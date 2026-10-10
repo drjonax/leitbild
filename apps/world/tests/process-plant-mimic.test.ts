@@ -179,7 +179,7 @@ describe('every intent over the reference Plant draws or is refused with a reaso
       }
     })
     expect(failures).toEqual([])
-  }, 30_000) // A watchdog for the whole sweep, not the property it measures.
+  }, 120_000) // A watchdog for the whole sweep, not the property it measures.
 
   test('is the diesel feeding the motor-driven AFW pump: the pump with its suction and its supply', () => {
     const mimic = generated(system, { to: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater', 'electricalPower'] })

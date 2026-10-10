@@ -9,7 +9,8 @@ import type {
   PackRuntimeRecordingBatch,
   SimulationRunId,
 } from '../src/core/model/index.ts'
-import type { PackRuntimeQuery, PackRuntimeStateStore } from '../src/simulation/protocol.ts'
+import { createSimulationClock, type SimulationClock } from '../src/core/model/time.ts'
+import type { PackRuntimeConnection, PackRuntimeQuery, PackRuntimeStateStore } from '../src/simulation/protocol.ts'
 import {
   createLocalProcessPlantPackRuntimeAdapter,
   processPlantControlRampCommandKind,
@@ -32,6 +33,18 @@ const createMemoryStateStore = (): PackRuntimeStateStore => {
     load: async () => state,
     save: async next => { state = structuredClone(next) },
   }
+}
+
+/** A paused Run clock: real-time Pack ticks see no elapsed time, so only `advance` moves the Plants. */
+const pausedRunClock = (): SimulationClock => createSimulationClock({ currentTime: builtIn.world.startsAt, updatedAt: issuedAt, paused: true })
+
+/** Advances the Pack by `ms` of simulation time as the Run does at maximum pace. */
+const advance = async (connection: PackRuntimeConnection, runClock: SimulationClock, ms: number): Promise<void> => {
+  const current = runClock.read()
+  const next = { ...current, currentTime: new Date(Date.parse(current.currentTime) + ms).toISOString() as IsoTimestamp }
+  if (!connection.advanceTo) throw new Error('process-plant runtime cannot advance to a Run clock')
+  await connection.advanceTo(next)
+  runClock.set(next)
 }
 
 const scenarioWithPlants = (plants: ReadonlyArray<OperationalObject> = [basePlant]) => ({
@@ -91,10 +104,12 @@ describe('process plant Pack runtime lifecycle', () => {
       label: 'Second test Plant',
       provenance: { ...basePlant.provenance, externalId: 'plant:test-second' },
     }
+    const runClock = pausedRunClock()
     const connection = await createLocalProcessPlantPackRuntimeAdapter().connect({
       simulationRunId,
       scenario: scenarioWithPlants([basePlant, secondPlant]),
       runtimeStateStore: createMemoryStateStore(),
+      runClock,
     })
     try {
       const accepted = await connection.sendCommand(command(processPlantControlWriteCommandKind, {
@@ -103,7 +118,7 @@ describe('process plant Pack runtime lifecycle', () => {
         value: false,
       }))
       expect(accepted.ok).toBe(true)
-      await Bun.sleep(1_100)
+      await advance(connection, runClock, 1_000)
 
       const first = await connection.invokeQuery(query('world.process-plant.variables.read', {
         plantId: basePlant.id,
@@ -126,6 +141,7 @@ describe('process plant Pack runtime lifecycle', () => {
       simulationRunId,
       scenario: scenarioWithPlants(),
       runtimeStateStore: stateStore,
+      runClock: pausedRunClock(),
     })
     expect((await first.sendCommand(command(processPlantControlWriteCommandKind, {
       plantId: basePlant.id,
@@ -134,13 +150,15 @@ describe('process plant Pack runtime lifecycle', () => {
     }))).ok).toBe(true)
     await first.close()
 
+    const runClock = pausedRunClock()
     const restored = await createLocalProcessPlantPackRuntimeAdapter().connect({
       simulationRunId,
       scenario: scenarioWithPlants(),
       runtimeStateStore: stateStore,
+      runClock,
     })
     try {
-      await Bun.sleep(1_100)
+      await advance(restored, runClock, 1_000)
       const read = await restored.invokeQuery(query('world.process-plant.variables.read', {
         plantId: basePlant.id,
         paths: ['rcpA.running'],
@@ -152,10 +170,12 @@ describe('process plant Pack runtime lifecycle', () => {
   })
 
   test('applies typed ramps and exposes displays and automation through discovery', async () => {
+    const runClock = pausedRunClock()
     const connection = await createLocalProcessPlantPackRuntimeAdapter().connect({
       simulationRunId,
       scenario: scenarioWithPlants(),
       runtimeStateStore: createMemoryStateStore(),
+      runClock,
     })
     try {
       expect((await connection.sendCommand(command(processPlantControlRampCommandKind, {
@@ -164,7 +184,7 @@ describe('process plant Pack runtime lifecycle', () => {
         targetValue: 0.5,
         durationSeconds: 1,
       }))).ok).toBe(true)
-      await Bun.sleep(1_100)
+      await advance(connection, runClock, 1_000)
 
       const read = await connection.invokeQuery(query('world.process-plant.variables.read', {
         plantId: basePlant.id,
@@ -186,21 +206,20 @@ describe('process plant Pack runtime lifecycle', () => {
   })
 
   test('emits only the selected recording profile with discoverable series metadata', async () => {
+    const runClock = pausedRunClock()
     const connection = await createLocalProcessPlantPackRuntimeAdapter().connect({
       simulationRunId,
       scenario: scenarioWithPlants(),
       runtimeStateStore: createMemoryStateStore(),
       recording: { packId: 'process-plant', profileId: 'operations', intervalMs: 250 },
+      runClock,
     })
     try {
-      const batch = await new Promise<PackRuntimeRecordingBatch>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('recording emission timed out')), 2_500)
-        connection.subscribe(emission => {
-          if (!emission.recording) return
-          clearTimeout(timeout)
-          resolve(emission.recording)
-        })
-      })
+      const batches: PackRuntimeRecordingBatch[] = []
+      connection.subscribe(emission => { if (emission.recording) batches.push(emission.recording) })
+      await advance(connection, runClock, 250)
+      expect(batches).toHaveLength(1)
+      const batch = batches[0]!
       expect(batch.descriptors.length).toBeGreaterThan(0)
       expect(batch.samples).toHaveLength(batch.descriptors.length)
       expect(batch.descriptors.every(descriptor => descriptor.subjectId === basePlant.id)).toBe(true)

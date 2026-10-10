@@ -1,4 +1,5 @@
 import type { SimulationRunId } from '../src/core/model/index.ts'
+import type { IdleRuntimeCloseTimer } from '../src/core/simulation-runs/registry.ts'
 import { scenarioAuthoringCatalogFor } from '../src/core/scenarios/authoring.ts'
 import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import { createScenarioRuntimeResolver,type ScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
@@ -73,6 +74,32 @@ export const testRuntimeConnectionConfig = (config: {
   ...(config.initialObjects === undefined ? {} : { initialObjects: config.initialObjects }),
 })
 
+/**
+ * A Run registry's idle-close countdowns on virtual time: a test advances it
+ * explicitly and each close that falls due has finished when advance returns.
+ */
+export const createManualIdleTimer = () => {
+  let nowMs = 0
+  const armed = new Set<{ readonly dueMs: number; readonly closeIfIdle: () => Promise<void> }>()
+  const arm: IdleRuntimeCloseTimer = (closeIfIdle, delayMs) => {
+    const countdown = { dueMs: nowMs + delayMs, closeIfIdle }
+    armed.add(countdown)
+    return () => { armed.delete(countdown) }
+  }
+  const advance = async (ms: number): Promise<void> => {
+    const untilMs = nowMs + ms
+    for (;;) {
+      const due = [...armed].filter(countdown => countdown.dueMs <= untilMs).sort((a, b) => a.dueMs - b.dueMs)[0]
+      if (!due) break
+      armed.delete(due)
+      nowMs = due.dueMs
+      await due.closeIfIdle()
+    }
+    nowMs = untilMs
+  }
+  return { arm, advance }
+}
+
 export const waitForCondition = async (
   label: string,
   condition: () => boolean,
@@ -81,12 +108,16 @@ export const waitForCondition = async (
     readonly intervalMs?: number
   },
 ): Promise<void> => {
-  const timeoutMs = options?.timeoutMs ?? 3_000
+  // The deadline reports a condition that never holds; it is not a budget, so
+  // it leaves a loaded machine room, and the condition is checked once more
+  // after a sleep that the machine stretched past it.
+  const timeoutMs = options?.timeoutMs ?? 10_000
   const intervalMs = options?.intervalMs ?? 25
   const startedAt = Date.now()
 
-  while (Date.now() - startedAt <= timeoutMs) {
+  for (;;) {
     if (condition()) return
+    if (Date.now() - startedAt > timeoutMs) break
     await Bun.sleep(intervalMs)
   }
 

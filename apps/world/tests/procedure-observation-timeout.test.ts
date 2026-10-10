@@ -15,6 +15,11 @@ import { deferred, procedureTestSource } from './procedure-fixtures.ts'
 const operator = { id: actorIdSchema.parse('operator:observation-timeout'), label: 'Timeout test operator', role: 'operator' as const }
 const conditionCapabilityId = 'world.process-plant.procedure-condition.evaluate'
 
+// The wall-time transport budget a healthy read must finish within: at load
+// 120 a healthy read overran 25 ms, so it is a second, and every bound below
+// tells a read cut off by the budget from one blocking on a hung transport.
+const acquisitionBudgetMs = 1_000
+
 /** Run, Hub, Process Plant and dispatch are real; only read-side transport is gated. */
 const setup = async (options: { readonly steps?: number; readonly restored?: SimulationRunStateSnapshot; readonly hangSource?: boolean; readonly timeoutMs?: number } = {}) => {
   const source = scenarios.find(scenario => scenario.id === 'test-plant')!
@@ -69,7 +74,7 @@ ${JSON.stringify({ capabilityId: conditionCapabilityId, continuous: true, input:
       if (mode === 'hang') await queryGate.promise
       return response
     } }, eventLog, snapshotStore: { load: async () => saved, save: async snapshot => { saved = snapshot } },
-    observationAcquisitionTimeoutMs: options.timeoutMs ?? 25,
+    observationAcquisitionTimeoutMs: options.timeoutMs ?? acquisitionBudgetMs,
     scenario: { id: scenario.scenarioId, startsAt: scenario.world.startsAt, agentRestrictions: { operationIds: [], objects: [] } },
     runtimeCapabilities: [...adapter.capabilities.map(capability => ({ packId: adapter.packId, runtimeId: adapter.id, capability })),
       ...worldCoreCapabilities.map(capability => ({ packId: 'world', runtimeId: 'world.core', capability }))],
@@ -93,7 +98,8 @@ ${JSON.stringify({ capabilityId: conditionCapabilityId, continuous: true, input:
   }
 }
 
-const within = async <T>(promise: Promise<T>, wallMs = 500): Promise<T> => {
+/** A hung transport would block forever; a read the budget cut off returns within it. */
+const within = async <T>(promise: Promise<T>, wallMs = 10 * acquisitionBudgetMs): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined
   try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Observer blocked runtime progress')), wallMs) })]) }
   finally { if (timer !== undefined) clearTimeout(timer) }
@@ -131,14 +137,20 @@ describe('bounded read-only procedure acquisition', () => {
   })
 
   test('one pass budget bounds many distinct stalled bindings and close does not await the unresolved read', async () => {
-    const fixture = await setup({ steps: 12 })
+    const fixture = await setup({ steps: 12, timeoutMs: 250 })
     try {
       fixture.mode('hang')
-      await within(fixture.start(), 200)
-      expect(fixture.calls().query).toBe(1)
+      const startedAt = performance.now()
+      await within(fixture.start())
+      // One pass budget starts a pass's first stalled read and none after it:
+      // the start's pass, and each pass the Run's one-second observation timer
+      // coalesced meanwhile, start one read at most. A budget per binding would
+      // start all twelve, leaving none "not started".
+      const timerPasses = Math.floor((performance.now() - startedAt) / 1_000) + 1
+      expect(fixture.calls().query).toBeLessThanOrEqual(1 + timerPasses)
       expect(fixture.current().observations).toHaveLength(12)
       expect(fixture.current().observations?.every(observation => observation.result.status === 'unknown')).toBe(true)
-      expect(fixture.current().observations?.[1]?.result.reason).toContain('this read was not started')
+      expect(fixture.current().observations?.some(observation => observation.result.reason?.includes('this read was not started'))).toBe(true)
       await within(fixture.runtime.close())
     } finally { fixture.queryGate.resolve(); await fixture.runtime.close() }
   })

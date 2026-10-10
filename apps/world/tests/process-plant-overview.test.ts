@@ -215,7 +215,7 @@ describe('the unit overview World generates for a Plant', () => {
     // Two loops on two headers closed by the feed train force one crossing.
     expect(mimic.crossings.forced).toBe(1)
     // Five and six loops overflow Full HD, so each searches the least height that draws: seconds under load.
-  }, 30_000)
+  }, 120_000)
 
   test('on a feedwater runback the failed valve that causes it stands out as abnormal, and nothing else does', () => {
     const upset = plant()

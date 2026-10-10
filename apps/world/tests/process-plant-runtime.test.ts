@@ -279,7 +279,7 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeGreaterThan(50)
     expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeLessThan(60)
     expect(Number(runtime.readVariable(valueOf('feedwaterControlValveA.positionFraction')))).toBeLessThan(1)
-  }, 20_000)
+  }, 120_000) // A watchdog for hangs: this 600 s trajectory ran 69 s at load 100 to 130.
 
   test('reference protection trips reactor on pressurizer pressure and containment pressure extremes', () => {
     for (const [initialState, expectedTrip] of [
@@ -477,7 +477,7 @@ describe('process plant runtime', () => {
 
     expect(active.alarms.length).toBeGreaterThan(0)
     expect(active.trips).toContain('trip:reactor-low-rcp-flow-trip:low-rcp-flow-trip')
-  }, 20_000) // 450 s correctness trajectory, same watchdog as the normal-hold case.
+  }, 120_000) // 450 s correctness trajectory, same watchdog as the normal-hold case.
 
   test('scheduled typed PWR fault actions compile to validated runtime writes', () => {
     const system = compiledSystem()
@@ -1453,7 +1453,7 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('safetyAccumulatorA.liquidInventoryKg')))).toBeLessThan(initialAccumulatorInventory)
     expect(observedVesselInjection).toBe(true)
     expect(Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryKg')))).toBeLessThan(initialPrimaryInventory)
-  }, 20_000)
+  }, 120_000)
 
   test('steam generator tube leak transfers primary coolant to secondary inventory and radiation', () => {
     const runtime = createProcessPlantRuntime({ system: compiledSystem() })
@@ -1481,7 +1481,7 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('sgA.secondaryRadiationMSvPerH')))).toBeGreaterThan(1)
     expect(Number(runtime.readVariable(valueOf('sg-a-steam-to-msiv-a.radiationMSvPerH')))).toBeGreaterThan(1)
     expect(Number(runtime.readVariable(valueOf('sgB.secondaryRadiationMSvPerH')))).toBeCloseTo(0.02, 6)
-  }, 20_000)
+  }, 120_000)
 
   test('loss of feedwater trends steam generator inventory downward', () => {
     const runtime = createProcessPlantRuntime({ system: compiledSystem() })

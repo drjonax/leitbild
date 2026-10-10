@@ -73,5 +73,5 @@ describe('authoritative PWR full-power operating point', () => {
         expect(Number(runtime.readVariable('vessel.primaryCoolantInventoryKg' as VariablePath))).toBeCloseTo(285000, 5)
       }
     }
-  }, 20_000)
+  }, 120_000)
 })

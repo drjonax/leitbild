@@ -17,6 +17,7 @@ import { overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/
 import { overviewKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
 import { drawnLook, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { openBridgeDevice } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
+import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
 
 // The unit overview: the principal circuits the energy rule finds, drawn by
 // the overview profile at 1:1 with OpenBridge's regular text. The drawing is
@@ -265,15 +266,12 @@ describe('the unit overview of the principal circuits', () => {
   })
 
   // The reference design is the 4-loop Plant (owner, 2026-10-10). Its own
-  // cost is the fastest of 12 compiles: the slowest measured the shared
-  // machine's load (586 ms with seven agents' test suites running), not the code.
-  test('compiles the 4-loop overview within 500 ms', () => {
-    const timings: number[] = []
-    for (let run = 0; run < 12; run++) {
-      const start = performance.now()
-      overview(plantOf(4), budgetFor(4))
-      timings.push(performance.now() - start)
-    }
-    expect(Math.min(...timings)).toBeLessThan(500)
-  }, 30_000) // A watchdog for the whole sweep, not the property it measures.
+  // cost is its main-thread CPU time in reference computations timed
+  // immediately before it, the median of five compiles (cpu-cost.ts): wall
+  // time measured the shared machine's load (586 ms with seven agents' test
+  // suites running), not the code.
+  test('compiles the 4-loop overview within 500 ms quiet', () => {
+    const [cost] = costsInReferences([() => overview(plantOf(4), budgetFor(4))], 5)
+    expect(cost).toBeLessThan(500 / referenceQuietMs)
+  }, 120_000) // A watchdog for the whole sweep, not the property it measures.
 })

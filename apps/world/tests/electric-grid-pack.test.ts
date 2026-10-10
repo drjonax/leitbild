@@ -19,6 +19,7 @@ import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { createLocalElectricGridPackRuntimeAdapter } from '../src/packs/electric-grid/sim/adapter.ts'
 import { electricGridRuntimeId } from '../src/packs/electric-grid/sim/constants.ts'
 import { weatherPack } from '../src/packs/weather/pack.ts'
+import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
 import { scenarios } from './fixtures/scenarios.ts'
 import type { PackRuntimeConnection, PackRuntimeEvent, PackRuntimeStateStore } from '../src/simulation/protocol.ts'
 
@@ -287,17 +288,25 @@ describe('electric grid Pack', () => {
     }
   })
 
-  test('keeps steady-topology Grid ticks within the lightweight runtime budget', () => {
+  // A tick's cost is the main-thread CPU time of a ten-tick batch in
+  // reference computations timed immediately before it, per tick, the median
+  // of five batches (cpu-cost.ts), not wall time, which measures a loaded
+  // shared machine.
+  test('keeps steady-topology Grid ticks within the lightweight runtime budget of 5 ms quiet', () => {
     const data = electricGridPackDataSchema.parse(gridScenario().initialObjects.find(object => object.id === 'grid:norway')?.packData)
     const definition = compileGridDefinition(gridDefinitionSchema.parse({ id: 'grid:norway', model: data.model, operatingPoint: data.operatingPoint, automation: data.automation }))
     const grid = createGridRuntimeInstance({ definition, at: '2026-01-01T10:00:00.000Z' })
     advanceGrid(grid, 0, '2026-01-01T10:00:00.000Z' as IsoTimestamp)
-    const startedAtMs = performance.now()
-    for (let index = 1; index <= 40; index += 1) {
-      advanceGrid(grid, 2, new Date(Date.parse('2026-01-01T10:00:00.000Z') + index * 2_000).toISOString() as IsoTimestamp)
+    let ticks = 0
+    const tenTicks = (): void => {
+      for (let tick = 0; tick < 10; tick += 1) {
+        ticks += 1
+        advanceGrid(grid, 2, new Date(Date.parse('2026-01-01T10:00:00.000Z') + ticks * 2_000).toISOString() as IsoTimestamp)
+      }
     }
-    const averageTickMs = (performance.now() - startedAtMs) / 40
-    expect(averageTickMs).toBeLessThan(5)
+    const [cost] = costsInReferences([tenTicks], 5)
+    expect(ticks).toBe(50)
+    expect(cost! / 10).toBeLessThan(5 / referenceQuietMs)
     expect(grid.diagnostics.topologyRebuildCount).toBe(1)
     expect(grid.diagnostics.lastSuccessfulTickAt).not.toBeNull()
   })

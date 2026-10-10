@@ -114,7 +114,7 @@ test.skipIf(!actualWiki||!actualIf97||!nativeSourceTest)('actual current-source 
       [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited])
     if(code!==0)throw Error(err+out);expect(out).toContain('1 passed');console.log(err.trim())
   } finally {await rm(work,{recursive:true,force:true})}
-},20000)
+},120000)
 type MutableConditions = { [K in keyof OperatingSourceConditions]: OperatingSourceConditions[K] extends readonly number[] ? number[] : number }
 const conditions = (): MutableConditions => structuredClone(model.reference.conditions) as MutableConditions
 const zeroDirection = (): MutableConditions => ({

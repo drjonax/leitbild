@@ -16,7 +16,7 @@ import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/
 import { createLocalAmbulancePackRuntimeAdapter } from '../src/packs/ambulance/sim/adapter.ts'
 import { createLocalWeatherPackRuntimeAdapter } from '../src/packs/weather/sim/adapter.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
-import { createTestScenarioRuntimeResolver, testScenarioAuthoring } from './helpers.ts'
+import { createManualIdleTimer, createTestScenarioRuntimeResolver, testScenarioAuthoring } from './helpers.ts'
 import { responseScenario } from './fixtures/scenarios.ts'
 import { assignCommandKind } from '../src/packs/ambulance/commands.ts'
 
@@ -48,7 +48,7 @@ const waitForMovingObjectEvent = async (
   await new Promise<void>((resolve, reject): void => {
     const timeout = setTimeout(() => {
       reject(new Error(`timed out waiting for moving object event: ${objectId}`))
-    }, 3_000)
+    }, 10_000)
 
     const poll = (): void => {
       const moving = client.events.some(event =>
@@ -64,18 +64,6 @@ const waitForMovingObjectEvent = async (
     }
     poll()
   })
-}
-
-const waitForRuntimeClosed = async (
-  registry: ReturnType<typeof createSimulationRunRegistry>,
-  simulationRunId: SimulationRunId,
-): Promise<void> => {
-  const deadline = Date.now() + 1_000
-  while (Date.now() < deadline) {
-    if (!registry.get(simulationRunId)) return
-    await Bun.sleep(10)
-  }
-  throw new Error(`timed out waiting for idle runtime close: ${simulationRunId}`)
 }
 
 describe('server health', () => {
@@ -368,12 +356,14 @@ describe('server health', () => {
 
   test('closes idle runtimes after the last realtime client leaves', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-server-idle-client-test-'))
+    const idle = createManualIdleTimer()
     const registry = createSimulationRunRegistry({
       dataDir,
       workspaceId: newWorkspaceId(),
       scenarioRuntimeResolver: createTestScenarioRuntimeResolver(),
       ...testScenarioAuthoring(),
       idleRuntimeCloseDelayMs: 5,
+      idleRuntimeCloseTimer: idle.arm,
       runtimeAdapters: [
         createLocalAmbulancePackRuntimeAdapter({ routing: createDirectRoutingAdapter() }),
         createLocalWeatherPackRuntimeAdapter(),
@@ -394,8 +384,12 @@ describe('server health', () => {
       realtime.addClient(simulationRunId, client)
       expect(registry.get(simulationRunId)).toBe(runtime)
 
+      await idle.advance(5)
+      expect(registry.get(simulationRunId)).toBe(runtime)
+
       realtime.removeClient(simulationRunId, client)
-      await waitForRuntimeClosed(registry, simulationRunId)
+      await idle.advance(5)
+      expect(registry.get(simulationRunId)).toBeUndefined()
       expect(realtime.status().websocketClientCount).toBe(0)
       expect(realtime.status().subscribedSimulationRunCount).toBe(0)
     } finally {
