@@ -39,12 +39,14 @@ describe('the values equipment opened from the overview leads with', () => {
     expect(of(['rcpA'])).not.toContain('rcpA.running' as never)
   })
 
-  test('at power the core leads with its power, the subcooling margin and its outlet temperature, and the de-energized source range last', () => {
-    // The subcooling margin is bound to the reactor coolant system, as the core's outlet temperature is: its alarms are the core's related alarms.
-    expect(of(['core'])).toEqual(['core.powerMw', 'vessel.subcoolingMarginC', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.sourceRangeEnergized', 'core.sourceRangeCountRateCps'] as never)
-    // With its high voltage on, the source range counts something and ranks as an instrument.
+  test('at power the core leads with its power, the subcooling margin, the RCS leak rate and its outlet temperature, and the de-energized source range last', () => {
+    // The subcooling margin and the RCS leak rate are bound to the reactor coolant system, as the core's outlet
+    // temperature is: their alarms are the core's related alarms. Of the source range only its flag fits the six.
+    expect(of(['core'])).toEqual(['core.powerMw', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.sourceRangeEnergized'] as never)
+    // With its high voltage on, the source range counts something and ranks as an instrument, ahead of the
+    // intermediate range, which no longer fits.
     const counting: PlantNow = { ...atPower, read: path => String(path) === 'core.sourceRangeEnergized' ? true : runtime.readVariable(path) }
-    expect(of(['core'], counting).slice(3)).toEqual(['core.sourceRangeEnergized', 'core.sourceRangeCountRateCps', 'core.intermediateRangeCurrentAmps'] as never)
+    expect(of(['core'], counting).slice(3)).toEqual(['core.coolantOutletTemperatureC', 'core.sourceRangeEnergized', 'core.sourceRangeCountRateCps'] as never)
   })
 
   test('a signal only rules of other modes judge follows its key values and instruments', () => {
