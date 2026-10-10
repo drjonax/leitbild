@@ -27,13 +27,14 @@
 //!    network then evaluates `F(0, y, 0)` itself for the receipt: its rows,
 //!    cells and face charts, not a second implementation of its equations.
 use super::{
-    Failure, Network, PZR_ALGEBRAIC, PZR_ENERGY, PZR_MASS, PZR_TRACER, Prepared, Properties,
-    PzrPreparation, RotorState, Water, not_integrated,
+    Failure, Network, PZR_ALGEBRAIC, PZR_COORDINATES, PZR_ENERGY, PZR_MASS, PZR_TRACER, Prepared,
+    Properties, PzrPreparation, RotorState, Water,
     packet::{self, FacePacket, Packet},
+    stratified,
 };
 use crate::local_flow::Cell;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::VecDeque;
 
 /// Standard gravity of the well-balanced face head in `local_flow`.
@@ -584,13 +585,64 @@ pub struct StratifiedPreparation {
 }
 
 impl<P: Properties> Network<P> {
-    /// `stratified::prepare` at the declared roof pressure and level.
+    /// `stratified::prepare` at the declared roof pressure and level, written
+    /// into `y` so that the network reconstructs exactly the roof pressure,
+    /// every volume and every zone's `U/M`. The surge-port pressure is the
+    /// written coordinates' own column at the port elevation.
     fn prepare_stratified(
         &self,
-        _point: &OperatingPoint,
-        _y: &mut [f64],
+        point: &OperatingPoint,
+        settings: &Settings,
+        y: &mut [f64],
     ) -> Result<StratifiedPreparation, Failure> {
-        Err(not_integrated("the PZR preparation at the declared point"))
+        let cell = &self.stratified;
+        let preparation = cell.prepare(
+            &self.properties,
+            point.pzr_roof_pressure_pa,
+            point.pzr_level_m,
+            settings.pressure_tolerance_pa,
+            settings.max_passes,
+        )?;
+        let range = self.pzr.coordinates();
+        let scales: [f64; PZR_COORDINATES] = self.scales()[range.clone()]
+            .try_into()
+            .map_err(|_| fatal("PZR scale layout"))?;
+        let written = stratified::Cell::coordinates(
+            &preparation.values,
+            &scales,
+            settings.representation_search,
+        )?;
+        y[range].copy_from_slice(&written);
+        let mut values = [0.; PZR_COORDINATES];
+        for ((v, w), s) in values.iter_mut().zip(written).zip(scales) {
+            *v = w * s;
+        }
+        // Representable steps of each written coordinate from the nearest
+        // `value / scale` (all nonnegative), and the zones' exact U/M.
+        let steps: Vec<u64> = written
+            .iter()
+            .zip(preparation.values.iter().zip(scales))
+            .map(|(w, (v, s))| w.to_bits().abs_diff((v / s).to_bits()))
+            .collect();
+        let specific_energy_exact: Vec<bool> = PZR_MASS[..3]
+            .iter()
+            .zip(PZR_ENERGY)
+            .map(|(m, e)| values[e] / values[*m] == preparation.values[e] / preparation.values[*m])
+            .collect();
+        let x = stratified::Coordinates::values(&values);
+        let column = cell.column(&self.properties, &x, None)?;
+        let port = cell
+            .parameters()
+            .ports
+            .iter()
+            .find(|p| p.face == self.pzr.port_face)
+            .ok_or_else(|| fatal("the port face has no PZR port"))?;
+        let port_pressure_pa = column.pressure_at(port.elevation_m).value;
+        let zone = |z: &stratified::Zone| json!({"pressure_pa":z.pressure.value,"temperature_k":z.temperature.value,"mass_kg":z.mass.value,"volume_m3":z.volume.value,"specific_energy_j_kg":z.specific_energy.value,"density_kg_m3":z.density.value});
+        Ok(StratifiedPreparation {
+            port_pressure_pa,
+            receipt: json!({"prepared":preparation.values,"written":values,"representation_steps":steps,"specific_energy_exact":specific_energy_exact,"saturation_temperature_k":preparation.saturation_temperature_k,"pass_changes_pa":preparation.pass_changes_pa,"roof_pressure_pa":column.roof_pressure.value,"interface_pressure_pa":column.interface_pressure.value,"bottom_pressure_pa":column.bottom_pressure.value,"port_pressure_pa":port_pressure_pa,"mixture_level_m":column.mixture_elevation.value-column.bottom_m,"collapsed_level_m":column.collapsed_elevation.value-column.bottom_m,"admitted_thickness_m":column.admitted_thickness.value,"zones":{"vapor":zone(&column.vapor),"admitted":zone(&column.admitted),"resident":zone(&column.resident)}}),
+        })
     }
 }
 
@@ -625,7 +677,7 @@ pub fn prepare<P: Properties>(
     for (r, state) in rotors.iter().enumerate() {
         network.set_rotor_state(r, *state);
     }
-    let pzr = network.prepare_stratified(point, &mut prepared.y)?;
+    let pzr = network.prepare_stratified(point, settings, &mut prepared.y)?;
     let owners = owners(packet, &network)?;
     let faces = &packet.mechanics.faces;
     let cells = network.cell_layout.len();

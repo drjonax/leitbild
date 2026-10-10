@@ -8,7 +8,8 @@ use leitbild_operating_plant::{
         Band, BandReport, Failure, MetastableBand, Network, Properties, PzrPreparation, RotorState,
         Water,
         packet::*,
-        prepare::{OperatingPoint, Settings, prepare},
+        prepare::{OperatingPoint, Receipt, Settings, prepare},
+        stratified::{Band as FreeArea, Heaters, Metastable, PortKind, Stratified, Tap},
     },
     rotor::{Shaft, SpeedRequest, Support},
     thermal::{Saturation, Scalar, WaterPoint},
@@ -164,6 +165,18 @@ const AUTHORED_PA: f64 = 15.6e6;
 const TRACER_PER_KG: f64 = 1e-3;
 const SURGE: usize = 4;
 const PZR: usize = 5;
+/// Free-area integral of the fixture's PZR cell: 1 m at 2.9 m2, 9 m at 3 m2.
+const PZR_VOLUME: f64 = 29.9;
+
+fn surge_port() -> PzrPort {
+    PzrPort {
+        id: "PZR.SURGE.MOUTH".into(),
+        kind: PortKind::Surge,
+        elevation_m: 10.,
+        face: 5,
+        bore_m: 0.25,
+    }
+}
 
 fn segment(region: usize, length: f64, rise: f64) -> PressureSegment {
     PressureSegment {
@@ -237,7 +250,7 @@ fn packet() -> Packet {
     });
     regions.push(Region {
         id: "PZR".into(),
-        volume_m3: 30.,
+        volume_m3: PZR_VOLUME,
         elevation_m: 20.,
     });
     let surge_water = liquid(AUTHORED_PA, 605.);
@@ -284,16 +297,56 @@ fn packet() -> Packet {
                 index: PZR,
                 bottom_m: 10.,
                 top_m: 20.,
-                fluid_volume_m3: 30.,
-                ports: vec![PzrPort {
-                    id: "PZR.SURGE.MOUTH".into(),
-                    kind: "surge".into(),
-                    elevation_m: 10.,
-                    face: 5,
-                    bore_m: 0.25,
-                }],
-                metastable: BAND,
+                fluid_volume_m3: PZR_VOLUME,
+                free_area: vec![
+                    FreeArea {
+                        from_m: 10.,
+                        to_m: 11.,
+                        area_m2: 2.9,
+                    },
+                    FreeArea {
+                        from_m: 11.,
+                        to_m: 20.,
+                        area_m2: 3.,
+                    },
+                ],
+                ports: vec![surge_port()],
+                taps: [("PT1", 20.), ("LT.LOW", 10.), ("LT.HIGH", 20.)]
+                    .map(|(id, elevation_m)| Tap {
+                        id: id.into(),
+                        elevation_m,
+                    })
+                    .to_vec(),
+                heaters: Heaters {
+                    bottom_m: 10.,
+                    top_m: 11.,
+                    displacement_m3: 0.1,
+                },
+                stratified: Stratified {
+                    withdrawal_scale_m: 0.25,
+                    admitted_preparation_thickness_m: 0.25,
+                    inversion_exchange_velocity_m_s: 300.,
+                    liquid_relaxation_time_s: 0.3,
+                    vapor_relaxation_time_s: 0.5,
+                    relaxation_sensitivity: [0.5, 1., 2.],
+                    bubble_diameter_m: 0.00075,
+                    spray_drop_diameter_m: 0.003,
+                    drop_diameter_sensitivity_m: [0.0015, 0.003, 0.006],
+                    resolvability_factor: 1000.,
+                },
+                metastable: Metastable {
+                    pressure_range_pa: BAND.pressure_range_pa,
+                    lower_bound_exclusive: BAND.lower_bound_exclusive,
+                    liquid_superheat_max_k: BAND.liquid_superheat_max_k,
+                    vapor_subcooling_max_k: BAND.vapor_subcooling_max_k,
+                    trial_max_k: BAND.trial_max_k,
+                    credited_max_k: BAND.credited_max_k,
+                    liquid_temperature_max_k: BAND.liquid_temperature_max_k,
+                    liquid_pressure_ceiling_pa: BAND.liquid_pressure_ceiling_pa,
+                    vapor_pressure_ceiling_pa: BAND.vapor_pressure_ceiling_pa,
+                },
                 absorber_mass_fraction: TRACER_PER_KG,
+                interfacial_length_m: 0.003,
             },
         },
         hydraulics: Hydraulics {
@@ -367,35 +420,102 @@ fn fatal<T>(result: Result<T, Failure>) -> String {
         Ok(_) => panic!("not refused"),
     }
 }
+const CONTROLS: PzrPreparation = PzrPreparation {
+    pressure_tolerance_pa: SETTINGS.pressure_tolerance_pa,
+    max_passes: SETTINGS.max_passes,
+};
 fn compile(packet: &Packet) -> String {
-    fatal(Network::new(
-        packet,
-        Analytic,
-        &PzrPreparation {
-            pressure_tolerance_pa: SETTINGS.pressure_tolerance_pa,
-            max_passes: SETTINGS.max_passes,
-        },
-    ))
+    fatal(Network::new(packet, Analytic, &CONTROLS))
+}
+
+fn prepared(level: f64) -> (Network<Analytic>, Vec<f64>, Receipt) {
+    let (network, prepared, receipt) =
+        prepare(&packet(), Analytic, &point(level), &[RUNNING], &SETTINGS)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+    (network, prepared.y, receipt)
 }
 
 #[test]
-fn network_and_preparation_refuse_at_the_stratified_integration_point() {
-    let message = compile(&packet());
+fn the_network_compiles_and_prepares_the_stratified_cell() {
+    let (network, prepared) = Network::new(&packet(), Analytic, &CONTROLS).unwrap();
+    // 5 regular cells, one 17-coordinate PZR, 6 faces of two paths, 1 rotor.
+    assert_eq!(network.dimension(), 5 * 6 + 17 + 6 * 2 + 1);
+    let algebraic = prepared.differential.iter().filter(|v| **v == 0.).count();
+    assert_eq!(algebraic, 5 + 6);
+    let pzr = network.pzr.coordinates();
     assert!(
-        message.contains("stratified PZR cell not integrated"),
-        "{message}"
+        prepared.differential[pzr.start..pzr.start + 6]
+            .iter()
+            .all(|v| *v == 0.)
     );
-    let prepared = fatal(prepare(
-        &packet(),
-        Analytic,
-        &point(6.),
-        &[RUNNING],
-        &SETTINGS,
-    ));
     assert!(
-        prepared.contains("stratified PZR cell not integrated"),
-        "{prepared}"
+        prepared.differential[pzr.start + 6..pzr.end]
+            .iter()
+            .all(|v| *v == 1.)
     );
+    // Every prepared zone volume, mass, energy and roof pressure is y = 1.
+    for offset in [0, 1, 2, 3, 6, 7, 8, 9, 11, 12] {
+        assert_eq!(prepared.y[pzr.start + offset], 1., "offset {offset}");
+    }
+}
+
+#[test]
+fn hydrostatic_preparation_is_at_rest_and_reconstructs_the_cell_exactly() {
+    let (network, y, receipt) = prepared(6.);
+    assert!(receipt.max_eos_row <= 1e-14, "{}", receipt.max_eos_row);
+    assert!(
+        receipt.max_tree_rest_pa <= 1e-7,
+        "{}",
+        receipt.max_tree_rest_pa
+    );
+    let port = &receipt.faces[5];
+    assert!(port.tree && port.rest_pa.abs() <= 1e-7, "{port:?}");
+    assert_eq!(receipt.root_region, SURGE);
+    let pzr = &receipt.pzr;
+    assert!(
+        pzr["representation_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s.as_u64() == Some(0))
+    );
+    assert!(
+        pzr["specific_energy_exact"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s.as_bool() == Some(true))
+    );
+    assert_eq!(pzr["mixture_level_m"].as_f64(), Some(6.));
+    // The algebraic rows hold exactly. The stock rows are not at rest here:
+    // this analytic chart's u(T) is not a consistent EOS with rho(p, T), so
+    // its deeper liquid reads as superheated and relaxes; maintained IF97
+    // gives round-off on the actual packet.
+    let algebraic = receipt
+        .initial_rows
+        .iter()
+        .find(|c| c.class == "pzr pressure and volume")
+        .unwrap();
+    assert!(algebraic.max_abs <= 1e-12, "{}", algebraic.max_abs);
+    let (inventory, _) = network
+        .inventory(
+            &y,
+            leitbild_operating_plant::network::Tolerances {
+                relative: 1e-6,
+                absolute: &vec![1e-8; y.len()],
+            },
+        )
+        .unwrap();
+    assert!(inventory[0] > 0. && inventory[1] > 0.);
+}
+
+#[test]
+fn preparation_is_bitwise_deterministic() {
+    let (_, a, ra) = prepared(6.);
+    let (_, b, rb) = prepared(6.);
+    let bits = |y: &[f64]| y.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&a), bits(&b));
+    assert_eq!(ra, rb);
 }
 
 #[test]
@@ -418,14 +538,7 @@ fn compile_refuses_a_misplaced_pzr_cell_port_or_force() {
     band.pzr.cell.metastable.credited_max_k = 0.6;
     assert!(compile(&band).contains("compiled band"));
     let mut ports = packet();
-    let extra = PzrPort {
-        id: "PZR.SPRAY".into(),
-        kind: "spray".into(),
-        elevation_m: 19.,
-        face: 5,
-        bore_m: 0.1,
-    };
-    ports.pzr.cell.ports.push(extra);
+    ports.pzr.cell.ports.push(surge_port());
     assert!(compile(&ports).contains("exactly one port"));
     let mut reverse = packet();
     let f = &mut reverse.mechanics.faces[5];

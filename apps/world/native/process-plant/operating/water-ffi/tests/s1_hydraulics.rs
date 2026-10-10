@@ -250,8 +250,8 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
         );
     Sample {
         t,
-        roof_pa: pzr.roof_pressure_pa,
-        pzr_level_m: pzr.level_m,
+        roof_pa: pzr.pt1_pa.value,
+        pzr_level_m: pzr.collapsed_level_m.value,
         loop_kg_s,
         core_dp_pa: network.cell(taps.lower).pressure.value
             - network.cell(taps.upper).pressure.value,

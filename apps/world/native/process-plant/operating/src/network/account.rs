@@ -7,7 +7,7 @@
 //! The stratified PZR cell's inventory belongs to its owner and enters
 //! through the integration point.
 use super::{
-    Failure, Network, PZR_COORDINATES, PZR_ENERGY, PZR_MASS, PZR_TRACER, Properties, not_integrated,
+    Failure, Network, PZR_COORDINATES, PZR_ENERGY, PZR_MASS, PZR_TRACER, Properties, stratified,
 };
 use serde_json::{Value, json};
 
@@ -330,9 +330,33 @@ impl<P: Properties> Network<P> {
 
     /// The PZR cell's admitted inventory (`stratified::inventory`): totals
     /// [mass, tracer, fluid internal energy, 0] with its transit stocks'
-    /// saturated energy, and its receipt.
-    fn stratified_inventory(&self, _y: &[f64]) -> Result<StratifiedInventory, Failure> {
-        Err(not_integrated("the PZR inventory"))
+    /// saturated energy, and its receipt. Every stock must be finite and
+    /// every mass and tracer nonnegative.
+    fn stratified_inventory(&self, y: &[f64]) -> Result<StratifiedInventory, Failure> {
+        let mut values = [0.; PZR_COORDINATES];
+        for (v, i) in values.iter_mut().zip(self.pzr.coordinates()) {
+            *v = y[i] * self.scales[i];
+        }
+        let nonnegative = PZR_MASS.iter().chain(&PZR_TRACER);
+        if values.iter().any(|v| !v.is_finite()) || nonnegative.into_iter().any(|o| values[*o] < 0.)
+        {
+            return Err(Failure::Fatal(format!(
+                "physical PZR stock admission failed: {values:?}"
+            )));
+        }
+        let x = stratified::Coordinates::values(&values);
+        let column = self.stratified.column(&self.properties, &x, None)?;
+        let inventory = self.stratified.inventory(&x, &column);
+        let energy: f64 = PZR_ENERGY.iter().map(|o| values[*o]).sum();
+        Ok(StratifiedInventory {
+            totals: [
+                inventory.mass_kg.value,
+                inventory.boron_kg.value,
+                inventory.energy_j.value,
+                0.,
+            ],
+            receipt: json!({"mass_kg":inventory.mass_kg.value,"boron_kg_eq":inventory.boron_kg.value,"energy_j":inventory.energy_j.value,"zone_internal_energy_j":energy,"bubble_mass_kg":x.bubble_mass.value,"drop_mass_kg":x.drop_mass.value,"drop_boron_kg_eq":x.drop_boron.value,"mixture_level_m":column.mixture_elevation.value-column.bottom_m,"collapsed_level_m":column.collapsed_elevation.value-column.bottom_m,"admitted_thickness_m":column.admitted_thickness.value}),
+        })
     }
 }
 
