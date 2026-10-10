@@ -15,9 +15,10 @@ const readableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolea
 // outside the loops (a reactor's power, a pressurizer's pressure, a
 // containment's pressure; per-loop values stay on their loop's symbols), then
 // the first key value of each energy source and sink (a core's outlet
-// temperature, a generator's output). Unpublished signals are left out; so
-// are writable ones, which would show a demand, and the states symbols draw
-// (a turbine stop valve's position, a breaker's contacts).
+// temperature, a generator's output), which keep their places however many
+// signals the trips judge. Unpublished signals are left out; so are writable
+// ones, which would show a demand, and the states symbols draw (a turbine stop
+// valve's position, a breaker's contacts).
 export const overviewKeyValues = (plant: CompiledProcessPlant): ReadonlyArray<VariablePath> => {
   const graph = plant.graph
   const ownerOf = (path: VariablePath) => {
@@ -34,7 +35,9 @@ export const overviewKeyValues = (plant: CompiledProcessPlant): ReadonlyArray<Va
   const energyEnds = graph.components
     .filter(component => component.semantics.energy.some(role => role.role === 'source' || role.role === 'sink'))
     .flatMap(component => component.semantics.keyValues.slice(0, 1))
-  return [...new Set([...tripWatched, ...energyEnds])].filter(readable).slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
+  const ends = [...new Set(energyEnds)].filter(readable)
+  const judged = [...new Set(tripWatched)].filter(readable).filter(path => !ends.includes(path))
+  return [...judged.slice(0, Math.max(0, COMPOSED_READOUTS_MAX_SIGNALS - ends.length)), ...ends].slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
 }
 
 /**
