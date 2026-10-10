@@ -179,6 +179,7 @@ describe('electric grid generator commands', () => {
     expect(send(gridStopGeneratorCommandKind, { assetId: kvilldalId }).ok).toBe(true)
     expect(state).toMatchObject({ state: 'stopping', targetMw: 0 })
     expect(reasonOf(send(gridStopGeneratorCommandKind, { assetId: kvilldalId }))).toContain('stopping')
+    expect(reasonOf(send(gridSetGeneratorAvailabilityCommandKind, { assetId: kvilldalId, availableMw: 0 }))).toContain('is stopping and needs at least')
     step(2)
     expect(state.dispatchMw).toBeCloseTo(Math.max(0, dispatchBeforeMw - generator.rampRateMwPerMinute * 2 / 60))
     step(Math.ceil(dispatchBeforeMw / generator.rampRateMwPerMinute * 60) + 4)

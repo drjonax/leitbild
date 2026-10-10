@@ -100,8 +100,9 @@ const generatorHandlers = {
     if (payload.availableMw > definition.capacityMw) throw new Error(`available capacity ${mw(payload.availableMw)} exceeds the installed capacity ${mw(definition.capacityMw)} of ${payload.assetId}`)
     if (payload.availableMw === state.availableMw) throw new Error(`generator ${payload.assetId} already has ${mw(state.availableMw)} available`)
     const minimumStableMw = generatorMinimumStableMw(definition)
-    if ((state.state === 'online' || state.state === 'starting') && (payload.availableMw <= 0 || payload.availableMw < minimumStableMw)) {
-      throw new Error(`generator ${payload.assetId} is ${state.state} and needs at least its minimum stable generation ${mw(minimumStableMw)} available; use stop-generator or trip-generator first`)
+    if (state.state !== 'offline' && state.state !== 'tripped' && (payload.availableMw <= 0 || payload.availableMw < minimumStableMw)) {
+      const next = state.state === 'stopping' ? 'wait until it is offline or trip it' : 'use stop-generator or trip-generator first'
+      throw new Error(`generator ${payload.assetId} is ${state.state} and needs at least its minimum stable generation ${mw(minimumStableMw)} available; ${next}`)
     }
     state.availableMw = payload.availableMw
     state.targetMw = Math.min(state.targetMw, state.availableMw)

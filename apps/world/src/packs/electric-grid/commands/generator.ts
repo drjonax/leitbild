@@ -38,7 +38,7 @@ export const gridGeneratorCommandCapabilities: ReadonlyArray<SimulationCapabilit
   gridCommandCapability({
     id: gridSetGeneratorAvailabilityCommandKind,
     title: 'Set generator availability',
-    description: 'Sets the available capacity (MW, 0 to installed capacity) without changing the lifecycle state. A starting or online unit must keep at least its minimum stable generation; lowering availability below the dispatch target lowers the target to the new availability.',
+    description: 'Sets the available capacity (MW, 0 to installed capacity) without changing the lifecycle state. A starting, online, or stopping unit must keep at least its minimum stable generation; lowering availability below the dispatch target lowers the target to the new availability.',
     payloadSchema: gridSetGeneratorAvailabilityPayloadSchema,
     risk: 'write',
     searchTerms: [...generatorTerms, 'availability', 'derate', 'capacity', 'partial outage', 'tilgjengelighet', 'tilgjengelig effekt', 'kapasitet', 'begrensning'],
