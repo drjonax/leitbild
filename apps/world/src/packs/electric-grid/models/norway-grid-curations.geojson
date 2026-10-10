@@ -1,0 +1,376 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "nygard-plant-terminal",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          6.0648179,
+          60.8910458
+        ]
+      },
+      "properties": {
+        "kind": "add-terminal",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid audit (lane DA1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/549836008",
+          "way/549836007",
+          "relation/7802012"
+        ],
+        "wayOsmId": "way/549836008",
+        "substationOsmId": "way/549836007",
+        "remoteSubstationOsmId": "relation/7802012",
+        "voltageKv": 300,
+        "reason": "The 300 kV line from Modalen ends at node 5311382733 by the underground Nygard pumped-storage plant, 162 m outside the mapped plant outline, so open data leaves the plant without a grid terminal.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0775A1E2-1252-4B8F-A85C-8E35157452E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+            "ref": "{0775A1E2-1252-4B8F-A85C-8E35157452E0}",
+            "note": "NVE Nettanlegg5 transmission line \"S 300 Nygard-Modalen\" 300 kV"
+          },
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 827",
+            "note": "NVE hydropower plant Nygard, 56 MW, Modalen"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/549836008",
+            "ref": "way/549836008",
+            "note": "line \"Nygard pumpekraftverk - Modalen\", version 3 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/549836007",
+            "ref": "way/549836007",
+            "note": "plant \"Nygard pumpekraftverk\", location=underground"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "mapped-corridor-present",
+            "fromSubstationOsmId": "way/549836007",
+            "toSubstationOsmId": "relation/7802012",
+            "voltageKv": 300
+          },
+          {
+            "kind": "review-by",
+            "date": "2027-10-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "jostedal-plant-terminal",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          7.2870254,
+          61.5261312
+        ]
+      },
+      "properties": {
+        "kind": "add-terminal",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid audit (lane DA1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/547209001",
+          "way/549798912",
+          "relation/7814748"
+        ],
+        "wayOsmId": "way/547209001",
+        "substationOsmId": "way/549798912",
+        "remoteSubstationOsmId": "relation/7814748",
+        "voltageKv": 300,
+        "reason": "The 300 kV Jostedal – Leirdøla line ends at node 5287283393, where NVE places the Jostedal station, 1.27 km from the outline of the underground Jostedal plant; OSM maps no station there.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BB9F0D20E-B279-42B0-902C-323C8E43A2C3%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+            "ref": "{B9F0D20E-B279-42B0-902C-323C8E43A2C3}",
+            "note": "NVE Nettanlegg5 station \"Jostedal\" at 7.2871, 61.5262"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BACAB4395-4247-40F1-BE7C-251C3170CD7E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+            "ref": "{ACAB4395-4247-40F1-BE7C-251C3170CD7E}",
+            "note": "NVE Nettanlegg5 transmission line \"Jostedal - Leirdøla\" 300 kV"
+          },
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 547",
+            "note": "NVE hydropower plant Jostedal, 288 MW, Luster"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/547209001",
+            "ref": "way/547209001",
+            "note": "line \"Jostedal - Leirdøla\", version 2 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/549798912",
+            "ref": "way/549798912",
+            "note": "plant \"Jostedal kraftverk\", location=underground"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "mapped-corridor-present",
+            "fromSubstationOsmId": "way/549798912",
+            "toSubstationOsmId": "relation/7814748",
+            "voltageKv": 300
+          },
+          {
+            "kind": "review-by",
+            "date": "2027-10-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "tokke-flesaker-gap-sam-eyde",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            9.094007,
+            59.5423121
+          ],
+          [
+            9.0940334,
+            59.542241
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "add-line",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid audit (lane DA1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/7883882",
+          "way/287115458",
+          "way/988971007",
+          "way/551048580"
+        ],
+        "fromSubstationOsmId": "relation/7883882",
+        "toSubstationOsmId": "way/287115458",
+        "voltageKv": 300,
+        "circuits": 1,
+        "reason": "Way 988971007 ends at node 9140809382 and way 551048580 starts at node 9140809383, 8 m apart, splitting the continuous Tokke – Flesaker 300 kV line; this record joins the two way ends.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0AF3A05A-1C0B-4B67-A4E3-A4302C6FA902%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+            "ref": "{0AF3A05A-1C0B-4B67-A4E3-A4302C6FA902}",
+            "note": "NVE Nettanlegg5 transmission line \"Tokke - Flesaker\" 300 kV"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/988971007",
+            "ref": "way/988971007",
+            "note": "line \"Tokke - Flesaker\", version 2 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/551048580",
+            "ref": "way/551048580",
+            "note": "line \"Tokke - Flesaker\", version 4 (checked 2026-10-10)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "mapped-corridor-present",
+            "fromSubstationOsmId": "relation/7883882",
+            "toSubstationOsmId": "way/287115458",
+            "voltageKv": 300
+          },
+          {
+            "kind": "review-by",
+            "date": "2027-10-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "tokke-flesaker-gap-flesaker",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            9.8187177,
+            59.7274863
+          ],
+          [
+            9.8182641,
+            59.7275109
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "add-line",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid audit (lane DA1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/7883882",
+          "way/287115458",
+          "way/287130954",
+          "way/287112082"
+        ],
+        "fromSubstationOsmId": "relation/7883882",
+        "toSubstationOsmId": "way/287115458",
+        "voltageKv": 300,
+        "circuits": 1,
+        "reason": "Way 287130954 ends at node 2907649523 and way 287112082 starts at node 2907649524, 26 m apart, 1.5 km before Flesaker; this record joins the two way ends of the Tokke – Flesaker line.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0AF3A05A-1C0B-4B67-A4E3-A4302C6FA902%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+            "ref": "{0AF3A05A-1C0B-4B67-A4E3-A4302C6FA902}",
+            "note": "NVE Nettanlegg5 transmission line \"Tokke - Flesaker\" 300 kV"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/287130954",
+            "ref": "way/287130954",
+            "note": "line \"Tokke - Flesaker\", version 7 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/287112082",
+            "ref": "way/287112082",
+            "note": "line \"Tokke - Flesaker\", version 10 (checked 2026-10-10)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "mapped-corridor-present",
+            "fromSubstationOsmId": "relation/7883882",
+            "toSubstationOsmId": "way/287115458",
+            "voltageKv": 300
+          },
+          {
+            "kind": "review-by",
+            "date": "2027-10-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "hemsil-2-nesbyen-gap-nes-portal",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            9.1194838,
+            60.6242671
+          ],
+          [
+            9.119344,
+            60.6243379
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "add-line",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid audit (lane DA1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/12277754",
+          "relation/7851611",
+          "way/549663541",
+          "way/549830979"
+        ],
+        "fromSubstationOsmId": "relation/12277754",
+        "toSubstationOsmId": "relation/7851611",
+        "voltageKv": 300,
+        "circuits": 1,
+        "reason": "Ways 549663541 and 549830979 end 11 m apart at the portal of the underground Nes power plant; NVE records the line as one Hemsil 2 – Nesbyen circuit, so this record joins the two way ends.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B15DCCA3D-B88D-4716-81A1-C514D090E649%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+            "ref": "{15DCCA3D-B88D-4716-81A1-C514D090E649}",
+            "note": "NVE Nettanlegg5 transmission line \"Hemsil 2 - Nesbyen\" 300 kV"
+          },
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 303",
+            "note": "NVE hydropower plant Nes, 250 MW, Nesbyen (underground)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/549663541",
+            "ref": "way/549663541",
+            "note": "line \"Hemsil 2 - Nes kraftverk\", version 6 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/549830979",
+            "ref": "way/549830979",
+            "note": "line \"Hemsil 2 - Nes kraftverk\", version 4 (checked 2026-10-10)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "mapped-corridor-present",
+            "fromSubstationOsmId": "relation/12277754",
+            "toSubstationOsmId": "relation/7851611",
+            "voltageKv": 300
+          },
+          {
+            "kind": "review-by",
+            "date": "2027-10-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "boris-gleb-kirkenes-out-of-service",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          30.1465402,
+          69.6518627
+        ]
+      },
+      "properties": {
+        "kind": "exclude-feature",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid audit (lane DA1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/585715856",
+          "way/585715857",
+          "way/585715883"
+        ],
+        "reason": "Statnett set the capacity of the Kirkenes – Boris Gleb connection to Russia to zero indefinitely on 2022-03-02; the model has no Russian boundary and must not carry this line.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2022/statnett-setter-kapasitet-mot-russland-til-null/",
+            "ref": "Statnett setter kapasitet mot Russland til null (2022-03-02)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/585715883",
+            "ref": "way/585715883",
+            "note": "line \"Boris Gleb - Kirkenes\" 150 kV, version 3 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/585715857",
+            "ref": "way/585715857",
+            "note": "line \"Boris Gleb - Kirkenes\" 150 kV, version 2 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/585715856",
+            "ref": "way/585715856",
+            "note": "line \"Boris Gleb - Kirkenes\" 132 kV, version 2 (checked 2026-10-10)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    }
+  ]
+}

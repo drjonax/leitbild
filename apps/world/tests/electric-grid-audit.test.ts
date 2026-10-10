@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { AuditBranch, AuditBus, AuditGraph, LonLat } from '../src/packs/electric-grid/audit/audit-graph.ts'
 import { nveLinesFromGeoJson, referenceGeometryFromSidecar } from '../src/packs/electric-grid/audit/audit-inputs.ts'
 import type { GridAuditReport } from '../src/packs/electric-grid/audit/audit-report.ts'
@@ -8,6 +10,8 @@ import { measureNveCoverage } from '../src/packs/electric-grid/audit/nve-coverag
 import { createReferenceGeometry } from '../src/packs/electric-grid/audit/reference-geometry.ts'
 import { auditGraphFromGridModelV1 } from '../src/packs/electric-grid/audit/v1-adapter.ts'
 import { auditGraphFromGridModelV2, type GridModelV2AuditInput } from '../src/packs/electric-grid/audit/v2-adapter.ts'
+import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
+import { norwayGridModelRef, norwayNormalOperatingPointRef, norwayStandardAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { norwayGridSourceData } from '../src/packs/electric-grid/models/norway-source-data.generated.ts'
 import { gridCurationCollectionSchema, type GridCurationCollection } from '../src/packs/electric-grid/schemas/grid-curation.ts'
@@ -458,5 +462,43 @@ describe('model adapters', () => {
     ] })
     expect(nve.withoutVoltage).toBe(1)
     expect(nve.lines).toEqual([{ globalId: '{A}', name: 'A - B', voltageKv: 420, parts: [[[10, 60], [10, 61]]] }])
+  })
+})
+
+describe('repository golden list and curations', () => {
+  const modelsDirectory = join(import.meta.dir, '../src/packs/electric-grid/models')
+  const load = async (name: string): Promise<unknown> => JSON.parse(await readFile(join(modelsDirectory, name), 'utf8')) as unknown
+
+  test('validate and cite a public source for every entry', async () => {
+    const golden = gridGoldenSchema.parse(await load('norway-grid-golden.json'))
+    const curations = gridCurationCollectionSchema.parse(await load('norway-grid-curations.geojson'))
+    expect({
+      stations: golden.stations.length, substations: golden.substations.length, corridors: golden.corridors.length,
+      interconnectors: golden.interconnectors.length, radial: golden.radialAllowList.length, curations: curations.features.length,
+    }).toEqual({ stations: 85, substations: 37, corridors: 24, interconnectors: 14, radial: 29, curations: 6 })
+    const entries = [...golden.stations, ...golden.substations, ...golden.corridors, ...golden.excludedCorridors, ...golden.interconnectors, ...golden.radialAllowList]
+    expect(entries.every(entry => entry.evidence.length > 0 && entry.evidence.every(item => item.url.startsWith('https://')))).toBe(true)
+  })
+
+  // Baseline of today's v1 model (audit B, 2026-10-10). The model build lane replaces this with a
+  // passing audit of the v2 model; until then it pins the measured gaps so regressions stay visible.
+  test("today's v1 Norway model reproduces the measured gap baseline", async () => {
+    const golden = gridGoldenSchema.parse(await load('norway-grid-golden.json'))
+    const curations = gridCurationCollectionSchema.parse(await load('norway-grid-curations.geojson'))
+    const model = compileGridDefinition({
+      id: 'grid:audit', model: { ref: norwayGridModelRef }, operatingPoint: { ref: norwayNormalOperatingPointRef }, automation: { ref: norwayStandardAutomationRef },
+    }).model
+    const report = auditGridTopology(auditGraphFromGridModelV1({ model, sourceData: norwayGridSourceData }), golden, { asOf: '2026-10-10', curations })
+    expect(report.verdict).toBe('fail')
+    expect(check(report, 'components').metrics.componentSizes).toEqual([99, 78, 46, 14, 3, 2, 2, 2, 2, 2, 2, 2, 1])
+    expect(check(report, 'voltage-mismatch').metrics.mismatchedLines).toBe(62)
+    expect(check(report, 'off-terminal-ends').status).toBe('not-measurable')
+    expect(check(report, 'golden-interconnectors').metrics).toEqual({ total: 14, present: 0 })
+    expect(check(report, 'golden-substations').metrics).toEqual({ total: 37, present: 34, inMainComponent: 19, degreeMet: 20 })
+    const corridorFailures = messages(report, 'golden-corridors')
+    for (const corridor of ['Kvinesdal – Lista 1 and 2', 'Sylling – Hamang 1 and 2', 'Nordreisa – Guolasjokka 1 and 2', 'Skillemoen – Kvænangen 1 and 2']) {
+      expect(corridorFailures).toContain(`${corridor} `)
+    }
+    expect(check(report, 'golden-corridors').metrics).toEqual({ total: 24, connected: 13, circuitsMet: 9 })
   })
 })

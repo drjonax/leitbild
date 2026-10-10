@@ -1,0 +1,3641 @@
+{
+  "id": "electric-grid.norway.golden",
+  "title": "Norway grid golden reference",
+  "reviewedAt": "2026-10-10",
+  "note": "Reviewed reference list for the Electric Grid audit. Stations are OSM features (2026-05-28 production sidecar ids, checked against the live OSM API on 2026-10-10 where noted) cross-checked against NVE Nettanlegg5 (snapshot 2026-10-10). Voltage levels and degrees come from NVE line voltages and names; NVE station voltages are not used because NVE lists every Statnett station at 420 kV. Circuit counts above one are from OSM numbered circuits. Update entries when the network changes; never loosen a threshold to pass a model.",
+  "sources": [
+    {
+      "id": "nve-nettanlegg5",
+      "title": "NVE Nettanlegg5 (Nettanlegg utbygd) MapServer",
+      "publisher": "NVE",
+      "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer",
+      "licence": "NLOD 1.0 (Geonorge catalogue record for Nettanlegg utbygd)",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "id": "nve-hydro-api",
+      "title": "NVE hydropower plants in operation",
+      "publisher": "NVE",
+      "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+      "licence": "NLOD",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "id": "nve-wind-api",
+      "title": "NVE wind power plants in operation",
+      "publisher": "NVE",
+      "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+      "licence": "NLOD",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "id": "elhub-consumption",
+      "title": "Elhub consumption per group, price area and hour",
+      "publisher": "Elhub",
+      "url": "https://api.elhub.no/energy-data/v0/price-areas?dataset=CONSUMPTION_PER_GROUP_MBA_HOUR&startDate=2026-01-15T00:00:00%2B01:00&endDate=2026-01-15T02:00:00%2B01:00",
+      "licence": "Elhub open energy data; licence statement not located on the API, to be confirmed by the registry-sources lane",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "id": "statnett",
+      "title": "Statnett news and project pages",
+      "publisher": "Statnett SF",
+      "url": "https://www.statnett.no",
+      "licence": "cited as public reference only",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "id": "svk",
+      "title": "Svenska kraftnät grid development pages",
+      "publisher": "Svenska kraftnät",
+      "url": "https://www.svk.se",
+      "licence": "cited as public reference only",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "id": "nordpool",
+      "title": "Nord Pool exchange messages",
+      "publisher": "Nord Pool",
+      "url": "https://nordpoolgroup.com",
+      "licence": "cited as public reference only",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "id": "openstreetmap",
+      "title": "OpenStreetMap",
+      "publisher": "OpenStreetMap contributors",
+      "url": "https://www.openstreetmap.org",
+      "licence": "ODbL 1.0",
+      "retrievedAt": "2026-10-10"
+    }
+  ],
+  "thresholds": {
+    "maxComponents": 1,
+    "minLargestComponentBusShare300kv": 1,
+    "minLargestComponentBusShare132kv": 1,
+    "minLargestComponentLoadShare": 1,
+    "maxUnexplainedBridges300kv": 0,
+    "maxUnexplainedArticulationPoints300kv": 0,
+    "maxUnexplainedDegreeOne300kv": 0,
+    "voltageClassTolerance": 0.1,
+    "maxVoltageMismatches": 0,
+    "maxParallelDuplicates": 0,
+    "maxOffTerminalEnds": 0,
+    "terminalPolygonBufferKm": 0.05,
+    "terminalPointRadiusKm": 0.25,
+    "maxAttachmentKm": {
+      "generator": {
+        "hydro": 30,
+        "wind": 30,
+        "solar": 30,
+        "thermal": 30,
+        "nuclear": 30
+      },
+      "load": {
+        "distributed": 60,
+        "site": 15
+      }
+    },
+    "maxAttachmentViolations": 0,
+    "generationTolerance": {
+      "hydro": 0.03,
+      "wind": 0.05
+    },
+    "maxUnassignedGenerationMw": 0,
+    "loadTolerance": 0.05,
+    "nveCoverage": {
+      "minKv": 300,
+      "bufferKm": 0.3,
+      "maxUncoveredShare": 0.03
+    },
+    "maxCuratedShare300kv": 0.02
+  },
+  "thresholdNotes": {
+    "maxComponents": "count; a nationwide ≥132 kV Norwegian AC model is one synchronous island once boundary buses are excluded (plan target).",
+    "minLargestComponentBusShare300kv": "fraction of ≥300 kV buses in the main component; 1 follows from the single-island target.",
+    "minLargestComponentBusShare132kv": "fraction of ≥132 kV buses in the main component; 1 follows from the single-island target.",
+    "minLargestComponentLoadShare": "fraction of reference demand (MW) in the main component; 1 follows from the single-island target.",
+    "maxUnexplainedBridges300kv": "count; every ≥300 kV bridge must cut off only allow-listed radial stations (audit B §4 P3).",
+    "maxUnexplainedArticulationPoints300kv": "count; same rule as bridges for station outages.",
+    "maxUnexplainedDegreeOne300kv": "count; every ≥300 kV bus with ≤1 ≥300 kV branch must be allow-listed (audit B §4 P3).",
+    "voltageClassTolerance": "fraction; 400/420 kV (4.8 %) and 132/145 kV (9.1 %) are one class, 300/420 kV (29 %) are not.",
+    "maxVoltageMismatches": "count of lines ending at a bus of another voltage class; transformers carry voltage changes.",
+    "maxParallelDuplicates": "count of extra branches built from an already used OSM way set.",
+    "maxOffTerminalEnds": "count of mapped line ends outside their terminal footprint (audit B B-03 baseline 174).",
+    "terminalPolygonBufferKm": "km; 50 m capture buffer around station polygons, as in audit B snap-audit and topology prototype.",
+    "terminalPointRadiusKm": "km; 250 m capture radius for point-only stations, as in audit B snap-audit and topology prototype.",
+    "maxAttachmentKm": "km; generators 30 km (audit B §4 P5 acceptance); site loads 15 km and municipality loads 60 km are provisional until the model build measures its allocation.",
+    "maxAttachmentViolations": "count of generators and loads beyond their kind limit.",
+    "generationTolerance": "fraction per price area against NVE in-operation capacity; hydro ±3 %, wind ±5 % (audit B §4 P5 acceptance).",
+    "maxUnassignedGenerationMw": "MW of generation without a price area.",
+    "loadTolerance": "fraction per price area against the Elhub reference hour (audit B §4 P8 acceptance ±5 %).",
+    "nveCoverage": "kV floor, km buffer and uncovered fraction; 300 m buffer and 97.4 % measured OSM agreement on the 2026-05-28 sidecar (audit B B-26), uncovered remainder being lines newer than the sidecar.",
+    "maxCuratedShare300kv": "fraction of ≥300 kV line length that is curated (audit B §4 P4 acceptance 2 %)."
+  },
+  "references": {
+    "generation": {
+      "sourceIds": [
+        "nve-hydro-api",
+        "nve-wind-api"
+      ],
+      "note": "Installed capacity in MW of plants NVE lists as in operation, summed by NVE price area (ElspotomraadeNummer) on 2026-10-10: hydro MaksYtelse over 1,863 plants, wind InstallertEffekt_MW over 65 farms.",
+      "capacityMwByFamily": {
+        "hydro": {
+          "NO1": 3777.7,
+          "NO2": 11585,
+          "NO3": 4787.8,
+          "NO4": 5516.3,
+          "NO5": 8356.8
+        },
+        "wind": {
+          "NO1": 384.7,
+          "NO2": 1427,
+          "NO3": 2107.8,
+          "NO4": 1159.3,
+          "NO5": 0
+        }
+      }
+    },
+    "load": {
+      "sourceId": "elhub-consumption",
+      "referenceHour": "2026-01-15T00:00:00+01:00",
+      "note": "Metered consumption over all Elhub consumption groups for the hour 00:00–01:00 Europe/Oslo on 2026-01-15, in MWh/h ≈ MW. Replace together with the model reference hour.",
+      "demandMwByArea": {
+        "NO1": 5496.5,
+        "NO2": 4804.6,
+        "NO3": 3671.1,
+        "NO4": 2726.6,
+        "NO5": 2182.8
+      }
+    }
+  },
+  "stations": [
+    {
+      "id": "sylling",
+      "name": "Sylling",
+      "osmIds": [
+        "way/128406208"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B579F852D-0048-4565-BA2F-BECE52EDD935%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{579F852D-0048-4565-BA2F-BECE52EDD935}",
+          "note": "NVE transformer station \"Sylling\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "hasle",
+      "name": "Hasle",
+      "osmIds": [
+        "way/60495669"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B7F1DE6EF-4946-48CD-9F03-B04BC0C9D9E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{7F1DE6EF-4946-48CD-9F03-B04BC0C9D9E0}",
+          "note": "NVE transformer station \"Hasle\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "kristiansand",
+      "name": "Kristiansand",
+      "osmIds": [
+        "relation/7928148"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0682DE6C-8EB0-4765-BD69-0B2784774C5D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0682DE6C-8EB0-4765-BD69-0B2784774C5D}",
+          "note": "NVE transformer station \"Kristiansand\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "feda-converter",
+      "name": "Feda converter station",
+      "osmIds": [
+        "relation/11981383"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B44E1C86D-97F2-4A78-899B-A72105485139%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{44E1C86D-97F2-4A78-899B-A72105485139}",
+          "note": "NVE transformer station \"Feda\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "tonstad",
+      "name": "Tonstad",
+      "osmIds": [
+        "relation/8890360"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B87BB606B-64AF-40F6-B06A-5267412557C7%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{87BB606B-64AF-40F6-B06A-5267412557C7}",
+          "note": "NVE transformer station \"Tonstad\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "saurdal",
+      "name": "Saurdal",
+      "osmIds": [
+        "relation/11036958"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B956F34D5-C317-41AE-8F92-742F62475E73%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{956F34D5-C317-41AE-8F92-742F62475E73}",
+          "note": "NVE transformer station \"Saurdal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "sauda",
+      "name": "Sauda",
+      "osmIds": [
+        "relation/8860331"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B3184227A-371B-400A-951B-9E5AA29E6021%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3184227A-371B-400A-951B-9E5AA29E6021}",
+          "note": "NVE transformer station \"Sauda\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "samnanger",
+      "name": "Samnanger",
+      "osmIds": [
+        "relation/20459254"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BC64D6286-6F80-4FE0-9368-599106618BA4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{C64D6286-6F80-4FE0-9368-599106618BA4}",
+          "note": "NVE transformer station \"Samnanger\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "sogndal",
+      "name": "Sogndal",
+      "osmIds": [
+        "way/469098816"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B57A5BE0C-845C-429E-8F4B-E937214FBAD7%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{57A5BE0C-845C-429E-8F4B-E937214FBAD7}",
+          "note": "NVE transformer station \"Sogndal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "aurland-1",
+      "name": "Aurland 1",
+      "osmIds": [
+        "relation/3993780"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B87651364-E2B0-4FE5-8DA9-1888D17AF707%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{87651364-E2B0-4FE5-8DA9-1888D17AF707}",
+          "note": "NVE transformer station \"Aurland 1\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "orskog",
+      "name": "Ørskog",
+      "osmIds": [
+        "way/548709529"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B122D8458-C240-4531-9407-96FDF19B2202%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{122D8458-C240-4531-9407-96FDF19B2202}",
+          "note": "NVE transformer station \"Ørskog\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "klaebu",
+      "name": "Klæbu",
+      "osmIds": [
+        "way/287685850"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B9F2460D0-4559-47D2-9484-8268C6F0CAD1%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9F2460D0-4559-47D2-9484-8268C6F0CAD1}",
+          "note": "NVE transformer station \"Klæbu\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "tunnsjodal",
+      "name": "Tunnsjødal",
+      "osmIds": [
+        "relation/8488332",
+        "way/1258376995"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B8ABBFB40-7153-4B0B-8A10-43687117247C%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8ABBFB40-7153-4B0B-8A10-43687117247C}",
+          "note": "NVE transformer station \"Tunnsjødal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "namsos",
+      "name": "Namsos",
+      "osmIds": [
+        "way/254428135"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B33B39753-58D6-4938-B539-9A01A2F149BA%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{33B39753-58D6-4938-B539-9A01A2F149BA}",
+          "note": "NVE transformer station \"Namsos\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "svartisen",
+      "name": "Svartisen",
+      "osmIds": [
+        "way/475820066"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B4C39589E-E5AF-4559-8EEA-80786BB44ECE%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{4C39589E-E5AF-4559-8EEA-80786BB44ECE}",
+          "note": "NVE transformer station \"Svartisen\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "ofoten",
+      "name": "Ofoten",
+      "osmIds": [
+        "way/572898626"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B4A2CE826-D38F-44CD-9F38-936ABB968E55%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{4A2CE826-D38F-44CD-9F38-936ABB968E55}",
+          "note": "NVE transformer station \"Ofoten\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "balsfjord",
+      "name": "Balsfjord",
+      "osmIds": [
+        "way/572898616"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B39A68A5D-B7C3-44AE-B1C1-9A17089BCB6D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{39A68A5D-B7C3-44AE-B1C1-9A17089BCB6D}",
+          "note": "NVE transformer station \"Balsfjord\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "skaidi",
+      "name": "Skaidi",
+      "osmIds": [
+        "way/586116281"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BE90CB3F3-AA3C-4CE8-8855-8490558F8276%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E90CB3F3-AA3C-4CE8-8855-8490558F8276}",
+          "note": "NVE transformer station \"Skaidi\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "kvilldal",
+      "name": "Kvilldal",
+      "osmIds": [
+        "relation/8857439",
+        "relation/12832052"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B8371A527-80E7-4022-9F91-67EC092DED87%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8371A527-80E7-4022-9F91-67EC092DED87}",
+          "note": "NVE transformer station \"Kvilldal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "nsl-converter",
+      "name": "North Sea Link converter station (Kvilldal)",
+      "osmIds": [
+        "relation/12832053"
+      ],
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2021/trial-operation-underway-for-north-sea-link/",
+          "ref": "Trial operation underway for North Sea Link (2021-10-01)",
+          "note": "North Sea Link Suldal (Kvilldal) – Blyth, 1,400 MW"
+        }
+      ]
+    },
+    {
+      "id": "rod",
+      "name": "Rød",
+      "osmIds": [
+        "relation/18667239",
+        "relation/18667238"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0F40E307-F0A4-4E1B-A3A1-46AEE7DE059C%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0F40E307-F0A4-4E1B-A3A1-46AEE7DE059C}",
+          "note": "NVE transformer station \"Rød\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "adal",
+      "name": "Ådal",
+      "osmIds": [
+        "way/295444089"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BD01486B8-1826-4F05-A4A0-61A13210753B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D01486B8-1826-4F05-A4A0-61A13210753B}",
+          "note": "NVE transformer station \"Ådal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "sima",
+      "name": "Sima",
+      "osmIds": [
+        "relation/10220813"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B6BE6F331-0C5E-492F-9436-F02406AFE949%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6BE6F331-0C5E-492F-9436-F02406AFE949}",
+          "note": "NVE transformer station \"Sima\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "lyse",
+      "name": "Lyse",
+      "osmIds": [
+        "relation/8886202"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B3DFF938D-7DE7-4D0A-998C-879A8EC3CA1C%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3DFF938D-7DE7-4D0A-998C-879A8EC3CA1C}",
+          "note": "NVE transformer station \"Lyse\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "nedre-rossaga",
+      "name": "Nedre Røssåga",
+      "osmIds": [
+        "relation/8473044"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BE437E6D0-CC77-4504-82DF-1CC102C64B64%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E437E6D0-CC77-4504-82DF-1CC102C64B64}",
+          "note": "NVE transformer station \"Nedre Røssåga\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "rana",
+      "name": "Rana",
+      "osmIds": [
+        "way/197866182"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BA409DC14-2103-492D-9934-064063CE7E8A%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{A409DC14-2103-492D-9934-064063CE7E8A}",
+          "note": "NVE transformer station \"Rana\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "salten",
+      "name": "Salten",
+      "osmIds": [
+        "way/1140662370"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BD244F8E4-2564-47DE-951E-96A6F1704B7D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D244F8E4-2564-47DE-951E-96A6F1704B7D}",
+          "note": "NVE transformer station \"Salten\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "kobbvatnet",
+      "name": "Kobbvatnet",
+      "osmIds": [
+        "way/842385259"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B39A5DF3F-0571-4234-8C2C-8218D1C59C37%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{39A5DF3F-0571-4234-8C2C-8218D1C59C37}",
+          "note": "NVE transformer station \"Kobbvatnet\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "skillemoen",
+      "name": "Skillemoen",
+      "osmIds": [
+        "way/883151328",
+        "way/672093604"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BC887FF68-CF50-40BD-9AED-A733DB00655B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{C887FF68-CF50-40BD-9AED-A733DB00655B}",
+          "note": "NVE transformer station \"Skillemoen\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "varangerbotn",
+      "name": "Varangerbotn",
+      "osmIds": [
+        "way/257192868"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B9A18324A-654F-4B00-99DA-D5CF63FC4A13%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9A18324A-654F-4B00-99DA-D5CF63FC4A13}",
+          "note": "NVE transformer station \"Varangerbotn\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "viklandet",
+      "name": "Viklandet",
+      "osmIds": [
+        "way/202200066"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BAD05D6A3-159D-4CDD-BEF8-8632746317A9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{AD05D6A3-159D-4CDD-BEF8-8632746317A9}",
+          "note": "NVE transformer station \"Viklandet\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "aura",
+      "name": "Aura",
+      "osmIds": [
+        "relation/7839720"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0C047CB7-8967-4A9D-9AE9-5311BAFA9C17%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0C047CB7-8967-4A9D-9AE9-5311BAFA9C17}",
+          "note": "NVE transformer station \"Aura\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "alfoten",
+      "name": "Ålfoten",
+      "osmIds": [
+        "way/548201553"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BF9E5C6EC-BD0B-4B2A-B161-9DCC02BB1F83%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{F9E5C6EC-BD0B-4B2A-B161-9DCC02BB1F83}",
+          "note": "NVE transformer station \"Ålfoten\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "orsta",
+      "name": "Ørsta",
+      "osmIds": [
+        "way/548473094"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B2C664BB0-AB11-4461-9D88-E1E84BDD286D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2C664BB0-AB11-4461-9D88-E1E84BDD286D}",
+          "note": "NVE transformer station \"Ørsta\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "hoyanger",
+      "name": "Høyanger",
+      "osmIds": [
+        "way/547743430"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B64205271-6571-433F-8AF8-7E2B8B444768%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{64205271-6571-433F-8AF8-7E2B8B444768}",
+          "note": "NVE transformer station \"Høyanger\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "fagrafjell",
+      "name": "Fagrafjell",
+      "osmIds": [
+        "way/830770515"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B6AE5095E-6D5A-412E-9CFD-F696E6E7FD8F%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6AE5095E-6D5A-412E-9CFD-F696E6E7FD8F}",
+          "note": "NVE transformer station \"Fagrafjell\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "arendal",
+      "name": "Arendal",
+      "osmIds": [
+        "way/358915801"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B2935584E-42C8-4BD4-8DF6-EAB3861A87AC%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2935584E-42C8-4BD4-8DF6-EAB3861A87AC}",
+          "note": "NVE transformer station \"Arendal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "frogner",
+      "name": "Frogner",
+      "osmIds": [
+        "way/295444099"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B1D4E4969-E84E-4D56-BBFB-61480479C8AF%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{1D4E4969-E84E-4D56-BBFB-61480479C8AF}",
+          "note": "NVE transformer station \"Frogner\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "surna",
+      "name": "Surna",
+      "osmIds": [
+        "way/633896066"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B92C39826-7EDA-4BB0-B9C9-1998742BC5CE%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{92C39826-7EDA-4BB0-B9C9-1998742BC5CE}",
+          "note": "NVE transformer station \"Surna\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/vare-prosjekter/region-midt/afjord-snilldal-og-surna-viklandet/",
+          "ref": "Åfjord–Snilldal og Surna–Viklandet project page",
+          "note": "Surna (formerly Trollheim) transformer station on Klæbu – Viklandet is in service"
+        }
+      ]
+    },
+    {
+      "id": "mauranger",
+      "name": "Mauranger",
+      "osmIds": [
+        "relation/7805329"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BDD751BCF-BAE1-4836-8415-B99262A33D4B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{DD751BCF-BAE1-4836-8415-B99262A33D4B}",
+          "note": "NVE transformer station \"Mauranger\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "blafalli",
+      "name": "Blåfalli",
+      "osmIds": [
+        "way/432965765"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BC40FA5AB-BD53-4947-9AE8-49D3CD4A92CF%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{C40FA5AB-BD53-4947-9AE8-49D3CD4A92CF}",
+          "note": "NVE transformer station \"Blåfalli\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "evanger",
+      "name": "Evanger",
+      "osmIds": [
+        "way/307323708"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BA3261D7A-2D27-44FA-A92D-F74CFEB68AAE%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{A3261D7A-2D27-44FA-A92D-F74CFEB68AAE}",
+          "note": "NVE transformer station \"Evanger\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "moskog",
+      "name": "Moskog",
+      "osmIds": [
+        "relation/13447791",
+        "relation/13447790"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B2631C594-F0B6-459D-844D-D8CA0D83C285%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2631C594-F0B6-459D-844D-D8CA0D83C285}",
+          "note": "NVE transformer station \"Moskog\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "kvinesdal",
+      "name": "Kvinesdal",
+      "osmIds": [
+        "relation/8894066",
+        "way/830169273"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BAE314EA0-B281-412B-BB89-550E4D60B4CF%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{AE314EA0-B281-412B-BB89-550E4D60B4CF}",
+          "note": "NVE transformer station \"Kvinesdal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "lista",
+      "name": "Lista",
+      "osmIds": [
+        "relation/8896922"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B49C4B210-51CC-4560-9430-F67BF1792A26%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{49C4B210-51CC-4560-9430-F67BF1792A26}",
+          "note": "NVE transformer station \"Lista\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "hamang",
+      "name": "Hamang",
+      "osmIds": [
+        "way/187555858",
+        "way/1303303006"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BE6F3DF4E-8E3D-40D4-99FE-C8F497D3F087%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E6F3DF4E-8E3D-40D4-99FE-C8F497D3F087}",
+          "note": "NVE transformer station \"Hamang\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "vagamo",
+      "name": "Vågåmo",
+      "osmIds": [
+        "way/290360704"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B1E7135DA-CC64-42E6-A6A7-1EA98A719D5A%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{1E7135DA-CC64-42E6-A6A7-1EA98A719D5A}",
+          "note": "NVE transformer station \"Vågåmo\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "halden",
+      "name": "Halden",
+      "osmIds": [
+        "way/232893576"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B849789F9-5BF7-4CB5-A9FE-9F8E84A2C450%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{849789F9-5BF7-4CB5-A9FE-9F8E84A2C450}",
+          "note": "NVE transformer station \"Halden\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "nea",
+      "name": "Nea",
+      "osmIds": [
+        "relation/8527323",
+        "relation/13534535"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B3B468FAE-68C8-4033-A36A-97FFFB5A0E8C%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3B468FAE-68C8-4033-A36A-97FFFB5A0E8C}",
+          "note": "NVE transformer station \"Nea\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "ertsmyra",
+      "name": "Ertsmyra",
+      "osmIds": [
+        "relation/8890888",
+        "relation/18292370"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B87705A33-F7C1-45A0-944A-4B8DF049BBC5%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{87705A33-F7C1-45A0-944A-4B8DF049BBC5}",
+          "note": "NVE transformer station \"Ertsmyra\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "nordlink-converter",
+      "name": "NordLink converter station (Ertsmyra)",
+      "osmIds": [
+        "relation/8890887"
+      ],
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2021/nordlink-in-operation2/",
+          "ref": "NordLink in operation (2021-03-31)",
+          "note": "NordLink Tonstad/Ertsmyra – Wilster, 1,400 MW, commercial operation from 31 March 2021"
+        }
+      ]
+    },
+    {
+      "id": "eidskog",
+      "name": "Eidskog",
+      "osmIds": [
+        "way/581435428"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BFE0136C7-EF78-44C8-A2F7-076C280C967D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{FE0136C7-EF78-44C8-A2F7-076C280C967D}",
+          "note": "NVE transformer station \"Eidskog\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "leirdola",
+      "name": "Leirdøla",
+      "osmIds": [
+        "relation/7814748"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B590C3CB0-25E7-4609-9945-237144BF44D2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{590C3CB0-25E7-4609-9945-237144BF44D2}",
+          "note": "NVE transformer station \"Leirdøla\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "jostedal",
+      "name": "Jostedal kraftverk",
+      "osmIds": [
+        "way/549798912"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BB9F0D20E-B279-42B0-902C-323C8E43A2C3%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B9F0D20E-B279-42B0-902C-323C8E43A2C3}",
+          "note": "NVE transformer station \"Jostedal\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 547",
+          "note": "NVE hydropower plant \"Jostedal\" 288 MW, Luster"
+        }
+      ]
+    },
+    {
+      "id": "modalen",
+      "name": "Modalen",
+      "osmIds": [
+        "relation/7802012"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B21E41ED2-4165-4B87-9F4A-C55199609B8F%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{21E41ED2-4165-4B87-9F4A-C55199609B8F}",
+          "note": "NVE transformer station \"Modalen\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "nygard",
+      "name": "Nygard pumpekraftverk",
+      "osmIds": [
+        "way/549836007"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 827",
+          "note": "NVE hydropower plant \"Nygard\" 56 MW, Modalen"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0775A1E2-1252-4B8F-A85C-8E35157452E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0775A1E2-1252-4B8F-A85C-8E35157452E0}",
+          "note": "NVE transmission line \"S 300 Nygard-Modalen\" 300 kV (EVINY FORNYBAR AS)"
+        }
+      ]
+    },
+    {
+      "id": "tokke",
+      "name": "Tokke",
+      "osmIds": [
+        "relation/7883882"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B3F92EBE0-F4E7-4975-8E92-9D1ADB4A732E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3F92EBE0-F4E7-4975-8E92-9D1ADB4A732E}",
+          "note": "NVE transformer station \"Tokke\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "flesaker",
+      "name": "Flesaker",
+      "osmIds": [
+        "way/287115458",
+        "relation/7871517"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B356829AD-2738-4465-99D6-8098B13BA06A%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{356829AD-2738-4465-99D6-8098B13BA06A}",
+          "note": "NVE transformer station \"Flesaker\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "hemsil-2",
+      "name": "Hemsil 2",
+      "osmIds": [
+        "relation/12277754",
+        "node/8396776075"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0B99E921-F638-43A4-A72D-A430A4623F34%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0B99E921-F638-43A4-A72D-A430A4623F34}",
+          "note": "NVE transformer station \"Hemsil 2\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "nesbyen",
+      "name": "Nesbyen (OSM: Nes koblingsstasjon)",
+      "osmIds": [
+        "relation/7851611"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B8C2DD958-6A70-488A-AED9-666F69DFD41E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8C2DD958-6A70-488A-AED9-666F69DFD41E}",
+          "note": "NVE transformer station \"Nesbyen\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "hyggevatn",
+      "name": "Hyggevatn",
+      "osmIds": [
+        "way/511117400"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B6A7E1ABA-6548-435D-BB76-0374FD9C3BAC%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6A7E1ABA-6548-435D-BB76-0374FD9C3BAC}",
+          "note": "NVE transmission line \"Skaidi - Hyggevatn\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/skaidi-hammerfest/",
+          "ref": "Skaidi–Hammerfest project page",
+          "note": "Skaidi – Hyggevatn 420 kV and the Skaidi 420 kV extension are under construction, line work running to 2028"
+        }
+      ]
+    },
+    {
+      "id": "kvaenangen",
+      "name": "Kvænangen",
+      "osmIds": [
+        "relation/8280181"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3125D3BC-5AC9-45C3-A87F-EC1BE4289468%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3125D3BC-5AC9-45C3-A87F-EC1BE4289468}",
+          "note": "NVE transmission line \"Skillemoen - Kvænangen\" 132 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "nordreisa",
+      "name": "Nordreisa",
+      "osmIds": [
+        "relation/8280502"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B20F733F0-6464-4120-8738-D3127AA6B9DB%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{20F733F0-6464-4120-8738-D3127AA6B9DB}",
+          "note": "NVE transmission line \"Nordreisa - Guolasjokka\" 132 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "guolasjokka",
+      "name": "Guolasjokka (Guolášjohka)",
+      "osmIds": [
+        "way/572898605"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B20F733F0-6464-4120-8738-D3127AA6B9DB%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{20F733F0-6464-4120-8738-D3127AA6B9DB}",
+          "note": "NVE transmission line \"Nordreisa - Guolasjokka\" 132 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "heroya-3",
+      "name": "Herøya 3",
+      "osmIds": [
+        "relation/13284562"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2F8C754B-0523-4BF7-A2C7-EB76AE329224%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2F8C754B-0523-4BF7-A2C7-EB76AE329224}",
+          "note": "NVE transmission line \"Porsgrunn - Herøya\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "kolsvik",
+      "name": "Kolsvik",
+      "osmIds": [
+        "relation/8482013"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B6F0433DC-5936-4C91-A773-BF504DDAEC53%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6F0433DC-5936-4C91-A773-BF504DDAEC53}",
+          "note": "NVE transformer station \"Kolsvik\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 209",
+          "note": "NVE hydropower plant \"Kolsvik\" 128 MW, Bindal"
+        }
+      ]
+    },
+    {
+      "id": "kjela",
+      "name": "Kjela",
+      "osmIds": [
+        "way/1156161502"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0F02703E-ECD7-4E93-9F68-00FF0C07AA80%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0F02703E-ECD7-4E93-9F68-00FF0C07AA80}",
+          "note": "NVE transformer station \"Kjela\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 203",
+          "note": "NVE hydropower plant \"Kjela\" 62 MW, Vinje"
+        }
+      ]
+    },
+    {
+      "id": "lio",
+      "name": "Lio",
+      "osmIds": [
+        "relation/10547156"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B7DE7E900-0083-46C6-B307-78B17A8CE724%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{7DE7E900-0083-46C6-B307-78B17A8CE724}",
+          "note": "NVE transformer station \"Lio\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 246",
+          "note": "NVE hydropower plant \"Lio\" 43 MW, Tokke"
+        }
+      ]
+    },
+    {
+      "id": "blafalli-3",
+      "name": "Blåfalli 3",
+      "osmIds": [
+        "way/440170580"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B3D2EF1BA-2723-438F-8BB3-BA6B807F8D37%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3D2EF1BA-2723-438F-8BB3-BA6B807F8D37}",
+          "note": "NVE transformer station \"Blåfalli 3\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 31",
+          "note": "NVE hydropower plant \"Blåfalli III H\" 100 MW, Kvinnherad"
+        }
+      ]
+    },
+    {
+      "id": "hadeland",
+      "name": "Hadeland",
+      "osmIds": [
+        "relation/8206955"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B1062C564-7161-4100-ADB5-5466D1C6B801%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{1062C564-7161-4100-ADB5-5466D1C6B801}",
+          "note": "NVE transformer station \"Hadeland\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "midtfjellet",
+      "name": "Midtfjellet",
+      "osmIds": [
+        "relation/8846883"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B3011BC09-D87B-4AC3-836B-30252AF246AB%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3011BC09-D87B-4AC3-836B-30252AF246AB}",
+          "note": "NVE transformer station \"Midtfjellet\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "fortun",
+      "name": "Fortun",
+      "osmIds": [
+        "relation/8679746"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B04C0CFB4-B288-45B9-8559-91F15AB48C70%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{04C0CFB4-B288-45B9-8559-91F15AB48C70}",
+          "note": "NVE transformer station \"Fortun\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "borgund",
+      "name": "Borgund",
+      "osmIds": [
+        "relation/7845549"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B8140FC03-335A-4B91-A2E2-6A1F3AD8D9A4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8140FC03-335A-4B91-A2E2-6A1F3AD8D9A4}",
+          "note": "NVE transformer station \"Borgund\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 35",
+          "note": "NVE hydropower plant \"Borgund\" 212 MW, Lærdal"
+        }
+      ]
+    },
+    {
+      "id": "rendalen",
+      "name": "Rendalen",
+      "osmIds": [
+        "relation/8211981"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B81F080D1-EFF8-4354-9137-EC14F148742C%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{81F080D1-EFF8-4354-9137-EC14F148742C}",
+          "note": "NVE transformer station \"Rendalen\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 336",
+          "note": "NVE hydropower plant \"Rendalen\" 100.5 MW, Rendalen"
+        }
+      ]
+    },
+    {
+      "id": "snilldal",
+      "name": "Snilldal",
+      "osmIds": [
+        "way/633840104"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BB21C0B84-2634-4642-9D56-961DAF3DBB0E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B21C0B84-2634-4642-9D56-961DAF3DBB0E}",
+          "note": "NVE transformer station \"Snilldal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "afjord",
+      "name": "Åfjord",
+      "osmIds": [
+        "way/615122824"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B142DA849-B88B-444B-9863-7464E3A89D52%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{142DA849-B88B-444B-9863-7464E3A89D52}",
+          "note": "NVE transformer station \"Åfjord\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "uvdal-2",
+      "name": "Uvdal 2",
+      "osmIds": [
+        "relation/9552168"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BC32A5B93-983A-4105-A2F3-1D31589A031E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{C32A5B93-983A-4105-A2F3-1D31589A031E}",
+          "note": "NVE transformer station \"Uvdal 2\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 483",
+          "note": "NVE hydropower plant \"Uvdal 2\" 40 MW, Nore og Uvdal"
+        }
+      ]
+    },
+    {
+      "id": "fraena",
+      "name": "Fræna",
+      "osmIds": [
+        "relation/7839089"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B3DD41F44-F174-4FB7-8E36-5D1BE8CEFA75%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3DD41F44-F174-4FB7-8E36-5D1BE8CEFA75}",
+          "note": "NVE transformer station \"Fræna\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "nyhamna",
+      "name": "Nyhamna",
+      "osmIds": [
+        "relation/10104222"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B24C4CB60-803C-459A-93B9-68C6910C4544%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{24C4CB60-803C-459A-93B9-68C6910C4544}",
+          "note": "NVE transmission line \"Viklandet - Fræna\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "hylen",
+      "name": "Hylen",
+      "osmIds": [
+        "relation/12274653"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BFE331FF1-F882-423C-825C-C66999FFF906%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{FE331FF1-F882-423C-825C-C66999FFF906}",
+          "note": "NVE transformer station \"Hylen\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 167",
+          "note": "NVE hydropower plant \"Hylen\" 160 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "id": "oksla",
+      "name": "Oksla",
+      "osmIds": [
+        "relation/10327289"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B8A4BAEC2-36E6-4065-849D-1701884C99EE%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8A4BAEC2-36E6-4065-849D-1701884C99EE}",
+          "note": "NVE transformer station \"Oksla\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 317",
+          "note": "NVE hydropower plant \"Oksla\" 206 MW, Ullensvang"
+        }
+      ]
+    },
+    {
+      "id": "sonna",
+      "name": "Sønnå kraftverk",
+      "osmIds": [
+        "way/289304185"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 1422",
+          "note": "NVE hydropower plant \"Sønnå H\" 212.4 MW, Sauda"
+        }
+      ]
+    },
+    {
+      "id": "hove-plant",
+      "name": "Hove kraftverk",
+      "osmIds": [
+        "node/9519270911"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 163",
+          "note": "NVE hydropower plant \"Hove\" 60 MW, Vik"
+        }
+      ]
+    },
+    {
+      "id": "usta-plant",
+      "name": "Usta kraftverk",
+      "osmIds": [
+        "way/675049925"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 480",
+          "note": "NVE hydropower plant \"Usta\" 205.22 MW, Ål"
+        }
+      ]
+    },
+    {
+      "id": "kobbelv",
+      "name": "Kobbelv kraftverk",
+      "osmIds": [
+        "relation/8293948"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 206",
+          "note": "NVE hydropower plant \"Kobbelv\" 300 MW, Sørfold"
+        }
+      ]
+    }
+  ],
+  "substations": [
+    {
+      "stationId": "sylling",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE4FD7762-C81A-4887-A77E-2492EB2613FD%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E4FD7762-C81A-4887-A77E-2492EB2613FD}",
+          "note": "NVE transmission line \"Rjukan - Sylling\" 420 kV (STATNETT SF); neighbour rjukan"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BA5A8BA79-5D2A-44F6-BC8B-D91D11A2349E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{A5A8BA79-5D2A-44F6-BC8B-D91D11A2349E}",
+          "note": "NVE transmission line \"Nore - Sylling\" 420 kV (STATNETT SF); neighbour nore"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0BE00F86-2240-4DD9-AB66-0237F85AC476%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0BE00F86-2240-4DD9-AB66-0237F85AC476}",
+          "note": "NVE transmission line \"Ringerike - Sylling\" 420 kV (STATNETT SF); neighbour ringerike"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3A06E06E-3BD4-401B-94A6-E799199830ED%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3A06E06E-3BD4-401B-94A6-E799199830ED}",
+          "note": "NVE transmission line \"Sylling - Tegneby\" 420 kV (STATNETT SF); neighbour tegneby"
+        }
+      ]
+    },
+    {
+      "stationId": "hasle",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB00D0B1A-E9D7-4FE3-923F-717BFE2CECFB%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B00D0B1A-E9D7-4FE3-923F-717BFE2CECFB}",
+          "note": "NVE transmission line \"Rød - Hasle\" 420 kV (STATNETT SF); neighbour rød"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B93128445-029A-474D-A1CE-A7752666A5D8%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{93128445-029A-474D-A1CE-A7752666A5D8}",
+          "note": "NVE transmission line \"Hasle - Halden\" 420 kV (STATNETT SF); neighbour halden"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BA9791877-3688-46E6-9DBD-CF7EF1DD01E9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{A9791877-3688-46E6-9DBD-CF7EF1DD01E9}",
+          "note": "NVE transmission line \"Tegneby - Hasle\" 420 kV (STATNETT SF); neighbour tegneby"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB00E5411-99C7-4BE5-8792-12E6C01CDF0D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B00E5411-99C7-4BE5-8792-12E6C01CDF0D}",
+          "note": "NVE transmission line \"Hasle - Borgvik\" 420 kV (STATNETT SF); neighbour borgvik"
+        }
+      ]
+    },
+    {
+      "stationId": "kristiansand",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B44F1ABAF-13E2-4FC9-8B67-776B72B90EF0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{44F1ABAF-13E2-4FC9-8B67-776B72B90EF0}",
+          "note": "NVE transmission line \"Kvinesdal - Kristiansand\" 420 kV (STATNETT SF); neighbour kvinesdal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B7D9F165B-2D5E-4B56-9FF7-EB13C98A3110%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{7D9F165B-2D5E-4B56-9FF7-EB13C98A3110}",
+          "note": "NVE transmission line \"Kristiansand - Arendal\" 420 kV (STATNETT SF); neighbour arendal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B4D78FB97-0F8B-4056-BA96-373B29B4693C%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{4D78FB97-0F8B-4056-BA96-373B29B4693C}",
+          "note": "NVE transmission line \"Kristiansand - Brokke\" 420 kV (STATNETT SF); neighbour brokke"
+        }
+      ]
+    },
+    {
+      "stationId": "tonstad",
+      "voltageKv": 300,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9F66A81D-21C8-45E2-A766-B5410B6BA56B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9F66A81D-21C8-45E2-A766-B5410B6BA56B}",
+          "note": "NVE transmission line \"Tonstad - Fagrafjell\" 300 kV (STATNETT SF); neighbour fagrafjell"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3AA814FE-E2D3-43FC-812C-B35619FE4321%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3AA814FE-E2D3-43FC-812C-B35619FE4321}",
+          "note": "NVE transmission line \"Tonstad - Ertsmyra\" 300 kV (STATNETT SF); neighbour ertsmyra"
+        }
+      ]
+    },
+    {
+      "stationId": "saurdal",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9B1B2781-B063-4AEF-AEB8-2EFDEFFDC347%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9B1B2781-B063-4AEF-AEB8-2EFDEFFDC347}",
+          "note": "NVE transmission line \"Saurdal - Lyse\" 420 kV (STATNETT SF); neighbour lyse"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2D833557-D0EC-4784-9FA0-CFEC2A882DC1%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2D833557-D0EC-4784-9FA0-CFEC2A882DC1}",
+          "note": "NVE transmission line \"Kvilldal - Saurdal\" 420 kV (STATNETT SF); neighbour kvilldal"
+        }
+      ]
+    },
+    {
+      "stationId": "sauda",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B682D3311-16F8-4883-9287-F3A6661CE45E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{682D3311-16F8-4883-9287-F3A6661CE45E}",
+          "note": "NVE transmission line \"Sauda - Hylen\" 420 kV (STATNETT SF); neighbour hylen"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B64088223-18B2-4B1E-A980-29DB999E1626%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{64088223-18B2-4B1E-A980-29DB999E1626}",
+          "note": "NVE transmission line \"Sauda - Lyse\" 420 kV (STATNETT SF); neighbour lyse"
+        }
+      ]
+    },
+    {
+      "stationId": "samnanger",
+      "voltageKv": 300,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B20033DCD-19CE-4748-BF27-E6E2896955C8%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{20033DCD-19CE-4748-BF27-E6E2896955C8}",
+          "note": "NVE transmission line \"Evanger - Samnanger\" 300 kV (STATNETT SF); neighbour evanger"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BDFD23903-30A3-4389-80EB-7AA0A6612440%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{DFD23903-30A3-4389-80EB-7AA0A6612440}",
+          "note": "NVE transmission line \"Mauranger - Samnanger\" 300 kV (STATNETT SF); neighbour mauranger"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BBEB9BEFE-41C9-46D8-A61D-140E972B4CC8%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{BEB9BEFE-41C9-46D8-A61D-140E972B4CC8}",
+          "note": "NVE transmission line \"Samnanger - Fana\" 300 kV (STATNETT SF); neighbour fana"
+        }
+      ]
+    },
+    {
+      "stationId": "sogndal",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9AB80CE3-EB45-4532-AA54-905E70B39052%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9AB80CE3-EB45-4532-AA54-905E70B39052}",
+          "note": "NVE transmission line \"Aurland - Sogndal\" 420 kV (STATNETT SF); neighbour aurland"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B5878F848-46D9-433E-835A-5879A4ED82D2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{5878F848-46D9-433E-835A-5879A4ED82D2}",
+          "note": "NVE transmission line \"Høyanger - Sogndal\" 420 kV (STATNETT SF); neighbour høyanger"
+        }
+      ]
+    },
+    {
+      "stationId": "aurland-1",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB577697B-7FCB-44DE-AA21-E1FA48B67238%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B577697B-7FCB-44DE-AA21-E1FA48B67238}",
+          "note": "NVE transmission line \"Aurland 1 - Aurland 2\" 420 kV (STATNETT SF); neighbour aurland 2"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B4BE4CAD8-E258-47DA-A426-2FC97CCE6D57%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{4BE4CAD8-E258-47DA-A426-2FC97CCE6D57}",
+          "note": "NVE transmission line \"Aurland 1 - Usta\" 420 kV (STATNETT SF); neighbour usta"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B4BFEAFCB-2518-426C-9E79-7CE67F4AEFD4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{4BFEAFCB-2518-426C-9E79-7CE67F4AEFD4}",
+          "note": "NVE transmission line \"Sima - Aurland 1\" 420 kV (STATNETT SF); neighbour sima"
+        }
+      ]
+    },
+    {
+      "stationId": "orskog",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BD81B071E-890D-481C-BC96-A6EC0430CEDE%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D81B071E-890D-481C-BC96-A6EC0430CEDE}",
+          "note": "NVE transmission line \"Viklandet - Ørskog\" 420 kV (STATNETT SF); neighbour viklandet"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B1F7C0E87-0751-4E6E-90F8-F34D0182197B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{1F7C0E87-0751-4E6E-90F8-F34D0182197B}",
+          "note": "NVE transmission line \"Ørskog - Sykkylven\" 420 kV (STATNETT SF); neighbour sykkylven"
+        }
+      ]
+    },
+    {
+      "stationId": "klaebu",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B14B97DAD-5D73-4F8F-AF05-256236A47148%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{14B97DAD-5D73-4F8F-AF05-256236A47148}",
+          "note": "NVE transmission line \"Verdal - Klæbu\" 420 kV (STATNETT SF); neighbour verdal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BAF86483D-0485-4F87-B47B-8CA257F26FB6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{AF86483D-0485-4F87-B47B-8CA257F26FB6}",
+          "note": "NVE transmission line \"Klæbu - Surna\" 420 kV (STATNETT SF); neighbour surna"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BCD926573-AE74-4818-B729-8C659FBBA540%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{CD926573-AE74-4818-B729-8C659FBBA540}",
+          "note": "NVE transmission line \"Nea - Klæbu\" 420 kV (STATNETT SF); neighbour nea"
+        }
+      ]
+    },
+    {
+      "stationId": "tunnsjodal",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B244C6B1A-3E16-423A-9C7C-E265EB26870D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{244C6B1A-3E16-423A-9C7C-E265EB26870D}",
+          "note": "NVE transmission line \"Namsos - Tunnsjødal\" 420 kV (STATNETT SF); neighbour namsos"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BEF14D2BF-B957-434A-B909-B286176B48E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{EF14D2BF-B957-434A-B909-B286176B48E0}",
+          "note": "NVE transmission line \"Nedre Røssåga - Tunnsjødal\" 420 kV (STATNETT SF); neighbour nedre røssåga"
+        }
+      ]
+    },
+    {
+      "stationId": "namsos",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B244C6B1A-3E16-423A-9C7C-E265EB26870D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{244C6B1A-3E16-423A-9C7C-E265EB26870D}",
+          "note": "NVE transmission line \"Namsos - Tunnsjødal\" 420 kV (STATNETT SF); neighbour tunnsjødal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BBDE71755-9D9F-4DF5-9915-AF35029116D2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{BDE71755-9D9F-4DF5-9915-AF35029116D2}",
+          "note": "NVE transmission line \"Namsos - Hofstad\" 420 kV (STATNETT SF); neighbour hofstad"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0CA1D8A1-0C28-4A8B-B450-D1E1C70AC738%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0CA1D8A1-0C28-4A8B-B450-D1E1C70AC738}",
+          "note": "NVE transmission line \"Namsos - Ogndal\" 420 kV (STATNETT SF); neighbour ogndal"
+        }
+      ]
+    },
+    {
+      "stationId": "svartisen",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BBD70EB1E-6A93-4865-994E-F4EA4179344E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{BD70EB1E-6A93-4865-994E-F4EA4179344E}",
+          "note": "NVE transmission line \"Svartisen - Rana\" 420 kV (STATNETT SF); neighbour rana"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BAEA8D674-32F3-4E2F-803E-D6133CE468F4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{AEA8D674-32F3-4E2F-803E-D6133CE468F4}",
+          "note": "NVE transmission line \"Salten - Svartisen\" 420 kV (STATNETT SF); neighbour salten"
+        }
+      ]
+    },
+    {
+      "stationId": "ofoten",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B8A90EBA5-F5D3-4C62-9377-EB237B3312A9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8A90EBA5-F5D3-4C62-9377-EB237B3312A9}",
+          "note": "NVE transmission line \"Ofoten - Kobbvatnet\" 420 kV (STATNETT SF); neighbour kobbvatnet"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B6893B207-7582-4FA0-9995-85D74BC560F8%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6893B207-7582-4FA0-9995-85D74BC560F8}",
+          "note": "NVE transmission line \"Ofoten - Kvandal\" 420 kV (STATNETT SF); neighbour kvandal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3CDC8234-C54D-48D2-B449-88094AC6FE07%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3CDC8234-C54D-48D2-B449-88094AC6FE07}",
+          "note": "NVE transmission line \"Ofoten - Ritsem\" 420 kV (STATNETT SF); neighbour ritsem"
+        }
+      ]
+    },
+    {
+      "stationId": "balsfjord",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9578AAAA-31F1-4CA9-B855-86E82D5F0E5A%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9578AAAA-31F1-4CA9-B855-86E82D5F0E5A}",
+          "note": "NVE transmission line \"Balsfjord - Vinnelys\" 420 kV (STATNETT SF); neighbour vinnelys"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B365CC1CC-7AFE-4352-9244-77F8BB2110BE%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{365CC1CC-7AFE-4352-9244-77F8BB2110BE}",
+          "note": "NVE transmission line \"Bardufoss - Balsfjord\" 420 kV (STATNETT SF); neighbour bardufoss"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B01D55338-2CF0-48F9-A020-CA02F885B938%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{01D55338-2CF0-48F9-A020-CA02F885B938}",
+          "note": "NVE transmission line \"Kvandal - Balsfjord\" 420 kV (STATNETT SF); neighbour kvandal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6}",
+          "note": "NVE transmission line \"Balsfjord - Skillemoen\" 420 kV (STATNETT SF); neighbour skillemoen"
+        }
+      ]
+    },
+    {
+      "stationId": "skaidi",
+      "voltageKv": 132,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB9607876-9841-4C34-A5A3-1BEBA7C4AE61%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B9607876-9841-4C34-A5A3-1BEBA7C4AE61}",
+          "note": "NVE transmission line \"Skaidi - Alta\" 132 kV (STATNETT SF); neighbour alta"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BFCEC9690-F9A7-4418-802E-FF1ED2D08B29%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{FCEC9690-F9A7-4418-802E-FF1ED2D08B29}",
+          "note": "NVE transmission line \"Lakselv - Skaidi\" 132 kV (STATNETT SF); neighbour lakselv"
+        }
+      ]
+    },
+    {
+      "stationId": "kvilldal",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B080AD10A-27BA-4BF6-81B2-B26E6E180D08%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{080AD10A-27BA-4BF6-81B2-B26E6E180D08}",
+          "note": "NVE transmission line \"Kvilldal - Rjukan\" 420 kV (STATNETT SF); neighbour rjukan"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B1515BB60-DA8A-4B73-A424-2B233DAA4DD7%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{1515BB60-DA8A-4B73-A424-2B233DAA4DD7}",
+          "note": "NVE transmission line \"Kvilldal - Holen\" 420 kV (STATNETT SF); neighbour holen"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2D833557-D0EC-4784-9FA0-CFEC2A882DC1%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2D833557-D0EC-4784-9FA0-CFEC2A882DC1}",
+          "note": "NVE transmission line \"Kvilldal - Saurdal\" 420 kV (STATNETT SF); neighbour saurdal"
+        }
+      ]
+    },
+    {
+      "stationId": "rod",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB00D0B1A-E9D7-4FE3-923F-717BFE2CECFB%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B00D0B1A-E9D7-4FE3-923F-717BFE2CECFB}",
+          "note": "NVE transmission line \"Rød - Hasle\" 420 kV (STATNETT SF); neighbour hasle"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B33A2ED19-7DE5-4564-9513-F6FA12388E42%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{33A2ED19-7DE5-4564-9513-F6FA12388E42}",
+          "note": "NVE transmission line \"Grenland - Rød\" 420 kV (STATNETT SF); neighbour grenland"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3ADEFB87-0BB8-4146-B344-2FE238E91B5F%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3ADEFB87-0BB8-4146-B344-2FE238E91B5F}",
+          "note": "NVE transmission line \"Holen - Rød\" 420 kV (STATNETT SF); neighbour holen"
+        }
+      ]
+    },
+    {
+      "stationId": "adal",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B866DC809-A30F-4042-BADC-C1767EC7290D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{866DC809-A30F-4042-BADC-C1767EC7290D}",
+          "note": "NVE transmission line \"Ådal - Ringerike\" 420 kV (STATNETT SF); neighbour ringerike"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2464D814-9548-443C-86AB-FAB5BC6BBC49%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2464D814-9548-443C-86AB-FAB5BC6BBC49}",
+          "note": "NVE transmission line \"Ådal - Frogner\" 420 kV (STATNETT SF); neighbour frogner"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B8A350A12-D9D8-488F-ADBB-0677B24F91B5%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8A350A12-D9D8-488F-ADBB-0677B24F91B5}",
+          "note": "NVE transmission line \"Usta - Ådal\" 420 kV (STATNETT SF); neighbour usta"
+        }
+      ]
+    },
+    {
+      "stationId": "sima",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2C30A522-17B3-4EDE-BCA5-47C592DD5E75%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2C30A522-17B3-4EDE-BCA5-47C592DD5E75}",
+          "note": "NVE transmission line \"Sima - Dagali\" 420 kV (STATNETT SF); neighbour dagali"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B73667A9A-A5F3-49E1-8895-DF29558B12A7%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{73667A9A-A5F3-49E1-8895-DF29558B12A7}",
+          "note": "NVE transmission line \"Sima - Samnanger\" 420 kV (STATNETT SF); neighbour samnanger"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B4BFEAFCB-2518-426C-9E79-7CE67F4AEFD4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{4BFEAFCB-2518-426C-9E79-7CE67F4AEFD4}",
+          "note": "NVE transmission line \"Sima - Aurland 1\" 420 kV (STATNETT SF); neighbour aurland 1"
+        }
+      ]
+    },
+    {
+      "stationId": "lyse",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B64088223-18B2-4B1E-A980-29DB999E1626%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{64088223-18B2-4B1E-A980-29DB999E1626}",
+          "note": "NVE transmission line \"Sauda - Lyse\" 420 kV (STATNETT SF); neighbour sauda"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B448F023A-42B2-49F4-9895-BCC181CED8B9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{448F023A-42B2-49F4-9895-BCC181CED8B9}",
+          "note": "NVE transmission line \"Lyse - Fagrafjell\" 420 kV (STATNETT SF); neighbour fagrafjell"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9B1B2781-B063-4AEF-AEB8-2EFDEFFDC347%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9B1B2781-B063-4AEF-AEB8-2EFDEFFDC347}",
+          "note": "NVE transmission line \"Saurdal - Lyse\" 420 kV (STATNETT SF); neighbour saurdal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B11E781CB-23B6-4889-82D5-BA03AB5151CD%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{11E781CB-23B6-4889-82D5-BA03AB5151CD}",
+          "note": "NVE transmission line \"Lyse - Tjørhom\" 420 kV (STATNETT SF); neighbour tjørhom"
+        }
+      ]
+    },
+    {
+      "stationId": "nedre-rossaga",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BFCE385CC-19EE-4A2A-96BD-9A0D72C3E30D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{FCE385CC-19EE-4A2A-96BD-9A0D72C3E30D}",
+          "note": "NVE transmission line \"Rana - Nedre Røssåga\" 420 kV (STATNETT SF); neighbour rana"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BEF14D2BF-B957-434A-B909-B286176B48E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{EF14D2BF-B957-434A-B909-B286176B48E0}",
+          "note": "NVE transmission line \"Nedre Røssåga - Tunnsjødal\" 420 kV (STATNETT SF); neighbour tunnsjødal"
+        }
+      ]
+    },
+    {
+      "stationId": "rana",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BFCE385CC-19EE-4A2A-96BD-9A0D72C3E30D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{FCE385CC-19EE-4A2A-96BD-9A0D72C3E30D}",
+          "note": "NVE transmission line \"Rana - Nedre Røssåga\" 420 kV (STATNETT SF); neighbour nedre røssåga"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BBD70EB1E-6A93-4865-994E-F4EA4179344E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{BD70EB1E-6A93-4865-994E-F4EA4179344E}",
+          "note": "NVE transmission line \"Svartisen - Rana\" 420 kV (STATNETT SF); neighbour svartisen"
+        }
+      ]
+    },
+    {
+      "stationId": "salten",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BAEA8D674-32F3-4E2F-803E-D6133CE468F4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{AEA8D674-32F3-4E2F-803E-D6133CE468F4}",
+          "note": "NVE transmission line \"Salten - Svartisen\" 420 kV (STATNETT SF); neighbour svartisen"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BCE9B0D51-16B4-454A-9B09-A9054C05BAB9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{CE9B0D51-16B4-454A-9B09-A9054C05BAB9}",
+          "note": "NVE transmission line \"Kobbvatnet - Salten\" 420 kV (STATNETT SF); neighbour kobbvatnet"
+        }
+      ]
+    },
+    {
+      "stationId": "kobbvatnet",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B8A90EBA5-F5D3-4C62-9377-EB237B3312A9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8A90EBA5-F5D3-4C62-9377-EB237B3312A9}",
+          "note": "NVE transmission line \"Ofoten - Kobbvatnet\" 420 kV (STATNETT SF); neighbour ofoten"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BCE9B0D51-16B4-454A-9B09-A9054C05BAB9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{CE9B0D51-16B4-454A-9B09-A9054C05BAB9}",
+          "note": "NVE transmission line \"Kobbvatnet - Salten\" 420 kV (STATNETT SF); neighbour salten"
+        }
+      ]
+    },
+    {
+      "stationId": "skillemoen",
+      "voltageKv": 420,
+      "minDegree": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B8859AAE8-B1CB-427E-9123-E9BE967EAB32%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8859AAE8-B1CB-427E-9123-E9BE967EAB32}",
+          "note": "NVE transmission line \"Vinnelys - Skillemoen\" 420 kV (STATNETT SF); neighbour vinnelys"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B15F4187A-E271-4B62-A033-9D22F253A986%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{15F4187A-E271-4B62-A033-9D22F253A986}",
+          "note": "NVE transmission line \"Skillemoen - Skaidi\" 420 kV (STATNETT SF); neighbour skaidi"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6}",
+          "note": "NVE transmission line \"Balsfjord - Skillemoen\" 420 kV (STATNETT SF); neighbour balsfjord"
+        }
+      ]
+    },
+    {
+      "stationId": "varangerbotn",
+      "voltageKv": 132,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B8DE61BC5-201C-4696-B6DB-4972BD4FE3E2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8DE61BC5-201C-4696-B6DB-4972BD4FE3E2}",
+          "note": "NVE transmission line \"Adamselv - Varangerbotn\" 132 kV (STATNETT SF); neighbour adamselv"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BD053B948-9DBB-4B5F-B226-A5F020A74FEC%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D053B948-9DBB-4B5F-B226-A5F020A74FEC}",
+          "note": "NVE transmission line \"Varangerbotn - Tana Bru\" 132 kV (STATNETT SF); neighbour tana bru"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B5FC72E6A-CAAA-47E3-AECD-0AB1F37E9D58%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{5FC72E6A-CAAA-47E3-AECD-0AB1F37E9D58}",
+          "note": "NVE transmission line \"Duttajohka - Varangerbotn\" 132 kV (STATNETT SF); neighbour duttajohka"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3C616CE3-F920-4768-9B2C-9A6051056BD7%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3C616CE3-F920-4768-9B2C-9A6051056BD7}",
+          "note": "NVE transmission line \"Skogfoss - Varangerbotn\" 132 kV (STATNETT SF); neighbour skogfoss"
+        }
+      ]
+    },
+    {
+      "stationId": "viklandet",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BD81B071E-890D-481C-BC96-A6EC0430CEDE%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D81B071E-890D-481C-BC96-A6EC0430CEDE}",
+          "note": "NVE transmission line \"Viklandet - Ørskog\" 420 kV (STATNETT SF); neighbour ørskog"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BC6E14803-D212-49AB-A617-1D1FD0C654F4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{C6E14803-D212-49AB-A617-1D1FD0C654F4}",
+          "note": "NVE transmission line \"Aura - Viklandet\" 420 kV (STATNETT SF); neighbour aura"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2ED8E5AF-6CCA-467B-A4CF-07068E5142D5%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2ED8E5AF-6CCA-467B-A4CF-07068E5142D5}",
+          "note": "NVE transmission line \"Surna - Viklandet\" 420 kV (STATNETT SF); neighbour surna"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B24C4CB60-803C-459A-93B9-68C6910C4544%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{24C4CB60-803C-459A-93B9-68C6910C4544}",
+          "note": "NVE transmission line \"Viklandet - Fræna\" 420 kV (STATNETT SF); neighbour fræna"
+        }
+      ]
+    },
+    {
+      "stationId": "aura",
+      "voltageKv": 300,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE6316196-22B4-45BC-9D56-FF67CB376D5E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E6316196-22B4-45BC-9D56-FF67CB376D5E}",
+          "note": "NVE transmission line \"Orkdal - Aura\" 300 kV (STATNETT SF); neighbour orkdal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3AFE9877-0424-486E-9091-1CACB59A03C6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3AFE9877-0424-486E-9091-1CACB59A03C6}",
+          "note": "NVE transmission line \"Aura - Vågåmo\" 300 kV (STATNETT SF); neighbour vågåmo"
+        }
+      ]
+    },
+    {
+      "stationId": "alfoten",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE6F01212-32D6-4BFA-A34E-185C9095A6D0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E6F01212-32D6-4BFA-A34E-185C9095A6D0}",
+          "note": "NVE transmission line \"Ørsta - Ålfoten\" 420 kV (STATNETT SF); neighbour ørsta"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B5F0E0E7D-071B-4B5F-BA01-FBC4A77DA610%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{5F0E0E7D-071B-4B5F-BA01-FBC4A77DA610}",
+          "note": "NVE transmission line \"Ålfoten - Moskog\" 420 kV (STATNETT SF); neighbour moskog"
+        }
+      ]
+    },
+    {
+      "stationId": "orsta",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BF8BF4CFA-ABC8-46FF-8270-F4B6783955D1%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{F8BF4CFA-ABC8-46FF-8270-F4B6783955D1}",
+          "note": "NVE transmission line \"Sykkylven - Ørsta\" 420 kV (STATNETT SF); neighbour sykkylven"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE6F01212-32D6-4BFA-A34E-185C9095A6D0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E6F01212-32D6-4BFA-A34E-185C9095A6D0}",
+          "note": "NVE transmission line \"Ørsta - Ålfoten\" 420 kV (STATNETT SF); neighbour ålfoten"
+        }
+      ]
+    },
+    {
+      "stationId": "hoyanger",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B5878F848-46D9-433E-835A-5879A4ED82D2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{5878F848-46D9-433E-835A-5879A4ED82D2}",
+          "note": "NVE transmission line \"Høyanger - Sogndal\" 420 kV (STATNETT SF); neighbour sogndal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B1F84323B-9EE5-49D3-BC74-9C8E492382D0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{1F84323B-9EE5-49D3-BC74-9C8E492382D0}",
+          "note": "NVE transmission line \"Moskog - Høyanger\" 420 kV (STATNETT SF); neighbour moskog"
+        }
+      ]
+    },
+    {
+      "stationId": "fagrafjell",
+      "voltageKv": 300,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB0851537-7B75-4C40-BE1F-C105950982A5%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B0851537-7B75-4C40-BE1F-C105950982A5}",
+          "note": "NVE transmission line \"Fagrafjell - Bærheim L1\" 300 kV (STATNETT SF); neighbour bærheim"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9F66A81D-21C8-45E2-A766-B5410B6BA56B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9F66A81D-21C8-45E2-A766-B5410B6BA56B}",
+          "note": "NVE transmission line \"Tonstad - Fagrafjell\" 300 kV (STATNETT SF); neighbour tonstad"
+        }
+      ]
+    },
+    {
+      "stationId": "arendal",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B6FF68459-03FB-4161-B8B1-36EB21463F88%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6FF68459-03FB-4161-B8B1-36EB21463F88}",
+          "note": "NVE transmission line \"Honna - Arendal\" 420 kV (STATNETT SF); neighbour honna"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B7D9F165B-2D5E-4B56-9FF7-EB13C98A3110%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{7D9F165B-2D5E-4B56-9FF7-EB13C98A3110}",
+          "note": "NVE transmission line \"Kristiansand - Arendal\" 420 kV (STATNETT SF); neighbour kristiansand"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BF69A9507-73BA-49FD-9C7B-C0AAFC4C1249%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{F69A9507-73BA-49FD-9C7B-C0AAFC4C1249}",
+          "note": "NVE transmission line \"Arendal - Bamble\" 420 kV (STATNETT SF); neighbour bamble"
+        }
+      ]
+    },
+    {
+      "stationId": "frogner",
+      "voltageKv": 420,
+      "minDegree": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2464D814-9548-443C-86AB-FAB5BC6BBC49%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2464D814-9548-443C-86AB-FAB5BC6BBC49}",
+          "note": "NVE transmission line \"Ådal - Frogner\" 420 kV (STATNETT SF); neighbour ådal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B5C1703E4-7A1B-46D9-BDA2-C4EF24131C2B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{5C1703E4-7A1B-46D9-BDA2-C4EF24131C2B}",
+          "note": "NVE transmission line \"Frogner - Follo\" 420 kV (STATNETT SF); neighbour follo"
+        }
+      ]
+    },
+    {
+      "stationId": "surna",
+      "voltageKv": 420,
+      "minDegree": 3,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE2B98C15-C53D-4F35-9A78-CCC14D8C0926%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E2B98C15-C53D-4F35-9A78-CCC14D8C0926}",
+          "note": "NVE transmission line \"Snilldal - Surna\" 420 kV (STATNETT SF); neighbour snilldal"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2ED8E5AF-6CCA-467B-A4CF-07068E5142D5%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2ED8E5AF-6CCA-467B-A4CF-07068E5142D5}",
+          "note": "NVE transmission line \"Surna - Viklandet\" 420 kV (STATNETT SF); neighbour viklandet"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BAF86483D-0485-4F87-B47B-8CA257F26FB6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{AF86483D-0485-4F87-B47B-8CA257F26FB6}",
+          "note": "NVE transmission line \"Klæbu - Surna\" 420 kV (STATNETT SF); neighbour klæbu"
+        }
+      ]
+    }
+  ],
+  "corridors": [
+    {
+      "id": "sima-samnanger",
+      "name": "Sima – Samnanger",
+      "fromStationId": "sima",
+      "toStationId": "samnanger",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B73667A9A-A5F3-49E1-8895-DF29558B12A7%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{73667A9A-A5F3-49E1-8895-DF29558B12A7}",
+          "note": "NVE transmission line \"Sima - Samnanger\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "salten-svartisen",
+      "name": "Salten – Svartisen",
+      "fromStationId": "salten",
+      "toStationId": "svartisen",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BAEA8D674-32F3-4E2F-803E-D6133CE468F4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{AEA8D674-32F3-4E2F-803E-D6133CE468F4}",
+          "note": "NVE transmission line \"Salten - Svartisen\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "ofoten-kobbvatnet",
+      "name": "Ofoten – Kobbvatnet",
+      "fromStationId": "ofoten",
+      "toStationId": "kobbvatnet",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B8A90EBA5-F5D3-4C62-9377-EB237B3312A9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8A90EBA5-F5D3-4C62-9377-EB237B3312A9}",
+          "note": "NVE transmission line \"Ofoten - Kobbvatnet\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "kobbvatnet-salten",
+      "name": "Kobbvatnet – Salten",
+      "fromStationId": "kobbvatnet",
+      "toStationId": "salten",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BCE9B0D51-16B4-454A-9B09-A9054C05BAB9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{CE9B0D51-16B4-454A-9B09-A9054C05BAB9}",
+          "note": "NVE transmission line \"Kobbvatnet - Salten\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "orsta-alfoten",
+      "name": "Ørsta – Ålfoten",
+      "fromStationId": "orsta",
+      "toStationId": "alfoten",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE6F01212-32D6-4BFA-A34E-185C9095A6D0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E6F01212-32D6-4BFA-A34E-185C9095A6D0}",
+          "note": "NVE transmission line \"Ørsta - Ålfoten\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "alfoten-moskog",
+      "name": "Ålfoten – Moskog",
+      "fromStationId": "alfoten",
+      "toStationId": "moskog",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B5F0E0E7D-071B-4B5F-BA01-FBC4A77DA610%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{5F0E0E7D-071B-4B5F-BA01-FBC4A77DA610}",
+          "note": "NVE transmission line \"Ålfoten - Moskog\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "svartisen-rana",
+      "name": "Svartisen – Rana",
+      "fromStationId": "svartisen",
+      "toStationId": "rana",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BBD70EB1E-6A93-4865-994E-F4EA4179344E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{BD70EB1E-6A93-4865-994E-F4EA4179344E}",
+          "note": "NVE transmission line \"Svartisen - Rana\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "aurland-1-sogndal",
+      "name": "Aurland 1 – Sogndal",
+      "fromStationId": "aurland-1",
+      "toStationId": "sogndal",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9AB80CE3-EB45-4532-AA54-905E70B39052%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9AB80CE3-EB45-4532-AA54-905E70B39052}",
+          "note": "NVE transmission line \"Aurland - Sogndal\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "klaebu-surna",
+      "name": "Klæbu – Surna",
+      "fromStationId": "klaebu",
+      "toStationId": "surna",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BAF86483D-0485-4F87-B47B-8CA257F26FB6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{AF86483D-0485-4F87-B47B-8CA257F26FB6}",
+          "note": "NVE transmission line \"Klæbu - Surna\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/vare-prosjekter/region-midt/afjord-snilldal-og-surna-viklandet/",
+          "ref": "Åfjord–Snilldal og Surna–Viklandet project page",
+          "note": "Surna (formerly Trollheim) transformer station on Klæbu – Viklandet is in service"
+        }
+      ]
+    },
+    {
+      "id": "surna-viklandet",
+      "name": "Surna – Viklandet",
+      "fromStationId": "surna",
+      "toStationId": "viklandet",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2ED8E5AF-6CCA-467B-A4CF-07068E5142D5%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2ED8E5AF-6CCA-467B-A4CF-07068E5142D5}",
+          "note": "NVE transmission line \"Surna - Viklandet\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/vare-prosjekter/region-midt/afjord-snilldal-og-surna-viklandet/",
+          "ref": "Åfjord–Snilldal og Surna–Viklandet project page",
+          "note": "Surna (formerly Trollheim) transformer station on Klæbu – Viklandet is in service"
+        }
+      ]
+    },
+    {
+      "id": "nedre-rossaga-tunnsjodal",
+      "name": "Nedre Røssåga – Tunnsjødal",
+      "fromStationId": "nedre-rossaga",
+      "toStationId": "tunnsjodal",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BEF14D2BF-B957-434A-B909-B286176B48E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{EF14D2BF-B957-434A-B909-B286176B48E0}",
+          "note": "NVE transmission line \"Nedre Røssåga - Tunnsjødal\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "evanger-samnanger",
+      "name": "Evanger – Samnanger",
+      "fromStationId": "evanger",
+      "toStationId": "samnanger",
+      "voltageKv": 300,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B20033DCD-19CE-4748-BF27-E6E2896955C8%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{20033DCD-19CE-4748-BF27-E6E2896955C8}",
+          "note": "NVE transmission line \"Evanger - Samnanger\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "blafalli-mauranger",
+      "name": "Blåfalli – Mauranger",
+      "fromStationId": "blafalli",
+      "toStationId": "mauranger",
+      "voltageKv": 300,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BAE85A51C-3D75-4D6D-9A9D-61125DD56C05%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{AE85A51C-3D75-4D6D-9A9D-61125DD56C05}",
+          "note": "NVE transmission line \"Blåfalli - Mauranger\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "balsfjord-skillemoen",
+      "name": "Balsfjord – Skillemoen",
+      "fromStationId": "balsfjord",
+      "toStationId": "skillemoen",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6}",
+          "note": "NVE transmission line \"Balsfjord - Skillemoen\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "aura-vagamo",
+      "name": "Aura – Vågåmo",
+      "fromStationId": "aura",
+      "toStationId": "vagamo",
+      "voltageKv": 300,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3AFE9877-0424-486E-9091-1CACB59A03C6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3AFE9877-0424-486E-9091-1CACB59A03C6}",
+          "note": "NVE transmission line \"Aura - Vågåmo\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "skillemoen-skaidi",
+      "name": "Skillemoen – Skaidi (built for 420 kV, operated at 132 kV)",
+      "fromStationId": "skillemoen",
+      "toStationId": "skaidi",
+      "voltageKv": 132,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B15F4187A-E271-4B62-A033-9D22F253A986%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{15F4187A-E271-4B62-A033-9D22F253A986}",
+          "note": "NVE transmission line \"Skillemoen - Skaidi\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://statnett.no/en/our-projects/northern-norway/balsfjord-skaidi/News-archive/extending-the-power-line-to-skaidi",
+          "ref": "Extending the power line to Skaidi",
+          "note": "Skillemoen – Skaidi is built for 420 kV but operated at 132 kV until demand increases"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/883151296",
+          "ref": "way/883151296",
+          "note": "OSM maps Skillemoen - Skaidi at 132 kV"
+        }
+      ]
+    },
+    {
+      "id": "kvinesdal-lista",
+      "name": "Kvinesdal – Lista 1 and 2",
+      "fromStationId": "kvinesdal",
+      "toStationId": "lista",
+      "voltageKv": 300,
+      "minCircuits": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B494EA290-F068-4C37-BF8E-D97B25682F52%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{494EA290-F068-4C37-BF8E-D97B25682F52}",
+          "note": "NVE transmission line \"Kvinesdal - Lista\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/577730227",
+          "ref": "way/577730227",
+          "note": "circuit \"Kvinesdal - Lista 1\""
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/577730226",
+          "ref": "way/577730226",
+          "note": "circuit \"Kvinesdal - Lista 2\""
+        }
+      ]
+    },
+    {
+      "id": "sylling-hamang",
+      "name": "Sylling – Hamang 1 and 2",
+      "fromStationId": "sylling",
+      "toStationId": "hamang",
+      "voltageKv": 300,
+      "minCircuits": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B14D1D25D-5373-4F49-8104-B9A4947130D7%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{14D1D25D-5373-4F49-8104-B9A4947130D7}",
+          "note": "NVE transmission line \"Sylling - Hamang\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/112635905",
+          "ref": "way/112635905",
+          "note": "circuit \"Sylling - Hamang 1\""
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/125234179",
+          "ref": "way/125234179",
+          "note": "circuit \"Sylling - Hamang 2\""
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/331737882",
+          "ref": "way/331737882",
+          "note": "shared section \"Sylling - Hamang 1&2\", circuits=2"
+        }
+      ]
+    },
+    {
+      "id": "nordreisa-guolasjokka",
+      "name": "Nordreisa – Guolasjokka 1 and 2",
+      "fromStationId": "nordreisa",
+      "toStationId": "guolasjokka",
+      "voltageKv": 132,
+      "minCircuits": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B20F733F0-6464-4120-8738-D3127AA6B9DB%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{20F733F0-6464-4120-8738-D3127AA6B9DB}",
+          "note": "NVE transmission line \"Nordreisa - Guolasjokka\" 132 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/586427553",
+          "ref": "way/586427553",
+          "note": "circuit \"Nordreisa - Guolášjohka 1\""
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/586427555",
+          "ref": "way/586427555",
+          "note": "circuit \"Nordreisa - Guolášjohka 2\""
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/586427554",
+          "ref": "way/586427554",
+          "note": "shared section \"1&2\", circuits=2"
+        }
+      ]
+    },
+    {
+      "id": "skillemoen-kvaenangen",
+      "name": "Skillemoen – Kvænangen 1 and 2",
+      "fromStationId": "skillemoen",
+      "toStationId": "kvaenangen",
+      "voltageKv": 132,
+      "minCircuits": 2,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3125D3BC-5AC9-45C3-A87F-EC1BE4289468%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3125D3BC-5AC9-45C3-A87F-EC1BE4289468}",
+          "note": "NVE transmission line \"Skillemoen - Kvænangen\" 132 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/586385659",
+          "ref": "way/586385659",
+          "note": "circuit \"Kvænangen - Skillemoen 1\""
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/170919323",
+          "ref": "way/170919323",
+          "note": "circuit \"Kvænangen - Skillemoen 2\""
+        }
+      ]
+    },
+    {
+      "id": "tokke-flesaker",
+      "name": "Tokke – Flesaker",
+      "fromStationId": "tokke",
+      "toStationId": "flesaker",
+      "voltageKv": 300,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0AF3A05A-1C0B-4B67-A4E3-A4302C6FA902%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0AF3A05A-1C0B-4B67-A4E3-A4302C6FA902}",
+          "note": "NVE transmission line \"Tokke - Flesaker\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "jostedal-leirdola",
+      "name": "Jostedal – Leirdøla",
+      "fromStationId": "jostedal",
+      "toStationId": "leirdola",
+      "voltageKv": 300,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BACAB4395-4247-40F1-BE7C-251C3170CD7E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{ACAB4395-4247-40F1-BE7C-251C3170CD7E}",
+          "note": "NVE transmission line \"Jostedal - Leirdøla\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "nygard-modalen",
+      "name": "Nygard – Modalen",
+      "fromStationId": "nygard",
+      "toStationId": "modalen",
+      "voltageKv": 300,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0775A1E2-1252-4B8F-A85C-8E35157452E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0775A1E2-1252-4B8F-A85C-8E35157452E0}",
+          "note": "NVE transmission line \"S 300 Nygard-Modalen\" 300 kV (EVINY FORNYBAR AS)"
+        }
+      ]
+    },
+    {
+      "id": "hemsil-2-nesbyen",
+      "name": "Hemsil 2 – Nesbyen",
+      "fromStationId": "hemsil-2",
+      "toStationId": "nesbyen",
+      "voltageKv": 300,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B15DCCA3D-B88D-4716-81A1-C514D090E649%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{15DCCA3D-B88D-4716-81A1-C514D090E649}",
+          "note": "NVE transmission line \"Hemsil 2 - Nesbyen\" 300 kV (STATNETT SF)"
+        }
+      ]
+    }
+  ],
+  "excludedCorridors": [
+    {
+      "id": "skaidi-hyggevatn-420",
+      "name": "Skaidi – Hyggevatn 420 kV",
+      "fromStationId": "skaidi",
+      "toStationId": "hyggevatn",
+      "voltageKv": 420,
+      "reason": "under construction (Statnett: line work to 2028); NVE already lists it, so a model must not show it energised",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B6A7E1ABA-6548-435D-BB76-0374FD9C3BAC%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6A7E1ABA-6548-435D-BB76-0374FD9C3BAC}",
+          "note": "NVE transmission line \"Skaidi - Hyggevatn\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/skaidi-hammerfest/",
+          "ref": "Skaidi–Hammerfest project page",
+          "note": "Skaidi – Hyggevatn 420 kV and the Skaidi 420 kV extension are under construction, line work running to 2028"
+        }
+      ]
+    }
+  ],
+  "interconnectors": [
+    {
+      "id": "norned",
+      "name": "NorNed (Feda – Eemshaven)",
+      "kind": "hvdc",
+      "stationId": "feda-converter",
+      "neighbourArea": "NL",
+      "voltageKv": 450,
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2020/restrictions-on-international-interconnector-capacity-until-the-western-corridor-in-place/",
+          "ref": "Interconnector capacities (2020-11-04)",
+          "note": "states NorNed full capacity 700 MW and Skagerrak full capacity 1,632 MW"
+        }
+      ]
+    },
+    {
+      "id": "nordlink",
+      "name": "NordLink (Ertsmyra – Wilster)",
+      "kind": "hvdc",
+      "stationId": "nordlink-converter",
+      "neighbourArea": "DE",
+      "voltageKv": 525,
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2021/nordlink-in-operation2/",
+          "ref": "NordLink in operation (2021-03-31)",
+          "note": "NordLink Tonstad/Ertsmyra – Wilster, 1,400 MW, commercial operation from 31 March 2021"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3C31737F-2CC8-49AC-94E0-B01FC3FA1E7B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3C31737F-2CC8-49AC-94E0-B01FC3FA1E7B}",
+          "note": "NVE transmission line \"Ertsmyra - Vollesfjord\" 525 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "north-sea-link",
+      "name": "North Sea Link (Kvilldal – Blyth)",
+      "kind": "hvdc",
+      "stationId": "nsl-converter",
+      "neighbourArea": "GB",
+      "voltageKv": 515,
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2021/trial-operation-underway-for-north-sea-link/",
+          "ref": "Trial operation underway for North Sea Link (2021-10-01)",
+          "note": "North Sea Link Suldal (Kvilldal) – Blyth, 1,400 MW"
+        }
+      ]
+    },
+    {
+      "id": "skagerrak-1",
+      "name": "Skagerrak 1 (Kristiansand – Tjele)",
+      "kind": "hvdc",
+      "stationId": "kristiansand",
+      "neighbourArea": "DK1",
+      "voltageKv": 250,
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2024/melder-reinvestering-av-sk1-og-sk2/",
+          "ref": "Melder reinvestering av SK1 og SK2 (2024-09-26)",
+          "note": "Skagerrak 1–4 Kristiansand – Tjele; SK1+SK2 500 MW, all four about 1,700 MW"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B4862D827-F2A2-4D61-9857-A63DEE34BE0B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{4862D827-F2A2-4D61-9857-A63DEE34BE0B}",
+          "note": "NVE transmission line \"Kristiansand - Kvarenes P1\" 250 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "skagerrak-2",
+      "name": "Skagerrak 2 (Kristiansand – Tjele)",
+      "kind": "hvdc",
+      "stationId": "kristiansand",
+      "neighbourArea": "DK1",
+      "voltageKv": 250,
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2024/melder-reinvestering-av-sk1-og-sk2/",
+          "ref": "Melder reinvestering av SK1 og SK2 (2024-09-26)",
+          "note": "Skagerrak 1–4 Kristiansand – Tjele; SK1+SK2 500 MW, all four about 1,700 MW"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BD6C77AD0-F3A4-4F18-A5E0-13294B8241A7%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D6C77AD0-F3A4-4F18-A5E0-13294B8241A7}",
+          "note": "NVE transmission line \"Kristiansand - Kvarenes P2\" 250 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "skagerrak-3",
+      "name": "Skagerrak 3 (Kristiansand – Tjele)",
+      "kind": "hvdc",
+      "stationId": "kristiansand",
+      "neighbourArea": "DK1",
+      "voltageKv": 350,
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2024/melder-reinvestering-av-sk1-og-sk2/",
+          "ref": "Melder reinvestering av SK1 og SK2 (2024-09-26)",
+          "note": "Skagerrak 1–4 Kristiansand – Tjele; SK1+SK2 500 MW, all four about 1,700 MW"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B25F0E7FE-2C01-4A23-B259-5A46FE646CD4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{25F0E7FE-2C01-4A23-B259-5A46FE646CD4}",
+          "note": "NVE transmission line \"Kristiansand - Kvarenes\" 350 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "skagerrak-4",
+      "name": "Skagerrak 4 (Kristiansand – Tjele)",
+      "kind": "hvdc",
+      "stationId": "kristiansand",
+      "neighbourArea": "DK1",
+      "voltageKv": 500,
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2024/melder-reinvestering-av-sk1-og-sk2/",
+          "ref": "Melder reinvestering av SK1 og SK2 (2024-09-26)",
+          "note": "Skagerrak 1–4 Kristiansand – Tjele; SK1+SK2 500 MW, all four about 1,700 MW"
+        }
+      ]
+    },
+    {
+      "id": "hasle-borgvik",
+      "name": "Hasle – Borgvik",
+      "kind": "ac",
+      "stationId": "hasle",
+      "neighbourArea": "SE3",
+      "voltageKv": 420,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB00E5411-99C7-4BE5-8792-12E6C01CDF0D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B00E5411-99C7-4BE5-8792-12E6C01CDF0D}",
+          "note": "NVE transmission line \"Hasle - Borgvik\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "halden-skogssater",
+      "name": "Halden – Skogssäter (NVE: Halden – Loviseholm)",
+      "kind": "ac",
+      "stationId": "halden",
+      "neighbourArea": "SE3",
+      "voltageKv": 420,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BF18555D2-3465-4D21-8401-C4EDBB825647%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{F18555D2-3465-4D21-8401-C4EDBB825647}",
+          "note": "NVE transmission line \"Halden - Loviseholm\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "eidskog-charlottenberg",
+      "name": "Eidskog – Charlottenberg",
+      "kind": "ac",
+      "stationId": "eidskog",
+      "neighbourArea": "SE3",
+      "voltageKv": 132,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B59475C41-4D28-4E83-8AA4-8EFB4F3D998B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{59475C41-4D28-4E83-8AA4-8EFB4F3D998B}",
+          "note": "NVE transmission line \"Eidskog - Charlottenberg\" 132 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nordpool",
+          "url": "https://nordpoolgroup.com/en/message-center-container/newsroom/exchange-message-list/2010/02/No-082010-NPS---Interconnector-132-kV-Eidskog-Charlottenberg-included-in-the-Elspot-market",
+          "ref": "Exchange message No. 08/2010",
+          "note": "132 kV Eidskog – Charlottenberg included in the Elspot market from 2010-02-17, NO1–SE3"
+        }
+      ]
+    },
+    {
+      "id": "nea-jarpstrommen",
+      "name": "Nea – Järpströmmen",
+      "kind": "ac",
+      "stationId": "nea",
+      "neighbourArea": "SE2",
+      "voltageKv": 420,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B598108DE-4C94-4E2C-9BB1-918B68F38DB2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{598108DE-4C94-4E2C-9BB1-918B68F38DB2}",
+          "note": "NVE transmission line \"Nea - Järpströmmen\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "svk",
+          "url": "https://www.svk.se/utveckling-av-kraftsystemet/transmissionsnatet/Sa-planerar-vi-elnatet-for-framtiden/jamtland-och-vasternorrland/",
+          "ref": "Jämtland och Västernorrland",
+          "note": "describes the 400 kV link from Järpströmmen to Nea"
+        }
+      ]
+    },
+    {
+      "id": "nedre-rossaga-ajaure",
+      "name": "Nedre Røssåga – Ajaure",
+      "kind": "ac",
+      "stationId": "nedre-rossaga",
+      "neighbourArea": "SE2",
+      "voltageKv": 220,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BA95C4486-10C9-4705-9627-A64406D75CED%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{A95C4486-10C9-4705-9627-A64406D75CED}",
+          "note": "NVE transmission line \"Nedre Røssåga - Ajaure\" 220 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2026/ny-forbindelse-mellom-helgeland-og-sverige-vil-gi-mer-kraft-til-nord-norge",
+          "ref": "Ny forbindelse mellom Helgeland og Sverige (2026-09-14)",
+          "note": "220 kV Nedre Røssåga – Gejmån – Ajaure – Grundfors in service since 1965"
+        }
+      ]
+    },
+    {
+      "id": "ofoten-ritsem",
+      "name": "Ofoten – Ritsem",
+      "kind": "ac",
+      "stationId": "ofoten",
+      "neighbourArea": "SE1",
+      "voltageKv": 420,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3CDC8234-C54D-48D2-B449-88094AC6FE07%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3CDC8234-C54D-48D2-B449-88094AC6FE07}",
+          "note": "NVE transmission line \"Ofoten - Ritsem\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "varangerbotn-ivalo",
+      "name": "Varangerbotn – Ivalo",
+      "kind": "ac",
+      "stationId": "varangerbotn",
+      "neighbourArea": "FI",
+      "voltageKv": 220,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB453616A-8FE4-488B-907D-A25FC5575931%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B453616A-8FE4-488B-907D-A25FC5575931}",
+          "note": "NVE transmission line \"Varangerbotn - Ivalo\" 220 kV (STATNETT SF)"
+        }
+      ]
+    }
+  ],
+  "radialAllowList": [
+    {
+      "stationId": "halden",
+      "voltageKv": 420,
+      "reason": "border-end",
+      "note": "Hasle – Halden is the only Norwegian 420 kV line; Halden continues to Skogssäter (SE3).",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B93128445-029A-474D-A1CE-A7752666A5D8%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{93128445-029A-474D-A1CE-A7752666A5D8}",
+          "note": "NVE transmission line \"Hasle - Halden\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BF18555D2-3465-4D21-8401-C4EDBB825647%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{F18555D2-3465-4D21-8401-C4EDBB825647}",
+          "note": "NVE transmission line \"Halden - Loviseholm\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "feda-converter",
+      "voltageKv": 300,
+      "reason": "converter-station",
+      "note": "NorNed converter AC side on a single feeder.",
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2020/restrictions-on-international-interconnector-capacity-until-the-western-corridor-in-place/",
+          "ref": "Interconnector capacities (2020-11-04)",
+          "note": "states NorNed full capacity 700 MW and Skagerrak full capacity 1,632 MW"
+        }
+      ]
+    },
+    {
+      "stationId": "nsl-converter",
+      "voltageKv": 420,
+      "reason": "converter-station",
+      "note": "North Sea Link converter AC side beside Kvilldal.",
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2021/trial-operation-underway-for-north-sea-link/",
+          "ref": "Trial operation underway for North Sea Link (2021-10-01)",
+          "note": "North Sea Link Suldal (Kvilldal) – Blyth, 1,400 MW"
+        }
+      ]
+    },
+    {
+      "stationId": "nordlink-converter",
+      "voltageKv": 420,
+      "reason": "converter-station",
+      "note": "NordLink converter AC side at Ertsmyra.",
+      "evidence": [
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2021/nordlink-in-operation2/",
+          "ref": "NordLink in operation (2021-03-31)",
+          "note": "NordLink Tonstad/Ertsmyra – Wilster, 1,400 MW, commercial operation from 31 March 2021"
+        }
+      ]
+    },
+    {
+      "stationId": "lista",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Lista is fed only from Kvinesdal (two circuits).",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B494EA290-F068-4C37-BF8E-D97B25682F52%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{494EA290-F068-4C37-BF8E-D97B25682F52}",
+          "note": "NVE transmission line \"Kvinesdal - Lista\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "heroya-3",
+      "voltageKv": 300,
+      "reason": "industrial-customer",
+      "note": "Herøya industrial park, fed only from Porsgrunn.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2F8C754B-0523-4BF7-A2C7-EB76AE329224%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2F8C754B-0523-4BF7-A2C7-EB76AE329224}",
+          "note": "NVE transmission line \"Porsgrunn - Herøya\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "fraena",
+      "voltageKv": 420,
+      "reason": "radial-supply",
+      "note": "Fræna is fed only from Viklandet and supplies Nyhamna.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B24C4CB60-803C-459A-93B9-68C6910C4544%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{24C4CB60-803C-459A-93B9-68C6910C4544}",
+          "note": "NVE transmission line \"Viklandet - Fræna\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "nyhamna",
+      "voltageKv": 420,
+      "reason": "industrial-customer",
+      "note": "Nyhamna gas processing plant beyond Fræna.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B24C4CB60-803C-459A-93B9-68C6910C4544%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{24C4CB60-803C-459A-93B9-68C6910C4544}",
+          "note": "NVE transmission line \"Viklandet - Fræna\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "kolsvik",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Kolsvik power plant on its single line to Namsskogan.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB61F78B2-CEA5-4274-BB6D-D8EACF63BE87%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B61F78B2-CEA5-4274-BB6D-D8EACF63BE87}",
+          "note": "NVE transmission line \"Kolsvik - Namsskogan\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 209",
+          "note": "NVE hydropower plant \"Kolsvik\" 128 MW, Bindal"
+        }
+      ]
+    },
+    {
+      "stationId": "kjela",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Kjela power plant on its single line to Nystøyl.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BF266021F-E805-48EB-A4B6-13831CAC6524%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{F266021F-E805-48EB-A4B6-13831CAC6524}",
+          "note": "NVE transmission line \"Nystøyl - Kjela\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 203",
+          "note": "NVE hydropower plant \"Kjela\" 62 MW, Vinje"
+        }
+      ]
+    },
+    {
+      "stationId": "lio",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Lio power plant (underground) on its single line to Eidsborg.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BA8077FA2-2CDE-47E2-A129-D9BA1C36259B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{A8077FA2-2CDE-47E2-A129-D9BA1C36259B}",
+          "note": "NVE transmission line \"Lio - Eidsborg\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 246",
+          "note": "NVE hydropower plant \"Lio\" 43 MW, Tokke"
+        }
+      ]
+    },
+    {
+      "stationId": "blafalli-3",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Blåfalli III power plant on its single line to Blåfalli.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BD9C2B199-B5A5-4C26-A394-91B6FA8A2C53%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D9C2B199-B5A5-4C26-A394-91B6FA8A2C53}",
+          "note": "NVE transmission line \"Blåfalli 3 - Blåfalli\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 31",
+          "note": "NVE hydropower plant \"Blåfalli III H\" 100 MW, Kvinnherad"
+        }
+      ]
+    },
+    {
+      "stationId": "hadeland",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Hadeland is fed only from Roa.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2864B341-70B7-468F-94E1-BE9C7AF6383B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2864B341-70B7-468F-94E1-BE9C7AF6383B}",
+          "note": "NVE transmission line \"Hadeland - Roa\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "midtfjellet",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Midtfjellet wind farm on its single line to Børtveit.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B6FE7890D-F775-41B8-9C94-A686799E9FA8%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6FE7890D-F775-41B8-9C94-A686799E9FA8}",
+          "note": "NVE transmission line \"Midtfjellet - Børtveit\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "fortun",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Fortun on its single 300 kV line to Leirdøla.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B8910BBDD-A121-4574-A621-741228C040AC%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8910BBDD-A121-4574-A621-741228C040AC}",
+          "note": "NVE transmission line \"Leirdøla - Fortun\" 300 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "jostedal",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Jostedal power plant (underground) on its single line to Leirdøla.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BACAB4395-4247-40F1-BE7C-251C3170CD7E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{ACAB4395-4247-40F1-BE7C-251C3170CD7E}",
+          "note": "NVE transmission line \"Jostedal - Leirdøla\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 547",
+          "note": "NVE hydropower plant \"Jostedal\" 288 MW, Luster"
+        }
+      ]
+    },
+    {
+      "stationId": "nygard",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Nygard pumped-storage plant (underground) on its single line to Modalen.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0775A1E2-1252-4B8F-A85C-8E35157452E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0775A1E2-1252-4B8F-A85C-8E35157452E0}",
+          "note": "NVE transmission line \"S 300 Nygard-Modalen\" 300 kV (EVINY FORNYBAR AS)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 827",
+          "note": "NVE hydropower plant \"Nygard\" 56 MW, Modalen"
+        }
+      ]
+    },
+    {
+      "stationId": "borgund",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Borgund power plant on its single line to Øljusjøen.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2899B065-1A54-4347-BE5E-F7847B0CC546%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2899B065-1A54-4347-BE5E-F7847B0CC546}",
+          "note": "NVE transmission line \"Borgund - Øljusjøen\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 35",
+          "note": "NVE hydropower plant \"Borgund\" 212 MW, Lærdal"
+        }
+      ]
+    },
+    {
+      "stationId": "rendalen",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Rendalen power plant on its single line to Balbergskaret.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B7E076DC1-F98F-48AB-8125-6CBD51FB4A5A%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{7E076DC1-F98F-48AB-8125-6CBD51FB4A5A}",
+          "note": "NVE transmission line \"Rendalen - Balbergskaret\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 336",
+          "note": "NVE hydropower plant \"Rendalen\" 100.5 MW, Rendalen"
+        }
+      ]
+    },
+    {
+      "stationId": "snilldal",
+      "voltageKv": 420,
+      "reason": "radial-supply",
+      "note": "Snilldal is fed only from Surna.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE2B98C15-C53D-4F35-9A78-CCC14D8C0926%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E2B98C15-C53D-4F35-9A78-CCC14D8C0926}",
+          "note": "NVE transmission line \"Snilldal - Surna\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "afjord",
+      "voltageKv": 420,
+      "reason": "radial-supply",
+      "note": "Åfjord is fed only from Hofstad.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3717E0DE-7916-4201-BF44-9A9C11E51C5B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3717E0DE-7916-4201-BF44-9A9C11E51C5B}",
+          "note": "NVE transmission line \"Hofstad - Åfjord\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "uvdal-2",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Uvdal II power plant on its single line to Nore.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B4F8E1BB8-F203-44B3-BFAF-8E2686543535%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{4F8E1BB8-F203-44B3-BFAF-8E2686543535}",
+          "note": "NVE transmission line \"Uvdal 2 - Nore\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 483",
+          "note": "NVE hydropower plant \"Uvdal 2\" 40 MW, Nore og Uvdal"
+        }
+      ]
+    },
+    {
+      "stationId": "hylen",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Hylen power plant on its single line to Sauda.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9AB4AD99-54CE-47DE-8B60-13056A747BF3%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9AB4AD99-54CE-47DE-8B60-13056A747BF3}",
+          "note": "NVE transmission line \"Hylen - Sauda\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 167",
+          "note": "NVE hydropower plant \"Hylen\" 160 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "stationId": "oksla",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Oksla power plant on its single line to Åsen.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B288FF8EC-4A75-4ADA-B93E-1CAA0774CE38%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{288FF8EC-4A75-4ADA-B93E-1CAA0774CE38}",
+          "note": "NVE transmission line \"Åsen - Oksla\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 317",
+          "note": "NVE hydropower plant \"Oksla\" 206 MW, Ullensvang"
+        }
+      ]
+    },
+    {
+      "stationId": "sonna",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Sønnå power plant (underground) with its plant connection only.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 1422",
+          "note": "NVE hydropower plant \"Sønnå H\" 212.4 MW, Sauda"
+        }
+      ]
+    },
+    {
+      "stationId": "hove-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Hove power plant (underground) beside Hove switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 163",
+          "note": "NVE hydropower plant \"Hove\" 60 MW, Vik"
+        }
+      ]
+    },
+    {
+      "stationId": "usta-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Usta power plant (underground) beside Usta station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 480",
+          "note": "NVE hydropower plant \"Usta\" 205.22 MW, Ål"
+        }
+      ]
+    },
+    {
+      "stationId": "kobbelv",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Kobbelv power plant (underground) connected to the Kobbvatnet area.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 206",
+          "note": "NVE hydropower plant \"Kobbelv\" 300 MW, Sørfold"
+        }
+      ]
+    },
+    {
+      "stationId": "skillemoen",
+      "voltageKv": 420,
+      "reason": "radial-supply",
+      "note": "Skillemoen is the end of the 420 kV operation from Balsfjord: Skillemoen – Skaidi is built for 420 kV but operated at 132 kV.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6}",
+          "note": "NVE transmission line \"Balsfjord - Skillemoen\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://statnett.no/en/our-projects/northern-norway/balsfjord-skaidi/News-archive/extending-the-power-line-to-skaidi",
+          "ref": "Extending the power line to Skaidi",
+          "note": "Skillemoen – Skaidi is built for 420 kV but operated at 132 kV until demand increases"
+        }
+      ]
+    }
+  ]
+}
