@@ -719,9 +719,10 @@ fn heater_embedded_blocks_equal_the_wiki_strict_blocks() {
     }
 }
 
-/// Metastable bulk liquid inside the bounded band is admitted unchanged:
-/// the saturated-bulk onset applies, nucleate boiling acts once the wall
-/// is above the liquid, and a wall between Tsat and T_L cools the liquid.
+/// Metastable bulk liquid inside the bounded band is admitted: a wall at or
+/// below Tsat cools it sensibly, a wall above it boils through the
+/// saturated-bulk onset, and a wall in (Tsat, T_L] refuses by name until SPEC
+/// selects that combination.
 #[test]
 fn heater_wet_law_admits_metastable_bulk_liquid_through_the_saturated_onset() {
     let c = cell();
@@ -738,10 +739,19 @@ fn heater_wet_law_admits_metastable_bulk_liquid_through_the_saturated_onset() {
         let point = If97.liquid(s(p), s(tl)).unwrap();
         let ct = h.liquid_contact_at(s(p), s(tl), point, &If97).unwrap();
         let hg = ct.saturation.vapor.enthalpy.value;
-        // A wall between Tsat and the liquid: sensible cooling, no birth.
-        let cool = h.wet_flux(1, &ct, s(ts + 0.5 * superheat), &If97).unwrap();
+        // A wall at or below Tsat: sensible cooling, no birth.
+        let cool = h.wet_flux(1, &ct, s(ts - 0.5), &If97).unwrap();
         assert_eq!(cool.mode, "sensible");
         assert!(cool.heat.value < 0. && cool.vapor_mass.value == 0.);
+        // A wall in (Tsat, T_L]: refused by name, never extrapolated.
+        for wall in [ts.next_up(), ts + 0.5 * superheat, tl] {
+            match h.wet_flux(1, &ct, s(wall), &If97) {
+                Err(Failure::Recoverable(m)) => {
+                    assert!(m.contains("no selected combination"), "{m}")
+                }
+                other => panic!("wall {wall} K: {other:?}"),
+            }
+        }
         // Above the liquid: nucleate with chi qb / (hg,sat − h_L).
         let wall = tl + 0.5;
         let hot = h.wet_flux(1, &ct, s(wall), &If97).unwrap();
@@ -749,12 +759,9 @@ fn heater_wet_law_admits_metastable_bulk_liquid_through_the_saturated_onset() {
         let qb = hot.heat.value - coefficient * (wall - tl);
         let gamma = chi * qb / (hg - point.enthalpy.value);
         assert!((hot.vapor_mass.value - gamma).abs() <= 1e-12 * gamma);
-        // The wall-temperature step at T_w = T_L that the shared wall <=
-        // liquid branch leaves for strictly superheated bulk, reported.
-        let at = h.wet_flux(1, &ct, s(tl), &If97).unwrap().heat.value;
         let above = h.wet_flux(1, &ct, s(tl.next_up()), &If97).unwrap();
         println!(
-            "15 MPa, bulk {superheat} K above Tsat: q at T_w = T_L {at:.3e} W/m², just above {:.3e} W/m² ({})",
+            "15 MPa, bulk {superheat} K above Tsat: (Tsat, T_L] refused; just above T_L {:.3e} W/m² ({})",
             above.heat.value, above.mode
         );
     }

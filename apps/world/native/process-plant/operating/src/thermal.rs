@@ -809,6 +809,19 @@ pub(crate) fn liquid_wall_current<P: WaterProperties>(
     if bulk_t.value > sat.temperature.value && !matches!(law.film, Film::Heater(_)) {
         return Err("stable liquid wall recipient required");
     }
+    // A wall in (Tsat, T_L] under strictly superheated bulk has no selected
+    // boiling combination (the sensible term is negative there); it refuses
+    // rather than extrapolating the cube root. Only the actual wall is
+    // tested: the turnover search below may probe that interval.
+    if matches!(law.film, Film::Heater(_))
+        && bulk.enthalpy.value > sat.liquid.enthalpy.value
+        && wall_t.value > sat.temperature.value
+        && wall_t.value <= bulk_t.value
+    {
+        return Err(
+            "superheated bulk liquid with the wall in (Tsat, T_L]: no selected combination",
+        );
+    }
     let (pre, pre_gamma, onset, _) =
         wet(props, pressure, bulk_t, wall_t, mass_flux, law, sat, bulk)?;
     if wall_t.value <= onset.value || wall_t.value <= bulk_t.value {
