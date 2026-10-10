@@ -29,6 +29,8 @@ import {
 import { fetchNveVannkraft, groupVannkraftPlants, parseVannkraftPage } from '../src/packs/electric-grid/sources/nve-vannkraft.ts'
 import { fetchNveVindkraft, mergeVindkraftLayers, parseVindkraftPage } from '../src/packs/electric-grid/sources/nve-vindkraft.ts'
 import { registryUserAgent, sha256Hex, type FetchContext } from '../src/packs/electric-grid/sources/registry-fetch.ts'
+import { interconnectorTableSchema } from '../src/packs/electric-grid/schemas/grid-interconnector.ts'
+import { majorSiteTableSchema } from '../src/packs/electric-grid/schemas/grid-major-site.ts'
 
 // Recorded subsets of the 2026-10-10 responses (tests/fixtures/electric-grid); no network.
 const fixture = (name: string): Promise<string> => readFile(join(import.meta.dir, 'fixtures', 'electric-grid', name), 'utf8')
@@ -279,5 +281,58 @@ describe('Kartverket municipalities and NVE bidding zones', () => {
     expect(coverage.unlocated.map(entry => entry.municipalityNumber)).toEqual(['0000'])
     expect(coverage.pointPriceArea.map(entry => [entry.municipalityNumber, entry.priceAreas])).toEqual([['0301', ['NO1']], ['1563', ['NO3']]])
     expect(() => municipalityCoverage(municipality, kommuner.slice(0, 1), [])).toThrow(/1563/)
+  })
+})
+
+describe('curated interconnector and major-site tables', () => {
+  const modelPath = (name: string): string => join(import.meta.dir, '..', 'src', 'packs', 'electric-grid', 'models', name)
+  const interconnectors = async () => interconnectorTableSchema.parse(JSON.parse(await readFile(modelPath('norway-interconnectors.json'), 'utf8')))
+  const majorSites = async () => majorSiteTableSchema.parse(JSON.parse(await readFile(modelPath('norway-major-sites.json'), 'utf8')))
+
+  test('lists every cross-border link with evidence', async () => {
+    const table = await interconnectors()
+    const ids = table.links.map(link => link.id)
+    for (const id of [
+      'hvdc:norned', 'hvdc:nordlink', 'hvdc:north-sea-link', 'hvdc:skagerrak-1', 'hvdc:skagerrak-2', 'hvdc:skagerrak-3', 'hvdc:skagerrak-4',
+      'ac:hasle-borgvik', 'ac:halden-loviseholm', 'ac:eidskog-charlottenberg', 'ac:nea-jarpstrommen', 'ac:nedre-rossaga-ajaure',
+      'ac:ofoten-ritsem', 'ac:varangerbotn-ivalo', 'ac:kirkenes-boris-gleb',
+    ]) expect(ids).toContain(id)
+    for (const link of table.links) {
+      expect(link.evidence.length).toBeGreaterThan(0)
+      if (link.inService) expect(link.osmWayIds.length).toBeGreaterThan(0)
+    }
+    expect(table.links.filter(link => link.kind === 'hvdc').every(link => link.lossPercentAtRated > 0 && link.rampMwPerMinute > 0)).toBe(true)
+  })
+
+  test('describes the Nordic synchronous remainder and the HVDC-only areas', async () => {
+    const table = await interconnectors()
+    const nordic = table.externalSystems.find(system => system.id === 'external:nordic-remainder')
+    expect(nordic?.synchronous).toBe(true)
+    expect(nordic?.cases?.winterPeak.inertiaGws).toBeGreaterThan(nordic!.cases!.summerLow.inertiaGws)
+    const hvdcAreas = new Set(table.links.filter(link => link.kind === 'hvdc').map(link => link.foreignArea))
+    for (const area of hvdcAreas) expect(table.externalSystems.some(system => system.area === area && !system.synchronous)).toBe(true)
+  })
+
+  test('rejects a link without evidence and an AC link to an HVDC-only area', async () => {
+    const raw = JSON.parse(await readFile(modelPath('norway-interconnectors.json'), 'utf8'))
+    const noEvidence = structuredClone(raw)
+    noEvidence.links[0].evidence = []
+    expect(interconnectorTableSchema.safeParse(noEvidence).success).toBe(false)
+    const acToNl = structuredClone(raw)
+    const ac = acToNl.links.find((link: { kind: string }) => link.kind === 'ac')
+    ac.foreignArea = 'NL'
+    expect(interconnectorTableSchema.safeParse(acToNl).success).toBe(false)
+  })
+
+  test('places every major site at a substation with published demand and evidence', async () => {
+    const table = await majorSites()
+    expect(table.sites.length).toBeGreaterThanOrEqual(15)
+    for (const site of table.sites) {
+      expect(site.evidence.length).toBeGreaterThan(0)
+      expect(site.elhubAbsorption.municipalityNr).toBe(site.municipalityNr)
+      if (site.offshore) expect(site.kind).toBe('petroleum-site')
+    }
+    const municipalities = new Set(table.sites.map(site => site.municipalityNr))
+    for (const number of ['1563', '4626', '1149', '4643', '1824', '1146', '4617', '5603', '1833', '4206', '1547']) expect(municipalities).toContain(number)
   })
 })
