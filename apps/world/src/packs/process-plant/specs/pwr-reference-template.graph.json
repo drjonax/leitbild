@@ -26,6 +26,7 @@
         "fuelTemperatureFeedbackPcmPerC": -1.2,
         "referenceBoronConcentrationPpm": 1200,
         "boronFeedbackPcmPerPpm": -0.08,
+        "voidFeedbackPcmPerPercent": -150,
         "criticalRodInsertionFraction": 0.15,
         "rodWorthPcm": 1200,
         "kineticsPcmPerEfoldPerSecond": 2400,
@@ -4281,8 +4282,8 @@
         }
       ],
       "physical": {
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "diameterM": 0.284,
+        "nominalFlowKgPerS": 4250
       }
     },
     {
@@ -4401,8 +4402,7 @@
         "diameterM": 0.76,
         "volumeM3": 14,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -4489,8 +4489,7 @@
         "diameterM": 0.76,
         "volumeM3": 15,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -4637,8 +4636,8 @@
         }
       ],
       "physical": {
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "diameterM": 0.70,
+        "nominalFlowKgPerS": 4250
       }
     },
     {
@@ -4655,8 +4654,7 @@
         "diameterM": 0.76,
         "volumeM3": 14,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -4743,8 +4741,7 @@
         "diameterM": 0.76,
         "volumeM3": 15,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -4891,8 +4888,8 @@
         }
       ],
       "physical": {
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "diameterM": 0.70,
+        "nominalFlowKgPerS": 4250
       }
     },
     {
@@ -4909,8 +4906,7 @@
         "diameterM": 0.76,
         "volumeM3": 14,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -4997,8 +4993,7 @@
         "diameterM": 0.76,
         "volumeM3": 15,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -5145,8 +5140,8 @@
         }
       ],
       "physical": {
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "diameterM": 0.70,
+        "nominalFlowKgPerS": 4250
       }
     },
     {
@@ -5163,8 +5158,7 @@
         "diameterM": 0.76,
         "volumeM3": 14,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -5251,8 +5245,7 @@
         "diameterM": 0.76,
         "volumeM3": 14,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -5339,8 +5332,7 @@
         "diameterM": 0.76,
         "volumeM3": 14,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -5427,8 +5419,7 @@
         "diameterM": 0.76,
         "volumeM3": 15,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -5515,8 +5506,7 @@
         "diameterM": 0.76,
         "volumeM3": 15,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -5603,8 +5593,7 @@
         "diameterM": 0.76,
         "volumeM3": 15,
         "nominalResistance": 0.04,
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "nominalFlowKgPerS": 4250
       },
       "variables": [
         {
@@ -5751,8 +5740,8 @@
         }
       ],
       "physical": {
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "diameterM": 0.70,
+        "nominalFlowKgPerS": 4250
       }
     },
     {
@@ -5829,8 +5818,8 @@
         }
       ],
       "physical": {
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "diameterM": 0.70,
+        "nominalFlowKgPerS": 4250
       }
     },
     {
@@ -5907,8 +5896,8 @@
         }
       ],
       "physical": {
-        "nominalFlowKgPerS": 4250,
-        "leakCoefficientKgPerSPerSqrtMPa": 520
+        "diameterM": 0.70,
+        "nominalFlowKgPerS": 4250
       }
     },
     {

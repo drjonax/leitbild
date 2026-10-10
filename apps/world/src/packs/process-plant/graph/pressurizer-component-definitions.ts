@@ -85,6 +85,7 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'steamMassFlowKgPerS', label: 'Pressurizer steam net mass flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
       variable({ path: 'steamVolumeM3', label: 'Pressurizer steam volume', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'volume', unit: 'm3' }),
       variable({ path: 'flashingRateKgPerS', label: 'Pressurizer flashing rate', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
+      variable({ path: 'compressedWaterVolumeM3', label: 'Reactor coolant compressed beyond its room', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'volume', unit: 'm3' }),
       variable({ path: 'waterInventoryBalanceResidualKg', label: 'Pressurizer water inventory balance residual', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'massDelta', unit: 'kg' }),
       variable({ path: 'steamMassBalanceResidualKg', label: 'Pressurizer steam mass balance residual', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'massDelta', unit: 'kg' }),
       variable({ path: 'waterTemperatureC', label: 'Pressurizer water temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),

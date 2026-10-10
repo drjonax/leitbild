@@ -20,6 +20,7 @@ export const pressurizerInitialValueDefinitions: ReadonlyArray<ComponentInitialV
       if (localPath === 'steamMassFlowKgPerS') return 0
       if (localPath === 'steamVolumeM3') return volume * (1 - nominalLevelFraction)
       if (localPath === 'flashingRateKgPerS') return 0
+      if (localPath === 'compressedWaterVolumeM3') return 0
       if (localPath === 'waterInventoryBalanceResidualKg') return 0
       if (localPath === 'steamMassBalanceResidualKg') return 0
       if (localPath === 'waterTemperatureC') return saturation.temperatureC

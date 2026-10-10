@@ -1415,7 +1415,8 @@ describe('process plant runtime', () => {
     for (let index = 0; index < 40; index += 1) runtime.tick(100)
     const initialLevel = Number(runtime.readVariable(valueOf('pressurizer.levelPercent')))
     const initialInventory = Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryKg')))
-    runtime.writeCommand({ type: 'setVariable', path: valueOf('rcs-cold-leg-a.leak.areaFraction'), value: 0.2 })
+    // A break of half a percent of the cold leg's area: about 150 kg/s, choked.
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('rcs-cold-leg-a.leak.areaFraction'), value: 0.005 })
     let largestOutsurge = 0
     for (let index = 0; index < 240; index += 1) {
       runtime.tick(100)
@@ -1426,7 +1427,8 @@ describe('process plant runtime', () => {
     expect(largestOutsurge).toBeLessThan(-100)
     expect(Number(runtime.readVariable(valueOf('pressurizer.levelPercent')))).toBeLessThan(initialLevel - 10)
     expect(Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryKg')))).toBeGreaterThan(initialInventory * 0.97)
-    expect(Number(runtime.readVariable(valueOf('vessel.loopVoidFraction')))).toBeCloseTo(0, 6)
+    // Only the surge line's lag behind the leak leaves room in the loops.
+    expect(Number(runtime.readVariable(valueOf('vessel.loopVoidFraction')))).toBeLessThan(0.002)
   })
 
   test('primary coolant link pressure drop and leaks are link-local hydraulic effects', () => {

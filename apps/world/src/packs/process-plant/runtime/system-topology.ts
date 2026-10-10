@@ -32,6 +32,10 @@ export const primarySystemReactorVessel = (
   plant: CompiledProcessPlant,
 ): CompiledComponent | null => uniqueComponentByKind(plant, 'reactorVessel')
 
+export const primarySystemContainment = (
+  plant: CompiledProcessPlant,
+): CompiledComponent | null => uniqueComponentByKind(plant, 'containmentVolume')
+
 export const primarySystemReactorCore = (
   plant: CompiledProcessPlant,
 ): CompiledComponent | null => uniqueComponentByKind(plant, 'reactorCore')

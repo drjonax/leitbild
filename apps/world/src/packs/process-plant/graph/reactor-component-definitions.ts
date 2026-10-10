@@ -56,6 +56,8 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       fuelTemperatureFeedbackPcmPerC: z.number().finite().optional(),
       referenceBoronConcentrationPpm: z.number().finite().nonnegative().optional(),
       boronFeedbackPcmPerPpm: z.number().finite().optional(),
+      /** Reactivity per percent of the coolant's volume that is steam. */
+      voidFeedbackPcmPerPercent: z.number().finite().nonpositive().optional(),
       criticalRodInsertionFraction: normalized.optional(),
       rodWorthPcm: z.number().finite().positive().optional(),
       kineticsPcmPerEfoldPerSecond: z.number().finite().positive().optional(),
@@ -91,6 +93,7 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'promptReactivityPcm', label: 'Rod-programmed reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'temperatureFeedbackPcm', label: 'Temperature feedback reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'boronFeedbackPcm', label: 'Boron feedback reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
+      variable({ path: 'voidFeedbackPcm', label: 'Void feedback reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'effectiveReactivityPcm', label: 'Effective core reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'rodInsertionFraction', label: 'Rod insertion demand', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'sourceRangeEnergized', label: 'Source-range detector high voltage on', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),

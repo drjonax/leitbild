@@ -27,6 +27,7 @@ import {
   saturationPressureMPaFromTemperatureC,
 } from '../water-properties.ts'
 import { pressurizerSprayFlowKgPerS } from './pressurizer-behaviors.ts'
+import { primaryBreakFlow } from '../links/primary-break-flow.ts'
 import { nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
 
 type ReactorBehaviorSystem = Parameters<ComponentBehaviorDefinition['update']>[0]['system']
@@ -133,6 +134,21 @@ const combineBoundaryInflows = (inflows: ReadonlyArray<BoundaryInflow>): Boundar
 
 type ReactorBehaviorComponent = ReactorBehaviorSystem['graph']['components'][number]
 
+/** The steam the reactor coolant system's breaks discharge, at the flow each break link carries. */
+const primaryBreakSteamFlowKgPerS = (system: ReactorBehaviorSystem, context: ReactorBehaviorContext): number => {
+  let steam = 0
+  for (const link of system.graph.links) {
+    if (link.service !== 'primaryCoolant') continue
+    const leakPath = processLinkVariablePath(link, 'leakFlowKgPerS')
+    if (!context.has(leakPath)) continue
+    const leak = context.readNumber(leakPath)
+    if (leak <= 0) continue
+    const breakFlow = primaryBreakFlow(system, link, context)
+    if (breakFlow.totalKgPerS > 0) steam += leak * breakFlow.steamKgPerS / breakFlow.totalKgPerS
+  }
+  return steam
+}
+
 /** What crosses the reactor coolant system's boundary: charging and injection
  * in, letdown, leaks and tube leakage out of the loops, relief out of the pressurizer. */
 const pressurizerReliefFlow = (system: ReactorBehaviorSystem, context: ReactorBehaviorContext): number => {
@@ -226,6 +242,7 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       'decayHeatMw',
       'incoming:flowKgPerS',
       'reactorVessel.boronConcentrationPpm',
+      'reactorVessel.loopVoidFraction',
     ],
     writes: [
       'powerMw',
@@ -233,6 +250,7 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       'totalThermalPowerMw',
       'temperatureFeedbackPcm',
       'boronFeedbackPcm',
+      'voidFeedbackPcm',
       'effectiveReactivityPcm',
       'fuelTemperatureC',
       'fuelLowerTemperatureC',
@@ -265,7 +283,11 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       const boronFeedbackPcm =
         (boronConcentration - optionalParameterNumber(component, 'referenceBoronConcentrationPpm', boronConcentration))
         * optionalParameterNumber(component, 'boronFeedbackPcmPerPpm', 0)
-      const effectiveReactivity = reactivity + temperatureFeedbackPcm + boronFeedbackPcm
+      // Steam in the coolant takes moderator away: a voiding core shuts itself down.
+      const voidFeedbackPcm = vessel === null
+        ? 0
+        : context.readNumber(componentVariablePath(vessel, 'loopVoidFraction')) * 100 * optionalParameterNumber(component, 'voidFeedbackPcmPerPercent', 0)
+      const effectiveReactivity = reactivity + temperatureFeedbackPcm + boronFeedbackPcm + voidFeedbackPcm
       const currentPower = context.readNumber(componentVariablePath(component, 'powerMw'))
       const nextPower = reactorKineticsPowerStep({
         currentPowerMw: currentPower,
@@ -281,6 +303,7 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'fissionPowerMw'), nextPower)
       context.write(componentVariablePath(component, 'temperatureFeedbackPcm'), temperatureFeedbackPcm)
       context.write(componentVariablePath(component, 'boronFeedbackPcm'), boronFeedbackPcm)
+      context.write(componentVariablePath(component, 'voidFeedbackPcm'), voidFeedbackPcm)
       context.write(componentVariablePath(component, 'effectiveReactivityPcm'), effectiveReactivity)
 
       // Core thermal power is the prompt share of fission power plus the decay
@@ -353,9 +376,12 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       const coreHeat = Math.max(0, context.readNumber(componentVariablePath(component, 'totalThermalPowerMw')))
       const pumpHeat = context.readNumber(componentVariablePath(component, 'pumpHeatMw'))
       const bypassFraction = optionalParameterNumber(component, 'coreBypassFlowFraction', 0)
-      const inletEnthalpy = liquidEnthalpyKjPerKg(mixedInletTemperature, pressure) + pumpHeat * 1_000 / flow
+      // Cold-leg water arriving hotter than saturation flashes as it comes.
+      const arrivingEnthalpy = liquidEnthalpyKjPerKg(mixedInletTemperature, pressure) + pumpHeat * 1_000 / flow
+      const inletEnthalpy = Math.min(arrivingEnthalpy, saturation.liquidEnthalpyKjPerKg)
       const outletEnthalpy = inletEnthalpy + coreHeat * 1_000 / flow
       const coreExitEnthalpy = outletEnthalpy + coreHeat * 1_000 * bypassFraction / ((1 - bypassFraction) * flow)
+      const flowFlashing = flow * (arrivingEnthalpy - inletEnthalpy) / latentHeat
       const boiling = flow * Math.max(0, outletEnthalpy - saturation.liquidEnthalpyKjPerKg) / latentHeat
       const timeConstantSeconds = optionalParameterNumber(component, 'coolantThermalTimeConstantS', 8)
       const relaxed = (localPath: string, enthalpy: number): number => relaxToward(
@@ -364,33 +390,44 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
         dt,
         timeConstantSeconds,
       )
-      const inlet = relaxed('coolantInletTemperatureC', inletEnthalpy)
+      let inlet = relaxed('coolantInletTemperatureC', inletEnthalpy)
       let outlet = relaxed('coolantOutletTemperatureC', outletEnthalpy)
       let coreExit = relaxed('coreExitTemperatureC', coreExitEnthalpy)
 
-      // The hot side of the loops (upper plenum, hot legs, steam generator
-      // inlets: about half their water) flashes when the pressure falls
-      // below its saturation pressure, cooling to it, and takes steam back
-      // into the water when the pressure rises above it; each no further
-      // than brings the system's steam to the hot water's saturation pressure.
-      let vapourGeneration = boiling
+      // The loops' water, half on the hot side (upper plenum, hot legs, steam
+      // generator inlets) and half on the cold, flashes where the pressure is
+      // below its saturation pressure, cooling to it. The steam gathers at the
+      // loops' high points, on the hot side, and condenses there on water
+      // below its saturation pressure. Each goes no further than brings the
+      // system's steam to that water's saturation pressure, so the pressure
+      // holds where the steam the water raises balances what leaves.
+      let vapourGeneration = boiling + flowFlashing
       const vessel = primarySystemReactorVessel(system)
       const pressurizer = primarySystemPressurizer(system)
       const loopSteam = vessel === null ? 0 : context.readNumber(componentVariablePath(vessel, 'loopSteamMassKg'))
-      if (vessel !== null && pressurizer !== null && (outlet > saturation.temperatureC || loopSteam > 0)) {
-        const hotLiquid = 0.5 * Math.max(0, context.readNumber(componentVariablePath(vessel, 'primaryCoolantInventoryKg')) - loopSteam)
-        const hotEnthalpy = liquidEnthalpyKjPerKg(outlet, pressure)
-        const surplus = hotEnthalpy - saturation.liquidEnthalpyKjPerKg
+      if (vessel !== null && pressurizer !== null && (outlet > saturation.temperatureC || inlet > saturation.temperatureC || loopSteam > 0)) {
+        const halfLiquid = 0.5 * Math.max(0, context.readNumber(componentVariablePath(vessel, 'primaryCoolantInventoryKg')) - loopSteam)
         const steamRoom = context.readNumber(componentVariablePath(vessel, 'loopSteamVolumeM3')) + context.readNumber(componentVariablePath(pressurizer, 'steamVolumeM3'))
-        const steamToHotSaturation = saturatedWaterSteam(saturationPressureMPaFromTemperatureC(outlet)).vapourDensityKgPerM3 * steamRoom
-          - loopSteam - context.readNumber(componentVariablePath(pressurizer, 'steamMassKg'))
-        const phaseChange = surplus > 0
-          ? Math.min(hotLiquid * surplus / latentHeat * Math.min(1, dt / parameterNumber(vessel, 'flashingTimeConstantS')), Math.max(0, steamToHotSaturation))
-          : -Math.min(loopSteam + boiling * dt, hotLiquid * -surplus / latentHeat * Math.min(1, dt / parameterNumber(vessel, 'condensationTimeConstantS')), Math.max(0, -steamToHotSaturation))
-        if (hotLiquid > 0 && phaseChange !== 0) {
-          outlet = liquidTemperatureCFromEnthalpy(pressure, hotEnthalpy - phaseChange * latentHeat / hotLiquid)
+        let systemSteam = loopSteam + context.readNumber(componentVariablePath(pressurizer, 'steamMassKg')) + vapourGeneration * dt
+        let condensable = loopSteam + vapourGeneration * dt
+        const flashingFraction = Math.min(1, dt / parameterNumber(vessel, 'flashingTimeConstantS'))
+        const condensationFraction = Math.min(1, dt / parameterNumber(vessel, 'condensationTimeConstantS'))
+        const phaseChangeOf = (temperature: number, condenses: boolean): number => {
+          if (halfLiquid <= 0) return temperature
+          const enthalpy = liquidEnthalpyKjPerKg(temperature, pressure)
+          const surplus = enthalpy - saturation.liquidEnthalpyKjPerKg
+          const steamToSaturation = saturatedWaterSteam(saturationPressureMPaFromTemperatureC(temperature)).vapourDensityKgPerM3 * steamRoom - systemSteam
+          const phaseChange = surplus > 0
+            ? Math.min(halfLiquid * surplus / latentHeat * flashingFraction, Math.max(0, steamToSaturation))
+            : condenses ? -Math.min(condensable, halfLiquid * -surplus / latentHeat * condensationFraction, Math.max(0, -steamToSaturation)) : 0
+          if (phaseChange === 0) return temperature
+          systemSteam += phaseChange
+          condensable += phaseChange
           vapourGeneration += phaseChange / dt
+          return liquidTemperatureCFromEnthalpy(pressure, enthalpy - phaseChange * latentHeat / halfLiquid)
         }
+        outlet = phaseChangeOf(outlet, true)
+        inlet = phaseChangeOf(inlet, false)
         // The core exit flashes as the hot leg does.
         if (coreExit > saturation.temperatureC) coreExit = Math.max(outlet, saturation.temperatureC)
       }
@@ -404,7 +441,7 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
     id: 'reactor-vessel-primary-inventory-state',
     phase: 'updateComponentState',
     componentKind: 'reactorVessel',
-    reads: ['primaryCoolantInventoryKg', 'loopSteamMassKg', 'surgeFlowKgPerS', 'boronConcentrationPpm', 'charging:flowKgPerS', 'charging:soluteConcentrationPpm', 'primaryInjection:flowKgPerS', 'primaryInjection:soluteConcentrationPpm', 'safetyInjection:flowKgPerS', 'safetyInjection:soluteConcentrationPpm', 'letdown:flowKgPerS', 'primaryRelief:flowKgPerS', 'primaryCoolant:leakFlowKgPerS', 'steamGenerator.primaryToSecondaryLeakKgPerS', 'pressurizer.pressureMPa', 'pressurizer.sprayFlowKgPerS', 'pressurizer.waterInventoryKg', 'pressurizer.steamMassKg', 'reactorCore.vapourGenerationKgPerS'],
+    reads: ['primaryCoolantInventoryKg', 'loopSteamMassKg', 'pressurizer.levelPercent', 'boronConcentrationPpm', 'charging:flowKgPerS', 'charging:soluteConcentrationPpm', 'primaryInjection:flowKgPerS', 'primaryInjection:soluteConcentrationPpm', 'safetyInjection:flowKgPerS', 'safetyInjection:soluteConcentrationPpm', 'letdown:flowKgPerS', 'primaryRelief:flowKgPerS', 'primaryCoolant:leakFlowKgPerS', 'steamGenerator.primaryToSecondaryLeakKgPerS', 'pressurizer.pressureMPa', 'pressurizer.sprayFlowKgPerS', 'pressurizer.waterInventoryKg', 'pressurizer.steamMassKg', 'reactorCore.vapourGenerationKgPerS'],
     writes: [
       'primaryCoolantInventoryKg',
       'primaryCoolantInventoryDeviationKg',
@@ -461,18 +498,47 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       // returns water when the loops shrink, as far as it holds any. The
       // surge line's water takes about a second to follow.
       const vapourGeneration = core === null ? 0 : context.readNumber(componentVariablePath(core, 'vapourGenerationKgPerS'))
+      // A break carries off the loops' steam in the share it reaches the break.
+      const breakSteamFlow = Math.min(primaryLeakFlow, primaryBreakSteamFlowKgPerS(system, context))
       let steam = Math.max(0, currentSteam + vapourGeneration * dt)
+      const breakSteam = Math.min(steam, breakSteamFlow * dt)
+      steam -= breakSteam
+      // The loops' outflow leaves the liquid but for the steam the breaks take.
       let liquid = currentInventory - currentSteam + (totalInflow - loopOutflow - sprayFlow) * dt - (steam - currentSteam)
-      const steamVolume = Math.min(loopVolume, steam / saturation.vapourDensityKgPerM3)
-      const liquidCapacity = liquidDensity * (loopVolume - steamVolume)
+      // The loops' steam takes its share of the room the system's water
+      // leaves, at the density all its steam has there: the density the
+      // pressurizer will set the pressure from, not last step's pressure.
+      const pressurizerVolume = parameterNumber(pressurizer, 'volumeM3')
       const pressurizerWater = context.readNumber(componentVariablePath(pressurizer, 'waterInventoryKg'))
-      const surgeFlow = Math.max(-pressurizerWater / dt, relaxToward(
-        context.readNumber(componentVariablePath(component, 'surgeFlowKgPerS')),
-        (liquid - liquidCapacity) / dt,
-        dt,
-        parameterNumber(component, 'surgeLineTimeConstantS'),
-      ))
+      const pressurizerSteamMass = context.readNumber(componentVariablePath(pressurizer, 'steamMassKg'))
+      const pressurizerWaterVolume = context.readNumber(componentVariablePath(pressurizer, 'levelPercent')) / 100 * pressurizerVolume
+      const systemSteamRoom = loopVolume + pressurizerVolume - Math.max(0, liquid) / liquidDensity - pressurizerWaterVolume
+      const systemSteamDensity = steam + pressurizerSteamMass > 0 && systemSteamRoom > 0
+        ? (steam + pressurizerSteamMass) / systemSteamRoom
+        : saturation.vapourDensityKgPerM3
+      const steamVolume = Math.min(loopVolume, steam / systemSteamDensity)
+      const liquidCapacity = liquidDensity * (loopVolume - steamVolume)
+      const surgeLineTimeConstant = parameterNumber(component, 'surgeLineTimeConstantS')
+      // A full pressurizer takes no more water: the loops' surplus then stays
+      // in them, compressed, and the pressure rises until relief makes room.
+      const pressurizerRoom = Math.max(0, pressurizerVolume - pressurizerWaterVolume)
+      let surgeFlow = clamp(
+        (liquid - liquidCapacity) * Math.min(1, dt / surgeLineTimeConstant) / dt,
+        -pressurizerWater / dt,
+        pressurizerRoom * liquidDensity / dt,
+      )
       liquid -= surgeFlow * dt
+      // A drained pressurizer no longer seals the surge line: its steam and
+      // the loops' share one space, and steam flows down to even it out, on
+      // its way to a break.
+      if (pressurizerWater <= 0 && surgeFlow <= 0) {
+        const pressurizerSteam = pressurizerSteamMass
+        const loopRoom = Math.max(0, loopVolume - Math.max(0, liquid) / liquidDensity)
+        const evenShare = (pressurizerSteam + steam) * pressurizerVolume / (pressurizerVolume + loopRoom)
+        const steamOutsurge = Math.max(0, pressurizerSteam - evenShare) * Math.min(1, dt / surgeLineTimeConstant)
+        surgeFlow = -steamOutsurge / dt
+        steam += steamOutsurge
+      }
       // Loops drained of water discharge their steam instead.
       if (liquid < 0) {
         steam = Math.max(0, steam + liquid)

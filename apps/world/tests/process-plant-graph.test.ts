@@ -58,9 +58,12 @@ describe('process plant model composition', () => {
     // valves and relief header, again when low-pressure SI became blockable
     // below P-11, again when the steam-line N-16 monitors were made to read
     // in proportion to fission power, and again when the core's fission
-    // power was given a 0 to 4,500 MW hard range; PWR Runs checkpointed
-    // before then must be restarted.
-    expect(system.modelDigest).toBe('ebeea0e15c10b637550ccf727a17b7f3b749058e3d2472116b34a56895b8b541')
+    // power was given a 0 to 4,500 MW hard range, and on 2026-10-11, approved
+    // by the owner as a model-truth change, when reactor coolant breaks were
+    // made to discharge at their critical flow, the coolant's moderator void
+    // to feed back on reactivity and the pressurizer's compressed water to be
+    // tracked; PWR Runs checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('412b8142497d1b035298d134dac97ca54a89095e82c4236feb34d9e5e4c9bb19')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

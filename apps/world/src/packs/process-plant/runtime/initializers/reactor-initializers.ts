@@ -22,6 +22,7 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'promptReactivityPcm') return 0
       if (localPath === 'temperatureFeedbackPcm') return 0
       if (localPath === 'boronFeedbackPcm') return 0
+      if (localPath === 'voidFeedbackPcm') return 0
       if (localPath === 'effectiveReactivityPcm') return 0
       if (localPath === 'rodInsertionFraction') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1))
       if (localPath === 'sourceRangeEnergized') return nuclearInstrumentationReading(component, initialFissionPower).sourceRangeEnergized
