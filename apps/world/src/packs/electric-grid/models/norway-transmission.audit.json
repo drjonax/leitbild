@@ -2388,8 +2388,8 @@
     "unused": 0,
     "expired": 0,
     "violated": 0,
-    "curatedKm300kv": 15.549700000000001,
-    "curatedShare300kv": 0.001723153370335265
+    "curatedKm300kv": 15.626,
+    "curatedShare300kv": 0.0017315939793543368
    },
    "failures": []
   }

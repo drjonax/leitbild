@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import type { AuditCheck, GridAuditReport } from '../src/packs/electric-grid/audit/audit-report.ts'
 import { auditGridTopology } from '../src/packs/electric-grid/audit/grid-audit.ts'
 import { auditGraphFromGridModelV2 } from '../src/packs/electric-grid/audit/v2-adapter.ts'
-import { gridGeometrySchema } from '../src/packs/electric-grid/build/geometry.ts'
+import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
+import { loadGridGeometryArtifact } from '../src/packs/electric-grid/queries/map-geometry.ts'
 import { gridCurationCollectionSchema } from '../src/packs/electric-grid/schemas/grid-curation.ts'
 import { gridGoldenSchema } from '../src/packs/electric-grid/schemas/grid-golden.ts'
 import { validateGridLoadProfiles } from '../src/packs/electric-grid/schemas/grid-load-profile.ts'
@@ -77,25 +78,25 @@ describe('generated Norway companions', () => {
     }
   })
 
-  test('give every line, cable and HVDC link an ordered path except the ledgered ones', async () => {
-    const geometry = gridGeometrySchema.parse(await load('norway-transmission.geometry.json'))
+  test('give every branch and HVDC link a path the live map accepts, mapped for all but the ledgered lines', async () => {
+    const text = await readFile(join(models, 'norway-transmission.geometry.json'), 'utf8')
+    const winter = validateGridOperatingPoint(await load('norway-winter-weekday-peak.operating-point.json'), 'winter', gridOperatingPointTargetsForModel(model))
+    const runtime = compileGridModelV2(model, winter).model
+    const busLocation = new Map(model.buses.map(bus => [bus.id, bus.location]))
+    // The live map's loader checks model and build ids, coverage and from→to orientation.
+    const paths = loadGridGeometryArtifact({
+      file: 'norway-transmission.geometry.json',
+      text,
+      model: runtime,
+      hvdcLinks: model.hvdcLinks.map(link => ({ id: link.id, from: busLocation.get(link.fromBusId)!, to: busLocation.get(link.toBusId)! })),
+    })
+    expect(paths.simplificationMeters).toBe(50)
     const ledger = await load('norway-transmission.ledger.json') as { readonly summary: { readonly geometryUnresolved: ReadonlyArray<string> } }
-    expect(geometry.sourceBuildId).toBe(model.sourceBuild.id)
     const unresolved = new Set(ledger.summary.geometryUnresolved)
-    const lines = model.branches.filter(branch => branch.kind !== 'transformer' && !unresolved.has(branch.id)).map(branch => branch.id).sort()
-    expect(geometry.branches.map(entry => entry.id).sort()).toEqual(lines)
-    expect(geometry.hvdcLinks.map(entry => entry.id).sort()).toEqual(model.hvdcLinks.map(link => link.id).sort())
     expect(unresolved.size).toBeLessThanOrEqual(1)
-    const location = new Map(model.buses.map(bus => [bus.id, bus.location]))
-    const branchById = new Map(model.branches.map(branch => [branch.id, branch]))
-    const km = (a: readonly [number, number], b: readonly [number, number]): number =>
-      Math.hypot((a[0] - b[0]) * 111.32 * Math.cos(a[1] * Math.PI / 180), (a[1] - b[1]) * 110.574)
-    // Paths run from the from-bus towards the to-bus.
-    for (const entry of geometry.branches) {
-      const branch = branchById.get(entry.id)!
-      const [first, last] = [entry.path[0]!, entry.path.at(-1)!]
-      expect(km(first, location.get(branch.fromBusId)!) <= km(last, location.get(branch.fromBusId)!)).toBe(true)
-    }
+    const mapped = model.branches.filter(branch => branch.kind !== 'transformer' && !unresolved.has(branch.id))
+    expect(mapped.filter(branch => paths.branchPaths.get(branch.id)!.length < 2)).toEqual([])
+    expect(model.branches.filter(branch => branch.kind === 'transformer').every(branch => paths.branchPaths.get(branch.id)!.length === 2)).toBe(true)
   })
 
   test('normalise the load profiles to the reference hour', async () => {

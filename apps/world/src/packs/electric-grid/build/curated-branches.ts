@@ -112,7 +112,7 @@ export const curatedNetwork = (config: {
       const remote = levelBus(feature, properties.remoteSubstationOsmId, properties.voltageKv, false)
       const ways = wayIds.map(id => config.sidecar.way(id)!)
       const path = corridorPath(ways, remote.location, terminal.location) ?? fail(feature, `the ways of ${properties.wayOsmId} do not chain from ${remote.label} towards ${terminal.label}`)
-      branch(feature, remote, terminal, properties.voltageKv, [...path, terminal.location], wayIds, 1, false)
+      branch(feature, remote, terminal, properties.voltageKv, path, wayIds, 1, false)
     }
   }
   return { buses: addedBuses, branches, paths }

@@ -1,5 +1,6 @@
 import { priceAreaSchema, type PriceArea } from '../schemas/grid-ids.ts'
 import { validateGridModel, type GridBranchV2, type GridModelV2 } from '../schemas/grid-model.ts'
+import { validateGridGeometryArtifact } from '../schemas/grid-geometry.ts'
 import { validateGridLoadProfiles, type GridLoadProfiles } from '../schemas/grid-load-profile.ts'
 import { gridOperatingPointTargetsForModel, validateGridOperatingPoint, type GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
 import { priceAreasContaining } from '../sources/nve-bidding-zones.ts'
@@ -218,6 +219,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   }), 'norway load profiles (build)')
 
   const geometry = buildGeometry({ model, branches: main.branches, hvdcLinks: topology.hvdcLinks, curatedPaths: curated.paths, sidecar })
+  validateGridGeometryArtifact(geometry.geometry, 'norway geometry (build)')
   const buildEntries = ledger.entries()
   const counts: Record<string, number> = {}
   for (const entry of buildEntries) counts[entry.reason] = (counts[entry.reason] ?? 0) + 1

@@ -1,25 +1,18 @@
-import { z } from 'zod'
+import type { GridGeometryArtifact } from '../schemas/grid-geometry.ts'
 import type { GridModelV2 } from '../schemas/grid-model.ts'
 import type { TopologyBranch, TopologyHvdcLink } from '../topology/result.ts'
 import { roundLonLat, simplifyPath, type LonLat } from './geo.ts'
 import { corridorPath } from './paths.ts'
 import type { SidecarFeatures } from './sidecar-features.ts'
 
-// Line, cable and HVDC geometry for the live map (lane ML1): one ordered path per branch from its
-// from-bus to its to-bus, Douglas–Peucker simplified. Transformers have no geometry.
+// Map geometry for the live map (schemas/grid-geometry.ts): one path per branch and HVDC link,
+// ordered from its from-bus to its to-bus and Douglas–Peucker simplified. Lines and cables follow
+// their mapped ways; transformers, and the corridors whose ways do not chain (listed in the ledger
+// summary as geometryUnresolved), draw from bus to bus.
 
 export const geometrySimplificationMeters = 50
 
-const pathSchema = z.array(z.tuple([z.number().finite(), z.number().finite()])).min(2)
-export const gridGeometrySchema = z.object({
-  schemaVersion: z.literal(1),
-  modelId: z.string().min(1),
-  sourceBuildId: z.string().min(1),
-  simplificationMeters: z.literal(geometrySimplificationMeters),
-  branches: z.array(z.object({ id: z.string().min(1), path: pathSchema }).strict()),
-  hvdcLinks: z.array(z.object({ id: z.string().min(1), path: pathSchema }).strict()),
-}).strict()
-export type GridGeometry = z.infer<typeof gridGeometrySchema>
+export type GridGeometry = GridGeometryArtifact
 
 export interface GeometryOutcome {
   readonly geometry: GridGeometry
@@ -51,20 +44,19 @@ export const buildGeometry = (config: {
     }
     return simplifyPath(ordered, geometrySimplificationMeters).map(roundLonLat)
   }
-  const branches = config.model.branches.flatMap(branch => {
-    if (branch.kind === 'transformer') return []
+  const busToBus = (fromBusId: string, toBusId: string) => [busLocation.get(fromBusId)!, busLocation.get(toBusId)!].map(roundLonLat)
+  const branches = config.model.branches.map(branch => {
+    if (branch.kind === 'transformer') return { id: branch.id, path: busToBus(branch.fromBusId, branch.toBusId) }
     const curated = config.curatedPaths.get(branch.id)
-    if (curated !== undefined) return [{ id: branch.id, path: simplifyPath(curated, geometrySimplificationMeters).map(roundLonLat) }]
+    if (curated !== undefined) return { id: branch.id, path: simplifyPath(curated, geometrySimplificationMeters).map(roundLonLat) }
     const source = topologyBranch.get(branch.id)
     if (source === undefined) throw new Error(`${branch.id} has neither topology ways nor a curated path`)
-    const result = path(branch.id, source.sourceFeatureIds, branch.fromBusId, branch.toBusId)
-    return result === undefined ? [] : [{ id: branch.id, path: result }]
+    return { id: branch.id, path: path(branch.id, source.sourceFeatureIds, branch.fromBusId, branch.toBusId) ?? busToBus(branch.fromBusId, branch.toBusId) }
   })
   const hvdcLinks = config.model.hvdcLinks.flatMap(link => {
     const source = topologyLink.get(link.id)
     if (source === undefined) throw new Error(`${link.id} has no topology ways`)
-    const result = path(link.id, source.sourceFeatureIds, link.fromBusId, link.toBusId)
-    return result === undefined ? [] : [{ id: link.id, path: result }]
+    return [{ id: link.id, path: path(link.id, source.sourceFeatureIds, link.fromBusId, link.toBusId) ?? busToBus(link.fromBusId, link.toBusId) }]
   })
   return {
     geometry: {
