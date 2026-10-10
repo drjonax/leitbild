@@ -4,7 +4,7 @@ import { gridReferenceFeatureSchema, type GridReferenceFeatureProperties } from 
 export interface GridReferenceNode {
   readonly id: string
   readonly externalId: string
-  readonly category: 'substation' | 'transformer' | 'plant' | 'generator' | 'load'
+  readonly category: 'substation' | 'transformer' | 'plant' | 'generator'
   readonly label: string
   readonly lon: number
   readonly lat: number
@@ -132,7 +132,7 @@ const nodeFromFeature = (
   feature: NormalizedFeature,
   properties: GridReferenceFeatureProperties,
 ): GridReferenceNode | null => {
-  if (properties.category !== 'substation' && properties.category !== 'transformer' && properties.category !== 'plant' && properties.category !== 'generator' && properties.category !== 'load') return null
+  if (properties.category !== 'substation' && properties.category !== 'transformer' && properties.category !== 'plant' && properties.category !== 'generator') return null
   const position = positionOf(feature.geometry)
   if (!position) return null
   return {
