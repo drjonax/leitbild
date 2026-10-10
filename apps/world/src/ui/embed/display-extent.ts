@@ -39,7 +39,54 @@ export const generatedExtent = (viewport: { readonly width: number; readonly hei
 }
 
 // Content settles (a sample re-rendered, a drawing arrived) before its room is measured.
-const EXTENT_SETTLE_MS = 150
+export const EXTENT_SETTLE_MS = 150
+
+/** The view's size, and since when it has had it (ms on the page's clock). */
+export interface ViewportTrack {
+  readonly width: number
+  readonly height: number
+  readonly since: number
+}
+
+/** The size the view had when it began to be measured counts as long held. */
+export const startViewportTrack = (size: { readonly width: number; readonly height: number }): ViewportTrack =>
+  ({ width: size.width, height: size.height, since: Number.NEGATIVE_INFINITY })
+
+export const trackViewport = (
+  track: ViewportTrack,
+  size: { readonly width: number; readonly height: number },
+  now: number,
+): ViewportTrack => track.width === size.width && track.height === size.height ? track : { width: size.width, height: size.height, since: now }
+
+/** When the view first showed a drawing, and whether the view had kept its size for a settle period by then. */
+export interface DrawingSighting {
+  readonly drawing: object
+  readonly at: number
+  readonly heldBefore: boolean
+}
+
+export const sightDrawing = (
+  sighting: DrawingSighting | null,
+  drawing: object,
+  viewport: ViewportTrack,
+  now: number,
+): DrawingSighting => sighting?.drawing === drawing ? sighting : { drawing, at: now, heldBefore: now - viewport.since >= EXTENT_SETTLE_MS }
+
+/**
+ * Whether a generated drawing is measured in the size it was drawn for. The
+ * view does not say what size it asked for, so the view's own history
+ * stands in: the drawing must have appeared after the view had kept its size
+ * for a settle period (one arriving just after a resize was asked for the
+ * size before), and the view must have kept that size since. A view drawn
+ * for its new size always qualifies: it is asked for only once resizing has
+ * stopped for longer than a settle period (ComposedDisplayView relayouts
+ * 300 ms after the last resize). A drawing asked for before a resize that
+ * arrives later than a settle period after it still passes; telling that
+ * apart needs the size each drawing was asked for.
+ */
+export const drawingMeasurable = (sighting: DrawingSighting, viewport: ViewportTrack): boolean =>
+  sighting.heldBefore && viewport.since <= sighting.at
+
 // A generated display's scrollers: its panels and the drawing's viewport.
 const GENERATED_SCROLLERS = '.panels, .mimic-panel .viewport'
 // An advice drawing at its natural size (MimicPanel scales it inside, by transform).
@@ -49,9 +96,9 @@ const ADVICE_DRAWINGS = '.mimic-panel .drawing'
  * Measures the card whenever its content or size changes and reports the
  * room it needs once things settle; the reporter drops repeats. Nothing is
  * reported while the view connects (`drawing` undefined), nor for a generated
- * drawing measured in a frame of another size than the one it was drawn for:
- * a new drawing for the frame is on its way, and the window must not fit its
- * zoom to the one it replaces.
+ * drawing measured in a frame of another size than the one it was drawn for
+ * (drawingMeasurable): a new drawing for the frame is on its way, and the
+ * window must not fit its zoom to the one it replaces.
  */
 export const observeDisplayExtent = (config: {
   readonly kind: 'advice' | 'generated'
@@ -62,13 +109,24 @@ export const observeDisplayExtent = (config: {
 }): (() => void) => {
   const { card } = config
   let timer: ReturnType<typeof setTimeout> | undefined
-  let drawnFor: { readonly drawing: object; readonly width: number; readonly height: number } | null = null
+  const viewportSize = (): { readonly width: number; readonly height: number } => ({ width: window.innerWidth, height: window.innerHeight })
+  let viewport = startViewportTrack(viewportSize())
+  let sighting: DrawingSighting | null = null
   const watched = new Set<Element>()
 
+  // Every change the view hears of notes the view's size and the drawing it
+  // shows, so a drawing is dated when it appears rather than when it is measured.
+  const look = (): void => {
+    const now = performance.now()
+    viewport = trackViewport(viewport, viewportSize(), now)
+    const drawing = config.drawing()
+    if (drawing !== undefined) sighting = sightDrawing(sighting, drawing, viewport, now)
+  }
+
   const measure = (): DisplayExtent | null => {
+    look()
     const drawing = config.drawing()
     if (drawing === undefined) return null
-    const viewport = { width: window.innerWidth, height: window.innerHeight }
     if (config.kind === 'advice') {
       const style = getComputedStyle(card)
       const box = card.getBoundingClientRect()
@@ -79,8 +137,7 @@ export const observeDisplayExtent = (config: {
         padding: Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight),
       })
     }
-    if (drawnFor?.drawing !== drawing) drawnFor = { drawing, ...viewport }
-    if (drawnFor.width !== viewport.width || drawnFor.height !== viewport.height) return null
+    if (sighting === null || !drawingMeasurable(sighting, viewport)) return null
     return generatedExtent(viewport, [...card.querySelectorAll<HTMLElement>(GENERATED_SCROLLERS)])
   }
 
@@ -90,6 +147,7 @@ export const observeDisplayExtent = (config: {
     if (extent !== null && extent.width >= 1 && extent.height >= 1) config.report(extent)
   }
   const schedule = (): void => {
+    look()
     clearTimeout(timer)
     timer = setTimeout(settle, EXTENT_SETTLE_MS)
   }
@@ -115,10 +173,13 @@ export const observeDisplayExtent = (config: {
 
   watch()
   changed.observe(card, { childList: true, subtree: true, attributes: true, characterData: true })
+  // The view's own size: its frame resized, whether or not the card's size follows.
+  window.addEventListener('resize', schedule)
   schedule()
   return () => {
     clearTimeout(timer)
     resized.disconnect()
     changed.disconnect()
+    window.removeEventListener('resize', schedule)
   }
 }

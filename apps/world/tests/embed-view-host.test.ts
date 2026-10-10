@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { parseDisplayFrameMessage, type DisplayFrameMessage } from '../src/ui/embed/display-frame-protocol.ts'
-import { ADVICE_MIN_WIDTH, adviceExtent, generatedExtent } from '../src/ui/embed/display-extent.ts'
+import {
+  ADVICE_MIN_WIDTH,
+  EXTENT_SETTLE_MS,
+  adviceExtent,
+  drawingMeasurable,
+  generatedExtent,
+  sightDrawing,
+  startViewportTrack,
+  trackViewport,
+} from '../src/ui/embed/display-extent.ts'
 import {
   createViewHost,
   createZoomAccumulator,
@@ -271,5 +280,40 @@ describe('the room an embedded display needs', () => {
     const stacked = { scrollWidth: 1180, clientWidth: 1180, scrollHeight: 980, clientHeight: 640 }
     const wideDrawing = { scrollWidth: 1500, clientWidth: 1180, scrollHeight: 400, clientHeight: 400 }
     expect(generatedExtent({ width: 1200, height: 700 }, [stacked, wideDrawing])).toEqual({ kind: 'generated', minWidth: 1520, width: 1520, height: 1040 })
+  })
+})
+
+describe('a generated drawing is measured only in the size it was drawn for', () => {
+  const small = { width: 1000, height: 600 }
+  const large = { width: 1400, height: 800 }
+
+  test('a drawing in a view that kept its size is measured', () => {
+    const viewport = startViewportTrack(small)
+    // The view's first size counts as held, so a drawing already there is measured.
+    const sighting = sightDrawing(null, {}, viewport, 0)
+    expect(drawingMeasurable(sighting, trackViewport(viewport, small, 500))).toBe(true)
+  })
+
+  test('a drawing that appeared before the view was resized is not measured in the new size', () => {
+    let viewport = trackViewport(startViewportTrack(small), small, 0)
+    const drawing = {}
+    const sighting = sightDrawing(null, drawing, viewport, 100)
+    // The window is resized while the drawing shows, and the view settles at the new size.
+    viewport = trackViewport(viewport, { width: 1100, height: 600 }, 200)
+    viewport = trackViewport(viewport, large, 260)
+    // Measured only once things settle, the drawing is still the one drawn for the old size.
+    expect(sightDrawing(sighting, drawing, viewport, 260 + EXTENT_SETTLE_MS)).toBe(sighting)
+    expect(drawingMeasurable(sighting, viewport)).toBe(false)
+  })
+
+  test('a drawing that arrives just after a resize was asked for the size before; the one for the new size is measured', () => {
+    let viewport = trackViewport(startViewportTrack(small), large, 1_000)
+    const late = sightDrawing(null, {}, viewport, 1_000 + EXTENT_SETTLE_MS / 2)
+    expect(drawingMeasurable(late, viewport)).toBe(false)
+    // The view asks for a drawing for its new size only once resizing stopped for longer than a settle period.
+    const redrawn = sightDrawing(late, {}, viewport, 1_000 + 300 + 40)
+    expect(redrawn).not.toBe(late)
+    viewport = trackViewport(viewport, large, 1_000 + 300 + 40 + EXTENT_SETTLE_MS)
+    expect(drawingMeasurable(redrawn, viewport)).toBe(true)
   })
 })
