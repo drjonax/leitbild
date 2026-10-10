@@ -253,6 +253,8 @@ struct Sample {
     energy_identity_w: f64,
     /// Largest retained |volume flow| on a phase path with an absent donor.
     blocked_path_m3_s: f64,
+    /// (face, phase) carrying it, if any.
+    blocked_path_at: Option<(usize, usize)>,
 }
 fn sample<P: leitbild_operating_plant::network::Properties>(
     network: &mut Network<P>,
@@ -285,12 +287,15 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
         .map(|i| y[*i] * network.scales()[*i] / network.rotor_inertia())
         .collect();
     let budget = network.current_budget(y, yp);
-    let blocked_path_m3_s = (0..network.face_count())
+    let (blocked_path_m3_s, blocked_path_at) = (0..network.face_count())
         .flat_map(|f| (0..2).map(move |k| (f, k)))
-        .filter_map(|(f, k)| network.chart(f, k))
-        .filter(|c| c.blocked_absent_donor)
-        .map(|c| c.volume_flow_m3_s.value.abs())
-        .fold(0., f64::max);
+        .filter_map(|(f, k)| network.chart(f, k).map(|c| (f, k, c)))
+        .filter(|(_, _, c)| c.blocked_absent_donor)
+        .map(|(f, k, c)| (c.volume_flow_m3_s.value.abs(), Some((f, k))))
+        .fold(
+            (0., None),
+            |best, next| if next.0 > best.0 { next } else { best },
+        );
     Sample {
         t,
         roof_pa: roof.pressure.value - mixture * 9.80665 * taps.roof_rise_m,
@@ -303,6 +308,7 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
             .as_f64()
             .unwrap(),
         blocked_path_m3_s,
+        blocked_path_at,
         ..Sample::default()
     }
 }
@@ -392,8 +398,9 @@ fn advance_run(
                 samples.push(s);
                 let blocked = samples.last().map_or(0., |s: &Sample| s.blocked_path_m3_s);
                 if blocked > spec.blocked_path_limit_m3_s {
+                    let at = samples.last().and_then(|s: &Sample| s.blocked_path_at);
                     failure = Some(format!(
-                        "phantom momentum: blocked phase path carries {blocked} m3/s at t={t}"
+                        "phantom momentum: blocked phase path (face, phase) {at:?} carries {blocked} m3/s at t={t}"
                     ));
                 } else if stats.steps > spec.step_cap {
                     failure = Some(format!("run cap reached: {} steps", stats.steps));
@@ -565,7 +572,25 @@ fn s1_hydraulics_admission() {
     );
     let total_started = cpu_s();
     let wall_started = Instant::now();
-    let mut receipt = json!({"kind":"s1-hydraulics-admission","packet":packet_path,"gates":format!("{gates:?}"),"budgets":format!("{budgets:?}")});
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .expect("git provenance")
+    };
+    let packet_sha256 = std::process::Command::new("shasum")
+        .args(["-a", "256", &packet_path])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .expect("packet hash");
+    let mut receipt = json!({"kind":"s1-hydraulics-admission","packet":packet_path,"packet_sha256":packet_sha256,"app_commit":git(&["rev-parse","HEAD"]),"app_worktree_dirty":!git(&["status","--porcelain"]).is_empty(),"gates":format!("{gates:?}"),"budgets":format!("{budgets:?}")});
 
     // 1. Hydrostatic preparation at the declared operating point.
     let rotors = vec![
@@ -660,6 +685,15 @@ fn s1_hydraulics_admission() {
         println!("{}", serde_json::to_string(receipt).unwrap());
     };
     if !settled_ok {
+        // Diagnostic only (not a gate): the zero-time spectrum at the last
+        // accepted settling state, to attribute what the network was doing.
+        let mut probe = fresh(&packet);
+        let (a, b) = pencil(&mut probe, &settle.y, &settle.yp);
+        if let Ok(stop) = spectrum::decompose(settle.y.len(), &a, &b) {
+            let algebraic = prepared.differential.iter().filter(|v| **v == 0.).count();
+            receipt["diagnostic_spectrum_at_stop"] = json!({"finite":stop.modes.len(),"infinite":stop.infinite.count,"algebraic":algebraic,"unstable":stop.modes.iter().filter(|m|m.unstable).map(|m|json!({"hz":m.frequency_hz,"re":m.lambda.re,"e_fold_s":m.e_fold_s})).collect::<Vec<_>>(),"marginal":stop.modes.iter().filter(|m|m.marginal).count()});
+        }
+        receipt["stop_sample"] = json!(format!("{:?}", settle.samples.last()));
         finish(
             &mut receipt,
             "STOP: settling did not reach the declared mechanical rest",
