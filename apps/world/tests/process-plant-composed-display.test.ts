@@ -362,11 +362,15 @@ describe('thresholds drawn on composed trends', () => {
     const panel = panelOf([{ ref: 'SG-B-LVL-NR', role: 'primary' }, { ref: 'SG-A-LVL-NR', role: 'context' }, { ref: 'SG-C-LVL-NR', role: 'context' }])
     expect(panel.thresholds.map(threshold => [threshold.value, threshold.kind, threshold.signals])).toEqual([
       [20, 'trip', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
+      [20, 'trip', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
       [30, 'alarm', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
       [75, 'alarm', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
       [82, 'trip', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
     ])
     expect((panel.thresholds[1] as unknown as { ruleIds: string[]; direction: string })).toMatchObject({
+      direction: 'low', ruleIds: ['sg-b-level-low-low-reactor-trip', 'sg-a-level-low-low-reactor-trip', 'sg-c-level-low-low-reactor-trip'],
+    })
+    expect((panel.thresholds[2] as unknown as { ruleIds: string[]; direction: string })).toMatchObject({
       direction: 'low', ruleIds: ['sg-b-level-low', 'sg-a-level-low', 'sg-c-level-low'],
     })
   })
@@ -375,11 +379,12 @@ describe('thresholds drawn on composed trends', () => {
     const panel = panelOf([{ ref: 'SG-A-LVL-NR', role: 'primary' }, { ref: 'SG-B-LVL-NR', role: 'primary' }])
     expect(panel.thresholds.map(threshold => [threshold.value, threshold.signals])).toEqual([
       [20, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
+      [20, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
       [30, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
       [75, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
       [82, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
     ])
-    expect(panel.thresholds[1]!.label).toBe('Steam generator A level low · Steam generator B level low')
+    expect(panel.thresholds[2]!.label).toBe('Steam generator A level low · Steam generator B level low')
   })
 })
 

@@ -450,9 +450,12 @@ describe('alarms that apply only in power operation', () => {
       ],
     }))
     const qualified = plant.automation.rules.filter(rule => rule.modes !== undefined)
-    // All act at power only but safety injection, which acts down to hot standby.
-    expect(qualified.filter(rule => JSON.stringify(rule.modes) !== '["powerOperation"]').map(rule => [rule.id, rule.modes]))
-      .toEqual([['safety-injection-low-pzr-pressure', ['powerOperation', 'startup', 'hotStandby']]])
+    // All act at power only but the steam generator low-low level trips, which act wherever the reactor can be
+    // critical, and safety injection, which acts down to hot standby.
+    expect(qualified.filter(rule => JSON.stringify(rule.modes) !== '["powerOperation"]').map(rule => [rule.id, rule.modes])).toEqual([
+      ...['a', 'b', 'c', 'd'].map(loop => [`sg-${loop}-level-low-low-reactor-trip`, ['powerOperation', 'startup']]),
+      ['safety-injection-low-pzr-pressure', ['powerOperation', 'startup', 'hotStandby']],
+    ])
     expect(qualified.map(rule => rule.id)).toEqual(expect.arrayContaining(['generator-output-low', 'turbine-load-low']))
   })
 
@@ -637,6 +640,8 @@ describe('steam generator high level', () => {
   test('displays draw the high alarm and the P-14 high-high limit beside the low ones', () => {
     const level = resolveProcessPlantSignalBinding(graph, { tagId: 'SG-B-LVL-NR' as never }).path
     expect(icThresholdsForSignal(plant, level).thresholds.map(threshold => [threshold.value, threshold.kind, threshold.direction])).toEqual([
+      // Low-low starts auxiliary feedwater and, at the same set point, trips the reactor.
+      [20, 'trip', 'low'],
       [20, 'trip', 'low'],
       [30, 'alarm', 'low'],
       [75, 'alarm', 'high'],
@@ -664,6 +669,58 @@ describe('steam generator high level', () => {
     expect(tag('MFW-PUMP-B-RUNNING')).toBe(false)
     expect(Number(tag('TURB-STOP-POS'))).toBeLessThan(0.05)
     expect(tag('TRIP-BKR-A-POS')).toBe(false)
+  })
+})
+
+describe('steam generator low-low level', () => {
+  const lifecycleOf = (plantRun: ReturnType<typeof started>, id: string) =>
+    plantRun.protection.snapshot().trips.find(lifecycle => lifecycle.id === id)!
+  const reactorTripOf = (loop: string) => `trip:sg-${loop}-level-low-low-reactor-trip:low-low-level-reactor-trip`
+
+  // Run until the trip breakers read open, and say when and at what level.
+  const runToReactorTrip = (plantRun: ReturnType<typeof started>) => {
+    for (let second = 1; second <= 300; second += 1) {
+      plantRun.run(1_000)
+      if (plantRun.tag('TRIP-BKR-A-POS') === false) return { second, level: Number(plantRun.tag('SG-A-LVL-NR')) }
+    }
+    throw new Error('the reactor did not trip within 300 s of the loss of main feedwater')
+  }
+
+  test('a loss of main feedwater trips the reactor first out on low-low level, and the turbine with it', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('loss-main-feedwater')
+    const tripped = runToReactorTrip(plantRun)
+    // The trip comes in as the level crosses the 20 % set point, not later on another limit.
+    expect(tripped.level).toBeLessThan(20)
+    expect(tripped.level).toBeGreaterThan(18)
+    plantRun.run(15_000)
+    expect(lifecycleOf(plantRun, reactorTripOf('a'))).toMatchObject({ active: true, firstOut: true })
+    const active = plantRun.protection.snapshot().trips.filter(lifecycle => lifecycle.active)
+    expect(active.filter(lifecycle => lifecycle.firstOut).map(lifecycle => lifecycle.id)).toEqual([reactorTripOf('a')])
+    // The turbine trip the reactor trip causes does not trip the reactor again.
+    expect(active.map(lifecycle => lifecycle.id)).not.toContain('trip:reactor-turbine-trip:turbine-trip-reactor-trip')
+    expect(plantRun.tag('TRIP-BKR-B-POS')).toBe(false)
+    expect(Number(plantRun.read('core.powerMw'))).toBeLessThan(100)
+    expect(Number(plantRun.tag('TURB-STOP-POS'))).toBeLessThan(0.05)
+    expect(Number(plantRun.tag('GEN-MW'))).toBeLessThan(25)
+  })
+
+  test('auxiliary feedwater then restores steam generator level', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('loss-main-feedwater')
+    runToReactorTrip(plantRun)
+    plantRun.run(30_000)
+    expect(plantRun.tag('AFW-PUMP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('AFW-PUMP-T-RUNNING')).toBe(true)
+    const levelsAfterTrip = ['A', 'B', 'C', 'D'].map(loop => Number(plantRun.tag(`SG-${loop}-LVL-NR`)))
+    plantRun.run(300_000)
+    for (const [index, loop] of ['A', 'B', 'C', 'D'].entries()) {
+      expect(Number(plantRun.read(`sg${loop}.feedwaterFlowKgPerS`)), loop).toBeGreaterThan(20)
+      expect(Number(plantRun.tag(`SG-${loop}-LVL-NR`)), loop).toBeGreaterThan(levelsAfterTrip[index]! + 5)
+    }
+    expect(Number(plantRun.read('core.powerMw'))).toBeLessThan(1)
   })
 })
 
