@@ -11,6 +11,7 @@ import {
   sumOutgoingComponentLinkValue,
 } from '../component-link-helpers.ts'
 import { inventoryBalanceStep } from '../physics.ts'
+import { primarySystemReactorCore } from '../system-topology.ts'
 import { steamGeneratorNarrowRange, steamGeneratorNarrowRangeLevelPercent, steamGeneratorOperatingLevel } from '../../steam-generator-operating-level.ts'
 import {
   energyBalanceTemperatureStep,
@@ -92,7 +93,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
     id: 'steam-generator-tube-leak-transfer',
     phase: 'solveThermalTransfer',
     componentKind: 'steamGenerator',
-    reads: ['tubeLeakFraction', 'pressureMPa', 'secondaryRadiationMSvPerH', 'primary pressure source'],
+    reads: ['tubeLeakFraction', 'pressureMPa', 'secondaryRadiationMSvPerH', 'primary pressure source', 'reactorCore.powerMw'],
     writes: ['primaryToSecondaryLeakKgPerS', 'secondaryRadiationMSvPerH'],
     update: ({ system, component, context }): void => {
       const leakFraction = clamp(context.readNumber(componentVariablePath(component, 'tubeLeakFraction')), 0, 1)
@@ -101,7 +102,15 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       const pressureDelta = Math.max(0, primaryPressure - secondaryPressure)
       const leakCoefficient = optionalParameterNumber(component, 'tubeLeakFlowCoefficientKgPerSPerSqrtMPa', 0)
       const leakFlow = leakFraction * leakCoefficient * Math.sqrt(pressureDelta)
-      const radiationTarget = 0.02 + leakFlow * optionalParameterNumber(component, 'tubeLeakRadiationGainMSvPerHPerKgS', 0.7)
+      // The steam-line monitor reads N-16, which fast neutrons make from the
+      // coolant's oxygen in the core and which decays with a 7 s half-life:
+      // the leaking coolant carries it in proportion to fission power, so the
+      // reading falls to background within seconds of a reactor trip. The
+      // gain is the reading per kg/s of leak at rated power; with no core
+      // there are no neutrons and no N-16.
+      const core = primarySystemReactorCore(system)
+      const powerFraction = core === null ? 0 : clamp(context.readNumber(componentVariablePath(core, 'powerMw')) / parameterNumber(core, 'ratedPowerMw'), 0, 1.2)
+      const radiationTarget = 0.02 + leakFlow * optionalParameterNumber(component, 'tubeLeakRadiationGainMSvPerHPerKgS', 0.7) * powerFraction
       context.write(componentVariablePath(component, 'primaryToSecondaryLeakKgPerS'), leakFlow)
       context.write(
         componentVariablePath(component, 'secondaryRadiationMSvPerH'),

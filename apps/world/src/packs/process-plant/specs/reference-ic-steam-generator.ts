@@ -3,11 +3,13 @@ import { alarm, all, annunciator, any, comparison, reactorTripBreakerWrites, rul
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
 
-// A tube leak shows on instruments, never on the fault that makes it: primary
-// water carries N-16 into this steam generator's steam, so its secondary
-// radiation (SG-<loop>-N16) rises above its 0.02 mSv/h background, and the
-// RCS inventory balance shows water leaving by an unmeasured path. Both
-// together point at this generator's tubes.
+// A tube leak shows on instruments, never on the fault that makes it: at
+// power primary water carries N-16 into this steam generator's steam, so its
+// steam-line N-16 monitor (SG-<loop>-N16) rises above its 0.02 mSv/h
+// background, and the RCS inventory balance shows water leaving by an
+// unmeasured path. Both together point at this generator's tubes. N-16 lives
+// seconds and is made only at power, so after a reactor trip these alarms
+// clear and the inventory balance alone still shows the leak.
 const tubeLeakRadiationMSvPerH = 0.03
 
 // Narrow-range level limits above the 55 % program: a high alarm, and P-14
@@ -68,7 +70,14 @@ export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop):
         comparison({ tagId: `SG-${loop}-N16` }, '>', tubeLeakRadiationMSvPerH),
         comparison({ tagId: 'RCS-LEAK-RATE' }, '>', rcsLeakRateAlarmKgPerS),
       ]),
+      clearCondition: any([
+        comparison({ tagId: `SG-${loop}-N16` }, '<', (0.02 + tubeLeakRadiationMSvPerH) / 2),
+        comparison({ tagId: 'RCS-LEAK-RATE' }, '<', rcsLeakRateAlarmKgPerS / 2),
+      ]),
       delayMs: 10_000,
+      clearDelayMs: 10_000,
+      latch: false,
+      resetWhenClear: true,
       effects: [alarm({
         id: 'tube-leak',
         title: `Steam generator ${loop} tube leak indicated`,
@@ -82,7 +91,11 @@ export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop):
       label: `Steam generator ${loop} secondary radiation high`,
       ruleClass: 'alarm',
       condition: comparison({ tagId: `SG-${loop}-N16` }, '>', 0.5),
+      clearCondition: comparison({ tagId: `SG-${loop}-N16` }, '<', 0.4),
       delayMs: 1_000,
+      clearDelayMs: 10_000,
+      latch: false,
+      resetWhenClear: true,
       effects: [alarm({
         id: 'secondary-radiation-high',
         title: `Steam generator ${loop} secondary radiation high`,

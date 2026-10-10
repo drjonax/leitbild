@@ -318,11 +318,14 @@ describe('process plant runtime', () => {
     expect(activeLifecycleIds(snapshot).alarms).toContain('alarm:offsite-grid-degraded-voltage:offsite-grid-degraded-voltage')
   })
 
+  // This test plant starts from the raw template, not an operating point, and
+  // heats up by itself until overtemperature delta-T trips its reactor about
+  // 50 s in; what shows at 90 s is what remains after that trip.
   describe('demo action catalog produces reference I&C lifecycle indications', () => {
     const expectedLifecycleIds = new Map<string, ReadonlyArray<string>>([
+      // N-16 is gone once the reactor trips; the inventory balance still shows the leak.
       ['steam-generator-tube-leak-a', [
-        'alarm:sg-a-tube-leak-indication:tube-leak',
-        'alarm:sg-a-secondary-radiation-high:secondary-radiation-high',
+        'alarm:rcs-leak-rate-high:leak-rate-high',
       ]],
       ['trip-reactor-coolant-pumps', [
         'alarm:rcp-a-trip:not-running',
@@ -334,7 +337,6 @@ describe('process plant runtime', () => {
       ['loss-main-feedwater', [
         'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       ]],
-      // A feedwater valve failed to 35 % at full power heats the plant up until overtemperature delta-T trips the reactor.
       ['steam-generator-b-feedwater-runback', [
         'trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip',
       ]],
@@ -394,7 +396,7 @@ describe('process plant runtime', () => {
       ['loss-main-feedwater', [
         'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       ]],
-      // A feedwater valve failed to 35 % at full power heats the plant up until overtemperature delta-T trips the reactor.
+      // This test plant heats up by itself until overtemperature delta-T trips its reactor about 50 s in.
       ['steam-generator-b-feedwater-runback', [
         'trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip',
       ]],

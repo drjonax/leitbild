@@ -385,6 +385,37 @@ describe('steam generator tube leak detection', () => {
     expect(Number(plantRun.tag('RCS-LEAK-RATE'))).toBeCloseTo(tubeFlow, 1)
   }, 60_000)
 
+  test('after a reactor trip the N-16 reading falls to background, so its alarms clear and the inventory balance alone shows the leak', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('steam-generator-tube-leak-a', { leakPercent: 1.2 })
+    expect(plantRun.secondsUntil(tubeLeak('a'), 60)).not.toBeNull()
+    const atPower = Number(plantRun.tag('SG-A-N16'))
+    expect(atPower).toBeGreaterThan(1)
+    for (const breaker of ['reactorTripBreakerA', 'reactorTripBreakerB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${breaker}.closed` as VariablePath, value: false })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
+    plantRun.run(60_000)
+    // The leak goes on, but no N-16 rides it on a shut-down core.
+    expect(Number(plantRun.read('sgA.primaryToSecondaryLeakKgPerS'))).toBeGreaterThan(1)
+    expect(Number(plantRun.tag('SG-A-N16'))).toBeLessThan(0.025)
+    expect(plantRun.activeIds()).not.toContain(tubeLeak('a'))
+    expect(plantRun.activeIds()).not.toContain('alarm:sg-a-secondary-radiation-high:secondary-radiation-high')
+    expect(plantRun.activeIds()).toContain(leakRateHigh)
+  }, 60_000)
+
+  test('a tube leak that starts on a shut-down core shows on the inventory balance only', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    for (const breaker of ['reactorTripBreakerA', 'reactorTripBreakerB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${breaker}.closed` as VariablePath, value: false })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
+    plantRun.run(60_000)
+    plantRun.act('steam-generator-tube-leak-a', { leakPercent: 1.2 })
+    expect(plantRun.secondsUntil(leakRateHigh, 60)).not.toBeNull()
+    plantRun.run(30_000)
+    expect(Number(plantRun.tag('SG-A-N16'))).toBeLessThan(0.025)
+    expect(plantRun.activeIds()).not.toContain(tubeLeak('a'))
+  }, 60_000)
+
   test('a hot-leg leak shows on the inventory balance but on no steam generator', () => {
     const plantRun = started()
     plantRun.run(5_000)

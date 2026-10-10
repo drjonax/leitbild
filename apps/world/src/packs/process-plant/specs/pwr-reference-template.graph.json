@@ -357,7 +357,7 @@
           "path": "secondaryRadiationMSvPerH",
           "tagId": "SG-A-N16",
           "equipmentId": "sgA",
-          "description": "Steam generator A secondary radiation indication"
+          "description": "Steam generator A main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
         }
       ],
       "metadata": {
@@ -423,7 +423,7 @@
           "path": "secondaryRadiationMSvPerH",
           "tagId": "SG-B-N16",
           "equipmentId": "sgB",
-          "description": "Steam generator B secondary radiation indication"
+          "description": "Steam generator B main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
         }
       ],
       "metadata": {
@@ -489,7 +489,7 @@
           "path": "secondaryRadiationMSvPerH",
           "tagId": "SG-C-N16",
           "equipmentId": "sgC",
-          "description": "Steam generator C secondary radiation indication"
+          "description": "Steam generator C main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
         }
       ],
       "metadata": {
@@ -555,7 +555,7 @@
           "path": "secondaryRadiationMSvPerH",
           "tagId": "SG-D-N16",
           "equipmentId": "sgD",
-          "description": "Steam generator D secondary radiation indication"
+          "description": "Steam generator D main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
         }
       ],
       "metadata": {
@@ -621,7 +621,7 @@
           "path": "secondaryRadiationMSvPerH",
           "tagId": "SG-E-N16",
           "equipmentId": "sgE",
-          "description": "Steam generator E secondary radiation indication"
+          "description": "Steam generator E main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
         }
       ],
       "metadata": {
@@ -687,7 +687,7 @@
           "path": "secondaryRadiationMSvPerH",
           "tagId": "SG-F-N16",
           "equipmentId": "sgF",
-          "description": "Steam generator F secondary radiation indication"
+          "description": "Steam generator F main steam line N-16 radiation monitor; N-16 is made only at power, so it reads a tube leak only then"
         }
       ],
       "metadata": {
