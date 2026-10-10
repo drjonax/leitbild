@@ -1,3 +1,5 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hydraulics.md#local-pressure-and-phase-path-impulse
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#separate-liquid-and-steam-thermal-histories
 //! Local pure-water pressure/phase constraints and reciprocal interphase work.
 //!
 //! Separated liquid/gas energy remains separated (the selected PZR carrier).

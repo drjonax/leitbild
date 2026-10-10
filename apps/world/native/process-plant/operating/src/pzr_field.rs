@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#finite-surge-and-pzr-connection-equations
 //! Actual ten-region PZR constitutive/source field under decisions 0011/0012.
 //! The caller supplies SAME-current phase properties, separate face mass flows
 //! and radial/axial velocities. This is not a pressure/kinematic/inertial
