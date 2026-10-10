@@ -623,9 +623,11 @@ describe('flows declared through a port', () => {
     const plantRun = started()
     plantRun.run(5_000)
     portFlowsHold(plant, path => plantRun.read(path))
-    // Main feed lost, low-low level starts auxiliary feed, and the inflow is still both lines together.
+    // Main feed lost, low-low level starts auxiliary feed, and the inflow is still both lines together. Overtemperature
+    // delta-T trips the reactor some 50 s in, before any level reaches low-low; with the heat gone the levels fall more
+    // slowly, and low-low comes a little over two minutes in.
     plantRun.act('loss-main-feedwater')
-    plantRun.run(120_000)
+    plantRun.run(180_000)
     expect(Number(plantRun.read('aux-feedwater-valve-b-to-sg-b.flowKgPerS'))).toBeGreaterThan(50)
     portFlowsHold(plant, path => plantRun.read(path))
   })
