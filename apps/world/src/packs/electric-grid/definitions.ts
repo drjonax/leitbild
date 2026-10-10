@@ -169,16 +169,15 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
   }
 }
 
-/** Reads one model data file; errors name the file. */
+/** Reads one model data file; errors name the file, not the server path. */
 export type GridModelFileReader = (file: string) => unknown
 
 export const gridModelFileReader = (directory: URL): GridModelFileReader => file => {
-  const path = fileURLToPath(new URL(file, directory))
-  const text = readFileSync(path, 'utf8')
+  const text = readFileSync(fileURLToPath(new URL(file, directory)), 'utf8')
   try {
     return JSON.parse(text) as unknown
   } catch (error) {
-    throw new Error(`${path}: invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
+    throw new Error(`${file}: invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
