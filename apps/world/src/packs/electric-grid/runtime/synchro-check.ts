@@ -1,30 +1,35 @@
 import type { GridBranchDefinition } from '../grid-model.ts'
 import type { GridRuntimeInstance } from './instance.ts'
-import { gridIslandIsEnergized } from './island-energization.ts'
-import { topologyPlanForGrid } from './topology.ts'
+import { gridIslandAtBus, gridIslandFrequencyHz, solvedGridIslands } from './island-lifecycle.ts'
+
+const degreesPerRadian = 180 / Math.PI
 
 /**
- * Synchronism check for closing an open branch. Closing inside one island, or onto a dead island
- * (dead-bus closing), is allowed. Closing between two energised islands requires the measured
- * frequency difference of the two end buses to be within the Automation's synchroCheckHz.
- * Returns the reason closing is blocked, or null when it may close.
+ * Synchronism check for closing an open branch, with the Automation's limits.
+ * - Ends in two energised islands: their frequencies may differ by at most maximumFrequencyDifferenceHz.
+ * - Ends already in one energised island (closing a loop): their voltage angles may differ by at
+ *   most maximumAngleDifferenceDegrees.
+ * - Either end de-energised: dead-bus closing is allowed.
+ * Returns the reason closing is blocked, with the measured difference, or null when it may close.
  */
 export const synchroCheckBlockReason = (grid: GridRuntimeInstance, branch: GridBranchDefinition): string | null => {
-  const plan = topologyPlanForGrid(grid)
-  const fromIslandId = plan.islandIdByBus.get(branch.fromBusId)!
-  const toIslandId = plan.islandIdByBus.get(branch.toBusId)!
-  if (fromIslandId === toIslandId) return null
-  const fromIsland = plan.islands.find(island => island.id === fromIslandId)!
-  const toIsland = plan.islands.find(island => island.id === toIslandId)!
-  if (!gridIslandIsEnergized(grid, fromIsland) || !gridIslandIsEnergized(grid, toIsland)) return null
-  const fromHz = grid.busStates.get(branch.fromBusId)?.frequencyHz
-  const toHz = grid.busStates.get(branch.toBusId)?.frequencyHz
-  if (fromHz === undefined || toHz === undefined) {
-    throw new Error(`synchro-check has no frequency measurement for ${branch.fromBusId} or ${branch.toBusId}; advance the Grid first`)
+  const islands = solvedGridIslands(grid)
+  const from = gridIslandAtBus(islands, branch.fromBusId)
+  const to = gridIslandAtBus(islands, branch.toBusId)
+  if (!from.energized || !to.energized) return null
+  const limits = grid.definition.automation.synchroCheck
+  if (from.id === to.id) {
+    const fromAngle = grid.busStates.get(branch.fromBusId)!.angleRad
+    const toAngle = grid.busStates.get(branch.toBusId)!.angleRad
+    const angleDegrees = Math.abs(fromAngle - toAngle) * degreesPerRadian
+    if (angleDegrees <= limits.maximumAngleDifferenceDegrees) return null
+    return `synchro-check blocks closing ${branch.id}: both ends are in ${from.id} and their voltage angles differ by ${angleDegrees.toFixed(1)}°, `
+      + `above the ${limits.maximumAngleDifferenceDegrees}° loop-closing limit; reduce the angle by re-dispatch first`
   }
+  const fromHz = gridIslandFrequencyHz(from)!
+  const toHz = gridIslandFrequencyHz(to)!
   const slipHz = Math.abs(fromHz - toHz)
-  const limitHz = grid.definition.automation.synchroCheckHz
-  if (slipHz <= limitHz) return null
-  return `synchro-check blocks closing ${branch.id}: ${fromIslandId} at ${fromHz.toFixed(3)} Hz and ${toIslandId} at ${toHz.toFixed(3)} Hz `
-    + `differ by ${slipHz.toFixed(3)} Hz, above the ${limitHz} Hz limit; bring the islands within ${limitHz} Hz first`
+  if (slipHz <= limits.maximumFrequencyDifferenceHz) return null
+  return `synchro-check blocks closing ${branch.id}: ${from.id} at ${fromHz.toFixed(3)} Hz and ${to.id} at ${toHz.toFixed(3)} Hz `
+    + `differ by ${slipHz.toFixed(3)} Hz, above the ${limits.maximumFrequencyDifferenceHz} Hz limit; bring the islands within ${limits.maximumFrequencyDifferenceHz} Hz first`
 }

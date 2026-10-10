@@ -9,6 +9,14 @@ const identity = { id: z.string().min(1), label: z.string().min(1) }
 const provenance = { sourceId: z.string().min(1), sourceFeatureId: z.string().min(1) }
 const kv = z.number().finite().positive()
 const mw = z.number().finite().nonnegative()
+const lonLat = z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90)])
+const evidenceProvenance = z.object({
+  sources: z.array(z.string().min(1)).min(1),
+  method: z.enum(['mapped', 'registry', 'measured', 'inferred', 'curated']),
+  confidence: z.enum(['high', 'medium', 'low']),
+  note: z.string().min(1).optional(),
+}).strict().refine(value => (value.method !== 'inferred' && value.method !== 'curated') || value.note !== undefined, 'inferred and curated provenance needs a note')
+const externalArea = z.enum(['SE1', 'SE2', 'SE3', 'SE4', 'FI', 'DK1', 'NL', 'DE', 'GB'])
 
 // Deliberately one level: named base topology plus explicit additional assets.
 // No recursive inheritance, arbitrary patches, implicit nodes or scenario logic.
@@ -17,8 +25,9 @@ export const gridModelAdditionSchema = z.object({
   baseModelRef: z.string().min(1), sourceIds: z.array(z.string().min(1)),
   buses: z.array(z.object({
     ...identity, nominalKv: kv,
-    location: z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90)]),
+    location: lonLat,
     ...provenance,
+    provenance: evidenceProvenance.optional(),
   }).strict()),
   branches: z.array(z.object({
     ...identity,
@@ -28,11 +37,35 @@ export const gridModelAdditionSchema = z.object({
     reactancePu: z.number().finite().positive(), resistancePu: z.number().finite().nonnegative(),
     weatherExposure: z.enum(['low', 'medium', 'high']),
     ...provenance,
+    provenance: evidenceProvenance.optional(),
   }).strict()),
   connectionPoints: z.array(z.object({
     ...identity, busId: z.string().min(1), nominalKv: kv,
     maximumExportMw: mw, maximumImportMw: mw,
   }).strict()),
+  externalSystems: z.array(z.object({
+    ...identity,
+    area: z.union([externalArea, z.literal('nordic-remainder')]),
+    synchronous: z.boolean(),
+    boundaryBusIds: z.array(z.string().min(1)).min(1),
+    inertiaGws: z.number().finite().positive().optional(),
+    loadMw: mw.optional(),
+    fcrNMwPerHz: mw.optional(),
+    fcrDUpMw: mw.optional(),
+    fcrDDownMw: mw.optional(),
+    afrrUpMw: mw.optional(),
+    afrrDownMw: mw.optional(),
+    provenance: evidenceProvenance,
+  }).strict()).optional(),
+  hvdcLinks: z.array(z.object({
+    ...identity,
+    fromBusId: z.string().min(1), toBusId: z.string().min(1),
+    ratingMw: z.number().finite().positive(),
+    lossPercent: z.number().finite().nonnegative().lt(100),
+    rampMwPerMinute: z.number().finite().positive(),
+    osmWayIds: z.array(z.string().min(1)),
+    provenance: evidenceProvenance,
+  }).strict()).optional(),
 }).strict()
 export type GridModelAddition = z.infer<typeof gridModelAdditionSchema>
 
@@ -77,5 +110,11 @@ export const addGridModelAssets = (base: GridModelDefinition, addition: GridMode
     buses: [...base.buses, ...addition.buses],
     branches: [...base.branches, ...addition.branches],
     connectionPoints: [...base.connectionPoints, ...addition.connectionPoints],
+    ...(base.externalSystems === undefined && addition.externalSystems === undefined
+      ? {}
+      : { externalSystems: [...base.externalSystems ?? [], ...addition.externalSystems ?? []] }),
+    ...(base.hvdcLinks === undefined && addition.hvdcLinks === undefined
+      ? {}
+      : { hvdcLinks: [...base.hvdcLinks ?? [], ...addition.hvdcLinks ?? []] }),
   }
 }

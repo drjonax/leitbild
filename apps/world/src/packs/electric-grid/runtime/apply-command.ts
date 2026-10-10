@@ -34,6 +34,7 @@ import {
 } from '../commands/load.ts'
 import type { GridBranchDefinition, GridGeneratorDefinition, GridLoadDefinition } from '../grid-model.ts'
 import type { GridBranchState, GridGeneratorState, GridLoadState, GridRuntimeInstance } from './instance.ts'
+import { gridFrequencyCommandHandlers } from './lfdd-commands.ts'
 import { synchroCheckBlockReason } from './synchro-check.ts'
 import { generatorMinimumStableMw, generatorStartupSeconds } from './unit-commitment.ts'
 
@@ -209,6 +210,7 @@ const handlers = {
   ...generatorHandlers,
   ...branchHandlers,
   ...loadHandlers,
+  ...gridFrequencyCommandHandlers,
 } satisfies Record<typeof electricGridCommandKinds[number], GridCommandHandler>
 
 const handlerByKind: ReadonlyMap<string, GridCommandHandler> = new Map(Object.entries(handlers))

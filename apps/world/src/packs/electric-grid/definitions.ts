@@ -6,6 +6,7 @@ import { gridOperatingPointOverridesSchema, type GridDefinition, type GridOperat
 import {
   catalogEntriesById,
   electricGridDefinitionCatalog,
+  type GridAutomationCatalogEntry,
   type GridDefinitionCatalog,
   type GridModelCatalogEntry,
 } from './definition-refs.ts'
@@ -13,11 +14,12 @@ import type {
   CompiledGridDefinition,
   CompiledGridModelIndex,
   GridAssetIndexEntry,
-  GridAutomationDefinition,
+  GridExternalSystemDefinition,
   GridModelDefinition,
   GridOperatingPointDefinition,
 } from './grid-model.ts'
 import { addGridModelAssets, parseGridModelAddition } from './model-additions.ts'
+import { gridAutomationSchema, type GridAutomation } from './schemas/grid-automation.ts'
 import { buildNorwayTransmissionModelV1 } from './models/norway-transmission-v1.ts'
 import {
   gridOperatingPointPerAssetFields,
@@ -136,6 +138,57 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     requireFinite(model, point.maximumExportMw, `${point.id} maximumExportMw`, 0)
     requireFinite(model, point.maximumImportMw, `${point.id} maximumImportMw`, 0)
   }
+  const externalSystems = model.externalSystems ?? []
+  const hvdcLinks = model.hvdcLinks ?? []
+  const synchronousExternalByBus = new Map<string, GridExternalSystemDefinition>()
+  const asynchronousBoundaryBusIds = new Set<string>()
+  const boundaryOwner = new Map<string, string>()
+  const externalIds = new Set<string>()
+  for (const system of externalSystems) {
+    if (externalIds.has(system.id) || assetById.has(system.id)) failModel(model, `duplicate external system id ${system.id}`)
+    externalIds.add(system.id)
+    if (system.boundaryBusIds.length === 0) failModel(model, `${system.id} has no boundary bus`)
+    for (const busId of system.boundaryBusIds) {
+      requireBus(busId, system.id)
+      const owner = boundaryOwner.get(busId)
+      if (owner !== undefined) failModel(model, `boundary bus ${busId} belongs to both ${owner} and ${system.id}`)
+      boundaryOwner.set(busId, system.id)
+      if ((generatorsByBus.get(busId)?.length ?? 0) > 0 || (loadsByBus.get(busId)?.length ?? 0) > 0 || (storageByBus.get(busId)?.length ?? 0) > 0) {
+        failModel(model, `boundary bus ${busId} of ${system.id} carries Norwegian generation, load or storage`)
+      }
+    }
+    if (system.synchronous) {
+      // One frequency per synchronous system: two boundary buses could sit in different Norwegian islands.
+      if (system.boundaryBusIds.length !== 1) failModel(model, `synchronous external system ${system.id} must have exactly one boundary bus`)
+      requireFinite(model, system.inertiaGws ?? Number.NaN, `${system.id} inertiaGws`, Number.MIN_VALUE)
+      requireFinite(model, system.loadMw ?? Number.NaN, `${system.id} loadMw`, 0)
+      for (const field of ['fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw'] as const) {
+        requireFinite(model, system[field] ?? Number.NaN, `${system.id} ${field}`, 0)
+      }
+      synchronousExternalByBus.set(system.boundaryBusIds[0]!, system)
+    } else {
+      for (const field of ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw'] as const) {
+        if (system[field] !== undefined) failModel(model, `${system.id} is asynchronous and cannot carry ${field}`)
+      }
+      for (const busId of system.boundaryBusIds) {
+        if ((branchesByBus.get(busId)?.length ?? 0) > 0) failModel(model, `boundary bus ${busId} of asynchronous ${system.id} must not have AC branches`)
+        asynchronousBoundaryBusIds.add(busId)
+      }
+    }
+  }
+  const hvdcIds = new Set<string>()
+  for (const link of hvdcLinks) {
+    if (hvdcIds.has(link.id) || assetById.has(link.id) || externalIds.has(link.id)) failModel(model, `duplicate HVDC link id ${link.id}`)
+    hvdcIds.add(link.id)
+    requireBus(link.fromBusId, link.id)
+    requireBus(link.toBusId, link.id)
+    if (link.fromBusId === link.toBusId) failModel(model, `${link.id} connects a bus to itself`)
+    if (asynchronousBoundaryBusIds.has(link.fromBusId)) failModel(model, `${link.id} must start at a Norwegian converter bus, not a boundary bus`)
+    requireFinite(model, link.ratingMw, `${link.id} ratingMw`, Number.MIN_VALUE)
+    requireFinite(model, link.lossPercent, `${link.id} lossPercent`, 0)
+    if (link.lossPercent >= 100) failModel(model, `${link.id} lossPercent must be below 100`)
+    requireFinite(model, link.rampMwPerMinute, `${link.id} rampMwPerMinute`, Number.MIN_VALUE)
+  }
   const staticComponentByBus = new Map<string, string>()
   for (const bus of model.buses) {
     if (staticComponentByBus.has(bus.id)) continue
@@ -161,6 +214,10 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     loadsByBus: readonlyGroups(loadsByBus),
     storageByBus: readonlyGroups(storageByBus),
     staticComponentByBus,
+    externalSystems,
+    hvdcLinks,
+    synchronousExternalByBus,
+    asynchronousBoundaryBusIds,
     diagnostics: {
       assetCount: assets.length,
       topologyComponentCount: new Set(staticComponentByBus.values()).size,
@@ -192,7 +249,8 @@ interface CompiledModelEntry {
 const operatingPointTargetsFor = (model: GridModelDefinition): GridOperatingPointTargets => ({
   generators: new Map(model.generators.map(generator => [generator.id, { capacityMw: generator.capacityMw }])),
   branches: new Set(model.branches.map(branch => branch.id)),
-  // v1 models carry HVDC as AC branches, have no external systems, and give loads no price area.
+  // The base v1 model carries HVDC as AC branches and gives loads no price area; this runtime does
+  // not yet apply Operating Point overrides to the external systems or HVDC links an addition adds.
   hvdcLinks: new Map(),
   externalSystems: new Map(),
   loadPriceAreas: new Set(),
@@ -226,7 +284,22 @@ const resolveOverrides = (definition: GridDefinition, targets: GridOperatingPoin
 
 export interface GridDefinitionCompiler {
   readonly compileModel: (ref: string) => CompiledModelEntry
+  readonly compileAutomation: (ref: string) => GridAutomation
   readonly compile: (definition: GridDefinition) => CompiledGridDefinition
+}
+
+/** Validates a frequency-control preset file against its catalog entry: the same id, title and description. */
+const parseAutomationPreset = (entry: GridAutomationCatalogEntry, raw: unknown): GridAutomation => {
+  const { file } = entry.source
+  const parsed = gridAutomationSchema.safeParse(raw)
+  if (!parsed.success) {
+    throw new Error(`${file}: invalid Grid Automation\n${parsed.error.issues.map(issue => `  $.${issue.path.join('.')}: ${issue.message}`).join('\n')}`)
+  }
+  const preset = parsed.data
+  for (const field of ['id', 'title', 'description'] as const) {
+    if (preset[field] !== entry[field]) throw new Error(`${file}: $.${field} ${JSON.stringify(preset[field])} does not match the catalog entry ${JSON.stringify(entry[field])}`)
+  }
+  return preset
 }
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -257,11 +330,22 @@ const requireCatalogMatch = (entry: GridModelCatalogEntry, model: GridModelDefin
 export const createGridDefinitionCompiler = (config: {
   readonly catalog: GridDefinitionCatalog
   readonly readModelFile: GridModelFileReader
+  readonly readAutomationFile: GridModelFileReader
 }): GridDefinitionCompiler => {
   const modelEntry = catalogEntriesById(config.catalog.models, 'Grid Model')
   const operatingPointEntry = catalogEntriesById(config.catalog.operatingPoints, 'Grid Operating Point')
   const automationEntry = catalogEntriesById(config.catalog.automations, 'Grid Automation')
   const compiledModels = new Map<string, CompiledModelEntry>()
+  const automations = new Map<string, GridAutomation>()
+
+  const compileAutomation = (ref: string): GridAutomation => {
+    const cached = automations.get(ref)
+    if (cached !== undefined) return cached
+    const entry = automationEntry(ref)
+    const preset = parseAutomationPreset(entry, config.readAutomationFile(entry.source.file))
+    automations.set(ref, preset)
+    return preset
+  }
 
   const loadModel = (entry: GridModelCatalogEntry): GridModelDefinition => {
     if (entry.source.kind === 'norway-source-data-v1') return buildNorwayTransmissionModelV1(entry)
@@ -289,11 +373,15 @@ export const createGridDefinitionCompiler = (config: {
   const compile = (definition: GridDefinition): CompiledGridDefinition => {
     const compiledModel = compileModel(definition.model.ref)
     const operatingPoint = operatingPointEntry(definition.operatingPoint.ref)
-    const automation = automationEntry(definition.automation.ref)
+    const automationCatalogEntry = automationEntry(definition.automation.ref)
+    const automation = compileAutomation(definition.automation.ref)
+    if (automation.swing.nominalFrequencyHz !== compiledModel.model.nominalFrequencyHz) {
+      throw new Error(`Grid Automation ${automation.id} is for ${automation.swing.nominalFrequencyHz} Hz, Model ${compiledModel.model.id} for ${compiledModel.model.nominalFrequencyHz} Hz`)
+    }
     if (!operatingPoint.compatibleModelRefs.includes(definition.model.ref)) {
       throw new Error(`Grid Operating Point ${definition.operatingPoint.ref} is not compatible with Model ${definition.model.ref}`)
     }
-    if (!automation.compatibleModelRefs.includes(definition.model.ref)) {
+    if (!automationCatalogEntry.compatibleModelRefs.includes(definition.model.ref)) {
       throw new Error(`Grid Automation ${definition.automation.ref} is not compatible with Model ${definition.model.ref}`)
     }
     const overrides = resolveOverrides(definition, compiledModel.targets)
@@ -304,36 +392,34 @@ export const createGridDefinitionCompiler = (config: {
       generationAvailabilityScale: overrides.generationAvailabilityScale ?? operatingPoint.values.generationAvailabilityScale,
       storageStateOfCharge: overrides.storageStateOfCharge ?? operatingPoint.values.storageStateOfCharge,
     }
-    const resolvedAutomation: GridAutomationDefinition = {
-      id: automation.id,
-      title: automation.title,
-      loadProfiles: automation.values.loadProfiles,
-      storageFrequencyResponse: automation.values.storageFrequencyResponse,
-      underFrequencyLoadShedding: automation.values.underFrequencyLoadShedding,
-      primaryFrequencyResponseMwPerHz: automation.values.primaryFrequencyResponseMwPerHz,
-      synchroCheckHz: automation.values.synchroCheckHz,
-    }
     const definitionDigest = createHash('sha256')
       .update(compiledModel.digest)
       .update(JSON.stringify(resolvedOperatingPoint))
-      .update(JSON.stringify(resolvedAutomation))
+      .update(JSON.stringify(automation))
       .digest('hex')
     return {
       gridId: definition.id,
       model: compiledModel.model,
       index: compiledModel.index,
       operatingPoint: resolvedOperatingPoint,
-      automation: resolvedAutomation,
+      automation,
       definitionDigest,
     }
   }
 
-  return { compileModel, compile }
+  return { compileModel, compileAutomation, compile }
 }
+
+/** Reads the built-in frequency-control presets in automations/. */
+export const gridAutomationFileReader: GridModelFileReader = gridModelFileReader(new URL('./automations/', import.meta.url))
 
 const builtinCompiler = createGridDefinitionCompiler({
   catalog: electricGridDefinitionCatalog,
   readModelFile: gridModelFileReader(new URL('./models/', import.meta.url)),
+  readAutomationFile: gridAutomationFileReader,
 })
 
 export const compileGridDefinition = (definition: GridDefinition): CompiledGridDefinition => builtinCompiler.compile(definition)
+
+/** A built-in frequency-control Automation by catalog id, read and validated on first use. */
+export const gridAutomationPreset = (ref: string): GridAutomation => builtinCompiler.compileAutomation(ref)

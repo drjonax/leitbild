@@ -2,10 +2,9 @@ import { z } from 'zod'
 import { matchesLiteralSearch } from '../../../core/model/index.ts'
 import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import type { GridAssetIndexEntry } from '../grid-model.ts'
-import { gridIslandIsEnergized } from '../runtime/island-energization.ts'
-import { gridAssetSnapshotFor, type GridRuntimeInstance, type GridTopologyPlan } from '../runtime/instance.ts'
+import { gridAssetSnapshotFor, type GridRuntimeInstance } from '../runtime/instance.ts'
 import { assetListItemSchema, assetPresentationFor } from './asset-presentation.ts'
-import { assetKindSchema, defineGridQuery, gridFor, requireGridIsland, solvedTopologyFor } from './common.ts'
+import { assetKindSchema, defineGridQuery, gridBusIslandId, gridFor, requireGridIsland } from './common.ts'
 import {
   branchDefinitionSchema,
   branchStateSchema,
@@ -64,8 +63,8 @@ const busIdsOf = (entry: GridAssetIndexEntry): ReadonlyArray<string> => entry.ki
   ? [entry.id]
   : entry.kind === 'branch' ? [entry.definition.fromBusId, entry.definition.toBusId] : [entry.definition.busId]
 
-const statusesOf = (grid: GridRuntimeInstance, energizedByIsland: ReadonlyMap<string, boolean>, plan: GridTopologyPlan, entry: GridAssetIndexEntry): ReadonlyArray<AssetStatus> => {
-  if (entry.kind === 'bus') return [energizedByIsland.get(plan.islandIdByBus.get(entry.id)!) ? 'energized' : 'de-energized']
+const statusesOf = (grid: GridRuntimeInstance, entry: GridAssetIndexEntry): ReadonlyArray<AssetStatus> => {
+  if (entry.kind === 'bus') return [grid.busStates.get(entry.id)!.energized ? 'energized' : 'de-energized']
   if (entry.kind === 'branch') {
     const state = grid.branches.get(entry.id)!
     return [state.state, ...(state.availability < 1 ? ['derated' as const] : [])]
@@ -80,8 +79,7 @@ const sortValueOf = (grid: GridRuntimeInstance, entry: GridAssetIndexEntry, sort
   if (sort === 'loading') return entry.kind === 'branch' ? grid.branches.get(entry.id)!.loadingPercent : null
   if (sort === 'dispatch') return entry.kind === 'generator' ? grid.generators.get(entry.id)!.dispatchMw : null
   if (entry.kind !== 'load') return null
-  const state = grid.loads.get(entry.id)!
-  return state.demandMw - state.servedMw
+  return grid.loads.get(entry.id)!.unservedMw
 }
 
 export const gridAssetSearchQuery = defineGridQuery({
@@ -93,14 +91,12 @@ export const gridAssetSearchQuery = defineGridQuery({
   output: assetSearchResultSchema,
   answer: (payload, grids) => {
     const grid = gridFor(grids, payload.gridId)
-    const plan = solvedTopologyFor(grid)
-    const islandId = payload.islandId === undefined ? undefined : requireGridIsland(plan, payload.islandId)
+    const islandId = payload.islandId === undefined ? undefined : requireGridIsland(grid, payload.islandId)
     const statuses = payload.status === undefined ? undefined : new Set(payload.status)
-    const energizedByIsland = new Map(statuses === undefined ? [] : plan.islands.map(island => [island.id, gridIslandIsEnergized(grid, island)]))
     const matched = grid.definition.index.assets.filter(entry =>
       (payload.kinds === undefined || payload.kinds.includes(entry.kind))
-      && (statuses === undefined || statusesOf(grid, energizedByIsland, plan, entry).some(status => statuses.has(status)))
-      && (islandId === undefined || busIdsOf(entry).some(busId => plan.islandIdByBus.get(busId) === islandId))
+      && (statuses === undefined || statusesOf(grid, entry).some(status => statuses.has(status)))
+      && (islandId === undefined || busIdsOf(entry).some(busId => gridBusIslandId(grid, busId) === islandId))
       && (payload.minLoadingPercent === undefined || (entry.kind === 'branch' && grid.branches.get(entry.id)!.loadingPercent >= payload.minLoadingPercent))
       && matchesLiteralSearch(payload.text, [entry.id, entry.label, entry.kind]))
     const sort = payload.sort

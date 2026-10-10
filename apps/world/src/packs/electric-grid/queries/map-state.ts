@@ -1,7 +1,7 @@
 import type { GridModelDefinition } from '../grid-model.ts'
-import { gridIslandIsEnergized } from '../runtime/island-energization.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
-import { defineGridQuery, gridFor, gridPayloadSchema, solvedTopologyFor, type ElectricGridQuery } from './common.ts'
+import { gridIslandFrequencyHz, solvedGridIslands } from '../runtime/island-lifecycle.ts'
+import { defineGridQuery, gridFor, gridPayloadSchema, type ElectricGridQuery } from './common.ts'
 import { gridMapGeometryFor, type GridMapGeometry } from './map-geometry.ts'
 import { gridMapStateResultSchema, type GridMapStateResult } from './map-schemas.ts'
 
@@ -9,32 +9,21 @@ import { gridMapStateResultSchema, type GridMapStateResult } from './map-schemas
 // world.electric-grid.map.geometry. Values are rounded to what a map can show.
 
 export interface GridMapIslandState {
+  /** Stable islands in plan order. */
   readonly islands: ReadonlyArray<{ readonly id: string; readonly energized: boolean; readonly frequencyHz: number | null }>
   /** Index into islands per bus, in model order. */
   readonly busIsland: ReadonlyArray<number>
+  /** Grid solve counter; it increases with every solve. */
+  readonly tick: number
 }
 
-/**
- * The map's only read of island membership, energisation and frequency. It derives them from
- * the solved topology today; the island-lifecycle runtime replaces the derivation with its
- * stored per-island state, so the map follows the runtime's own decision.
- */
+/** The map's only read of island membership, energisation and frequency: the runtime's stable island state. */
 export const gridMapIslandState = (grid: GridRuntimeInstance): GridMapIslandState => {
-  const plan = solvedTopologyFor(grid)
-  const islands = plan.islands.map(island => {
-    const energized = gridIslandIsEnergized(grid, island)
-    const frequencyHz = energized ? grid.frequencyByIsland.get(island.id) : null
-    if (frequencyHz === undefined) throw new Error(`Grid ${grid.definition.gridId} has no frequency for energised island ${island.id}`)
-    return { id: island.id, energized, frequencyHz }
-  })
-  const islandIndex = new Map(plan.islands.map((island, position) => [island.id, position]))
-  const busIsland = grid.definition.model.buses.map(bus => {
-    const islandId = plan.islandIdByBus.get(bus.id)
-    const position = islandId === undefined ? undefined : islandIndex.get(islandId)
-    if (position === undefined) throw new Error(`Grid ${grid.definition.gridId} bus ${bus.id} is in no solved island`)
-    return position
-  })
-  return { islands, busIsland }
+  const plan = solvedGridIslands(grid)
+  const islands = plan.islands.map(island => ({ id: island.id, energized: island.energized, frequencyHz: gridIslandFrequencyHz(island) }))
+  // The compiled network numbers buses in model order, and stable islands align with plan islands.
+  const busIsland = Array.from(plan.plan.islandIndexOfBus)
+  return { islands, busIsland, tick: grid.tick }
 }
 
 const tenths = (value: number): number => Math.round(value * 10) / 10
@@ -42,7 +31,7 @@ const hundredths = (value: number): number => Math.round(value * 100) / 100
 
 const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<GridMapStateResult, 'gridId'> => {
   const model: GridModelDefinition = grid.definition.model
-  const { islands, busIsland } = gridMapIslandState(grid)
+  const { islands, busIsland, tick } = gridMapIslandState(grid)
   const branchCount = model.branches.length
   const loadingPercent = new Array<number>(branchCount)
   const flowMw = new Array<number>(branchCount)
@@ -59,7 +48,7 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
   const loadStates = model.loads.map(load => grid.loads.get(load.id)!)
   return {
     geometryDigest: geometry.geometryDigest,
-    revision: grid.tick,
+    revision: tick,
     elapsedMs: grid.elapsedMs,
     islands: [...islands],
     buses: {

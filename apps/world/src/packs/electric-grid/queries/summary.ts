@@ -23,6 +23,20 @@ const constrainedBranchRowLimit = 8
 const generatorRowLimit = 12
 const affectedLoadRowLimit = 8
 
+const automationSummary = (grid: GridRuntimeInstance) => {
+  const automation = grid.definition.automation
+  return {
+    id: automation.id,
+    title: automation.title,
+    description: automation.description,
+    nominalFrequencyHz: automation.swing.nominalFrequencyHz,
+    automaticFrequencyRestoration: automation.afrr.enabled,
+    manualFrequencyRestoration: automation.mfrr.enabled,
+    lfddStageThresholdsHz: automation.lfdd.stages.map(stage => stage.thresholdHz),
+    synchroCheck: { ...automation.synchroCheck },
+  }
+}
+
 const summaryResultSchema = z.object({
   gridId: z.string(),
   model: z.object({
@@ -43,12 +57,16 @@ const summaryResultSchema = z.object({
   automation: z.object({
     id: z.string(),
     title: z.string(),
-    loadProfiles: z.boolean(),
-    storageFrequencyResponse: z.boolean(),
-    underFrequencyLoadShedding: z.boolean(),
-    primaryFrequencyResponseMwPerHz: finite,
-    synchroCheckHz: finite,
-  }).strict(),
+    description: z.string(),
+    nominalFrequencyHz: finite,
+    automaticFrequencyRestoration: z.boolean().describe('aFRR (AGC) acts in every energised island.'),
+    manualFrequencyRestoration: z.boolean().describe('mFRR activates when aFRR is persistently used.'),
+    lfddStageThresholdsHz: z.array(finite).describe('Under-frequency load-shedding stage thresholds, highest first (Hz).'),
+    synchroCheck: z.object({
+      maximumFrequencyDifferenceHz: finite.describe('Largest frequency difference at which a branch may close between two energised islands (Hz).'),
+      maximumAngleDifferenceDegrees: finite.describe('Largest voltage-angle difference at which a branch may close a loop inside one energised island (°).'),
+    }).strict(),
+  }).strict().describe('The Grid Automation preset in force, summarised.'),
   projection: gridProjectionSchema,
   assetCounts: z.object({ bus: count, branch: count, generator: count, load: count, storage: count }).strict(),
   diagnostics: z.object({
@@ -63,6 +81,13 @@ const summaryResultSchema = z.object({
       lastQueryDurationMs: finite,
       persistenceFailureCount: count,
       lastPersistenceFailure: z.string().nullable(),
+      energyAudit: z.object({
+        lastMaximumIslandMismatchMw: finite.describe('Largest |Σ injection| of an energised island at the last solve (MW); balance closes by construction.'),
+        cumulativeMismatchMwh: finite,
+        suppliedEnergyMwh: finite.describe('Generation and imports into islands over the run (MWh).'),
+        servedEnergyMwh: finite,
+        lossEnergyMwh: finite,
+      }).strict(),
     }).strict(),
   }).strict(),
   thresholds: z.object({
@@ -91,10 +116,11 @@ const summaryResultSchema = z.object({
     state: z.object({
       demandMw: finite,
       servedMw: finite,
-      unservedMw: finite,
+      unservedMw: finite.describe('curtailedMw + lfddShedMw + outageMw (MW).'),
       shedMw: finite,
       curtailedMw: finite,
       lfddShedMw: finite,
+      outageMw: finite.describe('Lost because the island is de-energised (MW).'),
       shedCauses: z.array(loadShedCauseSchema),
       serviceState: loadServiceStateSchema,
     }).strict(),
@@ -109,8 +135,8 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
     .sort((left, right) => right.state.loadingPercent - left.state.loadingPercent)
   const affected = model.loads
     .map(definition => ({ definition, state: grid.loads.get(definition.id)! }))
-    .filter(load => load.state.demandMw - load.state.servedMw > affectedLoadUnservedMw)
-    .sort((left, right) => (right.state.demandMw - right.state.servedMw) - (left.state.demandMw - left.state.servedMw))
+    .filter(load => load.state.unservedMw > affectedLoadUnservedMw)
+    .sort((left, right) => right.state.unservedMw - left.state.unservedMw)
   const generators = model.generators
     .map(definition => ({ definition, state: grid.generators.get(definition.id)! }))
     .sort((left, right) => right.state.dispatchMw - left.state.dispatchMw)
@@ -126,7 +152,7 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
       fidelity: { ...model.fidelity },
     },
     operatingPoint: { ...grid.definition.operatingPoint },
-    automation: { ...grid.definition.automation },
+    automation: automationSummary(grid),
     projection: grid.projection,
     assetCounts: {
       bus: model.buses.length,
@@ -135,7 +161,7 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
       load: model.loads.length,
       storage: model.storage.length,
     },
-    diagnostics: { model: grid.definition.index.diagnostics, runtime: { ...grid.diagnostics } },
+    diagnostics: { model: grid.definition.index.diagnostics, runtime: { ...grid.diagnostics, energyAudit: { ...grid.diagnostics.energyAudit } } },
     thresholds: { constrainedBranchLoadingPercent, affectedLoadUnservedMw },
     constrainedBranchCount: constrained.length,
     constrainedBranches: constrained.slice(0, constrainedBranchRowLimit).map(({ definition, state }) => ({
@@ -159,10 +185,11 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
       state: {
         demandMw: state.demandMw,
         servedMw: state.servedMw,
-        unservedMw: state.demandMw - state.servedMw,
+        unservedMw: state.unservedMw,
         shedMw: state.shedMw,
         curtailedMw: state.curtailedMw,
         lfddShedMw: state.lfddShedMw,
+        outageMw: state.outageMw,
         shedCauses: [...state.shedCauses],
         serviceState: state.serviceState,
       },

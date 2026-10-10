@@ -9,14 +9,14 @@ const projectionKey = (grid: GridRuntimeInstance): string => {
   return JSON.stringify({
     statusTone: value.statusTone,
     statusLabel: value.statusLabel,
-    frequencyHz: Math.round(value.frequencyHz * 100) / 100,
+    frequencyHz: value.frequencyHz === null ? null : Math.round(value.frequencyHz * 100) / 100,
+    islands: value.islands.map(island => [island.id, island.energized, island.frequencyHz === null ? null : Math.round(island.frequencyHz * 100) / 100, island.alarmCount]),
     totalGenerationMw: Math.round(value.totalGenerationMw),
     totalLoadMw: Math.round(value.totalLoadMw),
     servedLoadMw: Math.round(value.servedLoadMw),
     unservedLoadMw: Math.round(value.unservedLoadMw),
     reserveMarginMw: Math.round(value.reserveMarginMw),
     highestBranchLoadingPercent: Math.round(value.highestBranchLoadingPercent),
-    lowestVoltagePu: Math.round(value.lowestVoltagePu * 500) / 500,
     activeIslandCount: value.activeIslandCount,
     activeAlarmCount: value.activeAlarmCount,
     externalConnections: [...grid.externalConnections].map(([id, connection]) => ({

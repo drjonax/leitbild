@@ -2,7 +2,8 @@
 // A random geometric graph over a Norway-sized box: a spatially local spanning
 // tree plus nearest-neighbour meshing up to about 1.4 branches per bus, so the
 // fill of a sparse factorisation resembles a real transmission network.
-import { compileGridModelIndex } from '../../src/packs/electric-grid/definitions.ts'
+import { nordicFrequencyAutomationRef } from '../../src/packs/electric-grid/definition-refs.ts'
+import { compileGridModelIndex, gridAutomationPreset } from '../../src/packs/electric-grid/definitions.ts'
 import type {
   CompiledGridDefinition,
   GridBranchDefinition,
@@ -135,7 +136,7 @@ export const syntheticGridModel = (busCount: number, seed = 7): GridModelDefinit
     title: `Synthetic ${busCount}-bus grid`,
     description: 'Deterministic synthetic grid for network performance tests',
     nominalFrequencyHz: 50,
-    fidelity: { powerFlow: 'dc', voltage: 'approximate', frequency: 'aggregate-dynamic', recommendedMaximumBusCount: 1000 },
+    fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
     sourceBuild: { id: 'synthetic', generatedAt: '2026-10-10T00:00:00.000Z' },
     sourceIds: [],
     buses,
@@ -153,10 +154,7 @@ export const gridDefinitionForModel = (model: GridModelDefinition): CompiledGrid
   model,
   index: compileGridModelIndex(model),
   operatingPoint: { id: 'synthetic', title: 'Synthetic', loadScale: 1, generationAvailabilityScale: 1, storageStateOfCharge: 0.5 },
-  automation: {
-    id: 'synthetic', title: 'Synthetic', loadProfiles: true, storageFrequencyResponse: true,
-    underFrequencyLoadShedding: true, primaryFrequencyResponseMwPerHz: 900, synchroCheckHz: 0.2,
-  },
+  automation: gridAutomationPreset(nordicFrequencyAutomationRef),
   definitionDigest: '0'.repeat(64),
 })
 

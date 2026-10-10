@@ -11,7 +11,7 @@ import { createReferenceGeometry } from '../src/packs/electric-grid/audit/refere
 import { auditGraphFromGridModelV1 } from '../src/packs/electric-grid/audit/v1-adapter.ts'
 import { auditGraphFromGridModelV2, type GridModelV2AuditInput } from '../src/packs/electric-grid/audit/v2-adapter.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, norwayStandardAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { norwayGridSourceData } from '../src/packs/electric-grid/models/norway-source-data.generated.ts'
 import { gridCurationCollectionSchema, type GridCurationCollection } from '../src/packs/electric-grid/schemas/grid-curation.ts'
@@ -393,7 +393,7 @@ describe('golden and curation schemas', () => {
 describe('model adapters', () => {
   const v1Model = (): GridModelDefinition => ({
     id: 'v1-fixture', title: 'v1', description: 'v1', nominalFrequencyHz: 50,
-    fidelity: { powerFlow: 'dc', voltage: 'approximate', frequency: 'aggregate-dynamic', recommendedMaximumBusCount: 10 },
+    fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 10 },
     sourceBuild: { id: 'b', generatedAt: '2026-01-01T00:00:00Z' }, sourceIds: [],
     buses: [
       { id: 'NO-A', label: 'A', nominalKv: 420, location: [10, 60], sourceId: 'osm:pbf-power:NO', sourceFeatureId: 'way/1' },
@@ -509,7 +509,7 @@ describe('repository golden list and curations', () => {
     const golden = gridGoldenSchema.parse(await load('norway-grid-golden.json'))
     const curations = gridCurationCollectionSchema.parse(await load('norway-grid-curations.geojson'))
     const model = compileGridDefinition({
-      id: 'grid:audit', model: { ref: norwayGridModelRef }, operatingPoint: { ref: norwayNormalOperatingPointRef }, automation: { ref: norwayStandardAutomationRef },
+      id: 'grid:audit', model: { ref: norwayGridModelRef }, operatingPoint: { ref: norwayNormalOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
     }).model
     const report = auditGridTopology(auditGraphFromGridModelV1({ model, sourceData: norwayGridSourceData }), golden, { asOf: '2026-10-10', curations })
     expect(report.verdict).toBe('fail')

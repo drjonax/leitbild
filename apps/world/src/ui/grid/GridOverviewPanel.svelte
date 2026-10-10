@@ -28,13 +28,14 @@
     readonly gridId: string
     readonly model: { readonly title: string }
     readonly projection: {
-      readonly frequencyHz: number
+      readonly frequencyHz: number | null
       readonly totalGenerationMw: number
       readonly servedLoadMw: number
       readonly reserveMarginMw: number
-      readonly lowestVoltagePu: number
+      readonly voltageModel: 'dc-nominal'
       readonly statusLabel: string
       readonly activeAlarmCount: number
+      readonly islands: ReadonlyArray<{ readonly id: string; readonly energized: boolean; readonly loadMw: number; readonly alarmCount: number }>
     }
     readonly thresholds: { readonly constrainedBranchLoadingPercent: number }
     readonly constrainedBranchCount: number
@@ -102,11 +103,15 @@
   const branches = $derived(summary?.constrainedBranches ?? [])
   const generators = $derived(summary?.generators ?? [])
   const loads = $derived(summary?.affectedLoads ?? [])
-  const deenergizedIslandCount = $derived(islands?.islands.filter(island => !island.energized).length ?? 0)
+  // Island alarms as the runtime projection counts them: a de-energised island with demand, or an energised one off the standard frequency range or shedding load.
+  const deenergizedIslandCount = $derived(system?.islands.filter(island => !island.energized && island.alarmCount > 0).length ?? 0)
+  const frequencyAlarmIslandCount = $derived(system?.islands.filter(island => island.energized && island.alarmCount > 0).length ?? 0)
 
   const frequencyClass = $derived(!system
     ? 'idle'
-    : system.frequencyHz < 49.85 || system.frequencyHz > 50.15
+    : system.frequencyHz === null
+      ? 'alert'
+      : system.frequencyHz < 49.85 || system.frequencyHz > 50.15
       ? 'alert'
       : system.frequencyHz < 49.95 || system.frequencyHz > 50.05
         ? 'watch'
@@ -377,8 +382,8 @@
           <h2>{summary?.model.title ?? selectedGridItem?.object.label ?? 'Grid overview'}</h2>
         </div>
         <div class="frequency" class:alert={frequencyClass === 'alert'} class:watch={frequencyClass === 'watch'}>
-          <span>{system.frequencyHz.toFixed(3)}</span>
-          <small>Hz</small>
+          <span>{system.frequencyHz === null ? 'De-energised' : system.frequencyHz.toFixed(3)}</span>
+          <small>{system.frequencyHz === null ? '' : 'Hz (largest island)'}</small>
         </div>
       </div>
       <button
@@ -426,8 +431,8 @@
             <strong>{mw(system.reserveMarginMw)} MW</strong>
           </div>
           <div class="metric">
-            <span>Lowest voltage</span>
-            <strong>{system.lowestVoltagePu.toFixed(3)} pu</strong>
+            <span>Voltage</span>
+            <strong>Not computed (DC model)</strong>
           </div>
         </div>
 
@@ -440,7 +445,8 @@
             <ul>
               {#if summary && summary.constrainedBranchCount > 0}<li>{summary.constrainedBranchCount} corridors at or above {summary.thresholds.constrainedBranchLoadingPercent}% loading</li>{/if}
               {#if summary && summary.affectedLoadCount > 0}<li>{summary.affectedLoadCount} loads with unserved demand</li>{/if}
-              {#if deenergizedIslandCount > 0}<li>{deenergizedIslandCount} de-energised islands</li>{/if}
+              {#if deenergizedIslandCount > 0}<li>{deenergizedIslandCount} de-energised islands with demand</li>{/if}
+              {#if frequencyAlarmIslandCount > 0}<li>{frequencyAlarmIslandCount} islands outside the standard frequency range or shedding load</li>{/if}
             </ul>
           {/if}
         </div>

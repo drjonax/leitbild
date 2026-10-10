@@ -3,7 +3,8 @@ import { objectIdSchema } from '../../../core/model/index.ts'
 import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import { defineSimulationQueryCapability } from '../../../simulation/capabilities.ts'
 import type { SimulationCapability } from '../../../simulation/protocol.ts'
-import type { GridRuntimeInstance, GridTopologyPlan } from '../runtime/instance.ts'
+import type { GridRuntimeInstance } from '../runtime/instance.ts'
+import { solvedGridIslands } from '../runtime/island-lifecycle.ts'
 
 export type GridRuntimes = ReadonlyMap<string, GridRuntimeInstance>
 
@@ -48,15 +49,13 @@ export const gridFor = (grids: GridRuntimes, gridId: string): GridRuntimeInstanc
   return grid
 }
 
-/** The topology the Grid last solved; every accepted command and tick re-solves it. */
-export const solvedTopologyFor = (grid: GridRuntimeInstance): GridTopologyPlan => {
-  if (grid.topologyPlan === null) throw new Error(`Grid ${grid.definition.gridId} has not solved its topology since the last switching change`)
-  return grid.topologyPlan
-}
-
-export const requireGridIsland = (plan: GridTopologyPlan, islandId: string): string => {
-  if (!plan.islands.some(island => island.id === islandId)) return rejectCapabilityTarget(
+/** A stable island id of the Grid's solved islands, or a capability rejection naming where ids come from. */
+export const requireGridIsland = (grid: GridRuntimeInstance, islandId: string): string => {
+  if (!solvedGridIslands(grid).islands.some(island => island.id === islandId)) return rejectCapabilityTarget(
     `Grid island not found: ${islandId}. Discover current island ids with world.electric-grid.islands.list.`,
   )
   return islandId
 }
+
+/** The stable island id holding a bus at the last solve. */
+export const gridBusIslandId = (grid: GridRuntimeInstance, busId: string): string => grid.busStates.get(busId)!.islandId

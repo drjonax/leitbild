@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { gridAutomationPreset, gridAutomationPresets } from '../src/packs/electric-grid/automation-presets.ts'
+import { electricGridDefinitionCatalog } from '../src/packs/electric-grid/definition-refs.ts'
+import { gridAutomationPreset } from '../src/packs/electric-grid/definitions.ts'
 import { evaluateGeneratorProtection, createGeneratorProtectionState } from '../src/packs/electric-grid/runtime/frequency/generator-protection.ts'
 import { allocateFrequencyReserves, noReserves } from '../src/packs/electric-grid/runtime/frequency/governors.ts'
 import {
@@ -115,14 +116,18 @@ const frequencyAt = (result: SimulationResult, seconds: number): number => {
 
 describe('electric grid Automation presets', () => {
   test('every preset validates and the Nordic preset cites a source for every section', () => {
-    expect([...gridAutomationPresets.keys()].sort()).toEqual([
+    const presetIds = electricGridDefinitionCatalog.automations.map(entry => entry.id)
+    expect([...presetIds].sort()).toEqual([
       'electric-grid.frequency.islanded-operation',
       'electric-grid.frequency.manual-balancing-training',
       'electric-grid.frequency.nordic-2025',
     ])
-    for (const preset of gridAutomationPresets.values()) expect(gridAutomationSchema.parse(preset)).toEqual(preset)
+    for (const id of presetIds) {
+      const preset = gridAutomationPreset(id)
+      expect(gridAutomationSchema.parse(preset)).toEqual(preset)
+    }
     const cited = new Set(nordic.sources.filter(source => source.status !== 'modelling-choice').map(source => source.section))
-    for (const section of ['swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection'] as const) {
+    for (const section of ['swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection', 'synchroCheck'] as const) {
       expect(cited.has(section)).toBe(true)
     }
     expect(training.afrr.enabled).toBe(false)

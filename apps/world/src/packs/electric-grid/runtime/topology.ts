@@ -1,11 +1,7 @@
-import type { GridBranchDefinition } from '../grid-model.ts'
 import type { GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import { compiledGridNetworkFor, type CompiledGridNetwork } from './network/compiled-network.ts'
 import { createGridIslandSystem, solveGridIslandInto, type GridIslandSystem } from './network/dc-power-flow.ts'
 import { findGridIslands } from './network/islands.ts'
-
-export const gridBranchIsClosed = (grid: GridRuntimeInstance, branch: GridBranchDefinition): boolean =>
-  grid.branches.get(branch.id)?.state === 'closed'
 
 /** One island structure (its buses and closed branches) with the views and factor built from it. */
 interface CachedIsland {
@@ -125,6 +121,7 @@ const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwo
     islands,
     systems,
     islandIdByBus,
+    islandIndexOfBus: found.islandOfBus,
     injectionsMw: new Float64Array(network.busCount),
     anglesRad: new Float64Array(network.busCount),
     referenceMismatchMw: new Float64Array(found.count),
@@ -142,6 +139,22 @@ export const topologyPlanForGrid = (grid: GridRuntimeInstance): GridTopologyPlan
   grid.diagnostics.topologyRebuildCount += 1
   grid.diagnostics.lastTopologyRebuildDurationMs = performance.now() - startedAtMs
   return plan
+}
+
+/**
+ * Solves the islands flagged in `solveIsland` from the plan's `injectionsMw` into `anglesRad` (radians,
+ * reference bus 0) and `referenceMismatchMw` (the island's injection sum); other islands get angle 0.
+ */
+export const solvePlanInto = (plan: GridTopologyPlan, solveIsland: Uint8Array): void => {
+  const { network, injectionsMw, anglesRad } = plan
+  for (let island = 0; island < plan.systems.length; island += 1) {
+    if (solveIsland[island] === 1) {
+      plan.referenceMismatchMw[island] = solveGridIslandInto(network, plan.systems[island]!, injectionsMw, anglesRad)
+      continue
+    }
+    plan.referenceMismatchMw[island] = 0
+    for (const bus of plan.systems[island]!.buses) anglesRad[bus] = 0
+  }
 }
 
 /** Solves every island into the plan's per-bus angle and per-island reference-mismatch arrays. */

@@ -1,7 +1,8 @@
 import { z } from 'zod'
-import { gridIslandIsEnergized } from '../runtime/island-energization.ts'
-import type { GridRuntimeInstance, GridTopologyIsland } from '../runtime/instance.ts'
-import { defineGridQuery, gridFor, solvedTopologyFor } from './common.ts'
+import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from '../runtime/instance.ts'
+import { islandFixedInjectionMw, islandMembers } from '../runtime/island-input.ts'
+import { gridIslandFrequencyHz, solvedGridIslands } from '../runtime/island-lifecycle.ts'
+import { defineGridQuery, gridFor } from './common.ts'
 
 const finite = z.number().finite()
 const count = z.number().int().nonnegative()
@@ -13,18 +14,18 @@ const islandsPayloadSchema = z.object({
 }).strict()
 
 export const gridIslandSchema = z.object({
-  id: z.string(),
+  id: z.string().describe('Stable island id; it survives splits and merges of the island.'),
   referenceBus: z.object({ id: z.string(), label: z.string() }).strict(),
   busCount: count,
   branchCount: count,
   generatorCount: count,
   onlineGeneratorCount: count,
   loadCount: count,
-  energized: z.boolean().describe('True when a synchronised synchronous unit or a supplying connected system forms the island voltage.'),
+  energized: z.boolean().describe('True while a synchronised synchronous generator or a synchronous external system forms the island voltage; storage, converters and Plant connections cannot energise an island.'),
   frequencyHz: finite.nullable().describe('Island frequency; null when the island is not energised.'),
   generationMw: finite.describe('Generator output in the island (MW).'),
   storageMw: finite.describe('Net storage output, positive when discharging (MW).'),
-  externalExchangeMw: finite.describe('Net power from connected systems into the island, positive into the Grid (MW).'),
+  externalExchangeMw: finite.describe('Net power into the island from external systems, HVDC links and Plant connections, positive into the island (MW); 0 while de-energised.'),
   loadMw: finite.describe('Demand of the island loads (MW).'),
   servedLoadMw: finite,
   unservedLoadMw: finite,
@@ -40,31 +41,33 @@ const islandsResultSchema = z.object({
   islands: z.array(gridIslandSchema),
 }).strict()
 
-const islandView = (grid: GridRuntimeInstance, island: GridTopologyIsland): GridIslandView => {
-  const referenceBusId = island.buses[0]!
-  const generators = island.generators.map(generator => grid.generators.get(generator.id)!)
-  const loads = island.loads.map(load => grid.loads.get(load.id)!)
-  const energized = gridIslandIsEnergized(grid, island)
+const islandView = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland): GridIslandView => {
+  const structure = islands.plan.islands[island.planIndex]!
+  const referenceBusId = structure.referenceBusId
+  const generators = structure.generators.map(generator => grid.generators.get(generator.id)!)
+  const loads = structure.loads.map(load => grid.loads.get(load.id)!)
   const loadMw = loads.reduce((sum, load) => sum + load.demandMw, 0)
   const servedLoadMw = loads.reduce((sum, load) => sum + load.servedMw, 0)
+  const externalExchangeMw = island.energized
+    ? islandMembers(grid, structure).externals.reduce((sum, system) => sum + grid.externalSystems.get(system.id)!.importMw, 0)
+      + islandFixedInjectionMw(grid, structure)
+    : 0
   return {
     id: island.id,
     referenceBus: { id: referenceBusId, label: grid.definition.index.busById.get(referenceBusId)!.label },
-    busCount: island.buses.length,
-    branchCount: island.branches.length,
+    busCount: structure.buses.length,
+    branchCount: structure.branches.length,
     generatorCount: generators.length,
     onlineGeneratorCount: generators.filter(generator => generator.state === 'online').length,
     loadCount: loads.length,
-    energized,
-    frequencyHz: energized ? grid.frequencyByIsland.get(island.id)! : null,
+    energized: island.energized,
+    frequencyHz: gridIslandFrequencyHz(island),
     generationMw: generators.reduce((sum, generator) => sum + generator.dispatchMw, 0),
-    storageMw: island.storage.reduce((sum, item) => sum + grid.storage.get(item.id)!.dispatchMw, 0),
-    externalExchangeMw: [...grid.externalConnections.values()]
-      .filter(connection => connection.connected && island.busSet.has(connection.busId))
-      .reduce((sum, connection) => sum + connection.systemActivePowerMw, 0),
+    storageMw: structure.storage.reduce((sum, item) => sum + grid.storage.get(item.id)!.dispatchMw, 0),
+    externalExchangeMw,
     loadMw,
     servedLoadMw,
-    unservedLoadMw: loadMw - servedLoadMw,
+    unservedLoadMw: loads.reduce((sum, load) => sum + load.unservedMw, 0),
     reserveMw: generators.reduce((sum, generator) => sum + (generator.state === 'online'
       ? Math.min(generator.reserveMw, Math.max(0, generator.availableMw - generator.dispatchMw))
       : 0), 0),
@@ -80,8 +83,9 @@ export const gridIslandsQuery = defineGridQuery({
   output: islandsResultSchema,
   answer: (payload, grids) => {
     const grid = gridFor(grids, payload.gridId)
-    const islands = solvedTopologyFor(grid).islands
-      .map(island => islandView(grid, island))
+    const plan = solvedGridIslands(grid)
+    const islands = plan.islands
+      .map(island => islandView(grid, plan, island))
       .sort((left, right) => right.loadMw - left.loadMw || right.busCount - left.busCount || left.id.localeCompare(right.id))
     return {
       gridId: payload.gridId,

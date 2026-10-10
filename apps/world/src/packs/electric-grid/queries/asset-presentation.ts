@@ -96,27 +96,32 @@ export const assetPresentationFor = (grid: GridRuntimeInstance, asset: GridAsset
   if (asset.kind === 'bus') {
     const state = grid.busStates.get(asset.id)
     const definition = asset.definition as typeof grid.definition.model.buses[number]
-    const voltage = state?.voltagePu ?? 1
-    const frequency = state?.frequencyHz ?? grid.definition.model.nominalFrequencyHz
-    const frequencyDeviation = Math.abs(frequency - grid.definition.model.nominalFrequencyHz)
     const connections = [...grid.externalConnections.values()].filter(connection => connection.busId === asset.id)
     const connectedCount = connections.filter(connection => connection.connected).length
-    const externalSupplyMw = connections.reduce((total, connection) =>
-      total + (connection.connected ? connection.systemActivePowerMw : 0), 0)
-    tone = voltage < 0.95 || frequencyDeviation >= 0.5
-      ? 'error'
-      : voltage < 0.98 || frequencyDeviation >= 0.1 || (connections.length > 0 && connectedCount < connections.length)
-        ? 'working'
-        : 'ready'
-    const externalPowerLabel = externalSupplyMw >= 0
-      ? `${Math.round(externalSupplyMw).toLocaleString()} MW supplied`
-      : `${Math.round(Math.abs(externalSupplyMw)).toLocaleString()} MW drawn`
-    statusLabel = connections.length === 0
-      ? state ? `${state.voltagePu.toFixed(3)} pu` : 'Initializing'
-      : `${connectedCount}/${connections.length} connected`
-    summary = connections.length === 0
-      ? `${definition.nominalKv} kV · ${frequency.toFixed(2)} Hz`
-      : `${externalPowerLabel} · ${connectedCount}/${connections.length} connected · ${frequency.toFixed(2)} Hz`
+    const connectedLabel = `${connectedCount}/${connections.length} connected`
+    if (!state || !state.energized || state.frequencyHz === null) {
+      // The DC model computes no voltage: a live bus is described by its island frequency, a dead one as de-energised.
+      tone = state ? 'error' : 'idle'
+      statusLabel = state ? connections.length === 0 ? 'De-energised' : `De-energised · ${connectedLabel}` : 'Initializing'
+      summary = `${definition.nominalKv} kV · de-energised`
+    } else {
+      const frequency = state.frequencyHz
+      const frequencyDeviation = Math.abs(frequency - grid.definition.model.nominalFrequencyHz)
+      const externalSupplyMw = connections.reduce((total, connection) =>
+        total + (connection.connected ? connection.systemActivePowerMw : 0), 0)
+      tone = frequencyDeviation >= 0.5
+        ? 'error'
+        : frequencyDeviation >= 0.1 || (connections.length > 0 && connectedCount < connections.length)
+          ? 'working'
+          : 'ready'
+      const externalPowerLabel = externalSupplyMw >= 0
+        ? `${Math.round(externalSupplyMw).toLocaleString()} MW supplied`
+        : `${Math.round(Math.abs(externalSupplyMw)).toLocaleString()} MW drawn`
+      statusLabel = connections.length === 0 ? 'Energised' : connectedLabel
+      summary = connections.length === 0
+        ? `${definition.nominalKv} kV · ${frequency.toFixed(2)} Hz`
+        : `${externalPowerLabel} · ${connectedLabel} · ${frequency.toFixed(2)} Hz`
+    }
   } else if (asset.kind === 'branch') {
     const state = grid.branches.get(asset.id)!
     const definition = asset.definition as typeof grid.definition.model.branches[number]

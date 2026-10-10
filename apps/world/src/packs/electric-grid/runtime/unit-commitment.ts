@@ -61,11 +61,12 @@ export const generatorIsSynchronised = (state: GridGeneratorState): boolean =>
   state.state === 'online' || state.state === 'stopping'
 
 /**
- * Advances generator lifecycles once per Grid tick, after the clock moved: a starting unit synchronises
- * when its start-up time has elapsed and loads to minimum stable generation; a stopping unit goes
- * offline once it has unloaded to 0 MW.
+ * Advances generator lifecycles at the Grid's current elapsed time: a starting unit synchronises
+ * when its start-up time has elapsed and loads to minimum stable generation; a stopping unit's
+ * breaker opens once its set-point has ramped down to 0 MW. Returns whether any unit changed state.
  */
-export const advanceGridUnitCommitment = (grid: GridRuntimeInstance): void => {
+export const advanceGridUnitCommitment = (grid: GridRuntimeInstance): boolean => {
+  let changed = false
   for (const definition of grid.definition.model.generators) {
     const state = grid.generators.get(definition.id)!
     if (state.state === 'starting') {
@@ -74,9 +75,22 @@ export const advanceGridUnitCommitment = (grid: GridRuntimeInstance): void => {
       state.state = 'online'
       state.synchronisesAtElapsedMs = null
       state.targetMw = generatorMinimumStableMw(definition)
-    } else if (state.state === 'stopping' && state.dispatchMw <= 0) {
+      changed = true
+    } else if (state.state === 'stopping' && state.scheduledMw <= 0) {
       state.state = 'offline'
       state.targetMw = 0
+      changed = true
     }
   }
+  return changed
+}
+
+/** Earliest elapsed time at which a starting unit synchronises; null when none is starting. */
+export const nextSynchronisationElapsedMs = (grid: GridRuntimeInstance): number | null => {
+  let earliest: number | null = null
+  for (const state of grid.generators.values()) {
+    if (state.state !== 'starting' || state.synchronisesAtElapsedMs === null) continue
+    if (earliest === null || state.synchronisesAtElapsedMs < earliest) earliest = state.synchronisesAtElapsedMs
+  }
+  return earliest
 }

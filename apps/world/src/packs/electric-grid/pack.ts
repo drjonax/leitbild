@@ -5,7 +5,7 @@ import {
   gridModelCatalogEntry,
   norwayGridModelRef,
   norwayNormalOperatingPointRef,
-  norwayStandardAutomationRef,
+  nordicFrequencyAutomationRef,
 } from './definition-refs.ts'
 import { electricGridRecordingProfiles, gridRecordingSeriesCount } from './recording.ts'
 import { electricGridPackDataSchema } from './model.ts'
@@ -28,7 +28,7 @@ export const electricGridPack: WorldPack = {
           ref: norwayNormalOperatingPointRef,
           overrides: { loadScale: 1.03, generationAvailabilityScale: 1, storageStateOfCharge: 0.58 },
         },
-        automation: { ref: norwayStandardAutomationRef },
+        automation: { ref: nordicFrequencyAutomationRef },
       },
       placement: { kind: 'point', path: ['location'] },
       fields: [{

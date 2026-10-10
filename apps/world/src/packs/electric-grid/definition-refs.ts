@@ -1,5 +1,4 @@
 import type {
-  GridAutomationDefinition,
   GridConnectionPointDefinition,
   GridModelFidelity,
   GridOperatingPointDefinition,
@@ -12,7 +11,10 @@ import type {
 export const norwayGridModelRef = 'electric-grid.norway.transmission'
 export const haldenFourUnitGridModelRef = 'electric-grid.halden.four-unit'
 export const norwayNormalOperatingPointRef = 'electric-grid.norway.normal'
-export const norwayStandardAutomationRef = 'electric-grid.norway.standard'
+/** Nordic synchronous-area frequency control: the default Automation. */
+export const nordicFrequencyAutomationRef = 'electric-grid.frequency.nordic-2025'
+export const manualBalancingTrainingAutomationRef = 'electric-grid.frequency.manual-balancing-training'
+export const islandedOperationAutomationRef = 'electric-grid.frequency.islanded-operation'
 
 export interface GridModelAssetCounts {
   readonly bus: number
@@ -47,12 +49,18 @@ export interface GridOperatingPointCatalogEntry {
   readonly values: Omit<GridOperatingPointDefinition, 'id' | 'title'>
 }
 
+/** Where the loader finds an Automation: a frequency-control preset file in automations/. */
+export interface GridAutomationSource {
+  readonly kind: 'frequency-preset'
+  readonly file: string
+}
+
 export interface GridAutomationCatalogEntry {
   readonly id: string
   readonly title: string
   readonly description: string
   readonly compatibleModelRefs: ReadonlyArray<string>
-  readonly values: Omit<GridAutomationDefinition, 'id' | 'title'>
+  readonly source: GridAutomationSource
 }
 
 export interface GridDefinitionCatalog {
@@ -63,8 +71,8 @@ export interface GridDefinitionCatalog {
 
 const transmissionFidelity: GridModelFidelity = {
   powerFlow: 'dc',
-  voltage: 'approximate',
-  frequency: 'aggregate-dynamic',
+  voltage: 'not-modelled',
+  frequency: 'island-swing',
   recommendedMaximumBusCount: 1_000,
 }
 
@@ -90,11 +98,11 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
   }, {
     id: haldenFourUnitGridModelRef,
     title: 'Halden four-unit transmission connection',
-    description: 'Norway transmission topology with a dedicated 420 kV Halden switchyard and four independently connectable unit bays.',
+    description: 'Norway transmission topology with a dedicated 420 kV Halden switchyard and four independently connectable unit bays, coupled through the two real 420 kV ties Hasle–Borgvik and Halden–Skogssäter to a synchronous equivalent of the rest of the Nordic area behind SE3.',
     nominalFrequencyHz: 50,
     fidelity: transmissionFidelity,
     source: { kind: 'addition-v1', baseModelRef: norwayGridModelRef, file: 'halden.grid-model.json' },
-    assetCounts: { bus: 256, branch: 306, generator: 70, load: 22, storage: 1, connectionPoint: 4 },
+    assetCounts: { bus: 257, branch: 308, generator: 70, load: 22, storage: 1, connectionPoint: 4 },
     connectionPoints: [1, 2, 3, 4].map(haldenUnitBay),
   }],
   operatingPoints: [{
@@ -104,20 +112,25 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
     values: { loadScale: 1.03, generationAvailabilityScale: 1, storageStateOfCharge: 0.58 },
   }],
+  // Frequency-control presets; titles and descriptions must match the preset files (the loader checks).
   automations: [{
-    id: norwayStandardAutomationRef,
-    title: 'Standard grid controls',
-    description: 'Daily load profiles, actual generator primary response, storage response, and under-frequency load shedding.',
+    id: nordicFrequencyAutomationRef,
+    title: 'Nordic frequency control 2025',
+    description: 'Nordic synchronous-area frequency control: FCR-N, FCR-D, aFRR and mFRR with synchronous-area volumes, NC ER LFDD from 48.8 Hz to 48.0 Hz, and NC RfG generator frequency protection.',
     compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
-    values: {
-      loadProfiles: true,
-      storageFrequencyResponse: true,
-      underFrequencyLoadShedding: true,
-      primaryFrequencyResponseMwPerHz: 900,
-      // 0.2 Hz slip is the loose end of synchronism-check settings: typical relays close at 0.05–0.1 Hz and
-      // allow 0.02–0.25 Hz (OPAL-RT ANSI 25 synchronism-check model; TestGuy sync-check primer: ≤ 0.1 Hz).
-      synchroCheckHz: 0.2,
-    },
+    source: { kind: 'frequency-preset', file: 'nordic-2025.json' },
+  }, {
+    id: manualBalancingTrainingAutomationRef,
+    title: 'Manual balancing training',
+    description: 'Nordic FCR-N and FCR-D contain frequency, but no aFRR or mFRR restores it: an operator or Agent must re-dispatch units to bring frequency back to 50 Hz. FCR volumes scale with the island.',
+    compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
+    source: { kind: 'frequency-preset', file: 'manual-balancing-training.json' },
+  }, {
+    id: islandedOperationAutomationRef,
+    title: 'Islanded operation',
+    description: "An island separated from the Nordic synchronous area: Nordic FCR, LFDD and protection settings with reserves dimensioned from the island's own demand and largest unit, island aFRR able to replace the largest unit, and Nordic FFR from storage.",
+    compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
+    source: { kind: 'frequency-preset', file: 'islanded-operation.json' },
   }],
 }
 

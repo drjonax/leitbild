@@ -140,11 +140,11 @@ describe('electrical Pack connection', () => {
       expect(beforePoints).toHaveLength(4)
       expect(beforePoints.every(point => point.connected && point.systemActivePowerMw > 1000)).toBe(true)
       const summaryBefore = await connection.invokeQuery({ capabilityId: 'world.electric-grid.grid.summary', input: { gridId: 'grid:halden-four-unit' } })
-      const projectionBefore = (summaryBefore as { projection: { activeAlarmCount: number; frequencyHz: number; highestBranchLoadingPercent: number; totalGenerationMw: number } }).projection
-      // Four actual full-power units can oversupply the connected demand island
-      // and overload inferred transmission lines. Never suppress those alarms or
-      // inflate line ratings just to preserve the old underpowered baseline.
-      expect(Number.isFinite(projectionBefore.frequencyHz)).toBe(true)
+      const projectionBefore = (summaryBefore as { projection: { activeAlarmCount: number; frequencyHz: number | null; frequencyBasis: string; highestBranchLoadingPercent: number; totalGenerationMw: number } }).projection
+      // The four units' surplus over the island's demand is exported over the real 420 kV ties to the
+      // Nordic synchronous equivalent, so the island holds the Nordic normal band (±0.1 Hz).
+      expect(projectionBefore.frequencyBasis).toBe('largest-load-energized-island')
+      expect(Math.abs(projectionBefore.frequencyHz! - 50)).toBeLessThan(0.1)
       expect(projectionBefore.totalGenerationMw).toBeGreaterThanOrEqual(beforePoints.reduce((sum, point) => sum + point.systemActivePowerMw, 0))
 
       const trip = await connection.sendCommand({
@@ -170,11 +170,11 @@ describe('electrical Pack connection', () => {
       const afterPoints = (afterQuery as { connectionPoints: ReadonlyArray<{ system: { objectId: string }; systemActivePowerMw: number }> }).connectionPoints
       expect(afterPoints.find(point => point.system.objectId === 'plant:halden-1')?.systemActivePowerMw).toBeLessThan(beforePoints[0]!.systemActivePowerMw * 0.45)
       const summaryAfter = await connection.invokeQuery({ capabilityId: 'world.electric-grid.grid.summary', input: { gridId: 'grid:halden-four-unit' } })
-      const projectionAfter = (summaryAfter as { projection: { frequencyHz: number; totalGenerationMw: number } }).projection
-      // A weighted average across independently settling islands is not a trip
-      // response measurement. Halden can also remain oversupplied after one trip.
-      // The solver's island-local response is tested against a time-aligned control.
-      expect(Number.isFinite(projectionAfter.frequencyHz)).toBe(true)
+      const projectionAfter = (summaryAfter as { projection: { frequencyHz: number | null; totalGenerationMw: number } }).projection
+      // The lost infeed is contained by the island's and the Nordic equivalent's inertia and FCR:
+      // frequency falls but stays above the 49.0 Hz reference-incident minimum.
+      expect(projectionAfter.frequencyHz!).toBeLessThan(50)
+      expect(projectionAfter.frequencyHz!).toBeGreaterThan(49)
       expect(projectionAfter.totalGenerationMw).toBeLessThan(projectionBefore.totalGenerationMw - 500)
     } finally {
       unsubscribe()

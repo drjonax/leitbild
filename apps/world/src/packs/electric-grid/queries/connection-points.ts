@@ -16,8 +16,9 @@ const connectionPointResultSchema = z.object({
     systemActivePowerMw: finite.describe('Power from the connected system into the Grid, positive into the Grid (MW).'),
     connected: z.boolean(),
     energized: z.boolean(),
-    voltagePu: finite,
-    frequencyHz: finite,
+    voltagePu: finite.describe('1.0 on a live bus (nominal, not computed by the DC model); 0 when de-energised.'),
+    voltageModel: z.literal('dc-nominal'),
+    frequencyHz: finite.nullable().describe('Island frequency; null when the bus is de-energised (Hz).'),
   }).strict()),
 }).strict()
 
@@ -33,7 +34,7 @@ export const gridConnectionPointsQuery = defineGridQuery({
     return {
       gridId: payload.gridId,
       connectionPoints: grid.definition.model.connectionPoints.map(point => {
-        const busState = grid.busStates.get(point.busId)
+        const busState = grid.busStates.get(point.busId)!
         const connection = grid.externalConnections.get(point.id)
         return {
           ...point,
@@ -41,11 +42,13 @@ export const gridConnectionPointsQuery = defineGridQuery({
             objectId: connection.definition.system.objectId,
             portId: connection.definition.system.portId,
           },
-          systemActivePowerMw: connection?.systemActivePowerMw ?? 0,
-          connected: connection?.connected ?? false,
-          energized: (busState?.voltagePu ?? 0) >= 0.8,
-          voltagePu: busState?.voltagePu ?? 0,
-          frequencyHz: busState?.frequencyHz ?? grid.definition.model.nominalFrequencyHz,
+          // A point with nothing connected exchanges no power.
+          systemActivePowerMw: connection === undefined ? 0 : connection.systemActivePowerMw,
+          connected: connection !== undefined && connection.connected,
+          energized: busState.energized,
+          voltagePu: busState.voltagePu,
+          voltageModel: busState.voltageModel,
+          frequencyHz: busState.frequencyHz,
         }
       }),
     }

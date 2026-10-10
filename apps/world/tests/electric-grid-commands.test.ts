@@ -20,13 +20,13 @@ import {
   gridShedLoadCommandKind,
 } from '../src/packs/electric-grid/commands/load.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, norwayStandardAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { GridGeneratorDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
-import { gridIslandIsEnergized } from '../src/packs/electric-grid/runtime/island-energization.ts'
+import { islandHasVoltageFormingSource } from '../src/packs/electric-grid/runtime/island-input.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { topologyPlanForGrid } from '../src/packs/electric-grid/runtime/topology.ts'
 import { generatorMinimumStableMw, generatorStartupSeconds } from '../src/packs/electric-grid/runtime/unit-commitment.ts'
@@ -48,7 +48,7 @@ const definition = compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: norwayGridModelRef },
   operatingPoint: { ref: norwayNormalOperatingPointRef },
-  automation: { ref: norwayStandardAutomationRef },
+  automation: { ref: nordicFrequencyAutomationRef },
 }))
 
 const kvilldalId = 'generator:kvilldal-kraftverk-way-638639750'
@@ -162,27 +162,28 @@ describe('electric grid generator commands', () => {
     const { grid, send, step } = harness()
     const state = grid.generators.get(thermal.id)!
     expect(send(gridStopGeneratorCommandKind, { assetId: thermal.id }).ok).toBe(true)
-    step(600)
+    step(Math.ceil(state.scheduledMw / thermal.rampRateMwPerMinute * 60) + 4)
     expect(state.state).toBe('offline')
     expect(send(gridStartGeneratorCommandKind, { assetId: thermal.id }).ok).toBe(true)
-    step(generatorStartupSeconds(thermal)! - 10, 10)
+    step(generatorStartupSeconds(thermal)! - 10, 60)
     expect(state.state).toBe('starting')
     step(10, 10)
     expect(state.state).toBe('online')
-  })
+  }, 30_000) // 80 simulated minutes of the full Norway Model at 0.1 s frequency sub-steps
 
   test('stop unloads an online unit at its ramp rate before it goes offline, and aborts a start', () => {
     const { grid, send, step } = harness()
     const generator = generatorDefinition(kvilldalId)
     const state = grid.generators.get(kvilldalId)!
-    const dispatchBeforeMw = state.dispatchMw
+    // The set-point ramps; electrical output adds the unit's inertial share of the island imbalance.
+    const scheduledBeforeMw = state.scheduledMw
     expect(send(gridStopGeneratorCommandKind, { assetId: kvilldalId }).ok).toBe(true)
     expect(state).toMatchObject({ state: 'stopping', targetMw: 0 })
     expect(reasonOf(send(gridStopGeneratorCommandKind, { assetId: kvilldalId }))).toContain('stopping')
     expect(reasonOf(send(gridSetGeneratorAvailabilityCommandKind, { assetId: kvilldalId, availableMw: 0 }))).toContain('is stopping and needs at least')
     step(2)
-    expect(state.dispatchMw).toBeCloseTo(Math.max(0, dispatchBeforeMw - generator.rampRateMwPerMinute * 2 / 60))
-    step(Math.ceil(dispatchBeforeMw / generator.rampRateMwPerMinute * 60) + 4)
+    expect(state.scheduledMw).toBeCloseTo(Math.max(0, scheduledBeforeMw - generator.rampRateMwPerMinute * 2 / 60))
+    step(Math.ceil(scheduledBeforeMw / generator.rampRateMwPerMinute * 60) + 4)
     expect(state).toMatchObject({ state: 'offline', dispatchMw: 0 })
     expect(reasonOf(send(gridTripGeneratorCommandKind, { assetId: kvilldalId }))).toContain('already offline')
     expect(send(gridStartGeneratorCommandKind, { assetId: kvilldalId }).ok).toBe(true)
@@ -212,7 +213,7 @@ const separableBridge = (grid: GridRuntimeInstance) => {
     const to = plan.islands.find(island => island.busSet.has(branch.toBusId))!
     state.state = 'closed'
     if (plan.islands.length === baseIslandCount || from.id === to.id) continue
-    if (!gridIslandIsEnergized(grid, from) || !gridIslandIsEnergized(grid, to)) continue
+    if (!islandHasVoltageFormingSource(grid, from) || !islandHasVoltageFormingSource(grid, to)) continue
     const small = from.buses.length <= to.buses.length ? from : to
     if (small.loads.length > 0 && small.generators.length >= 2) {
       topologyPlanForGrid(grid)
@@ -237,24 +238,29 @@ describe('electric grid branch commands', () => {
     expect(reasonOf(send(gridOpenBranchCommandKind, { assetId: kvilldalId }))).toContain('branch Grid Asset not found')
   })
 
-  test('synchro-check blocks closing between energised islands apart by more than synchroCheckHz and reports the measured difference', () => {
+  test('synchro-check blocks closing between energised islands apart by more than the frequency limit and reports the measured difference', () => {
     const { grid, send, step } = harness()
     const { branch, small } = separableBridge(grid)
     expect(send(gridOpenBranchCommandKind, { assetId: branch.id }).ok).toBe(true)
     expect(send(gridCloseBranchCommandKind, { assetId: branch.id }).ok).toBe(true)
 
     expect(send(gridOpenBranchCommandKind, { assetId: branch.id }).ok).toBe(true)
-    const units = [...small.generators].sort((left, right) => right.capacityMw - left.capacityMw)
-    for (const unit of units.slice(0, -1)) expect(send(gridTripGeneratorCommandKind, { assetId: unit.id }).ok).toBe(true)
-    step(120)
+    // Raising one unit's set-point by 60 MW over-frequencies the separated island for minutes:
+    // its own units' FCR and aFRR are small against the step.
+    const lead = [...small.generators].sort((left, right) => grid.generators.get(right.id)!.dispatchMw - grid.generators.get(left.id)!.dispatchMw)[0]!
+    const leadState = grid.generators.get(lead.id)!
+    expect(send(gridDispatchGeneratorCommandKind, { assetId: lead.id, targetMw: Math.min(leadState.availableMw, leadState.targetMw + 60) }).ok).toBe(true)
+    step(60)
     const fromHz = grid.busStates.get(branch.fromBusId)!.frequencyHz
     const toHz = grid.busStates.get(branch.toBusId)!.frequencyHz
+    if (fromHz === null || toHz === null) throw new Error('both islands must stay energised')
     const slipHz = Math.abs(fromHz - toHz)
-    expect(slipHz).toBeGreaterThan(definition.automation.synchroCheckHz)
+    const limitHz = definition.automation.synchroCheck.maximumFrequencyDifferenceHz
+    expect(slipHz).toBeGreaterThan(limitHz)
     const reason = reasonOf(send(gridCloseBranchCommandKind, { assetId: branch.id }))
     expect(reason).toContain('synchro-check blocks closing')
     expect(reason).toContain(`differ by ${slipHz.toFixed(3)} Hz`)
-    expect(reason).toContain(`${definition.automation.synchroCheckHz} Hz limit`)
+    expect(reason).toContain(`${limitHz} Hz limit`)
     expect(grid.branches.get(branch.id)!.state).toBe('open')
   })
 
@@ -265,8 +271,7 @@ describe('electric grid branch commands', () => {
     const branches = definition.index.branchesByBus.get(load.busId)!
     for (const branch of branches) expect(send(gridOpenBranchCommandKind, { assetId: branch.id }).ok).toBe(true)
     step(60)
-    const island = topologyPlanForGrid(grid).islands.find(candidate => candidate.busSet.has(load.busId))!
-    expect(gridIslandIsEnergized(grid, island)).toBe(false)
+    expect(grid.busStates.get(load.busId)!.energized).toBe(false)
     expect(send(gridCloseBranchCommandKind, { assetId: branches[0]!.id }).ok).toBe(true)
   })
 })
@@ -440,7 +445,7 @@ describe('electric grid query Capabilities', () => {
 
   test('every asset of both published Models fits the typed asset.get output', () => {
     const halden = compileGridDefinition(gridDefinitionSchema.parse({
-      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: 'electric-grid.norway.normal' }, automation: { ref: norwayStandardAutomationRef },
+      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: 'electric-grid.norway.normal' }, automation: { ref: nordicFrequencyAutomationRef },
     }))
     for (const compiled of [definition, halden]) {
       const grid = createGridRuntimeInstance({ definition: compiled, at: isoAt(0) })

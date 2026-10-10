@@ -14,7 +14,7 @@ const gridItem = (overrides: unknown): PackScenarioItemSpec => ({
   location: [10.75, 59.91],
   model: { ref: 'electric-grid.norway.transmission' },
   operatingPoint: { ref: 'electric-grid.norway.normal', overrides },
-  automation: { ref: 'electric-grid.norway.standard' },
+  automation: { ref: 'electric-grid.frequency.nordic-2025' },
 }) as PackScenarioItemSpec
 const context = { at: '2026-01-15T16:00:00.000Z' as IsoTimestamp } as PackScenarioExpansionContext
 
@@ -29,7 +29,7 @@ const issuesOf = async (overrides: unknown): Promise<ReadonlyArray<{ readonly pa
 }
 
 const model = compileGridDefinition({
-  id: 'grid:ids', model: { ref: 'electric-grid.norway.transmission' }, operatingPoint: { ref: 'electric-grid.norway.normal' }, automation: { ref: 'electric-grid.norway.standard' },
+  id: 'grid:ids', model: { ref: 'electric-grid.norway.transmission' }, operatingPoint: { ref: 'electric-grid.norway.normal' }, automation: { ref: 'electric-grid.frequency.nordic-2025' },
 }).model
 
 describe('Grid Scenario Operating Point overrides', () => {
@@ -64,6 +64,6 @@ describe('Grid Scenario Operating Point overrides', () => {
     expect(Object.keys(schema.properties)).toEqual(expect.arrayContaining([
       'loadScale', 'priceAreaDemandScale', 'generatorStates', 'branchStates', 'hvdcSchedules', 'externalExchangeSchedules', 'generationAvailabilityScale', 'storageStateOfCharge',
     ]))
-    expect(() => gridOperatingPointOverridesSchema.parse({ automation: { ref: 'electric-grid.norway.standard' } })).toThrow()
+    expect(() => gridOperatingPointOverridesSchema.parse({ automation: { ref: 'electric-grid.frequency.nordic-2025' } })).toThrow()
   })
 })

@@ -26,11 +26,13 @@ export const electricGridRecordingProfiles: ReadonlyArray<RecordingProfileDescri
 interface GridRecordingSeries {
   readonly grid: GridRuntimeInstance
   readonly descriptor: RecordingSeriesDescriptor
-  readonly value: () => number
+  /** null: the quantity does not exist now (for example the frequency of a de-energised island); no sample is taken. */
+  readonly value: () => number | boolean | null
 }
 
 export interface GridRecordingPlan {
   readonly intervalMs: number
+  /** Every series described so far; islands that form later add their series when first sampled. */
   readonly descriptors: ReadonlyArray<RecordingSeriesDescriptor>
   readonly sample: (config: { readonly observedAt: IsoTimestamp; readonly simulationTime: IsoTimestamp }) => PackRuntimeRecordingBatch
 }
@@ -45,9 +47,10 @@ const series = (config: {
   readonly grid: GridRuntimeInstance
   readonly signalId: string
   readonly title: string
+  readonly valueType?: 'number' | 'boolean'
   readonly quantity: string
   readonly unit: string
-  readonly value: () => number
+  readonly value: () => number | boolean | null
 }): GridRecordingSeries => ({
   grid: config.grid,
   descriptor: {
@@ -55,7 +58,7 @@ const series = (config: {
     subjectId: config.grid.definition.gridId,
     signalId: config.signalId,
     title: `${config.grid.definition.model.title} · ${config.title}`,
-    valueType: 'number',
+    valueType: config.valueType ?? 'number',
     quantity: config.quantity,
     unit: config.unit,
   },
@@ -63,7 +66,11 @@ const series = (config: {
 })
 
 const operations = [{
-  signalId: 'grid.frequency', title: 'Frequency', quantity: 'frequency', unit: 'Hz', key: 'frequencyHz',
+  signalId: 'grid.frequency', title: 'Frequency (largest-load energised island)', quantity: 'frequency', unit: 'Hz', key: 'frequencyHz',
+}, {
+  signalId: 'grid.frequency.min', title: 'Lowest island frequency', quantity: 'frequency', unit: 'Hz', key: 'frequencyMinHz',
+}, {
+  signalId: 'grid.frequency.max', title: 'Highest island frequency', quantity: 'frequency', unit: 'Hz', key: 'frequencyMaxHz',
 }, {
   signalId: 'grid.generation', title: 'Generation', quantity: 'active-power', unit: 'MW', key: 'totalGenerationMw',
 }, {
@@ -73,26 +80,43 @@ const operations = [{
 }, {
   signalId: 'grid.unserved-load', title: 'Unserved load', quantity: 'active-power', unit: 'MW', key: 'unservedLoadMw',
 }, {
+  signalId: 'grid.losses', title: 'Network losses', quantity: 'active-power', unit: 'MW', key: 'lossesMw',
+}, {
   signalId: 'grid.reserve', title: 'Reserve margin', quantity: 'active-power', unit: 'MW', key: 'reserveMarginMw',
 }, {
   signalId: 'grid.maximum-branch-loading', title: 'Maximum branch loading', quantity: 'ratio', unit: '%', key: 'highestBranchLoadingPercent',
 }, {
-  signalId: 'grid.minimum-voltage', title: 'Minimum voltage', quantity: 'voltage-ratio', unit: 'pu', key: 'lowestVoltagePu',
+  signalId: 'grid.island-count', title: 'Energised islands', quantity: 'count', unit: '1', key: 'activeIslandCount',
 }, {
   signalId: 'grid.active-alarms', title: 'Active alarms', quantity: 'count', unit: '1', key: 'activeAlarmCount',
 }] as const
 const operationsSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => operations.map(({ key, ...item }) => series({ grid, ...item, value: () => grid.projection[key] }))
 
+/** Frequency and energisation series of one island, keyed by its stable id. */
+const islandSeries = (grid: GridRuntimeInstance, islandId: string): ReadonlyArray<GridRecordingSeries> => {
+  const island = () => grid.projection.islands.find(candidate => candidate.id === islandId)
+  return [
+    series({ grid, signalId: `island.${islandId}.frequency`, title: `Island ${islandId} frequency`, quantity: 'frequency', unit: 'Hz', value: () => island()?.frequencyHz ?? null }),
+    series({ grid, signalId: `island.${islandId}.energized`, title: `Island ${islandId} energised`, valueType: 'boolean', quantity: 'boolean', unit: 'boolean', value: () => {
+      const current = island()
+      return current === undefined ? null : current.energized
+    } }),
+  ]
+}
+
+// Each island adds its two series when it forms; the estimate counts the main island's.
+const estimatedIslandSeriesCount = 2
+
 export const gridRecordingSeriesCount = (counts: GridModelAssetCounts, profileId: string): number =>
-  operations.length + (profileId === 'engineering'
+  operations.length + estimatedIslandSeriesCount + (profileId === 'engineering'
     ? counts.bus * 2 + counts.branch * 2 + counts.generator + counts.load + counts.storage : 0)
 
 const engineeringSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => [
   ...grid.definition.model.buses.flatMap(bus => {
     const state = () => grid.busStates.get(bus.id)
     return [
-      series({ grid, signalId: `${bus.id}.voltage`, title: `${bus.label} voltage`, quantity: 'voltage-ratio', unit: 'pu', value: () => state()?.voltagePu ?? 1 }),
-      series({ grid, signalId: `${bus.id}.frequency`, title: `${bus.label} frequency`, quantity: 'frequency', unit: 'Hz', value: () => state()?.frequencyHz ?? grid.definition.model.nominalFrequencyHz }),
+      series({ grid, signalId: `${bus.id}.energized`, title: `${bus.label} energised`, valueType: 'boolean', quantity: 'boolean', unit: 'boolean', value: () => state()?.energized ?? null }),
+      series({ grid, signalId: `${bus.id}.frequency`, title: `${bus.label} frequency`, quantity: 'frequency', unit: 'Hz', value: () => state()?.frequencyHz ?? null }),
     ]
   }),
   ...grid.definition.model.branches.flatMap(branch => {
@@ -120,22 +144,46 @@ export const createGridRecordingPlan = (config: {
   const profile = profileFor(config.selection.profileId)
   const intervalMs = config.selection.intervalMs ?? profile.defaultIntervalMs
   if (intervalMs < profile.minimumIntervalMs) throw new Error(`electric-grid recording profile ${profile.id} requires an interval of at least ${profile.minimumIntervalMs} ms`)
-  const plans = [...config.grids.values()].flatMap(grid => profile.id === 'engineering'
+  const plans: GridRecordingSeries[] = [...config.grids.values()].flatMap(grid => profile.id === 'engineering'
     ? [...operationsSeries(grid), ...engineeringSeries(grid)]
-    : operationsSeries(grid))
+    : [...operationsSeries(grid)])
+  const describedIslands = new Set<string>()
+  const addIslandSeries = (): ReadonlyArray<RecordingSeriesDescriptor> => {
+    const added: RecordingSeriesDescriptor[] = []
+    for (const grid of config.grids.values()) {
+      for (const island of grid.projection.islands) {
+        const key = `${grid.definition.gridId}\u0000${island.id}`
+        if (describedIslands.has(key)) continue
+        describedIslands.add(key)
+        const created = islandSeries(grid, island.id)
+        plans.push(...created)
+        added.push(...created.map(item => item.descriptor))
+      }
+    }
+    return added
+  }
+  addIslandSeries()
   return {
     intervalMs,
-    descriptors: plans.map(item => item.descriptor),
-    sample: ({ observedAt, simulationTime }) => ({
-      descriptors: [],
-      samples: plans.map(item => ({
-        seriesId: item.descriptor.id,
-        observedAt,
-        simulationTime,
-        elapsedMs: Math.round(item.grid.elapsedMs),
-        value: item.value(),
-        quality: 'good' as const,
-      })),
-    }),
+    get descriptors() {
+      return plans.map(item => item.descriptor)
+    },
+    sample: ({ observedAt, simulationTime }) => {
+      const descriptors = addIslandSeries()
+      return {
+        descriptors: [...descriptors],
+        samples: plans.flatMap(item => {
+          const value = item.value()
+          return value === null ? [] : [{
+            seriesId: item.descriptor.id,
+            observedAt,
+            simulationTime,
+            elapsedMs: Math.round(item.grid.elapsedMs),
+            value,
+            quality: 'good' as const,
+          }]
+        }),
+      }
+    },
   }
 }

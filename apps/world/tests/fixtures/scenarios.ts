@@ -1222,7 +1222,7 @@ const fixtures = [
               "ref": "electric-grid.norway.normal"
             },
             "automation": {
-              "ref": "electric-grid.norway.standard"
+              "ref": "electric-grid.frequency.nordic-2025"
             }
           }
         ]

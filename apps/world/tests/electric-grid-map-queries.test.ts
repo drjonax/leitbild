@@ -3,7 +3,7 @@ import type { ActorId, CommandEnvelope, CommandId, IsoTimestamp, ObjectId, Simul
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, norwayStandardAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
@@ -24,7 +24,7 @@ const norway = compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: norwayGridModelRef },
   operatingPoint: { ref: norwayNormalOperatingPointRef },
-  automation: { ref: norwayStandardAutomationRef },
+  automation: { ref: nordicFrequencyAutomationRef },
 }))
 
 const runningGrid = (): GridRuntimeInstance => {

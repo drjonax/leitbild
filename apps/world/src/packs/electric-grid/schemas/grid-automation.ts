@@ -34,7 +34,7 @@ const directionalRequirementSchema = z.object({
 }).strict()
 
 export const automationSectionSchema = z.enum([
-  'simulation', 'swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection',
+  'simulation', 'swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection', 'synchroCheck',
 ])
 
 const sourceReferenceSchema = z.object({
@@ -194,6 +194,13 @@ const generatorProtectionSchema = z.object({
   return new Set(ids).size === ids.length && !ids.includes('rocof')
 }, 'generator protection element ids must be unique and must not be "rocof"')
 
+const synchroCheckSchema = z.object({
+  /** Largest frequency difference between two energised islands at which a branch may join them. */
+  maximumFrequencyDifferenceHz: hz,
+  /** Largest voltage-angle difference across an open branch whose ends are already in one energised island (loop closing). */
+  maximumAngleDifferenceDegrees: z.number().finite().positive().max(180),
+}).strict()
+
 export const gridAutomationSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -208,6 +215,7 @@ export const gridAutomationSchema = z.object({
   lfdd: lfddSchema,
   storage: storageSchema,
   generatorProtection: generatorProtectionSchema,
+  synchroCheck: synchroCheckSchema,
 }).strict().superRefine((value, context) => {
   const nominal = value.swing.nominalFrequencyHz
   const issue = (message: string, path: ReadonlyArray<string | number>): void => {

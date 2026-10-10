@@ -162,6 +162,22 @@
       "accessedOn": "2026-10-10",
       "status": "verified",
       "note": "§13.4.1: FFR trigger 49.7 Hz with full activation within 1.30 s (49.6 Hz / 1.00 s and 49.5 Hz / 0.70 s also allowed); short-duration support at least 5 s with deactivation at most 20 %/s; ready again within 15 min."
+    },
+    {
+      "section": "synchroCheck",
+      "title": "TestGuy: Sync Check Relay (25) Fundamentals and Testing Explained",
+      "url": "https://wiki.testguy.net/t/sync-check-relay-25-fundamentals-and-testing-explained/613",
+      "accessedOn": "2026-10-11",
+      "status": "verified",
+      "note": "Sync check relays require a slip of 0.1 Hz or less between the sources to operate; used as the frequency-difference limit for closing between two energised islands."
+    },
+    {
+      "section": "synchroCheck",
+      "title": "Industrial Monitor Direct: Generator breaker closing, power angle and voltage limits",
+      "url": "https://industrialmonitordirect.com/blogs/knowledgebase/generator-breaker-closing-power-angle-and-voltage-limits",
+      "accessedOn": "2026-10-11",
+      "status": "verified",
+      "note": "No universal angle: some systems accept no more than 20°; manual reclosing in normal operation with digital relays uses 15-25°, automatic synch-check relays 15-35°; a digital-relay example uses 15° and 0.05 Hz. 20° for closing a loop inside one island is a modelling choice within these ranges."
     }
   ],
   "simulation": {
@@ -327,5 +343,9 @@
       "thresholdHzPerSecond": 4,
       "delaySeconds": 0.25
     }
+  },
+  "synchroCheck": {
+    "maximumFrequencyDifferenceHz": 0.1,
+    "maximumAngleDifferenceDegrees": 20
   }
 }

@@ -11,8 +11,9 @@ import {
 
 /**
  * The DC power-flow system of one island. Its first (lowest-index) bus is the angle
- * reference: its row is dropped, so it absorbs the island's injection mismatch. The
- * reduced susceptance matrix over the remaining buses is factorised once per structure.
+ * reference: its row is dropped, so it would absorb any injection mismatch; the Grid's
+ * injections balance each island by construction and the solve's returned sum is checked.
+ * The reduced susceptance matrix over the remaining buses is factorised once per structure.
  */
 export interface GridIslandSystem {
   readonly islandId: string

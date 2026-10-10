@@ -29,13 +29,14 @@ import { createRuntimeStateWriter } from '../../../simulation/runtime-state-writ
 import { electricGridPackDataSchema,electricGridPackId } from '../model.ts'
 import { answerElectricGridQuery,electricGridQueryCapabilities } from '../queries/index.ts'
 import { createGridRecordingPlan } from '../recording.ts'
-import { balanceInitialGridDispatch,createGridRuntimeInstance,type GridRuntimeInstance } from '../runtime/instance.ts'
+import { dispatchGridFromLiveIslands } from '../runtime/dispatch.ts'
+import { createGridRuntimeInstance,type GridRuntimeInstance } from '../runtime/instance.ts'
 import { applyGridCommand } from '../runtime/apply-command.ts'
 import { advanceGrid } from '../runtime/solver.ts'
 import { commandProvenanceSource } from './command-provenance.ts'
 import { electricGridAdapterId,electricGridRuntimeId } from './constants.ts'
 import { gridProjectionEvents,projectGridObject,projectedInitialGridObjects } from './object-projection.ts'
-import { electricGridRuntimeStateSchema,restoredGridRuntimeStateFor,runtimeStateForElectricGrids } from './runtime-state.ts'
+import { parseElectricGridRuntimeState,restoredGridRuntimeStateFor,runtimeStateForElectricGrids } from './runtime-state.ts'
 
 const updateIntervalMs = 2_000
 
@@ -100,7 +101,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
     const { compileGridDefinition } = await import('../definitions.ts')
     const initialObjects = (config.initialObjects ?? config.scenario.initialObjects).filter(object => object.packId === electricGridPackId)
     const rawState = await config.runtimeStateStore?.load()
-    const runtimeState = rawState === undefined || rawState === null ? null : electricGridRuntimeStateSchema.parse(rawState)
+    const runtimeState = rawState === undefined || rawState === null ? null : parseElectricGridRuntimeState(rawState)
     const initialAt = config.scenario.world.startsAt
     const grids = new Map<string, GridRuntimeInstance>()
     const initiallyBalancedGridIds = new Set<string>()
@@ -227,7 +228,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
         const allObserved = [...grid.externalConnections.values()].every(connection =>
           observedStartupConnections.has(`${grid.definition.gridId}\u0000${connection.definition.network.portId}`))
         if (!allObserved) continue
-        balanceInitialGridDispatch(grid)
+        dispatchGridFromLiveIslands(grid, Date.parse(currentSimulationTime()))
         initiallyBalancedGridIds.add(grid.definition.gridId)
       }
     }

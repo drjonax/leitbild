@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { GridBranchDefinition } from '../grid-model.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
-import { defineGridQuery, gridFor, requireGridIsland, solvedTopologyFor } from './common.ts'
+import { defineGridQuery, gridBusIslandId, gridFor, requireGridIsland } from './common.ts'
 import { branchDefinitionSchema } from './schemas.ts'
 
 const finite = z.number().finite()
@@ -65,11 +65,10 @@ export const gridPowerFlowQuery = defineGridQuery({
   output: powerFlowResultSchema,
   answer: (payload, grids) => {
     const grid = gridFor(grids, payload.gridId)
-    const plan = solvedTopologyFor(grid)
-    const islandId = payload.islandId === undefined ? undefined : requireGridIsland(plan, payload.islandId)
+    const islandId = payload.islandId === undefined ? undefined : requireGridIsland(grid, payload.islandId)
     const matched = grid.definition.model.branches.filter(definition =>
       (payload.minLoadingPercent === undefined || grid.branches.get(definition.id)!.loadingPercent >= payload.minLoadingPercent)
-      && (islandId === undefined || plan.islandIdByBus.get(definition.fromBusId) === islandId || plan.islandIdByBus.get(definition.toBusId) === islandId))
+      && (islandId === undefined || gridBusIslandId(grid, definition.fromBusId) === islandId || gridBusIslandId(grid, definition.toBusId) === islandId))
     const ordered = payload.sort === 'loading'
       ? [...matched].sort((left, right) => grid.branches.get(right.id)!.loadingPercent - grid.branches.get(left.id)!.loadingPercent)
       : matched

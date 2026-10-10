@@ -21,7 +21,7 @@ const line = (id: string, fromBusId: string, toBusId: string, reactancePu: numbe
 
 const handModel = (id: string, busIds: ReadonlyArray<string>, branches: ReadonlyArray<GridBranchDefinition>): GridModelDefinition => ({
   id, title: id, description: 'Hand-built network test model', nominalFrequencyHz: 50,
-  fidelity: { powerFlow: 'dc', voltage: 'approximate', frequency: 'aggregate-dynamic', recommendedMaximumBusCount: 1000 },
+  fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
   sourceBuild: { id: 'network-test', generatedAt: '2026-10-10T00:00:00.000Z' },
   sourceIds: [],
   buses: busIds.map((busId, index) => ({ id: busId, label: busId, nominalKv: 420, location: [10 + index * 0.1, 60] as const })),
@@ -35,7 +35,7 @@ const norwayDefinition = (): CompiledGridDefinition => compileGridDefinition(gri
   id: 'grid:norway',
   model: { ref: 'electric-grid.norway.transmission' },
   operatingPoint: { ref: 'electric-grid.norway.normal' },
-  automation: { ref: 'electric-grid.norway.standard' },
+  automation: { ref: 'electric-grid.frequency.nordic-2025' },
 }))
 
 const injectionsOf = (grid: GridRuntimeInstance): ReadonlyMap<string, number> =>
@@ -201,7 +201,7 @@ describe('electric-grid sparse network core', () => {
     expect(grid.diagnostics.topologyRebuildCount).toBe(2)
   })
 
-  test('closes KCL at every non-reference bus to 1e-9 MW; the reference bus residual is the recorded mismatch', () => {
+  test('closes KCL at every bus to 1e-9 MW; the reference bus absorbs no island mismatch', () => {
     const definition = norwayDefinition()
     const grid = gridFor(definition)
     advanceGrid(grid, 0, at)
@@ -213,8 +213,8 @@ describe('electric-grid sparse network core', () => {
         else expect(Math.abs(residuals.get(busId)!)).toBeLessThan(1e-9)
       }
     })
-    // The Norway model has unbalanced islands today: the references absorb them until distributed slack lands.
-    expect(Math.max(...[...plan.referenceMismatchMw].map(Math.abs))).toBeGreaterThan(1)
+    // Island balance closes by construction (inertial and governor sharing): the references absorb nothing.
+    expect(Math.max(...[...plan.referenceMismatchMw].map(Math.abs))).toBeLessThan(1e-6)
   })
 
   test('detects the islands left by opening a bridge, and reuses island factors when it closes again', () => {
@@ -258,13 +258,18 @@ describe('electric-grid sparse network core', () => {
     const grid = gridFor(definition)
     advanceGrid(grid, 0, at)
     const before = topologyPlanForGrid(grid).islands.length
-    grid.branches.get(definition.index.branchesByBus.get(leaf.id)![0]!.id)!.state = 'open'
+    const branch = definition.index.branchesByBus.get(leaf.id)![0]!
+    const neighbour = branch.fromBusId === leaf.id ? branch.toBusId : branch.fromBusId
+    const parentId = grid.busStates.get(leaf.id)!.islandId
+    grid.branches.get(branch.id)!.state = 'open'
     advanceGrid(grid, 2, at)
     const plan = topologyPlanForGrid(grid)
     expect(plan.islands.length).toBe(before + 1)
     const index = plan.islands.findIndex(island => island.buses.length === 1 && island.buses[0] === leaf.id)
     expect(plan.islands[index]!.id).toBe(`island:${leaf.id}`)
-    expect(grid.busStates.get(leaf.id)!.islandId).toBe(`island:${leaf.id}`)
+    // Stable identity: the larger part keeps the parent's id; the separated bus is a new island.
+    expect(grid.busStates.get(neighbour)!.islandId).toBe(parentId)
+    expect(grid.busStates.get(leaf.id)!.islandId).not.toBe(parentId)
     expect(plan.referenceMismatchMw[index]).toBe(grid.busStates.get(leaf.id)!.netInjectionMw)
   })
 

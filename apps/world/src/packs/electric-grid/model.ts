@@ -11,21 +11,70 @@ export const electricGridPackId = 'electric-grid' as const
 
 const finiteNumber = z.number().finite()
 
+const nonNegative = finiteNumber.nonnegative()
+const count = z.number().int().nonnegative()
+
+/** Reserve allocated by product (MW), units and external equivalents of the island together. */
+export const gridReservesByProductSchema = z.object({
+  fcrNMw: nonNegative,
+  fcrDUpMw: nonNegative,
+  fcrDDownMw: nonNegative,
+  afrrUpMw: nonNegative,
+  afrrDownMw: nonNegative,
+  mfrrUpMw: nonNegative,
+  mfrrDownMw: nonNegative,
+}).strict()
+
+/** One electrical island with a stable id; frequency and RoCoF are null while it is de-energised. */
+export const gridIslandProjectionSchema = z.object({
+  id: z.string().min(1),
+  energized: z.boolean(),
+  busCount: count,
+  frequencyHz: finiteNumber.positive().nullable(),
+  rocofHzPerSecond: finiteNumber.nullable(),
+  /** Electrical output of the island's generators and storage (MW). */
+  generationMw: finiteNumber,
+  /** Net power into the island from external systems, connected systems and HVDC (MW; negative exports). */
+  importMw: finiteNumber,
+  loadMw: nonNegative,
+  servedLoadMw: nonNegative,
+  lossesMw: nonNegative,
+  reserves: gridReservesByProductSchema,
+  alarmCount: count,
+}).strict()
+export type GridIslandProjection = z.infer<typeof gridIslandProjectionSchema>
+
 export const gridProjectionSchema = z.object({
   statusTone: z.enum(['ready', 'working', 'error', 'idle']),
   statusLabel: z.string().min(1),
   summary: z.string().min(1),
   nominalFrequencyHz: finiteNumber.positive(),
-  frequencyHz: finiteNumber.positive(),
-  totalGenerationMw: finiteNumber.nonnegative(),
-  totalLoadMw: finiteNumber.nonnegative(),
-  servedLoadMw: finiteNumber.nonnegative(),
-  unservedLoadMw: finiteNumber.nonnegative(),
+  /** Headline frequency: the frequency of the energised island with the largest demand; null when no island is energised. */
+  frequencyHz: finiteNumber.positive().nullable(),
+  frequencyBasis: z.literal('largest-load-energized-island'),
+  frequencyIslandId: z.string().min(1).nullable(),
+  frequencyMinHz: finiteNumber.positive().nullable(),
+  frequencyMaxHz: finiteNumber.positive().nullable(),
+  /** Voltage is not computed by the DC model: live buses report nominal voltage. */
+  voltageModel: z.literal('dc-nominal'),
+  totalGenerationMw: nonNegative,
+  totalLoadMw: nonNegative,
+  servedLoadMw: nonNegative,
+  unservedLoadMw: nonNegative,
+  lossesMw: nonNegative,
   reserveMarginMw: finiteNumber,
-  highestBranchLoadingPercent: finiteNumber.nonnegative(),
-  lowestVoltagePu: finiteNumber.positive(),
-  activeIslandCount: z.number().int().positive(),
-  activeAlarmCount: z.number().int().nonnegative(),
+  highestBranchLoadingPercent: nonNegative,
+  /** Energised islands. */
+  activeIslandCount: count,
+  islandCount: count,
+  activeAlarmCount: count,
+  /** Islands that hold a generator, load, storage, connection point or external system. */
+  islands: z.array(gridIslandProjectionSchema),
+  energyAudit: z.object({
+    /** Largest |Σ injection| of an energised island at the last solve (MW). */
+    maximumIslandMismatchMw: nonNegative,
+    cumulativeMismatchMwh: nonNegative,
+  }).strict(),
   tick: z.number().int().nonnegative(),
   updatedAt: z.string().min(1),
 }).strict()
@@ -47,16 +96,24 @@ export const emptyGridProjection = (at: string, nominalFrequencyHz: number): Gri
   statusLabel: 'Initializing',
   summary: 'Grid runtime is initializing',
   nominalFrequencyHz,
-  frequencyHz: nominalFrequencyHz,
+  frequencyHz: null,
+  frequencyBasis: 'largest-load-energized-island',
+  frequencyIslandId: null,
+  frequencyMinHz: null,
+  frequencyMaxHz: null,
+  voltageModel: 'dc-nominal',
   totalGenerationMw: 0,
   totalLoadMw: 0,
   servedLoadMw: 0,
   unservedLoadMw: 0,
+  lossesMw: 0,
   reserveMarginMw: 0,
   highestBranchLoadingPercent: 0,
-  lowestVoltagePu: 1,
-  activeIslandCount: 1,
+  activeIslandCount: 0,
+  islandCount: 0,
   activeAlarmCount: 0,
+  islands: [],
+  energyAudit: { maximumIslandMismatchMw: 0, cumulativeMismatchMwh: 0 },
   tick: 0,
   updatedAt: at,
 })

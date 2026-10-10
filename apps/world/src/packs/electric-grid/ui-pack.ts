@@ -67,11 +67,11 @@ const presentationForGrid = (object: OperationalObject): PackObjectPresentation 
     fields: [
       packField('model', 'Model', data.model.ref),
       packField('operating-point', 'Operating point', data.operatingPoint.ref),
-      packField('frequency', 'Frequency', `${projection.frequencyHz.toFixed(2)} Hz`),
+      packField('frequency', 'Frequency (largest island)', projection.frequencyHz === null ? 'No island energised' : `${projection.frequencyHz.toFixed(2)} Hz`),
       packField('generation', 'Generation', mw(projection.totalGenerationMw)),
       packField('load', 'Served load', `${mw(projection.servedLoadMw)} / ${mw(projection.totalLoadMw)}`),
       packField('reserve', 'Reserve margin', mw(projection.reserveMarginMw)),
-      packField('islands', 'Islands', String(projection.activeIslandCount)),
+      packField('islands', 'Energised islands', `${projection.activeIslandCount} of ${projection.islandCount}`),
       packField('alarms', 'Active alarms', String(projection.activeAlarmCount)),
     ],
     mapIconVisible: true,

@@ -15,7 +15,8 @@ import { compileGridDefinition, compileGridModelIndex } from '../src/packs/elect
 import { electricGridPackDataSchema } from '../src/packs/electric-grid/model.ts'
 import { electricGridPack } from '../src/packs/electric-grid/pack.ts'
 import { addGridModelAssets, gridModelAdditionSchema } from '../src/packs/electric-grid/model-additions.ts'
-import { balanceInitialGridDispatch, createGridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
+import { dispatchGridFromLiveIslands } from '../src/packs/electric-grid/runtime/dispatch.ts'
+import { createGridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { createLocalElectricGridPackRuntimeAdapter } from '../src/packs/electric-grid/sim/adapter.ts'
 import { electricGridRuntimeId } from '../src/packs/electric-grid/sim/constants.ts'
@@ -72,7 +73,7 @@ const objectResult = (response: unknown): Record<string, unknown> => {
 describe('electric grid Pack', () => {
   test('composes declarative topology additions without coupling the compiler to Halden', async () => {
     const definition = (modelRef: string, operatingPointRef: string) => compileGridDefinition(gridDefinitionSchema.parse({
-      id: 'grid:test', model: { ref: modelRef }, operatingPoint: { ref: operatingPointRef }, automation: { ref: 'electric-grid.norway.standard' },
+      id: 'grid:test', model: { ref: modelRef }, operatingPoint: { ref: operatingPointRef }, automation: { ref: 'electric-grid.frequency.nordic-2025' },
     }))
     const base = definition('electric-grid.norway.transmission', 'electric-grid.norway.normal').model
     const haldenJson = await Bun.file(new URL('../src/packs/electric-grid/models/halden.grid-model.json', import.meta.url)).json() as object
@@ -86,7 +87,7 @@ describe('electric grid Pack', () => {
     expect(() => addGridModelAssets(base, { ...addition, baseModelRef: 'missing' }, 'test addition')).toThrow('base mismatch')
     // A published model is an immutable artifact used by persisted Run state.
     expect(definition('electric-grid.halden.four-unit', 'electric-grid.norway.normal').definitionDigest)
-      .toBe('c87cb95eccc768406bafd57c1ab7718573de5292bde753d978bd2408249a3528')
+      .toBe('951b066642f423545b22af8f2027d583240b036b2ffe1633b803f03fb5478536')
     expect(() => definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal')).toThrow('unknown Grid Operating Point')
     expect(definition('electric-grid.halden.four-unit', 'electric-grid.norway.normal').model.connectionPoints).toHaveLength(4)
   })
@@ -107,7 +108,7 @@ describe('electric grid Pack', () => {
     expect(electricGridPackDataSchema.parse(gridObjects[0]?.packData)).toMatchObject({
       model: { ref: 'electric-grid.norway.transmission' },
       operatingPoint: { ref: 'electric-grid.norway.normal' },
-      automation: { ref: 'electric-grid.norway.standard' },
+      automation: { ref: 'electric-grid.frequency.nordic-2025' },
     })
   })
 
@@ -216,15 +217,20 @@ describe('electric grid Pack', () => {
     const definition = compileGridDefinition(gridDefinitionSchema.parse({
       id: 'grid:scaled',
       model: data.model,
-      operatingPoint: { ...data.operatingPoint, overrides: { loadScale: 0.8, generationAvailabilityScale: 0.5, storageStateOfCharge: 0.25 } },
+      operatingPoint: { ...data.operatingPoint, overrides: { loadScale: 0.8, generationAvailabilityScale: 0.85, storageStateOfCharge: 0.25 } },
       automation: data.automation,
     }))
     const grid = createGridRuntimeInstance({ definition, at: '2026-01-01T10:00:00.000Z' })
     const generator = definition.model.generators[0]!
-    expect(grid.generators.get(generator.id)?.availableMw).toBeCloseTo(Math.min(generator.capacityMw, generator.availableMw * 0.5))
+    expect(grid.generators.get(generator.id)?.availableMw).toBeCloseTo(Math.min(generator.capacityMw, generator.availableMw * 0.85))
     const load = definition.model.loads[0]!
     expect(grid.loads.get(load.id)?.nominalDemandMw).toBeCloseTo(load.demandMw * 0.8)
     expect([...grid.storage.values()][0]?.stateOfChargeFraction).toBeCloseTo(0.25)
+    // Dispatch never caps silently: an island whose units cannot cover its demand is an explicit error.
+    const short = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:short', model: data.model, operatingPoint: { ...data.operatingPoint, overrides: { generationAvailabilityScale: 0.5 } }, automation: data.automation,
+    }))
+    expect(() => createGridRuntimeInstance({ definition: short, at: '2026-01-01T10:00:00.000Z' })).toThrow(/dispatch is infeasible: island .* needs .* MW but its online units can supply/)
   })
 
   test('rejects invalid Model identity and references during compilation', () => {
@@ -243,25 +249,37 @@ describe('electric grid Pack', () => {
     const grid = createGridRuntimeInstance({ definition, at: '2026-01-01T10:00:00.000Z' })
     advanceGrid(grid, 0, '2026-01-01T10:00:00.000Z' as IsoTimestamp)
     const firstPlan = grid.topologyPlan
-    const storage = [...grid.storage.values()][0]!
+    const storageId = [...grid.storage.keys()][0]!
+    const storage = grid.storage.get(storageId)!
     const initialCharge = storage.stateOfChargeFraction
-    for (const generator of grid.generators.values()) {
-      generator.state = 'tripped'
-      generator.dispatchMw = 0
-      generator.targetMw = 0
+    // The largest unit of the storage's island trips: FCR-D storage discharges below 49.9 Hz.
+    const storageBus = definition.model.storage[0]!.busId
+    const islandId = grid.busStates.get(storageBus)!.islandId
+    const largest = definition.model.generators
+      .filter(generator => grid.busStates.get(generator.busId)!.islandId === islandId)
+      .sort((a, b) => grid.generators.get(b.id)!.dispatchMw - grid.generators.get(a.id)!.dispatchMw)[0]!
+    const tripped = grid.generators.get(largest.id)!
+    tripped.state = 'tripped'
+    tripped.targetMw = 0
+    let elapsed = 0
+    let discharged = 0
+    for (let step = 0; step < 30; step += 1) {
+      elapsed += 2
+      advanceGrid(grid, 2, new Date(Date.parse('2026-01-01T10:00:00.000Z') + elapsed * 1_000).toISOString() as IsoTimestamp)
+      discharged = Math.max(discharged, storage.dispatchMw)
     }
-    advanceGrid(grid, 2, '2026-01-01T10:00:02.000Z' as IsoTimestamp)
-    advanceGrid(grid, 3_600, '2026-01-01T11:00:02.000Z' as IsoTimestamp)
     expect(grid.topologyPlan).toBe(firstPlan)
-    expect(new Set([...grid.busStates.values()].map(state => state.islandId)).size).toBeGreaterThanOrEqual(grid.projection.activeIslandCount)
+    expect(new Set([...grid.busStates.values()].map(state => state.islandId)).size).toBe(grid.projection.islandCount)
     expect(grid.projection.activeIslandCount).toBeGreaterThan(0)
-    expect(storage.dispatchMw).toBeGreaterThan(0)
+    expect(discharged).toBeGreaterThan(0)
     expect(storage.stateOfChargeFraction).toBeLessThan(initialCharge)
 
     const branchId = definition.model.branches[0]!.id
     grid.branches.get(branchId)!.state = 'open'
-    advanceGrid(grid, 1, '2026-01-01T11:00:01.000Z' as IsoTimestamp)
+    advanceGrid(grid, 1, new Date(Date.parse('2026-01-01T10:00:00.000Z') + (elapsed + 1) * 1_000).toISOString() as IsoTimestamp)
     expect(grid.topologyPlan).not.toBe(firstPlan)
+    // A step longer than the Automation's maximum catch-up fails visibly instead of being stretched.
+    expect(() => advanceGrid(grid, 3_600, '2026-01-01T12:00:00.000Z' as IsoTimestamp)).toThrow(/at most 120 s of catch-up/)
   })
 
   test('external supply loss lowers the connected island frequency against a time-aligned control', () => {
@@ -275,7 +293,7 @@ describe('electric grid Pack', () => {
       // A controlled, non-saturated operating point isolates the coupling. The
       // authored four-full-power-unit scenario is deliberately left unchanged.
       for (const point of grid.externalConnections.values()) { point.connected = true; point.systemActivePowerMw = 200 }
-      balanceInitialGridDispatch(grid)
+      dispatchGridFromLiveIslands(grid, Date.parse(at))
       advanceGrid(grid, 0, at)
       return grid
     }
@@ -288,7 +306,7 @@ describe('electric grid Pack', () => {
       advanceGrid(control, 1, time)
       advanceGrid(tripped, 1, time)
     }
-    expect(tripped.busStates.get(lost.busId)!.frequencyHz).toBeLessThan(control.busStates.get(lost.busId)!.frequencyHz - 0.01)
+    expect(tripped.busStates.get(lost.busId)!.frequencyHz!).toBeLessThan(control.busStates.get(lost.busId)!.frequencyHz! - 0.01)
     expect(tripped.projection.totalGenerationMw).toBeLessThan(control.projection.totalGenerationMw)
     for (const [id, state] of tripped.busStates) {
       if (state.islandId !== islandId) expect(state.frequencyHz).toBe(control.busStates.get(id)!.frequencyHz)

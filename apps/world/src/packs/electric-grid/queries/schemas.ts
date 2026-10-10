@@ -6,6 +6,7 @@ import type {
   GridLoadDefinition,
   GridStorageDefinition,
 } from '../grid-model.ts'
+import { gridReservesByProductSchema } from '../model.ts'
 import type {
   GridBranchState,
   GridBusState,
@@ -21,6 +22,12 @@ import type {
 const finite = z.number().finite()
 const location = z.tuple([finite, finite]).readonly()
 const sourceFields = { sourceId: z.string().optional(), sourceFeatureId: z.string().optional() }
+const assetProvenanceSchema = z.object({
+  sources: z.array(z.string()).readonly(),
+  method: z.enum(['mapped', 'registry', 'measured', 'inferred', 'curated']),
+  confidence: z.enum(['high', 'medium', 'low']),
+  note: z.string().optional(),
+}).strict().describe('Where the asset\'s values come from and how they were obtained, for assets a Model Addition adds with evidence.')
 
 export const busDefinitionSchema = z.object({
   id: z.string(),
@@ -28,6 +35,7 @@ export const busDefinitionSchema = z.object({
   nominalKv: finite,
   location,
   ...sourceFields,
+  provenance: assetProvenanceSchema.optional(),
 }).strict()
 
 export const branchDefinitionSchema = z.object({
@@ -43,6 +51,7 @@ export const branchDefinitionSchema = z.object({
   resistancePu: finite,
   weatherExposure: z.enum(['low', 'medium', 'high']),
   ...sourceFields,
+  provenance: assetProvenanceSchema.optional(),
 }).strict()
 
 export const generatorDefinitionSchema = z.object({
@@ -87,13 +96,17 @@ export const storageDefinitionSchema = z.object({
   ...sourceFields,
 }).strict()
 
+const islandFrequencyHz = finite.nullable().describe('Frequency of the island holding the asset; null while it is de-energised (Hz).')
+
 export const busStateSchema = z.object({
   busId: z.string(),
-  voltagePu: finite,
-  frequencyHz: finite,
+  islandId: z.string().describe('Stable id of the island holding the bus (world.electric-grid.islands.list).'),
+  energized: z.boolean(),
+  voltagePu: finite.describe('1.0 on a live bus (nominal, not computed by the DC model); 0 on a de-energised bus.'),
+  voltageModel: z.literal('dc-nominal'),
+  frequencyHz: islandFrequencyHz,
   angleRad: finite,
-  islandId: z.string(),
-  netInjectionMw: finite.describe('Net active power injected at the bus: generation minus served load (MW).'),
+  netInjectionMw: finite.describe('Net active power injected at the bus, including its share of branch losses (MW).'),
 }).strict()
 
 export const branchStateSchema = z.object({
@@ -103,8 +116,8 @@ export const branchStateSchema = z.object({
   loadingPercent: finite.describe('|flowMw| over the derated rating (%).'),
   voltageFromPu: finite,
   voltageToPu: finite,
-  frequencyHz: finite,
-  lossesMw: finite,
+  frequencyHz: islandFrequencyHz,
+  lossesMw: finite.describe('Quadratic DC loss r·P²/S_base (MW).'),
 }).strict()
 
 export const generatorLifecycleStateSchema = z.enum(['online', 'offline', 'starting', 'stopping', 'tripped'])
@@ -113,9 +126,14 @@ export const generatorStateSchema = z.object({
   state: generatorLifecycleStateSchema,
   availableMw: finite,
   dispatchMw: finite.describe('Active power output (MW).'),
-  targetMw: finite.describe('Dispatch target the unit ramps to (MW).'),
-  reserveMw: finite,
-  frequencyHz: finite,
+  targetMw: finite.describe('Operator or dispatch set-point (MW).'),
+  scheduledMw: finite.describe('Set-point the unit follows at its ramp rate; frequency control acts on top of it (MW).'),
+  fcrMw: finite.describe('Activated FCR-N and FCR-D (MW).'),
+  afrrMw: finite.describe('Activated aFRR (MW).'),
+  mfrrMw: finite.describe('Activated mFRR (MW).'),
+  reserves: gridReservesByProductSchema.describe('Reserve volumes allocated to the unit at dispatch (MW).'),
+  reserveMw: finite.describe('Upward reserve allocated: FCR-N, FCR-D up, aFRR up and mFRR up (MW).'),
+  frequencyHz: islandFrequencyHz,
   synchronisesAtElapsedMs: finite.nullable().describe('Run elapsed time at which a starting unit synchronises; null otherwise.'),
 }).strict()
 
@@ -125,13 +143,15 @@ export const loadShedCauseSchema = z.enum(['manual', 'lfdd'])
 export const loadStateSchema = z.object({
   nominalDemandMw: finite.describe('Scheduled demand before the daily profile (MW).'),
   manualDemandLimitMw: finite.nullable().describe('Manual shedding limit from shed-load (MW); null when not shed manually.'),
-  demandMw: finite,
-  servedMw: finite,
+  demandMw: finite.describe('Profiled demand before any shedding (MW).'),
+  servedMw: finite.describe('Demand served: demand less curtailment, LFDD shedding and outage, at the island\'s load self-regulation (MW).'),
   curtailedMw: finite.describe('Demand shed manually (MW).'),
   lfddShedMw: finite.describe('Demand shed by automatic under-frequency load shedding (MW).'),
+  outageMw: finite.describe('Demand lost because the load\'s island is de-energised (MW).'),
+  unservedMw: finite.describe('Demand not served: curtailedMw + lfddShedMw + outageMw (MW).'),
   shedMw: finite.describe('Total shed demand: curtailedMw + lfddShedMw (MW).'),
   shedCauses: z.array(loadShedCauseSchema),
-  frequencyHz: finite,
+  frequencyHz: islandFrequencyHz,
   voltagePu: finite,
   serviceState: loadServiceStateSchema,
 }).strict()
@@ -139,7 +159,7 @@ export const loadStateSchema = z.object({
 export const storageStateSchema = z.object({
   stateOfChargeFraction: finite,
   dispatchMw: finite.describe('Active power, positive when discharging into the Grid (MW).'),
-  frequencyHz: finite,
+  frequencyHz: islandFrequencyHz,
   voltagePu: finite,
   state: z.enum(['idle', 'charging', 'discharging', 'unavailable']),
 }).strict()

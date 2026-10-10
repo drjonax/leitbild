@@ -1,11 +1,11 @@
 {
   "id": "halden-power-complex",
   "title": "Halden four-unit power complex",
-  "description": "Four independently simulated PWR units supply a dedicated 420 kV switchyard in the Norwegian transmission grid. This is a stressed starting condition: approximately 4.4 GW of nuclear generation can exceed demand in the connected grid island and produce frequency or loading alarms. No balancing demand, export path or inflated line rating is invented to hide this. Plant output and station-service demand participate directly in grid balance, flow, voltage, and frequency. Local weather evolves from rain through freezing conditions to clearing, with recorded ground probes. Weather is observable context; it does not yet change Plant or Grid physics.",
+  "description": "Four independently simulated PWR units supply a dedicated 420 kV switchyard in the Norwegian transmission grid. The units' combined output of about 4.3 GW exceeds the demand of the connected Norwegian island, so the dispatch exports the surplus to Sweden over the two real 420 kV ties Hasle–Borgvik and Halden–Skogssäter into a synchronous equivalent of the rest of the Nordic area, which shares the island's frequency, inertia and reserves. Plant output and station-service demand participate directly in grid balance, flow and frequency; the DC grid model does not compute voltage. If the switchyard loses every path to a voltage-forming source, its ports de-energise and the Plants lose offsite power. Local weather evolves from rain through freezing conditions to clearing, with recorded ground probes. Weather is observable context; it does not yet change Plant or Grid physics.",
   "objectives": [
-    "Operate four independent PWR units while monitoring their combined effect on the transmission grid.",
-    "Assess the initially stressed grid balance before changing dispatch or tripping a unit; this source-derived network is not a calibrated four-unit operating baseline.",
-    "Observe actual grid frequency, reserve, voltage, and branch-flow response when a unit changes output or trips.",
+    "Operate four independent PWR units while monitoring their combined effect on the transmission grid and the export to Sweden.",
+    "Assess the starting balance, the tie loading and the reserves before changing dispatch or tripping a unit; this source-derived network is not a calibrated four-unit operating baseline.",
+    "Observe the island frequency, reserve activation and branch-flow response when a unit changes output or trips.",
     "Maintain offsite station-service power from the connected grid.",
     "Inspect local weather and persistent ground conditions at the complex and compare with the northern probe. Weather does not automatically cause equipment failures."
   ],
@@ -180,7 +180,7 @@
             "ref": "electric-grid.norway.normal"
           },
           "automation": {
-            "ref": "electric-grid.norway.standard"
+            "ref": "electric-grid.frequency.nordic-2025"
           }
         }
       ],

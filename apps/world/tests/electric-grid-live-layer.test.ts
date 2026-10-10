@@ -7,7 +7,7 @@ import type { PackMapTheme } from '../src/core/packs/reference-style.ts'
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, norwayStandardAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
@@ -171,7 +171,7 @@ const norway = compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: norwayGridModelRef },
   operatingPoint: { ref: norwayNormalOperatingPointRef },
-  automation: { ref: norwayStandardAutomationRef },
+  automation: { ref: nordicFrequencyAutomationRef },
 }))
 
 /** The query result as the browser receives it: answered, validated by the Host, sent as JSON. */

@@ -5,7 +5,7 @@ import {
   type GridDefinitionCatalog,
   type GridModelCatalogEntry,
 } from '../src/packs/electric-grid/definition-refs.ts'
-import { compileGridDefinition, createGridDefinitionCompiler, gridModelFileReader } from '../src/packs/electric-grid/definitions.ts'
+import { compileGridDefinition, createGridDefinitionCompiler, gridAutomationFileReader, gridModelFileReader } from '../src/packs/electric-grid/definitions.ts'
 
 const worldRoot = resolve(import.meta.dir, '..')
 
@@ -45,14 +45,14 @@ const fixtureCatalog = (models: ReadonlyArray<GridModelCatalogEntry>): GridDefin
 const fixtureCompiler = () => {
   const reads: string[] = []
   const read = gridModelFileReader(new URL('./fixtures/electric-grid/', import.meta.url))
-  const compiler = createGridDefinitionCompiler({ catalog: fixtureCatalog(fixtureModels), readModelFile: file => { reads.push(file); return read(file) } })
+  const compiler = createGridDefinitionCompiler({ catalog: fixtureCatalog(fixtureModels), readModelFile: file => { reads.push(file); return read(file) }, readAutomationFile: gridAutomationFileReader })
   return { compiler, reads }
 }
 const definitionFor = (modelRef: string) => ({
   id: 'grid:catalog-test',
   model: { ref: modelRef },
   operatingPoint: { ref: 'electric-grid.norway.normal' },
-  automation: { ref: 'electric-grid.norway.standard' },
+  automation: { ref: 'electric-grid.frequency.nordic-2025' },
 })
 
 describe('Electric Grid definition catalog', () => {
@@ -111,9 +111,10 @@ describe('Electric Grid definition catalog', () => {
     const drifted = createGridDefinitionCompiler({
       catalog: fixtureCatalog([norway, fixtureAddition({ id: 'electric-grid.test.fixture-addition', file: 'addition-valid.grid-model.json', title: 'Drifted title' })]),
       readModelFile: gridModelFileReader(new URL('./fixtures/electric-grid/', import.meta.url)),
+      readAutomationFile: gridAutomationFileReader,
     })
     expect(() => drifted.compile(definitionFor('electric-grid.test.fixture-addition'))).toThrow('catalog title "Drifted title" does not describe the loaded model')
-    expect(() => createGridDefinitionCompiler({ catalog: fixtureCatalog([norway, norway]), readModelFile: () => null })).toThrow('duplicate Grid Model in the Grid catalog')
+    expect(() => createGridDefinitionCompiler({ catalog: fixtureCatalog([norway, norway]), readModelFile: () => null, readAutomationFile: () => null })).toThrow('duplicate Grid Model in the Grid catalog')
     expect(() => compiler.compile(definitionFor('electric-grid.test.missing'))).toThrow('unknown Grid Model: electric-grid.test.missing')
   })
 })
