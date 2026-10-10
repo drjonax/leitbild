@@ -468,3 +468,5 @@ impl leitbild_operating_plant::hot_spine::Properties for If97 {
 }
 #[cfg(feature = "ida")]
 pub mod ida;
+#[cfg(feature = "ida")]
+pub mod klu;
