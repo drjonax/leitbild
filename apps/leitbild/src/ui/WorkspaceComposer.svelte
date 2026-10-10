@@ -1,5 +1,7 @@
 <script lang="ts">
-  import type { WorkspaceSubjectReference } from '@leitbild/contracts'
+  import { onDestroy, untrack } from 'svelte'
+  import type { WorkspaceResourceReference, WorkspaceSubjectReference } from '@leitbild/contracts'
+  import { createViewRelay, type WorldPane } from './view-relay.ts'
   import { workspaceSubjectFocusMessage } from './workspace-focus.ts'
 
   interface Props {
@@ -9,6 +11,11 @@
     readonly agentsRoomId: string | null
     readonly agentsVisible: boolean
     readonly onShowAgents: () => void
+    /** Whether this Workspace's catalog lists the Run. */
+    readonly hasRun: (run: WorkspaceResourceReference) => boolean
+    /** Opens a Run in a World pane beside the chat, as switching Runs does. */
+    readonly onOpenRun: (runId: string) => void
+    readonly onError: (message: string) => void
   }
 
   type CollapsedPane = 'world' | 'agents' | null
@@ -17,7 +24,7 @@
   const collapseThreshold = 12
   const minimumOpenShare = 20
 
-  let { workspaceId, worldRunId, focusedSubjects, agentsRoomId, agentsVisible, onShowAgents }: Props = $props()
+  let { workspaceId, worldRunId, focusedSubjects, agentsRoomId, agentsVisible, onShowAgents, hasRun, onOpenRun, onError }: Props = $props()
   let splitPercent = $state(initialSplit)
   let lastOpenSplit = $state(initialSplit)
   let collapsedPane = $state<CollapsedPane>(null)
@@ -25,6 +32,9 @@
   let dragLeft = 0
   let dragWidth = 1
   let agentsFrame = $state<HTMLIFrameElement | null>(null)
+  let worldFrame = $state<HTMLIFrameElement | null>(null)
+  // The process display window asked for the whole area and the chat was collapsed for it.
+  let windowMaximised = $state(false)
 
   const publishResourceFocus = (): void => {
     agentsFrame?.contentWindow?.postMessage(
@@ -89,6 +99,66 @@
   const restoreSplit = (): void => {
     collapsedPane = null
     splitPercent = lastOpenSplit
+    windowMaximised = false
+  }
+
+  // Only a chat shown beside the World pane is collapsed for the window, and
+  // restoring undoes only that collapse.
+  const maximiseWorld = (maximised: boolean): void => {
+    if (maximised) {
+      if (worldRunId === null || agentsRoomId === null || !agentsVisible || collapsedPane !== null) return
+      collapsedPane = 'agents'
+      windowMaximised = true
+      return
+    }
+    if (!windowMaximised) return
+    windowMaximised = false
+    if (collapsedPane === 'agents') restoreSplit()
+  }
+
+  // Relay state stays in the relay's plain closure, never in $state: a Svelte
+  // proxy cannot be posted to a frame (see workspace-focus.ts).
+  const relay = createViewRelay({
+    workspaceId: () => workspaceId,
+    worldPane: (): WorldPane => worldRunId === null ? 'absent' : collapsedPane === 'world' ? 'collapsed' : 'shown',
+    hasRun: run => hasRun(run),
+    postToWorld: message => worldFrame?.contentWindow?.postMessage(message, location.origin),
+    postToAgents: message => agentsFrame?.contentWindow?.postMessage(message, location.origin),
+    showWorld: () => restoreSplit(),
+    maximiseWorld,
+    openRun: runId => onOpenRun(runId),
+    reportError: message => onError(message),
+    startTimer: (ms, expire) => {
+      const timer = setTimeout(expire, ms)
+      return () => clearTimeout(timer)
+    },
+  })
+  onDestroy(() => relay.dispose())
+
+  // Only the two frames' own documents take part in the window's protocol.
+  const receiveViewMessage = (event: MessageEvent): void => {
+    if (event.origin !== location.origin || event.source === null) return
+    if (event.source === agentsFrame?.contentWindow) relay.fromAgents(event.data)
+    else if (event.source === worldFrame?.contentWindow) relay.fromWorld(event.data)
+  }
+
+  // A new Run gives the World frame a new document (or none), which listens only
+  // once it says so. World says so as its route mounts, which can be before the
+  // frame's load event, so readiness is reset here rather than on load.
+  $effect(() => {
+    worldRunId
+    untrack(() => relay.worldFrameUnloaded())
+  })
+
+  // Another Room or a closed chat ends the Agents document that listed the displays.
+  $effect(() => {
+    agentsRoomId
+    untrack(() => relay.agentsFrameUnloaded())
+  })
+
+  const agentsFrameLoaded = (): void => {
+    publishResourceFocus()
+    relay.agentsFrameLoaded()
   }
 
   const resizeWithKeyboard = (event: KeyboardEvent): void => {
@@ -113,13 +183,17 @@
   }
 </script>
 
+<svelte:window onmessage={receiveViewMessage} />
+
 <section
   class="workspace-composer"
   class:dragging
+  class:window-maximised={windowMaximised}
   style={`grid-template-columns: ${gridColumns}`}
 >
   {#if worldRunId !== null}<section class="module-pane world-pane" class:collapsed={collapsedPane === 'world'} aria-label="World simulations">
     <iframe
+      bind:this={worldFrame}
       class="module-frame active"
       src={`/workspaces/${encodeURIComponent(workspaceId)}/world/runs/${encodeURIComponent(worldRunId)}`}
       title="World simulations"
@@ -144,7 +218,7 @@
       class="module-frame active"
       src={`/workspaces/${encodeURIComponent(workspaceId)}/agents?room=${encodeURIComponent(agentsRoomId)}&view=focused`}
       title="Agents room"
-      onload={publishResourceFocus}
+      onload={agentsFrameLoaded}
     ></iframe>
   </section>{/if}
 

@@ -364,6 +364,9 @@ button:disabled { opacity: .55; cursor: wait; }
   .split-handle, .reopen-handle { display: none; }
   .module-pane.collapsed { display: block; }
   .module-pane.hidden-pane { display: none; }
+  /* A maximised process display window takes the chat's row too. */
+  .workspace-composer.window-maximised { grid-template-rows: minmax(0, 1fr); }
+  .workspace-composer.window-maximised .agents-pane { display: none; }
 }
 
 /* Card actions are sibling controls, never nested interactive elements. */

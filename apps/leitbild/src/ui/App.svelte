@@ -8,6 +8,7 @@
     type ResourceSummaryItem,
     type Workspace,
     type ModuleQueryOutcome,
+    type WorkspaceResourceReference,
     type WorkspaceSubjectReference,
   } from '@leitbild/contracts'
   import JsonTree from './JsonTree.svelte'
@@ -20,7 +21,7 @@
   import RunRoomControls from './RunRoomControls.svelte'
   import { request, jsonRequest } from './api.ts'
   import { cardCapability } from './card-actions.ts'
-  import { roomScopeIncludingRun, roomSelectsRun, roomUsesFamily, runFamilyFor } from './run-room-scope.ts'
+  import { roomScopeIncludingRun, roomSelectsRun, roomUsesFamily, runFamilyFor, sameResource } from './run-room-scope.ts'
 
   type Page = { readonly kind: 'list' } | { readonly kind: 'workspace'; readonly id: string }
   interface InvocationResponse {
@@ -325,6 +326,10 @@
     else history.pushState(null, '', url)
   }
 
+  // The process display window opens a chat display's Run only when this Workspace lists it.
+  const listsRun = (run: WorkspaceResourceReference): boolean =>
+    resources.some(resource => resource.ref.type === 'world.simulation-run' && sameResource(resource.ref, run))
+
   const closeWorldRun = (): void => {
     location.href = workspace ? `/workspaces/${encodeURIComponent(workspace.id)}` : '/workspaces'
   }
@@ -557,7 +562,8 @@
     {#each catalogFailures as outcome (outcome.moduleId)}{#if outcome.status === 'failed'}<p class="notice error" role="alert">{moduleTitles[outcome.moduleId]}: {outcome.failure.message}</p>{/if}{/each}
     {#if refreshError}<p class="notice error" role="alert">Catalog refresh failed: {refreshError}</p>{/if}
     {#if showingComposer}
-    <WorkspaceComposer workspaceId={workspace.id} worldRunId={selectedWorldRunId} {focusedSubjects} agentsRoomId={selectedAgentsRoomId} {agentsVisible} onShowAgents={showRunAssistant} />
+    <WorkspaceComposer workspaceId={workspace.id} worldRunId={selectedWorldRunId} {focusedSubjects} agentsRoomId={selectedAgentsRoomId} {agentsVisible} onShowAgents={showRunAssistant}
+      hasRun={listsRun} onOpenRun={runId => switchWorldRun(runId)} onError={message => { error = message }} />
     {:else}
       <section class="workspace-home">
         {#if error}<p class="notice error">{error}</p>{/if}
