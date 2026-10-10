@@ -55,9 +55,10 @@ describe('process plant model composition', () => {
     // pressurizer coupled to the loops' inventory and saturation, and
     // realistic loop and tube-metal sizes. Changed again on 2026-10-10,
     // approved by the owner, when the pressurizer gained its code safety
-    // valves and relief header; PWR Runs checkpointed before then must be
+    // valves and relief header, and again when low-pressure SI became
+    // blockable below P-11; PWR Runs checkpointed before then must be
     // restarted.
-    expect(system.modelDigest).toBe('e019871acc3d16ff380871de6b9b443f93236e1e5533ccf9f7365a81b37e864d')
+    expect(system.modelDigest).toBe('59475281dcc0100918f49e53ffa323fd81c346dc065b72a5125c5d5da72ebd6d')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

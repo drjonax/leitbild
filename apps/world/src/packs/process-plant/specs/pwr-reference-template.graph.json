@@ -4145,6 +4145,43 @@
           "shortLabel": "Relief header"
         }
       }
+    },
+    {
+      "id": "safetyInjectionBlockLogic",
+      "kind": "safetyInjectionBlockLogic",
+      "label": "Safety Injection Block Logic",
+      "parameters": {
+        "p11PressureMPa": 13.3,
+        "reactorTripBreakers": [
+          "reactorTripBreakerA",
+          "reactorTripBreakerB"
+        ]
+      },
+      "variables": [
+        {
+          "path": "blockPushbutton",
+          "tagId": "SI-BLOCK",
+          "equipmentId": "safetyInjectionBlockLogic",
+          "description": "Low pressurizer pressure SI block pushbutton command; momentary, accepted below P-11 with the reactor tripped"
+        },
+        {
+          "path": "blocked",
+          "tagId": "SI-BLOCKED",
+          "equipmentId": "safetyInjectionBlockLogic",
+          "description": "Safety injection on low pressurizer pressure blocked; resets by itself when pressure rises above P-11"
+        },
+        {
+          "path": "belowP11",
+          "tagId": "P-11",
+          "equipmentId": "safetyInjectionBlockLogic",
+          "description": "P-11 permissive: pressurizer pressure below 13.3 MPa, where low-pressure SI may be blocked"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "SI block logic"
+        }
+      }
     }
   ],
   "connections": [
@@ -11767,6 +11804,9 @@
     "pressurizer-safety-valves-to-tank.flowKgPerS",
     "pressurizer-safety-valves-to-tank.temperatureC",
     "pressurizer-relief-header-to-tank.flowKgPerS",
-    "pressurizer-relief-header-to-tank.temperatureC"
+    "pressurizer-relief-header-to-tank.temperatureC",
+    "safetyInjectionBlockLogic.blockPushbutton",
+    "safetyInjectionBlockLogic.blocked",
+    "safetyInjectionBlockLogic.belowP11"
   ]
 }

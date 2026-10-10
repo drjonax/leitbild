@@ -74,7 +74,6 @@ describe('I&C thresholds for composed displays', () => {
     const pressure = compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path
     const { thresholds } = icThresholdsForSignal(compiled, pressure)
     expect(thresholds.map(threshold => [threshold.value, threshold.kind, threshold.modeLabel ?? null])).toEqual([
-      [12.7, 'trip', 'Power operation or Startup or Hot standby'],
       [13.8, 'trip', 'Power operation'],
       [14.8, 'alarm', null],
       [15.35, 'control', null],
@@ -90,8 +89,8 @@ describe('I&C thresholds for composed displays', () => {
     const names = (tagId: string, unit: string) => icThresholdsForSignal(compiled, compiled.graph.signalBindingByTagId.get(tagId as never)!.path).thresholds
       .filter(threshold => threshold.kind !== 'control').map(threshold => thresholdName(threshold, unit))
     expect(names('SUB-MARGIN', 'degC')).toEqual(['LO-LO ALM 0 °C', 'LO ALM 16.7 °C'])
-    // Safety injection actuates below the low-pressure reactor trip: the low-low pressurizer pressure SI signal.
-    expect(names('PT-455', 'MPa')).toEqual(['LO-LO TRIP 12.7 MPa', 'LO TRIP 13.8 MPa', 'LO ALM 14.8 MPa', 'HI ALM 16 MPa', 'HI TRIP 16.18 MPa', 'HI-HI TRIP 16.35 MPa'])
+    // Safety injection on low pressure is no line of its own: a block below P-11 can hold it off.
+    expect(names('PT-455', 'MPa')).toEqual(['LO TRIP 13.8 MPa', 'LO ALM 14.8 MPa', 'HI ALM 16 MPa', 'HI TRIP 16.18 MPa', 'HI-HI TRIP 16.35 MPa'])
     // Low-low level starts auxiliary feedwater and trips the reactor at the one set point: two trips, neither further.
     expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO TRIP 20 %', 'LO TRIP 20 %', 'LO ALM 30 %', 'HI ALM 75 %', 'HI TRIP 82 %'])
   })
@@ -118,6 +117,12 @@ describe('I&C thresholds for composed displays', () => {
     const twoLimits = { ...gated, id: 'probe-two-limits', condition: { type: 'all' as const, conditions: [gated.condition.conditions[0]!, { ...gated.condition.conditions[0]!, value: 12 }] } }
     const listed = icThresholdsForSignal({ ...plant, automation: { ...plant.automation, rules: [...plant.automation.rules, twoLimits] } }, pressure)
     expect(listed.combinedRules.map(rule => rule.ruleId)).toContain('probe-two-limits')
+  })
+
+  test('draw safety injection on low pressure, gated by the block below P-11 that can hold it off', () => {
+    const pressure = compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path
+    const si = icThresholdsForSignal(compiled, pressure).thresholds.find(threshold => threshold.ruleId === 'safety-injection-low-pzr-pressure')!
+    expect([si.value, si.direction, si.gatedBy]).toEqual([12.7, 'low', ['SI-BLOCKED off']])
   })
 
   test('list combined-condition rules instead of drawing them', () => {
@@ -576,7 +581,7 @@ describe('world.process-plant.display.view and sample', () => {
     const strip = view.display.panels[0]!.strips[0]!
     expect(strip.unit).toBe('MPa')
     expect(strip.pens[0]!.seriesId).toStartWith('series:')
-    expect(strip.pens[0]!.thresholds.length).toBe(9)
+    expect(strip.pens[0]!.thresholds.length).toBe(8)
   })
 
   test('view keeps rendering displays that later authoring rules would reject', () => {

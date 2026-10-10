@@ -103,6 +103,8 @@ export const rule = (config: {
   readonly latch?: boolean
   readonly resetWhenClear?: boolean
   readonly effects: ReadonlyArray<ReferenceIcEffect>
+  /** For a permissive or interlock: the writes it gates. */
+  readonly commandGates?: ReadonlyArray<{ readonly signal: SignalRef; readonly message?: string }>
 }): ProcessPlantIcRule => ({
   id: config.id,
   ...(config.label === undefined ? {} : { label: config.label }),
@@ -116,7 +118,7 @@ export const rule = (config: {
   latch: config.latch ?? true,
   resetWhenClear: config.resetWhenClear ?? false,
   effects: [...config.effects],
-  commandGates: [],
+  commandGates: (config.commandGates ?? []).map(gate => ({ signal: signalReference(gate.signal), ...(gate.message === undefined ? {} : { message: gate.message }) })),
 })
 
 export const deadbandController = (config: {

@@ -93,6 +93,21 @@ const balanceVessel = (system: CompiledProcessPlant, balance: CompiledComponent)
 
 const rcsInventoryReads = ['vessel.chargingFlowKgPerS', 'vessel.safetyInjectionFlowKgPerS', 'vessel.letdownFlowKgPerS', 'vessel.reliefOutflowKgPerS', 'vessel.primaryCoolantInventoryKg', 'leakRateKgPerS', 'balancedInventoryKg']
 
+const siBlockWrites = ['blockPushbutton', 'blocked', 'belowP11']
+
+// P-11, P-4 and the block memory, from this step's pressure and breaker contacts; the pushbutton springs back.
+const writeSafetyInjectionBlock = (system: CompiledProcessPlant, logic: CompiledComponent, context: ProcessPlantBehaviorContext, held: boolean): void => {
+  const pressurizer = required(primarySystemPressurizer(system), `SI block logic ${logic.id} needs a pressurizer pressure channel`)
+  const breakers = (logic.parameters as { readonly reactorTripBreakers: ReadonlyArray<string> }).reactorTripBreakers.map(id =>
+    required(system.graph.componentIndexById.get(id as never), `SI block logic ${logic.id} names reactor trip breaker ${id}, which is not a component of the Plant`))
+  const belowP11 = context.readNumber(componentVariablePath(pressurizer, 'pressureMPa')) < parameterNumber(logic, 'p11PressureMPa')
+  const reactorTripped = breakers.some(index => !context.readBoolean(componentVariablePath(system.graph.components[index]!, 'closedState')))
+  const blocked = belowP11 && reactorTripped && (held || context.readBoolean(componentVariablePath(logic, 'blockPushbutton')))
+  context.write(componentVariablePath(logic, 'belowP11'), belowP11)
+  context.write(componentVariablePath(logic, 'blocked'), blocked)
+  context.write(componentVariablePath(logic, 'blockPushbutton'), false)
+}
+
 export const instrumentationBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
     id: 'delta-t-protection-channel',
@@ -122,6 +137,15 @@ export const instrumentationBehaviorDefinitions: ReadonlyArray<ComponentBehavior
       context.write(componentVariablePath(component, 'balancedInventoryKg'), inventory)
     },
   },
+  {
+    id: 'safety-injection-block-logic',
+    phase: 'updateComponentState',
+    componentKind: 'safetyInjectionBlockLogic',
+    reads: ['blockPushbutton', 'blocked', 'pressurizer.pressureMPa', 'reactor trip breakers closedState'],
+    writes: siBlockWrites,
+    update: ({ system, component, context }): void =>
+      writeSafetyInjectionBlock(system, component, context, context.readBoolean(componentVariablePath(component, 'blocked'))),
+  },
 ]
 
 export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
@@ -141,5 +165,13 @@ export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<Comp
       context.write(componentVariablePath(component, 'leakRateKgPerS'), 0)
       context.write(componentVariablePath(component, 'balancedInventoryKg'), context.readNumber(componentVariablePath(balanceVessel(system, component), 'primaryCoolantInventoryKg')))
     },
+  },
+  {
+    id: 'safety-injection-block-logic-initial-state',
+    componentKind: 'safetyInjectionBlockLogic',
+    reads: ['pressurizer.pressureMPa', 'reactor trip breakers closedState'],
+    writes: siBlockWrites,
+    // A Plant starts with no block set.
+    reconcile: ({ system, component, context }): void => writeSafetyInjectionBlock(system, component, context, false),
   },
 ]

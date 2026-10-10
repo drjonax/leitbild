@@ -11,6 +11,10 @@ export const instrumentationInitialValueDefinitions: ReadonlyArray<ComponentInit
     initialValueFor: (_component, localPath) => channelPaths.has(localPath) ? 0 : undefined,
   },
   {
+    componentKind: 'safetyInjectionBlockLogic',
+    initialValueFor: (_component, localPath) => localPath === 'blockPushbutton' || localPath === 'blocked' || localPath === 'belowP11' ? false : undefined,
+  },
+  {
     componentKind: 'rcsInventoryBalance',
     initialValueFor: (_component, localPath) => localPath === 'leakRateKgPerS' || localPath === 'balancedInventoryKg' ? 0 : undefined,
   },

@@ -74,4 +74,29 @@ export const instrumentationComponentDefinitions: ReadonlyArray<ComponentDefinit
       variable({ path: 'balancedInventoryKg', label: 'RCS inventory at the last balance', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'internal', quantity: 'mass', unit: 'kg' }),
     ],
   }),
+  defineComponent({
+    kind: 'safetyInjectionBlockLogic' as ComponentKind,
+    label: 'Safety Injection Block Logic',
+    // The safeguards logic that lets operators block safety injection on low
+    // pressurizer pressure for a planned cooldown and depressurization. P-11
+    // is pressurizer pressure below its setpoint. Pressed there, the momentary
+    // BLOCK pushbutton sets a block memory and springs back; the block holds
+    // only while P-11 does and the reactor is tripped (either trip breaker
+    // open, P-4), so it resets by itself when pressure rises past P-11 and can
+    // never hold with the reactor at power. Requiring P-4 goes beyond the
+    // reference plant's logic, where low pressure would trip the reactor first.
+    ports: {},
+    parametersSchema: z.object({
+      /** P-11: the pressurizer pressure below which the block may be set and holds. */
+      p11PressureMPa: positive,
+      /** The reactor trip breakers whose open contacts make P-4. */
+      reactorTripBreakers: z.array(z.string().min(1)).min(1),
+    }).strict(),
+    semantics: fixedSemantics({ keyValues: ['blocked'] }),
+    variables: [
+      variable({ path: 'blockPushbutton', label: 'Low pressurizer pressure SI block pushbutton', kind: 'discrete', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'blocked', label: 'Low pressurizer pressure SI blocked', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'belowP11', label: 'P-11 pressurizer pressure below setpoint', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+    ],
+  }),
 ]

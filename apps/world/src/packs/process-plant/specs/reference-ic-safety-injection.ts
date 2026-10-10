@@ -1,14 +1,18 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, annunciator, comparison, reactorTripBreakerWrites, rule, trip, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, comparison, reactorTripBreakerOpen, reactorTripBreakerWrites, rule, trip, write } from './reference-ic-helpers.ts'
 
 // Safety injection on low pressurizer pressure: below 12.7 MPa (about
 // 1,830 psig, within the 1,807 to 1,870 psig Westinghouse plants set it at)
 // the SI signal starts the high-head safety injection pumps and trips the
-// reactor (NUREG-1431 Table 3.3.2-1, function 1.d). It acts in modes 1 to 3;
-// the reference model has no P-11, so it cannot be blocked for a planned
-// depressurization in hot standby. The SI signal seals in: it starts the
-// pumps once and stands until reset, and the pumps run until stopped.
+// reactor (NUREG-1431 Table 3.3.2-1, function 1.d). It acts in modes 1 to 3,
+// unless operators have blocked it below P-11 (13.3 MPa, 1,915 psig) for a
+// planned cooldown and depressurization: the block (SI-BLOCKED) is a memory
+// of the safeguards logic (safetyInjectionBlockLogic), which resets it when
+// pressure rises past P-11 and holds it only with the reactor tripped. The
+// SI signal seals in: it starts the pumps once and stands until reset, and
+// the pumps run until stopped.
 const lowPressurizerPressureSiMPa = 12.7
+const p11PressureMPa = 13.3
 
 const siAction = annunciator({
   system: 'safetyInjection',
@@ -30,7 +34,10 @@ export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcR
     label: 'Safety injection on low pressurizer pressure',
     ruleClass: 'protection',
     modes: ['powerOperation', 'startup', 'hotStandby'],
-    condition: comparison({ tagId: 'PT-455' }, '<', lowPressurizerPressureSiMPa),
+    condition: all([
+      comparison({ tagId: 'PT-455' }, '<', lowPressurizerPressureSiMPa),
+      comparison({ tagId: 'SI-BLOCKED' }, '==', false),
+    ]),
     delayMs: 1_000,
     effects: [
       trip({
@@ -43,6 +50,35 @@ export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcR
       ...reactorTripBreakerWrites('safety-injection'),
       write('insert-control-rods-safety-injection', { path: 'core.rodInsertionFraction' }, 1),
     ],
+  }),
+  // The BLOCK pushbutton is accepted only where the block can hold: below
+  // P-11, with the reactor tripped. Anywhere else it is refused.
+  rule({
+    id: 'safety-injection-block-permissive',
+    label: 'Low pressurizer pressure SI block permitted below P-11',
+    ruleClass: 'permissive',
+    condition: all([comparison({ tagId: 'P-11' }, '==', true), reactorTripBreakerOpen()]),
+    effects: [],
+    commandGates: [{
+      signal: { tagId: 'SI-BLOCK' },
+      message: `Safety injection on low pressurizer pressure can be blocked only below P-11 (${p11PressureMPa} MPa) with the reactor tripped`,
+    }],
+  }),
+  rule({
+    id: 'safety-injection-blocked',
+    label: 'Low pressurizer pressure SI blocked',
+    ruleClass: 'alarm',
+    condition: comparison({ tagId: 'SI-BLOCKED' }, '==', true),
+    clearCondition: comparison({ tagId: 'SI-BLOCKED' }, '==', false),
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'blocked',
+      title: 'Low-pressure SI blocked',
+      message: `Safety injection on low pressurizer pressure is blocked; the block resets when pressure rises above P-11 (${p11PressureMPa} MPa).`,
+      severity: 'notice',
+      annunciator: annunciator({ system: 'safetyInjection', equipmentId: 'safetyInjectionHeader', group: 'safety-injection', priority: 'medium', role: 'status' }),
+    })],
   }),
   // Each pump's run feedback, so the board shows which train is injecting.
   ...siPumps.flatMap(pump => {

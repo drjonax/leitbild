@@ -10,6 +10,7 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
+import { validateProcessPlantControlWrite } from '../src/packs/process-plant/control-write-validation.ts'
 
 // Reactor protection and safety injection of the four-loop reference PWR,
 // read from the I&C's trips and alarms and the equipment's feedback.
@@ -56,7 +57,13 @@ const started = (automation: ProcessPlantIcConfig = plant.automation) => {
     }
     return null
   }
-  return { runtime, protection, step, run, act, tag, read, activeIds, trip, secondsUntil }
+  /** An operator's write, refused as the I&C's permissives and interlocks refuse it. */
+  const operate = (tagId: string, value: boolean | number) => {
+    const validation = validateProcessPlantControlWrite({ system: plant, runtime, protection, payload: { plantId: plant.id, tagId, value } as never })
+    if (validation.accepted) runtime.writeCommand({ type: 'setVariable', path: validation.targetPath, value })
+    return validation
+  }
+  return { runtime, protection, step, run, act, tag, read, activeIds, trip, secondsUntil, operate }
 }
 
 describe('high pressurizer pressure', () => {
@@ -393,5 +400,65 @@ describe('steam generator tube leak detection', () => {
     plantRun.run(120_000)
     expect(Math.abs(Number(plantRun.tag('RCS-LEAK-RATE')))).toBeLessThan(0.063)
     expect(plantRun.activeIds()).not.toContain(leakRateHigh)
+  })
+})
+
+describe('blocking low-pressure safety injection below P-11', () => {
+  const siActuated = 'trip:safety-injection-low-pzr-pressure:safety-injection'
+
+  test('is refused at power and above P-11', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    const refused = plantRun.operate('SI-BLOCK', true)
+    expect(refused.accepted).toBe(false)
+    if (!refused.accepted) expect(refused.reason).toContain('only below P-11 (13.3 MPa) with the reactor tripped')
+    // Tripped, but still above P-11.
+    for (const breaker of ['reactorTripBreakerA', 'reactorTripBreakerB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${breaker}.closed` as VariablePath, value: false })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
+    plantRun.run(10_000)
+    expect(plantRun.tag('P-11')).toBe(false)
+    expect(plantRun.operate('SI-BLOCK', true).accepted).toBe(false)
+    expect(plantRun.tag('SI-BLOCKED')).toBe(false)
+  })
+
+  test('lets a planned depressurization in hot standby pass 12.7 MPa without SI, and resets above P-11', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    for (const breaker of ['reactorTripBreakerA', 'reactorTripBreakerB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${breaker}.closed` as VariablePath, value: false })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
+    plantRun.run(30_000)
+    // The operators depressurize through the PORV and block SI as soon as P-11 comes in.
+    expect(plantRun.operate('PORV-456A', 0.15).accepted).toBe(true)
+    let blockedAt: number | null = null
+    for (let second = 0; second < 120 && blockedAt === null; second += 1) {
+      plantRun.step()
+      if (plantRun.tag('P-11') === true && plantRun.operate('SI-BLOCK', true).accepted) blockedAt = Number(plantRun.tag('PT-455'))
+    }
+    expect(blockedAt).not.toBeNull()
+    expect(blockedAt!).toBeLessThan(13.3)
+    expect(blockedAt!).toBeGreaterThan(12.7)
+    plantRun.step()
+    expect(plantRun.tag('SI-BLOCKED')).toBe(true)
+    // The pushbutton springs back; the block is the logic's memory.
+    expect(plantRun.tag('SI-BLOCK')).toBe(false)
+    expect(plantRun.activeIds()).toContain('alarm:safety-injection-blocked:blocked')
+    plantRun.run(90_000)
+    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(11)
+    expect(plantRun.activeIds()).not.toContain(siActuated)
+    expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(false)
+
+    // Repressurized past P-11, the block resets by itself, and SI is armed again.
+    expect(plantRun.operate('PORV-456A', 0).accepted).toBe(true)
+    let resetAt: number | null = null
+    for (let second = 0; second < 300 && resetAt === null; second += 1) {
+      plantRun.step()
+      if (plantRun.tag('SI-BLOCKED') === false) resetAt = Number(plantRun.tag('PT-455'))
+    }
+    expect(resetAt).not.toBeNull()
+    expect(resetAt!).toBeGreaterThanOrEqual(13.3)
+    expect(plantRun.operate('PORV-456A', 0.15).accepted).toBe(true)
+    expect(plantRun.secondsUntil(siActuated, 120)).not.toBeNull()
+    plantRun.run(5_000)
+    expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
   })
 })
