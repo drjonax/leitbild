@@ -2,8 +2,9 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { carveOperatingPrimary, compileOperatingPoint, compileOperatingSurgeHydraulics, operatingHousingMechanicalGeometry, operatingPointSources, prepareOperatingSpine } from './reference-design-operating-spine'
-import { operatingCirculationCycles } from './reference-design-operating-hydraulics'
+import { carveOperatingPrimary, compileOperatingHousingLosses, compileOperatingLineLosses, compileOperatingPoint, compileOperatingSurgeHydraulics, fittingLoss,
+  operatingHousingMechanicalGeometry, operatingPointSources, prepareOperatingSpine, type FaceLossSection } from './reference-design-operating-spine'
+import { operatingCirculationCycles, type Section } from './reference-design-operating-hydraulics'
 import { compileOperatingPzr } from './reference-design-operating-pzr'
 import { routeElevation } from './reference-design-surge-route'
 
@@ -40,7 +41,7 @@ const housingFixture: Parameters<typeof operatingHousingMechanicalGeometry>[0] =
   insertedBodyBottom_m: -2.25, spiderBottom_m: 2.4, spiderHeight_m: .1, spiderMass_kg: 4,
   steelDensity_kg_m3: 7920, stemDiameter_m: .012, stemLength_m: 6, headBottom_m: 4,
   housingID_m: .25, housingTop_m: 8, housingCapHeight_m: .05, neckID_m: .05, neckTop_m: 13.6,
-  collarID_m: .0125, collarOD_m: .025, collarBottoms_m: [8.05, 8.35], collarHeight_m: .1, normalTravel_m: 4 }
+  collarID_m: .0125, collarOD_m: .025, collarBottoms_m: [8.05, 8.35], collarHeight_m: .1, normalTravel_m: 4, headGrossArea_m2: 16.75 }
 
 test('housing free geometry retains collar outer bypass and subtracts stem through cap bore', () => {
   const c = housingFixture, h = operatingHousingMechanicalGeometry(c, 2.8), A = (d: number) => Math.PI * d ** 2 / 4,
@@ -64,6 +65,33 @@ test('housing free geometry retains collar outer bypass and subtracts stem throu
   expect(() => operatingHousingMechanicalGeometry(c, NaN)).toThrow('pose')
   expect(() => operatingHousingMechanicalGeometry(c, -1)).toThrow('pose')
   expect(() => operatingHousingMechanicalGeometry(c, 4.1)).toThrow('pose')
+})
+
+test('housing losses follow the support pieces, sharp-edge laws and authored perimeters only', () => {
+  const c = housingFixture, A = (d: number) => Math.PI * d ** 2 / 4, regions = ['HOUSING.MAIN', 'HOUSING.NECK'],
+    losses = compileOperatingHousingLosses(c, 2.8, 9.80665, id => regions.indexOf(id)), h = operatingHousingMechanicalGeometry(c, 2.8)
+  expect(fittingLoss.contraction(0)).toBe(.5); expect(fittingLoss.expansion(0)).toBe(1); expect(fittingLoss.thinPlate(1)).toBe(0)
+  for (const [face, lo, hi] of [['UPPER->HOUSING.MAIN', 4, 6], ['HOUSING.MAIN->HOUSING.NECK', 6, 10.825]] as const) {
+    const own = losses.filter(s => s.face === face)
+    expect(sum(own.map(s => s.parameters.length_m))).toBeCloseTo(hi - lo, 12)
+    for (const s of own) {
+      expect(s.kind).toBe('face_loss'); expect(s.parameters.pump).toBeNull(); expect(s.parameters.grid_count).toBe(0)
+      expect(s.parameters.form_loss).toBeCloseTo(sum(s.terms.map(t => t.loss)), 15)
+    }
+  }
+  const mouth = losses.find(s => s.terms.some(t => t.id === 'HEAD.MOUTH'))!, n = mouth.parameters.area_m2 / 16.75
+  expect(mouth.parameters.area_m2).toBeCloseTo(c.clusters * (A(.25) - 24 * A(.0095)), 13)
+  expect(mouth.parameters.form_loss).toBeCloseTo((.5 * (1 - n) ** .75 + (1 - n) ** 2) / 2, 14)
+  expect(mouth.parameters.hydraulic_diameter_m).toBeCloseTo(4 * mouth.parameters.area_m2 / (c.clusters * Math.PI * (.25 + 24 * .0095)), 14)
+  const spider = losses.find(s => s.terms.some(t => t.id === 'SPIDER.FRAME'))!
+  expect(spider.parameters.wall).toBe('none'); expect(spider.parameters.hydraulic_diameter_m).toBe(0)
+  const cap = losses.find(s => s.terms.some(t => t.id === 'CAP.BORE'))!, nc = (A(.05) - A(.012)) / (A(.25) - A(.012))
+  expect(cap.parameters.form_loss).toBeCloseTo((.5 * (1 - nc) ** .75 + (1 - nc) ** 2) / 2, 14)
+  const collars = losses.filter(s => s.terms.some(t => t.id === 'COLLAR')), ncol = (A(.05) - A(.012) - A(.025) + A(.0125)) / (A(.05) - A(.012))
+  expect(collars).toHaveLength(2)
+  for (const s of collars) expect(s.parameters.form_loss).toBeCloseTo(.5 * (1 - ncol) ** .75 + (1 - ncol) ** 2, 14)
+  expect(losses.filter(s => s.parameters.wall === 'none')).toHaveLength(1)
+  expect(losses.length).toBe(h.pieces.filter(p => p.length_m >= 1e-9 && p.end_m <= h.neckPlane_m).length)
 })
 
 test('fixed HOT.A carve conserves all extensive stores and removes SURGE once without mutation', () => {
@@ -132,6 +160,18 @@ test('actual five-piece surge splits at8m with disjoint inertia, head, elbow and
   expect(h.junctionFirstMoment.scope).toContain('expansion-tree')
   const cut = structuredClone(pzr); cut.surge.pieces[1]!.start_m = 7; cut.surge.pieces[1]!.end_m = 9
   expect(() => compileOperatingSurgeHydraulics(cut)).toThrow('split elbow')
+  // Line losses: friction and one elbow per half, each end the mean of its two directions.
+  const losses = compileOperatingLineLosses(h, pzr, { dividingTurnLoss: 1 }, 9.80665, 27),
+    prism = Math.sqrt(Math.PI / 4), hotEnd = (1 + (1 - A / prism) ** 2) / 2,
+    receiver = pzr.regions[pzr.mouth.region]!.axialArea_m2, pzrEnd = ((1 - A / receiver) ** 2 + .5) / 2
+  expect(losses.map(s => s.face)).toEqual(['HOT.A.JUNCTION->SURGE', 'SURGE->PZR.SURGE.MOUTH'])
+  for (const [k, s] of losses.entries()) {
+    expect(s.region).toBe(27); expect(s.parameters.wall).toBe('circular_churchill')
+    expect([s.parameters.length_m, s.parameters.area_m2, s.parameters.hydraulic_diameter_m]).toEqual([8, A, .3])
+    expect(s.parameters.elevation_change_m).toBe([0, 4][k]!)
+    expect(s.parameters.form_loss).toBeCloseTo(.2 + [hotEnd, pzrEnd][k]!, 14)
+  }
+  expect(() => compileOperatingLineLosses(h, pzr, { dividingTurnLoss: -1 }, 9.80665, 27)).toThrow('Invalid')
 })
 
 // Independent owner-statement fixture; the actual test below reads the wiki.
@@ -188,7 +228,11 @@ test.skipIf(!wiki || !if97)('actual single hot packet rebases every recipient, f
   expect(p.external_ports.surge_stock.volume_m3).toBeCloseTo(p.pzr.surge.route.liquidVolume_m3, 13)
   expect(p.external_ports.surge_stock.absorberTracer_kgEq).toBeCloseTo(p.external_ports.surge_stock.mass_kg / 1000, 12)
   expect(p.thermal.water[p.external_ports.primary_to_surge.primary_water]!.id).toBe('HOT.A.JUNCTION')
-  expect(p.hydraulics.sections).toHaveLength(21); expect(p.hydraulics.cycles.columns).toHaveLength(7)
+  type Any = typeof p.hydraulics.sections[number]
+  const channels = p.hydraulics.sections.filter((s: Any): s is Section => !('kind' in s)),
+    passive = p.hydraulics.sections.filter((s: Any): s is FaceLossSection => 'kind' in s)
+  expect(channels).toHaveLength(21); expect(p.hydraulics.cycles.columns).toHaveLength(7)
+  expect(p.hydraulics.sections.slice(0, 21)).toEqual(channels)
   expect(p.hydraulics.surge.halves).toHaveLength(2)
   expect(p.hydraulics.surge.halves.map(h => h.elevationChange_m)).toEqual([0, 4])
   expect(p.pzr.faces.every(f => f.distance_m > 0 && f.normal.length === 2)).toBe(true)
@@ -205,10 +249,21 @@ test.skipIf(!wiki || !if97)('actual single hot packet rebases every recipient, f
     expect(sum(face.pressure_segments.map(s => s.elevation_change_m)))
       .toBeCloseTo(m.regions[face.to]!.elevation_m - m.regions[face.from]!.elevation_m, 12)
   }
-  for (const section of p.hydraulics.sections) {
+  for (const section of channels) {
     const owned = m.faces.slice(0, 33).flatMap(f => f.supports).filter(s => s.region === section.region)
     expect(sum(owned.map(s => s.volume_m3))).toBeCloseTo(section.movingVolume_m3, 11)
   }
+  // Each passive face section is the adjoint of exactly its own face current.
+  for (const [k, s] of passive.entries())
+    expect(m.section_force_projection.filter(t => t.section === 21 + k)).toEqual([{ face: m.faces.findIndex(f => f.id === s.face), section: 21 + k, coefficient: 1 }])
+  expect(m.section_force_projection.every(t => t.face < 35)).toBe(true)
+  const loaded = new Set(m.section_force_projection.map(t => m.faces[t.face]!.id))
+  expect(m.faces.slice(0, 35).filter(f => !loaded.has(f.id)).map(f => f.id)).toEqual(p.hydraulics.passiveLossScope.liquidFacesWithoutSectionLoss)
+  expect(passive.filter(s => s.face === 'UPPER->HOUSING.MAIN').length).toBeGreaterThan(0)
+  expect(passive.filter(s => s.face === 'HOUSING.MAIN->HOUSING.NECK').length).toBeGreaterThan(0)
+  expect(passive.filter(s => s.face === 'HOT.A.JUNCTION->SURGE' || s.face === 'SURGE->PZR.SURGE.MOUTH').map(s => s.id)).toEqual(['SURGE.HALF.0', 'SURGE.HALF.1'])
+  expect(p.hydraulics.passiveLossScope.liquidFacesWithoutSectionLoss).toEqual([])
+  expect(p.hydraulics.hotBranchLoss.dividingTurnLoss).toBe(1)
   expect(m.faces[31]!.supports.every(s => m.regions[s.region]!.id === 'HOUSING.MAIN')).toBe(true)
   expect(m.faces[32]!.supports.some(s => m.regions[s.region]!.id === 'HOUSING.NECK')).toBe(true)
   // An outgoing half of the two-way SG bundle owns half its area, not two

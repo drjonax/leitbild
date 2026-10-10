@@ -48,7 +48,7 @@ export function operatingPumpParameters(b:ReturnType<typeof parseOperatingHydrau
 export type FlowTerm={edge:number,weight:number}
 export type Section={id:string,region:number,flow:FlowTerm[],force:FlowTerm[],
   parameters:{length_m:number,area_m2:number,hydraulic_diameter_m:number,elevation_change_m:number,gravity_m_s2:number,
-    wall:'none'|'rod'|'smooth_pipe'|'annular_churchill',form_loss:number,grid_count:number,grid_factor:number,
+    wall:'none'|'rod'|'smooth_pipe'|'annular_churchill'|'circular_churchill',form_loss:number,grid_count:number,grid_factor:number,
     blockage_fraction:number,pump:null|{a:number,b:number,resistance:number,mixed_degradation_depth:number}},
   movingVolume_m3:number,retainedThermalVolume_m3:number,inletElevation_m:number,outletElevation_m:number,
   conversionRecipients:{term:'wall'|'grid'|'form'|'pump_internal'|'braking',region:number,fraction:number}[]}
@@ -125,6 +125,8 @@ export function compileOperatingHydraulics(g:CirculationGeometry,documents:{sele
     physical=z.object({sgDevelopedLength_m:positive,downcomerBottom_m:z.number().finite(),downcomerTop_m:z.number().finite()}).passthrough().parse(block(documents.mechanics,'reference-primary-mechanics')),
     basis=z.object({gravity_m_s2:positive}).passthrough().parse(block(documents.losses,'reference-hydraulics')),
     hotA=z.object({lossCoefficient:nonnegative}).strict().parse(block(documents.pressure,'reference-hot-a-distributed-loss')),
+    // Coarse-network surge-branch factor; the spine compiler composes the face.
+    hotBranchLoss=z.object({dividingTurnLoss:nonnegative}).strict().parse(block(documents.losses,'reference-hot-a-branch-loss')),
     downBudget=lossBudget(documents.losses,'Downcomer / LOWER entry'),
     hot=lossBudget(documents.losses,'HOT path'),sg=lossBudget(documents.losses,'Folded SG primary'),passage=lossBudget(documents.losses,'Each pump passage / COLD entry'),
     sections:Section[]=[],gravity:{edge:number,region:number,delta_z_m:number}[]=[],
@@ -184,6 +186,7 @@ export function compileOperatingHydraulics(g:CirculationGeometry,documents:{sele
     pumpSources:{nominalFluidPower_W:{...commissioning,field:'referenceFluidPower_W'},driveTrackingTime_s:driveRecord,
       driveTorqueCapFactor:driveRecord,driveEfficiency:driveRecord,
       derivedOnly:'P_drag0=drag_Nm_per_rad_s*referenceOmega_rad_s^2=dragFraction*nominalFluidPower_W; J=(P_fluid0+P_drag0)*inertiaDecay_s/omega0^2'},
+    hotBranchLoss:{...hotBranchLoss,source:{page:'model/primary-hydraulic-basis.md',heading:'Coarse-network nozzle and junction losses',block:'reference-hot-a-branch-loss'}},
     sections,forceIncidence,gravityIncidence:gravity,cycles,
     mainInertance:main.matrix,mainInertanceSupports:main.supports,
     coveredEdges:[...covered].sort((a,b)=>a-b),unclosedTreeEdges:g.edges.flatMap((e,i)=>covered.has(i)?[]:[{edge:i,id:e.id}]),
