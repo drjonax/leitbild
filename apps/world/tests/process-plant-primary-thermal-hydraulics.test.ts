@@ -153,3 +153,36 @@ describe('a reactor trip', () => {
     expect(read('vessel.loopVoidFraction')).toBeLessThan(1e-6)
   }, 60_000)
 })
+
+describe('a steam generator tube rupture without charging or letdown', () => {
+  test('drains the pressurizer and settles where safety injection makes up the leak, lifting no relief valve', () => {
+    const plantRun = started()
+    plantRun.run(60)
+    const { read } = plantRun
+    for (const pump of ['chargingPump', 'chargingPumpB']) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: `${pump}.running` as VariablePath, value: false })
+    }
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'letdownValve.positionFraction' as VariablePath, value: 0 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'sgA.tubeLeakFraction' as VariablePath, value: 0.18 })
+    let drainedPressure: number | null = null
+    let peakPressureDrained = 0
+    let peakReliefDrained = 0
+    plantRun.run(540, () => {
+      if (drainedPressure === null && read('pressurizer.levelPercent') < 1) drainedPressure = read('pressurizer.pressureMPa')
+      if (drainedPressure === null) return
+      peakPressureDrained = Math.max(peakPressureDrained, read('pressurizer.pressureMPa'))
+      peakReliefDrained = Math.max(peakReliefDrained, read('pressurizer.reliefFlowKgPerS') + read('pressurizer.safetyValveFlowKgPerS'))
+    })
+    // The last few kilograms of water in the drained pressurizer cannot hold
+    // its steam up at their own saturation pressure: from the moment it
+    // drains, the pressure only falls, and no relief valve lifts.
+    expect(drainedPressure).not.toBeNull()
+    expect(peakPressureDrained).toBeLessThan(drainedPressure! + 0.1)
+    expect(peakReliefDrained).toBe(0)
+    // It settles above the ruptured generator's pressure, where the safety
+    // injection pumps deliver what the leak takes, with the loops still full.
+    expect(read('pressurizer.pressureMPa')).toBeGreaterThan(read('sgA.pressureMPa'))
+    expect(Math.abs(read('vessel.safetyInjectionFlowKgPerS') - read('vessel.tubeLeakFlowKgPerS'))).toBeLessThan(10)
+    expect(read('vessel.loopVoidFraction')).toBeLessThan(0.01)
+  }, 60_000)
+})

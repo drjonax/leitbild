@@ -40,6 +40,38 @@ export const pressurizerSprayFlowKgPerS = (pressurizer: CompiledComponent, conte
 
 const saturationPressureFloorMarginC = 2
 
+/**
+ * The highest pressure, up to the floor, that the pressurizer's water can
+ * hold its steam space at: the water, flashing down to saturation there,
+ * raises at least the steam the space then holds.
+ */
+const pressureWaterHolds = (input: {
+  readonly floorPressure: number
+  readonly steamPressure: number
+  readonly water: number
+  readonly waterEnthalpy: number
+  readonly steamRoom: number
+  readonly vapourMass: number
+}): number => {
+  const holds = (pressure: number): boolean => {
+    const saturation = saturatedWaterSteam(pressure)
+    const flashable = Math.max(0, input.waterEnthalpy - input.water * saturation.liquidEnthalpyKjPerKg)
+      / (saturation.vapourEnthalpyKjPerKg - saturation.liquidEnthalpyKjPerKg)
+    return input.vapourMass + flashable >= saturation.vapourDensityKgPerM3 * input.steamRoom
+  }
+  if (holds(input.floorPressure)) return input.floorPressure
+  // At the steam's own pressure the space needs no more steam, so the water
+  // holds some pressure between the two.
+  let low = Math.min(input.steamPressure, input.floorPressure)
+  let high = input.floorPressure
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const middle = (low + high) / 2
+    if (holds(middle)) low = middle
+    else high = middle
+  }
+  return low
+}
+
 export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
     id: 'pressurizer-pressure-inventory-state',
@@ -224,10 +256,19 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
             / (volume + (vessel === null ? 0 : parameterNumber(vessel, 'primaryCoolantVolumeM3')))
         : saturationPressureMPaFromVapourDensity(Math.max(0, vapourMass) / steamRoom)
       // The pressurizer's own water, near saturation, flashes faster than any
-      // relief or break carries steam off: while it holds water the pressure
-      // stays at about that water's saturation pressure or above.
+      // relief or break carries steam off: the pressure stays at about that
+      // water's saturation pressure or above, as far as the water holds the
+      // heat to raise the steam that takes. The last few kilograms in a
+      // drained pressurizer hold too little to keep up its steam space.
       const nextPressure = water > 0
-        ? Math.max(saturationPressureMPaFromTemperatureC(nextWaterTemperature - saturationPressureFloorMarginC), steamPressure)
+        ? Math.max(steamPressure, pressureWaterHolds({
+          floorPressure: saturationPressureMPaFromTemperatureC(nextWaterTemperature - saturationPressureFloorMarginC),
+          steamPressure,
+          water,
+          waterEnthalpy,
+          steamRoom: Math.max(0, steamRoom),
+          vapourMass,
+        }))
         : steamPressure
       const steamVolume = Math.max(0, volume - waterVolume)
       const perSecond = (mass: number): number => dt > 0 ? mass / dt : 0
