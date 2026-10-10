@@ -21,6 +21,7 @@ const SETTINGS: Settings = Settings {
     eos_row_bound: 1e-12,
     tree_face_bound_pa: 1e-6,
     representation_search: 4,
+    pzr_phase_margin_k: 1.,
 };
 /// Level inside PZR.3 (12.5..15.5 m) above the S1 packet's 6.5 m datum.
 const INSIDE_BAND_LEVEL_M: f64 = 7.5;
@@ -31,7 +32,7 @@ fn summary(receipt: &Receipt) -> Value {
         .iter()
         .filter(|r| r.id.starts_with("PZR."))
         .map(|r| {
-            json!({"id":r.id,"pressure_pa":r.pressure_pa,"vapor_fraction":r.vapor_fraction,"liquid_kg":r.phases[0].map(|p|p.mass_kg),"vapor_kg":r.phases[1].map(|p|p.mass_kg),"tracer_kg_eq":r.tracer_kg_eq,"eos_row":r.eos_row})
+            json!({"id":r.id,"pressure_pa":r.pressure_pa,"vapor_fraction":r.vapor_fraction,"liquid_kg":r.phases[0].map(|p|p.mass_kg),"vapor_kg":r.phases[1].map(|p|p.mass_kg),"liquid_from_saturation_k":r.phases[0].and_then(|p|p.saturation_distance_k),"vapor_from_saturation_k":r.phases[1].and_then(|p|p.saturation_distance_k),"tracer_kg_eq":r.tracer_kg_eq,"eos_row":r.eos_row})
         })
         .collect();
     let loops: Vec<Value> = receipt

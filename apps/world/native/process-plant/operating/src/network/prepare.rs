@@ -6,12 +6,17 @@
 //!
 //! 1. Phases. Primary and SURGE volumes hold liquid. The declared surface,
 //!    bottom datum plus level, either coincides with a PZR region boundary
-//!    (within `level_match_m`): a sharp interface between saturated liquid
-//!    below and saturated vapor above. Or it lies strictly inside one band,
-//!    whose regions then hold both saturated phases, liquid below and vapor
-//!    above the surface, with vapor volume `V*(top-surface)/(top-bottom)`.
-//!    Every phase is saturated at its region's local pressure. A surface
-//!    outside the PZR is refused.
+//!    (within `level_match_m`): a sharp interface between liquid below and
+//!    vapor above. Or it lies strictly inside one band, whose regions then
+//!    hold both phases, liquid below and vapor above the surface, with vapor
+//!    volume `V*(top-surface)/(top-bottom)`. A surface outside the PZR is
+//!    refused. Every PZR phase sits at the declared margin from its region's
+//!    LOCAL saturation: liquid at `T_sat(p) - margin`, vapor at
+//!    `T_sat(p) + margin`; the phases of one region share pressure, not
+//!    temperature. Exact saturation is the bound of the stable property
+//!    branches, which the first algebraic pressure adjustment of a
+//!    consistent initialization already crosses; metastable admission and
+//!    exact equilibrium transactions are not part of this construction.
 //! 2. Pressures. Integrate hydrostatically from the declared roof gauge along
 //!    a breadth-first spanning tree of the compiled faces, with each face's
 //!    authored pressure segments and the fraction-weighted mixture density of
@@ -29,9 +34,9 @@
 //!    is driven toward the band below and its vapor toward the band above.
 //! 4. The stocks overwrite the coordinates compiled by `Network::new` (see
 //!    [`overwrite_stocks`]) so that the network reconstructs exactly the
-//!    prepared pressure and specific internal energies: a saturated phase
-//!    lies on the bound of its stable property branch, where one rounding of
-//!    `U/M` would cross it. Impulses stay zero and rotor angular momenta stay
+//!    prepared pressure and specific internal energies and so evaluates the
+//!    very states this construction recovered. Impulses stay zero and rotor
+//!    angular momenta stay
 //!    exactly as compiled; the caller declares every rotor's drive/shaft
 //!    state, which the network requires. The network then evaluates
 //!    `F(0, y, 0)` itself for the receipt: its EOS rows, cells and face
@@ -87,6 +92,9 @@ pub struct Settings {
     /// Adjacent representable coordinates tried on each side when writing an
     /// exactly reconstructed pressure or specific internal energy.
     pub representation_search: usize,
+    /// Declared distance of every PZR phase from its local saturation, K:
+    /// liquid below and vapor above `T_sat(p)`. Must be positive.
+    pub pzr_phase_margin_k: f64,
 }
 
 /// One cell's prepared stock, liquid then vapor. A zero-mass phase is
@@ -127,8 +135,9 @@ pub struct PhaseState {
     pub mass_kg: f64,
     pub internal_energy_j: f64,
     pub volume_m3: f64,
-    /// Temperature minus saturation at the local pressure (PZR phases).
-    pub saturation_margin_k: Option<f64>,
+    /// Signed temperature minus saturation at the local pressure (PZR
+    /// phases): negative is subcooled liquid, positive superheated vapor.
+    pub saturation_distance_k: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -209,6 +218,7 @@ impl Settings {
             self.pressure_tolerance_pa,
             self.eos_row_bound,
             self.tree_face_bound_pa,
+            self.pzr_phase_margin_k,
         ];
         if positive.iter().any(|v| !(v.is_finite() && *v > 0.))
             || self.max_passes == 0
@@ -380,9 +390,9 @@ pub fn overwrite_stocks<P: Properties>(
 enum Content {
     /// Primary/SURGE liquid at its prepared specific internal energy, J/kg.
     Liquid { specific_energy: f64 },
-    /// PZR region: saturated phases at the local pressure with this vapor
-    /// volume fraction (0 liquid, 1 vapor, between: a two-phase band).
-    Saturated { vapor_fraction: f64 },
+    /// PZR region: phases at the declared margin from local saturation with
+    /// this vapor volume fraction (0 liquid, 1 vapor, between: two-phase).
+    Pzr { vapor_fraction: f64 },
 }
 
 struct Owner {
@@ -599,7 +609,7 @@ fn owners<P: Properties>(
             }
             .ok_or_else(|| fatal(format!("PZR region {j} lacks its authored phase energy")))?;
             Owner {
-                content: Content::Saturated {
+                content: Content::Pzr {
                     vapor_fraction: interface.vapor_fraction[j],
                 },
                 authored_phase: phase,
@@ -632,6 +642,7 @@ fn cell_state<P: Properties>(
     owner: &Owner,
     node: usize,
     pressure: f64,
+    margin_k: f64,
 ) -> Result<CellState, Failure> {
     let context = |e: String| fatal(format!("region {node} at {pressure} Pa: {e}"));
     let recover = |vapor: bool, u: f64| -> Result<(f64, Water), Failure> {
@@ -649,21 +660,24 @@ fn cell_state<P: Properties>(
         Content::Liquid { specific_energy } => {
             ([Some(recover(false, specific_energy)?), None], [1., 0.])
         }
-        Content::Saturated { vapor_fraction } => {
+        Content::Pzr { vapor_fraction } => {
             let saturation = properties
                 .saturation(Scalar::constant(pressure))
                 .map_err(context)?
                 .temperature
                 .value;
             let mut phases = [None; 2];
-            for (k, present) in [vapor_fraction < 1., vapor_fraction > 0.]
-                .into_iter()
-                .enumerate()
+            for (k, (present, temperature)) in [
+                (vapor_fraction < 1., saturation - margin_k),
+                (vapor_fraction > 0., saturation + margin_k),
+            ]
+            .into_iter()
+            .enumerate()
             {
                 if present {
                     let vapor = k == 1;
                     let u = properties
-                        .forward(vapor, pressure, saturation)
+                        .forward(vapor, pressure, temperature)
                         .map_err(context)?
                         .internal_energy_j_kg;
                     phases[k] = Some(recover(vapor, u)?);
@@ -841,7 +855,15 @@ pub fn prepare<P: Properties>(
         owners
             .iter()
             .enumerate()
-            .map(|(node, owner)| cell_state(network.properties(), owner, node, pressure[node]))
+            .map(|(node, owner)| {
+                cell_state(
+                    network.properties(),
+                    owner,
+                    node,
+                    pressure[node],
+                    settings.pzr_phase_margin_k,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()
     };
 
@@ -957,7 +979,7 @@ fn account<P: Properties>(
     for (node, ((owner, state), stock)) in owners.iter().zip(&states).zip(&written).enumerate() {
         let saturation = match owner.content {
             Content::Liquid { .. } => None,
-            Content::Saturated { .. } => Some(
+            Content::Pzr { .. } => Some(
                 network
                     .properties()
                     .saturation(Scalar::constant(stock.pressure_pa))
@@ -974,7 +996,7 @@ fn account<P: Properties>(
                     mass_kg: stock.mass_kg[k],
                     internal_energy_j: stock.internal_energy_j[k],
                     volume_m3: stock.mass_kg[k] / water.density_kg_m3,
-                    saturation_margin_k: saturation.map(|t| water.temperature_k - t),
+                    saturation_distance_k: saturation.map(|t| water.temperature_k - t),
                 });
             }
         }
