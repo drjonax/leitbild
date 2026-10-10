@@ -20,6 +20,7 @@
     gridSetEvChargingDemandCommandKind,
     gridShedLoadCommandKind,
   } from '../../packs/electric-grid/commands/load.ts'
+  import { electricGridDestructiveCommandKinds } from '../../packs/electric-grid/commands/index.ts'
   import { invokeSimulationRunCapability, querySimulationRunCapability } from '../simulation-run-client.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
 
@@ -74,6 +75,7 @@
   let activeOperationId = $state<string | null>(null)
   let commandValue = $state('')
   let commandStatus = $state<string | null>(null)
+  let pendingConfirmation = $state<{ readonly operationId: string; readonly value: number } | null>(null)
   let loadSequence = 0
   let searchTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -126,6 +128,7 @@
     selectedAssetId = asset.id
     detail = null
     activeOperationId = null
+    pendingConfirmation = null
     commandStatus = null
     void loadDetail(asset.id)
   }
@@ -199,19 +202,35 @@
     return base
   }
 
+  const confirmationText = (confirmation: { readonly operationId: string; readonly value: number }): string =>
+    `${operationLabel(confirmation.operationId)} ${detail?.label ?? ''}${numericOperation(confirmation.operationId) ? ` to ${confirmation.value.toLocaleString()} MW` : ''}? This disconnects supply or generation at once.`
+
   const sendOperation = async (operationId: string): Promise<void> => {
     if (!detail) return
+    pendingConfirmation = null
     if (numericOperation(operationId) && activeOperationId !== operationId) {
       activeOperationId = operationId
       commandValue = defaultValueFor(operationId)
       commandStatus = null
       return
     }
+    if (!numericOperation(operationId)) activeOperationId = null
     const value = numericOperation(operationId) ? Number(commandValue) : 0
     if (numericOperation(operationId) && !Number.isFinite(value)) {
       commandStatus = 'Enter a valid number'
       return
     }
+    if (electricGridDestructiveCommandKinds.has(operationId)) {
+      pendingConfirmation = { operationId, value }
+      commandStatus = null
+      return
+    }
+    await invokeOperation(operationId, value)
+  }
+
+  const invokeOperation = async (operationId: string, value: number): Promise<void> => {
+    if (!detail) return
+    pendingConfirmation = null
     commandStatus = 'Sending…'
     try {
       const response = await invokeSimulationRunCapability(simulationRunId, {
@@ -304,6 +323,14 @@
               <button type="button" onclick={() => activeOperationId && void sendOperation(activeOperationId)}>Apply</button>
             </div>
           {/if}
+          {#if pendingConfirmation}
+            {@const confirmation = pendingConfirmation}
+            <div class="confirmation" role="alertdialog" aria-label="Confirm Grid operation">
+              <p>{confirmationText(confirmation)}</p>
+              <button type="button" class="confirm" onclick={() => void invokeOperation(confirmation.operationId, confirmation.value)}>Confirm</button>
+              <button type="button" onclick={() => { pendingConfirmation = null }}>Cancel</button>
+            </div>
+          {/if}
           {#if commandStatus}<p class="command-status">{commandStatus}</p>{/if}
         {/if}
 
@@ -371,6 +398,10 @@
   .command-form label { display: flex; flex: 1; flex-direction: column; gap: 4px; font-size: 10px; }
   .command-form input { width: 100%; box-sizing: border-box; padding: 5px 6px; color: inherit; border: 1px solid rgba(148,163,184,.45); border-radius: 4px; background: transparent; }
   .command-status { margin: 5px 0; color: #64748b; font-size: 10px; }
+  .confirmation { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; padding: 8px; border: 1px solid rgba(220,38,38,.45); border-radius: 5px; background: rgba(220,38,38,.08); font-size: 11px; }
+  .confirmation p { flex: 1 1 100%; margin: 0; }
+  .confirmation button { padding: 5px 8px; color: inherit; border: 1px solid rgba(148,163,184,.4); border-radius: 999px; background: transparent; cursor: pointer; font-size: 11px; }
+  .confirmation button.confirm { color: #fff; border-color: #dc2626; background: #dc2626; }
   details { margin-top: 9px; font-size: 10px; }
   summary { cursor: pointer; font-weight: 650; }
   dl { display: grid; grid-template-columns: minmax(80px,.8fr) minmax(0,1.2fr); gap: 4px 8px; margin: 7px 0; }
