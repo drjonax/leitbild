@@ -22,35 +22,7 @@ import type {
   PackRuntimeEventHistory,
   PackRuntimeQuery,
 } from '../../../simulation/protocol.ts'
-import {
-  gridClearDerateCommandKind,
-  gridClearDeratePayloadSchema,
-  gridCloseBranchCommandKind,
-  gridCloseBranchPayloadSchema,
-  gridDerateBranchCommandKind,
-  gridDerateBranchPayloadSchema,
-  gridOpenBranchCommandKind,
-  gridOpenBranchPayloadSchema,
-} from '../commands/branch.ts'
-import {
-  gridDispatchGeneratorCommandKind,
-  gridDispatchGeneratorPayloadSchema,
-  gridReturnGeneratorToServiceCommandKind,
-  gridReturnGeneratorToServicePayloadSchema,
-  gridSetGeneratorAvailabilityCommandKind,
-  gridSetGeneratorAvailabilityPayloadSchema,
-  gridTripGeneratorCommandKind,
-  gridTripGeneratorPayloadSchema,
-} from '../commands/generator.ts'
 import { electricGridCommandCapabilities,electricGridCommandKinds } from '../commands/index.ts'
-import {
-  gridRestoreLoadCommandKind,
-  gridRestoreLoadPayloadSchema,
-  gridSetEvChargingDemandCommandKind,
-  gridSetEvChargingDemandPayloadSchema,
-  gridShedLoadCommandKind,
-  gridShedLoadPayloadSchema,
-} from '../commands/load.ts'
 import { gridDefinitionSchema } from '../config.ts'
 import { defaultSimulationRunRuntimePolicy } from '../../../core/simulation-runs/runtime-persistence-policy.ts'
 import { createRuntimeStateWriter } from '../../../simulation/runtime-state-writer.ts'
@@ -58,6 +30,7 @@ import { electricGridPackDataSchema,electricGridPackId } from '../model.ts'
 import { answerElectricGridQuery,electricGridQueryCapabilities } from '../queries/index.ts'
 import { createGridRecordingPlan } from '../recording.ts'
 import { balanceInitialGridDispatch,createGridRuntimeInstance,type GridRuntimeInstance } from '../runtime/instance.ts'
+import { applyGridCommand } from '../runtime/apply-command.ts'
 import { advanceGrid } from '../runtime/solver.ts'
 import { electricGridAdapterId,electricGridRuntimeId } from './constants.ts'
 import { gridProjectionEvents,projectGridObject,projectedInitialGridObjects } from './object-projection.ts'
@@ -114,93 +87,6 @@ const requireGrid = (grids: ReadonlyMap<string, GridRuntimeInstance>, command: C
   const grid = grids.get(gridId)
   if (!grid) throw new Error(`target Grid not found: ${gridId}`)
   return grid
-}
-
-const applyCommand = (grid: GridRuntimeInstance, command: CommandEnvelope): void => {
-  if (command.kind === gridDispatchGeneratorCommandKind) {
-    const payload = gridDispatchGeneratorPayloadSchema.parse(command.payload)
-    const state = grid.generators.get(payload.assetId)
-    if (!state) throw new Error(`generator Grid Asset not found: ${payload.assetId}`)
-    if (state.state !== 'online') throw new Error(`generator Grid Asset ${payload.assetId} is ${state.state}; return it to service before dispatching`)
-    state.targetMw = Math.min(payload.targetMw, state.availableMw)
-    return
-  }
-  if (command.kind === gridTripGeneratorCommandKind) {
-    const payload = gridTripGeneratorPayloadSchema.parse(command.payload)
-    const state = grid.generators.get(payload.assetId)
-    if (!state) throw new Error(`generator Grid Asset not found: ${payload.assetId}`)
-    state.state = 'tripped'
-    state.dispatchMw = 0
-    state.targetMw = 0
-    return
-  }
-  if (command.kind === gridSetGeneratorAvailabilityCommandKind) {
-    const payload = gridSetGeneratorAvailabilityPayloadSchema.parse(command.payload)
-    const state = grid.generators.get(payload.assetId)
-    const entry = grid.definition.index.assetById.get(payload.assetId)
-    const definition = entry?.kind === 'generator' ? entry.definition : undefined
-    if (!state || !definition) throw new Error(`generator Grid Asset not found: ${payload.assetId}`)
-    state.availableMw = Math.min(payload.availableMw, definition.capacityMw)
-    state.targetMw = Math.min(state.targetMw, state.availableMw)
-    state.dispatchMw = Math.min(state.dispatchMw, state.availableMw)
-    if (state.availableMw === 0 && state.state === 'online') state.state = 'offline'
-    return
-  }
-  if (command.kind === gridReturnGeneratorToServiceCommandKind) {
-    const payload = gridReturnGeneratorToServicePayloadSchema.parse(command.payload)
-    const state = grid.generators.get(payload.assetId)
-    if (!state) throw new Error(`generator Grid Asset not found: ${payload.assetId}`)
-    if (state.availableMw <= 0) throw new Error(`generator Grid Asset ${payload.assetId} has no available capacity`)
-    state.state = 'online'
-    state.dispatchMw = 0
-    state.targetMw = 0
-    return
-  }
-  if (command.kind === gridOpenBranchCommandKind || command.kind === gridCloseBranchCommandKind || command.kind === gridDerateBranchCommandKind || command.kind === gridClearDerateCommandKind) {
-    const payload = command.kind === gridOpenBranchCommandKind
-      ? gridOpenBranchPayloadSchema.parse(command.payload)
-      : command.kind === gridCloseBranchCommandKind
-        ? gridCloseBranchPayloadSchema.parse(command.payload)
-        : command.kind === gridDerateBranchCommandKind
-          ? gridDerateBranchPayloadSchema.parse(command.payload)
-          : gridClearDeratePayloadSchema.parse(command.payload)
-    const state = grid.branches.get(payload.assetId)
-    if (!state) throw new Error(`branch Grid Asset not found: ${payload.assetId}`)
-    if (command.kind === gridOpenBranchCommandKind) state.state = 'open'
-    if (command.kind === gridCloseBranchCommandKind) state.state = 'closed'
-    if (command.kind === gridClearDerateCommandKind) state.availability = 1
-    if (command.kind === gridDerateBranchCommandKind) state.availability = gridDerateBranchPayloadSchema.parse(command.payload).availability
-    if (command.kind === gridOpenBranchCommandKind || command.kind === gridCloseBranchCommandKind) grid.topologyPlan = null
-    return
-  }
-  if (command.kind === gridShedLoadCommandKind) {
-    const payload = gridShedLoadPayloadSchema.parse(command.payload)
-    const state = grid.loads.get(payload.assetId)
-    const entry = grid.definition.index.assetById.get(payload.assetId)
-    const definition = entry?.kind === 'load' ? entry.definition : undefined
-    if (!state || !definition || !definition.controllable) throw new Error(`controllable load Grid Asset not found: ${payload.assetId}`)
-    state.nominalDemandMw = Math.max(definition.criticalMw, state.nominalDemandMw - payload.amountMw)
-    return
-  }
-  if (command.kind === gridRestoreLoadCommandKind) {
-    const payload = gridRestoreLoadPayloadSchema.parse(command.payload)
-    const state = grid.loads.get(payload.assetId)
-    const entry = grid.definition.index.assetById.get(payload.assetId)
-    const definition = entry?.kind === 'load' ? entry.definition : undefined
-    if (!state || !definition || !definition.controllable) throw new Error(`controllable load Grid Asset not found: ${payload.assetId}`)
-    state.nominalDemandMw = definition.demandMw * grid.definition.operatingPoint.loadScale
-    return
-  }
-  if (command.kind === gridSetEvChargingDemandCommandKind) {
-    const payload = gridSetEvChargingDemandPayloadSchema.parse(command.payload)
-    const state = grid.loads.get(payload.assetId)
-    const entry = grid.definition.index.assetById.get(payload.assetId)
-    const definition = entry?.kind === 'load' ? entry.definition : undefined
-    if (!state || !definition || definition.kind !== 'ev_charging' || !definition.controllable) throw new Error(`controllable EV charging Grid Asset not found: ${payload.assetId}`)
-    state.nominalDemandMw = Math.max(definition.criticalMw, payload.demandMw)
-    return
-  }
-  throw new Error(`electric-grid runtime does not accept command kind: ${command.kind}`)
 }
 
 export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter => ({
@@ -450,7 +336,8 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
         if (!electricGridCommandKinds.includes(command.kind as typeof electricGridCommandKinds[number])) return commandRejected(command, `electric-grid runtime does not accept command kind: ${command.kind}`)
         try {
           const grid = requireGrid(grids, command)
-          applyCommand(grid, command)
+          const applied = applyGridCommand(grid, command)
+          if (!applied.ok) return commandRejected(command, applied.reason)
           const at = currentSimulationTime()
           advanceGrid(grid, 0, at)
           const events = gridProjectionEvents({
