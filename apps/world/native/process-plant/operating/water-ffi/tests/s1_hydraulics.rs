@@ -212,15 +212,19 @@ fn taps(packet: &Packet, point: &OperatingPoint) -> Taps {
         .filter(|(_, r)| (r.top_m - point.pzr_roof_elevation_m).abs() < 1e-9)
         .max_by(|a, b| a.1.volume_m3.total_cmp(&b.1.volume_m3))
         .expect("a PZR region must end at the roof tap");
-    let interface = packet.preparation.operating_point.pzr_bottom_elevation_m
-        + packet.preparation.operating_point.pzr_level_m;
+    // Cross-section of the band holding the declared interface (inner+outer).
+    let interface = packet.preparation.operating_point.pzr_bottom_elevation_m + point.pzr_level_m;
     let interface_area_m2 = packet
         .pzr
         .regions
         .iter()
-        .filter(|r| (r.top_m - interface).abs() < 1e-9)
+        .filter(|r| r.bottom_m < interface && interface < r.top_m)
         .map(|r| r.axial_area_m2)
         .sum();
+    assert!(
+        interface_area_m2 > 0.,
+        "declared S1 interface must lie inside one PZR band"
+    );
     Taps {
         loop_faces: [face("RETURN.A->DOWN"), face("RETURN.B->DOWN")],
         lower: region("LOWER"),
