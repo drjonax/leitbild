@@ -8,14 +8,22 @@
     type DisplayFrameZoomRequest,
   } from '../embed/display-frame-protocol.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
-  import { displayFrameGeometry, type DisplayExtent, type DisplayKind } from './display-zoom.ts'
+  import {
+    displayFrameGeometry,
+    presentedFrameGeometry,
+    type DisplayExtent,
+    type DisplayFrameGeometry,
+    type DisplayKind,
+  } from './display-zoom.ts'
 
   // One display in the process display window: its own page in a frame, so
   // OpenBridge's styles stay with the drawing and it samples the Run itself.
-  // Frames of displays shown recently stay mounted at the same size and are
-  // hidden, never removed from layout, so returning to one is instant and it
-  // keeps its drill-down. The window tells each frame whether it is shown and
-  // at what zoom; it listens only to this frame's own page.
+  // Frames of displays shown recently stay mounted and are hidden, never
+  // removed from layout, so returning to one is instant and it keeps its
+  // drill-down. A hidden frame keeps the size it was hidden at, so resizing
+  // the window never has it drawn again; shown, it takes the window's size.
+  // The window tells each frame whether it is shown and at what zoom; it
+  // listens only to this frame's own page.
 
   interface Props {
     readonly entryKey: string
@@ -46,13 +54,19 @@
   let layerWidth = $state(0)
   let layerHeight = $state(0)
 
-  const geometry = $derived(displayFrameGeometry({
+  const windowGeometry = $derived(displayFrameGeometry({
     kind,
     zoom,
     body: { width: layerWidth, height: layerHeight },
     extent,
     envelopeHeight: envelope.height,
   }))
+  // The geometry last given to the frame; a hidden frame keeps it until it is shown again.
+  let presented: DisplayFrameGeometry | null = null
+  const geometry = $derived.by(() => {
+    presented = presentedFrameGeometry(presented, windowGeometry, shown)
+    return presented
+  })
 
   const present = (): void => {
     const target = frame?.contentWindow

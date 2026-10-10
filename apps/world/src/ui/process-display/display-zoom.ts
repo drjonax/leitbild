@@ -111,6 +111,19 @@ export const displayFrameGeometry = (config: {
 }
 
 /**
+ * The geometry a frame is given: the window's while it is shown; while it
+ * is hidden, the one it had when it was hidden. A generated display draws
+ * itself again for every new frame size, so a hidden frame that followed
+ * the window would be drawn for sizes nobody sees; shown again, it takes the
+ * window's geometry once.
+ */
+export const presentedFrameGeometry = (
+  previous: DisplayFrameGeometry | null,
+  current: DisplayFrameGeometry,
+  shown: boolean,
+): DisplayFrameGeometry => shown || previous === null ? current : previous
+
+/**
  * The zoom at which a display fits the body. Advice: as large as shows its
  * whole height and its narrowest width (50-200 %). A generated display: the
  * zoom at which the room it reported needing fits, never above 100 %; its

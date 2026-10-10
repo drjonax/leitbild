@@ -346,8 +346,9 @@
     const previous = extents.get(key)
     if (previous && previous.kind === extent.kind && previous.minWidth === extent.minWidth && previous.width === extent.width && previous.height === extent.height) return
     extents = withValue(extents, key, extent)
-    const entry = deck.find(candidate => candidate.key === key)
-    const state = zoomStates.get(key)
+    // A hidden frame keeps its size, so only the shown display's zoom follows; a hidden one refits when shown.
+    const entry = current
+    const state = entry?.key === key ? zoomStates.get(key) : undefined
     if (entry && state) setZoomState(key, reduceDisplayZoom(state, { type: 'extent' }, zoomContextFor(entry)))
   }
 
@@ -360,12 +361,11 @@
   const measureBody = (size: DisplaySize): void => {
     if (bodySize !== null && bodySize.width === size.width && bodySize.height === size.height) return
     bodySize = size
-    // Every mounted display follows, including an overview whose view is still loading.
-    for (const frame of mountedFrames) {
-      const entry = deck.find(candidate => candidate.key === frame.key)
-      const state = zoomStates.get(frame.key)
-      if (entry && state) setZoomState(frame.key, reduceDisplayZoom(state, { type: 'body' }, zoomContextFor(entry)))
-    }
+    // The shown display follows, even an overview whose view is still loading. A hidden
+    // one keeps the size it was hidden at and refits when it is shown again (showEntry).
+    const entry = current
+    const state = entry === null ? undefined : zoomStates.get(entry.key)
+    if (entry && state) setZoomState(entry.key, reduceDisplayZoom(state, { type: 'body' }, zoomContextFor(entry)))
   }
 
   // --- Frames ---------------------------------------------------------------

@@ -8,6 +8,7 @@ import {
   initialDisplayZoom,
   overviewZoomKey,
   overviewZoomStore,
+  presentedFrameGeometry,
   reduceDisplayZoom,
   sliderPercentForZoom,
   steppedDisplayZoom,
@@ -96,6 +97,20 @@ describe('display frame geometry', () => {
       boxWidth: 1000,
       boxHeight: 400,
     })
+  })
+
+  test('a hidden frame keeps the size it was hidden at and takes the window\'s once shown again', () => {
+    const at = (width: number, zoom: number) => displayFrameGeometry({ kind: 'generated', zoom, body: { width, height: 600 }, extent: null, envelopeHeight: 0 })
+    let presented = presentedFrameGeometry(null, at(1000, 1), true)
+    expect(presented).toEqual(at(1000, 1))
+    // Hidden, the window is resized (and its zoom refitted) many times: the frame is not drawn for any of it.
+    for (const width of [1010, 1100, 1300]) {
+      presented = presentedFrameGeometry(presented, at(width, 0.8), false)
+      expect(presented).toEqual(at(1000, 1))
+    }
+    // Shown again, one resize to the window's current geometry.
+    presented = presentedFrameGeometry(presented, at(1300, 0.8), true)
+    expect(presented).toEqual(at(1300, 0.8))
   })
 })
 
