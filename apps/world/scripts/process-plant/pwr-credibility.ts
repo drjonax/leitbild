@@ -30,6 +30,7 @@ const variablePath = (value: string): VariablePath => value as VariablePath
 
 type SourceRefId =
   | 'nrc-srp-ch15'
+  | 'nrc-srp-15-2-7'
   | 'iaea-ssg-2'
   | 'nrc-trace'
   | 'oecd-nea-mslb'
@@ -48,6 +49,12 @@ const sourceRefs: Readonly<Record<SourceRefId, SourceRef>> = {
     title: 'NRC NUREG-0800 Chapter 15',
     url: 'https://www.nrc.gov/reading-rm/doc-collections/nuregs/staff/sr0800/ch15/index.html',
     note: 'Event-family taxonomy for LWR transient and accident analysis.',
+  },
+  'nrc-srp-15-2-7': {
+    id: 'nrc-srp-15-2-7',
+    title: 'NRC NUREG-0800 Section 15.2.7, Loss of Normal Feedwater Flow (Rev. 2, March 2007)',
+    url: 'https://www.nrc.gov/reading-rm/doc-collections/nuregs/staff/sr0800/ch15/index.html',
+    note: 'A moderate-frequency event: reactor coolant and main steam pressure stay below 110 % of design, fuel cladding stays intact, and the event does not grow into an accident. Plant analyses meet it by tripping the reactor on low-low steam generator level and removing decay heat with auxiliary feedwater, without the pressurizer filling.',
   },
   'iaea-ssg-2': {
     id: 'iaea-ssg-2',
@@ -176,7 +183,7 @@ const cases: ReadonlyArray<CredibilityCase> = [
     id: 'loss-feedwater-afw',
     title: 'Loss Of Feedwater With AFW',
     eventFamily: 'NRC SRP 15.2.7 loss of normal feedwater flow',
-    description: 'Main feedwater trips; auxiliary feedwater starts and should preserve a secondary heat sink.',
+    description: 'Main feedwater trips; the reactor trips on low-low steam generator level, and auxiliary feedwater (also aligned by schedule at T+180s) should preserve a secondary heat sink.',
     sourceRefs: ['nrc-srp-ch15', 'iaea-ssg-2', 'leitbild-pwr-scope'],
     actions: system => [
       ...tripComponentsMatching(system, 60_000, 'trip-main-feedwater', isMainFeedwaterPump),
@@ -190,8 +197,8 @@ const cases: ReadonlyArray<CredibilityCase> = [
     id: 'loss-feedwater-auto-afw',
     title: 'Loss Of Feedwater With Automatic AFW',
     eventFamily: 'NRC SRP 15.2.7 loss of normal feedwater flow',
-    description: 'Main feedwater trips; the reference protection trips the reactor as the plant heats up, and graph-aware reference I&C should diagnose low-low SG level and actuate AFW without manual schedule help.',
-    sourceRefs: ['nrc-srp-ch15', 'iaea-ssg-2', 'leitbild-pwr-scope'],
+    description: 'Main feedwater trips; the reference protection should trip the reactor, on overtemperature delta-T or low-low SG level, whichever comes first, and the graph-aware reference I&C actuate AFW without manual schedule help; AFW should then remove decay heat.',
+    sourceRefs: ['nrc-srp-15-2-7', 'iaea-ssg-2', 'leitbild-pwr-scope'],
     actions: system => [
       ...tripComponentsMatching(system, 60_000, 'trip-main-feedwater-auto-afw', isMainFeedwaterPump),
     ],
@@ -200,7 +207,7 @@ const cases: ReadonlyArray<CredibilityCase> = [
     id: 'loss-heat-sink-dryout',
     title: 'Loss Of Secondary Heat Sink Without AFW Inventory',
     eventFamily: 'NRC SRP Chapter 15 heat-sink degradation envelope',
-    description: 'Normal feedwater is lost while AFW inventory is unavailable; SG level should uncover tubes and degrade heat transfer in the compact model.',
+    description: 'Normal feedwater is lost while AFW inventory is unavailable; after the low-low level reactor trip, decay heat boils the SGs down, uncovering tubes and degrading heat transfer in the compact model.',
     sourceRefs: ['nrc-srp-ch15', 'nrc-trace', 'iaea-ssg-2', 'leitbild-pwr-scope'],
     initialState: {
       'auxFeedwaterTank.inventoryKg': 0,
@@ -285,6 +292,7 @@ const telemetryVariables = [
   'core.fuelHeatupRateCPerS',
   'core.rodInsertionFraction',
   'vessel.primaryCoolantInventoryKg',
+  'vessel.meanPrimaryCoolantTemperatureC',
   'vessel.primaryLeakFlowKgPerS',
   'vessel.safetyInjectionFlowKgPerS',
   'vessel.tubeLeakFlowKgPerS',
@@ -409,6 +417,28 @@ const targets: ReadonlyArray<CredibilityTarget> = [
     sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-scope'],
   },
   {
+    id: 'auto-afw-reactor-trip',
+    caseId: 'loss-feedwater-auto-afw',
+    label: 'Low-low SG level trips the reactor',
+    signal: 'core.powerMw max after T+200s',
+    expectation: 'Steam generator low-low level should trip the reactor, so that only decay heat is left for auxiliary feedwater to remove.',
+    measure: { kind: 'maxAfter', path: variablePath('core.powerMw'), afterMs: 200_000 },
+    acceptable: { max: 100 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-15-2-7', 'leitbild-pwr-scope'],
+  },
+  {
+    id: 'auto-afw-reactor-trip-rods-inserted',
+    caseId: 'loss-feedwater-auto-afw',
+    label: 'The low-low level trip inserts the rods',
+    signal: 'core.rodInsertionFraction final value',
+    expectation: 'The reactor trip should be visible as rod insertion as well as reduced power.',
+    measure: { kind: 'point', path: variablePath('core.rodInsertionFraction'), atMs: durationMs },
+    acceptable: { min: 0.95 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-15-2-7', 'leitbild-pwr-scope'],
+  },
+  {
     id: 'auto-afw-flow',
     caseId: 'loss-feedwater-auto-afw',
     label: 'Reference I&C actuates AFW after low-low SG level',
@@ -422,16 +452,57 @@ const targets: ReadonlyArray<CredibilityTarget> = [
   {
     id: 'auto-afw-heat-sink-preserved',
     caseId: 'loss-feedwater-auto-afw',
-    label: 'Automatic AFW preserves usable SG heat transfer',
-    signal: 'sgA.heatTransferMw min after T+260s',
-    // The reactor trips on overtemperature delta-T about 50 s after the feedwater
-    // loss, so afterwards each of the four SGs carries a quarter of the decay
-    // heat, about 30 to 50 MW in this window.
-    expectation: 'The affected steam generator should keep removing its share of decay heat after the reactor trip and AFW actuation.',
-    measure: { kind: 'minAfter', path: variablePath('sgA.heatTransferMw'), afterMs: 260_000 },
-    acceptable: { min: 25 },
+    label: 'Automatic AFW outpaces decay-heat boil-off and refills the SG',
+    signal: 'sgA.levelPercent delta from T+260s to final',
+    expectation: 'Once the reactor has tripped, AFW flow should exceed what decay heat boils off, so the affected SG level turns and recovers and its tubes stay a heat sink.',
+    measure: { kind: 'delta', path: variablePath('sgA.levelPercent'), fromMs: 260_000, toMs: durationMs },
+    acceptable: { min: 2 },
     severity: 'gate',
-    sourceRefs: ['iaea-ssg-2', 'leitbild-pwr-scope'],
+    sourceRefs: ['nrc-srp-15-2-7', 'iaea-ssg-2', 'leitbild-pwr-scope'],
+  },
+  {
+    id: 'auto-afw-rcs-heat-removed',
+    caseId: 'loss-feedwater-auto-afw',
+    label: 'AFW removes RCS heat after the trip',
+    signal: 'vessel.meanPrimaryCoolantTemperatureC delta from T+300s to final',
+    expectation: 'With AFW established the steam generators should remove decay and stored heat, so the average coolant temperature falls instead of rising.',
+    measure: { kind: 'delta', path: variablePath('vessel.meanPrimaryCoolantTemperatureC'), fromMs: 300_000, toMs: durationMs },
+    acceptable: { max: 0 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-15-2-7', 'leitbild-pwr-scope'],
+  },
+  {
+    id: 'auto-afw-rcs-pressure-bounded',
+    caseId: 'loss-feedwater-auto-afw',
+    label: 'RCS pressure stays below 110 % of design',
+    signal: 'pressurizer.pressureMPa max after T+60s',
+    expectation: 'Reactor coolant pressure should stay below 110 % of the 17.24 MPa (2,485 psig) design pressure.',
+    measure: { kind: 'maxAfter', path: variablePath('pressurizer.pressureMPa'), afterMs: 60_000 },
+    acceptable: { max: 18.96 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-15-2-7'],
+  },
+  {
+    id: 'auto-afw-steam-pressure-bounded',
+    caseId: 'loss-feedwater-auto-afw',
+    label: 'Main steam pressure stays below 110 % of design',
+    signal: 'sgA.pressureMPa max after T+60s',
+    expectation: 'Steam generator pressure should stay below 110 % of the design pressure the main steam safety valve is set at (9.6 MPa).',
+    measure: { kind: 'maxAfter', path: variablePath('sgA.pressureMPa'), afterMs: 60_000 },
+    acceptable: { max: 10.56 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-15-2-7'],
+  },
+  {
+    id: 'auto-afw-pressurizer-not-solid',
+    caseId: 'loss-feedwater-auto-afw',
+    label: 'The pressurizer does not fill',
+    signal: 'pressurizer.levelPercent max after T+60s',
+    expectation: 'The coolant heat-up before the trip should not fill the pressurizer and relieve water through its valves.',
+    measure: { kind: 'maxAfter', path: variablePath('pressurizer.levelPercent'), afterMs: 60_000 },
+    acceptable: { max: 95 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-15-2-7', 'leitbild-pwr-scope'],
   },
   {
     id: 'dryout-tube-uncovering',
