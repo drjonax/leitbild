@@ -115,7 +115,8 @@ export const displayFrameGeometry = (config: {
  * whole height and its narrowest width (50-200 %). A generated display: the
  * zoom at which the room it reported needing fits, never above 100 %; its
  * layout changes with its size, so the caller allows one correction after the
- * next report and then stops.
+ * next report and then stops, and tries 100 % first where the display is
+ * already drawn whole.
  */
 export const fitDisplayZoom = (context: DisplayZoomContext, zoom: number): number => {
   const body = context.body
@@ -162,12 +163,26 @@ export type DisplayZoomAction =
 
 const manual = (zoom: number): DisplayZoomState => ({ zoom: clampDisplayZoom(zoom), fit: false, auto: false, corrections: 0 })
 
-const fitted = (context: DisplayZoomContext, zoom: number): DisplayZoomState => ({
-  zoom: fitDisplayZoom(context, zoom),
-  fit: true,
-  auto: false,
-  corrections: context.kind === 'generated' ? 1 : 0,
-})
+// A generated display drawn whole reports exactly its frame, which says
+// nothing about how much larger it could be drawn whole.
+const drawnWholeAt = (context: DisplayZoomContext, zoom: number): boolean =>
+  context.body !== null && context.extent !== null
+  && context.extent.width <= context.body.width / zoom + 0.5
+  && context.extent.height <= context.body.height / zoom + 0.5
+
+const fitted = (context: DisplayZoomContext, zoom: number): DisplayZoomState => {
+  // Drawn whole below 100 %, it may be drawn whole larger too: Fit tries 100 % and
+  // takes the one correction its next report allows.
+  if (context.kind === 'generated' && zoom < GENERATED_FIT_MAX - SAME_ZOOM && drawnWholeAt(context, zoom)) {
+    return { zoom: GENERATED_FIT_MAX, fit: true, auto: false, corrections: 1 }
+  }
+  return {
+    zoom: fitDisplayZoom(context, zoom),
+    fit: true,
+    auto: false,
+    corrections: context.kind === 'generated' ? 1 : 0,
+  }
+}
 
 /** A display's zoom when the window first shows it: what the operator left, else 100 % (generated) or the advice default. */
 export const initialDisplayZoom = (context: DisplayZoomContext, stored: StoredDisplayZoom | null): DisplayZoomState => {

@@ -29,6 +29,8 @@ const createMemoryStorage = () => {
 
 const body = { width: 1000, height: 600 }
 
+const manualAt = (zoom: number): DisplayZoomState => ({ zoom, fit: false, auto: false, corrections: 0 })
+
 const advice = (overrides: Partial<DisplayZoomContext> = {}): DisplayZoomContext => ({
   kind: 'advice',
   body,
@@ -133,6 +135,19 @@ describe('display fit', () => {
     expect(state).toEqual({ zoom: 1, fit: true, auto: false, corrections: 1 })
     state = reduceDisplayZoom(state, { type: 'body' }, generated({ body: { width: 1000, height: 600 }, extent: settled }))
     expect(state.zoom).toBe(0.5)
+  })
+
+  test('Fit on a generated display drawn whole below 100 % tries 100 %, then corrects once', () => {
+    // At 60 % the frame is 1000/0.6 x 600/0.6 and the display needs no more: it may fit larger.
+    const whole = { kind: 'generated' as const, minWidth: 1, width: 1667, height: 1000 }
+    let state = reduceDisplayZoom(manualAt(0.6), { type: 'toggle-fit' }, generated({ extent: whole }))
+    expect(state).toEqual({ zoom: 1, fit: true, auto: false, corrections: 1 })
+    // Drawn for 100 %, it needs 1250 x 600: one correction to 80 %, then it stays.
+    state = reduceDisplayZoom(state, { type: 'extent' }, generated({ extent: { ...whole, width: 1250, height: 600 } }))
+    expect(state).toEqual({ zoom: 0.8, fit: true, auto: false, corrections: 0 })
+    // Drawn whole at 100 %, it stays there.
+    expect(reduceDisplayZoom(manualAt(0.6), { type: 'toggle-fit' }, generated({ extent: whole })).zoom).toBe(1)
+    expect(reduceDisplayZoom({ zoom: 1, fit: true, auto: false, corrections: 1 }, { type: 'extent' }, generated({ extent: { ...whole, width: 1000, height: 600 } })).zoom).toBe(1)
   })
 
   test('advice under Fit refits on every report and body change', () => {
