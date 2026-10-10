@@ -10,6 +10,7 @@ import { primarySystemReactorCore, primarySystemReactorVessel } from '../system-
 import { saturationTemperatureCFromPressureMPa } from '../thermophysics.ts'
 import {
   compressedWaterState,
+  criticalPressureMPa,
   liquidEnthalpyKjPerKg,
   liquidTemperatureCFromEnthalpy,
   saturatedWaterSteam,
@@ -40,6 +41,46 @@ export const pressurizerSprayFlowKgPerS = (pressurizer: CompiledComponent, conte
 
 const saturationPressureFloorMarginC = 2
 
+/** The volume a water's room gives up per MPa it is compressed, m3 per m3 of it. */
+const waterCompressibilityPerMPa = (temperatureC: number, pressureMPa: number): number => {
+  const density = compressedWaterState(temperatureC, pressureMPa).densityKgPerM3
+  return (compressedWaterState(temperatureC, pressureMPa + 0.1).densityKgPerM3 - density) / 0.1 / density
+}
+
+/** The system's steam space at a pressure: the room it has at the step's pressure, and what its compressed water gives up. */
+interface SteamSpace {
+  readonly room: number
+  readonly vapourMass: number
+  readonly pressure: number
+  readonly waterComplianceM3PerMPa: number
+}
+
+const steamRoomAt = (space: SteamSpace, pressure: number): number =>
+  Math.max(0, space.room + space.waterComplianceM3PerMPa * (pressure - space.pressure))
+
+/**
+ * The pressure at which the steam's density in its room is saturated steam's:
+ * the room grows with the pressure as the water compresses, so the two are
+ * found together. Found from last step's room alone, a small steam space over
+ * the whole system's water rings, each step's pressure overshooting the last.
+ */
+const steamPressureOf = (space: SteamSpace): number => {
+  const pressureInRoom = (pressure: number): number => {
+    const room = steamRoomAt(space, pressure)
+    return room > 0 ? saturationPressureMPaFromVapourDensity(Math.max(0, space.vapourMass) / room) : criticalPressureMPa
+  }
+  // The answer lies between last step's pressure and the pressure last
+  // step's room gives.
+  let low = Math.min(space.pressure, pressureInRoom(space.pressure))
+  let high = Math.max(space.pressure, pressureInRoom(space.pressure))
+  for (let iteration = 0; iteration < 16; iteration += 1) {
+    const middle = (low + high) / 2
+    if (pressureInRoom(middle) > middle) low = middle
+    else high = middle
+  }
+  return (low + high) / 2
+}
+
 /**
  * The highest pressure, up to the floor, that the pressurizer's water can
  * hold its steam space at: the water, flashing down to saturation there,
@@ -50,14 +91,13 @@ const pressureWaterHolds = (input: {
   readonly steamPressure: number
   readonly water: number
   readonly waterEnthalpy: number
-  readonly steamRoom: number
-  readonly vapourMass: number
+  readonly space: SteamSpace
 }): number => {
   const holds = (pressure: number): boolean => {
     const saturation = saturatedWaterSteam(pressure)
     const flashable = Math.max(0, input.waterEnthalpy - input.water * saturation.liquidEnthalpyKjPerKg)
       / (saturation.vapourEnthalpyKjPerKg - saturation.liquidEnthalpyKjPerKg)
-    return input.vapourMass + flashable >= saturation.vapourDensityKgPerM3 * input.steamRoom
+    return input.space.vapourMass + flashable >= saturation.vapourDensityKgPerM3 * steamRoomAt(input.space, pressure)
   }
   if (holds(input.floorPressure)) return input.floorPressure
   // At the steam's own pressure the space needs no more steam, so the water
@@ -242,7 +282,14 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       // The pressure the steam and liquid volumes settle at.
       const waterVolume = water / compressedWaterState(nextWaterTemperature, pressure).densityKgPerM3
       const steamRoom = volume - waterVolume + loopSteamVolume
-      const vapourMass = steam + loopSteamMass
+      const loopVolume = vessel === null ? 0 : parameterNumber(vessel, 'primaryCoolantVolumeM3')
+      const space: SteamSpace = {
+        room: steamRoom,
+        vapourMass: steam + loopSteamMass,
+        pressure,
+        waterComplianceM3PerMPa: waterVolume * waterCompressibilityPerMPa(nextWaterTemperature, pressure)
+          + (loopVolume - loopSteamVolume) * waterCompressibilityPerMPa((hotLegTemperature + coldLegTemperature) / 2, pressure),
+      }
       const minimumSteamRoom = volume * 0.002
       // Water-solid, the system's water compresses, and the piping stretches,
       // by the volume it has outgrown its room since the last step. With room
@@ -253,8 +300,8 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
         ? pressure
           + (vessel === null ? 0 : parameterNumber(vessel, 'effectiveBulkModulusMPa'))
             * (compressedWater - context.readNumber(componentVariablePath(component, 'compressedWaterVolumeM3')))
-            / (volume + (vessel === null ? 0 : parameterNumber(vessel, 'primaryCoolantVolumeM3')))
-        : saturationPressureMPaFromVapourDensity(Math.max(0, vapourMass) / steamRoom)
+            / (volume + loopVolume)
+        : steamPressureOf(space)
       // The pressurizer's own water, near saturation, flashes faster than any
       // relief or break carries steam off: the pressure stays at about that
       // water's saturation pressure or above, as far as the water holds the
@@ -266,8 +313,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
           steamPressure,
           water,
           waterEnthalpy,
-          steamRoom: Math.max(0, steamRoom),
-          vapourMass,
+          space,
         }))
         : steamPressure
       const steamVolume = Math.max(0, volume - waterVolume)

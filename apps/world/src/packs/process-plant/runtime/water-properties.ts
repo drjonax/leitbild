@@ -10,7 +10,7 @@ import { saturationTemperatureCFromPressureMPa } from './thermophysics.ts'
 
 const kelvinOffset = 273.15
 const specificGasConstantKjPerKgK = 0.461526
-const criticalPressureMPa = 22.064
+export const criticalPressureMPa = 22.064
 const criticalDensityKgPerM3 = 322
 const criticalEnthalpyKjPerKg = 2087.546845
 

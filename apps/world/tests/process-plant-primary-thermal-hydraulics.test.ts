@@ -21,10 +21,13 @@ const started = () => {
   const runtime = createProcessPlantRuntime({ system: plant })
   const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
   const read = (path: string): number => Number(runtime.readVariable(path as VariablePath))
+  const evaluate = (): void => {
+    protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-primary-th' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+  }
   const run = (seconds: number, each?: () => void): void => {
     for (let second = 0; second < seconds; second++) {
       runtime.tick(1_000)
-      protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-primary-th' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+      evaluate()
       each?.()
     }
   }
@@ -32,7 +35,7 @@ const started = () => {
     const snapshot = protection.snapshot()
     return [...snapshot.alarms, ...snapshot.trips].filter(lifecycle => lifecycle.active).map(lifecycle => lifecycle.id)
   }
-  return { runtime, read, run, active }
+  return { runtime, read, run, evaluate, active }
 }
 
 describe('the full-power operating point', () => {
@@ -184,5 +187,33 @@ describe('a steam generator tube rupture without charging or letdown', () => {
     expect(read('pressurizer.pressureMPa')).toBeGreaterThan(read('sgA.pressureMPa'))
     expect(Math.abs(read('vessel.safetyInjectionFlowKgPerS') - read('vessel.tubeLeakFlowKgPerS'))).toBeLessThan(10)
     expect(read('vessel.loopVoidFraction')).toBeLessThan(0.01)
+  }, 60_000)
+})
+
+describe('a pressurizer filling to solid', () => {
+  test('compresses its steam smoothly, without its pressure ringing from one solver step to the next', () => {
+    const plantRun = started()
+    plantRun.run(30)
+    const { read } = plantRun
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'letdownValve.positionFraction' as VariablePath, value: 0 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'chargingPumpB.running' as VariablePath, value: true })
+    // A small steam space over the whole system's compressible water: the
+    // pressure follows the water's growth, step by solver step.
+    let previousPressure = read('pressurizer.pressureMPa')
+    let largestStepChange = 0
+    let highestLevel = 0
+    for (let second = 0; second < 90; second++) {
+      for (let step = 0; step < 10; step++) {
+        plantRun.runtime.tick(100)
+        const pressure = read('pressurizer.pressureMPa')
+        const level = read('pressurizer.levelPercent')
+        if (level > 70 && level < 97) largestStepChange = Math.max(largestStepChange, Math.abs(pressure - previousPressure))
+        previousPressure = pressure
+        highestLevel = Math.max(highestLevel, level)
+      }
+      plantRun.evaluate()
+    }
+    expect(highestLevel).toBeGreaterThan(97)
+    expect(largestStepChange).toBeLessThan(0.05)
   }, 60_000)
 })
