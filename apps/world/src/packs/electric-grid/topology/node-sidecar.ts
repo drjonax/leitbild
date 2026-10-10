@@ -100,7 +100,7 @@ export const adaptNodeSidecar = (raw: unknown, sourceId: string): NodeSidecarAda
         if (!nodeIds || nodeIds.length !== coordinates.length) throw new Error(`node sidecar: ${id} needs osmNodeIds aligned with its coordinates`)
         const vertexKeys = nodeIds.map(nodeKey)
         if (properties.category === 'busbar' || properties.category === 'portal') {
-          features.push({ kind: 'busbar', featureId: id, osmWayIds: [id], lifecycle: properties.lifecycle, coordinates, vertexKeys })
+          features.push({ kind: 'busbar', featureId: id, osmWayIds: [id], lifecycle: properties.lifecycle, voltagesKv: properties.voltageKv, coordinates, vertexKeys })
           break
         }
         const reading = levelsFromOsmTags(properties.tags)

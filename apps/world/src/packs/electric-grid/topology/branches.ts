@@ -11,6 +11,7 @@ export type BranchContext = {
   readonly keyMode: TopologyKeyMode
   readonly interconnectors: PreparedInterconnectors
   readonly sourceIds: ReadonlyArray<string>
+  readonly curationOfFeature: ReadonlyMap<string, string>
   readonly busLabel: (busId: string) => string
 }
 
@@ -53,13 +54,15 @@ export const corridorBranch = (
         : `no circuits, cables or route relation mapped; modelled as ${circuitCount}`,
     })
   }
+  const curations = [...new Set(pieces.flatMap(piece => context.curationOfFeature.get(piece.featureId) ?? []))].sort(compareText)
   const notes = [
+    ...(curations.length > 0 ? [`lifecycle tag overridden by ${curations.join(', ')}`] : []),
     ...(inherited ? ['voltage inherited from adjacent ways'] : []),
     ...(!whole ? [`circuit count inferred (${circuitCount})`] : []),
   ]
   const provenance: TopologyProvenance = {
     sources: [...context.sourceIds],
-    method: notes.length > 0 ? 'inferred' : 'mapped',
+    method: curations.length > 0 ? 'curated' : notes.length > 0 ? 'inferred' : 'mapped',
     confidence: inherited ? 'low' : notes.length > 0 ? 'medium' : 'high',
     note: notes.length > 0 ? notes.join('; ') : null,
   }

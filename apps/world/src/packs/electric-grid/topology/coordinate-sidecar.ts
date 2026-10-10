@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { gridReferenceFeatureSchema } from '../schemas/grid-reference.ts'
 import { measurePolygon, type LonLat, type TopologyStationGeometry } from './geometry.ts'
 import type { TopologyInput, TopologyInputFeature } from './input.ts'
 import { ledgerEntry, type TopologyLedgerEntry } from './ledger.ts'
@@ -23,9 +22,19 @@ const geometrySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('Polygon'), coordinates: z.array(z.array(position).min(4)).min(1) }),
   z.object({ type: z.literal('MultiPolygon'), coordinates: z.array(z.array(z.array(position).min(4)).min(1)).min(1) }),
 ])
+// The fields this adapter reads from the 2026-05 sidecar format (the Pack schema has moved on).
+const legacyPropertiesSchema = z.object({
+  category: z.enum(['line', 'cable', 'substation', 'transformer', 'plant', 'generator', 'load', 'unknown']),
+  externalId: z.string().min(1),
+  name: z.string().min(1).nullable(),
+  operator: z.string().min(1).nullable(),
+  cables: z.number().int().positive().nullable(),
+  plantSource: z.string().min(1).nullable(),
+  tags: z.record(z.string(), z.string()),
+})
 const sidecarSchema = z.object({
   type: z.literal('FeatureCollection'),
-  features: z.array(z.object({ type: z.literal('Feature'), geometry: geometrySchema, properties: gridReferenceFeatureSchema })),
+  features: z.array(z.object({ type: z.literal('Feature'), geometry: geometrySchema, properties: legacyPropertiesSchema })),
 })
 
 type SidecarGeometry = z.infer<typeof geometrySchema>
@@ -76,7 +85,7 @@ export const adaptCoordinateSidecar = (raw: unknown, sourceId: string): Coordina
       const vertexKeys = coordinates.map(coordinateVertexKey)
       const osmWayIds = wayIdsOf(feature)
       if (tags.line === 'busbar' || tags.line === 'bay') {
-        features.push({ kind: 'busbar', featureId: properties.externalId, osmWayIds, lifecycle, coordinates, vertexKeys })
+        features.push({ kind: 'busbar', featureId: properties.externalId, osmWayIds, lifecycle, voltagesKv: voltagesKvFromOsmTags(tags.voltage), coordinates, vertexKeys })
         continue
       }
       const reading = levelsFromOsmTags(tags)

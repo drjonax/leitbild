@@ -29,6 +29,9 @@ const reasonDispositions = {
   'converter-without-ac-bus': 'unresolved',
   // inferred: the model contains the element, but a value was inferred rather than mapped
   'terminal-buffer': 'inferred',
+  'terminal-buffer-review': 'inferred',
+  'short-branch-merged': 'inferred',
+  'busbar-tie-merged': 'inferred',
   'terminal-point-radius': 'inferred',
   'voltage-inherited': 'inferred',
   'voltage-normalised': 'inferred',
@@ -36,6 +39,9 @@ const reasonDispositions = {
   'parallel-spans-merged': 'inferred',
   'circuits-inferred': 'inferred',
   'transformer-inferred': 'inferred',
+  // curated: a typed curation record changed what open data says
+  'curation-applied': 'curated',
+  'curation-target-missing': 'unresolved',
   // reported: observations for audit and curation; no model element depends on them
   'passes-through-station': 'reported',
   'endpoint-in-incompatible-station': 'reported',
@@ -45,6 +51,7 @@ const reasonDispositions = {
   'plant-contains-multiple-stations': 'reported',
   'transformer-unmatched': 'reported',
   'traction-station-fed': 'reported',
+  'curation-unneeded': 'reported',
 } as const
 
 export type TopologyLedgerReason = keyof typeof reasonDispositions

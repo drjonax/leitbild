@@ -11,6 +11,8 @@ import type { StationHit, StationIndex } from './station-index.ts'
 
 export type StationLocation = { readonly group: StationGroup; readonly hit: StationHit }
 
+export type SpanningBusbar = { readonly busbar: TopologyBusbarInput; readonly groups: ReadonlyArray<StationGroup> }
+
 export type TerminalResolver = {
   readonly coordinateOf: (key: string) => LonLat
   readonly locateKey: (key: string) => StationLocation | null
@@ -18,6 +20,8 @@ export type TerminalResolver = {
   readonly groupsAtPoint: (point: LonLat) => ReadonlyArray<StationGroup>
   readonly containingGroups: (point: LonLat) => ReadonlyArray<StationGroup>
   readonly noteTerminal: (key: string, kv: number, location: StationLocation) => void
+  // Busbars and bays touching several stations; each vertex joins only its own station.
+  readonly spanningBusbars: ReadonlyArray<SpanningBusbar>
   readonly flush: () => void
 }
 
@@ -26,6 +30,7 @@ export type TerminalResolverInput = {
   readonly busbars: ReadonlyArray<TopologyBusbarInput>
   readonly index: StationIndex
   readonly groups: StationGroups
+  readonly bufferReviewM: number
 }
 
 export const createTerminalResolver = (input: TerminalResolverInput, ledger: TopologyLedger): TerminalResolver => {
@@ -75,6 +80,7 @@ export const createTerminalResolver = (input: TerminalResolverInput, ledger: Top
   }
 
   const busbarGroups = new Map<string, StationGroup>()
+  const spanningBusbars: SpanningBusbar[] = []
   for (const busbar of [...input.busbars].sort((left, right) => compareText(left.featureId, right.featureId))) {
     const located = busbar.vertexKeys.map((key, index) => ({ key, location: locatePoint(busbar.coordinates[index]!, null) }))
     const groups = [...new Set(located.flatMap(entry => entry.location ? [entry.location.group] : []))]
@@ -84,12 +90,7 @@ export const createTerminalResolver = (input: TerminalResolverInput, ledger: Top
       continue
     }
     if (groups.length > 1) {
-      ledger.add({
-        reason: 'busbar-spans-stations',
-        elementIds,
-        location: busbar.coordinates[0]!,
-        detail: `busbar/bay touches stations ${groups.map(group => group.id).sort(compareText).join(', ')}; each vertex joins only the station it lies in`,
-      })
+      spanningBusbars.push({ busbar, groups: [...groups].sort((left, right) => compareText(left.id, right.id)) })
       for (const entry of located) if (entry.location && !busbarGroups.has(entry.key)) busbarGroups.set(entry.key, entry.location.group)
       continue
     }
@@ -101,6 +102,7 @@ export const createTerminalResolver = (input: TerminalResolverInput, ledger: Top
     coordinateOf,
     locateKey,
     busbarGroupOf: key => busbarGroups.get(key) ?? null,
+    spanningBusbars,
     groupsAtPoint: point => [...new Set(input.index.locate(point).map(hit => input.groups.groupOf(hit.container)))],
     containingGroups: point => [...new Set(input.index.containing(point).map(container => input.groups.groupOf(container)))],
     noteTerminal: (key, kv, location) => {
@@ -113,13 +115,17 @@ export const createTerminalResolver = (input: TerminalResolverInput, ledger: Top
       for (const [key, { location, kvs }] of notes) {
         const levels = [...kvs].sort((left, right) => left - right)
         ledger.add({
-          reason: location.hit.method === 'buffer' ? 'terminal-buffer' : 'terminal-point-radius',
+          reason: location.hit.method === 'point-radius'
+            ? 'terminal-point-radius'
+            : location.hit.distanceM > input.bufferReviewM ? 'terminal-buffer-review' : 'terminal-buffer',
           elementIds: [...(featuresAtKey.get(key) ?? []), location.hit.container.station.featureId],
           voltageKv: levels[levels.length - 1]!,
           location: coordinateOf(key),
           stationId: location.group.id,
           distanceM: location.hit.distanceM,
-          detail: `way end ${key} at ${levels.join('/')} kV joined to ${location.group.id} ${location.hit.method === 'buffer' ? 'within the polygon buffer' : 'within the point-station radius'}`,
+          detail: `way end ${key} at ${levels.join('/')} kV joined to ${location.group.id} ${location.hit.method === 'point-radius'
+            ? 'within the point-station radius'
+            : location.hit.distanceM > input.bufferReviewM ? `${location.hit.distanceM.toFixed(1)} m outside its polygon, beyond the ${input.bufferReviewM} m review threshold` : 'within the polygon buffer'}`,
         })
       }
       notes.clear()

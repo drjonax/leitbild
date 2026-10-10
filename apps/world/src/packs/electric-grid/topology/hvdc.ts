@@ -14,9 +14,12 @@ import type { StationGroup } from './station-groups.ts'
 export type HvdcInput = {
   readonly lines: ReadonlyArray<TopologyLineInput>
   readonly stationOfKey: (key: string, coordinate: LonLat) => StationGroup | null
+  readonly groupsAtPoint: (point: LonLat) => ReadonlyArray<StationGroup>
   readonly acBusOfGroup: (groupId: string) => string | null
   readonly interconnectors: PreparedInterconnectors
   readonly sourceIds: ReadonlyArray<string>
+  readonly curationOfFeature: ReadonlyMap<string, string>
+  readonly curationsOfInterconnector: ReadonlyMap<string, ReadonlyArray<string>>
 }
 
 export type HvdcResult = {
@@ -122,11 +125,15 @@ export const resolveHvdcLinks = (input: HvdcInput, ledger: TopologyLedger): Hvdc
     for (const line of entryLines) usedFeatureIds.add(line.featureId)
     foreignEnds.set(entry.id, foreignEnd.coordinate)
     touchedGroupIds.add(converter.id)
+    const curations = [...new Set([
+      ...entryLines.flatMap(line => input.curationOfFeature.get(line.featureId) ?? []),
+      ...(input.curationsOfInterconnector.get(entry.id) ?? []),
+    ])].sort(compareText)
     const provenance: TopologyProvenance = {
       sources: [...input.sourceIds],
       method: 'curated',
-      confidence: 'high',
-      note: `route mapped in OSM (${present.length} way(s)); endpoints verified against the interconnector table`,
+      confidence: curations.length > 0 ? 'medium' : 'high',
+      note: `route mapped in OSM (${present.length} way(s)); endpoints verified against the interconnector table${curations.length > 0 ? `; corrected by ${curations.join(', ')}` : ''}`,
     }
     links.push({
       id: entry.id,
@@ -144,7 +151,21 @@ export const resolveHvdcLinks = (input: HvdcInput, ledger: TopologyLedger): Hvdc
   }
 
   for (const network of networks.values()) {
-    const unused = network.lines.filter(line => !usedFeatureIds.has(line.featureId))
+    // Converter-yard wiring lies wholly inside one station; it is station equipment, not a link.
+    const insideOneStation = (line: TopologyLineInput): StationGroup | null => {
+      const first = input.groupsAtPoint(line.coordinates[0]!)
+      return first.find(group => line.coordinates.every(point => input.groupsAtPoint(point).some(other => other.id === group.id))) ?? null
+    }
+    const unusedAll = network.lines.filter(line => !usedFeatureIds.has(line.featureId))
+    const unused: TopologyLineInput[] = []
+    for (const line of unusedAll) {
+      const station = insideOneStation(line)
+      if (!station) {
+        unused.push(line)
+        continue
+      }
+      ledger.add({ reason: 'station-internal-way', elementIds: [line.featureId, ...line.osmWayIds], ...(dcVoltages(line).length > 0 ? { voltageKv: Math.max(...dcVoltages(line)) } : {}), stationId: station.id, detail: 'HVDC way lies entirely inside one station' })
+    }
     if (unused.length === 0) continue
     const voltages = unused.flatMap(dcVoltages)
     ledger.add({

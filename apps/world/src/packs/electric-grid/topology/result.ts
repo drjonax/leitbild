@@ -21,6 +21,7 @@ export type TopologyBus = {
   readonly stationFeatureIds: ReadonlyArray<string> // all station features unified into the station
   readonly stationRoles: ReadonlyArray<string>      // OSM substation=* roles (converter, traction, …)
   readonly vertexKey: string | null                 // junction node key
+  readonly mergedBusIds: ReadonlyArray<string>      // buses joined into this one by a zero-impedance merge
   readonly nominalKv: number
   readonly location: LonLat
   readonly externalArea: ExternalArea | null
@@ -85,6 +86,7 @@ export type TopologySummary = {
 export type TopologyResult = {
   readonly sourceId: string
   readonly interconnectorSourceId: string
+  readonly curationSourceId: string
   readonly keyMode: TopologyKeyMode
   readonly options: TopologyOptions
   readonly buses: ReadonlyArray<TopologyBus>

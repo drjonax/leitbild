@@ -36,6 +36,7 @@ export type TopologyBusbarInput = {
   readonly featureId: string
   readonly osmWayIds: ReadonlyArray<string>
   readonly lifecycle: TopologyLifecycle
+  readonly voltagesKv: ReadonlyArray<number>         // tagged; empty when untagged (portal gantries)
   readonly coordinates: ReadonlyArray<LonLat>
   readonly vertexKeys: ReadonlyArray<string>
 }
@@ -101,4 +102,29 @@ export type TopologyInterconnector = {
 export type TopologyInterconnectorTable = {
   readonly sourceId: string
   readonly interconnectors: ReadonlyArray<TopologyInterconnector>
+}
+
+// Typed corrections where open data is wrong or stale (supplied by the curation source, DA1).
+// Each record names its evidence; the compiler applies it only to the named targets and ledgers
+// every application, every target that no longer needs it, and every target it cannot find.
+export type TopologyCuration =
+  | {
+      readonly kind: 'assert-in-service'
+      readonly id: string                             // curation:<slug>
+      readonly targetOsmIds: ReadonlyArray<string>    // way/<id> | node/<id> | relation/<id>
+      readonly reason: string
+      readonly evidence: ReadonlyArray<string>
+    }
+  | {
+      readonly kind: 'add-interconnector-ways'
+      readonly id: string
+      readonly interconnectorId: string               // ac:<slug> | hvdc:<slug>
+      readonly osmWayIds: ReadonlyArray<string>
+      readonly reason: string
+      readonly evidence: ReadonlyArray<string>
+    }
+
+export type TopologyCurationSet = {
+  readonly sourceId: string
+  readonly records: ReadonlyArray<TopologyCuration>
 }
