@@ -149,6 +149,10 @@ describe('zoom gestures inside a framed view', () => {
     expect(key('=', { ctrlKey: true })).toBe('in')
     expect(key('+', { metaKey: true })).toBe('in')
     expect(key('-', { ctrlKey: true })).toBe('out')
+    // Ctrl+Shift+- (and Ctrl+Shift+=) zoom the display as they would the page.
+    expect(key('_', { ctrlKey: true })).toBe('out')
+    expect(key('_', { metaKey: true })).toBe('out')
+    expect(key('+', { ctrlKey: true })).toBe('in')
     expect(key('0', { metaKey: true })).toBe('reset')
     // Without Ctrl or Cmd, with Alt (AltGr), or another key: not a zoom.
     expect(key('=')).toBeNull()

@@ -18,6 +18,7 @@
   import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
   import { processPlantActionInvokeCommandKind } from '../../packs/process-plant/command-kinds.ts'
   import { DISPLAY_ZOOM_MAX, DISPLAY_ZOOM_MIN, type DisplayFrameZoomRequest } from '../embed/display-frame-protocol.ts'
+  import { zoomStepOfKey } from '../embed/view-host.ts'
   import ProcedureRunBadges from '../procedures/ProcedureRunBadges.svelte'
   import type { ProcedureRunSummary, ProcedureRunSummaryGroup } from '../procedures/procedure-run-selectors.ts'
   import { invokeSimulationRunCapability } from '../simulation-run-client.ts'
@@ -520,14 +521,6 @@
     step(direction)
   }
 
-  const zoomKeyStep = (event: KeyboardEvent): 'in' | 'out' | 'reset' | null => {
-    if (!(event.ctrlKey || event.metaKey) || event.altKey) return null
-    if (event.key === '=' || event.key === '+') return 'in'
-    if (event.key === '-' || event.key === '_') return 'out'
-    if (event.key === '0') return 'reset'
-    return null
-  }
-
   const windowKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
       // Esc closes what the chrome opened, never the window.
@@ -537,7 +530,8 @@
       }
       return
     }
-    const zoomStep = zoomKeyStep(event)
+    // The same keys as inside a display's frame (view-host.ts).
+    const zoomStep = zoomStepOfKey(event)
     if (zoomStep === null || current === null) return
     event.preventDefault()
     changeZoom({ type: 'step', step: zoomStep })

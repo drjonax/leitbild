@@ -99,11 +99,15 @@ export const createViewHost = (ports: ViewHostPorts) => {
 
 export type ViewHost = ReturnType<typeof createViewHost>
 
-/** Ctrl/Cmd with = (or +), - and 0, the browser's zoom keys, zoom the display instead of the page. */
+/**
+ * Ctrl/Cmd with = (or +), - (or _, with Shift) and 0, the browser's zoom keys,
+ * zoom the display instead of the page. The window and every frame it shows
+ * read the keys here, so the same keys zoom wherever focus is.
+ */
 export const zoomStepOfKey = (key: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey'>): ZoomStep | null => {
   if (!(key.ctrlKey || key.metaKey) || key.altKey) return null
   if (key.key === '=' || key.key === '+') return 'in'
-  if (key.key === '-') return 'out'
+  if (key.key === '-' || key.key === '_') return 'out'
   return key.key === '0' ? 'reset' : null
 }
 
