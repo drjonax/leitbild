@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 2,
+  "id": "electric-grid.test.v2-fixture",
+  "title": "Grid Model v2 test fixture",
+  "description": "Hand-written miniature model exercising every Grid Model v2 asset kind and cross-field rule.",
+  "nominalFrequencyHz": 50,
+  "sBaseMva": 100,
+  "fidelity": { "powerFlow": "dc", "frequency": "island-swing", "voltage": "not-modelled" },
+  "referenceHour": "2026-01-15T17:00:00+01:00",
+  "sourceBuild": {
+    "id": "build:test-fixture-0001",
+    "inputs": [
+      { "sourceId": "osm:pbf-power:NO@2026-10-09", "snapshotAt": "2026-10-09T00:00:00Z", "sha256": "0000000000000000000000000000000000000000000000000000000000000001", "licence": "ODbL-1.0" },
+      { "sourceId": "nve:vannkraft1@2026-10-10", "snapshotAt": "2026-10-10T00:00:00Z", "sha256": "0000000000000000000000000000000000000000000000000000000000000002", "licence": "NLOD-2.0" },
+      { "sourceId": "nve:vindkraft2@2026-10-10", "snapshotAt": "2026-10-10T00:00:00Z", "sha256": "0000000000000000000000000000000000000000000000000000000000000003", "licence": "NLOD-2.0" },
+      { "sourceId": "elhub:consumption@2026-10-10", "snapshotAt": "2026-10-10T00:00:00Z", "sha256": "0000000000000000000000000000000000000000000000000000000000000004", "licence": "NLOD-2.0" },
+      { "sourceId": "leitbild:test-curation@2026-10-10", "snapshotAt": "2026-10-10T00:00:00Z", "sha256": "0000000000000000000000000000000000000000000000000000000000000005", "licence": "Leitbild test fixture" }
+    ]
+  },
+  "buses": [
+    {
+      "id": "bus:osm-way-60495669@420", "label": "Hasle 420 kV", "kind": "substation", "substationId": "osm-way-60495669",
+      "nominalKv": 420, "location": [11.155, 59.314], "priceArea": "NO1",
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "high" }
+    },
+    {
+      "id": "bus:osm-way-60495669@132", "label": "Hasle 132 kV", "kind": "substation", "substationId": "osm-way-60495669",
+      "nominalKv": 132, "location": [11.155, 59.314], "priceArea": "NO1",
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "high" }
+    },
+    {
+      "id": "bus:osm-relation-7928148@420", "label": "Kristiansand 420 kV", "kind": "substation", "substationId": "osm-relation-7928148",
+      "nominalKv": 420, "location": [7.901, 58.259], "priceArea": "NO2",
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "high" }
+    },
+    {
+      "id": "bus:junction-osm-node-1234567@420", "label": "Line junction 1234567", "kind": "junction",
+      "nominalKv": 420, "location": [9.6, 58.9], "priceArea": "NO1",
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "medium" }
+    },
+    {
+      "id": "bus:boundary-SE3", "label": "Sweden SE3 boundary", "kind": "boundary",
+      "nominalKv": 400, "location": [11.6, 59.2], "externalArea": "SE3",
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "inferred", "confidence": "medium", "note": "Border crossing of the Hasle–Borgvik tie." }
+    },
+    {
+      "id": "bus:boundary-DE", "label": "Germany HVDC terminal", "kind": "boundary",
+      "nominalKv": 400, "location": [9.3, 54.1], "externalArea": "DE",
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "inferred", "confidence": "medium", "note": "Converter station outside Norway." }
+    },
+    {
+      "id": "bus:curated-test-plant-switchyard@420", "label": "Test plant switchyard", "kind": "plant-terminal",
+      "nominalKv": 420, "location": [11.2, 59.2], "priceArea": "NO1",
+      "provenance": { "sources": ["leitbild:test-curation@2026-10-10"], "method": "curated", "confidence": "low", "note": "Fixture switchyard for a connected process plant." }
+    }
+  ],
+  "branches": [
+    {
+      "id": "branch:osm-0123456789abcdef", "label": "Hasle – junction", "kind": "ac_line",
+      "fromBusId": "bus:osm-way-60495669@420", "toBusId": "bus:junction-osm-node-1234567@420", "nominalKv": 420, "lengthKm": 40,
+      "circuits": 1, "ratingMw": 1850, "emergencyRatingMw": 2100, "emergencyDurationSeconds": 900,
+      "reactancePu": 0.0072, "resistancePu": 0.0006, "chargingSusceptancePu": 0.21, "osmWayIds": ["100", "101"],
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "high" }
+    },
+    {
+      "id": "branch:osm-fedcba9876543210", "label": "Junction – Kristiansand", "kind": "ac_line",
+      "fromBusId": "bus:junction-osm-node-1234567@420", "toBusId": "bus:osm-relation-7928148@420", "nominalKv": 420, "lengthKm": 250,
+      "circuits": 2, "ratingMw": 3700, "emergencyRatingMw": 4200, "emergencyDurationSeconds": 900,
+      "reactancePu": 0.0225, "resistancePu": 0.0019, "chargingSusceptancePu": 2.6, "osmWayIds": ["102"],
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "high" }
+    },
+    {
+      "id": "branch:osm-00112233445566aa", "label": "Hasle – Borgvik", "kind": "ac_line",
+      "fromBusId": "bus:osm-way-60495669@420", "toBusId": "bus:boundary-SE3", "nominalKv": 420, "lengthKm": 30,
+      "circuits": 1, "ratingMw": 1850, "emergencyRatingMw": 2100, "emergencyDurationSeconds": 900,
+      "reactancePu": 0.0054, "resistancePu": 0.0005, "chargingSusceptancePu": 0.16, "osmWayIds": ["103"],
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "high" }
+    },
+    {
+      "id": "branch:transformer-osm-way-60495669-420-132", "label": "Hasle 420/132 kV transformer", "kind": "transformer",
+      "fromBusId": "bus:osm-way-60495669@420", "toBusId": "bus:osm-way-60495669@132", "nominalKv": 420,
+      "circuits": 2, "ratingMw": 600, "emergencyRatingMw": 720, "emergencyDurationSeconds": 1200,
+      "reactancePu": 0.02, "resistancePu": 0.0008, "chargingSusceptancePu": 0, "osmWayIds": [],
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "inferred", "confidence": "medium", "note": "Voltage levels share a substation; rating from the 132 kV level." }
+    },
+    {
+      "id": "branch:curated-test-plant-hasle", "label": "Test plant – Hasle", "kind": "ac_line",
+      "fromBusId": "bus:curated-test-plant-switchyard@420", "toBusId": "bus:osm-way-60495669@420", "nominalKv": 420, "lengthKm": 5,
+      "circuits": 2, "ratingMw": 3700, "emergencyRatingMw": 4200, "emergencyDurationSeconds": 900,
+      "reactancePu": 0.0005, "resistancePu": 0.00004, "chargingSusceptancePu": 0.05, "osmWayIds": [],
+      "provenance": { "sources": ["leitbild:test-curation@2026-10-10"], "method": "curated", "confidence": "low", "note": "Fixture connection of the test plant." }
+    }
+  ],
+  "hvdcLinks": [
+    {
+      "id": "hvdc:test-link", "label": "Test HVDC link", "fromBusId": "bus:osm-relation-7928148@420", "toBusId": "bus:boundary-DE",
+      "ratingMw": 1400, "lossPercent": 2.5, "rampMwPerMinute": 30, "osmWayIds": ["200"],
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "high" }
+    }
+  ],
+  "externalSystems": [
+    {
+      "id": "external:nordic-remainder", "label": "Nordic remainder", "area": "nordic-remainder", "synchronous": true,
+      "boundaryBusIds": ["bus:boundary-SE3"], "inertiaGws": 120, "loadMw": 30000, "fcrNMwPerHz": 6000, "fcrDUpMw": 1450,
+      "provenance": { "sources": ["leitbild:test-curation@2026-10-10"], "method": "curated", "confidence": "low", "note": "Fixture equivalent." }
+    },
+    {
+      "id": "external:DE", "label": "Germany", "area": "DE", "synchronous": false, "boundaryBusIds": ["bus:boundary-DE"],
+      "provenance": { "sources": ["leitbild:test-curation@2026-10-10"], "method": "curated", "confidence": "low", "note": "HVDC-only area." }
+    }
+  ],
+  "generators": [
+    {
+      "id": "generator:nve-hydro-123", "label": "Test hydro", "kind": "hydro-reservoir", "busId": "bus:osm-relation-7928148@420",
+      "location": [7.95, 58.3], "capacityMw": 300, "ratedMva": 330, "inertiaSeconds": 3.5, "synchronous": true,
+      "minimumStableMw": 30, "rampMwPerMinute": 60, "blackStartCapable": true, "annualProductionGwh": 1200, "priceArea": "NO2",
+      "registryIds": ["123"], "attachmentKm": 4.2,
+      "provenance": { "sources": ["nve:vannkraft1@2026-10-10"], "method": "registry", "confidence": "high" }
+    },
+    {
+      "id": "generator:nve-wind-45", "label": "Test wind", "kind": "wind", "busId": "bus:osm-way-60495669@132",
+      "location": [11.3, 59.4], "capacityMw": 100, "ratedMva": 110, "inertiaSeconds": 0, "synchronous": false,
+      "minimumStableMw": 0, "rampMwPerMinute": 20, "blackStartCapable": false, "priceArea": "NO1",
+      "registryIds": ["45"], "attachmentKm": 12,
+      "provenance": { "sources": ["nve:vindkraft2@2026-10-10"], "method": "registry", "confidence": "high" }
+    },
+    {
+      "id": "generator:aggregate-osm-way-60495669@132-hydro-run-of-river", "label": "Hasle small hydro aggregate", "kind": "hydro-run-of-river",
+      "busId": "bus:osm-way-60495669@132", "location": [11.1, 59.35], "capacityMw": 40, "ratedMva": 44, "inertiaSeconds": 2.5, "synchronous": true,
+      "minimumStableMw": 0, "rampMwPerMinute": 10, "blackStartCapable": false, "priceArea": "NO1",
+      "registryIds": ["901", "902"], "attachmentKm": 8,
+      "provenance": { "sources": ["nve:vannkraft1@2026-10-10"], "method": "inferred", "confidence": "medium", "note": "Units below the modelling threshold aggregated at their nearest 132 kV bus." }
+    }
+  ],
+  "loads": [
+    {
+      "id": "load:0301-household", "label": "Oslo households", "kind": "household", "busId": "bus:osm-way-60495669@132",
+      "location": [10.75, 59.91], "referenceDemandMw": 800, "powerFactor": 0.98, "priority": "normal", "interruptibleMw": 0,
+      "municipalityNr": "0301", "priceArea": "NO1", "attachmentKm": 25,
+      "provenance": { "sources": ["elhub:consumption@2026-10-10"], "method": "inferred", "confidence": "medium", "note": "Municipal consumption allocated to the nearest 132 kV bus; interruptible volume unknown." }
+    },
+    {
+      "id": "load:site-test-smelter", "label": "Test smelter", "kind": "industry-site", "busId": "bus:osm-relation-7928148@420",
+      "location": [7.92, 58.27], "referenceDemandMw": 250, "powerFactor": 0.95, "priority": "high", "interruptibleMw": 50,
+      "priceArea": "NO2", "attachmentKm": 3,
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "medium" }
+    }
+  ],
+  "storage": [],
+  "connectionPoints": [
+    {
+      "id": "test-plant-unit-1", "label": "Test plant unit 1 bay", "busId": "bus:curated-test-plant-switchyard@420",
+      "nominalKv": 420, "maximumExportMw": 100, "maximumImportMw": 1100
+    }
+  ]
+}
