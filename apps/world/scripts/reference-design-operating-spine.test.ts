@@ -126,13 +126,22 @@ test('carve refuses altered partition, hidden owners and malformed incidence', (
 
 test('actual five-piece surge splits at8m with disjoint inertia, head, elbow and first-moment geometry', () => {
   const record = (name: string, value: unknown) => '```' + name + '\n' + JSON.stringify(value) + '\n```'
-  const pzr = compileOperatingPzr(record('reference-operating-pzr', {
+  // Test-only owner texts in the shapes the PZR compiler reads.
+  const pzr = compileOperatingPzr({ selection: '## Allocation\n\n' + record('reference-operating-pzr', {
     commonPressure_Pa: 15e6, liquidTemperature_K: 600, vaporTemperature_K: 630, phaseBoundaryHeight_m: 6,
-    bands_m: [0, 1, 3, 6, 9, 12], interfacialLength_m: .003, solidRoughness_m: .000045, absorberMassFraction: .001 }), record('reference-surge-route', {
+    bands_m: [0, 1, 3, 6, 9, 12], interfacialLength_m: .003, solidRoughness_m: .000045, absorberMassFraction: .001 })
+    + '\n\n## Stratified PZR cell\n\n' + record('ld01-pzr-stratified', { withdrawalScale_m: .3, admittedPreparationThickness_m: .3,
+      inversionExchangeVelocity_m_s: 1, liquidRelaxationTime_s: .3, vaporRelaxationTime_s: .5, relaxationSensitivity: [.5, 1, 2],
+      bubbleDiameter_m: .001, sprayDropDiameter_m: .003, dropDiameterSensitivity_m: [.0015, .003, .006], resolvabilityFactor: 1000 }),
+    surge: record('reference-surge-route', {
       source: 'LD01.HOT.A', receiver: 'LD01.PZR', sourceElevation_m: 2.5, receiverElevation_m: 6.5,
       developedLength_m: 16, firstStraight_m: 6, bendRadius_m: .45, internalDiameter_m: .3, wallThickness_m: .025,
       steelDensity_kg_m3: 7920, roughness_m: .0000015, entryLoss: .5, elbowLoss: .2, exitLoss: 1 }),
-    { id: 'HOT.A', volume_m3: 15, mainFlowArea_m2: Math.PI / 4, elevation_m: 2.5 })
+    properties: '## Bounded metastable admission\n\n' + record('ld01-metastable-band', { pressureRange_Pa: [1e7, 1.6e7], lowerBoundExclusive: true,
+      liquidSuperheatMax_K: 2, vaporSubcoolingMax_K: 1.4, trialMax_K: 3, creditedMax_K: .5, liquidTemperatureMax_K: 623.15,
+      liquidPressureCeiling_Pa: 1.7e7, vaporPressureCeiling_Pa: 1.6e7 }),
+    measurements: '### PZR electronic differential level\n\n' + record('ld01-pzr-taps', { pt1Elevation_m: 18.5, ltLowElevation_m: 6.5, ltHighElevation_m: 18.5 }) + '\n' },
+  { id: 'HOT.A', volume_m3: 15, mainFlowArea_m2: Math.PI / 4, elevation_m: 2.5 })
   const h = compileOperatingSurgeHydraulics(pzr), A = Math.PI * .3 ** 2 / 4
   expect(h.halves.map(p => p.length_m)).toEqual([8, 8])
   expect(h.halves.map(p => p.elevationChange_m)).toEqual([0, 4])
@@ -163,7 +172,7 @@ test('actual five-piece surge splits at8m with disjoint inertia, head, elbow and
   // Line losses: friction and one elbow per half, each end the mean of its two directions.
   const losses = compileOperatingLineLosses(h, pzr, { dividingTurnLoss: 1 }, 9.80665, 27),
     prism = Math.sqrt(Math.PI / 4), hotEnd = (1 + (1 - A / prism) ** 2) / 2,
-    receiver = pzr.regions[pzr.mouth.region]!.axialArea_m2, pzrEnd = ((1 - A / receiver) ** 2 + .5) / 2
+    receiver = 4.5, pzrEnd = ((1 - A / receiver) ** 2 + .5) / 2
   expect(losses.map(s => s.face)).toEqual(['HOT.A.JUNCTION->SURGE', 'SURGE->PZR.SURGE.MOUTH'])
   for (const [k, s] of losses.entries()) {
     expect(s.region).toBe(27); expect(s.parameters.wall).toBe('circular_churchill')
@@ -184,21 +193,19 @@ function pointFixture() {
     'systems/primary-coolant/pressure-and-inventory.md': '### Acquired-pressure command comparison\n\nAt top-tap pressure 14,862,307.3669 Pa and commissioned setpoint 14,864,186.8055 Pa, duty follows.\n',
     'systems/primary-coolant/pumps-and-support.md': '## Shaft and energy model\n\nCommands request zero or nominal speed for the initial operational interface; tests may differ.\n',
   }
-  const bands = [0, 1, 3, 6, 9, 12], regions = bands.slice(0, -1).flatMap((lo, i) => ['inner', 'outer'].map(lane =>
-    ({ id: `PZR.${i}.${lane}`, bottom_m: 6.5 + lo, top_m: 6.5 + bands[i + 1]! })))
-  return { docs, pzr: { regions } }
+  return { docs, pzr: { bottom_m: 6.5, top_m: 18.5 } }
 }
 
-test('declared operating point reads each owner statement once and reports the PZR region boundary', () => {
+test('declared operating point reads each owner statement once', () => {
   const { docs, pzr } = pointFixture(), point = compileOperatingPoint(docs, pzr, 1500)
   expect([point.pzrRoofPressure_Pa, point.pzrRoofElevation_m, point.pzrLevel_m, point.rcpSpeedRequest]).toEqual([14864186.8055, 18.5, 6, 'nominal'])
   expect(point.provenance).toEqual(operatingPointSources)
-  expect(point.pzrLevelSurfaceElevation_m).toBe(12.5)
-  expect(point.pzrLevelRegionBoundary).toEqual({ onBoundary: true, below: ['PZR.2.inner', 'PZR.2.outer'], above: ['PZR.3.inner', 'PZR.3.outer'] })
-  // A level inside a coarse band is reported, never moved to the nearest boundary.
-  const inside = { ...docs, 'systems/primary-coolant/inventory-and-chemistry.md': docs['systems/primary-coolant/inventory-and-chemistry.md']!.replace('target is 6 m', 'target is 5 m') }
-  expect(compileOperatingPoint(inside, pzr, 1500).pzrLevelRegionBoundary.onBoundary).toBe(false)
-  expect(compileOperatingPoint(inside, pzr, 1500).pzrLevel_m).toBe(5)
+  expect(point.pzrLevelSurfaceElevation_m).toBe(12.5); expect(point.pzrBottomElevation_m).toBe(6.5)
+  // Another declared level is carried unchanged; there are no bands to snap to.
+  const inside = { ...docs, 'systems/primary-coolant/inventory-and-chemistry.md': docs['systems/primary-coolant/inventory-and-chemistry.md']!.replace('target is 6 m', 'target is 5.25 m') }
+  expect(compileOperatingPoint(inside, pzr, 1500).pzrLevel_m).toBe(5.25)
+  const over = { ...docs, 'systems/primary-coolant/inventory-and-chemistry.md': docs['systems/primary-coolant/inventory-and-chemistry.md']!.replace('target is 6 m', 'target is 12 m') }
+  expect(() => compileOperatingPoint(over, pzr, 1500)).toThrow('Invalid declared')
   const edit = (page: string, from: string, to: string) => ({ ...docs, [page]: docs[page]!.replace(from, to) })
   expect(() => compileOperatingPoint(edit('systems/primary-coolant/pressure-and-inventory.md', '186.8055 Pa,', '186.8056 Pa,'), pzr, 1500)).toThrow('disagree')
   expect(() => compileOperatingPoint(edit('systems/instrumentation/operational-observations.md', '+18.5 m', '+18 m'), pzr, 1500)).toThrow('roof tap')
@@ -235,20 +242,29 @@ test.skipIf(!wiki || !if97)('actual single hot packet rebases every recipient, f
   expect(p.hydraulics.sections.slice(0, 21)).toEqual(channels)
   expect(p.hydraulics.surge.halves).toHaveLength(2)
   expect(p.hydraulics.surge.halves.map(h => h.elevationChange_m)).toEqual([0, 4])
-  expect(p.pzr.faces.every(f => f.distance_m > 0 && f.normal.length === 2)).toBe(true)
+  const cell = p.pzr.cell
+  expect([cell.index, cell.bottom_m, cell.top_m]).toEqual([28, 6.5, 18.5])
+  expect(cell.fluidVolume_m3).toBe(sum(cell.freeArea.map(a => (a.to_m - a.from_m) * a.area_m2)))
+  expect(cell.ports).toEqual([{ id: 'PZR.SURGE.MOUTH', kind: 'surge', elevation_m: 6.5, bore_m: .3, face: 34 }])
+  expect(cell.taps).toEqual([{ id: 'PT1', elevation_m: 18.5 }, { id: 'LT.LOW', elevation_m: 6.5 }, { id: 'LT.HIGH', elevation_m: 18.5 }])
+  expect([cell.absorberMassFraction, cell.interfacialLength_m]).toEqual([.001, .003])
   expect(p.hydraulics.coveredEdges).toHaveLength(31); expect(p.hydraulics.unclosedTreeEdges).toHaveLength(2)
   expect(p.hydraulics.mainInertance.aa).toBeCloseTo(70.629211610045, 10)
   expect(p.hydraulics.mainInertance.ab).toBeCloseTo(2.654786439092273, 12)
   expect(p.hydraulics.mainInertance.bb).toBeCloseTo(70.629211610045, 10)
   const m = p.mechanics
-  expect(m.regions).toHaveLength(38); expect(m.faces).toHaveLength(48); expect(m.force_projection).toHaveLength(27)
+  expect(m.regions).toHaveLength(29); expect(m.faces).toHaveLength(35); expect(m.force_projection).toHaveLength(0)
+  expect(m.regions[28]).toEqual({ id: 'PZR', volume_m3: cell.fluidVolume_m3, elevation_m: cell.top_m })
   expect(m.faces.slice(0, 33).map(f => f.id)).toEqual(p.edges.map(e => e.id))
   expect(m.faces[33]!.id).toBe('HOT.A.JUNCTION->SURGE'); expect(m.faces[34]!.id).toBe('SURGE->PZR.SURGE.MOUTH')
   for (const face of m.faces) {
     expect(face.supports.length).toBeGreaterThan(0)
-    expect(sum(face.pressure_segments.map(s => s.elevation_change_m)))
-      .toBeCloseTo(m.regions[face.to]!.elevation_m - m.regions[face.from]!.elevation_m, 12)
+    // Face 34 ends at the surge mouth; the PZR side is its port view.
+    const to = face.to === 28 ? cell.ports[0]!.elevation_m : m.regions[face.to]!.elevation_m
+    expect(sum(face.pressure_segments.map(s => s.elevation_change_m))).toBeCloseTo(to - m.regions[face.from]!.elevation_m, 12)
+    expect([...face.supports, ...face.pressure_segments].every(s => s.region !== 28)).toBe(true)
   }
+  expect(m.faces.filter(f => f.to === 28 || f.from === 28).map(f => f.id)).toEqual(['SURGE->PZR.SURGE.MOUTH'])
   for (const section of channels) {
     const owned = m.faces.slice(0, 33).flatMap(f => f.supports).filter(s => s.region === section.region)
     expect(sum(owned.map(s => s.volume_m3))).toBeCloseTo(section.movingVolume_m3, 11)
@@ -271,10 +287,6 @@ test.skipIf(!wiki || !if97)('actual single hot packet rebases every recipient, f
   const sg = p.hydraulics.sections.find(s => s.id === 'SG.A.PRIMARY')!, sgEdge = p.edges.findIndex(e => e.id === 'SG.A.PRIMARY->PUMP.A1'),
     sgSupport = m.faces[sgEdge]!.supports.find(s => s.region === sg.region)!
   expect(sgSupport.inverse_area_length_per_m).toBeCloseTo(sg.parameters.length_m / sg.parameters.area_m2, 12)
-  const radial = m.faces[35]!, ri = p.pzr.radialGeometry.innerRadius_m, rc = p.pzr.radialGeometry.innerCentroid_m,
-    inner = p.pzr.regions[0]!, porosity = inner.axialArea_m2 / (Math.PI * ri ** 2), height = inner.top_m - inner.bottom_m
-  expect(radial.supports[0]!.inverse_area_length_per_m).toBeCloseTo(Math.log(ri / rc) / (2 * Math.PI * height * porosity), 14)
-  expect(radial.flow_area_m2).toBe(p.pzr.faces[0]!.area_m2)
   expect(m.faces[33]!.pressure_segments.some(s => s.path_length_m === 0 && s.elevation_change_m !== 0)).toBe(true)
   expect(sum(p.hydraulics.sections.filter(s => s.id.startsWith('HOT.A.')).map(s => s.parameters.form_loss))).toBeCloseTo(.49504493, 14)
   for (const column of p.hydraulics.cycles.columns) {
@@ -291,7 +303,7 @@ test.skipIf(!wiki || !if97)('actual single hot packet rebases every recipient, f
   expect(p.preparation.direct_source_projection.maxConstraintDefect_kg_s).toBeLessThan(1e-7)
   const point = p.preparation.operatingPoint
   expect([point.pzrRoofPressure_Pa, point.pzrRoofElevation_m, point.pzrLevel_m, point.rcpSpeedRequest]).toEqual([14864186.8055, 18.5, 6, 'nominal'])
-  expect(point.pzrLevelRegionBoundary.onBoundary).toBe(true); expect(point.pzrLevelSurfaceElevation_m).toBe(12.5)
+  expect(point.pzrLevelSurfaceElevation_m).toBe(12.5)
   const pump = p.hydraulics.pump, omega = pump.referenceOmega_rad_s
   expect([pump.driveTrackingTime_s, pump.driveTorqueCapFactor, pump.driveEfficiency]).toEqual([5, 1.5, .96])
   expect(pump.drag_Nm_per_rad_s * omega ** 2).toBeCloseTo(.01 * pump.nominalFluidPower_W, 8)

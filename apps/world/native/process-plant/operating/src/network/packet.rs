@@ -3,6 +3,7 @@
 //!
 //! The TypeScript input compilers own every value; this boundary only
 //! validates shapes. Unknown sibling packet fields belong to other consumers.
+use super::properties::MetastableBand;
 use crate::{
     hydraulics::Section,
     local_flow::{MomentumSupport, PressureSegment},
@@ -102,54 +103,36 @@ pub struct SurgeStock {
     #[serde(rename = "absorberTracer_kgEq")]
     pub absorber_tracer_kg_eq: f64,
 }
+/// The one stratified PZR cell (decision 0014). The network reads only its
+/// topology here; the cell's column, zone and law parameters belong to the
+/// stratified cell owner, which reads the same `pzr.cell` object.
 #[derive(Debug, Deserialize)]
 pub struct Pzr {
-    pub regions: Vec<PzrRegion>,
-    pub faces: Vec<PzrFace>,
-    pub selection: PzrSelection,
+    pub cell: PzrCell,
 }
 #[derive(Debug, Deserialize)]
-pub struct PzrWater {
-    #[serde(rename = "T")]
-    pub temperature_k: f64,
-}
-#[derive(Debug, Deserialize)]
-pub struct PzrRegion {
-    #[serde(rename = "initialPhase")]
-    pub initial_phase: String,
-    #[serde(rename = "commonPressure_Pa")]
-    pub common_pressure_pa: f64,
-    pub water: PzrWater,
-    pub mass_kg: f64,
-    #[serde(rename = "liquidEnergy_J")]
-    pub liquid_energy_j: Option<f64>,
-    #[serde(rename = "vaporEnergy_J")]
-    pub vapor_energy_j: Option<f64>,
-    #[serde(rename = "absorberTracer_kgEq")]
-    pub absorber_tracer_kg_eq: f64,
-    pub volume_m3: f64,
-    #[serde(rename = "axialArea_m2")]
-    pub axial_area_m2: f64,
-    pub top_m: f64,
+pub struct PzrCell {
+    /// Index of the cell among `mechanics.regions`; the last region.
+    pub index: usize,
     pub bottom_m: f64,
-    #[serde(rename = "solidPerimeter_m")]
-    pub solid_perimeter_m: f64,
+    pub top_m: f64,
+    #[serde(rename = "fluidVolume_m3")]
+    pub fluid_volume_m3: f64,
+    pub ports: Vec<PzrPort>,
+    /// Must equal the band compiled into the property implementation.
+    pub metastable: MetastableBand,
+    /// Liquid tracer per kg of prepared liquid; also the tracer scale class.
+    #[serde(rename = "absorberMassFraction")]
+    pub absorber_mass_fraction: f64,
+}
+#[derive(Debug, Deserialize)]
+pub struct PzrPort {
+    pub id: String,
+    pub kind: String,
     pub elevation_m: f64,
-}
-#[derive(Debug, Deserialize)]
-pub struct PzrFace {
-    pub from: usize,
-    pub to: usize,
-    pub area_m2: f64,
-    pub distance_m: f64,
-    pub normal: [f64; 2],
-}
-#[derive(Debug, Deserialize)]
-pub struct PzrSelection {
-    #[serde(rename = "interfacialLength_m")]
-    pub interfacial_length_m: f64,
-    #[serde(rename = "solidRoughness_m")]
-    pub solid_roughness_m: f64,
+    /// The mechanics face ending at this port.
+    pub face: usize,
+    pub bore_m: f64,
 }
 #[derive(Debug, Deserialize)]
 pub struct Hydraulics {

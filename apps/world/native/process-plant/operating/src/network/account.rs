@@ -4,7 +4,11 @@
 //!
 //! Nothing here mutates a coordinate. Exact-zero phase energy residue is
 //! reported against the unchanged per-state solver error scale, never reset.
-use super::{Failure, Network, Properties};
+//! The stratified PZR cell's inventory belongs to its owner and enters
+//! through the integration point.
+use super::{
+    Failure, Network, PZR_COORDINATES, PZR_ENERGY, PZR_MASS, PZR_TRACER, Properties, not_integrated,
+};
 use serde_json::{Value, json};
 
 /// Solver error scaling used for numerical admission of empty-phase energy.
@@ -32,8 +36,10 @@ pub fn empty_energy_ratio(energy: f64, allowance: f64) -> Result<f64, Failure> {
 }
 
 impl<P: Properties> Network<P> {
+    /// Regular cells holding energy without mass; the PZR zones always hold
+    /// mass and its transit stocks carry no energy coordinate.
     pub fn orphan_energy_owners(&self, y: &[f64]) -> Vec<(usize, usize)> {
-        (0..self.cells.len())
+        (0..self.pzr.cell)
             .flat_map(|node| (0..2).map(move |k| (node, k)))
             .filter(|(node, k)| {
                 let (mi, ui) = self.stock_indices(*node, *k);
@@ -66,7 +72,7 @@ impl<P: Properties> Network<P> {
         let mut orphan_energy = Vec::new();
         let mut orphan_abs = 0.;
         let mut orphan_allowance = 0.;
-        for node in 0..self.cells.len() {
+        for node in 0..self.pzr.cell {
             for k in 0..2 {
                 let (mi, ui) = self.stock_indices(node, k);
                 let mass = y[mi] * self.scales[mi];
@@ -106,6 +112,10 @@ impl<P: Properties> Network<P> {
         if orphan_abs > orphan_allowance {
             return Err(Failure::Fatal("aggregate absolute empty-phase energy exceeds associated unchanged state-error budgets".into()));
         }
+        let pzr = self.stratified_inventory(y)?;
+        for (sum, v) in total.iter_mut().zip(pzr.totals) {
+            *sum += v;
+        }
         let mut cold_paths = 0;
         for l in &self.face_layout {
             let inertia = self.faces[l.face].supports.iter().fold(0., |sum, support| {
@@ -144,7 +154,7 @@ impl<P: Properties> Network<P> {
         }
         Ok((
             total,
-            json!({"mass_kg":total[0],"boron_kg_eq":total[1],"fluid_internal_energy_j":total[2],"rotor_kinetic_energy_j":total[3],"positive_phase_stocks":present,"exact_zero_mass_phase_stocks":absent,"exact_zero_inertia_paths":cold_paths,"numerical_stock_and_impulse_admission":true,"empty_energy_residuals":{"physical_law":"M=0 requires U=0; raw numerical defects below existing solver error budgets are reported, not reset or used for absent EOS","owners":orphan_energy,"sum_absolute_raw_energy_j":orphan_abs,"sum_associated_state_error_allowances_j":orphan_allowance,"aggregate_absolute_error_ratio":if orphan_allowance==0. {0.}else{orphan_abs/orphan_allowance}}}),
+            json!({"mass_kg":total[0],"boron_kg_eq":total[1],"fluid_internal_energy_j":total[2],"rotor_kinetic_energy_j":total[3],"pzr":pzr.receipt,"positive_phase_stocks":present,"exact_zero_mass_phase_stocks":absent,"exact_zero_inertia_paths":cold_paths,"numerical_stock_and_impulse_admission":true,"empty_energy_residuals":{"physical_law":"M=0 requires U=0; raw numerical defects below existing solver error budgets are reported, not reset or used for absent EOS","owners":orphan_energy,"sum_absolute_raw_energy_j":orphan_abs,"sum_associated_state_error_allowances_j":orphan_allowance,"aggregate_absolute_error_ratio":if orphan_allowance==0. {0.}else{orphan_abs/orphan_allowance}}}),
         ))
     }
 
@@ -158,7 +168,7 @@ impl<P: Properties> Network<P> {
         let mut mass_abs = 0.;
         let mut boron_abs = 0.;
         let mut energy_abs = 0.;
-        for node in 0..self.cells.len() {
+        for node in 0..self.pzr.cell {
             for k in 0..2 {
                 let (mi, ui) = self.stock_indices(node, k);
                 let md = (yp[mi] - self.rows[mi].value) * self.scales[mi];
@@ -172,6 +182,23 @@ impl<P: Properties> Network<P> {
             let bd = (yp[index] - self.rows[index].value) * self.scales[index];
             boron += bd;
             boron_abs += bd.abs();
+        }
+        // The PZR stock rows in the same `rate - receipt` convention; its energy
+        // rows also carry the zones' p dV/dt, whose sum is the reported
+        // hydrostatic remainder.
+        let rhs = |offset: usize| {
+            let i = self.pzr.base + offset;
+            (yp[i] - self.rows[i].value) * self.scales[i]
+        };
+        for (offsets, sum, abs) in [
+            (&PZR_MASS[..], &mut mass, &mut mass_abs),
+            (&PZR_ENERGY[..], &mut energy, &mut energy_abs),
+            (&PZR_TRACER[..], &mut boron, &mut boron_abs),
+        ] {
+            for offset in offsets {
+                *sum += rhs(*offset);
+                *abs += rhs(*offset).abs();
+            }
         }
         let mut motor_work = 0.;
         let mut electric = 0.;
@@ -187,7 +214,7 @@ impl<P: Properties> Network<P> {
                 motor_heat += law.motor_heat_w.value;
             }
         }
-        let max_primary_void = self.cells[..self.pzr_begin]
+        let max_primary_void = self.cells[..self.pzr.cell]
             .iter()
             .map(|c| c.phase[1].map_or(0., |p| p.fraction.value))
             .fold(0., f64::max);
@@ -210,6 +237,20 @@ impl<P: Properties> Network<P> {
                 labels[l.mass[k]] = ("M", format!("M[{node},{k}]"));
                 labels[l.energy[k]] = ("U", format!("U[{node},{k}]"));
             }
+        }
+        let names = [
+            "p_roof", "V_g", "V_A", "V_R", "V_b", "V_d", "M_g", "U_g", "M_A", "U_A", "B_A", "M_R",
+            "U_R", "B_R", "M_b", "M_d", "B_d",
+        ];
+        for (offset, name) in names.into_iter().enumerate().take(PZR_COORDINATES) {
+            let category = &name[..1];
+            labels[self.pzr.base + offset] = (
+                ["p", "V", "M", "U", "B"]
+                    .into_iter()
+                    .find(|c| *c == category)
+                    .unwrap_or(""),
+                format!("{name}[{}]", self.pzr.cell),
+            );
         }
         for l in &self.face_layout {
             labels[l.index] = ("Pi", format!("Pi[{},{}]", l.face, l.phase));
@@ -236,7 +277,7 @@ impl<P: Properties> Network<P> {
                 .total_cmp(&(errors[*a] * weights[*a]).abs())
         });
         let entry = |j: usize| json!({"index":j,"coordinate":labels[j].1,"category":labels[j].0,"scaled_y":y[j],"physical_y":y[j]*self.scales[j],"physical_rate":yp[j]*self.scales[j],"physical_local_error_estimate":errors[j]*self.scales[j],"stock_reciprocal_scaled_error_weight":weights[j],"weighted_error":errors[j]*weights[j]});
-        let categories: Vec<Value> = ["p", "M", "U", "B", "Pi", "rotor"]
+        let categories: Vec<Value> = ["p", "V", "M", "U", "B", "Pi", "rotor"]
             .iter()
             .map(|category| {
                 let members: Vec<usize> = indices
@@ -255,18 +296,20 @@ impl<P: Properties> Network<P> {
         let pressure = range(
             self.cell_layout
                 .iter()
-                .map(|l| y[l.base] * self.scales[l.base])
+                .map(|l| l.base)
+                .chain([self.pzr.base])
+                .map(|i| y[i] * self.scales[i])
                 .collect(),
         );
         let phase_ranges: Vec<Value> = (0..2)
             .map(|k| {
-                let masses: Vec<f64> = (0..self.cells.len())
+                let masses: Vec<f64> = (0..self.pzr.cell)
                     .map(|node| {
                         let (mi, _) = self.stock_indices(node, k);
                         y[mi] * self.scales[mi]
                     })
                     .collect();
-                let energies: Vec<f64> = (0..self.cells.len())
+                let energies: Vec<f64> = (0..self.pzr.cell)
                     .map(|node| {
                         let (_, ui) = self.stock_indices(node, k);
                         y[ui] * self.scales[ui]
@@ -284,4 +327,17 @@ impl<P: Properties> Network<P> {
             .sqrt();
         json!({"current_bdf_order":order,"stock_estimated_local_error_wrms":wrms,"meaning":"stock last accepted-step estimated local error times stock current error weights; control uses global WRMS, not a per-coordinate threshold","top_coordinates":indices.iter().take(12).map(|j|entry(*j)).collect::<Vec<_>>(),"categories":categories,"pressure_pa":pressure,"phase_ranges":phase_ranges})
     }
+
+    /// The PZR cell's admitted inventory (`stratified::inventory`): totals
+    /// [mass, tracer, fluid internal energy, 0] with its transit stocks'
+    /// saturated energy, and its receipt.
+    fn stratified_inventory(&self, _y: &[f64]) -> Result<StratifiedInventory, Failure> {
+        Err(not_integrated("the PZR inventory"))
+    }
+}
+
+/// Admitted inventory of the stratified PZR cell.
+struct StratifiedInventory {
+    totals: [f64; 4],
+    receipt: Value,
 }

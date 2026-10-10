@@ -11,7 +11,7 @@
 #![cfg(all(feature = "ida", target_os = "macos"))]
 use leitbild_operating_plant::{
     network::{
-        CscOut, Network, RotorState, ToleranceClasses,
+        CscOut, Network, PzrPreparation, RotorState, ToleranceClasses,
         packet::Packet,
         prepare::{self, OperatingPoint, Settings},
     },
@@ -108,10 +108,6 @@ struct SpectrumGate {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Gates {
-    #[serde(rename = "pzrTestLevel_m")]
-    pzr_test_level_m: f64,
-    #[serde(rename = "pzrPhaseMargin_K")]
-    pzr_phase_margin_k: f64,
     relative_tolerance: f64,
     stock_scaled_absolute: f64,
     tracer_scaled_absolute: f64,
@@ -175,16 +171,13 @@ fn strict_block<T: for<'a> Deserialize<'a>>(page: &str, fence: &str) -> T {
 }
 
 /// Named topology used by the credited outputs, resolved from packet ids.
+/// The PZR roof pressure and level come from the stratified cell's taps.
 struct Taps {
     loop_faces: [usize; 2],
     lower: usize,
     upper: usize,
-    roof_cell: usize,
-    roof_rise_m: f64,
-    pzr_cells: std::ops::Range<usize>,
-    interface_area_m2: f64,
 }
-fn taps(packet: &Packet, point: &OperatingPoint) -> Taps {
+fn taps(packet: &Packet) -> Taps {
     let face = |id: &str| {
         packet
             .mechanics
@@ -201,42 +194,10 @@ fn taps(packet: &Packet, point: &OperatingPoint) -> Taps {
             .position(|r| r.id == id)
             .unwrap_or_else(|| panic!("no region {id}"))
     };
-    let begin = packet
-        .mechanics
-        .regions
-        .iter()
-        .position(|r| r.id.starts_with("PZR."))
-        .unwrap();
-    // The roof tap lies in the highest PZR vapor region reaching the roof.
-    let (roof_local, roof_region) = packet
-        .pzr
-        .regions
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| (r.top_m - point.pzr_roof_elevation_m).abs() < 1e-9)
-        .max_by(|a, b| a.1.volume_m3.total_cmp(&b.1.volume_m3))
-        .expect("a PZR region must end at the roof tap");
-    // Cross-section of the band holding the declared interface (inner+outer).
-    let interface = packet.preparation.operating_point.pzr_bottom_elevation_m + point.pzr_level_m;
-    let interface_area_m2 = packet
-        .pzr
-        .regions
-        .iter()
-        .filter(|r| r.bottom_m < interface && interface < r.top_m)
-        .map(|r| r.axial_area_m2)
-        .sum();
-    assert!(
-        interface_area_m2 > 0.,
-        "declared S1 interface must lie inside one PZR band"
-    );
     Taps {
         loop_faces: [face("RETURN.A->DOWN"), face("RETURN.B->DOWN")],
         lower: region("LOWER"),
         upper: region("UPPER"),
-        roof_cell: begin + roof_local,
-        roof_rise_m: point.pzr_roof_elevation_m - roof_region.elevation_m,
-        pzr_cells: begin..packet.mechanics.regions.len(),
-        interface_area_m2,
     }
 }
 
@@ -244,7 +205,7 @@ fn taps(packet: &Packet, point: &OperatingPoint) -> Taps {
 struct Sample {
     t: f64,
     roof_pa: f64,
-    pzr_liquid_m3: f64,
+    pzr_level_m: f64,
     loop_kg_s: [f64; 2],
     core_dp_pa: f64,
     omega: Vec<f64>,
@@ -266,18 +227,9 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
     network
         .evaluate(t, y, yp, None, 0., None)
         .unwrap_or_else(|e| panic!("accepted-output evaluation at t={t}: {e:?}"));
-    let roof = network.cell(taps.roof_cell);
-    let mixture: f64 = roof
-        .phase
-        .iter()
-        .flatten()
-        .map(|p| p.fraction.value * p.density.value)
-        .sum();
-    let pzr_liquid_m3 = taps
-        .pzr_cells
-        .clone()
-        .map(|n| network.cell(n).phase[0].map_or(0., |p| p.fraction.value) * network.volume(n))
-        .sum();
+    let pzr = network
+        .pzr_taps()
+        .unwrap_or_else(|e| panic!("PZR taps at t={t}: {e:?}"));
     let loop_kg_s = taps
         .loop_faces
         .map(|f| network.chart(f, 0).map_or(0., |c| c.mass_flow_kg_s.value));
@@ -298,8 +250,8 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
         );
     Sample {
         t,
-        roof_pa: roof.pressure.value - mixture * 9.80665 * taps.roof_rise_m,
-        pzr_liquid_m3,
+        roof_pa: pzr.roof_pressure_pa,
+        pzr_level_m: pzr.level_m,
         loop_kg_s,
         core_dp_pa: network.cell(taps.lower).pressure.value
             - network.cell(taps.upper).pressure.value,
@@ -366,13 +318,7 @@ fn advance_run(
     )
     .expect("stock IDA construction");
     ida.set_max_order(spec.max_order).expect("max order");
-    let stocks: Vec<usize> = ida
-        .system()
-        .network
-        .cell_layout
-        .iter()
-        .flat_map(|l| [l.mass[0], l.mass[1], l.boron])
-        .collect();
+    let stocks = ida.system().network.nonnegative_stocks();
     ida.constrain_nonnegative(&stocks)
         .expect("nonnegative stocks");
     ida.stop_at(spec.duration_s).expect("stop time");
@@ -451,7 +397,7 @@ fn run_json(run: &Run, duration: f64) -> Value {
     json!({"steps":run.steps,"residuals":run.residuals,"jacobians":run.jacobians,"error_failures":run.error_failures,"convergence_failures":run.convergence_failures,"cpu_s":run.cpu_s,"solver_cpu_s":run.solver_cpu_s,"evaluation_wall_s":run.evaluation_wall_s,"jacobian_wall_s":run.jacobian_wall_s,"steps_per_simulated_s":run.steps as f64/duration,"solver_cpu_s_per_simulated_s":run.solver_cpu_s/duration,"reached_s":run.samples.last().map(|s|s.t),"failure":run.failure})
 }
 /// Largest credited-output differences between two runs at common times.
-fn compare(a: &Run, b: &Run, taps: &Taps, window_s: f64) -> Value {
+fn compare(a: &Run, b: &Run, window_s: f64) -> Value {
     let mut roof: f64 = 0.;
     let mut level: f64 = 0.;
     let mut dp: f64 = 0.;
@@ -472,7 +418,7 @@ fn compare(a: &Run, b: &Run, taps: &Taps, window_s: f64) -> Value {
         }
         previous = Some(difference);
         roof = roof.max(difference.abs());
-        level = level.max((sa.pzr_liquid_m3 - sb.pzr_liquid_m3).abs() / taps.interface_area_m2);
+        level = level.max((sa.pzr_level_m - sb.pzr_level_m).abs());
         dp = dp.max((sa.core_dp_pa - sb.core_dp_pa).abs());
         for k in 0..2 {
             flow = flow.max((sa.loop_kg_s[k] - sb.loop_kg_s[k]).abs());
@@ -502,8 +448,14 @@ fn running(network: &mut Network<If97>) {
         );
     }
 }
+/// The harness's declared preparation controls; the PZR cell of every fresh
+/// network is prepared with the same values as the hydrostatic preparation.
+const PZR: PzrPreparation = PzrPreparation {
+    pressure_tolerance_pa: 1e-6,
+    max_passes: 50,
+};
 fn fresh(packet: &Packet) -> Network<If97> {
-    let (mut network, _) = Network::new(packet, If97).expect("network");
+    let (mut network, _) = Network::new(packet, If97, &PZR).expect("network");
     running(&mut network);
     network
 }
@@ -558,14 +510,9 @@ fn s1_hydraulics_admission() {
         declared.rcp_speed_request, "nominal",
         "only the nominal request is selected"
     );
-    let point = OperatingPoint {
-        pzr_roof_pressure_pa: declared.pzr_roof_pressure_pa,
-        pzr_roof_elevation_m: declared.pzr_roof_elevation_m,
-        // Declared S1 test level inside one band (see the S1 declaration).
-        pzr_level_m: gates.pzr_test_level_m,
-        pzr_bottom_elevation_m: declared.pzr_bottom_elevation_m,
-    };
-    let taps = taps(&packet, &point);
+    // The declared 6.00 m saturated preparation (S1 re-declaration).
+    let point = OperatingPoint::from(declared);
+    let taps = taps(&packet);
     assert!(
         gates.spectrum.fast_mode_hz >= budgets.uncredited_above_hz,
         "spectral fast-mode limit must not reach into the credited band"
@@ -601,13 +548,12 @@ fn s1_hydraulics_admission() {
         4
     ];
     let settings = Settings {
-        pressure_tolerance_pa: 1e-6,
-        max_passes: 50,
+        pressure_tolerance_pa: PZR.pressure_tolerance_pa,
+        max_passes: PZR.max_passes,
         level_match_m: 1e-9,
         eos_row_bound: 1e-12,
         tree_face_bound_pa: 1e-6,
         representation_search: 8,
-        pzr_phase_margin_k: gates.pzr_phase_margin_k,
     };
     let (network, prepared, preparation) =
         prepare::prepare(&packet, If97, &point, &rotors, &settings)
@@ -890,7 +836,7 @@ fn s1_hydraulics_admission() {
     let hold_rate_measured =
         steps_between(&hold, gates.hold.measured_from_s, gates.hold.duration_s) / measured;
     let hold_residuals = hold.residuals as f64 / hold.steps.max(1) as f64;
-    let hold_diff = compare(&hold, &hold_ref, &taps, gates.hold.duration_s);
+    let hold_diff = compare(&hold, &hold_ref, gates.hold.duration_s);
     let hold_pass = hold.failure.is_none()
         && hold_rate_measured <= hold_rate
         && hold_residuals <= gates.hold.max_residuals_per_step
@@ -952,8 +898,8 @@ fn s1_hydraulics_admission() {
     let early = steps_between(&trip, 0., sl.early_window_s) / sl.early_window_s;
     let late = steps_between(&trip, sl.early_window_s, sl.duration_s)
         / (sl.duration_s - sl.early_window_s);
-    let trip_ref_diff = compare(&trip, &trip_ref, &taps, sl.duration_s);
-    let trip_ctl_diff = compare(&trip, &trip_ctl, &taps, sl.control_window_s);
+    let trip_ref_diff = compare(&trip, &trip_ref, sl.duration_s);
+    let trip_ctl_diff = compare(&trip, &trip_ctl, sl.control_window_s);
     let trip_pass = trip.failure.is_none()
         && early <= sl.max_early_steps_per_second
         && late <= sl.max_late_steps_per_second
@@ -1023,8 +969,8 @@ fn s1_hydraulics_admission() {
         .iter()
         .find(|s| s.t >= sz.recovery_within_s - 1e-12)
         .is_some_and(|s| s.last_step * sz.recovery_step_factor >= quiet_step);
-    let seize_ref_diff = compare(&seize, &seize_ref, &taps, sz.duration_s);
-    let seize_ctl_diff = compare(&seize, &seize_ctl, &taps, sz.control_window_s);
+    let seize_ref_diff = compare(&seize, &seize_ref, sz.duration_s);
+    let seize_ctl_diff = compare(&seize, &seize_ctl, sz.control_window_s);
     let seize_pass = seize.failure.is_none()
         && extra_cpu <= sz.max_extra_cpu_s
         && recovered
@@ -1072,14 +1018,9 @@ fn s1_harness_smoke() {
     let packet: Packet =
         serde_json::from_slice(&std::fs::read(&packet_path).unwrap()).expect("packet");
     let declared = &packet.preparation.operating_point;
-    let point = OperatingPoint {
-        pzr_roof_pressure_pa: declared.pzr_roof_pressure_pa,
-        pzr_roof_elevation_m: declared.pzr_roof_elevation_m,
-        // Declared S1 test level inside one band (see the S1 declaration).
-        pzr_level_m: gates.pzr_test_level_m,
-        pzr_bottom_elevation_m: declared.pzr_bottom_elevation_m,
-    };
-    let taps = taps(&packet, &point);
+    // The declared 6.00 m saturated preparation (S1 re-declaration).
+    let point = OperatingPoint::from(declared);
+    let taps = taps(&packet);
     let rotors = vec![
         RotorState {
             support: Support::Supported(SpeedRequest::Nominal),
@@ -1088,13 +1029,12 @@ fn s1_harness_smoke() {
         4
     ];
     let settings = Settings {
-        pressure_tolerance_pa: 1e-6,
-        max_passes: 50,
+        pressure_tolerance_pa: PZR.pressure_tolerance_pa,
+        max_passes: PZR.max_passes,
         level_match_m: 1e-9,
         eos_row_bound: 1e-12,
         tree_face_bound_pa: 1e-6,
         representation_search: 8,
-        pzr_phase_margin_k: gates.pzr_phase_margin_k,
     };
     let (network, prepared, preparation) =
         prepare::prepare(&packet, If97, &point, &rotors, &settings).expect("preparation");
@@ -1134,6 +1074,6 @@ fn s1_harness_smoke() {
     );
     println!(
         "{}",
-        json!({"kind":"s1-harness-smoke-NOT-EVIDENCE","packet":packet_path,"preparation_passes":preparation.pass_changes_pa.len(),"max_eos_row":preparation.max_eos_row,"max_loop_rest_pa":preparation.max_loop_rest_pa,"max_phase_drive_pa":preparation.max_phase_drive_pa,"on_boundary":preparation.on_boundary,"mass_change_kg":preparation.mass_change_kg,"run":run_json(&run,3.),"samples":run.samples.iter().map(|s|json!({"t":s.t,"roof_pa":s.roof_pa,"loop_kg_s":s.loop_kg_s,"omega":s.omega,"steps":s.steps,"h":s.last_step,"energy_identity_w":s.energy_identity_w,"blocked_path_m3_s":s.blocked_path_m3_s})).collect::<Vec<_>>()})
+        json!({"kind":"s1-harness-smoke-NOT-EVIDENCE","packet":packet_path,"preparation_passes":preparation.pass_changes_pa.len(),"max_eos_row":preparation.max_eos_row,"max_loop_rest_pa":preparation.max_loop_rest_pa,"max_phase_drive_pa":preparation.max_phase_drive_pa,"mass_change_kg":preparation.mass_change_kg,"run":run_json(&run,3.),"samples":run.samples.iter().map(|s|json!({"t":s.t,"roof_pa":s.roof_pa,"loop_kg_s":s.loop_kg_s,"omega":s.omega,"steps":s.steps,"h":s.last_step,"energy_identity_w":s.energy_identity_w,"blocked_path_m3_s":s.blocked_path_m3_s})).collect::<Vec<_>>()})
     );
 }

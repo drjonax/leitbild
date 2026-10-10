@@ -4,7 +4,7 @@
 #![cfg(feature = "ida")]
 use leitbild_operating_plant::{
     network::{
-        Network, Reuse, RotorState, Tolerances, Water, empty_energy_ratio,
+        Network, PzrPreparation, Reuse, RotorState, Tolerances, Water, empty_energy_ratio,
         packet::Packet,
         properties::{inverse, saturation},
     },
@@ -17,6 +17,11 @@ use serde_json::json;
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
 }
+/// Declared controls of the PZR preparation, as the S1 harness declares them.
+const PZR: PzrPreparation = PzrPreparation {
+    pressure_tolerance_pa: 1e-6,
+    max_passes: 50,
+};
 /// Every rotor running on supported nominal-speed drive, shafts free.
 fn running<P: leitbild_operating_plant::network::Properties>(network: &mut Network<P>) {
     for r in 0..network.rotor_count() {
@@ -211,7 +216,7 @@ fn exact_current_property_reuse_matches_uncached_and_invalidates_every_key() {
 fn actual_prepared_network_admits_and_evaluates() {
     let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
     let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let (mut network, prepared) = Network::new(&packet, If97).unwrap();
+    let (mut network, prepared) = Network::new(&packet, If97, &PZR).unwrap();
     running(&mut network);
     network
         .select_leading_receipts(&prepared.y, &prepared.yp)
@@ -238,7 +243,7 @@ fn structural_pattern_contains_sampled_dense_jacobians() {
     use leitbild_operating_plant::network::CscOut;
     let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
     let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let (mut network, prepared) = Network::new(&packet, If97).unwrap();
+    let (mut network, prepared) = Network::new(&packet, If97, &PZR).unwrap();
     running(&mut network);
     network
         .select_leading_receipts(&prepared.y, &prepared.yp)
@@ -306,7 +311,7 @@ fn colored_jacobian_equals_dense_jacobian_bitwise() {
     use leitbild_operating_plant::{network::CscOut, sparse::compare_with_dense};
     let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
     let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let (mut network, prepared) = Network::new(&packet, If97).unwrap();
+    let (mut network, prepared) = Network::new(&packet, If97, &PZR).unwrap();
     running(&mut network);
     network
         .select_leading_receipts(&prepared.y, &prepared.yp)

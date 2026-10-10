@@ -1,52 +1,39 @@
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/computational-design-review.md#pressure-realization-approved-10-october
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/build-readiness.md#s1-declaration-hydraulics-admission
 //! EOS-consistent hydrostatic preparation of the composed network at a
 //! declared operating point. This is a deterministic construction of one
 //! prepared state, not an iterative plant solver:
 //!
-//! 1. Phases. Primary and SURGE volumes hold liquid. The declared surface,
-//!    bottom datum plus level, either coincides with a PZR region boundary
-//!    (within `level_match_m`): a sharp interface between liquid below and
-//!    vapor above. Or it lies strictly inside one band, whose regions then
-//!    hold both phases, liquid below and vapor above the surface, with vapor
-//!    volume `V*(top-surface)/(top-bottom)`. A surface outside the PZR is
-//!    refused. Every PZR phase sits at the declared margin from its region's
-//!    LOCAL saturation: liquid at `T_sat(p) - margin`, vapor at
-//!    `T_sat(p) + margin`; the phases of one region share pressure, not
-//!    temperature. Exact saturation is the bound of the stable property
-//!    branches, which the first algebraic pressure adjustment of a
-//!    consistent initialization already crosses; metastable admission and
-//!    exact equilibrium transactions are not part of this construction.
-//! 2. Pressures. Integrate hydrostatically from the declared roof gauge along
-//!    a breadth-first spanning tree of the compiled faces, with each face's
-//!    authored pressure segments and the fraction-weighted mixture density of
-//!    each segment region: the well-balanced head of `local_flow`, so every
-//!    tree face's mixture remainder vanishes at rest to round-off. Density
-//!    depends on pressure, so passes repeat to an explicit fixed-point
-//!    tolerance. Primary/SURGE liquid keeps its prepared specific internal
-//!    energy, so its mass becomes `V * rho(p, u)`. Liquid tracer keeps the
-//!    prepared concentration of its region, or, for a region prepared as
-//!    vapor, that of the liquid region directly below it.
+//! 1. The PZR. The stratified cell owner prepares its seventeen coordinates
+//!    at the declared roof pressure and level (`stratified::prepare`): all
+//!    zones at saturation of the interface, no transit stock, every row zero
+//!    to rounding. It returns the column pressure at the surge port.
+//! 2. Pressures. Primary and SURGE volumes hold liquid. SURGE follows from the
+//!    port face at rest, `p_SURGE = p_port + g*sum(rho_mix*dz)` over the port
+//!    face's SURGE segments; then a breadth-first spanning tree of the
+//!    regular faces from SURGE, with each face's authored pressure segments
+//!    and the mixture density of each segment region: the well-balanced head
+//!    of `local_flow`, so every tree face's mixture remainder vanishes at rest
+//!    to round-off. Density depends on pressure, so passes repeat to an
+//!    explicit fixed-point tolerance. Liquid keeps its prepared specific
+//!    internal energy, so its mass becomes `V * rho(p, u)`, and its prepared
+//!    tracer concentration.
 //! 3. Reported, never zeroed: a loop face's mixture remainder (with
-//!    nonuniform temperature, the physical buoyancy drive) and, in a
-//!    two-phase band, each phase path's relative buoyancy. The coarse band
-//!    is a mixture region, not a resolved stratified surface, so its liquid
-//!    is driven toward the band below and its vapor toward the band above.
-//! 4. The stocks overwrite the coordinates compiled by `Network::new` (see
-//!    [`overwrite_stocks`]) so that the network reconstructs exactly the
-//!    prepared pressure and specific internal energies and so evaluates the
-//!    very states this construction recovered. Impulses stay zero and rotor
-//!    angular momenta stay
-//!    exactly as compiled; the caller declares every rotor's drive/shaft
-//!    state, which the network requires. The network then evaluates
-//!    `F(0, y, 0)` itself for the receipt: its EOS rows, cells and face
-//!    charts, not a second implementation of its equations.
+//!    nonuniform temperature, the physical buoyancy drive).
+//! 4. The regular stocks overwrite the coordinates compiled by `Network::new`
+//!    (see [`overwrite_stocks`]) so that the network reconstructs exactly the
+//!    prepared pressure and specific internal energies. Impulses stay zero
+//!    and rotor angular momenta stay exactly as compiled; the caller declares
+//!    every rotor's drive/shaft state, which the network requires. The
+//!    network then evaluates `F(0, y, 0)` itself for the receipt: its rows,
+//!    cells and face charts, not a second implementation of its equations.
 use super::{
-    Failure, Network, Prepared, Properties, RotorState, Water,
+    Failure, Network, PZR_ALGEBRAIC, PZR_ENERGY, PZR_MASS, PZR_TRACER, Prepared, Properties,
+    PzrPreparation, RotorState, Water, not_integrated,
     packet::{self, FacePacket, Packet},
 };
-use crate::{local_flow::Cell, thermal::Scalar};
+use crate::local_flow::Cell;
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::VecDeque;
 
 /// Standard gravity of the well-balanced face head in `local_flow`.
@@ -60,7 +47,7 @@ pub struct OperatingPoint {
     pub pzr_roof_elevation_m: f64,
     /// Indicated liquid height above `pzr_bottom_elevation_m`.
     pub pzr_level_m: f64,
-    /// Declared PZR bottom datum; it must be the lowest compiled region bottom.
+    /// Declared PZR bottom datum; it must be the compiled cell bottom.
     pub pzr_bottom_elevation_m: f64,
 }
 
@@ -82,8 +69,7 @@ pub struct Settings {
     /// A pass converges when no pressure changes by more than this.
     pub pressure_tolerance_pa: f64,
     pub max_passes: usize,
-    /// A surface this close to a region boundary is that boundary; also the
-    /// datum agreement bound. Below half of every region height.
+    /// Agreement bound of the declared datum and roof with the compiled cell.
     pub level_match_m: f64,
     /// Accept only if every evaluated EOS row is at most this.
     pub eos_row_bound: f64,
@@ -92,13 +78,10 @@ pub struct Settings {
     /// Adjacent representable coordinates tried on each side when writing an
     /// exactly reconstructed pressure or specific internal energy.
     pub representation_search: usize,
-    /// Declared distance of every PZR phase from its local saturation, K:
-    /// liquid below and vapor above `T_sat(p)`. Must be positive.
-    pub pzr_phase_margin_k: f64,
 }
 
-/// One cell's prepared stock, liquid then vapor. A zero-mass phase is
-/// exactly absent and carries zero specific internal energy.
+/// One regular cell's prepared stock, liquid then vapor. A zero-mass phase
+/// is exactly absent and carries zero specific internal energy.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Stock {
     pub pressure_pa: f64,
@@ -135,20 +118,14 @@ pub struct PhaseState {
     pub mass_kg: f64,
     pub internal_energy_j: f64,
     pub volume_m3: f64,
-    /// Signed temperature minus saturation at the local pressure (PZR
-    /// phases): negative is subcooled liquid, positive superheated vapor.
-    pub saturation_distance_k: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RegionReceipt {
     pub region: usize,
     pub id: String,
-    pub authored_phase: usize,
     pub before: State,
     pub pressure_pa: f64,
-    /// Prepared vapor volume fraction: 0 liquid, 1 vapor, else two-phase.
-    pub vapor_fraction: f64,
     /// Liquid then vapor; `None` is an exactly absent phase.
     pub phases: [Option<PhaseState>; 2],
     pub tracer_kg_eq: f64,
@@ -163,10 +140,10 @@ pub struct FaceReceipt {
     pub to: usize,
     pub tree: bool,
     /// Mixture remainder `p_from - p_to - g*sum(rho_mix*dz)` of the network's
-    /// own evaluated cells, as in `local_flow`.
+    /// own evaluated cells (the PZR side is its port view), as in `local_flow`.
     pub rest_pa: f64,
-    /// The network chart's pressure-gravity term per phase path, including
-    /// relative buoyancy in a two-phase region; `None` without phase inertia.
+    /// The network chart's pressure-gravity term per phase path; `None`
+    /// without phase inertia.
     pub pressure_gravity_pa: [Option<f64>; 2],
 }
 
@@ -182,14 +159,16 @@ pub struct RowClass {
 pub struct Receipt {
     pub operating_point: OperatingPoint,
     pub settings: Settings,
+    /// SURGE: the tree root, fixed by the port face from the PZR port.
     pub root_region: usize,
-    pub surface_elevation_m: f64,
-    /// The surface is a region boundary (sharp interface).
-    pub on_boundary: bool,
+    pub port_pressure_pa: f64,
+    /// The stratified cell owner's preparation receipt.
+    pub pzr: Value,
     /// Largest pressure change of every hydrostatic pass.
     pub pass_changes_pa: Vec<f64>,
     pub regions: Vec<RegionReceipt>,
     pub faces: Vec<FaceReceipt>,
+    /// Prepared minus authored primary/SURGE stock; the PZR has no authored stock.
     pub mass_change_kg: f64,
     pub energy_change_j: f64,
     pub tracer_change_kg_eq: f64,
@@ -218,7 +197,6 @@ impl Settings {
             self.pressure_tolerance_pa,
             self.eos_row_bound,
             self.tree_face_bound_pa,
-            self.pzr_phase_margin_k,
         ];
         if positive.iter().any(|v| !(v.is_finite() && *v > 0.))
             || self.max_passes == 0
@@ -231,7 +209,8 @@ impl Settings {
 }
 
 impl OperatingPoint {
-    fn validate(&self) -> Result<(), Failure> {
+    /// Finite values and the compiled cell's datum, roof and height.
+    fn validate(&self, cell: &packet::PzrCell, settings: &Settings) -> Result<(), Failure> {
         let values = [
             self.pzr_roof_pressure_pa,
             self.pzr_roof_elevation_m,
@@ -240,6 +219,20 @@ impl OperatingPoint {
         ];
         if !values.iter().all(|v| v.is_finite()) || self.pzr_roof_pressure_pa <= 0. {
             return Err(fatal(format!("invalid operating point {self:?}")));
+        }
+        if (self.pzr_bottom_elevation_m - cell.bottom_m).abs() > settings.level_match_m
+            || (self.pzr_roof_elevation_m - cell.top_m).abs() > settings.level_match_m
+        {
+            return Err(fatal(format!(
+                "declared PZR bottom {} m and roof {} m differ from the compiled cell {}..{} m",
+                self.pzr_bottom_elevation_m, self.pzr_roof_elevation_m, cell.bottom_m, cell.top_m
+            )));
+        }
+        if !(self.pzr_level_m > 0. && self.pzr_level_m < cell.top_m - cell.bottom_m) {
+            return Err(fatal(format!(
+                "level {} m lies outside the PZR {}..{} m",
+                self.pzr_level_m, cell.bottom_m, cell.top_m
+            )));
         }
         Ok(())
     }
@@ -296,22 +289,22 @@ fn phase_coordinates(
     None
 }
 
-/// Write the cell coordinates of a `Network::new` layout in its compiled
-/// scaling so that the network's reconstruction reproduces exactly each
-/// stock's pressure and every present phase's specific internal energy; the
-/// phase mass is reproduced within `search` representable steps, and liquid
-/// tracer to rounding. Impulse and rotor coordinates are not touched, and
-/// the scales stay those compiled from the packet. Refuses a stock without a
-/// present phase, energy without mass, tracer without liquid, or a value no
-/// coordinate within `search` steps reproduces. Returns what the network
-/// will reconstruct.
+/// Write the regular cells' coordinates of a `Network::new` layout in its
+/// compiled scaling so that the network's reconstruction reproduces exactly
+/// each stock's pressure and every present phase's specific internal energy;
+/// the phase mass is reproduced within `search` representable steps, and
+/// liquid tracer to rounding. The PZR block, impulse and rotor coordinates
+/// are not touched, and the scales stay those compiled from the packet.
+/// Refuses a stock without a present phase, energy without mass, tracer
+/// without liquid, or a value no coordinate within `search` steps
+/// reproduces. Returns what the network will reconstruct.
 pub fn overwrite_stocks<P: Properties>(
     network: &Network<P>,
     y: &mut [f64],
     stocks: &[Stock],
     search: usize,
 ) -> Result<Vec<Written>, Failure> {
-    if stocks.len() != network.cells() || y.len() != network.dimension() {
+    if stocks.len() != network.cell_layout.len() || y.len() != network.dimension() {
         return Err(fatal("stock/coordinate layout mismatch"));
     }
     let scales = network.scales();
@@ -387,18 +380,11 @@ pub fn overwrite_stocks<P: Properties>(
     Ok(written)
 }
 
-enum Content {
-    /// Primary/SURGE liquid at its prepared specific internal energy, J/kg.
-    Liquid { specific_energy: f64 },
-    /// PZR region: phases at the declared margin from local saturation with
-    /// this vapor volume fraction (0 liquid, 1 vapor, between: two-phase).
-    Pzr { vapor_fraction: f64 },
-}
-
+/// One regular cell's authored owner: liquid at its prepared specific
+/// internal energy and tracer concentration.
 struct Owner {
-    content: Content,
-    authored_phase: usize,
-    /// Liquid tracer per kg of liquid; zero without liquid.
+    specific_energy: f64,
+    /// Liquid tracer per kg of liquid.
     concentration: f64,
     before: State,
 }
@@ -427,149 +413,14 @@ fn authored(
     Ok(state)
 }
 
-struct Interface {
-    surface_m: f64,
-    on_boundary: bool,
-    /// Vapor volume fraction of every PZR region, local order.
-    vapor_fraction: Vec<f64>,
-}
-
-/// The declared surface and the vapor volume fraction of every PZR region.
-fn interface(
-    packet: &Packet,
-    point: &OperatingPoint,
-    settings: &Settings,
-) -> Result<Interface, Failure> {
-    let regions = &packet.pzr.regions;
-    let bottom = regions
-        .iter()
-        .map(|r| r.bottom_m)
-        .fold(f64::INFINITY, f64::min);
-    let top = regions
-        .iter()
-        .map(|r| r.top_m)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let lowest = regions
-        .iter()
-        .map(|r| r.top_m - r.bottom_m)
-        .fold(f64::INFINITY, f64::min);
-    if !(bottom.is_finite() && top.is_finite() && lowest > 2. * settings.level_match_m) {
-        return Err(fatal(
-            "level_match_m must stay below half of every PZR region height",
-        ));
-    }
-    if (point.pzr_bottom_elevation_m - bottom).abs() > settings.level_match_m {
-        return Err(fatal(format!(
-            "declared PZR bottom datum {} m differs from the lowest compiled region bottom {bottom} m",
-            point.pzr_bottom_elevation_m
-        )));
-    }
-    let requested = point.pzr_bottom_elevation_m + point.pzr_level_m;
-    if !(requested >= bottom - settings.level_match_m && requested <= top + settings.level_match_m)
-    {
-        return Err(fatal(format!(
-            "level {} m puts the surface at {requested} m, outside the PZR {bottom}..{top} m",
-            point.pzr_level_m
-        )));
-    }
-    let nearest = regions
-        .iter()
-        .flat_map(|r| [r.bottom_m, r.top_m])
-        .fold(bottom, |best, b| {
-            if (b - requested).abs() < (best - requested).abs() {
-                b
-            } else {
-                best
+fn owners<P: Properties>(packet: &Packet, network: &Network<P>) -> Result<Vec<Owner>, Failure> {
+    let surge = network.cell_layout.len() - 1;
+    (0..network.cell_layout.len())
+        .map(|node| {
+            if network.cell_layout[node].phase != 0 {
+                return Err(fatal(format!("primary/SURGE region {node} is not liquid")));
             }
-        });
-    let on_boundary = (nearest - requested).abs() <= settings.level_match_m;
-    let surface_m = if on_boundary { nearest } else { requested };
-    let vapor_fraction = regions
-        .iter()
-        .map(|r| {
-            if r.top_m <= surface_m + settings.level_match_m {
-                0.
-            } else if r.bottom_m >= surface_m - settings.level_match_m {
-                1.
-            } else {
-                (r.top_m - surface_m) / (r.top_m - r.bottom_m)
-            }
-        })
-        .collect();
-    Ok(Interface {
-        surface_m,
-        on_boundary,
-        vapor_fraction,
-    })
-}
-
-/// Liquid tracer concentration of every PZR region holding liquid, resolved
-/// bottom-up: its own prepared value, or for a region prepared as vapor the
-/// value of the liquid region directly below it (top equals its bottom).
-fn pzr_concentrations(
-    packet: &Packet,
-    authored_phase: &[usize],
-    vapor_fraction: &[f64],
-    settings: &Settings,
-) -> Result<Vec<f64>, Failure> {
-    let regions = &packet.pzr.regions;
-    let mut order: Vec<usize> = (0..regions.len()).collect();
-    order.sort_by(|a, b| regions[*a].bottom_m.total_cmp(&regions[*b].bottom_m));
-    let mut concentration: Vec<Option<f64>> = vec![None; regions.len()];
-    for j in order {
-        let r = &regions[j];
-        concentration[j] = Some(if vapor_fraction[j] == 1. {
-            0.
-        } else if authored_phase[j] == 0 {
-            r.absorber_tracer_kg_eq / r.mass_kg
-        } else {
-            let below: Vec<usize> = packet
-                .pzr
-                .faces
-                .iter()
-                .filter_map(|f| match (f.from == j, f.to == j) {
-                    (true, _) => Some(f.to),
-                    (_, true) => Some(f.from),
-                    _ => None,
-                })
-                .filter(|&i| (regions[i].top_m - r.bottom_m).abs() <= settings.level_match_m)
-                .collect();
-            match below[..] {
-                [i] if vapor_fraction[i] < 1. => concentration[i].ok_or_else(|| {
-                    fatal(format!("PZR region {i} concentration unresolved below {j}"))
-                })?,
-                _ => {
-                    return Err(fatal(format!(
-                        "PZR region {j} holds liquid at the declared level but was prepared as vapor, and no single liquid region lies directly below it to give a prepared liquid tracer concentration"
-                    )));
-                }
-            }
-        });
-    }
-    concentration
-        .into_iter()
-        .map(|c| c.ok_or_else(|| fatal("unresolved PZR concentration")))
-        .collect()
-}
-
-fn owners<P: Properties>(
-    packet: &Packet,
-    network: &Network<P>,
-    interface: &Interface,
-    settings: &Settings,
-) -> Result<Vec<Owner>, Failure> {
-    let begin = network.pzr_begin();
-    let authored_phase: Vec<usize> = network.cell_layout.iter().map(|l| l.phase).collect();
-    let concentration = pzr_concentrations(
-        packet,
-        &authored_phase[begin..],
-        &interface.vapor_fraction,
-        settings,
-    )?;
-    let mut owners = Vec::with_capacity(network.cells());
-    for (node, &phase) in authored_phase.iter().enumerate() {
-        let owner = if node < begin {
-            let before = if node + 1 < begin {
+            let before = if node < surge {
                 let w = &packet.thermal.water[node];
                 authored(
                     w.pressure_pa,
@@ -588,116 +439,33 @@ fn owners<P: Properties>(
                     w.absorber_tracer_kg_eq,
                 )?
             };
-            if phase != 0 {
-                return Err(fatal(format!("primary/SURGE region {node} is not liquid")));
-            }
-            Owner {
-                content: Content::Liquid {
-                    specific_energy: before.internal_energy_j / before.mass_kg,
-                },
-                authored_phase: phase,
+            Ok(Owner {
+                specific_energy: before.internal_energy_j / before.mass_kg,
                 concentration: before.tracer_kg_eq / before.mass_kg,
                 before,
-            }
-        } else {
-            let j = node - begin;
-            let r = &packet.pzr.regions[j];
-            let energy = if phase == 0 {
-                r.liquid_energy_j
-            } else {
-                r.vapor_energy_j
-            }
-            .ok_or_else(|| fatal(format!("PZR region {j} lacks its authored phase energy")))?;
-            Owner {
-                content: Content::Pzr {
-                    vapor_fraction: interface.vapor_fraction[j],
-                },
-                authored_phase: phase,
-                concentration: concentration[j],
-                before: authored(
-                    r.common_pressure_pa,
-                    r.water.temperature_k,
-                    r.mass_kg,
-                    energy,
-                    r.absorber_tracer_kg_eq,
-                )?,
-            }
-        };
-        owners.push(owner);
-    }
-    Ok(owners)
+            })
+        })
+        .collect()
 }
 
-/// Present phases of one cell at pressure `p`: specific internal energy and
-/// caloric point, recovered through the same inversion as the EOS row, the
-/// phase volume fractions and the fraction-weighted mixture density.
-struct CellState {
-    phases: [Option<(f64, Water)>; 2],
-    fraction: [f64; 2],
-    mixture: f64,
-}
-
+/// A liquid cell at pressure `p`: its specific internal energy and caloric
+/// point, recovered through the same inversion as the EOS row.
 fn cell_state<P: Properties>(
     properties: &P,
     owner: &Owner,
     node: usize,
     pressure: f64,
-    margin_k: f64,
-) -> Result<CellState, Failure> {
+) -> Result<(f64, Water), Failure> {
     let context = |e: String| fatal(format!("region {node} at {pressure} Pa: {e}"));
-    let recover = |vapor: bool, u: f64| -> Result<(f64, Water), Failure> {
-        let water = properties.values(
-            &properties
-                .caloric(vapor, pressure, u, false)
-                .map_err(context)?,
-        );
-        if !(water.density_kg_m3.is_finite() && water.density_kg_m3 > 0.) {
-            return Err(context(format!("density {}", water.density_kg_m3)));
-        }
-        Ok((u, water))
-    };
-    let (phases, fraction) = match owner.content {
-        Content::Liquid { specific_energy } => {
-            ([Some(recover(false, specific_energy)?), None], [1., 0.])
-        }
-        Content::Pzr { vapor_fraction } => {
-            let saturation = properties
-                .saturation(Scalar::constant(pressure))
-                .map_err(context)?
-                .temperature
-                .value;
-            let mut phases = [None; 2];
-            for (k, (present, temperature)) in [
-                (vapor_fraction < 1., saturation - margin_k),
-                (vapor_fraction > 0., saturation + margin_k),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                if present {
-                    let vapor = k == 1;
-                    let u = properties
-                        .forward(vapor, pressure, temperature)
-                        .map_err(context)?
-                        .internal_energy_j_kg;
-                    phases[k] = Some(recover(vapor, u)?);
-                }
-            }
-            (phases, [1. - vapor_fraction, vapor_fraction])
-        }
-    };
-    let mixture = phases
-        .iter()
-        .zip(fraction)
-        .fold(0., |sum, (phase, f)| match phase {
-            Some((_, water)) => sum + f * water.density_kg_m3,
-            None => sum,
-        });
-    Ok(CellState {
-        phases,
-        fraction,
-        mixture,
-    })
+    let water = properties.values(
+        &properties
+            .caloric(false, pressure, owner.specific_energy, false)
+            .map_err(context)?,
+    );
+    if !(water.density_kg_m3.is_finite() && water.density_kg_m3 > 0.) {
+        return Err(context(format!("density {}", water.density_kg_m3)));
+    }
+    Ok((owner.specific_energy, water))
 }
 
 struct Tree {
@@ -706,7 +474,9 @@ struct Tree {
     member: Vec<bool>,
 }
 
-/// Breadth-first spanning tree over faces in compiled index order.
+/// Breadth-first spanning tree over the regular cells' faces in compiled
+/// index order. Faces touching the PZR (`cells` and beyond) are not tree
+/// faces; the port face fixes the root instead.
 fn spanning_tree(faces: &[FacePacket], cells: usize, root: usize) -> Result<Tree, Failure> {
     let mut reached = vec![false; cells];
     reached[root] = true;
@@ -715,6 +485,9 @@ fn spanning_tree(faces: &[FacePacket], cells: usize, root: usize) -> Result<Tree
     let mut member = vec![false; faces.len()];
     while let Some(node) = queue.pop_front() {
         for (j, f) in faces.iter().enumerate() {
+            if f.from >= cells || f.to >= cells {
+                continue;
+            }
             let other = if f.from == node {
                 f.to
             } else if f.to == node {
@@ -732,7 +505,7 @@ fn spanning_tree(faces: &[FacePacket], cells: usize, root: usize) -> Result<Tree
     }
     if let Some(node) = reached.iter().position(|r| !r) {
         return Err(fatal(format!(
-            "region {node} is not connected to the PZR roof gauge"
+            "region {node} is not connected to the PZR surge port"
         )));
     }
     Ok(Tree { order, member })
@@ -745,8 +518,8 @@ fn head(face: &FacePacket, mixture: impl Fn(usize) -> f64) -> f64 {
     })
 }
 
-/// One hydrostatic pass: root from the roof gauge, then every tree face at
-/// rest, `p_to = p_from - head`.
+/// One hydrostatic pass: the root from the port face at rest, then every tree
+/// face at rest, `p_to = p_from - head`.
 fn integrate(
     faces: &[FacePacket],
     tree: &Tree,
@@ -794,12 +567,31 @@ fn at_most(value: f64, bound: f64) -> bool {
 /// Parts of the construction the receipt reads back.
 struct Construction {
     root: usize,
-    interface: Interface,
+    port_pressure_pa: f64,
+    pzr: Value,
     pass_changes_pa: Vec<f64>,
     owners: Vec<Owner>,
-    states: Vec<CellState>,
+    states: Vec<(f64, Water)>,
     written: Vec<Written>,
     tree: Tree,
+}
+
+/// The stratified cell owner's preparation at the declared point: the PZR
+/// block written exactly into `y`, its surge-port pressure and its receipt.
+pub struct StratifiedPreparation {
+    pub port_pressure_pa: f64,
+    pub receipt: Value,
+}
+
+impl<P: Properties> Network<P> {
+    /// `stratified::prepare` at the declared roof pressure and level.
+    fn prepare_stratified(
+        &self,
+        _point: &OperatingPoint,
+        _y: &mut [f64],
+    ) -> Result<StratifiedPreparation, Failure> {
+        Err(not_integrated("the PZR preparation at the declared point"))
+    }
 }
 
 /// Build the network from `packet`, declare `rotors` (one per compiled
@@ -814,8 +606,15 @@ pub fn prepare<P: Properties>(
     settings: &Settings,
 ) -> Result<(Network<P>, Prepared, Receipt), Failure> {
     settings.validate()?;
-    point.validate()?;
-    let (mut network, mut prepared) = Network::new(packet, properties)?;
+    point.validate(&packet.pzr.cell, settings)?;
+    let (mut network, mut prepared) = Network::new(
+        packet,
+        properties,
+        &PzrPreparation {
+            pressure_tolerance_pa: settings.pressure_tolerance_pa,
+            max_passes: settings.max_passes,
+        },
+    )?;
     if rotors.len() != network.rotor_count() {
         return Err(fatal(format!(
             "{} rotor states declared for {} compiled rotors",
@@ -826,52 +625,29 @@ pub fn prepare<P: Properties>(
     for (r, state) in rotors.iter().enumerate() {
         network.set_rotor_state(r, *state);
     }
-    let interface = interface(packet, point, settings)?;
-    let owners = owners(packet, &network, &interface, settings)?;
-    let begin = network.pzr_begin();
+    let pzr = network.prepare_stratified(point, &mut prepared.y)?;
+    let owners = owners(packet, &network)?;
     let faces = &packet.mechanics.faces;
-    let root = packet
-        .pzr
-        .regions
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| {
-            r.bottom_m <= point.pzr_roof_elevation_m && point.pzr_roof_elevation_m <= r.top_m
-        })
-        .fold(None, |best: Option<(usize, f64)>, (j, r)| match best {
-            Some((_, top)) if top >= r.top_m => best,
-            _ => Some((j, r.top_m)),
-        })
-        .map(|(j, _)| begin + j)
-        .ok_or_else(|| {
-            fatal(format!(
-                "roof elevation {} m lies in no PZR region",
-                point.pzr_roof_elevation_m
-            ))
-        })?;
-    let roof_leg = point.pzr_roof_elevation_m - packet.pzr.regions[root - begin].elevation_m;
-    let tree = spanning_tree(faces, network.cells(), root)?;
+    let cells = network.cell_layout.len();
+    let port = &faces[network.pzr.port_face];
+    let root = port.from;
+    let tree = spanning_tree(faces, cells, root)?;
     let states_at = |pressure: &[f64]| {
         owners
             .iter()
             .enumerate()
-            .map(|(node, owner)| {
-                cell_state(
-                    network.properties(),
-                    owner,
-                    node,
-                    pressure[node],
-                    settings.pzr_phase_margin_k,
-                )
-            })
+            .map(|(node, owner)| cell_state(network.properties(), owner, node, pressure[node]))
             .collect::<Result<Vec<_>, _>>()
     };
 
     let mut pressure: Vec<f64> = owners.iter().map(|o| o.before.pressure_pa).collect();
     let mut pass_changes_pa = Vec::new();
     let states = loop {
-        let mixture: Vec<f64> = states_at(&pressure)?.iter().map(|s| s.mixture).collect();
-        let root_pressure = point.pzr_roof_pressure_pa + mixture[root] * (G * roof_leg);
+        let mixture: Vec<f64> = states_at(&pressure)?
+            .iter()
+            .map(|(_, water)| water.density_kg_m3)
+            .collect();
+        let root_pressure = pzr.port_pressure_pa + head(port, |region| mixture[region]);
         let next = integrate(faces, &tree, &mixture, root, root_pressure);
         let (change, _) = largest(next.iter().zip(&pressure).map(|(a, b)| a - b));
         pass_changes_pa.push(change);
@@ -899,24 +675,14 @@ pub fn prepare<P: Properties>(
         .iter()
         .zip(&owners)
         .enumerate()
-        .map(|(node, (state, owner))| {
-            let volume = network.volume(node);
-            let vapor_volume = volume * state.fraction[1];
-            let volumes = [volume - vapor_volume, vapor_volume];
-            let mut stock = Stock {
+        .map(|(node, ((u, water), owner))| {
+            let mass = network.volume(node) * water.density_kg_m3;
+            Stock {
                 pressure_pa: pressure[node],
-                mass_kg: [0.; 2],
-                specific_energy_j_kg: [0.; 2],
-                tracer_kg_eq: 0.,
-            };
-            for (k, phase) in state.phases.iter().enumerate() {
-                if let Some((u, water)) = phase {
-                    stock.mass_kg[k] = volumes[k] * water.density_kg_m3;
-                    stock.specific_energy_j_kg[k] = *u;
-                }
+                mass_kg: [mass, 0.],
+                specific_energy_j_kg: [*u, 0.],
+                tracer_kg_eq: mass * owner.concentration,
             }
-            stock.tracer_kg_eq = stock.mass_kg[0] * owner.concentration;
-            stock
         })
         .collect();
     let written = overwrite_stocks(
@@ -935,7 +701,8 @@ pub fn prepare<P: Properties>(
     prepared.differential = network.differential(&prepared.differential);
     let construction = Construction {
         root,
-        interface,
+        port_pressure_pa: pzr.port_pressure_pa,
+        pzr: pzr.receipt,
         pass_changes_pa,
         owners,
         states,
@@ -967,7 +734,8 @@ fn account<P: Properties>(
 ) -> Result<Receipt, Failure> {
     let Construction {
         root,
-        interface,
+        port_pressure_pa,
+        pzr,
         pass_changes_pa,
         owners,
         states,
@@ -976,38 +744,22 @@ fn account<P: Properties>(
     } = construction;
     let rows = network.rows();
     let mut regions = Vec::with_capacity(owners.len());
-    for (node, ((owner, state), stock)) in owners.iter().zip(&states).zip(&written).enumerate() {
-        let saturation = match owner.content {
-            Content::Liquid { .. } => None,
-            Content::Pzr { .. } => Some(
-                network
-                    .properties()
-                    .saturation(Scalar::constant(stock.pressure_pa))
-                    .map_err(fatal)?
-                    .temperature
-                    .value,
-            ),
-        };
-        let mut phases = [None; 2];
-        for (k, phase) in state.phases.iter().enumerate() {
-            if let Some((_, water)) = phase {
-                phases[k] = Some(PhaseState {
-                    temperature_k: water.temperature_k,
-                    mass_kg: stock.mass_kg[k],
-                    internal_energy_j: stock.internal_energy_j[k],
-                    volume_m3: stock.mass_kg[k] / water.density_kg_m3,
-                    saturation_distance_k: saturation.map(|t| water.temperature_k - t),
-                });
-            }
-        }
+    for (node, ((owner, (_, water)), stock)) in owners.iter().zip(&states).zip(&written).enumerate()
+    {
         regions.push(RegionReceipt {
             region: node,
             id: packet.mechanics.regions[node].id.clone(),
-            authored_phase: owner.authored_phase,
             before: owner.before,
             pressure_pa: stock.pressure_pa,
-            vapor_fraction: state.fraction[1],
-            phases,
+            phases: [
+                Some(PhaseState {
+                    temperature_k: water.temperature_k,
+                    mass_kg: stock.mass_kg[0],
+                    internal_energy_j: stock.internal_energy_j[0],
+                    volume_m3: stock.mass_kg[0] / water.density_kg_m3,
+                }),
+                None,
+            ],
             tracer_kg_eq: stock.tracer_kg_eq,
             eos_row: rows[network.cell_layout[node].base].value,
         });
@@ -1038,7 +790,8 @@ fn account<P: Properties>(
             face: j,
             from: f.from,
             to: f.to,
-            tree: tree.member[j],
+            // The port face fixes the root: part of the construction.
+            tree: tree.member[j] || j == network.pzr.port_face,
             rest_pa: cells[f.from].pressure.value
                 - cells[f.to].pressure.value
                 - head(f, |region| cell_mixture(&cells[region])),
@@ -1063,6 +816,10 @@ fn account<P: Properties>(
         "tracer",
         "impulse",
         "rotor",
+        "pzr pressure and volume",
+        "pzr mass",
+        "pzr energy",
+        "pzr tracer",
     ]
     .into_iter()
     .map(|class| (class, Vec::new()))
@@ -1086,6 +843,11 @@ fn account<P: Properties>(
         .1
         .extend(network.face_layout.iter().map(|l| l.index));
     classes[7].1.extend(network.rotor_index.iter().copied());
+    let base = network.pzr.base;
+    classes[8].1.extend(base..base + PZR_ALGEBRAIC);
+    classes[9].1.extend(PZR_MASS.iter().map(|o| base + o));
+    classes[10].1.extend(PZR_ENERGY.iter().map(|o| base + o));
+    classes[11].1.extend(PZR_TRACER.iter().map(|o| base + o));
     let initial_rows = classes
         .into_iter()
         .filter(|(_, indices)| !indices.is_empty())
@@ -1102,8 +864,8 @@ fn account<P: Properties>(
         operating_point: *point,
         settings: *settings,
         root_region: root,
-        surface_elevation_m: interface.surface_m,
-        on_boundary: interface.on_boundary,
+        port_pressure_pa,
+        pzr,
         pass_changes_pa,
         max_eos_row: largest(regions.iter().map(|r| r.eos_row)).0,
         mass_change_kg: after(|p| p.mass_kg) - before(|s| s.mass_kg),

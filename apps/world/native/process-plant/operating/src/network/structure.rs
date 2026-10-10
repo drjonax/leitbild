@@ -2,17 +2,22 @@
 //! Conservative structural sparsity of the composed network's stage Jacobian.
 //!
 //! Derived once from compiled topology: face endpoints, momentum supports,
-//! pressure segments, force/velocity projections, section projections and
-//! the PZR field's local neighbor coupling. It must contain every entry any
-//! state can produce, so it couples through upwind donor switches and
-//! absent-phase one-sided charts. Callers verify numerically that sampled
-//! dense Jacobians are contained in this pattern, and the colored assembly
-//! refuses any response outside it.
+//! pressure segments and section projections. A cell's coordinates are its
+//! six regular ones or the stratified PZR cell's whole block, so the PZR rows
+//! depend on the PZR coordinates and the port face's flux dependencies, and
+//! the port face's momentum row depends on the PZR coordinates through the
+//! port view. It must contain every entry any state can produce, so it
+//! couples through upwind donor switches and absent-phase one-sided charts.
+//! Callers verify numerically that sampled dense Jacobians are contained in
+//! this pattern, and the colored assembly refuses any response outside it.
 use super::{Network, Properties};
 use std::collections::BTreeSet;
 
 impl<P: Properties> Network<P> {
     fn cell_coordinates(&self, cell: usize) -> std::ops::Range<usize> {
+        if cell == self.pzr.cell {
+            return self.pzr.coordinates();
+        }
         let base = self.cell_layout[cell].base;
         base..base + 6
     }
@@ -27,7 +32,6 @@ impl<P: Properties> Network<P> {
         let mut cells = BTreeSet::from([f.from, f.to]);
         cells.extend(f.supports.iter().map(|s| s.region));
         cells.extend(f.pressure_segments.iter().map(|s| s.region));
-        cells.extend(self.projections[face].iter().map(|p| p.region));
         cells
     }
     fn endpoint_faces(&self, cell: usize) -> Vec<usize> {
@@ -105,52 +109,6 @@ impl<P: Properties> Network<P> {
             if let Some(r) = h.rotor {
                 rows.insert(self.rotor_index[r]);
                 cols.insert(self.rotor_index[r]);
-            }
-            add(&rows, &cols);
-        }
-        // PZR field: each region's sources depend on its own phases, its face
-        // neighbors, adjacent face currents, velocities of itself and its
-        // neighbors (charts of faces projecting onto them), interface
-        // saturation at adjacent faces and, for the receiver, the inflow face.
-        // They feed the region's stock rows and the force rows of every face
-        // projecting onto the region.
-        let pzr_internal: Vec<usize> = (self.first_pzr_face..self.faces.len()).collect();
-        let projecting = |cell: usize| -> Vec<usize> {
-            (0..self.faces.len())
-                .filter(|face| self.projections[*face].iter().any(|p| p.region == cell))
-                .collect()
-        };
-        for cell in self.pzr_begin..self.cells.len() {
-            let adjacent: Vec<usize> = pzr_internal
-                .iter()
-                .copied()
-                .filter(|face| self.faces[*face].from == cell || self.faces[*face].to == cell)
-                .collect();
-            let mut neighbors = BTreeSet::from([cell]);
-            for face in &adjacent {
-                neighbors.insert(self.faces[*face].from);
-                neighbors.insert(self.faces[*face].to);
-            }
-            let mut influencing: BTreeSet<usize> = adjacent.iter().copied().collect();
-            for n in &neighbors {
-                influencing.extend(projecting(*n));
-            }
-            if self.faces[self.surge_to_pzr_face].to == cell {
-                influencing.insert(self.surge_to_pzr_face);
-            }
-            let mut rows: BTreeSet<usize> = self.cell_coordinates(cell).collect();
-            for face in projecting(cell) {
-                rows.extend(self.face_coordinates(face));
-            }
-            let mut cols = BTreeSet::new();
-            for n in &neighbors {
-                cols.extend(self.cell_coordinates(*n));
-            }
-            for face in &influencing {
-                self.flux_dependencies(*face, &mut cols);
-            }
-            for face in &adjacent {
-                self.chart_dependencies(*face, &mut cols);
             }
             add(&rows, &cols);
         }

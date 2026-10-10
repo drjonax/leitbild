@@ -7,8 +7,13 @@
 //! a rigid volume is a local function of its retained mass and energy, so its
 //! weight follows from the same relative tolerance through the isentropic
 //! compressibility: holding pressure tighter than the inventories that fix it
-//! only measures Newton slack. No value of a particular plant lives here.
-use super::{Failure, Network, Properties};
+//! only measures Newton slack. The stratified PZR cell's roof pressure is
+//! weighted the same way through the cell's effective isentropic
+//! compressibility; its volumes are scaled like the volume rows and its
+//! stocks take the stock classes. No value of a particular plant lives here.
+use super::{
+    Failure, Network, PZR_ENERGY, PZR_MASS, PZR_TRACER, PZR_VOLUME, Properties, not_integrated,
+};
 
 /// Declared absolute tolerances; all fields are required, none defaulted.
 #[derive(Clone, Copy, Debug)]
@@ -70,6 +75,7 @@ impl<P: Properties> Network<P> {
             }
             atol[l.boron] = classes.tracer_scaled;
         }
+        self.stratified_tolerances(y, classes, &mut atol)?;
         for l in &self.face_layout {
             atol[l.index] = classes.volume_flow_m3_s;
         }
@@ -77,5 +83,28 @@ impl<P: Properties> Network<P> {
             atol[*index] = classes.rotor_scaled;
         }
         Ok(atol)
+    }
+
+    /// The PZR block: zone and transit volumes (scaled by the cell volume)
+    /// and the eleven stocks take the stock and tracer classes; the roof
+    /// pressure takes `relative / (kappa_eff * scale)` with the cell's
+    /// effective isentropic compressibility `kappa_eff = sum(V_k kappa_s,k)/V`
+    /// from the stratified column at `y`.
+    fn stratified_tolerances(
+        &self,
+        _y: &[f64],
+        classes: ToleranceClasses,
+        atol: &mut [f64],
+    ) -> Result<(), Failure> {
+        let base = self.pzr.base;
+        for offset in PZR_VOLUME.iter().chain(&PZR_MASS).chain(&PZR_ENERGY) {
+            atol[base + offset] = classes.stock_scaled;
+        }
+        for offset in PZR_TRACER {
+            atol[base + offset] = classes.tracer_scaled;
+        }
+        Err(not_integrated(
+            "the roof-pressure weight from the cell's effective isentropic compressibility",
+        ))
     }
 }

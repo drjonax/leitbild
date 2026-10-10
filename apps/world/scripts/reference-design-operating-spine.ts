@@ -293,22 +293,22 @@ type MomentumSupport = { region: number, path_length_m: number, inverse_area_len
 type PressureSegment = { region: number, path_length_m: number, elevation_change_m: number }
 type MechanicalFace = { id: string, from: number, to: number, flow_area_m2: number,
   supports: MomentumSupport[], pressure_segments: PressureSegment[] }
-type PzrGeometry = Pick<ReturnType<typeof compileOperatingPzr>, 'regions' | 'faces' | 'mouth' | 'radialGeometry' | 'surge' | 'hotPartition'>
+type PzrGeometry = Pick<ReturnType<typeof compileOperatingPzr>, 'cell' | 'mouth' | 'surge' | 'hotPartition'>
 
 /** Coarse local-pressure line losses on the two SURGE faces (surge-route.md).
  * Friction and each elbow stay on their own half route. Each end carries the
  * mean of its two directional coefficients because the native face law is
  * reciprocal; toward-PZR is positive face flow on both faces. */
 export function compileOperatingLineLosses(line: Pick<ReturnType<typeof compileOperatingSurgeHydraulics>, 'halves'>,
-  pzr: Pick<PzrGeometry, 'surge' | 'regions' | 'mouth' | 'hotPartition'>, branch: { dividingTurnLoss: number }, gravity: number, surge: number) {
+  pzr: Pick<PzrGeometry, 'surge' | 'mouth' | 'hotPartition'>, branch: { dividingTurnLoss: number }, gravity: number, surge: number) {
   const r = pzr.surge.route, A = r.area_m2, junction = pzr.hotPartition.parts[1]!,
-    prism = junction.length_m * Math.sqrt(pzr.hotPartition.area_m2), receiver = pzr.regions[pzr.mouth.region]!.axialArea_m2
+    prism = junction.length_m * Math.sqrt(pzr.hotPartition.area_m2), receiver = pzr.mouth.jetReceiverArea_m2
   if (!Number.isFinite(branch.dividingTurnLoss) || branch.dividingTurnLoss < 0 || line.halves.length !== 2) throw Error('Invalid surge line loss input')
   const ends = [
     { face: 'HOT.A.JUNCTION->SURGE', id: 'HOT.A.BRANCH', towardPzr: branch.dividingTurnLoss, towardHot: fittingLoss.expansion(ratio(A / prism)),
       law: 'mean of Idelchik 90-degree dividing side-branch factor (toward PZR) and Borda-Carnot line jet into the 1 m junction prism (toward HOT)' },
     { face: 'SURGE->PZR.SURGE.MOUTH', id: 'PZR.MOUTH', towardPzr: fittingLoss.expansion(ratio(A / receiver)), towardHot: r.entryLoss,
-      law: 'mean of Borda-Carnot jet into the bottom outer PZR region (toward PZR) and the record entryLoss with CdA=A/sqrt(1+entryLoss) (toward HOT)' },
+      law: 'mean of Borda-Carnot jet into the 4.5 m2 outer-annulus free area the mouth discharges into (toward PZR) and the record entryLoss with CdA=A/sqrt(1+entryLoss) (toward HOT)' },
   ] as const
   return line.halves.map((half, k): FaceLossSection => {
     const end = ends[k]!, terms: FaceLossTerm[] = [
@@ -330,7 +330,9 @@ export function compileOperatingMechanics(primary: { regions: readonly { id: str
   hydraulics: { sections: readonly Section[], gravityIncidence: readonly { edge: number, region: number, delta_z_m: number }[] },
   pzr: PzrGeometry, control: HousingGeometry, travel: number, faceLosses: readonly FaceLossSection[]) {
   if (primary.regions.length !== 27 || primary.edges.length !== 33) throw Error('Mechanical map requires actual carved27/33 primary')
-  const surge = 27, pzrOffset = 28, regions = [...primary.regions, primary.surgeStock, ...pzr.regions]
+  // The PZR is one pressure cell; its pressure coordinate p_roof lives at top_m.
+  const surge = 27, pzrCell = 28, regions = [...primary.regions, primary.surgeStock,
+    { id: 'PZR', volume_m3: pzr.cell.fluidVolume_m3, elevation_m: pzr.cell.top_m }]
     .map(r => ({ id: r.id, volume_m3: r.volume_m3, elevation_m: r.elevation_m })),
     faces: MechanicalFace[] = primary.edges.map(e => ({ ...e, flow_area_m2: Infinity, supports: [], pressure_segments: [] })),
     force_projection: { face: number, region: number, coefficient_per_m2: number, normal: [number, number] }[] = []
@@ -372,7 +374,7 @@ export function compileOperatingMechanics(primary: { regions: readonly { id: str
   }
   const line = compileOperatingSurgeHydraulics(pzr), lateral = pzr.hotPartition.junctionPorts[2]!,
     start: MechanicalFace = { id: 'HOT.A.JUNCTION->SURGE', from: primary.junction, to: surge, flow_area_m2: lateral.area_m2, supports: [], pressure_segments: [] },
-    end: MechanicalFace = { id: 'SURGE->PZR.SURGE.MOUTH', from: surge, to: pzrOffset + pzr.mouth.region,
+    end: MechanicalFace = { id: 'SURGE->PZR.SURGE.MOUTH', from: surge, to: pzrCell,
       flow_area_m2: pzr.mouth.area_m2, supports: [], pressure_segments: [] }
   const arm = line.junctionFirstMoment.lateralArm_m
   add(start, primary.junction, arm, arm / lateral.area_m2, arm * lateral.area_m2)
@@ -384,66 +386,43 @@ export function compileOperatingMechanics(primary: { regions: readonly { id: str
   const lineReferenceHead = primary.surgeStock.elevation_m - line.momentumPlane.elevation_m
   start.pressure_segments.push({ region: surge, path_length_m: 0, elevation_change_m: lineReferenceHead })
   end.pressure_segments.unshift({ region: surge, path_length_m: 0, elevation_change_m: -lineReferenceHead })
-  const mouth = pzr.regions[pzr.mouth.region]!, mouthLength = mouth.elevation_m - pzr.mouth.elevation_m
-  add(end, pzrOffset + pzr.mouth.region, mouthLength, mouthLength / mouth.axialArea_m2, mouthLength * mouth.axialArea_m2, mouthLength)
+  // Face 34 ends at the surge mouth: SURGE supports and segments only. The PZR
+  // side contributes its stratified-column port view, no support or inertia.
+  const port = pzr.cell.ports.find(p => p.id === end.id.split('->')[1])
+  if (!port || pzr.cell.ports.length !== 1 || port.elevation_m !== pzr.mouth.elevation_m) throw Error('Face 34 needs the one PZR surge port')
   faces.push(start, end)
-  force_projection.push({ face: 34, region: end.to, coefficient_per_m2: mouthLength / mouth.volume_m3, normal: [0, 1] })
-  for (const physical of pzr.faces) {
-    const face: MechanicalFace = { id: physical.id, from: pzrOffset + physical.from, to: pzrOffset + physical.to,
-      flow_area_m2: physical.area_m2, supports: [], pressure_segments: [] }
-    for (const [local, incoming] of [[physical.from, true], [physical.to, false]] as const) {
-      const r = pzr.regions[local]!
-      if (physical.direction === 'axial') {
-        const L = Math.abs(r.elevation_m - physical.elevation_m)
-        add(face, pzrOffset + local, L, L / r.axialArea_m2, L * r.axialArea_m2, L)
-      } else {
-        const boundary = pzr.radialGeometry.innerRadius_m, lo = incoming ? r.radialCentroid_m : boundary,
-          hi = incoming ? boundary : r.radialCentroid_m, height = r.top_m - r.bottom_m,
-          porosity = r.lane === 'inner' ? r.axialArea_m2 / (Math.PI * boundary ** 2) : 1,
-          L = hi - lo, inverseA = Math.log(hi / lo) / (2 * Math.PI * height * porosity),
-          V = Math.PI * (hi ** 2 - lo ** 2) * height * porosity
-        add(face, pzrOffset + local, L, inverseA, V)
-      }
-      const s = face.supports.at(-1)!
-      force_projection.push({ face: faces.length, region: pzrOffset + local,
-        coefficient_per_m2: s.path_length_m / r.volume_m3, normal: [...physical.normal] })
-    }
-    // Its declared physical throat, not a logarithmic/volume-mean area.
-    face.flow_area_m2 = physical.area_m2; faces.push(face)
-  }
-  if (regions.length !== 38 || faces.length !== 48 || new Set(faces.map(f => f.id)).size !== faces.length
+  const endpoint = (cell: number) => cell === pzrCell ? port.elevation_m : regions[cell]!.elevation_m
+  if (regions.length !== 29 || faces.length !== 35 || new Set(faces.map(f => f.id)).size !== faces.length
     || regions.some(r => !Number.isFinite(r.volume_m3) || r.volume_m3 <= 0 || !Number.isFinite(r.elevation_m))
-    || faces.some(f => !Number.isFinite(f.flow_area_m2) || f.flow_area_m2 <= 0 || !f.supports.length
+    || faces.some(f => !Number.isFinite(f.flow_area_m2) || f.flow_area_m2 <= 0 || !f.supports.length || f.from === pzrCell
+      || [...f.supports, ...f.pressure_segments].some(s => s.region === pzrCell)
       || f.supports.some(s => ![s.path_length_m, s.inverse_area_length_per_m, s.volume_m3].every(v => Number.isFinite(v) && v > 0))
       || f.pressure_segments.some(s => !Number.isFinite(s.path_length_m) || s.path_length_m < 0 || !Number.isFinite(s.elevation_change_m))
-      || !near(sum(f.pressure_segments.map(s => s.elevation_change_m)), regions[f.to]!.elevation_m - regions[f.from]!.elevation_m)))
+      || !near(sum(f.pressure_segments.map(s => s.elevation_change_m)), endpoint(f.to) - endpoint(f.from)))
+    || faces.filter(f => f.to === pzrCell).map(f => f.id).join() !== end.id)
     throw Error('Incomplete physical local-pressure path map')
   // Face losses append after the channel sections, each on its own face only.
-  // PZR-internal faces own their field drag/interphase laws, never a section.
-  const firstPzrFace = primary.edges.length + 2, lossFaces = faceLosses.map(s => {
+  const lossFaces = faceLosses.map(s => {
     const face = faces.findIndex(f => f.id === s.face)
     if (face < 0) throw Error('Unknown face for passive loss ' + s.id)
-    if (face >= firstPzrFace) throw Error('A PZR-internal face cannot carry a section loss')
     if (!faces[face]!.supports.some(t => t.region === s.region)) throw Error('Passive loss region does not support its face ' + s.id)
     return face
   })
   const section_force_projection = [...hydraulics.sections.flatMap((s, section) => s.force.map(t => ({ face: t.edge, section, coefficient: t.weight }))),
     ...lossFaces.map((face, k) => ({ face, section: hydraulics.sections.length + k, coefficient: 1 }))]
   const loaded = new Set(section_force_projection.map(t => t.face)),
-    unloaded = faces.flatMap((f, i) => i < firstPzrFace && !loaded.has(i) ? [f.id] : [])
+    unloaded = faces.flatMap((f, i) => !loaded.has(i) ? [f.id] : [])
   return { regions, faces, force_projection, section_force_projection,
     housing, pressureProfile: 'Current mixture hydrostatic head on each segment plus length-linear dynamic pressure remainder; sharp pure-phase rest shares one reconstructed face pressure.',
-    radialProfile: 'Exact annular inverse-area integral between selected positive centroids and lane boundary; uniform existing inner-lane rod porosity reduction.',
     momentumScope: 'Generalized hydraulic impulse; parallel half-paths once per component. HOT lateral y profile overlaps main x water, not a second x inertia or a second junction momentum bank.',
     omittedMomentum: 'Mixed LOWER/UPPER/COLD reservoirs have no invented pipe inertia; closed-end beyond-centroid motion is unresolved at this coarse pressure-cell resolution.',
-    lossScope: { liquidFacesWithoutSectionLoss: unloaded, pzrFieldFaces: faces.slice(firstPzrFace).map(f => f.id),
-      faceLossFaces: [...new Set(lossFaces)].map(i => faces[i]!.id) },
+    lossScope: { liquidFacesWithoutSectionLoss: unloaded, faceLossFaces: [...new Set(lossFaces)].map(i => faces[i]!.id) },
     scope: 'Physical geometry and force/velocity projection only. No advancement, phase-event, operational-fidelity or performance admission.' }
 }
 
 /** Which faces carry which passive losses, and why the rest do not. Lists are
  * derived from the compiled projections; reasons name their wiki owners. */
-export function operatingPassiveLossScope(loss: { liquidFacesWithoutSectionLoss: readonly string[], pzrFieldFaces: readonly string[],
+export function operatingPassiveLossScope(loss: { liquidFacesWithoutSectionLoss: readonly string[],
   faceLossFaces: readonly string[] }, faceLosses: readonly FaceLossSection[]) {
   return {
     channelSections: 'Primary faces 0-30 keep the 21 channel sections, their weights and owned budgets unchanged (primary-hydraulic-basis.md).',
@@ -451,7 +430,6 @@ export function operatingPassiveLossScope(loss: { liquidFacesWithoutSectionLoss:
       sections: faceLosses.filter(s => s.face === face).map(s => ({ id: s.id, wall: s.parameters.wall,
         terms: s.terms.map(t => ({ id: t.id, loss: t.loss })) })) })),
     liquidFacesWithoutSectionLoss: [...loss.liquidFacesWithoutSectionLoss],
-    pzrFieldFaces: { faces: [...loss.pzrFieldFaces], reason: 'Drag and interphase laws belong to the PZR field; section projections are rejected there.' },
     gasPaths: 'Sections act on the liquid carrier only. Primary/SURGE gas phase paths have no passive drag in this package.',
     notRepresented: [
       'COLD->RETURN entrance and RETURN->DOWN turn/expansion: zero credited loss by owner selection (mechanical-energy-and-geometry.md); geometry estimate K=1.777 is an open design-basis question in primary-hydraulic-basis.md, not adopted.',
@@ -497,7 +475,7 @@ export const operatingPointPages = [...new Set([...Object.values(operatingPointS
 
 /** Declared selections for the prepared state, not targets for any flow. */
 export function compileOperatingPoint(docs: Readonly<Record<string, string>>,
-  pzr: { regions: readonly { id: string, bottom_m: number, top_m: number }[] }, referenceRpm: number) {
+  cell: { bottom_m: number, top_m: number }, referenceRpm: number) {
   const phrase = (source: { page: string, heading: string }, pattern: RegExp) => {
     const text = docs[source.page]
     if (text === undefined) throw Error('Missing operating-point owner ' + source.page)
@@ -513,14 +491,13 @@ export function compileOperatingPoint(docs: Readonly<Record<string, string>>,
     rpm = value(phrase(src.rcpSpeedRequest, /actual supported ([0-9]+) rpm rotor states/g))
   phrase(src.pzrRoofElevation_m, /(LT datum remains the PZR bottom)/g)
   phrase(check.speedVocabulary, /(Commands request zero or nominal speed for the initial operational interface)/g)
-  const bottom = Math.min(...pzr.regions.map(r => r.bottom_m)), top = Math.max(...pzr.regions.map(r => r.top_m))
+  const bottom = cell.bottom_m, top = cell.top_m
   if (![setpoint, roof, level, rpm, bottom].every(Number.isFinite) || setpoint <= 0 || level <= 0 || level >= top - bottom)
     throw Error('Invalid declared PZR/RCP operating point')
   if (setpoint !== compared) throw Error('PZR pressure setpoint owners disagree')
   if (roof !== top) throw Error('PT1 roof tap is not the compiled PZR top fluid boundary')
   if (rpm !== referenceRpm) throw Error('Prepared RCP speed is not the commissioned nominal speed')
-  const surface = bottom + level, below = pzr.regions.filter(r => r.top_m === surface).map(r => r.id),
-    above = pzr.regions.filter(r => r.bottom_m === surface).map(r => r.id)
+  const surface = bottom + level
   return { pzrRoofPressure_Pa: setpoint, pzrRoofElevation_m: roof, pzrLevel_m: level, rcpSpeedRequest: 'nominal' as const,
     provenance: { ...src },
     crossChecks: { ...check },
@@ -531,7 +508,6 @@ export function compileOperatingPoint(docs: Readonly<Record<string, string>>,
       rcpSpeedRequest: 'All four supported RCPs request nominal speed, i.e. hydraulics.pump.referenceOmega_rad_s; no second speed value',
     },
     pzrBottomElevation_m: bottom, pzrLevelSurfaceElevation_m: surface,
-    pzrLevelRegionBoundary: { onBoundary: below.length > 0 && above.length > 0, below, above },
     scope: 'Declared selections for a consistent prepared state. They are controller/indication setpoints and the supported speed request, not imposed pressures, levels or flows, and not evidence that the preparation is stationary.' }
 }
 
@@ -543,9 +519,9 @@ export async function prepareOperatingSpine(wiki: string, if97: string) {
   const originalThermal = compileOperatingThermal(parseFuelConstruction(fuelDoc), parseFuelHandling(handlingDoc), parseControlAbsorber(controlDoc),
     hot.fluid, hot.energy, parseOperatingThermal(thermalDoc), parseTransferThermal(handlingDoc), parseOperatingFuelGap(gapDoc))
   const hotOwner = hot.fluid.geometry.regions.find(r => r.id === 'HOT.A')!
-  const [pzr, originalHydraulics, pointDocs] = await Promise.all([prepareOperatingPzr(wiki, if97, hotOwner), loadOperatingHydraulics(wiki, hot.fluid.geometry),
+  const [pzr, originalHydraulics, pointDocs] = await Promise.all([prepareOperatingPzr(wiki, hotOwner), loadOperatingHydraulics(wiki, hot.fluid.geometry),
     Promise.all(operatingPointPages.map(async page => [page, await read(page)] as const)).then(Object.fromEntries) as Promise<Record<string, string>>])
-  const operatingPoint = compileOperatingPoint(pointDocs, pzr, originalHydraulics.selection.referenceRpm)
+  const operatingPoint = compileOperatingPoint(pointDocs, pzr.cell, originalHydraulics.selection.referenceRpm)
   const carved = carveOperatingPrimary(hot.fluid.primary.regions, hot.fluid.primary.edges, pzr.hotPartition)
   const waterIndex = (old: number) => { const i = carved.regionMap[old]; if (i === undefined || i < 0) throw Error('Thermal/source contact requires an explicit physical repartition'); return i }
   const direct = carved.regions.map(() => 0)
@@ -574,23 +550,26 @@ export async function prepareOperatingSpine(wiki: string, if97: string) {
     carvedRegion = (id: string) => { const i = carved.regions.findIndex(r => r.id === id); if (i < 0) throw Error('Unknown carved owner ' + id); return i },
     faceLosses = [...compileOperatingHousingLosses(control, travel, hydraulics.gravity_m_s2, carvedRegion),
       ...compileOperatingLineLosses(hydraulics.surge, pzr, hydraulics.hotBranchLoss, hydraulics.gravity_m_s2, carved.regions.length)]
-  const mechanics = compileOperatingMechanics(carved, hydraulics, pzr, control, travel, faceLosses)
+  const mechanics = compileOperatingMechanics(carved, hydraulics, pzr, control, travel, faceLosses),
+    pzrIndex = mechanics.regions.findIndex(r => r.id === 'PZR'),
+    cell = { index: pzrIndex, ...pzr.cell, ports: pzr.cell.ports.map(p => ({ ...p, face: mechanics.faces.findIndex(f => f.to === pzrIndex && f.id.endsWith('->' + p.id)) })) }
+  if (cell.index !== 28 || cell.ports.some(p => p.face !== 34)) throw Error('PZR cell/port indices moved')
   const packetHydraulics = { ...hydraulics, sections: [...hydraulics.sections, ...faceLosses],
     passiveLossScope: operatingPassiveLossScope(mechanics.lossScope, faceLosses) }
   const hash = (s: string) => createHash('sha256').update(s).digest('hex')
   return { identity: 'LD01-HOT-SPINE-1', thermal, hot: { ...hot.nativeInput, fluid: nativeFluid },
     feedback_metadata: operatingSourceNativeMetadata(hot.compiledSource), feedback_reference: hot.compiledSource.reference.conditions,
     edges: carved.edges, source_water, water_flow_area_m2: carved.regions.map(r => r.mainFlowArea_m2),
-    water_boron_amount_kg_eq: carved.regions.map(r => r.absorberTracer_kgEq), hydraulics: packetHydraulics, pzr, mechanics,
+    water_boron_amount_kg_eq: carved.regions.map(r => r.absorberTracer_kgEq), hydraulics: packetHydraulics, pzr: { ...pzr, cell }, mechanics,
     external_ports: {
       surge_stock: carved.surgeStock,
       primary_to_surge: { id: 'HOT.A.JUNCTION->SURGE', primary_water: carved.junction, surge_id: carved.surgeStock.id,
         area_m2: pzr.hotPartition.surgeArea_m2, elevation_m: pzr.hotPartition.elevation_m,
         normal: pzr.hotPartition.junctionPorts[2]!.normal },
-      surge_to_pzr: { id: 'SURGE->PZR.SURGE.MOUTH', surge_id: carved.surgeStock.id, pzr_water: pzr.mouth.region,
+      surge_to_pzr: { id: 'SURGE->PZR.SURGE.MOUTH', surge_id: carved.surgeStock.id, pzr_cell: cell.index, pzr_port: pzr.mouth.id,
         area_m2: pzr.mouth.area_m2, elevation_m: pzr.mouth.elevation_m, normal: pzr.mouth.normal },
       receiptRule: 'Signed actual donor material/thermal enthalpy; no prescribed flow, pressure matching or zero-filled external equation',
-      scope: 'Finite removed line stock and actual geometry/storage ports; native SURGE provides current signed M/H/B transport. Surge/junction forces, PZR pressure/kinematic/inertia and phase events, and complete unit F remain open.' },
+      scope: 'Finite removed line stock and actual geometry/storage ports; native SURGE provides current signed M/H/B transport. The PZR side of face 34 is the stratified-column port view. Surge/junction forces and complete unit F remain open.' },
     preparation: { direct_source_projection: projection, operatingPoint,
       scope: 'Preparation-only pressure/enthalpy/continuity check with specified zero cycle currents and no external mass. It is not the joined current-flow solution. operatingPoint declares the selected PZR roof setpoint, level setpoint and RCP speed request for a consistent preparation.' },
     provenance: { sourceSha256: hash(await Bun.file(import.meta.path).text()), hot: hot.provenance, fluid: hot.fluid.provenance,
