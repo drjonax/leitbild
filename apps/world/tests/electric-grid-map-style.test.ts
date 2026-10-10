@@ -4,6 +4,7 @@ import { createActivePackViews } from '../src/core/packs/active-views.ts'
 import { layerIdsMatching } from '../src/core/packs/layer-id-glob.ts'
 import type { PackMapTheme, PackReferenceLayerSpec } from '../src/core/packs/reference-style.ts'
 import { electricGridPackView } from '../src/packs/electric-grid/ui-pack.ts'
+import { gridLiveStateLegend } from '../src/packs/electric-grid/ui/grid-live-layer.ts'
 import { gridMapPalette, gridVoltageClasses, gridVoltageLegend } from '../src/packs/electric-grid/ui/grid-map-palette.ts'
 import { gridNorwayStyle } from '../src/packs/electric-grid/ui/grid-norway-style.ts'
 import { buildReferenceDatasetLayers, type ReferenceLayerSpec } from '../src/ui/map/reference-layer-factory.ts'
@@ -245,7 +246,7 @@ const colorObject = (hex: string) => {
 
 describe('grid-norway Pack presentation', () => {
   test('every grid layer belongs to exactly one layer-group toggle, and every drawn category has one', () => {
-    const groups = electricGridPackView.presentation.mapLayerGroups ?? []
+    const groups = (electricGridPackView.presentation.mapLayerGroups ?? []).filter(group => group.layerIdPattern.startsWith('reference:'))
     const ids = built('light').layers.map(spec => spec.id)
     for (const id of ids) expect(groups.filter(group => layerIdsMatching([id], group.layerIdPattern).length === 1)).toHaveLength(1)
     for (const group of groups) expect(layerIdsMatching(ids, group.layerIdPattern).length).toBeGreaterThan(0)
@@ -258,7 +259,7 @@ describe('grid-norway Pack presentation', () => {
     const views = createActivePackViews([electricGridPackView])
     expect(views.referenceStyles).toEqual([gridNorwayStyle])
     expect(views.referenceDatasetIds).toEqual(['grid-norway'])
-    expect(views.presentation.mapLegends).toEqual([gridVoltageLegend])
+    expect(views.presentation.mapLegends).toEqual([gridVoltageLegend, gridLiveStateLegend])
     const unstyled = { ...electricGridPackView, presentation: { ...electricGridPackView.presentation, referenceStyles: [] } }
     expect(() => createActivePackViews([unstyled])).toThrow('reference dataset grid-norway with 0 styles')
     const foreign = { ...electricGridPackView, referenceData: { datasetIds: [] } }

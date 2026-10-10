@@ -5,6 +5,7 @@ import { createWorldPackDescriptor } from '../../core/packs/protocol.ts'
 import { asDatasetId } from '../../reference-data/types.ts'
 import { electricGridPackId, parseElectricGridObjectData } from './model.ts'
 import { electricGridRuntimeId } from './sim/constants.ts'
+import { gridLiveLayerGroupId, gridLiveMapLayer, gridLiveStateLegend, gridOverviewPanelId } from './ui/grid-live-layer.ts'
 import { gridGenerationColor, gridVoltageLegend, neutralSwatchColor } from './ui/grid-map-palette.ts'
 import { gridNorwayStyle } from './ui/grid-norway-style.ts'
 
@@ -36,6 +37,12 @@ const layerGroups: ReadonlyArray<PackMapLayerGroup> = [{
   defaultVisible: true,
   layerIdPattern: referenceLayerPattern('generation'),
   swatch: { symbol: 'circle', color: gridGenerationColor, sizePx: 11 },
+}, {
+  id: gridLiveLayerGroupId,
+  label: 'Live grid state',
+  defaultVisible: true,
+  layerIdPattern: `live:${gridLiveMapLayer.id}:*:*`,
+  swatch: { symbol: 'line', color: gridLiveStateLegend.entries[0]!.color, sizePx: 3 },
 }]
 
 const presentationForGrid = (object: OperationalObject): PackObjectPresentation => {
@@ -89,7 +96,8 @@ export const electricGridPackView: WorldPackView = {
   presentation: {
     mapLayerGroups: layerGroups,
     referenceStyles: [gridNorwayStyle],
-    mapLegends: [gridVoltageLegend],
+    mapLegends: [gridVoltageLegend, gridLiveStateLegend],
+    liveMapLayers: [gridLiveMapLayer],
     categories: [{
       id: 'electric-grids',
       label: 'Electric grids',
@@ -100,7 +108,7 @@ export const electricGridPackView: WorldPackView = {
   },
   ui: {
     surfacePanels: [{
-      id: 'electric-grid.overview',
+      id: gridOverviewPanelId,
       label: 'Grid operations',
       defaultOpen: true,
       load: async () => await import('../../ui/grid/GridOverviewPanel.svelte'),
