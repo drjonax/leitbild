@@ -1886,13 +1886,13 @@
         "controller": {
           "kind": "proportionalPosition",
           "measuredPath": "main-steam-header-to-turbine-bypass-valve.pressureMPa",
-          "setpoint": 8.2,
+          "setpoint": 7.6,
           "biasPositionFraction": 0,
-          "gainPerUnit": 0.8,
+          "gainPerUnit": 2.5,
           "direction": "direct",
           "deadband": 0.05,
           "minPositionFraction": 0,
-          "maxPositionFraction": 0.75,
+          "maxPositionFraction": 1,
           "timeConstantS": 2
         }
       },
@@ -2851,8 +2851,8 @@
       "parameters": {
         "initialPositionFraction": 0,
         "valveMode": "safety",
-        "setpointMPa": 9.6,
-        "reseatMPa": 9.2,
+        "setpointMPa": 8.27,
+        "reseatMPa": 7.86,
         "cvKgPerSPerSqrtMPa": 900,
         "strokeOpenTimeS": 0.25,
         "strokeCloseTimeS": 1.5,

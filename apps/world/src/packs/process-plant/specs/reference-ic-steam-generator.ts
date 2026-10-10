@@ -25,6 +25,12 @@ const levelHighHighPercent = 82
 // that one channel trips.
 const levelLowLowPercent = 20
 
+// Steam pressure ladder of the reference main steam system: the steam dumps
+// hold no-load pressure, 7.6 MPa (1,092 psig); the high-pressure alarm comes in
+// above them and below the lowest safety valve set pressure, 8.27 MPa (the
+// 1,185 psig design pressure).
+const pressureHighMPa = 8.1
+
 export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop): ReadonlyArray<ProcessPlantIcRule> => {
   const lower = loop.toLowerCase()
   const sg = `sg${loop}`
@@ -179,8 +185,8 @@ export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop):
       id: `sg-${lower}-pressure-high`,
       label: `Steam generator ${loop} pressure high`,
       ruleClass: 'alarm',
-      condition: comparison({ tagId: `SG-${loop}-PRESS` }, '>', 9.3),
-      clearCondition: comparison({ tagId: `SG-${loop}-PRESS` }, '<', 9.1),
+      condition: comparison({ tagId: `SG-${loop}-PRESS` }, '>', pressureHighMPa),
+      clearCondition: comparison({ tagId: `SG-${loop}-PRESS` }, '<', pressureHighMPa - 0.1),
       clearDelayMs: 1_000,
       delayMs: 1_000,
       latch: false,

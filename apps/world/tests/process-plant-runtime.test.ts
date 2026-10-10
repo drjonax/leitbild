@@ -1221,7 +1221,16 @@ describe('process plant runtime', () => {
       maxBypassOpening = Math.max(maxBypassOpening, Number(runtime.readVariable(valueOf('turbineBypassValve.effectivePositionFraction'))))
     }
 
-    expect(maxBypassPressure).toBeGreaterThan(8.2)
+    let maxSafetyValveOpening = 0
+    for (let index = 0; index < 100; index += 1) {
+      runtime.tick(100)
+      maxSafetyValveOpening = Math.max(maxSafetyValveOpening, Number(runtime.readVariable(valueOf('mainSteamSafetyValve.effectivePositionFraction'))))
+    }
+    // The steam dumps open above no-load pressure (7.6 MPa) and hold the rise
+    // below the safety valves' 8.27 MPa set pressure, which stay shut.
+    expect(maxBypassPressure).toBeGreaterThan(7.65)
+    expect(maxBypassPressure).toBeLessThan(8.27)
+    expect(maxSafetyValveOpening).toBe(0)
     // Opening is pressure-driven, not a fixed percentage; require useful release.
     expect(maxBypassOpening).toBeGreaterThan(0)
     expect(maxBypassFlow).toBeGreaterThan(initialSteamFlow * 0.03)

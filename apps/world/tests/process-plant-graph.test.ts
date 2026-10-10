@@ -44,11 +44,13 @@ describe('process plant model composition', () => {
     // pump lost its AC feed, and again when the reactor protection gained
     // its loop delta-T channels, safety injection pump curves, accumulator
     // injection and the PORV block valve, its motor fed from safety bus A
-    // apart from the heaters' unit bus, and again, as a model-truth change,
-    // when the main steam safety valve was made to discharge to the
-    // atmosphere instead of into containment; PWR Runs checkpointed before
-    // then must be restarted.
-    expect(system.modelDigest).toBe('fea645af3f9d7d8291d5eee8a8f64d85d2786059c38018249ac69fa92aa73f15')
+    // apart from the heaters' unit bus. Changed again on 2026-10-10,
+    // approved by the owner as model-truth changes, when the main steam
+    // safety valve was made to discharge to the atmosphere instead of into
+    // containment, and again for the steam generators' narrow-range level,
+    // the auxiliary feedwater ratings and the main steam pressure set
+    // points; PWR Runs checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('b8dba0581362f585ecc4c5db8bbe4fc4fd4ca2442619c6e25ae258ac8be8613b')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
