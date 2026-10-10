@@ -1,3 +1,5 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#finite-surge-and-pzr-connection-equations
+//! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#compact-common-pressure-hot-spine-allocation
 //! Common-pressure pure-water PZR thermodynamics, not a completed vessel flow
 //! solver. Actual ten-region geometry/ports are compiled separately. Present
 //! phase energies remain separate; absent phases have no property query. The

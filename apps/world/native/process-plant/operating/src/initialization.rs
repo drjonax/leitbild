@@ -1,3 +1,5 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-thermal.md#two-node-fuel-finite-helium-and-clad
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#initialization-and-pressure-projection-have-limited-roles
 //! Startup-only initialization of the three existing massless fuel surfaces.
 //! All finite energies, nuclear histories and current water/flow coordinates
 //! remain owned by the caller. This is NOT a stage inverse or time integrator.

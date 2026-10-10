@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#one-maintained-water-implementation
 //! The only unsafe water boundary. The pure operating equation crate remains
 //! unsafe-forbidden and has no dependency on this opt-in native package.
 
@@ -468,3 +469,6 @@ impl leitbild_operating_plant::hot_spine::Properties for If97 {
 }
 #[cfg(feature = "ida")]
 pub mod ida;
+pub mod network;
+#[cfg(target_os = "macos")]
+pub mod spectrum;

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { carveOperatingPrimary, compileOperatingSurgeHydraulics, operatingHousingMechanicalGeometry, prepareOperatingSpine } from './reference-design-operating-spine'
+import { carveOperatingPrimary, compileOperatingPoint, compileOperatingSurgeHydraulics, operatingHousingMechanicalGeometry, operatingPointSources, prepareOperatingSpine } from './reference-design-operating-spine'
 import { operatingCirculationCycles } from './reference-design-operating-hydraulics'
 import { compileOperatingPzr } from './reference-design-operating-pzr'
 import { routeElevation } from './reference-design-surge-route'
@@ -134,6 +134,42 @@ test('actual five-piece surge splits at8m with disjoint inertia, head, elbow and
   expect(() => compileOperatingSurgeHydraulics(cut)).toThrow('split elbow')
 })
 
+// Independent owner-statement fixture; the actual test below reads the wiki.
+function pointFixture() {
+  const docs: Record<string, string> = {
+    'systems/primary-coolant/pressurizer-thermal-state.md': '#### Acquisition and initial intent\n\nRetain the pressure setpoint **14,864,186.8055 Pa**, gain and bands.\n\n#### Bounded native evidence\n\nText.\n',
+    'systems/instrumentation/operational-observations.md': '## Primary pressure, inventory and heat transport\n\n```text\n# not a heading\n```\n\nSelect the PZR PT1/PT2/PT3 direct pressure interfaces at the top fluid boundary, +18.5 m on the current plant datum (12 m above the PZR bottom). LT datum remains the PZR bottom and its 12 m equivalent vessel height.\n',
+    'systems/primary-coolant/inventory-and-chemistry.md': '## Normal inventory controller\n\nThe candidate target is 6 m at the nominal state. Use one channel.\n',
+    'model/connected-primary-initialization.md': '## Current original physical hot preparation\n\nPassages retain momenta and actual supported 1500 rpm rotor states.\n',
+    'systems/primary-coolant/pressure-and-inventory.md': '### Acquired-pressure command comparison\n\nAt top-tap pressure 14,862,307.3669 Pa and commissioned setpoint 14,864,186.8055 Pa, duty follows.\n',
+    'systems/primary-coolant/pumps-and-support.md': '## Shaft and energy model\n\nCommands request zero or nominal speed for the initial operational interface; tests may differ.\n',
+  }
+  const bands = [0, 1, 3, 6, 9, 12], regions = bands.slice(0, -1).flatMap((lo, i) => ['inner', 'outer'].map(lane =>
+    ({ id: `PZR.${i}.${lane}`, bottom_m: 6.5 + lo, top_m: 6.5 + bands[i + 1]! })))
+  return { docs, pzr: { regions } }
+}
+
+test('declared operating point reads each owner statement once and reports the PZR region boundary', () => {
+  const { docs, pzr } = pointFixture(), point = compileOperatingPoint(docs, pzr, 1500)
+  expect([point.pzrRoofPressure_Pa, point.pzrRoofElevation_m, point.pzrLevel_m, point.rcpSpeedRequest]).toEqual([14864186.8055, 18.5, 6, 'nominal'])
+  expect(point.provenance).toEqual(operatingPointSources)
+  expect(point.pzrLevelSurfaceElevation_m).toBe(12.5)
+  expect(point.pzrLevelRegionBoundary).toEqual({ onBoundary: true, below: ['PZR.2.inner', 'PZR.2.outer'], above: ['PZR.3.inner', 'PZR.3.outer'] })
+  // A level inside a coarse band is reported, never moved to the nearest boundary.
+  const inside = { ...docs, 'systems/primary-coolant/inventory-and-chemistry.md': docs['systems/primary-coolant/inventory-and-chemistry.md']!.replace('target is 6 m', 'target is 5 m') }
+  expect(compileOperatingPoint(inside, pzr, 1500).pzrLevelRegionBoundary.onBoundary).toBe(false)
+  expect(compileOperatingPoint(inside, pzr, 1500).pzrLevel_m).toBe(5)
+  const edit = (page: string, from: string, to: string) => ({ ...docs, [page]: docs[page]!.replace(from, to) })
+  expect(() => compileOperatingPoint(edit('systems/primary-coolant/pressure-and-inventory.md', '186.8055 Pa,', '186.8056 Pa,'), pzr, 1500)).toThrow('disagree')
+  expect(() => compileOperatingPoint(edit('systems/instrumentation/operational-observations.md', '+18.5 m', '+18 m'), pzr, 1500)).toThrow('roof tap')
+  expect(() => compileOperatingPoint(docs, pzr, 1400)).toThrow('nominal speed')
+  expect(() => compileOperatingPoint(edit('systems/primary-coolant/pressurizer-thermal-state.md', '#### Acquisition and initial intent\n\nRetain', '#### Acquisition and initial intent\n\n#### Other\n\nRetain'), pzr, 1500)).toThrow('Expected one selected statement')
+  const doubled = docs['systems/primary-coolant/inventory-and-chemistry.md']!
+  expect(() => compileOperatingPoint({ ...docs, 'systems/primary-coolant/inventory-and-chemistry.md': doubled + 'The candidate target is 6 m at the nominal state.\n' }, pzr, 1500)).toThrow('Expected one selected statement')
+  const { 'systems/primary-coolant/pumps-and-support.md': _, ...missing } = docs
+  expect(() => compileOperatingPoint(missing, pzr, 1500)).toThrow('Missing operating-point owner')
+})
+
 const wiki = process.env.LD01_WIKI_ROOT, if97 = process.env.LD01_IF97_DIRECTORY
 if (!!wiki !== !!if97) throw Error('Supply both actual wiki and pinned IF97 directory')
 test.skipIf(!wiki || !if97)('actual single hot packet rebases every recipient, finite store and hydraulic cycle; native consumes it', async () => {
@@ -198,6 +234,14 @@ test.skipIf(!wiki || !if97)('actual single hot packet rebases every recipient, f
   for (const he of p.thermal.helium) expect(he.energy_j).toBeCloseTo(1.5 * he.nr_j_k * he.temperature_k, 7)
   expect(p.preparation.direct_source_projection.donorBranchConsistent).toBe(true)
   expect(p.preparation.direct_source_projection.maxConstraintDefect_kg_s).toBeLessThan(1e-7)
+  const point = p.preparation.operatingPoint
+  expect([point.pzrRoofPressure_Pa, point.pzrRoofElevation_m, point.pzrLevel_m, point.rcpSpeedRequest]).toEqual([14864186.8055, 18.5, 6, 'nominal'])
+  expect(point.pzrLevelRegionBoundary.onBoundary).toBe(true); expect(point.pzrLevelSurfaceElevation_m).toBe(12.5)
+  const pump = p.hydraulics.pump, omega = pump.referenceOmega_rad_s
+  expect([pump.driveTrackingTime_s, pump.driveTorqueCapFactor, pump.driveEfficiency]).toEqual([5, 1.5, .96])
+  expect(pump.drag_Nm_per_rad_s * omega ** 2).toBeCloseTo(.01 * pump.nominalFluidPower_W, 8)
+  expect(pump.rotorInertia_kg_m2).toBeCloseTo((pump.nominalFluidPower_W + pump.drag_Nm_per_rad_s * omega ** 2) * 10 / omega ** 2, 10)
+  expect('nominalDragPower_W' in pump).toBe(false)
   const native = process.env.LD01_OPERATING_HOT_SPINE_TEST
   if (native) {
     const directory = await mkdtemp(join(tmpdir(), 'ld01-hot-spine-'))

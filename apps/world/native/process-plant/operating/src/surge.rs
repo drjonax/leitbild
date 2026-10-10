@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#finite-surge-and-pzr-connection-equations
 //! Finite liquid-line storage and reciprocal current donor receipts.
 //!
 //! The primary, line and PZR keep their own thermodynamic pressures. Endpoint

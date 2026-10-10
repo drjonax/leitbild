@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#what-one-call-computes
 //! Connected current-state hot thermal/source residual/RHS operator.
 //! One call composes current feedback, actual event-fed history, reciprocal
 //! finite heat receipts and local retained-mass continuity. External ports

@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/computational-design-review.md#41-native-rust-compact-implicit-equations
 //! Reusable equation blocks for the approved compact operating model.
 //!
 //! This standalone crate does not import the fine research kernel, select a
@@ -11,11 +12,13 @@ pub mod hydraulics;
 pub mod initialization;
 pub mod kinetics;
 pub mod local_flow;
+pub mod network;
 pub mod phase;
 pub mod poisons;
 pub mod pressure;
 pub mod pzr;
 pub mod pzr_field;
+pub mod rotor;
 pub mod source_feedback;
 pub mod sparse;
 pub mod surge;

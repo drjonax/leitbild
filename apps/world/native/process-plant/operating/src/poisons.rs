@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-equations.md#poison-memory
 //! I-135/Xe-135 and Pm-149/Sm-149 inventory kinetics.
 //!
 //! Direct production yields and actual local capture-rate coefficients are

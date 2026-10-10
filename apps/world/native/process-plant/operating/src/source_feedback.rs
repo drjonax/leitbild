@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/systems/reactor/feedback-and-actuation-basis.md#selected-hot-response-and-capture-convention
 //! Current hot source feedback from immutable compiled physical coefficients.
 //! No reference calibration, equilibrium reset, JSON stage decoding or solver.
 //! Values and ONE current direction are evaluated together without allocation.

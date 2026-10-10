@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/systems/reactor/heat-and-history.md#compact-hot-reference-energy-and-material-preparation
 //! Finite effective fertile capture, using the SAME exposure as nuclear loss.
 //!
 //! A target atom becomes one effective product. The product is bookkeeping for

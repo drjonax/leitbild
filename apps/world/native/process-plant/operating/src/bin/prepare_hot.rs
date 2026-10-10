@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-reference.md#same-package-native-consumption
 //! One strict, once-per-preparation JSON boundary. This consumes the SAME
 //! owner-generated parameters/stocks as the TypeScript package, not a second
 //! Rust fixture. It evaluates equations and independent receipts, not time.

@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hydraulics.md#actual-finite-geometry-and-force-placement
 //! Actual hydraulic constitutive ports, NOT a completed low-Mach momentum chart.
 //!
 //! One implementation of reviewed signed RCP and passive pressure laws. The

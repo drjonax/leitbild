@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-equations.md#decay-heat-is-stored-energy-not-delayed-neutron-population
 //! Event-fed decay energy stores, separate from prompt deposition.
 //!
 //! For each group: E' = q * event_rate - lambda * E. The current release is
