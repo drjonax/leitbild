@@ -50,11 +50,17 @@ describe('the values equipment opened from the overview leads with', () => {
   })
 
   test('a signal only rules of other modes judge follows its key values and instruments', () => {
-    // RCP A's low loop flow alarm acts in power operation only.
-    expect(of(['rcpA'])).toEqual(['rcpA.loopFlowKgPerS', 'rcpA.runningState'] as never)
+    // At power RCP A's run feedback and loop flow are both judged by reactor trips of power operation, the pump
+    // breaker trip first; out of it only the run feedback's not-running alarm acts, and the loop flow follows.
+    expect(of(['rcpA'])).toEqual(['rcpA.runningState', 'rcpA.loopFlowKgPerS'] as never)
     expect(of(['rcpA'], { ...atPower, mode: 'coldShutdown' })).toEqual(['rcpA.runningState', 'rcpA.loopFlowKgPerS'] as never)
     // Where no declared mode holds, a rule declared for modes acts in none.
     expect(of(['rcpA'], { ...atPower, mode: null })).toEqual(['rcpA.runningState', 'rcpA.loopFlowKgPerS'] as never)
+    // The vessel's net inventory flow, judged only by the low primary flow trip of power operation, leads at power
+    // and falls behind the six out of it.
+    expect(of(['vessel'])[0]).toBe('vessel.netInventoryFlowKgPerS' as never)
+    expect(of(['vessel'], { ...atPower, mode: 'coldShutdown' })).not.toContain('vessel.netInventoryFlowKgPerS' as never)
+    expect(of(['vessel'], { ...atPower, mode: null })).not.toContain('vessel.netInventoryFlowKgPerS' as never)
   })
 
   test('parallel equipment is compared value by value', () => {
