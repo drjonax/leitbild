@@ -88,6 +88,30 @@ describe('I&C thresholds for composed displays', () => {
     expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO TRIP 20 %', 'LO ALM 30 %', 'HI ALM 75 %', 'HI TRIP 82 %'])
   })
 
+  test('draw a limit that only on/off states of other signals gate, naming them', () => {
+    // Safety injection on low pressure unless an operator blocked it: the 12.7 MPa line still belongs on the axis.
+    const pressure = compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path
+    const breaker = compiled.graph.signalBindingByTagId.get('TRIP-BKR-A-POS' as never)!
+    const gated = {
+      id: 'probe-gated-low-pressure',
+      label: 'Probe gated low pressure',
+      enabled: true,
+      ruleClass: 'protection' as const,
+      condition: { type: 'all' as const, conditions: [
+        { type: 'comparison' as const, signal: { path: pressure }, operator: '<' as const, value: 12.7 },
+        { type: 'comparison' as const, signal: { tagId: breaker.tagId! }, operator: '==' as const, value: false },
+      ] },
+      delayMs: 0, clearDelayMs: 0, latch: true, resetWhenClear: false, effects: [], commandGates: [],
+    }
+    const plant = { ...compiled, automation: { ...compiled.automation, rules: [...compiled.automation.rules, gated] } }
+    const drawn = icThresholdsForSignal(plant, pressure).thresholds.find(threshold => threshold.ruleId === 'probe-gated-low-pressure')!
+    expect([drawn.value, drawn.direction, drawn.gatedBy]).toEqual([12.7, 'low', ['TRIP-BKR-A-POS off']])
+    // Two limits on the value, or a gate on a number, still make a combined rule that is listed.
+    const twoLimits = { ...gated, id: 'probe-two-limits', condition: { type: 'all' as const, conditions: [gated.condition.conditions[0]!, { ...gated.condition.conditions[0]!, value: 12 }] } }
+    const listed = icThresholdsForSignal({ ...plant, automation: { ...plant.automation, rules: [...plant.automation.rules, twoLimits] } }, pressure)
+    expect(listed.combinedRules.map(rule => rule.ruleId)).toContain('probe-two-limits')
+  })
+
   test('list combined-condition rules instead of drawing them', () => {
     const flow = compiled.graph.signalBindingByTagId.get('RCP-A-FLOW' as never)!.path
     const result = icThresholdsForSignal(compiled, flow)

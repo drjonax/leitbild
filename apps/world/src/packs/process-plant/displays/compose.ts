@@ -1036,7 +1036,7 @@ const signalName = (pen: ComposedDisplayPen): string => `${pen.name} (${pen.tagI
 // Lines are named as the display labels them ("LO ALM 30 %"), so an answer
 // can refer to them by the same name.
 const thresholdText = (threshold: ComposedTrendThreshold, unit: ProcessUnit): string =>
-  `${threshold.kind === 'control' ? `I&C control set point marked on the axis: ${threshold.label}` : `"${thresholdName(threshold, unit)}" ${threshold.kind} line: ${threshold.label}`}, acts ${operatorText[threshold.operator]} ${threshold.value} ${unit} for ${threshold.signals.join(', ')}${threshold.modeLabel === undefined ? '' : ` (only in ${threshold.modeLabel})`}`
+  `${threshold.kind === 'control' ? `I&C control set point marked on the axis: ${threshold.label}` : `"${thresholdName(threshold, unit)}" ${threshold.kind} line: ${threshold.label}`}, acts ${operatorText[threshold.operator]} ${threshold.value} ${unit} for ${threshold.signals.join(', ')}${threshold.modeLabel === undefined ? '' : ` (only in ${threshold.modeLabel})`}${threshold.gatedBy === undefined ? '' : ` (only while ${threshold.gatedBy.join(' and ')})`}`
 
 /** How each requested reference resolved, so the agent learns exact tags, paths and units. */
 export const composedDisplaySignals = (display: CompiledComposedDisplay): ReadonlyArray<{

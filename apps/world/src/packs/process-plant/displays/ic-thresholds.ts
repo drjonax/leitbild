@@ -29,6 +29,12 @@ export interface ComposedDisplayThreshold {
   readonly modeLabel?: string
   /** The same modes by id, to tell whether the rule acts in the Plant's current mode. */
   readonly modeIds?: ReadonlyArray<string>
+  /**
+   * The on/off states of other signals the rule also requires ("SI-BLOCKED
+   * off"): it acts at this value only while they hold. Absent, the value alone
+   * decides.
+   */
+  readonly gatedBy?: ReadonlyArray<string>
 }
 
 /** A rule that watches the signal inside a combined condition (vote, all,
@@ -102,6 +108,35 @@ export const escalateLimits = (thresholds: ReadonlyArray<Omit<ComposedDisplayThr
       .map(other => other.value)).size,
   }))
 
+type NumericLimit = { readonly operator: '<' | '<=' | '>' | '>='; readonly value: number }
+
+/**
+ * One numeric limit on the path among conditions that are otherwise only
+ * on/off states of other signals: the limit, and those states as operators
+ * read them ("SI-BLOCKED off"). Null for anything else.
+ */
+const gatedLimit = (
+  plant: CompiledProcessPlant,
+  conditions: ReadonlyArray<ProcessPlantIcCondition>,
+  path: VariablePath,
+): { readonly limit: NumericLimit; readonly gates: ReadonlyArray<string> } | null => {
+  const limits: NumericLimit[] = []
+  const gates: string[] = []
+  for (const child of conditions) {
+    if (child.type !== 'comparison') return null
+    const onPath = resolveProcessPlantSignalPath(plant.graph, child.signal) === path
+    if (onPath && typeof child.value === 'number' && child.operator !== '==' && child.operator !== '!=') {
+      limits.push({ operator: child.operator, value: child.value })
+      continue
+    }
+    if (onPath || typeof child.value !== 'boolean' || (child.operator !== '==' && child.operator !== '!=')) return null
+    const binding = resolveProcessPlantSignalBinding(plant.graph, child.signal)
+    const on = child.operator === '==' ? child.value : !child.value
+    gates.push(`${binding.tagId ?? binding.label} ${on ? 'on' : 'off'}`)
+  }
+  return limits.length === 1 && gates.length > 0 ? { limit: limits[0]!, gates } : null
+}
+
 export const icThresholdsForSignal = (
   plant: CompiledProcessPlant,
   path: VariablePath,
@@ -125,6 +160,26 @@ export const icThresholdsForSignal = (
         direction: condition.operator === '<' || condition.operator === '<=' ? 'low' : 'high',
         value: condition.value,
         ...modesOf(plant, rule),
+      })
+      continue
+    }
+    // A limit on this value that other signals' on/off states only gate (SI on
+    // low pressure unless an operator blocked it) still has its place on the
+    // axis: it is drawn, naming what gates it. Votes, alternatives and limits
+    // shared with other values stay listed.
+    const gated = condition.type === 'all' ? gatedLimit(plant, condition.conditions, path) : null
+    if (gated !== null) {
+      const severity = severityFor(rule)
+      thresholds.push({
+        ruleId: rule.id,
+        label: labelFor(rule),
+        kind: kindFor(rule),
+        ...(severity === undefined ? {} : { severity }),
+        operator: gated.limit.operator,
+        direction: gated.limit.operator === '<' || gated.limit.operator === '<=' ? 'low' : 'high',
+        value: gated.limit.value,
+        ...modesOf(plant, rule),
+        gatedBy: gated.gates,
       })
       continue
     }
