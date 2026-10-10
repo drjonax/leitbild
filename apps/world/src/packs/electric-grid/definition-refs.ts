@@ -12,7 +12,6 @@ import type {
 export const norwayGridModelRef = 'electric-grid.norway.transmission'
 export const haldenFourUnitGridModelRef = 'electric-grid.halden.four-unit'
 export const norwayNormalOperatingPointRef = 'electric-grid.norway.normal'
-export const haldenFourUnitOperatingPointRef = 'electric-grid.halden.four-unit.normal'
 export const norwayStandardAutomationRef = 'electric-grid.norway.standard'
 
 export interface GridModelAssetCounts {
@@ -103,12 +102,6 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     title: 'Normal winter weekday',
     description: 'Winter weekday demand, available generation, and initial storage charge.',
     compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
-    values: { loadScale: 1.03, generationAvailabilityScale: 1, storageStateOfCharge: 0.58 },
-  }, {
-    id: haldenFourUnitOperatingPointRef,
-    title: 'Halden four-unit normal operation',
-    description: 'Balanced Norwegian demand and conventional dispatch before the four connected units enter the runtime exchange.',
-    compatibleModelRefs: [haldenFourUnitGridModelRef],
     values: { loadScale: 1.03, generationAvailabilityScale: 1, storageStateOfCharge: 0.58 },
   }],
   automations: [{

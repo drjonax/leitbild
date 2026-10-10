@@ -84,8 +84,9 @@ describe('electric grid Pack', () => {
     expect(() => compileGridModelIndex({ ...combined, connectionPoints: [{ ...combined.connectionPoints[0]!, busId: 'missing' }] })).toThrow()
     expect(() => addGridModelAssets(base, { ...addition, baseModelRef: 'missing' }, 'test addition')).toThrow('base mismatch')
     // A published model is an immutable artifact used by persisted Run state.
-    expect(definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal').definitionDigest)
-      .toBe('2f785ba0ebb800eb206d3d3890f8e3713d6bb6c06bd9802832b3c8dc889b8ac0')
+    expect(definition('electric-grid.halden.four-unit', 'electric-grid.norway.normal').definitionDigest)
+      .toBe('24e790c7fc6808f697967934fab16b9f5fb1f47740a3c2c003b20b370ee38ec2')
+    expect(() => definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal')).toThrow('unknown Grid Operating Point')
     expect(definition('electric-grid.halden.four-unit', 'electric-grid.norway.normal').model.connectionPoints).toHaveLength(4)
   })
 
