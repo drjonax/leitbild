@@ -77,50 +77,6 @@ impl<P: Properties> Network<P> {
         Ok(())
     }
 
-    /// The consistent initial pair at a prepared state (decision 0013's exit),
-    /// built from the residual's own forces, not from IDACalcIC: algebraic
-    /// rates zero, and each differential rate the value that zeroes its own
-    /// row through its unit y'-coefficient at `(y, 0)`. At a rest state every
-    /// receipt vanishes, so stock rates are their rows' round-off, impulse
-    /// rates carry each face's force at Q = 0 and rotor rates their drive law
-    /// at rest. Refuses, Fatal, unless the verified largest scaled
-    /// `|F(t, y, y')|` is at most `bound`; returns `y'` and that value.
-    pub fn consistent_rates(
-        &mut self,
-        t: f64,
-        y: &[f64],
-        differential: &[f64],
-        bound: f64,
-    ) -> Result<(Vec<f64>, f64), Failure> {
-        let n = self.dimension();
-        if y.len() != n || differential.len() != n || !(bound.is_finite() && bound > 0.) {
-            return Err(Failure::Fatal("consistent-rate layout or bound".into()));
-        }
-        let zero = vec![0.; n];
-        self.evaluate(t, y, &zero, None, 0., None)?;
-        let yp: Vec<f64> = self
-            .rows
-            .iter()
-            .zip(differential)
-            .map(|(row, id)| if *id == 1. { -row.value } else { 0. })
-            .collect();
-        self.evaluate(t, y, &yp, None, 0., None)?;
-        let largest = self.rows.iter().fold(0_f64, |best, r| {
-            let v = r.value.abs();
-            if best.is_nan() || v.is_nan() || v > best {
-                v
-            } else {
-                best
-            }
-        });
-        if !(largest <= bound) {
-            return Err(Failure::Fatal(format!(
-                "the prepared pair is not consistent: largest scaled row {largest} > {bound}"
-            )));
-        }
-        Ok((yp, largest))
-    }
-
     /// Evaluate all residual rows into `rows()`; with `seed`, also directions.
     pub fn evaluate(
         &mut self,
