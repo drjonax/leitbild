@@ -870,8 +870,19 @@ fn s1_hydraulics_admission() {
             "slowest_oscillatory":pre_report.modes.iter().filter(|m|m.frequency_hz>0.).take(8).map(|m|json!({"hz":m.frequency_hz,"zeta":m.damping_ratio,"e_fold_s":m.e_fold_s})).collect::<Vec<_>>()},
         "post_seizure":{"finite":post_report.finite,"infinite":post_report.infinite.count,"algebraic":algebraic+1,"unstable":post_report.unstable,"marginal":post_report.marginal,"fast_excited":fast_excited(&post_report),"max_ratio":post_report.events[0].max_ratio,"removed_rotor_energy_j":locking.event.map(|e|e.removed_kinetic_energy_j)}
     });
-    let go = pre_report.unstable == 0
-        && post_report.unstable == 0
+    // A positive real part counts only where it is resolved: a mode whose
+    // first-order error bound covers Re λ has an unresolved sign (the
+    // spectrum's `marginal`), as for an exactly conserved inventory.
+    let resolved_growing = |spectrum: &spectrum::Spectrum| {
+        spectrum
+            .modes
+            .iter()
+            .filter(|m| m.unstable && !m.marginal)
+            .count()
+    };
+    let (resolved_pre, resolved_post) = (resolved_growing(&pre), resolved_growing(&post));
+    let go = resolved_pre == 0
+        && resolved_post == 0
         && pre_report.infinite.count == algebraic
         && post_report.infinite.count == algebraic + 1
         && spectral["pre"]["fast_excited"]
@@ -883,6 +894,8 @@ fn s1_hydraulics_admission() {
             .unwrap()
             .is_empty();
     receipt["spectrum"] = spectral;
+    receipt["spectrum"]["resolved_growing_pre"] = json!(resolved_pre);
+    receipt["spectrum"]["resolved_growing_post"] = json!(resolved_post);
     if !go {
         finish(
             &mut receipt,
