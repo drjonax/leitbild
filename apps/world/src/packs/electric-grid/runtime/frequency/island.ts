@@ -72,18 +72,17 @@ const limited = (outputMw: number, upMw: number, downMw: number): number => Math
 
 type WorkingUnitState = { -readonly [K in keyof UnitFrequencyState]: UnitFrequencyState[K] }
 
-/** Exact integral of a linear mFRR ramp over [t0, t1]. */
+/** Exact integral of a linear mFRR ramp over [t0, t1]: held before the ramp, linear during it, held after. */
 const mfrrEnergyMws = (ramp: MfrrUnitRamp, t0: number, t1: number, fullActivationSeconds: number): number => {
   if (ramp.fromMw === ramp.toMw) return ramp.toMw * (t1 - t0)
-  const rampEnd = ramp.startedAtSeconds + fullActivationSeconds
-  let energy = 0
-  let a = t0
-  for (const point of [ramp.startedAtSeconds, rampEnd, t1]) {
-    if (point <= a || point > t1) continue
-    energy += (mfrrOutputMw(ramp, a, fullActivationSeconds) + mfrrOutputMw(ramp, point, fullActivationSeconds)) / 2 * (point - a)
-    a = point
-  }
-  return energy
+  const rampStart = ramp.startedAtSeconds
+  const rampEnd = rampStart + fullActivationSeconds
+  const a = Math.min(rampEnd, Math.max(rampStart, t0))
+  const b = Math.min(rampEnd, Math.max(rampStart, t1))
+  const before = Math.max(0, Math.min(t1, rampStart) - t0) * ramp.fromMw
+  const after = Math.max(0, t1 - Math.max(t0, rampEnd)) * ramp.toMw
+  const during = (b - a) * (ramp.fromMw + (ramp.toMw - ramp.fromMw) * ((a + b) / 2 - rampStart) / fullActivationSeconds)
+  return before + during + after
 }
 
 const outOfService = (unit: UnitFrequencyState): UnitFrequencyState =>
@@ -154,6 +153,8 @@ export const advanceIslandFrequency = (
   }
   collectActive()
   let kineticEnergyMws = islandKineticEnergyMws(units, input.externals)
+  // True while every synchronised unit's protection relays sit at zero with no trip.
+  let relaysAtRest = activeStates.every(state => protectionAtRest(state.protection))
   let servedNominalMw = servedAtNominalMw(input, lfddShedFractionByLoad(lfdd))
   // Per-unit scratch for one sub-step: scheduled end, FCR starting outputs and caps.
   let scheduledEnd = new Float64Array(active.length)
@@ -420,7 +421,9 @@ export const advanceIslandFrequency = (
     const tripped = new Set<string>()
     // Inside every pick-up band at both ends of the step, a relay whose timers are all zero stays so.
     const quiet = protectionQuiet(automation.generatorProtection, f0, frequencyHz, rocofHzPerSecond)
-    for (let index = 0; index < active.length; index += 1) {
+    const sweep = !(quiet && relaysAtRest)
+    if (sweep) relaysAtRest = quiet
+    for (let index = 0; sweep && index < active.length; index += 1) {
       const unit = active[index]!
       const current = activeStates[index]!
       if (quiet && protectionAtRest(current.protection)) continue
@@ -428,6 +431,7 @@ export const advanceIslandFrequency = (
         previousFrequencyHz: f0, frequencyHz, rocofHzPerSecond, stepSeconds, nowSeconds: t1,
       })
       current.protection = protection
+      if (!protectionAtRest(protection)) relaysAtRest = false
       if (protection.trip) {
         tripped.add(unit.id)
         Object.assign(current, outOfService(current))

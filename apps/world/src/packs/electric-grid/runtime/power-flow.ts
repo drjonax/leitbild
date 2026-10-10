@@ -185,8 +185,10 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
     frequencyOfPlanIsland[island.planIndex] = island.energized ? island.frequency!.frequencyHz : null
     idOfPlanIsland[island.planIndex] = island.id
   }
-  model.branches.forEach((branch, index) => {
-    const state = grid.branches.get(branch.id)!
+  // Branch states are kept in model order (topology.ts checks it), so they are walked alongside the model.
+  let index = 0
+  for (const state of grid.branches.values()) {
+    const branch = model.branches[index]!
     const from = network.branchFrom[index]!
     const live = plan.closedBranches[index] === 1 && energisedPlanIsland[islandOf[from]!] === 1
     const flowMw = live ? flows[index]! : 0
@@ -202,7 +204,8 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
     state.frequencyHz = live ? frequencyOfPlanIsland[islandOf[from]!]! : null
     state.voltageFromPu = energisedPlanIsland[islandOf[from]!] === 1 ? 1 : 0
     state.voltageToPu = toLive ? 1 : 0
-  })
+    index += 1
+  }
   for (const link of grid.definition.index.hvdcLinks) lossesMw += grid.hvdcLinks.get(link.id)!.lossesMw
 
   const busStates = grid.busStates
