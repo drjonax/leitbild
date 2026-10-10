@@ -12,7 +12,7 @@ use leitbild_operating_plant::{
 };
 use leitbild_operating_water::{
     Branch, CaloricLinearization, If97, WaterPoint, directional_ph, directional_pu,
-    ida::{Failure, Ida, Initial, System},
+    ida::{Advance, Failure, Ida, Initial, System},
     point, point_ph, point_pu,
 };
 use serde_json::{Value, json};
@@ -1005,6 +1005,18 @@ impl System for Pilot {
     fn nonzeros(&self) -> usize {
         self.scales.len() * self.scales.len()
     }
+    fn root_count(&self) -> usize {
+        0
+    }
+    fn roots(
+        &mut self,
+        _: f64,
+        _: &[f64],
+        _: &[f64],
+        _: &mut [f64],
+    ) -> std::result::Result<(), Failure> {
+        Ok(())
+    }
     fn residual(
         &mut self,
         t: f64,
@@ -1588,7 +1600,9 @@ fn actual_38_volume_mechanical_trajectory() {
         for target in [0.001, 0.01, 0.1, 1., 2.] {
             let segment_started = Instant::now();
             let before = ida.stats().unwrap();
-            let result = ida.advance(target, &mut y, &mut yp);
+            let result = ida
+                .advance(target, &mut y, &mut yp)
+                .and_then(Advance::reached);
             let segment_wall = segment_started.elapsed().as_secs_f64();
             let after = ida.stats().unwrap();
             advance_segments.push(json!({"requested_time_s":target,"returned_success":result.is_ok(),"internal_time_before_s":before.internal_time,"internal_time_after_s":after.internal_time,"wall_s":segment_wall,"steps":after.steps-before.steps,"residuals":after.residuals-before.residuals,"jacobians":after.jacobians-before.jacobians,"error_failures":after.error_failures-before.error_failures,"last_step_s":after.last_step}));
