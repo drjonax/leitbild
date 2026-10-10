@@ -40,11 +40,11 @@ describe('Grid Model v2 schema', () => {
     expect(rejection(variant(model => { model.generators[0].busId = 'bus:osm-way-1@420' }))).toContain('$.generators[0].busId: unknown bus')
     expect(rejection(variant(model => { model.loads[1].busId = 'bus:boundary-DE' }))).toContain('$.loads[1].busId: bus:boundary-DE is a boundary bus')
     expect(rejection(variant(model => { model.connectionPoints[0].busId = 'bus:osm-way-1@420' }))).toContain('$.connectionPoints[0].busId: unknown bus')
-    expect(rejection(variant(model => { model.hvdcLinks[0].fromBusId = 'bus:boundary-SE3' }))).toContain('$.hvdcLinks[0].fromBusId')
+    expect(rejection(variant(model => { model.hvdcLinks[0].fromBusId = 'bus:boundary-SE3@400' }))).toContain('$.hvdcLinks[0].fromBusId')
     expect(rejection(variant(model => { model.externalSystems[1].boundaryBusIds = ['bus:osm-way-60495669@420'] })))
       .toContain('$.externalSystems[1].boundaryBusIds[0]: bus:osm-way-60495669@420 is not a boundary bus')
-    expect(rejection(variant(model => { model.externalSystems[1].boundaryBusIds = ['bus:boundary-SE3'] })))
-      .toContain('$.externalSystems[1].boundaryBusIds[0]: bus:boundary-SE3 already belongs to external:nordic-remainder')
+    expect(rejection(variant(model => { model.externalSystems[1].boundaryBusIds = ['bus:boundary-SE3@400'] })))
+      .toContain('$.externalSystems[1].boundaryBusIds[0]: bus:boundary-SE3@400 already belongs to external:nordic-remainder')
     expect(rejection(variant(model => { model.connectionPoints[0].nominalKv = 132 }))).toContain('$.connectionPoints[0].nominalKv')
   })
 
@@ -65,6 +65,7 @@ describe('Grid Model v2 schema', () => {
     expect(rejection(variant(model => { model.externalSystems[1].id = 'external:NL' }))).toContain('$.externalSystems[1].id: must be external:DE')
     expect(rejection(variant(model => { model.generators[2].busId = 'bus:osm-way-60495669@420' }))).toContain('$.generators[2].busId: the aggregate id names bus bus:osm-way-60495669@132')
     expect(rejection(variant(model => { model.loads[0].municipalityNr = '0302' }))).toContain('$.loads[0].municipalityNr: the id names municipality 0301')
+    expect(rejection(variant(model => { model.loads[0].busId = 'bus:osm-relation-7928148@420' }))).toContain('$.loads[0].busId: the load id names substation osm-way-60495669')
     expect(rejection(variant(model => { model.connectionPoints[0].id = 'Unit 1' }))).toContain('$.connectionPoints[0].id')
   })
 
@@ -117,5 +118,21 @@ describe('Grid Model v2 schema', () => {
   test('requires converter-connected units to carry no synchronous inertia', () => {
     expect(rejection(variant(model => { model.generators[1].inertiaSeconds = 1 }))).toContain('$.generators[1].inertiaSeconds: a converter-connected unit has no synchronous inertia')
     expect(rejection(variant(model => { model.generators[0].minimumStableMw = 400 }))).toContain('$.generators[0].minimumStableMw: must not exceed capacityMw (300)')
+  })
+
+  test('carries the AC load-flow fields: taps, reactive capability, set-points and shunts', () => {
+    expect(rejection(variant(model => { delete model.branches[3].tapRatio }))).toContain('$.branches[3].tapRatio: required for a transformer')
+    expect(rejection(variant(model => { model.branches[0].tapRatio = 1 }))).toContain('$.branches[0].tapRatio: a ac_line has no tap changer')
+    expect(rejection(variant(model => { delete model.generators[0].powerFactor }))).toContain('$.generators[0].powerFactor')
+    expect(rejection(variant(model => { model.generators[0].voltageSetpointPu = 1.3 }))).toContain('$.generators[0].voltageSetpointPu')
+    expect(rejection(variant(model => { model.generators[0].ratedMva = 250 }))).toContain('$.generators[0].ratedMva: must be at least capacityMw (300)')
+    expect(rejection(variant(model => { model.shunts[0].busId = 'bus:osm-way-60495669@132' }))).toContain('$.shunts[0].busId: the shunt id names bus bus:osm-way-60495669@420')
+    expect(rejection(variant(model => { model.shunts[0].mvarAtNominalVoltage = 0 }))).toContain('$.shunts[0].mvarAtNominalVoltage: must be non-zero')
+    expect(rejection(variant(model => { model.shunts[0] = { ...model.shunts[0], id: 'shunt:osm-way-1@420-1', busId: 'bus:osm-way-1@420' } }))).toContain('$.shunts[0].busId: unknown bus bus:osm-way-1@420')
+  })
+
+  test('gives AC boundary buses their voltage and HVDC boundaries none', () => {
+    expect(rejection(variant(model => { model.buses[4].id = 'bus:boundary-SE3' }))).toContain('$.buses[4].id: a boundary bus id must be bus:boundary-SE3@400')
+    expect(rejection(variant(model => { model.buses[5].id = 'bus:boundary-DE@400' }))).toContain('$.buses[5].id: a boundary bus id must be bus:boundary-DE')
   })
 })

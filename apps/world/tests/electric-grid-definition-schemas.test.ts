@@ -41,6 +41,7 @@ const additionJson = () => ({
     location: [7.8, 58.2], referenceDemandMw: 40, powerFactor: 0.9, priority: 'critical', interruptibleMw: 0, priceArea: 'NO2', attachmentKm: 0,
     provenance: { sources: ['osm:pbf-power:NO@2026-10-09'], method: 'mapped', confidence: 'medium' },
   }],
+  shunts: [],
   connectionPoints: [{ id: 'second-plant-unit-1', label: 'Second plant unit 1 bay', busId: 'bus:curated-second-plant@420', nominalKv: 420, maximumExportMw: 50, maximumImportMw: 1200 }],
 })
 const composeOnto = (artifact: Parameters<typeof composeGridModel>[0]['base'], json: unknown): GridModelV2 =>

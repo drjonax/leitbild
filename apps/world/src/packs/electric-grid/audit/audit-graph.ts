@@ -67,6 +67,7 @@ export interface AuditGenerator {
   readonly capacityMw: number
   readonly priceArea?: string
   readonly attachmentKm: number
+  readonly curationIds: ReadonlyArray<string>
 }
 
 export interface AuditLoad {
@@ -78,6 +79,7 @@ export interface AuditLoad {
   readonly demandMw: number
   readonly priceArea?: string
   readonly attachmentKm: number
+  readonly curationIds: ReadonlyArray<string>
 }
 
 export interface AuditGraph {

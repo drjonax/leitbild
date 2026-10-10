@@ -130,6 +130,7 @@ export const auditGraphFromGridModelV1 = (input: GridModelV1AuditInput): AuditGr
       capacityMw: generator.capacityMw,
       ...(generator.priceArea === undefined ? {} : { priceArea: generator.priceArea }),
       attachmentKm: haversineKm(generator.location, busLocation(generator.busId, generator.id)),
+      curationIds: [],
     })),
     loads: model.loads.map(load => ({
       id: load.id,
@@ -139,6 +140,7 @@ export const auditGraphFromGridModelV1 = (input: GridModelV1AuditInput): AuditGr
       busId: load.busId,
       demandMw: load.demandMw,
       attachmentKm: haversineKm(load.location, busLocation(load.busId, load.id)),
+      curationIds: [],
     })),
   }
 }

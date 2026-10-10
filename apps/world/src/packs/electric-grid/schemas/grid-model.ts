@@ -12,6 +12,7 @@ import {
   municipalityLoadIdParts,
   nordicSynchronousExternalAreas,
   priceAreaSchema,
+  shuntIdParts,
   siteLoadKinds,
   transformerIdParts,
 } from './grid-ids.ts'
@@ -72,7 +73,13 @@ export const gridBusSchema = z.object({
   requireCuratedProvenance(context, bus)
   if (bus.kind === 'boundary') {
     if (bus.externalArea === undefined) fail(context, ['externalArea'], 'required for a boundary bus')
-    else if (bus.id !== `bus:boundary-${bus.externalArea}`) fail(context, ['id'], `a boundary bus id must be bus:boundary-${bus.externalArea}`)
+    else {
+      // An AC tie meets a synchronous neighbour at one voltage level; an HVDC area has one terminal.
+      const expected = nordicSynchronousExternalAreas.has(bus.externalArea)
+        ? `bus:boundary-${bus.externalArea}@${String(bus.nominalKv)}`
+        : `bus:boundary-${bus.externalArea}`
+      if (bus.id !== expected) fail(context, ['id'], `a boundary bus id must be ${expected}`)
+    }
     if (bus.priceArea !== undefined) fail(context, ['priceArea'], 'a boundary bus lies outside the Norwegian price areas')
     if (bus.substationId !== undefined) fail(context, ['substationId'], 'a boundary bus has no substation')
     return
@@ -109,10 +116,14 @@ export const gridBranchSchema = z.object({
   reactancePu: positive,
   resistancePu: nonNegative,
   chargingSusceptancePu: nonNegative,
+  /** Off-nominal turns ratio (1 = nominal); required for transformers, absent for lines and cables. */
+  tapRatio: positive.optional(),
   osmWayIds,
   provenance: gridProvenanceSchema,
 }).strict().superRefine((branch, context) => {
   requireCuratedProvenance(context, branch)
+  if (branch.kind === 'transformer' && branch.tapRatio === undefined) fail(context, ['tapRatio'], 'required for a transformer')
+  if (branch.kind !== 'transformer' && branch.tapRatio !== undefined) fail(context, ['tapRatio'], `a ${branch.kind} has no tap changer`)
   if (branch.emergencyRatingMw < branch.ratingMw) fail(context, ['emergencyRatingMw'], `must be at least ratingMw (${branch.ratingMw})`)
   if (branch.fromBusId === branch.toBusId) fail(context, ['toBusId'], 'a branch must connect two different buses')
   if (branch.kind === 'transformer' && branch.lengthKm !== undefined) fail(context, ['lengthKm'], 'a transformer has no length')
@@ -162,19 +173,25 @@ export const gridExternalSystemSchema = z.object({
   inertiaGws: positive.optional(),
   /** Load for frequency-dependent damping; required when synchronous. */
   loadMw: positive.optional(),
+  /** FCR-N held by the system, MW/Hz. */
   fcrNMwPerHz: nonNegative.optional(),
   fcrDUpMw: nonNegative.optional(),
+  fcrDDownMw: nonNegative.optional(),
+  afrrUpMw: nonNegative.optional(),
+  afrrDownMw: nonNegative.optional(),
   provenance: gridProvenanceSchema,
 }).strict().superRefine((system, context) => {
   if (system.id !== `external:${system.area}`) fail(context, ['id'], `must be external:${system.area}`)
   requireUnique(context, system.boundaryBusIds, 'boundaryBusIds')
+  const synchronousFields = ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw'] as const
   if (system.synchronous) {
     if (system.area !== 'nordic-remainder' && !nordicSynchronousExternalAreas.has(system.area)) fail(context, ['synchronous'], `${system.area} is not synchronous with the Nordic system`)
-    if (system.inertiaGws === undefined) fail(context, ['inertiaGws'], 'required for a synchronous external system')
-    if (system.loadMw === undefined) fail(context, ['loadMw'], 'required for a synchronous external system')
+    for (const field of synchronousFields) {
+      if (system[field] === undefined) fail(context, [field], 'required for a synchronous external system')
+    }
     return
   }
-  for (const field of ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw'] as const) {
+  for (const field of synchronousFields) {
     if (system[field] !== undefined) fail(context, [field], 'only a synchronous external system shares frequency with Norway')
   }
 })
@@ -188,6 +205,10 @@ export const gridGeneratorSchema = z.object({
   location: lonLat,
   capacityMw: positive,
   ratedMva: positive,
+  /** Rated power factor; the reactive limit is ratedMva·√(1 − powerFactor²). */
+  powerFactor: z.number().finite().gt(0).max(1),
+  /** Voltage set-point of the attached bus while the unit controls voltage. */
+  voltageSetpointPu: z.number().finite().min(0.9).max(1.1),
   /** H on ratedMva; 0 for converter-connected units. */
   inertiaSeconds: nonNegative,
   synchronous: z.boolean(),
@@ -203,6 +224,7 @@ export const gridGeneratorSchema = z.object({
   provenance: gridProvenanceSchema,
 }).strict().superRefine((generator, context) => {
   requireCuratedProvenance(context, generator)
+  if (generator.ratedMva < generator.capacityMw) fail(context, ['ratedMva'], `must be at least capacityMw (${generator.capacityMw})`)
   if (generator.minimumStableMw > generator.capacityMw) fail(context, ['minimumStableMw'], `must not exceed capacityMw (${generator.capacityMw})`)
   if (!generator.synchronous && generator.inertiaSeconds !== 0) fail(context, ['inertiaSeconds'], 'a converter-connected unit has no synchronous inertia')
   requireUnique(context, generator.registryIds, 'registryIds')
@@ -240,6 +262,19 @@ export const gridLoadSchema = z.object({
   }
 })
 export type GridLoadV2 = z.infer<typeof gridLoadSchema>
+
+export const gridShuntSchema = z.object({
+  id: z.string().regex(gridIdPatterns.shunt, 'must be a Grid shunt id'),
+  busId: busRef,
+  /** Reactive power at 1 pu voltage: negative for a reactor (absorbs), positive for a capacitor. */
+  mvarAtNominalVoltage: z.number().finite().refine(value => value !== 0, 'must be non-zero'),
+  switchable: z.boolean(),
+  provenance: gridProvenanceSchema,
+}).strict().superRefine((shunt, context) => {
+  const parts = shuntIdParts(shunt.id)
+  if (parts !== undefined && parts.busId !== shunt.busId) fail(context, ['busId'], `the shunt id names bus ${parts.busId}`)
+})
+export type GridShuntV2 = z.infer<typeof gridShuntSchema>
 
 export const gridConnectionPointSchema = z.object({
   id: z.string().max(128).regex(gridIdPatterns.connectionPoint, 'must be a kebab-case connection point id'),
@@ -286,6 +321,7 @@ export const gridModelSchema = z.object({
   externalSystems: z.array(gridExternalSystemSchema),
   generators: z.array(gridGeneratorSchema),
   loads: z.array(gridLoadSchema),
+  shunts: z.array(gridShuntSchema),
   /** Empty until a real storage asset with provenance exists. */
   storage: z.tuple([]),
   connectionPoints: z.array(gridConnectionPointSchema),

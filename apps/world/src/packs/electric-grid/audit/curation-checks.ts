@@ -10,6 +10,8 @@ const referencedCurationIds = (context: AuditContext): ReadonlySet<string> => ne
   ...context.graph.buses.flatMap(bus => bus.curationIds),
   ...context.graph.branches.flatMap(branch => branch.curationIds),
   ...context.graph.hvdcLinks.flatMap(link => link.curationIds),
+  ...context.graph.generators.flatMap(generator => generator.curationIds),
+  ...context.graph.loads.flatMap(load => load.curationIds),
 ])
 
 const levelBuses = (context: AuditContext, osmId: string, voltageKv: number) => {
@@ -88,7 +90,7 @@ export const curationsCheck = (context: AuditContext, statuses: ReadonlyArray<Cu
     assetIds: [`curation:${status.id}`],
   }))
   const assetsByUnknown = new Map<string, string[]>()
-  for (const asset of [...context.graph.buses, ...context.graph.branches, ...context.graph.hvdcLinks]) {
+  for (const asset of [...context.graph.buses, ...context.graph.branches, ...context.graph.hvdcLinks, ...context.graph.generators, ...context.graph.loads]) {
     for (const id of asset.curationIds) {
       if (known.has(id)) continue
       const list = assetsByUnknown.get(id)

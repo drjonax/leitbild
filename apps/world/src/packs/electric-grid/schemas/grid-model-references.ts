@@ -1,11 +1,11 @@
 import type { GridDataIssue } from './data-issues.ts'
 import type { GridModelV2 } from './grid-model.ts'
-import { nordicSynchronousExternalAreas, transformerIdParts } from './grid-ids.ts'
+import { municipalityLoadIdParts, nordicSynchronousExternalAreas, transformerIdParts } from './grid-ids.ts'
 
 // Cross-asset rules of Grid Model v2: unique ids, resolvable references, boundary coverage
 // and provenance sources that name a recorded build input.
 
-export const gridModelAssetCollections = ['buses', 'branches', 'hvdcLinks', 'externalSystems', 'generators', 'loads', 'connectionPoints'] as const
+export const gridModelAssetCollections = ['buses', 'branches', 'hvdcLinks', 'externalSystems', 'generators', 'loads', 'shunts', 'connectionPoints'] as const
 export type GridModelAssetCollection = typeof gridModelAssetCollections[number]
 
 type Model = Pick<GridModelV2, GridModelAssetCollection | 'sourceBuild'>
@@ -80,7 +80,12 @@ export const gridModelReferenceIssues = (model: Model): ReadonlyArray<GridDataIs
   })
 
   model.generators.forEach((generator, index) => { requireBus(['generators', index, 'busId'], generator.busId, 'norwegian') })
-  model.loads.forEach((load, index) => { requireBus(['loads', index, 'busId'], load.busId, 'norwegian') })
+  model.loads.forEach((load, index) => {
+    const bus = requireBus(['loads', index, 'busId'], load.busId, 'norwegian')
+    const parts = municipalityLoadIdParts(load.id)
+    if (bus !== undefined && parts !== undefined && bus.substationId !== parts.substationId) fail(['loads', index, 'busId'], `the load id names substation ${parts.substationId}`)
+  })
+  model.shunts.forEach((shunt, index) => { requireBus(['shunts', index, 'busId'], shunt.busId, 'norwegian') })
   model.connectionPoints.forEach((point, index) => {
     const bus = requireBus(['connectionPoints', index, 'busId'], point.busId, 'norwegian')
     if (bus !== undefined && bus.nominalKv !== point.nominalKv) fail(['connectionPoints', index, 'nominalKv'], `must equal the bus voltage ${bus.nominalKv} kV`)

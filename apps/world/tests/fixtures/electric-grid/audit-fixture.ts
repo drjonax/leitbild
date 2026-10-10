@@ -85,13 +85,13 @@ export const fixtureGraph = (): AuditGraph => ({
   branches,
   hvdcLinks: [{ id: 'hvdc:fixture-link', label: 'Fixture link', fromBusId: 'bus:b@420', toBusId: 'bus:boundary-DK1', ratingMw: 700, osmWayIds: ['way/300'], curationIds: [] }],
   generators: [
-    { id: 'generator:p', label: 'P hydro', kind: 'hydro-reservoir', family: 'hydro', busId: 'bus:p@300', capacityMw: 300, priceArea: 'NO1', attachmentKm: 1 },
-    { id: 'generator:c', label: 'C hydro', kind: 'hydro-reservoir', family: 'hydro', busId: 'bus:c@420', capacityMw: 500, priceArea: 'NO1', attachmentKm: 2 },
-    { id: 'generator:e', label: 'E wind', kind: 'wind', family: 'wind', busId: 'bus:e@132', capacityMw: 100, priceArea: 'NO1', attachmentKm: 5 },
+    { id: 'generator:p', label: 'P hydro', kind: 'hydro-reservoir', family: 'hydro', busId: 'bus:p@300', capacityMw: 300, priceArea: 'NO1', attachmentKm: 1, curationIds: [] },
+    { id: 'generator:c', label: 'C hydro', kind: 'hydro-reservoir', family: 'hydro', busId: 'bus:c@420', capacityMw: 500, priceArea: 'NO1', attachmentKm: 2, curationIds: [] },
+    { id: 'generator:e', label: 'E wind', kind: 'wind', family: 'wind', busId: 'bus:e@132', capacityMw: 100, priceArea: 'NO1', attachmentKm: 5, curationIds: [] },
   ],
   loads: [
-    { id: 'load:a', label: 'A municipality', kind: 'household', family: 'distributed', busId: 'bus:a@132', demandMw: 400, priceArea: 'NO1', attachmentKm: 20 },
-    { id: 'load:d', label: 'D smelter', kind: 'industry-site', family: 'site', busId: 'bus:d@420', demandMw: 200, priceArea: 'NO1', attachmentKm: 1 },
+    { id: 'load:a', label: 'A municipality', kind: 'household', family: 'distributed', busId: 'bus:a@132', demandMw: 400, priceArea: 'NO1', attachmentKm: 20, curationIds: [] },
+    { id: 'load:d', label: 'D smelter', kind: 'industry-site', family: 'site', busId: 'bus:d@420', demandMw: 200, priceArea: 'NO1', attachmentKm: 1, curationIds: [] },
   ],
 })
 

@@ -13,8 +13,12 @@ export type ExternalArea = z.infer<typeof externalAreaSchema>
 export const nordicSynchronousExternalAreas: ReadonlySet<string> = new Set(['SE1', 'SE2', 'SE3', 'FI'])
 
 export const generatorKinds = ['hydro-reservoir', 'hydro-run-of-river', 'hydro-pumped', 'wind', 'solar', 'thermal', 'nuclear'] as const
-/** Elhub consumption groups; a municipality load id is `load:<municipalityNr>-<group>`. */
-export const municipalityLoadGroups = ['household', 'cabin', 'primary', 'secondary', 'tertiary'] as const
+/**
+ * The consumption groups Elhub publishes per municipality (private = household + cabin,
+ * industry = primary + secondary, business = tertiary). A municipality's demand of one group
+ * splits over the substations it is attached to: `load:<municipalityNr>-<group>-<substation>`.
+ */
+export const municipalityLoadGroups = ['private', 'business', 'industry'] as const
 export const siteLoadKinds = ['industry-site', 'petroleum-site', 'data-center'] as const
 
 const slug = '[a-z0-9]+(?:-[a-z0-9]+)*'
@@ -24,12 +28,15 @@ const busToken = `(?:${osmElement}|junction-osm-node-[1-9]\\d*|curated-${slug})@
 const exact = (body: string): RegExp => new RegExp(`^${body}$`)
 
 export const gridIdPatterns = {
-  bus: exact(`bus:(?:${busToken}|boundary-(?:${externalAreas.join('|')}))`),
+  /** AC boundary buses carry their voltage (`bus:boundary-SE3@420`); HVDC boundaries do not (`bus:boundary-NL`). */
+  bus: exact(`bus:(?:${busToken}|boundary-(?:${externalAreas.join('|')})(?:@${kv})?)`),
   branch: exact(`branch:(?:osm-[0-9a-f]{16,64}|transformer-${osmElement}-${kv}-${kv}|curated-${slug})`),
   hvdcLink: exact(`hvdc:${slug}`),
   externalSystem: exact(`external:(?:nordic-remainder|${externalAreas.join('|')})`),
   generator: exact(`generator:(?:nve-(?:hydro|wind)-[1-9]\\d*|${osmElement}|aggregate-${busToken}-(?:${generatorKinds.join('|')})|curated-${slug})`),
-  load: exact(`load:(?:\\d{4}-(?:${municipalityLoadGroups.join('|')})|site-${slug})`),
+  load: exact(`load:(?:\\d{4}-(?:${municipalityLoadGroups.join('|')})-${osmElement}|site-${slug})`),
+  /** `shunt:<bus id without "bus:">-<n>`. */
+  shunt: exact(`shunt:${busToken}-[1-9]\\d*`),
   /** Connection point ids double as electrical port ids, so they stay within the core id grammar. */
   connectionPoint: exact(slug),
   /** Model, Model Addition and Operating Point references. */
@@ -51,10 +58,16 @@ export const aggregateGeneratorIdParts = (id: string): { readonly busId: string;
   return match ? { busId: `bus:${match[1]!}`, kind: match[2]! } : undefined
 }
 
-/** Parses `load:<municipalityNr>-<group>`. */
-export const municipalityLoadIdParts = (id: string): { readonly municipalityNr: string; readonly group: string } | undefined => {
-  const match = new RegExp(`^load:(\\d{4})-(${municipalityLoadGroups.join('|')})$`).exec(id)
-  return match ? { municipalityNr: match[1]!, group: match[2]! } : undefined
+/** Parses `load:<municipalityNr>-<group>-<substation>`. */
+export const municipalityLoadIdParts = (id: string): { readonly municipalityNr: string; readonly group: string; readonly substationId: string } | undefined => {
+  const match = new RegExp(`^load:(\\d{4})-(${municipalityLoadGroups.join('|')})-(${osmElement})$`).exec(id)
+  return match ? { municipalityNr: match[1]!, group: match[2]!, substationId: match[3]! } : undefined
 }
 
 export const isCuratedId = (id: string): boolean => /^[a-z]+:curated-/.test(id)
+
+/** Parses `shunt:<bus id without "bus:">-<n>`. */
+export const shuntIdParts = (id: string): { readonly busId: string; readonly index: number } | undefined => {
+  const match = new RegExp(`^shunt:(${busToken})-([1-9]\\d*)$`).exec(id)
+  return match ? { busId: `bus:${match[1]!}`, index: Number(match[2]!) } : undefined
+}

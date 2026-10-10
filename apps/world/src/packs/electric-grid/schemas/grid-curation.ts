@@ -11,6 +11,9 @@ import { gridExternalAreaSchema, gridRadialReasonSchema } from './grid-golden.ts
 const slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
 const osmId = z.string().regex(osmIdPattern)
 const wayId = z.string().regex(/^way\/[1-9][0-9]*$/)
+const interconnectorId = z.string().regex(/^(?:ac|hvdc):[a-z0-9]+(?:-[a-z0-9]+)*$/)
+const siteId = z.string().regex(/^site:[a-z0-9]+(?:-[a-z0-9]+)*$/)
+const registeredGeneratorId = z.string().regex(/^generator:nve-(?:hydro|wind)-[1-9][0-9]*$/)
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const text = z.string().trim().min(1)
 const kv = z.number().finite().positive()
@@ -63,6 +66,29 @@ const propertiesSchema = z.discriminatedUnion('kind', [
     substationOsmId: osmId, externalArea: gridExternalAreaSchema, linkKind: z.enum(['ac', 'hvdc']),
     voltageKv: kv, ratingMw: z.number().finite().positive(),
   }).strict(),
+  /** Mapped features whose lifecycle tag is stale: the topology compiles them as operational. */
+  z.object({ kind: z.literal('assert-in-service'), ...common }).strict(),
+  /** OSM ways of a listed interconnector that the interconnector table does not list yet. */
+  z.object({
+    kind: z.literal('add-interconnector-ways'), ...common,
+    interconnectorId, osmWayIds: z.array(wayId).min(1),
+  }).strict(),
+  /**
+   * An offshore power-from-shore HVDC link: no grid branch, because the platform demand is the
+   * major-site load at the onshore converter; the mapped cable ways are explained, not dropped.
+   */
+  z.object({ kind: z.literal('offshore-load'), ...common, siteId }).strict(),
+  /**
+   * A registered plant beyond the attachment radius of every ≥132 kV station, connected through
+   * the mapped regional (<132 kV) grid: it attaches at the station the regional route reaches.
+   */
+  z.object({
+    kind: z.literal('attach-via-regional-grid'), ...common,
+    generatorId: registeredGeneratorId, substationOsmId: osmId, voltageKv: kv,
+    /** The mapped regional route from the plant to the station, in order (ways and stations). */
+    viaOsmIds: z.array(osmId),
+    networkKm: z.number().finite().positive(),
+  }).strict(),
 ])
 
 const featureSchema = z.object({
@@ -86,6 +112,10 @@ const allowedExpiry: Record<CurationFeature['properties']['kind'], {
   'assert-radial': { required: ['radial-no-longer'], allowed: ['radial-no-longer', 'review-by'] },
   'exclude-feature': { required: ['review-by'], allowed: ['review-by'] },
   boundary: { required: ['review-by'], allowed: ['review-by'] },
+  'assert-in-service': { required: ['review-by'], allowed: ['review-by'] },
+  'add-interconnector-ways': { required: ['review-by'], allowed: ['review-by'] },
+  'offshore-load': { required: ['review-by'], allowed: ['review-by'] },
+  'attach-via-regional-grid': { required: ['review-by'], allowed: ['review-by'] },
 }
 
 const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray<string> => {
@@ -95,6 +125,10 @@ const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray
     case 'assert-radial': return [properties.substationOsmId]
     case 'exclude-feature': return []
     case 'boundary': return [properties.substationOsmId]
+    case 'assert-in-service': return []
+    case 'add-interconnector-ways': return properties.osmWayIds
+    case 'offshore-load': return []
+    case 'attach-via-regional-grid': return [properties.substationOsmId]
   }
 }
 

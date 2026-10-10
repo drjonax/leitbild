@@ -39,7 +39,7 @@
       "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "medium" }
     },
     {
-      "id": "bus:boundary-SE3", "label": "Sweden SE3 boundary", "kind": "boundary",
+      "id": "bus:boundary-SE3@400", "label": "Sweden SE3 boundary", "kind": "boundary",
       "nominalKv": 400, "location": [11.6, 59.2], "externalArea": "SE3",
       "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "inferred", "confidence": "medium", "note": "Border crossing of the Hasle–Borgvik tie." }
     },
@@ -71,7 +71,7 @@
     },
     {
       "id": "branch:osm-00112233445566aa", "label": "Hasle – Borgvik", "kind": "ac_line",
-      "fromBusId": "bus:osm-way-60495669@420", "toBusId": "bus:boundary-SE3", "nominalKv": 420, "lengthKm": 30,
+      "fromBusId": "bus:osm-way-60495669@420", "toBusId": "bus:boundary-SE3@400", "nominalKv": 420, "lengthKm": 30,
       "circuits": 1, "ratingMw": 1850, "emergencyRatingMw": 2100, "emergencyDurationSeconds": 900,
       "reactancePu": 0.0054, "resistancePu": 0.0005, "chargingSusceptancePu": 0.16, "osmWayIds": ["103"],
       "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "high" }
@@ -80,7 +80,7 @@
       "id": "branch:transformer-osm-way-60495669-420-132", "label": "Hasle 420/132 kV transformer", "kind": "transformer",
       "fromBusId": "bus:osm-way-60495669@420", "toBusId": "bus:osm-way-60495669@132", "nominalKv": 420,
       "circuits": 2, "ratingMw": 600, "emergencyRatingMw": 720, "emergencyDurationSeconds": 1200,
-      "reactancePu": 0.02, "resistancePu": 0.0008, "chargingSusceptancePu": 0, "osmWayIds": [],
+      "reactancePu": 0.02, "resistancePu": 0.0008, "chargingSusceptancePu": 0, "tapRatio": 1, "osmWayIds": [],
       "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "inferred", "confidence": "medium", "note": "Voltage levels share a substation; rating from the 132 kV level." }
     },
     {
@@ -101,7 +101,7 @@
   "externalSystems": [
     {
       "id": "external:nordic-remainder", "label": "Nordic remainder", "area": "nordic-remainder", "synchronous": true,
-      "boundaryBusIds": ["bus:boundary-SE3"], "inertiaGws": 120, "loadMw": 30000, "fcrNMwPerHz": 6000, "fcrDUpMw": 1450,
+      "boundaryBusIds": ["bus:boundary-SE3@400"], "inertiaGws": 120, "loadMw": 30000, "fcrNMwPerHz": 6000, "fcrDUpMw": 1450, "fcrDDownMw": 1400, "afrrUpMw": 200, "afrrDownMw": 200,
       "provenance": { "sources": ["leitbild:test-curation@2026-10-10"], "method": "curated", "confidence": "low", "note": "Fixture equivalent." }
     },
     {
@@ -112,21 +112,21 @@
   "generators": [
     {
       "id": "generator:nve-hydro-123", "label": "Test hydro", "kind": "hydro-reservoir", "busId": "bus:osm-relation-7928148@420",
-      "location": [7.95, 58.3], "capacityMw": 300, "ratedMva": 330, "inertiaSeconds": 3.5, "synchronous": true,
+      "location": [7.95, 58.3], "capacityMw": 300, "ratedMva": 330, "powerFactor": 0.9, "voltageSetpointPu": 1.0, "inertiaSeconds": 3.5, "synchronous": true,
       "minimumStableMw": 30, "rampMwPerMinute": 60, "blackStartCapable": true, "annualProductionGwh": 1200, "priceArea": "NO2",
       "registryIds": ["123"], "attachmentKm": 4.2,
       "provenance": { "sources": ["nve:vannkraft1@2026-10-10"], "method": "registry", "confidence": "high" }
     },
     {
       "id": "generator:nve-wind-45", "label": "Test wind", "kind": "wind", "busId": "bus:osm-way-60495669@132",
-      "location": [11.3, 59.4], "capacityMw": 100, "ratedMva": 110, "inertiaSeconds": 0, "synchronous": false,
+      "location": [11.3, 59.4], "capacityMw": 100, "ratedMva": 110, "powerFactor": 0.95, "voltageSetpointPu": 1.0, "inertiaSeconds": 0, "synchronous": false,
       "minimumStableMw": 0, "rampMwPerMinute": 20, "blackStartCapable": false, "priceArea": "NO1",
       "registryIds": ["45"], "attachmentKm": 12,
       "provenance": { "sources": ["nve:vindkraft2@2026-10-10"], "method": "registry", "confidence": "high" }
     },
     {
       "id": "generator:aggregate-osm-way-60495669@132-hydro-run-of-river", "label": "Hasle small hydro aggregate", "kind": "hydro-run-of-river",
-      "busId": "bus:osm-way-60495669@132", "location": [11.1, 59.35], "capacityMw": 40, "ratedMva": 44, "inertiaSeconds": 2.5, "synchronous": true,
+      "busId": "bus:osm-way-60495669@132", "location": [11.1, 59.35], "capacityMw": 40, "ratedMva": 44, "powerFactor": 0.9, "voltageSetpointPu": 1.0, "inertiaSeconds": 2.5, "synchronous": true,
       "minimumStableMw": 0, "rampMwPerMinute": 10, "blackStartCapable": false, "priceArea": "NO1",
       "registryIds": ["901", "902"], "attachmentKm": 8,
       "provenance": { "sources": ["nve:vannkraft1@2026-10-10"], "method": "inferred", "confidence": "medium", "note": "Units below the modelling threshold aggregated at their nearest 132 kV bus." }
@@ -134,7 +134,7 @@
   ],
   "loads": [
     {
-      "id": "load:0301-household", "label": "Oslo households", "kind": "household", "busId": "bus:osm-way-60495669@132",
+      "id": "load:0301-private-osm-way-60495669", "label": "Oslo private consumption", "kind": "private", "busId": "bus:osm-way-60495669@132",
       "location": [10.75, 59.91], "referenceDemandMw": 800, "powerFactor": 0.98, "priority": "normal", "interruptibleMw": 0,
       "municipalityNr": "0301", "priceArea": "NO1", "attachmentKm": 25,
       "provenance": { "sources": ["elhub:consumption@2026-10-10"], "method": "inferred", "confidence": "medium", "note": "Municipal consumption allocated to the nearest 132 kV bus; interruptible volume unknown." }
@@ -144,6 +144,12 @@
       "location": [7.92, 58.27], "referenceDemandMw": 250, "powerFactor": 0.95, "priority": "high", "interruptibleMw": 50,
       "priceArea": "NO2", "attachmentKm": 3,
       "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "medium" }
+    }
+  ],
+  "shunts": [
+    {
+      "id": "shunt:osm-way-60495669@420-1", "busId": "bus:osm-way-60495669@420", "mvarAtNominalVoltage": -150, "switchable": true,
+      "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "inferred", "confidence": "low", "note": "Fixture reactor sized to half the connected line charging." }
     }
   ],
   "storage": [],

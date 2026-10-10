@@ -178,9 +178,29 @@ describe('inventory checks', () => {
     expect(failedAssets(audit({ graph }), 'attachment-distance')).toEqual(['generator:c', 'bus:c@420', 'load:d', 'bus:d@420'])
   })
 
+  test('accept a generator beyond its limit only on a curated regional route naming it', () => {
+    const input = fixtureCurationsInput()
+    const route = {
+      type: 'Feature', id: 'fixture-regional-route', geometry: { type: 'Point', coordinates: fixtureLocations.c },
+      properties: {
+        kind: 'attach-via-regional-grid', licence: 'osm-odbl-1.0', author: 'test', reviewedAt: '2026-10-10',
+        targetOsmIds: ['way/2'], generatorId: 'generator:nve-hydro-7', substationOsmId: 'way/2', voltageKv: 420, viaOsmIds: ['way/2'], networkKm: 40,
+        reason: 'regional route', evidence: [{ url: 'https://www.openstreetmap.org/way/2', ref: 'way/2' }], expiresWhen: [{ kind: 'review-by', date: '2027-10-10' }],
+      },
+    }
+    const curations = gridCurationCollectionSchema.parse({ ...input, features: [...input.features, route] })
+    const far = (id: string, curationIds: ReadonlyArray<string>) => editGraph(base => ({
+      generators: base.generators.map(item => item.id === 'generator:c' ? { ...item, id, attachmentKm: 31, curationIds } : item),
+    }))
+    const explained = audit({ graph: far('generator:nve-hydro-7', ['fixture-regional-route']), curations })
+    expect(check(explained, 'attachment-distance')).toMatchObject({ status: 'pass', metrics: { curatedRegionalRoutes: 1 } })
+    expect(explained.curations.find(status => status.id === 'fixture-regional-route')?.status).toBe('applied')
+    expect(failedAssets(audit({ graph: far('generator:nve-hydro-8', ['fixture-regional-route']), curations }), 'attachment-distance')).toEqual(['generator:nve-hydro-8', 'bus:c@420'])
+  })
+
   test('compare capacity per kind and price area and flag generation without a price area', () => {
     const graph = editGraph(base => ({
-      generators: base.generators.map(item => item.id === 'generator:c' ? { ...item, capacityMw: 400 } : item.id === 'generator:e' ? { id: item.id, label: item.label, kind: item.kind, family: item.family, busId: item.busId, capacityMw: item.capacityMw, attachmentKm: item.attachmentKm } : item),
+      generators: base.generators.map(item => item.id === 'generator:c' ? { ...item, capacityMw: 400 } : item.id === 'generator:e' ? { id: item.id, label: item.label, kind: item.kind, family: item.family, busId: item.busId, capacityMw: item.capacityMw, attachmentKm: item.attachmentKm, curationIds: [] } : item),
     }))
     const report = audit({ graph })
     expect(messages(report, 'generation-by-area')).toContain('hydro in NO1: model 700 MW vs reference 800 MW (-12.5 %')
@@ -428,8 +448,8 @@ describe('model adapters', () => {
       { id: 'branch:osm-y', label: 'A – SE3', kind: 'ac_line', fromBusId: 'bus:osm-way-1@420', toBusId: 'bus:boundary-SE3', nominalKv: 420, lengthKm: 50, circuits: 1, osmWayIds: ['12'], provenance: { sources: ['osm'] } },
     ],
     hvdcLinks: [],
-    generators: [{ id: 'generator:nve-hydro-1', label: 'G', kind: 'hydro-pumped', busId: 'bus:osm-relation-2@420', capacityMw: 10, priceArea: 'NO1', attachmentKm: 2 }],
-    loads: [{ id: 'load:0301-household', label: 'L', kind: 'household', busId: 'bus:osm-way-1@420', referenceDemandMw: 5, priceArea: 'NO1', attachmentKm: 3 }],
+    generators: [{ id: 'generator:nve-hydro-1', label: 'G', kind: 'hydro-pumped', busId: 'bus:osm-relation-2@420', capacityMw: 10, priceArea: 'NO1', attachmentKm: 2, provenance: { sources: ['nve', 'curation:g-route'] } }],
+    loads: [{ id: 'load:0301-private-osm-way-1', label: 'L', kind: 'private', busId: 'bus:osm-way-1@420', referenceDemandMw: 5, priceArea: 'NO1', attachmentKm: 3, provenance: { sources: ['elhub'] } }],
   })
 
   test('map a v2 model, reading curation ids from provenance', () => {
@@ -445,7 +465,7 @@ describe('model adapters', () => {
     expect(graph.branches[0]).toMatchObject({ circuits: 2, ends: { from: [10, 60], to: [10.5, 60] } })
     expect(graph.branches[0]!.geometry).toHaveLength(2)
     expect(graph.branches[1]!.geometry).toBeUndefined()
-    expect(graph.generators[0]!.family).toBe('hydro')
+    expect(graph.generators[0]).toMatchObject({ family: 'hydro', curationIds: ['g-route'] })
     expect(graph.loads[0]).toMatchObject({ family: 'distributed', demandMw: 5 })
   })
 

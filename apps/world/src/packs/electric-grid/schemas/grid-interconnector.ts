@@ -112,6 +112,9 @@ const synchronousCaseSchema = z.strictObject({
   fcrNMwPerHz: z.number().positive(),
   fcrDUpMw: z.number().positive(),
   fcrDDownMw: z.number().positive(),
+  // aFRR held outside Norway, MW each way.
+  afrrUpMw: z.number().positive(),
+  afrrDownMw: z.number().positive(),
   derivation: z.string().min(1),
 })
 

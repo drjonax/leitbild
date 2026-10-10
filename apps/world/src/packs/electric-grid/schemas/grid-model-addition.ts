@@ -10,6 +10,7 @@ import {
   gridHvdcLinkSchema,
   gridLoadSchema,
   gridModelSchema,
+  gridShuntSchema,
   gridSourceInputSchema,
   type GridModelV2,
 } from './grid-model.ts'
@@ -19,7 +20,7 @@ import {
 // and adds no storage.
 
 /** The base collections an addition appends to, in Grid Model v2 order. */
-const additiveCollections = ['buses', 'branches', 'hvdcLinks', 'externalSystems', 'generators', 'loads', 'connectionPoints'] as const
+const additiveCollections = ['buses', 'branches', 'hvdcLinks', 'externalSystems', 'generators', 'loads', 'shunts', 'connectionPoints'] as const
 type AdditiveCollection = typeof additiveCollections[number]
 
 const subject = 'Grid Model Addition v2'
@@ -39,6 +40,7 @@ export const gridModelAdditionSchema = z.object({
   externalSystems: z.array(gridExternalSystemSchema),
   generators: z.array(gridGeneratorSchema),
   loads: z.array(gridLoadSchema),
+  shunts: z.array(gridShuntSchema),
   connectionPoints: z.array(gridConnectionPointSchema),
 }).strict().superRefine((addition, context) => {
   if (addition.baseModelRef === addition.id) context.addIssue({ code: 'custom', path: ['baseModelRef'], message: 'an addition cannot be its own base' })

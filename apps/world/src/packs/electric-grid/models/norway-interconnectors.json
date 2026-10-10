@@ -1274,7 +1274,9 @@
           "fcrNMwPerHz": 3720,
           "fcrDUpMw": 899,
           "fcrDDownMw": 868,
-          "derivation": "Kinetic energy 256 GWs (Fingrid map, 2020-12-31 17–18) × remainder share 66.9 % (Norway 6.6 % NO4 + 26.5 % southern Norway) = 171 GWs. Load: non-coincident January 2026 peaks SE 24,965 + FI 15,553 + DK2 2,616 = 43,134 MW (coincident value probably 1–2 GW lower). FCR-N 600 MW over ±0.1 Hz and FCR-D 1450 MW up / 1400 MW down for the Nordic area (2026 SOA LFCR parameters); Norway's 2026 obligation share is 38 %, so the remainder holds 62 %: FCR-N 372 MW = 3720 MW/Hz, FCR-D up 899 MW (linear 49.9→49.5 Hz), FCR-D down 868 MW."
+          "afrrUpMw": 138,
+          "afrrDownMw": 138,
+          "derivation": "Kinetic energy 256 GWs (Fingrid map, 2020-12-31 17–18) × remainder share 66.9 % (Norway 6.6 % NO4 + 26.5 % southern Norway) = 171 GWs. Load: non-coincident January 2026 peaks SE 24,965 + FI 15,553 + DK2 2,616 = 43,134 MW (coincident value probably 1–2 GW lower). FCR-N 600 MW over ±0.1 Hz and FCR-D 1450 MW up / 1400 MW down for the Nordic area (2026 SOA LFCR parameters); Norway's 2026 obligation share is 38 %, so the remainder holds 62 %: FCR-N 372 MW = 3720 MW/Hz, FCR-D up 899 MW (linear 49.9→49.5 Hz), FCR-D down 868 MW. aFRR: the Nordic 2026 volume of 200 MW each way (Appendix 1 to Annex LFCR 2026) less Norway's 31 % share = 138 MW."
         },
         "summerLow": {
           "inertiaGws": 101,
@@ -1282,7 +1284,9 @@
           "fcrNMwPerHz": 3720,
           "fcrDUpMw": 899,
           "fcrDDownMw": 868,
-          "derivation": "Kinetic energy: 2024 annual minimum 131 GWs × remainder share 77.0 % from the Fingrid map of the 2021-06-13 low-inertia hour = 101 GWs (the 2021 record low of 110 GWs gives 85 GWs). Load: SE+DK2 coincident summer-2025 minimum 10,154 MW + FI estimate 6,000–6,500 MW (Q3-2025 mean 8.15 GW × the 0.74–0.80 min/mean ratio of NO and SE) ≈ 16,400 MW. FCR-N 600 MW over ±0.1 Hz and FCR-D 1450 MW up / 1400 MW down for the Nordic area (2026 SOA LFCR parameters); Norway's 2026 obligation share is 38 %, so the remainder holds 62 %: FCR-N 372 MW = 3720 MW/Hz, FCR-D up 899 MW (linear 49.9→49.5 Hz), FCR-D down 868 MW. FFR up to 186 MW (62 % of about 300 MW) is procured only in low-inertia hours and is not included."
+          "afrrUpMw": 138,
+          "afrrDownMw": 138,
+          "derivation": "Kinetic energy: 2024 annual minimum 131 GWs × remainder share 77.0 % from the Fingrid map of the 2021-06-13 low-inertia hour = 101 GWs (the 2021 record low of 110 GWs gives 85 GWs). Load: SE+DK2 coincident summer-2025 minimum 10,154 MW + FI estimate 6,000–6,500 MW (Q3-2025 mean 8.15 GW × the 0.74–0.80 min/mean ratio of NO and SE) ≈ 16,400 MW. FCR-N 600 MW over ±0.1 Hz and FCR-D 1450 MW up / 1400 MW down for the Nordic area (2026 SOA LFCR parameters); Norway's 2026 obligation share is 38 %, so the remainder holds 62 %: FCR-N 372 MW = 3720 MW/Hz, FCR-D up 899 MW (linear 49.9→49.5 Hz), FCR-D down 868 MW. FFR up to 186 MW (62 % of about 300 MW) is procured only in low-inertia hours and is not included. aFRR: the Nordic 2026 volume of 200 MW each way (Appendix 1 to Annex LFCR 2026) less Norway's 31 % share = 138 MW."
         }
       },
       "loadDampingPercentPerHz": 1,
@@ -1334,6 +1338,10 @@
         {
           "url": "https://www.fingrid.fi/en/news/news/2025/fingrid-group--managements-review-1.1.30.9.2025/",
           "supports": "Finnish Jan–Sep 2025 consumption 61.3 TWh (summer estimate)"
+        },
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/SOC%20documents/Nordic/2026/Nordic_SOA_Appendix_1_to_Annex_LFCR_Regularly_changing_parameters_2026.pdf",
+          "supports": "2026 Nordic aFRR volume of at least 200 MW and the national shares (Norway 31 %)"
         }
       ],
       "provenance": {

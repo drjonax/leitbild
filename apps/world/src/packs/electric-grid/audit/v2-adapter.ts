@@ -61,15 +61,17 @@ export interface GridModelV2AuditInput {
     readonly capacityMw: number
     readonly priceArea: string
     readonly attachmentKm: number
+    readonly provenance: ProvenanceInput
   }>
   readonly loads: ReadonlyArray<{
     readonly id: string
     readonly label: string
-    readonly kind: 'household' | 'cabin' | 'primary' | 'secondary' | 'tertiary' | 'industry-site' | 'petroleum-site' | 'data-center'
+    readonly kind: 'private' | 'business' | 'industry' | 'industry-site' | 'petroleum-site' | 'data-center'
     readonly busId: string
     readonly referenceDemandMw: number
     readonly priceArea: string
     readonly attachmentKm: number
+    readonly provenance: ProvenanceInput
   }>
 }
 
@@ -84,11 +86,9 @@ const generatorFamilies: Readonly<Record<GridModelV2AuditInput['generators'][num
 }
 
 const loadFamilies: Readonly<Record<GridModelV2AuditInput['loads'][number]['kind'], AuditLoadFamily>> = {
-  household: 'distributed',
-  cabin: 'distributed',
-  primary: 'distributed',
-  secondary: 'distributed',
-  tertiary: 'distributed',
+  private: 'distributed',
+  business: 'distributed',
+  industry: 'distributed',
   'industry-site': 'site',
   'petroleum-site': 'site',
   'data-center': 'site',
@@ -182,6 +182,7 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
       capacityMw: generator.capacityMw,
       priceArea: generator.priceArea,
       attachmentKm: generator.attachmentKm,
+      curationIds: curationIdsOf(generator.provenance),
     })),
     loads: model.loads.map(load => ({
       id: load.id,
@@ -192,6 +193,7 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
       demandMw: load.referenceDemandMw,
       priceArea: load.priceArea,
       attachmentKm: load.attachmentKm,
+      curationIds: curationIdsOf(load.provenance),
     })),
   }
 }

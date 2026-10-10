@@ -14,9 +14,17 @@ export const attachmentCheck = (context: AuditContext): AuditCheck => {
   const thresholds = context.golden.thresholds
   const limits = thresholds.maxAttachmentKm
   const failures: AuditFailure[] = []
+  // A reviewed attach-via-regional-grid curation explains a plant connected through the regional grid.
+  const regionalRoutes = new Set(context.curations.features.flatMap(feature =>
+    feature.properties.kind === 'attach-via-regional-grid' ? [`${feature.id}|${feature.properties.generatorId}`] : []))
+  let curatedBeyondLimit = 0
   for (const generator of context.graph.generators) {
     const limit = limits.generator[generator.family]
     if (generator.attachmentKm <= limit) continue
+    if (generator.curationIds.some(id => regionalRoutes.has(`${id}|${generator.id}`))) {
+      curatedBeyondLimit += 1
+      continue
+    }
     failures.push({ message: `generator ${generator.label} (${generator.family}, ${round(generator.capacityMw)} MW) is ${generator.attachmentKm.toFixed(1)} km from its bus (max ${limit} km)`, assetIds: [generator.id, generator.busId] })
   }
   for (const load of context.graph.loads) {
@@ -29,9 +37,11 @@ export const attachmentCheck = (context: AuditContext): AuditCheck => {
     id: 'attachment-distance',
     title: 'Generator and load attachment distance by kind',
     status: checkStatus(failures.length > thresholds.maxAttachmentViolations, undefined),
-    summary: `${failures.length} assets attached beyond their kind limit (max ${thresholds.maxAttachmentViolations})`,
+    summary: `${failures.length} assets attached beyond their kind limit (max ${thresholds.maxAttachmentViolations}); ${curatedBeyondLimit} generators beyond it on a curated regional route`,
     metrics: {
       violations: failures.length,
+      generatorViolations: failures.filter(failure => failure.assetIds[0]!.startsWith('generator:')).length,
+      curatedRegionalRoutes: curatedBeyondLimit,
       maximumGeneratorKm: maximum(context.graph.generators.map(generator => generator.attachmentKm)),
       maximumLoadKm: maximum(context.graph.loads.map(load => load.attachmentKm)),
     },
