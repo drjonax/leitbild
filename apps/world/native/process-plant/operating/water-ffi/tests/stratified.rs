@@ -8,7 +8,7 @@
 use leitbild_operating_plant::{
     network::{
         Failure, Properties,
-        stratified::{self as st, Case, Cell, Coordinates, Heat, Parameters, Receipt},
+        stratified::{self as st, Boundary, Case, Cell, Coordinates, Heat, Parameters, Receipt},
     },
     thermal::Scalar,
 };
@@ -32,6 +32,18 @@ fn section(fluid_volume: f64) -> String {
 }
 fn parameters() -> Parameters {
     serde_json::from_str(&section(59.7486726)).unwrap()
+}
+/// The same cell with the spray inlet and the relief outlet at the roof.
+fn all_ports() -> Parameters {
+    let mut p = parameters();
+    let upper: Vec<st::Port> = serde_json::from_str(
+        r#"[{"id":"PZR.SPRAY","kind":"spray","elevation_m":18.5,"face":35,"bore_m":0.012},
+            {"id":"PZR.RELIEF","kind":"relief","elevation_m":18.5,"bore_m":0.15,
+             "relief":{"opening_Pa":15800000,"reseat_Pa":15600000,"fullStrokes_per_s":20,"effectiveAreaPerLift_m2":0.00411672057382}}]"#,
+    )
+    .unwrap();
+    p.ports.extend(upper);
+    p
 }
 fn cell() -> Cell {
     let p = parameters();
@@ -104,7 +116,13 @@ fn evaluate(
     let x = Coordinates::values(values);
     let r = Coordinates::values(rate);
     p.cell
-        .residual(&If97, &x, &r, &[receipt], heat, &p.scales, None)
+        .residual(&If97, &x, &r, &[receipt], &boundary(heat), &p.scales, None)
+}
+fn boundary(heat: Heat) -> Boundary {
+    Boundary {
+        heat,
+        ..Boundary::closed()
+    }
 }
 /// Specific internal energy and enthalpy of a branch at (p, T).
 fn state(vapor: bool, p: f64, t: f64) -> (f64, f64) {
@@ -584,7 +602,7 @@ fn seeded_directions_match_central_differences_on_an_active_state() {
         let x = coordinates(y, &p.scales, seed);
         let r = rates(yp, &p.scales, seed, cj);
         p.cell
-            .residual(&If97, &x, &r, &[receipt], heat, &p.scales, None)
+            .residual(&If97, &x, &r, &[receipt], &boundary(heat), &p.scales, None)
             .unwrap()
             .rows
     };
@@ -678,12 +696,12 @@ fn residual_on_a_shared_column_is_bitwise_the_residual() {
     };
     let whole = p
         .cell
-        .residual(&If97, &x, &r, &receipt, heat, &p.scales, None)
+        .residual(&If97, &x, &r, &receipt, &boundary(heat), &p.scales, None)
         .unwrap();
     let column = p.cell.column(&If97, &x, None).unwrap();
     let shared = p
         .cell
-        .residual_on(column, &x, &r, &receipt, heat, &p.scales)
+        .residual_on(&If97, column, &x, &r, &receipt, &boundary(heat), &p.scales)
         .unwrap();
     for i in 0..st::COORDINATES {
         assert_eq!(
@@ -695,6 +713,433 @@ fn residual_on_a_shared_column_is_bitwise_the_residual() {
             whole.rows[i].direction.to_bits(),
             shared.rows[i].direction.to_bits(),
             "row {i}"
+        );
+    }
+}
+
+#[test]
+fn relief_full_lift_on_saturated_steam_reproduces_its_100_kg_s_calibration() {
+    let p0 = 15.8e6;
+    let sat = If97.saturation(s(p0)).unwrap();
+    let flux = st::restriction_flux(&If97, true, s(p0), sat.vapor.enthalpy, s(101_325.)).unwrap();
+    let rate = flux.mass_flux.value * 0.004_116_720_573_82;
+    println!(
+        "steam: G {} kg/(m2 s), throat {} Pa, choked {}, {} saturation calls, rate {rate} kg/s",
+        flux.mass_flux.value, flux.throat_pressure_pa.value, flux.choked, flux.saturation_calls
+    );
+    let liquid =
+        st::restriction_flux(&If97, false, s(p0), sat.liquid.enthalpy, s(101_325.)).unwrap();
+    println!(
+        "liquid: G {} kg/(m2 s), throat {} Pa, rate {} kg/s",
+        liquid.mass_flux.value,
+        liquid.throat_pressure_pa.value,
+        liquid.mass_flux.value * 0.004_116_720_573_82
+    );
+    assert!(flux.choked && liquid.choked);
+    // The area was calibrated once with IAPWS-95 (CoolProp); the native
+    // IF97 path gives 99.986 kg/s. Halving the path step four times moves
+    // it by 1e-6 relative, so the 1.4e-4 gap is the property formulation.
+    assert!((rate - 100.).abs() < 0.02, "{rate}");
+    assert!((liquid.mass_flux.value * 0.004_116_720_573_82 - 180.024_21).abs() < 0.1);
+}
+
+/// The cell's boundary with the relief closed and nothing else entering.
+fn shut() -> Boundary {
+    Boundary {
+        relief: Some(st::ReliefState {
+            lift: s(0.),
+            back_pressure_pa: s(101_325.),
+        }),
+        ..Boundary::closed()
+    }
+}
+
+/// The prepared state of the cell with every port kind.
+fn prepared_all() -> Prepared {
+    let base = prepared();
+    let p = all_ports();
+    let case = Case::nominal(&p);
+    Prepared {
+        cell: Cell::new(p, case).unwrap(),
+        ..base
+    }
+}
+fn bank(
+    bottom_m: f64,
+    top_m: f64,
+    q: f64,
+    gamma: f64,
+    exposed: f64,
+    j: f64,
+    hl: f64,
+) -> st::HeaterReceipt {
+    st::HeaterReceipt {
+        bottom_m,
+        top_m,
+        wet_heat_w: s(q),
+        wet_vapor_kg_s: s(gamma),
+        exposed_heat_w: s(exposed),
+        condensate_kg_s: s(j),
+        condensate_enthalpy_j_kg: s(hl),
+    }
+}
+fn evaluate_all(
+    p: &Prepared,
+    values: &[f64; st::COORDINATES],
+    rate: &[f64; st::COORDINATES],
+    receipts: [Receipt; 3],
+    boundary: &Boundary,
+) -> st::Evaluation {
+    let x = Coordinates::values(values);
+    let r = Coordinates::values(rate);
+    p.cell
+        .residual(&If97, &x, &r, &receipts, boundary, &p.scales, None)
+        .unwrap()
+}
+
+#[test]
+fn spray_is_heated_to_saturation_at_entry_by_condensing_vapor() {
+    let p = prepared_all();
+    let v = physical(&coordinates(&p.y, &p.scales, None));
+    let zero = [0.; st::COORDINATES];
+    let c = &p.preparation.column;
+    let (hf, hg) = (
+        c.interface_saturation.liquid.enthalpy.value,
+        c.interface_saturation.vapor.enthalpy.value,
+    );
+    let hv = c.vapor.enthalpy.value;
+    let w = 3.2;
+    for (h_s, cold) in [(state(false, ROOF_PA, 565.).1, true), (hf + 4.0e4, false)] {
+        let spray = Receipt {
+            mass: s(w),
+            enthalpy: s(w * h_s),
+            boron: s(w * 0.0012),
+        };
+        let ev = evaluate_all(
+            &p,
+            &v,
+            &zero,
+            [Receipt::zero(), spray, Receipt::zero()],
+            &shut(),
+        );
+        let f = &ev.flows;
+        let vapor_h = if cold { hv } else { hg };
+        let expected = w * (hf - h_s) / (vapor_h - hf);
+        assert!((f.spray_condensation.value - expected).abs() <= 1e-12 * expected.abs());
+        assert_eq!(expected > 0., cold);
+        let src = &f.sources;
+        assert!((src[st::DROP_MASS].value - (w + expected)).abs() <= 1e-12 * w);
+        assert!((src[st::DROP_BORON].value - w * 0.0012).abs() <= 1e-18);
+        // The vapor zone pays the condensate at its enthalpy, or receives the
+        // flash at h_g,sat; the interface exchange is at rest here.
+        let rest = f.interface.vapor.mass.value;
+        assert!((src[st::VAPOR_MASS].value - (rest - expected)).abs() <= 1e-12 * w);
+        let energy = src[st::VAPOR_ENERGY].value - f.interface.vapor.enthalpy.value;
+        assert!((energy + expected * vapor_h).abs() <= 1e-9 * (expected * vapor_h).abs());
+        // Entry balance: W_s h_s + W_c h_v = (W_s + W_c) h_f,sat.
+        let entry = w * h_s + expected * vapor_h - (w + expected) * hf;
+        assert!(entry.abs() <= 1e-9 * w * hf, "entry imbalance {entry}");
+        let b = &ev.balance;
+        assert!((b.energy_w.value - b.receipt_energy_w.value).abs() <= 1e-9 * w * hf);
+        println!("spray h_s {h_s}: W_c {} kg/s", f.spray_condensation.value);
+    }
+}
+
+#[test]
+fn heater_sources_go_to_the_zones_the_rods_wet_by_level() {
+    let p = prepared_all();
+    let mut v = physical(&coordinates(&p.y, &p.scales, None));
+    let zero = [0.; st::COORDINATES];
+    let hg = p
+        .preparation
+        .column
+        .interface_saturation
+        .vapor
+        .enthalpy
+        .value;
+    // Prepared levels: A to 6.80 m, the mixture to 12.5 m. Both banks wet.
+    let receipts = [Receipt::zero(); 3];
+    let banks = vec![
+        bank(6.5, 7.5, 1.2e5, 0.02, 0., 0., 0.),
+        bank(6.5, 9.5, 2.0e5, 0.05, 0., 0., 0.),
+    ];
+    let boundary = Boundary {
+        heaters: banks.clone(),
+        ..shut()
+    };
+    let rest = evaluate_all(&p, &v, &zero, receipts, &shut()).flows.sources;
+    let ev = evaluate_all(&p, &v, &zero, receipts, &boundary);
+    let c = &ev.column;
+    let mut expected = [0.; 2];
+    let mut expected_mass = [0.; 2];
+    for b in &banks {
+        let w = p.cell.heater_wetting(c, b.bottom_m, b.top_m).unwrap();
+        assert!(
+            (w.wet_fraction.value - 1.).abs() < 1e-12 && w.exposed_length_m.value.abs() < 1e-12
+        );
+        assert!((w.admitted_length_m.value - 0.3).abs() < 1e-12);
+        let share = w.admitted_length_m.value / w.wet_length_m.value;
+        let (q, gamma) = (b.wet_heat_w.value, b.wet_vapor_kg_s.value);
+        expected[0] += share * (q - gamma * hg);
+        expected[1] += (1. - share) * (q - gamma * hg);
+        expected_mass[0] -= share * gamma;
+        expected_mass[1] -= (1. - share) * gamma;
+    }
+    let src = &ev.flows.sources;
+    let d = |i: usize| src[i].value - rest[i].value;
+    assert!((d(st::ADMITTED_ENERGY) - expected[0]).abs() <= 1e-9 * expected[0].abs());
+    assert!((d(st::RESIDENT_ENERGY) - expected[1]).abs() <= 1e-9 * expected[1].abs());
+    assert!((d(st::ADMITTED_MASS) - expected_mass[0]).abs() <= 1e-15);
+    assert!((d(st::RESIDENT_MASS) - expected_mass[1]).abs() <= 1e-15);
+    assert!((d(st::BUBBLE_MASS) - 0.07).abs() <= 1e-15);
+    assert!(d(st::VAPOR_ENERGY).abs() <= 1e-9);
+    // Wet heat totals: the liquid layers and the bubbles' carried enthalpy.
+    let total = d(st::ADMITTED_ENERGY) + d(st::RESIDENT_ENERGY) + d(st::BUBBLE_MASS) * hg;
+    assert!((total - 3.2e5).abs() <= 1e-9 * 3.2e5);
+
+    // Mixture level lowered to 8.5 m: the backup bank is wet over 2 of its
+    // 3 m (0.3 m in A, 1.7 m in R) and exposed over 1 m.
+    v[st::RESIDENT_VOLUME] = p.cell.volume_below(s(8.5)).value - v[st::ADMITTED_VOLUME];
+    let hl = 1.55e6;
+    let banks = vec![bank(6.5, 9.5, 1.5e5, 0.03, 4.0e3, 0.002, hl)];
+    let boundary = Boundary {
+        heaters: banks,
+        ..shut()
+    };
+    let rest = evaluate_all(&p, &v, &zero, receipts, &shut()).flows.sources;
+    let ev = evaluate_all(&p, &v, &zero, receipts, &boundary);
+    let w = p.cell.heater_wetting(&ev.column, 6.5, 9.5).unwrap();
+    assert!((ev.column.mixture_elevation.value - 8.5).abs() < 1e-12);
+    assert!((w.wet_fraction.value - 2. / 3.).abs() < 1e-12);
+    assert!((w.admitted_length_m.value - 0.3).abs() < 1e-12);
+    assert!((w.resident_length_m.value - 1.7).abs() < 1e-12);
+    assert!((w.exposed_length_m.value - 1.).abs() < 1e-12);
+    let src = &ev.flows.sources;
+    let d = |i: usize| src[i].value - rest[i].value;
+    let gv = ev.column.vapor.enthalpy.value;
+    // The lowered level raises p_s; wall vapor is carried at its h_g,sat.
+    let hg = ev.column.interface_saturation.vapor.enthalpy.value;
+    assert!((d(st::ADMITTED_ENERGY) - 0.15 * (1.5e5 - 0.03 * hg)).abs() <= 1e-6);
+    assert!((d(st::RESIDENT_ENERGY) - (0.85 * (1.5e5 - 0.03 * hg) + 0.002 * hl)).abs() <= 1e-6);
+    assert!((d(st::VAPOR_ENERGY) - (4.0e3 - 0.002 * gv)).abs() <= 1e-6);
+    assert!((d(st::VAPOR_MASS) + 0.002).abs() <= 1e-15);
+    assert!((d(st::RESIDENT_MASS) - (0.002 - 0.85 * 0.03)).abs() <= 1e-15);
+    let b = &ev.balance;
+    assert!((b.energy_w.value - b.receipt_energy_w.value).abs() <= 1e-6);
+}
+
+#[test]
+fn every_port_kind_and_both_banks_are_conserved_exactly() {
+    let p = prepared_all();
+    let v = active(&p);
+    let rate = active_rates();
+    let relief = st::ReliefState {
+        lift: s(0.6),
+        back_pressure_pa: s(3.0e5),
+    };
+    let boundary = Boundary {
+        heat: Heat {
+            vapor: s(1.1e4),
+            admitted: s(0.),
+            resident: s(5.0e4),
+        },
+        heaters: vec![
+            bank(6.5, 7.5, 1.1e5, 0.01, 0., 0., 0.),
+            bank(6.5, 9.5, 2.3e5, 0.04, 2.0e3, 0.001, 1.5e6),
+        ],
+        relief: Some(relief),
+    };
+    let receipts = [
+        Receipt {
+            mass: s(-21.),
+            enthalpy: s(-21. * 1.6e6 + 7.0e4),
+            boron: s(-0.02),
+        },
+        Receipt {
+            mass: s(2.4),
+            enthalpy: s(2.4 * 1.25e6),
+            boron: s(0.003),
+        },
+        Receipt::zero(),
+    ];
+    let ev = evaluate_all(&p, &v, &rate, receipts, &boundary);
+    let f = &ev.flows;
+    let out = f.relief.unwrap();
+    assert!(
+        out.vapor_kg_s.value > 0. && out.drop_kg_s.value > 0.,
+        "partly wet outlet"
+    );
+    let implied: Vec<f64> = (0..st::COORDINATES)
+        .map(|i| rate[i] - ev.rows[i].value * p.scales[i])
+        .collect();
+    let sat = &ev.column.interface_saturation;
+    let mass = [
+        st::VAPOR_MASS,
+        st::ADMITTED_MASS,
+        st::RESIDENT_MASS,
+        st::BUBBLE_MASS,
+        st::DROP_MASS,
+    ]
+    .iter()
+    .map(|i| implied[*i])
+    .sum::<f64>();
+    let boron = implied[st::ADMITTED_BORON] + implied[st::RESIDENT_BORON] + implied[st::DROP_BORON];
+    let work: f64 = f.work.iter().map(|w| w.value).sum();
+    let energy = implied[st::VAPOR_ENERGY]
+        + implied[st::ADMITTED_ENERGY]
+        + implied[st::RESIDENT_ENERGY]
+        + work
+        + implied[st::BUBBLE_MASS] * sat.vapor.enthalpy.value
+        + implied[st::DROP_MASS] * sat.liquid.enthalpy.value
+        + f.transit_drift[0].value
+        + f.transit_drift[1].value;
+    let gv = ev.column.vapor.enthalpy.value;
+    let heater = 1.1e5 + 2.3e5 + 2.0e3 - 0.001 * gv + 0.001 * 1.5e6;
+    let expect_mass = -21. + 2.4 - out.vapor_kg_s.value - out.drop_kg_s.value;
+    let expect_energy =
+        -21. * 1.6e6 + 7.0e4 + 2.4 * 1.25e6 + 1.1e4 + 5.0e4 + heater - out.enthalpy_w.value;
+    let expect_boron = -0.02 + 0.003 - out.boron_kg_s.value;
+    assert!(
+        (mass - expect_mass).abs() <= 1e-12 * 1e3,
+        "mass {mass} vs {expect_mass}"
+    );
+    assert!(
+        (boron - expect_boron).abs() <= 1e-12,
+        "boron {boron} vs {expect_boron}"
+    );
+    assert!(
+        (energy - expect_energy).abs() <= 1e-12 * 1e10,
+        "energy {energy} vs {expect_energy}"
+    );
+    let b = &ev.balance;
+    assert!((b.receipt_mass_kg_s.value - expect_mass).abs() <= 1e-12 * 1e3);
+    assert!((b.energy_w.value - b.receipt_energy_w.value).abs() <= 1e-12 * 1e10);
+    // The drops leave by their volume share of the vapor region.
+    let alpha = v[st::DROP_VOLUME] / (v[st::VAPOR_VOLUME] + v[st::DROP_VOLUME]);
+    let drop_flux = out.drop.unwrap().mass_flux.value;
+    assert!((out.drop_kg_s.value - alpha * 0.6 * 0.004_116_720_573_82 * drop_flux).abs() <= 1e-12);
+    println!(
+        "relief at lift 0.6: vapor {} kg/s, drops {} kg/s",
+        out.vapor_kg_s.value, out.drop_kg_s.value
+    );
+}
+
+#[test]
+fn relief_outlet_is_dry_without_drops_and_its_roots_follow_raw_pt1() {
+    let p = prepared_all();
+    let v = physical(&coordinates(&p.y, &p.scales, None));
+    let zero = [0.; st::COORDINATES];
+    let boundary = Boundary {
+        relief: Some(st::ReliefState {
+            lift: s(1.),
+            back_pressure_pa: s(101_325.),
+        }),
+        ..Boundary::closed()
+    };
+    let ev = evaluate_all(&p, &v, &zero, [Receipt::zero(); 3], &boundary);
+    let out = ev.flows.relief.unwrap();
+    assert_eq!(out.drop_kg_s.value, 0.);
+    assert!(out.drop.is_none() && out.vapor_kg_s.value > 0.);
+    assert_eq!(out.boron_kg_s.value, 0.);
+    // Closed relief: no flow and no restriction evaluation.
+    let shut = Boundary {
+        relief: Some(st::ReliefState {
+            lift: s(0.),
+            back_pressure_pa: s(101_325.),
+        }),
+        ..Boundary::closed()
+    };
+    let ev0 = evaluate_all(&p, &v, &zero, [Receipt::zero(); 3], &shut);
+    let out0 = ev0.flows.relief.unwrap();
+    assert!(out0.vapor.is_none() && out0.vapor_kg_s.value == 0.);
+    // A relief port needs its state, and its receipt is the cell's own.
+    let x = Coordinates::values(&v);
+    let r = Coordinates::values(&zero);
+    let missing = p.cell.residual(
+        &If97,
+        &x,
+        &r,
+        &[Receipt::zero(); 3],
+        &Boundary::closed(),
+        &p.scales,
+        None,
+    );
+    assert!(matches!(missing, Err(Failure::Fatal(_))));
+    let device = p.cell.parameters().ports[2].relief.unwrap();
+    let roof = s(ROOF_PA);
+    let closed = device.roots(roof, s(0.), false, st::ReliefMotion::Closed);
+    assert!((closed.demand.value - (ROOF_PA - 15.8e6)).abs() < 1e-6 && closed.travel.is_none());
+    let opening = device.roots(roof, s(0.3), true, st::ReliefMotion::Opening);
+    assert!((opening.demand.value - (ROOF_PA - 15.6e6)).abs() < 1e-6);
+    assert!((opening.travel.unwrap().value - 0.7).abs() < 1e-15);
+    assert_eq!(device.lift_rate(st::ReliefMotion::Opening), 20.);
+    assert_eq!(device.lift_rate(st::ReliefMotion::Closing), -20.);
+    assert_eq!(device.lift_rate(st::ReliefMotion::Open), 0.);
+    // Upper ports see p_roof and the vapor region's content.
+    let view = p.cell.port_view(&ev.column, 1).unwrap();
+    assert_eq!(view.pressure.value, ev.column.roof_pressure.value);
+    assert!(view.phase[0].is_none() && view.phase[1].unwrap().fraction.value == 1.);
+    println!(
+        "dry relief at full lift: {} kg/s of vapor",
+        out.vapor_kg_s.value
+    );
+}
+
+#[test]
+fn restriction_flux_directions_match_central_differences() {
+    // Superheated steam (crossing into the dome on the path), saturated
+    // liquid (flashing at once) and an unchoked low pressure ratio.
+    let p0 = 15.2e6;
+    let sat = If97.saturation(s(p0)).unwrap();
+    let steam = state(true, p0, sat.temperature.value + 4.).1;
+    // Drops saturated at p_s expand from the lower p_roof, so they start wet.
+    let drops = If97
+        .saturation(s(p0 + 6.0e3))
+        .unwrap()
+        .liquid
+        .enthalpy
+        .value;
+    for (vapor, h0, back) in [
+        (true, steam, 3.0e5),
+        (false, drops, 3.0e5),
+        (true, steam, 13.9e6),
+    ] {
+        let (dp, dh, db) = (2.0e3, 150., 1.0e3);
+        let seeded = st::restriction_flux(
+            &If97,
+            vapor,
+            Scalar::new(p0, dp),
+            Scalar::new(h0, dh),
+            Scalar::new(back, db),
+        )
+        .unwrap();
+        let at = |e: f64| {
+            st::restriction_flux(
+                &If97,
+                vapor,
+                s(p0 + e * dp),
+                s(h0 + e * dh),
+                s(back + e * db),
+            )
+            .unwrap()
+            .mass_flux
+            .value
+        };
+        let (h1, h2) = (2e-3, 1e-3);
+        let (coarse, fine) = (
+            (at(h1) - at(-h1)) / (2. * h1),
+            (at(h2) - at(-h2)) / (2. * h2),
+        );
+        let an = seeded.mass_flux.direction;
+        let spread = (coarse - fine).abs();
+        assert!(
+            (an - fine).abs() <= 3. * spread + 1e-6 * an.abs().max(1.),
+            "vapor {vapor} back {back}: analytic {an}, difference {fine}, spread {spread}"
+        );
+        assert_eq!(seeded.choked, back < 1e7, "choking at back {back}");
+        println!(
+            "vapor {vapor} back {back}: G {} direction {an} vs {fine}",
+            seeded.mass_flux.value
         );
     }
 }
