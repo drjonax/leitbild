@@ -23,6 +23,7 @@ import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { norwayGridModelRef, norwayNormalOperatingPointRef, norwayStandardAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { GridGeneratorDefinition } from '../src/packs/electric-grid/grid-model.ts'
+import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { gridIslandIsEnergized } from '../src/packs/electric-grid/runtime/island-energization.ts'
@@ -36,6 +37,7 @@ import {
   restoredGridRuntimeStateFor,
   runtimeStateForElectricGrids,
 } from '../src/packs/electric-grid/sim/runtime-state.ts'
+import { capabilityJsonSchema } from '../src/simulation/capabilities.ts'
 import type { PackRuntimeEvent } from '../src/simulation/protocol.ts'
 import { scenarios } from './fixtures/scenarios.ts'
 
@@ -398,5 +400,157 @@ describe('electric grid command Capabilities', () => {
     } finally {
       await connection.close()
     }
+  })
+})
+
+const queryCapability = (id: string) => electricGridQueryCapabilities.find(capability => capability.id === id)!
+
+/** Answers a query the way the Host does: the Pack answer, then the published output schema. */
+const queryGrid = (grid: GridRuntimeInstance, capabilityId: string, input: Readonly<Record<string, unknown>> = {}) => {
+  const scoped = capabilityId === 'world.electric-grid.catalog.list' ? input : { gridId: grid.definition.gridId, ...input }
+  const raw = answerElectricGridQuery({ request: { capabilityId, input: scoped }, grids: new Map([[grid.definition.gridId, grid]]) })
+  return { raw, parsed: queryCapability(capabilityId).output.parse(raw) as Record<string, unknown> }
+}
+const query = (grid: GridRuntimeInstance, capabilityId: string, input: Readonly<Record<string, unknown>> = {}) =>
+  queryGrid(grid, capabilityId, input).parsed as Record<string, any>
+
+/** JSON Schema paths of objects that publish no properties (free-form records). */
+const untypedObjectPaths = (schema: unknown, path = '$'): ReadonlyArray<string> => {
+  if (typeof schema !== 'object' || schema === null) return []
+  const node = schema as Record<string, unknown>
+  const own = node.type === 'object' && node.properties === undefined ? [path] : []
+  return [...own, ...Object.entries(node).flatMap(([key, value]) => Array.isArray(value)
+    ? value.flatMap((item, index) => untypedObjectPaths(item, `${path}.${key}[${index}]`))
+    : untypedObjectPaths(value, `${path}.${key}`))]
+}
+
+describe('electric grid query Capabilities', () => {
+  test('publish typed output schemas with properties for every known shape', () => {
+    for (const capability of electricGridQueryCapabilities) {
+      const schema = capabilityJsonSchema(capability.output) as { readonly type?: string; readonly properties?: Record<string, unknown> }
+      expect(schema.type).toBe('object')
+      expect(Object.keys(schema.properties ?? {}).length).toBeGreaterThan(0)
+      const untyped = untypedObjectPaths(schema)
+      expect(untyped).toEqual(capability.id === 'world.electric-grid.catalog.list' ? ['$.properties.operatingPointOverridesSchema'] : [])
+      expect(capability.searchTerms?.length ?? 0).toBeGreaterThanOrEqual(6)
+    }
+    expect(electricGridQueryCapabilities.map(capability => capability.id)).toContain('world.electric-grid.islands.list')
+  })
+
+  test('every asset of both published Models fits the typed asset.get output', () => {
+    const halden = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: 'electric-grid.halden.four-unit.normal' }, automation: { ref: norwayStandardAutomationRef },
+    }))
+    for (const compiled of [definition, halden]) {
+      const grid = createGridRuntimeInstance({ definition: compiled, at: isoAt(0) })
+      advanceGrid(grid, 0, isoAt(0))
+      for (const asset of compiled.index.assets) expect(() => query(grid, 'world.electric-grid.asset.get', { assetId: asset.id })).not.toThrow()
+      for (const id of ['world.electric-grid.catalog.list', 'world.electric-grid.grid.summary', 'world.electric-grid.islands.list', 'world.electric-grid.connection-points.list']) {
+        expect(() => query(grid, id)).not.toThrow()
+      }
+      expect(() => query(grid, 'world.electric-grid.power-flow.snapshot', { includeDefinition: true, limit: 500 })).not.toThrow()
+    }
+  })
+
+  test('query results are deep copies that never alias runtime state', () => {
+    const { grid, send } = harness()
+    const { raw } = queryGrid(grid, 'world.electric-grid.asset.get', { assetId: kvilldalId })
+    const detail = raw as { asset: { state: { dispatchMw: number; state: string }; definition: { capacityMw: number } } }
+    const dispatchMw = detail.asset.state.dispatchMw
+    detail.asset.state.dispatchMw = -1
+    detail.asset.definition.capacityMw = -1
+    expect(grid.generators.get(kvilldalId)!.dispatchMw).toBe(dispatchMw)
+    expect(generatorDefinition(kvilldalId).capacityMw).toBe(1240)
+    const summary = queryGrid(grid, 'world.electric-grid.grid.summary').raw as { projection: { tick: number } }
+    const tick = summary.projection.tick
+    expect(send(gridTripGeneratorCommandKind, { assetId: kvilldalId }).ok).toBe(true)
+    expect(detail.asset.state.state).toBe('online')
+    expect(summary.projection.tick).toBe(tick)
+  })
+
+  test('the default power-flow page is compact, sortable and filterable', () => {
+    const { grid } = harness()
+    const page = query(grid, 'world.electric-grid.power-flow.snapshot')
+    expect(page.branches).toHaveLength(100)
+    expect(page.branches[0].definition).toBeUndefined()
+    expect(JSON.stringify(page).length).toBeLessThanOrEqual(25_000)
+    const sorted = query(grid, 'world.electric-grid.power-flow.snapshot', { sort: 'loading', limit: 20 }).branches as ReadonlyArray<{ loadingPercent: number }>
+    expect(sorted.every((row, index) => index === 0 || sorted[index - 1]!.loadingPercent >= row.loadingPercent)).toBe(true)
+    const threshold = sorted[5]!.loadingPercent
+    const loaded = query(grid, 'world.electric-grid.power-flow.snapshot', { minLoadingPercent: threshold })
+    expect(loaded.total).toBe([...grid.branches.values()].filter(state => state.loadingPercent >= threshold).length)
+    expect(query(grid, 'world.electric-grid.power-flow.snapshot', { includeDefinition: true, limit: 1 }).branches[0].definition).toMatchObject({ reactancePu: expect.any(Number) })
+  })
+
+  test('assets.search filters by state, island and loading and sorts by the asked quantity', () => {
+    const { grid, send } = harness()
+    expect(send(gridTripGeneratorCommandKind, { assetId: kvilldalId }).ok).toBe(true)
+    const tripped = query(grid, 'world.electric-grid.assets.search', { kinds: ['generator'], status: ['tripped'] })
+    expect(tripped.assets.map((asset: { id: string }) => asset.id)).toEqual([kvilldalId])
+
+    const byDispatch = query(grid, 'world.electric-grid.assets.search', { kinds: ['generator'], sort: 'dispatch', limit: 5 }).assets as ReadonlyArray<{ id: string }>
+    const dispatchOf = (id: string) => grid.generators.get(id)!.dispatchMw
+    expect(byDispatch.every((asset, index) => index === 0 || dispatchOf(byDispatch[index - 1]!.id) >= dispatchOf(asset.id))).toBe(true)
+
+    const byLoading = query(grid, 'world.electric-grid.assets.search', { sort: 'loading', limit: 3 }).assets as ReadonlyArray<{ id: string; kind: string }>
+    expect(byLoading.every(asset => asset.kind === 'branch')).toBe(true)
+    const threshold = grid.branches.get(byLoading[2]!.id)!.loadingPercent
+    const loaded = query(grid, 'world.electric-grid.assets.search', { minLoadingPercent: threshold, limit: 200 })
+    expect(loaded.total).toBe(3)
+
+    expect(send(gridShedLoadCommandKind, { assetId: evLoadId, targetDemandMw: 60 }).ok).toBe(true)
+    const shed = query(grid, 'world.electric-grid.assets.search', { kinds: ['load'], sort: 'shed', limit: 1 }).assets as ReadonlyArray<{ id: string; status: { label: string } }>
+    expect(shed[0]).toMatchObject({ id: evLoadId, status: { label: 'shed (manual)' } })
+    expect(query(grid, 'world.electric-grid.assets.search', { kinds: ['load'], status: ['shed'] }).total).toBe(1)
+
+    const largest = query(grid, 'world.electric-grid.islands.list', { limit: 1 }).islands[0]
+    const inIsland = query(grid, 'world.electric-grid.assets.search', { kinds: ['bus'], islandId: largest.id, limit: 1 })
+    expect(inIsland.total).toBe(largest.busCount)
+    expect(() => query(grid, 'world.electric-grid.assets.search', { islandId: 'island:missing' })).toThrow('islands.list')
+  })
+
+  test('summary lists only constrained branches and affected loads and states its thresholds', () => {
+    const { grid, send } = harness()
+    const normal = query(grid, 'world.electric-grid.grid.summary')
+    expect(normal.thresholds).toEqual({ constrainedBranchLoadingPercent: 70, affectedLoadUnservedMw: 0 })
+    expect(normal.affectedLoads).toEqual([])
+    expect(normal.affectedLoadCount).toBe(0)
+    expect(normal.constrainedBranchCount).toBe([...grid.branches.values()].filter(state => state.state === 'closed' && state.loadingPercent >= 70).length)
+    expect(normal.constrainedBranches.every((branch: { state: { loadingPercent: number } }) => branch.state.loadingPercent >= 70)).toBe(true)
+
+    expect(send(gridShedLoadCommandKind, { assetId: evLoadId, targetDemandMw: 60 }).ok).toBe(true)
+    const shed = query(grid, 'world.electric-grid.grid.summary')
+    expect(shed.affectedLoadCount).toBe(1)
+    expect(shed.affectedLoads[0]).toMatchObject({ id: evLoadId, state: { shedCauses: ['manual'], serviceState: 'shed' } })
+    expect(shed.affectedLoads[0].state.unservedMw).toBeCloseTo(grid.loads.get(evLoadId)!.curtailedMw)
+    expect(shed.projection.unservedLoadMw).toBeCloseTo(shed.affectedLoads[0].state.unservedMw)
+  })
+
+  test('catalog.list carries no per-Grid runtime diagnostics', () => {
+    const { grid } = harness()
+    grid.diagnostics.lastPersistenceFailure = 'disk full'
+    const catalog = query(grid, 'world.electric-grid.catalog.list')
+    expect(Object.keys(catalog.grids[0]).sort()).toEqual(['automation', 'id', 'model', 'modelDiagnostics', 'operatingPoint'])
+    expect(JSON.stringify(catalog)).not.toContain('disk full')
+  })
+
+  test('islands.list reports per-island balance, energisation and frequency', () => {
+    const { grid, send, step } = harness()
+    const before = query(grid, 'world.electric-grid.islands.list', { limit: 500 })
+    expect(before.total).toBe(topologyPlanForGrid(grid).islands.length)
+    const islands = before.islands as ReadonlyArray<{ loadMw: number; servedLoadMw: number; energized: boolean; frequencyHz: number | null }>
+    expect(islands.reduce((sum, island) => sum + island.loadMw, 0)).toBeCloseTo(grid.projection.totalLoadMw)
+    expect(islands.every((island, index) => index === 0 || islands[index - 1]!.loadMw >= island.loadMw)).toBe(true)
+    expect(islands.every(island => island.energized === (island.frequencyHz !== null))).toBe(true)
+
+    const load = definition.model.loads.find(candidate => (definition.index.generatorsByBus.get(candidate.busId) ?? []).length === 0
+      && (definition.index.branchesByBus.get(candidate.busId) ?? []).length >= 2)!
+    for (const branch of definition.index.branchesByBus.get(load.busId)!) expect(send(gridOpenBranchCommandKind, { assetId: branch.id }).ok).toBe(true)
+    step(4)
+    const isolated = (query(grid, 'world.electric-grid.islands.list', { limit: 500 }).islands as ReadonlyArray<{ id: string; energized: boolean; frequencyHz: number | null; loadCount: number }>)
+      .find(island => island.id === grid.busStates.get(load.busId)!.islandId)!
+    expect(isolated).toMatchObject({ energized: false, frequencyHz: null })
+    expect(isolated.loadCount).toBeGreaterThan(0)
+    expect(query(grid, 'world.electric-grid.assets.search', { kinds: ['bus'], status: ['de-energized'], islandId: isolated.id }).total).toBeGreaterThan(0)
   })
 })

@@ -3,6 +3,7 @@ import { gridAssetGetQuery, gridAssetSearchQuery } from './assets.ts'
 import { gridCatalogQuery } from './catalog.ts'
 import type { ElectricGridQuery, GridRuntimes } from './common.ts'
 import { gridConnectionPointsQuery } from './connection-points.ts'
+import { gridIslandsQuery } from './islands.ts'
 import { gridPowerFlowQuery } from './power-flow.ts'
 import { gridSummaryQuery } from './summary.ts'
 
@@ -10,6 +11,7 @@ import { gridSummaryQuery } from './summary.ts'
 const electricGridQueries: ReadonlyArray<ElectricGridQuery> = [
   gridCatalogQuery,
   gridSummaryQuery,
+  gridIslandsQuery,
   gridAssetSearchQuery,
   gridAssetGetQuery,
   gridPowerFlowQuery,
@@ -22,11 +24,12 @@ export const electricGridQueryKinds: ReadonlyArray<string> = electricGridQueries
 
 export const electricGridQueryCapabilities: ReadonlyArray<SimulationCapability> = electricGridQueries.map(query => query.capability)
 
+/** Answers one query with a deep copy, so callers never alias live runtime state. */
 export const answerElectricGridQuery = (config: {
   readonly request: PackRuntimeQuery
   readonly grids: GridRuntimes
 }): unknown => {
   const query = queryById.get(config.request.capabilityId)
   if (!query) throw new Error(`unsupported Electric Grid query Capability: ${config.request.capabilityId}`)
-  return query.answer(config.request.input, config.grids)
+  return structuredClone(query.answer(config.request.input, config.grids))
 }

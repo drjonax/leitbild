@@ -3,7 +3,7 @@ import { objectIdSchema } from '../../../core/model/index.ts'
 import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import { defineSimulationQueryCapability } from '../../../simulation/capabilities.ts'
 import type { SimulationCapability } from '../../../simulation/protocol.ts'
-import type { GridRuntimeInstance } from '../runtime/instance.ts'
+import type { GridRuntimeInstance, GridTopologyPlan } from '../runtime/instance.ts'
 
 export type GridRuntimes = ReadonlyMap<string, GridRuntimeInstance>
 
@@ -15,12 +15,12 @@ export interface ElectricGridQuery {
 
 export const assetKindSchema = z.enum(['bus', 'branch', 'generator', 'load', 'storage'])
 export const gridPayloadSchema = z.object({ gridId: z.string().min(1) }).strict()
-export const genericObjectSchema = z.record(z.string(), z.unknown())
 
 export const defineGridQuery = <Input extends z.ZodType>(config: {
   readonly id: string
   readonly title: string
   readonly description: string
+  readonly searchTerms: ReadonlyArray<string>
   readonly input: Input
   readonly output: z.ZodType
   readonly answer: (payload: z.output<Input>, grids: GridRuntimes) => unknown
@@ -29,6 +29,7 @@ export const defineGridQuery = <Input extends z.ZodType>(config: {
     id: config.id,
     title: config.title,
     description: config.description,
+    searchTerms: config.searchTerms,
     input: config.input,
     output: config.output,
     inspectObjectIds: rawInput => {
@@ -45,4 +46,17 @@ export const gridFor = (grids: GridRuntimes, gridId: string): GridRuntimeInstanc
     `Electric Grid not found: ${gridId}. Discover exact running Grid ids with world.electric-grid.catalog.list.`,
   )
   return grid
+}
+
+/** The topology the Grid last solved; every accepted command and tick re-solves it. */
+export const solvedTopologyFor = (grid: GridRuntimeInstance): GridTopologyPlan => {
+  if (grid.topologyPlan === null) throw new Error(`Grid ${grid.definition.gridId} has not solved its topology since the last switching change`)
+  return grid.topologyPlan
+}
+
+export const requireGridIsland = (plan: GridTopologyPlan, islandId: string): string => {
+  if (!plan.islands.some(island => island.id === islandId)) return rejectCapabilityTarget(
+    `Grid island not found: ${islandId}. Discover current island ids with world.electric-grid.islands.list.`,
+  )
+  return islandId
 }
