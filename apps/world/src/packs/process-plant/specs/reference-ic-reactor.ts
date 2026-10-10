@@ -24,6 +24,13 @@ const lowRcpFlowVoteThresholdFor = (loops: ReadonlyArray<ProcessPlantReferenceLo
 
 const lowRcpFlowTripThresholdKgPerS = 3_000
 
+// Overtemperature and overpower delta-T: each loop's channel
+// (deltaTProtectionChannel) computes its setpoint from its own Tavg and the
+// pressurizer pressure and trips when its delta-T rises past it; two channels
+// trip the reactor, as two of four do at the reference four-loop plant
+// (NUREG-1431 Table 3.3.1-1, functions 6 and 7).
+const deltaTTripVoteFor = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): number => Math.min(2, loops.length)
+
 // P-9: above half of the reference core's 3,400 MW rated power the steam
 // dumps cannot take the whole load a turbine trip rejects, so the turbine
 // trip trips the reactor. Below it the reactor rides the trip out.
@@ -63,6 +70,42 @@ export const reactorReferenceIcRules = (
       }),
       ...reactorTripBreakerWrites('high-power-trip'),
       write('insert-control-rods', { path: 'core.rodInsertionFraction' }, 1),
+    ],
+  }),
+  rule({
+    id: 'reactor-overtemperature-delta-t-trip',
+    label: 'Reactor overtemperature delta-T trip',
+    ruleClass: 'protection',
+    modes: ['powerOperation'],
+    condition: vote(deltaTTripVoteFor(loops), loops.map(loop => comparison({ path: `deltaTChannel${loop}.overtemperatureMarginC` }, '<', 0))),
+    delayMs: 1_000,
+    effects: [
+      trip({
+        id: 'overtemperature-delta-t-trip',
+        title: 'Reactor overtemperature delta-T trip',
+        message: `${deltaTTripVoteFor(loops)} or more loops' delta-T is above its overtemperature setpoint, which falls as loop Tavg rises and pressurizer pressure falls.`,
+        annunciator: reactorAction,
+      }),
+      ...reactorTripBreakerWrites('overtemperature-delta-t-trip'),
+      write('insert-control-rods-overtemperature-delta-t', { path: 'core.rodInsertionFraction' }, 1),
+    ],
+  }),
+  rule({
+    id: 'reactor-overpower-delta-t-trip',
+    label: 'Reactor overpower delta-T trip',
+    ruleClass: 'protection',
+    modes: ['powerOperation'],
+    condition: vote(deltaTTripVoteFor(loops), loops.map(loop => comparison({ path: `deltaTChannel${loop}.overpowerMarginC` }, '<', 0))),
+    delayMs: 1_000,
+    effects: [
+      trip({
+        id: 'overpower-delta-t-trip',
+        title: 'Reactor overpower delta-T trip',
+        message: `${deltaTTripVoteFor(loops)} or more loops' delta-T is above its overpower setpoint, which falls as loop Tavg rises above its rated value.`,
+        annunciator: reactorAction,
+      }),
+      ...reactorTripBreakerWrites('overpower-delta-t-trip'),
+      write('insert-control-rods-overpower-delta-t', { path: 'core.rodInsertionFraction' }, 1),
     ],
   }),
   rule({

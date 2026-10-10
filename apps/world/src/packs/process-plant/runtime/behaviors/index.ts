@@ -8,6 +8,7 @@ import { balanceOfPlantBehaviorDefinitions } from './balance-of-plant-behaviors.
 import { containmentBehaviorDefinitions } from './containment-behaviors.ts'
 import { electricalBehaviorDefinitions, electricalInitialReconciliationDefinitions } from './electrical-behaviors.ts'
 import { heatExchangerBehaviorDefinitions } from './heat-exchanger-behaviors.ts'
+import { instrumentationBehaviorDefinitions, instrumentationInitialReconciliationDefinitions } from './instrumentation-behaviors.ts'
 import { junctionBehaviorDefinitions } from './junction-behaviors.ts'
 import { pressurizerBehaviorDefinitions } from './pressurizer-behaviors.ts'
 import { pumpBehaviorDefinitions, pumpInitialReconciliationDefinitions } from './pump-behaviors.ts'
@@ -25,6 +26,7 @@ const behaviorDefinitionsByFamily: ReadonlyArray<ComponentBehaviorDefinition> = 
   ...pumpBehaviorDefinitions,
   ...steamGeneratorBehaviorDefinitions,
   ...pressurizerBehaviorDefinitions,
+  ...instrumentationBehaviorDefinitions,
 ]
 
 const behaviorDefinitionById = (id: string): ComponentBehaviorDefinition => {
@@ -67,11 +69,13 @@ export const componentBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefini
   behaviorDefinitionById('processHeader-mixing-diagnostics'),
   behaviorDefinitionById('steamHeader-mixing-diagnostics'),
   behaviorDefinitionById('electrical-load-service'),
+  behaviorDefinitionById('delta-t-protection-channel'),
 ]
 
 export const componentInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
   ...pumpInitialReconciliationDefinitions,
   ...electricalInitialReconciliationDefinitions,
+  ...instrumentationInitialReconciliationDefinitions,
 ]
 
 /**
@@ -103,4 +107,5 @@ export const processPlantComponentBehaviorSourcePathByKind: ReadonlyMap<Componen
   ['centrifugalPump' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/pump-behaviors.ts'],
   ['steamGenerator' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/steam-generator-behaviors.ts'],
   ['pressurizer' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/pressurizer-behaviors.ts'],
+  ['deltaTProtectionChannel' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/instrumentation-behaviors.ts'],
 ])

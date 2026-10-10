@@ -321,8 +321,9 @@ describe('process plant runtime', () => {
       ['loss-main-feedwater', [
         'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       ]],
+      // A feedwater valve failed to 35 % at full power heats the plant up until overtemperature delta-T trips the reactor.
       ['steam-generator-b-feedwater-runback', [
-        'alarm:sg-b-feedwater-flow-low:feedwater-flow-low',
+        'trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip',
       ]],
       ['pressurizer-relief-open', [
         'alarm:pzr-relief-flow-high:relief-flow-high',
@@ -375,8 +376,9 @@ describe('process plant runtime', () => {
       ['loss-main-feedwater', [
         'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       ]],
+      // A feedwater valve failed to 35 % at full power heats the plant up until overtemperature delta-T trips the reactor.
       ['steam-generator-b-feedwater-runback', [
-        'alarm:sg-b-feedwater-flow-low:feedwater-flow-low',
+        'trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip',
       ]],
       ['pressurizer-relief-open', [
         'alarm:pzr-relief-flow-high:relief-flow-high',
@@ -485,7 +487,9 @@ describe('process plant runtime', () => {
     const active = activeLifecycleIds(snapshot)
 
     expect(active.alarms.length).toBeGreaterThan(0)
-    expect(active.trips).toContain('trip:reactor-low-rcp-flow-trip:low-rcp-flow-trip')
+    // The loss of feedwater heats the plant up enough to trip the reactor before the pumps stop.
+    expect(active.trips.length).toBeGreaterThan(0)
+    expect(runtime.readVariable(valueOf('reactorTripBreakerA.closedState'))).toBe(false)
   }, 120_000) // 450 s correctness trajectory, same watchdog as the normal-hold case.
 
   test('scheduled typed PWR fault actions compile to validated runtime writes', () => {

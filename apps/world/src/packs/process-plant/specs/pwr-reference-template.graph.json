@@ -3479,6 +3479,336 @@
           "shortLabel": "RTB B"
         }
       }
+    },
+    {
+      "id": "deltaTChannelA",
+      "kind": "deltaTProtectionChannel",
+      "label": "Loop A Delta-T Protection Channel",
+      "parameters": {
+        "overtemperatureK1": 1.18,
+        "overtemperatureK2PerC": 0.0378,
+        "overtemperatureK3PerMPa": 0.1595,
+        "overpowerK4": 1.1,
+        "overpowerK6PerC": 0.0029
+      },
+      "variables": [
+        {
+          "path": "deltaTC",
+          "tagId": "TDI-411",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A delta-T, hot-leg minus cold-leg RTD temperature"
+        },
+        {
+          "path": "averageTemperatureC",
+          "tagId": "TAVG-411",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A average temperature from its hot- and cold-leg RTDs"
+        },
+        {
+          "path": "overtemperatureSetpointC",
+          "tagId": "OTDT-411-SP",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A overtemperature delta-T trip setpoint, computed from loop Tavg and pressurizer pressure"
+        },
+        {
+          "path": "overpowerSetpointC",
+          "tagId": "OPDT-411-SP",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A overpower delta-T trip setpoint, computed from loop Tavg"
+        },
+        {
+          "path": "overtemperatureMarginC",
+          "tagId": "OTDT-411-MARGIN",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A overtemperature delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "overpowerMarginC",
+          "tagId": "OPDT-411-MARGIN",
+          "equipmentId": "deltaTChannelA",
+          "description": "Loop A overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "dT channel A"
+        }
+      }
+    },
+    {
+      "id": "deltaTChannelB",
+      "kind": "deltaTProtectionChannel",
+      "label": "Loop B Delta-T Protection Channel",
+      "parameters": {
+        "overtemperatureK1": 1.18,
+        "overtemperatureK2PerC": 0.0378,
+        "overtemperatureK3PerMPa": 0.1595,
+        "overpowerK4": 1.1,
+        "overpowerK6PerC": 0.0029
+      },
+      "variables": [
+        {
+          "path": "deltaTC",
+          "tagId": "TDI-421",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B delta-T, hot-leg minus cold-leg RTD temperature"
+        },
+        {
+          "path": "averageTemperatureC",
+          "tagId": "TAVG-421",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B average temperature from its hot- and cold-leg RTDs"
+        },
+        {
+          "path": "overtemperatureSetpointC",
+          "tagId": "OTDT-421-SP",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B overtemperature delta-T trip setpoint, computed from loop Tavg and pressurizer pressure"
+        },
+        {
+          "path": "overpowerSetpointC",
+          "tagId": "OPDT-421-SP",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B overpower delta-T trip setpoint, computed from loop Tavg"
+        },
+        {
+          "path": "overtemperatureMarginC",
+          "tagId": "OTDT-421-MARGIN",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B overtemperature delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "overpowerMarginC",
+          "tagId": "OPDT-421-MARGIN",
+          "equipmentId": "deltaTChannelB",
+          "description": "Loop B overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "dT channel B"
+        }
+      }
+    },
+    {
+      "id": "deltaTChannelC",
+      "kind": "deltaTProtectionChannel",
+      "label": "Loop C Delta-T Protection Channel",
+      "parameters": {
+        "overtemperatureK1": 1.18,
+        "overtemperatureK2PerC": 0.0378,
+        "overtemperatureK3PerMPa": 0.1595,
+        "overpowerK4": 1.1,
+        "overpowerK6PerC": 0.0029
+      },
+      "variables": [
+        {
+          "path": "deltaTC",
+          "tagId": "TDI-431",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C delta-T, hot-leg minus cold-leg RTD temperature"
+        },
+        {
+          "path": "averageTemperatureC",
+          "tagId": "TAVG-431",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C average temperature from its hot- and cold-leg RTDs"
+        },
+        {
+          "path": "overtemperatureSetpointC",
+          "tagId": "OTDT-431-SP",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C overtemperature delta-T trip setpoint, computed from loop Tavg and pressurizer pressure"
+        },
+        {
+          "path": "overpowerSetpointC",
+          "tagId": "OPDT-431-SP",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C overpower delta-T trip setpoint, computed from loop Tavg"
+        },
+        {
+          "path": "overtemperatureMarginC",
+          "tagId": "OTDT-431-MARGIN",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C overtemperature delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "overpowerMarginC",
+          "tagId": "OPDT-431-MARGIN",
+          "equipmentId": "deltaTChannelC",
+          "description": "Loop C overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "dT channel C"
+        }
+      }
+    },
+    {
+      "id": "deltaTChannelD",
+      "kind": "deltaTProtectionChannel",
+      "label": "Loop D Delta-T Protection Channel",
+      "parameters": {
+        "overtemperatureK1": 1.18,
+        "overtemperatureK2PerC": 0.0378,
+        "overtemperatureK3PerMPa": 0.1595,
+        "overpowerK4": 1.1,
+        "overpowerK6PerC": 0.0029
+      },
+      "variables": [
+        {
+          "path": "deltaTC",
+          "tagId": "TDI-441",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D delta-T, hot-leg minus cold-leg RTD temperature"
+        },
+        {
+          "path": "averageTemperatureC",
+          "tagId": "TAVG-441",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D average temperature from its hot- and cold-leg RTDs"
+        },
+        {
+          "path": "overtemperatureSetpointC",
+          "tagId": "OTDT-441-SP",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D overtemperature delta-T trip setpoint, computed from loop Tavg and pressurizer pressure"
+        },
+        {
+          "path": "overpowerSetpointC",
+          "tagId": "OPDT-441-SP",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D overpower delta-T trip setpoint, computed from loop Tavg"
+        },
+        {
+          "path": "overtemperatureMarginC",
+          "tagId": "OTDT-441-MARGIN",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D overtemperature delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "overpowerMarginC",
+          "tagId": "OPDT-441-MARGIN",
+          "equipmentId": "deltaTChannelD",
+          "description": "Loop D overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "dT channel D"
+        }
+      }
+    },
+    {
+      "id": "deltaTChannelE",
+      "kind": "deltaTProtectionChannel",
+      "label": "Loop E Delta-T Protection Channel",
+      "parameters": {
+        "overtemperatureK1": 1.18,
+        "overtemperatureK2PerC": 0.0378,
+        "overtemperatureK3PerMPa": 0.1595,
+        "overpowerK4": 1.1,
+        "overpowerK6PerC": 0.0029
+      },
+      "variables": [
+        {
+          "path": "deltaTC",
+          "tagId": "TDI-451",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E delta-T, hot-leg minus cold-leg RTD temperature"
+        },
+        {
+          "path": "averageTemperatureC",
+          "tagId": "TAVG-451",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E average temperature from its hot- and cold-leg RTDs"
+        },
+        {
+          "path": "overtemperatureSetpointC",
+          "tagId": "OTDT-451-SP",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E overtemperature delta-T trip setpoint, computed from loop Tavg and pressurizer pressure"
+        },
+        {
+          "path": "overpowerSetpointC",
+          "tagId": "OPDT-451-SP",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E overpower delta-T trip setpoint, computed from loop Tavg"
+        },
+        {
+          "path": "overtemperatureMarginC",
+          "tagId": "OTDT-451-MARGIN",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E overtemperature delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "overpowerMarginC",
+          "tagId": "OPDT-451-MARGIN",
+          "equipmentId": "deltaTChannelE",
+          "description": "Loop E overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "dT channel E"
+        }
+      }
+    },
+    {
+      "id": "deltaTChannelF",
+      "kind": "deltaTProtectionChannel",
+      "label": "Loop F Delta-T Protection Channel",
+      "parameters": {
+        "overtemperatureK1": 1.18,
+        "overtemperatureK2PerC": 0.0378,
+        "overtemperatureK3PerMPa": 0.1595,
+        "overpowerK4": 1.1,
+        "overpowerK6PerC": 0.0029
+      },
+      "variables": [
+        {
+          "path": "deltaTC",
+          "tagId": "TDI-461",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F delta-T, hot-leg minus cold-leg RTD temperature"
+        },
+        {
+          "path": "averageTemperatureC",
+          "tagId": "TAVG-461",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F average temperature from its hot- and cold-leg RTDs"
+        },
+        {
+          "path": "overtemperatureSetpointC",
+          "tagId": "OTDT-461-SP",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F overtemperature delta-T trip setpoint, computed from loop Tavg and pressurizer pressure"
+        },
+        {
+          "path": "overpowerSetpointC",
+          "tagId": "OPDT-461-SP",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F overpower delta-T trip setpoint, computed from loop Tavg"
+        },
+        {
+          "path": "overtemperatureMarginC",
+          "tagId": "OTDT-461-MARGIN",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F overtemperature delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        },
+        {
+          "path": "overpowerMarginC",
+          "tagId": "OPDT-461-MARGIN",
+          "equipmentId": "deltaTChannelF",
+          "description": "Loop F overpower delta-T margin, setpoint minus loop delta-T; the channel trips below zero"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "dT channel F"
+        }
+      }
     }
   ],
   "connections": [
@@ -10327,6 +10657,42 @@
     "safety-accumulator-e-to-cold-leg-e.flowKgPerS",
     "safety-accumulator-f-to-cold-leg-f.flowKgPerS",
     "safety-accumulator-e-to-cold-leg-e.pressureMPa",
-    "safety-accumulator-f-to-cold-leg-f.pressureMPa"
+    "safety-accumulator-f-to-cold-leg-f.pressureMPa",
+    "deltaTChannelA.deltaTC",
+    "deltaTChannelA.averageTemperatureC",
+    "deltaTChannelA.overtemperatureSetpointC",
+    "deltaTChannelA.overpowerSetpointC",
+    "deltaTChannelA.overtemperatureMarginC",
+    "deltaTChannelA.overpowerMarginC",
+    "deltaTChannelB.deltaTC",
+    "deltaTChannelB.averageTemperatureC",
+    "deltaTChannelB.overtemperatureSetpointC",
+    "deltaTChannelB.overpowerSetpointC",
+    "deltaTChannelB.overtemperatureMarginC",
+    "deltaTChannelB.overpowerMarginC",
+    "deltaTChannelC.deltaTC",
+    "deltaTChannelC.averageTemperatureC",
+    "deltaTChannelC.overtemperatureSetpointC",
+    "deltaTChannelC.overpowerSetpointC",
+    "deltaTChannelC.overtemperatureMarginC",
+    "deltaTChannelC.overpowerMarginC",
+    "deltaTChannelD.deltaTC",
+    "deltaTChannelD.averageTemperatureC",
+    "deltaTChannelD.overtemperatureSetpointC",
+    "deltaTChannelD.overpowerSetpointC",
+    "deltaTChannelD.overtemperatureMarginC",
+    "deltaTChannelD.overpowerMarginC",
+    "deltaTChannelE.deltaTC",
+    "deltaTChannelE.averageTemperatureC",
+    "deltaTChannelE.overtemperatureSetpointC",
+    "deltaTChannelE.overpowerSetpointC",
+    "deltaTChannelE.overtemperatureMarginC",
+    "deltaTChannelE.overpowerMarginC",
+    "deltaTChannelF.deltaTC",
+    "deltaTChannelF.averageTemperatureC",
+    "deltaTChannelF.overtemperatureSetpointC",
+    "deltaTChannelF.overpowerSetpointC",
+    "deltaTChannelF.overtemperatureMarginC",
+    "deltaTChannelF.overpowerMarginC"
   ]
 }

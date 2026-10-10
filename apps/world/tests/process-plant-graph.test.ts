@@ -41,9 +41,10 @@ describe('process plant model composition', () => {
     // open in standby, again when the non-safety loads were moved to unit
     // buses, again when the diesels, buses and unit auxiliary transformer
     // were given realistic ratings, and again when the turbine-driven AFW
-    // pump lost its AC feed; PWR Runs checkpointed before then must be
+    // pump lost its AC feed, and again when the reactor protection gained
+    // its loop delta-T channels; PWR Runs checkpointed before then must be
     // restarted.
-    expect(system.modelDigest).toBe('561e3456f18f6474396fc8118650b2a391c13edf04127d4ba6c2be7f58c15c9c')
+    expect(system.modelDigest).toBe('DIGEST-PENDING')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

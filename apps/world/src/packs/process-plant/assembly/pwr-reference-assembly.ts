@@ -17,7 +17,7 @@ export const pwrReferenceParametersSchema = z.object({
   title: z.string().min(1).optional(),
 }).strict()
 
-const loopComponentIdPattern = /^(?:sg|rcp|feedwaterControlValve|auxFeedwaterValve|mainSteamIsolationValve|safetyAccumulator)([A-F])$/u
+const loopComponentIdPattern = /^(?:sg|rcp|feedwaterControlValve|auxFeedwaterValve|mainSteamIsolationValve|safetyAccumulator|deltaTChannel)([A-F])$/u
 
 const loopIdForComponent = (component: Pick<ComponentInstanceSpec, 'id'>): LoopId | null => {
   const match = loopComponentIdPattern.exec(String(component.id))
