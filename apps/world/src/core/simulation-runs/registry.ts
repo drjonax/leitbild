@@ -4,7 +4,7 @@ import { createCaptureAdmission } from '../../features/historian/capture-admissi
 import { lstat,readdir,rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z,ZodError } from 'zod'
-import { openRunHistorian } from '../../features/historian/store.ts'
+import { openRunHistorian, recordedHistoryOf } from '../../features/historian/store.ts'
 import { createProcedureSourceService,type ProcedureSourceService } from '../../features/procedures/source.ts'
 import { capabilityJsonSchema } from '../../simulation/capabilities.ts'
 import { worldCoreCapabilities } from '../../simulation/core-capabilities.ts'
@@ -542,6 +542,9 @@ export const createSimulationRunRegistry = (config: {
     const historian = scenarioRuntime.scenario.recording.length === 0
       ? undefined
       : openRunHistorian(join(runDir, 'history.sqlite'), { captureAdmission: await createCaptureAdmission(storageBudget, workspaceRoot) })
+    // Each recording runtime reads back only its own series, by simulation
+    // time, as the displays it answers for read them.
+    const recordedHistoryByRuntimeId = historian === undefined ? {} : Object.fromEntries(Object.keys(recordingByRuntimeId).map(runtimeId => [runtimeId, recordedHistoryOf(historian, runtimeId)]))
     let runtimeConnection
     const runClock = createSimulationClock({
       currentTime: restoredSnapshot?.clock?.currentTime ?? scenarioRuntime.scenario.world.startsAt,
@@ -578,6 +581,7 @@ export const createSimulationRunRegistry = (config: {
         ...(restoredSnapshot ? { initialObjects: restoredSnapshot.objects } : {}),
         runtimeStateStores,
         recordingByRuntimeId,
+        recordedHistoryByRuntimeId,
       })
     } catch (error) {
       historian?.close()

@@ -121,6 +121,9 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
               ...(config.recordingByRuntimeId?.[adapter.id] === undefined
               ? {}
               : { recording: config.recordingByRuntimeId[adapter.id] }),
+              ...(config.recordedHistoryByRuntimeId?.[adapter.id] === undefined
+              ? {}
+              : { recordedHistory: config.recordedHistoryByRuntimeId[adapter.id] }),
             }),
           }
         }),

@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { ActorId,ClientId,CommandEnvelope,CommandResult,ElectricalConnectionDefinition,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,PackRuntimeRecordingBatch,Provenance,ScenarioRecordingSelection,ScenarioWorldDefinition,SimulationClockState,SimulationRunEvent,SimulationRunId,TelemetryState } from '../core/model/index.ts'
+import type { ActorId,ClientId,CommandEnvelope,CommandResult,ElectricalConnectionDefinition,InteractionSignal,IsoTimestamp,ObjectId,OperationalObject,PackRuntimeRecordingBatch,Provenance,RecordedSample,ScenarioRecordingSelection,ScenarioWorldDefinition,SimulationClockState,SimulationRunEvent,SimulationRunId,TelemetryState } from '../core/model/index.ts'
 import type { PackRuntimeClock } from '../core/packs/protocol.ts'
 
 export interface PackRuntimeSnapshot {
@@ -178,6 +178,21 @@ export interface PackScenarioRuntimeConfig {
   readonly runtimeConfig: unknown
 }
 
+/**
+ * The samples this runtime recorded in its Run's historian, read by
+ * simulation time: one series and window per read, the newest up to the
+ * limit. The host binds it to the runtime, so a Pack reads only what it
+ * recorded itself.
+ */
+export interface PackRuntimeRecordedHistory {
+  readonly read: (query: {
+    readonly seriesId: string
+    readonly from: IsoTimestamp
+    readonly to: IsoTimestamp
+    readonly limit: number
+  }) => ReadonlyArray<RecordedSample>
+}
+
 export interface PackRuntimeQueries {
   readonly has: (capabilityId: string) => boolean
   readonly invoke: (query: PackRuntimeQuery) => Promise<unknown>
@@ -205,4 +220,7 @@ export interface PackRuntimeConnectionConfig {
   readonly runtimeStateStores?: Readonly<Record<string, PackRuntimeStateStore>>
   readonly recording?: ScenarioRecordingSelection
   readonly recordingByRuntimeId?: Readonly<Record<string, ScenarioRecordingSelection>>
+  /** What this runtime has recorded so far; present with `recording` where the Run keeps a historian. */
+  readonly recordedHistory?: PackRuntimeRecordedHistory
+  readonly recordedHistoryByRuntimeId?: Readonly<Record<string, PackRuntimeRecordedHistory>>
 }

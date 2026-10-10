@@ -76,6 +76,19 @@ export interface RunHistorian {
   readonly close: () => void
 }
 
+/**
+ * One runtime's own series read back by simulation time, newest first up to
+ * the limit: what a Pack runtime reads of what it recorded (the
+ * PackRuntimeRecordedHistory port).
+ */
+export const recordedHistoryOf = (historian: Pick<RunHistorian, 'query'>, runtimeId: string) => ({
+  read: (query: { readonly seriesId: string; readonly from: string; readonly to: string; readonly limit: number }): ReadonlyArray<RecordedSample> => {
+    const page = historian.query({ mode: 'raw', runtimeId, seriesId: query.seriesId, timeAxis: 'simulation', from: query.from, to: query.to, limit: query.limit })
+    if (page.mode !== 'raw') throw new Error('the historian answered a raw read with a summary')
+    return page.samples
+  },
+})
+
 const currentSchema = 1
 
 const historyStorage = (path: string) => {

@@ -1,4 +1,4 @@
-import type { PackRuntimeQuery } from '../../simulation/protocol.ts'
+import type { PackRuntimeQuery, PackRuntimeRecordedHistory } from '../../simulation/protocol.ts'
 import type { IsoTimestamp, ObjectId, OperationalObject } from '../../core/model/index.ts'
 import { answerProcessPlantIcQuery, processPlantIcQueryKinds } from './ic-query.ts'
 import type { ProcessPlantRuntimeInstance } from './runtime-instance.ts'
@@ -34,6 +34,8 @@ export const answerProcessPlantQuery = (config: {
   readonly simulationTime?: IsoTimestamp
   /** Series the Run's historian records (empty when it records none); required by composed displays. */
   readonly recordedSeriesIds?: ReadonlySet<string>
+  /** What the Run's historian holds of them; a composed display reads the recent history of what it trends. */
+  readonly recordedHistory?: PackRuntimeRecordedHistory
 }): unknown => answerProcessPlantCatalogQuery(config)
   ?? answerProcessPlantCredibilityQuery(config)
   ?? answerProcessPlantIcQuery(config)
