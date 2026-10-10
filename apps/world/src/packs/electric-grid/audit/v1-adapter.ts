@@ -11,7 +11,7 @@ import {
   type AuditLoadFamily,
 } from './audit-graph.ts'
 import { haversineKm } from './geodesy.ts'
-import { pairBranchEnds, type ReferenceGeometry } from './reference-geometry.ts'
+import { distanceToLocation, pairBranchEnds, type ReferenceGeometry } from './reference-geometry.ts'
 
 // Grid Model v1 → audit graph. v1 has one bus per station at its highest voltage, no circuits,
 // no price areas on buses or loads, and synthetic merged branch ids; the reference sidecar
@@ -96,7 +96,7 @@ export const auditGraphFromGridModelV1 = (input: GridModelV1AuditInput): AuditGr
     const geometry = featureId === undefined ? undefined : reference?.polylines(featureId)
     const from = busById.get(branch.fromBusId) ?? fail(`branch ${branch.id} references unknown bus ${branch.fromBusId}`)
     const to = busById.get(branch.toBusId) ?? fail(`branch ${branch.id} references unknown bus ${branch.toBusId}`)
-    const ends = geometry === undefined ? undefined : pairBranchEnds(geometry, from.location, to.location)
+    const ends = geometry === undefined ? undefined : pairBranchEnds(geometry, distanceToLocation(from.location), distanceToLocation(to.location))
     branches.push({
       id: branch.id,
       label: branch.label,

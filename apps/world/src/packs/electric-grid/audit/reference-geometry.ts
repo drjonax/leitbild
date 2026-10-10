@@ -51,31 +51,39 @@ export const createReferenceGeometry = (features: ReadonlyArray<ReferenceFeature
   }
 }
 
+/** Distance in km from a point to a branch terminal; the pairing minimises it. */
+export type TerminalDistance = (point: LonLat) => number
+
+export const distanceToLocation = (location: LonLat): TerminalDistance => point => haversineKm(point, location)
+
 /**
- * Pairs the free ends of a branch's polylines with its terminals: the end nearest the from bus,
- * then the remaining end nearest the to bus.
+ * Pairs the free ends of a branch's polylines with its terminals: the end nearest the from
+ * terminal, then the remaining end nearest the to terminal. A terminal where the branch's ways are
+ * split (a tee or a station inside the way, see way-segments.ts) pairs with the way vertex nearest
+ * it instead.
  */
 export const pairBranchEnds = (
   polylines: ReadonlyArray<ReadonlyArray<LonLat>>,
-  fromLocation: LonLat,
-  toLocation: LonLat,
+  from: TerminalDistance,
+  to: TerminalDistance,
+  split: { readonly from: boolean; readonly to: boolean } = { from: false, to: false },
 ): { readonly from: LonLat; readonly to: LonLat } | undefined => {
   const ends = polylines.flatMap(line => line.length >= 2 ? [line[0]!, line[line.length - 1]!] : [])
   if (ends.length < 2) return undefined
-  const nearest = (target: LonLat, exclude: number): number => {
-    let best = -1
+  const vertices = polylines.flatMap(line => line.length >= 2 ? line : [])
+  const nearest = (points: ReadonlyArray<LonLat>, distance: TerminalDistance, exclude: LonLat | null): LonLat => {
+    let best: LonLat | null = null
     let bestKm = Number.POSITIVE_INFINITY
-    ends.forEach((end, index) => {
-      if (index === exclude) return
-      const km = haversineKm(end, target)
+    for (const point of points) {
+      if (point === exclude) continue
+      const km = distance(point)
       if (km < bestKm) {
         bestKm = km
-        best = index
+        best = point
       }
-    })
-    return best
+    }
+    return best!
   }
-  const fromIndex = nearest(fromLocation, -1)
-  const toIndex = nearest(toLocation, fromIndex)
-  return { from: ends[fromIndex]!, to: ends[toIndex]! }
+  const fromEnd = nearest(split.from ? vertices : ends, from, null)
+  return { from: fromEnd, to: nearest(split.to ? vertices : ends, to, fromEnd) }
 }

@@ -8,7 +8,7 @@ import { compileGridTopology } from '../topology/compile.ts'
 import { compareText } from '../topology/ids.ts'
 import type { TopologyLedgerEntry } from '../topology/ledger.ts'
 import { adaptNodeSidecar } from '../topology/node-sidecar.ts'
-import type { TopologyBranch, TopologyHvdcLink, TopologySummary } from '../topology/result.ts'
+import type { TopologyBranch, TopologyBus, TopologyHvdcLink, TopologySummary } from '../topology/result.ts'
 import { curatedNetwork } from './curated-branches.ts'
 import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from './curations.ts'
 import { electricalRules } from './electrical.ts'
@@ -51,6 +51,8 @@ export interface GridModelLedger {
   readonly sourceBuildId: string
   readonly rules: typeof buildRules
   readonly excludedInterconnectors: ReadonlyArray<{ readonly id: string; readonly reason: string }>
+  /** Per station bus of several OSM features or absorbed tee vertices: what its audit footprint covers. */
+  readonly stationTerminals: Readonly<Record<string, { readonly featureIds: ReadonlyArray<string>; readonly junctionPoints: ReadonlyArray<readonly [number, number]> }>>
   readonly summary: { readonly topology: TopologySummary; readonly build: Readonly<Record<string, number>>; readonly geometryUnresolved: ReadonlyArray<string> }
   readonly build: ReadonlyArray<BuildLedgerEntry>
   /** Element ids of the filtering reasons, per reason. */
@@ -71,6 +73,13 @@ const failOnCurationLedger = (entries: ReadonlyArray<TopologyLedgerEntry>): void
   const stale = entries.filter(entry => entry.reason === 'curation-target-missing' || entry.reason === 'curation-unneeded')
   if (stale.length > 0) throw new Error(`curation records need review:\n${stale.map(entry => `  ${entry.reason}: ${entry.detail}`).join('\n')}`)
 }
+
+/** Station buses that unify several OSM station features or absorbed tee vertices (audit footprints). */
+const stationTerminalsOf = (buses: ReadonlyArray<TopologyBus>): GridModelLedger['stationTerminals'] =>
+  Object.fromEntries(buses
+    .filter(bus => bus.stationId !== null && (bus.stationFeatureIds.length > 1 || bus.mergedJunctionLocations.length > 0))
+    .sort((left, right) => compareText(left.id, right.id))
+    .map(bus => [bus.id, { featureIds: [...bus.stationFeatureIds].sort(compareText), junctionPoints: bus.mergedJunctionLocations.map(point => [point[0], point[1]] as const) }]))
 
 export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayModelBuild => {
   const sources = modelSources(inputs)
@@ -231,6 +240,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
       sourceBuildId: buildId,
       rules: buildRules,
       excludedInterconnectors: excludedInterconnectors(inputs.interconnectors.data),
+      stationTerminals: stationTerminalsOf(main.buses),
       summary: { topology: topology.summary, build: counts, geometryUnresolved: geometry.unresolved },
       build: buildEntries,
       topologyFiltered: Object.fromEntries([...filteringReasons].sort().map(reason => [reason,

@@ -1,7 +1,7 @@
 import type { GridCurationCollection } from '../schemas/grid-curation.ts'
 import type { GridGolden, GridGoldenStation } from '../schemas/grid-golden.ts'
 import type { AuditBranch, AuditBus, AuditGraph } from './audit-graph.ts'
-import { distanceToFootprintKm } from './geodesy.ts'
+import { distanceToFootprintKm, haversineKm } from './geodesy.ts'
 import { connectedComponents, createMultigraph, type AuditMultigraph } from './graph-metrics.ts'
 
 // Derived, read-only indices shared by the audit checks.
@@ -70,13 +70,12 @@ const measureTerminalEnds = (
         unmeasured += 1
         continue
       }
-      measured.push({
-        branch,
-        bus,
-        side,
-        distanceKm: distanceToFootprintKm(branch.ends[side], bus.footprint),
-        limitKm: bus.footprint.kind === 'point' ? limits.pointRadiusKm : limits.polygonBufferKm,
-      })
+      const parts = [
+        { distanceKm: distanceToFootprintKm(branch.ends[side], bus.footprint), limitKm: bus.footprint.kind === 'point' ? limits.pointRadiusKm : limits.polygonBufferKm },
+        ...(bus.capturePoints ?? []).map(point => ({ distanceKm: haversineKm(branch.ends![side], point), limitKm: limits.pointRadiusKm })),
+      ]
+      const closest = parts.reduce((best, part) => part.distanceKm - part.limitKm < best.distanceKm - best.limitKm ? part : best)
+      measured.push({ branch, bus, side, ...closest })
     }
   }
   return { measured, unmeasured, boundary }

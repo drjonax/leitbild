@@ -104,6 +104,8 @@ export const mergeBuses = (
     mergedBuses.push({
       ...bus,
       mergedBusIds: ids,
+      mergedJunctionLocations: [...bus.mergedJunctionLocations, ...joined.flatMap(other => other.kind === 'junction' ? [other.location, ...other.mergedJunctionLocations] : other.mergedJunctionLocations)]
+        .sort((left, right) => left[0] - right[0] || left[1] - right[1]),
       stationFeatureIds: [...new Set([...bus.stationFeatureIds, ...joined.flatMap(other => other.stationFeatureIds)])].sort(compareText),
       stationRoles: [...new Set([...bus.stationRoles, ...joined.flatMap(other => other.stationRoles)])].sort(compareText),
       provenance: { ...bus.provenance, note: [bus.provenance.note, `joined by zero-impedance connections with ${ids.join(', ')}`].filter(note => note !== null).join('; ') },

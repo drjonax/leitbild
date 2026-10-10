@@ -14,7 +14,7 @@ export type Bbox = readonly [minLon: number, minLat: number, maxLon: number, max
 
 // Mean Earth radius (IUGG), km.
 const earthRadiusKm = 6371.0088
-// Length of one degree of latitude, km (WGS84 mean).
+// Length of one degree of latitude at the equator, km (WGS84).
 const kmPerDegreeLat = 110.574
 // Length of one degree of longitude at the equator, km (WGS84).
 const kmPerDegreeLonEquator = 111.32

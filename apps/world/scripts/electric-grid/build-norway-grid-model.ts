@@ -111,7 +111,7 @@ const main = async (): Promise<void> => {
   const compiled = performance.now()
 
   const golden = gridGoldenSchema.parse(JSON.parse(await readFile(resolve(values.golden), 'utf8')) as unknown)
-  const report = auditGridTopology(auditGraphFromGridModelV2(built.model, referenceGeometryFromSidecar(sidecarJson)), golden, {
+  const report = auditGridTopology(auditGraphFromGridModelV2(built.model, referenceGeometryFromSidecar(sidecarJson), built.ledger.stationTerminals), golden, {
     asOf: inputs.snapshotDate,
     curations: inputs.curations.data,
   })

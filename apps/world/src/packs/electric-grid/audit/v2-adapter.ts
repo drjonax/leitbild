@@ -1,4 +1,5 @@
 import {
+  type AuditFootprint,
   type AuditBranch,
   type AuditBus,
   type AuditBusKind,
@@ -8,7 +9,9 @@ import {
   type AuditLoadFamily,
   type LonLat,
 } from './audit-graph.ts'
-import { pairBranchEnds, type ReferenceGeometry } from './reference-geometry.ts'
+import { distanceToFootprintKm, haversineKm } from './geodesy.ts'
+import { distanceToLocation, pairBranchEnds, type ReferenceGeometry, type TerminalDistance } from './reference-geometry.ts'
+import { splitTerminals } from './way-segments.ts'
 
 // Grid Model v2 → audit graph. Typed structurally against the fields the audit reads, so the
 // Pack's v2 schema type is assignable to it. The v2 schema writes stations as `osm-way-<n>` and
@@ -104,7 +107,15 @@ const curationIdsOf = (provenance: ProvenanceInput): ReadonlyArray<string> =>
     return match ? [match[1]!] : []
   })
 
-export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, reference?: ReferenceGeometry): AuditGraph => {
+/**
+ * What the topology unified into each station bus, keyed by bus id: the OSM station features
+ * (co-located stations, site relation members, zero-impedance merges), whose footprints form the
+ * station's footprint, and the tee vertices merged into it. Buses of one feature and no merged tee
+ * may be absent.
+ */
+export type StationTerminals = Readonly<Record<string, { readonly featureIds: ReadonlyArray<string>; readonly junctionPoints: ReadonlyArray<LonLat> }>>
+
+export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, reference?: ReferenceGeometry, stationTerminals: StationTerminals = {}): AuditGraph => {
   const fail = (message: string): never => {
     throw new Error(`Grid Model v2 ${model.id}: ${message}`)
   }
@@ -114,11 +125,19 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
   }
   const osmWays = (assetId: string, wayIds: ReadonlyArray<string>): ReadonlyArray<string> =>
     wayIds.map(wayId => v2WayPattern.test(wayId) ? `way/${wayId}` : fail(`${assetId} osmWayId ${wayId} is not a positive OSM way number`))
+  const stationFootprint = (busId: string, substationId: string): AuditFootprint | undefined => {
+    if (reference === undefined) return undefined
+    const members = [substationId, ...(stationTerminals[busId]?.featureIds ?? []).filter(id => id !== substationId)]
+    const footprints = members.flatMap(id => reference.footprint(id) ?? [])
+    const polygons = footprints.flatMap(footprint => footprint.kind === 'polygon' ? footprint.polygons : [])
+    return polygons.length > 0 ? { kind: 'polygon', polygons } : footprints[0]
+  }
   const buses = model.buses.map((bus): AuditBus => {
     const substationId = bus.substationId === undefined ? undefined : osmStation(bus.id, bus.substationId)
     const footprint = bus.kind === 'junction'
       ? { kind: 'point' as const, location: bus.location }
-      : substationId === undefined ? undefined : reference?.footprint(substationId)
+      : substationId === undefined ? undefined : stationFootprint(bus.id, substationId)
+    const capturePoints = stationTerminals[bus.id]?.junctionPoints ?? []
     return {
       id: bus.id,
       label: bus.label,
@@ -130,18 +149,18 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
       ...(bus.externalArea === undefined ? {} : { externalArea: bus.externalArea }),
       curationIds: curationIdsOf(bus.provenance),
       ...(footprint === undefined ? {} : { footprint }),
+      ...(capturePoints.length === 0 ? {} : { capturePoints }),
     }
   })
+  const terminalDistance = (bus: AuditBus): TerminalDistance => {
+    if (bus.footprint === undefined) return distanceToLocation(bus.location)
+    const footprint = bus.footprint
+    return point => Math.min(distanceToFootprintKm(point, footprint), ...(bus.capturePoints ?? []).map(capture => haversineKm(point, capture)))
+  }
   const busById = new Map(buses.map(bus => [bus.id, bus]))
-  const branches = model.branches.map((branch): AuditBranch => {
-    const osmWayIds = osmWays(branch.id, branch.osmWayIds)
-    const parts = reference === undefined || osmWayIds.length === 0
-      ? undefined
-      : osmWayIds.map(id => reference.polylines(id))
-    const geometry = parts === undefined || parts.some(part => part === undefined) ? undefined : parts.flatMap(part => part ?? [])
-    const from = busById.get(branch.fromBusId) ?? fail(`branch ${branch.id} references unknown bus ${branch.fromBusId}`)
-    const to = busById.get(branch.toBusId) ?? fail(`branch ${branch.id} references unknown bus ${branch.toBusId}`)
-    const ends = geometry === undefined ? undefined : pairBranchEnds(geometry, from.location, to.location)
+  const bare = model.branches.map((branch): AuditBranch => {
+    if (!busById.has(branch.fromBusId)) fail(`branch ${branch.id} references unknown bus ${branch.fromBusId}`)
+    if (!busById.has(branch.toBusId)) fail(`branch ${branch.id} references unknown bus ${branch.toBusId}`)
     return {
       id: branch.id,
       label: branch.label,
@@ -151,11 +170,23 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
       nominalKv: branch.nominalKv,
       ...(branch.lengthKm === undefined ? {} : { lengthKm: branch.lengthKm }),
       circuits: branch.circuits,
-      osmWayIds,
+      osmWayIds: osmWays(branch.id, branch.osmWayIds),
       curationIds: curationIdsOf(branch.provenance),
-      ...(ends === undefined ? {} : { ends }),
-      ...(geometry === undefined ? {} : { geometry }),
     }
+  })
+  const splitBusesOf = splitTerminals(bare)
+  const branches = bare.map((branch): AuditBranch => {
+    const parts = reference === undefined || branch.osmWayIds.length === 0
+      ? undefined
+      : branch.osmWayIds.map(id => reference.polylines(id))
+    const geometry = parts === undefined || parts.some(part => part === undefined) ? undefined : parts.flatMap(part => part ?? [])
+    if (geometry === undefined) return branch
+    const split = splitBusesOf.get(branch.id)
+    const ends = pairBranchEnds(geometry, terminalDistance(busById.get(branch.fromBusId)!), terminalDistance(busById.get(branch.toBusId)!), {
+      from: split?.has(branch.fromBusId) ?? false,
+      to: split?.has(branch.toBusId) ?? false,
+    })
+    return { ...branch, ...(ends === undefined ? {} : { ends }), geometry }
   })
   return {
     modelId: model.id,

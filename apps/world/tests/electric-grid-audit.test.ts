@@ -162,7 +162,7 @@ describe('line checks', () => {
     const c = fixtureLocations.c
     const moved = audit({ graph: patchBranch(fixtureGraph(), 'branch:b-c', { ends: { from: fixtureLocations.b, to: north(c, 1) } }) })
     expect(failedAssets(moved, 'off-terminal-ends')).toEqual(['branch:b-c', 'bus:c@420'])
-    expect(messages(moved, 'off-terminal-ends')).toContain('to end lies 0.78 km outside bus:c@420')
+    expect(messages(moved, 'off-terminal-ends')).toContain('to end lies 0.77 km outside bus:c@420')
     const nearJunction = (km: number) => patchBranch(fixtureGraph(), 'branch:c-j', { ends: { from: c, to: north(fixtureLocations.j, km) } })
     expect(check(audit({ graph: nearJunction(0.2) }), 'off-terminal-ends').status).toBe('pass')
     expect(failedAssets(audit({ graph: nearJunction(0.4) }), 'off-terminal-ends')).toEqual(['branch:c-j', 'bus:junction-j@420'])
@@ -467,6 +467,60 @@ describe('model adapters', () => {
     expect(graph.branches[1]!.geometry).toBeUndefined()
     expect(graph.generators[0]).toMatchObject({ family: 'hydro', curationIds: ['g-route'] })
     expect(graph.loads[0]).toMatchObject({ family: 'distributed', demandMw: 5 })
+  })
+
+  test('measure the segments of a way split at a tee at the tee vertex, not as duplicates', () => {
+    // way/20 runs A → T → B; the topology splits it at the tee T where way/21 leaves for C.
+    const model = v2Model()
+    const tee = { id: 'bus:junction-osm-node-7@420', label: 'T', kind: 'junction' as const, nominalKv: 420, location: [10.25, 60] as const, priceArea: 'NO1', provenance: { sources: ['osm'] } }
+    const c = { id: 'bus:osm-way-3@420', label: 'C', kind: 'substation' as const, substationId: 'osm-way-3', nominalKv: 420, location: [10.25, 60.3] as const, priceArea: 'NO1', provenance: { sources: ['osm'] } }
+    const segment = (id: string, fromBusId: string, toBusId: string, ways: ReadonlyArray<string>) =>
+      ({ id, label: id, kind: 'ac_line' as const, fromBusId, toBusId, nominalKv: 420, lengthKm: 14, circuits: 1, osmWayIds: ways, provenance: { sources: ['osm'] } })
+    const split: GridModelV2AuditInput = {
+      ...model,
+      buses: [...model.buses, tee, c],
+      branches: [
+        segment('branch:osm-at', 'bus:osm-way-1@420', tee.id, ['20']),
+        segment('branch:osm-tb', tee.id, 'bus:osm-relation-2@420', ['20']),
+        segment('branch:osm-tc', tee.id, c.id, ['21']),
+      ],
+    }
+    const lines = createReferenceGeometry([
+      { geometry: { type: 'Polygon', coordinates: [[[9.99, 59.99], [10.01, 59.99], [10.01, 60.01], [9.99, 60.01], [9.99, 59.99]]] }, properties: { externalId: 'way/1' } },
+      { geometry: { type: 'Point', coordinates: [10.5, 60] }, properties: { externalId: 'relation/2' } },
+      { geometry: { type: 'Point', coordinates: [10.25, 60.3] }, properties: { externalId: 'way/3' } },
+      { geometry: { type: 'LineString', coordinates: [[10, 60], [10.1, 60], [10.25, 60], [10.4, 60], [10.5, 60]] }, properties: { externalId: 'way/20' } },
+      { geometry: { type: 'LineString', coordinates: [[10.25, 60], [10.25, 60.3]] }, properties: { externalId: 'way/21' } },
+    ])
+    const graph = auditGraphFromGridModelV2(split, lines)
+    const ends = (id: string) => graph.branches.find(branch => branch.id === id)!.ends
+    expect(ends('branch:osm-at')).toEqual({ from: [10, 60], to: [10.25, 60] })
+    expect(ends('branch:osm-tb')).toEqual({ from: [10.25, 60], to: [10.5, 60] })
+    const goldenOf = fixtureGolden()
+    const report = auditGridTopology(graph, goldenOf, { asOf: '2026-10-10', curations: fixtureCurations() })
+    expect(check(report, 'parallel-duplicates').metrics).toMatchObject({ duplicateBranches: 0, segmentedWaySets: 1, segmentBranches: 2 })
+    expect(check(report, 'off-terminal-ends').failures).toEqual([])
+  })
+
+  test('take a station footprint from every feature the topology unified into it and its merged tees', () => {
+    const model = v2Model()
+    const lines = createReferenceGeometry([
+      { geometry: { type: 'Polygon', coordinates: [[[9.99, 59.99], [10.01, 59.99], [10.01, 60.01], [9.99, 60.01], [9.99, 59.99]]] }, properties: { externalId: 'way/1' } },
+      // A co-located switchyard grouped into B's station; way/11 ends inside it, 2.2 km from B's point.
+      { geometry: { type: 'Polygon', coordinates: [[[10.53, 59.99], [10.55, 59.99], [10.55, 60.01], [10.53, 60.01], [10.53, 59.99]]] }, properties: { externalId: 'way/9' } },
+      { geometry: { type: 'Point', coordinates: [10.5, 60] }, properties: { externalId: 'relation/2' } },
+      // way/10 stops at a tee 200 m outside A that a zero-impedance merge joined into A.
+      { geometry: { type: 'LineString', coordinates: [[10.0128, 60], [10.25, 60]] }, properties: { externalId: 'way/10' } },
+      { geometry: { type: 'LineString', coordinates: [[10.25, 60], [10.54, 60]] }, properties: { externalId: 'way/11' } },
+    ])
+    const report = (terminals: Parameters<typeof auditGraphFromGridModelV2>[2]) =>
+      auditGridTopology(auditGraphFromGridModelV2(model, lines, terminals), fixtureGolden(), { asOf: '2026-10-10', curations: fixtureCurations() })
+    expect(failedAssets(report({}), 'off-terminal-ends')).toEqual(['branch:osm-x', 'bus:osm-way-1@420', 'branch:osm-x', 'bus:osm-relation-2@420'])
+    const unified = report({
+      'bus:osm-way-1@420': { featureIds: ['way/1'], junctionPoints: [[10.0128, 60]] },
+      'bus:osm-relation-2@420': { featureIds: ['relation/2', 'way/9'], junctionPoints: [] },
+    })
+    expect(check(unified, 'off-terminal-ends').failures).toEqual([])
   })
 
   test('refuse v2 station and way ids outside the v2 grammar', () => {

@@ -4,7 +4,7 @@ import { haversineKm, kmPerDegreeLon, type LonLat } from '../topology/geometry.t
 
 export { haversineKm, type LonLat }
 
-// Length of one degree of latitude, km (WGS84 mean; as in topology/geometry.ts).
+// Length of one degree of latitude at the equator, km (WGS84; as in topology/geometry.ts).
 const kmPerDegreeLat = 110.574
 
 /** Perpendicular distance in km from `point` to the segment a–b in a local equirectangular frame. */

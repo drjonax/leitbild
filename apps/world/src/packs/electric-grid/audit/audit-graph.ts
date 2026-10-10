@@ -28,6 +28,8 @@ export interface AuditBus {
   readonly externalArea?: string
   readonly curationIds: ReadonlyArray<string>
   readonly footprint?: AuditFootprint
+  /** Tee vertices a zero-impedance merge joined into this bus; a line end within the point radius of one meets the bus. */
+  readonly capturePoints?: ReadonlyArray<LonLat>
 }
 
 export interface AuditBranch {

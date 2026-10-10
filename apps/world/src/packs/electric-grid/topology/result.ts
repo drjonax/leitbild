@@ -22,6 +22,7 @@ export type TopologyBus = {
   readonly stationRoles: ReadonlyArray<string>      // OSM substation=* roles (converter, traction, …)
   readonly vertexKey: string | null                 // junction node key
   readonly mergedBusIds: ReadonlyArray<string>      // buses joined into this one by a zero-impedance merge
+  readonly mergedJunctionLocations: ReadonlyArray<LonLat> // tee vertices among them, where line ends now meet this bus
   readonly nominalKv: number
   readonly location: LonLat
   readonly externalArea: ExternalArea | null

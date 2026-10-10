@@ -1,4 +1,4 @@
-import { pointInPolygon } from '../../../reference-data/point-in-polygon.ts'
+import { distanceToStationKm } from '../topology/geometry.ts'
 import type { AuditFootprint, LonLat } from './audit-graph.ts'
 
 /** Mean Earth radius in km (IUGG), adequate for audit distances below a few hundred km. */
@@ -33,21 +33,15 @@ export const pointToSegmentKm = (point: LonLat, a: LonLat, b: LonLat): number =>
   return Math.hypot(ax + t * dx, ay + t * dy)
 }
 
-/** Distance from a point to a footprint: 0 inside a polygon, otherwise to its nearest edge or point. */
-export const distanceToFootprintKm = (point: LonLat, footprint: AuditFootprint): number => {
-  if (footprint.kind === 'point') return haversineKm(point, footprint.location)
-  const geometry = { type: 'MultiPolygon' as const, coordinates: footprint.polygons }
-  if (pointInPolygon(point, geometry)) return 0
-  let best = Number.POSITIVE_INFINITY
-  for (const polygon of footprint.polygons) {
-    for (const ring of polygon) {
-      for (let index = 1; index < ring.length; index += 1) {
-        best = Math.min(best, pointToSegmentKm(point, ring[index - 1]!, ring[index]!))
-      }
-    }
-  }
-  return best
-}
+/**
+ * Distance from a point to a footprint: 0 inside a polygon, otherwise to its nearest edge or point.
+ * It is the topology compiler's own station distance, so the audit judges a terminal by the same
+ * measure as the rule that made it (local flat-earth frames differ by about 1 % in north–south scale).
+ */
+export const distanceToFootprintKm = (point: LonLat, footprint: AuditFootprint): number =>
+  distanceToStationKm(point, footprint.kind === 'point'
+    ? { type: 'Point', coordinates: footprint.location }
+    : { type: 'MultiPolygon', coordinates: footprint.polygons })
 
 /** Whether a point lies within a footprint's capture zone (polygon + buffer, or point radius). */
 export const withinFootprint = (

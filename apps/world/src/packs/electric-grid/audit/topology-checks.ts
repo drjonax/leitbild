@@ -2,6 +2,7 @@ import type { AuditBranch, AuditBus } from './audit-graph.ts'
 import { describeBuses, isLine, isMappedLine, type AuditContext } from './audit-context.ts'
 import { checkStatus, type AuditCheck, type AuditFailure } from './audit-report.ts'
 import { bridgesAndArticulationPoints, connectedComponents, createMultigraph } from './graph-metrics.ts'
+import { waySetGroups } from './way-segments.ts'
 
 /** Backbone voltage floor in kV: Statnett's 300 kV and 420 kV transmission levels. */
 const backboneKv = 300
@@ -187,26 +188,27 @@ export const parallelDuplicateCheck = (context: AuditContext): AuditCheck => {
   const thresholds = context.golden.thresholds
   const lines = context.graph.branches.filter(isMappedLine)
   const withoutWays = lines.filter(branch => branch.osmWayIds.length === 0)
-  const groups = new Map<string, AuditBranch[]>()
-  for (const branch of lines) {
-    if (branch.osmWayIds.length === 0) continue
-    const key = [...new Set(branch.osmWayIds)].sort().join('|')
-    const group = groups.get(key)
-    if (group) group.push(branch)
-    else groups.set(key, [branch])
-  }
-  const failures: AuditFailure[] = [...groups.values()].filter(group => group.length > 1).map(group => ({
-    message: `${group.length} branches share the same OSM way set (${group[0]!.osmWayIds.length} ways): ${group.map(branch => branch.label).join(', ')}`,
-    assetIds: group.map(branch => branch.id),
+  const groups = waySetGroups(lines)
+  // Consecutive segments of one way, split at a tee or a station inside it, are one way, not a duplicate.
+  const failures: AuditFailure[] = groups.filter(group => !group.segments).map(group => ({
+    message: `${group.branches.length} branches share the same OSM way set (${new Set(group.branches[0]!.osmWayIds).size} ways at ${group.branches[0]!.nominalKv} kV) without chaining as segments of it: ${group.branches.map(branch => branch.label).join(', ')}`,
+    assetIds: group.branches.map(branch => branch.id),
   }))
   const duplicates = failures.reduce((sum, failure) => sum + failure.assetIds.length - 1, 0)
   const unmeasured = withoutWays.length > 0 ? `${withoutWays.length} of ${lines.length} mapped lines carry no OSM way ids` : undefined
+  const segmentGroups = groups.filter(group => group.segments)
   return {
     id: 'parallel-duplicates',
     title: 'Branches built twice from the same OSM ways',
     status: checkStatus(duplicates > thresholds.maxParallelDuplicates, unmeasured),
-    summary: `${duplicates} duplicate branches in ${failures.length} way sets (max ${thresholds.maxParallelDuplicates})`,
-    metrics: { duplicateBranches: duplicates, duplicateWaySets: failures.length, linesWithoutWayIds: withoutWays.length },
+    summary: `${duplicates} duplicate branches in ${failures.length} way sets (max ${thresholds.maxParallelDuplicates}); ${segmentGroups.length} way sets split into segments at a tee or a station inside the way`,
+    metrics: {
+      duplicateBranches: duplicates,
+      duplicateWaySets: failures.length,
+      segmentedWaySets: segmentGroups.length,
+      segmentBranches: segmentGroups.reduce((sum, group) => sum + group.branches.length, 0),
+      linesWithoutWayIds: withoutWays.length,
+    },
     failures,
     ...(unmeasured === undefined ? {} : { unmeasured }),
   }

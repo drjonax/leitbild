@@ -3,6 +3,7 @@
 // generated Grid Model v2 JSON file (validated by schemas/grid-model.ts).
 //
 //   bun run scripts/electric-grid/audit-grid-model.ts [--model <ref> | --model-file <v2 .grid-model.json>] [--sidecar <grid-norway.features.geojson>]
+//     [--ledger <v2 .ledger.json>: station members for footprints; required with --model-file and --sidecar]
 //     [--nve <Nettanlegg5 transmission layer .geojson>]... [--as-of YYYY-MM-DD] [--json <report.json>]
 //     [--golden <file>] [--curations <file>] [--show <failures per check>]
 //
@@ -11,6 +12,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+import { z } from 'zod'
 import { compileGridDefinition } from '../../src/packs/electric-grid/definitions.ts'
 import { electricGridDefinitionCatalog, norwayGridModelRef } from '../../src/packs/electric-grid/definition-refs.ts'
 import { norwayGridSourceData } from '../../src/packs/electric-grid/models/norway-source-data.generated.ts'
@@ -21,7 +23,7 @@ import { auditGridTopology } from '../../src/packs/electric-grid/audit/grid-audi
 import type { GridAuditReport } from '../../src/packs/electric-grid/audit/audit-report.ts'
 import type { NveLine } from '../../src/packs/electric-grid/audit/nve-coverage.ts'
 import { auditGraphFromGridModelV1 } from '../../src/packs/electric-grid/audit/v1-adapter.ts'
-import { auditGraphFromGridModelV2 } from '../../src/packs/electric-grid/audit/v2-adapter.ts'
+import { auditGraphFromGridModelV2, type StationTerminals } from '../../src/packs/electric-grid/audit/v2-adapter.ts'
 import { validateGridModel } from '../../src/packs/electric-grid/schemas/grid-model.ts'
 
 const modelsDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/packs/electric-grid/models')
@@ -60,12 +62,26 @@ const printReport = (report: GridAuditReport, show: number, asOfSource: string):
   console.log(`\nVERDICT: ${report.verdict.toUpperCase()}`)
 }
 
+const ledgerStationsSchema = z.object({
+  stationTerminals: z.record(z.string(), z.object({
+    featureIds: z.array(z.string().min(1)),
+    junctionPoints: z.array(z.tuple([z.number().finite(), z.number().finite()])),
+  }).strict()),
+})
+
+// The build audits footprints of the stations the topology unified; the CLI reads them from the build ledger.
+const stationTerminalsOf = async (ledger: string | undefined, withSidecar: boolean): Promise<StationTerminals> => {
+  if (ledger === undefined) return withSidecar ? usage('--ledger is required with --model-file and --sidecar (station footprints)') : {}
+  return ledgerStationsSchema.parse(await readJson(ledger)).stationTerminals
+}
+
 const main = async (): Promise<void> => {
   const { values } = parseArgs({
     options: {
       model: { type: 'string' },
       'model-file': { type: 'string' },
       sidecar: { type: 'string' },
+      ledger: { type: 'string' },
       nve: { type: 'string', multiple: true },
       'as-of': { type: 'string' },
       json: { type: 'string' },
@@ -97,7 +113,7 @@ const main = async (): Promise<void> => {
         sourceData: norwayGridSourceData,
         ...(reference === undefined ? {} : { reference }),
       })
-    : auditGraphFromGridModelV2(validateGridModel(await readJson(modelFile), modelFile), reference)
+    : auditGraphFromGridModelV2(validateGridModel(await readJson(modelFile), modelFile), reference, await stationTerminalsOf(values.ledger, reference !== undefined))
   const report = auditGridTopology(graph, golden, { asOf, curations, ...(nveLines === undefined ? {} : { nveLines }) })
   printReport(report, show, asOfSource)
   if (values.json !== undefined) {
