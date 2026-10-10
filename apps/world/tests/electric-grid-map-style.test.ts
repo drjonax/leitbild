@@ -8,7 +8,7 @@ import { gridLiveStateLegend } from '../src/packs/electric-grid/ui/grid-live-lay
 import { gridMapPalette, gridVoltageClasses, gridVoltageLegend } from '../src/packs/electric-grid/ui/grid-map-palette.ts'
 import { gridNorwayStyle } from '../src/packs/electric-grid/ui/grid-norway-style.ts'
 import { buildReferenceDatasetLayers, type ReferenceLayerSpec } from '../src/ui/map/reference-layer-factory.ts'
-import { gridNorwayReferenceTileset } from './fixtures/grid-norway-reference-manifest.ts'
+import { gridNorwayReferenceTileset, gridNorwaySlimReferenceTileset } from './fixtures/grid-norway-reference-manifest.ts'
 
 const themes: ReadonlyArray<PackMapTheme> = ['light', 'dark']
 const built = (theme: PackMapTheme) => buildReferenceDatasetLayers(gridNorwayReferenceTileset, gridNorwayStyle, { theme })
@@ -184,6 +184,68 @@ describe('grid-norway reference style: zoom classes through filters', () => {
     expect(draws(sites, 8, 'Polygon', { category: 'substation', maxVoltageKv: 132, name: 'Lokal' })).toBe(false)
     expect(draws(sites, 9, 'Polygon', { category: 'substation', maxVoltageKv: 132, name: 'Lokal' })).toBe(true)
     expect(draws(sites, 13, 'Polygon', { category: 'substation', maxVoltageKv: 420 })).toBe(false)
+  })
+})
+
+describe('grid-norway reference style: slim z12 tiles', () => {
+  const slim = buildReferenceDatasetLayers(gridNorwaySlimReferenceTileset, gridNorwayStyle, { theme: 'light' })
+  const notInService = (properties: Record<string, unknown>) => ({ ...properties, lifecycle: 'construction' })
+
+  test('draws every published category and overzooms the z12 tiles within the archive bounds', () => {
+    expect(slim.source).toMatchObject({ minzoom: 4, maxzoom: 12, bounds: [-0.401667, 53.446519, 31.015342, 78.923129] })
+    expect(slim.source.tiles).toEqual(['/map/datasets/grid-norway/current/grid-norway/{z}/{x}/{y}.mvt?build=20261010-192738'])
+    expect(slim.layers.map(spec => spec.id)).toEqual(built('light').layers.map(spec => spec.id))
+    expect(draws(layer('lines:line'), 18, 'LineString', { category: 'line', maxVoltageKv: 66 })).toBe(true)
+    expect(draws(layer('substations:point'), 18, 'Point', { category: 'substation', maxVoltageKv: 22 })).toBe(true)
+  })
+
+  test('busbars draw with the site outlines from z12', () => {
+    const outline = layer('substations:outline')
+    expect(draws(outline, 11, 'LineString', { category: 'busbar', maxVoltageKv: 420 })).toBe(false)
+    expect(draws(outline, 12, 'LineString', { category: 'busbar', maxVoltageKv: 420 })).toBe(true)
+    expect(draws(outline, 12, 'LineString', { category: 'busbar' })).toBe(true)
+    expect(evaluate(outline, 'line-width', 12, 'LineString', { category: 'busbar', maxVoltageKv: 420 })).toBeCloseTo(1.4, 6)
+  })
+
+  test('an HVDC link draws as a double line about as wide as a 420 kV line, a cable stays dashed', () => {
+    for (const id of ['lines:line', 'cables:line']) {
+      const spec = layer(id)
+      const categoryId = id === 'lines:line' ? 'line' : 'cable'
+      for (const zoom of [4, 8, 12]) {
+        const ac = { category: categoryId, maxVoltageKv: 420 }
+        const dc = { ...ac, maxVoltageKv: 450, systems: 'hvdc' }
+        expect(evaluate(spec, 'line-gap-width', zoom, 'LineString', ac)).toBe(0)
+        const gap = evaluate(spec, 'line-gap-width', zoom, 'LineString', dc) as number
+        const stroke = evaluate(spec, 'line-width', zoom, 'LineString', dc) as number
+        const acWidth = evaluate(spec, 'line-width', zoom, 'LineString', ac) as number
+        expect(gap).toBeGreaterThan(stroke)
+        expect(2 * stroke + gap).toBeGreaterThan(1.4 * acWidth)
+        expect(2 * stroke + gap).toBeLessThan(2 * acWidth)
+      }
+    }
+    expect(evaluate(layer('cables:line'), 'line-dasharray', 8, 'LineString', { category: 'cable', maxVoltageKv: 450, systems: 'hvdc' })).toEqual([2.5, 1.5])
+    expect(evaluate(layer('lines:line'), 'line-dasharray', 8, 'LineString', { category: 'line', maxVoltageKv: 450, systems: 'hvdc' })).toEqual([1, 0])
+  })
+
+  test('assets not in service draw thin, grey and dashed, and never before z8', () => {
+    const line = layer('lines:line')
+    const planned = notInService({ category: 'line', maxVoltageKv: 420 })
+    expect(draws(line, 7, 'LineString', planned)).toBe(false)
+    expect(draws(line, 8, 'LineString', planned)).toBe(true)
+    expect(draws(line, 8, 'LineString', notInService({ category: 'line' }))).toBe(false)
+    expect(draws(line, 9, 'LineString', notInService({ category: 'line' }))).toBe(true)
+    expect(evaluate(line, 'line-color', 9, 'LineString', planned)).toMatchObject(colorObject(gridMapPalette('light').voltage.unknown))
+    expect(evaluate(line, 'line-dasharray', 9, 'LineString', planned)).toEqual([2, 3])
+    expect(evaluate(line, 'line-width', 9, 'LineString', planned) as number)
+      .toBeLessThan(evaluate(line, 'line-width', 9, 'LineString', { category: 'line', maxVoltageKv: 66 }) as number)
+    expect(evaluate(line, 'line-gap-width', 9, 'LineString', notInService({ category: 'line', maxVoltageKv: 450, systems: 'hvdc' }))).toBe(0)
+    expect(evaluate(layer('cables:line'), 'line-dasharray', 9, 'LineString', notInService({ category: 'cable', maxVoltageKv: 420 }))).toEqual([2, 3])
+    const site = notInService({ category: 'substation', maxVoltageKv: 420 })
+    expect(draws(layer('substations:point'), 7, 'Point', site)).toBe(false)
+    expect(draws(layer('substations:point'), 8, 'Point', site)).toBe(true)
+    expect(evaluate(layer('substations:point'), 'circle-color', 8, 'Point', site)).toMatchObject(colorObject(gridMapPalette('light').voltage.unknown))
+    expect(evaluate(layer('substations:outline'), 'line-dasharray', 12, 'Polygon', site)).toEqual([2, 3])
+    expect(evaluate(layer('substations:outline'), 'line-dasharray', 12, 'Polygon', { category: 'substation', maxVoltageKv: 420 })).toEqual([1, 0])
   })
 })
 

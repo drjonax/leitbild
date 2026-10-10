@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import { featureFilter } from '@maplibre/maplibre-gl-style-spec'
 import { gridNorwayTileFeatures } from '../src/packs/electric-grid/datasets/grid-norway-tiles.ts'
 import { gridNorwayTilebuild } from '../src/packs/electric-grid/datasets/grid-norway.ts'
 import { siteAnchor } from '../src/packs/electric-grid/datasets/site-anchor.ts'
+import { gridNorwayStyle } from '../src/packs/electric-grid/ui/grid-norway-style.ts'
 import type { GridReferenceFeatureProperties } from '../src/packs/electric-grid/schemas/grid-reference.ts'
 import { pointInPolygon } from '../src/reference-data/point-in-polygon.ts'
 import type { GeoJsonGeometry, NormalizedFeature, TileFeature, TileProjection } from '../src/reference-data/types.ts'
@@ -133,5 +135,42 @@ describe('site anchor', () => {
     // Half of the length measured in the local plane: 1 of 3 parts runs east at cos(60°) scale.
     expect(midLat).toBeCloseTo(60.0005, 6)
     expect(siteAnchor(node)).toEqual([10.001, 60.0005])
+  })
+})
+
+describe('grid-norway tile projection agrees with the reference style', () => {
+  const layers = gridNorwayStyle.layersFor({ theme: 'light' }).map(spec => ({ spec, filter: featureFilter(spec.filter as never) }))
+  const mvtType = { Point: 1, LineString: 2, Polygon: 3, MultiPolygon: 3 } as const
+  const drawnAt = (zoom: number, tile: TileFeature): boolean => layers.some(({ spec, filter }) =>
+    zoom >= (spec.minzoom ?? 0) && filter.filter({ zoom } as never, { type: mvtType[tile.geometry.type], properties: tile.properties, geometry: [] } as never))
+
+  const voltages = [515, 420, 300, 230, 220, 132, 110, 66, 22, null]
+  const lifecycles = ['operational', 'construction', 'proposed', 'disused'] as const
+  const samples: NormalizedFeature[] = [
+    ...(['line', 'cable', 'busbar'] as const).flatMap(category => voltages.flatMap(maxVoltageKv => lifecycles.flatMap(lifecycle =>
+      (['ac50', 'hvdc'] as const).map(system => gridFeature(line, { category, maxVoltageKv, lifecycle, systems: [system], name: 'Navn' }))))),
+    ...(['substation', 'transformer'] as const).flatMap(category => voltages.flatMap(maxVoltageKv => lifecycles.flatMap(lifecycle =>
+      [node, square, line].map(geometry => gridFeature(geometry, { category, maxVoltageKv, lifecycle, name: 'Navn' }))))),
+    ...(['plant', 'generator'] as const).flatMap(category => [1240, 500, 140, 100, 30, null].flatMap(outputMw => lifecycles.flatMap(lifecycle =>
+      [node, square].map(geometry => gridFeature(geometry, { category, outputMw, lifecycle, name: 'Navn' }))))),
+  ]
+
+  test('every tile feature is drawn at each zoom it is in and when overzoomed, and the style wants no point or line before it', () => {
+    let checked = 0
+    for (const sample of samples) {
+      for (const tile of tiled(gridNorwayTileFeatures(sample))) {
+        const lastZoom = tile.maxZoom === undefined ? 18 : tile.maxZoom
+        for (let zoom = tile.minZoom; zoom <= lastZoom; zoom++) {
+          if (!drawnAt(zoom, tile)) throw new Error(`${JSON.stringify(tile.properties)} ${tile.geometry.type} is in the z${zoom} tiles but not drawn`)
+        }
+        // Site footprints are not checked below z12: the style still draws older builds' polygon sites as dots there.
+        const footprint = tile.geometry.type !== 'Point' && ['substation', 'transformer', 'plant', 'generator'].includes(String(tile.properties.category))
+        if (!footprint && tile.minZoom > gridNorwayTilebuild.globalMinZoom && drawnAt(tile.minZoom - 1, tile)) {
+          throw new Error(`${JSON.stringify(tile.properties)} ${tile.geometry.type} is drawn at z${tile.minZoom - 1} but tiled from z${tile.minZoom}`)
+        }
+        checked += 1
+      }
+    }
+    expect(checked).toBeGreaterThan(700)
   })
 })
