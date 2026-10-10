@@ -332,7 +332,7 @@ export const createServer = (config: ServerConfig): { readonly stop: () => Promi
       if (url.pathname === '/map/capabilities.json') return secure(await mapCapabilitiesResponse(mapArtifacts))
       if (url.pathname === '/map/style.json') return secure(await mapStyleResponse(url.searchParams.get('theme'), mapArtifacts))
       if (url.pathname.startsWith('/map/tiles/')) {
-        const tileResponse = await currentVectorTileResponse(url, mapArtifacts)
+        const tileResponse = await currentVectorTileResponse(req, url, mapArtifacts)
         if (tileResponse) return secure(tileResponse)
       }
       if (url.pathname === '/map/tiles/current.pmtiles') return secure(await currentPmtilesResponse(req, mapArtifacts))
@@ -349,7 +349,7 @@ export const createServer = (config: ServerConfig): { readonly stop: () => Promi
         if (sceneryResponse) return secure(sceneryResponse)
       }
       if (url.pathname.startsWith('/map/datasets/')) {
-        const referenceVectorTileResponse = await referenceDatasetVectorTileResponse(url)
+        const referenceVectorTileResponse = await referenceDatasetVectorTileResponse(req, url)
         if (referenceVectorTileResponse) return secure(referenceVectorTileResponse)
         const referenceTilesResponse = await referenceDatasetPmtilesResponse(req, url)
         if (referenceTilesResponse) return secure(referenceTilesResponse)

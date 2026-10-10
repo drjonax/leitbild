@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { gunzipSync } from 'node:zlib'
+import { TileType } from 'pmtiles'
 import {
   __clearManifestCacheForTests,
   createMapCapabilityManifest,
@@ -20,11 +22,26 @@ import {
   referenceDatasetPmtilesResponse,
   referenceDatasetVectorTileResponse,
 } from '../src/map/artifacts.ts'
+import { writePmtilesArchive } from '../src/map/pmtiles-writer.ts'
 import { buildSceneryTilesetDocument } from '../src/map/scenery-tileset.ts'
 import type { SceneryAssetTileSummary } from '../src/map/scenery.ts'
 import { createLeitbildMapStyle } from '../src/map/style.ts'
 
-const writeReferenceDataset = async (root: string, datasetId: string, buildId: string, bytes: string): Promise<void> => {
+// Stand-in MVT payload: the server never decodes tiles, it only codes and caches their bytes.
+const fixtureTileBytes = (seed: number): Uint8Array<ArrayBuffer> => {
+  const bytes = new Uint8Array(8_192)
+  for (let index = 0; index < bytes.length; index += 1) bytes[index] = (index * seed + (index >> 6)) % 97
+  return bytes
+}
+
+const mvtArchive = (tileBytes: Uint8Array): Uint8Array => writePmtilesArchive({
+  tiles: [{ z: 1, x: 1, y: 0, data: tileBytes }],
+  tileType: TileType.Mvt,
+  bounds: { minLon: 0, minLat: 0, maxLon: 180, maxLat: 85 },
+  center: { lon: 90, lat: 40, zoom: 1 },
+})
+
+const writeReferenceDataset = async (root: string, datasetId: string, buildId: string, bytes: string | Uint8Array): Promise<void> => {
   const buildDir = join(root, 'builds', datasetId, buildId)
   await mkdir(buildDir, { recursive: true })
   await Bun.write(join(buildDir, `${datasetId}.pmtiles`), bytes)
@@ -329,22 +346,111 @@ describe('vector map artifacts', () => {
     await mkdir(currentDir)
     await Bun.write(join(currentDir, 'norway.pmtiles'), 'not-a-real-pmtiles')
 
-    const invalidBase = await currentVectorTileResponse(new URL('http://localhost/map/tiles/current/27/0/0.mvt'), { rootDir })
+    const invalidBaseUrl = new URL('http://localhost/map/tiles/current/27/0/0.mvt')
+    const invalidBase = await currentVectorTileResponse(new Request(invalidBaseUrl), invalidBaseUrl, { rootDir })
     expect(invalidBase?.status).toBe(400)
 
     const referenceRoot = await mkdtemp(join(tmpdir(), 'leitbild-reference-test-'))
     await writeReferenceDataset(referenceRoot, 'grid-norway', '20260530-120000', 'not-a-real-pmtiles')
-    const invalidReference = await referenceDatasetVectorTileResponse(
-      new URL('http://localhost/map/datasets/grid-norway/current/grid-norway/0/0/1.mvt'),
-      { referenceRoot },
-    )
+    const invalidReferenceUrl = new URL('http://localhost/map/datasets/grid-norway/current/grid-norway/0/0/1.mvt')
+    const invalidReference = await referenceDatasetVectorTileResponse(new Request(invalidReferenceUrl), invalidReferenceUrl, { referenceRoot })
     expect(invalidReference?.status).toBe(400)
 
-    const unknownReference = await referenceDatasetVectorTileResponse(
-      new URL('http://localhost/map/datasets/missing/current/missing/0/0/0.mvt'),
-      { referenceRoot },
-    )
+    const unknownReferenceUrl = new URL('http://localhost/map/datasets/missing/current/missing/0/0/0.mvt')
+    const unknownReference = await referenceDatasetVectorTileResponse(new Request(unknownReferenceUrl), unknownReferenceUrl, { referenceRoot })
     expect(unknownReference?.status).toBe(404)
+  })
+
+  test('vector tiles are served gzip-coded to clients that accept gzip and as identity bytes otherwise', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'leitbild-map-test-'))
+    await mkdir(join(rootDir, 'current'))
+    const archivePath = join(rootDir, 'current', 'norway.pmtiles')
+    const tileBytes = fixtureTileBytes(1)
+    await Bun.write(archivePath, mvtArchive(tileBytes))
+    const fixedMtime = new Date('2026-10-01T00:00:00Z')
+    await utimes(archivePath, fixedMtime, fixedMtime)
+
+    const url = new URL('http://localhost/map/tiles/current/1/1/0.mvt')
+    const request = (acceptEncoding?: string): Request =>
+      new Request(url, acceptEncoding === undefined ? {} : { headers: { 'Accept-Encoding': acceptEncoding } })
+
+    const gzipped = await currentVectorTileResponse(request('gzip, deflate, br, zstd'), url, { rootDir })
+    expect(gzipped?.status).toBe(200)
+    expect(gzipped?.headers.get('content-type')).toBe('application/vnd.mapbox-vector-tile')
+    expect(gzipped?.headers.get('content-encoding')).toBe('gzip')
+    expect(gzipped?.headers.get('vary')).toBe('Accept-Encoding')
+    expect(gzipped?.headers.get('cache-control')).toBe('public, max-age=3600')
+    expect(gzipped?.headers.get('etag')).toBeNull()
+    const gzippedBody = new Uint8Array(await gzipped!.arrayBuffer())
+    expect(gzipped?.headers.get('content-length')).toBe(String(gzippedBody.byteLength))
+    expect(gzippedBody.byteLength).toBeLessThan(tileBytes.byteLength)
+    expect(new Uint8Array(gunzipSync(gzippedBody))).toEqual(tileBytes)
+
+    for (const acceptEncoding of [undefined, 'br, deflate', 'gzip;q=0']) {
+      const identity = await currentVectorTileResponse(request(acceptEncoding), url, { rootDir })
+      expect(identity?.status).toBe(200)
+      expect(identity?.headers.get('content-encoding')).toBeNull()
+      expect(identity?.headers.get('vary')).toBe('Accept-Encoding')
+      expect(identity?.headers.get('content-length')).toBe(String(tileBytes.byteLength))
+      expect(new Uint8Array(await identity!.arrayBuffer())).toEqual(tileBytes)
+    }
+
+    const absentUrl = new URL('http://localhost/map/tiles/current/1/0/0.mvt')
+    const absent = await currentVectorTileResponse(new Request(absentUrl, { headers: { 'Accept-Encoding': 'gzip' } }), absentUrl, { rootDir })
+    expect(absent?.status).toBe(200)
+    expect(absent?.headers.get('content-encoding')).toBeNull()
+    expect(absent?.headers.get('content-length')).toBe('0')
+  })
+
+  test('gzip-coded vector tiles are cached per archive identity', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'leitbild-map-test-'))
+    await mkdir(join(rootDir, 'current'))
+    const archivePath = join(rootDir, 'current', 'norway.pmtiles')
+    const firstBytes = fixtureTileBytes(1)
+    const replacementBytes = fixtureTileBytes(2)
+    expect(replacementBytes.byteLength).toBe(firstBytes.byteLength)
+    const fixedMtime = new Date('2026-10-01T00:00:00Z')
+    await Bun.write(archivePath, mvtArchive(firstBytes))
+    await utimes(archivePath, fixedMtime, fixedMtime)
+
+    const url = new URL('http://localhost/map/tiles/current/1/1/0.mvt')
+    const gzipTileBytes = async (): Promise<Uint8Array> => {
+      const response = await currentVectorTileResponse(new Request(url, { headers: { 'Accept-Encoding': 'gzip' } }), url, { rootDir })
+      expect(response?.headers.get('content-encoding')).toBe('gzip')
+      return new Uint8Array(gunzipSync(new Uint8Array(await response!.arrayBuffer())))
+    }
+    const identityTileBytes = async (): Promise<Uint8Array> => {
+      const response = await currentVectorTileResponse(new Request(url), url, { rootDir })
+      return new Uint8Array(await response!.arrayBuffer())
+    }
+
+    expect(await gzipTileBytes()).toEqual(firstBytes)
+
+    // Same size and modification time: the archive identity is unchanged, so the compressed
+    // tile comes from memory while the uncoded path reads the file again.
+    await Bun.write(archivePath, mvtArchive(replacementBytes))
+    await utimes(archivePath, fixedMtime, fixedMtime)
+    expect(await gzipTileBytes()).toEqual(firstBytes)
+    expect(await identityTileBytes()).toEqual(replacementBytes)
+
+    // A replaced archive (new modification time) is never served from the old entries.
+    const laterMtime = new Date('2026-10-02T00:00:00Z')
+    await utimes(archivePath, laterMtime, laterMtime)
+    expect(await gzipTileBytes()).toEqual(replacementBytes)
+  })
+
+  test('reference dataset vector tiles share the gzip tile path', async () => {
+    __clearManifestCacheForTests()
+    const referenceRoot = await mkdtemp(join(tmpdir(), 'leitbild-reference-test-'))
+    const tileBytes = fixtureTileBytes(3)
+    await writeReferenceDataset(referenceRoot, 'grid-norway', '20260530-120000', mvtArchive(tileBytes))
+
+    const url = new URL('http://localhost/map/datasets/grid-norway/current/grid-norway/1/1/0.mvt')
+    const response = await referenceDatasetVectorTileResponse(new Request(url, { headers: { 'Accept-Encoding': 'gzip, br' } }), url, { referenceRoot })
+    expect(response?.status).toBe(200)
+    expect(response?.headers.get('content-encoding')).toBe('gzip')
+    expect(response?.headers.get('vary')).toBe('Accept-Encoding')
+    expect(new Uint8Array(gunzipSync(new Uint8Array(await response!.arrayBuffer())))).toEqual(tileBytes)
   })
 
   test('reference dataset PMTiles route rejects unsafe paths', async () => {

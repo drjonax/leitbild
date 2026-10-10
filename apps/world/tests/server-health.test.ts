@@ -3,6 +3,9 @@ import { newWorkspaceId } from '@leitbild/contracts'
 import { mkdir, mkdtemp, symlink, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { gunzipSync } from 'node:zlib'
+import { TileType } from 'pmtiles'
+import { writePmtilesArchive } from '../src/map/pmtiles-writer.ts'
 import { actorIdSchema, nowIso, type SimulationRunId, type SimulationRunEvent } from '../src/core/model/index.ts'
 import type { Actor } from '../src/core/simulation-runs/actors.ts'
 import { createHealthDetails, createServer, staticContentTypeForPath } from '../src/core/api/server.ts'
@@ -86,6 +89,22 @@ describe('server health', () => {
         expect(response.status).toBe(503) // Missing artifact, not an unregistered route.
         expect(await response.json()).toMatchObject({ error: 'vector map artifact unavailable' })
       }
+      await mkdir(join(dataDir, 'current'))
+      const tileBytes = new Uint8Array(4_096).map((_, index) => index % 7)
+      await Bun.write(join(dataDir, 'current', 'norway.pmtiles'), writePmtilesArchive({
+        tiles: [{ z: 0, x: 0, y: 0, data: tileBytes }],
+        tileType: TileType.Mvt,
+        bounds: { minLon: -180, minLat: -85, maxLon: 180, maxLat: 85 },
+        center: { lon: 0, lat: 0, zoom: 0 },
+      }))
+      // The HTTP server must pass the module's own gzip coding through unchanged.
+      const coded = await fetch(`http://127.0.0.1:${server.port}/map/tiles/current/0/0/0.mvt`, {
+        headers: { 'Accept-Encoding': 'gzip' },
+        decompress: false,
+      })
+      expect(coded.headers.get('content-encoding')).toBe('gzip')
+      expect(coded.headers.get('vary')).toBe('Accept-Encoding')
+      expect(new Uint8Array(gunzipSync(new Uint8Array(await coded.arrayBuffer())))).toEqual(tileBytes)
       await mkdir(join(dataDir, 'overview'))
       await Bun.write(join(dataDir, 'overview', 'current.pmtiles'), '0123456789')
       const ranged = await fetch(`http://127.0.0.1:${server.port}/map/tiles/overview.pmtiles`, { headers: { Range: 'bytes=2-5' } })
