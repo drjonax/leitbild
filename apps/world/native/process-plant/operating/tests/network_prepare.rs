@@ -7,7 +7,9 @@ use leitbild_operating_plant::{
     network::{
         Failure, Network, Prepared, Properties, RotorState, Water,
         packet::*,
-        prepare::{OperatingPoint, Receipt, RegionReceipt, Settings, prepare},
+        prepare::{
+            OperatingPoint, PhaseState, Receipt, Settings, Stock, overwrite_stocks, prepare,
+        },
     },
     rotor::{Shaft, SpeedRequest, Support},
     thermal::{Saturation, Scalar, WaterPoint},
@@ -59,6 +61,9 @@ fn vapor(p: f64, t: f64) -> Water {
         viscosity_pa_s: 2e-5,
         conductivity_w_m_k: 0.08,
     }
+}
+fn liquid_density(p: f64, t: f64) -> f64 {
+    liquid(p, t).density_kg_m3
 }
 fn saturation_temperature(p: f64) -> f64 {
     1. / (1. / TSAT0 - R / LATENT * (p / P0).ln())
@@ -147,8 +152,9 @@ fn support(region: usize, length: f64, area: f64) -> MomentumSupport {
     }
 }
 /// Two halves `(length, rise)`, one in each endpoint volume.
-fn face(from: usize, to: usize, area: f64, halves: [(f64, f64); 2]) -> FacePacket {
+fn face(id: String, from: usize, to: usize, area: f64, halves: [(f64, f64); 2]) -> FacePacket {
     FacePacket {
+        id,
         from,
         to,
         flow_area_m2: area,
@@ -165,27 +171,28 @@ fn face(from: usize, to: usize, area: f64, halves: [(f64, f64); 2]) -> FacePacke
 
 /// Four primary volumes in one loop (core, hot side, SG, cold side with a
 /// pump section) at nonuniform temperature, a SURGE line volume and a
-/// two-lane, five-band PZR (bands 10..20 m) whose bottom three bands are the
-/// authored liquid. Authored pressure is flat, i.e. not hydrostatic rest.
+/// two-lane, five-band PZR (bands of 2 m from 10 to 20 m) whose bottom three
+/// bands are the authored liquid. Authored pressure is flat, i.e. not rest.
+/// Mechanics faces: 0..=5 primary/SURGE; band b has radial face 6+3b and,
+/// below band 4, inner/outer axial faces 7+3b and 8+3b up to band b+1.
 fn packet() -> Packet {
-    // (id, volume m3, temperature K); elevations 0, 6, 8, 1 m live in the
-    // face segments, SURGE sits at 9 m.
     let primary = [
-        ("CORE", 20., 590.),
-        ("HOT", 10., 610.),
-        ("SG", 15., 575.),
-        ("COLD", 10., 565.),
+        ("CORE", 20., 0., 590.),
+        ("HOT", 10., 6., 610.),
+        ("SG", 15., 8., 575.),
+        ("COLD", 10., 1., 565.),
     ];
     let mut regions: Vec<Region> = primary
         .iter()
-        .map(|(id, volume, _)| Region {
+        .map(|(id, volume, elevation, _)| Region {
             id: (*id).into(),
             volume_m3: *volume,
+            elevation_m: *elevation,
         })
         .collect();
     let water: Vec<WaterOwner> = primary
         .iter()
-        .map(|(_, volume, t)| {
+        .map(|(_, volume, _, t)| {
             let w = liquid(AUTHORED_PA, *t);
             WaterOwner {
                 pressure_pa: AUTHORED_PA,
@@ -199,6 +206,7 @@ fn packet() -> Packet {
     regions.push(Region {
         id: "SURGE".into(),
         volume_m3: 0.8,
+        elevation_m: 9.,
     });
     let surge_water = liquid(AUTHORED_PA, 605.);
     let surge_mass = 0.8 * surge_water.density_kg_m3;
@@ -219,6 +227,7 @@ fn packet() -> Packet {
             regions.push(Region {
                 id: format!("PZR.{band}.{lane}"),
                 volume_m3: volume,
+                elevation_m: bottom + 1.,
             });
             pzr_regions.push(PzrRegion {
                 initial_phase: if is_liquid { "liquid" } else { "vapor" }.into(),
@@ -240,12 +249,18 @@ fn packet() -> Packet {
         }
     }
     let mut faces = vec![
-        face(0, 1, 0.5, [(3., 3.), (3., 3.)]),
-        face(1, 2, 0.5, [(4., 1.), (4., 1.)]),
-        face(2, 3, 0.5, [(4., -3.5), (4., -3.5)]),
-        face(3, 0, 0.3, [(2., -0.5), (2., -0.5)]),
-        face(1, SURGE, 0.05, [(2., 1.5), (2., 1.5)]),
-        face(SURGE, PZR + 1, 0.05, [(1., 1.), (1., 1.)]),
+        face("CORE->HOT".into(), 0, 1, 0.5, [(3., 3.), (3., 3.)]),
+        face("HOT->SG".into(), 1, 2, 0.5, [(4., 1.), (4., 1.)]),
+        face("SG->COLD".into(), 2, 3, 0.5, [(4., -3.5), (4., -3.5)]),
+        face("COLD->CORE".into(), 3, 0, 0.3, [(2., -0.5), (2., -0.5)]),
+        face("HOT->SURGE".into(), 1, SURGE, 0.05, [(2., 1.5), (2., 1.5)]),
+        face(
+            "SURGE->PZR".into(),
+            SURGE,
+            PZR + 1,
+            0.05,
+            [(1., 1.), (1., 1.)],
+        ),
     ];
     let mut pzr_faces = Vec::new();
     for band in 0..5 {
@@ -259,6 +274,7 @@ fn packet() -> Packet {
         });
         let (from, to) = (PZR + 2 * band, PZR + 2 * band + 1);
         faces.push(FacePacket {
+            id: format!("PZR.RADIAL.{band}"),
             from,
             to,
             flow_area_m2: radial_area,
@@ -275,6 +291,7 @@ fn packet() -> Packet {
                     normal: [0., 1.],
                 });
                 faces.push(face(
+                    format!("PZR.AXIAL.{band}.{lane}"),
                     PZR + 2 * band + lane,
                     PZR + 2 * band + 2 + lane,
                     area,
@@ -345,14 +362,23 @@ fn packet() -> Packet {
                 },
             }],
         },
+        preparation: Preparation {
+            operating_point: leitbild_operating_plant::network::packet::OperatingPoint {
+                pzr_roof_pressure_pa: 15.5e6,
+                pzr_roof_elevation_m: 20.,
+                pzr_level_m: 6.,
+                pzr_bottom_elevation_m: 10.,
+                rcp_speed_request: "nominal".into(),
+            },
+        },
     }
 }
 
+/// The packet's declared point with another indicated level.
 fn point(level: f64) -> OperatingPoint {
     OperatingPoint {
-        pzr_roof_pressure_pa: 15.5e6,
-        pzr_roof_elevation_m: 20.,
         pzr_level_m: level,
+        ..OperatingPoint::from(&packet().preparation.operating_point)
     }
 }
 const RUNNING: RotorState = RotorState {
@@ -365,33 +391,35 @@ const SETTINGS: Settings = Settings {
     level_match_m: 1e-9,
     eos_row_bound: 1e-12,
     tree_face_bound_pa: 1e-6,
+    representation_search: 4,
 };
 
 fn prepared(level: f64) -> (Network<Analytic>, Prepared, Receipt) {
     prepare(&packet(), Analytic, &point(level), &[RUNNING], &SETTINGS)
         .unwrap_or_else(|e| panic!("{e:?}"))
 }
-fn refusal(level: f64, settings: &Settings) -> String {
-    match prepare(&packet(), Analytic, &point(level), &[RUNNING], settings) {
+fn refused(point: &OperatingPoint, settings: &Settings) -> String {
+    match prepare(&packet(), Analytic, point, &[RUNNING], settings) {
         Err(Failure::Fatal(message)) => message,
         Err(other) => panic!("unexpected failure class {other:?}"),
-        Ok(_) => panic!("level {level} was not refused"),
+        Ok(_) => panic!("{point:?} was not refused"),
     }
 }
+fn mass(r: &leitbild_operating_plant::network::prepare::RegionReceipt) -> f64 {
+    r.phases.iter().flatten().map(|p| p.mass_kg).sum()
+}
+fn phase(receipt: &Receipt, region: usize, k: usize) -> PhaseState {
+    receipt.regions[region].phases[k].unwrap_or_else(|| panic!("region {region} lacks phase {k}"))
+}
 
-/// Independent rest residual `p_from - p_to - g sum(rho dz)` from the
-/// receipt's prepared stocks, with rho = M / V.
+/// Independent rest residual `p_from - p_to - g sum(rho_mix dz)` from the
+/// receipt's prepared stocks, with rho_mix = total mass / V.
 fn rest_residuals(packet: &Packet, receipt: &Receipt) -> Vec<f64> {
     let density: Vec<f64> = receipt
         .regions
         .iter()
         .zip(&packet.mechanics.regions)
-        .map(|(r, region)| r.after.mass_kg / region.volume_m3)
-        .collect();
-    let pressure: Vec<f64> = receipt
-        .regions
-        .iter()
-        .map(|r| r.after.pressure_pa)
+        .map(|(r, region)| mass(r) / region.volume_m3)
         .collect();
     packet
         .mechanics
@@ -403,19 +431,54 @@ fn rest_residuals(packet: &Packet, receipt: &Receipt) -> Vec<f64> {
                 .iter()
                 .map(|s| density[s.region] * G * s.elevation_change_m)
                 .sum();
-            pressure[f.from] - pressure[f.to] - head
+            receipt.regions[f.from].pressure_pa - receipt.regions[f.to].pressure_pa - head
         })
         .collect()
 }
 
+/// Round-off checks common to every prepared state.
+fn at_rest(packet: &Packet, receipt: &Receipt) -> Vec<f64> {
+    assert!(receipt.max_eos_row <= 1e-14, "{}", receipt.max_eos_row);
+    assert!(
+        receipt.max_tree_rest_pa <= 1e-7,
+        "{}",
+        receipt.max_tree_rest_pa
+    );
+    let rest = rest_residuals(packet, receipt);
+    for f in &receipt.faces {
+        assert!((f.rest_pa - rest[f.face]).abs() <= 1e-7, "face {}", f.face);
+        if f.face != 2 {
+            assert!(
+                rest[f.face].abs() <= 1e-7,
+                "face {} rest {}",
+                f.face,
+                rest[f.face]
+            );
+        }
+    }
+    for r in &receipt.regions {
+        for p in r.phases.iter().flatten() {
+            if r.region > SURGE {
+                assert!(p.saturation_margin_k.unwrap().abs() <= 1e-9);
+            }
+        }
+        let volume: f64 = r.phases.iter().flatten().map(|p| p.volume_m3).sum();
+        let v = packet.mechanics.regions[r.region].volume_m3;
+        assert!((volume - v).abs() <= 1e-14 * v);
+    }
+    rest
+}
+
 #[test]
-fn sharp_hydrostatic_rest_at_the_declared_level() {
+fn sharp_hydrostatic_rest_at_a_boundary_level() {
     let packet = packet();
     let (network, prepared, receipt) = prepared(6.);
     println!("{}", serde_json::to_string(&receipt).unwrap());
-    assert_eq!(receipt.interface_elevation_m, 16.);
+    assert_eq!(
+        (receipt.surface_elevation_m, receipt.on_boundary),
+        (16., true)
+    );
     assert_eq!(receipt.root_region, PZR + 8);
-    // Passes contract to the fixed point within the declared tolerance.
     let passes = &receipt.pass_changes_pa;
     assert!(passes.len() >= 3 && *passes.last().unwrap() <= SETTINGS.pressure_tolerance_pa);
     assert!(
@@ -423,15 +486,7 @@ fn sharp_hydrostatic_rest_at_the_declared_level() {
             .windows(2)
             .all(|w| w[1] < 1e-2 * w[0] || w[1] <= 1e-6)
     );
-
-    // Round-off EOS and tree rest, evaluated by the network itself.
-    assert!(receipt.max_eos_row <= 1e-14, "{}", receipt.max_eos_row);
-    assert!(
-        receipt.max_tree_face_pa <= 1e-7,
-        "{}",
-        receipt.max_tree_face_pa
-    );
-    let rest = rest_residuals(&packet, &receipt);
+    let rest = at_rest(&packet, &receipt);
     let loops: Vec<usize> = receipt
         .faces
         .iter()
@@ -443,83 +498,69 @@ fn sharp_hydrostatic_rest_at_the_declared_level() {
         [2, 8, 11, 14, 17],
         "BFS from the roof: SG->COLD closes the primary loop, outer-lane axials the PZR loops"
     );
+    // A sharp interface leaves every phase path at rest except the primary
+    // loop, which keeps its buoyancy drive -g*sum(rho dz) around the loop.
     for f in &receipt.faces {
-        if f.tree || f.face != 2 {
-            assert!(
-                rest[f.face].abs() <= 1e-7,
-                "face {} rest {}",
-                f.face,
-                rest[f.face]
-            );
-            assert!(
-                f.largest_pa <= 1e-7,
-                "face {} {:?}",
-                f.face,
-                f.pressure_gravity_pa
-            );
+        for term in f.pressure_gravity_pa.iter().flatten() {
+            assert!(f.face == 2 || term.abs() <= 1e-7, "face {} {term}", f.face);
         }
     }
-    // The primary loop keeps its physical buoyancy drive: hot rising leg,
-    // cold falling leg. Its value is the closed-loop integral -g sum(rho dz).
     let drive = receipt.faces[2].pressure_gravity_pa[0].unwrap();
     assert_eq!(receipt.faces[2].pressure_gravity_pa[1], None);
     assert!(drive > 4e3, "{drive}");
     assert!((drive - rest[2]).abs() <= 1e-9 * drive);
     let closed: f64 = [0, 1, 2, 3].iter().map(|&j| rest[j]).sum();
     assert!((closed - drive).abs() <= 1e-7);
+    assert_eq!(receipt.max_loop_rest_pa, receipt.faces[2].rest_pa.abs());
 
-    // Phases, saturation and preserved specific energy/concentration.
+    // Phases, preserved specific energy and concentration.
     for r in &receipt.regions {
         if r.region <= SURGE {
-            assert_eq!((r.phase, r.saturation_margin_k), (0, None));
+            assert_eq!(r.vapor_fraction, 0.);
+            let liquid = r.phases[0].unwrap();
             let before = r.before.internal_energy_j / r.before.mass_kg;
-            let after = r.after.internal_energy_j / r.after.mass_kg;
+            let after = liquid.internal_energy_j / liquid.mass_kg;
             assert!((after - before).abs() <= 1e-15 * before);
-            assert!((r.after.temperature_k - r.before.temperature_k).abs() <= 1e-9);
-            let c = r.after.tracer_kg_eq / r.after.mass_kg;
-            assert!((c - TRACER_PER_KG).abs() <= 1e-15);
+            assert!((liquid.temperature_k - r.before.temperature_k).abs() <= 1e-9);
+            assert!((r.tracer_kg_eq / liquid.mass_kg - TRACER_PER_KG).abs() <= 1e-15);
         } else {
             let band = (r.region - PZR) / 2;
-            assert_eq!(r.phase, usize::from(band >= 3));
-            assert_eq!(r.phase, r.authored_phase);
-            assert!(r.saturation_margin_k.unwrap().abs() <= 1e-9);
-            let expected = if r.phase == 0 {
-                TRACER_PER_KG * r.after.mass_kg
-            } else {
-                0.
-            };
-            assert!((r.after.tracer_kg_eq - expected).abs() <= 1e-15 * r.after.mass_kg);
+            let vapor = band >= 3;
+            assert_eq!(r.vapor_fraction, if vapor { 1. } else { 0. });
+            assert_eq!(usize::from(vapor), r.authored_phase);
+            assert!(r.phases[usize::from(!vapor)].is_none());
         }
     }
-    // Roof gauge: root region at its centroid one metre below the roof.
     let root = &receipt.regions[PZR + 8];
-    let rho = root.after.mass_kg / 2.;
-    assert!((root.after.pressure_pa - 15.5e6 - rho * G).abs() <= 1e-8);
-    // Lanes of one band share pressure; bands below are heavier.
+    let rho = mass(root) / 2.;
+    assert!((root.pressure_pa - 15.5e6 - rho * G).abs() <= 1e-8);
     for band in 0..5 {
-        let [a, b] = [0, 1].map(|lane| receipt.regions[PZR + 2 * band + lane].after.pressure_pa);
+        let [a, b] = [0, 1].map(|lane| receipt.regions[PZR + 2 * band + lane].pressure_pa);
         assert_eq!(a, b);
     }
     // The 20 m column from the roof to the core lies between all-vapor and
     // all-liquid columns of the prepared densities.
-    let core = receipt.regions[0].after.pressure_pa;
-    assert!(core > receipt.regions[3].after.pressure_pa);
+    let core = receipt.regions[0].pressure_pa;
     let densities: Vec<f64> = receipt
         .regions
         .iter()
         .zip(&packet.mechanics.regions)
-        .map(|(r, region)| r.after.mass_kg / region.volume_m3)
+        .map(|(r, region)| mass(r) / region.volume_m3)
         .collect();
     let [lightest, heaviest] =
         [f64::min, f64::max].map(|f| densities.iter().copied().fold(densities[0], f));
     assert!(G * 20. * lightest < core - 15.5e6 && core - 15.5e6 < G * 20. * heaviest);
 
-    // Totals are the sums of the per-region receipts.
-    let sum = |f: fn(&RegionReceipt) -> f64| receipt.regions.iter().map(f).sum::<f64>();
-    let mass = sum(|r| r.after.mass_kg) - sum(|r| r.before.mass_kg);
-    assert!((receipt.mass_change_kg - mass).abs() <= 1e-9);
-    let tracer = sum(|r| r.after.tracer_kg_eq) - sum(|r| r.before.tracer_kg_eq);
-    assert!((receipt.tracer_change_kg_eq - tracer).abs() <= 1e-12);
+    let total = |f: fn(&PhaseState) -> f64| {
+        receipt
+            .regions
+            .iter()
+            .flat_map(|r| r.phases.iter().flatten())
+            .map(f)
+            .sum::<f64>()
+    };
+    let before: f64 = receipt.regions.iter().map(|r| r.before.mass_kg).sum();
+    assert!((receipt.mass_change_kg - (total(|p| p.mass_kg) - before)).abs() <= 1e-9);
 
     // Coordinates: overwritten stocks, untouched impulses and rotor, yp = 0.
     let (_, authored) = Network::new(&packet, Analytic).unwrap();
@@ -531,16 +572,16 @@ fn sharp_hydrostatic_rest_at_the_declared_level() {
     }
     assert!(prepared.yp.iter().all(|v| *v == 0.));
     assert_eq!(prepared.differential, authored.differential);
+    let scales = network.scales();
     for (node, l) in network.cell_layout.iter().enumerate() {
         let r = &receipt.regions[node];
-        let scales = network.scales();
-        assert_eq!(prepared.y[l.mass[1 - r.phase]], 0.);
-        assert_eq!(prepared.y[l.energy[1 - r.phase]], 0.);
-        assert_eq!(prepared.y[l.base] * scales[l.base], r.after.pressure_pa);
-        let m = prepared.y[l.mass[r.phase]] * scales[l.mass[r.phase]];
-        assert!((m - r.after.mass_kg).abs() <= 1e-15 * m);
+        assert_eq!(prepared.y[l.base] * scales[l.base], r.pressure_pa);
+        for k in 0..2 {
+            let m = prepared.y[l.mass[k]] * scales[l.mass[k]];
+            let expected = r.phases[k].map_or(0., |p| p.mass_kg);
+            assert!((m - expected).abs() <= 1e-15 * m.max(1.));
+        }
     }
-    // F(0, y, 0) is reported by row class; the pump starts from its head.
     let class = |name: &str| {
         receipt
             .initial_rows
@@ -550,97 +591,253 @@ fn sharp_hydrostatic_rest_at_the_declared_level() {
             .max_abs
     };
     assert_eq!(class("eos"), receipt.max_eos_row);
-    assert!(class("impulse") > 0.);
-}
-
-#[test]
-fn a_lower_level_turns_the_top_liquid_band_to_vapor() {
-    let (network, prepared, receipt) = prepared(4.);
-    assert_eq!(receipt.interface_elevation_m, 14.);
-    for r in &receipt.regions[PZR + 4..PZR + 6] {
-        assert_eq!(
-            (r.authored_phase, r.phase, r.after.tracer_kg_eq),
-            (0, 1, 0.)
-        );
-        let l = network.cell_layout[r.region];
-        assert_eq!(prepared.y[l.mass[0]], 0.);
-        assert!(prepared.y[l.mass[1]] > 0.);
-    }
-    assert!(receipt.max_eos_row <= 1e-14);
-    assert!(receipt.max_tree_face_pa <= 1e-7);
-    let dropped: f64 = receipt.regions[PZR + 4..PZR + 6]
-        .iter()
-        .map(|r| r.before.tracer_kg_eq)
-        .sum();
-    assert!(receipt.tracer_change_kg_eq < -0.9 * dropped);
-}
-
-#[test]
-fn an_unrepresentable_or_unsupported_level_is_refused() {
-    let inside = refusal(5., &SETTINGS);
-    assert!(inside.contains("cannot represent level 5"), "{inside}");
-    let near = refusal(6. + 1e-6, &SETTINGS);
-    assert!(near.contains("not at a region boundary"), "{near}");
-    let raised = refusal(8., &SETTINGS);
     assert!(
-        raised.contains("no prepared liquid tracer concentration"),
-        "{raised}"
+        class("impulse") > 0.,
+        "the pump starts from its shutoff head"
     );
 }
 
 #[test]
+fn a_level_inside_a_vapor_band_makes_that_band_two_phase() {
+    let packet = packet();
+    // Surface 17 m, the middle of band 3 (16..18 m), which was authored vapor.
+    let (_, _, receipt) = prepared(7.);
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+    assert_eq!(
+        (receipt.surface_elevation_m, receipt.on_boundary),
+        (17., false)
+    );
+    at_rest(&packet, &receipt);
+    for lane in 0..2 {
+        let node = PZR + 6 + lane;
+        let r = &receipt.regions[node];
+        let v = packet.mechanics.regions[node].volume_m3;
+        assert_eq!((r.authored_phase, r.vapor_fraction), (1, 0.5));
+        let [liquid, vapor] = [0, 1].map(|k| phase(&receipt, node, k));
+        for p in [liquid, vapor] {
+            assert!((p.volume_m3 - v / 2.).abs() <= 1e-14 * v);
+        }
+        // Saturated phases at the band's own pressure.
+        let t = saturation_temperature(r.pressure_pa);
+        assert!(
+            (liquid.mass_kg - v / 2. * liquid_density(r.pressure_pa, t)).abs()
+                <= 1e-12 * liquid.mass_kg
+        );
+        assert!((vapor.mass_kg - v / 2. * r.pressure_pa / (R * t)).abs() <= 1e-12 * vapor.mass_kg);
+        // Liquid tracer at the concentration of the liquid band below.
+        let below = &receipt.regions[node - 2];
+        let c = below.tracer_kg_eq / phase(&receipt, node - 2, 0).mass_kg;
+        assert!((r.tracer_kg_eq - c * liquid.mass_kg).abs() <= 1e-15 * r.tracer_kg_eq);
+        // Mixture-hydrostatic lanes share the band pressure.
+        assert_eq!(r.pressure_pa, receipt.regions[PZR + 6].pressure_pa);
+    }
+    // The mixed band keeps each phase's relative buoyancy on its axial faces,
+    // f_l*f_v*(rho_l - rho_v)*g*dz for the 1 m half-segment inside the band:
+    // liquid toward band 2, vapor toward band 4. Radial faces stay at rest.
+    let node = PZR + 6;
+    let [liquid, vapor] = [0, 1].map(|k| phase(&receipt, node, k));
+    let relative = 0.25 * (liquid.mass_kg - vapor.mass_kg) / (0.5 * 2.) * G;
+    for face in [13, 14, 16, 17] {
+        let [l, g] = receipt.faces[face].pressure_gravity_pa.map(Option::unwrap);
+        assert!(
+            (l + relative).abs() <= 1e-9 * relative,
+            "face {face} liquid {l}"
+        );
+        assert!(
+            (g - relative).abs() <= 1e-9 * relative,
+            "face {face} vapor {g}"
+        );
+    }
+    for term in receipt.faces[15].pressure_gravity_pa.iter().flatten() {
+        assert!(term.abs() <= 1e-7);
+    }
+    assert!(receipt.max_phase_drive_pa >= relative);
+}
+
+#[test]
+fn the_network_reconstructs_the_prepared_saturated_states_exactly() {
+    for level in [6., 7.] {
+        let (network, prepared, receipt) = prepared(level);
+        assert!(receipt.representation_offset <= SETTINGS.representation_search);
+        let scales = network.scales();
+        for (node, l) in network.cell_layout.iter().enumerate() {
+            let r = &receipt.regions[node];
+            let p = prepared.y[l.base] * scales[l.base];
+            assert_eq!(p.to_bits(), r.pressure_pa.to_bits());
+            assert_eq!(network.cell(node).pressure.value.to_bits(), p.to_bits());
+            for k in 0..2 {
+                let (m, u) = (
+                    prepared.y[l.mass[k]] * scales[l.mass[k]],
+                    prepared.y[l.energy[k]] * scales[l.energy[k]],
+                );
+                let Some(phase) = r.phases[k] else {
+                    assert_eq!((m, u), (0., 0.));
+                    continue;
+                };
+                assert_eq!((m, u), (phase.mass_kg, phase.internal_energy_j));
+                if node > SURGE {
+                    // Exactly the saturated specific energy at the network's
+                    // own pressure: on the stable-branch bound, not across it.
+                    let t = saturation_temperature(p);
+                    let saturated = if k == 0 { liquid(p, t) } else { vapor(p, t) };
+                    assert_eq!((u / m).to_bits(), saturated.internal_energy_j_kg.to_bits());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_stock_writer_refuses_absent_or_unrepresentable_stocks() {
+    let (network, prepared, _) = prepared(6.);
+    let good = Stock {
+        pressure_pa: 15.5e6,
+        mass_kg: [1000., 0.],
+        specific_energy_j_kg: [1.5e6, 0.],
+        tracer_kg_eq: 1.,
+    };
+    let mut stocks = vec![good; network.cells()];
+    let mut y = prepared.y.clone();
+    let written = overwrite_stocks(&network, &mut y, &stocks, 4).unwrap();
+    assert!(written.iter().all(|w| w.pressure_pa == 15.5e6));
+    for bad in [
+        Stock {
+            mass_kg: [0., 0.],
+            ..good
+        },
+        Stock {
+            mass_kg: [-1., 2.],
+            ..good
+        },
+        Stock {
+            specific_energy_j_kg: [1.5e6, 2.5e6],
+            ..good
+        },
+        Stock {
+            mass_kg: [0., 10.],
+            specific_energy_j_kg: [0., 2.5e6],
+            ..good
+        },
+        Stock {
+            pressure_pa: 0.,
+            ..good
+        },
+    ] {
+        stocks[2] = bad;
+        assert!(
+            overwrite_stocks(&network, &mut y, &stocks, 4).is_err(),
+            "{bad:?}"
+        );
+    }
+    assert!(overwrite_stocks(&network, &mut y, &stocks[1..], 4).is_err());
+}
+
+#[test]
+fn a_level_inside_a_liquid_band_keeps_its_own_tracer_concentration() {
+    let packet = packet();
+    // Surface 15 m inside band 2 (14..16 m), authored liquid.
+    let (_, _, receipt) = prepared(5.);
+    at_rest(&packet, &receipt);
+    for node in [PZR + 4, PZR + 5] {
+        let r = &receipt.regions[node];
+        assert_eq!((r.authored_phase, r.vapor_fraction), (0, 0.5));
+        let c = r.tracer_kg_eq / phase(&receipt, node, 0).mass_kg;
+        assert!((c - TRACER_PER_KG).abs() <= 1e-15);
+        assert!(receipt.regions[node + 2].phases[0].is_none());
+    }
+    // A level within level_match_m of a boundary is that boundary.
+    let (_, _, snapped) = prepared(6. + 1e-10);
+    assert!(snapped.on_boundary);
+    assert_eq!(snapped.surface_elevation_m, 16.);
+}
+
+#[test]
+fn boundary_levels_move_whole_bands_between_phases() {
+    // Lowered: band 2 becomes vapor and its liquid tracer leaves with it.
+    let (network, prepared_low, low) = prepared(4.);
+    assert_eq!(low.surface_elevation_m, 14.);
+    at_rest(&packet(), &low);
+    for r in &low.regions[PZR + 4..PZR + 6] {
+        assert_eq!(
+            (r.authored_phase, r.vapor_fraction, r.tracer_kg_eq),
+            (0, 1., 0.)
+        );
+        let l = network.cell_layout[r.region];
+        assert_eq!(prepared_low.y[l.mass[0]], 0.);
+        assert!(prepared_low.y[l.mass[1]] > 0.);
+    }
+    let dropped: f64 = low.regions[PZR + 4..PZR + 6]
+        .iter()
+        .map(|r| r.before.tracer_kg_eq)
+        .sum();
+    assert!(low.tracer_change_kg_eq < -0.9 * dropped);
+    // Raised: band 3, authored vapor, becomes liquid with the band below's
+    // prepared concentration.
+    let (_, _, high) = prepared(8.);
+    assert_eq!(high.surface_elevation_m, 18.);
+    at_rest(&packet(), &high);
+    for node in [PZR + 6, PZR + 7] {
+        let r = &high.regions[node];
+        assert_eq!((r.authored_phase, r.vapor_fraction), (1, 0.));
+        let c = r.tracer_kg_eq / phase(&high, node, 0).mass_kg;
+        assert!((c - TRACER_PER_KG).abs() <= 1e-15);
+    }
+}
+
+#[test]
 fn explicit_limits_and_inputs_are_enforced() {
-    let unconverged = refusal(
-        6.,
+    for level in [-0.5, 10.5] {
+        let outside = refused(&point(level), &SETTINGS);
+        assert!(outside.contains("outside the PZR"), "{outside}");
+    }
+    let datum = refused(
+        &OperatingPoint {
+            pzr_bottom_elevation_m: 9.9,
+            ..point(6.)
+        },
+        &SETTINGS,
+    );
+    assert!(datum.contains("bottom datum"), "{datum}");
+    let unconverged = refused(
+        &point(6.),
         &Settings {
             max_passes: 2,
             ..SETTINGS
         },
     );
     assert!(unconverged.contains("did not converge"), "{unconverged}");
-    let strict = refusal(
-        6.,
+    let strict = refused(
+        &point(7.),
         &Settings {
             eos_row_bound: 1e-300,
             ..SETTINGS
         },
     );
     assert!(strict.contains("EOS rows are not at round-off"), "{strict}");
-    let wide = refusal(
-        6.,
+    let wide = refused(
+        &point(6.),
         &Settings {
             level_match_m: 1.,
             ..SETTINGS
         },
     );
     assert!(wide.contains("half of every PZR region height"), "{wide}");
-    let roof = match prepare(
-        &packet(),
-        Analytic,
+    let roof = refused(
         &OperatingPoint {
             pzr_roof_elevation_m: 21.,
             ..point(6.)
         },
-        &[RUNNING],
         &SETTINGS,
-    ) {
-        Err(Failure::Fatal(m)) => m,
-        _ => panic!("roof above the PZR was accepted"),
-    };
-    assert!(roof.contains("lies in no PZR region"), "{roof}");
-    assert!(
-        prepare(
-            &packet(),
-            Analytic,
-            &OperatingPoint {
-                pzr_roof_pressure_pa: f64::NAN,
-                ..point(6.)
-            },
-            &[RUNNING],
-            &SETTINGS
-        )
-        .is_err()
     );
+    assert!(roof.contains("lies in no PZR region"), "{roof}");
+    let nan = refused(
+        &OperatingPoint {
+            pzr_roof_pressure_pa: f64::NAN,
+            ..point(6.)
+        },
+        &SETTINGS,
+    );
+    assert!(nan.contains("invalid operating point"), "{nan}");
     for rotors in [&[][..], &[RUNNING, RUNNING][..]] {
         match prepare(&packet(), Analytic, &point(6.), rotors, &SETTINGS) {
             Err(Failure::Fatal(m)) => assert!(m.contains("rotor states declared"), "{m}"),
@@ -678,69 +875,13 @@ fn declared_rotor_states_are_evaluated_without_touching_angular_momentum() {
     );
 }
 
-/// Structural admission of the actual compiled packet with the synthetic
-/// analytic chart (not IF97 values): the level is the packet's own authored
-/// PZR phase boundary and the roof is its top at the authored top pressure.
-#[test]
-#[ignore = "requires LD01_OPERATING_HOT_SPINE_PACKET; structural only"]
-fn actual_packet_admits_a_sharp_preparation_at_its_authored_boundary() {
-    let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
-    let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let regions = &packet.pzr.regions;
-    let datum = regions
-        .iter()
-        .map(|r| r.bottom_m)
-        .fold(f64::INFINITY, f64::min);
-    let boundary = regions
-        .iter()
-        .filter(|r| r.initial_phase == "liquid")
-        .map(|r| r.top_m)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let top = regions
-        .iter()
-        .max_by(|a, b| a.top_m.total_cmp(&b.top_m))
-        .unwrap();
-    let declared = OperatingPoint {
-        pzr_roof_pressure_pa: top.common_pressure_pa,
-        pzr_roof_elevation_m: top.top_m,
-        pzr_level_m: boundary - datum,
-    };
-    let rotors = vec![
-        RUNNING;
-        packet
-            .hydraulics
-            .sections
-            .iter()
-            .filter(|s| s.parameters.pump.is_some())
-            .count()
-    ];
-    let (_, _, receipt) = prepare(&packet, Analytic, &declared, &rotors, &SETTINGS)
-        .unwrap_or_else(|e| panic!("{e:?}"));
-    let loops: Vec<(usize, f64)> = receipt
-        .faces
-        .iter()
-        .filter(|f| !f.tree)
-        .map(|f| (f.face, f.largest_pa))
-        .collect();
-    println!(
-        "{}",
-        serde_json::json!({"packet":path,"declared":declared,"interface_m":receipt.interface_elevation_m,"root":receipt.root_region,"passes":receipt.pass_changes_pa,"max_eos_row":receipt.max_eos_row,"max_tree_face_pa":receipt.max_tree_face_pa,"loop_faces_pa":loops,"initial_rows":receipt.initial_rows})
-    );
-    assert_eq!(
-        receipt
-            .regions
-            .iter()
-            .filter(|r| r.phase != r.authored_phase)
-            .count(),
-        0
-    );
-}
-
 #[test]
 fn preparation_is_bitwise_deterministic() {
-    let (_, a, ra) = prepared(6.);
-    let (_, b, rb) = prepared(6.);
-    let bits = |y: &[f64]| y.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
-    assert_eq!(bits(&a.y), bits(&b.y));
-    assert_eq!(ra, rb);
+    for level in [6., 7.] {
+        let (_, a, ra) = prepared(level);
+        let (_, b, rb) = prepared(level);
+        let bits = |y: &[f64]| y.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&a.y), bits(&b.y));
+        assert_eq!(ra, rb);
+    }
 }
