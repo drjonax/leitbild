@@ -17,6 +17,28 @@ pub struct Packet {
     pub external_ports: ExternalPorts,
     pub pzr: Pzr,
     pub hydraulics: Hydraulics,
+    pub preparation: Preparation,
+}
+#[derive(Debug, Deserialize)]
+pub struct Preparation {
+    #[serde(rename = "operatingPoint")]
+    pub operating_point: OperatingPoint,
+}
+/// Declared prepared-state selections compiled from their wiki owners.
+#[derive(Debug, Deserialize)]
+pub struct OperatingPoint {
+    #[serde(rename = "pzrRoofPressure_Pa")]
+    pub pzr_roof_pressure_pa: f64,
+    #[serde(rename = "pzrRoofElevation_m")]
+    pub pzr_roof_elevation_m: f64,
+    /// Indicated level above the PZR bottom datum `pzr_bottom_elevation_m`.
+    #[serde(rename = "pzrLevel_m")]
+    pub pzr_level_m: f64,
+    #[serde(rename = "pzrBottomElevation_m")]
+    pub pzr_bottom_elevation_m: f64,
+    /// The only selected request is the nominal speed of `hydraulics.pump`.
+    #[serde(rename = "rcpSpeedRequest")]
+    pub rcp_speed_request: String,
 }
 #[derive(Debug, Deserialize)]
 pub struct Mechanics {
