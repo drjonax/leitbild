@@ -121,6 +121,9 @@ pub struct PzrCell {
     pub ports: Vec<PzrPort>,
     /// Must equal the band compiled into the property implementation.
     pub metastable: MetastableBand,
+    /// Liquid tracer per kg of prepared liquid; also the tracer scale class.
+    #[serde(rename = "absorberMassFraction")]
+    pub absorber_mass_fraction: f64,
 }
 #[derive(Debug, Deserialize)]
 pub struct PzrPort {

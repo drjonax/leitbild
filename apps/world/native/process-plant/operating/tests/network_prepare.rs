@@ -293,6 +293,7 @@ fn packet() -> Packet {
                     bore_m: 0.25,
                 }],
                 metastable: BAND,
+                absorber_mass_fraction: TRACER_PER_KG,
             },
         },
         hydraulics: Hydraulics {

@@ -294,7 +294,11 @@ impl<P: Properties> Network<P> {
             port_face: port.face,
         };
         let values = stratified_preparation(packet, &properties, pzr_preparation)?;
-        scales.extend(pzr_scales(&values, cell.fluid_volume_m3)?);
+        scales.extend(pzr_scales(
+            &values,
+            cell.fluid_volume_m3,
+            cell.absorber_mass_fraction,
+        )?);
         physical.extend(values);
         differential.extend([0.; PZR_ALGEBRAIC]);
         differential.extend([1.; PZR_COORDINATES - PZR_ALGEBRAIC]);
@@ -595,26 +599,28 @@ fn stratified_preparation<P: Properties>(
 }
 
 /// Solver scales of the PZR block per class: the prepared roof pressure;
-/// zone and transit volumes by the cell's fluid volume (as the volume rows); each zone's
-/// prepared mass, energy and tracer; transit stocks by the inventory of their
-/// phase (bubbles as vapor, drops and their tracer as the resident layer).
+/// zone and transit volumes by the cell's fluid volume (as the volume rows);
+/// each zone's prepared mass and energy; transit masses by their host zone's
+/// mass scale (bubbles by the vapor zone, drops by the resident layer); and
+/// every tracer by its host mass scale times the packet's absorber fraction.
 fn pzr_scales(
     values: &[f64; PZR_COORDINATES],
     fluid_volume_m3: f64,
+    absorber_mass_fraction: f64,
 ) -> Result<[f64; PZR_COORDINATES], Failure> {
+    if absorber_mass_fraction == 0. {
+        return Err(bad("zero-absorber tracer scale has no declared class"));
+    }
     let mut scales = *values;
     for offset in PZR_VOLUME {
         scales[offset] = fluid_volume_m3;
     }
-    let [mg, ma, mr, _, _] = PZR_MASS.map(|offset| values[offset]);
-    for (tracer, mass) in [(PZR_TRACER[0], ma), (PZR_TRACER[1], mr)] {
-        if values[tracer] == 0. {
-            scales[tracer] = mass * 0.001;
-        }
+    let [mg, ma, mr, mb, md] = PZR_MASS;
+    scales[mb] = values[mg];
+    scales[md] = values[mr];
+    for (tracer, host) in PZR_TRACER.into_iter().zip([ma, mr, md]) {
+        scales[tracer] = scales[host] * absorber_mass_fraction;
     }
-    scales[PZR_MASS[3]] = mg;
-    scales[PZR_MASS[4]] = mr;
-    scales[PZR_TRACER[2]] = scales[PZR_TRACER[1]];
     if scales.iter().any(|v| !v.is_finite() || *v <= 0.) {
         return Err(bad(format!(
             "prepared PZR coordinates give a nonpositive scale: {scales:?}"
