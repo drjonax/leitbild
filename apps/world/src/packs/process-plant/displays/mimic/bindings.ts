@@ -252,10 +252,12 @@ export const itemBinding = (
   }
 }
 
-/** A power line is live while the equipment feeding it is energized. */
-export const linkPowerBinding = (graph: CompiledPlantGraph, linkIndex: number): { readonly energizedPath: VariablePath | null } => {
-  const source = graph.components[graph.links[linkIndex]!.fromComponentIndex]!
-  return { energizedPath: aspectOf(source.semantics.aspects, 'energized')?.state?.path ?? null }
+/** A power line is live while its own solved energized state reads true: what feeds it puts power out through closed contacts. */
+export const linkPowerBinding = (graph: CompiledPlantGraph, linkIndex: number): { readonly energizedPath: VariablePath } => {
+  const link = graph.links[linkIndex]!
+  const energized = link.variables.find(variable => String(variable.path) === `${link.id}.energized`)
+  if (energized === undefined) throw new Error(`power link ${link.id} has no energized state to draw`)
+  return { energizedPath: energized.path }
 }
 
 export const linkFlowBinding = (graph: CompiledPlantGraph, linkIndex: number): MimicFlowBinding => {

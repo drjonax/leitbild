@@ -1,5 +1,6 @@
 import type { MimicFlowBinding, MimicItemBinding } from './bindings.ts'
-import { flowLook, itemLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
+import { flowLook, itemLook, powerLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
+import type { MimicPipeState } from './mimic-model.ts'
 import type { MimicPresentation } from './presentation.ts'
 
 // The text rows beside a drawn item, shared by the server (which reserves
@@ -204,6 +205,18 @@ export const bundleFlowLook = (flows: ReadonlyArray<MimicFlowBinding>, index: Sa
   const looks = flows.map(flow => flowLook(flow, index))
   const order: ReadonlyArray<FlowLook['look']> = ['forward', 'reverse', 'flowing', 'unknown', 'none']
   return looks.reduce((best, look) => (order.indexOf(look.look) < order.indexOf(best.look) ? look : best))
+}
+
+/**
+ * How a drawn pipe looks: one pipe's own state, or for a stub, every line it
+ * stands for together, so a bus fed from its diesel reads live though its
+ * offsite feeder is dead.
+ */
+export const pipeStatesLook = (states: ReadonlyArray<MimicPipeState>, index: SampleIndex): FlowLook['look'] | 'live' | 'dead' => {
+  const power = states.flatMap(state => state.kind === 'power' ? [state.energizedPath] : [])
+  const fluid = states.flatMap(state => state.kind === 'fluid' ? [state.flow, ...state.parallel] : [])
+  if (power.length > 0 && fluid.length > 0) throw new Error('a drawn pipe cannot carry both power and fluid')
+  return power.length > 0 ? powerLook(power, index) : bundleFlowLook(fluid, index).look
 }
 
 export const itemRowTexts = (binding: MimicItemBinding, presentation: MimicPresentation, rows: ReadonlyArray<MimicRow>, index: SampleIndex, format: (value: number, unit: string) => string): ReadonlyArray<string> => {

@@ -17,6 +17,10 @@ import { itemBinding, framingRules } from '../src/packs/process-plant/displays/m
 import { indexSample, itemLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
+import { compileMimic } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
+import { MIMIC_MAX_WIDTH } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
+import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
+import { pipeStatesLook } from '../src/packs/process-plant/displays/mimic/rows.ts'
 
 // The reference PWR reports what its equipment does, beside what it is told
 // to do: a feedback tag for each command tag, read from the solved state.
@@ -158,6 +162,40 @@ describe('breakers', () => {
     plantRun.run(15_000)
     expect(plantRun.tag('BRK-EDG-A-POS')).toBe(true)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
+  })
+
+  test('a power line reads energized from what feeds it, and a drawn bus feeder from all its lines', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    const live = (linkId: string) => plantRun.read(`${linkId}.energized`)
+    expect(live('offsite-breaker-a-to-safety-bus-a')).toBe(true)
+    expect(live('diesel-generator-a-to-breaker-a')).toBe(false)
+    expect(live('diesel-breaker-a-to-safety-bus-a')).toBe(false)
+    expect(live('turbine-generator-to-unit-aux-transformer')).toBe(true)
+
+    plantRun.act('loss-offsite-power')
+    plantRun.run(60_000)
+    // The open offsite breaker's line is dead, though the transformer feeding it is still live from the coasting generator's tail.
+    expect(live('unit-aux-transformer-to-offsite-breaker-a')).toBe(plantRun.read('unitAuxTransformer.energized'))
+    expect(live('offsite-breaker-a-to-safety-bus-a')).toBe(false)
+    expect(live('diesel-generator-a-to-breaker-a')).toBe(true)
+    expect(live('diesel-breaker-a-to-safety-bus-a')).toBe(true)
+    expect(live('unit-bus-a-to-rcpA')).toBe(false)
+
+    const drawn = (intent: Parameters<typeof compileMimic>[1]) => {
+      const drawing = compileMimic(plant, intent, { profile: chatMimicProfile, maxWidth: MIMIC_MAX_WIDTH, maxHeight: 900 })
+      if (!drawing.ok) throw new Error(JSON.stringify(drawing.issues))
+      return { mimic: drawing.mimic, sample: indexSample(drawing.mimic.paths.map(path => ({ path, value: plantRun.read(path), quality: 'good' }))) }
+    }
+    // Drawn from the diesel to its pump, every line between them reads live.
+    const route = drawn({ from: ['dieselGeneratorA'], to: ['auxFeedwaterPumpMotor'] })
+    const lines = route.mimic.pipes.filter(pipe => !route.mimic.stubs.some(stub => pipe.id.startsWith(`${stub.id}.`)))
+    expect(lines.map(pipe => pipeStatesLook([pipe.state], route.sample))).toEqual(lines.map(() => 'live'))
+    // Around the pump, the bus's two feeders stop the drawing as one stub: live, as its diesel feeder is.
+    const around = drawn({ around: ['auxFeedwaterPumpMotor'], reach: 1 })
+    const feeders = around.mimic.stubs.find(stub => stub.states.length === 2 && stub.states.every(state => state.kind === 'power'))!
+    expect(feeders.states.map(state => pipeStatesLook([state], around.sample)).sort()).toEqual(['dead', 'live'])
+    expect(pipeStatesLook(feeders.states, around.sample)).toBe('live')
   })
 
   test('a reactor trip opens both reactor trip breakers, read from their position feedback', () => {

@@ -8,7 +8,8 @@ import {
 import { clamp, optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 
-const sourcePowerForComponent = (
+/** The power a component puts out, as its own solved state reads: a breaker only while its contacts are closed. */
+export const sourcePowerForComponent = (
   source: CompiledComponent,
   context: ProcessPlantBehaviorContext,
 ): { readonly energized: boolean; readonly availablePowerMw: number; readonly voltageFraction: number } => {

@@ -152,7 +152,12 @@ export const flowLook = (binding: MimicFlowBinding, index: SampleIndex): FlowLoo
   return { look: value > 0 ? 'forward' : 'reverse', value }
 }
 
-export const powerLook = (energizedPath: string | null, index: SampleIndex): 'live' | 'dead' | 'unknown' => {
-  const energized = booleanAt(index, energizedPath ?? undefined)
-  return energized === null ? 'unknown' : energized ? 'live' : 'dead'
+/**
+ * A drawn power line, or a stub standing for several lines into one terminal
+ * (a bus fed from its diesel and from offsite): live while any line is live,
+ * unknown when none is and any is unknown, else dead.
+ */
+export const powerLook = (energizedPaths: ReadonlyArray<string | null>, index: SampleIndex): 'live' | 'dead' | 'unknown' => {
+  const looks = energizedPaths.map(path => booleanAt(index, path ?? undefined))
+  return looks.includes(true) ? 'live' : looks.includes(null) ? 'unknown' : 'dead'
 }

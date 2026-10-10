@@ -17,6 +17,7 @@ import type {
   PortDefinition,
   PortName,
   PortRef,
+  ProcessLinkVariableDescriptor,
   ProcessSignalBinding,
   ProcessSignalTagId,
   VariableDescriptor,
@@ -142,6 +143,24 @@ const variablePathFor = (componentId: ComponentId, localPath: LocalVariablePath)
 
 const processLinkVariablePathFor = (connectionId: ConnectionId, localPath: LocalVariablePath): VariablePath =>
   `${connectionId}.${localPath}` as VariablePath
+
+// Every power line solves whether it carries power, from the equipment that
+// feeds it, so no reader has to infer a line's state from its ends.
+const electricalLinkVariables = (
+  connection: PlantGraphSpec['connections'][number],
+  fromLabel: string,
+  toLabel: string,
+): ReadonlyArray<ProcessLinkVariableDescriptor> => connection.connectionKind !== 'electricalPower' ? [] : [{
+  path: 'energized' as LocalVariablePath,
+  label: `${fromLabel} to ${toLabel} energized`,
+  kind: 'derived',
+  discipline: 'electrical',
+  writable: false,
+  publish: 'telemetry',
+  quantity: 'boolean',
+  unit: 'boolean',
+  initialValue: false,
+}]
 
 const assertComponentVariableOverridesValid = (
   componentId: ComponentId,
@@ -459,6 +478,7 @@ export const compilePlantGraph = (
   const incomingLinksByComponent: number[][] = spec.components.map(() => [])
   const outgoingLinksByComponent: number[][] = spec.components.map(() => [])
   const mutableLinksByService = new Map<ConnectionService, number[]>()
+  const linkVariableDeclarations: Array<ReadonlyArray<ProcessLinkVariableDescriptor>> = []
   const links: CompiledProcessLink[] = spec.connections.map((connection, index) => {
     const from = parsePortRef(connection.from)
     const to = parsePortRef(connection.to)
@@ -478,6 +498,8 @@ export const compilePlantGraph = (
     if (!toPort) throw new Error(`connection ${connection.id} references unknown port: ${to.componentId}.${to.portName}`)
     if (!compatiblePortKinds(fromPort, toPort)) throw new Error(`connection ${connection.id} has incompatible port kinds: ${fromPort.kind} -> ${toPort.kind}`)
     if (!directionAllowsConnection(fromPort, toPort)) throw new Error(`connection ${connection.id} has invalid port directions: ${fromPort.direction} -> ${toPort.direction}`)
+    const declaredVariables = [...connection.variables, ...electricalLinkVariables(connection, spec.components[fromComponentIndex]!.label, spec.components[toComponentIndex]!.label)]
+    linkVariableDeclarations.push(declaredVariables)
     const inferredKind = inferConnectionKind(fromPort, toPort)
     const kind = connection.connectionKind
     if (kind !== inferredKind) {
@@ -499,7 +521,7 @@ export const compilePlantGraph = (
       ...(connection.solverModel === undefined ? {} : { solverModel: connection.solverModel }),
       ...(connection.physical === undefined ? {} : { physical: connection.physical }),
       ...(connection.metadata === undefined ? {} : { metadata: connection.metadata }),
-      variables: connection.variables.map(variable => ({
+      variables: declaredVariables.map(variable => ({
         ...variable,
         ...linkVariableSemanticsFor(variable.path),
         path: processLinkVariablePathFor(connection.id, variable.path),
@@ -526,7 +548,7 @@ export const compilePlantGraph = (
   )
   const linkVariables: CompiledVariable[] = links.flatMap(link =>
     link.variables.map(descriptor => {
-      const source = spec.connections[link.index]?.variables.find(variable => processLinkVariablePathFor(link.id, variable.path) === descriptor.path)
+      const source = linkVariableDeclarations[link.index]?.find(variable => processLinkVariablePathFor(link.id, variable.path) === descriptor.path)
       if (!source) throw new Error(`connection ${link.id} failed to resolve variable ${descriptor.path}`)
       return {
         path: descriptor.path,

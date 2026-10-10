@@ -2,8 +2,8 @@
   import { onMount } from 'svelte'
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
-  import { indexSample, powerLook, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-  import { bundleFlowLook, drawnLook, itemTreatment, rowText, type MimicRow } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import { indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
+  import { drawnLook, itemTreatment, pipeStatesLook, rowText, type MimicRow } from '../../../../packs/process-plant/displays/mimic/rows.ts'
   import { displayValue, formatQuantity, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
   import { alertTypeOf } from '../panel-presenters.ts'
@@ -94,19 +94,21 @@
     return entry !== undefined && typeof entry.value === 'number' && entry.quality !== 'outside-hard-range' ? displayValue(entry.value, row.unit) : null
   }
 
-  // A pipe drawn for grouped equipment's parallel pipes carries flow while any of them does.
-  const pipeLook = (state: MimicPipeState) => state.kind === 'fluid' ? bundleFlowLook([state.flow, ...state.parallel], index).look : powerLook(state.energizedPath, index)
+  // A pipe drawn for grouped equipment's parallel pipes carries flow while any
+  // of them does; a stub reads as every line it stands for.
+  const stubOf = (pipeId: string) => mimic.stubs.find(stub => pipeId.startsWith(`${stub.id}.`))
+  const pipeLook = (pipe: { readonly id: string; readonly state: MimicPipeState }) => pipeStatesLook(stubOf(pipe.id)?.states ?? [pipe.state], index)
 
   // Headers carry flow while any pipe that tees into them does, so a header never contradicts its branches.
   const barValue = (item: MimicDrawnItem) => {
     const touching = mimic.pipes.filter(pipe => pipe.points.some(([x, y]) => x >= item.box.x && x <= item.box.x + item.box.width && y >= item.box.y && y <= item.box.y + item.box.height))
-    const values = touching.map(pipe => pipeValue(pipeLook(pipe.state)))
+    const values = touching.map(pipe => pipeValue(pipeLook(pipe)))
     return values.includes('open-flow') ? 'open-flow' : values.length > 0 && values.every(value => value === 'empty') ? 'empty' : 'closed-dash'
   }
 
   const segments = $derived.by((): Segment[] => {
     const pipes = mimic.pipes.flatMap(pipe => {
-      const look = pipeLook(pipe.state)
+      const look = pipeLook(pipe)
       const value = pipeValue(look)
       const size = pipe.carrier === 'electricalPower' ? 'small' : 'medium'
       const chevron = look === 'forward' || look === 'reverse' ? chevronSegment(pipe.id, pipe.points, pipe.gaps, value, size, look === 'reverse') : null
@@ -122,7 +124,7 @@
     })
     const ends = mimic.stubs.map(stub => {
       const pipe = mimic.pipes.find(candidate => candidate.id.startsWith(`${stub.id}.`))!
-      const look = pipeLook(stub.states[0]!)
+      const look = pipeStatesLook(stub.states, index)
       return stubEndSegment(pipe.id, pipe.points, stub.direction, pipeValue(look), pipe.carrier === 'electricalPower' ? 'small' : 'medium', look === 'forward')
     })
     return [...pipes, ...bars, ...ends]

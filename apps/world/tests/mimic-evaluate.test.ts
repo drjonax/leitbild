@@ -71,8 +71,13 @@ describe('mimic state of one sample', () => {
     expect(itemLook(turbine, sample({ 't.steam': 380 })).state.kind).toBe('running')
   })
 
-  test('a power line is live while what feeds it is energized', () => {
-    expect(powerLook('b.energized', sample({ 'b.energized': false }))).toBe('dead')
-    expect(powerLook(null, sample({}))).toBe('unknown')
+  test('a power line is live while its solved state reads energized; a stub of several lines while any of them is', () => {
+    expect(powerLook(['l.energized'], sample({ 'l.energized': true }))).toBe('live')
+    expect(powerLook(['l.energized'], sample({ 'l.energized': false }))).toBe('dead')
+    expect(powerLook([null], sample({}))).toBe('unknown')
+    // A bus fed from its diesel while its offsite feeder is open.
+    expect(powerLook(['offsite.energized', 'diesel.energized'], sample({ 'offsite.energized': false, 'diesel.energized': true }))).toBe('live')
+    expect(powerLook(['offsite.energized', 'diesel.energized'], sample({ 'offsite.energized': false }))).toBe('unknown')
+    expect(powerLook(['offsite.energized', 'diesel.energized'], sample({ 'offsite.energized': false, 'diesel.energized': false }))).toBe('dead')
   })
 })
