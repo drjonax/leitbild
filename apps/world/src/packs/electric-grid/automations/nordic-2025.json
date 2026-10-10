@@ -145,7 +145,7 @@
       "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/kantaverkko/sahkonsiirto/taajuudensaatojareservitnordic-soa_annex-lfcr_070224.pdf",
       "accessedOn": "2026-10-10",
       "status": "verified",
-      "note": "§7.4.2.2: dimensioned aFRR capacity at least 300 MW (in force through 2025). Version 8 (2026) replaces the figure with a joint Nordic decision; the 2026 Appendix 1 gives at least 200 MW."
+      "note": "§7.4.2.2: dimensioned aFRR capacity at least 300 MW (in force through 2025). Version 8 (2026) replaces the figure with a joint Nordic decision; the 2026 Appendix 1, in force now, gives at least 200 MW, which this preset uses."
     },
     {
       "section": "afrr",
@@ -244,11 +244,11 @@
     "requirement": {
       "up": {
         "basis": "fixed",
-        "mw": 300
+        "mw": 200
       },
       "down": {
         "basis": "fixed",
-        "mw": 300
+        "mw": 200
       }
     },
     "eligibleGovernorClasses": [
