@@ -1052,7 +1052,6 @@ describe('process plant runtime', () => {
           totalVolumeM3: 60,
           initialLiquidInventoryKg: 35_000,
           initialGasPressureMPa: 4.5,
-          injectionSetpointMPa: 2.5,
           outletCvKgPerSPerSqrtMPa: 40,
           minimumUsableInventoryKg: 1_000,
           initialTemperatureC: 35,
@@ -1460,8 +1459,10 @@ describe('process plant runtime', () => {
     expect(transientDiagnostics.containment.sumpInventoryKg).toBeGreaterThan(baselineDiagnostics.containment.sumpInventoryKg ?? 0)
     expect(transientDiagnostics.containment.pressureMPa).toBeGreaterThan(baselineDiagnostics.containment.pressureMPa ?? 0)
     expect(transientDiagnostics.safetySystems.accumulatorInventoryKg).toBeLessThan(baselineDiagnostics.safetySystems.accumulatorInventoryKg)
-    expect(Number(runtime.readVariable(valueOf('vessel-release-to-containment.flowKgPerS'))))
-      .toBeCloseTo(Number(runtime.readVariable(valueOf('vessel.primaryLeakFlowKgPerS'))), 6)
+    // The release link carries the leak flow the vessel solved a step before;
+    // the accumulators still inject, so the two differ by that step's change.
+    const leakFlow = Number(runtime.readVariable(valueOf('vessel.primaryLeakFlowKgPerS')))
+    expect(Math.abs(Number(runtime.readVariable(valueOf('vessel-release-to-containment.flowKgPerS'))) - leakFlow)).toBeLessThan(leakFlow * 0.01)
     expect(Number(runtime.readVariable(valueOf('containment.incomingMassKgPerS')))).toBeGreaterThan(0)
     expect(Number(runtime.readVariable(valueOf('containment.sumpInventoryKg')))).toBeGreaterThan(initialContainmentSump)
     expect(Number(runtime.readVariable(valueOf('containment.pressureMPa')))).toBeGreaterThan(initialContainmentPressure)

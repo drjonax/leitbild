@@ -147,3 +147,20 @@ describe('a reactor coolant pump that stops at power', () => {
     expect(tripped()).toBe(true)
   })
 })
+
+describe('safety injection accumulators', () => {
+  test('keep injecting as long as the reactor coolant pressure stays below their expanding gas', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-hot-leg-a.leak.areaFraction' as VariablePath, value: 0.45 })
+    plantRun.run(300_000)
+    const gas = Number(plantRun.read('safetyAccumulatorA.gasPressureMPa'))
+    const pressure = Number(plantRun.tag('PT-455'))
+    // Well below its 4.4 MPa charge, the gas still stands just above the coolant pressure it injects into.
+    expect(pressure).toBeLessThan(3.5)
+    expect(gas).toBeLessThan(3.5)
+    expect(gas).toBeGreaterThan(pressure)
+    expect(Number(plantRun.read('safetyAccumulatorA.outletFlowKgPerS'))).toBeGreaterThan(1)
+    expect(Number(plantRun.read('safetyAccumulatorA.depletedFraction'))).toBeGreaterThan(0.2)
+  })
+})

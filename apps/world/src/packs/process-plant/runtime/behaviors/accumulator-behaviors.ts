@@ -47,10 +47,12 @@ export const accumulatorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const initialGasVolume = Math.max(0.001, totalVolume - initialInventory / liquidDensity)
       const exponent = optionalParameterNumber(component, 'gasPolytropicExponent', 1.2)
       const gasPressure = parameterNumber(component, 'initialGasPressureMPa') * Math.pow(initialGasVolume / gasVolume, exponent)
+      // The check valve opens once the pressure it injects into falls below the
+      // gas pressure, and the accumulator then injects until the expanding gas
+      // no longer exceeds that pressure or only its unusable water is left.
       const downstreamPressure = averageOutletPressureMPa({ system, component, context })
-        ?? parameterNumber(component, 'injectionSetpointMPa')
-      const injectionSetpoint = parameterNumber(component, 'injectionSetpointMPa')
-      const availableHead = gasPressure - Math.max(downstreamPressure, injectionSetpoint)
+      if (downstreamPressure === null) throw new Error(`accumulator ${component.id} outlet carries no pressure, so its check valve cannot be judged`)
+      const availableHead = gasPressure - downstreamPressure
       const dischargeIsolationOpen = context.readBoolean(componentVariablePath(component, 'dischargeIsolationOpen'))
       const checkValveOpen = optionalParameterBoolean(component, 'checkValveEnabled', true)
         ? dischargeIsolationOpen && availableHead > 0 && currentInventory > minimumInventory
@@ -80,7 +82,7 @@ export const accumulatorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       context.write(componentVariablePath(component, 'gasPressureMPa'), nextGasPressure)
       context.write(componentVariablePath(component, 'outletFlowKgPerS'), boundedOutletFlow)
       context.write(componentVariablePath(component, 'fillFlowKgPerS'), fillFlow)
-      context.write(componentVariablePath(component, 'availableInjectionHeadMPa'), Math.max(0, nextGasPressure - Math.max(downstreamPressure, injectionSetpoint)))
+      context.write(componentVariablePath(component, 'availableInjectionHeadMPa'), Math.max(0, nextGasPressure - downstreamPressure))
       context.write(componentVariablePath(component, 'depletedFraction'), clamp(1 - nextInventory / Math.max(1, initialInventory - minimumInventory), 0, 1))
       context.write(componentVariablePath(component, 'checkValveOpenFraction'), checkValveOpen ? 1 : 0)
       context.write(componentVariablePath(component, 'temperatureC'), nextTemperature)

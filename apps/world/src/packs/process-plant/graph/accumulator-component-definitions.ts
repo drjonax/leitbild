@@ -18,7 +18,6 @@ export const accumulatorComponentDefinitions: ReadonlyArray<ComponentDefinition>
       liquidDensityKgPerM3: z.number().finite().positive().optional(),
       initialGasPressureMPa: z.number().finite().positive(),
       gasPolytropicExponent: z.number().finite().min(1).max(2).optional(),
-      injectionSetpointMPa: z.number().finite().positive(),
       outletCvKgPerSPerSqrtMPa: z.number().finite().nonnegative(),
       minimumUsableInventoryKg: z.number().finite().nonnegative().optional(),
       checkValveEnabled: z.boolean().optional(),
