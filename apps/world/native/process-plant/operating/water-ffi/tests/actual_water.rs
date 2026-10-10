@@ -39,7 +39,7 @@ fn actual_c_abi_si_properties_and_endpoint_identities() {
             );
         }
     }
-    assert!(point(Branch::Liquid, 16e6 + 1., 600.).is_err());
+    assert!(point(Branch::Liquid, 17e6 + 1., 600.).is_err());
     assert!(point(Branch::Liquid, 15.2e6, 650.).is_err());
     assert!(point(Branch::Vapor, 6e6, 300.).is_err());
     assert!(point(Branch::Liquid, f64::NAN, 600.).is_err());
@@ -235,5 +235,5 @@ fn coefficient_derivatives_at_a_boundary_probe_inward_without_clipping() {
     let b = point(Branch::Liquid, p, t - 2. * h).unwrap();
     let probe = (3. * q.viscosity_pa_s - 4. * a.viscosity_pa_s + b.viscosity_pa_s) / (2. * h);
     assert!((probe - d.viscosity_pa_s).abs() <= 1e-5 * probe.abs());
-    assert!(directional(Branch::Liquid, p + 1., t, 0., 0.).is_err());
+    assert!(directional(Branch::Liquid, 17e6 + 1., t, 0., 0.).is_err());
 }

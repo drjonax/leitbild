@@ -8,9 +8,51 @@ import {nativeIf97HeaderSha256, nativeIf97LicenseSha256, nativeIf97Revision, nat
 
 const hash=(v:Uint8Array|string)=>createHash('sha256').update(v).digest('hex')
 
+// spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#bounded-metastable-admission
+// The band and both pressure ceilings have one numeric owner: the wiki strict
+// block ld01-metastable-band on this page. The build reads it from an explicit
+// wiki root, compiles it into the bridge and records the page hash and the
+// parsed band in its receipt; the native boundary exposes the compiled band.
+export const metastableBandPage='world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md'
+export const metastableBandFence='ld01-metastable-band'
+export type MetastableBand={pressureRange_Pa:[number,number],lowerBoundExclusive:boolean,
+  liquidSuperheatMax_K:number,vaporSubcoolingMax_K:number,trialMax_K:number,creditedMax_K:number,
+  liquidTemperatureMax_K:number,liquidPressureCeiling_Pa:number,vaporPressureCeiling_Pa:number}
+
+/** The single JSON object of the one fenced strict block `fence` in a page. */
+export function strictBlock(page:string,fence:string):unknown{
+  const open='```'+fence+'\n',start=page.indexOf(open)
+  if(start<0||page.indexOf(open,start+1)>=0)throw Error(`Expected exactly one ${fence} block`)
+  const body=start+open.length,end=page.indexOf('\n```',body)
+  if(end<0)throw Error(`Unterminated ${fence} block`)
+  return JSON.parse(page.slice(body,end))
+}
+
+/** Admit the block's exact field set; refuse anything else, never default. */
+export function parseMetastableBand(value:unknown):MetastableBand{
+  const keys=['pressureRange_Pa','lowerBoundExclusive','liquidSuperheatMax_K','vaporSubcoolingMax_K','trialMax_K',
+    'creditedMax_K','liquidTemperatureMax_K','liquidPressureCeiling_Pa','vaporPressureCeiling_Pa']
+  if(typeof value!=='object'||value===null||Array.isArray(value))throw Error('Metastable band must be an object')
+  const v=value as Record<string,unknown>
+  if(Object.keys(v).sort().join()!==[...keys].sort().join())throw Error('Metastable band fields differ from the contract')
+  const positive=(k:string)=>{const x=v[k];if(typeof x!=='number'||!Number.isFinite(x)||x<=0)throw Error(`${k} must be a positive number`);return x}
+  const range=v.pressureRange_Pa
+  if(!Array.isArray(range)||range.length!==2||!range.every(x=>typeof x==='number'&&Number.isFinite(x)&&x>0)||!(range[0]<range[1]))
+    throw Error('pressureRange_Pa must be two increasing positive pressures')
+  if(typeof v.lowerBoundExclusive!=='boolean')throw Error('lowerBoundExclusive must be a boolean')
+  const band:MetastableBand={pressureRange_Pa:[range[0],range[1]],lowerBoundExclusive:v.lowerBoundExclusive,
+    liquidSuperheatMax_K:positive('liquidSuperheatMax_K'),vaporSubcoolingMax_K:positive('vaporSubcoolingMax_K'),
+    trialMax_K:positive('trialMax_K'),creditedMax_K:positive('creditedMax_K'),liquidTemperatureMax_K:positive('liquidTemperatureMax_K'),
+    liquidPressureCeiling_Pa:positive('liquidPressureCeiling_Pa'),vaporPressureCeiling_Pa:positive('vaporPressureCeiling_Pa')}
+  if(!(band.creditedMax_K<=Math.min(band.liquidSuperheatMax_K,band.vaporSubcoolingMax_K))
+    ||!(Math.max(band.liquidSuperheatMax_K,band.vaporSubcoolingMax_K)<=band.trialMax_K))
+    throw Error('Metastable band must nest credited <= admitted <= trial')
+  return band
+}
+
 // One authored adapter is shared with the existing forward preparation reader.
 // C++ exceptions never cross the C ABI; output is written only on success.
-export const operatingWaterBridge=String.raw`
+export const operatingWaterBridge=(band:MetastableBand)=>String.raw`
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -66,51 +108,103 @@ State endpoint_caloric(double p,bool is_liquid) {
  if(T<=IF97::T23min) return is_liquid?gibbs_caloric(r1,1,T,p):gibbs_caloric(r2,2,T,p);
  return endpoint(p,is_liquid);
 }
+// Bounded metastable admission: the parsed ld01-metastable-band block, recorded
+// with its page hash in the build receipt.
+constexpr double band_pressure_low_pa=${band.pressureRange_Pa[0]},band_pressure_high_pa=${band.pressureRange_Pa[1]};
+constexpr bool band_lower_exclusive=${band.lowerBoundExclusive};
+constexpr double trial_max_k=${band.trialMax_K},liquid_temperature_max_k=${band.liquidTemperatureMax_K};
+constexpr double liquid_ceiling_pa=${band.liquidPressureCeiling_Pa},vapor_ceiling_pa=${band.vaporPressureCeiling_Pa};
+constexpr double liquid_superheat_max_k=${band.liquidSuperheatMax_K},vapor_subcooling_max_k=${band.vaporSubcoolingMax_K};
+constexpr double credited_max_k=${band.creditedMax_K};
+constexpr int TRIAL_BAND=4;
+bool in_band(double p) {
+ return (band_lower_exclusive?p>band_pressure_low_pa:p>=band_pressure_low_pa)&&p<=band_pressure_high_pa;
+}
+// The metastable side of saturation on an explicit branch: liquid above Tsat;
+// vapor below it where the shared adapter's own supersaturation test refuses
+// (every vapor state that test admits keeps its unchanged stable path).
+bool metastable_side(int branch,double p,double T,double ts) {
+ return (branch==0&&T>ts)||(branch==1&&T<ts&&T>=IF97::Tmin&&!(p<=r4.p_T(T)));
+}
+// Complete forward tuples (the shared adapter) and the caloric-inverse subset.
+struct CompleteTuple {
+ static State liquid_equation(double T,double p){return gibbs(r1,1,T,p);}
+ static State vapor_equation(double T,double p){return gibbs(r2,2,T,p);}
+ static State stable_liquid(double T,double p){return liquid(T,p);}
+ static State stable_vapor(double T,double p){return vapor(T,p);}
+ static State saturated(double p,bool is_liquid){return endpoint(p,is_liquid);}
+};
+struct CaloricTuple {
+ static State liquid_equation(double T,double p){return gibbs_caloric(r1,1,T,p);}
+ static State vapor_equation(double T,double p){return gibbs_caloric(r2,2,T,p);}
+ static State stable_liquid(double T,double p){return liquid_caloric(T,p);}
+ static State stable_vapor(double T,double p){return vapor_caloric(T,p);}
+ static State saturated(double p,bool is_liquid){return endpoint_caloric(p,is_liquid);}
+};
+// The explicitly requested branch at (p,T); ts is Tsat(p). An exact saturation
+// boundary has two physical branches: honour the caller's branch instead of
+// delegating its identity to TP rounding. The stable side of saturation and the
+// saturated endpoints take the shared adapter's unchanged paths. With
+// metastable admission, the metastable side is the branch's own basic
+// equation, region-1 Eq. (7) or region-2 Eq. (15), inside the band's pressure
+// range and trial departure only: no region search and no backward equation.
+// Outside them it returns TRIAL_BAND. Without admission it is the stable path.
+template<class Tuple> int branch_state(int branch,double p,double T,State& q,double& ts,bool metastable) {
+ require(std::isfinite(p)&&p>=1e5&&p<=(branch==0||branch==2?liquid_ceiling_pa:vapor_ceiling_pa),
+  "Operating water pressure domain");
+ ts=r4.T_p(p);
+ if(metastable&&metastable_side(branch,p,T,ts)){
+  const bool liquid=branch==0;
+  if(!(in_band(p)&&(liquid?T<=std::min(ts+trial_max_k,liquid_temperature_max_k):T>=ts-trial_max_k)))
+   return TRIAL_BAND;
+  q=liquid?Tuple::liquid_equation(T,p):Tuple::vapor_equation(T,p);
+ }else switch(branch) {
+  case 0:
+   if(T==ts){q=Tuple::saturated(p,true);break;}
+   require(!(T>liquid_temperature_max_k),"Liquid above the region-1 temperature limit");
+   q=Tuple::stable_liquid(T,p);break;
+  case 1:q=T==ts?Tuple::saturated(p,false):Tuple::stable_vapor(T,p);break;
+  case 2:q=Tuple::saturated(p,true);break;
+  case 3:q=Tuple::saturated(p,false);break;
+  default:return 2;
+ }
+ require(q.region==1||q.region==2,"Operating water admits R1/R2 only");
+ return 0;
+}
 extern "C" {
 struct OperatingWaterPoint {
  int region;
  double p,T,rho,u,h,cp,cv,alpha,kappa,mu,conductivity,saturation_slope;
+ // Signed departure T-Tsat(p) on the requested branch (zero at an endpoint).
+ double saturation_departure;
 };
-int ld01_water_point(int branch,double p,double T,OperatingWaterPoint* out) noexcept {
+// The complete forward point; metastable admission is off only for the
+// coefficient probes of a stable-side state (see water_direction_at).
+static int water_point_at(int branch,double p,double T,OperatingWaterPoint* out,bool metastable) noexcept {
  if(!out) return 2;
  try {
-  require(std::isfinite(p)&&p>=1e5&&p<=16e6,"Operating water pressure domain");
-  State q;
-  switch(branch) {
-   // An exact saturation boundary has two physical branches. Honour the
-   // explicit caller branch instead of delegating its identity to TP rounding.
-   case 0:q=T==r4.T_p(p)?endpoint(p,true):liquid(T,p);break;
-   case 1:q=T==r4.T_p(p)?endpoint(p,false):vapor(T,p);break;
-   case 2:q=endpoint(p,true);break;
-   case 3:q=endpoint(p,false);break;
-   default:return 2;
-  }
-  require(q.region==1||q.region==2,"Operating water admits R1/R2 only");
+  State q;double ts;
+  const int status=branch_state<CompleteTuple>(branch,p,T,q,ts,metastable);if(status)return status;
   const double slope=saturation_slope(p);
   require(std::isfinite(slope)&&slope>0,"Invalid saturation derivative");
-  *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,q.cv,q.alpha,q.kappa,q.mu,q.conductivity,slope};
+  *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,q.cv,q.alpha,q.kappa,q.mu,q.conductivity,slope,q.T-ts};
   return 0;
  }catch(const std::domain_error&){return 1;}
  catch(const std::exception&){return 3;}
  catch(...){return 3;}
+}
+int ld01_water_point(int branch,double p,double T,OperatingWaterPoint* out) noexcept {
+ return water_point_at(branch,p,T,out,true);
 }
 // The same branches, checks and status codes as ld01_water_point. Fields it
 // does not evaluate (cv, kappa, mu, conductivity, saturation slope) are NaN.
 int ld01_water_caloric(int branch,double p,double T,OperatingWaterPoint* out) noexcept {
  if(!out) return 2;
  try {
-  require(std::isfinite(p)&&p>=1e5&&p<=16e6,"Operating water pressure domain");
-  State q;
-  switch(branch) {
-   case 0:q=T==r4.T_p(p)?endpoint_caloric(p,true):liquid_caloric(T,p);break;
-   case 1:q=T==r4.T_p(p)?endpoint_caloric(p,false):vapor_caloric(T,p);break;
-   case 2:q=endpoint_caloric(p,true);break;
-   case 3:q=endpoint_caloric(p,false);break;
-   default:return 2;
-  }
-  require(q.region==1||q.region==2,"Operating water admits R1/R2 only");
+  State q;double ts;
+  const int status=branch_state<CaloricTuple>(branch,p,T,q,ts,true);if(status)return status;
   const double none=std::numeric_limits<double>::quiet_NaN();
-  *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,none,q.alpha,none,none,none,none};
+  *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,none,q.alpha,none,none,none,none,q.T-ts};
   return 0;
  }catch(const std::domain_error&){return 1;}
  catch(const std::exception&){return 3;}
@@ -121,11 +215,17 @@ int ld01_water_caloric(int branch,double p,double T,OperatingWaterPoint* out) no
 // local coefficient probes. These are disclosed inexact Newton coefficients,
 // never a replacement EOS value or a finite-difference whole-plant Jacobian.
 // Direction at q, which is ld01_water_point(branch,p,T)'s own complete output.
+// Coefficient probes stay with the centre's admission: a stable-side centre
+// is probed on stable-side states only, as before metastable admission, and a
+// metastable centre inside the band.
 static int water_direction_at(int branch,double p,double T,double dp,double dT,
  const OperatingWaterPoint& q,OperatingWaterPoint* direction) noexcept {
+ bool metastable;
+ try{metastable=metastable_side(branch,p,T,r4.T_p(p));}catch(...){return 3;}
  const bool saturated=branch==2||branch==3;
  const double actual_dT=saturated?q.saturation_slope*dp:dT;
  OperatingWaterPoint d{};d.region=q.region;d.p=dp;d.T=actual_dT;
+ d.saturation_departure=actual_dT-q.saturation_slope*dp;
  d.rho=q.rho*(q.kappa*dp-q.alpha*actual_dT);
  d.u=(p*q.kappa-q.T*q.alpha)/q.rho*dp+(q.cp-p*q.alpha/q.rho)*actual_dT;
  d.h=(1-q.T*q.alpha)/q.rho*dp+q.cp*actual_dT;
@@ -133,12 +233,12 @@ static int water_direction_at(int branch,double p,double T,double dp,double dT,
  if(scale!=0.) {
   const double h=std::cbrt(std::numeric_limits<double>::epsilon())/scale;
   OperatingWaterPoint a{},b{},c{};
-  const bool plus=ld01_water_point(branch,p+h*dp,T+h*dT,&a)==0;
-  const bool minus=ld01_water_point(branch,p-h*dp,T-h*dT,&b)==0;
+  const bool plus=water_point_at(branch,p+h*dp,T+h*dT,&a,metastable)==0;
+  const bool minus=water_point_at(branch,p-h*dp,T-h*dT,&b,metastable)==0;
   int side=0;
   if(!(plus&&minus)){
    side=plus?1:minus?-1:0;
-   if(!side||ld01_water_point(branch,p+2*side*h*dp,T+2*side*h*dT,&c))return 1;
+   if(!side||water_point_at(branch,p+2*side*h*dp,T+2*side*h*dT,&c,metastable))return 1;
   }
   const auto coefficient=[&](double OperatingWaterPoint::*member){
    if(plus&&minus)return (a.*member-b.*member)/(2*h);
@@ -172,6 +272,40 @@ int ld01_water_direction_held(int branch,const OperatingWaterPoint* held,double 
  const int status=water_direction_at(branch,held->p,held->T,dp,dT,*held,&d);if(status)return status;
  *direction=d;return 0;
 }
+// The caloric inverse's branch ends at p: the stable end (branch code and
+// temperature: the saturated endpoint, or region 1 at its temperature limit
+// where saturation lies above it) and the trial end of the metastable band,
+// NaN where the branch has no band at p. Branches 0 and 1 only.
+int ld01_water_bracket(int branch,double p,int* stable_branch,double* stable_T,double* trial_T) noexcept {
+ if(!stable_branch||!stable_T||!trial_T||(branch!=0&&branch!=1))return 2;
+ try {
+  require(std::isfinite(p)&&p>=1e5&&p<=(branch==0?liquid_ceiling_pa:vapor_ceiling_pa),
+   "Operating water pressure domain");
+  const double ts=r4.T_p(p),none=std::numeric_limits<double>::quiet_NaN();
+  if(branch==0){
+   const bool saturated=ts<=IF97::T23min;
+   *stable_branch=saturated?2:0;*stable_T=saturated?0.:liquid_temperature_max_k;
+   *trial_T=in_band(p)&&ts<liquid_temperature_max_k?std::min(ts+trial_max_k,liquid_temperature_max_k):none;
+  }else{
+   *stable_branch=3;*stable_T=0.;
+   *trial_T=in_band(p)?ts-trial_max_k:none;
+  }
+  return 0;
+ }catch(const std::domain_error&){return 1;}
+ catch(...){return 3;}
+}
+struct OperatingMetastableBand {
+ double pressure_low,pressure_high,trial_max,liquid_superheat_max,vapor_subcooling_max,
+  credited_max,liquid_temperature_max,liquid_ceiling,vapor_ceiling;
+ int lower_exclusive;
+};
+int ld01_water_metastable_band(OperatingMetastableBand* out) noexcept {
+ if(!out)return 2;
+ *out={band_pressure_low_pa,band_pressure_high_pa,trial_max_k,liquid_superheat_max_k,
+  vapor_subcooling_max_k,credited_max_k,liquid_temperature_max_k,liquid_ceiling_pa,vapor_ceiling_pa,
+  band_lower_exclusive?1:0};
+ return 0;
+}
 int ld01_water_surface(double T,double dT,double* value,double* direction) noexcept {
  if(!value||!direction||!std::isfinite(T)||!std::isfinite(dT))return 2;
  try {
@@ -197,17 +331,20 @@ int ld01_water_vapor_sat_density(double T,double dT,double* value,double* direct
 }
 `
 
-export async function buildOperatingWater(if97Directory:string,outputDirectory:string){
-  const directory=resolve(if97Directory),output=resolve(outputDirectory)
+export async function buildOperatingWater(if97Directory:string,wikiRoot:string,outputDirectory:string){
+  const directory=resolve(if97Directory),output=resolve(outputDirectory),wiki=resolve(wikiRoot)
   const [header,license]=await Promise.all(['IF97.h','LICENSE'].map(n=>Bun.file(join(directory,n)).bytes()))
   if(hash(header!)!==nativeIf97HeaderSha256||hash(license!)!==nativeIf97LicenseSha256)
     throw Error('Pinned maintained IF97 header/license mismatch')
+  const page=await Bun.file(join(wiki,metastableBandPage)).bytes()
+  const band=parseMetastableBand(strictBlock(new TextDecoder().decode(page),metastableBandFence))
+  const source=operatingWaterBridge(band)
   await mkdir(output,{recursive:true})
   const work=await mkdtemp(join(tmpdir(),'ld01-water-build-'))
   try{
     const object=join(work,'water.o'),library=join(output,'libld01_operating_water.a')
     const compile=Bun.spawn(['c++','-std=c++17','-O2','-fPIC','-I',directory,'-x','c++','-c','-o',object,'-'],
-      {stdin:new Blob([operatingWaterBridge]),stdout:'pipe',stderr:'pipe'})
+      {stdin:new Blob([source]),stdout:'pipe',stderr:'pipe'})
     const [compileError,code]=await Promise.all([new Response(compile.stderr).text(),compile.exited])
     if(code!==0)throw Error(compileError||'Operating water bridge compilation failed')
     const archive=Bun.spawn(['ar','rcs',library,object],{stdout:'pipe',stderr:'pipe'})
@@ -217,15 +354,17 @@ export async function buildOperatingWater(if97Directory:string,outputDirectory:s
     // explicitly supplied artifact directory; it is a trusted local build
     // input, not a separate cryptographic artifact-admission service.
     const receipt={revision:nativeIf97Revision,headerSha256:nativeIf97HeaderSha256,
-      licenseSha256:nativeIf97LicenseSha256,adapterSha256:hash(operatingWaterBridge),
-      librarySha256:hash(await Bun.file(library).bytes()),platform:process.platform,architecture:process.arch}
+      licenseSha256:nativeIf97LicenseSha256,adapterSha256:hash(source),
+      librarySha256:hash(await Bun.file(library).bytes()),platform:process.platform,architecture:process.arch,
+      metastableBand:{page:metastableBandPage,pageSha256:hash(page),fence:metastableBandFence,band}}
     await Bun.write(join(output,'water-build.json'),JSON.stringify(receipt,null,2)+'\n')
     return {directory:output,...receipt}
   }finally{await rm(work,{recursive:true,force:true})}
 }
 
 if(import.meta.main){
-  const [if97,output,...rest]=Bun.argv.slice(2)
-  if(!if97||!output||rest.length)throw Error('Usage: operating-water <pinned IF97 directory> <artifact directory>')
-  console.log(JSON.stringify(await buildOperatingWater(if97,output)))
+  const [if97,wiki,output,...rest]=Bun.argv.slice(2)
+  if(!if97||!wiki||!output||rest.length)
+    throw Error('Usage: operating-water <pinned IF97 directory> <wiki root> <artifact directory>')
+  console.log(JSON.stringify(await buildOperatingWater(if97,wiki,output)))
 }
