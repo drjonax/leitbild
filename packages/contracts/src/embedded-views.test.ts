@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  embeddedViewContentSchema,
   embeddedViewEnvelopeSchema,
   embeddedViewFragment,
   embeddedViewPath,
@@ -58,5 +59,22 @@ describe('embedded view publication', () => {
     const { moduleId: _moduleId, subject, ...publication } = envelope
     expect(embeddedViewPublicationSchema.safeParse(publication).success).toBe(true)
     expect(embeddedViewEnvelopeSchema.parse({ ...publication, moduleId: subject.moduleId, subject })).toEqual(embeddedViewEnvelopeSchema.parse(envelope))
+  })
+})
+
+describe('embedded view content', () => {
+  const content = {
+    items: [{ names: ['PT-455', 'Pressurizer pressure'], values: [{ value: 15.7, unit: 'MPa' }], limits: [{ value: 16, unit: 'MPa' }], history: true }],
+    span: { shownMs: 60_000, horizonMs: 600_000 },
+    lead: { item: 0, reason: 'PT-455: 15.7 MPa, HI ALM 16 MPa · 0.285 below' },
+  }
+
+  test('describes items by their names and the values the view shows', () => {
+    expect(embeddedViewContentSchema.parse(content)).toEqual(content)
+  })
+
+  test('rejects a lead that is not one of the items, and unknown fields', () => {
+    expect(embeddedViewContentSchema.safeParse({ ...content, lead: { item: 1, reason: 'x' } }).success).toBe(false)
+    expect(embeddedViewContentSchema.safeParse({ ...content, note: 'x' }).success).toBe(false)
   })
 })

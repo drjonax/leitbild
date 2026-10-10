@@ -1,7 +1,9 @@
-import type { VariablePath } from '../graph/index.ts'
+import type { ProcessSignalBinding, VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
+import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
+import { resolveProcessPlantSignalBinding } from '../signals.ts'
 import { COMPOSED_READOUTS_MAX_SIGNALS } from './composition.ts'
-import { icTripWatchedPaths, icWatchedPaths } from './ic-thresholds.ts'
+import { icTripWatchedPaths } from './ic-thresholds.ts'
 
 const readableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolean => {
   const binding = plant.graph.signalBindingByPath.get(path)
@@ -36,24 +38,88 @@ export const overviewKeyValues = (plant: CompiledProcessPlant): ReadonlyArray<Va
 }
 
 /**
- * The values a detail of some equipment leads with: its signals an alarm or
- * trip rule judges (trips first), then the key values its kind declares, then
- * its instruments (signals with a tag). Each is taken in turn from every
- * item, so parallel equipment is compared value by value.
+ * What the Plant is doing as a display is opened, which a detail's lead
+ * values are chosen by: the declared operating mode it is in (null where it
+ * declares none or none holds), and its live values.
  */
-export const equipmentKeyValues = (plant: CompiledProcessPlant, components: ReadonlyArray<number>): ReadonlyArray<VariablePath> => {
+export interface PlantNow {
+  readonly mode: string | null
+  readonly read: (path: VariablePath) => unknown
+}
+
+const ruleKind = (rule: ProcessPlantIcRule): 'trip' | 'alarm' | null =>
+  rule.effects.some(effect => effect.type === 'trip.enter') ? 'trip'
+    : rule.effects.some(effect => effect.type === 'alarm.enter') ? 'alarm'
+      : null
+
+const conditionBindings = (plant: CompiledProcessPlant, condition: ProcessPlantIcCondition): ReadonlyArray<ProcessSignalBinding> =>
+  condition.type === 'comparison' ? [resolveProcessPlantSignalBinding(plant.graph, condition.signal)]
+    : condition.type === 'not' ? conditionBindings(plant, condition.condition)
+      : condition.conditions.flatMap(child => conditionBindings(plant, child))
+
+// As the I&C runs: a rule declared for some modes acts only while the Plant is in one of them.
+const actsIn = (rule: ProcessPlantIcRule, mode: string | null): boolean =>
+  rule.modes === undefined || (mode !== null && rule.modes.includes(mode))
+
+/** The signals alarm and trip rules judge, trips first, each kind in rule order: those that act in the mode, or only in others. */
+const judged = (plant: CompiledProcessPlant, mode: string | null, acting: boolean): ReadonlyArray<ProcessSignalBinding> => (['trip', 'alarm'] as const)
+  .flatMap(kind => plant.automation.rules
+    .filter(rule => rule.enabled && ruleKind(rule) === kind && actsIn(rule, mode) === acting)
+    .flatMap(rule => conditionBindings(plant, rule.condition)))
+
+/**
+ * Readings the model marks as measuring nothing now (a source range with its
+ * high voltage cut), with the flags that say so: neither is what equipment
+ * leads with while it is out.
+ */
+export const notMeaningfulNow = (plant: CompiledProcessPlant, now: PlantNow): ReadonlySet<VariablePath> => new Set(plant.graph.components
+  .flatMap(component => component.semantics.meaningfulWhile)
+  .flatMap(qualified => now.read(qualified.flag) === true ? [] : [qualified.flag, ...qualified.variables]))
+
+/** What a detail's lead values depend on besides its equipment: the same key draws the same values. */
+export const leadValuesKey = (plant: CompiledProcessPlant, now: PlantNow): string =>
+  `${now.mode ?? 'no mode'}|${[...notMeaningfulNow(plant, now)].sort().join(',')}`
+
+// A signal belongs to the node that owns its path and to the equipment it is
+// bound to, as the alarms related to a display count it (ic-thresholds.ts):
+// the core's outlet temperature and the RCS subcooling margin are both bound
+// to the reactor coolant system.
+const equipmentOf = (binding: ProcessSignalBinding): ReadonlyArray<string> => [
+  String(binding.path).split('.')[0]!,
+  ...(binding.equipmentId === undefined ? [] : [String(binding.equipmentId)]),
+]
+
+/**
+ * The values a detail of some equipment leads with, for the Plant as it is
+ * when the detail is opened: the signals of its equipment that alarm and
+ * trip rules acting in the current mode judge (trips first), then the key
+ * values its kind declares, then its instruments (signals with a tag), then
+ * the signals only rules of other modes judge (a feedwater flow alarm that
+ * acts at power, opened at shutdown). Readings the model marks as measuring
+ * nothing now (a de-energized source range) come last. Each is taken in turn
+ * from every item, so parallel equipment is compared value by value.
+ */
+export const equipmentKeyValues = (plant: CompiledProcessPlant, components: ReadonlyArray<number>, now: PlantNow): ReadonlyArray<VariablePath> => {
   const graph = plant.graph
   const ownerOf = (binding: { readonly owner: { readonly type: string; readonly componentIndex?: number } } | undefined) =>
     binding?.owner.type === 'component' ? binding.owner.componentIndex : undefined
-  const watched = icWatchedPaths(plant)
   const readable = readableIn(plant)
+  const own = (component: number) => graph.signalBindings.filter(binding => ownerOf(binding) === component)
+  const equipment = (component: number) => new Set(own(component).flatMap(equipmentOf))
+  const onEquipment = (bindings: ReadonlyArray<ProcessSignalBinding>) => (component: number): ReadonlyArray<VariablePath> => {
+    const keys = equipment(component)
+    return [...new Set(bindings.filter(binding => equipmentOf(binding).some(key => keys.has(key))).map(binding => binding.path))]
+  }
   const inTurn = (listOf: (component: number) => ReadonlyArray<VariablePath>): ReadonlyArray<VariablePath> => {
     const lists = components.map(component => listOf(component).filter(readable))
     return Array.from({ length: Math.max(0, ...lists.map(list => list.length)) }, (_, rank) => lists.flatMap(list => list.slice(rank, rank + 1))).flat()
   }
-  return [...new Set([
-    ...inTurn(component => watched.filter(path => ownerOf(graph.signalBindingByPath.get(path)) === component)),
+  const ranked = [...new Set([
+    ...inTurn(onEquipment(judged(plant, now.mode, true))),
     ...inTurn(component => graph.components[component]!.semantics.keyValues),
-    ...inTurn(component => graph.signalBindings.filter(binding => binding.tagId !== undefined && ownerOf(binding) === component).map(binding => binding.path)),
-  ])].slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
+    ...inTurn(component => own(component).filter(binding => binding.tagId !== undefined).map(binding => binding.path)),
+    ...inTurn(onEquipment(judged(plant, now.mode, false))),
+  ])]
+  const out = notMeaningfulNow(plant, now)
+  return [...ranked.filter(path => !out.has(path)), ...ranked.filter(path => out.has(path))].slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
 }

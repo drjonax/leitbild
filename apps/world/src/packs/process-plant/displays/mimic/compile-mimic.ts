@@ -129,6 +129,8 @@ interface Planned {
   /** Per edge, the Plant link it draws and the links of grouped members it stands for too. */
   readonly edgeLinks: ReadonlyMap<string, { readonly link: number; readonly parallel: ReadonlyArray<number> }>
   readonly stubs: ReadonlyMap<string, MimicStub>
+  /** Hub ports lone pipes enter ("cold leg C" of the core). */
+  readonly entries: ReadonlyArray<{ readonly item: string; readonly port: string }>
   readonly issues: ReadonlyArray<MimicIssue>
 }
 
@@ -156,6 +158,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   const edges: DiagramEdge[] = []
   const edgeLinks = new Map<string, { link: number; parallel: number[] }>()
   const stubs = new Map<string, MimicStub>()
+  const entries: Array<{ readonly item: string; readonly port: string }> = []
   const componentRank = new Map<number, string>()
 
   const measure = (style: OpenBridgeTextStyle, text: string, owner: string): number => {
@@ -269,8 +272,13 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const bindings = group.map(member => itemBinding(plant, { kind: 'component', component: member }, aspectFor(presentation), framed))
     // A group's own state is its members' (rows.ts drawnLook); it shows no member's values.
     // A header's ports are only where branches join; its stubs name the rest.
+    // The port is never added to the item's label: "Core · cold leg C" beside
+    // the core's 339 °C read as the cold leg's temperature. Naming it at the
+    // pipe's end needs room the layout engine does not reserve yet, so the
+    // compose result says where the pipe enters instead.
     const reached = group.length === 1 && presentation.element !== 'bar' ? loneReachedPort(graph, component, piped.get(index) ?? new Set(), usedPorts.get(index) ?? new Set()) : null
-    const binding: MimicItemBinding = group.length === 1 ? (reached === null ? bindings[0]! : { ...bindings[0]!, label: `${bindings[0]!.label} · ${reached}` }) : {
+    if (reached !== null) entries.push({ item: bindings[0]!.label, port: reached })
+    const binding: MimicItemBinding = group.length === 1 ? bindings[0]! : {
       item: bindings[0]!.item,
       label: groupLabel(bindings.map(member => member.label)),
       state: null,
@@ -370,7 +378,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       : { ...edge, from: { node: id, port: 'end' }, to: { node: nodeOf(stub.component), port: stub.port } })
   })
 
-  return { graph: { nodes, edges }, items, edgeLinks, stubs, issues }
+  return { graph: { nodes, edges }, items, edgeLinks, stubs, entries, issues }
 }
 
 const pipeState = (graph: CompiledPlantGraph, link: CompiledProcessLink, parallel: ReadonlyArray<number>): MimicPipeState =>
@@ -482,6 +490,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       carriers: scope.carriers,
       unverifiedFlows: [...new Set(pipes.filter(pipe => pipe.state.kind === 'fluid' && pipe.state.flow.fidelity === 'unverified').map(pipe => pipe.linkId))],
       unmeasuredStates: items.filter(item => item.binding.state?.aspect === 'position' && item.binding.state.state === undefined).map(item => item.binding.label),
+      entries: planned.entries,
     },
     hash: `${MIMIC_LAYOUT_VERSION}:${layout.hash}`,
   }

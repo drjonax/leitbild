@@ -3,7 +3,7 @@
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { indexSample, powerLook, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-  import { bundleFlowLook, drawnLook, rowText, type MimicRow } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import { bundleFlowLook, drawnLook, itemTreatment, rowText, type MimicRow } from '../../../../packs/process-plant/displays/mimic/rows.ts'
   import { displayValue, formatQuantity, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
   import { alertTypeOf } from '../panel-presenters.ts'
@@ -206,6 +206,13 @@
     const y = Math.min(...boxes.map(box => box.y))
     return { x, y, width: Math.max(...boxes.map(box => box.x + box.width)) - x, height: Math.max(...boxes.map(box => box.y + box.height)) - y }
   }
+
+  // An abnormal item is outlined just outside its symbol and text, inside the clearance the layout keeps around them.
+  const abnormalInset = 2
+  const abnormalBox = (item: MimicDrawnItem): string => {
+    const area = target(item)
+    return `left:${area.x - abnormalInset}px;top:${area.y - abnormalInset}px;width:${area.width + 2 * abnormalInset}px;height:${area.height + 2 * abnormalInset}px`
+  }
 </script>
 
 <div class="mimic-panel" role={open === undefined ? 'img' : 'group'} aria-label={`Equipment mimic${stale ? ' (stale: states not current)' : ''}. ${equipmentWords}`}>
@@ -226,6 +233,9 @@
           {#if alert !== null && item.frame !== null}
             <!-- OpenBridge draws the flap below the framed region; the server reserved both. -->
             <div class="box" style={`left:${item.frame.x}px;top:${item.frame.y}px;width:${item.frame.width}px;height:${item.frame.height - flapHeight}px`} use:frame={{ ob, alert, width: item.frame.width }}></div>
+          {:else if itemTreatment(look, alert !== null) === 'abnormal'}
+            <!-- Not following its command: abnormal, outlined in OpenBridge's enhanced colour, never an alarm colour. -->
+            <div class="abnormal" style={abnormalBox(item)}></div>
           {/if}
           {#if item.presentation.element === 'device'}
             <div class="anchor" style={`left:${item.box.x + item.box.width / 2}px;top:${item.box.y + item.box.height / 2}px`} use:device={{ ob, item, look, rows: deviceRows(item, look), alert }}></div>
@@ -275,7 +285,7 @@
       <span class="key"><canvas use:keyGlyph={{ ob: openBridge, value: 'empty', chevron: false, theme }}></canvas>{mimicLegend.noFlow}</span>
       <span class="key"><canvas use:keyGlyph={{ ob: openBridge, value: 'closed-dash', chevron: false, theme }}></canvas>{mimicLegend.unknownFlow}</span>
     {/if}
-    <span>{mimicLegend.command}</span>
+    <span class="key"><span class="abnormal-key">{mimicLegend.command}</span>{mimicLegend.commandMeaning}</span>
     {#if drawsRelief}<span>{mimicLegend.notComputed}</span>{/if}
     <span>{mimicLegend.simulator}</span>
   </p>
@@ -308,5 +318,7 @@
   .target { position: absolute; padding: 0; border: none; border-radius: 4px; background: none; cursor: pointer; pointer-events: auto; }
   .target:hover { outline: 1px solid var(--border-outline-color); outline-offset: 2px; }
   .target:focus-visible { outline: 2px solid var(--border-focus-color); outline-offset: 2px; }
+  .abnormal { position: absolute; box-sizing: border-box; border: 2px solid var(--element-neutral-enhanced-color); border-radius: 4px; }
+  .abnormal-key { padding: 0 3px; border: 2px solid var(--element-neutral-enhanced-color); border-radius: 3px; line-height: 10px; }
   .stale-tag { padding: 0 4px; border: 1px solid var(--element-neutral-color); border-radius: 2px; color: var(--element-active-color); font-weight: 700; line-height: 12px; }
 </style>

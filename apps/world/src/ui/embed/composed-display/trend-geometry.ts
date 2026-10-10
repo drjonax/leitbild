@@ -1,6 +1,6 @@
 // Pure geometry for composed-display trends. Time is Simulation Run time in
 // epoch milliseconds; values are the signal's native unit.
-import { formatValue } from '../../../packs/process-plant/displays/display-text.ts'
+import { formatValue, trendSpanMs } from '../../../packs/process-plant/displays/display-text.ts'
 
 export interface TrendPoint {
   readonly t: number
@@ -110,19 +110,9 @@ export const timeTicks = (now: number, windowMs: number): ReadonlyArray<TimeTick
   return ticks
 }
 
-// A trend never spans less than this, so a Run's first minute still reads as a curve.
-const MIN_WINDOW_MS = 60_000
-const WINDOW_STEP_MS = 30_000
-
-/**
- * The time a trend spans: its horizon, or the Run's history rounded up to 30 s
- * while that is shorter, so a young Run is not drawn as a mostly hatched plot.
- */
-export const trendWindowMs = (horizonMs: number, now: number, runStartedAt: number | null): number => {
-  if (runStartedAt === null) return horizonMs
-  const history = Math.ceil(Math.max(0, now - runStartedAt) / WINDOW_STEP_MS) * WINDOW_STEP_MS
-  return Math.min(horizonMs, Math.max(MIN_WINDOW_MS, history))
-}
+/** The time a trend spans now (trendSpanMs); its full horizon until the Run's start is known. */
+export const trendWindowMs = (horizonMs: number, now: number, runStartedAt: number | null): number =>
+  runStartedAt === null ? horizonMs : trendSpanMs(horizonMs, now - runStartedAt)
 
 /** Keeps points ordered and drops those that can no longer influence the window. */
 export const appendPoint = (

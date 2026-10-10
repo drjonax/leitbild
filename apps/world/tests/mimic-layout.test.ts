@@ -366,20 +366,39 @@ describe('diagram layout engine', () => {
     }
   })
 
-  // What a layout costs is its fastest of 20 runs: other work on a shared
-  // machine (other agents' test suites) only ever adds to a run, so slow runs
-  // measure the machine, not the engine. Every graph must lay out within 50 ms.
-  test('lays out within 50 ms, up to 40 nodes and 60 edges', () => {
+  // What a layout costs is its fastest of 20 runs, judged against a fixed
+  // reference computation of the same kind (allocating, sorting, keyed
+  // lookups) timed between them. A loaded shared machine slows both alike:
+  // with several agents' suites running, even the fastest layout ran 60 ms
+  // while the two kept a ratio of 2.0 to 2.5. On a quiet machine the
+  // reference takes about 12 ms, so four references is the 50 ms budget, and
+  // an engine 60 % slower than today fails.
+  test('lays out within four reference computations (50 ms quiet), up to 40 nodes and 60 edges', () => {
     const largest = dense()
     expect([largest.nodes.length, largest.edges.length]).toEqual([40, 60])
     const graphs = [...fixtures.map(([, graph]) => graph), largest]
-    const costs = graphs.map(graph => Math.min(...Array.from({ length: 20 }, () => {
+    const reference = (): number => {
+      let sum = 0
+      for (let round = 0; round < 40; round++) {
+        const values = Array.from({ length: 2_000 }, (_, index) => ({ id: `n${(index * 7919) % 2_000}`, x: (index * 104729) % 1_013 }))
+        values.sort((a, b) => a.x - b.x || a.id.localeCompare(b.id))
+        const byId = new Map(values.map(value => [value.id, value.x]))
+        for (const value of values) sum += byId.get(value.id)!
+      }
+      return sum
+    }
+    const timed = (run: () => unknown): number => {
       const start = performance.now()
-      layoutDiagram(graph, profile)
+      run()
       return performance.now() - start
+    }
+    let referenceCost = Infinity
+    const costs = graphs.map(graph => Math.min(...Array.from({ length: 20 }, () => {
+      referenceCost = Math.min(referenceCost, timed(reference))
+      return timed(() => layoutDiagram(graph, profile))
     })))
-    expect(Math.max(...costs)).toBeLessThan(50)
-  })
+    expect(Math.max(...costs)).toBeLessThan(4 * referenceCost)
+  }, 30_000)
 })
 
 /** 40 nodes and 60 edges: the combined drawing at six lanes with suction, drains, bypasses, recirculation and spills. */

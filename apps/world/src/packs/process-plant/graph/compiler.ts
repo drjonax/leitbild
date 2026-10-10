@@ -231,10 +231,26 @@ const compileComponentSemantics = (
       if (typeof flow !== 'number' || !(flow > 0)) throw new Error(`${context}: rated outflow parameter ${rating.parameter} must be a non-negative number`)
       return [{ port: rating.port as PortName, flowKgPerS: flow }]
     }),
+    portFlows: semantics.portFlows.map(flow => {
+      const variable = resolve(flow.variable as LocalVariablePath)
+      if (variable.quantity !== 'flowRate' || variable.writable) throw new Error(`${context}: flow through ${flow.port} names ${flow.variable}, which is not a solved flow`)
+      return { port: portName(flow.port), path: variablePathFor(componentId, flow.variable as LocalVariablePath) }
+    }),
     keyValues: semantics.keyValues.map(local => {
       const variable = resolve(local as LocalVariablePath)
       if (variable.writable) throw new Error(`${context}: key value ${local} is writable`)
       return variablePathFor(componentId, local as LocalVariablePath)
+    }),
+    meaningfulWhile: semantics.meaningfulWhile.map(qualified => {
+      const flag = resolve(qualified.flag as LocalVariablePath)
+      if (flag.quantity !== 'boolean' || flag.writable) throw new Error(`${context}: readings are meaningful while ${qualified.flag}, which is not a solved flag`)
+      return {
+        flag: variablePathFor(componentId, qualified.flag as LocalVariablePath),
+        variables: qualified.variables.map(local => {
+          resolve(local as LocalVariablePath)
+          return variablePathFor(componentId, local as LocalVariablePath)
+        }),
+      }
     }),
     energy: semantics.energy.map((role): CompiledEnergyRole => {
       const circuits = new Set(Object.values(ports).map(port => port.circuit))

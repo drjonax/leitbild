@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { embeddedViewPublicationSchema } from '@leitbild/contracts'
+import { embeddedViewContentSchema, embeddedViewPublicationSchema } from '@leitbild/contracts'
 import type { IsoTimestamp } from '../src/core/model/index.ts'
 import {
   answerProcessPlantQuery,
@@ -14,6 +14,7 @@ import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
+import { thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
 import { composedDisplayStateSchema } from '../src/packs/process-plant/displays/composition.ts'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 
@@ -79,6 +80,14 @@ describe('I&C thresholds for composed displays', () => {
     ])
   })
 
+  test('name a signal\'s further limits of one kind LO-LO and HI-HI', () => {
+    const names = (tagId: string, unit: string) => icThresholdsForSignal(compiled, compiled.graph.signalBindingByTagId.get(tagId as never)!.path).thresholds
+      .filter(threshold => threshold.kind !== 'control').map(threshold => thresholdName(threshold, unit))
+    expect(names('SUB-MARGIN', 'degC')).toEqual(['LO-LO ALM 0 °C', 'LO ALM 16.7 °C'])
+    expect(names('PT-455', 'MPa')).toEqual(['LO TRIP 13.8 MPa', 'LO ALM 14.8 MPa', 'HI ALM 16 MPa', 'HI TRIP 16.18 MPa', 'HI-HI TRIP 16.35 MPa'])
+    expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO TRIP 20 %', 'LO ALM 30 %', 'HI ALM 75 %', 'HI TRIP 82 %'])
+  })
+
   test('list combined-condition rules instead of drawing them', () => {
     const flow = compiled.graph.signalBindingByTagId.get('RCP-A-FLOW' as never)!.path
     const result = icThresholdsForSignal(compiled, flow)
@@ -111,6 +120,32 @@ describe('world.process-plant.display.compose', () => {
     // At the 55 % program the high alarm is nearer than the low one.
     expect(margins[0]).toMatch(/^SG-[AB]-LVL-NR: [0-9.]+ %, [0-9.]+ % below HI ALM 75 %$/)
     expect(runtime.checkpoint()).toEqual(before)
+  })
+
+  test('says what the view shows in the terms an answer may cite, and what it leads with', () => {
+    const result = ask('world.process-plant.display.compose', {
+      ...composition([{ ref: 'SG-B-LVL-NR', role: 'primary' }, { ref: 'SG-A-LVL-NR', role: 'context' }]),
+      panels: [
+        { kind: 'trend', horizon: '10m', signals: [{ ref: 'SG-B-LVL-NR', role: 'primary' }, { ref: 'SG-A-LVL-NR', role: 'context' }] },
+        { kind: 'alarms', scope: 'related' },
+      ],
+    }) as { shows: ReadonlyArray<string>; margins: ReadonlyArray<string>; viewContent: unknown }
+    const content = embeddedViewContentSchema.parse(result.viewContent)
+    const level = content.items.find(item => item.names.includes('SG-B-LVL-NR'))!
+    expect(level.names).toEqual(expect.arrayContaining(['sgB.levelPercent', 'Steam generator level']))
+    expect(level.history).toBe(true)
+    // Its current value and the LO TRIP 20 % and LO ALM 30 % lines, as the display shows them.
+    expect(level.values).toEqual([{ value: 55, unit: '%' }])
+    expect(level.limits).toEqual(expect.arrayContaining([{ value: 20, unit: '%' }, { value: 30, unit: '%' }]))
+    expect(content.items.at(-1)!.names[0]).toContain('Active alarms and trips')
+    // The display leads with the first margin.
+    expect(content.lead!.reason).toBe(result.margins[0]!)
+    expect(result.margins[0]!.startsWith(content.items[content.lead!.item]!.names[0]!)).toBe(true)
+    // A Plant that has not run yet: the axis reaches back the least a trend spans, and says so.
+    expect(content.span).toEqual({ shownMs: 60_000, horizonMs: 600_000 })
+    expect(result.shows[0]).toStartWith("Live trend of the last 1 min (the Run's history so far; it widens to 10m as the Run continues)")
+    // The published Capability returns it: its output schema is enforced at the boundary.
+    expect(() => processPlantCapabilities.find(capability => capability.id === 'world.process-plant.display.compose')!.output.parse(result)).not.toThrow()
   })
 
   test('rejects every issue at once with did-you-mean suggestions and never repairs', () => {
@@ -150,6 +185,12 @@ describe('world.process-plant.display.compose', () => {
     expect(rejectionOf(() => ask('world.process-plant.display.compose', readouts('pressurizer-relief-to-tank.flowKgPerS'))))
       .toContain('show pressurizer.reliefFlowKgPerS (Pressurizer relief flow, HI ALM 1 kg/s) instead')
     expect(() => ask('world.process-plant.display.compose', readouts('pressurizer.reliefFlowKgPerS'))).not.toThrow()
+    // Run 21 (sg-b-runback): the feed line into SG B read "no I&C limit" while SG B's feedwater inflow was in LO ALM. The SG
+    // declares that inflow as the flow through its feedwater inlet, which the line shares with auxiliary feed: show both.
+    expect(rejectionOf(() => ask('world.process-plant.display.compose', readouts('feedwater-control-valve-b-to-sg-b.flowKgPerS'))))
+      .toContain('"feedwater-control-valve-b-to-sg-b.flowKgPerS" is judged by no I&C rule, but the whole flow through Steam Generator B\'s feedwater inlet, which this line shares with the line of AFW valve B, is: show sgB.feedwaterFlowKgPerS (Feedwater inflow, LO ALM 150 kg/s) beside it')
+    const beside = { ...composition([{ ref: 'feedwater-control-valve-b-to-sg-b.flowKgPerS', role: 'primary' }]), panels: [{ kind: 'readouts', signals: [{ ref: 'feedwater-control-valve-b-to-sg-b.flowKgPerS', role: 'primary' }, { ref: 'sgB.feedwaterFlowKgPerS', role: 'context' }] }] }
+    expect(() => ask('world.process-plant.display.compose', beside)).not.toThrow()
   })
 
   test('no tag described as a position or run state binds a writable variable', () => {
@@ -530,12 +571,23 @@ describe('a display shows what its question is about', () => {
     expect(() => ask('world.process-plant.display.compose', display(['SG-B-LVL-NR'], [{ kind: 'mimic', to: ['sgB'], services: ['feedwater'] }]))).not.toThrow()
   })
 
+  test('a drawing says what an answer may cite of it: each item by its label and id, its drawn state and values', () => {
+    const result = ask('world.process-plant.display.compose', display(['sgB'], [{ kind: 'mimic', to: ['sgB'], services: ['feedwater'] }])) as { viewContent: unknown }
+    const content = embeddedViewContentSchema.parse(result.viewContent)
+    const generator = content.items.find(item => item.names.includes('sgB'))!
+    expect(generator.state).toStartWith('level ')
+    expect(generator.history).toBe(false)
+    expect(content.span).toBeNull()
+  })
+
   test('a service or loop is a subject as plants.list names it', () => {
     expect(() => ask('world.process-plant.display.compose', display(['feedwater', 'sgB'], [{ kind: 'mimic', to: ['sgB'], services: ['feedwater'] }]))).not.toThrow()
     expect(rejectionOf(() => ask('world.process-plant.display.compose', display(['aux feedwater'], [trendOf('SG-B-LVL-NR')]))))
       .toContain('subjects.0: the auxFeedwater service is what the question is about but no panel shows it')
     // Safety injection to loop C draws shared equipment only; its pipe into cold leg C is loop C.
-    expect(() => ask('world.process-plant.display.compose', display(['loop C', 'safetyInjection'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }]))).not.toThrow()
+    const lineup = ask('world.process-plant.display.compose', display(['loop C', 'safetyInjection'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }])) as { shows: ReadonlyArray<string> }
+    // The drawing does not name the leg it enters, so the answer must.
+    expect(lineup.shows).toContain('The pipe drawn into Core enters it at cold leg C; the drawing does not name that port, so say it')
     // As plants.list names it (probe run 20).
     expect(() => ask('world.process-plant.display.compose', display(['C'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }]))).not.toThrow()
     expect(rejectionOf(() => ask('world.process-plant.display.compose', display(['loop D'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }]))))

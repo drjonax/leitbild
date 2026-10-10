@@ -1,8 +1,10 @@
 import { SUGGESTION_COUNT, editDistance, letters, matchedWords, normalized, words } from './name-matching.ts'
 import { z } from 'zod'
+import type { EmbeddedViewContent } from '@leitbild/contracts'
 import { recordingSeriesIdFor } from '../../../core/model/index.ts'
 import type {
   CompiledPlantGraph,
+  CompiledProcessLink,
   ProcessQuantity,
   ProcessSignalBinding,
   ProcessUnit,
@@ -11,6 +13,7 @@ import type {
 } from '../graph/index.ts'
 import { linkCarrier, processSignalTagIdSchema, variablePathSchema } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
+import { processPlantOperatingMode } from '../runtime/index.ts'
 import { findProcessPlantSignalBinding } from '../signals.ts'
 import {
   COMPOSED_DISPLAY_MAX_HEIGHT_PX,
@@ -37,14 +40,14 @@ import {
   type ComposedPanelShape,
   type ComposedPanelSize,
 } from './composition.ts'
-import { formatQuantity, marginText, nearestThresholdMargin, thresholdName } from './display-text.ts'
+import { displayValue, formatQuantity, marginText, nearestThresholdMargin, thresholdName, trendSpanMs, unitLabel, type ThresholdMargin } from './display-text.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
 import { principalCircuits } from './mimic/principal.ts'
-import { equipmentKeyValues, overviewKeyValues } from './overview-key-values.ts'
+import { equipmentKeyValues, leadValuesKey, overviewKeyValues, type PlantNow } from './overview-key-values.ts'
 import { annunciatorSystems, type AnnunciatorSystem } from './annunciators.ts'
-import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
+import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
 import {
   icAlarmRuleIdsForEquipment,
@@ -215,6 +218,22 @@ const suggestionsFor = (ref: string, graph: CompiledPlantGraph): ReadonlyArray<s
     .slice(0, SUGGESTION_COUNT)
     .map(({ binding }) => `${binding.tagId ?? binding.path} (${binding.label}, ${binding.unit})`)
 }
+
+/** The Plant's declared operating mode and live values now: what a detail's lead values are chosen by. */
+const plantNow = (system: ProcessPlantRuntimeInstance): PlantNow => {
+  const modes = system.plant.automation.operatingModes
+  return {
+    mode: modes.length === 0 ? null : processPlantOperatingMode({ system: system.plant, runtime: system.runtime, modes })?.id ?? null,
+    read: path => system.runtime.readVariableSnapshot(path).value,
+  }
+}
+
+/**
+ * What equipment opened now leads with besides itself (the Plant's mode, and
+ * which readings measure nothing): a detail compiled under the same key shows
+ * the same values, so a cached detail is reused only while it still holds.
+ */
+export const detailLeadKey = (system: ProcessPlantRuntimeInstance): string => leadValuesKey(system.plant, plantNow(system))
 
 const resolveRef = (system: ProcessPlantRuntimeInstance, ref: string): ProcessSignalBinding | undefined => {
   const tag = processSignalTagIdSchema.safeParse(ref)
@@ -450,37 +469,71 @@ const compositionIssues = (composition: ComposedDisplayComposition): ReadonlyArr
 }
 
 /**
- * A link's flow that the model also solves as the throughput of equipment it
- * bundles on that link's end (the PORV on the pressurizer's relief outlet),
- * where the I&C judges that variable and not the link's. Shown as it is, the
- * display would read "no I&C limit" beside an alarm on the same flow; the
- * refusal names the judged signal and its limits.
+ * The flows the model declares through the ports at a link's ends: what a
+ * component's kind names as the whole flow through a port (a steam
+ * generator's feedwater inflow through its feedwater inlet), and the
+ * throughput of a device it bundles there (the PORV on the pressurizer's
+ * relief outlet). Each says what it is the flow through, and the other links
+ * on that port: none where the link carries the same flow, else the links
+ * whose flow it shares. Only declared flows count, never names.
+ */
+export const declaredPortFlows = (graph: CompiledPlantGraph, linkIndex: number): ReadonlyArray<{
+  readonly path: VariablePath
+  readonly through: string
+  /** The component whose port it is. */
+  readonly component: number
+  readonly others: ReadonlyArray<CompiledProcessLink>
+}> => {
+  const link = graph.links[linkIndex]!
+  const ends = [{ index: link.fromComponentIndex, port: String(link.fromPortName) }, { index: link.toComponentIndex, port: String(link.toPortName) }]
+  return ends.flatMap(end => {
+    const component = graph.components[end.index]!
+    const others = graph.links.filter(other => other.index !== link.index
+      && ((other.fromComponentIndex === end.index && String(other.fromPortName) === end.port) || (other.toComponentIndex === end.index && String(other.toPortName) === end.port)))
+    return [
+      ...component.semantics.portFlows.filter(flow => String(flow.port) === end.port).map(flow => ({ path: flow.path, through: `${component.label}'s ${portName(end.port)}`, component: end.index, others })),
+      ...component.semantics.embedded.filter(device => String(device.port) === end.port).flatMap(device => device.aspects
+        .flatMap(aspect => aspect.aspect === 'throughput' && aspect.state !== undefined ? [{ path: aspect.state.path, through: `${component.label}'s ${device.label}`, component: end.index, others }] : [])),
+    ]
+  })
+}
+
+/**
+ * A link's flow the I&C judges no rule on, where the model declares a flow
+ * through the port at one of its ends that the I&C does judge. Shown as it
+ * is, the display would read "no I&C limit" beside an alarm on that flow. A
+ * link alone on the port carries the same flow, so the judged signal is shown
+ * instead; a link that shares the port carries part of the judged flow, so
+ * the judged flow must be shown beside it. The refusal names the judged
+ * signal and its limits.
  */
 const judgedElsewhereIssues = (system: ProcessPlantRuntimeInstance, composition: ComposedDisplayComposition): ReadonlyArray<ComposedDisplayIssue> => {
   const graph = system.plant.graph
   const acting = (path: VariablePath) => icThresholdsForSignal(system.plant, path).thresholds.filter(threshold => threshold.kind !== 'control')
+  const shown = new Set(composition.panels.flatMap(panel => 'signals' in panel ? panel.signals : []).flatMap(signal => resolveRef(system, signal.ref)?.path ?? []))
+  const farLabel = (link: CompiledProcessLink, near: number) => {
+    const far = graph.components[link.fromComponentIndex === near ? link.toComponentIndex : link.fromComponentIndex]!
+    return far.metadata?.presentation?.shortLabel ?? far.label
+  }
   return composition.panels.flatMap((panel, panelIndex) => !('signals' in panel) ? [] : panel.signals.flatMap((signal, signalIndex): ComposedDisplayIssue[] => {
     const binding = resolveRef(system, signal.ref)
     if (binding?.owner.type !== 'link' || acting(binding.path).length > 0) return []
     const link = graph.links[binding.owner.linkIndex]!
-    const ends = [{ index: link.fromComponentIndex, port: String(link.fromPortName) }, { index: link.toComponentIndex, port: String(link.toPortName) }]
-    for (const end of ends) {
-      const component = graph.components[end.index]!
-      for (const device of component.semantics.embedded.filter(candidate => String(candidate.port) === end.port)) {
-        for (const aspect of device.aspects) {
-          if (aspect.aspect !== 'throughput' || aspect.state === undefined) continue
-          const judged = graph.signalBindingByPath.get(aspect.state.path)
-          if (judged === undefined || judged.unit !== binding.unit || judged.quantity !== binding.quantity) continue
-          const limits = acting(judged.path)
-          if (limits.length === 0) continue
-          const ref = judged.tagId ?? String(judged.path)
-          return [{
-            path: `panels.${panelIndex}.signals.${signalIndex}.ref`,
-            message: `"${signal.ref}" is judged by no I&C rule, but the same flow through ${component.label}'s ${device.label} is: show ${ref} (${judged.label}, ${limits.map(limit => thresholdName(limit, judged.unit)).join(', ')}) instead, so the display carries the limits its alarms act on`,
-            didYouMean: [ref],
-          }]
-        }
-      }
+    for (const flow of declaredPortFlows(graph, link.index)) {
+      const judged = graph.signalBindingByPath.get(flow.path)
+      if (judged === undefined || judged.unit !== binding.unit || judged.quantity !== binding.quantity) continue
+      const limits = acting(judged.path)
+      if (limits.length === 0 || (flow.others.length > 0 && shown.has(judged.path))) continue
+      const ref = judged.tagId ?? String(judged.path)
+      const named = `${ref} (${judged.label}, ${limits.map(limit => thresholdName(limit, judged.unit)).join(', ')})`
+      const sharing = flow.others.map(other => farLabel(other, flow.component)).join(', ')
+      return [{
+        path: `panels.${panelIndex}.signals.${signalIndex}.ref`,
+        message: flow.others.length === 0
+          ? `"${signal.ref}" is judged by no I&C rule, but the same flow through ${flow.through} is: show ${named} instead, so the display carries the limits its alarms act on`
+          : `"${signal.ref}" is judged by no I&C rule, but the whole flow through ${flow.through}, which this line shares with the ${flow.others.length === 1 ? 'line' : 'lines'} of ${sharing}, is: show ${named} beside it, so the display carries the limits its alarms act on`,
+        didYouMean: [ref],
+      }]
     }
     return []
   }))
@@ -557,7 +610,7 @@ const subjectIssues = (
       return [{ path, message: `${named} is connected to no other equipment in the Plant model, so no display can show it; name the equipment it is part of or acts on instead` }]
     }
     // Its lead values as a detail of it shows them: what its I&C judges, its key values and instruments.
-    const leads = equipmentKeyValues(system.plant, equipment.components).map(value => graph.signalBindingByPath.get(value)?.tagId ?? String(value)).slice(0, SUGGESTION_COUNT)
+    const leads = equipmentKeyValues(system.plant, equipment.components, plantNow(system)).map(value => graph.signalBindingByPath.get(value)?.tagId ?? String(value)).slice(0, SUGGESTION_COUNT)
     return [{ path, message: `${named} is what the question is about but no panel shows it: draw it in a mimic or show one of its signals${leads.length === 0 ? '' : ` (such as ${leads.join(', ')})`}` }]
   })
 }
@@ -826,19 +879,21 @@ const fitGenerated = (
     { arrangement: 'stacked' as const, panels: widest },
   ].flatMap(layout => {
     const room = overviewDrawingRoom(view, layout.arrangement, layout.panels)
-    return room === null ? [] : [{ ...layout, room }]
+    // A window too small for an arrangement leaves it no room at all; it is skipped, never asked to draw.
+    return room === null || room.maxWidth <= 0 || room.maxHeight <= 0 ? [] : [{ ...layout, room }]
   })
   // A window too small scrolls by as little as the drawing needs: the least
   // height that draws, in steps of two grid rows up to twice the window,
   // beside the column while the window is wide enough for it, else stacked,
   // else at any width; a drawing that fits no such height is drawn at its
   // own size.
-  const shortest = view === null ? 0 : view.height - composedDisplayLayout.overviewFrame - composedDisplayLayout.mimicLegend
+  // A window shorter than its frame still scrolls from the least room a drawing can have.
+  const shortest = view === null ? 0 : Math.max(SCROLL_STEP, view.height - composedDisplayLayout.overviewFrame - composedDisplayLayout.mimicLegend)
   const heights = Array.from({ length: Math.floor(shortest / SCROLL_STEP) }, (_, step) => shortest + (step + 1) * SCROLL_STEP)
-  const scrolling = view === null ? [] : [
+  const scrolling = (view === null ? [] : [
     { arrangement: 'column' as const, maxWidth: overviewDrawingRoom({ width: view.width, height: UNCONSTRAINED }, 'column', widest)!.maxWidth },
     { arrangement: 'stacked' as const, maxWidth: view.width - 2 * composedDisplayLayout.overviewPadding },
-  ]
+  ]).filter(rung => rung.maxWidth > 0)
   // Taller room never stops a drawing that fits in less, so the least height is found by halving.
   const leastHeight = (draw: GeneratedDrawing, maxWidth: number): MimicCompileResult => {
     let best = draw({ maxWidth, maxHeight: heights.at(-1) ?? shortest })
@@ -936,6 +991,10 @@ export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, reco
  * follows down to the next link;
  * its lead values (equipmentKeyValues); and the alarms related to what is
  * drawn. Where the drawing stops, its stubs say what lies beyond.
+ * The lead values are chosen for the Plant's operating mode when the detail
+ * is opened (what rules acting in that mode judge first, readings that
+ * measure nothing then last); they stay as chosen while the detail is open,
+ * and opening it again in another mode chooses again (detailLeadKey).
  */
 export const compileDetailDisplay = (
   system: ProcessPlantRuntimeInstance,
@@ -948,7 +1007,7 @@ export const compileDetailDisplay = (
   if (unknown.length > 0) return { ok: false, issues: [{ path: 'detail', message: `${system.plant.id} has no ${unknown.length === 1 ? 'component' : 'components'} ${unknown.join(', ')}` }] }
   const components = componentIds.map(id => graph.componentIndexById.get(id as never)!)
   const issues: ComposedDisplayIssue[] = []
-  const readouts = leadValues(system, equipmentKeyValues(system.plant, components), recordedSeriesIds, issues)
+  const readouts = leadValues(system, equipmentKeyValues(system.plant, components, plantNow(system)), recordedSeriesIds, issues)
   if (issues.length > 0) return { ok: false, issues }
   const loops = [...new Set(components.map(index => graph.components[index]!.metadata?.loopId))]
   const narrowed = loops.every((loop): loop is string => loop !== undefined) ? { loops } : {}
@@ -997,8 +1056,9 @@ export const composedDisplaySignals = (display: CompiledComposedDisplay): Readon
 })))
 
 const mimicShows = (mimic: CompiledMimic): ReadonlyArray<string> => [
-  `Live equipment mimic generated from the Plant model (${mimic.summary.carriers.join(', ')}): ${mimic.summary.equipment.map(item => `${item.label} (${item.id})`).join(', ')}. Pumps are drawn running or stopped from their actual speed, valves from their actual position, levels as vessel fills; pipes show flow, no flow (hollow) or unknown (dashed), with a direction arrow only where the model computes the direction; a command that disagrees with the equipment is stated as "CMD …"; equipment with an active alarm is framed with what the alarm watches ("P LO-LO")`,
+  `Live equipment mimic generated from the Plant model (${mimic.summary.carriers.join(', ')}): ${mimic.summary.equipment.map(item => `${item.label} (${item.id})`).join(', ')}. Pumps are drawn running or stopped from their actual speed, valves from their actual position, levels as vessel fills; pipes show flow, no flow (hollow) or unknown (dashed), with a direction arrow only where the model computes the direction; a command that disagrees with the equipment is stated as "CMD …" and the equipment is outlined as abnormal (not an alarm), so the cause of an upset stands out; equipment with an active alarm is framed with what the alarm watches ("P LO-LO")`,
   ...(mimic.summary.stops.length === 0 ? [] : [`The drawing stops at: ${mimic.summary.stops.join('; ')}`]),
+  ...mimic.summary.entries.map(entry => `The pipe drawn into ${entry.item} enters it at ${entry.port}; the drawing does not name that port, so say it`),
 ]
 
 // A sparkline has no value axis: it shows which way a value went and how fast, never a value to quote.
@@ -1007,12 +1067,22 @@ const sparklinesShow = (pens: ReadonlyArray<ComposedDisplayPen>, sparklineMs: nu
   return `Where the lead values stand beside the drawing, each recorded one has a sparkline of its last ${sparklineMs / 60_000} min, for direction and rate only (no value scale)${unrecorded.length === 0 ? '' : `; not recorded by this Run, so without one: ${unrecorded.map(pen => pen.name).join(', ')}`}`
 }
 
+const minutes = (ms: number): string => `${Number((ms / 60_000).toFixed(1))} min`
+
+// While the Run's history is shorter than the horizon, the axis reaches only
+// as far back as the history: say so, or an answer promises a window the
+// operator does not see (evaluation run 19: "10-minute window" over a 1 min axis).
+const trendSpanText = (panel: ComposedTrendPanel, historyMs: number): string => {
+  const shown = trendSpanMs(panel.horizonMs, historyMs)
+  return shown === panel.horizonMs ? `the last ${panel.horizon}` : `the last ${minutes(shown)} (the Run's history so far; it widens to ${panel.horizon} as the Run continues)`
+}
+
 /** Plain statements of what the view shows, so the agent's text need not repeat it. */
-export const composedDisplayShows = (display: CompiledComposedDisplay): ReadonlyArray<string> => display.panels.flatMap(panel => {
+export const composedDisplayShows = (display: CompiledComposedDisplay, historyMs: number): ReadonlyArray<string> => display.panels.flatMap(panel => {
   if (panel.kind === 'trend') {
     const strips = panel.strips.length === 1 ? '' : ` in ${panel.strips.length} stacked strips (one per measurement)`
     return [
-      ...(panel.strips.length === 0 ? [] : [`Live trend of the last ${panel.horizon}${strips}: ${panel.strips.flatMap(strip => strip.pens).map(signalName).join('; ')}`]),
+      ...(panel.strips.length === 0 ? [] : [`Live trend of ${trendSpanText(panel, historyMs)}${strips}: ${panel.strips.flatMap(strip => strip.pens).map(signalName).join('; ')}`]),
       ...(panel.live.length === 0 ? [] : [`Current values only, not recorded by this Run (no history to describe): ${panel.live.map(signalName).join('; ')}`]),
       ...panel.strips.flatMap(strip => strip.thresholds.map(threshold => thresholdText(threshold, strip.unit))),
     ]
@@ -1037,19 +1107,70 @@ export const composedDisplayShows = (display: CompiledComposedDisplay): Readonly
 export const composedDisplayMargins = (
   display: CompiledComposedDisplay,
   read: (path: VariablePath) => unknown,
-): ReadonlyArray<string> => {
-  const pens = [...new Map(display.panels.flatMap(composedPanelPens).map(pen => [pen.path, pen])).values()]
-  return pens
-    .flatMap(pen => {
-      const value = read(pen.path)
-      if (typeof value !== 'number') return []
-      const margin = nearestThresholdMargin(value, pen.thresholds)
-      if (margin === null) return []
-      const relative = margin.margin / Math.max(Math.abs(margin.threshold.value), Number.EPSILON)
-      return [{ relative, text: `${pen.name}: ${formatQuantity(value, pen.unit)}, ${marginText(margin, pen.unit)}` }]
-    })
-    .sort((left, right) => left.relative - right.relative)
-    .map(entry => entry.text)
+): ReadonlyArray<string> => rankedMargins(display, read).map(entry => entry.text)
+
+/** Each signal the view shows once, in display order. */
+const shownPens = (display: CompiledComposedDisplay): ReadonlyArray<ComposedDisplayPen> =>
+  [...new Map(display.panels.flatMap(composedPanelPens).map(pen => [pen.path, pen])).values()]
+
+// Past a trip limit first, then past an alarm limit, then nearest relative
+// to the limit: the first is what the display leads with.
+const passedRank = (margin: ThresholdMargin): number => margin.margin >= 0 ? 2 : margin.threshold.kind === 'trip' ? 0 : 1
+const rankedMargins = (
+  display: CompiledComposedDisplay,
+  read: (path: VariablePath) => unknown,
+): ReadonlyArray<{ readonly pen: ComposedDisplayPen; readonly text: string }> => shownPens(display)
+  .flatMap(pen => {
+    const value = read(pen.path)
+    if (typeof value !== 'number') return []
+    const margin = nearestThresholdMargin(value, pen.thresholds)
+    if (margin === null) return []
+    const relative = margin.margin / Math.max(Math.abs(margin.threshold.value), Number.EPSILON)
+    return [{ pen, rank: passedRank(margin), relative, text: `${pen.name}: ${formatQuantity(value, pen.unit)}, ${marginText(margin, pen.unit)}` }]
+  })
+  .sort((left, right) => left.rank - right.rank || left.relative - right.relative)
+
+/** A native value as the view shows it, to six digits, or nothing for a state. */
+export const shownQuantity = (value: number, unit: string): EmbeddedViewContent['items'][number]['values'] =>
+  unitLabel(unit) === '' ? [] : [{ value: Number(displayValue(value, unit).toPrecision(6)), unit: unitLabel(unit) }]
+
+const penNames = (pen: ComposedDisplayPen): Array<string> =>
+  [...new Set([pen.name, ...(pen.tagId === undefined ? [] : [pen.tagId]), String(pen.path), pen.label, pen.described])]
+
+/**
+ * What the view shows in the terms an answer may cite (the contract's
+ * embedded view content): each signal with its current value and limits, the
+ * equipment its mimics draw (from the caller, which reads their states), the
+ * related or plant alarms, how far back the trend reaches now, and the signal
+ * the display leads with, which the answer must name.
+ */
+export const composedDisplayContent = (
+  display: CompiledComposedDisplay,
+  read: (path: VariablePath) => unknown,
+  historyMs: number,
+  equipment: EmbeddedViewContent['items'],
+): EmbeddedViewContent => {
+  const pens = shownPens(display)
+  const trended = new Set(display.panels.flatMap(panel => panel.kind === 'trend' ? panel.strips.flatMap(strip => strip.pens.filter(pen => pen.recorded).map(pen => pen.path)) : []))
+  const items = pens.map(pen => {
+    const value = read(pen.path)
+    return {
+      names: penNames(pen),
+      values: typeof value === 'number' ? shownQuantity(value, pen.unit) : [],
+      limits: pen.thresholds.flatMap(threshold => shownQuantity(threshold.value, pen.unit)),
+      history: trended.has(pen.path),
+    }
+  })
+  const alarms = display.panels.flatMap(panel => panel.kind === 'alarms' && (panel.scope === 'plant' || panel.ruleIds.length > 0)
+    ? [{ names: [panel.scope === 'plant' ? 'Active alarms and trips of the Plant' : 'Active alarms and trips of the displayed signals and equipment'], values: [], limits: [], history: false }]
+    : [])
+  const trend = display.panels.find(panel => panel.kind === 'trend')
+  const lead = rankedMargins(display, read)[0]
+  return {
+    items: [...items, ...equipment, ...alarms],
+    span: trend === undefined ? null : { shownMs: trendSpanMs(trend.horizonMs, historyMs), horizonMs: trend.horizonMs },
+    lead: lead === undefined ? null : { item: pens.indexOf(lead.pen), reason: lead.text },
+  }
 }
 
 export const composedDisplayWarnings = (display: CompiledComposedDisplay): ReadonlyArray<string> => display.panels.flatMap(panel => {

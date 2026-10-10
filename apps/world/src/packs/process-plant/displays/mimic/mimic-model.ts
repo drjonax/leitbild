@@ -103,6 +103,12 @@ export interface CompiledMimic {
     readonly carriers: ReadonlyArray<string>
     readonly unverifiedFlows: ReadonlyArray<string>
     readonly unmeasuredStates: ReadonlyArray<string>
+    /**
+     * Where a lone pipe enters a hub at one of several alike ports, which the
+     * drawing does not name ("Core", "cold leg C"): the hub's label never
+     * carries it, and the layout reserves no room at the pipe's end.
+     */
+    readonly entries: ReadonlyArray<{ readonly item: string; readonly port: string }>
   }
   /** Geometry hash, independent of ids: a stored display whose drawing changed says so. */
   readonly hash: string

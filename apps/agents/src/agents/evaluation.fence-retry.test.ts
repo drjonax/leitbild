@@ -311,3 +311,56 @@ describe('evaluation required view (display requests)', () => {
     expect(calls).toHaveLength(1)
   })
 })
+
+describe('evaluation answer-display consistency', () => {
+  // Run 19 rcp-trip: the answer cited a loop flow its display did not show.
+  const fenced = (text: string): string => `${text}\n\n\`\`\`leitbild-view\nview call_0_0/compose\n\`\`\``
+  const inconsistent = fenced('Core cooling is not confirmed. All four RCP loops were at about 401 kg/s; CET-AVG is 302.4 °C.')
+  const corrected = fenced('Core cooling is not confirmed. CET-AVG is 302.4 °C; loop flow (not shown) is about 401 kg/s.')
+  const viewContent = {
+    items: [{ names: ['CET-AVG', 'Core coolant outlet temperature'], values: [{ value: 302.4, unit: '°C' }], limits: [], history: true }],
+    span: { shownMs: 60_000, horizonMs: 120_000 },
+    lead: null,
+  }
+  const run = async (answers: ReadonlyArray<string>, data: unknown = { viewContent }) => {
+    const scripted = [
+      { content: '', toolCalls: [{ id: 'w1', function: { name: 'workspace_call', arguments: { calls: [] } } }] },
+      ...answers.map(content => ({ content })),
+    ]
+    let index = 0
+    const calls: ChatRequest[] = []
+    const provider: LLMProvider = {
+      models: async () => [],
+      chat: async request => { calls.push(request); return { ...mkResponse(''), ...scripted[index++]! } },
+    }
+    const executor = async () => [{
+      success: true,
+      data: { results: [{ key: 'compose', operationId: 'world.process-plant.display.compose', success: true, data, viewRef: 'call_0_0/compose' }] },
+    }]
+    const result = await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', {
+      toolDefinitions: [{ type: 'function', function: { name: 'workspace_call', description: 'call', parameters: {} } }],
+    })
+    return { calls, result }
+  }
+
+  test('an answer citing what its display does not show is corrected once, naming each issue', async () => {
+    const { calls, result } = await run([inconsistent, corrected])
+    expect(calls).toHaveLength(3)
+    const correction = calls[2]!.messages.at(-1)!.content
+    expect(correction).toContain('- It cites 401 kg/s, but the display shows no value in kg/s.')
+    expect(correction).toContain('mark one "(not shown)"')
+    expect(correction).not.toMatch(/\b(?:below|above) the answer\b/)
+    expect(result.decision.response).toEqual({ action: 'respond', content: corrected })
+  })
+
+  test('a second disagreement is posted as it is: one correction per answer', async () => {
+    const { calls, result } = await run([inconsistent, inconsistent])
+    expect(calls).toHaveLength(3)
+    expect(result.decision.response).toEqual({ action: 'respond', content: inconsistent })
+  })
+
+  test('an answer agreeing with its display, or a view without published content, costs no extra call', async () => {
+    expect((await run([corrected])).calls).toHaveLength(2)
+    expect((await run([inconsistent], {})).calls).toHaveLength(2)
+  })
+})

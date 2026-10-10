@@ -147,8 +147,11 @@ export const updateDevice = (
   device.state = isOn(look) ? 'open' : 'closed'
   device.static = look.state.kind === 'unknown' || look.state.kind === 'none' || look.notMeasured || family === 'valve-check' || family === 'battery'
   device.orientation = config.orientation === 'vertical' && !family.startsWith('pump') ? 'verticalRight' : 'horizontal'
+  // No digit count: OpenBridge fills a value row's unused digits with dim
+  // hinted zeros, so 35 % at three digits read "035 %". The server reserves
+  // the row's width for three digits itself (compile-mimic.ts).
   device.readouts = config.rows.map(row => row.type === 'value'
-    ? { type: 'value', value: row.value, nDigits: 3, unit: row.unit, direction: 'none', icon: 'none' }
+    ? { type: 'value', value: row.value, nDigits: 0, unit: row.unit, direction: 'none', icon: 'none' }
     : { type: row.emphasis ? 'state-on' : 'state-off', value: row.text, hasIcon: false })
   device.alert = config.alert !== null
   if (config.alert !== null) {

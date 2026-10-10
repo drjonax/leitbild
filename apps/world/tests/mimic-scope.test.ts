@@ -10,6 +10,7 @@ import { component, connect, plantGraph } from '../src/packs/process-plant/graph
 import { itemServices, resolveMimicScope, stubText, type MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
 import { unpresentedKinds } from '../src/packs/process-plant/displays/mimic/presentation.ts'
 import { framingRules, itemBinding, linkFlowBinding, NO_FLOW_FRACTION } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import { declaredPortFlows } from '../src/packs/process-plant/displays/compose.ts'
 
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:scope', loopCount: 4 }))
 const graph = plant.graph
@@ -178,6 +179,35 @@ describe('the mimic draws any Plant, not only the reference PWR', () => {
     const north = drawn(skid, { services: ['coolant'], loops: ['N'] })
     expect(north.labels).toEqual(['Basin', 'CV-N', 'Collector', 'Cooler', 'P-N'])
     expect(north.stubs.map(stub => `${label(skid, stub.component)}: ${stubText(skid, stub)}`)).toEqual(['Basin: to P-S'])
+  })
+
+  test('a line\'s flow is the flow its kind declares through the port it joins, whole where the line is alone on it', () => {
+    // A boiler fed by two lines into one inlet, with one steam line out: no PWR names, no reference ids.
+    const feed = { ...water, service: 'feed' }
+    const steam = { ...water, service: 'steam', nominalFluid: 'steam' as const, designPhase: 'steam' as const, solverModel: 'compressibleSteam' as const }
+    const boiler = compilePlantGraph(plantGraph({
+      id: 'boiler-skid',
+      title: 'Boiler skid',
+      fixedStepMs: 100,
+      components: [
+        component('feedNorth', 'processTank', 'Feed North', tank, [], { presentation: { shortLabel: 'FT-N' } }),
+        component('feedSouth', 'processTank', 'Feed South', tank, [], { presentation: { shortLabel: 'FT-S' } }),
+        component('drum', 'steamGenerator', 'Drum', { nominalPressureMPa: 6, nominalLevelPercent: 0.5, heatTransferCoefficientMwPerK: 2 }, [], { presentation: { shortLabel: 'DR' } }),
+        component('engine', 'turbineLoadSink', 'Engine', { nominalElectricMw: 10, initialLoadFraction: 1, nominalSteamFlowKgPerS: 10, electricalTimeConstantS: 5 }, [], { presentation: { shortLabel: 'ENG' } }),
+      ],
+      connections: [
+        connect('north-feed', 'feedNorth.outlet', 'drum.feedwaterInlet', feed),
+        connect('south-feed', 'feedSouth.outlet', 'drum.feedwaterInlet', feed),
+        connect('drum-steam', 'drum.steamOutlet', 'engine.steamInlet', steam),
+      ],
+    }), processPlantComponentRegistry)
+    const flows = (id: string) => declaredPortFlows(boiler, boiler.links.find(link => String(link.id) === id)!.index)
+      .map(flow => ({ path: String(flow.path), through: flow.through, others: flow.others.map(other => String(other.id)) }))
+    expect(flows('north-feed')).toEqual([{ path: 'drum.feedwaterFlowKgPerS', through: 'Drum\'s feedwater inlet', others: ['south-feed'] }])
+    expect(flows('drum-steam')).toEqual([{ path: 'drum.steamOutflowKgPerS', through: 'Drum\'s steam outlet', others: [] }])
+    // A bundled device's throughput is the flow through its port; equipment that declares none has none.
+    expect(declaredPortFlows(graph, graph.links.find(link => String(link.id) === 'pressurizer-relief-to-tank')!.index).map(flow => String(flow.path))).toEqual(['pressurizer.reliefFlowKgPerS'])
+    expect(flows('north-feed').some(flow => flow.path.startsWith('feedNorth.'))).toBe(false)
   })
 
   test('a link is rated by the pump driving it, through the check valve and collector', () => {

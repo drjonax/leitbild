@@ -293,6 +293,7 @@
               <TrendPanel
                 {strip}
                 horizon={panel.horizon}
+                horizonMs={panel.horizonMs}
                 {windowMs}
                 series={snapshot.series}
                 range={snapshot.ranges[index]?.[stripIndex] ?? null}
@@ -302,6 +303,7 @@
                 height={charts[stripIndex]!}
                 timeAxis={stripIndex === panel.strips.length - 1}
                 adviceLabel={stripIndex === 0}
+                mode={snapshot.latest?.mode}
                 {activeRuleIds}
               />
               <PenLegend pens={strip.pens} horizonMs={panel.horizonMs} latest={snapshot.latest} series={snapshot.series} historyMissing={snapshot.historyMissing} {activeRuleIds} />

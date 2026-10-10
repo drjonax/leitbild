@@ -10,10 +10,10 @@ const size = SPARKLINE_SIZE
 
 // The pressurizer's pressure limits, as the reference PWR declares them.
 const pressure: ReadonlyArray<ComposedDisplayThreshold> = [
-  { ruleId: 'trip-low', label: 'Pressure low trip', kind: 'trip', operator: '<', direction: 'low', value: 13.8 },
-  { ruleId: 'alarm-low', label: 'Pressure low', kind: 'alarm', operator: '<', direction: 'low', value: 14.8 },
-  { ruleId: 'spray', label: 'Spray on', kind: 'control', operator: '>', direction: 'high', value: 15.65 },
-  { ruleId: 'alarm-high', label: 'Pressure high', kind: 'alarm', operator: '>', direction: 'high', value: 16 },
+  { ruleId: 'trip-low', label: 'Pressure low trip', kind: 'trip', operator: '<', direction: 'low', value: 13.8, escalation: 1 },
+  { ruleId: 'alarm-low', label: 'Pressure low', kind: 'alarm', operator: '<', direction: 'low', value: 14.8, escalation: 1 },
+  { ruleId: 'spray', label: 'Spray on', kind: 'control', operator: '>', direction: 'high', value: 15.65, escalation: 1 },
+  { ruleId: 'alarm-high', label: 'Pressure high', kind: 'alarm', operator: '>', direction: 'high', value: 16, escalation: 1 },
 ]
 
 const every = (stepMs: number, from: number, to: number, value: (t: number) => number): ReadonlyArray<TrendPoint> =>
@@ -76,7 +76,7 @@ describe('lead value sparklines', () => {
     // Generator output far above its low alarm keeps its own scale.
     const output = sparkline({
       points: every(60_000, start, now, () => 1100), now, windowMs, size, value: 1100,
-      thresholds: [{ ruleId: 'gen-low', label: 'Generator output low', kind: 'alarm', operator: '<', direction: 'low', value: 450 }],
+      thresholds: [{ ruleId: 'gen-low', label: 'Generator output low', kind: 'alarm', operator: '<', direction: 'low', value: 450, escalation: 1 }],
     })
     expect([output.limit, output.end?.y]).toEqual([null, size.height / 2])
   })

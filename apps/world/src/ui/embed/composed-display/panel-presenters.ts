@@ -1,8 +1,8 @@
 // Pure derivations for composed-display panels. Thresholds come from World;
 // these functions only relate them to the latest sampled values.
-import { displayValue, formatValue, thresholdName, unitLabel, type ThresholdMargin } from '../../../packs/process-plant/displays/display-text.ts'
+import { displayValue, formatValue, marginTextForms, thresholdName, unitLabel, type ThresholdMargin } from '../../../packs/process-plant/displays/display-text.ts'
 import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
-import type { ComposedDisplayAlarm } from './composed-display-client.ts'
+import type { ComposedDisplayAlarm, ComposedDisplaySample } from './composed-display-client.ts'
 import type { TrendPoint } from './trend-geometry.ts'
 
 // A rate needs some history: two points at least this far apart.
@@ -76,6 +76,36 @@ export const rateText = (
   return `${rate > 0 ? '▲ +' : '▼ −'}${formatValue(displayValue(Math.abs(rate), unit))}${label === '' ? '' : ` ${label}`}/min${window}${change}`
 }
 
+// A time to a limit is projected only from a tendency with a basis: half a
+// minute of change the display can show, all of it one way, and not slowing.
+// A curve bending over (pressure settling while a PORV stays stuck open) would
+// otherwise be extrapolated straight to a limit it may never reach.
+const PROJECTION_BASIS_MS = 30_000
+
+/**
+ * Whether the latest tendency supports projecting a time to a limit: the
+ * points reach back half a minute, the value moved through several values the
+ * display can tell apart in it, each step the way the rate goes, and the rate
+ * is neither slowing nor reversing (rateChange, as the legend says it).
+ */
+export const projectionBasis = (points: ReadonlyArray<TrendPoint>, windowMs: number, unit: string): boolean => {
+  const last = points.at(-1)
+  if (last === undefined || points[0]!.t > last.t - PROJECTION_BASIS_MS) return false
+  const rate = ratePerMinute(points, windowMs)
+  if (rate === null || isSteady(rate, last.v)) return false
+  const change = rateChange(points, windowMs, last.v)
+  if (change === 'slowing' || change === 'reversing') return false
+  const recent = points.filter(point => point.t >= last.t - PROJECTION_BASIS_MS)
+  const shown = recent.map(point => formatValue(displayValue(point.v, unit)))
+  let steps = 0
+  for (let index = 1; index < recent.length; index += 1) {
+    if (shown[index] === shown[index - 1]) continue
+    if (Math.sign(recent[index]!.v - recent[index - 1]!.v) !== Math.sign(rate)) return false
+    steps += 1
+  }
+  return steps >= CHANGE_MIN_DISTINCT_VALUES - 1
+}
+
 /** Minutes until the value reaches the threshold at the current rate, if moving toward it. */
 export const minutesToThreshold = (value: number, rate: number | null, threshold: ComposedDisplayThreshold): number | null => {
   if (rate === null || rate === 0) return null
@@ -85,10 +115,15 @@ export const minutesToThreshold = (value: number, rate: number | null, threshold
   return already ? null : distance / rate
 }
 
-/** "≈45 s" or "≈4 min" to the threshold at the current rate; empty when not approaching it within half an hour. */
-export const timeToThresholdText = (value: number, rate: number | null, threshold: ComposedDisplayThreshold): string => {
+/**
+ * "≈45 s" or "≈4 min" to the threshold at the current rate; where the
+ * tendency gives no basis for a time (projectionBasis), "approaching, not
+ * projected" instead; empty when not approaching it within half an hour.
+ */
+export const timeToThresholdText = (value: number, rate: number | null, threshold: ComposedDisplayThreshold, projectable: boolean): string => {
   const minutes = minutesToThreshold(value, rate, threshold)
   if (minutes === null || minutes > 30) return ''
+  if (!projectable) return 'approaching, not projected'
   return minutes < 2 ? `≈${Math.max(1, Math.round(minutes * 60))} s` : `≈${Math.round(minutes)} min`
 }
 
@@ -115,14 +150,22 @@ export const limitAhead = (
  * For a value past an active limit and moving back: when it will be back
  * inside it, always with a time ("back above LO ALM 30 % in ≈2 min", "back
  * above LO TRIP 13.8 MPa in over 30 min"), so a slow drift never reads as a
- * recovery already made; empty otherwise.
+ * recovery already made; "recovering, not projected" where the tendency gives
+ * no basis for a time (projectionBasis); empty otherwise.
  */
-export const returningText = (value: number, rate: number | null, active: ComposedDisplayThreshold, unit: string): string => {
+export const returningText = (value: number, rate: number | null, active: ComposedDisplayThreshold, unit: string, projectable: boolean): string => {
   if (rate === null || isSteady(rate, value)) return ''
   const returning = active.direction === 'low' ? rate > 0 : rate < 0
   if (!returning) return ''
-  const eta = timeToThresholdText(value, rate, { ...active, direction: active.direction === 'low' ? 'high' : 'low' })
+  if (!projectable) return 'recovering, not projected'
+  const eta = timeToThresholdText(value, rate, { ...active, direction: active.direction === 'low' ? 'high' : 'low' }, true)
   return `back ${active.direction === 'low' ? 'above' : 'below'} ${thresholdName(active, unit)} in ${eta === '' ? 'over 30 min' : eta}`
+}
+
+/** The fullest wording of a margin that fits its room (marginTextForms); the shortest where none does. */
+export const fitMarginText = (margin: ThresholdMargin, unit: string, fits: (text: string) => boolean): string => {
+  const forms = marginTextForms(margin, unit)
+  return forms.find(fits) ?? forms.at(-1)!
 }
 
 /** Whether the value moves away from every limit it has not passed ("no HI limit ahead"). */
@@ -137,6 +180,27 @@ export const agoText = (ms: number): string => {
   const minutes = Math.floor(seconds / 60)
   return minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} h ${minutes % 60} min ago`
 }
+
+/**
+ * Whether a limit acts now: one the I&C applies in every mode always; a
+ * mode-qualified one while the Plant is in one of its modes, or while its rule
+ * is still active (a trip latched in power operation stays until it is reset).
+ */
+export const limitInForce = (threshold: Pick<ComposedDisplayThreshold, 'modeIds'>, mode: { readonly id: string } | null, active: boolean): boolean =>
+  active || threshold.modeIds === undefined || (mode !== null && threshold.modeIds.includes(mode.id))
+
+/**
+ * A signal's limits that act in the Plant's current mode, so no margin or
+ * time is read against one that does not. The mode is unknown only where the
+ * Plant declares none (no limit is qualified) or before the first sample
+ * (no value is compared), so then every limit is kept.
+ */
+export const limitsInForce = (
+  thresholds: ReadonlyArray<ComposedDisplayThreshold>,
+  mode: ComposedDisplaySample['mode'],
+  activeRuleIds: ReadonlySet<string>,
+): ReadonlyArray<ComposedDisplayThreshold> =>
+  mode === undefined ? thresholds : thresholds.filter(threshold => limitInForce(threshold, mode, activeRuleIds.has(threshold.ruleId)))
 
 /** The most severe of a signal's thresholds whose I&C rule is active now. */
 export const activeThreshold = (

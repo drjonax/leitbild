@@ -364,6 +364,31 @@ describe('nuclear instrumentation', () => {
   }, 20_000) // A tripped Run held for minutes, the same watchdog as the runtime's long trajectories.
 })
 
+describe('flows declared through a port', () => {
+  // A kind's declared port flow is what every link on that port carries together; displays judge a line by it.
+  const portFlowsHold = (system: typeof plant, read: (path: VariablePath) => unknown) => {
+    for (const component of system.graph.components) {
+      for (const flow of component.semantics.portFlows) {
+        const links = system.graph.links.filter(link => (link.toComponentIndex === component.index && link.toPortName === flow.port) || (link.fromComponentIndex === component.index && link.fromPortName === flow.port))
+        expect(links.length).toBeGreaterThan(0)
+        const carried = links.reduce((sum, link) => sum + Number(read(link.variables.find(variable => String(variable.path).endsWith('.flowKgPerS'))!.path)), 0)
+        expect(Number(read(flow.path)), String(flow.path)).toBeCloseTo(carried, 6)
+      }
+    }
+  }
+
+  test('a steam generator\'s feedwater inflow is what its main and auxiliary feed lines bring in', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    portFlowsHold(plant, path => plantRun.read(path))
+    // Main feed lost, low-low level starts auxiliary feed, and the inflow is still both lines together.
+    plantRun.act('loss-main-feedwater')
+    plantRun.run(120_000)
+    expect(Number(plantRun.read('aux-feedwater-valve-b-to-sg-b.flowKgPerS'))).toBeGreaterThan(50)
+    portFlowsHold(plant, path => plantRun.read(path))
+  })
+})
+
 describe('steam generator high level', () => {
   test('displays draw the high alarm and the P-14 high-high limit beside the low ones', () => {
     const level = resolveProcessPlantSignalBinding(graph, { tagId: 'SG-B-LVL-NR' as never }).path

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { MimicFlowBinding, MimicItemBinding, MimicStateBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { flowLook, indexSample, itemLook, powerLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
+import { drawnLook, itemRows, itemTreatment } from '../src/packs/process-plant/displays/mimic/rows.ts'
 
 const sample = (values: Record<string, number | boolean>, quality: Record<string, string> = {}) =>
   indexSample(Object.entries(values).map(([path, value]) => ({ path, value, quality: quality[path] ?? 'good' })))
@@ -35,6 +36,22 @@ describe('mimic state of one sample', () => {
     })
     expect(itemLook(porv, sample({ 'r.flow': 0.1, 'r.command': 0 }))).toMatchObject({ state: { kind: 'notPassing' }, mismatch: null })
     expect(itemLook(porv, sample({ 'r.flow': 0, 'r.command': 1 })).mismatch).toBe('CMD 100 %')
+  })
+
+  test('equipment that does not follow its command stands out as abnormal, and in its alarm\'s colour only while an alarm of its own is active', () => {
+    // FCV B failed at 35 % while commanded 100 %: the cause of the runback, before any alarm it leads to.
+    const stuck = itemLook(valve, sample({ 'v.effective': 0.35, 'v.command': 1 }))
+    expect(itemTreatment(stuck, false)).toBe('abnormal')
+    expect(itemTreatment(stuck, true)).toBe('alarm')
+    expect(itemTreatment(itemLook(valve, sample({ 'v.effective': 1, 'v.command': 1 })), false)).toBe('normal')
+    expect(itemTreatment(itemLook(pump, sample({ 'p.speedRpm': 0, 'p.running': true })), false)).toBe('abnormal')
+    // A stale or missing sample says nothing it cannot know.
+    expect(itemTreatment(itemLook(valve, sample({})), false)).toBe('normal')
+    // A group stands out while any member disagrees.
+    const second = item({ aspect: 'running', state: { path: 'q.speedRpm' as never, reading: 'aboveZero' }, command: 'q.running' as never })
+    const rows = itemRows(pump, { element: 'device', icon: 'pump', aspect: 'running' }, { marker: false, members: [pump, second], commands: 'stacked' })
+    expect(itemTreatment(drawnLook(pump, rows, sample({ 'p.speedRpm': 1200, 'p.running': true, 'q.speedRpm': 0, 'q.running': true })), false)).toBe('abnormal')
+    expect(itemTreatment(drawnLook(pump, rows, sample({ 'p.speedRpm': 1200, 'p.running': true, 'q.speedRpm': 0, 'q.running': false })), false)).toBe('normal')
   })
 
   test('pipes draw direction only where the model solves it', () => {

@@ -3,6 +3,7 @@ import type { IsoTimestamp, ObjectId } from '../src/core/model/index.ts'
 import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import {
   answerProcessPlantQuery,
+  commandsForProcessPlantAction,
   compileProcessPlant,
   createProcessPlantProtectionRunner,
   createProcessPlantRampRunner,
@@ -13,6 +14,8 @@ import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance 
 import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { annunciatorHeight, compileDetailDisplay, compileOverviewDisplay, composedDisplayShows, overviewDrawingRoom, type CompiledComposedDisplay, type OverviewView } from '../src/packs/process-plant/displays/compose.ts'
 import { composedDisplayLayout } from '../src/packs/process-plant/displays/composition.ts'
+import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
+import { drawnLook, itemTreatment } from '../src/packs/process-plant/displays/mimic/rows.ts'
 
 // Process display windows as measured on production in Full HD and QHD browsers.
 const fullHd: OverviewView = { width: 1896, height: 972 }
@@ -131,7 +134,7 @@ describe('the unit overview World generates for a Plant', () => {
     expect(readouts.sparklineMs).toBe(600_000)
     // The vessel's net inventory flow is not recorded: it has no sparkline, and the agent is told so.
     expect(readouts.pens.filter(pen => !pen.recorded).map(pen => String(pen.path))).toEqual(['vessel.netInventoryFlowKgPerS'])
-    const shows = composedDisplayShows(result.display).join(' ')
+    const shows = composedDisplayShows(result.display, system.runtime.elapsedMs()).join(' ')
     expect(shows).toContain('each recorded one has a sparkline of its last 10 min, for direction and rate only (no value scale); not recorded by this Run, so without one: ')
     // The column as drawn: the title over six lead values, nine tiles two to a row, the alarms and the footer, under the window's header row.
     const layout = composedDisplayLayout
@@ -165,6 +168,16 @@ describe('the unit overview World generates for a Plant', () => {
     const roomy = drawn(fullHd)
     // A browser with a bookmarks bar shows less of the screen: the same drawing, a few pixels of scrolling.
     expect(drawn({ width: fullHd.width, height: 885 })).toEqual(roomy)
+  })
+
+  test('a window too small for any arrangement scrolls the drawing, never refusing it', () => {
+    // A zoomed-in display window or a narrow pane leaves less room than the frame itself (display-modal session, 654 × 470).
+    for (const view of [{ width: 654, height: 470 }, { width: 320, height: 200 }, { width: 200, height: 60 }]) {
+      const result = compileOverviewDisplay(system, new Set(), view)
+      expect(result.ok, `${view.width} × ${view.height}`).toBe(true)
+      if (!result.ok) continue
+      expect(result.display.height).toBeGreaterThan(view.height)
+    }
   })
 
   test('where only compact tiles let the column fit, they go three to a row with the declared short labels', () => {
@@ -201,6 +214,22 @@ describe('the unit overview World generates for a Plant', () => {
     expect(mimic.crossings.forced).toBe(1)
     // Five and six loops overflow Full HD, so each searches the least height that draws: seconds under load.
   }, 30_000)
+
+  test('on a feedwater runback the failed valve that causes it stands out as abnormal, and nothing else does', () => {
+    const upset = plant()
+    upset.runtime.tick(1_000)
+    for (const command of commandsForProcessPlantAction({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 }, graph: upset.plant.graph })) {
+      upset.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    upset.runtime.tick(5_000)
+    const result = compileOverviewDisplay(upset, new Set(), fullHd)
+    if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))
+    const panel = result.display.panels.find(candidate => candidate.kind === 'mimic')!
+    if (panel.kind !== 'mimic') throw new Error('expected the mimic')
+    const index = indexSample(panel.mimic.paths.map(path => ({ path, value: upset.runtime.readVariable(path), quality: 'good' })))
+    const abnormal = panel.mimic.items.filter(item => itemTreatment(drawnLook(item.binding, item.rows, index), false) === 'abnormal').map(item => item.components.join(','))
+    expect(abnormal).toEqual(['feedwaterControlValveB'])
+  })
 
   test('an overview state for another Plant is refused', () => {
     expect(() => ask('world.process-plant.display.view', { plantId: system.plant.id, state: JSON.stringify({ overview: { plantId: 'plant:other' } }) }))
@@ -268,6 +297,11 @@ describe('equipment opened from the unit overview', () => {
     // Its injection and charging lines stop at it, by name.
     expect(mimic.mimic.stubs.map(stub => stub.text)).toContain('from ACC ×4, CHG ×2, RHR iso, SI header')
     expect(result.display.height).toBeLessThanOrEqual(fullHd.height)
+    // Opened at power it leads with power, subcooling margin and outlet temperature; the de-energized source range comes last.
+    const readouts = result.display.panels.find(panel => panel.kind === 'readouts')!
+    if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
+    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(0, 3)).toEqual(['core.powerMw', 'SUB-MARGIN', 'CET-AVG'])
+    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-2)).toEqual(['NIS-SR-HV', 'NIS-SR'])
   })
 
   test('every item of the overview opens', () => {

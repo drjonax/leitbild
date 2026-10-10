@@ -45,7 +45,14 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       tubeLeakRadiationGainMSvPerHPerKgS: z.number().finite().nonnegative().optional(),
       tubeLeakRadiationTimeConstantS: z.number().finite().positive().optional(),
     }),
-    semantics: fixedSemantics({ keyValues: ['levelPercent', 'pressureMPa'], aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })], ratedOutflow: [{ port: 'steamOutlet', parameter: 'nominalSteamFlowKgPerS' }], energy: [{ role: 'transfer', from: 'primary', to: 'secondary' }] }),
+    semantics: fixedSemantics({
+      keyValues: ['levelPercent', 'pressureMPa'],
+      aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })],
+      ratedOutflow: [{ port: 'steamOutlet', parameter: 'nominalSteamFlowKgPerS' }],
+      // What its feed lines bring in through the feedwater inlet, and what its steam lines take out.
+      portFlows: [{ port: 'feedwaterInlet', variable: 'feedwaterFlowKgPerS' }, { port: 'steamOutlet', variable: 'steamOutflowKgPerS' }],
+      energy: [{ role: 'transfer', from: 'primary', to: 'secondary' }],
+    }),
     variables: [
       variable({ path: 'levelPercent', label: 'Steam generator level', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
       variable({ path: 'pressureMPa', label: 'Steam generator pressure', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),

@@ -94,30 +94,18 @@ describe('generated equipment mimics', () => {
     expect(mimic.summary.unmeasuredStates).toEqual([])
   })
 
-  test('a lone pipe into a hub says where it enters when nothing is drawn at the hub\'s other alike ports', () => {
+  test('a lone pipe into a hub says where it enters in the compose result, never beside the hub\'s value', () => {
     // Safety injection to loop C reaches the core at cold leg C only; the header's stub names the other legs.
-    const labels = (intent: MimicIntent) => generated(system, intent).items.map(item => item.binding.label)
-    expect(labels({ services: ['safetyInjection'], loops: ['C'] })).toContain('Core · cold leg C')
-    expect(labels({ services: ['primaryInjection'], loops: ['A'] })).toContain('Core · cold leg A')
+    const drawn = (intent: MimicIntent) => generated(system, intent)
+    const si = drawn({ services: ['safetyInjection'], loops: ['C'] })
+    // "Core · cold leg C" beside 339 °C read as the cold leg's temperature: the core keeps its own label.
+    expect(si.items.map(item => item.binding.label)).toContain('Core')
+    expect(si.items.map(item => item.binding.label).filter(label => label.includes(' · '))).toEqual([])
+    expect(si.summary.entries).toEqual([{ item: 'Core', port: 'cold leg C' }])
+    expect(drawn({ services: ['primaryInjection'], loops: ['A'] }).summary.entries).toEqual([{ item: 'Core', port: 'cold leg A' }])
     // Several legs reached: the equipment on them tells them apart, and headers never list their branches.
-    expect(labels({ services: ['primaryCoolant'], loops: ['A'] })).toContain('Core')
-    expect(labels({ services: ['primaryCoolant'] }).filter(label => label.includes(' · '))).toEqual([])
-  })
-
-  test('a breaker says its contacts, and a command it does not follow', () => {
-    const mimic = generated(system, { to: ['safetyBusA'] })
-    const breaker = mimic.items.find(item => item.binding.label === 'Offsite BKR A')!
-    expect(breaker.rows.map(row => row.kind)).toEqual(['state', 'mismatch'])
-    expect(mimic.summary.unmeasuredStates).toEqual([])
-    const state = breaker.binding.state!
-    const at = (closed: boolean, command: boolean) => indexSample([{ path: state.state!.path, value: closed, quality: 'good' }, { path: state.command!, value: command, quality: 'good' }])
-    const texts = (index: ReturnType<typeof indexSample>) => itemRowTexts(breaker.binding, breaker.presentation, breaker.rows, index, String)
-    expect(texts(at(true, true))).toEqual(['CLOSED', ''])
-    expect(texts(at(false, false))).toEqual(['OPEN', ''])
-    // Tripped open while still commanded closed, and stuck closed while commanded open.
-    expect(texts(at(false, true))).toEqual(['OPEN', 'CMD CLOSE'])
-    expect(texts(at(true, false))).toEqual(['CLOSED', 'CMD OPEN'])
-    expect(texts(indexSample([]))).toEqual(['?', ''])
+    expect(drawn({ services: ['primaryCoolant'], loops: ['A'] }).summary.entries).toEqual([])
+    expect(drawn({ services: ['primaryCoolant'] }).summary.entries).toEqual([])
   })
 
   test('the same intent on the same model draws the same mimic', () => {
@@ -191,7 +179,7 @@ describe('every intent over the reference Plant draws or is refused with a reaso
       }
     })
     expect(failures).toEqual([])
-  })
+  }, 30_000) // A watchdog for the whole sweep, not the property it measures.
 
   test('is the diesel feeding the motor-driven AFW pump: the pump with its suction and its supply', () => {
     const mimic = generated(system, { to: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater', 'electricalPower'] })

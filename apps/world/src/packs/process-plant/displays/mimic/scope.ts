@@ -457,7 +457,7 @@ export const drawingStops = (
 const STUB_NAMES = 3
 
 /** "cold leg A" for a port named coldLegA. */
-const portName = (port: string): string => words(port).map(word => word.length === 1 ? word.toUpperCase() : word).join(' ')
+export const portName = (port: string): string => words(port).map(word => word.length === 1 ? word.toUpperCase() : word).join(' ')
 
 // Ports are named only where a component has several alike: connected, of the
 // same circuit and direction (the core's four cold legs; a 4-loop Plant leaves
@@ -473,8 +473,8 @@ const alikePorts = (graph: CompiledPlantGraph, component: CompiledComponent, por
 
 /**
  * The one port a lone pipe reaches on a hub of alike ports where nothing is
- * drawn at the others ("cold leg C" of the core's four), so the pipe says
- * where it enters. Null otherwise: a port with no alike, alike ports all
+ * drawn at the others ("cold leg C" of the core's four), so the display can
+ * say where the pipe enters. Null otherwise: a port with no alike, alike ports all
  * piped or stubbed (a stub names its own), or several reached, where the
  * equipment drawn on them tells them apart (SG A, RCP A).
  */

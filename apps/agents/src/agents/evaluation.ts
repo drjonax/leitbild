@@ -16,6 +16,8 @@ import { classifyLLMError } from './error-classify.ts'
 import { extractFences } from './fence-extract.ts'
 import { parseMapBody, formatMapErrors } from '../core/render-validators/map-schema.ts'
 import { parseViewFenceBody, viewRefFor, VIEW_FENCE_LANGUAGE } from '../core/render-validators/view-fence.ts'
+import { embeddedViewContentSchema, type EmbeddedViewContent } from '@leitbild/contracts'
+import { answerViewIssues } from './answer-consistency.ts'
 
 // Max times the eval loop will ask the LLM to fix an invalid map/geojson
 // fence before giving up and posting the broken response (the UI banner
@@ -26,6 +28,12 @@ import { parseViewFenceBody, viewRefFor, VIEW_FENCE_LANGUAGE } from '../core/ren
 // error and reveals another. Beyond 2, models tend to oscillate. Test
 // `evaluation.fence-retry.test.ts` asserts 3 total LLM calls (1 + 2 retries).
 export const MAX_FENCE_RETRIES = 2
+
+// Times the eval loop asks the LLM to make an answer agree with the display
+// it presents (answer-consistency.ts). One: the issues name each fix, and a
+// second round would cost another full answer's latency for a model that
+// did not take the first; the corrected answer is still fence-checked.
+export const MAX_CONSISTENCY_CORRECTIONS = 1
 
 // === Decision — what the agent wants to do after evaluation ===
 
@@ -259,14 +267,16 @@ const callLLMOnce = async (
   }
 }
 
-// === Fence validation + retry ===
+// === Fence validation + retry, answer consistency ===
 //
 // Validate every ```map / ```geojson fence schema and every ```leitbild-view
 // reference in the response content. If any are invalid, append a synthetic
 // correction prompt to the conversation context and re-call the LLM. Repeat
 // up to MAX_FENCE_RETRIES times. Returns the final response content
 // (corrected if a retry succeeded; the last attempt's content if all retries
-// failed — the UI then shows the error in place of the block).
+// failed — the UI then shows the error in place of the block). Once the
+// fences are valid, an answer that disagrees with the display it presents is
+// corrected the same way, at most MAX_CONSISTENCY_CORRECTIONS times.
 //
 // Mermaid is excluded by design: its parser is browser-only; a server-side
 // validator would only catch trivial cases (oversized, completely wrong
@@ -321,9 +331,41 @@ export const collectViewRefs = (into: Set<string>, tool: string, result: ToolRes
   }
 }
 
-const retryInvalidFences = async (
+/** What the Modules said each view composed in this turn shows, by viewRef. */
+export const collectViewContents = (into: Map<string, EmbeddedViewContent>, tool: string, result: ToolResult): void => {
+  if (tool !== 'workspace_call' || !result.success) return
+  const entries = (result.data as { results?: unknown } | undefined)?.results
+  if (!Array.isArray(entries)) return
+  for (const entry of entries) {
+    const { viewRef, data } = (entry ?? {}) as { viewRef?: unknown; data?: unknown }
+    if (typeof viewRef !== 'string' || typeof data !== 'object' || data === null || !('viewContent' in data)) continue
+    // A Module that publishes content must publish it valid: a broken
+    // contract fails the turn loudly rather than skipping the check.
+    into.set(viewRef, embeddedViewContentSchema.parse((data as { viewContent: unknown }).viewContent))
+  }
+}
+
+// Where an answer and the display it presents disagree. A view whose Module
+// says nothing of what it shows (a unit overview) is not checked: there is
+// nothing to compare the answer with.
+const presentedViewIssues = (content: string, viewContents: ReadonlyMap<string, EmbeddedViewContent>): ReadonlyArray<string> => {
+  const fence = extractFences(content, [VIEW_FENCE_LANGUAGE])[0]
+  if (fence === undefined) return []
+  const parsed = parseViewFenceBody(fence.body)
+  if (parsed.kind === 'invalid') return []
+  const view = viewContents.get(viewRefFor(parsed.ref.callId, parsed.ref.key))
+  return view === undefined ? [] : answerViewIssues(content, view)
+}
+
+const consistencyCorrection = (issues: ReadonlyArray<string>): string =>
+  `The answer and the display it presents disagree, and the operator reads them together:\n${issues.map(issue => `- ${issue}`).join('\n')}\n\n` +
+  `Re-emit the FULL corrected response with the same \`${VIEW_FENCE_LANGUAGE}\` block. Cite values and watch items only as the display shows them, or mark one "(not shown)"; ` +
+  'name what the display leads with; give its time span as the display draws it. Keep the assessment and actions.'
+
+const correctResponse = async (
   initialContent: string,
   viewRefs: ReadonlySet<string>,
+  viewContents: ReadonlyMap<string, EmbeddedViewContent>,
   context: Array<ChatRequest['messages'][number]>,
   config: AIAgentConfig,
   llmProvider: LLMProvider,
@@ -338,19 +380,29 @@ const retryInvalidFences = async (
 ): Promise<string> => {
   let content = initialContent
   let continuation = initialContinuation
-  for (let attempt = 0; attempt < MAX_FENCE_RETRIES; attempt++) {
+  let fenceRetries = 0
+  let consistencyCorrections = 0
+  for (;;) {
     const validation = validateResponseFences(content, viewRefs)
-    if (validation.ok) return content
-    // Append the invalid response + a precise correction prompt. The next
-    // LLM call will see (a) what it just emitted, (b) why it failed,
+    let correction: string
+    if (!validation.ok) {
+      if (fenceRetries === MAX_FENCE_RETRIES) break
+      fenceRetries++
+      correction =
+        `Your previous response contained one or more invalid fenced blocks:\n\n${validation.errors}\n\n` +
+        `Re-emit the FULL corrected response (keep the surrounding prose, fix or remove the listed blocks).`
+    } else {
+      // Valid fences: does the answer agree with the display it presents?
+      const issues = consistencyCorrections === MAX_CONSISTENCY_CORRECTIONS ? [] : presentedViewIssues(content, viewContents)
+      if (issues.length === 0) return content
+      consistencyCorrections++
+      correction = consistencyCorrection(issues)
+    }
+    // Append the response + a precise correction prompt. The next LLM call
+    // will see (a) what it just emitted, (b) why it must change,
     // (c) instruction to re-emit a corrected version.
     context.push({ role: 'assistant' as const, content, ...(continuation ? { continuation } : {}) })
-    context.push({
-      role: 'user' as const,
-      content:
-        `Your previous response contained one or more invalid fenced blocks:\n\n${validation.errors}\n\n` +
-        `Re-emit the FULL corrected response (keep the surrounding prose, fix or remove the listed blocks).`,
-    })
+    context.push({ role: 'user' as const, content: correction })
     if (signal?.aborted) return content
     const request: ChatRequest = {
       model: continuationModel(context, config.model),
@@ -430,6 +482,7 @@ export const evaluate = async (
   // Rounds spent insisting on a view call the model again without a tool
   // round of the agent's own; they do not count against its iteration limit.
   let insistRounds = 0
+  const viewContents = new Map<string, EmbeddedViewContent>()
   let lastGenerationQuery: GenerationQuery | undefined
   const captureRequest = (request: ChatRequest): void => {
     // ChatRequest is JSON-shaped. Clone at the call boundary so subsequent
@@ -558,6 +611,7 @@ export const evaluate = async (
           const result = results[i]
           if (!call || !result) continue
           collectViewRefs(viewRefs, call.tool, result)
+          collectViewContents(viewContents, call.tool, result)
           const operationOutcomes = operationOutcomesFor(call.tool, result)
           const traceSuccess = result.success && (operationOutcomes?.every(outcome => outcome.success) ?? true)
           onEvent?.({ kind: 'tool_result', tool: call.tool, callId: call.callId ?? String(i), success: traceSuccess, preview: traceSuccess ? undefined : result.error ?? 'One or more requested operations failed' })
@@ -627,7 +681,8 @@ export const evaluate = async (
         continue
       }
       // Fence retry loop: validate ```map / ```geojson schemas and that every
-      // ```leitbild-view names a display composed in this turn. If invalid,
+      // ```leitbild-view names a display composed in this turn, then that the
+      // answer agrees with the display it presents. If invalid,
       // append a synthetic correction prompt to context and re-call the LLM
       // up to MAX_FENCE_RETRIES times. Each retry streams live (the user sees
       // the rewrite); only the final response is committed via makeResult.
@@ -636,9 +691,10 @@ export const evaluate = async (
       //
       // Mermaid is not validated here on purpose: its parser is browser-only
       // and a server-side validator would be a smell-test, not a real check.
-      const finalContent = await retryInvalidFences(
+      const finalContent = await correctResponse(
         content,
         viewRefs,
+        viewContents,
         context,
         config,
         llmProvider,
