@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { carveOperatingPrimary, compileOperatingHousingLosses, compileOperatingPoint, compileOperatingSurgeHydraulics, fittingLoss,
+import { carveOperatingPrimary, compileOperatingHousingLosses, compileOperatingLineLosses, compileOperatingPoint, compileOperatingSurgeHydraulics, fittingLoss,
   operatingHousingMechanicalGeometry, operatingPointSources, prepareOperatingSpine, type FaceLossSection } from './reference-design-operating-spine'
 import { operatingCirculationCycles, type Section } from './reference-design-operating-hydraulics'
 import { compileOperatingPzr } from './reference-design-operating-pzr'
@@ -160,6 +160,18 @@ test('actual five-piece surge splits at8m with disjoint inertia, head, elbow and
   expect(h.junctionFirstMoment.scope).toContain('expansion-tree')
   const cut = structuredClone(pzr); cut.surge.pieces[1]!.start_m = 7; cut.surge.pieces[1]!.end_m = 9
   expect(() => compileOperatingSurgeHydraulics(cut)).toThrow('split elbow')
+  // Line losses: friction and one elbow per half, each end the mean of its two directions.
+  const losses = compileOperatingLineLosses(h, pzr, { dividingTurnLoss: 1 }, 9.80665, 27),
+    prism = Math.sqrt(Math.PI / 4), hotEnd = (1 + (1 - A / prism) ** 2) / 2,
+    receiver = pzr.regions[pzr.mouth.region]!.axialArea_m2, pzrEnd = ((1 - A / receiver) ** 2 + .5) / 2
+  expect(losses.map(s => s.face)).toEqual(['HOT.A.JUNCTION->SURGE', 'SURGE->PZR.SURGE.MOUTH'])
+  for (const [k, s] of losses.entries()) {
+    expect(s.region).toBe(27); expect(s.parameters.wall).toBe('circular_churchill')
+    expect([s.parameters.length_m, s.parameters.area_m2, s.parameters.hydraulic_diameter_m]).toEqual([8, A, .3])
+    expect(s.parameters.elevation_change_m).toBe([0, 4][k]!)
+    expect(s.parameters.form_loss).toBeCloseTo(.2 + [hotEnd, pzrEnd][k]!, 14)
+  }
+  expect(() => compileOperatingLineLosses(h, pzr, { dividingTurnLoss: -1 }, 9.80665, 27)).toThrow('Invalid')
 })
 
 // Independent owner-statement fixture; the actual test below reads the wiki.
@@ -249,6 +261,9 @@ test.skipIf(!wiki || !if97)('actual single hot packet rebases every recipient, f
   expect(m.faces.slice(0, 35).filter(f => !loaded.has(f.id)).map(f => f.id)).toEqual(p.hydraulics.passiveLossScope.liquidFacesWithoutSectionLoss)
   expect(passive.filter(s => s.face === 'UPPER->HOUSING.MAIN').length).toBeGreaterThan(0)
   expect(passive.filter(s => s.face === 'HOUSING.MAIN->HOUSING.NECK').length).toBeGreaterThan(0)
+  expect(passive.filter(s => s.face === 'HOT.A.JUNCTION->SURGE' || s.face === 'SURGE->PZR.SURGE.MOUTH').map(s => s.id)).toEqual(['SURGE.HALF.0', 'SURGE.HALF.1'])
+  expect(p.hydraulics.passiveLossScope.liquidFacesWithoutSectionLoss).toEqual([])
+  expect(p.hydraulics.hotBranchLoss.dividingTurnLoss).toBe(1)
   expect(m.faces[31]!.supports.every(s => m.regions[s.region]!.id === 'HOUSING.MAIN')).toBe(true)
   expect(m.faces[32]!.supports.some(s => m.regions[s.region]!.id === 'HOUSING.NECK')).toBe(true)
   // An outgoing half of the two-way SG bundle owns half its area, not two

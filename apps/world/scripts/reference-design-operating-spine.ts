@@ -171,9 +171,9 @@ export function compileOperatingSurgeHydraulics(pzr: Pick<Awaited<ReturnType<typ
   if (![area, mainArea, lateralArm, junctionLength].every(x => Number.isFinite(x) && x > 0)) throw Error('Invalid actual junction first moment')
   return { halves, momentumPlane: { distance_m: middle, elevation_m: routeElevation(r, middle) },
     inventoryMeanElevation_m: r.volumeMeanElevation_m,
-    lossLaw: 'Reviewed circular Churchill Darcy64/Re continuation with actual roughness; NOT annular96/Re or smooth Colebrook',
+    lossLaw: 'Reviewed circular Churchill Darcy64/Re continuation with actual roughness; NOT annular96/Re or smooth Colebrook. The coarse face sections use the native smooth circular Churchill law (roughness omitted, bounded in surge-route.md).',
     endpointLoss: { hotEntrance: 0, pzrReceipt: 0, pzrWithdrawalCdA_m2: area / Math.sqrt(1 + r.entryLoss),
-      scope: 'No retired HOT entrance/tee or PZR exit loss; phase-weighted withdrawal area belongs to its separate endpoint receipt' },
+      scope: 'Selected line/intersection/mouth realization: no retired HOT entrance/tee or PZR exit loss, because their momentum receipts pay that dissipation; phase-weighted withdrawal area belongs to its separate endpoint receipt. The coarse local-pressure faces, which lack those receipts, carry the equivalent end coefficients in hydraulics.sections SURGE.HALF.0/1.' },
     junctionFirstMoment: { status: 'PROJECTION_CANDIDATE' as const, owner: 'HOT.A.JUNCTION',
       mainAxisArm_m: junctionLength / 2, lateralArm_m: lateralArm,
       lateralInertance_per_m: lateralArm / area,
@@ -294,6 +294,32 @@ type PressureSegment = { region: number, path_length_m: number, elevation_change
 type MechanicalFace = { id: string, from: number, to: number, flow_area_m2: number,
   supports: MomentumSupport[], pressure_segments: PressureSegment[] }
 type PzrGeometry = Pick<ReturnType<typeof compileOperatingPzr>, 'regions' | 'faces' | 'mouth' | 'radialGeometry' | 'surge' | 'hotPartition'>
+
+/** Coarse local-pressure line losses on the two SURGE faces (surge-route.md).
+ * Friction and each elbow stay on their own half route. Each end carries the
+ * mean of its two directional coefficients because the native face law is
+ * reciprocal; toward-PZR is positive face flow on both faces. */
+export function compileOperatingLineLosses(line: Pick<ReturnType<typeof compileOperatingSurgeHydraulics>, 'halves'>,
+  pzr: Pick<PzrGeometry, 'surge' | 'regions' | 'mouth' | 'hotPartition'>, branch: { dividingTurnLoss: number }, gravity: number, surge: number) {
+  const r = pzr.surge.route, A = r.area_m2, junction = pzr.hotPartition.parts[1]!,
+    prism = junction.length_m * Math.sqrt(pzr.hotPartition.area_m2), receiver = pzr.regions[pzr.mouth.region]!.axialArea_m2
+  if (!Number.isFinite(branch.dividingTurnLoss) || branch.dividingTurnLoss < 0 || line.halves.length !== 2) throw Error('Invalid surge line loss input')
+  const ends = [
+    { face: 'HOT.A.JUNCTION->SURGE', id: 'HOT.A.BRANCH', towardPzr: branch.dividingTurnLoss, towardHot: fittingLoss.expansion(ratio(A / prism)),
+      law: 'mean of Idelchik 90-degree dividing side-branch factor (toward PZR) and Borda-Carnot line jet into the 1 m junction prism (toward HOT)' },
+    { face: 'SURGE->PZR.SURGE.MOUTH', id: 'PZR.MOUTH', towardPzr: fittingLoss.expansion(ratio(A / receiver)), towardHot: r.entryLoss,
+      law: 'mean of Borda-Carnot jet into the bottom outer PZR region (toward PZR) and the record entryLoss with CdA=A/sqrt(1+entryLoss) (toward HOT)' },
+  ] as const
+  return line.halves.map((half, k): FaceLossSection => {
+    const end = ends[k]!, terms: FaceLossTerm[] = [
+      { id: half.id + '.ELBOW', loss: half.elbowLoss, law: 'route-record elbowLoss at its own half' },
+      { id: end.id, loss: (end.towardPzr + end.towardHot) / 2, law: end.law }]
+    if (half.hydraulicDiameter_m !== r.internalDiameter_m || half.area_m2 !== A) throw Error('Surge half does not use the actual bore')
+    return { id: half.id, kind: 'face_loss', face: end.face, region: surge, terms, conversionRecipients: recipients(surge),
+      parameters: faceLossParameters({ length_m: half.length_m, area_m2: A, hydraulic_diameter_m: r.internalDiameter_m,
+        elevation_change_m: half.elevationChange_m }, 'circular_churchill', sum(terms.map(t => t.loss)), gravity) }
+  })
+}
 
 /** Coarse physical path geometry for generalized hydraulic impulse I_Q*Q,
  * I_Q=sum(rho*alpha*integral(ds/A)). Not literal linear momentum, a constant
@@ -432,6 +458,10 @@ export function operatingPassiveLossScope(loss: { liquidFacesWithoutSectionLoss:
       'UPPER->HOT.A/HOT.B nozzle entrance: inside the retained HOT path budget, so no separate coefficient.',
       'HOT.A run-through momentum exchange with surge flow (about 2*rho*w_main*Q_surge/A_main): odd in surge flow, not expressible by a reciprocal face law.',
     ],
+    approximations: [
+      'Direction-dependent end and fitting coefficients enter as the mean of their two directions because the native face law is reciprocal: surge HOT end +-0.077, PZR end +-0.117, housing mouth +-0.14, cap +-0.22 for one-way flow; exact per symmetric oscillation cycle.',
+      'Surge-line friction uses the native smooth circular Churchill law; the selected 1.5 um roughness would raise friction by at most 3.8% to 100 kg/s and 11.5% at 500 kg/s.',
+    ],
   }
 }
 
@@ -542,7 +572,8 @@ export async function prepareOperatingSpine(wiki: string, if97: string) {
     hydraulics = { ...rebasedHydraulics, surge: { ...rebasedHydraulics.surge, ...compileOperatingSurgeHydraulics(pzr) } }
   const control = parseControlAbsorber(controlDoc), travel = hot.fluid.geometry.referenceRodTravel_m,
     carvedRegion = (id: string) => { const i = carved.regions.findIndex(r => r.id === id); if (i < 0) throw Error('Unknown carved owner ' + id); return i },
-    faceLosses = compileOperatingHousingLosses(control, travel, hydraulics.gravity_m_s2, carvedRegion)
+    faceLosses = [...compileOperatingHousingLosses(control, travel, hydraulics.gravity_m_s2, carvedRegion),
+      ...compileOperatingLineLosses(hydraulics.surge, pzr, hydraulics.hotBranchLoss, hydraulics.gravity_m_s2, carved.regions.length)]
   const mechanics = compileOperatingMechanics(carved, hydraulics, pzr, control, travel, faceLosses)
   const packetHydraulics = { ...hydraulics, sections: [...hydraulics.sections, ...faceLosses],
     passiveLossScope: operatingPassiveLossScope(mechanics.lossScope, faceLosses) }
