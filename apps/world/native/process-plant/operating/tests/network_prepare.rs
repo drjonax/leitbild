@@ -599,3 +599,24 @@ fn the_declared_point_must_match_the_compiled_cell() {
         assert!(invalid.contains("invalid settings"), "{invalid}");
     }
 }
+
+#[test]
+fn the_prepared_pair_is_made_consistent_from_its_own_rows_without_calcic() {
+    let (mut network, prepared, _) =
+        prepare(&packet(), Analytic, &point(6.), &[RUNNING], &SETTINGS).unwrap();
+    let (yp, largest) = network
+        .consistent_rates(0., &prepared.y, &prepared.differential, 1e-12)
+        .unwrap();
+    assert!(largest <= 1e-12, "{largest}");
+    for (rate, id) in yp.iter().zip(&prepared.differential) {
+        if *id == 0. {
+            assert_eq!(*rate, 0.);
+        }
+    }
+    // The fixture's loop is not isothermal: its impulses accelerate at rest.
+    assert!(network.face_layout.iter().any(|l| yp[l.index] != 0.));
+    match network.consistent_rates(0., &prepared.y, &prepared.differential, f64::NAN) {
+        Err(Failure::Fatal(m)) => assert!(m.contains("layout or bound"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}

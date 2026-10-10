@@ -325,6 +325,9 @@ struct Spec<'a> {
     step_cap: i64,
     cpu_cap_s: f64,
     blocked_path_limit_m3_s: f64,
+    /// IDACalcIC before the first step: event reinitializations only. The
+    /// prepared start and a settled restart begin from their own pair.
+    calcic: bool,
 }
 /// Advance one declared run from a consistent or event-changed state.
 #[allow(clippy::too_many_arguments)] // One run's complete, explicit inputs.
@@ -358,11 +361,15 @@ fn advance_run(
     ida.constrain_nonnegative(&stocks)
         .expect("nonnegative stocks");
     ida.stop_at(spec.duration_s).expect("stop time");
-    let mut failure = ida.initialize(spec.output_s, &mut y, &mut yp).err();
+    let mut failure = if spec.calcic {
+        ida.initialize(spec.output_s, &mut y, &mut yp).err()
+    } else {
+        None
+    };
     let mut samples = Vec::new();
     let mut diagnostic_cpu = 0.;
     let mut post_calcic_max_row = None;
-    if failure.is_none() {
+    if failure.is_none() && spec.calcic {
         let d = cpu_s();
         let network = &mut ida.system_mut().network;
         post_calcic_max_row = match network.evaluate(0., &y, &yp, None, 0., None) {
@@ -537,6 +544,9 @@ fn running(network: &mut Network<If97>) {
         );
     }
 }
+/// Largest scaled row of the consistent initial pair at t = 0 (lead ruling).
+const CONSISTENT_ROW_BOUND: f64 = 1e-12;
+
 /// The harness's declared preparation controls; the PZR cell of every fresh
 /// network is prepared with the same values as the hydrostatic preparation.
 const PZR: PzrPreparation = PzrPreparation {
@@ -683,12 +693,19 @@ fn s1_hydraulics_admission() {
     };
     // A hydrostatic rest start has no physical phase birth at t=0, so no
     // leading-receipt selection is made; a later birth is the declared no-go.
-    let settle_network = network;
+    // Decision 0013's exit: a consistent initial pair from the preparation,
+    // verified, with no IDACalcIC at t = 0.
+    let mut settle_network = network;
+    let (yp0, consistency) = settle_network
+        .consistent_rates(0., &y0, &prepared.differential, CONSISTENT_ROW_BOUND)
+        .expect("consistent prepared pair");
+    receipt["initial_pair"] =
+        json!({"largest_scaled_row":consistency,"bound":CONSISTENT_ROW_BOUND,"calcic_at_t0":false});
     let settle = advance_run(
         settle_network,
         &taps,
         &y0,
-        &prepared.yp,
+        &yp0,
         &prepared.differential,
         Spec {
             rtol: gates.relative_tolerance,
@@ -699,6 +716,7 @@ fn s1_hydraulics_admission() {
             step_cap: i64::MAX,
             cpu_cap_s: gates.settling.max_cpu_s,
             blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
+            calcic: false,
         },
         &settled,
     );
@@ -843,16 +861,22 @@ fn s1_hydraulics_admission() {
 
     // 4. Event runs with references.
     let interval = gates.output_interval_s;
-    let base = |duration: f64, rate: f64, rtol: f64, atol: &'static [f64], order: usize| Spec {
-        rtol,
-        atol,
-        max_order: order,
-        duration_s: duration,
-        output_s: interval,
-        step_cap: (gates.run_cap_factor * rate * duration) as i64,
-        cpu_cap_s: gates.total_cpu_s,
-        blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
-    };
+    // Event runs reinitialize with IDACalcIC and report its residual; the
+    // hold restarts from the settled pair itself.
+    let base =
+        |duration: f64, rate: f64, rtol: f64, atol: &'static [f64], order: usize, calcic: bool| {
+            Spec {
+                rtol,
+                atol,
+                max_order: order,
+                duration_s: duration,
+                output_s: interval,
+                step_cap: (gates.run_cap_factor * rate * duration) as i64,
+                cpu_cap_s: gates.total_cpu_s,
+                blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
+                calcic,
+            }
+        };
     let atol_static: &'static [f64] = Box::leak(atol.clone().into_boxed_slice());
     let refined: &'static [f64] = Box::leak(
         atol.iter()
@@ -902,6 +926,7 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.max_order,
+            false,
         ),
         &never,
     );
@@ -918,6 +943,7 @@ fn s1_hydraulics_admission() {
             rtol_ref,
             refined,
             gates.max_order,
+            false,
         ),
         &never,
     );
@@ -949,6 +975,7 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.max_order,
+            true,
         ),
         &never,
     );
@@ -965,6 +992,7 @@ fn s1_hydraulics_admission() {
             rtol_ref,
             refined,
             gates.max_order,
+            true,
         ),
         &never,
     );
@@ -981,6 +1009,7 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.control_max_order,
+            true,
         ),
         &never,
     );
@@ -1014,6 +1043,7 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.max_order,
+            true,
         ),
         &never,
     );
@@ -1031,6 +1061,7 @@ fn s1_hydraulics_admission() {
             rtol_ref,
             refined,
             gates.max_order,
+            true,
         ),
         &never,
     );
@@ -1048,6 +1079,7 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.control_max_order,
+            true,
         ),
         &never,
     );
@@ -1143,11 +1175,15 @@ fn s1_harness_smoke() {
             },
         )
         .expect("tolerances");
+    let mut network = network;
+    let (yp0, _) = network
+        .consistent_rates(0., &y0, &prepared.differential, CONSISTENT_ROW_BOUND)
+        .expect("consistent prepared pair");
     let run = advance_run(
         network,
         &taps,
         &y0,
-        &prepared.yp,
+        &yp0,
         &prepared.differential,
         Spec {
             rtol: gates.relative_tolerance,
@@ -1158,6 +1194,7 @@ fn s1_harness_smoke() {
             step_cap: 200_000,
             cpu_cap_s: 60.,
             blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
+            calcic: false,
         },
         &|_: &[Sample]| false,
     );
@@ -1167,17 +1204,14 @@ fn s1_harness_smoke() {
     );
 }
 
-/// Zero-time receipt only, NOT S1 evidence: the declared 6.00 m preparation,
-/// RCPs at rest, IDACalcIC on the colored network and the residual right
-/// after it, plus the census and the property calls per residual. Advances
-/// no time.
+/// Zero-time check, NOT S1 evidence: the declared 6.00 m preparation, RCPs at
+/// rest, and its consistent initial pair built from the residual's own forces
+/// (no IDACalcIC at t = 0), asserted at the declared bound; with the census,
+/// structure, calls per residual and PZR band state. Advances no time.
 #[test]
 #[ignore = "requires the actual packet, the wiki, maintained IF97 and stock IDA/KLU"]
-fn s1_zero_time_calcic_receipt() {
+fn s1_zero_time_consistent_pair() {
     let packet_path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
-    let wiki = std::env::var("LD01_WIKI_ROOT").unwrap();
-    let model = format!("{wiki}/world/packs/process-plant/reference-designs/ld-01/model");
-    let gates: Gates = strict_block(&format!("{model}/build-readiness.md"), "ld01-s1-gates");
     let packet: Packet =
         serde_json::from_slice(&std::fs::read(&packet_path).unwrap()).expect("packet");
     let point = OperatingPoint::from(&packet.preparation.operating_point);
@@ -1196,92 +1230,45 @@ fn s1_zero_time_calcic_receipt() {
         tree_face_bound_pa: 1e-6,
         representation_search: 8,
     };
-    let (network, prepared, preparation) =
+    let (mut network, prepared, preparation) =
         prepare::prepare(&packet, If97, &point, &rotors, &settings).expect("preparation");
     let mut y = prepared.y.clone();
     for index in &network.rotor_index {
         y[*index] = 0.;
     }
-    let atol = network
-        .absolute_tolerances(
-            &y,
-            ToleranceClasses {
-                relative: gates.relative_tolerance,
-                stock_scaled: gates.stock_scaled_absolute,
-                tracer_scaled: gates.tracer_scaled_absolute,
-                rotor_scaled: gates.rotor_scaled_absolute,
-                volume_flow_m3_s: gates.volume_flow_absolute_m3_s,
-            },
-        )
-        .expect("tolerances");
     let structure = network.sparse_jacobian().expect("structure");
-    let (nonzeros, colors) = (structure.pattern.nonzeros(), structure.coloring.count());
     let algebraic = prepared.differential.iter().filter(|v| **v == 0.).count();
-    let mut yp = prepared.yp.clone();
-    let system = Integrated::colored(network).expect("colored assembly");
-    let mut ida = Ida::new(
-        system,
-        Initial {
-            time: 0.,
-            y: &y,
-            yp: &yp,
-            differential: &prepared.differential,
-            absolute_tolerance: &atol,
-            relative_tolerance: gates.relative_tolerance,
-        },
-    )
-    .expect("stock IDA construction");
-    ida.set_max_order(gates.max_order).expect("max order");
-    let stocks = ida.system().network.nonnegative_stocks();
-    ida.constrain_nonnegative(&stocks)
-        .expect("nonnegative stocks");
-    let before = ida.system().network.counters;
-    let calcic = ida.initialize(gates.output_interval_s, &mut y, &mut yp);
-    let stats = ida.stats().expect("stats");
-    let network = &mut ida.system_mut().network;
+    let before = network.counters;
+    let (yp, largest) = network
+        .consistent_rates(0., &y, &prepared.differential, CONSISTENT_ROW_BOUND)
+        .expect("consistent prepared pair");
     let during = network.counters;
-    network
-        .evaluate(0., &y, &yp, None, 0., None)
-        .expect("post-CalcIC residual");
+    assert!(largest <= CONSISTENT_ROW_BOUND, "{largest}");
     let rows: Vec<f64> = network.rows().iter().map(|r| r.value).collect();
-    let (largest, at) =
-        rows.iter()
-            .enumerate()
-            .map(|(i, r)| (r.abs(), i))
-            .fold(
-                (0., 0),
-                |best, next| if next.0 > best.0 { next } else { best },
-            );
-    let weights: Vec<f64> = y
-        .iter()
-        .zip(&atol)
-        .map(|(v, a)| 1. / (gates.relative_tolerance * v.abs() + a))
-        .collect();
-    let wrms = (rows
-        .iter()
-        .zip(&weights)
-        .map(|(r, w)| (r * w).powi(2))
-        .sum::<f64>()
-        / rows.len() as f64)
-        .sqrt();
     let labels = network.labels();
-    let mut ranked: Vec<usize> = (0..rows.len()).collect();
-    ranked.sort_by(|a, b| rows[*b].abs().total_cmp(&rows[*a].abs()));
-    let top: Vec<Value> = ranked[..8]
+    let at = (0..rows.len())
+        .max_by(|a, b| rows[*a].abs().total_cmp(&rows[*b].abs()))
+        .unwrap();
+    // Algebraic rates are exactly zero; impulse rates carry the loop drive.
+    for (i, id) in prepared.differential.iter().enumerate() {
+        if *id == 0. {
+            assert_eq!(yp[i], 0.);
+        }
+    }
+    let impulse = network
+        .face_layout
         .iter()
-        .map(|i| json!({"row":i,"coordinate":labels[*i].1,"scaled_row":rows[*i],"scaled_y":y[*i],"scaled_yp":yp[*i],"weight":weights[*i]}))
-        .collect();
-    let pzr_rows: Vec<f64> = network.pzr.coordinates().map(|i| rows[i]).collect();
+        .map(|l| (yp[l.index] * network.scales()[l.index]).abs())
+        .fold(0., f64::max);
     let taps = network.pzr_taps().expect("taps");
     let bands = network.pzr_band_reports().expect("band reports");
     println!(
         "{}",
-        json!({"kind":"s1-zero-time-calcic-NOT-EVIDENCE","packet":packet_path,
+        json!({"kind":"s1-zero-time-consistent-pair-NOT-EVIDENCE","packet":packet_path,
             "census":{"coordinates":y.len(),"algebraic":algebraic,"differential":y.len()-algebraic},
-            "structure":{"nonzeros":nonzeros,"colors":colors},
-            "preparation":{"max_eos_row":preparation.max_eos_row,"max_tree_rest_pa":preparation.max_tree_rest_pa,"max_loop_rest_pa":preparation.max_loop_rest_pa,"initial_rows":preparation.initial_rows,"pzr_representation_steps":preparation.pzr["representation_steps"],"pzr_specific_energy_exact":preparation.pzr["specific_energy_exact"]},
-            "calcic":{"ok":calcic.is_ok(),"error":calcic.err(),"residuals":stats.residuals,"jacobians":stats.jacobians,"network_evaluations":during.evaluations-before.evaluations,"pzr_columns":during.pzr_columns-before.pzr_columns},
-            "post_calcic":{"max_abs_scaled_row":largest,"row":at,"coordinate":labels[at].1,"wrms_state_weighted":wrms,"top_rows":top,"pzr_rows":pzr_rows},
-            "pzr":{"pt1_pa":taps.pt1_pa.value,"collapsed_level_m":taps.collapsed_level_m.value,"mixture_level_m":taps.mixture_level_m.value,"departure_k":bands.map(|b|b.departure_k),"bands":format!("{:?}",bands.map(|b|b.band)),"tap_departures":format!("{:?}",taps.departures)}})
+            "structure":{"nonzeros":structure.pattern.nonzeros(),"colors":structure.coloring.count()},
+            "preparation":{"max_eos_row":preparation.max_eos_row,"max_tree_rest_pa":preparation.max_tree_rest_pa,"max_loop_rest_pa":preparation.max_loop_rest_pa,"pzr_representation_steps":preparation.pzr["representation_steps"],"pzr_specific_energy_exact":preparation.pzr["specific_energy_exact"]},
+            "initial_pair":{"largest_scaled_row":largest,"row":at,"coordinate":labels[at].1,"bound":CONSISTENT_ROW_BOUND,"largest_impulse_rate_pa":impulse,"evaluations":during.evaluations-before.evaluations,"pzr_columns":during.pzr_columns-before.pzr_columns},
+            "pzr":{"pt1_pa":taps.pt1_pa.value,"collapsed_level_m":taps.collapsed_level_m.value,"mixture_level_m":taps.mixture_level_m.value,"departure_k":bands.map(|b|b.departure_k),"bands":format!("{:?}",bands.map(|b|b.band))}})
     );
 }
