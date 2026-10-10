@@ -51,9 +51,11 @@ pub struct Mechanics {
 pub struct Region {
     pub id: String,
     pub volume_m3: f64,
+    pub elevation_m: f64,
 }
 #[derive(Debug, Deserialize)]
 pub struct FacePacket {
+    pub id: String,
     pub from: usize,
     pub to: usize,
     pub flow_area_m2: f64,
