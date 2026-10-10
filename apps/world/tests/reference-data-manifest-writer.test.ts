@@ -32,6 +32,13 @@ const config: DatasetConfig = {
   featureToCategory: (f: NormalizedFeature): string => String(f.properties.category ?? 'unknown'),
 }
 
+const sourceSnapshots = [{
+  origin: '/dev/null',
+  sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+  byteLength: 0,
+  dataTimestamp: null,
+}]
+
 const sampleFeature: NormalizedFeature = {
   type: 'Feature',
   geometry: { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]] },
@@ -43,6 +50,7 @@ describe('composeDatasetManifest', () => {
     const manifest = composeDatasetManifest({
       config,
       features: [sampleFeature, sampleFeature, sampleFeature],
+      sourceSnapshots,
       builtAt: asIso8601('2026-05-26T18:30:00Z'),
       buildId: asBuildId('20260526-1830'),
       pmtilesRelativePath: 'test-dataset.pmtiles',
@@ -58,6 +66,7 @@ describe('composeDatasetManifest', () => {
     const manifest = composeDatasetManifest({
       config,
       features: [sampleFeature],
+      sourceSnapshots,
       builtAt: asIso8601('2026-05-26T18:30:00Z'),
       buildId: asBuildId('20260526-1830'),
       pmtilesRelativePath: 'x.pmtiles',
@@ -67,12 +76,28 @@ describe('composeDatasetManifest', () => {
   })
 })
 
+describe('composeDatasetManifest source snapshots', () => {
+  test('records one snapshot per source and rejects a mismatched count', () => {
+    const input = {
+      config,
+      features: [sampleFeature],
+      builtAt: asIso8601('2026-05-26T18:30:00Z'),
+      buildId: asBuildId('20260526-1830'),
+      pmtilesRelativePath: 'x.pmtiles',
+      sidecarRelativePath: 'x.features.geojson',
+    }
+    expect(composeDatasetManifest({ ...input, sourceSnapshots }).sources[0]?.snapshot).toEqual(sourceSnapshots[0])
+    expect(() => composeDatasetManifest({ ...input, sourceSnapshots: [] })).toThrow('0 source snapshot(s) for 1 source(s)')
+  })
+})
+
 describe('writeDatasetManifest', () => {
   test('writes JSON to disk and round-trips', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'leitbild-manifest-'))
     const manifest = composeDatasetManifest({
       config,
       features: [sampleFeature],
+      sourceSnapshots,
       builtAt: asIso8601('2026-05-26T18:30:00Z'),
       buildId: asBuildId('20260526-1830'),
       pmtilesRelativePath: 'x.pmtiles',

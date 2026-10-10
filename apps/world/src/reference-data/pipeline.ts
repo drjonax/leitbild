@@ -1,8 +1,8 @@
-import { mkdir, rename, symlink, rm, writeFile, lstat, readdir, readlink } from 'node:fs/promises'
+import { mkdir, readFile, rename, symlink, rm, writeFile, lstat, readdir, readlink } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { assertKnownLicence } from './licences.ts'
 import { composeDatasetManifest, writeAuditReport, writeDatasetManifest, type AuditReport } from './manifest-writer.ts'
-import { loadManualSource } from './sources/manual.ts'
+import { parseManualSource } from './sources/manual.ts'
 import { buildTiles, type TippecanoeRunner } from './tippecanoe.ts'
 import {
   asBuildId,
@@ -12,7 +12,10 @@ import {
   type DatasetSource,
   type FeatureCollection,
   type FetchCache,
+  type LocalSourceLoad,
   type NormalizedFeature,
+  type RawBytes,
+  type SourceSnapshot,
 } from './types.ts'
 
 // buildDataset:
@@ -40,15 +43,23 @@ const generateBuildId = (now: Date): BuildId => {
   return asBuildId(stamp)
 }
 
-const loadSource = async (source: DatasetSource, fetchCache: FetchCache): Promise<ReadonlyArray<NormalizedFeature>> => {
+const snapshotOfBytes = (origin: string, bytes: RawBytes): SourceSnapshot => ({
+  origin,
+  sha256: new Bun.CryptoHasher('sha256').update(bytes).digest('hex'),
+  byteLength: bytes.byteLength,
+  dataTimestamp: null,
+})
+
+const loadSource = async (source: DatasetSource, fetchCache: FetchCache): Promise<LocalSourceLoad> => {
   if (source.kind === 'manual') {
-    return loadManualSource(source.path)
+    const bytes = await readFile(source.path)
+    return { features: parseManualSource(bytes.toString('utf8')), snapshot: snapshotOfBytes(source.path, bytes) }
   }
   if (source.kind === 'local') {
     return source.load(fetchCache)
   }
   const raw = await source.fetch(fetchCache)
-  return source.parse(raw)
+  return { features: await source.parse(raw), snapshot: snapshotOfBytes(String(source.id), raw) }
 }
 
 const validateFeatures = <P>(
@@ -103,9 +114,9 @@ export const buildDataset = async <P>(
   const buildDir = join(env.referenceRoot, 'builds', String(config.id), String(buildId))
   await mkdir(buildDir, { recursive: true })
 
-  const sourceBatches = await Promise.all(config.sources.map(s => loadSource(s, env.fetchCache)))
+  const sourceLoads = await Promise.all(config.sources.map(s => loadSource(s, env.fetchCache)))
   const allFeatures: NormalizedFeature[] = []
-  for (const batch of sourceBatches) for (const feature of batch) allFeatures.push(feature)
+  for (const load of sourceLoads) for (const feature of load.features) allFeatures.push(feature)
 
   const { errors, accepted } = validateFeatures(allFeatures, config)
   const auditErrors: string[] = [...errors]
@@ -158,6 +169,7 @@ export const buildDataset = async <P>(
   const manifest = composeDatasetManifest({
     config,
     features: accepted,
+    sourceSnapshots: sourceLoads.map(load => load.snapshot),
     builtAt: asIso8601(now.toISOString()),
     buildId,
     pmtilesRelativePath: pmtilesFileName,

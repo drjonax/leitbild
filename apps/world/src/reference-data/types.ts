@@ -31,6 +31,20 @@ export interface FetchCache {
   readonly write: (entry: FetchCacheEntry, body: RawBytes) => Promise<void>
 }
 
+// Identity of the bytes a source was built from, recorded per source in the dataset manifest.
+export interface SourceSnapshot {
+  readonly origin: string
+  readonly sha256: string
+  readonly byteLength: number
+  // Time the data itself describes (e.g. an OSM replication timestamp); null when the input carries none.
+  readonly dataTimestamp: Iso8601 | null
+}
+
+export interface LocalSourceLoad {
+  readonly features: ReadonlyArray<NormalizedFeature>
+  readonly snapshot: SourceSnapshot
+}
+
 export type DatasetSource =
   | {
       readonly kind: 'manual'
@@ -40,7 +54,7 @@ export type DatasetSource =
   | {
       readonly kind: 'local'
       readonly id: SourceId
-      readonly load: (cache: FetchCache) => Promise<ReadonlyArray<NormalizedFeature>>
+      readonly load: (cache: FetchCache) => Promise<LocalSourceLoad>
     }
   | {
       readonly kind: 'remote'

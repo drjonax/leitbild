@@ -1,10 +1,12 @@
-import { access, mkdir, rename } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { stat } from 'node:fs/promises'
 import {
+  asIso8601,
   asSourceId,
   type DatasetSource,
   type GeoJsonPosition,
+  type LocalSourceLoad,
   type NormalizedFeature,
+  type SourceSnapshot,
 } from '../../../reference-data/types.ts'
 import type { GridReferenceCategory, GridReferenceFeatureProperties } from '../schemas/grid-reference.ts'
 import {
@@ -17,7 +19,13 @@ import {
   type NodeCoordinates,
   type WayRefs,
 } from './osm-power-geometry.ts'
-import { readOsmPbf, type OsmRelationMember, type OsmTags } from './osm-pbf-reader.ts'
+import {
+  readOsmPbf,
+  readOsmPbfHeader,
+  type OsmPbfHeader,
+  type OsmRelationMember,
+  type OsmTags,
+} from './osm-pbf-reader.ts'
 import {
   buildOsmPowerProperties,
   exclusionOf,
@@ -32,12 +40,23 @@ import {
 
 // OSM PBF power extraction: one normalised feature per OSM element, plus a ledger of what was not emitted.
 
+export type OsmPbfPin =
+  | { readonly kind: 'sha256'; readonly sha256: string }
+  | { readonly kind: 'max-age'; readonly maxAgeDays: number; readonly now: () => Date }
+
 export interface OsmPbfPowerSourceConfig {
-  readonly id?: string
+  readonly id: string
   readonly path: string
-  readonly downloadUrl?: string
-  readonly userAgent?: string
-  readonly fetchFn?: typeof fetch
+  readonly pin: OsmPbfPin
+}
+
+export interface OsmPbfInspection {
+  readonly path: string
+  readonly sha256: string
+  readonly byteLength: number
+  readonly modifiedAtMs: number
+  readonly header: OsmPbfHeader
+  readonly replicationTimestamp: Date
 }
 
 export interface OsmPowerExtraction {
@@ -72,12 +91,74 @@ interface Candidate {
   readonly properties: GridReferenceFeatureProperties
 }
 
-const DEFAULT_USER_AGENT = 'Leitbild/0.1 (https://leitbild.leitbild.app)'
+const SHA256_HEX = /^[0-9a-f]{64}$/
+const MILLISECONDS_PER_DAY = 86_400_000
 const AREA_CATEGORIES: ReadonlySet<GridReferenceCategory> = new Set(['substation', 'plant', 'generator'])
 const RELATION_CATEGORIES: ReadonlySet<GridReferenceCategory> = new Set(['substation', 'plant', 'generator', 'transformer', 'circuit'])
 
 const relationKindOf = (tags: OsmTags): OsmPowerKind | null =>
   isPowerCircuitRelation(tags) ? { category: 'circuit', lifecycle: lifecycleOfTagged(tags) } : powerKindOf(tags)
+
+const sha256OfFile = async (path: string): Promise<string> => {
+  const hasher = new Bun.CryptoHasher('sha256')
+  for await (const chunk of Bun.file(path).stream()) hasher.update(chunk)
+  return hasher.digest('hex')
+}
+
+/** Hashes the file and reads its OSMHeader; a PBF without a replication timestamp cannot be dated and is rejected. */
+export const inspectOsmPbf = async (path: string): Promise<OsmPbfInspection> => {
+  const before = await stat(path)
+  const header = await readOsmPbfHeader(path)
+  if (!header.replicationTimestamp) {
+    throw new Error(`osm-pbf-power: ${path} has no osmosis_replication_timestamp in its OSMHeader`)
+  }
+  const sha256 = await sha256OfFile(path)
+  const after = await stat(path)
+  if (after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+    throw new Error(`osm-pbf-power: ${path} changed while it was being hashed`)
+  }
+  return {
+    path,
+    sha256,
+    byteLength: after.size,
+    modifiedAtMs: after.mtimeMs,
+    header,
+    replicationTimestamp: header.replicationTimestamp,
+  }
+}
+
+export const assertOsmPbfPin = (inspection: OsmPbfInspection, pin: OsmPbfPin): void => {
+  if (pin.kind === 'sha256') {
+    if (inspection.sha256 !== pin.sha256) {
+      throw new Error(`osm-pbf-power: ${inspection.path} has sha256 ${inspection.sha256}, pinned input expects ${pin.sha256}`)
+    }
+    return
+  }
+  const ageMs = pin.now().getTime() - inspection.replicationTimestamp.getTime()
+  if (ageMs > pin.maxAgeDays * MILLISECONDS_PER_DAY) {
+    const ageDays = (ageMs / MILLISECONDS_PER_DAY).toFixed(1)
+    throw new Error(
+      `osm-pbf-power: ${inspection.path} is ${ageDays} days old (replication timestamp ${inspection.replicationTimestamp.toISOString()}), exceeding the ${pin.maxAgeDays}-day maximum`,
+    )
+  }
+}
+
+export const validateOsmPbfPin = (pin: OsmPbfPin): OsmPbfPin => {
+  if (pin.kind === 'sha256' && !SHA256_HEX.test(pin.sha256)) {
+    throw new Error(`osm-pbf-power: pinned sha256 must be 64 lowercase hex characters, got "${pin.sha256}"`)
+  }
+  if (pin.kind === 'max-age' && !(Number.isFinite(pin.maxAgeDays) && pin.maxAgeDays > 0)) {
+    throw new Error(`osm-pbf-power: max age must be a positive number of days, got ${pin.maxAgeDays}`)
+  }
+  return pin
+}
+
+export const snapshotOfInspection = (inspection: OsmPbfInspection): SourceSnapshot => ({
+  origin: inspection.path,
+  sha256: inspection.sha256,
+  byteLength: inspection.byteLength,
+  dataTimestamp: asIso8601(inspection.replicationTimestamp.toISOString()),
+})
 
 const readPowerElements = async (path: string): Promise<{
   readonly nodes: ReadonlyArray<PowerNodeRecord>
@@ -235,41 +316,30 @@ export const extractOsmPower = async (path: string, source: string): Promise<Osm
   return { features, ledger: ledger.toRecord() }
 }
 
-const hasFile = async (path: string): Promise<boolean> => {
-  try {
-    await access(path)
-    return true
-  } catch {
-    return false
+/** Verifies the pin, extracts, and fails if the file changed between hashing and extraction. */
+export const extractPinnedOsmPower = async (
+  path: string,
+  pin: OsmPbfPin,
+  source: string,
+): Promise<{ readonly inspection: OsmPbfInspection; readonly extraction: OsmPowerExtraction }> => {
+  const inspection = await inspectOsmPbf(path)
+  assertOsmPbfPin(inspection, validateOsmPbfPin(pin))
+  const extraction = await extractOsmPower(path, source)
+  const after = await stat(path)
+  if (after.size !== inspection.byteLength || after.mtimeMs !== inspection.modifiedAtMs) {
+    throw new Error(`osm-pbf-power: ${path} changed during extraction`)
   }
-}
-
-const ensureLocalPbf = async (config: OsmPbfPowerSourceConfig): Promise<void> => {
-  if (await hasFile(config.path)) return
-  if (!config.downloadUrl) {
-    throw new Error(`osm-pbf-power: source file does not exist and no downloadUrl was configured: ${config.path}`)
-  }
-  await mkdir(dirname(config.path), { recursive: true })
-  const fetchFn = config.fetchFn ?? fetch
-  const response = await fetchFn(config.downloadUrl, {
-    headers: { 'user-agent': config.userAgent ?? DEFAULT_USER_AGENT },
-  })
-  if (!response.ok || !response.body) {
-    throw new Error(`osm-pbf-power: failed to download ${config.downloadUrl}: HTTP ${response.status}`)
-  }
-  const tmpPath = `${config.path}.download`
-  await Bun.write(Bun.file(tmpPath), response)
-  await rename(tmpPath, config.path)
+  return { inspection, extraction }
 }
 
 export const osmPbfPowerSource = (config: OsmPbfPowerSourceConfig): DatasetSource => {
-  const id = config.id ?? 'osm:pbf-power:NO'
+  const pin = validateOsmPbfPin(config.pin)
   return {
     kind: 'local',
-    id: asSourceId(id),
-    load: async (): Promise<ReadonlyArray<NormalizedFeature>> => {
-      await ensureLocalPbf(config)
-      return (await extractOsmPower(config.path, id)).features
+    id: asSourceId(config.id),
+    load: async (): Promise<LocalSourceLoad> => {
+      const { inspection, extraction } = await extractPinnedOsmPower(config.path, pin, config.id)
+      return { features: extraction.features, snapshot: snapshotOfInspection(inspection) }
     },
   }
 }

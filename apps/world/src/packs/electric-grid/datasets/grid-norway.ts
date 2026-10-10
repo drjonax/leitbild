@@ -8,9 +8,10 @@ import {
 } from '../../../reference-data/types.ts'
 import { compileGridReferenceGraph } from '../reference-graph.ts'
 import { gridReferenceFeatureSchema } from '../schemas/grid-reference.ts'
-import { osmPbfPowerSource } from '../sources/osm-pbf-power.ts'
+import { osmPbfPowerSource, type OsmPbfPin } from '../sources/osm-pbf-power.ts'
 
 export const gridNorwayDatasetId = asDatasetId('grid-norway')
+export const gridNorwayOsmSourceId = 'osm:pbf-power:NO'
 
 export const gridNorwayFeatureSchema = gridReferenceFeatureSchema
 export type GridNorwayFeatureProperties = z.infer<typeof gridNorwayFeatureSchema>
@@ -22,9 +23,10 @@ export interface GridNorwayThresholds {
 }
 
 export interface GridNorwayDatasetConfig {
-  readonly osmPbfPath?: string
-  readonly osmPbfDownloadUrl?: string
-  readonly osmPbfUserAgent?: string
+  readonly osmPbf: {
+    readonly path: string
+    readonly pin: OsmPbfPin
+  }
   readonly thresholds?: GridNorwayThresholds
 }
 
@@ -65,10 +67,9 @@ const failIfBelow = (
 export const createGridNorwayDataset = (config: GridNorwayDatasetConfig): DatasetConfig => {
   const thresholds = config.thresholds ?? gridNorwayProductionThresholds
   const powerSource = osmPbfPowerSource({
-    id: 'osm:pbf-power:NO',
-    path: config.osmPbfPath ?? '/opt/leitbild/maps/sources/norway-latest.osm.pbf',
-    ...(config.osmPbfDownloadUrl !== undefined ? { downloadUrl: config.osmPbfDownloadUrl } : {}),
-    ...(config.osmPbfUserAgent !== undefined ? { userAgent: config.osmPbfUserAgent } : {}),
+    id: gridNorwayOsmSourceId,
+    path: config.osmPbf.path,
+    pin: config.osmPbf.pin,
   })
   return {
     id: gridNorwayDatasetId,

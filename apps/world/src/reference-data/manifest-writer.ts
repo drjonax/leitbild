@@ -10,6 +10,7 @@ import type {
   Iso8601,
   LicenceRef,
   NormalizedFeature,
+  SourceSnapshot,
 } from './types.ts'
 
 // Per-dataset manifest fragment written next to the PMTiles + sidecar GeoJSON.
@@ -35,6 +36,12 @@ export const datasetManifestSchema = z.object({
   sources: z.array(z.object({
     id: z.string().min(1),
     kind: z.enum(['manual', 'local', 'remote']),
+    snapshot: z.object({
+      origin: z.string().min(1),
+      sha256: z.string().regex(/^[0-9a-f]{64}$/),
+      byteLength: z.number().int().nonnegative(),
+      dataTimestamp: z.string().min(1).nullable(),
+    }),
   })).min(1),
   licences: z.array(z.object({
     id: z.string().min(1),
@@ -85,6 +92,8 @@ const licencePayload = (licence: LicenceRef) => ({
 export interface BuildManifestInput<P> {
   readonly config: DatasetConfig<P>
   readonly features: ReadonlyArray<NormalizedFeature>
+  /** One snapshot per entry of `config.sources`, in the same order. */
+  readonly sourceSnapshots: ReadonlyArray<SourceSnapshot>
   readonly builtAt: Iso8601
   readonly buildId: BuildId
   readonly pmtilesRelativePath: string
@@ -93,6 +102,9 @@ export interface BuildManifestInput<P> {
 
 export const composeDatasetManifest = <P>(input: BuildManifestInput<P>): DatasetManifest => {
   for (const licence of input.config.licences) assertKnownLicence(licence)
+  if (input.sourceSnapshots.length !== input.config.sources.length) {
+    throw new Error(`composeDatasetManifest: ${input.sourceSnapshots.length} source snapshot(s) for ${input.config.sources.length} source(s)`)
+  }
   const counts = countByCategory(input.features, input.config.featureToCategory)
   const manifest: DatasetManifest = {
     schemaVersion: 1,
@@ -105,7 +117,7 @@ export const composeDatasetManifest = <P>(input: BuildManifestInput<P>): Dataset
       outputLayer: input.config.tilebuild.outputLayer,
     },
     categories: categoryEntries(input.config.tilebuild.categories, counts),
-    sources: input.config.sources.map(s => ({ id: String(s.id), kind: s.kind })),
+    sources: input.config.sources.map((s, index) => ({ id: String(s.id), kind: s.kind, snapshot: input.sourceSnapshots[index]! })),
     licences: input.config.licences.map(licencePayload),
   }
   return datasetManifestSchema.parse(manifest)

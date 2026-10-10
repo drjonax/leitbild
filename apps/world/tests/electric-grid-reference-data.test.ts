@@ -1,13 +1,22 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createGridNorwayDataset } from '../src/packs/electric-grid/datasets/grid-norway.ts'
 import { compileGridReferenceGraph } from '../src/packs/electric-grid/reference-graph.ts'
 import { gridReferenceFeatureSchema, type GridReferenceFeatureProperties } from '../src/packs/electric-grid/schemas/grid-reference.ts'
-import { extractOsmPower, type OsmPowerExtraction } from '../src/packs/electric-grid/sources/osm-pbf-power.ts'
+import {
+  assertOsmPbfPin,
+  extractOsmPower,
+  inspectOsmPbf,
+  osmPbfPowerSource,
+  type OsmPowerExtraction,
+} from '../src/packs/electric-grid/sources/osm-pbf-power.ts'
 import { parseFrequency, parseOutputMw, parseVoltage, systemsFor } from '../src/packs/electric-grid/sources/osm-power-normalization.ts'
+import { createFetchCache } from '../src/reference-data/fetch-cache.ts'
+import { buildDataset } from '../src/reference-data/pipeline.ts'
 import type { NormalizedFeature } from '../src/reference-data/types.ts'
-import { writeOsmPbfFixture, type FixtureOsm } from './helpers/osm-pbf-fixture.ts'
+import { encodeOsmPbf, writeOsmPbfFixture, type FixtureOsm } from './helpers/osm-pbf-fixture.ts'
 
 const replicationTimestamp = new Date('2026-10-08T20:21:06Z')
 
@@ -301,5 +310,72 @@ describe('OSM PBF power extraction', () => {
     const graph = compileGridReferenceGraph(extraction.features, { maxEndpointDistanceKm: 2 })
     expect(graph.branches.find(branch => branch.externalId === 'way/200')).toMatchObject({ voltageKv: [420] })
     expect(graph.nodes.map(node => node.externalId)).toContain('way/100')
+  })
+})
+
+describe('OSM PBF pinned input and source snapshot', () => {
+  test('inspection reads the replication timestamp and hashes the file', async () => {
+    const inspection = await inspectOsmPbf(fixturePath)
+    const expected = new Bun.CryptoHasher('sha256').update(encodeOsmPbf(fixture)).digest('hex')
+    expect(inspection.sha256).toBe(expected)
+    expect(inspection.replicationTimestamp.toISOString()).toBe('2026-10-08T20:21:06.000Z')
+    expect(inspection.header.replicationBaseUrl).toBe('https://download.geofabrik.de/europe/norway-updates')
+  })
+
+  test('a sha256 pin mismatch fails loudly', async () => {
+    const inspection = await inspectOsmPbf(fixturePath)
+    expect(() => assertOsmPbfPin(inspection, { kind: 'sha256', sha256: '0'.repeat(64) })).toThrow('pinned input expects')
+    expect(() => assertOsmPbfPin(inspection, { kind: 'sha256', sha256: inspection.sha256 })).not.toThrow()
+  })
+
+  test('a max-age pin rejects an extract older than allowed', async () => {
+    const inspection = await inspectOsmPbf(fixturePath)
+    const now = () => new Date('2026-10-10T08:00:00Z')
+    expect(() => assertOsmPbfPin(inspection, { kind: 'max-age', maxAgeDays: 7, now })).not.toThrow()
+    expect(() => assertOsmPbfPin(inspection, { kind: 'max-age', maxAgeDays: 1, now })).toThrow('exceeding the 1-day maximum')
+  })
+
+  test('an extract without a replication timestamp cannot be used', async () => {
+    const path = join(directory, 'undated.osm.pbf')
+    await writeOsmPbfFixture(path, { ...fixture, replicationTimestamp: null })
+    await expect(inspectOsmPbf(path)).rejects.toThrow('no osmosis_replication_timestamp')
+    const undated = osmPbfPowerSource({ id: source, path, pin: { kind: 'max-age', maxAgeDays: 30, now: () => new Date() } })
+    if (undated.kind !== 'local') throw new Error('expected a local source')
+    await expect(undated.load(createFetchCache(join(directory, 'cache')))).rejects.toThrow('no osmosis_replication_timestamp')
+  })
+
+  test('the grid-norway pipeline build records the PBF snapshot in its manifest', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'leitbild-grid-norway-'))
+    const sha256 = (await inspectOsmPbf(fixturePath)).sha256
+    const dataset = createGridNorwayDataset({
+      osmPbf: { path: fixturePath, pin: { kind: 'sha256', sha256 } },
+      thresholds: { nodes: 1, branches: 1, maxUnresolvedEndpointFraction: 1 },
+    })
+    const outcome = await buildDataset(dataset, {
+      referenceRoot: root,
+      fetchCache: createFetchCache(join(root, 'sources')),
+      skipTileBuild: true,
+      now: () => new Date('2026-10-10T10:00:00Z'),
+    })
+    const manifest = JSON.parse(await readFile(join(outcome.buildDir, 'grid-norway.manifest.json'), 'utf8')) as {
+      readonly sources: ReadonlyArray<{ readonly id: string; readonly kind: string; readonly snapshot: unknown }>
+      readonly licences: ReadonlyArray<{ readonly id: string }>
+    }
+    const sidecar = JSON.parse(await readFile(join(outcome.buildDir, 'grid-norway.features.geojson'), 'utf8')) as {
+      readonly features: ReadonlyArray<unknown>
+    }
+    expect(outcome.featureCount).toBe(extraction.features.length)
+    expect(sidecar.features).toHaveLength(extraction.features.length)
+    expect(manifest.sources).toEqual([{
+      id: 'osm:pbf-power:NO',
+      kind: 'local',
+      snapshot: {
+        origin: fixturePath,
+        sha256,
+        byteLength: encodeOsmPbf(fixture).byteLength,
+        dataTimestamp: '2026-10-08T20:21:06.000Z',
+      },
+    }])
+    expect(manifest.licences.map(licence => licence.id)).toEqual(['osm-odbl-1.0'])
   })
 })

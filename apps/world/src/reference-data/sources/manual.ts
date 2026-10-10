@@ -38,8 +38,10 @@ export const manualSource = (config: ManualSourceConfig): DatasetSource => ({
   path: config.path,
 })
 
-export const loadManualSource = async (path: string): Promise<ReadonlyArray<NormalizedFeature>> => {
-  const raw = await readFile(path, 'utf8')
+export const loadManualSource = async (path: string): Promise<ReadonlyArray<NormalizedFeature>> =>
+  parseManualSource(await readFile(path, 'utf8'))
+
+export const parseManualSource = (raw: string): ReadonlyArray<NormalizedFeature> => {
   const parsed = featureCollectionSchema.parse(JSON.parse(raw))
   return parsed.features.map((f): NormalizedFeature => ({
     type: 'Feature',
