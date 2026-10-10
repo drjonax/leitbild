@@ -62,10 +62,14 @@ export const distributeMfrrActivation = (
   units: ReadonlyArray<FrequencyUnit>,
   levels: ReadonlyMap<string, number>,
 ): { readonly levels: ReadonlyMap<string, number>; readonly activatedMw: number; readonly shortfallMw: number } => {
+  // A unit takes activation up to its allocated mFRR and to the physical room its set-point leaves
+  // between minimum and maximum output.
   const room = (unit: FrequencyUnit): number => {
     if (!unit.synchronised) return 0
     const level = levels.get(unit.id)!
-    return activationMw >= 0 ? Math.max(0, unit.reserves.mfrrUpMw - level) : Math.max(0, unit.reserves.mfrrDownMw + level)
+    return activationMw >= 0
+      ? Math.max(0, Math.min(unit.reserves.mfrrUpMw - level, unit.maximumMw - unit.targetMw - level))
+      : Math.max(0, Math.min(unit.reserves.mfrrDownMw + level, unit.targetMw + level - unit.minimumMw))
   }
   const totalRoom = units.reduce((sum, unit) => sum + room(unit), 0)
   const magnitude = Math.min(Math.abs(activationMw), totalRoom)

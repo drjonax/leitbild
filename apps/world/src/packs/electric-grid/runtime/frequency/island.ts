@@ -70,6 +70,18 @@ const stepTolerance = 1e-9
 
 const limited = (outputMw: number, upMw: number, downMw: number): number => Math.min(upMw, Math.max(-downMw, outputMw))
 
+/**
+ * Output band of a synchronised unit at a set-point: [minimum, maximum], widened only to hold a
+ * set-point outside it. Governor, aFRR and mFRR output stay inside it; only the set-point (a stop)
+ * takes a unit below its minimum.
+ */
+const bandLowMw = (unit: FrequencyUnit, scheduledMw: number): number => Math.min(unit.minimumMw, scheduledMw)
+const bandHighMw = (unit: FrequencyUnit, scheduledMw: number): number => Math.max(unit.maximumMw, scheduledMw)
+
+/** mFRR a unit delivers at a set-point: its activation, limited so set-point plus mFRR stays in the band. */
+const deliveredMfrrMw = (unit: FrequencyUnit, scheduledMw: number, activationMw: number): number =>
+  Math.min(bandHighMw(unit, scheduledMw) - scheduledMw, Math.max(bandLowMw(unit, scheduledMw) - scheduledMw, activationMw))
+
 type WorkingUnitState = { -readonly [K in keyof UnitFrequencyState]: UnitFrequencyState[K] }
 
 /** Exact integral of a linear mFRR ramp over [t0, t1]: held before the ramp, linear during it, held after. */
@@ -241,7 +253,21 @@ export const advanceIslandFrequency = (
           mfrrEndMw = mfrrOutputMw(ramp, t1, mfrrFullSeconds)
           mfrrEnergyMw = mfrrEnergyMws(ramp, t0, t1, mfrrFullSeconds)
         }
+        const deliveredStartMw = deliveredMfrrMw(unit, fromMw, mfrrStartMw)
+        const deliveredEndMw = deliveredMfrrMw(unit, endMw, mfrrEndMw)
+        if (deliveredStartMw !== mfrrStartMw || deliveredEndMw !== mfrrEndMw) {
+          // Where the band binds, delivered mFRR is taken linear across the sub-step.
+          mfrrStartMw = deliveredStartMw
+          mfrrEndMw = deliveredEndMw
+          mfrrEnergyMw = (deliveredStartMw + deliveredEndMw) / 2 * stepSeconds
+        }
       }
+      // aFRR follows its share only within the room set-point and mFRR leave in the band at both
+      // ends of the sub-step; 0 always fits, since set-point plus mFRR lies in the band.
+      const afrrLowMw = Math.max(bandLowMw(unit, fromMw) - fromMw - mfrrStartMw, bandLowMw(unit, endMw) - endMw - mfrrEndMw)
+      const afrrHighMw = Math.min(bandHighMw(unit, fromMw) - fromMw - mfrrStartMw, bandHighMw(unit, endMw) - endMw - mfrrEndMw)
+      if (current.afrrMw > afrrHighMw) current.afrrMw = afrrHighMw
+      else if (current.afrrMw < afrrLowMw) current.afrrMw = afrrLowMw
       fixedEnergyMws += scheduledEnergyMws + current.afrrMw * stepSeconds + mfrrEnergyMw
       const baseStartMw = fromMw + current.afrrMw + mfrrStartMw
       const baseEndMw = endMw + current.afrrMw + mfrrEndMw
@@ -456,7 +482,7 @@ export const advanceIslandFrequency = (
   const selfRegulation = finalFrequencyHz === null ? 0 : 1 + dampingPerHz * (finalFrequencyHz - nominalHz)
   const unitOutputs = units.map(unit => {
     const current = unitStates.get(unit.id)!
-    const mfrrMw = unit.synchronised ? mfrrAt(current.mfrr, elapsedSeconds) : 0
+    const mfrrMw = unit.synchronised ? deliveredMfrrMw(unit, current.scheduledMw, mfrrAt(current.mfrr, elapsedSeconds)) : 0
     const fcrDMw = current.fcrDUpMw + current.fcrDDownMw
     return {
       id: unit.id,
@@ -623,10 +649,10 @@ const runRestorationCycle = (context: {
   }
   for (const unit of units) {
     const current = unitStates.get(unit.id)!
-    // A provider cannot follow its share beyond its own output limits.
-    const baseMw = current.scheduledMw + mfrrAt(current.mfrr, t0)
-    const upRoomMw = Math.max(0, unit.maximumMw - baseMw)
-    const downRoomMw = Math.max(0, baseMw - unit.minimumMw)
+    // A provider cannot follow its share beyond its own output band.
+    const baseMw = current.scheduledMw + deliveredMfrrMw(unit, current.scheduledMw, mfrrAt(current.mfrr, t0))
+    const upRoomMw = Math.max(0, bandHighMw(unit, current.scheduledMw) - baseMw)
+    const downRoomMw = Math.max(0, baseMw - bandLowMw(unit, current.scheduledMw))
     current.afrrMw = unit.synchronised ? Math.min(upRoomMw, Math.max(-downRoomMw, shares.get(unit.id)!)) : 0
   }
   const mfrrConfig = automation.mfrr

@@ -431,3 +431,60 @@ describe('frequency advance boundaries', () => {
     expect(result.products.some(product => product.deficitMw > 0)).toBe(true)
   })
 })
+
+describe('unit output band', () => {
+  /** Eight hydro units of 40–100 MW at one set-point, with more reserve allocated than a set-point at an edge leaves room for. */
+  const units = (targetMw: number): FrequencyUnit[] => Array.from({ length: 8 }, (_, index) => ({
+    id: `hydro-${index}`, connection: 'synchronous', governorClass: 'hydro', synchronised: true,
+    ratedMva: 111, inertiaConstantSeconds: 6, minimumMw: 40, maximumMw: 100, targetMw, rampRateMwPerSecond: 2,
+    reserves: { fcrNMw: 2, fcrDUpMw: 2, fcrDDownMw: 2, afrrUpMw: 5, afrrDownMw: 5, mfrrUpMw: 20, mfrrDownMw: 20 },
+  }))
+
+  /**
+   * Runs 300 s with aFRR and mFRR acting against an imbalance, then moves every set-point to the
+   * band edge, with demand to match, while that activation is still held, and runs 300 s more.
+   */
+  const run = (config: { readonly targetMw: number; readonly loadMw: number; readonly edgeMw: number }) => {
+    const before: IslandFrequencyInput = {
+      islandId: 'band', units: units(config.targetMw), storage: [],
+      loads: [{ id: 'demand', priority: 'normal', demandMw: config.loadMw, protectedMw: 0 }],
+      externals: [], lossesMw: 0, fixedInjectionMw: 0,
+    }
+    const steady = { ...before, loads: [{ id: 'demand', priority: 'normal' as const, demandMw: 8 * config.targetMw, protectedMw: 0 }] }
+    let state = createIslandFrequencyState(nordic, steady, { frequencyHz: 50, startSeconds: 0, storageStateOfChargeFraction: {} })
+    let restorationMw = 0
+    let lowestMw = Number.POSITIVE_INFINITY
+    let highestMw = 0
+    const advance = (input: IslandFrequencyInput, record: boolean): void => {
+      const result = advanceIslandFrequency(nordic, state, input, 2)
+      state = result.state
+      for (const unit of result.units) {
+        if (!record) {
+          restorationMw = unit.afrrMw + unit.mfrrMw
+          continue
+        }
+        lowestMw = Math.min(lowestMw, unit.outputMw)
+        highestMw = Math.max(highestMw, unit.outputMw)
+      }
+    }
+    for (let step = 0; step < 150; step += 1) advance(before, false)
+    // Demand now matches the new set-points, so the held activation is no longer needed and has no room.
+    const atEdge = { ...before, units: units(config.edgeMw), loads: [{ id: 'demand', priority: 'normal' as const, demandMw: 8 * config.edgeMw, protectedMw: 0 }] }
+    for (let step = 0; step < 150; step += 1) advance(atEdge, true)
+    return { restorationMw, lowestMw, highestMw }
+  }
+
+  test('a set-point raised to availability takes held aFRR and mFRR out instead of exceeding it', () => {
+    const result = run({ targetMw: 90, loadMw: 8 * 90 + 24, edgeMw: 100 })
+    expect(result.restorationMw).toBeGreaterThan(1)
+    expect(result.highestMw).toBeLessThanOrEqual(100 + 1e-9)
+    expect(result.highestMw).toBeGreaterThan(100 - 1e-6)
+  })
+
+  test('a set-point lowered to minimum stable generation takes held aFRR and mFRR out instead of undercutting it', () => {
+    const result = run({ targetMw: 50, loadMw: 8 * 50 - 24, edgeMw: 40 })
+    expect(result.restorationMw).toBeLessThan(-1)
+    expect(result.lowestMw).toBeGreaterThanOrEqual(40 - 1e-9)
+    expect(result.lowestMw).toBeLessThan(40 + 1e-6)
+  })
+})
