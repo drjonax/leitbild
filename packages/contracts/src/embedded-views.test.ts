@@ -6,6 +6,10 @@ import {
   embeddedViewPath,
   embeddedViewPublicationSchema,
   parseEmbeddedViewFragment,
+  embeddedViewOpenMessageSchema,
+  embeddedViewsMessageSchema,
+  embeddedViewWindowMaximiseMessageSchema,
+  EMBEDDED_VIEW_LISTING_MAX,
   EMBEDDED_VIEW_STATE_MAX_LENGTH,
 } from './embedded-views.ts'
 
@@ -76,5 +80,28 @@ describe('embedded view content', () => {
   test('rejects a lead that is not one of the items, and unknown fields', () => {
     expect(embeddedViewContentSchema.safeParse({ ...content, lead: { item: 1, reason: 'x' } }).success).toBe(false)
     expect(embeddedViewContentSchema.safeParse({ ...content, note: 'x' }).success).toBe(false)
+  })
+})
+
+describe('embedded view window messages', () => {
+  const listing = { key: 'room-1/turn-1/call_1_0/display', envelope, caption: 'Answer 14:02:31' }
+
+  test('list views oldest first with unique keys', () => {
+    expect(embeddedViewsMessageSchema.parse({ type: 'leitbild:views', views: [listing] }).views[0]?.key).toBe(listing.key)
+    expect(embeddedViewsMessageSchema.safeParse({ type: 'leitbild:views', views: [listing, listing] }).success).toBe(false)
+    const many = Array.from({ length: EMBEDDED_VIEW_LISTING_MAX + 1 }, (_, index) => ({ ...listing, key: `k${index}` }))
+    expect(embeddedViewsMessageSchema.safeParse({ type: 'leitbild:views', views: many }).success).toBe(false)
+  })
+
+  test('open a view from a self-contained listing whose envelope is checked', () => {
+    expect(embeddedViewOpenMessageSchema.safeParse({ type: 'leitbild:view-open', view: listing }).success).toBe(true)
+    expect(embeddedViewOpenMessageSchema.safeParse({ type: 'leitbild:view-open', view: { ...listing, envelope: { ...envelope, height: 9_999 } } }).success).toBe(false)
+    expect(embeddedViewOpenMessageSchema.safeParse({ type: 'leitbild:view-open', view: { ...listing, url: 'https://evil.example' } }).success).toBe(false)
+    expect(embeddedViewOpenMessageSchema.safeParse({ type: 'leitbild:view-open', key: listing.key }).success).toBe(false)
+  })
+
+  test('maximise names the wanted state', () => {
+    expect(embeddedViewWindowMaximiseMessageSchema.parse({ type: 'leitbild:view-window-maximise', maximised: true }).maximised).toBe(true)
+    expect(embeddedViewWindowMaximiseMessageSchema.safeParse({ type: 'leitbild:view-window-maximise' }).success).toBe(false)
   })
 })
