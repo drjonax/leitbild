@@ -19,7 +19,7 @@ const drivenSources: ReadonlyArray<(source: { readonly kind: string }, link: Com
   source => source.kind === 'processTank',
   (source, link) => source.kind === 'condenserSink' && (link.service === processPlantServices.condensate || link.service === 'coolingWater'),
   (source, link) => source.kind === 'pressurizer' && link.service === 'primaryRelief',
-  (source, link) => source.kind === 'reactorVessel' && link.service === 'primaryRelease',
+  (source, link) => source.kind === 'reactorVessel' && (link.service === 'primaryRelease' || link.service === 'letdown'),
   (source, link) => source.kind === 'steamGenerator' && link.service === processPlantServices.mainSteam,
   source => source.kind === 'turbineLoadSink',
   (source, link) => source.kind === 'containmentVolume' && (String(link.fromPortName) === 'sumpOut' || String(link.fromPortName) === 'ventOut'),

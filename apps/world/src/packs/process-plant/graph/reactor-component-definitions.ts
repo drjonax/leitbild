@@ -122,6 +122,7 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       upperPlenum: { kind: 'hydraulicThermal', direction: 'in', circuit: 'coolant' },
       pressurizerSurge: { kind: 'hydraulicThermal', direction: 'bidirectional', circuit: 'coolant' },
       releaseOutlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'coolant' },
+      letdownOutlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'coolant' },
     },
     parametersSchema: z.object({
       nominalPrimaryCoolantInventoryKg: z.number().finite().positive(),
@@ -131,12 +132,17 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       effectiveBulkModulusMPa: z.number().finite().positive(),
       thermalExpansionCoefficientPerC: z.number().finite().nonnegative(),
       referencePrimaryCoolantTemperatureC: z.number().finite(),
+      /** Letdown flow through the orifices at nominal coolant pressure. */
       normalLetdownFlowKgPerS: z.number().finite().nonnegative().optional(),
       primaryReleaseRadiationMSvPerH: z.number().finite().nonnegative().optional(),
       initialBoronConcentrationPpm: z.number().finite().nonnegative().optional(),
       collapsedLevelReferenceInventoryFraction: normalized.optional(),
     }),
-    semantics: fixedSemantics({ keyValues: ['subcoolingMarginC', 'collapsedLiquidLevelPercent'], aspects: [aspect('level', { variable: 'collapsedLiquidLevelPercent', reading: 'value' })] }),
+    semantics: fixedSemantics({
+      keyValues: ['subcoolingMarginC', 'collapsedLiquidLevelPercent'],
+      aspects: [aspect('level', { variable: 'collapsedLiquidLevelPercent', reading: 'value' })],
+      ratedOutflow: [{ port: 'letdownOutlet', parameter: 'normalLetdownFlowKgPerS' }],
+    }),
     variables: [
       variable({ path: 'primaryCoolantInventoryKg', label: 'Primary coolant inventory', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg' }),
       variable({ path: 'primaryCoolantInventoryDeviationKg', label: 'Primary coolant inventory deviation', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'massDelta', unit: 'kg' }),

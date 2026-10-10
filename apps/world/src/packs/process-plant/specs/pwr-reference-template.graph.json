@@ -2452,7 +2452,7 @@
       "kind": "processValve",
       "label": "Letdown Valve",
       "parameters": {
-        "initialPositionFraction": 0.5
+        "initialPositionFraction": 1
       },
       "variables": [
         {
@@ -8305,6 +8305,50 @@
       ]
     },
     {
+      "id": "rcs-letdown",
+      "from": "vessel.letdownOutlet",
+      "to": "letdownValve.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "letdown",
+      "nominalFluid": "water",
+      "designPhase": "liquid",
+      "solverModel": "incompressibleLiquid",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Letdown from reactor coolant system flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 90
+        },
+        {
+          "path": "temperatureC",
+          "label": "Letdown from reactor coolant system temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 288
+        },
+        {
+          "path": "soluteConcentrationPpm",
+          "kind": "derived",
+          "discipline": "chemical",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "concentration",
+          "unit": "ppm",
+          "initialValue": 1200
+        }
+      ]
+    },
+    {
       "id": "letdown-to-vct",
       "from": "letdownValve.outlet",
       "to": "volumeControlTank.inlet",
@@ -8323,7 +8367,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 45
+          "initialValue": 90
         },
         {
           "path": "temperatureC",

@@ -1,5 +1,6 @@
 import { componentVariablePath, processLinkVariablePath, type ProcessLinkBehaviorDefinition } from '../behavior-contract.ts'
 import { relaxToward } from '../component-helpers.ts'
+import { primarySystemReactorCore } from '../system-topology.ts'
 import { averageIncomingLinkValue, flowWeightedIncomingLinkValue, hasProcessLinkVariable, serviceMatches } from './link-flow-helpers.ts'
 
 export const processLinkTemperatureBehaviorDefinitions: ReadonlyArray<ProcessLinkBehaviorDefinition> = [
@@ -20,6 +21,14 @@ export const processLinkTemperatureBehaviorDefinitions: ReadonlyArray<ProcessLin
         target = context.readNumber(componentVariablePath(fromComponent, 'primaryOutletTemperatureC'))
       } else if (fromComponent.kind === 'pressurizer' && link.service === 'primaryRelief') {
         target = context.readNumber(componentVariablePath(fromComponent, 'steamTemperatureC'))
+      } else if (fromComponent.kind === 'reactorVessel' && link.service === 'letdown') {
+        // Letdown leaves from a cold leg. Its regenerative and letdown heat
+        // exchangers are not modelled, so it carries cold-leg temperature to
+        // the volume control tank and charging returns it.
+        const core = primarySystemReactorCore(system)
+        target = core === null
+          ? context.readNumber(componentVariablePath(fromComponent, 'meanPrimaryCoolantTemperatureC'))
+          : context.readNumber(componentVariablePath(core, 'coolantInletTemperatureC'))
       } else if (fromComponent.kind === 'reactorVessel' && link.service === 'primaryRelease') {
         target = context.readNumber(componentVariablePath(fromComponent, 'meanPrimaryCoolantTemperatureC'))
       } else if (fromComponent.kind === 'processTank') {

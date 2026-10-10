@@ -12,6 +12,7 @@ import {
 } from '../component-helpers.ts'
 import {
   averageIncomingComponentLinkValue as averageIncomingLinkValue,
+  sumOutgoingComponentLinkValue,
   sumProcessLinkValueByService as sumLinkValueByService,
 } from '../component-link-helpers.ts'
 import { flowWeightedIncomingLinkValue, sumIncomingLinkValue } from '../links/link-flow-helpers.ts'
@@ -351,10 +352,9 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       ])
       const chargingFlow = chargingInflow.flowKgPerS
       const primaryInjectionFlow = injectionInflow.flowKgPerS
-      const letdownFlow = Math.max(
-        sumLinkValueByService(system, 'flowKgPerS', context, 'letdown'),
-        optionalParameterNumber(component, 'normalLetdownFlowKgPerS', 0),
-      )
+      // Letdown is what leaves the vessel on its letdown line, and the same
+      // flow reaches the volume control tank.
+      const letdownFlow = sumOutgoingComponentLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'letdown')
       const reliefFlow = sumLinkValueByService(system, 'flowKgPerS', context, 'primaryRelief')
       const primaryLeakFlow = sumLinkValueByService(system, 'leakFlowKgPerS', context, 'primaryCoolant')
       const tubeLeakFlow = sumComponentValueByKind(system, 'steamGenerator', 'primaryToSecondaryLeakKgPerS', context)

@@ -11,6 +11,8 @@ import {
 } from './link-flow-helpers.ts'
 import { topologyAwareMainSteamDemandForSourceLink, topologyAwareMainSteamReleaseAvailabilityForSourceLink } from './main-steam-demand.ts'
 import { processPlantServices, serviceUsesDownstreamDemand } from '../service-profiles.ts'
+import { optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
+import { primarySystemPressurizer } from '../system-topology.ts'
 
 export interface ProcessLinkFlowSource {
   readonly flowKgPerS: number
@@ -85,6 +87,20 @@ export const processLinkFlowSourceFor = (config: {
   if (fromComponent.kind === 'pressurizer' && link.service === 'primaryRelief') {
     return {
       flowKgPerS: context.readNumber(componentVariablePath(fromComponent, 'reliefFlowKgPerS')),
+      alreadyIncludesPathAvailability: false,
+      alreadyIncludesTargetValveDemand: false,
+      bypassTargetPumpLimit: false,
+    }
+  }
+  if (fromComponent.kind === 'reactorVessel' && link.service === 'letdown') {
+    // The letdown orifices pass their rated flow at nominal coolant pressure,
+    // less as the pressure behind them falls; the letdown valve sets the rest.
+    const pressurizer = primarySystemPressurizer(system)
+    const pressureFraction = pressurizer === null
+      ? 1
+      : context.readNumber(componentVariablePath(pressurizer, 'pressureMPa')) / parameterNumber(pressurizer, 'nominalPressureMPa')
+    return {
+      flowKgPerS: optionalParameterNumber(fromComponent, 'normalLetdownFlowKgPerS', 0) * Math.sqrt(Math.max(0, Math.min(1, pressureFraction))),
       alreadyIncludesPathAvailability: false,
       alreadyIncludesTargetValveDemand: false,
       bypassTargetPumpLimit: false,

@@ -229,8 +229,10 @@ describe('operator names', () => {
 describe('link flow', () => {
   test('only flows the runtime actually solves count as flow, and loop legs carry size without direction', () => {
     const fidelity = new Map(graph.links.filter(link => link.kind === 'fluidFlow').map(link => [String(link.id), processLinkFlowFidelityFor(graph, link)]))
-    // The surge line gets a share of the core's outflow; the letdown line has nothing feeding it.
-    expect([...fidelity].filter(([, value]) => value === 'unverified').map(([id]) => id).sort()).toEqual(['letdown-to-vct', 'pressurizer-surge-line'])
+    // The surge line gets a share of the core's outflow. The letdown line is fed from the vessel.
+    expect([...fidelity].filter(([, value]) => value === 'unverified').map(([id]) => id).sort()).toEqual(['pressurizer-surge-line'])
+    expect(fidelity.get('rcs-letdown')).toBe('solved')
+    expect(fidelity.get('letdown-to-vct')).toBe('solved')
     expect([...fidelity].filter(([, value]) => value === 'magnitudeOnly').map(([id]) => id).sort()).toEqual(
       ['a', 'b', 'c', 'd'].flatMap(loop => [`rcp-${loop}-to-core`, `rcs-cold-leg-${loop}`, `rcs-hot-leg-${loop}`]).sort(),
     )
@@ -239,11 +241,12 @@ describe('link flow', () => {
 
   test('a link is rated by its own nominal flow or by the equipment that drives it', () => {
     expect(ratedFlowForLink(graph, linkById('rcs-hot-leg-a'))).toBe(4250)
-    // Through the MFW header and FCV B, back to one MFW pump.
-    expect(ratedFlowForLink(graph, linkById('feedwater-control-valve-b-to-sg-b'))).toBeCloseTo(797, 0)
+    // Through the MFW header and FCV B, back to one MFW pump: half the steam
+    // the core's 3,400 MW and the reactor coolant pumps' 18 MW raise.
+    expect(ratedFlowForLink(graph, linkById('feedwater-control-valve-b-to-sg-b'))).toBeCloseTo(756, 0)
     expect(ratedFlowForLink(graph, linkById('pressurizer-relief-to-tank'))).toBe(componentById(graph, 'pressurizer').semantics.ratedOutflow[0]!.flowKgPerS)
-    // Nothing rated feeds the letdown line.
-    expect(ratedFlowForLink(graph, linkById('letdown-to-vct'))).toBeNull()
+    // The letdown line carries the vessel's rated letdown.
+    expect(ratedFlowForLink(graph, linkById('letdown-to-vct'))).toBe(90)
   })
 
   test('a header joins all its ports, so a rating passes through it', () => {
