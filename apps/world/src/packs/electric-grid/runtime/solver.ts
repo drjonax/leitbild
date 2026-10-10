@@ -5,8 +5,9 @@ import type { GridRuntimeInstance } from './instance.ts'
 import { solveGridNetwork } from './power-flow.ts'
 import { projectGridSystem } from './projection.ts'
 import { topologyPlanForGrid } from './topology.ts'
+import { advanceGridUnitCommitment } from './unit-commitment.ts'
 
-/** One Grid tick: topology, demand, frequency control, network solution, then system projection. */
+/** One Grid tick: topology, unit commitment, demand, frequency control, network solution, then system projection. */
 export const advanceGrid = (grid: GridRuntimeInstance, dtSeconds: number, at: IsoTimestamp): void => {
   const startedAtMs = performance.now()
   const plan = topologyPlanForGrid(grid)
@@ -14,6 +15,7 @@ export const advanceGrid = (grid: GridRuntimeInstance, dtSeconds: number, at: Is
   grid.elapsedMs += dynamicSeconds * 1_000
   grid.tick += 1
 
+  advanceGridUnitCommitment(grid)
   applyGridDemand(grid, at)
   const frequencyByIsland = advanceGridFrequencyControl(grid, plan, dynamicSeconds)
   grid.frequencyByIsland = frequencyByIsland

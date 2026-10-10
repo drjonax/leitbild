@@ -1,5 +1,6 @@
 import { gridFrequencyStep, gridGeneratorIsOnline } from './dynamics.ts'
 import type { GridRuntimeInstance, GridTopologyPlan } from './instance.ts'
+import { gridLoadServiceState, shedGridLoadByLfdd } from './load-service.ts'
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value))
 
@@ -86,12 +87,7 @@ export const advanceGridFrequencyControl = (
           : previousHz < model.nominalFrequencyHz - 0.35
             ? 0.12
             : 0
-    for (const load of loads) {
-      const state = grid.loads.get(load.id)!
-      const interruptibleMw = Math.max(0, state.demandMw - load.criticalMw)
-      state.shedMw = interruptibleMw * shedFraction
-      state.servedMw = Math.max(load.criticalMw, state.demandMw - state.shedMw)
-    }
+    for (const load of loads) shedGridLoadByLfdd(grid.loads.get(load.id)!, load, shedFraction)
     const servedLoadMw = loads.reduce((sum, load) => sum + grid.loads.get(load.id)!.servedMw, 0)
     const storageGenerationMw = storage.reduce((sum, item) => sum + grid.storage.get(item.id)!.dispatchMw, 0)
     const frequencyHz = gridFrequencyStep({
@@ -106,7 +102,7 @@ export const advanceGridFrequencyControl = (
     for (const load of loads) {
       const state = grid.loads.get(load.id)!
       state.frequencyHz = frequencyHz
-      state.serviceState = state.servedMw <= 0 ? 'outage' : state.shedMw > 0 ? 'shed' : Math.abs(frequencyHz - model.nominalFrequencyHz) >= 0.2 ? 'constrained' : 'normal'
+      state.serviceState = gridLoadServiceState(state, frequencyHz, model.nominalFrequencyHz)
     }
     for (const item of storage) {
       const state = grid.storage.get(item.id)!

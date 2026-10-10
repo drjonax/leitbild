@@ -9,8 +9,10 @@ import {
 import {
   gridDispatchGeneratorCommandKind,
   gridGeneratorCommandCapabilities,
-  gridReturnGeneratorToServiceCommandKind,
+  gridResetGeneratorTripCommandKind,
   gridSetGeneratorAvailabilityCommandKind,
+  gridStartGeneratorCommandKind,
+  gridStopGeneratorCommandKind,
   gridTripGeneratorCommandKind,
 } from './generator.ts'
 import {
@@ -24,7 +26,9 @@ export const electricGridCommandKinds = [
   gridDispatchGeneratorCommandKind,
   gridTripGeneratorCommandKind,
   gridSetGeneratorAvailabilityCommandKind,
-  gridReturnGeneratorToServiceCommandKind,
+  gridResetGeneratorTripCommandKind,
+  gridStartGeneratorCommandKind,
+  gridStopGeneratorCommandKind,
   gridOpenBranchCommandKind,
   gridCloseBranchCommandKind,
   gridDerateBranchCommandKind,
@@ -39,3 +43,8 @@ export const electricGridCommandCapabilities: ReadonlyArray<SimulationCapability
   ...gridBranchCommandCapabilities,
   ...gridLoadCommandCapabilities,
 ]
+
+/** Commands that disconnect generation or supply at once; operator surfaces confirm them first. */
+export const electricGridDestructiveCommandKinds: ReadonlySet<string> = new Set(
+  electricGridCommandCapabilities.filter(capability => capability.risk === 'destructive').map(capability => capability.id),
+)

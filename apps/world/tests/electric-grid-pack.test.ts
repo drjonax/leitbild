@@ -5,8 +5,9 @@ import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-res
 import { gridDerateBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import {
   gridDispatchGeneratorCommandKind,
-  gridReturnGeneratorToServiceCommandKind,
+  gridResetGeneratorTripCommandKind,
   gridSetGeneratorAvailabilityCommandKind,
+  gridStartGeneratorCommandKind,
   gridTripGeneratorCommandKind,
 } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
@@ -85,7 +86,7 @@ describe('electric grid Pack', () => {
     expect(() => addGridModelAssets(base, { ...addition, baseModelRef: 'missing' }, 'test addition')).toThrow('base mismatch')
     // A published model is an immutable artifact used by persisted Run state.
     expect(definition('electric-grid.halden.four-unit', 'electric-grid.norway.normal').definitionDigest)
-      .toBe('24e790c7fc6808f697967934fab16b9f5fb1f47740a3c2c003b20b370ee38ec2')
+      .toBe('c87cb95eccc768406bafd57c1ab7718573de5292bde753d978bd2408249a3528')
     expect(() => definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal')).toThrow('unknown Grid Operating Point')
     expect(definition('electric-grid.halden.four-unit', 'electric-grid.norway.normal').model.connectionPoints).toHaveLength(4)
   })
@@ -169,7 +170,9 @@ describe('electric grid Pack', () => {
       const before = objectResult(await connection.invokeQuery({ capabilityId: 'world.electric-grid.grid.summary', input: { gridId: 'grid:norway' } }))
       const beforeReserve = (before.projection as { readonly reserveMarginMw: number }).reserveMarginMw
 
-      const dispatch = await connection.sendCommand(command({ kind: gridDispatchGeneratorCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId, targetMw: 0 } }))
+      const generatorBefore = objectResult(await connection.invokeQuery({ capabilityId: 'world.electric-grid.asset.get', input: { gridId: 'grid:norway', assetId: generatorId } }))
+      const availableMw = (generatorBefore.asset as { readonly state: { readonly availableMw: number } }).state.availableMw
+      const dispatch = await connection.sendCommand(command({ kind: gridDispatchGeneratorCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId, targetMw: availableMw } }))
       const trip = await connection.sendCommand(command({ kind: gridTripGeneratorCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId } }))
       const derate = await connection.sendCommand(command({ kind: gridDerateBranchCommandKind, gridId: 'grid:norway', payload: { assetId: branchId, availability: 0.6 } }))
       expect(dispatch.ok).toBe(true)
@@ -195,12 +198,14 @@ describe('electric grid Pack', () => {
       })).assets as ReadonlyArray<{ readonly id: string }>
       const generatorId = generators[0]!.id
       expect((await connection.sendCommand(command({ kind: gridTripGeneratorCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId } }))).ok).toBe(true)
-      expect((await connection.sendCommand(command({ kind: gridSetGeneratorAvailabilityCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId, availableMw: 50 } }))).ok).toBe(true)
+      expect((await connection.sendCommand(command({ kind: gridSetGeneratorAvailabilityCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId, availableMw: 600 } }))).ok).toBe(true)
       const tripped = objectResult(await connection.invokeQuery({ capabilityId: 'world.electric-grid.asset.get', input: { gridId: 'grid:norway', assetId: generatorId } }))
-      expect(tripped.asset).toMatchObject({ state: { state: 'tripped', availableMw: 50 } })
+      expect(tripped.asset).toMatchObject({ state: { state: 'tripped', availableMw: 600 } })
       expect((await connection.sendCommand(command({ kind: gridDispatchGeneratorCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId, targetMw: 20 } }))).ok).toBe(false)
-      expect((await connection.sendCommand(command({ kind: gridReturnGeneratorToServiceCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId } }))).ok).toBe(true)
-      expect((await connection.sendCommand(command({ kind: gridDispatchGeneratorCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId, targetMw: 20 } }))).ok).toBe(true)
+      expect((await connection.sendCommand(command({ kind: gridResetGeneratorTripCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId } }))).ok).toBe(true)
+      expect((await connection.sendCommand(command({ kind: gridStartGeneratorCommandKind, gridId: 'grid:norway', payload: { assetId: generatorId } }))).ok).toBe(true)
+      const starting = objectResult(await connection.invokeQuery({ capabilityId: 'world.electric-grid.asset.get', input: { gridId: 'grid:norway', assetId: generatorId } }))
+      expect(starting.asset).toMatchObject({ state: { state: 'starting', availableMw: 600 } })
     } finally {
       await connection.close()
     }

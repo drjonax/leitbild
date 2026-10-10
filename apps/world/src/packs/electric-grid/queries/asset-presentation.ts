@@ -7,8 +7,10 @@ import {
 } from '../commands/branch.ts'
 import {
   gridDispatchGeneratorCommandKind,
-  gridReturnGeneratorToServiceCommandKind,
+  gridResetGeneratorTripCommandKind,
   gridSetGeneratorAvailabilityCommandKind,
+  gridStartGeneratorCommandKind,
+  gridStopGeneratorCommandKind,
   gridTripGeneratorCommandKind,
 } from '../commands/generator.ts'
 import {
@@ -16,8 +18,9 @@ import {
   gridSetEvChargingDemandCommandKind,
   gridShedLoadCommandKind,
 } from '../commands/load.ts'
-import type { GridAssetDefinition } from '../grid-model.ts'
-import type { GridAssetSnapshot, GridRuntimeInstance } from '../runtime/instance.ts'
+import type { GridAssetDefinition, GridGeneratorDefinition, GridLoadDefinition } from '../grid-model.ts'
+import type { GridAssetSnapshot, GridBranchState, GridGeneratorState, GridLoadState, GridRuntimeInstance } from '../runtime/instance.ts'
+import { generatorMinimumStableMw, generatorStartupSeconds } from '../runtime/unit-commitment.ts'
 import { assetKindSchema } from './common.ts'
 
 const mapTargetSchema = z.discriminatedUnion('kind', [
@@ -53,25 +56,35 @@ const mapTargetFor = (grid: GridRuntimeInstance, definition: GridAssetDefinition
   return undefined
 }
 
-const applicableOperationIdsFor = (asset: GridAssetSnapshot): ReadonlyArray<string> => {
-  if (asset.kind === 'generator') {
-    const state = asset.state as GridRuntimeInstance['generators'] extends Map<string, infer T> ? T : never
-    return state.state === 'online'
-      ? [gridDispatchGeneratorCommandKind, gridTripGeneratorCommandKind, gridSetGeneratorAvailabilityCommandKind]
-      : [gridSetGeneratorAvailabilityCommandKind, ...(state.availableMw > 0 ? [gridReturnGeneratorToServiceCommandKind] : [])]
-  }
-  if (asset.kind === 'branch') {
-    const state = asset.state as GridRuntimeInstance['branches'] extends Map<string, infer T> ? T : never
-    return [
-      state.state === 'closed' ? gridOpenBranchCommandKind : gridCloseBranchCommandKind,
-      ...(state.availability < 1 ? [gridClearDerateCommandKind] : [gridDerateBranchCommandKind]),
-    ]
-  }
-  if (asset.kind === 'load') {
-    const definition = asset.definition as typeof asset.definition & { readonly controllable?: boolean; readonly kind?: string }
-    if (definition.controllable !== true) return []
-    return [gridShedLoadCommandKind, gridRestoreLoadCommandKind, ...(definition.kind === 'ev_charging' ? [gridSetEvChargingDemandCommandKind] : [])]
-  }
+const generatorOperationIds = (definition: GridGeneratorDefinition, state: GridGeneratorState): ReadonlyArray<string> => {
+  if (state.state === 'online') return [gridDispatchGeneratorCommandKind, gridStopGeneratorCommandKind, gridTripGeneratorCommandKind, gridSetGeneratorAvailabilityCommandKind]
+  if (state.state === 'starting') return [gridStopGeneratorCommandKind, gridTripGeneratorCommandKind, gridSetGeneratorAvailabilityCommandKind]
+  if (state.state === 'stopping') return [gridTripGeneratorCommandKind, gridSetGeneratorAvailabilityCommandKind]
+  if (state.state === 'tripped') return [gridResetGeneratorTripCommandKind, gridSetGeneratorAvailabilityCommandKind]
+  const startable = generatorStartupSeconds(definition) !== null
+    && state.availableMw > 0 && state.availableMw >= generatorMinimumStableMw(definition)
+  return [...(startable ? [gridStartGeneratorCommandKind] : []), gridSetGeneratorAvailabilityCommandKind]
+}
+
+const loadOperationIds = (definition: GridLoadDefinition, state: GridLoadState): ReadonlyArray<string> => {
+  if (!definition.controllable) return []
+  return [
+    gridShedLoadCommandKind,
+    ...(state.manualDemandLimitMw === null ? [] : [gridRestoreLoadCommandKind]),
+    ...(definition.kind === 'ev_charging' ? [gridSetEvChargingDemandCommandKind] : []),
+  ]
+}
+
+const branchOperationIds = (state: GridBranchState): ReadonlyArray<string> => [
+  state.state === 'closed' ? gridOpenBranchCommandKind : gridCloseBranchCommandKind,
+  ...(state.availability < 1 ? [gridDerateBranchCommandKind, gridClearDerateCommandKind] : [gridDerateBranchCommandKind]),
+]
+
+const applicableOperationIdsFor = (grid: GridRuntimeInstance, asset: GridAssetSnapshot): ReadonlyArray<string> => {
+  const entry = grid.definition.index.assetById.get(asset.id)!
+  if (entry.kind === 'generator') return generatorOperationIds(entry.definition, grid.generators.get(asset.id)!)
+  if (entry.kind === 'branch') return branchOperationIds(grid.branches.get(asset.id)!)
+  if (entry.kind === 'load') return loadOperationIds(entry.definition, grid.loads.get(asset.id)!)
   return []
 }
 
@@ -115,7 +128,7 @@ export const assetPresentationFor = (grid: GridRuntimeInstance, asset: GridAsset
     const state = grid.generators.get(asset.id)!
     const definition = asset.definition as typeof grid.definition.model.generators[number]
     subkind = definition.kind
-    tone = state.state === 'online' ? (state.availableMw < definition.capacityMw ? 'working' : 'ready') : state.state === 'tripped' ? 'error' : 'idle'
+    tone = state.state === 'online' ? (state.availableMw < definition.capacityMw ? 'working' : 'ready') : state.state === 'tripped' ? 'error' : state.state === 'offline' ? 'idle' : 'working'
     statusLabel = state.state
     summary = `${Math.round(state.dispatchMw).toLocaleString()} / ${Math.round(state.availableMw).toLocaleString()} MW`
   } else if (asset.kind === 'load') {
@@ -123,7 +136,7 @@ export const assetPresentationFor = (grid: GridRuntimeInstance, asset: GridAsset
     const definition = asset.definition as typeof grid.definition.model.loads[number]
     subkind = definition.kind
     tone = state.serviceState === 'outage' || state.serviceState === 'shed' ? 'error' : state.serviceState === 'constrained' ? 'working' : 'ready'
-    statusLabel = state.serviceState
+    statusLabel = state.serviceState === 'shed' ? `shed (${state.shedCauses.join(', ')})` : state.serviceState
     summary = `${Math.round(state.servedMw).toLocaleString()} / ${Math.round(state.demandMw).toLocaleString()} MW served`
   } else {
     const state = grid.storage.get(asset.id)!
@@ -139,7 +152,7 @@ export const assetPresentationFor = (grid: GridRuntimeInstance, asset: GridAsset
     subkind,
     status: { tone, label: statusLabel },
     summary,
-    applicableOperationIds: [...applicableOperationIdsFor(asset)],
+    applicableOperationIds: [...applicableOperationIdsFor(grid, asset)],
     ...(mapTarget === undefined ? {} : { mapTarget }),
   }
 }

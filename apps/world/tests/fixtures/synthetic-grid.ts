@@ -155,7 +155,7 @@ export const gridDefinitionForModel = (model: GridModelDefinition): CompiledGrid
   operatingPoint: { id: 'synthetic', title: 'Synthetic', loadScale: 1, generationAvailabilityScale: 1, storageStateOfCharge: 0.5 },
   automation: {
     id: 'synthetic', title: 'Synthetic', loadProfiles: true, storageFrequencyResponse: true,
-    underFrequencyLoadShedding: true, primaryFrequencyResponseMwPerHz: 900,
+    underFrequencyLoadShedding: true, primaryFrequencyResponseMwPerHz: 900, synchroCheckHz: 0.2,
   },
   definitionDigest: '0'.repeat(64),
 })

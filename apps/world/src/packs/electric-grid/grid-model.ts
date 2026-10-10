@@ -155,6 +155,8 @@ export interface GridAutomationDefinition {
   readonly storageFrequencyResponse: boolean
   readonly underFrequencyLoadShedding: boolean
   readonly primaryFrequencyResponseMwPerHz: number
+  /** Largest frequency difference (Hz) between two energised islands at which close-branch may join them. */
+  readonly synchroCheckHz: number
 }
 
 export interface CompiledGridDefinition {

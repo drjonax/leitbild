@@ -109,7 +109,15 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     title: 'Standard grid controls',
     description: 'Daily load profiles, actual generator primary response, storage response, and under-frequency load shedding.',
     compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
-    values: { loadProfiles: true, storageFrequencyResponse: true, underFrequencyLoadShedding: true, primaryFrequencyResponseMwPerHz: 900 },
+    values: {
+      loadProfiles: true,
+      storageFrequencyResponse: true,
+      underFrequencyLoadShedding: true,
+      primaryFrequencyResponseMwPerHz: 900,
+      // 0.2 Hz slip is the loose end of synchronism-check settings: typical relays close at 0.05–0.1 Hz and
+      // allow 0.02–0.25 Hz (OPAL-RT ANSI 25 synchronism-check model; TestGuy sync-check primer: ≤ 0.1 Hz).
+      synchroCheckHz: 0.2,
+    },
   }],
 }
 

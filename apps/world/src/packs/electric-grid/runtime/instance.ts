@@ -32,20 +32,36 @@ export interface GridBranchState {
   lossesMw: number
 }
 
+/** tripped →(reset)→ offline →(start)→ starting →(start-up time)→ online →(stop)→ stopping →(0 MW)→ offline. */
+export type GridGeneratorLifecycleState = 'online' | 'offline' | 'starting' | 'stopping' | 'tripped'
+
 export interface GridGeneratorState {
-  state: 'online' | 'offline' | 'tripped'
+  state: GridGeneratorLifecycleState
   availableMw: number
   dispatchMw: number
   targetMw: number
   reserveMw: number
   frequencyHz: number
+  /** Grid elapsed time at which a starting unit synchronises; null in every other state. */
+  synchronisesAtElapsedMs: number | null
 }
 
+export type GridLoadShedCause = 'manual' | 'lfdd'
+
 export interface GridLoadState {
+  /** Scheduled demand before the load profile (Model × Operating Point, or an EV charging schedule). */
   nominalDemandMw: number
+  /** Manual shedding limit from shed-load: the load draws at most this; null when not shed manually. */
+  manualDemandLimitMw: number | null
   demandMw: number
   servedMw: number
+  /** Demand disconnected by the manual shedding limit. */
+  curtailedMw: number
+  /** Demand disconnected by automatic under-frequency load shedding. */
+  lfddShedMw: number
+  /** Total shed demand: curtailedMw + lfddShedMw. */
   shedMw: number
+  shedCauses: Array<GridLoadShedCause>
   frequencyHz: number
   voltagePu: number
   serviceState: 'normal' | 'constrained' | 'shed' | 'outage'
@@ -135,8 +151,8 @@ export interface RestoredGridRuntimeState {
   readonly tick: number
   readonly frequencies: ReadonlyArray<{ readonly islandId: string; readonly frequencyHz: number }>
   readonly branches: ReadonlyArray<{ readonly id: string; readonly state: GridBranchState['state']; readonly availability: number }>
-  readonly generators: ReadonlyArray<{ readonly id: string; readonly state: GridGeneratorState['state']; readonly availableMw: number; readonly dispatchMw: number; readonly targetMw: number }>
-  readonly loads: ReadonlyArray<{ readonly id: string; readonly nominalDemandMw: number }>
+  readonly generators: ReadonlyArray<{ readonly id: string; readonly state: GridGeneratorState['state']; readonly availableMw: number; readonly dispatchMw: number; readonly targetMw: number; readonly synchronisesAtElapsedMs: number | null }>
+  readonly loads: ReadonlyArray<{ readonly id: string; readonly nominalDemandMw: number; readonly manualDemandLimitMw: number | null }>
   readonly storage: ReadonlyArray<{ readonly id: string; readonly stateOfChargeFraction: number; readonly dispatchMw: number }>
 }
 
@@ -198,15 +214,21 @@ export const createGridRuntimeInstance = (config: {
       targetMw: clamp(targetMw, 0, generator.capacityMw),
       reserveMw: generator.reserveMw,
       frequencyHz: config.definition.model.nominalFrequencyHz,
+      synchronisesAtElapsedMs: restored?.synchronisesAtElapsedMs ?? null,
     } satisfies GridGeneratorState]
   }))
   const loads = new Map(config.definition.model.loads.map(load => {
-    const nominalDemandMw = restoredLoads.get(load.id)?.nominalDemandMw ?? load.demandMw * config.definition.operatingPoint.loadScale
+    const restored = restoredLoads.get(load.id)
+    const nominalDemandMw = restored?.nominalDemandMw ?? load.demandMw * config.definition.operatingPoint.loadScale
     return [load.id, {
       nominalDemandMw,
+      manualDemandLimitMw: restored?.manualDemandLimitMw ?? null,
       demandMw: nominalDemandMw,
       servedMw: nominalDemandMw,
+      curtailedMw: 0,
+      lfddShedMw: 0,
       shedMw: 0,
+      shedCauses: [],
       frequencyHz: config.definition.model.nominalFrequencyHz,
       voltagePu: 1,
       serviceState: 'normal',

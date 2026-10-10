@@ -18,12 +18,17 @@ export const electricGridRuntimeStateSchema = z.object({
     }).strict()),
     generators: z.array(z.object({
       id: z.string().min(1),
-      state: z.enum(['online', 'offline', 'tripped']),
+      state: z.enum(['online', 'offline', 'starting', 'stopping', 'tripped']),
       availableMw: finite.nonnegative(),
       dispatchMw: finite.nonnegative(),
       targetMw: finite.nonnegative(),
+      synchronisesAtElapsedMs: finite.nonnegative().nullable(),
     }).strict()),
-    loads: z.array(z.object({ id: z.string().min(1), nominalDemandMw: finite.nonnegative() }).strict()),
+    loads: z.array(z.object({
+      id: z.string().min(1),
+      nominalDemandMw: finite.nonnegative(),
+      manualDemandLimitMw: finite.nonnegative().nullable(),
+    }).strict()),
     storage: z.array(z.object({
       id: z.string().min(1),
       stateOfChargeFraction: finite.min(0).max(1),
@@ -42,8 +47,15 @@ export const runtimeStateForElectricGrids = (grids: ReadonlyMap<string, GridRunt
     tick: grid.tick,
     frequencies: [...grid.frequencyByIsland].map(([islandId, frequencyHz]) => ({ islandId, frequencyHz })),
     branches: [...grid.branches].map(([id, state]) => ({ id, state: state.state, availability: state.availability })),
-    generators: [...grid.generators].map(([id, state]) => ({ id, state: state.state, availableMw: state.availableMw, dispatchMw: state.dispatchMw, targetMw: state.targetMw })),
-    loads: [...grid.loads].map(([id, state]) => ({ id, nominalDemandMw: state.nominalDemandMw })),
+    generators: [...grid.generators].map(([id, state]) => ({
+      id,
+      state: state.state,
+      availableMw: state.availableMw,
+      dispatchMw: state.dispatchMw,
+      targetMw: state.targetMw,
+      synchronisesAtElapsedMs: state.synchronisesAtElapsedMs,
+    })),
+    loads: [...grid.loads].map(([id, state]) => ({ id, nominalDemandMw: state.nominalDemandMw, manualDemandLimitMw: state.manualDemandLimitMw })),
     storage: [...grid.storage].map(([id, state]) => ({ id, stateOfChargeFraction: state.stateOfChargeFraction, dispatchMw: state.dispatchMw })),
   })),
 })

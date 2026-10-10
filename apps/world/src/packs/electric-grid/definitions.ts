@@ -311,6 +311,7 @@ export const createGridDefinitionCompiler = (config: {
       storageFrequencyResponse: automation.values.storageFrequencyResponse,
       underFrequencyLoadShedding: automation.values.underFrequencyLoadShedding,
       primaryFrequencyResponseMwPerHz: automation.values.primaryFrequencyResponseMwPerHz,
+      synchroCheckHz: automation.values.synchroCheckHz,
     }
     const definitionDigest = createHash('sha256')
       .update(compiledModel.digest)

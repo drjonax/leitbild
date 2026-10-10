@@ -9,8 +9,10 @@
   } from '../../packs/electric-grid/commands/branch.ts'
   import {
     gridDispatchGeneratorCommandKind,
-    gridReturnGeneratorToServiceCommandKind,
+    gridResetGeneratorTripCommandKind,
     gridSetGeneratorAvailabilityCommandKind,
+    gridStartGeneratorCommandKind,
+    gridStopGeneratorCommandKind,
     gridTripGeneratorCommandKind,
   } from '../../packs/electric-grid/commands/generator.ts'
   import {
@@ -155,7 +157,9 @@
     [gridDispatchGeneratorCommandKind]: 'Set dispatch',
     [gridTripGeneratorCommandKind]: 'Trip',
     [gridSetGeneratorAvailabilityCommandKind]: 'Set availability',
-    [gridReturnGeneratorToServiceCommandKind]: 'Return to service',
+    [gridResetGeneratorTripCommandKind]: 'Reset trip',
+    [gridStartGeneratorCommandKind]: 'Start',
+    [gridStopGeneratorCommandKind]: 'Stop',
     [gridOpenBranchCommandKind]: 'Open',
     [gridCloseBranchCommandKind]: 'Close',
     [gridDerateBranchCommandKind]: 'Derate',
@@ -168,7 +172,7 @@
   const valueLabel = (operationId: string): string => operationId === gridDerateBranchCommandKind
     ? 'Available fraction (0.05–1)'
     : operationId === gridShedLoadCommandKind
-      ? 'Amount (MW)'
+      ? 'Shed to at most (MW)'
       : operationId === gridSetEvChargingDemandCommandKind
         ? 'Demand (MW)'
         : operationId === gridSetGeneratorAvailabilityCommandKind
@@ -178,7 +182,7 @@
   const defaultValueFor = (operationId: string): string => {
     if (!detail) return ''
     if (operationId === gridDerateBranchCommandKind) return '0.8'
-    if (operationId === gridShedLoadCommandKind) return '10'
+    if (operationId === gridShedLoadCommandKind) return String(Math.round(Number(detail.state?.servedMw ?? 0) * 0.9))
     if (operationId === gridDispatchGeneratorCommandKind) return String(detail.state?.targetMw ?? 0)
     if (operationId === gridSetGeneratorAvailabilityCommandKind) return String(detail.state?.availableMw ?? 0)
     if (operationId === gridSetEvChargingDemandCommandKind) return String(detail.state?.nominalDemandMw ?? 0)
@@ -190,7 +194,7 @@
     if (operationId === gridDispatchGeneratorCommandKind) return { ...base, targetMw: value }
     if (operationId === gridSetGeneratorAvailabilityCommandKind) return { ...base, availableMw: value }
     if (operationId === gridDerateBranchCommandKind) return { ...base, availability: value }
-    if (operationId === gridShedLoadCommandKind) return { ...base, amountMw: value }
+    if (operationId === gridShedLoadCommandKind) return { ...base, targetDemandMw: value }
     if (operationId === gridSetEvChargingDemandCommandKind) return { ...base, demandMw: value }
     return base
   }
