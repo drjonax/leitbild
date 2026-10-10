@@ -18,6 +18,9 @@ pub type Result<T> = std::result::Result<T, String>;
 pub trait System {
     fn dimension(&self) -> usize;
     fn nonzeros(&self) -> usize;
+    /// Number of root functions g(t,y,yp), read once at construction. A
+    /// system without discrete-event roots states 0 explicitly.
+    fn root_count(&self) -> usize;
     fn residual(
         &mut self,
         time: f64,
@@ -37,6 +40,36 @@ pub trait System {
         rows: &mut [i64],
         pointers: &mut [i64],
     ) -> std::result::Result<(), Failure>;
+    /// Fill all `root_count` finite root-function values. Stock IDA cannot
+    /// retry a root evaluation, so every failure here is fatal to the handle.
+    fn roots(
+        &mut self,
+        time: f64,
+        y: &[f64],
+        yp: &[f64],
+        out: &mut [f64],
+    ) -> std::result::Result<(), Failure>;
+}
+/// Successful `advance` outcome; the output buffers hold the state at `time`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Advance {
+    /// IDA_SUCCESS at the requested target or IDA_TSTOP_RETURN at the armed
+    /// stop boundary; the returned time distinguishes them.
+    Reached(f64),
+    /// IDA_ROOT_RETURN at a located root. `directions` is IDAGetRootInfo per
+    /// root function: +1 rising, -1 falling through zero, 0 no root found.
+    Root { time: f64, directions: Vec<i32> },
+}
+impl Advance {
+    /// Time reached by a system that declares no roots; a root is an error.
+    pub fn reached(self) -> Result<f64> {
+        match self {
+            Self::Reached(time) => Ok(time),
+            Self::Root { time, directions } => Err(format!(
+                "unexpected stock IDA root return at {time} s: {directions:?}"
+            )),
+        }
+    }
 }
 pub struct Initial<'a> {
     pub time: f64,
@@ -46,6 +79,8 @@ pub struct Initial<'a> {
     pub absolute_tolerance: &'a [f64],
     pub relative_tolerance: f64,
 }
+/// Stock counters. `reinitialize` (IDAReInit) restarts the integrator
+/// counts; the Jacobian count restarts at the next stock setup.
 #[derive(Debug)]
 pub struct Stats {
     pub steps: i64,
@@ -54,7 +89,17 @@ pub struct Stats {
     pub nonlinear_iterations: i64,
     pub error_failures: i64,
     pub convergence_failures: i64,
+    /// IDAGetNumLinSolvSetups: iteration-matrix setups (KLU factorizations).
+    pub linear_setups: i64,
+    /// IDAGetNumGEvals: root-function evaluations.
+    pub root_evaluations: i64,
+    /// IDAGetLastOrder: BDF order of the last accepted step (0 before any).
+    pub last_order: i32,
+    /// IDAGetCurrentOrder: order stock will attempt next.
+    pub current_order: i32,
     pub last_step: f64,
+    /// IDAGetCurrentStep: step stock will attempt next.
+    pub current_step: f64,
     pub internal_time: f64,
 }
 type Residual = unsafe extern "C" fn(*mut c_void, f64, *const f64, *const f64, *mut f64) -> c_int;
@@ -68,6 +113,10 @@ type Jacobian = unsafe extern "C" fn(
     *mut i64,
     *mut i64,
 ) -> c_int;
+type Roots = unsafe extern "C" fn(*mut c_void, f64, *const f64, *const f64, *mut f64) -> c_int;
+const IDA_SUCCESS: c_int = 0;
+const IDA_TSTOP_RETURN: c_int = 1;
+const IDA_ROOT_RETURN: c_int = 2;
 unsafe extern "C" {
     fn operating_ida_create(
         n: i64,
@@ -80,6 +129,8 @@ unsafe extern "C" {
         yp: *const f64,
         f: Residual,
         j: Jacobian,
+        nroots: c_int,
+        g: Roots,
         user: *mut c_void,
         status: *mut c_int,
     ) -> *mut c_void;
@@ -93,7 +144,20 @@ unsafe extern "C" {
         y: *mut f64,
         yp: *mut f64,
     ) -> c_int;
-    fn operating_ida_stats(ida: *mut c_void, stats: *mut c_long, last_step: *mut f64) -> c_int;
+    fn operating_ida_stats(
+        ida: *mut c_void,
+        counts: *mut c_long,
+        orders: *mut c_int,
+        steps: *mut f64,
+    ) -> c_int;
+    fn operating_ida_max_order(ida: *mut c_void, order: c_int) -> c_int;
+    fn operating_ida_max_step(ida: *mut c_void, step: f64) -> c_int;
+    fn operating_ida_solution_scaling(ida: *mut c_void, enabled: c_int) -> c_int;
+    fn operating_ida_newton_coefficient(ida: *mut c_void, coefficient: f64) -> c_int;
+    fn operating_ida_reinitialize(ida: *mut c_void, t: f64, y: *const f64, yp: *const f64)
+    -> c_int;
+    fn operating_ida_root_directions(ida: *mut c_void, directions: *mut c_int) -> c_int;
+    fn operating_ida_differential(ida: *mut c_void, ids: *const f64) -> c_int;
     fn operating_ida_stop_at(ida: *mut c_void, target: f64) -> c_int;
     fn operating_ida_nonnegative(ida: *mut c_void, flags: *const f64) -> c_int;
     fn operating_ida_current_time(ida: *mut c_void, time: *mut f64) -> c_int;
@@ -114,6 +178,7 @@ struct Context<S> {
     system: S,
     n: usize,
     nnz: usize,
+    roots: usize,
     fatal: Option<String>,
     last_trial: Option<String>,
 }
@@ -135,6 +200,26 @@ impl<S> Context<S> {
                 -1
             }
         }
+    }
+    /// Root evaluations have no stock retry path and must be finite.
+    fn root_status(
+        &mut self,
+        result: std::thread::Result<std::result::Result<(), Failure>>,
+        values: &[f64],
+    ) -> c_int {
+        let reason = match result {
+            Ok(Ok(())) => match values.iter().position(|v| !v.is_finite()) {
+                None => return 0,
+                Some(i) => format!("root function {i} is not finite ({})", values[i]),
+            },
+            Ok(Err(Failure::Recoverable(reason))) => {
+                format!("root function cannot be retried by stock IDA: {reason}")
+            }
+            Ok(Err(Failure::Fatal(reason))) => reason,
+            Err(_) => "panic caught at IDA root boundary".into(),
+        };
+        self.fatal.get_or_insert(reason);
+        -1
     }
 }
 unsafe extern "C" fn residual<S: System>(
@@ -186,16 +271,44 @@ unsafe extern "C" fn jacobian<S: System>(
     }));
     c.status(result)
 }
+unsafe extern "C" fn roots<S: System>(
+    user: *mut c_void,
+    t: f64,
+    y: *const f64,
+    yp: *const f64,
+    out: *mut f64,
+) -> c_int {
+    // SAFETY: as for residual; stock passes nrtfn = Context::roots values.
+    let c = unsafe { &mut *user.cast::<Context<S>>() };
+    if c.fatal.is_some() {
+        return -1;
+    }
+    let out = unsafe { std::slice::from_raw_parts_mut(out, c.roots) };
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
+        c.system.roots(
+            t,
+            std::slice::from_raw_parts(y, c.n),
+            std::slice::from_raw_parts(yp, c.n),
+            out,
+        )
+    }));
+    c.root_status(result, out)
+}
 pub struct Ida<S: System> {
     handle: NonNull<c_void>,
     context: Box<Context<S>>,
     time: f64,
     failed: bool,
+    /// Set by the first `advance` after construction or reinitialization.
+    started: bool,
 }
 impl<S: System> Ida<S> {
     pub fn new(system: S, initial: Initial<'_>) -> Result<Self> {
         let n = system.dimension();
         let nnz = system.nonzeros();
+        let root_count = system.root_count();
+        let nroots = c_int::try_from(root_count)
+            .map_err(|_| format!("{root_count} IDA root functions exceed C int"))?;
         if n == 0
             || nnz == 0
             || n > i64::MAX as usize
@@ -224,6 +337,7 @@ impl<S: System> Ida<S> {
             system,
             n,
             nnz,
+            roots: root_count,
             fatal: None,
             last_trial: None,
         });
@@ -240,6 +354,8 @@ impl<S: System> Ida<S> {
                 initial.yp.as_ptr(),
                 residual::<S>,
                 jacobian::<S>,
+                nroots,
+                roots::<S>,
                 (&mut *context as *mut Context<S>).cast(),
                 &mut status,
             )
@@ -251,6 +367,7 @@ impl<S: System> Ida<S> {
             context,
             time: initial.time,
             failed: false,
+            started: false,
         })
     }
     fn buffers(&self, y: &[f64], yp: &[f64]) -> Result<()> {
@@ -272,9 +389,17 @@ impl<S: System> Ida<S> {
         }
         Ok(())
     }
+    /// Stock IDACalcIC (IDA_YA_YDP_INIT) at a segment start: after
+    /// construction or `reinitialize`, before `advance`. Stock history after
+    /// a step holds scaled derivatives, not an initial-condition guess.
     pub fn initialize(&mut self, horizon: f64, y: &mut [f64], yp: &mut [f64]) -> Result<()> {
         if self.failed {
             return Err("IDA handle is fail-stopped".into());
+        }
+        if self.started {
+            return Err(
+                "IDA consistent initialization requires construction or reinitialize first".into(),
+            );
         }
         self.buffers(y, yp)?;
         if !horizon.is_finite() || horizon <= self.time {
@@ -292,7 +417,9 @@ impl<S: System> Ida<S> {
         self.failed = result.is_err();
         result
     }
-    pub fn advance(&mut self, target: f64, y: &mut [f64], yp: &mut [f64]) -> Result<f64> {
+    /// Advance toward `target` with stock IDA_NORMAL. A located root of a
+    /// declared root function returns early as `Advance::Root`.
+    pub fn advance(&mut self, target: f64, y: &mut [f64], yp: &mut [f64]) -> Result<Advance> {
         if self.failed {
             return Err("IDA handle is fail-stopped".into());
         }
@@ -300,6 +427,7 @@ impl<S: System> Ida<S> {
         if !target.is_finite() || target <= self.time {
             return Err("IDA target must be in the future".into());
         }
+        self.started = true;
         let status = unsafe {
             operating_ida_advance(
                 self.handle.as_ptr(),
@@ -309,10 +437,116 @@ impl<S: System> Ida<S> {
                 yp.as_mut_ptr(),
             )
         };
+        let result = self.check(status).and_then(|()| self.outcome(status));
+        self.failed = result.is_err();
+        result
+    }
+    fn outcome(&self, status: c_int) -> Result<Advance> {
+        match status {
+            IDA_SUCCESS | IDA_TSTOP_RETURN => Ok(Advance::Reached(self.time)),
+            IDA_ROOT_RETURN => {
+                let mut directions = vec![0 as c_int; self.context.roots];
+                let code = unsafe {
+                    operating_ida_root_directions(self.handle.as_ptr(), directions.as_mut_ptr())
+                };
+                self.check(code)?;
+                Ok(Advance::Root {
+                    time: self.time,
+                    directions,
+                })
+            }
+            other => Err(format!("unadmitted stock IDA solve status {other}")),
+        }
+    }
+    /// Restart stock history at `time` from (`y`, `yp`) after a physical
+    /// discrete event (IDAReInit). Tolerances, differential identity,
+    /// constraints, roots, the KLU linear solver, Jacobian callback, an armed
+    /// stop boundary and options are retained; stock counters restart. This
+    /// does not make the restarted state consistent: call `initialize` when
+    /// algebraic values or derivatives must be recomputed (IDACalcIC).
+    pub fn reinitialize(&mut self, time: f64, y: &[f64], yp: &[f64]) -> Result<()> {
+        if self.failed {
+            return Err("IDA handle is fail-stopped".into());
+        }
+        self.buffers(y, yp)?;
+        if !time.is_finite() || y.iter().chain(yp).any(|v| !v.is_finite()) {
+            return Err("IDA reinitialization requires a finite time and state".into());
+        }
+        let status = unsafe {
+            operating_ida_reinitialize(self.handle.as_ptr(), time, y.as_ptr(), yp.as_ptr())
+        };
         let result = self.check(status);
         self.failed = result.is_err();
         result?;
-        Ok(self.time)
+        self.time = time;
+        self.started = false;
+        Ok(())
+    }
+    /// IDASetId on this instance after a structural discrete event, such as a
+    /// seized rotor whose rate row becomes algebraic: 1 marks a differential
+    /// and 0 an algebraic coordinate. Allowed only at a segment start (after
+    /// construction or `reinitialize`, before `advance`); follow it with
+    /// `initialize` so IDACalcIC recomputes the new algebraic values and the
+    /// differential derivatives. Changing the residual equations themselves
+    /// through `system_mut` belongs at the same reinitialization.
+    pub fn set_differential(&mut self, ids: &[f64]) -> Result<()> {
+        self.configurable("differential identity")?;
+        if ids.len() != self.context.n || ids.iter().any(|v| *v != 0. && *v != 1.) {
+            return Err("IDA differential identity needs one 0/1 value per coordinate".into());
+        }
+        let code = unsafe { operating_ida_differential(self.handle.as_ptr(), ids.as_ptr()) };
+        self.check(code)
+    }
+    /// Options configure the next integration segment only. Stock reads the
+    /// Newton coefficient at its first step and cannot safely lower an active
+    /// BDF order, so every option is refused once `advance` has started.
+    fn configurable(&self, option: &str) -> Result<()> {
+        if self.failed {
+            Err("IDA handle is fail-stopped".into())
+        } else if self.started {
+            Err(format!(
+                "IDA {option} may change only after construction or reinitialization, before advance"
+            ))
+        } else {
+            Ok(())
+        }
+    }
+    /// IDASetMaxOrd; stock admits 1 through its allocated maximum order 5.
+    pub fn set_max_order(&mut self, order: usize) -> Result<()> {
+        self.configurable("maximum order")?;
+        let order = c_int::try_from(order)
+            .map_err(|_| format!("IDA maximum order {order} exceeds C int"))?;
+        let code = unsafe { operating_ida_max_order(self.handle.as_ptr(), order) };
+        self.check(code)
+    }
+    /// IDASetMaxStep: a positive bound on |h|; +inf removes the bound
+    /// explicitly. Stock's zero sentinel for "unbounded" and NaN are refused.
+    pub fn set_max_step(&mut self, step: f64) -> Result<()> {
+        self.configurable("maximum step")?;
+        if step.is_nan() || step <= 0. {
+            return Err(format!("IDA maximum step {step} must be positive"));
+        }
+        let code = unsafe { operating_ida_max_step(self.handle.as_ptr(), step) };
+        self.check(code)
+    }
+    /// IDASetLinearSolutionScaling for the matrix-based KLU solver (stock
+    /// enables it): rescale linear solutions after a changed cj.
+    pub fn set_linear_solution_scaling(&mut self, enabled: bool) -> Result<()> {
+        self.configurable("linear solution scaling")?;
+        let code =
+            unsafe { operating_ida_solution_scaling(self.handle.as_ptr(), c_int::from(enabled)) };
+        self.check(code)
+    }
+    /// IDASetNonlinConvCoef: finite positive Newton convergence coefficient.
+    pub fn set_nonlinear_convergence_coefficient(&mut self, coefficient: f64) -> Result<()> {
+        self.configurable("nonlinear convergence coefficient")?;
+        if !coefficient.is_finite() || coefficient <= 0. {
+            return Err(format!(
+                "IDA nonlinear convergence coefficient {coefficient} must be finite and positive"
+            ));
+        }
+        let code = unsafe { operating_ida_newton_coefficient(self.handle.as_ptr(), coefficient) };
+        self.check(code)
     }
     /// Only actual intervention/event boundaries and the final horizon require
     /// a forced endpoint. Ordinary observation calls use IDA interpolation.
@@ -402,10 +636,17 @@ impl<S: System> Ida<S> {
     }
     #[allow(clippy::unnecessary_cast)] // C long varies by host ABI.
     pub fn stats(&self) -> Result<Stats> {
-        let mut counts = [0 as c_long; 6];
-        let mut step = 0.;
-        let status =
-            unsafe { operating_ida_stats(self.handle.as_ptr(), counts.as_mut_ptr(), &mut step) };
+        let mut counts = [0 as c_long; 8];
+        let mut orders = [0 as c_int; 2];
+        let mut steps = [0.; 2];
+        let status = unsafe {
+            operating_ida_stats(
+                self.handle.as_ptr(),
+                counts.as_mut_ptr(),
+                orders.as_mut_ptr(),
+                steps.as_mut_ptr(),
+            )
+        };
         // Diagnostic counters remain inspectable after a model fail-stop.
         // Native query success is not solve success and must not clear fatal.
         if status < 0 {
@@ -424,7 +665,12 @@ impl<S: System> Ida<S> {
             nonlinear_iterations: counts[3] as i64,
             error_failures: counts[4] as i64,
             convergence_failures: counts[5] as i64,
-            last_step: step,
+            linear_setups: counts[6] as i64,
+            root_evaluations: counts[7] as i64,
+            last_order: orders[0],
+            current_order: orders[1],
+            last_step: steps[0],
+            current_step: steps[1],
             internal_time,
         })
     }

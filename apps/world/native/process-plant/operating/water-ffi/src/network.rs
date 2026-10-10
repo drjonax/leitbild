@@ -133,6 +133,22 @@ mod integrated {
                 Assembly::Colored { structure, .. } => structure.pattern.nonzeros(),
             }
         }
+        /// S1 declares no physical event roots yet.
+        fn root_count(&self) -> usize {
+            0
+        }
+        /// Evaluating zero root functions fills nothing; any requested root
+        /// value contradicts the declared count and is refused.
+        fn roots(&mut self, _: f64, _: &[f64], _: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+            if out.is_empty() {
+                Ok(())
+            } else {
+                Err(Failure::Fatal(format!(
+                    "the network declares no root functions, not {}",
+                    out.len()
+                )))
+            }
+        }
         fn residual(
             &mut self,
             time: f64,

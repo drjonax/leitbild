@@ -16,6 +16,7 @@ _Static_assert(sizeof(sunrealtype) == sizeof(double), "DOUBLE required");
 _Static_assert(sizeof(sunindextype) == sizeof(int64_t), "INT64 required");
 typedef int (*Residual)(void*, double, const double*, const double*, double*);
 typedef int (*Jacobian)(void*, double, double, const double*, const double*, double*, int64_t*, int64_t*);
+typedef int (*Roots)(void*, double, const double*, const double*, double*);
 typedef struct {
     SUNContext ctx;
     N_Vector y, yp, atol, ids;
@@ -24,6 +25,7 @@ typedef struct {
     void *ida, *user;
     Residual residual;
     Jacobian jacobian;
+    Roots roots;
     double time;
 } OperatingIDA;
 static int residual(double t, N_Vector y, N_Vector yp, N_Vector r, void *v) {
@@ -36,6 +38,10 @@ static int jacobian(double t, double cj, N_Vector y, N_Vector yp, N_Vector r,
     OperatingIDA *o = v;
     return o->jacobian(o->user,t,cj,N_VGetArrayPointer(y),N_VGetArrayPointer(yp),
         SUNSparseMatrix_Data(j),SUNSparseMatrix_IndexValues(j),SUNSparseMatrix_IndexPointers(j));
+}
+static int root_values(double t, N_Vector y, N_Vector yp, double *g, void *v) {
+    OperatingIDA *o = v;
+    return o->roots(o->user,t,N_VGetArrayPointer(y),N_VGetArrayPointer(yp),g);
 }
 void operating_ida_free(OperatingIDA *o) {
     if (!o) return;
@@ -51,7 +57,7 @@ void operating_ida_free(OperatingIDA *o) {
 }
 OperatingIDA *operating_ida_create(int64_t n,int64_t nnz,double t,double rtol,
     const double *atol,const double *ids,const double *y,const double *yp,
-    Residual f,Jacobian j,void *user,int *status) {
+    Residual f,Jacobian j,int nroots,Roots g,void *user,int *status) {
     OperatingIDA *o = calloc(1,sizeof(*o));
     *status=-1;
     if (!o) return NULL;
@@ -59,7 +65,7 @@ OperatingIDA *operating_ida_create(int64_t n,int64_t nnz,double t,double rtol,
     if (SUNDIALSGetVersionNumber(&major,&minor,&patch,label,sizeof(label))
         || major!=SUNDIALS_VERSION_MAJOR || minor!=SUNDIALS_VERSION_MINOR
         || patch!=SUNDIALS_VERSION_PATCH) goto fail;
-    o->user=user; o->residual=f; o->jacobian=j; o->time=t;
+    o->user=user; o->residual=f; o->jacobian=j; o->roots=g; o->time=t;
     if (SUNContext_Create(SUN_COMM_NULL,&o->ctx)) goto fail;
     o->y=N_VNew_Serial(n,o->ctx); o->yp=N_VNew_Serial(n,o->ctx);
     o->atol=N_VNew_Serial(n,o->ctx); o->ids=N_VNew_Serial(n,o->ctx);
@@ -80,6 +86,7 @@ OperatingIDA *operating_ida_create(int64_t n,int64_t nnz,double t,double rtol,
     CHECK(IDASetId(o->ida,o->ids));
     CHECK(IDASetLinearSolver(o->ida,o->linear,o->matrix));
     CHECK(IDASetJacFn(o->ida,jacobian));
+    if (nroots>0) CHECK(IDARootInit(o->ida,nroots,root_values));
     return o;
 fail: operating_ida_free(o); return NULL;
 }
@@ -154,13 +161,44 @@ int operating_ida_error_diagnostics(OperatingIDA *o,double *errors,double *weigh
     N_VDestroy(e);
     return code;
 }
-int operating_ida_stats(OperatingIDA *o,long *stats,double *last_step) {
-    int code=IDAGetNumSteps(o->ida,&stats[0]);
-    if (code>=0) code=IDAGetNumResEvals(o->ida,&stats[1]);
-    if (code>=0) code=IDAGetNumJacEvals(o->ida,&stats[2]);
-    if (code>=0) code=IDAGetNumNonlinSolvIters(o->ida,&stats[3]);
-    if (code>=0) code=IDAGetNumErrTestFails(o->ida,&stats[4]);
-    if (code>=0) code=IDAGetNumNonlinSolvConvFails(o->ida,&stats[5]);
-    if (code>=0) code=IDAGetLastStep(o->ida,last_step);
+int operating_ida_stats(OperatingIDA *o,long *counts,int *orders,double *steps) {
+    int code=IDAGetNumSteps(o->ida,&counts[0]);
+    if (code>=0) code=IDAGetNumResEvals(o->ida,&counts[1]);
+    if (code>=0) code=IDAGetNumJacEvals(o->ida,&counts[2]);
+    if (code>=0) code=IDAGetNumNonlinSolvIters(o->ida,&counts[3]);
+    if (code>=0) code=IDAGetNumErrTestFails(o->ida,&counts[4]);
+    if (code>=0) code=IDAGetNumNonlinSolvConvFails(o->ida,&counts[5]);
+    if (code>=0) code=IDAGetNumLinSolvSetups(o->ida,&counts[6]);
+    if (code>=0) code=IDAGetNumGEvals(o->ida,&counts[7]);
+    if (code>=0) code=IDAGetLastOrder(o->ida,&orders[0]);
+    if (code>=0) code=IDAGetCurrentOrder(o->ida,&orders[1]);
+    if (code>=0) code=IDAGetLastStep(o->ida,&steps[0]);
+    if (code>=0) code=IDAGetCurrentStep(o->ida,&steps[1]);
     return code;
 }
+int operating_ida_max_order(OperatingIDA *o,int order) { return IDASetMaxOrd(o->ida,order); }
+int operating_ida_max_step(OperatingIDA *o,double step) { return IDASetMaxStep(o->ida,step); }
+int operating_ida_solution_scaling(OperatingIDA *o,int enabled) {
+    return IDASetLinearSolutionScaling(o->ida,enabled?SUNTRUE:SUNFALSE);
+}
+int operating_ida_newton_coefficient(OperatingIDA *o,double coefficient) {
+    return IDASetNonlinConvCoef(o->ida,coefficient);
+}
+/* Stock IDAReInit restarts history at t from (y,yp); tolerances, ids,
+   constraints, roots, linear solver, Jacobian, stop time and options stay. */
+int operating_ida_reinitialize(OperatingIDA *o,double t,const double *y,const double *yp) {
+    memcpy(N_VGetArrayPointer(o->y),y,N_VGetLength(o->y)*sizeof(double));
+    memcpy(N_VGetArrayPointer(o->yp),yp,N_VGetLength(o->yp)*sizeof(double));
+    int code=IDAReInit(o->ida,t,o->y,o->yp);
+    if (code>=0) o->time=t;
+    return code;
+}
+int operating_ida_root_directions(OperatingIDA *o,int *directions) {
+    return IDAGetRootInfo(o->ida,directions);
+}
+/* Stock IDASetId copies the vector; the owned ids remain only its source. */
+int operating_ida_differential(OperatingIDA *o,const double *ids) {
+    memcpy(N_VGetArrayPointer(o->ids),ids,N_VGetLength(o->ids)*sizeof(double));
+    return IDASetId(o->ida,o->ids);
+}
+
