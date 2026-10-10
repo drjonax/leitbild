@@ -1,6 +1,6 @@
 import {expect,test} from 'bun:test'
 import {compileOperatingPzr,type PzrSources} from './reference-design-operating-pzr'
-import {caseSetSections,parsePzrHeaterBanks,parsePzrRelief} from './reference-design-operating-pzr-cases'
+import {caseSetSections,parsePzrHeaterBanks,parsePzrRelief,parsePzrSpray} from './reference-design-operating-pzr-cases'
 
 // Test-only owner texts in the shapes the compilers read; not plant evidence.
 const selected={commonPressure_Pa:15e6,liquidTemperature_K:600,vaporTemperature_K:630,phaseBoundaryHeight_m:6,
@@ -31,10 +31,13 @@ test('heater banks and the relief device parse from their owners and agree with 
       nominalCapacity_W:2880000,lateralContactArea_m2:48.254863,solidDisplacement_m3:.2412743,steelMass_kg:1910.892581}]},
     equipment='## Physical banks and displaced inventory\n\n'+fence('ld01-pzr-heater-banks',banks)+'\n',
     relief={openingPressure_Pa:15800000,reseatPressure_Pa:15600000,fullStrokesPerSecond:20,effectiveAreaPerLift_m2:.00411672057382,
-      calibration:{massFlow_kg_s:100,fluid:'saturatedSteam',inletPressure_Pa:15800000,backPressure_Pa:101325},bore_m:.15},
-    inventory='### Independent relief candidate\n\n'+fence('ld01-pzr-relief-device',relief)+'\n'
+      calibration:{massFlow_kg_s:100,fluid:'saturatedSteam',inletPressure_Pa:15800000,backPressure_Pa:101325},bore_m:.15,elevation_m:18.5},
+    spray={elevation_m:18.5,exitCount:16,exitBore_m:.012,ringRadius_m:.6,effectiveAreaPerExit_m2:.0000625,aggregateEffectiveArea_m2:.001},
+    inventory='### Independent relief candidate\n\n'+fence('ld01-pzr-relief-device',relief)+'\n\n## Controlled-spray material path\n\n'+fence('ld01-pzr-spray-port',spray)+'\n'
   expect(parsePzrHeaterBanks(equipment).map(b=>b.id)).toEqual(['normal','backup'])
   expect(parsePzrRelief(inventory)).toEqual(relief)
+  expect(parsePzrSpray(inventory)).toEqual(spray)
+  expect(()=>parsePzrSpray(inventory.replace('"aggregateEffectiveArea_m2":0.001','"aggregateEffectiveArea_m2":0.0011'))).toThrow('aggregate')
   const edit=(from:string,to:string)=>equipment.replace(from,to)
   expect(()=>parsePzrHeaterBanks(edit('"solidDisplacement_m3":0.2412743','"solidDisplacement_m3":0.2412745'))).toThrow('rounding')
   expect(()=>parsePzrHeaterBanks(edit('"equivalentRods":256','"equivalentRods":255'))).toThrow('rod geometry')

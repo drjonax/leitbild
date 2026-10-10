@@ -16,11 +16,16 @@ const bankSchema=z.object({id:z.enum(['normal','backup']),equivalentRods:z.numbe
 const banksSchema=z.object({banks:z.array(bankSchema).length(2)}).strict()
 const reliefSchema=z.object({openingPressure_Pa:positive,reseatPressure_Pa:positive,fullStrokesPerSecond:positive,
   effectiveAreaPerLift_m2:positive,calibration:z.object({massFlow_kg_s:positive,fluid:z.string().min(1),
-    inletPressure_Pa:positive,backPressure_Pa:positive}).strict(),bore_m:positive}).strict()
+    inletPressure_Pa:positive,backPressure_Pa:positive}).strict(),bore_m:positive,elevation_m:positive}).strict()
   .superRefine((r,c)=>{if(!(r.reseatPressure_Pa<r.openingPressure_Pa))c.addIssue({code:'custom',message:'Relief reseat must lie below opening'})})
+const sprayPortSchema=z.object({elevation_m:positive,exitCount:z.number().int().positive(),exitBore_m:positive,
+  ringRadius_m:positive,effectiveAreaPerExit_m2:positive,aggregateEffectiveArea_m2:positive}).strict()
+  .superRefine((s,c)=>{if(Math.abs(s.aggregateEffectiveArea_m2-s.exitCount*s.effectiveAreaPerExit_m2)>1e-12*s.aggregateEffectiveArea_m2)
+    c.addIssue({code:'custom',message:'Spray aggregate effective area must be the exits times the per-exit area'})})
 export const equipmentOwners={
   heaterBanks:{page:'systems/primary-coolant/heater-equipment.md',heading:'Physical banks and displaced inventory',fence:'ld01-pzr-heater-banks'},
   relief:{page:'systems/primary-coolant/pressure-and-inventory.md',heading:'Independent relief candidate',fence:'ld01-pzr-relief-device'},
+  spray:{page:'systems/primary-coolant/pressure-and-inventory.md',heading:'Controlled-spray material path',fence:'ld01-pzr-spray-port'},
 } as const
 /** The heater-equipment owner's banks, checked against the authored rod
  * geometry: rounded table values must agree within their rounding (volumes
@@ -71,10 +76,17 @@ export function caseSetSections(cell:ReturnType<typeof compileOperatingPzr>['cel
       solidDisplacement_m3:b.solidDisplacement_m3,steelMass_kg:b.steelMass_kg})),
     reliefCalibration:{...relief.calibration}}
 }
-/** The relief pickup elevation and the spray distributor elevation and bore
- * have no committed owner yet, so a case-set compile refuses here. */
-function caseSetPortGeometry(_docs:Readonly<Record<string,string>>):CaseSetPortGeometry{
-  throw Error('Case-set ports refuse: the relief pickup elevation and the spray distributor elevation and bore have no committed owner')
+/** The controlled-spray distributor from its pressure-and-inventory owner. */
+export function parsePzrSpray(inventory:string){
+  return sprayPortSchema.parse(ownedBlock(inventory,equipmentOwners.spray.heading,equipmentOwners.spray.fence))
+}
+/** Port geometry from the owners' blocks: the relief pickup elevation from
+ * the relief device, the spray inlet elevation and its exit bore (one of the
+ * distributor's equal tips, not the supply line's bore) from the spray
+ * distributor. */
+function caseSetPortGeometry(inventory:string):CaseSetPortGeometry{
+  const relief=parsePzrRelief(inventory),spray=parsePzrSpray(inventory)
+  return {relief:{elevation_m:relief.elevation_m},spray:{elevation_m:spray.elevation_m,bore_m:spray.exitBore_m}}
 }
 /** Case-set packet section (lead ruling 3): the S1 cell plus the spray and
  * relief ports and the heater-bank and relief-calibration siblings, from
@@ -83,6 +95,6 @@ export async function prepareOperatingPzrCaseSet(wikiRoot:string,hot:HotEnvelope
   const base=join(wikiRoot,'world/packs/process-plant/reference-designs/ld-01'),s1=await prepareOperatingPzr(wikiRoot,hot),
     paths=[equipmentOwners.heaterBanks.page,equipmentOwners.relief.page],docs=await Promise.all(paths.map(p=>Bun.file(join(base,p)).text())),
     hash=(s:string)=>createHash('sha256').update(s).digest('hex'),
-    added=caseSetSections(s1.cell,parsePzrHeaterBanks(docs[0]!),parsePzrRelief(docs[1]!),caseSetPortGeometry(Object.fromEntries(paths.map((p,i)=>[p,docs[i]!]))))
+    added=caseSetSections(s1.cell,parsePzrHeaterBanks(docs[0]!),parsePzrRelief(docs[1]!),caseSetPortGeometry(docs[1]!))
   return {...s1,...added,provenance:{...s1.provenance,consumed:[...s1.provenance.consumed,...paths.map((name,i)=>({name,sha256:hash(docs[i]!)}))]}}
 }
