@@ -42,42 +42,77 @@ export const workspaceRoomHref = (workspaceId: string, roomId: string): string =
 
 export interface ViewListPublisherDeps {
   readonly post: (message: EmbeddedViewsMessage) => void
-  readonly delayMs: number
+  /** How long a list that adds or reorders displays must hold before it is posted. */
+  readonly settleMs: number
+  /** How long a list that only removes displays must hold before it is posted. */
+  readonly removalGraceMs: number
   readonly setTimer: (run: () => void, delayMs: number) => unknown
   readonly clearTimer: (timer: unknown) => void
 }
 
 export interface ViewListPublisher {
-  /** The current list; posted after `delayMs` without a newer offer, and only when its key sequence differs from the last one posted. */
-  readonly offer: (views: ReadonlyArray<EmbeddedViewListing>) => void
+  /**
+   * The current list of the shown room (null: none). Nothing is posted while
+   * its key sequence equals the last one posted. A list of another room is
+   * posted at once; within one room, a list that only removes displays is
+   * posted after `removalGraceMs` and any other after `settleMs`, each only
+   * if no newer list was offered meanwhile.
+   */
+  readonly offer: (roomId: string | null, views: ReadonlyArray<EmbeddedViewListing>) => void
 }
 
 const sameKeys = (left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean =>
   left.length === right.length && left.every((key, index) => key === right[index])
 
+// `next` keeps some of `published`, in the same order, and adds nothing.
+const removesOnly = (next: ReadonlyArray<string>, published: ReadonlyArray<string>): boolean => {
+  if (next.length >= published.length) return false
+  let kept = 0
+  for (const key of published) if (kept < next.length && next[kept] === key) kept += 1
+  return kept === next.length
+}
+
+// A realtime snapshot empties the shown room's messages and refetches them, so
+// the store passes through a shorter list and back. Removals therefore wait
+// longer than additions; if the room returns to what was posted meanwhile, the
+// window never hears of the gap and keeps its frames.
 export const createViewListPublisher = (deps: ViewListPublisherDeps): ViewListPublisher => {
   // The Host starts every frame document with nothing listed.
   let publishedKeys: ReadonlyArray<string> = []
+  // Undefined until the first offer, which therefore counts as a room switch.
+  let offeredRoom: string | null | undefined = undefined
   let pending: unknown = null
+  const publish = (keys: ReadonlyArray<string>, views: ReadonlyArray<EmbeddedViewListing>): void => {
+    publishedKeys = keys
+    deps.post({ type: 'leitbild:views', views: [...views] })
+  }
   return {
-    offer: views => {
+    offer: (roomId, views) => {
+      const roomSwitched = roomId !== offeredRoom
+      offeredRoom = roomId
       if (pending !== null) deps.clearTimer(pending)
+      pending = null
+      const keys = views.map(view => view.key)
+      if (sameKeys(keys, publishedKeys)) return
+      if (roomSwitched) {
+        publish(keys, views)
+        return
+      }
       pending = deps.setTimer(() => {
         pending = null
-        const keys = views.map(view => view.key)
-        if (sameKeys(keys, publishedKeys)) return
-        publishedKeys = keys
-        deps.post({ type: 'leitbild:views', views: [...views] })
-      }, deps.delayMs)
+        publish(keys, views)
+      }, removesOnly(keys, publishedKeys) ? deps.removalGraceMs : deps.settleMs)
     },
   }
 }
 
 export interface ViewListSyncDeps {
-  /** The valid fences of the shown room's posted answers, in store order, each key once. */
-  readonly fences: () => ReadonlyArray<ViewFence>
+  /** The room whose displays are listed, null when none is shown. */
+  readonly room: () => string | null
+  /** The valid fences of a room's posted answers, in store order, each key once. */
+  readonly fences: (roomId: string) => ReadonlyArray<ViewFence>
   readonly resolve: (fence: ViewFence) => Promise<ViewResolution>
-  readonly offer: (views: ReadonlyArray<EmbeddedViewListing>) => void
+  readonly offer: (roomId: string | null, views: ReadonlyArray<EmbeddedViewListing>) => void
 }
 
 /** Derives the list from the store once every resolution settled; a newer store state supersedes an older derivation. */
@@ -85,11 +120,12 @@ export const createViewListSync = (deps: ViewListSyncDeps): (() => Promise<void>
   let generation = 0
   return async () => {
     const current = ++generation
-    const fences = deps.fences()
+    const roomId = deps.room()
+    const fences = roomId === null ? [] : deps.fences(roomId)
     const resolutions = await Promise.all(fences.map(fence => deps.resolve(fence)))
     // A newer derivation started while these settled; it offers the newer list.
     if (current !== generation) return
     const resolved: ResolvedViewFence[] = fences.map((fence, index) => ({ fence, resolution: resolutions[index]! }))
-    deps.offer(viewListings(resolved))
+    deps.offer(roomId, viewListings(resolved))
   }
 }

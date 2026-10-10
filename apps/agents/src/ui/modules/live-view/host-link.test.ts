@@ -50,78 +50,136 @@ describe('messages Agents builds for the Host', () => {
   })
 })
 
-const fakeTimers = () => {
+const fakeClock = () => {
+  let now = 0
   let next = 1
-  const timers = new Map<number, () => void>()
+  const timers = new Map<number, { readonly due: number; readonly run: () => void }>()
   return {
-    setTimer: (run: () => void) => { const id = next++; timers.set(id, run); return id },
+    setTimer: (run: () => void, delayMs: number) => { const id = next++; timers.set(id, { due: now + delayMs, run }); return id },
     clearTimer: (timer: unknown) => { timers.delete(timer as number) },
     pending: () => timers.size,
-    elapse: () => { const due = [...timers.values()]; timers.clear(); for (const run of due) run() },
+    advance: (ms: number) => {
+      now += ms
+      for (const [id, timer] of [...timers].sort(([, left], [, right]) => left.due - right.due)) {
+        if (timer.due > now) continue
+        timers.delete(id)
+        timer.run()
+      }
+    },
   }
 }
 
 describe('publishing the list', () => {
   const publisher = () => {
-    const timers = fakeTimers()
+    const clock = fakeClock()
     const posted: EmbeddedViewsMessage[] = []
-    const { offer } = createViewListPublisher({ post: message => posted.push(message), delayMs: 250, ...timers })
-    return { offer, posted, timers }
+    const { offer } = createViewListPublisher({ post: message => posted.push(message), settleMs: 250, removalGraceMs: 2_000, ...clock })
+    const keysPosted = () => posted.map(message => message.views.map(view => view.key))
+    return { offer, posted, keysPosted, clock }
   }
+  const listed = (...keys: string[]) => keys.map(listing)
 
-  test('posts after the list settled, and only when its key sequence changed', () => {
-    const { offer, posted, timers } = publisher()
-    offer([])
-    timers.elapse()
+  test('posts the first room\'s list at once, and nothing while it is still empty', () => {
+    const empty = publisher()
+    empty.offer('room-1', [])
+    empty.clock.advance(5_000)
+    expect(empty.posted).toEqual([])
+    const shown = publisher()
+    shown.offer('room-1', listed('a'))
+    expect(shown.posted).toEqual([{ type: 'leitbild:views', views: listed('a') }])
+  })
+
+  test('posts additions and reorders after the list settled, and only when its key sequence changed', () => {
+    const { offer, posted, keysPosted, clock } = publisher()
+    offer('room-1', [])
+    offer('room-1', listed('a'))
+    clock.advance(249)
     expect(posted).toEqual([])
-    offer([listing('a')])
-    expect(posted).toEqual([])
-    timers.elapse()
-    expect(posted).toEqual([{ type: 'leitbild:views', views: [listing('a')] }])
-    offer([listing('a')])
-    timers.elapse()
-    expect(posted).toHaveLength(1)
-    offer([listing('b'), listing('a')])
-    timers.elapse()
-    offer([listing('a'), listing('b')])
-    timers.elapse()
-    expect(posted.map(message => message.views.map(view => view.key))).toEqual([['a'], ['b', 'a'], ['a', 'b']])
+    clock.advance(1)
+    offer('room-1', listed('a'))
+    clock.advance(5_000)
+    offer('room-1', listed('b', 'a'))
+    clock.advance(250)
+    offer('room-1', listed('a', 'b'))
+    clock.advance(250)
+    expect(keysPosted()).toEqual([['a'], ['b', 'a'], ['a', 'b']])
     for (const message of posted) embeddedViewsMessageSchema.parse(message)
   })
 
   test('a newer list replaces one still settling', () => {
-    const { offer, posted, timers } = publisher()
-    offer([listing('a')])
-    offer([listing('a'), listing('b')])
-    expect(timers.pending()).toBe(1)
-    timers.elapse()
-    expect(posted).toEqual([{ type: 'leitbild:views', views: [listing('a'), listing('b')] }])
+    const { offer, posted, clock } = publisher()
+    offer('room-1', [])
+    offer('room-1', listed('a'))
+    offer('room-1', listed('a', 'b'))
+    expect(clock.pending()).toBe(1)
+    clock.advance(250)
+    expect(posted).toEqual([{ type: 'leitbild:views', views: listed('a', 'b') }])
   })
 
-  test('posts an empty list when the room no longer has displays', () => {
-    const { offer, posted, timers } = publisher()
-    offer([listing('a')])
-    timers.elapse()
-    offer([])
-    timers.elapse()
-    expect(posted.at(-1)).toEqual({ type: 'leitbild:views', views: [] })
+  test('a realtime snapshot that empties the room and refetches it posts nothing', () => {
+    const { offer, keysPosted, clock } = publisher()
+    offer('room-1', listed('a', 'b'))
+    offer('room-1', [])
+    clock.advance(1_200)
+    offer('room-1', listed('a'))
+    clock.advance(700)
+    offer('room-1', listed('a', 'b'))
+    clock.advance(10_000)
+    expect(keysPosted()).toEqual([['a', 'b']])
+  })
+
+  test('a removal that still holds after the grace is posted, an empty list included', () => {
+    const { offer, keysPosted, clock } = publisher()
+    offer('room-1', listed('a', 'b', 'c'))
+    offer('room-1', listed('a', 'c'))
+    clock.advance(1_999)
+    expect(keysPosted()).toEqual([['a', 'b', 'c']])
+    clock.advance(1)
+    expect(keysPosted()).toEqual([['a', 'b', 'c'], ['a', 'c']])
+    offer('room-1', [])
+    clock.advance(2_000)
+    expect(keysPosted().at(-1)).toEqual([])
+  })
+
+  test('a list that removes some displays and adds another settles like an addition', () => {
+    const { offer, keysPosted, clock } = publisher()
+    offer('room-1', listed('a', 'b'))
+    offer('room-1', listed('b', 'c'))
+    clock.advance(250)
+    expect(keysPosted().at(-1)).toEqual(['b', 'c'])
+  })
+
+  test('another room\'s list is posted at once, an empty one included, and cancels a pending one', () => {
+    const { offer, keysPosted, clock } = publisher()
+    offer('room-1', listed('a'))
+    offer('room-1', listed('a', 'b'))
+    offer('room-2', listed('x'))
+    expect(keysPosted()).toEqual([['a'], ['x']])
+    offer(null, [])
+    expect(keysPosted()).toEqual([['a'], ['x'], []])
+    clock.advance(10_000)
+    expect(keysPosted()).toHaveLength(3)
   })
 })
 
 describe('deriving the list from the store', () => {
   const fenceFor = (key: string): ViewFence => ({ key, answer: { roomId: 'room-1', turnId: 'tr_1', caption: 'Answer 14:02:31' }, ref: { callId: 'call_1_0', key } })
 
-  test('offers the resolved displays once every resolution settled', async () => {
-    const offered: ReadonlyArray<EmbeddedViewListing>[] = []
+  test('offers the shown room\'s resolved displays once every resolution settled', async () => {
+    const offered: Array<{ readonly roomId: string | null; readonly keys: ReadonlyArray<string> }> = []
+    let room: string | null = 'room-1'
     const sync = createViewListSync({
+      room: () => room,
       fences: () => [fenceFor('a'), fenceFor('refused'), fenceFor('b')],
       resolve: async fence => (fence.key === 'refused'
         ? { kind: 'refused', code: 'view_evidence_unavailable', message: 'gone' }
         : { kind: 'view', envelope: envelope(fence.key) }) as ViewResolution,
-      offer: views => offered.push(views),
+      offer: (roomId, views) => offered.push({ roomId, keys: views.map(view => view.key) }),
     })
     await sync()
-    expect(offered.map(views => views.map(view => view.key))).toEqual([['a', 'b']])
+    room = null
+    await sync()
+    expect(offered).toEqual([{ roomId: 'room-1', keys: ['a', 'b'] }, { roomId: null, keys: [] }])
   })
 
   test('a newer store state supersedes a derivation still waiting for evidence', async () => {
@@ -129,11 +187,12 @@ describe('deriving the list from the store', () => {
     let releaseSlow: (resolution: ViewResolution) => void = () => {}
     const offered: ReadonlyArray<EmbeddedViewListing>[] = []
     const sync = createViewListSync({
+      room: () => 'room-1',
       fences: () => fences,
       resolve: fence => fence.key === 'a'
         ? new Promise<ViewResolution>(resolve => { releaseSlow = resolve })
         : Promise.resolve({ kind: 'view', envelope: envelope(fence.key) } as ViewResolution),
-      offer: views => offered.push(views),
+      offer: (_roomId, views) => offered.push(views),
     })
     const older = sync()
     fences = [fenceFor('b')]

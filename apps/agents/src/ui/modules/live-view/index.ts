@@ -24,6 +24,9 @@ import { createChipHost, fenceNotice, promoteUnhostedChips, showAvailable, showP
 // Long enough for a burst of re-renders and resolutions to settle into one
 // list, short enough that a new answer's display reaches the window at once.
 const LIST_SETTLE_MS = 250
+// Long enough for a realtime snapshot's refetch of the shown room to restore
+// its messages, so the window does not drop displays that are still there.
+const LIST_REMOVAL_GRACE_MS = 2_000
 
 const fetchJson = async (path: string): Promise<{ readonly status: number; readonly body: unknown }> => {
   const response = await apiFetch(path)
@@ -46,18 +49,17 @@ const openView = (listing: EmbeddedViewListing): void => {
 
 const publisher = createViewListPublisher({
   post: postToHost,
-  delayMs: LIST_SETTLE_MS,
+  settleMs: LIST_SETTLE_MS,
+  removalGraceMs: LIST_REMOVAL_GRACE_MS,
   setTimer: (run, delayMs) => setTimeout(run, delayMs),
   clearTimer: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
 })
 
 const syncViewList = createViewListSync({
-  fences: () => {
-    const roomId = $selectedRoomId.get()
-    return roomId === null ? [] : roomViewFences($roomMessages.get()[roomId] ?? [])
-  },
+  room: () => $selectedRoomId.get(),
+  fences: roomId => roomViewFences($roomMessages.get()[roomId] ?? []),
   resolve: fence => resolutions.resolve(fence),
-  offer: views => publisher.offer(views),
+  offer: (roomId, views) => publisher.offer(roomId, views),
 })
 
 const refreshViewList = (): void => {
