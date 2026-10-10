@@ -87,13 +87,17 @@ describe('generated equipment mimics', () => {
 
   test('the PORV the model bundles in the pressurizer is drawn on the relief line with the opening it relieves through', () => {
     const mimic = generated(system, { from: ['pressurizer'], to: ['PRT'] })
-    expect(mimic.items.map(item => item.binding.label).sort()).toEqual(['PORV', 'PORV block', 'PRT', 'PZR'])
+    expect(mimic.items.map(item => item.binding.label).sort()).toEqual(['PORV', 'PORV block', 'PRT', 'PZR', 'Relief header', 'Safety valves'])
     const porv = mimic.items.find(item => item.binding.label === 'PORV')!
     expect(porv.presentation).toEqual({ element: 'device', icon: 'valve-digital', aspect: 'position' })
     expect(porv.rows.map(row => row.kind)).toEqual(['position', 'mismatch'])
-    // Its block valve is drawn in series on the same line, between it and the pressurizer.
+    // Its block valve is drawn in series on the same line, between it and the pressurizer, and the code
+    // safety valves on their own line; both lines join the relief header to the tank.
     const block = mimic.items.find(item => item.binding.label === 'PORV block')!
     expect(block.presentation).toEqual({ element: 'device', icon: 'valve-digital', aspect: 'position' })
+    const safeties = mimic.items.find(item => item.binding.label === 'Safety valves')!
+    expect(safeties.presentation).toEqual({ element: 'device', icon: 'valve-digital', aspect: 'position' })
+    expect(safeties.rows.map(row => row.kind)).toEqual(['position'])
     expect(mimic.summary.unmeasuredStates).toEqual([])
   })
 
@@ -268,7 +272,7 @@ describe('mimic panels in composed displays', () => {
 
   test('a stored display re-opens with its drawing, and relates its alarms to the drawn equipment', () => {
     const composed = ask('world.process-plant.display.compose', { ...display([{ kind: 'mimic', from: ['pressurizer'], to: ['PRT'] }, { kind: 'alarms', scope: 'related' }]), subjects: ['pressurizer'] }) as { view: { state: string }; equipment: ReadonlyArray<{ id: string; label: string; state: string }> }
-    expect(composed.equipment.map(item => item.label)).toEqual(['PZR', 'PRT', 'PORV block', 'PORV'])
+    expect(composed.equipment.map(item => item.label)).toEqual(['PZR', 'PRT', 'Relief header', 'PORV block', 'PORV', 'Safety valves'])
     expect(composed.equipment.find(item => item.label === 'PORV')!.state).toBe('closed')
     expect(composed.equipment.find(item => item.label === 'PORV block')!.state).toBe('open')
     const result = ask('world.process-plant.display.view', { plantId: system.plant.id, state: composed.view.state }) as {

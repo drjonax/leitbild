@@ -89,6 +89,24 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     })],
   }),
   rule({
+    id: 'pzr-safety-valve-open',
+    label: 'Pressurizer safety valve open',
+    ruleClass: 'alarm',
+    // On the valves' flow monitors: a code safety valve lifts only past 17.24 MPa and reseats 5 % below it.
+    condition: comparison({ tagId: 'PSV-8010-OPEN' }, '==', true),
+    clearCondition: comparison({ tagId: 'PSV-8010-OPEN' }, '==', false),
+    clearDelayMs: 1_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'safety-valve-open',
+      title: 'Pressurizer safety valve open',
+      message: 'The pressurizer code safety valves have lifted and are discharging reactor coolant steam to the relief tank.',
+      severity: 'critical',
+      annunciator: annunciator({ ...pzrAlarm, priority: 'urgent' }),
+    })],
+  }),
+  rule({
     id: 'pzr-porv-block-valve-not-open',
     label: 'Pressurizer PORV block valve not open',
     ruleClass: 'alarm',

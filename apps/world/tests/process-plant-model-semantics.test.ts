@@ -63,6 +63,13 @@ describe('model semantics declared per component kind', () => {
       { aspect: 'position', state: { path: 'pressurizer.blockValveEffectivePositionFraction' as never, reading: 'value' }, command: 'pressurizer.blockValvePositionFraction' as never },
     ])
     expect(porv).toMatchObject({ id: 'reliefValve', function: 'relieving', port: 'reliefOutlet' })
+    // The spring-loaded code safety valves relieve on their own outlet, with no command: their lift is all they report.
+    const safeties = componentById(graph, 'pressurizer').semantics.embedded[2]!
+    expect(safeties).toMatchObject({ id: 'safetyValves', function: 'relieving', port: 'safetyOutlet' })
+    expect(safeties.aspects).toEqual([
+      { aspect: 'position', state: { path: 'pressurizer.safetyValvesLiftFraction' as never, reading: 'value' } },
+      { aspect: 'throughput', state: { path: 'pressurizer.safetyValveFlowKgPerS' as never, reading: 'flow' } },
+    ])
     expect(porv!.aspects).toEqual([
       { aspect: 'position', state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' }, command: 'pressurizer.reliefValvePositionFraction' as never },
       { aspect: 'throughput', state: { path: 'pressurizer.reliefFlowKgPerS' as never, reading: 'flow' } },
@@ -196,7 +203,7 @@ describe('operator names', () => {
       expect(new Set(labels).size).toBe(labels.length)
     }
     expect(componentById(graph, 'feedwaterControlValveB').metadata?.presentation?.shortLabel).toBe('FCV B')
-    expect(componentById(graph, 'pressurizer').metadata?.presentation?.embedded).toEqual({ reliefValve: 'PORV', blockValve: 'PORV block' })
+    expect(componentById(graph, 'pressurizer').metadata?.presentation?.embedded).toEqual({ reliefValve: 'PORV', blockValve: 'PORV block', safetyValves: 'Safety valves' })
   })
 
   test('renaming equipment never changes the Plant identity that persisted Runs are bound to', () => {

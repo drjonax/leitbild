@@ -53,9 +53,11 @@ describe('process plant model composition', () => {
     // relief valves, and again when the primary system was given IF97
     // coolant properties, a closed energy balance, a letdown line, a
     // pressurizer coupled to the loops' inventory and saturation, and
-    // realistic loop and tube-metal sizes; PWR Runs checkpointed before then
-    // must be restarted.
-    expect(system.modelDigest).toBe('5c4548dcdc971e793a32edf6ac9e75998fff3425caee065244a54c8c22978da5')
+    // realistic loop and tube-metal sizes. Changed again on 2026-10-10,
+    // approved by the owner, when the pressurizer gained its code safety
+    // valves and relief header; PWR Runs checkpointed before then must be
+    // restarted.
+    expect(system.modelDigest).toBe('e019871acc3d16ff380871de6b9b443f93236e1e5533ccf9f7365a81b37e864d')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

@@ -202,7 +202,11 @@
         "reliefCapacityKgPerS": 85,
         "flashingTimeConstantS": 1,
         "condensationTimeConstantS": 20,
-        "blockValveStrokeTimeS": 10
+        "blockValveStrokeTimeS": 10,
+        "safetyValveSetpointMPa": 17.24,
+        "safetyValvesCapacityKgPerS": 158.8,
+        "safetyValveAccumulationFraction": 0.03,
+        "safetyValveBlowdownFraction": 0.05
       },
       "variables": [
         {
@@ -252,6 +256,18 @@
           "tagId": "MOV-8000A-POS",
           "equipmentId": "pressurizer",
           "description": "Pressurizer PORV 456A block valve 8000A position feedback"
+        },
+        {
+          "path": "safetyValvesOpen",
+          "tagId": "PSV-8010-OPEN",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer code safety valves 8010A, B and C open, from their valve-flow monitors"
+        },
+        {
+          "path": "safetyValvesLiftFraction",
+          "tagId": "PSV-8010-POS",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer code safety valves 8010A, B and C position feedback; they share a set pressure and lift together"
         }
       ],
       "metadata": {
@@ -259,7 +275,8 @@
           "shortLabel": "PZR",
           "embedded": {
             "reliefValve": "PORV",
-            "blockValve": "PORV block"
+            "blockValve": "PORV block",
+            "safetyValves": "Safety valves"
           }
         }
       }
@@ -4109,6 +4126,25 @@
           "shortLabel": "RCS leak rate"
         }
       }
+    },
+    {
+      "id": "pressurizerReliefHeader",
+      "kind": "processHeader",
+      "label": "Pressurizer Relief Header",
+      "parameters": {
+        "initialTemperatureC": 50,
+        "initialPressureMPa": 0.1,
+        "headerVolumeM3": 1,
+        "distributionMode": "pressureWeighted",
+        "portIds": [
+          "A"
+        ]
+      },
+      "metadata": {
+        "presentation": {
+          "shortLabel": "Relief header"
+        }
+      }
     }
   ],
   "connections": [
@@ -4200,7 +4236,7 @@
     {
       "id": "pressurizer-relief-to-tank",
       "from": "pressurizer.reliefOutlet",
-      "to": "pressurizerReliefTank.inlet",
+      "to": "pressurizerReliefHeader.inletA",
       "connectionKind": "fluidFlow",
       "service": "primaryRelief",
       "nominalFluid": "steam",
@@ -4228,6 +4264,74 @@
           "quantity": "temperature",
           "unit": "degC",
           "initialValue": 322
+        }
+      ]
+    },
+    {
+      "id": "pressurizer-safety-valves-to-tank",
+      "from": "pressurizer.safetyOutlet",
+      "to": "pressurizerReliefHeader.inletA",
+      "connectionKind": "fluidFlow",
+      "service": "primaryRelief",
+      "nominalFluid": "steam",
+      "designPhase": "twoPhase",
+      "solverModel": "twoPhaseApprox",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Pressurizer safety valve discharge flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Pressurizer safety valve discharge temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 322
+        }
+      ]
+    },
+    {
+      "id": "pressurizer-relief-header-to-tank",
+      "from": "pressurizerReliefHeader.outletA",
+      "to": "pressurizerReliefTank.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "primaryRelief",
+      "nominalFluid": "steam",
+      "designPhase": "twoPhase",
+      "solverModel": "twoPhaseApprox",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Pressurizer relief header to relief tank flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Pressurizer relief header to relief tank temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 50
         }
       ]
     },
@@ -11656,6 +11760,13 @@
     "deltaTChannelF.overpowerMarginC",
     "pressurizer.blockValvePositionFraction",
     "pressurizer.blockValveEffectivePositionFraction",
-    "rcsInventoryBalance.leakRateKgPerS"
+    "rcsInventoryBalance.leakRateKgPerS",
+    "pressurizer.safetyValvesOpen",
+    "pressurizer.safetyValvesLiftFraction",
+    "pressurizer.safetyValveFlowKgPerS",
+    "pressurizer-safety-valves-to-tank.flowKgPerS",
+    "pressurizer-safety-valves-to-tank.temperatureC",
+    "pressurizer-relief-header-to-tank.flowKgPerS",
+    "pressurizer-relief-header-to-tank.temperatureC"
   ]
 }

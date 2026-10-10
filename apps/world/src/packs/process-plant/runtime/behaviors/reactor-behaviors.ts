@@ -135,6 +135,11 @@ type ReactorBehaviorComponent = ReactorBehaviorSystem['graph']['components'][num
 
 /** What crosses the reactor coolant system's boundary: charging and injection
  * in, letdown, leaks and tube leakage out of the loops, relief out of the pressurizer. */
+const pressurizerReliefFlow = (system: ReactorBehaviorSystem, context: ReactorBehaviorContext): number => {
+  const pressurizer = primarySystemPressurizer(system)
+  return pressurizer === null ? 0 : sumOutgoingComponentLinkValue(system, pressurizer, 'flowKgPerS', context, link => link.service === 'primaryRelief')
+}
+
 const primaryBoundaryFlows = (system: ReactorBehaviorSystem, vessel: ReactorBehaviorComponent, context: ReactorBehaviorContext) => {
   const primaryBoundaryLink = (link: { readonly toComponentIndex: number }): boolean => {
     const toComponent = system.graph.components[link.toComponentIndex]
@@ -149,7 +154,8 @@ const primaryBoundaryFlows = (system: ReactorBehaviorSystem, vessel: ReactorBeha
     // Letdown is what leaves the vessel on its letdown line, and the same
     // flow reaches the volume control tank.
     letdownFlow: sumOutgoingComponentLinkValue(system, vessel, 'flowKgPerS', context, link => link.service === 'letdown'),
-    reliefFlow: sumLinkValueByService(system, 'flowKgPerS', context, 'primaryRelief'),
+    // Relief leaves the coolant where it leaves the pressurizer; the relief header it joins downstream carries it again.
+    reliefFlow: pressurizerReliefFlow(system, context),
     primaryLeakFlow: sumLinkValueByService(system, 'leakFlowKgPerS', context, 'primaryCoolant'),
     tubeLeakFlow: sumComponentValueByKind(system, 'steamGenerator', 'primaryToSecondaryLeakKgPerS', context),
   }

@@ -126,13 +126,13 @@ describe('mimic scope from the agent\'s intent', () => {
     for (const name of ['PORV', 'porv']) {
       expect(rejection(graph, { to: [name] })).toEqual([{
         field: 'to.0',
-        message: `"${name}" is the reliefValve the model bundles in pressurizer, drawn on its reliefOutlet line; name pressurizer instead (from pressurizer to pressurizerReliefTank draws that line with it)`,
+        message: `"${name}" is the reliefValve the model bundles in pressurizer, drawn on its reliefOutlet line; name pressurizer instead (from pressurizer to pressurizerReliefHeader draws that line with it)`,
         didYouMean: ['pressurizer (Pressurizer, PZR)'],
       }])
     }
     expect(rejection(graph, { from: ['pressurizer'], to: ['PRT'], exclude: ['PORV'] })[0]!.message).toBe('"PORV" is the reliefValve the model bundles in pressurizer, drawn on its reliefOutlet line; it cannot be excluded on its own')
     // Named as the hint says, the line draws with the device on it.
-    expect(drawn(graph, { from: ['pressurizer'], to: ['pressurizerReliefTank'] }).labels).toEqual(['PRT', 'PZR'])
+    expect(drawn(graph, { from: ['pressurizer'], to: ['pressurizerReliefHeader'] }).labels).toEqual(['PZR', 'Relief header'])
   })
 
   test('the same intent always draws the same equipment', () => {

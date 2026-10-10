@@ -11,6 +11,7 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       surgeLine: { kind: 'hydraulicThermal', direction: 'bidirectional', circuit: 'coolant' },
       sprayInlet: { kind: 'hydraulicThermal', direction: 'in', circuit: 'coolant' },
       reliefOutlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'coolant' },
+      safetyOutlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'coolant' },
       heaterPower: { kind: 'electricalAc', direction: 'in', demand: 'demandMw' },
       // The PORV block valve's motor has its own supply, apart from the heaters': the valve must close on a stuck-open
       // PORV after a loss of offsite power, when the heaters' bus is dead and only the diesel-backed buses are live.
@@ -28,6 +29,14 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       condensationTimeConstantS: z.number().finite().positive(),
       /** Full stroke time of the motor-operated PORV block valve. */
       blockValveStrokeTimeS: z.number().finite().positive(),
+      /** Set pressure of the spring-loaded code safety valves, where they pop open. */
+      safetyValveSetpointMPa: z.number().finite().positive(),
+      /** Rated discharge of all the code safety valves together, at full lift. */
+      safetyValvesCapacityKgPerS: z.number().finite().positive(),
+      /** Pressure rise above the set pressure at which the safety valves reach full lift, a fraction of it. */
+      safetyValveAccumulationFraction: z.number().finite().positive().max(0.1),
+      /** Pressure fall below the set pressure at which the safety valves reseat, a fraction of it. */
+      safetyValveBlowdownFraction: z.number().finite().positive().max(0.2),
     }),
     semantics: fixedSemantics({ keyValues: ['pressureMPa', 'levelPercent'],
       aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })],
@@ -53,8 +62,20 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
           aspect('throughput', { variable: 'reliefFlowKgPerS', reading: 'flow' }),
         ],
         variables: ['reliefFlowKgPerS', 'reliefValvePositionFraction', 'reliefValveEffectivePositionFraction', 'reliefValveFailureActive', 'reliefValveFailedPositionFraction'],
+      }, {
+        // The spring-loaded code safety valves, on their own lines to the relief tank, which no block valve isolates.
+        // The model holds them as one bank: they share a set pressure, so they lift together.
+        id: 'safetyValves',
+        label: 'code safety valves',
+        function: 'relieving',
+        port: 'safetyOutlet',
+        aspects: [
+          aspect('position', { variable: 'safetyValvesLiftFraction', reading: 'value' }),
+          aspect('throughput', { variable: 'safetyValveFlowKgPerS', reading: 'flow' }),
+        ],
+        variables: ['safetyValvesLiftFraction', 'safetyValvesOpen', 'safetyValveFlowKgPerS'],
       }],
-      ratedOutflow: [{ port: 'reliefOutlet', parameter: 'reliefCapacityKgPerS' }],
+      ratedOutflow: [{ port: 'reliefOutlet', parameter: 'reliefCapacityKgPerS' }, { port: 'safetyOutlet', parameter: 'safetyValvesCapacityKgPerS' }],
     }),
     variables: [
       variable({ path: 'pressureMPa', label: 'Pressurizer pressure', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
@@ -78,6 +99,9 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'reliefFlowKgPerS', label: 'Pressurizer relief flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
       variable({ path: 'blockValvePositionFraction', label: 'Pressurizer PORV block valve position command', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'blockValveEffectivePositionFraction', label: 'Pressurizer PORV block valve position', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
+      variable({ path: 'safetyValvesOpen', label: 'Pressurizer code safety valves open', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'safetyValvesLiftFraction', label: 'Pressurizer code safety valve lift', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
+      variable({ path: 'safetyValveFlowKgPerS', label: 'Pressurizer code safety valve flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
     ],
   }),
 ]

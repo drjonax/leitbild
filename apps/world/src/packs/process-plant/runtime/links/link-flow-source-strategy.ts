@@ -97,8 +97,11 @@ export const processLinkFlowSourceFor = (config: {
     }
   }
   if (fromComponent.kind === 'pressurizer' && link.service === 'primaryRelief') {
+    const reliefFlowByPort: Readonly<Record<string, string>> = { reliefOutlet: 'reliefFlowKgPerS', safetyOutlet: 'safetyValveFlowKgPerS' }
+    const flowVariable = reliefFlowByPort[String(link.fromPortName)]
+    if (flowVariable === undefined) throw new Error(`pressurizer relief link ${link.id} leaves port ${link.fromPortName}, which relieves nothing`)
     return {
-      flowKgPerS: context.readNumber(componentVariablePath(fromComponent, 'reliefFlowKgPerS')),
+      flowKgPerS: context.readNumber(componentVariablePath(fromComponent, flowVariable)),
       alreadyIncludesPathAvailability: false,
       alreadyIncludesTargetValveDemand: false,
       bypassTargetPumpLimit: false,

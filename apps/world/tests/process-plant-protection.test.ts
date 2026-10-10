@@ -76,6 +76,49 @@ describe('high pressurizer pressure', () => {
   })
 })
 
+describe('pressurizer code safety valves', () => {
+  test('with the PORV blocked, they hold an overpressure near their 17.24 MPa set pressure, discharging to the relief tank', () => {
+    // The same overpressure: no spray, no PORV opening, the PORV isolated and the heaters full on.
+    const automation = withOnlyReactorTrips(['pzr-pressure-high-reactor-trip'])
+    const plantRun = started({ ...automation, rules: automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-') || rule.id === 'pzr-pressure-high-reactor-trip') })
+    plantRun.run(5_000)
+    plantRun.act('pressurizer-porv-block-valve-close')
+    plantRun.run(12_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 30 })
+    const tankBefore = Number(plantRun.read('pressurizerReliefTank.inventoryKg'))
+    let peak = 0
+    let liftedAt: number | null = null
+    let dischargePeak = 0
+    for (let second = 1; second <= 300; second += 1) {
+      plantRun.step()
+      const pressure = Number(plantRun.tag('PT-455'))
+      peak = Math.max(peak, pressure)
+      if (liftedAt === null && plantRun.tag('PSV-8010-OPEN') === true) liftedAt = pressure
+      dischargePeak = Math.max(dischargePeak, Number(plantRun.read('pressurizer-relief-header-to-tank.flowKgPerS')))
+    }
+    // They pop at their set pressure and the pressure never passes their 3 % accumulation, far from the solver's 18 MPa limit.
+    expect(liftedAt).not.toBeNull()
+    expect(liftedAt!).toBeGreaterThanOrEqual(17.24)
+    expect(peak).toBeLessThan(17.24 * 1.03)
+    expect(plantRun.tag('MOV-8000A-POS')).toBe(0)
+    expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBe(0)
+    // What they discharge reaches the relief tank through the relief header.
+    expect(dischargePeak).toBeGreaterThan(40)
+    expect(Number(plantRun.read('pressurizerReliefTank.inventoryKg'))).toBeGreaterThan(tankBefore + 1_000)
+    expect(plantRun.protection.snapshot().alarms.find(lifecycle => lifecycle.id === 'alarm:pzr-safety-valve-open:safety-valve-open')!.occurrenceCount).toBeGreaterThan(0)
+  })
+
+  test('stay shut at normal pressure and through a normal trip', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('turbine-trip')
+    plantRun.run(60_000)
+    expect(plantRun.tag('PSV-8010-OPEN')).toBe(false)
+    expect(plantRun.tag('PSV-8010-POS')).toBe(0)
+    expect(plantRun.protection.snapshot().alarms.find(lifecycle => lifecycle.id === 'alarm:pzr-safety-valve-open:safety-valve-open')!.occurrenceCount).toBe(0)
+  })
+})
+
 describe('overtemperature and overpower delta-T', () => {
   test('each loop channel holds its setpoints above its delta-T at rated power', () => {
     const plantRun = started()

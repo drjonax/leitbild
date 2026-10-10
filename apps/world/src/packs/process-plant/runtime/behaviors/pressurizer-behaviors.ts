@@ -56,6 +56,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'reliefValveFailedPositionFraction',
       'blockValvePositionFraction',
       'blockValveEffectivePositionFraction',
+      'safetyValvesOpen',
       'levelPercent',
       'reactorVessel.surgeFlowKgPerS',
       'reactorVessel.loopSteamMassKg',
@@ -79,6 +80,9 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'reliefValveEffectivePositionFraction',
       'blockValveEffectivePositionFraction',
       'reliefFlowKgPerS',
+      'safetyValvesOpen',
+      'safetyValvesLiftFraction',
+      'safetyValveFlowKgPerS',
       'demandMw',
     ],
     update: ({ system, component, context }): void => {
@@ -111,6 +115,20 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
         ? approach(blockValvePosition, clamp(context.readNumber(componentVariablePath(component, 'blockValvePositionFraction')), 0, 1), dt / parameterNumber(component, 'blockValveStrokeTimeS'))
         : blockValvePosition
       const reliefFlow = reliefCapacity * Math.min(reliefOpening, nextBlockValvePosition) * clamp(pressure / nominalPressure, 0, 1.4)
+      // The code safety valves pop open at their set pressure, reach full lift
+      // with the accumulation above it and stay open until pressure falls by
+      // the blowdown below it. Their lift follows pressure between reseat and
+      // full lift, and their choked steam flow the pressure upstream.
+      const safetySetpoint = parameterNumber(component, 'safetyValveSetpointMPa')
+      const safetyFullLiftPressure = safetySetpoint * (1 + parameterNumber(component, 'safetyValveAccumulationFraction'))
+      const safetyReseatPressure = safetySetpoint * (1 - parameterNumber(component, 'safetyValveBlowdownFraction'))
+      const safetyValvesOpen = context.readBoolean(componentVariablePath(component, 'safetyValvesOpen'))
+        ? pressure > safetyReseatPressure
+        : pressure >= safetySetpoint
+      const safetyLift = safetyValvesOpen
+        ? clamp((pressure - safetyReseatPressure) / (safetyFullLiftPressure - safetyReseatPressure), 0, 1)
+        : 0
+      const safetyFlow = parameterNumber(component, 'safetyValvesCapacityKgPerS') * safetyLift * pressure / safetyFullLiftPressure
 
       const vessel = primarySystemReactorVessel(system)
       const core = primarySystemReactorCore(system)
@@ -148,9 +166,9 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
         waterEnthalpy += sprayFlow * dt * sprayEnthalpy + sprayCondensation * saturation.vapourEnthalpyKjPerKg
       }
       waterEnthalpy += heaterPower * 1_000 * dt
-      // The PORV relieves steam while there is a steam space, water once the
-      // pressurizer is solid.
-      const reliefMass = reliefFlow * dt
+      // The PORV and the safety valves relieve steam while there is a steam
+      // space, water once the pressurizer is solid.
+      const reliefMass = (reliefFlow + safetyFlow) * dt
       const steamRelief = Math.min(steam, reliefMass)
       steam -= steamRelief
       const waterRelief = Math.min(water, reliefMass - steamRelief)
@@ -205,6 +223,9 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       context.write(componentVariablePath(component, 'reliefValveEffectivePositionFraction'), reliefOpening)
       context.write(componentVariablePath(component, 'blockValveEffectivePositionFraction'), nextBlockValvePosition)
       context.write(componentVariablePath(component, 'reliefFlowKgPerS'), reliefFlow)
+      context.write(componentVariablePath(component, 'safetyValvesOpen'), safetyValvesOpen)
+      context.write(componentVariablePath(component, 'safetyValvesLiftFraction'), safetyLift)
+      context.write(componentVariablePath(component, 'safetyValveFlowKgPerS'), safetyFlow)
       context.write(componentVariablePath(component, 'waterTemperatureC'), nextWaterTemperature)
       context.write(componentVariablePath(component, 'steamTemperatureC'), saturationTemperatureCFromPressureMPa(nextPressure))
       context.write(componentVariablePath(component, 'waterInventoryKg'), water)
