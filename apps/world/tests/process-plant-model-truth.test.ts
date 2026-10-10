@@ -179,6 +179,44 @@ describe('breakers', () => {
   })
 })
 
+describe('auxiliary feedwater on a loss of offsite power', () => {
+  test('starts: the turbine-driven pump with its bus, each motor-driven pump on its diesel\'s sequencer, every steam generator fed', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    plantRun.act('loss-offsite-power')
+    const firstTrue: Record<string, number> = {}
+    for (let second = 1; second <= 40; second += 1) {
+      plantRun.run(1_000)
+      for (const tagId of ['BRK-EDG-A-POS', 'BRK-EDG-B-POS', 'AFW-PUMP-A-RUNNING', 'AFW-PUMP-B-RUNNING', 'AFW-PUMP-T-RUNNING']) {
+        if (plantRun.tag(tagId) === true) firstTrue[tagId] ??= second
+      }
+    }
+    // The motor-driven pumps come on in the sequencer's step 5 s after their diesel's breaker closes, not with it.
+    expect(firstTrue['AFW-PUMP-A-RUNNING']! - firstTrue['BRK-EDG-A-POS']!).toBeGreaterThanOrEqual(5)
+    expect(firstTrue['AFW-PUMP-B-RUNNING']! - firstTrue['BRK-EDG-B-POS']!).toBeGreaterThanOrEqual(5)
+    expect(firstTrue['AFW-PUMP-A-RUNNING']!).toBeLessThanOrEqual(25)
+    expect(firstTrue['AFW-PUMP-T-RUNNING']!).toBeLessThanOrEqual(firstTrue['AFW-PUMP-A-RUNNING']!)
+    expect(plantRun.activeIds()).toContain('trip:loss-of-offsite-power-afw-actuation:afw-actuation')
+    // Lined up at about the design flow to each steam generator, not wide open.
+    for (const loop of ['a', 'b', 'c', 'd']) {
+      const flow = Number(plantRun.read(`aux-feedwater-valve-${loop}-to-sg-${loop}.flowKgPerS`))
+      expect(flow, loop).toBeGreaterThan(15)
+      expect(flow, loop).toBeLessThan(40)
+    }
+  })
+
+  test('a turbine trip with offsite power available does not start it', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    plantRun.act('turbine-trip')
+    plantRun.run(30_000)
+    expect(plantRun.tag('UNIT-BUS-A-ENERGIZED')).toBe(true)
+    expect(plantRun.tag('RCP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('AFW-PUMP-A-RUNNING')).toBe(false)
+    expect(plantRun.activeIds()).not.toContain('trip:loss-of-offsite-power-afw-actuation:afw-actuation')
+  })
+})
+
 describe('emergency diesel ratings', () => {
   const trainASafetyPumps = ['AFW-PUMP-A', 'SI-PUMP-A', 'CHG-PUMP-A', 'RHR-PUMP-A', 'CSPRAY-A']
   const onDieselWithTrainALoads = (plantRun: ReturnType<typeof started>, system: typeof plant) => {

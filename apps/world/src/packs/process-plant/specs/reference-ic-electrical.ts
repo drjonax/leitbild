@@ -1,5 +1,6 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, rule, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, rule, trip, write } from './reference-ic-helpers.ts'
+import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 
 const electricalAlarm = annunciator({
   system: 'electrical',
@@ -46,6 +47,23 @@ const dieselGeneratorRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRul
         write(`open-diesel-breaker-${lower}`, { tagId: `BRK-EDG-${train}-CLOSED` }, false),
       ],
     }),
+    // The load sequencer: the bus's loads that were running come back as the
+    // breaker closes (the in-service charging pump among them); once the
+    // diesel has recovered from that block, the motor-driven auxiliary
+    // feedwater pump starts, as a loss of offsite power demands. The safety
+    // injection and RHR pumps start on a safety injection signal instead.
+    rule({
+      id: `diesel-generator-${lower}-sequencer-afw`,
+      label: `Diesel generator ${train} load sequencer auxiliary feedwater step`,
+      ruleClass: 'normalControl',
+      condition: comparison({ tagId: `BRK-EDG-${train}-POS` }, '==', true),
+      delayMs: 5_000,
+      latch: false,
+      resetWhenClear: true,
+      effects: [
+        write(`start-motor-afw-${lower}`, { tagId: `AFW-PUMP-${train}` }, true),
+      ],
+    }),
     // On its diesel alone, the bus can carry no more than the diesel's rating:
     // a bus margin of 0 MW means the diesel is loaded to its limit.
     rule({
@@ -74,7 +92,37 @@ const dieselGeneratorRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRul
   ]
 }
 
-export const electricalReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> => [
+// Both unit buses dead is a loss of offsite power to the unit: the steam-driven
+// auxiliary feedwater pump starts at once and auxiliary feedwater is lined up
+// to every steam generator; the motor-driven pumps follow on the sequencer.
+// Each line opens to a quarter, about 26 kg/s per steam generator and some
+// 105 kg/s in all, a 4-loop PWR's auxiliary feedwater design flow. Wide open,
+// the reference pumps would feed four times that and overfill the steam
+// generators within minutes; operators throttle from there.
+const afwLineUpPositionFraction = 0.25
+
+const lossOfOffsitePowerAuxiliaryFeedwater = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlantIcRule => rule({
+  id: 'loss-of-offsite-power-afw-actuation',
+  label: 'Loss of offsite power auxiliary feedwater actuation',
+  ruleClass: 'protection',
+  condition: all([
+    comparison({ tagId: 'UNIT-BUS-A-ENERGIZED' }, '==', false),
+    comparison({ tagId: 'UNIT-BUS-B-ENERGIZED' }, '==', false),
+  ]),
+  delayMs: 1_000,
+  effects: [
+    trip({
+      id: 'afw-actuation',
+      title: 'AFW actuation on loss of offsite power',
+      message: 'Both unit buses are dead: the turbine-driven auxiliary feedwater pump starts and auxiliary feedwater is lined up to every steam generator.',
+      annunciator: annunciator({ system: 'feedwater', equipmentId: 'auxFeedwaterHeader', group: 'auxiliary-feedwater', priority: 'urgent', role: 'automaticAction' }),
+    }),
+    write('start-turbine-afw', { tagId: 'AFW-PUMP-T' }, true),
+    ...loops.map(loop => write(`open-afw-valve-${loop.toLowerCase()}`, { path: `auxFeedwaterValve${loop}.positionFraction` }, afwLineUpPositionFraction)),
+  ],
+})
+
+export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
     id: 'safety-bus-a-loss-alarm',
     label: 'Safety bus A loss of power',
@@ -183,6 +231,7 @@ export const electricalReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> 
       }),
     ],
   }),
+  lossOfOffsitePowerAuxiliaryFeedwater(loops),
   rule({
     id: 'loss-of-offsite-power',
     label: 'Loss of offsite power',

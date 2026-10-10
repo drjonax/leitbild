@@ -333,6 +333,7 @@ describe('process plant runtime', () => {
       ]],
       ['loss-offsite-power', [
         'alarm:loss-of-offsite-power:loss-of-offsite-power',
+        'trip:loss-of-offsite-power-afw-actuation:afw-actuation',
       ]],
     ])
 
@@ -386,6 +387,7 @@ describe('process plant runtime', () => {
       ]],
       ['loss-offsite-power', [
         'alarm:loss-of-offsite-power:loss-of-offsite-power',
+        'trip:loss-of-offsite-power-afw-actuation:afw-actuation',
       ]],
     ])
 
