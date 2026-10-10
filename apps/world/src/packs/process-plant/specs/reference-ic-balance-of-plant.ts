@@ -1,9 +1,9 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, rule, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, reactorTripBreakerOpen, rule, write } from './reference-ic-helpers.ts'
 
 const feedwaterAlarm = annunciator({
   system: 'feedwater',
-  equipmentId: 'mainFeedwaterHeader',
+  equipmentId: 'feedwaterHeader',
   group: 'feedwater',
   priority: 'high',
   role: 'symptom',
@@ -22,10 +22,7 @@ export const balanceOfPlantReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRu
     id: 'reactor-trip-turbine-trip',
     label: 'Reactor trip turbine trip',
     ruleClass: 'normalControl',
-    condition: any([
-      comparison({ tagId: 'TRIP-BKR-A' }, '==', false),
-      comparison({ tagId: 'TRIP-BKR-B' }, '==', false),
-    ]),
+    condition: reactorTripBreakerOpen(),
     latch: false,
     resetWhenClear: true,
     effects: [
@@ -37,10 +34,7 @@ export const balanceOfPlantReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRu
     id: 'reactor-trip-main-feedwater-isolation',
     label: 'Reactor trip main feedwater isolation',
     ruleClass: 'normalControl',
-    condition: any([
-      comparison({ tagId: 'TRIP-BKR-A' }, '==', false),
-      comparison({ tagId: 'TRIP-BKR-B' }, '==', false),
-    ]),
+    condition: reactorTripBreakerOpen(),
     delayMs: 45_000,
     latch: false,
     resetWhenClear: true,
@@ -54,12 +48,12 @@ export const balanceOfPlantReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRu
     label: 'Main feedwater pump unavailable',
     ruleClass: 'alarm',
     condition: any([
-      comparison({ tagId: 'MFW-PUMP-A-RUN' }, '==', false),
-      comparison({ tagId: 'MFW-PUMP-B-RUN' }, '==', false),
+      comparison({ tagId: 'MFW-PUMP-A-RUNNING' }, '==', false),
+      comparison({ tagId: 'MFW-PUMP-B-RUNNING' }, '==', false),
     ]),
     clearCondition: all([
-      comparison({ tagId: 'MFW-PUMP-A-RUN' }, '==', true),
-      comparison({ tagId: 'MFW-PUMP-B-RUN' }, '==', true),
+      comparison({ tagId: 'MFW-PUMP-A-RUNNING' }, '==', true),
+      comparison({ tagId: 'MFW-PUMP-B-RUNNING' }, '==', true),
     ]),
     clearDelayMs: 1_000,
     delayMs: 1_000,
@@ -77,6 +71,7 @@ export const balanceOfPlantReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRu
     id: 'turbine-load-low',
     label: 'Turbine load low',
     ruleClass: 'alarm',
+    modes: ['powerOperation'],
     condition: comparison({ tagId: 'TURB-LOAD' }, '<', 0.5),
     clearCondition: comparison({ tagId: 'TURB-LOAD' }, '>', 0.55),
     clearDelayMs: 1_000,
@@ -95,6 +90,7 @@ export const balanceOfPlantReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRu
     id: 'generator-output-low',
     label: 'Generator output low',
     ruleClass: 'alarm',
+    modes: ['powerOperation'],
     condition: comparison({ tagId: 'GEN-MW' }, '<', 450),
     clearCondition: comparison({ tagId: 'GEN-MW' }, '>', 500),
     clearDelayMs: 2_000,

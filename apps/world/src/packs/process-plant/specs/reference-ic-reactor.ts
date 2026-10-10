@@ -1,6 +1,6 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
-import { alarm, annunciator, comparison, reactorTripBreakerWrites, rule, trip, vote, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, comparison, reactorTripBreakerWrites, rule, trip, vote, write } from './reference-ic-helpers.ts'
 
 const reactorAlarm = annunciator({
   system: 'reactorProtection',
@@ -23,6 +23,11 @@ const lowRcpFlowVoteThresholdFor = (loops: ReadonlyArray<ProcessPlantReferenceLo
   Math.max(1, Math.ceil(loops.length * 0.75))
 
 const lowRcpFlowTripThresholdKgPerS = 3_000
+
+// P-9: above half of the reference core's 3,400 MW rated power the steam
+// dumps cannot take the whole load a turbine trip rejects, so the turbine
+// trip trips the reactor. Below it the reactor rides the trip out.
+const p9PowerMw = 1_700
 
 export const reactorReferenceIcRules = (
   loops: ReadonlyArray<ProcessPlantReferenceLoop>,
@@ -64,8 +69,7 @@ export const reactorReferenceIcRules = (
     id: 'reactor-low-primary-flow-trip',
     label: 'Reactor low primary flow trip',
     ruleClass: 'protection',
-    modeLabel: 'power operation',
-    modeCondition: comparison({ path: 'core.powerMw' }, '>', 100),
+    modes: ['powerOperation'],
     condition: comparison({ path: 'vessel.netInventoryFlowKgPerS' }, '<', -250),
     delayMs: 2_000,
     effects: [
@@ -80,11 +84,32 @@ export const reactorReferenceIcRules = (
     ],
   }),
   rule({
+    id: 'reactor-turbine-trip',
+    label: 'Reactor trip on turbine trip',
+    ruleClass: 'protection',
+    // In power operation, so the turbine trip a reactor trip itself causes does not trip it again.
+    modes: ['powerOperation'],
+    // The stop valve closed and power above P-9, as the RPS logic ANDs them.
+    condition: all([
+      comparison({ tagId: 'TURB-STOP-POS' }, '<', 0.05),
+      comparison({ path: 'core.powerMw' }, '>', p9PowerMw),
+    ]),
+    effects: [
+      trip({
+        id: 'turbine-trip-reactor-trip',
+        title: 'Reactor trip on turbine trip',
+        message: `The turbine stop valve closed with reactor power above P-9 (${p9PowerMw} MW, half of rated).`,
+        annunciator: reactorAction,
+      }),
+      ...reactorTripBreakerWrites('turbine-trip'),
+      write('insert-control-rods-turbine-trip', { path: 'core.rodInsertionFraction' }, 1),
+    ],
+  }),
+  rule({
     id: 'reactor-low-rcp-flow-trip',
     label: 'Reactor low reactor coolant pump flow trip',
     ruleClass: 'protection',
-    modeLabel: 'power operation',
-    modeCondition: comparison({ path: 'core.powerMw' }, '>', 100),
+    modes: ['powerOperation'],
     condition: vote(lowRcpFlowVoteThresholdFor(loops), loops.map(loop => comparison({ path: `rcp${loop}.loopFlowKgPerS` }, '<', lowRcpFlowTripThresholdKgPerS))),
     delayMs: 2_000,
     effects: [

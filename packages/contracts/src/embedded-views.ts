@@ -1,7 +1,12 @@
 import { z } from 'zod'
 import { moduleIdSchema } from './ids.ts'
 import { workspaceResourceReferenceSchema } from './resources.ts'
-import { EMBEDDED_VIEW_FRAGMENT_KEY } from './embedded-view-route.ts'
+import {
+  EMBEDDED_VIEW_FRAGMENT_KEY,
+  EMBEDDED_VIEW_MAX_HEIGHT,
+  EMBEDDED_VIEW_MIN_HEIGHT,
+  EMBEDDED_VIEW_STATE_MAX_LENGTH,
+} from './embedded-view-route.ts'
 
 // A view that its owning Module publishes for another Module to embed, e.g. a
 // World display shown below an Agents message. The owning Module defines,
@@ -14,19 +19,13 @@ export const embeddedViewTypeSchema = z.string()
   .brand<'EmbeddedViewType'>()
 export type EmbeddedViewType = z.infer<typeof embeddedViewTypeSchema>
 
-// The envelope travels in a URL fragment; 4 KiB keeps it far below browser
-// URL limits while leaving room for a compact display composition.
-export const EMBEDDED_VIEW_STATE_MAX_LENGTH = 4096
-
 // What a Module operation returns when its result can be shown as a view. The
 // caller completes the envelope with the exact Resource it invoked, so the
 // publishing runtime need not know its own Workspace identity.
-// Views up to 960 px tall: a live equipment mimic with its trend and alarms needs about 900.
-export const EMBEDDED_VIEW_MAX_HEIGHT = 960
 const embeddedViewPublicationShape = {
   viewType: embeddedViewTypeSchema,
   title: z.string().min(1).max(120),
-  height: z.number().int().min(120).max(EMBEDDED_VIEW_MAX_HEIGHT),
+  height: z.number().int().min(EMBEDDED_VIEW_MIN_HEIGHT).max(EMBEDDED_VIEW_MAX_HEIGHT),
   state: z.string().min(2).max(EMBEDDED_VIEW_STATE_MAX_LENGTH),
 }
 export const embeddedViewPublicationSchema = z.object(embeddedViewPublicationShape).strict()
@@ -49,4 +48,10 @@ export const parseEmbeddedViewFragment = (hash: string): EmbeddedViewEnvelope =>
   return embeddedViewEnvelopeSchema.parse(JSON.parse(decodeURIComponent(body.slice(EMBEDDED_VIEW_FRAGMENT_KEY.length))))
 }
 
-export { embeddedViewFragment, embeddedViewPath } from './embedded-view-route.ts'
+export {
+  embeddedViewFragment,
+  embeddedViewPath,
+  EMBEDDED_VIEW_MAX_HEIGHT,
+  EMBEDDED_VIEW_MIN_HEIGHT,
+  EMBEDDED_VIEW_STATE_MAX_LENGTH,
+} from './embedded-view-route.ts'

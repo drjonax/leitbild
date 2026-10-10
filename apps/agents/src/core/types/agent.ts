@@ -1,7 +1,7 @@
 // Agent types — Agent, AIAgent, state observability, team membership,
 // AI configuration, response shape, and message-routing coordination.
 
-import type { Message, MessageTarget, PostParams } from './messaging.ts'
+import type { Message, MessageCause, MessageTarget, PostParams } from './messaging.ts'
 import type { ToolDefinition, ToolExecutor } from './tool.ts'
 import type { Room } from './room.ts'
 import type { RoomDirectory } from '../rooms/directory.ts'
@@ -156,7 +156,29 @@ export interface AIAgent extends Agent {
   // error renders as the typed error bubble). Never throws; logs on
   // internal failure.
   readonly fireTriggerExecute?: (prompt: string, roomId: string) => Promise<void>
+  // Asks for one ordinary evaluation in `roomId` (queued like any pending
+  // room when the agent is busy) that ends with `turn.instruction`.
+  readonly requestTurn?: (roomId: string, turn: RequestedTurn) => RequestedTurnResult
 }
+
+// A one-turn request from outside the conversation, such as a display
+// request. The instruction is a transient trailing user message: never posted,
+// never kept in history. The reply carries `cause` and starts its inReplyTo
+// with `inReplyTo`. `requireView` asks the evaluation loop to insist once on
+// a live view when the reply presents none.
+export interface RequestedTurn {
+  readonly instruction: string
+  readonly inReplyTo: ReadonlyArray<string>
+  readonly cause: MessageCause
+  readonly requireView: boolean
+}
+
+// `queued`: the turn waits behind the agent's current work. A refusal names
+// its rule: another requested turn is pending in the Room, or a script
+// directs the Room (its context strategy has no place for the instruction).
+export type RequestedTurnResult =
+  | { readonly kind: 'accepted'; readonly queued: boolean }
+  | { readonly kind: 'refused'; readonly reason: 'pending' | 'script'; readonly message: string }
 
 export interface ContextPreviewSection {
   readonly key: string
@@ -259,6 +281,7 @@ export type AgentResponseErrorCode =
   | 'tool_loop_exceeded' // tool iteration cap hit and no partial text
   | 'empty_response'     // LLM returned no content and no tool calls
   | 'tools_unavailable'  // model emitted tool calls but no executor wired
+  | 'request_dropped'    // a requested turn could no longer run (RequestedTurn)
   | 'unknown'
 
 export type AgentResponse =

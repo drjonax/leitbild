@@ -148,11 +148,13 @@ const variableLetters = (binding: ProcessSignalBinding): string => {
 const discreteWords = (graph: CompiledPlantGraph, binding: ProcessSignalBinding, value: boolean): string => {
   const owner = binding.owner.type === 'component' ? graph.components[binding.owner.componentIndex]! : undefined
   const aspects = owner?.semantics.aspects ?? []
-  const served = aspects.find(aspect => aspect.command === binding.path || aspect.state?.path === binding.path)?.aspect
+  const servedAspect = aspects.find(aspect => aspect.command === binding.path || aspect.state?.path === binding.path)
+  const served = servedAspect?.aspect
   // A flag that serves no aspect says itself: "degraded" true reads DEGRADED.
   const flag = String(binding.path).split('.').at(-1)!.replace(/([a-z])([A-Z])/g, '$1 $2').toUpperCase()
   // "CMD" is kept for a command the equipment does not follow; a rule on the run command reads NOT RUN.
   return served === 'running' ? (value ? 'RUN' : 'NOT RUN')
+    : served === 'position' && servedAspect?.state?.reading === 'closedWhileTrue' ? (value ? 'CLOSED' : 'OPEN')
     : served === 'position' ? (value ? 'OPEN' : 'SHUT')
       : served === 'energized' ? (value ? 'LIVE' : 'DEAD')
         : (value ? flag : `NOT ${flag}`)

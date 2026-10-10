@@ -14,6 +14,8 @@ import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { compileMimic, type MimicBudget } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH, type CompiledMimic } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
+import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
+import { itemRowTexts } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { plantCarriers, plantLoops, type MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
 import { carriersAt } from '../src/packs/process-plant/graph/index.ts'
 
@@ -83,13 +85,39 @@ describe('generated equipment mimics', () => {
     }
   })
 
-  test('the PORV the model bundles in the pressurizer is drawn on the relief line, judged by its flow', () => {
+  test('the PORV the model bundles in the pressurizer is drawn on the relief line with the opening it relieves through', () => {
     const mimic = generated(system, { from: ['pressurizer'], to: ['PRT'] })
     expect(mimic.items.map(item => item.binding.label).sort()).toEqual(['PORV', 'PRT', 'PZR'])
     const porv = mimic.items.find(item => item.binding.label === 'PORV')!
     expect(porv.presentation).toEqual({ element: 'device', icon: 'valve-digital', aspect: 'position' })
-    expect(porv.rows.map(row => row.kind)).toEqual(['state', 'throughput', 'mismatch'])
-    expect(mimic.summary.unmeasuredStates).toEqual(['PORV'])
+    expect(porv.rows.map(row => row.kind)).toEqual(['position', 'mismatch'])
+    expect(mimic.summary.unmeasuredStates).toEqual([])
+  })
+
+  test('a lone pipe into a hub says where it enters when nothing is drawn at the hub\'s other alike ports', () => {
+    // Safety injection to loop C reaches the core at cold leg C only; the header's stub names the other legs.
+    const labels = (intent: MimicIntent) => generated(system, intent).items.map(item => item.binding.label)
+    expect(labels({ services: ['safetyInjection'], loops: ['C'] })).toContain('Core · cold leg C')
+    expect(labels({ services: ['primaryInjection'], loops: ['A'] })).toContain('Core · cold leg A')
+    // Several legs reached: the equipment on them tells them apart, and headers never list their branches.
+    expect(labels({ services: ['primaryCoolant'], loops: ['A'] })).toContain('Core')
+    expect(labels({ services: ['primaryCoolant'] }).filter(label => label.includes(' · '))).toEqual([])
+  })
+
+  test('a breaker says its contacts, and a command it does not follow', () => {
+    const mimic = generated(system, { to: ['safetyBusA'] })
+    const breaker = mimic.items.find(item => item.binding.label === 'Offsite BKR A')!
+    expect(breaker.rows.map(row => row.kind)).toEqual(['state', 'mismatch'])
+    expect(mimic.summary.unmeasuredStates).toEqual([])
+    const state = breaker.binding.state!
+    const at = (closed: boolean, command: boolean) => indexSample([{ path: state.state!.path, value: closed, quality: 'good' }, { path: state.command!, value: command, quality: 'good' }])
+    const texts = (index: ReturnType<typeof indexSample>) => itemRowTexts(breaker.binding, breaker.presentation, breaker.rows, index, String)
+    expect(texts(at(true, true))).toEqual(['CLOSED', ''])
+    expect(texts(at(false, false))).toEqual(['OPEN', ''])
+    // Tripped open while still commanded closed, and stuck closed while commanded open.
+    expect(texts(at(false, true))).toEqual(['OPEN', 'CMD CLOSE'])
+    expect(texts(at(true, false))).toEqual(['CLOSED', 'CMD OPEN'])
+    expect(texts(indexSample([]))).toEqual(['?', ''])
   })
 
   test('the same intent on the same model draws the same mimic', () => {
@@ -248,7 +276,7 @@ describe('mimic panels in composed displays', () => {
   test('a stored display re-opens with its drawing, and relates its alarms to the drawn equipment', () => {
     const composed = ask('world.process-plant.display.compose', { ...display([{ kind: 'mimic', from: ['pressurizer'], to: ['PRT'] }, { kind: 'alarms', scope: 'related' }]), subjects: ['pressurizer'] }) as { view: { state: string }; equipment: ReadonlyArray<{ id: string; label: string; state: string }> }
     expect(composed.equipment.map(item => item.label)).toEqual(['PZR', 'PRT', 'PORV'])
-    expect(composed.equipment.find(item => item.label === 'PORV')!.state).toBe('position not measured; no flow')
+    expect(composed.equipment.find(item => item.label === 'PORV')!.state).toBe('closed')
     const result = ask('world.process-plant.display.view', { plantId: system.plant.id, state: composed.view.state }) as {
       drawingChanged: boolean
       display: { panels: ReadonlyArray<{ kind: string; ruleIds?: ReadonlyArray<string> }> }

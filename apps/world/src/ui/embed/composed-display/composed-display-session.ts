@@ -1,7 +1,7 @@
 import type { SimulationRunId } from '../../../core/model/index.ts'
 import type { CompiledComposedPanel, ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
 import type { ComposedDisplayClient, ComposedDisplaySample, ComposedDisplayViewResult, ViewSize } from './composed-display-client.ts'
-import { appendPoint, type TrendPoint, type ValueDomain } from './trend-geometry.ts'
+import { appendPoint, HOLD_GAP_MS, type TrendPoint, type ValueDomain } from './trend-geometry.ts'
 
 export type ComposedDisplayPhase =
   | { readonly kind: 'checking' }
@@ -18,6 +18,8 @@ export interface ComposedDisplaySnapshot {
   readonly series: ReadonlyMap<string, ReadonlyArray<TrendPoint>>
   /** Signals without recorded history in the window; their trend starts when the view opened. */
   readonly historyMissing: ReadonlySet<string>
+  /** Lead values whose history could not be read, and why; their sparkline starts when the view opened. */
+  readonly historyErrors: ReadonlyMap<string, string>
   /**
    * Value range seen per panel scale (one per trend strip, one for a
    * comparison) since the view opened; it only grows, so scales never jump inward.
@@ -43,6 +45,15 @@ export const IDLE_SUSPEND_MS = 15 * 60_000
 const COMPARISON_SERIES_MS = 600_000
 // Alarm state marks values in alarm on every panel, not only the alarms strip.
 const WITH_ALARMS = true
+
+/** A signal whose history a display keeps: from its window's start until now. */
+interface HistoryPen {
+  readonly path: string
+  readonly seriesId: string
+  readonly horizonMs: number
+}
+
+const messageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
 const pensOf = (panel: CompiledComposedPanel): ReadonlyArray<ComposedDisplayPen> => {
   if (panel.kind === 'alarms' || panel.kind === 'mimic') return []
@@ -73,7 +84,7 @@ export const createComposedDisplaySession = (config: {
   let polls = 0
   let lastInteractionWallMs = wallNow()
   let lastSimulationMs: number | undefined
-  let snapshot: ComposedDisplaySnapshot = { phase: { kind: 'checking' }, series: new Map(), historyMissing: new Set(), ranges: [], sampleError: null, resetSinceAdvice: false }
+  let snapshot: ComposedDisplaySnapshot = { phase: { kind: 'checking' }, series: new Map(), historyMissing: new Set(), historyErrors: new Map(), ranges: [], sampleError: null, resetSinceAdvice: false }
   // What the view shows: the state it was embedded with, or equipment opened from a generated display.
   let state = config.state
 
@@ -83,7 +94,7 @@ export const createComposedDisplaySession = (config: {
     config.onChange(snapshot)
   }
 
-  const fail = (error: unknown): void => update({ phase: { kind: 'failed', message: error instanceof Error ? error.message : String(error) } })
+  const fail = (error: unknown): void => update({ phase: { kind: 'failed', message: messageOf(error) } })
 
   const stopPolling = (): void => { clearInterval(timer); timer = undefined }
 
@@ -94,13 +105,50 @@ export const createComposedDisplaySession = (config: {
     ? panel.mimic.paths.map(String)
     : pensOf(panel).map(pen => String(pen.path))))]
 
-  /** Trends keep their horizon; comparisons keep ten minutes for rates. Readouts use the latest sample. */
-  const trendPens = (): ReadonlyArray<{ readonly path: string; readonly seriesId: string; readonly horizonMs: number }> =>
-    panels().flatMap(panel => plottedPensOf(panel).map(pen => ({
+  /** Trends keep their horizon; comparisons keep ten minutes for rates. Advice readouts use only the latest sample. */
+  const trendPens = (shown: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<HistoryPen> =>
+    shown.flatMap(panel => plottedPensOf(panel).map(pen => ({
       path: String(pen.path),
       seriesId: pen.seriesId,
       horizonMs: panel.kind === 'trend' ? panel.horizonMs : COMPARISON_SERIES_MS,
     })))
+
+  /** A generated display's lead values keep their sparklines' window: the recorded numeric ones. */
+  const sparklinePens = (shown: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<HistoryPen> => shown.flatMap(panel => {
+    if (panel.kind !== 'readouts' || panel.sparklineMs === undefined) return []
+    const horizonMs = panel.sparklineMs
+    return panel.pens.filter(pen => pen.recorded && pen.valueKind === 'number').map(pen => ({ path: String(pen.path), seriesId: pen.seriesId, horizonMs }))
+  })
+
+  /**
+   * The history behind what a display draws over time, read once when it
+   * opens; live samples extend it. A trend is its history, so a trend whose
+   * history cannot be read fails the display. A sparkline only adds direction
+   * to a lead value, so one that cannot be read is said on its row and starts
+   * with the live samples. Sparklines read from one hold gap before their
+   * window, so the value held at the window's start is known.
+   */
+  const backfill = async (shown: ReadonlyArray<CompiledComposedPanel>, now: number): Promise<Pick<ComposedDisplaySnapshot, 'series' | 'historyMissing' | 'historyErrors'>> => {
+    const series = new Map<string, ReadonlyArray<TrendPoint>>()
+    const historyMissing = new Set<string>()
+    const historyErrors = new Map<string, string>()
+    const read = async (pen: HistoryPen, from: number): Promise<void> => {
+      const points = await config.client.history(config.runId, pen.seriesId, { from, to: now })
+      if (points.length === 0) historyMissing.add(pen.path)
+      series.set(pen.path, points)
+    }
+    await Promise.all([
+      ...trendPens(shown).map(pen => read(pen, now - pen.horizonMs)),
+      ...sparklinePens(shown).map(async pen => {
+        try {
+          await read(pen, now - pen.horizonMs - HOLD_GAP_MS)
+        } catch (error) {
+          historyErrors.set(pen.path, messageOf(error))
+        }
+      }),
+    ])
+    return { series, historyMissing, historyErrors }
+  }
 
   /** Values on each scale of a panel: trends their history per strip, comparisons the latest sample. */
   const scaleValues = (
@@ -132,7 +180,7 @@ export const createComposedDisplaySession = (config: {
     const reset = lastSimulationMs !== undefined && at < lastSimulationMs
     lastSimulationMs = at
     const series = new Map(reset ? [] : snapshot.series)
-    for (const pen of trendPens()) {
+    for (const pen of [...trendPens(panels()), ...sparklinePens(panels())]) {
       const value = sample.values.find(entry => entry.path === pen.path)?.value
       if (typeof value !== 'number') continue
       series.set(pen.path, appendPoint(series.get(pen.path) ?? [], { t: at, v: value }, at - pen.horizonMs))
@@ -157,7 +205,7 @@ export const createComposedDisplaySession = (config: {
       applySample(await config.client.sample(config.runId, config.plantId, sampledPaths(), WITH_ALARMS))
     } catch (error) {
       // Keep the last values on screen; the stale marker and this message say they are old.
-      update({ sampleError: error instanceof Error ? error.message : String(error) })
+      update({ sampleError: messageOf(error) })
     }
   }
 
@@ -171,17 +219,11 @@ export const createComposedDisplaySession = (config: {
     const view = await config.client.view(config.runId, config.plantId, state, config.size())
     update({ view })
     const now = Date.parse(view.simulationTime)
-    const series = new Map<string, ReadonlyArray<TrendPoint>>()
-    const historyMissing = new Set<string>()
-    await Promise.all(trendPens().map(async pen => {
-      const points = await config.client.history(config.runId, pen.seriesId, { from: now - pen.horizonMs, to: now })
-      if (points.length === 0) historyMissing.add(pen.path)
-      series.set(pen.path, points)
-    }))
+    const history = await backfill(view.display.panels, now)
     lastSimulationMs = now
     // The first sample fills readouts, comparisons and alarms before polling starts.
     const first = await config.client.sample(config.runId, config.plantId, sampledPaths(), WITH_ALARMS)
-    update({ series, historyMissing, latest: first, lastSampleWallMs: wallNow(), ranges: grownRanges(series, first), phase: { kind: 'live' } })
+    update({ ...history, latest: first, lastSampleWallMs: wallNow(), ranges: grownRanges(history.series, first), phase: { kind: 'live' } })
   }
 
   // A generated display is drawn for its view, so a view with no size yet (a
@@ -246,21 +288,24 @@ export const createComposedDisplaySession = (config: {
         const view = await config.client.view(config.runId, config.plantId, drawn, config.size())
         if (drawn === state) update({ view })
       } catch (error) {
-        update({ sampleError: error instanceof Error ? error.message : String(error) })
+        update({ sampleError: messageOf(error) })
       }
     },
     /**
      * Shows another generated display of the same Plant in place (equipment
-     * opened from an overview, or back). Generated displays have no trends,
-     * so only the latest sample carries over until the next one arrives. A
-     * display that cannot be drawn leaves the current one and rejects.
+     * opened from an overview, or back), with its lead values' history read
+     * once as it opens; the latest sample carries over until the next one
+     * arrives. A display that cannot be drawn leaves the current one and
+     * rejects.
      */
     open: async (next: string): Promise<void> => {
       if (closed) return
       const view = await config.client.view(config.runId, config.plantId, next, config.size())
       if (closed) return
+      const history = await backfill(view.display.panels, Date.parse(view.simulationTime))
+      if (closed) return
       state = next
-      update({ view, series: new Map(), historyMissing: new Set(), ranges: [] })
+      update({ view, ...history, ranges: [] })
       if (snapshot.phase.kind === 'live') await poll()
     },
     poll,

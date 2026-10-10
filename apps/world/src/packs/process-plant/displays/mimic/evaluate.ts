@@ -33,6 +33,8 @@ const percent = (fraction: number): string => `${Math.round(fraction * 100)} %`
 export type ItemState =
   | { readonly kind: 'running' | 'stopped' }
   | { readonly kind: 'position'; readonly fraction: number }
+  /** A breaker's contacts. */
+  | { readonly kind: 'closed' | 'open' }
   | { readonly kind: 'passing' | 'notPassing'; readonly flow: number }
   | { readonly kind: 'level'; readonly percent: number; readonly offScale: 'high' | 'low' | null }
   | { readonly kind: 'flowing' | 'noFlow' }
@@ -50,8 +52,13 @@ export interface ItemLook {
   readonly words: string
 }
 
-const commandText = (index: SampleIndex, path: string | undefined, aspect: 'running' | 'position'): { readonly text: string; readonly open: boolean | null; readonly fraction: number | null } | null => {
+/**
+ * A command as the item shows it. `open` is whether it demands the item run
+ * or open; a breaker's command (`closedWhileTrue`) closes it while true.
+ */
+const commandText = (index: SampleIndex, path: string | undefined, aspect: 'running' | 'position', closedWhileTrue = false): { readonly text: string; readonly open: boolean | null; readonly fraction: number | null } | null => {
   const flag = booleanAt(index, path)
+  if (flag !== null && closedWhileTrue) return { text: flag ? 'CMD CLOSE' : 'CMD OPEN', open: !flag, fraction: null }
   if (flag !== null) return { text: aspect === 'running' ? (flag ? 'CMD RUN' : 'CMD STOP') : (flag ? 'CMD OPEN' : 'CMD SHUT'), open: flag, fraction: null }
   const fraction = numberAt(index, path)
   if (fraction === null) return null
@@ -75,7 +82,15 @@ export const itemLook = (binding: MimicItemBinding, index: SampleIndex): ItemLoo
   }
 
   if (state.aspect === 'position') {
-    const command = commandText(index, state.command, 'position')
+    const closedWhileTrue = state.state?.reading === 'closedWhileTrue'
+    const command = commandText(index, state.command, 'position', closedWhileTrue)
+    if (closedWhileTrue) {
+      const closed = booleanAt(index, state.state?.path)
+      if (closed === null) return unknown()
+      // A breaker commanded open disagrees while its contacts stay closed, and the other way round.
+      const mismatch = command === null || command.open === null || command.open === !closed ? null : command.text
+      return { state: { kind: closed ? 'closed' : 'open' }, notMeasured: false, mismatch, words: `${closed ? 'closed' : 'open'}${mismatch === null ? '' : `; ${mismatch.replace('CMD', 'commanded').toLowerCase()} disagrees`}` }
+    }
     if (state.state === undefined) {
       // The model does not compute the position: what passes the item judges it.
       const flow = numberAt(index, state.throughput?.path)

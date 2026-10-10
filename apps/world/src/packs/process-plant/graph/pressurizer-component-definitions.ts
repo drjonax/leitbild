@@ -29,15 +29,18 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
     }),
     semantics: fixedSemantics({ keyValues: ['pressureMPa', 'levelPercent'],
       aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })],
-      // The PORV is modelled inside the pressurizer, on its relief outlet. The model solves the relief flow but not the
-      // valve's position, so the position reads "not measured" and the valve is judged by what passes it.
+      // The PORV is modelled inside the pressurizer, on its relief outlet. Its position is the opening the model relieves
+      // through: the demand, the automatic opening above the relief setpoint, or a failed position.
       embedded: [{
         id: 'reliefValve',
         label: 'relief valve',
         function: 'relieving',
         port: 'reliefOutlet',
-        aspects: [aspect('position', undefined, 'reliefValvePositionFraction'), aspect('throughput', { variable: 'reliefFlowKgPerS', reading: 'flow' })],
-        variables: ['reliefFlowKgPerS', 'reliefValvePositionFraction', 'reliefValveFailureActive', 'reliefValveFailedPositionFraction'],
+        aspects: [
+          aspect('position', { variable: 'reliefValveEffectivePositionFraction', reading: 'value' }, 'reliefValvePositionFraction'),
+          aspect('throughput', { variable: 'reliefFlowKgPerS', reading: 'flow' }),
+        ],
+        variables: ['reliefFlowKgPerS', 'reliefValvePositionFraction', 'reliefValveEffectivePositionFraction', 'reliefValveFailureActive', 'reliefValveFailedPositionFraction'],
       }],
       ratedOutflow: [{ port: 'reliefOutlet', parameter: 'reliefCapacityKgPerS' }],
     }),
@@ -57,9 +60,10 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'heaterPowerMw', label: 'Pressurizer heater power', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'power', unit: 'MW', limits: { hardRange: { min: 0, max: 30 } } }),
       variable({ path: 'demandMw', label: 'Pressurizer electrical demand', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'sprayFlowKgPerS', label: 'Pressurizer spray flow', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'flowRate', unit: 'kg/s', limits: { hardRange: { min: 0, max: 250 } } }),
-      variable({ path: 'reliefValvePositionFraction', label: 'Pressurizer relief valve position', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
+      variable({ path: 'reliefValvePositionFraction', label: 'Pressurizer relief valve position demand', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'reliefValveFailureActive', label: 'Pressurizer relief valve failure active', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'faultInjection', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'reliefValveFailedPositionFraction', label: 'Pressurizer relief valve failed position', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'faultInjection', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
+      variable({ path: 'reliefValveEffectivePositionFraction', label: 'Pressurizer relief valve effective position', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
       variable({ path: 'reliefFlowKgPerS', label: 'Pressurizer relief flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
     ],
   }),

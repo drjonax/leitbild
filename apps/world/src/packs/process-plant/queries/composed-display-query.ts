@@ -6,6 +6,7 @@ import { rejectCapabilityInput, rejectCapabilityTarget } from '../../../simulati
 import { variablePathSchema } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { processPlantSignalQuality } from '../signals.ts'
+import { processPlantOperatingMode } from '../runtime/index.ts'
 import {
   COMPOSED_DISPLAY_VIEW_TYPE,
   PROCESS_DISPLAY_SAMPLE_MAX_PATHS,
@@ -211,10 +212,14 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
   const system = requirePlant(config.plants, payload.plantId)
   const protection = payload.alarms ? system.protection?.snapshot() : undefined
   if (payload.alarms && protection === undefined) return rejectCapabilityTarget(`Process Plant ${payload.plantId} has no configured alarms`)
+  // Where the Plant declares operating modes, the one it is in, or null where none holds.
+  const modes = system.plant.automation.operatingModes
+  const mode = modes.length === 0 ? undefined : processPlantOperatingMode({ system: system.plant, runtime: system.runtime, modes })
   return {
     plantId: payload.plantId,
     simulationTime,
     plantElapsedMs: system.runtime.elapsedMs(),
+    ...(mode === undefined ? {} : { mode: mode === null ? null : { id: mode.id, label: mode.label } }),
     ...(protection === undefined ? {} : {
       // Shelved, suppressed and out-of-service alarms annunciate nowhere; one
       // that cleared unacknowledged stays listed until it is acknowledged.

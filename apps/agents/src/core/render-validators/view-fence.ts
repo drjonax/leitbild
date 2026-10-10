@@ -8,6 +8,11 @@
 // Browser-safe: no schema runtime. Server-side completion of envelopes lives in
 // view-envelope.ts.
 import type { EmbeddedViewEnvelope } from '@leitbild/contracts'
+import {
+  EMBEDDED_VIEW_MAX_HEIGHT,
+  EMBEDDED_VIEW_MIN_HEIGHT,
+  EMBEDDED_VIEW_STATE_MAX_LENGTH,
+} from '@leitbild/contracts/embedded-view-route'
 
 export const VIEW_FENCE_LANGUAGE = 'leitbild-view'
 
@@ -48,15 +53,14 @@ export type ViewEnvelopeCheck =
 // Structural mirror of the contract's envelope schema for the browser, where
 // the envelope arrives from this Module's own execution evidence (already
 // schema-validated when it was recorded). It checks every field that shapes
-// the frame route; view-fence.test.ts keeps it in step with the schema.
+// the frame route, with the contract's own limits; view-fence.test.ts keeps it
+// in step with the schema.
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/
 const DOTTED_TYPE = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/
 const MODULE_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const WORKSPACE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const ENVELOPE_KEYS = ['height', 'moduleId', 'state', 'subject', 'title', 'viewType']
 const SUBJECT_KEYS = ['id', 'moduleId', 'type', 'workspaceId']
-// Mirrors EMBEDDED_VIEW_STATE_MAX_LENGTH in the contract.
-const STATE_MAX_LENGTH = 4096
 
 const structuralProblem = (value: unknown): string | null => {
   if (typeof value !== 'object' || value === null) return 'not an object'
@@ -67,8 +71,8 @@ const structuralProblem = (value: unknown): string | null => {
   if (typeof envelope.moduleId !== 'string' || !MODULE_ID.test(envelope.moduleId) || envelope.moduleId.length > 64) return 'invalid moduleId'
   if (typeof envelope.viewType !== 'string' || !DOTTED_TYPE.test(envelope.viewType) || envelope.viewType.length > 128) return 'invalid viewType'
   if (typeof envelope.title !== 'string' || envelope.title.length < 1 || envelope.title.length > 120) return 'invalid title'
-  if (typeof envelope.height !== 'number' || !Number.isInteger(envelope.height) || envelope.height < 120 || envelope.height > 720) return 'invalid height'
-  if (typeof envelope.state !== 'string' || envelope.state.length < 2 || envelope.state.length > STATE_MAX_LENGTH) return 'invalid state'
+  if (typeof envelope.height !== 'number' || !Number.isInteger(envelope.height) || envelope.height < EMBEDDED_VIEW_MIN_HEIGHT || envelope.height > EMBEDDED_VIEW_MAX_HEIGHT) return 'invalid height'
+  if (typeof envelope.state !== 'string' || envelope.state.length < 2 || envelope.state.length > EMBEDDED_VIEW_STATE_MAX_LENGTH) return 'invalid state'
   if (typeof subject.workspaceId !== 'string' || !WORKSPACE_ID.test(subject.workspaceId)) return 'invalid subject workspaceId'
   if (subject.moduleId !== envelope.moduleId) return 'subject belongs to another Module'
   if (typeof subject.type !== 'string' || !DOTTED_TYPE.test(subject.type) || !subject.type.startsWith(`${envelope.moduleId}.`)) return 'invalid subject type'

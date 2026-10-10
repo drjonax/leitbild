@@ -50,17 +50,24 @@ describe('model semantics declared per component kind', () => {
         if (declared.command !== undefined) expect(graph.signalBindingByPath.get(declared.command)!.actuation).toBe('command')
       }
     }
-    // A pump runs when it turns, whatever its run command says; a valve sits where it actually is.
-    expect(componentById(graph, 'rcpA').semantics.aspects).toEqual([{ aspect: 'running', state: { path: 'rcpA.speedRpm' as never, reading: 'aboveZero' }, command: 'rcpA.running' as never }])
+    // A pump runs while its motor is commanded to run and has power, whatever its run command alone says; a valve sits where it actually is.
+    expect(componentById(graph, 'rcpA').semantics.aspects).toEqual([{ aspect: 'running', state: { path: 'rcpA.runningState' as never, reading: 'true' }, command: 'rcpA.running' as never }])
     expect(componentById(graph, 'feedwaterControlValveB').semantics.aspects[0]!.state!.path).toBe('feedwaterControlValveB.effectivePositionFraction' as never)
   })
 
-  test('the PORV is a device on the pressurizer relief outlet whose position the model does not solve', () => {
+  test('the PORV is a device on the pressurizer relief outlet whose position is the opening the model relieves through', () => {
     const [porv] = componentById(graph, 'pressurizer').semantics.embedded
     expect(porv).toMatchObject({ id: 'reliefValve', function: 'relieving', port: 'reliefOutlet' })
     expect(porv!.aspects).toEqual([
-      { aspect: 'position', command: 'pressurizer.reliefValvePositionFraction' as never },
+      { aspect: 'position', state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' }, command: 'pressurizer.reliefValvePositionFraction' as never },
       { aspect: 'throughput', state: { path: 'pressurizer.reliefFlowKgPerS' as never, reading: 'flow' } },
+    ])
+  })
+
+  test('a breaker position is its contacts, closed while its solved state reads true', () => {
+    expect(componentById(graph, 'offsiteBreakerA').semantics.aspects).toEqual([
+      { aspect: 'energized', state: { path: 'offsiteBreakerA.energized' as never, reading: 'true' } },
+      { aspect: 'position', state: { path: 'offsiteBreakerA.closedState' as never, reading: 'closedWhileTrue' }, command: 'offsiteBreakerA.closed' as never },
     ])
   })
 

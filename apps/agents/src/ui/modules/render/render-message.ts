@@ -20,6 +20,7 @@ import { showToast } from '../toast.ts'
 import { $messageThinking } from '../stores.ts'
 import { decorateProductSourceReferences } from '../modals/source-modal.ts'
 import { mountMessageComparisons } from '../message-comparisons.ts'
+import { applyDisplayReply, displayReplyCaptionElement, displayRequestRow, isDisplayReply, offersDisplayRequest } from '../display-request.ts'
 
 // Clipboard writes use the current Async Clipboard API. Returns false when
 // the browser or document context does not permit clipboard access.
@@ -377,6 +378,10 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
       div.appendChild(attHost)
     }
 
+    // Offer to show this answer as a live display. The row stays empty unless
+    // the author holds the display Skill.
+    if (sender && offersDisplayRequest(msg, sender)) div.appendChild(displayRequestRow(msg, sender.name))
+
     // If a script is active in this room, append the whisper attached to
     // THIS specific message (looked up by messageId in stepLogs). No-op
     // when no script is active or no whisper has been classified yet.
@@ -389,7 +394,10 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
   // when an automation subsystem produced this message.
   // Subtle (text-text-subtle, small) so it doesn't compete with the message
   // body. Tooltip carries the full attribution. See Message.cause docs.
-  if (msg.cause) {
+  // A display-request reply names its requester and links to its answer.
+  if (isDisplayReply(msg)) {
+    div.appendChild(displayReplyCaptionElement(container, msg))
+  } else if (msg.cause) {
     const cap = document.createElement('div')
     cap.className = 'text-[10px] text-text-subtle mt-0.5'
     const stepFragment = msg.cause.step !== undefined ? ` step ${msg.cause.step + 1}` : ''
@@ -400,6 +408,8 @@ export const renderMessage = (opts: RenderMessageOptions): void => {
   }
 
   container.appendChild(div)
+
+  if (isDisplayReply(msg)) applyDisplayReply(container, msg)
 
   if (msg.generationTraceId && msg.roomId && msg.type === 'chat') {
     mountMessageComparisons(div, msg, renderMarkdownContent)

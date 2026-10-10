@@ -54,6 +54,8 @@ export interface ComposedDisplayAlarm {
 export interface ComposedDisplaySample {
   readonly simulationTime: string
   readonly plantElapsedMs: number
+  /** Present where the Plant declares operating modes: the one it is in, or null where none holds. */
+  readonly mode?: { readonly id: string; readonly label: string } | null
   /** Present when the sample asked for alarms. */
   readonly alarms?: ReadonlyArray<ComposedDisplayAlarm>
   readonly values: ReadonlyArray<{

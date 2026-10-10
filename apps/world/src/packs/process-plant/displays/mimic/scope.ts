@@ -459,6 +459,33 @@ const STUB_NAMES = 3
 /** "cold leg A" for a port named coldLegA. */
 const portName = (port: string): string => words(port).map(word => word.length === 1 ? word.toUpperCase() : word).join(' ')
 
+// Ports are named only where a component has several alike: connected, of the
+// same circuit and direction (the core's four cold legs; a 4-loop Plant leaves
+// its cold legs E and F unconnected).
+const alikePorts = (graph: CompiledPlantGraph, component: CompiledComponent, port: string): ReadonlyArray<string> => {
+  const first = component.ports[port]
+  const connected = (name: string) => graph.links.some(link =>
+    (link.fromComponentIndex === component.index && String(link.fromPortName) === name) || (link.toComponentIndex === component.index && String(link.toPortName) === name))
+  return Object.entries(component.ports)
+    .filter(([name, other]) => other.circuit !== undefined && other.circuit === first?.circuit && other.direction === first.direction && connected(name))
+    .map(([name]) => name)
+}
+
+/**
+ * The one port a lone pipe reaches on a hub of alike ports where nothing is
+ * drawn at the others ("cold leg C" of the core's four), so the pipe says
+ * where it enters. Null otherwise: a port with no alike, alike ports all
+ * piped or stubbed (a stub names its own), or several reached, where the
+ * equipment drawn on them tells them apart (SG A, RCP A).
+ */
+export const loneReachedPort = (graph: CompiledPlantGraph, component: CompiledComponent, piped: ReadonlySet<string>, shown: ReadonlySet<string>): string | null => {
+  const named = [...piped].filter(port => {
+    const alike = alikePorts(graph, component, port)
+    return alike.length > 1 && alike.some(other => !shown.has(other))
+  })
+  return named.length === 1 ? portName(named[0]!) : null
+}
+
 /**
  * What a stub says of its far ends. `names` lists them: "to SG A, SG C, SG D",
  * "to Core cold leg A, cold leg B" where one far component has several such
@@ -471,12 +498,8 @@ export const stubText = (graph: CompiledPlantGraph, stub: MimicStub, style: 'nam
   const byComponent = new Map<number, string[]>()
   for (const other of stub.others) byComponent.set(other.component, [...(byComponent.get(other.component) ?? []), other.port])
   const parts = [...byComponent].map(([component, ports]) => {
-    // Ports are named only where the far component has several alike (the core's cold legs).
-    const far = graph.components[component]!
-    const first = far.ports[ports[0]!]
-    const alike = Object.values(far.ports).filter(port => port.circuit !== undefined && port.circuit === first?.circuit && port.direction === first.direction)
     const label = shortLabelOf(graph, component)
-    return { label, named: alike.length > 1 ? `${label} ${ports.map(portName).join(', ')}` : label }
+    return { label, named: alikePorts(graph, graph.components[component]!, ports[0]!).length > 1 ? `${label} ${ports.map(portName).join(', ')}` : label }
   })
   const verb = stub.direction === 'out' ? 'to' : 'from'
   const listed = (names: ReadonlyArray<string>): string => {

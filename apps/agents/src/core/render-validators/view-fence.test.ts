@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { embeddedViewEnvelopeSchema, newWorkspaceId } from '@leitbild/contracts'
+import { EMBEDDED_VIEW_MAX_HEIGHT, EMBEDDED_VIEW_MIN_HEIGHT, EMBEDDED_VIEW_STATE_MAX_LENGTH, embeddedViewEnvelopeSchema, newWorkspaceId } from '@leitbild/contracts'
 import { checkViewEnvelope, parseViewFenceBody, viewRefFor } from './view-fence.ts'
 import { embeddedViewFor } from './view-envelope.ts'
 
@@ -42,10 +42,15 @@ describe('leitbild-view fences', () => {
       envelope,
       { ...envelope, viewType: '../agents' },
       { ...envelope, viewType: 'display' },
-      { ...envelope, height: 119 },
+      { ...envelope, height: EMBEDDED_VIEW_MIN_HEIGHT - 1 },
+      { ...envelope, height: EMBEDDED_VIEW_MIN_HEIGHT },
+      { ...envelope, height: 721 },
+      { ...envelope, height: EMBEDDED_VIEW_MAX_HEIGHT },
+      { ...envelope, height: EMBEDDED_VIEW_MAX_HEIGHT + 1 },
       { ...envelope, height: 340.5 },
       { ...envelope, title: '' },
-      { ...envelope, state: 'x'.repeat(4097) },
+      { ...envelope, state: 'x'.repeat(EMBEDDED_VIEW_STATE_MAX_LENGTH) },
+      { ...envelope, state: 'x'.repeat(EMBEDDED_VIEW_STATE_MAX_LENGTH + 1) },
       { ...envelope, extra: true },
       { ...envelope, subject: { ...run, id: '../run' } },
       { ...envelope, subject: { ...run, type: 'agents.room' } },

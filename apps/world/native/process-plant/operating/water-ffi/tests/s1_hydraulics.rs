@@ -110,6 +110,8 @@ struct SpectrumGate {
 struct Gates {
     #[serde(rename = "pzrTestLevel_m")]
     pzr_test_level_m: f64,
+    #[serde(rename = "pzrPhaseMargin_K")]
+    pzr_phase_margin_k: f64,
     relative_tolerance: f64,
     stock_scaled_absolute: f64,
     tracer_scaled_absolute: f64,
@@ -133,6 +135,8 @@ struct Gates {
     supply_loss: SupplyLoss,
     seizure: Seizure,
     spectrum: SpectrumGate,
+    #[serde(rename = "blockedPathMaxVolumeFlow_m3_s")]
+    blocked_path_max_volume_flow_m3_s: f64,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -212,15 +216,19 @@ fn taps(packet: &Packet, point: &OperatingPoint) -> Taps {
         .filter(|(_, r)| (r.top_m - point.pzr_roof_elevation_m).abs() < 1e-9)
         .max_by(|a, b| a.1.volume_m3.total_cmp(&b.1.volume_m3))
         .expect("a PZR region must end at the roof tap");
-    let interface = packet.preparation.operating_point.pzr_bottom_elevation_m
-        + packet.preparation.operating_point.pzr_level_m;
+    // Cross-section of the band holding the declared interface (inner+outer).
+    let interface = packet.preparation.operating_point.pzr_bottom_elevation_m + point.pzr_level_m;
     let interface_area_m2 = packet
         .pzr
         .regions
         .iter()
-        .filter(|r| (r.top_m - interface).abs() < 1e-9)
+        .filter(|r| r.bottom_m < interface && interface < r.top_m)
         .map(|r| r.axial_area_m2)
         .sum();
+    assert!(
+        interface_area_m2 > 0.,
+        "declared S1 interface must lie inside one PZR band"
+    );
     Taps {
         loop_faces: [face("RETURN.A->DOWN"), face("RETURN.B->DOWN")],
         lower: region("LOWER"),
@@ -243,6 +251,10 @@ struct Sample {
     steps: i64,
     last_step: f64,
     energy_identity_w: f64,
+    /// Largest retained |volume flow| on a phase path with an absent donor.
+    blocked_path_m3_s: f64,
+    /// (face, phase) carrying it, if any.
+    blocked_path_at: Option<(usize, usize)>,
 }
 fn sample<P: leitbild_operating_plant::network::Properties>(
     network: &mut Network<P>,
@@ -275,6 +287,15 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
         .map(|i| y[*i] * network.scales()[*i] / network.rotor_inertia())
         .collect();
     let budget = network.current_budget(y, yp);
+    let (blocked_path_m3_s, blocked_path_at) = (0..network.face_count())
+        .flat_map(|f| (0..2).map(move |k| (f, k)))
+        .filter_map(|(f, k)| network.chart(f, k).map(|c| (f, k, c)))
+        .filter(|(_, _, c)| c.blocked_absent_donor)
+        .map(|(f, k, c)| (c.volume_flow_m3_s.value.abs(), Some((f, k))))
+        .fold(
+            (0., None),
+            |best, next| if next.0 > best.0 { next } else { best },
+        );
     Sample {
         t,
         roof_pa: roof.pressure.value - mixture * 9.80665 * taps.roof_rise_m,
@@ -286,6 +307,8 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
         energy_identity_w: budget["fluid_plus_rotor_plus_bearing_minus_motor_w"]
             .as_f64()
             .unwrap(),
+        blocked_path_m3_s,
+        blocked_path_at,
         ..Sample::default()
     }
 }
@@ -313,6 +336,7 @@ struct Spec<'a> {
     output_s: f64,
     step_cap: i64,
     cpu_cap_s: f64,
+    blocked_path_limit_m3_s: f64,
 }
 /// Advance one declared run from a consistent or event-changed state.
 #[allow(clippy::too_many_arguments)] // One run's complete, explicit inputs.
@@ -372,7 +396,13 @@ fn advance_run(
                 s.steps = stats.steps;
                 s.last_step = stats.last_step;
                 samples.push(s);
-                if stats.steps > spec.step_cap {
+                let blocked = samples.last().map_or(0., |s: &Sample| s.blocked_path_m3_s);
+                if blocked > spec.blocked_path_limit_m3_s {
+                    let at = samples.last().and_then(|s: &Sample| s.blocked_path_at);
+                    failure = Some(format!(
+                        "phantom momentum: blocked phase path (face, phase) {at:?} carries {blocked} m3/s at t={t}"
+                    ));
+                } else if stats.steps > spec.step_cap {
                     failure = Some(format!("run cap reached: {} steps", stats.steps));
                 } else if cpu_s() - started > spec.cpu_cap_s {
                     failure = Some(format!("run CPU cap {} s reached", spec.cpu_cap_s));
@@ -533,6 +563,7 @@ fn s1_hydraulics_admission() {
         pzr_roof_elevation_m: declared.pzr_roof_elevation_m,
         // Declared S1 test level inside one band (see the S1 declaration).
         pzr_level_m: gates.pzr_test_level_m,
+        pzr_bottom_elevation_m: declared.pzr_bottom_elevation_m,
     };
     let taps = taps(&packet, &point);
     assert!(
@@ -541,7 +572,25 @@ fn s1_hydraulics_admission() {
     );
     let total_started = cpu_s();
     let wall_started = Instant::now();
-    let mut receipt = json!({"kind":"s1-hydraulics-admission","packet":packet_path,"gates":format!("{gates:?}"),"budgets":format!("{budgets:?}")});
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .expect("git provenance")
+    };
+    let packet_sha256 = std::process::Command::new("shasum")
+        .args(["-a", "256", &packet_path])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .expect("packet hash");
+    let mut receipt = json!({"kind":"s1-hydraulics-admission","packet":packet_path,"packet_sha256":packet_sha256,"app_commit":git(&["rev-parse","HEAD"]),"app_worktree_dirty":!git(&["status","--porcelain"]).is_empty(),"gates":format!("{gates:?}"),"budgets":format!("{budgets:?}")});
 
     // 1. Hydrostatic preparation at the declared operating point.
     let rotors = vec![
@@ -557,6 +606,8 @@ fn s1_hydraulics_admission() {
         level_match_m: 1e-9,
         eos_row_bound: 1e-12,
         tree_face_bound_pa: 1e-6,
+        representation_search: 8,
+        pzr_phase_margin_k: gates.pzr_phase_margin_k,
     };
     let (network, prepared, preparation) =
         prepare::prepare(&packet, If97, &point, &rotors, &settings)
@@ -612,6 +663,7 @@ fn s1_hydraulics_admission() {
             output_s: 1.,
             step_cap: i64::MAX,
             cpu_cap_s: gates.settling.max_cpu_s,
+            blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
         },
         &settled,
     );
@@ -633,6 +685,37 @@ fn s1_hydraulics_admission() {
         println!("{}", serde_json::to_string(receipt).unwrap());
     };
     if !settled_ok {
+        // Diagnostic only (not a gate): the zero-time spectrum at the last
+        // accepted settling state, to attribute what the network was doing.
+        let mut probe = fresh(&packet);
+        let (a, b) = pencil(&mut probe, &settle.y, &settle.yp);
+        if let Ok(stop) = spectrum::decompose(settle.y.len(), &a, &b) {
+            let algebraic = prepared.differential.iter().filter(|v| **v == 0.).count();
+            let labels = probe.labels();
+            let localize = |m: usize| -> Vec<Value> {
+                let mut weight: Vec<(f64, usize)> = stop.shapes[m]
+                    .right
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| (v.abs(), i))
+                    .collect();
+                weight.sort_by(|a, b| b.0.total_cmp(&a.0));
+                weight
+                    .iter()
+                    .take(4)
+                    .map(|(w, i)| json!({"coordinate":labels[*i].1,"weight":w}))
+                    .collect()
+            };
+            let unstable: Vec<Value> = stop
+                .modes
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.unstable)
+                .map(|(i, m)| json!({"hz":m.frequency_hz,"re":m.lambda.re,"e_fold_s":m.e_fold_s,"dominant":localize(i)}))
+                .collect();
+            receipt["diagnostic_spectrum_at_stop"] = json!({"finite":stop.modes.len(),"infinite":stop.infinite.count,"algebraic":algebraic,"unstable":unstable,"marginal":stop.modes.iter().filter(|m|m.marginal).count()});
+        }
+        receipt["stop_sample"] = json!(format!("{:?}", settle.samples.last()));
         finish(
             &mut receipt,
             "STOP: settling did not reach the declared mechanical rest",
@@ -733,6 +816,7 @@ fn s1_hydraulics_admission() {
         output_s: interval,
         step_cap: (gates.run_cap_factor * rate * duration) as i64,
         cpu_cap_s: gates.total_cpu_s,
+        blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
     };
     let atol_static: &'static [f64] = Box::leak(atol.clone().into_boxed_slice());
     let refined: &'static [f64] = Box::leak(
@@ -993,6 +1077,7 @@ fn s1_harness_smoke() {
         pzr_roof_elevation_m: declared.pzr_roof_elevation_m,
         // Declared S1 test level inside one band (see the S1 declaration).
         pzr_level_m: gates.pzr_test_level_m,
+        pzr_bottom_elevation_m: declared.pzr_bottom_elevation_m,
     };
     let taps = taps(&packet, &point);
     let rotors = vec![
@@ -1008,6 +1093,8 @@ fn s1_harness_smoke() {
         level_match_m: 1e-9,
         eos_row_bound: 1e-12,
         tree_face_bound_pa: 1e-6,
+        representation_search: 8,
+        pzr_phase_margin_k: gates.pzr_phase_margin_k,
     };
     let (network, prepared, preparation) =
         prepare::prepare(&packet, If97, &point, &rotors, &settings).expect("preparation");
@@ -1041,11 +1128,12 @@ fn s1_harness_smoke() {
             output_s: 0.5,
             step_cap: 200_000,
             cpu_cap_s: 60.,
+            blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
         },
         &|_: &[Sample]| false,
     );
     println!(
         "{}",
-        json!({"kind":"s1-harness-smoke-NOT-EVIDENCE","packet":packet_path,"preparation_passes":preparation.pass_changes_pa.len(),"max_eos_row":preparation.max_eos_row,"max_loop_face_pa":preparation.max_loop_face_pa,"mass_change_kg":preparation.mass_change_kg,"run":run_json(&run,3.),"samples":run.samples.iter().map(|s|json!({"t":s.t,"roof_pa":s.roof_pa,"loop_kg_s":s.loop_kg_s,"omega":s.omega,"steps":s.steps,"h":s.last_step,"energy_identity_w":s.energy_identity_w})).collect::<Vec<_>>()})
+        json!({"kind":"s1-harness-smoke-NOT-EVIDENCE","packet":packet_path,"preparation_passes":preparation.pass_changes_pa.len(),"max_eos_row":preparation.max_eos_row,"max_loop_rest_pa":preparation.max_loop_rest_pa,"max_phase_drive_pa":preparation.max_phase_drive_pa,"on_boundary":preparation.on_boundary,"mass_change_kg":preparation.mass_change_kg,"run":run_json(&run,3.),"samples":run.samples.iter().map(|s|json!({"t":s.t,"roof_pa":s.roof_pa,"loop_kg_s":s.loop_kg_s,"omega":s.omega,"steps":s.steps,"h":s.last_step,"energy_identity_w":s.energy_identity_w,"blocked_path_m3_s":s.blocked_path_m3_s})).collect::<Vec<_>>()})
     );
 }

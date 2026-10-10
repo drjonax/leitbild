@@ -37,6 +37,8 @@ const POSITION_COMMANDS = ['CMD SHUT', 'CMD OPEN', 'CMD 100 %', 'CMD 10 %']
 /** What a position command can be, without its CMD (evaluate.ts commandText). */
 const COMMANDED_POSITIONS = POSITION_COMMANDS.map(text => text.slice('CMD '.length))
 const RUNNING_COMMANDS = ['CMD RUN', 'CMD STOP']
+/** A breaker's commands (evaluate.ts commandText). */
+const BREAKER_COMMANDS = ['CMD CLOSE', 'CMD OPEN']
 /** A digital valve reads shut below and open above these positions (evaluate.ts); between, a marker shows its opening. */
 const SHUT_BELOW = 0.05
 const OPEN_ABOVE = 0.95
@@ -45,6 +47,9 @@ const WIDEST_OPENING = '95 %'
 
 /** The word a group counts its members by, per state aspect; aspects without one are not grouped. */
 export const COUNT_WORDS: Readonly<Partial<Record<string, string>>> = { running: 'RUN', energized: 'LIVE', position: 'OPEN' }
+
+/** Whether an item's position is a breaker's contacts, closed while its state reads true. */
+const switching = (binding: MimicItemBinding): boolean => binding.state?.state?.reading === 'closedWhileTrue'
 
 const countTexts = (members: number, word: string): ReadonlyArray<string> => [`${members}/${members} ${word}`, `${members}/${members} ${word} ?`]
 
@@ -62,10 +67,11 @@ export const itemRows = (
   const valuesOf = (commands: ReadonlyArray<string>): ReadonlyArray<string> => commands.map(text => text.slice('CMD '.length))
   if (options.members.length > 1) {
     const aspect = binding.state?.aspect
-    const word = aspect === undefined ? undefined : COUNT_WORDS[aspect]
+    // Breakers are counted by how many are closed.
+    const word = aspect === undefined ? undefined : switching(binding) ? 'CLOSED' : COUNT_WORDS[aspect]
     if (word === undefined) throw new Error(`a group of ${binding.label} has no state to count its members by`)
     const commanded = options.members.some(member => member.state?.command !== undefined)
-    const commands = aspect === 'running' ? RUNNING_COMMANDS : POSITION_COMMANDS
+    const commands = aspect === 'running' ? RUNNING_COMMANDS : switching(binding) ? BREAKER_COMMANDS : POSITION_COMMANDS
     return [
       { kind: 'count', members: options.members, word, texts: countTexts(options.members.length, word), required: true },
       ...(!commanded ? [] : stacked
@@ -95,6 +101,14 @@ export const itemRows = (
     return [{ kind: 'state', texts: ['STOP', '?', 'CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(RUNNING_COMMANDS), required: true }]
   }
   if (state.aspect === 'energized') return [{ kind: 'state', texts: ['DEAD', '?'], required: true }]
+  if (switching(binding)) {
+    // No symbol shows a breaker's contacts, so its first row always says them; a command it does not follow follows.
+    const contacts: MimicRow = { kind: 'state', texts: ['CLOSED', 'OPEN', '?'], required: true }
+    if (state.command === undefined) return [contacts]
+    return stacked
+      ? [contacts, { kind: 'state', texts: ['CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(BREAKER_COMMANDS), required: true }]
+      : [contacts, { kind: 'mismatch', texts: BREAKER_COMMANDS, required: true }]
+  }
   if (state.aspect === 'position' && state.state === undefined) {
     // The model does not compute the position: say so, and what passes.
     return [
@@ -147,13 +161,15 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
   // The state word, unless the symbol disagrees with its command: then the command, or CMD over it.
   if (look.mismatch !== null && row.texts.includes(look.mismatch)) return look.mismatch
   if (look.mismatch !== null && row.texts.includes('CMD')) return 'CMD'
-  const word = look.state.kind === 'stopped' ? 'STOP' : look.state.kind === 'dead' ? 'DEAD' : look.state.kind === 'unknown' ? '?' : ''
+  const word = look.state.kind === 'stopped' ? 'STOP' : look.state.kind === 'dead' ? 'DEAD' : look.state.kind === 'unknown' ? '?'
+    : look.state.kind === 'closed' ? 'CLOSED' : look.state.kind === 'open' ? 'OPEN' : ''
   return row.texts.includes(word) ? word : ''
 }
 
 /** Whether a member's look is in the state its group counts by. */
 const counts = (look: ItemLook, word: string): boolean =>
-  word === 'RUN' ? look.state.kind === 'running' : word === 'LIVE' ? look.state.kind === 'energized' : look.state.kind === 'position' && look.state.fraction >= SHUT_BELOW
+  word === 'RUN' ? look.state.kind === 'running' : word === 'LIVE' ? look.state.kind === 'energized' : word === 'CLOSED' ? look.state.kind === 'closed'
+    : look.state.kind === 'position' && look.state.fraction >= SHUT_BELOW
 
 /**
  * How a drawn item looks for one sample: its own look, or for a group the
@@ -168,7 +184,7 @@ export const drawnLook = (binding: MimicItemBinding, rows: ReadonlyArray<MimicRo
   const looks = count.members.map(member => itemLook(member, index))
   const counted = looks.filter(look => counts(look, count.word))
   const mismatch = looks.find(look => look.mismatch !== null)?.mismatch ?? null
-  const words = `${counted.length} of ${looks.length} ${count.word === 'RUN' ? 'running' : count.word === 'LIVE' ? 'energized' : 'open'}${mismatch === null ? '' : `; a member is ${mismatch.replace('CMD', 'commanded').toLowerCase()}`}`
+  const words = `${counted.length} of ${looks.length} ${count.word === 'RUN' ? 'running' : count.word === 'LIVE' ? 'energized' : count.word === 'CLOSED' ? 'closed' : 'open'}${mismatch === null ? '' : `; a member is ${mismatch.replace('CMD', 'commanded').toLowerCase()}`}`
   const state = counted[0]?.state ?? (looks.some(look => look.state.kind === 'unknown') ? { kind: 'unknown' as const } : looks[0]!.state)
   return { state, notMeasured: looks.some(look => look.notMeasured), mismatch, words }
 }

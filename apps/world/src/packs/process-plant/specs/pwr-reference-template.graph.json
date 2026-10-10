@@ -32,7 +32,7 @@
         "fuelThermalCapacityMjPerC": 45000,
         "nominalPrimaryFlowKgPerS": 17000,
         "nominalSourceRangeCountRateCps": 100000,
-        "nominalIntermediateRangeCurrentAmps": 0.00001,
+        "nominalIntermediateRangeCurrentAmps": 0.0005,
         "minimumNaturalCirculationCoolingFraction": 0.08
       },
       "variables": [
@@ -51,7 +51,7 @@
           "path": "rodInsertionFraction",
           "tagId": "ROD-POS-AVG",
           "equipmentId": "rod-control-system",
-          "description": "Average control rod insertion used to derive steps withdrawn for procedure checks",
+          "description": "Average control rod insertion demand; the model moves the rods to it at once, so procedure checks derive steps withdrawn from it",
           "externalRefs": [
             "rcs.rod.position.avg"
           ],
@@ -60,10 +60,16 @@
           }
         },
         {
+          "path": "sourceRangeEnergized",
+          "tagId": "NIS-SR-HV",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "Source-range detector high voltage on; cut above P-6, an intermediate-range current of 1e-10 A"
+        },
+        {
           "path": "sourceRangeCountRateCps",
           "tagId": "NIS-SR",
           "equipmentId": "nuclear-instrumentation",
-          "description": "Source-range nuclear instrumentation count rate",
+          "description": "Source-range nuclear instrumentation count rate; no counts while its detectors' high voltage is off above P-6 (NIS-SR-HV)",
           "externalRefs": [
             "nis.source_range.count_rate"
           ]
@@ -72,7 +78,7 @@
           "path": "intermediateRangeCurrentAmps",
           "tagId": "NIS-IR",
           "equipmentId": "nuclear-instrumentation",
-          "description": "Intermediate-range nuclear instrumentation current",
+          "description": "Intermediate-range nuclear instrumentation current, in proportion to neutron flux over its 1e-11 A to 1e-3 A span",
           "externalRefs": [
             "nis.intermediate_range.avg"
           ]
@@ -215,19 +221,25 @@
           "path": "heaterPowerMw",
           "tagId": "PZR-HTR",
           "equipmentId": "pressurizer",
-          "description": "Pressurizer heater power"
+          "description": "Pressurizer heater power demand"
         },
         {
           "path": "sprayFlowKgPerS",
           "tagId": "PZR-SPRAY",
           "equipmentId": "pressurizer",
-          "description": "Pressurizer spray flow"
+          "description": "Pressurizer spray flow demand"
         },
         {
           "path": "reliefValvePositionFraction",
           "tagId": "PORV-456A",
-          "equipmentId": "pressurizerReliefValve",
-          "description": "Pressurizer relief valve position"
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer PORV 456A position demand"
+        },
+        {
+          "path": "reliefValveEffectivePositionFraction",
+          "tagId": "PORV-456A-POS",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer PORV 456A position feedback"
         }
       ],
       "metadata": {
@@ -236,17 +248,6 @@
           "embedded": {
             "reliefValve": "PORV"
           }
-        }
-      }
-    },
-    {
-      "id": "pressurizerReliefValve",
-      "kind": "processValve",
-      "label": "Pressurizer Relief Valve",
-      "parameters": {},
-      "metadata": {
-        "presentation": {
-          "shortLabel": "PZR relief valve"
         }
       }
     },
@@ -695,17 +696,23 @@
           "path": "running",
           "tagId": "RCP-A-RUN",
           "equipmentId": "rcpA",
-          "description": "Reactor coolant pump A running command/status",
+          "description": "Reactor coolant pump A run command",
           "externalRefs": [
             "RCP-1",
             "rcs.rcp.1.status"
           ]
         },
         {
+          "path": "runningState",
+          "tagId": "RCP-A-RUNNING",
+          "equipmentId": "rcpA",
+          "description": "Reactor coolant pump A run feedback"
+        },
+        {
           "path": "speedFraction",
           "tagId": "RCP-A-SPD",
           "equipmentId": "rcpA",
-          "description": "Reactor coolant pump A speed fraction"
+          "description": "Reactor coolant pump A speed demand"
         },
         {
           "path": "loopFlowKgPerS",
@@ -738,17 +745,23 @@
           "path": "running",
           "tagId": "RCP-B-RUN",
           "equipmentId": "rcpB",
-          "description": "Reactor coolant pump B running command/status",
+          "description": "Reactor coolant pump B run command",
           "externalRefs": [
             "RCP-2",
             "rcs.rcp.2.status"
           ]
         },
         {
+          "path": "runningState",
+          "tagId": "RCP-B-RUNNING",
+          "equipmentId": "rcpB",
+          "description": "Reactor coolant pump B run feedback"
+        },
+        {
           "path": "speedFraction",
           "tagId": "RCP-B-SPD",
           "equipmentId": "rcpB",
-          "description": "Reactor coolant pump B speed fraction"
+          "description": "Reactor coolant pump B speed demand"
         },
         {
           "path": "loopFlowKgPerS",
@@ -781,17 +794,23 @@
           "path": "running",
           "tagId": "RCP-C-RUN",
           "equipmentId": "rcpC",
-          "description": "Reactor coolant pump C running command/status",
+          "description": "Reactor coolant pump C run command",
           "externalRefs": [
             "RCP-3",
             "rcs.rcp.3.status"
           ]
         },
         {
+          "path": "runningState",
+          "tagId": "RCP-C-RUNNING",
+          "equipmentId": "rcpC",
+          "description": "Reactor coolant pump C run feedback"
+        },
+        {
           "path": "speedFraction",
           "tagId": "RCP-C-SPD",
           "equipmentId": "rcpC",
-          "description": "Reactor coolant pump C speed fraction"
+          "description": "Reactor coolant pump C speed demand"
         },
         {
           "path": "loopFlowKgPerS",
@@ -824,17 +843,23 @@
           "path": "running",
           "tagId": "RCP-D-RUN",
           "equipmentId": "rcpD",
-          "description": "Reactor coolant pump D running command/status",
+          "description": "Reactor coolant pump D run command",
           "externalRefs": [
             "RCP-4",
             "rcs.rcp.4.status"
           ]
         },
         {
+          "path": "runningState",
+          "tagId": "RCP-D-RUNNING",
+          "equipmentId": "rcpD",
+          "description": "Reactor coolant pump D run feedback"
+        },
+        {
           "path": "speedFraction",
           "tagId": "RCP-D-SPD",
           "equipmentId": "rcpD",
-          "description": "Reactor coolant pump D speed fraction"
+          "description": "Reactor coolant pump D speed demand"
         },
         {
           "path": "loopFlowKgPerS",
@@ -867,17 +892,23 @@
           "path": "running",
           "tagId": "RCP-E-RUN",
           "equipmentId": "rcpE",
-          "description": "Reactor coolant pump E running command/status",
+          "description": "Reactor coolant pump E run command",
           "externalRefs": [
             "RCP-5",
             "rcs.rcp.5.status"
           ]
         },
         {
+          "path": "runningState",
+          "tagId": "RCP-E-RUNNING",
+          "equipmentId": "rcpE",
+          "description": "Reactor coolant pump E run feedback"
+        },
+        {
           "path": "speedFraction",
           "tagId": "RCP-E-SPD",
           "equipmentId": "rcpE",
-          "description": "Reactor coolant pump E speed fraction"
+          "description": "Reactor coolant pump E speed demand"
         },
         {
           "path": "loopFlowKgPerS",
@@ -910,17 +941,23 @@
           "path": "running",
           "tagId": "RCP-F-RUN",
           "equipmentId": "rcpF",
-          "description": "Reactor coolant pump F running command/status",
+          "description": "Reactor coolant pump F run command",
           "externalRefs": [
             "RCP-6",
             "rcs.rcp.6.status"
           ]
         },
         {
+          "path": "runningState",
+          "tagId": "RCP-F-RUNNING",
+          "equipmentId": "rcpF",
+          "description": "Reactor coolant pump F run feedback"
+        },
+        {
           "path": "speedFraction",
           "tagId": "RCP-F-SPD",
           "equipmentId": "rcpF",
-          "description": "Reactor coolant pump F speed fraction"
+          "description": "Reactor coolant pump F speed demand"
         },
         {
           "path": "loopFlowKgPerS",
@@ -950,7 +987,13 @@
           "path": "running",
           "tagId": "MFW-PUMP-A-RUN",
           "equipmentId": "mainFeedwaterPumpA",
-          "description": "Main feedwater pump A running command/status"
+          "description": "Main feedwater pump A run command"
+        },
+        {
+          "path": "runningState",
+          "tagId": "MFW-PUMP-A-RUNNING",
+          "equipmentId": "mainFeedwaterPumpA",
+          "description": "Main feedwater pump A run feedback"
         }
       ],
       "metadata": {
@@ -974,7 +1017,13 @@
           "path": "running",
           "tagId": "MFW-PUMP-B-RUN",
           "equipmentId": "mainFeedwaterPumpB",
-          "description": "Main feedwater pump B running command/status"
+          "description": "Main feedwater pump B run command"
+        },
+        {
+          "path": "runningState",
+          "tagId": "MFW-PUMP-B-RUNNING",
+          "equipmentId": "mainFeedwaterPumpB",
+          "description": "Main feedwater pump B run feedback"
         }
       ],
       "metadata": {
@@ -1037,10 +1086,16 @@
           "path": "positionFraction",
           "tagId": "MFW-A-CV",
           "equipmentId": "feedwaterControlValveA",
-          "description": "Main feedwater control valve A position",
+          "description": "Main feedwater control valve A position demand",
           "externalRefs": [
             "secondary.mfw.a.cv_position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MFW-A-CV-POS",
+          "equipmentId": "feedwaterControlValveA",
+          "description": "Main feedwater control valve A position feedback"
         }
       ],
       "metadata": {
@@ -1072,7 +1127,21 @@
         "presentation": {
           "shortLabel": "FCV B"
         }
-      }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "MFW-B-CV",
+          "equipmentId": "feedwaterControlValveB",
+          "description": "Main feedwater control valve B position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MFW-B-CV-POS",
+          "equipmentId": "feedwaterControlValveB",
+          "description": "Main feedwater control valve B position feedback"
+        }
+      ]
     },
     {
       "id": "feedwaterControlValveC",
@@ -1097,7 +1166,21 @@
         "presentation": {
           "shortLabel": "FCV C"
         }
-      }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "MFW-C-CV",
+          "equipmentId": "feedwaterControlValveC",
+          "description": "Main feedwater control valve C position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MFW-C-CV-POS",
+          "equipmentId": "feedwaterControlValveC",
+          "description": "Main feedwater control valve C position feedback"
+        }
+      ]
     },
     {
       "id": "feedwaterControlValveD",
@@ -1122,7 +1205,21 @@
         "presentation": {
           "shortLabel": "FCV D"
         }
-      }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "MFW-D-CV",
+          "equipmentId": "feedwaterControlValveD",
+          "description": "Main feedwater control valve D position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MFW-D-CV-POS",
+          "equipmentId": "feedwaterControlValveD",
+          "description": "Main feedwater control valve D position feedback"
+        }
+      ]
     },
     {
       "id": "feedwaterControlValveE",
@@ -1147,7 +1244,21 @@
         "presentation": {
           "shortLabel": "FCV E"
         }
-      }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "MFW-E-CV",
+          "equipmentId": "feedwaterControlValveE",
+          "description": "Main feedwater control valve E position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MFW-E-CV-POS",
+          "equipmentId": "feedwaterControlValveE",
+          "description": "Main feedwater control valve E position feedback"
+        }
+      ]
     },
     {
       "id": "feedwaterControlValveF",
@@ -1172,7 +1283,21 @@
         "presentation": {
           "shortLabel": "FCV F"
         }
-      }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "MFW-F-CV",
+          "equipmentId": "feedwaterControlValveF",
+          "description": "Main feedwater control valve F position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MFW-F-CV-POS",
+          "equipmentId": "feedwaterControlValveF",
+          "description": "Main feedwater control valve F position feedback"
+        }
+      ]
     },
     {
       "id": "auxFeedwaterTank",
@@ -1221,10 +1346,16 @@
           "path": "running",
           "tagId": "AFW-PUMP-A",
           "equipmentId": "auxFeedwaterPumpMotor",
-          "description": "Motor-driven auxiliary feedwater pump running status",
+          "description": "Motor-driven auxiliary feedwater pump A run command",
           "externalRefs": [
             "afw.pump.a.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "AFW-PUMP-A-RUNNING",
+          "equipmentId": "auxFeedwaterPumpMotor",
+          "description": "Motor-driven auxiliary feedwater pump A run feedback"
         }
       ],
       "metadata": {
@@ -1249,10 +1380,16 @@
           "path": "running",
           "tagId": "AFW-PUMP-B",
           "equipmentId": "auxFeedwaterPumpMotorB",
-          "description": "Motor-driven auxiliary feedwater pump B running status",
+          "description": "Motor-driven auxiliary feedwater pump B run command",
           "externalRefs": [
             "afw.pump.b.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "AFW-PUMP-B-RUNNING",
+          "equipmentId": "auxFeedwaterPumpMotorB",
+          "description": "Motor-driven auxiliary feedwater pump B run feedback"
         }
       ],
       "metadata": {
@@ -1277,10 +1414,16 @@
           "path": "running",
           "tagId": "AFW-PUMP-T",
           "equipmentId": "auxFeedwaterPumpTurbine",
-          "description": "Turbine-driven auxiliary feedwater pump running status",
+          "description": "Turbine-driven auxiliary feedwater pump run command",
           "externalRefs": [
             "afw.pump.tdafw.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "AFW-PUMP-T-RUNNING",
+          "equipmentId": "auxFeedwaterPumpTurbine",
+          "description": "Turbine-driven auxiliary feedwater pump run feedback"
         },
         {
           "path": "speedRpm",
@@ -1332,10 +1475,16 @@
           "path": "positionFraction",
           "tagId": "AFW-A-CV",
           "equipmentId": "auxFeedwaterValveA",
-          "description": "Auxiliary feedwater valve A position",
+          "description": "Auxiliary feedwater valve A position demand",
           "externalRefs": [
             "afw.a.cv_position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "AFW-A-CV-POS",
+          "equipmentId": "auxFeedwaterValveA",
+          "description": "Auxiliary feedwater valve A position feedback"
         }
       ],
       "metadata": {
@@ -1356,10 +1505,16 @@
           "path": "positionFraction",
           "tagId": "AFW-B-CV",
           "equipmentId": "auxFeedwaterValveB",
-          "description": "Auxiliary feedwater valve B position",
+          "description": "Auxiliary feedwater valve B position demand",
           "externalRefs": [
             "afw.b.cv_position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "AFW-B-CV-POS",
+          "equipmentId": "auxFeedwaterValveB",
+          "description": "Auxiliary feedwater valve B position feedback"
         }
       ],
       "metadata": {
@@ -1380,10 +1535,16 @@
           "path": "positionFraction",
           "tagId": "AFW-C-CV",
           "equipmentId": "auxFeedwaterValveC",
-          "description": "Auxiliary feedwater valve C position",
+          "description": "Auxiliary feedwater valve C position demand",
           "externalRefs": [
             "afw.c.cv_position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "AFW-C-CV-POS",
+          "equipmentId": "auxFeedwaterValveC",
+          "description": "Auxiliary feedwater valve C position feedback"
         }
       ],
       "metadata": {
@@ -1404,10 +1565,16 @@
           "path": "positionFraction",
           "tagId": "AFW-D-CV",
           "equipmentId": "auxFeedwaterValveD",
-          "description": "Auxiliary feedwater valve D position",
+          "description": "Auxiliary feedwater valve D position demand",
           "externalRefs": [
             "afw.d.cv_position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "AFW-D-CV-POS",
+          "equipmentId": "auxFeedwaterValveD",
+          "description": "Auxiliary feedwater valve D position feedback"
         }
       ],
       "metadata": {
@@ -1428,10 +1595,16 @@
           "path": "positionFraction",
           "tagId": "AFW-E-CV",
           "equipmentId": "auxFeedwaterValveE",
-          "description": "Auxiliary feedwater valve E position",
+          "description": "Auxiliary feedwater valve E position demand",
           "externalRefs": [
             "afw.e.cv_position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "AFW-E-CV-POS",
+          "equipmentId": "auxFeedwaterValveE",
+          "description": "Auxiliary feedwater valve E position feedback"
         }
       ],
       "metadata": {
@@ -1452,10 +1625,16 @@
           "path": "positionFraction",
           "tagId": "AFW-F-CV",
           "equipmentId": "auxFeedwaterValveF",
-          "description": "Auxiliary feedwater valve F position",
+          "description": "Auxiliary feedwater valve F position demand",
           "externalRefs": [
             "afw.f.cv_position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "AFW-F-CV-POS",
+          "equipmentId": "auxFeedwaterValveF",
+          "description": "Auxiliary feedwater valve F position feedback"
         }
       ],
       "metadata": {
@@ -1476,10 +1655,16 @@
           "path": "positionFraction",
           "tagId": "MSIV-A",
           "equipmentId": "mainSteamIsolationValveA",
-          "description": "Main steam isolation valve A position",
+          "description": "Main steam isolation valve A position demand",
           "externalRefs": [
             "secondary.msiv.a.position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MSIV-A-POS",
+          "equipmentId": "mainSteamIsolationValveA",
+          "description": "Main steam isolation valve A position feedback"
         }
       ],
       "metadata": {
@@ -1500,10 +1685,16 @@
           "path": "positionFraction",
           "tagId": "MSIV-B",
           "equipmentId": "mainSteamIsolationValveB",
-          "description": "Main steam isolation valve B position",
+          "description": "Main steam isolation valve B position demand",
           "externalRefs": [
             "secondary.msiv.b.position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MSIV-B-POS",
+          "equipmentId": "mainSteamIsolationValveB",
+          "description": "Main steam isolation valve B position feedback"
         }
       ],
       "metadata": {
@@ -1524,10 +1715,16 @@
           "path": "positionFraction",
           "tagId": "MSIV-C",
           "equipmentId": "mainSteamIsolationValveC",
-          "description": "Main steam isolation valve C position",
+          "description": "Main steam isolation valve C position demand",
           "externalRefs": [
             "secondary.msiv.c.position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MSIV-C-POS",
+          "equipmentId": "mainSteamIsolationValveC",
+          "description": "Main steam isolation valve C position feedback"
         }
       ],
       "metadata": {
@@ -1548,10 +1745,16 @@
           "path": "positionFraction",
           "tagId": "MSIV-D",
           "equipmentId": "mainSteamIsolationValveD",
-          "description": "Main steam isolation valve D position",
+          "description": "Main steam isolation valve D position demand",
           "externalRefs": [
             "secondary.msiv.d.position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MSIV-D-POS",
+          "equipmentId": "mainSteamIsolationValveD",
+          "description": "Main steam isolation valve D position feedback"
         }
       ],
       "metadata": {
@@ -1572,10 +1775,16 @@
           "path": "positionFraction",
           "tagId": "MSIV-E",
           "equipmentId": "mainSteamIsolationValveE",
-          "description": "Main steam isolation valve E position",
+          "description": "Main steam isolation valve E position demand",
           "externalRefs": [
             "secondary.msiv.e.position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MSIV-E-POS",
+          "equipmentId": "mainSteamIsolationValveE",
+          "description": "Main steam isolation valve E position feedback"
         }
       ],
       "metadata": {
@@ -1596,10 +1805,16 @@
           "path": "positionFraction",
           "tagId": "MSIV-F",
           "equipmentId": "mainSteamIsolationValveF",
-          "description": "Main steam isolation valve F position",
+          "description": "Main steam isolation valve F position demand",
           "externalRefs": [
             "secondary.msiv.f.position"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "MSIV-F-POS",
+          "equipmentId": "mainSteamIsolationValveF",
+          "description": "Main steam isolation valve F position feedback"
         }
       ],
       "metadata": {
@@ -1641,7 +1856,21 @@
         "presentation": {
           "shortLabel": "TSV"
         }
-      }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "TURB-STOP",
+          "equipmentId": "turbineStopValve",
+          "description": "Turbine stop valve position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "TURB-STOP-POS",
+          "equipmentId": "turbineStopValve",
+          "description": "Turbine stop valve position feedback"
+        }
+      ]
     },
     {
       "id": "turbineBypassValve",
@@ -1670,7 +1899,13 @@
           "path": "positionFraction",
           "tagId": "TURB-BYP",
           "equipmentId": "turbineBypassValve",
-          "description": "Turbine bypass valve position"
+          "description": "Turbine bypass valve position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "TURB-BYP-POS",
+          "equipmentId": "turbineBypassValve",
+          "description": "Turbine bypass valve position feedback"
         }
       ],
       "metadata": {
@@ -1889,10 +2124,16 @@
           "path": "running",
           "tagId": "CHG-PUMP-A",
           "equipmentId": "chargingPump",
-          "description": "Charging pump running status",
+          "description": "Charging pump A run command",
           "externalRefs": [
             "cvcs.charging_pump.a.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "CHG-PUMP-A-RUNNING",
+          "equipmentId": "chargingPump",
+          "description": "Charging pump A run feedback"
         }
       ],
       "metadata": {
@@ -1915,10 +2156,16 @@
           "path": "running",
           "tagId": "CHG-PUMP-B",
           "equipmentId": "chargingPumpB",
-          "description": "Charging pump B running status",
+          "description": "Charging pump B run command",
           "externalRefs": [
             "cvcs.charging_pump.b.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "CHG-PUMP-B-RUNNING",
+          "equipmentId": "chargingPumpB",
+          "description": "Charging pump B run feedback"
         }
       ],
       "metadata": {
@@ -1939,10 +2186,16 @@
           "path": "positionFraction",
           "tagId": "LET-ISOL",
           "equipmentId": "letdownValve",
-          "description": "CVCS letdown isolation valve position",
+          "description": "CVCS letdown isolation valve position demand",
           "externalRefs": [
             "cvcs.letdown.isolation"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "LET-ISOL-POS",
+          "equipmentId": "letdownValve",
+          "description": "CVCS letdown isolation valve position feedback"
         }
       ],
       "metadata": {
@@ -2045,10 +2298,16 @@
           "path": "running",
           "tagId": "SI-PUMP-A",
           "equipmentId": "safetyInjectionPumpA",
-          "description": "High-head safety injection pump A running status",
+          "description": "High-head safety injection pump A run command",
           "externalRefs": [
             "ess.si_pump.a.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "SI-PUMP-A-RUNNING",
+          "equipmentId": "safetyInjectionPumpA",
+          "description": "High-head safety injection pump A run feedback"
         }
       ],
       "metadata": {
@@ -2073,10 +2332,16 @@
           "path": "running",
           "tagId": "SI-PUMP-B",
           "equipmentId": "safetyInjectionPumpB",
-          "description": "High-head safety injection pump B running status",
+          "description": "High-head safety injection pump B run command",
           "externalRefs": [
             "ess.si_pump.b.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "SI-PUMP-B-RUNNING",
+          "equipmentId": "safetyInjectionPumpB",
+          "description": "High-head safety injection pump B run feedback"
         }
       ],
       "metadata": {
@@ -2117,10 +2382,16 @@
           "path": "running",
           "tagId": "CSPRAY-A",
           "equipmentId": "containmentSprayPumpA",
-          "description": "Containment spray pump A running status",
+          "description": "Containment spray pump A run command",
           "externalRefs": [
             "ess.cspray_pump.a.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "CSPRAY-A-RUNNING",
+          "equipmentId": "containmentSprayPumpA",
+          "description": "Containment spray pump A run feedback"
         }
       ],
       "metadata": {
@@ -2145,10 +2416,16 @@
           "path": "running",
           "tagId": "CSPRAY-B",
           "equipmentId": "containmentSprayPumpB",
-          "description": "Containment spray pump B running status",
+          "description": "Containment spray pump B run command",
           "externalRefs": [
             "ess.cspray_pump.b.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "CSPRAY-B-RUNNING",
+          "equipmentId": "containmentSprayPumpB",
+          "description": "Containment spray pump B run feedback"
         }
       ],
       "metadata": {
@@ -2189,10 +2466,16 @@
           "path": "running",
           "tagId": "RHR-PUMP-A",
           "equipmentId": "rhrPumpA",
-          "description": "Residual heat removal pump A running status",
+          "description": "Residual heat removal pump A run command",
           "externalRefs": [
             "ess.rhr_pump.a.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "RHR-PUMP-A-RUNNING",
+          "equipmentId": "rhrPumpA",
+          "description": "Residual heat removal pump A run feedback"
         }
       ],
       "metadata": {
@@ -2217,10 +2500,16 @@
           "path": "running",
           "tagId": "RHR-PUMP-B",
           "equipmentId": "rhrPumpB",
-          "description": "Residual heat removal pump B running status",
+          "description": "Residual heat removal pump B run command",
           "externalRefs": [
             "ess.rhr_pump.b.status"
           ]
+        },
+        {
+          "path": "runningState",
+          "tagId": "RHR-PUMP-B-RUNNING",
+          "equipmentId": "rhrPumpB",
+          "description": "Residual heat removal pump B run feedback"
         }
       ],
       "metadata": {
@@ -2271,10 +2560,16 @@
           "path": "positionFraction",
           "tagId": "RHR-ISOL",
           "equipmentId": "rhrIsolationValve",
-          "description": "Residual heat removal isolation valve position",
+          "description": "Residual heat removal isolation valve position demand",
           "externalRefs": [
             "ess.rhr.isolation_valve"
           ]
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "RHR-ISOL-POS",
+          "equipmentId": "rhrIsolationValve",
+          "description": "Residual heat removal isolation valve position feedback"
         }
       ],
       "metadata": {
@@ -2374,7 +2669,7 @@
           "path": "dischargeIsolationOpen",
           "tagId": "ACCUM-1",
           "equipmentId": "safetyAccumulatorA",
-          "description": "Accumulator A discharge isolation open",
+          "description": "Accumulator A discharge isolation valve open command; the model opens the valve at once",
           "externalRefs": [
             "ess.accumulator.1.discharge_valve"
           ]
@@ -2407,7 +2702,7 @@
           "path": "dischargeIsolationOpen",
           "tagId": "ACCUM-2",
           "equipmentId": "safetyAccumulatorB",
-          "description": "Accumulator B discharge isolation open",
+          "description": "Accumulator B discharge isolation valve open command; the model opens the valve at once",
           "externalRefs": [
             "ess.accumulator.2.discharge_valve"
           ]
@@ -2440,7 +2735,7 @@
           "path": "dischargeIsolationOpen",
           "tagId": "ACCUM-3",
           "equipmentId": "safetyAccumulatorC",
-          "description": "Accumulator C discharge isolation open",
+          "description": "Accumulator C discharge isolation valve open command; the model opens the valve at once",
           "externalRefs": [
             "ess.accumulator.3.discharge_valve"
           ]
@@ -2473,7 +2768,7 @@
           "path": "dischargeIsolationOpen",
           "tagId": "ACCUM-4",
           "equipmentId": "safetyAccumulatorD",
-          "description": "Accumulator D discharge isolation open",
+          "description": "Accumulator D discharge isolation valve open command; the model opens the valve at once",
           "externalRefs": [
             "ess.accumulator.4.discharge_valve"
           ]
@@ -2506,7 +2801,7 @@
           "path": "dischargeIsolationOpen",
           "tagId": "ACCUM-5",
           "equipmentId": "safetyAccumulatorE",
-          "description": "Accumulator E discharge isolation open",
+          "description": "Accumulator E discharge isolation valve open command; the model opens the valve at once",
           "externalRefs": [
             "ess.accumulator.5.discharge_valve"
           ]
@@ -2539,7 +2834,7 @@
           "path": "dischargeIsolationOpen",
           "tagId": "ACCUM-6",
           "equipmentId": "safetyAccumulatorF",
-          "description": "Accumulator F discharge isolation open",
+          "description": "Accumulator F discharge isolation valve open command; the model opens the valve at once",
           "externalRefs": [
             "ess.accumulator.6.discharge_valve"
           ]
@@ -2728,7 +3023,13 @@
           "path": "closed",
           "tagId": "BRK-OFFSITE-A-CLOSED",
           "equipmentId": "offsiteBreakerA",
-          "description": "Offsite breaker A closed status"
+          "description": "Offsite breaker A close command"
+        },
+        {
+          "path": "closedState",
+          "tagId": "BRK-OFFSITE-A-POS",
+          "equipmentId": "offsiteBreakerA",
+          "description": "Offsite breaker A position feedback, closed while true"
         }
       ],
       "metadata": {
@@ -2750,7 +3051,13 @@
           "path": "closed",
           "tagId": "BRK-OFFSITE-B-CLOSED",
           "equipmentId": "offsiteBreakerB",
-          "description": "Offsite breaker B closed status"
+          "description": "Offsite breaker B close command"
+        },
+        {
+          "path": "closedState",
+          "tagId": "BRK-OFFSITE-B-POS",
+          "equipmentId": "offsiteBreakerB",
+          "description": "Offsite breaker B position feedback, closed while true"
         }
       ],
       "metadata": {
@@ -2986,10 +3293,16 @@
           "path": "closed",
           "tagId": "TRIP-BKR-A",
           "equipmentId": "reactorTripBreakerA",
-          "description": "Reactor trip breaker A closed status",
+          "description": "Reactor trip breaker A close command",
           "externalRefs": [
             "rps.trip_breaker.a.position"
           ]
+        },
+        {
+          "path": "closedState",
+          "tagId": "TRIP-BKR-A-POS",
+          "equipmentId": "reactorTripBreakerA",
+          "description": "Reactor trip breaker A position feedback, closed while true"
         }
       ],
       "metadata": {
@@ -3011,10 +3324,16 @@
           "path": "closed",
           "tagId": "TRIP-BKR-B",
           "equipmentId": "reactorTripBreakerB",
-          "description": "Reactor trip breaker B closed status",
+          "description": "Reactor trip breaker B close command",
           "externalRefs": [
             "rps.trip_breaker.b.position"
           ]
+        },
+        {
+          "path": "closedState",
+          "tagId": "TRIP-BKR-B-POS",
+          "equipmentId": "reactorTripBreakerB",
+          "description": "Reactor trip breaker B position feedback, closed while true"
         }
       ],
       "metadata": {
@@ -3066,7 +3385,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "pressurizer-surge-line primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3077,7 +3395,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "pressurizer-surge-line pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3088,7 +3405,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "pressurizer-surge-line leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3099,7 +3415,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "pressurizer-surge-line leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3196,7 +3511,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-hot-leg-a primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3207,7 +3521,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-hot-leg-a pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3218,7 +3531,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-hot-leg-a leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3229,7 +3541,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-hot-leg-a leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3288,7 +3599,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-cold-leg-a primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3299,7 +3609,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-cold-leg-a pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3310,7 +3619,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-cold-leg-a leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3321,7 +3629,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-cold-leg-a leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3366,7 +3673,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcp-a-to-core primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3377,7 +3683,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcp-a-to-core pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3388,7 +3693,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcp-a-to-core leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3399,7 +3703,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcp-a-to-core leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3462,7 +3765,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-hot-leg-b primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3473,7 +3775,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-hot-leg-b pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3484,7 +3785,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-hot-leg-b leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3495,7 +3795,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-hot-leg-b leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3554,7 +3853,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-cold-leg-b primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3565,7 +3863,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-cold-leg-b pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3576,7 +3873,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-cold-leg-b leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3587,7 +3883,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-cold-leg-b leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3632,7 +3927,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcp-b-to-core primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3643,7 +3937,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcp-b-to-core pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3654,7 +3947,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcp-b-to-core leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3665,7 +3957,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcp-b-to-core leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3728,7 +4019,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-hot-leg-c primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3739,7 +4029,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-hot-leg-c pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3750,7 +4039,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-hot-leg-c leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3761,7 +4049,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-hot-leg-c leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3820,7 +4107,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-cold-leg-c primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3831,7 +4117,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-cold-leg-c pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3842,7 +4127,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-cold-leg-c leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3853,7 +4137,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-cold-leg-c leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3898,7 +4181,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcp-c-to-core primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -3909,7 +4191,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcp-c-to-core pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3920,7 +4201,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcp-c-to-core leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -3931,7 +4211,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcp-c-to-core leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -3994,7 +4273,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-hot-leg-d primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -4005,7 +4283,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-hot-leg-d pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4016,7 +4293,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-hot-leg-d leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -4027,7 +4303,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-hot-leg-d leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4086,7 +4361,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-hot-leg-e primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -4097,7 +4371,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-hot-leg-e pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4108,7 +4381,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-hot-leg-e leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -4119,7 +4391,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-hot-leg-e leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4178,7 +4449,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-hot-leg-f primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -4189,7 +4459,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-hot-leg-f pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4200,7 +4469,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-hot-leg-f leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -4211,7 +4479,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-hot-leg-f leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4270,7 +4537,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-cold-leg-d primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -4281,7 +4547,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-cold-leg-d pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4292,7 +4557,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-cold-leg-d leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -4303,7 +4567,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-cold-leg-d leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4362,7 +4625,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-cold-leg-e primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -4373,7 +4635,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-cold-leg-e pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4384,7 +4645,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-cold-leg-e leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -4395,7 +4655,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-cold-leg-e leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4454,7 +4713,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcs-cold-leg-f primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -4465,7 +4723,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcs-cold-leg-f pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4476,7 +4733,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcs-cold-leg-f leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -4487,7 +4743,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcs-cold-leg-f leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4532,7 +4787,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcp-d-to-core primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -4543,7 +4797,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcp-d-to-core pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4554,7 +4807,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcp-d-to-core leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -4565,7 +4817,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcp-d-to-core leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4614,7 +4865,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcp-e-to-core primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -4625,7 +4875,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcp-e-to-core pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4636,7 +4885,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcp-e-to-core leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -4647,7 +4895,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcp-e-to-core leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4696,7 +4943,6 @@
         },
         {
           "path": "pressureMPa",
-          "label": "rcp-f-to-core primary coolant pressure",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
@@ -4707,7 +4953,6 @@
         },
         {
           "path": "pressureDropMPa",
-          "label": "rcp-f-to-core pressure drop",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -4718,7 +4963,6 @@
         },
         {
           "path": "leak.areaFraction",
-          "label": "rcp-f-to-core leak area",
           "kind": "control",
           "discipline": "control",
           "writable": true,
@@ -4729,7 +4973,6 @@
         },
         {
           "path": "leakFlowKgPerS",
-          "label": "rcp-f-to-core leak flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -7140,7 +7383,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "vct-to-charging-pump solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -7281,7 +7523,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "charging-pump-to-cold-leg-a solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -7326,7 +7567,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "letdown-to-vct solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -7439,7 +7679,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "vct-to-charging-pump-b solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -7484,7 +7723,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "charging-pump-b-to-cold-leg-b solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -8409,7 +8647,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "safety-accumulator-a-to-cold-leg-a solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -8465,7 +8702,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "safety-accumulator-b-to-cold-leg-b solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -8521,7 +8757,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "safety-accumulator-c-to-cold-leg-c solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -8577,7 +8812,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "safety-accumulator-d-to-cold-leg-d solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -8633,7 +8867,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "safety-accumulator-e-to-cold-leg-e solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -8689,7 +8922,6 @@
         },
         {
           "path": "soluteConcentrationPpm",
-          "label": "safety-accumulator-f-to-cold-leg-f solute concentration",
           "kind": "derived",
           "discipline": "chemical",
           "writable": false,
@@ -9235,6 +9467,7 @@
     "core.effectiveReactivityPcm",
     "core.rodInsertionFraction",
     "core.sourceRangeCountRateCps",
+    "core.sourceRangeEnergized",
     "core.intermediateRangeCurrentAmps",
     "core.fuelTemperatureC",
     "core.fuelLowerTemperatureC",
@@ -9259,6 +9492,7 @@
     "pressurizer.heaterPowerMw",
     "pressurizer.sprayFlowKgPerS",
     "pressurizer.reliefValvePositionFraction",
+    "pressurizer.reliefValveEffectivePositionFraction",
     "pressurizer.reliefFlowKgPerS",
     "pressurizerReliefTank.inventoryKg",
     "pressurizerReliefTank.levelPercent",
@@ -9278,6 +9512,7 @@
     "sgA.steamQualityFraction",
     "sgA.secondaryInventoryKg",
     "rcpA.running",
+    "rcpA.runningState",
     "rcpA.flowKgPerS",
     "rcpA.developedHeadPa",
     "rcpA.loopFlowTargetKgPerS",
@@ -9305,6 +9540,7 @@
     "sgB.steamQualityFraction",
     "sgB.secondaryInventoryKg",
     "rcpB.running",
+    "rcpB.runningState",
     "rcpB.flowKgPerS",
     "rcpB.developedHeadPa",
     "rcpB.loopFlowTargetKgPerS",
@@ -9332,6 +9568,7 @@
     "sgC.steamQualityFraction",
     "sgC.secondaryInventoryKg",
     "rcpC.running",
+    "rcpC.runningState",
     "rcpC.flowKgPerS",
     "rcpC.developedHeadPa",
     "rcpC.loopFlowTargetKgPerS",
@@ -9359,6 +9596,7 @@
     "sgD.steamQualityFraction",
     "sgD.secondaryInventoryKg",
     "rcpD.running",
+    "rcpD.runningState",
     "rcpD.flowKgPerS",
     "rcpD.developedHeadPa",
     "rcpD.loopFlowTargetKgPerS",
@@ -9374,7 +9612,9 @@
     "feedwater-control-valve-d-to-sg-d.flowKgPerS",
     "aux-feedwater-valve-d-to-sg-d.flowKgPerS",
     "mainFeedwaterPumpA.running",
+    "mainFeedwaterPumpA.runningState",
     "mainFeedwaterPumpB.running",
+    "mainFeedwaterPumpB.runningState",
     "mainFeedwaterPumpA.flowKgPerS",
     "mainFeedwaterPumpB.flowKgPerS",
     "feedwaterTank.inventoryKg",
@@ -9383,8 +9623,11 @@
     "feedwaterTank.makeupFlowKgPerS",
     "feedwaterTank.availableOutletFlowKgPerS",
     "auxFeedwaterPumpMotor.running",
+    "auxFeedwaterPumpMotor.runningState",
     "auxFeedwaterPumpMotorB.running",
+    "auxFeedwaterPumpMotorB.runningState",
     "auxFeedwaterPumpTurbine.running",
+    "auxFeedwaterPumpTurbine.runningState",
     "auxFeedwaterPumpTurbine.speedRpm",
     "auxFeedwaterPumpMotor.flowKgPerS",
     "auxFeedwaterPumpMotorB.flowKgPerS",
@@ -9564,11 +9807,6 @@
     "sgD.secondaryInventoryBalanceResidualKg",
     "sgD.steamMassBalanceResidualKg",
     "sgD.boilingEnergyResidualMw",
-    "pressurizerReliefValve.positionFraction",
-    "pressurizerReliefValve.effectivePositionFraction",
-    "pressurizerReliefValve.inletFlowKgPerS",
-    "pressurizerReliefValve.outletFlowKgPerS",
-    "pressurizerReliefValve.flowBalanceResidualKgPerS",
     "feedwaterHeader.inletFlowKgPerS",
     "feedwaterHeader.outletFlowKgPerS",
     "feedwaterHeader.flowBalanceResidualKgPerS",
@@ -9663,22 +9901,29 @@
     "rwst.levelPercent",
     "rwst.availableOutletFlowKgPerS",
     "safetyInjectionPumpA.running",
+    "safetyInjectionPumpA.runningState",
     "safetyInjectionPumpA.flowKgPerS",
     "safetyInjectionPumpB.running",
+    "safetyInjectionPumpB.runningState",
     "safetyInjectionPumpB.flowKgPerS",
     "safetyInjectionHeader.outletFlowKgPerS",
     "containmentSprayAdditiveTank.levelPercent",
     "containmentSprayPumpA.running",
+    "containmentSprayPumpA.runningState",
     "containmentSprayPumpA.flowKgPerS",
     "containmentSprayPumpB.running",
+    "containmentSprayPumpB.runningState",
     "containmentSprayPumpB.flowKgPerS",
     "containmentSprayHeader.outletFlowKgPerS",
     "rhrPumpA.running",
+    "rhrPumpA.runningState",
     "rhrPumpA.flowKgPerS",
     "rhrPumpB.running",
+    "rhrPumpB.runningState",
     "rhrPumpB.flowKgPerS",
     "rhrHeader.outletFlowKgPerS",
     "rhrIsolationValve.positionFraction",
+    "rhrIsolationValve.effectivePositionFraction",
     "boricAcidInjectionValve.positionFraction",
     "boricAcidInjectionValve.effectivePositionFraction",
     "containment.pressureMPa",
@@ -9780,8 +10025,10 @@
     "plantControlsLoadA.energized",
     "plantControlsLoadB.energized",
     "chargingPump.running",
+    "chargingPump.runningState",
     "chargingPump.flowKgPerS",
     "chargingPumpB.running",
+    "chargingPumpB.runningState",
     "chargingPumpB.flowKgPerS",
     "vitalBatteryA.voltageVdc",
     "vessel.boronConcentrationPpm",
@@ -9816,7 +10063,9 @@
     "sgE.secondaryInventoryKg",
     "sgF.secondaryInventoryKg",
     "rcpE.running",
+    "rcpE.runningState",
     "rcpF.running",
+    "rcpF.runningState",
     "rcpE.flowKgPerS",
     "rcpF.flowKgPerS",
     "rcpE.developedHeadPa",

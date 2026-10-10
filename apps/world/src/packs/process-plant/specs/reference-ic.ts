@@ -2,6 +2,7 @@ import type { ProcessPlantIcConfig } from '../runtime/index.ts'
 import { primaryLoopIdForPump, type CompiledPlantGraph, type CompiledComponent } from '../graph/index.ts'
 import { accumulatorReferenceIcRules } from './reference-ic-accumulator.ts'
 import { referenceAnnunciatorSystems } from './reference-ic-annunciators.ts'
+import { referenceOperatingModes } from './reference-ic-modes.ts'
 import { balanceOfPlantReferenceIcRules } from './reference-ic-balance-of-plant.ts'
 import { containmentReferenceIcRules } from './reference-ic-containment.ts'
 import { electricalReferenceIcRules } from './reference-ic-electrical.ts'
@@ -9,15 +10,18 @@ import { pressurizerReferenceIcRules } from './reference-ic-pressurizer.ts'
 import { reactorReferenceIcRules } from './reference-ic-reactor.ts'
 import { reactorCoolantPumpReferenceIcRules } from './reference-ic-rcp.ts'
 import { steamGeneratorReferenceIcRules } from './reference-ic-steam-generator.ts'
+import { subcoolingReferenceIcRules } from './reference-ic-subcooling.ts'
 import { fourLoopReferenceLetters, type ProcessPlantReferenceLoop } from './reference-loop.ts'
 
 export const pressurizedWaterReactorReferenceIcFor = (
   loops: ReadonlyArray<ProcessPlantReferenceLoop>,
 ): ProcessPlantIcConfig => ({
+  operatingModes: [...referenceOperatingModes],
   annunciatorSystems: [...referenceAnnunciatorSystems],
   rules: [
     ...reactorReferenceIcRules(loops),
     ...pressurizerReferenceIcRules(),
+    ...subcoolingReferenceIcRules(),
     ...loops.flatMap(loop => steamGeneratorReferenceIcRules(loop)),
     ...loops.flatMap(loop => reactorCoolantPumpReferenceIcRules(loop)),
     ...loops.flatMap(loop => accumulatorReferenceIcRules(loop)),

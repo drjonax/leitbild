@@ -34,7 +34,10 @@ describe('process plant model composition', () => {
     // the Agent upgrade; changed on 2026-10-10 when the owner chose to delete
     // the spec's hand-picked display profiles, accepting that PWR Runs
     // checkpointed before then cannot be restored and must be restarted.
-    expect(system.modelDigest).toBe('207c0c7f2c2603700b29f2e70b2fb657a0259e0591960e471fff350b1e527093')
+    // Changed again on 2026-10-10, approved by the owner, when the model was
+    // made to report equipment state truthfully; PWR Runs checkpointed before
+    // then must be restarted.
+    expect(system.modelDigest).toBe('7ea5b4b52e74b1652b3cadd87a5f97745d4462a2c21f2050f2b57cf9317819fd')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
@@ -105,7 +108,7 @@ describe('process plant model composition', () => {
       operatingPointRef: 'test.operating-point',
       automationRef: 'test.automation',
       graph: invalid,
-      automationForGraph: () => ({ annunciatorSystems: [], rules: [] }),
+      automationForGraph: () => ({ operatingModes: [], annunciatorSystems: [], rules: [] }),
       validateGraph: assertPrimaryLoopTopologyValid,
     })).toThrow('primary loop A must have exactly one core hotLegA primaryCoolant outlet')
   })

@@ -29,6 +29,8 @@ export const valueDigits = (value: number): number => {
   const magnitude = Math.abs(value)
   // An exact zero (a closed valve, a stopped flow) reads "0", not "0.000".
   if (magnitude === 0) return 0
+  // Below a thousandth, two significant digits: an intermediate-range current of 5e-4 A reads 0.00050, never 0.000.
+  if (magnitude < 1e-3) return Math.min(12, 1 - Math.floor(Math.log10(magnitude)))
   return magnitude >= 100 ? 0 : magnitude >= 10 ? 1 : magnitude >= 1 ? 2 : 3
 }
 

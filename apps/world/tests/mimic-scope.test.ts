@@ -114,7 +114,7 @@ describe('mimic scope from the agent\'s intent', () => {
   })
 
   test('equipment the model connects to nothing is refused as such', () => {
-    for (const id of ['pressurizerReliefValve', 'reactorTripBreakerA', 'containmentSprayAdditiveTank']) {
+    for (const id of ['reactorTripBreakerA', 'containmentSprayAdditiveTank']) {
       expect(rejection(graph, { from: [id], services: ['primaryRelief'] })).toEqual([{ field: 'from.0', message: `${id} is not connected to any equipment in the Plant model, so it cannot be drawn` }])
       expect(rejection(graph, { from: ['pressurizer'], to: [id] })[0]).toEqual({ field: 'to.0', message: `${id} is not connected to any equipment in the Plant model, so it cannot be drawn` })
     }
@@ -191,17 +191,26 @@ describe('mimic presentation and bindings', () => {
     expect(unpresentedKinds(processPlantComponentRegistry.keys())).toEqual([])
   })
 
-  test('state comes from solved signals; the PORV, whose position is not solved, is judged by its relief flow', () => {
+  test('state comes from solved signals; a device whose position is not solved is judged by its flow', () => {
     const framed = framingRules(plant)
     const pzr = graph.componentIndexById.get('pressurizer' as never)!
     const porv = itemBinding(plant, { kind: 'device', component: pzr, device: 'reliefValve' }, 'position', framed)
     expect(porv.label).toBe('PORV')
+    // The PORV reads the opening the model relieves through, never its demand.
     expect(porv.state).toEqual({
       aspect: 'position',
+      state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' },
       command: 'pressurizer.reliefValvePositionFraction' as never,
-      throughput: { path: 'pressurizer.reliefFlowKgPerS' as never, noFlowBelow: graph.components[pzr]!.semantics.ratedOutflow[0]!.flowKgPerS * NO_FLOW_FRACTION },
     })
     expect(porv.frames).toEqual([{ ruleId: 'pzr-relief-flow-high', flap: 'F HI' }])
+    // An accumulator's discharge isolation valve opens on its command at once; the model solves no separate position.
+    const accumulator = graph.componentIndexById.get('safetyAccumulatorA' as never)!
+    const isolation = itemBinding(plant, { kind: 'device', component: accumulator, device: 'dischargeIsolationValve' }, 'position', framed)
+    expect(isolation.state).toEqual({
+      aspect: 'position',
+      command: 'safetyAccumulatorA.dischargeIsolationOpen' as never,
+      throughput: { path: 'safetyAccumulatorA.outletFlowKgPerS' as never, noFlowBelow: null },
+    })
     for (const component of graph.components) {
       for (const aspect of component.semantics.aspects) {
         if (aspect.state !== undefined) expect(graph.signalBindingByPath.get(aspect.state.path)!.writable && graph.signalBindingByPath.get(aspect.state.path)!.actuation !== 'boundary').toBe(false)

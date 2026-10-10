@@ -24,6 +24,7 @@ import {
   COMPOSED_TREND_MAX_SIGNALS,
   COMPOSED_TREND_MAX_STRIPS,
   COMPOSED_TREND_STRIP_MAX_PENS,
+  LEAD_VALUE_SPARKLINE_MS,
   composedDisplayCompositionSchema,
   composedPanelHeight,
   fitComposedDisplay,
@@ -118,6 +119,12 @@ export interface ComposedComparisonPanel {
 export interface ComposedReadoutsPanel {
   readonly kind: 'readouts'
   readonly pens: ReadonlyArray<ComposedDisplayPen>
+  /**
+   * A generated display's lead values: the time the sparkline beside each
+   * recorded one spans, in the column beside the drawing. Advice readouts
+   * show current values only.
+   */
+  readonly sparklineMs?: number
 }
 
 export interface ComposedAlarmsPanel {
@@ -771,10 +778,10 @@ export const overviewDrawingRoom = (
   return { maxWidth: width, maxHeight: height - layout.overviewFooter - stackedPanelsHeight(panels, width) - layout.mimicLegend }
 }
 
-/** The column's least height: its lead values, the annunciator tiles, the alarms and the footer. */
+/** The column's least height: its lead values under their title, the annunciator tiles, the alarms and the footer. */
 const overviewColumnHeight = (panels: GeneratedPanels): number => {
   const layout = composedDisplayLayout
-  return (panels.readouts === 0 ? 0 : panels.readouts * layout.overviewReadoutRow + layout.panelGap)
+  return (panels.readouts === 0 ? 0 : layout.overviewReadoutsTitle + panels.readouts * layout.overviewReadoutRow + layout.panelGap)
     + annunciatorHeight(panels.annunciators, panels.tileWidth, layout.overviewColumn) + layout.alarms + layout.overviewFooter
 }
 
@@ -864,16 +871,13 @@ const fitGenerated = (
 const generatedDisplay = (
   system: ProcessPlantRuntimeInstance,
   title: string,
-  readouts: UnsizedPanel | undefined,
+  readouts: ComposedReadoutsPanel | undefined,
   view: OverviewView | null,
   fitted: { readonly arrangement: OverviewArrangement; readonly panels: GeneratedPanels; readonly mimic: CompiledMimic },
   alarms: (panels: ReadonlyArray<CompiledComposedPanel>) => ComposedAlarmsPanel,
 ): CompiledComposedDisplay => {
   // Nothing generated is a trend, so every panel has its natural height.
-  const shown = [...(readouts === undefined ? [] : [readouts]), { kind: 'mimic' as const, mimic: fitted.mimic }].map((panel): CompiledComposedPanel => {
-    if (panel.kind === 'trend') throw new Error('a generated display has no trend')
-    return panel
-  })
+  const shown: ReadonlyArray<CompiledComposedPanel> = [...(readouts === undefined ? [] : [readouts]), { kind: 'mimic', mimic: fitted.mimic }]
   const width = view === null ? fitted.mimic.width : view.width - 2 * composedDisplayLayout.overviewPadding
   return {
     plantId: system.plant.id,
@@ -885,13 +889,17 @@ const generatedDisplay = (
   }
 }
 
+/** A generated display's lead values, each recorded one with a sparkline of its history. */
 const leadValues = (
   system: ProcessPlantRuntimeInstance,
   paths: ReadonlyArray<VariablePath>,
   recordedSeriesIds: ReadonlySet<string>,
   issues: ComposedDisplayIssue[],
-): UnsizedPanel | undefined => paths.length === 0 ? undefined
-  : compilePanel(system, { kind: 'readouts', signals: paths.map(path => ({ ref: path, role: 'primary' as const })) }, 0, recordedSeriesIds, issues)
+): ComposedReadoutsPanel | undefined => {
+  if (paths.length === 0) return undefined
+  const panel = compilePanel(system, { kind: 'readouts', signals: paths.map(path => ({ ref: path, role: 'primary' as const })) }, 0, recordedSeriesIds, issues)
+  return panel?.kind === 'readouts' ? { ...panel, sparklineMs: LEAD_VALUE_SPARKLINE_MS } : undefined
+}
 
 /**
  * The unit overview World generates for a Plant: its lead values (protection
@@ -914,7 +922,7 @@ export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, reco
     const fitted = annunciatorSystems(system.plant, width)
     return fitted.ok ? [{ width, systems: fitted.systems }] : []
   })]
-  const values = readouts?.kind === 'readouts' ? readouts.pens.length : 0
+  const values = readouts?.pens.length ?? 0
   const fitted = fitGenerated(view, tiles.map(option => ({ readouts: values, annunciators: option.systems.length, tileWidth: option.width })), [room => compileMimicScope(system.plant, circuits.scope, { profile: overviewMimicProfile, ...room })])
   if (!fitted.ok) return { ok: false, issues: fitted.issues.map(message => ({ path: 'overview', message })) }
   const systems = tiles.find(option => option.width === fitted.panels.tileWidth)!.systems
@@ -945,7 +953,7 @@ export const compileDetailDisplay = (
   const loops = [...new Set(components.map(index => graph.components[index]!.metadata?.loopId))]
   const narrowed = loops.every((loop): loop is string => loop !== undefined) ? { loops } : {}
   const reaches = Array.from({ length: MIMIC_REACH_LINKS }, (_, step) => MIMIC_REACH_LINKS - step)
-  const panels = [{ readouts: readouts?.kind === 'readouts' ? readouts.pens.length : 0, annunciators: 0, tileWidth: composedDisplayLayout.annunciatorTile.widths[0] }]
+  const panels = [{ readouts: readouts?.pens.length ?? 0, annunciators: 0, tileWidth: composedDisplayLayout.annunciatorTile.widths[0] }]
   const whole = reaches.map(reach => resolveMimicScope(graph, { around: componentIds, ...narrowed, reach }))
   const unresolved = whole.find(scope => !scope.ok)
   if (unresolved !== undefined && !unresolved.ok) return { ok: false, issues: unresolved.issues.map(issue => ({ path: 'detail', message: issue.message })) }
@@ -993,6 +1001,12 @@ const mimicShows = (mimic: CompiledMimic): ReadonlyArray<string> => [
   ...(mimic.summary.stops.length === 0 ? [] : [`The drawing stops at: ${mimic.summary.stops.join('; ')}`]),
 ]
 
+// A sparkline has no value axis: it shows which way a value went and how fast, never a value to quote.
+const sparklinesShow = (pens: ReadonlyArray<ComposedDisplayPen>, sparklineMs: number): string => {
+  const unrecorded = pens.filter(pen => pen.valueKind === 'number' && !pen.recorded)
+  return `Where the lead values stand beside the drawing, each recorded one has a sparkline of its last ${sparklineMs / 60_000} min, for direction and rate only (no value scale)${unrecorded.length === 0 ? '' : `; not recorded by this Run, so without one: ${unrecorded.map(pen => pen.name).join(', ')}`}`
+}
+
 /** Plain statements of what the view shows, so the agent's text need not repeat it. */
 export const composedDisplayShows = (display: CompiledComposedDisplay): ReadonlyArray<string> => display.panels.flatMap(panel => {
   if (panel.kind === 'trend') {
@@ -1004,7 +1018,12 @@ export const composedDisplayShows = (display: CompiledComposedDisplay): Readonly
     ]
   }
   if (panel.kind === 'comparison') return [`Live side-by-side comparison with the median: ${panel.pens.map(signalName).join('; ')}`, ...panel.thresholds.map(threshold => thresholdText(threshold, panel.unit))]
-  if (panel.kind === 'readouts') return [`Live readouts with margin to the nearest I&C alarm or trip threshold: ${panel.pens.map(signalName).join('; ')}`]
+  if (panel.kind === 'readouts') {
+    return [
+      `Live readouts with margin to the nearest I&C alarm or trip threshold: ${panel.pens.map(signalName).join('; ')}`,
+      ...(panel.sparklineMs === undefined ? [] : [sparklinesShow(panel.pens, panel.sparklineMs)]),
+    ]
+  }
   if (panel.kind === 'mimic') return mimicShows(panel.mimic)
   return [panel.scope === 'related' ? `Active alarms and trips of the ${panel.ruleIds.length} I&C rules acting on the displayed signals and their equipment` : 'All active alarms and trips of the Plant']
 })

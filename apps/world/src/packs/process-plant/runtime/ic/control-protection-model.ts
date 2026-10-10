@@ -170,8 +170,8 @@ export const processPlantIcRuleSchema = z.object({
   label: z.string().min(1).optional(),
   enabled: z.boolean().default(true),
   ruleClass: processPlantIcRuleClassSchema.default('protection'),
-  modeLabel: z.string().min(1).optional(),
-  modeCondition: processPlantIcConditionSchema.optional(),
+  /** The declared operating modes the rule acts in (operatingModes); absent, it acts in every mode. */
+  modes: z.array(idSchema).min(1).optional(),
   condition: processPlantIcConditionSchema,
   delayMs: z.number().finite().nonnegative().default(0),
   clearCondition: processPlantIcConditionSchema.optional(),
@@ -197,10 +197,37 @@ export const processPlantIcAnnunciatorSystemSchema = z.object({
 }).strict()
 export type ProcessPlantIcAnnunciatorSystem = z.infer<typeof processPlantIcAnnunciatorSystemSchema>
 
+/**
+ * An operating mode of the Plant ("Power operation"), declared once and named
+ * by its id on each rule that acts only in it. The Plant is in the first
+ * declared mode whose condition holds, so declaration order resolves overlap;
+ * a Plant whose modes cover every state is always in one.
+ */
+export const processPlantIcOperatingModeSchema = z.object({
+  id: idSchema,
+  label: z.string().min(1),
+  condition: processPlantIcConditionSchema,
+}).strict()
+export type ProcessPlantIcOperatingMode = z.infer<typeof processPlantIcOperatingModeSchema>
+
 export const processPlantIcConfigSchema = z.object({
+  operatingModes: z.array(processPlantIcOperatingModeSchema).default([]),
   annunciatorSystems: z.array(processPlantIcAnnunciatorSystemSchema).default([]),
   rules: z.array(processPlantIcRuleSchema).default([]),
 }).strict().superRefine((config, ctx) => {
+  // A rule names declared modes only, each once.
+  const modes = new Set<string>()
+  for (const [index, mode] of config.operatingModes.entries()) {
+    if (modes.has(mode.id)) ctx.addIssue({ code: 'custom', path: ['operatingModes', index, 'id'], message: `operating mode ${mode.id} is declared twice` })
+    modes.add(mode.id)
+  }
+  for (const [ruleIndex, rule] of config.rules.entries()) {
+    for (const [modeIndex, mode] of (rule.modes ?? []).entries()) {
+      const path = ['rules', ruleIndex, 'modes', modeIndex]
+      if (!modes.has(mode)) ctx.addIssue({ code: 'custom', path, message: `${rule.id} acts in operating mode ${mode}, which is not declared; declared: ${[...modes].join(', ') || 'none'}` })
+      if (rule.modes!.indexOf(mode) !== modeIndex) ctx.addIssue({ code: 'custom', path, message: `${rule.id} names operating mode ${mode} twice` })
+    }
+  }
   // A system's alarms are all its own and all named, so a system that shows quiet is quiet.
   const declared = new Set<string>()
   for (const [index, system] of config.annunciatorSystems.entries()) {

@@ -873,3 +873,139 @@ describe('Tool use (ReAct loop)', () => {
     expect(capturedRequest.tools).toEqual(toolDefs)
   })
 })
+
+describe('Requested turns', () => {
+  const turn = {
+    instruction: '[Display request] Show your answer as a live display.',
+    inReplyTo: ['answer-1'],
+    cause: { kind: 'display-request' as const, name: 'Alice' },
+    requireView: true,
+  }
+  const recording = (answers: ReadonlyArray<string>, delayMs = 0) => {
+    const requests: Array<ReadonlyArray<{ role: string; content: string }>> = []
+    const provider: LLMProvider = {
+      models: async () => ['test-model'],
+      chat: async request => {
+        requests.push(structuredClone(request.messages) as Array<{ role: string; content: string }>)
+        if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs))
+        return { content: answers[Math.min(requests.length - 1, answers.length - 1)]!, generationMs: 1, tokensUsed: { prompt: 1, completion: 1 } }
+      },
+    }
+    return { provider, requests }
+  }
+
+  test('run one ordinary turn ending with the instruction and post its reply with the cause', async () => {
+    const decisions: Decision[] = []
+    const { provider, requests } = recording(['Level is steady.', 'No display can be produced for this answer.'])
+    const agent = createAIAgent(makeConfig(), provider, decision => { decisions.push(decision) })
+    await agent.join(makeRoom())
+    expect(agent.requestTurn!('room-1', turn)).toEqual({ kind: 'accepted', queued: false })
+    await agent.whenIdle()
+    expect(requests[0]!.at(-1)).toEqual({ role: 'user', content: turn.instruction })
+    // requireView reached the evaluation loop: the display-less answer was asked once more.
+    expect(requests).toHaveLength(2)
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.response).toEqual({ action: 'respond', content: 'No display can be produced for this answer.' })
+    expect(decisions[0]!.cause).toEqual(turn.cause)
+    expect(decisions[0]!.inReplyTo).toEqual(['answer-1'])
+    // The instruction is transient: the next ordinary turn does not see it.
+    agent.receive(makeMessage({ senderId: 'alice', content: 'Thanks' }))
+    await agent.whenIdle()
+    expect(requests.at(-1)!.some(message => message.content === turn.instruction)).toBe(false)
+    expect(decisions.at(-1)!.cause).toBeUndefined()
+  })
+
+  test('wait behind current work and the room\'s new questions, and refuse a second request meanwhile', async () => {
+    const decisions: Decision[] = []
+    const { provider, requests } = recording(['Done.'], 20)
+    const agent = createAIAgent(makeConfig(), provider, decision => { decisions.push(decision) })
+    await agent.join(makeRoom())
+    agent.receive(makeMessage({ id: 'question-1', senderId: 'alice', content: 'First question' }))
+    // Let the first turn build its context and reach the model.
+    await new Promise(resolve => setTimeout(resolve, 5))
+    expect(agent.requestTurn!('room-1', turn)).toEqual({ kind: 'accepted', queued: true })
+    const second = agent.requestTurn!('room-1', { ...turn, inReplyTo: ['answer-2'] })
+    expect(second.kind).toBe('refused')
+    if (second.kind === 'refused') expect(second.reason).toBe('pending')
+    agent.receive(makeMessage({ id: 'question-2', senderId: 'alice', content: 'Second question' }))
+    await agent.whenIdle()
+    // The question that arrived while the request waited gets its own answer first.
+    expect(decisions.map(decision => decision.inReplyTo)).toEqual([['question-1'], ['question-2'], ['answer-1']])
+    expect(decisions.map(decision => decision.cause)).toEqual([undefined, undefined, turn.cause])
+    expect(requests.filter(messages => messages.at(-1)!.content === turn.instruction)).toHaveLength(1)
+  })
+
+  test('refuse a second request while the first runs', async () => {
+    const { provider } = recording(['Done.'], 30)
+    const agent = createAIAgent(makeConfig(), provider, () => {})
+    await agent.join(makeRoom())
+    expect(agent.requestTurn!('room-1', turn)).toEqual({ kind: 'accepted', queued: false })
+    await new Promise(resolve => setTimeout(resolve, 5))
+    const again = agent.requestTurn!('room-1', turn)
+    expect(again.kind).toBe('refused')
+    await agent.whenIdle()
+    expect(agent.requestTurn!('room-1', { ...turn, requireView: false })).toEqual({ kind: 'accepted', queued: false })
+    await agent.whenIdle()
+  })
+
+  test('a request made during a trigger turn runs when the trigger ends', async () => {
+    const decisions: Decision[] = []
+    const { provider, requests } = recording(['Done.'], 20)
+    const agent = createAIAgent(makeConfig(), provider, decision => { decisions.push(decision) })
+    await agent.join(makeRoom())
+    const trigger = agent.fireTriggerExecute!('Report the plant state.', 'room-1')
+    await new Promise(resolve => setTimeout(resolve, 5))
+    expect(agent.requestTurn!('room-1', { ...turn, requireView: false })).toEqual({ kind: 'accepted', queued: true })
+    await trigger
+    await agent.whenIdle(2_000)
+    expect(requests.some(messages => messages.at(-1)!.content === turn.instruction)).toBe(true)
+    expect(decisions.at(-1)!.cause).toEqual(turn.cause)
+  })
+
+  test('a request that a script overtakes is dropped with its reason, and the script turn runs', async () => {
+    const decisions: Decision[] = []
+    let scripted = false
+    const { provider, requests } = recording(['Done.'], 20)
+    const agent = createAIAgent(makeConfig(), provider, decision => { decisions.push(decision) }, {
+      getScriptContext: () => scripted ? { systemDoc: 'Script', dialogue: [] } : undefined,
+    })
+    await agent.join(makeRoom())
+    await agent.join(makeRoom('room-2', 'Other Room'))
+    agent.receive(makeMessage({ roomId: 'room-2', senderId: 'alice', content: 'Busy elsewhere' }))
+    await new Promise(resolve => setTimeout(resolve, 5))
+    expect(agent.requestTurn!('room-1', turn).kind).toBe('accepted')
+    scripted = true
+    agent.forceEvaluate!('room-1')
+    await agent.whenIdle()
+    const dropped = decisions.find(decision => decision.response.action === 'error')!
+    expect(dropped.response).toEqual({ action: 'error', code: 'request_dropped', message: 'A script started directing this room before the requested turn ran; ask again when it ends.' })
+    expect(dropped.cause).toEqual(turn.cause)
+    expect(dropped.inReplyTo).toEqual(['answer-1'])
+    expect(requests.some(messages => messages.some(message => message.content === turn.instruction))).toBe(false)
+    expect(requests.at(-1)!.at(-1)!.content).toContain('It is your turn')
+  })
+
+  test('cancelling generation drops a waiting request', async () => {
+    const decisions: Decision[] = []
+    const { provider, requests } = recording(['Done.'], 20)
+    const agent = createAIAgent(makeConfig(), provider, decision => { decisions.push(decision) })
+    await agent.join(makeRoom())
+    agent.receive(makeMessage({ senderId: 'alice', content: 'First question' }))
+    expect(agent.requestTurn!('room-1', turn).kind).toBe('accepted')
+    agent.cancelGeneration()
+    await agent.whenIdle()
+    agent.receive(makeMessage({ senderId: 'alice', content: 'Next question' }))
+    await agent.whenIdle()
+    expect(requests.some(messages => messages.at(-1)!.content === turn.instruction)).toBe(false)
+    expect(decisions.every(decision => decision.cause === undefined)).toBe(true)
+  })
+
+  test('refuse a room a script directs', async () => {
+    const agent = createAIAgent(makeConfig(), makeLLMProvider('Hi'), () => {}, {
+      getScriptContext: () => ({ systemDoc: 'Script', dialogue: [] }),
+    })
+    const result = agent.requestTurn!('room-1', turn)
+    expect(result.kind).toBe('refused')
+    if (result.kind === 'refused') expect(result.reason).toBe('script')
+  })
+})

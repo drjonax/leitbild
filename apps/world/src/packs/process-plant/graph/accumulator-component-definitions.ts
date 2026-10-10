@@ -35,7 +35,7 @@ export const accumulatorComponentDefinitions: ReadonlyArray<ComponentDefinition>
       ],
     }),
     variables: [
-      variable({ path: 'dischargeIsolationOpen', label: 'Accumulator discharge isolation open', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'dischargeIsolationOpen', label: 'Accumulator discharge isolation open command', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'liquidInventoryKg', label: 'Accumulator liquid inventory', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg' }),
       variable({ path: 'gasVolumeM3', label: 'Accumulator gas volume', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'volume', unit: 'm3' }),
       variable({ path: 'gasPressureMPa', label: 'Accumulator gas pressure', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),

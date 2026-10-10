@@ -59,8 +59,12 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       maxPowerRampFractionPerS: z.number().finite().positive().optional(),
       fuelThermalCapacityMjPerC: z.number().finite().positive(),
       nominalPrimaryFlowKgPerS: z.number().finite().positive().optional(),
+      /** Source-range count rate at P-6, where its high voltage is cut. */
       nominalSourceRangeCountRateCps: z.number().finite().positive().optional(),
+      /** Intermediate-range current at rated power. */
       nominalIntermediateRangeCurrentAmps: z.number().finite().positive().optional(),
+      /** P-6: the intermediate-range current above which the source range's high voltage is cut. */
+      sourceRangeCutoffCurrentAmps: z.number().finite().positive().optional(),
       minimumNaturalCirculationCoolingFraction: normalized.optional(),
     }),
     semantics: fixedSemantics({ keyValues: ['coolantOutletTemperatureC'], energy: [{ role: 'source', circuit: 'coolant', rate: 'totalThermalPowerMw' }] }),
@@ -73,7 +77,8 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'temperatureFeedbackPcm', label: 'Temperature feedback reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'boronFeedbackPcm', label: 'Boron feedback reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'effectiveReactivityPcm', label: 'Effective core reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
-      variable({ path: 'rodInsertionFraction', label: 'Rod insertion', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
+      variable({ path: 'rodInsertionFraction', label: 'Rod insertion demand', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
+      variable({ path: 'sourceRangeEnergized', label: 'Source-range detector high voltage on', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'sourceRangeCountRateCps', label: 'Source-range neutron count rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'countRate', unit: 'cps' }),
       variable({ path: 'intermediateRangeCurrentAmps', label: 'Intermediate-range neutron current', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'electricalCurrent', unit: 'amps' }),
       variable({ path: 'coolantInletTemperatureC', label: 'Core coolant inlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),

@@ -237,11 +237,11 @@ describe('the unit overview of the principal circuits', () => {
     const count = pumps.rows.find(row => row.kind === 'count')!
     if (count.kind !== 'count') throw new Error('no count')
     const [first, second] = count.members.map(member => member.state!.state!.path)
-    const sample = (a: number, b: number) => indexSample([{ path: first!, value: a, quality: 'good' }, { path: second!, value: b, quality: 'good' }])
-    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(1, 1)), sample(1, 1), String)).toBe('2/2 RUN')
-    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(1, 0)), sample(1, 0), String)).toBe('1/2 RUN')
-    expect(drawnLook(pumps.binding, pumps.rows, sample(1, 0)).state.kind).toBe('running')
-    expect(drawnLook(pumps.binding, pumps.rows, sample(0, 0)).state.kind).toBe('stopped')
+    const sample = (a: boolean, b: boolean) => indexSample([{ path: first!, value: a, quality: 'good' }, { path: second!, value: b, quality: 'good' }])
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, true)), sample(true, true), String)).toBe('2/2 RUN')
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, false)), sample(true, false), String)).toBe('1/2 RUN')
+    expect(drawnLook(pumps.binding, pumps.rows, sample(true, false)).state.kind).toBe('running')
+    expect(drawnLook(pumps.binding, pumps.rows, sample(false, false)).state.kind).toBe('stopped')
     expect(drawnLook(pumps.binding, pumps.rows, indexSample([])).state.kind).toBe('unknown')
     // Every member's state is sampled; the pipe the group draws for both suctions carries both flows.
     for (const path of [first!, second!]) expect(mimic.paths).toContain(path)
