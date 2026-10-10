@@ -719,12 +719,13 @@ fn heater_embedded_blocks_equal_the_wiki_strict_blocks() {
     }
 }
 
-/// Metastable bulk liquid inside the bounded band is admitted: a wall at or
-/// below Tsat cools it sensibly, a wall above it boils through the
-/// saturated-bulk onset, and a wall in (Tsat, T_L] refuses by name until SPEC
-/// selects that combination.
+/// Saturated and metastable bulk liquid take SPEC's continuous combination
+/// (59a1c83): sensible only for a wall at or below Tsat; above it the signed
+/// sensible term plus CTF's net boiling increment on the wall superheat,
+/// with `Gamma = chi q_nb / (hg,sat − h_L)`. It is continuous at Tsat and
+/// has no branch at T_L.
 #[test]
-fn heater_wet_law_admits_metastable_bulk_liquid_through_the_saturated_onset() {
+fn heater_wet_law_is_continuous_for_saturated_and_superheated_bulk() {
     let c = cell();
     let h = heaters(&c);
     let contact: ContactBlock = serde_json::from_str(CONTACT).unwrap();
@@ -733,36 +734,141 @@ fn heater_wet_law_admits_metastable_bulk_liquid_through_the_saturated_onset() {
         contact.wet.sensible_coefficient_w_m2_k,
     );
     let p = 15e6;
-    let ts = tsat(p);
-    for superheat in [0.01, 0.1, 1., 2.] {
-        let tl = ts + superheat;
-        let point = If97.liquid(s(p), s(tl)).unwrap();
+    let sat = WaterProperties::saturation(&If97, s(p)).unwrap();
+    let ts = sat.temperature.value;
+    for superheat in [0., 0.01, 0.1, 1., 2.] {
+        let (tl, point) = if superheat == 0. {
+            (ts, sat.liquid)
+        } else {
+            (
+                ts + superheat,
+                If97.liquid(s(p), s(ts + superheat)).unwrap(),
+            )
+        };
         let ct = h.liquid_contact_at(s(p), s(tl), point, &If97).unwrap();
         let hg = ct.saturation.vapor.enthalpy.value;
-        // A wall at or below Tsat: sensible cooling, no birth.
-        let cool = h.wet_flux(1, &ct, s(ts - 0.5), &If97).unwrap();
-        assert_eq!(cool.mode, "sensible");
-        assert!(cool.heat.value < 0. && cool.vapor_mass.value == 0.);
-        // A wall in (Tsat, T_L]: refused by name, never extrapolated.
-        for wall in [ts.next_up(), ts + 0.5 * superheat, tl] {
-            match h.wet_flux(1, &ct, s(wall), &If97) {
-                Err(Failure::Recoverable(m)) => {
-                    assert!(m.contains("no selected combination"), "{m}")
-                }
-                other => panic!("wall {wall} K: {other:?}"),
+        let at = |t: f64| h.wet_flux(1, &ct, s(t), &If97).unwrap();
+        // At or below Tsat: sensible only, no vapor.
+        let below = at(ts);
+        assert_eq!(below.mode, "sensible");
+        assert!(below.vapor_mass.value == 0.);
+        assert!((below.heat.value - coefficient * (ts - tl)).abs() <= 1e-9);
+        // Continuous at Tsat: the next wall boils by a vanishing increment.
+        let above = at(ts.next_up());
+        assert_eq!(above.mode, "nucleate");
+        assert!((above.heat.value - below.heat.value).abs() <= 1e-9);
+        assert!(above.vapor_mass.value.abs() <= 1e-15);
+        // No branch at T_L: the same nucleate law on both sides, with equal
+        // one-sided slopes that match the analytic wall direction there.
+        let walls = [tl - 1e-6, tl, tl + 1e-6];
+        let q: Vec<_> = walls.iter().map(|t| at(*t)).collect();
+        if superheat > 0. {
+            assert!(q.iter().all(|x| x.mode == "nucleate"));
+            let left = (q[1].heat.value - q[0].heat.value) / 1e-6;
+            let right = (q[2].heat.value - q[1].heat.value) / 1e-6;
+            let exact = h
+                .wet_flux(1, &ct, Scalar::new(tl, 1.), &If97)
+                .unwrap()
+                .heat
+                .direction;
+            for slope in [left, right] {
+                assert!((slope - exact).abs() <= 1e-4 * exact, "{slope} vs {exact}");
             }
         }
-        // Above the liquid: nucleate with chi qb / (hg,sat − h_L).
-        let wall = tl + 0.5;
-        let hot = h.wet_flux(1, &ct, s(wall), &If97).unwrap();
-        assert_eq!(hot.mode, "nucleate");
-        let qb = hot.heat.value - coefficient * (wall - tl);
-        let gamma = chi * qb / (hg - point.enthalpy.value);
-        assert!((hot.vapor_mass.value - gamma).abs() <= 1e-12 * gamma);
-        let above = h.wet_flux(1, &ct, s(tl.next_up()), &If97).unwrap();
+        for (t, x) in walls.iter().zip(&q) {
+            let net = x.heat.value - coefficient * (t - tl);
+            let gamma = chi * net / (hg - point.enthalpy.value);
+            assert!((x.vapor_mass.value - gamma).abs() <= 1e-12 * gamma.abs().max(1e-12));
+        }
         println!(
-            "15 MPa, bulk {superheat} K above Tsat: (Tsat, T_L] refused; just above T_L {:.3e} W/m² ({})",
-            above.heat.value, above.mode
+            "15 MPa, bulk {superheat} K above Tsat: q(Tsat) {:.3e}, q(T_L) {:.3e}, q(T_L + 1 µK) {:.3e} W/m²",
+            below.heat.value, q[1].heat.value, q[2].heat.value
+        );
+    }
+}
+
+/// The wall law's operating domain is 0.1–16 MPa; a contact pressure
+/// outside it refuses before any property is used. (The maintained
+/// library's own vapor ceiling is 16 MPa, so the contact is formed inside
+/// and its pressure moved out.)
+#[test]
+fn heater_wet_law_refuses_outside_its_operating_pressure_domain() {
+    let c = cell();
+    let h = heaters(&c);
+    let p = 15.9e6;
+    let t = tsat(p) - 5.;
+    let inside = h
+        .liquid_contact_at(s(p), s(t), If97.liquid(s(p), s(t)).unwrap(), &If97)
+        .unwrap();
+    assert!(h.wet_flux(1, &inside, s(t + 10.), &If97).is_ok());
+    for outside in [16.1e6, 0.09e6] {
+        let mut ct = inside;
+        ct.pressure = s(outside);
+        match h.wet_flux(1, &ct, s(t + 10.), &If97) {
+            Err(Failure::Recoverable(m)) => assert!(m.contains("domain"), "{m}"),
+            other => panic!("{outside} Pa: {other:?}"),
+        }
+    }
+}
+
+/// An unpowered rod segment in superheated liquid relaxes monotonically to
+/// the one wall temperature in (Tsat, T_L) where the sensible gain from the
+/// liquid balances boiling, without chattering across T_L.
+#[test]
+fn heater_unpowered_rod_relaxes_without_chatter_in_superheated_liquid() {
+    let state = prepared(6.0);
+    let h = heaters(&state.cell);
+    let zero = [0.; st::COORDINATES];
+    let (_, c) = column(&state, &state.values, &zero);
+    // R superheated by 0.5 K at its own centroid pressure.
+    let (p_r, m_r) = (c.resident.pressure.value, c.resident.mass.value);
+    let target = tsat(p_r) + 0.5;
+    let u = leitbild_operating_plant::network::Properties::forward(&If97, false, p_r, target)
+        .unwrap()
+        .internal_energy_j_kg;
+    let mut values = state.values;
+    values[st::RESIDENT_ENERGY] = m_r * u;
+    let (_, c) = column(&state, &values, &zero);
+    let (tl, ts) = (
+        c.resident.temperature.value,
+        tsat(c.resident.pressure.value),
+    );
+    assert!(tl - ts > 0.49 && tl - ts < 0.51);
+    // The backup's upper segment is wetted by R alone.
+    let j = 2;
+    let g = h.segments()[j];
+    let w = state.cell.heater_wetting(&c, g.bottom_m, g.top_m).unwrap();
+    assert!(w.admitted_length_m.value == 0. && w.exposed_length_m.value == 0.);
+    let contacts = h.contacts(&c, &[w], &If97).unwrap();
+    let rate = |u: f64| {
+        h.segment_rates(j, &c, &w, Scalar::new(u, 1.), 0., &contacts, &If97)
+            .unwrap()
+    };
+    let energy = |t: f64| g.steel_mass_kg * h.caloric().specific_energy(s(t)).unwrap().value;
+    for start in [tl + 3., tl + 0.4, tl - 0.3, ts + 0.05] {
+        let mut u = energy(start);
+        let mut path = vec![];
+        for _ in 0..400 {
+            let r = rate(u);
+            // Stable: the steel rate falls with the steel energy everywhere.
+            assert!(r.metal_rate.direction < 0.);
+            path.push((r.temperature.value, r.metal_rate.value));
+            u += 0.2 * r.metal_rate.value / -r.metal_rate.direction;
+        }
+        let (end, last) = *path.last().unwrap();
+        assert!(
+            ts < end && end < tl,
+            "equilibrium {end} K outside (Tsat, T_L)"
+        );
+        assert!(last.abs() <= 1e-9 * path[0].1.abs().max(1.));
+        // Monotone approach: one sign of T − T* and shrinking distance.
+        let side = (path[0].0 - end).signum();
+        for pair in path.windows(2) {
+            let (a, b) = ((pair[0].0 - end) * side, (pair[1].0 - end) * side);
+            assert!(a >= -1e-9 && b <= a + 1e-12, "chatter: {a} then {b}");
+        }
+        println!(
+            "unpowered segment from {start:.3} K: settles at {end:.6} K (T_L {tl:.6}, Tsat {ts:.6})"
         );
     }
 }

@@ -594,6 +594,25 @@ fn wet<P: WaterProperties>(
 ) -> Result<(Scalar, Scalar, Scalar, Scalar)> {
     let h = liquid_film(props, pressure, bulk_t, wall_t, flux, law, sat, bulk)?;
     let sensible = h * (wall_t - bulk_t);
+    if let Film::Heater(f) = law.film
+        && bulk.enthalpy.value >= sat.liquid.enthalpy.value
+    {
+        // Saturated or superheated bulk (SPEC 59a1c83): CTF's net boiling
+        // increment on the wall superheat with zero initiation flux, added
+        // to the signed sensible term outside the cube root. Continuous at
+        // Tw = Tsat and with no branch at Tw = T_L.
+        let onset = sat.temperature;
+        if wall_t.value <= onset.value {
+            return Ok((sensible, s(0.), onset, sensible));
+        }
+        let superheat = wall_t - sat.temperature;
+        let wall_sensible = h * superheat;
+        let boiling = (wall_sensible.pow(3.) + pool(pressure, superheat, true).pow(3.))
+            .pow(1. / 3.)
+            - wall_sensible;
+        let gamma = s(f.wall_birth_fraction) * boiling / (sat.vapor.enthalpy - bulk.enthalpy);
+        return Ok((sensible + boiling, gamma, onset, sensible));
+    }
     if wall_t.value <= bulk_t.value {
         return Ok((sensible, s(0.), bulk_t, sensible));
     }
@@ -617,17 +636,11 @@ fn wet<P: WaterProperties>(
             });
     let sub = sat.temperature - bulk_t;
     let onset = match law.film {
-        Film::Core => sat.temperature + s(0.5) * (d0 + (d0 * d0 + s(4.) * d0 * sub).pow(0.5)),
-        Film::Heater(_) => {
-            // CTF's regime selection: saturated or superheated bulk liquid
-            // boils once Tw > Tsat, with no onset suppression; subcooled
-            // liquid keeps the tangency. The step at h_L = h_f,sat is the
-            // heater page's declared discontinuity.
-            if bulk.enthalpy.value >= sat.liquid.enthalpy.value {
-                sat.temperature
-            } else {
-                sat.temperature + s(0.5) * (d0 + (d0 * d0 + s(4.) * d0 * sub).pow(0.5))
-            }
+        // The heater reaches here only with subcooled bulk: the tangency.
+        // Its step from the saturated combination at h_L = h_f,sat is the
+        // heater page's declared discontinuity.
+        Film::Core | Film::Heater(_) => {
+            sat.temperature + s(0.5) * (d0 + (d0 * d0 + s(4.) * d0 * sub).pow(0.5))
         }
         Film::Tube | Film::External => {
             bulk_t + s(0.25) * (d0.pow(0.5) + (d0 + s(4.) * sub).pow(0.5)).pow(2.)
@@ -809,22 +822,12 @@ pub(crate) fn liquid_wall_current<P: WaterProperties>(
     if bulk_t.value > sat.temperature.value && !matches!(law.film, Film::Heater(_)) {
         return Err("stable liquid wall recipient required");
     }
-    // A wall in (Tsat, T_L] under strictly superheated bulk has no selected
-    // boiling combination (the sensible term is negative there); it refuses
-    // rather than extrapolating the cube root. Only the actual wall is
-    // tested: the turnover search below may probe that interval.
-    if matches!(law.film, Film::Heater(_))
-        && bulk.enthalpy.value > sat.liquid.enthalpy.value
-        && wall_t.value > sat.temperature.value
-        && wall_t.value <= bulk_t.value
-    {
-        return Err(
-            "superheated bulk liquid with the wall in (Tsat, T_L]: no selected combination",
-        );
-    }
     let (pre, pre_gamma, onset, _) =
         wet(props, pressure, bulk_t, wall_t, mass_flux, law, sat, bulk)?;
-    if wall_t.value <= onset.value || wall_t.value <= bulk_t.value {
+    // The heater's saturated-bulk combination boils above Tsat even with
+    // the wall below a superheated liquid; its sensible region is below onset.
+    let heater = matches!(law.film, Film::Heater(_));
+    if wall_t.value <= onset.value || (!heater && wall_t.value <= bulk_t.value) {
         return Ok(WallFlux {
             heat: pre.finite()?,
             vapor_mass: s(0.),
