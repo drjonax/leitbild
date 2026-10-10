@@ -82,18 +82,42 @@ export interface FeatureCollection {
   readonly features: ReadonlyArray<NormalizedFeature>
 }
 
-export interface CategoryTileConfig {
-  readonly category: string
+/** Tile attribute values; arrays and objects would reach the tiles as JSON strings. */
+export type TileFeaturePropertyValue = string | number | boolean
+
+/** One geometry the tile build writes for a sidecar feature, with the zoom range that carries it. */
+export interface TileFeature {
+  readonly geometry: GeoJsonGeometry
+  /** Must not contain `fid`: the pipeline adds the numeric feature id itself. */
+  readonly properties: Readonly<Record<string, TileFeaturePropertyValue>>
   readonly minZoom: number
-  readonly maxZoom: number
-  readonly simplification?: number
+  /** Defaults to the tile set's maximum zoom. */
+  readonly maxZoom?: number
 }
+
+/**
+ * The Pack's tile projection of one sidecar feature: its tile geometries, or the reason it
+ * stays out of the tiles. Exclusion reasons are counted in the dataset manifest.
+ */
+export type TileProjection =
+  | {
+      readonly kind: 'tiled'
+      /** Recorded against the tile features' numeric `fid` in `<dataset>.feature-index.json`. */
+      readonly externalId: string
+      readonly features: ReadonlyArray<TileFeature>
+    }
+  | {
+      readonly kind: 'excluded'
+      readonly reason: string
+    }
 
 export interface TilebuildConfig {
   readonly outputLayer: string
-  readonly categories: ReadonlyArray<CategoryTileConfig>
   readonly globalMinZoom: number
   readonly globalMaxZoom: number
+  /** Largest gzip-coded tile tippecanoe may write; a larger tile fails the build. */
+  readonly maximumTileBytes: number
+  readonly tileFeatures: (feature: NormalizedFeature) => TileProjection
 }
 
 export interface LicenceRef {

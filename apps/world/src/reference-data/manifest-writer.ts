@@ -1,15 +1,15 @@
 import { z } from 'zod'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import type { VectorTileArchiveSummary } from '../map/vector-tile-archive.ts'
 import { assertKnownLicence } from './licences.ts'
+import type { TileCategorySummary } from './tile-projection.ts'
 import type {
   BuildId,
-  CategoryTileConfig,
   DatasetConfig,
   DatasetId,
   Iso8601,
   LicenceRef,
-  NormalizedFeature,
   SourceSnapshot,
 } from './types.ts'
 
@@ -26,13 +26,26 @@ export const datasetManifestSchema = z.object({
     pmtilesPath: z.string().min(1),
     sidecarGeoJsonPath: z.string().min(1),
     outputLayer: z.string().min(1),
+    /** The Pack's tile projection of the sidecar; tippecanoe's only input. */
+    tileInputGeoJsonPath: z.string().min(1),
+    /** Numeric tile feature id (`fid`) to sidecar external id. */
+    featureIndexPath: z.string().min(1),
   }),
+  /** Tiled sidecar features per category, with the zoom range the tile projection gave them. */
   categories: z.array(z.object({
     category: z.string().min(1),
     minZoom: z.number().int().min(0).max(24),
     maxZoom: z.number().int().min(0).max(24),
     featureCount: z.number().int().min(0),
   })),
+  /** Sidecar features the tile projection left out, by reason. */
+  tileExclusions: z.record(z.string().min(1), z.number().int().positive()),
+  /** Zoom range and bounds from the PMTiles header; null when the build skipped tippecanoe. */
+  tiles: z.object({
+    minZoom: z.number().int().min(0).max(24),
+    maxZoom: z.number().int().min(0).max(24),
+    bounds: z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90), z.number().min(-180).max(180), z.number().min(-90).max(90)]),
+  }).nullable(),
   sources: z.array(z.object({
     id: z.string().min(1),
     kind: z.enum(['manual', 'local', 'remote']),
@@ -56,29 +69,6 @@ export const datasetManifestSchema = z.object({
 
 export type DatasetManifest = z.infer<typeof datasetManifestSchema>
 
-const countByCategory = (
-  features: ReadonlyArray<NormalizedFeature>,
-  categoryOf: (f: NormalizedFeature) => string,
-): Map<string, number> => {
-  const counts = new Map<string, number>()
-  for (const feature of features) {
-    const category = categoryOf(feature)
-    counts.set(category, (counts.get(category) ?? 0) + 1)
-  }
-  return counts
-}
-
-const categoryEntries = (
-  cfg: ReadonlyArray<CategoryTileConfig>,
-  counts: Map<string, number>,
-): DatasetManifest['categories'] =>
-  cfg.map(c => ({
-    category: c.category,
-    minZoom: c.minZoom,
-    maxZoom: c.maxZoom,
-    featureCount: counts.get(c.category) ?? 0,
-  }))
-
 const licencePayload = (licence: LicenceRef) => ({
   id: String(licence.id),
   name: licence.name,
@@ -91,13 +81,18 @@ const licencePayload = (licence: LicenceRef) => ({
 
 export interface BuildManifestInput<P> {
   readonly config: DatasetConfig<P>
-  readonly features: ReadonlyArray<NormalizedFeature>
+  readonly tileCategories: ReadonlyArray<TileCategorySummary>
+  readonly tileExclusions: Readonly<Record<string, number>>
+  /** Null when the build skipped tippecanoe. */
+  readonly tiles: VectorTileArchiveSummary | null
   /** One snapshot per entry of `config.sources`, in the same order. */
   readonly sourceSnapshots: ReadonlyArray<SourceSnapshot>
   readonly builtAt: Iso8601
   readonly buildId: BuildId
   readonly pmtilesRelativePath: string
   readonly sidecarRelativePath: string
+  readonly tileInputRelativePath: string
+  readonly featureIndexRelativePath: string
 }
 
 export const composeDatasetManifest = <P>(input: BuildManifestInput<P>): DatasetManifest => {
@@ -105,7 +100,6 @@ export const composeDatasetManifest = <P>(input: BuildManifestInput<P>): Dataset
   if (input.sourceSnapshots.length !== input.config.sources.length) {
     throw new Error(`composeDatasetManifest: ${input.sourceSnapshots.length} source snapshot(s) for ${input.config.sources.length} source(s)`)
   }
-  const counts = countByCategory(input.features, input.config.featureToCategory)
   const manifest: DatasetManifest = {
     schemaVersion: 1,
     datasetId: String(input.config.id),
@@ -115,8 +109,12 @@ export const composeDatasetManifest = <P>(input: BuildManifestInput<P>): Dataset
       pmtilesPath: input.pmtilesRelativePath,
       sidecarGeoJsonPath: input.sidecarRelativePath,
       outputLayer: input.config.tilebuild.outputLayer,
+      tileInputGeoJsonPath: input.tileInputRelativePath,
+      featureIndexPath: input.featureIndexRelativePath,
     },
-    categories: categoryEntries(input.config.tilebuild.categories, counts),
+    categories: input.tileCategories.map(category => ({ ...category })),
+    tileExclusions: { ...input.tileExclusions },
+    tiles: input.tiles === null ? null : { minZoom: input.tiles.minZoom, maxZoom: input.tiles.maxZoom, bounds: [...input.tiles.bounds] },
     sources: input.config.sources.map((s, index) => ({ id: String(s.id), kind: s.kind, snapshot: input.sourceSnapshots[index]! })),
     licences: input.config.licences.map(licencePayload),
   }

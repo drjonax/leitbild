@@ -1,8 +1,10 @@
 import { mkdir, readFile, rename, symlink, rm, writeFile, lstat, readdir, readlink } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
+import { readVectorTileArchiveSummary, type VectorTileArchiveSummary } from '../map/vector-tile-archive.ts'
 import { assertKnownLicence } from './licences.ts'
 import { composeDatasetManifest, writeAuditReport, writeDatasetManifest, type AuditReport } from './manifest-writer.ts'
 import { parseManualSource } from './sources/manual.ts'
+import { projectTileFeatures, type FeatureIndex } from './tile-projection.ts'
 import { buildTiles, type TippecanoeRunner } from './tippecanoe.ts'
 import {
   asBuildId,
@@ -19,7 +21,8 @@ import {
 } from './types.ts'
 
 // buildDataset:
-//   loadSources -> validate -> audit -> write sidecar GeoJSON -> build tiles -> write manifest -> write audit report
+//   loadSources -> validate -> audit -> write sidecar GeoJSON -> project tile features (tile input GeoJSON +
+//   feature index) -> build tiles from the tile input -> write manifest -> write audit report
 // promoteBuild:
 //   atomic symlink swap releases/<id>/current -> builds/<id>/<buildId>
 
@@ -84,12 +87,16 @@ const validateFeatures = <P>(
   return { errors, accepted }
 }
 
-const writeSidecar = async (path: string, features: ReadonlyArray<NormalizedFeature>): Promise<void> => {
+const writeJsonAtomically = async (path: string, value: unknown): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
-  const collection: FeatureCollection = { type: 'FeatureCollection', features }
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}`
-  await writeFile(tmp, JSON.stringify(collection))
+  await writeFile(tmp, JSON.stringify(value))
   await rename(tmp, path)
+}
+
+const writeSidecar = async (path: string, features: ReadonlyArray<NormalizedFeature>): Promise<void> => {
+  const collection: FeatureCollection = { type: 'FeatureCollection', features }
+  await writeJsonAtomically(path, collection)
 }
 
 const categoryCountsOf = <P>(
@@ -131,10 +138,14 @@ export const buildDataset = async <P>(
   }
 
   const sidecarFileName = `${String(config.id)}.features.geojson`
+  const tileInputFileName = `${String(config.id)}.tiles.geojson`
+  const featureIndexFileName = `${String(config.id)}.feature-index.json`
   const pmtilesFileName = `${String(config.id)}.pmtiles`
   const manifestFileName = `${String(config.id)}.manifest.json`
   const auditFileName = 'audit-report.json'
   const sidecarPath = join(buildDir, sidecarFileName)
+  const tileInputPath = join(buildDir, tileInputFileName)
+  const featureIndexPath = join(buildDir, featureIndexFileName)
   const pmtilesPath = join(buildDir, pmtilesFileName)
   const manifestPath = join(buildDir, manifestFileName)
   const auditPath = join(buildDir, auditFileName)
@@ -156,24 +167,35 @@ export const buildDataset = async <P>(
 
   await writeSidecar(sidecarPath, accepted)
 
+  const projected = projectTileFeatures(accepted, config)
+  await writeJsonAtomically(tileInputPath, { type: 'FeatureCollection', features: projected.features })
+  const featureIndex: FeatureIndex = { datasetId: String(config.id), buildId: String(buildId), externalIdByFid: projected.externalIdByFid }
+  await writeJsonAtomically(featureIndexPath, featureIndex)
+
+  let tiles: VectorTileArchiveSummary | null = null
   if (!env.skipTileBuild) {
     await buildTiles({
-      inputGeoJsonPath: sidecarPath,
+      inputGeoJsonPath: tileInputPath,
       outputPmtilesPath: pmtilesPath,
       config: config.tilebuild,
       ...(env.tippecanoeBinary !== undefined ? { binary: env.tippecanoeBinary } : {}),
       ...(env.tippecanoeRunner !== undefined ? { runner: env.tippecanoeRunner } : {}),
     })
+    tiles = await readVectorTileArchiveSummary(pmtilesPath)
   }
 
   const manifest = composeDatasetManifest({
     config,
-    features: accepted,
+    tileCategories: projected.categories,
+    tileExclusions: projected.exclusions,
+    tiles,
     sourceSnapshots: sourceLoads.map(load => load.snapshot),
     builtAt: asIso8601(now.toISOString()),
     buildId,
     pmtilesRelativePath: pmtilesFileName,
     sidecarRelativePath: sidecarFileName,
+    tileInputRelativePath: tileInputFileName,
+    featureIndexRelativePath: featureIndexFileName,
   })
   await writeDatasetManifest(manifestPath, manifest)
 

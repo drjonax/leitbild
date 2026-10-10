@@ -9,6 +9,8 @@ import {
 import { compileGridReferenceGraph } from '../reference-graph.ts'
 import { gridReferenceFeatureSchema } from '../schemas/grid-reference.ts'
 import { osmPbfPowerSource, type OsmPbfPin } from '../sources/osm-pbf-power.ts'
+import { gridFootprintMinZoom } from '../ui/grid-zoom-classes.ts'
+import { gridNorwayTileFeatures } from './grid-norway-tiles.ts'
 
 export const gridNorwayDatasetId = asDatasetId('grid-norway')
 export const gridNorwayOsmSourceId = 'osm:pbf-power:NO'
@@ -39,17 +41,11 @@ export const gridNorwayProductionThresholds: GridNorwayThresholds = {
 export const gridNorwayTilebuild: TilebuildConfig = {
   outputLayer: 'grid',
   globalMinZoom: 4,
-  globalMaxZoom: 14,
-  categories: [
-    { category: 'line', minZoom: 4, maxZoom: 14 },
-    { category: 'cable', minZoom: 5, maxZoom: 14 },
-    { category: 'substation', minZoom: 6, maxZoom: 14 },
-    { category: 'transformer', minZoom: 9, maxZoom: 14 },
-    { category: 'plant', minZoom: 6, maxZoom: 14 },
-    { category: 'generator', minZoom: 8, maxZoom: 14 },
-    { category: 'load', minZoom: 8, maxZoom: 14 },
-    { category: 'unknown', minZoom: 10, maxZoom: 14 },
-  ],
+  // Footprints and busbars appear at z12 with exact geometry; MapLibre overzooms z12 beyond.
+  globalMaxZoom: gridFootprintMinZoom,
+  // gzip bytes; about five times the largest tile (21 KB at z6) of the 2026-10-08 sidecar's build.
+  maximumTileBytes: 100_000,
+  tileFeatures: gridNorwayTileFeatures,
 }
 
 export const gridNorwayFeatureToCategory = (feature: NormalizedFeature): string => {
