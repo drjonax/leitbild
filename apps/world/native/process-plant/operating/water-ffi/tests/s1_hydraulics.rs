@@ -11,7 +11,7 @@
 #![cfg(all(feature = "ida", target_os = "macos"))]
 use leitbild_operating_plant::{
     network::{
-        CscOut, Network, RotorState, ToleranceClasses,
+        CscOut, Network, PzrPreparation, RotorState, ToleranceClasses,
         packet::Packet,
         prepare::{self, OperatingPoint, Settings},
     },
@@ -448,8 +448,14 @@ fn running(network: &mut Network<If97>) {
         );
     }
 }
+/// The harness's declared preparation controls; the PZR cell of every fresh
+/// network is prepared with the same values as the hydrostatic preparation.
+const PZR: PzrPreparation = PzrPreparation {
+    pressure_tolerance_pa: 1e-6,
+    max_passes: 50,
+};
 fn fresh(packet: &Packet) -> Network<If97> {
-    let (mut network, _) = Network::new(packet, If97).expect("network");
+    let (mut network, _) = Network::new(packet, If97, &PZR).expect("network");
     running(&mut network);
     network
 }
@@ -542,8 +548,8 @@ fn s1_hydraulics_admission() {
         4
     ];
     let settings = Settings {
-        pressure_tolerance_pa: 1e-6,
-        max_passes: 50,
+        pressure_tolerance_pa: PZR.pressure_tolerance_pa,
+        max_passes: PZR.max_passes,
         level_match_m: 1e-9,
         eos_row_bound: 1e-12,
         tree_face_bound_pa: 1e-6,
@@ -1023,8 +1029,8 @@ fn s1_harness_smoke() {
         4
     ];
     let settings = Settings {
-        pressure_tolerance_pa: 1e-6,
-        max_passes: 50,
+        pressure_tolerance_pa: PZR.pressure_tolerance_pa,
+        max_passes: PZR.max_passes,
         level_match_m: 1e-9,
         eos_row_bound: 1e-12,
         tree_face_bound_pa: 1e-6,

@@ -5,7 +5,8 @@ use leitbild_operating_plant::{
     hydraulics::{Pump as Impeller, Section, WallLaw},
     local_flow::{MomentumSupport, PressureSegment},
     network::{
-        Band, BandReport, Failure, MetastableBand, Network, Properties, RotorState, Water,
+        Band, BandReport, Failure, MetastableBand, Network, Properties, PzrPreparation, RotorState,
+        Water,
         packet::*,
         prepare::{OperatingPoint, Settings, prepare},
     },
@@ -366,7 +367,14 @@ fn fatal<T>(result: Result<T, Failure>) -> String {
     }
 }
 fn compile(packet: &Packet) -> String {
-    fatal(Network::new(packet, Analytic))
+    fatal(Network::new(
+        packet,
+        Analytic,
+        &PzrPreparation {
+            pressure_tolerance_pa: SETTINGS.pressure_tolerance_pa,
+            max_passes: SETTINGS.max_passes,
+        },
+    ))
 }
 
 #[test]

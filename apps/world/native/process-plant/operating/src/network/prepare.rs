@@ -28,7 +28,7 @@
 //!    cells and face charts, not a second implementation of its equations.
 use super::{
     Failure, Network, PZR_ALGEBRAIC, PZR_ENERGY, PZR_MASS, PZR_TRACER, Prepared, Properties,
-    RotorState, Water, not_integrated,
+    PzrPreparation, RotorState, Water, not_integrated,
     packet::{self, FacePacket, Packet},
 };
 use crate::local_flow::Cell;
@@ -607,7 +607,14 @@ pub fn prepare<P: Properties>(
 ) -> Result<(Network<P>, Prepared, Receipt), Failure> {
     settings.validate()?;
     point.validate(&packet.pzr.cell, settings)?;
-    let (mut network, mut prepared) = Network::new(packet, properties)?;
+    let (mut network, mut prepared) = Network::new(
+        packet,
+        properties,
+        &PzrPreparation {
+            pressure_tolerance_pa: settings.pressure_tolerance_pa,
+            max_passes: settings.max_passes,
+        },
+    )?;
     if rotors.len() != network.rotor_count() {
         return Err(fatal(format!(
             "{} rotor states declared for {} compiled rotors",

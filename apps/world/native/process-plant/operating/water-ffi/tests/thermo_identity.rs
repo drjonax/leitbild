@@ -9,7 +9,10 @@
 //! can be dumped (`LD01_IDENTITY_DUMP`) to compare separately built archives
 //! and implementations input by input.
 use leitbild_operating_plant::{
-    network::{BandReport, MetastableBand, Network, Properties, RotorState, Water, packet::Packet},
+    network::{
+        BandReport, MetastableBand, Network, Properties, PzrPreparation, RotorState, Water,
+        packet::Packet,
+    },
     rotor::{Shaft, SpeedRequest, Support},
     thermal::{Saturation, Scalar},
 };
@@ -638,6 +641,12 @@ impl Properties for Census {
     }
 }
 
+/// Declared controls of the PZR preparation, as the S1 harness declares them.
+const PZR: PzrPreparation = PzrPreparation {
+    pressure_tolerance_pa: 1e-6,
+    max_passes: 50,
+};
+
 fn running<P: Properties>(network: &mut Network<P>) {
     for r in 0..network.rotor_count() {
         network.set_rotor_state(
@@ -655,7 +664,7 @@ fn running<P: Properties>(network: &mut Network<P>) {
 fn prepared_network_residual_cost() {
     let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
     let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let (mut network, prepared) = Network::new(&packet, If97).unwrap();
+    let (mut network, prepared) = Network::new(&packet, If97, &PZR).unwrap();
     running(&mut network);
     network
         .select_leading_receipts(&prepared.y, &prepared.yp)
@@ -688,7 +697,7 @@ fn prepared_network_residual_cost() {
     }
     let [residual, jacobian] = best;
     let calls = Rc::new(Cell::new([0; 6]));
-    let (mut census, _) = Network::new(&packet, Census(calls.clone())).unwrap();
+    let (mut census, _) = Network::new(&packet, Census(calls.clone()), &PZR).unwrap();
     running(&mut census);
     census
         .select_leading_receipts(&prepared.y, &prepared.yp)

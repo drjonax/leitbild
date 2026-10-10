@@ -111,6 +111,14 @@ pub struct Counters {
     pub jacobian_wall_s: f64,
 }
 
+/// Caller-declared numerical controls of the stratified cell's preparation
+/// at the packet's operating point (`stratified::prepare`); none is defaulted.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct PzrPreparation {
+    pub pressure_tolerance_pa: f64,
+    pub max_passes: usize,
+}
+
 /// Initial coordinates compiled from the packet, in solver scaling.
 pub struct Prepared {
     pub y: Vec<f64>,
@@ -169,8 +177,14 @@ fn bad(reason: impl Into<String>) -> Failure {
 
 impl<P: Properties> Network<P> {
     /// Compile the network from the owner packet. Returns the network and the
-    /// prepared coordinates exactly as authored (no rebalancing here).
-    pub fn new(packet: &packet::Packet, properties: P) -> Result<(Self, Prepared), Failure> {
+    /// prepared coordinates: regular cells exactly as authored (no
+    /// rebalancing here), the PZR cell prepared at the packet's operating
+    /// point under the caller's declared controls.
+    pub fn new(
+        packet: &packet::Packet,
+        properties: P,
+        pzr_preparation: &PzrPreparation,
+    ) -> Result<(Self, Prepared), Failure> {
         let geometry = &packet.mechanics;
         let cell = &packet.pzr.cell;
         let cells_n = geometry.regions.len();
@@ -279,7 +293,7 @@ impl<P: Properties> Network<P> {
             base: physical.len(),
             port_face: port.face,
         };
-        let values = stratified_preparation(packet, &properties)?;
+        let values = stratified_preparation(packet, &properties, pzr_preparation)?;
         scales.extend(pzr_scales(&values, cell.fluid_volume_m3)?);
         physical.extend(values);
         differential.extend([0.; PZR_ALGEBRAIC]);
@@ -575,6 +589,7 @@ fn not_integrated(what: &str) -> Failure {
 fn stratified_preparation<P: Properties>(
     _packet: &packet::Packet,
     _properties: &P,
+    _controls: &PzrPreparation,
 ) -> Result<[f64; PZR_COORDINATES], Failure> {
     Err(not_integrated("the prepared PZR coordinates"))
 }
