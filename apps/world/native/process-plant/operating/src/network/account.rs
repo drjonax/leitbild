@@ -173,11 +173,19 @@ impl<P: Properties> Network<P> {
             boron += bd;
             boron_abs += bd.abs();
         }
-        for index in &self.rotor_index {
-            let rhs = (yp[*index] - self.rows[*index].value) * self.scales[*index];
+        let mut motor_work = 0.;
+        let mut electric = 0.;
+        let mut motor_heat = 0.;
+        for (r, index) in self.rotor_index.iter().enumerate() {
             let omega = y[*index] * self.scales[*index] / self.rotor_inertia;
-            rotor += rhs * omega;
-            bearing += self.rotor_drag * omega * omega;
+            if let Some(law) = self.motor[r] {
+                // dL/dt from the accepted rate; the row residual is not a rate.
+                rotor += yp[*index] * self.scales[*index] * omega;
+                bearing += law.drag_torque_nm.value * omega;
+                motor_work += law.motor_work_w.value;
+                electric += law.electric_w.value;
+                motor_heat += law.motor_heat_w.value;
+            }
         }
         let max_primary_void = self.cells[..self.pzr_begin]
             .iter()
@@ -189,7 +197,7 @@ impl<P: Properties> Network<P> {
             .filter(|h| h.rotor.is_some())
             .map(|h| self.cells[h.region].phase[0].map_or(0., |p| p.fraction.value))
             .fold(1., f64::min);
-        json!({"mass_receipt_sum_kg_s":mass,"mass_receipt_abs_sum_kg_s":mass_abs,"boron_receipt_sum_kg_eq_s":boron,"boron_receipt_abs_sum_kg_eq_s":boron_abs,"fluid_energy_receipt_sum_w":energy,"fluid_energy_receipt_abs_sum_w":energy_abs,"once_paid_shaft_power_w":self.shaft_power.value,"fluid_energy_minus_shaft_w":energy-self.shaft_power.value,"rotor_energy_rhs_w":rotor,"bearing_loss_w":bearing,"fluid_plus_rotor_plus_bearing_w":energy+rotor+bearing,"max_primary_void_fraction":max_primary_void,"min_pump_liquid_fraction":min_pump_liquid})
+        json!({"mass_receipt_sum_kg_s":mass,"mass_receipt_abs_sum_kg_s":mass_abs,"boron_receipt_sum_kg_eq_s":boron,"boron_receipt_abs_sum_kg_eq_s":boron_abs,"fluid_energy_receipt_sum_w":energy,"fluid_energy_receipt_abs_sum_w":energy_abs,"once_paid_shaft_power_w":self.shaft_power.value,"fluid_energy_minus_shaft_w":energy-self.shaft_power.value,"rotor_energy_rate_w":rotor,"bearing_loss_w":bearing,"motor_work_w":motor_work,"motor_electric_w":electric,"motor_conversion_heat_w":motor_heat,"fluid_plus_rotor_plus_bearing_minus_motor_w":energy+rotor+bearing-motor_work,"max_primary_void_fraction":max_primary_void,"min_pump_liquid_fraction":min_pump_liquid})
     }
 
     /// Coordinate labels: (category, label) for receipts and error accounts.

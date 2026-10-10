@@ -13,7 +13,7 @@ use super::{
 use crate::{
     hydraulics,
     local_flow::{self as flow, Cell, Phase},
-    phase, pzr_field as pf, thermal,
+    phase, pzr_field as pf, rotor, thermal,
 };
 use serde_json::json;
 use std::time::Instant;
@@ -497,10 +497,38 @@ impl<P: Properties> Network<P> {
                 self.shaft_power = self.shaft_power + shaft;
                 self.receipts[region][0][1] = self.receipts[region][0][1] + shaft;
                 let index = self.rotor_index[r];
-                self.rows[index] = (self.rate(yp, seed, cj, index)
-                    + rec(e.value.fluid_torque_nm, e.direction.fluid_torque_nm)
-                    + s(self.rotor_drag) * omega)
-                    / s(self.scales[index]);
+                let state = self.rotor_states[r].ok_or_else(|| {
+                    Failure::Fatal("rotor drive/shaft state must be declared".into())
+                })?;
+                let law = self
+                    .drive
+                    .evaluate(
+                        state.support,
+                        state.shaft,
+                        rotor::Input {
+                            omega_rad_s: omega,
+                            angular_momentum_rate_nm: self.rate(yp, seed, cj, index),
+                            fluid_torque_nm: rec(
+                                e.value.fluid_torque_nm,
+                                e.direction.fluid_torque_nm,
+                            ),
+                        },
+                    )
+                    .map_err(|e| match e {
+                        rotor::Error::InvalidInput | rotor::Error::NonfiniteResult => {
+                            Failure::Recoverable(format!("rotor trial: {e:?}"))
+                        }
+                        _ => Failure::Fatal(format!("rotor law: {e:?}")),
+                    })?;
+                self.rows[index] = match law.rotor {
+                    rotor::RotorRow::Free { residual_nm } => residual_nm / s(self.scales[index]),
+                    rotor::RotorRow::Locked { residual_rad_s, .. } => {
+                        residual_rad_s / s(self.drive.reference_omega_rad_s)
+                    }
+                };
+                if seed.is_none() {
+                    self.motor[r] = Some(law);
+                }
             }
         }
         Ok(())

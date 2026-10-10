@@ -26,7 +26,7 @@ pub use tolerance::ToleranceClasses;
 use crate::{
     hydraulics::Section,
     local_flow::{Cell, Chart, Face, ForceProjection, Phase},
-    pzr_field as pf,
+    pzr_field as pf, rotor,
     thermal::Scalar,
 };
 use serde_json::{Value, json};
@@ -62,6 +62,14 @@ struct Hydraulic {
     rotor: Option<usize>,
 }
 
+/// Discrete drive and shaft state of one rotor: part of the copyable Run
+/// state. Declared explicitly by the caller; there is no default.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RotorState {
+    pub support: rotor::Support,
+    pub shaft: rotor::Shaft,
+}
+
 /// Wall-time and call counters, separated so callers can attribute cost.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Counters {
@@ -92,7 +100,9 @@ pub struct Network<P: Properties> {
     section_drive: Vec<Scalar>,
     pub rotor_index: Vec<usize>,
     rotor_inertia: f64,
-    rotor_drag: f64,
+    drive: rotor::Parameters,
+    rotor_states: Vec<Option<RotorState>>,
+    motor: Vec<Option<rotor::Evaluation>>,
     field: pf::Model,
     work: pf::Work,
     pzr_begin: usize,
@@ -314,6 +324,18 @@ impl<P: Properties> Network<P> {
             }
         }
         let pump = &packet.hydraulics.pump;
+        let drive = rotor::Parameters {
+            inertia_kg_m2: pump.rotor_inertia_kg_m2,
+            drag_nm_per_rad_s: pump.drag_nm_per_rad_s,
+            reference_omega_rad_s: pump.reference_omega_rad_s,
+            nominal_fluid_power_w: pump.nominal_fluid_power_w,
+            tracking_time_s: pump.drive_tracking_time_s,
+            torque_cap_factor: pump.drive_torque_cap_factor,
+            efficiency: pump.drive_efficiency,
+        };
+        drive
+            .validate()
+            .map_err(|e| bad(format!("invalid compiled RCP drive: {e:?}")))?;
         let mut rotor_index = Vec::new();
         let mut sections = Vec::with_capacity(packet.hydraulics.sections.len());
         for h in &packet.hydraulics.sections {
@@ -389,9 +411,11 @@ impl<P: Properties> Network<P> {
                 sections,
                 section_projection,
                 section_drive: vec![s(0.); section_count],
+                rotor_states: vec![None; rotor_index.len()],
+                motor: vec![None; rotor_index.len()],
                 rotor_index,
                 rotor_inertia: pump.rotor_inertia_kg_m2,
-                rotor_drag: pump.drag_nm_per_rad_s,
+                drive,
                 field,
                 work: pf::Work::default(),
                 pzr_begin,
@@ -469,6 +493,57 @@ impl<P: Properties> Network<P> {
     }
     pub fn reuse(&self) -> Reuse<P::Caloric> {
         Reuse::new(self.cells.len(), self.saturation_points())
+    }
+    pub fn drive(&self) -> &rotor::Parameters {
+        &self.drive
+    }
+    pub fn rotor_count(&self) -> usize {
+        self.rotor_index.len()
+    }
+    pub fn rotor_state(&self, r: usize) -> Option<RotorState> {
+        self.rotor_states[r]
+    }
+    /// Declare or change one rotor's discrete drive/shaft state (an event).
+    pub fn set_rotor_state(&mut self, r: usize, state: RotorState) {
+        self.rotor_states[r] = Some(state);
+    }
+    /// Last evaluated drive law of one rotor (motor torque, heats, branch).
+    pub fn motor(&self, r: usize) -> Option<rotor::Evaluation> {
+        self.motor[r]
+    }
+    /// Ideal seizure transaction: lock the shaft, set its retained angular
+    /// momentum to zero in `y`, and return the one-time removed energy credit.
+    pub fn seize(&mut self, r: usize, y: &mut [f64]) -> Result<rotor::Locking, Failure> {
+        let state = self.rotor_states[r]
+            .ok_or_else(|| bad("rotor state must be declared before seizure"))?;
+        let index = self.rotor_index[r];
+        let omega = y[index] * self.scales[index] / self.rotor_inertia;
+        let locking = self
+            .drive
+            .lock(state.shaft, omega)
+            .map_err(|e| bad(format!("seizure refused: {e:?}")))?;
+        self.rotor_states[r] = Some(RotorState {
+            support: state.support,
+            shaft: locking.shaft,
+        });
+        y[index] = 0.;
+        Ok(locking)
+    }
+    /// Current IDA id vector: a locked rotor's speed row is algebraic.
+    pub fn differential(&self, prepared: &[f64]) -> Vec<f64> {
+        let mut ids = prepared.to_vec();
+        for (r, index) in self.rotor_index.iter().enumerate() {
+            if matches!(
+                self.rotor_states[r],
+                Some(RotorState {
+                    shaft: rotor::Shaft::Locked,
+                    ..
+                })
+            ) {
+                ids[*index] = 0.;
+            }
+        }
+        ids
     }
     /// Prepared scope string for receipts: what this network does and omits.
     pub fn scope() -> Value {

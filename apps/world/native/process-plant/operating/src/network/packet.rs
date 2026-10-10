@@ -140,6 +140,14 @@ pub struct Pump {
     pub drag_nm_per_rad_s: f64,
     #[serde(rename = "referenceOmega_rad_s")]
     pub reference_omega_rad_s: f64,
+    #[serde(rename = "nominalFluidPower_W")]
+    pub nominal_fluid_power_w: f64,
+    #[serde(rename = "driveTrackingTime_s")]
+    pub drive_tracking_time_s: f64,
+    #[serde(rename = "driveTorqueCapFactor")]
+    pub drive_torque_cap_factor: f64,
+    #[serde(rename = "driveEfficiency")]
+    pub drive_efficiency: f64,
 }
 #[derive(Debug, Deserialize)]
 pub struct SectionEntry {
