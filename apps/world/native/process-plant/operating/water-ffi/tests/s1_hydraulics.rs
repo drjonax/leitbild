@@ -110,6 +110,8 @@ struct SpectrumGate {
 struct Gates {
     #[serde(rename = "pzrTestLevel_m")]
     pzr_test_level_m: f64,
+    #[serde(rename = "pzrPhaseMargin_K")]
+    pzr_phase_margin_k: f64,
     relative_tolerance: f64,
     stock_scaled_absolute: f64,
     tracer_scaled_absolute: f64,
@@ -133,6 +135,8 @@ struct Gates {
     supply_loss: SupplyLoss,
     seizure: Seizure,
     spectrum: SpectrumGate,
+    #[serde(rename = "blockedPathMaxVolumeFlow_m3_s")]
+    blocked_path_max_volume_flow_m3_s: f64,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -247,6 +251,8 @@ struct Sample {
     steps: i64,
     last_step: f64,
     energy_identity_w: f64,
+    /// Largest retained |volume flow| on a phase path with an absent donor.
+    blocked_path_m3_s: f64,
 }
 fn sample<P: leitbild_operating_plant::network::Properties>(
     network: &mut Network<P>,
@@ -279,6 +285,12 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
         .map(|i| y[*i] * network.scales()[*i] / network.rotor_inertia())
         .collect();
     let budget = network.current_budget(y, yp);
+    let blocked_path_m3_s = (0..network.face_count())
+        .flat_map(|f| (0..2).map(move |k| (f, k)))
+        .filter_map(|(f, k)| network.chart(f, k))
+        .filter(|c| c.blocked_absent_donor)
+        .map(|c| c.volume_flow_m3_s.value.abs())
+        .fold(0., f64::max);
     Sample {
         t,
         roof_pa: roof.pressure.value - mixture * 9.80665 * taps.roof_rise_m,
@@ -290,6 +302,7 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
         energy_identity_w: budget["fluid_plus_rotor_plus_bearing_minus_motor_w"]
             .as_f64()
             .unwrap(),
+        blocked_path_m3_s,
         ..Sample::default()
     }
 }
@@ -317,6 +330,7 @@ struct Spec<'a> {
     output_s: f64,
     step_cap: i64,
     cpu_cap_s: f64,
+    blocked_path_limit_m3_s: f64,
 }
 /// Advance one declared run from a consistent or event-changed state.
 #[allow(clippy::too_many_arguments)] // One run's complete, explicit inputs.
@@ -376,7 +390,12 @@ fn advance_run(
                 s.steps = stats.steps;
                 s.last_step = stats.last_step;
                 samples.push(s);
-                if stats.steps > spec.step_cap {
+                let blocked = samples.last().map_or(0., |s: &Sample| s.blocked_path_m3_s);
+                if blocked > spec.blocked_path_limit_m3_s {
+                    failure = Some(format!(
+                        "phantom momentum: blocked phase path carries {blocked} m3/s at t={t}"
+                    ));
+                } else if stats.steps > spec.step_cap {
                     failure = Some(format!("run cap reached: {} steps", stats.steps));
                 } else if cpu_s() - started > spec.cpu_cap_s {
                     failure = Some(format!("run CPU cap {} s reached", spec.cpu_cap_s));
@@ -537,6 +556,7 @@ fn s1_hydraulics_admission() {
         pzr_roof_elevation_m: declared.pzr_roof_elevation_m,
         // Declared S1 test level inside one band (see the S1 declaration).
         pzr_level_m: gates.pzr_test_level_m,
+        pzr_bottom_elevation_m: declared.pzr_bottom_elevation_m,
     };
     let taps = taps(&packet, &point);
     assert!(
@@ -561,6 +581,8 @@ fn s1_hydraulics_admission() {
         level_match_m: 1e-9,
         eos_row_bound: 1e-12,
         tree_face_bound_pa: 1e-6,
+        representation_search: 8,
+        pzr_phase_margin_k: gates.pzr_phase_margin_k,
     };
     let (network, prepared, preparation) =
         prepare::prepare(&packet, If97, &point, &rotors, &settings)
@@ -616,6 +638,7 @@ fn s1_hydraulics_admission() {
             output_s: 1.,
             step_cap: i64::MAX,
             cpu_cap_s: gates.settling.max_cpu_s,
+            blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
         },
         &settled,
     );
@@ -737,6 +760,7 @@ fn s1_hydraulics_admission() {
         output_s: interval,
         step_cap: (gates.run_cap_factor * rate * duration) as i64,
         cpu_cap_s: gates.total_cpu_s,
+        blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
     };
     let atol_static: &'static [f64] = Box::leak(atol.clone().into_boxed_slice());
     let refined: &'static [f64] = Box::leak(
@@ -997,6 +1021,7 @@ fn s1_harness_smoke() {
         pzr_roof_elevation_m: declared.pzr_roof_elevation_m,
         // Declared S1 test level inside one band (see the S1 declaration).
         pzr_level_m: gates.pzr_test_level_m,
+        pzr_bottom_elevation_m: declared.pzr_bottom_elevation_m,
     };
     let taps = taps(&packet, &point);
     let rotors = vec![
@@ -1012,6 +1037,8 @@ fn s1_harness_smoke() {
         level_match_m: 1e-9,
         eos_row_bound: 1e-12,
         tree_face_bound_pa: 1e-6,
+        representation_search: 8,
+        pzr_phase_margin_k: gates.pzr_phase_margin_k,
     };
     let (network, prepared, preparation) =
         prepare::prepare(&packet, If97, &point, &rotors, &settings).expect("preparation");
@@ -1045,11 +1072,12 @@ fn s1_harness_smoke() {
             output_s: 0.5,
             step_cap: 200_000,
             cpu_cap_s: 60.,
+            blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
         },
         &|_: &[Sample]| false,
     );
     println!(
         "{}",
-        json!({"kind":"s1-harness-smoke-NOT-EVIDENCE","packet":packet_path,"preparation_passes":preparation.pass_changes_pa.len(),"max_eos_row":preparation.max_eos_row,"max_loop_face_pa":preparation.max_loop_face_pa,"mass_change_kg":preparation.mass_change_kg,"run":run_json(&run,3.),"samples":run.samples.iter().map(|s|json!({"t":s.t,"roof_pa":s.roof_pa,"loop_kg_s":s.loop_kg_s,"omega":s.omega,"steps":s.steps,"h":s.last_step,"energy_identity_w":s.energy_identity_w})).collect::<Vec<_>>()})
+        json!({"kind":"s1-harness-smoke-NOT-EVIDENCE","packet":packet_path,"preparation_passes":preparation.pass_changes_pa.len(),"max_eos_row":preparation.max_eos_row,"max_loop_rest_pa":preparation.max_loop_rest_pa,"max_phase_drive_pa":preparation.max_phase_drive_pa,"on_boundary":preparation.on_boundary,"mass_change_kg":preparation.mass_change_kg,"run":run_json(&run,3.),"samples":run.samples.iter().map(|s|json!({"t":s.t,"roof_pa":s.roof_pa,"loop_kg_s":s.loop_kg_s,"omega":s.omega,"steps":s.steps,"h":s.last_step,"energy_identity_w":s.energy_identity_w,"blocked_path_m3_s":s.blocked_path_m3_s})).collect::<Vec<_>>()})
     );
 }
