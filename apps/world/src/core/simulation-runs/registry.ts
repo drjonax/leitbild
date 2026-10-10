@@ -81,6 +81,15 @@ export interface SimulationRunRegistryStatus {
   readonly leases: ReadonlyArray<SimulationRunLeaseSummary>
 }
 
+/** Arms one idle-close countdown and returns its disarm; the countdown's close settles when the Run is closed or kept. */
+export type IdleRuntimeCloseTimer = (closeIfIdle: () => Promise<void>, delayMs: number) => () => void
+
+const wallClockIdleRuntimeCloseTimer: IdleRuntimeCloseTimer = (closeIfIdle, delayMs) => {
+  const timer = setTimeout(() => { void closeIfIdle() }, delayMs)
+  timer.unref?.()
+  return () => clearTimeout(timer)
+}
+
 interface MaximumPaceController {
   stopRequested: boolean
   destination: { playback: RunPlayback; pace: RunPace }
@@ -136,6 +145,7 @@ export const createSimulationRunRegistry = (config: {
   readonly scenarioLibrary?: ScenarioLibrary
   readonly storageBudget?: StorageBudget
   readonly idleRuntimeCloseDelayMs?: number
+  readonly idleRuntimeCloseTimer?: IdleRuntimeCloseTimer
   readonly procedureSourceService?: ProcedureSourceService
 }): SimulationRunRegistry => {
   const simulationRuns = new Map<SimulationRunId, SimulationRunRuntime>()
@@ -150,8 +160,9 @@ export const createSimulationRunRegistry = (config: {
   const executionStates = new Map<SimulationRunId, RunExecutionState>()
   const executionOperations = createKeyedOperations<SimulationRunId>()
   const familyOperations = createKeyedOperations<SimulationRunId>()
-  const idleRuntimeCloseTimers = new Map<SimulationRunId, ReturnType<typeof setTimeout>>()
+  const idleRuntimeCloseDisarms = new Map<SimulationRunId, () => void>()
   const idleRuntimeCloseDelayMs = config.idleRuntimeCloseDelayMs ?? defaultSimulationRunRuntimePolicy.idleRuntimeCloseDelayMs
+  const armIdleRuntimeClose = config.idleRuntimeCloseTimer ?? wallClockIdleRuntimeCloseTimer
   let nextLeaseNumber = 0
   const workspacePaths = worldWorkspacePaths(config.dataDir, config.workspaceId)
   const workspaceRoot = workspacePaths.root
@@ -227,10 +238,10 @@ export const createSimulationRunRegistry = (config: {
   }
 
   const clearIdleRuntimeCloseTimer = (id: SimulationRunId): void => {
-    const timer = idleRuntimeCloseTimers.get(id)
-    if (!timer) return
-    clearTimeout(timer)
-    idleRuntimeCloseTimers.delete(id)
+    const disarm = idleRuntimeCloseDisarms.get(id)
+    if (!disarm) return
+    disarm()
+    idleRuntimeCloseDisarms.delete(id)
   }
 
   const leaseCountFor = (id: SimulationRunId): number =>
@@ -254,23 +265,18 @@ export const createSimulationRunRegistry = (config: {
     if (!simulationRuns.has(id)) return
     if (creatingSimulationRuns.has(id)) return
     if (leaseCountFor(id) > 0) return
-    const timer = setTimeout(() => {
-      idleRuntimeCloseTimers.delete(id)
+    idleRuntimeCloseDisarms.set(id, armIdleRuntimeClose(async () => {
+      idleRuntimeCloseDisarms.delete(id)
       if (leaseCountFor(id) > 0) return
       if (!simulationRuns.has(id)) return
-      const closeIdleRuntime = async (): Promise<void> => {
-        try {
-          await lifecycle.run(id, async () => {
-            if (leaseCountFor(id) === 0) await closeLoaded(id)
-          })
-        } catch (err) {
-          console.error(`idle simulation run close failed for ${id}:`, err)
-        }
+      try {
+        await lifecycle.run(id, async () => {
+          if (leaseCountFor(id) === 0) await closeLoaded(id)
+        })
+      } catch (err) {
+        console.error(`idle simulation run close failed for ${id}:`, err)
       }
-      void closeIdleRuntime()
-    }, idleRuntimeCloseDelayMs)
-    timer.unref?.()
-    idleRuntimeCloseTimers.set(id, timer)
+    }, idleRuntimeCloseDelayMs))
   }
 
   const leaseSummaries = (): ReadonlyArray<SimulationRunLeaseSummary> =>

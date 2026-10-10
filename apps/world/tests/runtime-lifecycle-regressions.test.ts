@@ -5,7 +5,7 @@ import type { PackRuntimeConnectionConfig } from '../src/simulation/protocol.ts'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
-import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring, waitForCondition } from './helpers.ts'
+import { createManualIdleTimer, createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring, waitForCondition } from './helpers.ts'
 import { createRuntimeHub } from '../src/simulation/runtime-hub.ts'
 import { electricalPortsFromObject } from '../src/core/model/electrical.ts'
 import { testScenarioDefinitions } from './fixtures/scenarios.ts'
@@ -116,17 +116,18 @@ test('regression: pause longer than peer TTL preserves electrical connection on 
 
 test('regression: API-only run lifetime honors idle policy and recent access', async () => {
   const dataDir = await mkdtemp(join(tmpdir(),'audit-run-leases-'))
-  const registry = createSimulationRunRegistry({dataDir,workspaceId,...testScenarioAuthoring(),runtimeAdapters:createTestPackRuntimeAdapters(),scenarioRuntimeResolver:createTestScenarioRuntimeResolver(),idleRuntimeCloseDelayMs:80})
+  const idle = createManualIdleTimer()
+  const registry = createSimulationRunRegistry({dataDir,workspaceId,...testScenarioAuthoring(),runtimeAdapters:createTestPackRuntimeAdapters(),scenarioRuntimeResolver:createTestScenarioRuntimeResolver(),idleRuntimeCloseDelayMs:80,idleRuntimeCloseTimer:idle.arm})
   try {
     const run=await registry.create({scenarioId:'test-response'})
-    await waitForCondition('unleased Run finishes idle close and checkpoint', () => registry.get(run.id) === undefined)
+    await idle.advance(80)
     const stillLoadedWithoutLeases=registry.get(run.id)!==undefined
     await registry.load(run.id)
     const release=registry.acquireLease(run.id,'realtime')
     release()
-    await Bun.sleep(55)
+    await idle.advance(55)
     await registry.load(run.id)
-    await Bun.sleep(55)
+    await idle.advance(55)
     const loadedAfterRecentLoad=registry.get(run.id)!==undefined
     expect(stillLoadedWithoutLeases).toBe(false)
     expect(loadedAfterRecentLoad).toBe(true)
@@ -162,21 +163,24 @@ test('boundary: Save still rejects a separate unfinished cue after another cue i
 
 test('request and explicit background ownership protect a Run until released', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'run-ownership-'))
-  const registry = createSimulationRunRegistry({ dataDir, workspaceId, ...testScenarioAuthoring(), runtimeAdapters: createTestPackRuntimeAdapters(), scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), idleRuntimeCloseDelayMs: 40 })
+  const idle = createManualIdleTimer()
+  const registry = createSimulationRunRegistry({ dataDir, workspaceId, ...testScenarioAuthoring(), runtimeAdapters: createTestPackRuntimeAdapters(), scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), idleRuntimeCloseDelayMs: 40, idleRuntimeCloseTimer: idle.arm })
   try {
     const run = await registry.create({ scenarioId: 'test-response' })
     const release = registry.acquireLease(run.id, 'api')
     await expect(registry.delete(run.id)).rejects.toThrow('active requests')
     await expect(registry.reset(run.id)).rejects.toThrow('active requests')
-    await Bun.sleep(80)
+    await idle.advance(80)
     expect(registry.get(run.id)).toBe(run)
     await registry.setBackgroundExecution(run.id, true)
     release()
-    await Bun.sleep(80)
+    await idle.advance(80)
     expect(registry.get(run.id)).toBe(run)
     expect(registry.leaseSummary(run.id).leasesByKind.background).toBe(1)
     await registry.setBackgroundExecution(run.id, false)
-    await Bun.sleep(100)
+    await idle.advance(39)
+    expect(registry.get(run.id)).toBe(run)
+    await idle.advance(1)
     expect(registry.get(run.id)).toBeUndefined()
   } finally { await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) }
 })
