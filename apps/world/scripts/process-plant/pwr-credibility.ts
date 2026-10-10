@@ -190,7 +190,7 @@ const cases: ReadonlyArray<CredibilityCase> = [
     id: 'loss-feedwater-auto-afw',
     title: 'Loss Of Feedwater With Automatic AFW',
     eventFamily: 'NRC SRP 15.2.7 loss of normal feedwater flow',
-    description: 'Main feedwater trips; graph-aware reference I&C should diagnose low-low SG level and actuate AFW without manual schedule help.',
+    description: 'Main feedwater trips; the reference protection trips the reactor as the plant heats up, and graph-aware reference I&C should diagnose low-low SG level and actuate AFW without manual schedule help.',
     sourceRefs: ['nrc-srp-ch15', 'iaea-ssg-2', 'leitbild-pwr-scope'],
     actions: system => [
       ...tripComponentsMatching(system, 60_000, 'trip-main-feedwater-auto-afw', isMainFeedwaterPump),
@@ -424,9 +424,12 @@ const targets: ReadonlyArray<CredibilityTarget> = [
     caseId: 'loss-feedwater-auto-afw',
     label: 'Automatic AFW preserves usable SG heat transfer',
     signal: 'sgA.heatTransferMw min after T+260s',
-    expectation: 'The affected steam generator should retain a meaningful heat sink after AFW actuation.',
+    // The reactor trips on overtemperature delta-T about 50 s after the feedwater
+    // loss, so afterwards each of the four SGs carries a quarter of the decay
+    // heat, about 30 to 50 MW in this window.
+    expectation: 'The affected steam generator should keep removing its share of decay heat after the reactor trip and AFW actuation.',
     measure: { kind: 'minAfter', path: variablePath('sgA.heatTransferMw'), afterMs: 260_000 },
-    acceptable: { min: 120 },
+    acceptable: { min: 25 },
     severity: 'gate',
     sourceRefs: ['iaea-ssg-2', 'leitbild-pwr-scope'],
   },
@@ -631,7 +634,7 @@ const targets: ReadonlyArray<CredibilityTarget> = [
   {
     id: 'rcp-reactor-trip-power-suppression',
     caseId: 'all-rcp-trip',
-    label: 'Reference protection suppresses fission power after low-flow trip',
+    label: 'Reference protection suppresses fission power after the RCP breaker trip',
     signal: 'core.powerMw final value',
     expectation: 'Loss of forced primary flow should actuate reactor protection and reduce fission power to a shutdown-range value.',
     measure: { kind: 'point', path: variablePath('core.powerMw'), atMs: durationMs },
@@ -642,9 +645,9 @@ const targets: ReadonlyArray<CredibilityTarget> = [
   {
     id: 'rcp-reactor-trip-rods-inserted',
     caseId: 'all-rcp-trip',
-    label: 'Reference protection inserts rods after low-flow trip',
+    label: 'Reference protection inserts rods after the RCP breaker trip',
     signal: 'core.rodInsertionFraction final value',
-    expectation: 'A low-flow reactor trip should be procedure-visible through rod insertion as well as reduced power.',
+    expectation: 'The reactor trip on the stopped pumps should be procedure-visible through rod insertion as well as reduced power.',
     measure: { kind: 'point', path: variablePath('core.rodInsertionFraction'), atMs: durationMs },
     acceptable: { min: 0.95 },
     severity: 'gate',
