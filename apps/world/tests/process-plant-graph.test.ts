@@ -56,10 +56,11 @@ describe('process plant model composition', () => {
     // realistic loop and tube-metal sizes. Changed again on 2026-10-10,
     // approved by the owner, when the pressurizer gained its code safety
     // valves and relief header, again when low-pressure SI became blockable
-    // below P-11, and again when the steam-line N-16 monitors were made to
-    // read in proportion to fission power; PWR Runs checkpointed before then
-    // must be restarted.
-    expect(system.modelDigest).toBe('26528f4361e160fc3c03288728b3567081785723c1dde6b89044b253d4514ac4')
+    // below P-11, again when the steam-line N-16 monitors were made to read
+    // in proportion to fission power, and again when the core's fission
+    // power was given a 0 to 4,500 MW hard range; PWR Runs checkpointed
+    // before then must be restarted.
+    expect(system.modelDigest).toBe('ebeea0e15c10b637550ccf727a17b7f3b749058e3d2472116b34a56895b8b541')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

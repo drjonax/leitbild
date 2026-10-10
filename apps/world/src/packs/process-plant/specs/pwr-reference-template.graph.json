@@ -47,6 +47,21 @@
           ],
           "capabilities": {
             "procedureRelevant": true
+          },
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 4500
+            }
+          }
+        },
+        {
+          "path": "fissionPowerMw",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 4500
+            }
           }
         },
         {
