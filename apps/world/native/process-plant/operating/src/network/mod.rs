@@ -61,16 +61,44 @@ pub struct CellLayout {
     pub energy: [usize; 2],
 }
 /// Coordinates of the stratified PZR cell, in the contract order.
-pub const PZR_COORDINATES: usize = 17;
+pub const PZR_COORDINATES: usize = stratified::COORDINATES;
 /// Offsets within the PZR block: the algebraic roof pressure and volumes
 /// `V_g, V_A, V_R, V_b, V_d`, then the differential masses `M_g, M_A, M_R,
 /// M_b, M_d`, internal energies `U_g, U_A, U_R` and tracers `B_A, B_R, B_d`.
-pub const PZR_PRESSURE: usize = 0;
-pub const PZR_VOLUME: [usize; 5] = [1, 2, 3, 4, 5];
+pub const PZR_PRESSURE: usize = stratified::ROOF_PRESSURE;
+pub const PZR_VOLUME: [usize; 5] = [
+    stratified::VAPOR_VOLUME,
+    stratified::ADMITTED_VOLUME,
+    stratified::RESIDENT_VOLUME,
+    stratified::BUBBLE_VOLUME,
+    stratified::DROP_VOLUME,
+];
 pub const PZR_ALGEBRAIC: usize = 6;
-pub const PZR_MASS: [usize; 5] = [6, 8, 11, 14, 15];
-pub const PZR_ENERGY: [usize; 3] = [7, 9, 12];
-pub const PZR_TRACER: [usize; 3] = [10, 13, 16];
+pub const PZR_MASS: [usize; 5] = [
+    stratified::VAPOR_MASS,
+    stratified::ADMITTED_MASS,
+    stratified::RESIDENT_MASS,
+    stratified::BUBBLE_MASS,
+    stratified::DROP_MASS,
+];
+pub const PZR_ENERGY: [usize; 3] = [
+    stratified::VAPOR_ENERGY,
+    stratified::ADMITTED_ENERGY,
+    stratified::RESIDENT_ENERGY,
+];
+pub const PZR_TRACER: [usize; 3] = [
+    stratified::ADMITTED_BORON,
+    stratified::RESIDENT_BORON,
+    stratified::DROP_BORON,
+];
+// The network's algebraic block is exactly the cell's leading zero ids.
+const _: () = {
+    let mut i = 0;
+    while i < PZR_COORDINATES {
+        assert!((stratified::DIFFERENTIAL[i] == 0.) == (i < PZR_ALGEBRAIC));
+        i += 1;
+    }
+};
 /// The stratified PZR cell: its region index, first coordinate (the
 /// algebraic roof pressure) and the one face ending at its surge port.
 #[derive(Clone, Copy, Debug)]
@@ -111,6 +139,9 @@ pub struct Counters {
     pub evaluation_wall_s: f64,
     pub jacobians: usize,
     pub jacobian_wall_s: f64,
+    /// Stratified columns evaluated, one per residual (each 3 inversions and
+    /// 2 saturations).
+    pub pzr_columns: usize,
 }
 
 /// Caller-declared numerical controls of the stratified cell's preparation
@@ -138,6 +169,12 @@ pub struct Network<P: Properties> {
     /// Regular cells only, `0..pzr.cell`.
     pub cell_layout: Vec<CellLayout>,
     pub pzr: PzrLayout,
+    /// The stratified cell owner's compiled model (decision 0014).
+    stratified: stratified::Cell,
+    /// Column of the last value evaluation, for taps and accounts.
+    pzr_column: Option<stratified::Column>,
+    /// Internal transfers and balance of the last value evaluation.
+    pzr_evaluation: Option<stratified::Evaluation>,
     pub face_layout: Vec<FaceLayout>,
     volumes: Vec<f64>,
     sections: Vec<Hydraulic>,
@@ -222,21 +259,28 @@ impl<P: Properties> Network<P> {
                 "no network region owns a nonpressure force; a force projection refuses",
             ));
         }
-        // One port, whose face ends at the cell. The PZR side contributes its
-        // port view only: no support, segment or other face touches the cell.
+        // One surge port, whose face ends at the cell. The network composes
+        // no spray or relief owner, so those ports refuse here. The PZR side
+        // contributes its port view only: no support, segment or other face
+        // touches the cell.
         let [port] = &cell.ports[..] else {
             return Err(bad("the stratified PZR cell needs exactly one port"));
+        };
+        let (stratified::PortKind::Surge, Some(port_face)) = (port.kind, port.face) else {
+            return Err(bad(
+                "the network composes only the surge port, with its face",
+            ));
         };
         let touching: Vec<usize> = (0..faces.len())
             .filter(|j| faces[*j].from == pzr || faces[*j].to == pzr)
             .collect();
-        if touching != [port.face]
-            || faces[port.face].to != pzr
-            || faces[port.face]
+        if touching != [port_face]
+            || faces[port_face].to != pzr
+            || faces[port_face]
                 .supports
                 .iter()
                 .any(|support| support.region == pzr)
-            || faces[port.face]
+            || faces[port_face]
                 .pressure_segments
                 .iter()
                 .any(|segment| segment.region == pzr)
@@ -284,7 +328,7 @@ impl<P: Properties> Network<P> {
             differential.extend([0., 1., 1., 1., 1., 1.]);
         }
         let compiled = properties.metastable_band().map_err(bad)?;
-        if compiled != cell.metastable {
+        if compiled != MetastableBand::from(&cell.metastable) {
             return Err(bad(format!(
                 "packet pzr.cell.metastable {:?} differs from the property implementation's compiled band {compiled:?}",
                 cell.metastable
@@ -293,9 +337,10 @@ impl<P: Properties> Network<P> {
         let pzr_layout = PzrLayout {
             cell: pzr,
             base: physical.len(),
-            port_face: port.face,
+            port_face,
         };
-        let values = stratified_preparation(packet, &properties, pzr_preparation)?;
+        let stratified = stratified::Cell::new(cell.clone(), stratified::Case::nominal(cell))?;
+        let values = stratified_preparation(packet, &stratified, &properties, pzr_preparation)?;
         scales.extend(pzr_scales(
             &values,
             cell.fluid_volume_m3,
@@ -394,6 +439,9 @@ impl<P: Properties> Network<P> {
                 cells,
                 cell_layout,
                 pzr: pzr_layout,
+                stratified,
+                pzr_column: None,
+                pzr_evaluation: None,
                 face_layout,
                 volumes,
                 sections,
@@ -502,10 +550,31 @@ impl<P: Properties> Network<P> {
             seed.map_or(0., |d| d[index]) * cj * self.scales[index],
         )
     }
-    /// Exact per-assembly reuse slots of the regular cells. The stratified
-    /// cell's own property calls are sized at its integration point.
+    /// Exact per-assembly reuse slots: every regular cell, then the
+    /// stratified cell's two caloric nodes and two saturation points.
     pub fn reuse(&self) -> Reuse<P::Caloric> {
-        Reuse::new(self.pzr.cell, 0)
+        Reuse::new(self.pzr.cell + 2, 2)
+    }
+    /// The stratified cell's reuse slots in [`Network::reuse`].
+    fn pzr_slots(&self) -> stratified::Slots {
+        stratified::Slots {
+            vapor_and_resident: self.pzr.cell,
+            admitted: self.pzr.cell + 1,
+            interface: 0,
+            boundary: 1,
+        }
+    }
+    /// The stratified cell owner's compiled model.
+    pub fn stratified(&self) -> &stratified::Cell {
+        &self.stratified
+    }
+    /// Column of the last value evaluation.
+    pub fn pzr_column(&self) -> Option<&stratified::Column> {
+        self.pzr_column.as_ref()
+    }
+    /// Transfers and balance of the last value evaluation of the PZR rows.
+    pub fn pzr_evaluation(&self) -> Option<&stratified::Evaluation> {
+        self.pzr_evaluation.as_ref()
     }
     pub fn drive(&self) -> &rotor::Parameters {
         &self.drive
@@ -566,45 +635,84 @@ impl<P: Properties> Network<P> {
     }
 }
 
-/// Credited PZR instrument values of the last evaluation: PT1 roof pressure
-/// and the LT level indication (`stratified::taps` on the column).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PzrTaps {
-    pub roof_pressure_pa: f64,
-    pub level_m: f64,
-}
-
 impl<P: Properties> Network<P> {
-    /// The PZR taps of the last evaluation's column.
-    pub fn pzr_taps(&self) -> Result<PzrTaps, Failure> {
-        Err(not_integrated("the PZR taps"))
+    /// PT1, the LT pressures, levels and zone departures of the last value
+    /// evaluation's column (`stratified::taps`).
+    pub fn pzr_taps(&self) -> Result<stratified::Taps, Failure> {
+        let column = self
+            .pzr_column
+            .as_ref()
+            .ok_or_else(|| bad("the PZR taps need an evaluated column"))?;
+        self.stratified.taps(&self.properties, column)
+    }
+    /// Band reports of the last value evaluation's vapor, A and R zone
+    /// states from the property implementation: accepted states only.
+    pub fn pzr_band_reports(&self) -> Result<[BandReport; 3], Failure> {
+        let column = self
+            .pzr_column
+            .as_ref()
+            .ok_or_else(|| bad("the PZR band reports need an evaluated column"))?;
+        let report = |zone: &stratified::Zone, vapor: bool| -> Result<BandReport, Failure> {
+            let point = self
+                .properties
+                .caloric(
+                    vapor,
+                    zone.pressure.value,
+                    zone.specific_energy.value,
+                    false,
+                )
+                .map_err(Failure::Recoverable)?;
+            Ok(self.properties.band(&point))
+        };
+        Ok([
+            report(&column.vapor, true)?,
+            report(&column.admitted, false)?,
+            report(&column.resident, false)?,
+        ])
     }
 }
 
-/// Integration point of the stratified PZR cell owner (decision 0014,
-/// `network::stratified`). Until that module is merged every use refuses:
-/// no PZR coordinate, scale, row, port view or inventory is guessed here.
-fn not_integrated(what: &str) -> Failure {
-    Failure::Fatal(format!(
-        "stratified PZR cell not integrated: {what} belongs to network::stratified"
-    ))
-}
-
 /// Prepared physical PZR coordinates at the packet's operating point
-/// (`stratified::prepare`), in the contract order.
+/// (`stratified::prepare`), in the contract order. The roof pressure is the
+/// declared one at the cell top.
 fn stratified_preparation<P: Properties>(
-    _packet: &packet::Packet,
-    _properties: &P,
-    _controls: &PzrPreparation,
+    packet: &packet::Packet,
+    cell: &stratified::Cell,
+    properties: &P,
+    controls: &PzrPreparation,
 ) -> Result<[f64; PZR_COORDINATES], Failure> {
-    Err(not_integrated("the prepared PZR coordinates"))
+    let point = &packet.preparation.operating_point;
+    let parameters = cell.parameters();
+    if point.pzr_roof_elevation_m != parameters.top_m
+        || point.pzr_bottom_elevation_m != parameters.bottom_m
+    {
+        return Err(bad(format!(
+            "declared PZR roof {} m and bottom {} m are not the compiled cell's {}..{} m",
+            point.pzr_roof_elevation_m,
+            point.pzr_bottom_elevation_m,
+            parameters.bottom_m,
+            parameters.top_m
+        )));
+    }
+    Ok(cell
+        .prepare(
+            properties,
+            point.pzr_roof_pressure_pa,
+            point.pzr_level_m,
+            controls.pressure_tolerance_pa,
+            controls.max_passes,
+        )?
+        .values)
 }
 
-/// Solver scales of the PZR block per class: the prepared roof pressure;
-/// zone and transit volumes by the cell's fluid volume (as the volume rows);
-/// each zone's prepared mass and energy; transit masses by their host zone's
-/// mass scale (bubbles by the vapor zone, drops by the resident layer); and
-/// every tracer by its host mass scale times the packet's absorber fraction.
+/// Solver scales of the PZR block per class (contract amendment 4): the
+/// prepared roof pressure; each zone volume, mass and energy by its own
+/// prepared value, so a prepared zone is exactly `y = 1`; the transit
+/// volumes, zero at preparation, by the cell's fluid volume; transit masses
+/// by their host zone's mass scale (bubbles by the vapor zone, drops by the
+/// resident layer); and every tracer by its host mass scale times the
+/// packet's absorber fraction. A zero zone volume or absorber fraction has
+/// no declared scale class and refuses.
 fn pzr_scales(
     values: &[f64; PZR_COORDINATES],
     fluid_volume_m3: f64,
@@ -613,10 +721,13 @@ fn pzr_scales(
     if absorber_mass_fraction == 0. {
         return Err(bad("zero-absorber tracer scale has no declared class"));
     }
-    let mut scales = *values;
-    for offset in PZR_VOLUME {
-        scales[offset] = fluid_volume_m3;
+    let [vg, va, vr, vb, vd] = PZR_VOLUME;
+    if [vg, va, vr].iter().any(|i| values[*i] == 0.) {
+        return Err(bad("a zero prepared PZR zone volume has no declared scale"));
     }
+    let mut scales = *values;
+    scales[vb] = fluid_volume_m3;
+    scales[vd] = fluid_volume_m3;
     let [mg, ma, mr, mb, md] = PZR_MASS;
     scales[mb] = values[mg];
     scales[md] = values[mr];

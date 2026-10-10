@@ -9,9 +9,9 @@
 //! gives the port view the port face reads, and its rows take the port
 //! receipts.
 use super::{
-    Failure, Network, Properties, not_integrated,
+    Failure, Network, PZR_COORDINATES, Properties,
     properties::{self as props, Reuse, Water},
-    rec, s, selected_phase,
+    rec, s, selected_phase, stratified,
 };
 use crate::{
     hydraulics,
@@ -75,6 +75,50 @@ impl<P: Properties> Network<P> {
             }
         }
         Ok(())
+    }
+
+    /// The consistent initial pair at a prepared state (decision 0013's exit),
+    /// built from the residual's own forces, not from IDACalcIC: algebraic
+    /// rates zero, and each differential rate the value that zeroes its own
+    /// row through its unit y'-coefficient at `(y, 0)`. At a rest state every
+    /// receipt vanishes, so stock rates are their rows' round-off, impulse
+    /// rates carry each face's force at Q = 0 and rotor rates their drive law
+    /// at rest. Refuses, Fatal, unless the verified largest scaled
+    /// `|F(t, y, y')|` is at most `bound`; returns `y'` and that value.
+    pub fn consistent_rates(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        differential: &[f64],
+        bound: f64,
+    ) -> Result<(Vec<f64>, f64), Failure> {
+        let n = self.dimension();
+        if y.len() != n || differential.len() != n || !(bound.is_finite() && bound > 0.) {
+            return Err(Failure::Fatal("consistent-rate layout or bound".into()));
+        }
+        let zero = vec![0.; n];
+        self.evaluate(t, y, &zero, None, 0., None)?;
+        let yp: Vec<f64> = self
+            .rows
+            .iter()
+            .zip(differential)
+            .map(|(row, id)| if *id == 1. { -row.value } else { 0. })
+            .collect();
+        self.evaluate(t, y, &yp, None, 0., None)?;
+        let largest = self.rows.iter().fold(0_f64, |best, r| {
+            let v = r.value.abs();
+            if best.is_nan() || v.is_nan() || v > best {
+                v
+            } else {
+                best
+            }
+        });
+        if !(largest <= bound) {
+            return Err(Failure::Fatal(format!(
+                "the prepared pair is not consistent: largest scaled row {largest} > {bound}"
+            )));
+        }
+        Ok((yp, largest))
     }
 
     /// Evaluate all residual rows into `rows()`; with `seed`, also directions.
@@ -175,7 +219,8 @@ impl<P: Properties> Network<P> {
             }
         }
         // The stratified cell's column and the port view its port face reads.
-        self.cells[self.pzr.cell] = self.stratified_port_view(y, seed, reuse.as_deref_mut())?;
+        let column = self.stratified_column(y, seed, reuse.as_deref_mut())?;
+        self.cells[self.pzr.cell] = self.stratified.port_view(&column, self.pzr_port()?)?;
         // Supports are regular cells only (validated at compile time).
         let phase_mass: [Vec<thermal::Scalar>; 2] = std::array::from_fn(|k| {
             (0..n)
@@ -247,8 +292,8 @@ impl<P: Properties> Network<P> {
         }
         self.compose_sections(y, yp, seed, cj, &points)?;
         self.compose_momentum(t, y, yp, seed, cj, &phase_mass)?;
-        self.compose_stocks(y, yp, seed, cj, &points, reuse.as_deref_mut())?;
-        self.compose_stratified(y, yp, seed, cj, reuse)?;
+        self.compose_stocks(y, yp, seed, cj, &points, reuse)?;
+        self.compose_stratified(column, y, yp, seed, cj)?;
         self.counters.evaluation_wall_s += started.elapsed().as_secs_f64();
         Ok(())
     }
@@ -480,28 +525,91 @@ impl<P: Properties> Network<P> {
         Ok(())
     }
 
-    /// The stratified cell's column at the current coordinates and its view
-    /// at the port face's mouth: pressure there and the phase drawn there
-    /// (`stratified::column`, `stratified::port_view`).
-    fn stratified_port_view(
-        &mut self,
-        _y: &[f64],
-        _seed: Option<&[f64]>,
-        _reuse: Option<&mut Reuse<P::Caloric>>,
-    ) -> Result<Cell, Failure> {
-        Err(not_integrated("the column and its surge port view"))
+    /// The stratified cell's coordinates (or rates) in physical units.
+    fn pzr_coordinates(
+        &self,
+        values: impl Fn(usize) -> thermal::Scalar,
+    ) -> Result<stratified::Coordinates, Failure> {
+        let x: Vec<thermal::Scalar> = self.pzr.coordinates().map(values).collect();
+        stratified::Coordinates::from_slice(&x)
     }
 
-    /// The stratified cell's 15 rows from its coordinates, rates and the port
-    /// receipts `self.receipts[pzr]` (`stratified::residual`).
+    /// The stratified cell's column at the current coordinates: three zone
+    /// inversions and two saturations, once per residual
+    /// (`stratified::column`).
+    fn stratified_column(
+        &mut self,
+        y: &[f64],
+        seed: Option<&[f64]>,
+        reuse: Option<&mut Reuse<P::Caloric>>,
+    ) -> Result<stratified::Column, Failure> {
+        let x = self.pzr_coordinates(|i| self.get(y, seed, i))?;
+        let slots = self.pzr_slots();
+        let column = self
+            .stratified
+            .column(&self.properties, &x, reuse.map(|r| (r, slots)))?;
+        self.counters.pzr_columns += 1;
+        if seed.is_none() {
+            self.pzr_column = Some(column);
+        }
+        Ok(column)
+    }
+    /// The cell's port read by the port face.
+    fn pzr_port(&self) -> Result<usize, Failure> {
+        self.stratified
+            .parameters()
+            .ports
+            .iter()
+            .position(|p| p.face == Some(self.pzr.port_face))
+            .ok_or_else(|| Failure::Fatal("the port face has no PZR port".into()))
+    }
+
+    /// The stratified cell's 17 rows on this evaluation's column from its
+    /// coordinates, rates and the liquid port receipt `self.receipts[pzr]`
+    /// (`stratified::residual_on`, no property call with a closed boundary).
+    /// S1's boundary is closed: no heater, zone heat or relief; a vapor
+    /// arrival through the surge port is outside the composed cell and
+    /// refuses.
     fn compose_stratified(
         &mut self,
-        _y: &[f64],
-        _yp: &[f64],
-        _seed: Option<&[f64]>,
-        _cj: f64,
-        _reuse: Option<&mut Reuse<P::Caloric>>,
+        column: stratified::Column,
+        y: &[f64],
+        yp: &[f64],
+        seed: Option<&[f64]>,
+        cj: f64,
     ) -> Result<(), Failure> {
-        Err(not_integrated("the PZR rows"))
+        let x = self.pzr_coordinates(|i| self.get(y, seed, i))?;
+        let rate = self.pzr_coordinates(|i| self.rate(yp, seed, cj, i))?;
+        let [liquid, vapor] = self.receipts[self.pzr.cell];
+        if vapor.iter().any(|q| q.value != 0. || q.direction != 0.) {
+            return Err(Failure::Fatal(
+                "a vapor receipt through the surge port is outside the composed stratified cell"
+                    .into(),
+            ));
+        }
+        let receipts = [stratified::Receipt {
+            mass: liquid[0],
+            enthalpy: liquid[1],
+            boron: liquid[2],
+        }];
+        let scales: [f64; PZR_COORDINATES] = self.scales[self.pzr.coordinates()]
+            .try_into()
+            .map_err(|_| Failure::Fatal("PZR scale layout".into()))?;
+        let evaluation = self.stratified.residual_on(
+            &self.properties,
+            column,
+            &x,
+            &rate,
+            &receipts,
+            &stratified::Boundary::closed(),
+            &scales,
+        )?;
+        for (index, row) in self.pzr.coordinates().zip(evaluation.rows) {
+            self.rows[index] = row;
+        }
+        if seed.is_none() {
+            self.pzr_evaluation = Some(evaluation);
+        }
+        Ok(())
     }
 }

@@ -12,7 +12,8 @@
 //! compressibility; its volumes are scaled like the volume rows and its
 //! stocks take the stock classes. No value of a particular plant lives here.
 use super::{
-    Failure, Network, PZR_ENERGY, PZR_MASS, PZR_TRACER, PZR_VOLUME, Properties, not_integrated,
+    Failure, Network, PZR_COORDINATES, PZR_ENERGY, PZR_MASS, PZR_PRESSURE, PZR_TRACER, PZR_VOLUME,
+    Properties, stratified,
 };
 
 /// Declared absolute tolerances; all fields are required, none defaulted.
@@ -92,7 +93,7 @@ impl<P: Properties> Network<P> {
     /// from the stratified column at `y`.
     fn stratified_tolerances(
         &self,
-        _y: &[f64],
+        y: &[f64],
         classes: ToleranceClasses,
         atol: &mut [f64],
     ) -> Result<(), Failure> {
@@ -103,8 +104,39 @@ impl<P: Properties> Network<P> {
         for offset in PZR_TRACER {
             atol[base + offset] = classes.tracer_scaled;
         }
-        Err(not_integrated(
-            "the roof-pressure weight from the cell's effective isentropic compressibility",
-        ))
+        let mut values = [0.; PZR_COORDINATES];
+        for (v, i) in values.iter_mut().zip(self.pzr.coordinates()) {
+            *v = y[i] * self.scales[i];
+        }
+        let column = self.stratified.column(
+            &self.properties,
+            &stratified::Coordinates::values(&values),
+            None,
+        )?;
+        if column.bubble_volume.value != 0. || column.drop_volume.value != 0. {
+            return Err(Failure::Fatal(
+                "the roof-pressure weight is declared at a transit-free state".into(),
+            ));
+        }
+        let zones = [column.vapor, column.admitted, column.resident];
+        let volume: f64 = zones.iter().map(|z| z.volume.value).sum();
+        let effective = zones
+            .iter()
+            .map(|z| {
+                let isentropic = z.compressibility.value
+                    - z.temperature.value * z.expansion.value.powi(2)
+                        / (z.density.value * z.cp.value);
+                z.volume.value * isentropic
+            })
+            .sum::<f64>()
+            / volume;
+        if !effective.is_finite() || effective <= 0. {
+            return Err(Failure::Fatal(format!(
+                "nonpositive effective isentropic compressibility {effective} of the PZR cell"
+            )));
+        }
+        let index = base + PZR_PRESSURE;
+        atol[index] = classes.relative / (effective * self.scales[index]);
+        Ok(())
     }
 }

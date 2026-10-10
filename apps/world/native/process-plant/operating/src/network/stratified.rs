@@ -809,6 +809,8 @@ pub struct ReliefState {
 pub struct Boundary {
     pub heat: Heat,
     pub heaters: Vec<HeaterReceipt>,
+    /// One receipt per shell band or head, from the wall owner.
+    pub walls: Vec<WallReceipt>,
     /// Present exactly when the cell declares a relief port.
     pub relief: Option<ReliefState>,
 }
@@ -817,9 +819,49 @@ impl Boundary {
         Self {
             heat: Heat::zero(),
             heaters: Vec::new(),
+            walls: Vec::new(),
             relief: None,
         }
     }
+}
+
+/// A wall element of the PZR: a shell band over a span on the plant datum,
+/// or one of the flat heads at `bottom_m` and `top_m`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WallElement {
+    Band { bottom_m: f64, top_m: f64 },
+    BottomHead,
+    TopHead,
+}
+
+/// One wall element's sources, evaluated by the wall owner from its metal on
+/// the contact [`Cell::wall_wetting`] gives it. The cell routes them; the
+/// metal receives the opposite of every term.
+#[derive(Clone, Copy, Debug)]
+pub struct WallReceipt {
+    pub element: WallElement,
+    /// Heat into the wetted liquid of A and of R, W (signed).
+    pub wet_heat_w: [Scalar; 2],
+    /// Wall-born vapor from A's and R's contact, kg/s, into the bubbles.
+    pub wet_vapor_kg_s: [Scalar; 2],
+    /// Heat into the vapor zone on the dry contact, W (signed).
+    pub dry_heat_w: Scalar,
+    /// Vapor condensed on the dry contact, kg/s, entering R.
+    pub condensate_kg_s: Scalar,
+    /// The condensate's liquid enthalpy at wall temperature, J/kg.
+    pub condensate_enthalpy_j_kg: Scalar,
+}
+
+/// Contact of a wall element with the zones, as fractions of its area that
+/// sum to one, and for a shell band its lengths.
+#[derive(Clone, Copy, Debug)]
+pub struct WallWetting {
+    pub admitted_fraction: Scalar,
+    pub resident_fraction: Scalar,
+    /// Dry contact with the vapor zone.
+    pub vapor_fraction: Scalar,
+    /// The band's lengths by level; `None` for a head.
+    pub band: Option<Wetting>,
 }
 
 /// One phase's quasi-steady restriction flux on its energy adiabat.
@@ -1625,7 +1667,7 @@ impl Cell {
         let p = &self.parameters;
         if !(bottom_m >= p.bottom_m && bottom_m < top_m && top_m <= p.top_m) {
             return Err(fatal(format!(
-                "heater span {bottom_m}..{top_m} m is outside the vessel"
+                "contact span {bottom_m}..{top_m} m is outside the vessel"
             )));
         }
         let admitted = overlap(bottom_m, top_m, s(p.bottom_m), column.boundary_elevation);
@@ -1644,6 +1686,58 @@ impl Cell {
             resident_length_m: resident,
             exposed_length_m: span - wet,
         })
+    }
+
+    /// A wall element's contact by level. A shell band is wetted over its
+    /// overlap with A's region `[bottom, z_AR]` and R's `[z_AR, z_mix]` and
+    /// dry above `z_mix`, as a heater bank is. The bottom head contacts the
+    /// lowest zone present at `bottom_m` and the top head the vapor zone; a
+    /// mixture level reaching the top head is the solid-PZR structural limit.
+    pub fn wall_wetting(
+        &self,
+        column: &Column,
+        element: WallElement,
+    ) -> Result<WallWetting, Failure> {
+        let one = |zone: usize| {
+            let mut f = [s(0.); 3];
+            f[zone] = s(1.);
+            WallWetting {
+                admitted_fraction: f[0],
+                resident_fraction: f[1],
+                vapor_fraction: f[2],
+                band: None,
+            }
+        };
+        match element {
+            WallElement::Band { bottom_m, top_m } => {
+                let w = self.heater_wetting(column, bottom_m, top_m)?;
+                let span = s(top_m - bottom_m);
+                Ok(WallWetting {
+                    admitted_fraction: w.admitted_length_m / span,
+                    resident_fraction: w.resident_length_m / span,
+                    vapor_fraction: w.exposed_length_m / span,
+                    band: Some(w),
+                })
+            }
+            WallElement::BottomHead => {
+                let bottom = self.parameters.bottom_m;
+                Ok(if column.boundary_elevation.value > bottom {
+                    one(0)
+                } else if column.mixture_elevation.value > bottom {
+                    one(1)
+                } else {
+                    one(2)
+                })
+            }
+            WallElement::TopHead => {
+                if column.mixture_elevation.value >= self.parameters.top_m {
+                    return Err(recoverable(
+                        "mixture level reaches the top head: the solid-PZR structural limit",
+                    ));
+                }
+                Ok(one(2))
+            }
+        }
     }
 
     /// The 17 scaled rows from coordinates `x`, their rates and the signed
@@ -1863,6 +1957,43 @@ impl Cell {
             energy[RV] = energy[RV] + j * heater.condensate_enthalpy_j_kg;
             receipt[1] = receipt[1] + q + heater.exposed_heat_w - j * g.enthalpy
                 + j * heater.condensate_enthalpy_j_kg;
+        }
+
+        // Shell bands and heads: wet heat and wall vapor into the liquid zone
+        // each contacts, the vapor into the bubble stock, dry heat and
+        // condensation with g, the condensate into R.
+        let absent = |v: Scalar| v.value == 0. && v.direction == 0.;
+        for wall in &boundary.walls {
+            let w = self.wall_wetting(&c, wall.element)?;
+            for (k, (zone, share)) in [(AV, w.admitted_fraction), (RV, w.resident_fraction)]
+                .into_iter()
+                .enumerate()
+            {
+                let (q, gamma) = (wall.wet_heat_w[k], wall.wet_vapor_kg_s[k]);
+                if absent(share) && !(absent(q) && absent(gamma)) {
+                    return Err(fatal(format!(
+                        "wall {:?} delivers wet sources to a zone it does not contact",
+                        wall.element
+                    )));
+                }
+                mass[zone] = mass[zone] - gamma;
+                energy[zone] = energy[zone] + q - gamma * hg;
+                bubbles = bubbles + gamma;
+                receipt[1] = receipt[1] + q;
+            }
+            let j = wall.condensate_kg_s;
+            if absent(w.vapor_fraction) && !(absent(wall.dry_heat_w) && absent(j)) {
+                return Err(fatal(format!(
+                    "wall {:?} delivers dry sources without dry contact",
+                    wall.element
+                )));
+            }
+            energy[GV] = energy[GV] + wall.dry_heat_w - j * g.enthalpy;
+            mass[GV] = mass[GV] - j;
+            mass[RV] = mass[RV] + j;
+            energy[RV] = energy[RV] + j * wall.condensate_enthalpy_j_kg;
+            receipt[1] =
+                receipt[1] + wall.dry_heat_w - j * g.enthalpy + j * wall.condensate_enthalpy_j_kg;
         }
 
         // Bulk relaxation on each zone's own metastable excess. A liquid

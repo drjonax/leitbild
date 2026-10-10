@@ -947,6 +947,7 @@ fn every_port_kind_and_both_banks_are_conserved_exactly() {
             bank(6.5, 7.5, 1.1e5, 0.01, 0., 0., 0.),
             bank(6.5, 9.5, 2.3e5, 0.04, 2.0e3, 0.001, 1.5e6),
         ],
+        walls: Vec::new(),
         relief: Some(relief),
     };
     let receipts = [
@@ -1142,4 +1143,258 @@ fn restriction_flux_directions_match_central_differences() {
             seeded.mass_flux.value
         );
     }
+}
+
+fn wall(
+    element: st::WallElement,
+    wet: [f64; 2],
+    vapor: [f64; 2],
+    dry: f64,
+    j: f64,
+    hl: f64,
+) -> st::WallReceipt {
+    st::WallReceipt {
+        element,
+        wet_heat_w: wet.map(s),
+        wet_vapor_kg_s: vapor.map(s),
+        dry_heat_w: s(dry),
+        condensate_kg_s: s(j),
+        condensate_enthalpy_j_kg: s(hl),
+    }
+}
+
+#[test]
+fn wall_receipts_are_routed_to_the_zones_their_wetting_reports() {
+    use st::WallElement::{Band, BottomHead, TopHead};
+    let p = prepared_all();
+    let v = physical(&coordinates(&p.y, &p.scales, None));
+    let zero = [0.; st::COORDINATES];
+    let receipts = [Receipt::zero(); 3];
+    let rest = evaluate_all(&p, &v, &zero, receipts, &shut());
+    let c = &rest.column;
+    // Prepared levels: A to 6.80 m, the mixture to 12.5 m.
+    let cases = [
+        (
+            Band {
+                bottom_m: 6.5,
+                top_m: 7.5,
+            },
+            [0.3, 0.7, 0.],
+        ),
+        (
+            Band {
+                bottom_m: 9.5,
+                top_m: 13.5,
+            },
+            [0., 0.75, 0.25],
+        ),
+        (
+            Band {
+                bottom_m: 13.5,
+                top_m: 18.5,
+            },
+            [0., 0., 1.],
+        ),
+        (BottomHead, [1., 0., 0.]),
+        (TopHead, [0., 0., 1.]),
+    ];
+    let hg = c.interface_saturation.vapor.enthalpy.value;
+    let gv = c.vapor.enthalpy.value;
+    let hl = 1.5e6;
+    let mut walls = Vec::new();
+    let mut expected = [[0.; 2]; 3];
+    let mut bubbles = 0.;
+    for (n, (element, fractions)) in cases.iter().enumerate() {
+        let w = p.cell.wall_wetting(c, *element).unwrap();
+        let got = [
+            w.admitted_fraction.value,
+            w.resident_fraction.value,
+            w.vapor_fraction.value,
+        ];
+        for (a, b) in got.iter().zip(fractions) {
+            assert!((a - b).abs() < 1e-12, "{element:?}: {got:?}");
+        }
+        assert_eq!(w.band.is_some(), matches!(element, Band { .. }));
+        // A wall owner scales its flux by the contact fractions.
+        let flux = 1.0e4 * (n as f64 + 1.);
+        let wet = [flux * got[0], flux * got[1]];
+        let boil = [1e-3 * got[0], 2e-3 * got[1]];
+        let (dry, j) = (300. * got[2], 4e-4 * got[2]);
+        walls.push(wall(*element, wet, boil, dry, j, hl));
+        expected[0][0] += wet[0] - boil[0] * hg;
+        expected[0][1] -= boil[0];
+        expected[1][0] += wet[1] - boil[1] * hg + j * hl;
+        expected[1][1] += j - boil[1];
+        expected[2][0] += dry - j * gv;
+        expected[2][1] -= j;
+        bubbles += boil[0] + boil[1];
+    }
+    let boundary = Boundary { walls, ..shut() };
+    let ev = evaluate_all(&p, &v, &zero, receipts, &boundary);
+    let d = |i: usize| ev.flows.sources[i].value - rest.flows.sources[i].value;
+    for (zone, [e, m]) in [
+        (st::ADMITTED_ENERGY, expected[0]),
+        (st::RESIDENT_ENERGY, expected[1]),
+        (st::VAPOR_ENERGY, expected[2]),
+    ] {
+        assert!(
+            (d(zone) - e).abs() <= 1e-9 * e.abs().max(1.),
+            "energy row {zone}"
+        );
+        assert!((d(zone - 1) - m).abs() <= 1e-15, "mass row {}", zone - 1);
+    }
+    assert!((d(st::BUBBLE_MASS) - bubbles).abs() <= 1e-15);
+    let b = &ev.balance;
+    assert!((b.energy_w.value - b.receipt_energy_w.value).abs() <= 1e-6);
+    // A wall cannot heat a zone it does not contact.
+    let bad = Boundary {
+        walls: vec![wall(
+            Band {
+                bottom_m: 13.5,
+                top_m: 18.5,
+            },
+            [0., 1e3],
+            [0.; 2],
+            0.,
+            0.,
+            0.,
+        )],
+        ..shut()
+    };
+    let x = Coordinates::values(&v);
+    let r = Coordinates::values(&zero);
+    let refused = p
+        .cell
+        .residual(&If97, &x, &r, &receipts, &bad, &p.scales, None);
+    assert!(matches!(refused, Err(Failure::Fatal(_))));
+    let wet_top = Boundary {
+        walls: vec![wall(TopHead, [1e3, 0.], [0.; 2], 0., 0., 0.)],
+        ..shut()
+    };
+    assert!(
+        p.cell
+            .residual(&If97, &x, &r, &receipts, &wet_top, &p.scales, None)
+            .is_err()
+    );
+}
+
+#[test]
+fn walls_with_every_port_kind_are_conserved_exactly() {
+    use st::WallElement::{Band, BottomHead, TopHead};
+    let p = prepared_all();
+    let v = active(&p);
+    let rate = active_rates();
+    let probe = evaluate_all(&p, &v, &rate, [Receipt::zero(); 3], &shut());
+    let c = probe.column;
+    let mut walls = Vec::new();
+    for (n, element) in [
+        Band {
+            bottom_m: 6.5,
+            top_m: 9.5,
+        },
+        Band {
+            bottom_m: 9.5,
+            top_m: 14.5,
+        },
+        Band {
+            bottom_m: 14.5,
+            top_m: 18.5,
+        },
+        BottomHead,
+        TopHead,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let w = p.cell.wall_wetting(&c, element).unwrap();
+        let k = n as f64 + 1.;
+        let f = [
+            w.admitted_fraction.value,
+            w.resident_fraction.value,
+            w.vapor_fraction.value,
+        ];
+        walls.push(wall(
+            element,
+            [-2.0e3 * k * f[0], 3.0e3 * k * f[1]],
+            [5e-4 * f[0], 7e-4 * f[1]],
+            -150. * k * f[2],
+            2e-4 * f[2],
+            1.45e6,
+        ));
+    }
+    let boundary = Boundary {
+        heaters: vec![bank(6.5, 9.5, 1.2e5, 0.02, 0., 0., 0.)],
+        walls: walls.clone(),
+        relief: Some(st::ReliefState {
+            lift: s(0.4),
+            back_pressure_pa: s(2.5e5),
+        }),
+        ..Boundary::closed()
+    };
+    let receipts = [
+        Receipt {
+            mass: s(9.),
+            enthalpy: s(9. * 1.28e6),
+            boron: s(0.011),
+        },
+        Receipt {
+            mass: s(1.1),
+            enthalpy: s(1.1 * 1.3e6),
+            boron: s(0.0013),
+        },
+        Receipt::zero(),
+    ];
+    let ev = evaluate_all(&p, &v, &rate, receipts, &boundary);
+    let f = &ev.flows;
+    let out = f.relief.unwrap();
+    let implied: Vec<f64> = (0..st::COORDINATES)
+        .map(|i| rate[i] - ev.rows[i].value * p.scales[i])
+        .collect();
+    let sat = &ev.column.interface_saturation;
+    let mass = [
+        st::VAPOR_MASS,
+        st::ADMITTED_MASS,
+        st::RESIDENT_MASS,
+        st::BUBBLE_MASS,
+        st::DROP_MASS,
+    ]
+    .iter()
+    .map(|i| implied[*i])
+    .sum::<f64>();
+    let boron = implied[st::ADMITTED_BORON] + implied[st::RESIDENT_BORON] + implied[st::DROP_BORON];
+    let work: f64 = f.work.iter().map(|w| w.value).sum();
+    let energy = implied[st::VAPOR_ENERGY]
+        + implied[st::ADMITTED_ENERGY]
+        + implied[st::RESIDENT_ENERGY]
+        + work
+        + implied[st::BUBBLE_MASS] * sat.vapor.enthalpy.value
+        + implied[st::DROP_MASS] * sat.liquid.enthalpy.value
+        + f.transit_drift[0].value
+        + f.transit_drift[1].value;
+    let gv = ev.column.vapor.enthalpy.value;
+    let walls_energy: f64 = walls
+        .iter()
+        .map(|w| {
+            w.wet_heat_w[0].value + w.wet_heat_w[1].value + w.dry_heat_w.value
+                - w.condensate_kg_s.value * gv
+                + w.condensate_kg_s.value * w.condensate_enthalpy_j_kg.value
+        })
+        .sum();
+    let expect_mass = 9. + 1.1 - out.vapor_kg_s.value - out.drop_kg_s.value;
+    let expect_energy = 9. * 1.28e6 + 1.1 * 1.3e6 + 1.2e5 + walls_energy - out.enthalpy_w.value;
+    let expect_boron = 0.011 + 0.0013 - out.boron_kg_s.value;
+    assert!(
+        (mass - expect_mass).abs() <= 1e-12 * 1e3,
+        "mass {mass} vs {expect_mass}"
+    );
+    assert!(
+        (boron - expect_boron).abs() <= 1e-12,
+        "boron {boron} vs {expect_boron}"
+    );
+    assert!(
+        (energy - expect_energy).abs() <= 1e-12 * 1e10,
+        "energy {energy} vs {expect_energy}"
+    );
+    let b = &ev.balance;
+    assert!((b.energy_w.value - b.receipt_energy_w.value).abs() <= 1e-12 * 1e10);
 }

@@ -51,6 +51,22 @@ pub struct MetastableBand {
     pub vapor_pressure_ceiling_pa: f64,
 }
 
+impl From<&super::stratified::Metastable> for MetastableBand {
+    fn from(b: &super::stratified::Metastable) -> Self {
+        Self {
+            pressure_range_pa: b.pressure_range_pa,
+            lower_bound_exclusive: b.lower_bound_exclusive,
+            liquid_superheat_max_k: b.liquid_superheat_max_k,
+            vapor_subcooling_max_k: b.vapor_subcooling_max_k,
+            trial_max_k: b.trial_max_k,
+            credited_max_k: b.credited_max_k,
+            liquid_temperature_max_k: b.liquid_temperature_max_k,
+            liquid_pressure_ceiling_pa: b.liquid_pressure_ceiling_pa,
+            vapor_pressure_ceiling_pa: b.vapor_pressure_ceiling_pa,
+        }
+    }
+}
+
 /// Where an accepted state lies relative to saturation on its own branch.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum Band {
