@@ -153,9 +153,10 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
         + (averageIncomingLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'auxFeedwater') ?? 0)
       const tubeLeakFlow = context.readNumber(componentVariablePath(component, 'primaryToSecondaryLeakKgPerS'))
       context.write(componentVariablePath(component, 'feedwaterFlowKgPerS'), feedwaterFlow)
-      // A generator's steam leaves by every main steam line on its outlet: to its isolation valve and to its atmospheric relief valve.
+      // A generator's steam leaves by every main steam line: by its steam outlet to its isolation valve and by its
+      // relief outlet to its atmospheric relief valve. Its steam outlet flow is what the outlet's line carries alone.
       const mainSteamOutflow = sumOutgoingComponentLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'mainSteam')
-      context.write(componentVariablePath(component, 'steamOutflowKgPerS'), mainSteamOutflow)
+      context.write(componentVariablePath(component, 'steamOutflowKgPerS'), sumOutgoingComponentLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'mainSteam' && String(link.fromPortName) === 'steamOutlet'))
       const pressurePath = componentVariablePath(component, 'pressureMPa')
       const levelPath = componentVariablePath(component, 'levelPercent')
       const heatTransfer = context.readNumber(componentVariablePath(component, 'heatTransferMw'))
