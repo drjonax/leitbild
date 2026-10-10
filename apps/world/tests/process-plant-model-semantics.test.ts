@@ -140,6 +140,31 @@ describe('model semantics declared per component kind', () => {
     expect(() => compilePlantGraph(spec, registry)).toThrow('component engine semantics: energy sink rate steamFlowKgPerS must be a solved power')
   })
 
+  test('a flow through a port must be a solved flow on a port the kind has', () => {
+    const base = processPlantComponentRegistry.get('steamGenerator' as ComponentKind)!
+    const compileWith = (portFlows: ReadonlyArray<{ readonly port: string; readonly variable: string }>) => {
+      const registry = new Map([...processPlantComponentRegistry, ['steamGenerator' as ComponentKind, { ...base, semantics: fixedSemantics({ portFlows }) }]])
+      return () => compilePlantGraph(plantGraph({
+        id: 'semantics.port-flow',
+        title: 'Port flow',
+        fixedStepMs: 100,
+        components: [component('drum', 'steamGenerator', 'Drum', { nominalPressureMPa: 6, nominalLevelPercent: 0.5, heatTransferCoefficientMwPerK: 2 })],
+        connections: [],
+      }), registry)
+    }
+    expect(compileWith([{ port: 'feedwaterInlet', variable: 'levelPercent' }])).toThrow('component drum semantics: flow through feedwaterInlet names levelPercent, which is not a solved flow')
+    expect(compileWith([{ port: 'feedInlet', variable: 'feedwaterFlowKgPerS' }])).toThrow('component drum semantics names unknown port feedInlet')
+    expect(componentById(graph, 'sgB').semantics.portFlows.map(flow => [String(flow.port), String(flow.path)])).toEqual([['feedwaterInlet', 'sgB.feedwaterFlowKgPerS'], ['steamOutlet', 'sgB.steamOutflowKgPerS']])
+  })
+
+  test('readings are meaningful only while a solved flag says so', () => {
+    expect(componentById(graph, 'core').semantics.meaningfulWhile).toEqual([{ flag: 'core.sourceRangeEnergized', variables: ['core.sourceRangeCountRateCps'] }] as never)
+    const base = processPlantComponentRegistry.get('reactorCore' as ComponentKind)!
+    const faulty: ComponentDefinition = { ...base, semantics: fixedSemantics({ meaningfulWhile: [{ flag: 'sourceRangeCountRateCps', variables: ['intermediateRangeCurrentAmps'] }] }) }
+    const registry = new Map([...processPlantComponentRegistry, ['reactorCore' as ComponentKind, faulty]])
+    expect(() => compilePlantGraph(assemblePwrReferencePlantGraph({ loopCount: 4 }), registry)).toThrow('component core semantics: readings are meaningful while sourceRangeCountRateCps, which is not a solved flag')
+  })
+
   test('a writable variable without an actuation is rejected', () => {
     const base = processPlantComponentRegistry.get('processTank' as ComponentKind)!
     const undeclared: ComponentDefinition = {

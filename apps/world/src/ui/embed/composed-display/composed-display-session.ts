@@ -38,6 +38,8 @@ export interface ComposedDisplaySnapshot {
 // Live polling matches the operations recording interval. Presence is cheap
 // but only needed to notice pause and removal, so it runs less often.
 export const SAMPLE_INTERVAL_MS = 1_000
+/** Samples further apart than this in wall time mean the display missed some; it reads the Run's history for them. */
+export const MISSED_SAMPLES_MS = 5 * SAMPLE_INTERVAL_MS
 const PRESENCE_EVERY_SAMPLES = 5
 // After this long without interaction the view stops polling, so a forgotten
 // open chat cannot keep a Run simulating indefinitely.
@@ -202,15 +204,27 @@ export const createComposedDisplaySession = (config: {
     polls += 1
     try {
       if (polls % PRESENCE_EVERY_SAMPLES === 0 && !await checkPresence()) return
-      applySample(await config.client.sample(config.runId, config.plantId, sampledPaths(), WITH_ALARMS))
+      const sample = await config.client.sample(config.runId, config.plantId, sampledPaths(), WITH_ALARMS)
+      // A display that missed samples (hidden, suspended or slow to answer)
+      // reads what the Run recorded meanwhile, so no line is drawn flat
+      // across the gap as if the value had held.
+      if (snapshot.lastSampleWallMs !== undefined && wallNow() - snapshot.lastSampleWallMs > MISSED_SAMPLES_MS) {
+        update(await backfill(panels(), Date.parse(sample.simulationTime)))
+      }
+      applySample(sample)
     } catch (error) {
       // Keep the last values on screen; the stale marker and this message say they are old.
       update({ sampleError: messageOf(error) })
     }
   }
 
+  // The frame may be hidden before the display has started (a window opening
+  // behind another, a tab in the background); polling starts only while shown.
+  let visible = true
+
   const startPolling = (): void => {
     stopPolling()
+    if (!visible || closed) return
     timer = setInterval(() => { void poll() }, SAMPLE_INTERVAL_MS)
   }
 
@@ -309,9 +323,11 @@ export const createComposedDisplaySession = (config: {
       if (snapshot.phase.kind === 'live') await poll()
     },
     poll,
-    setVisible: (visible: boolean): void => {
-      if (!visible) { stopPolling(); return }
-      if (snapshot.phase.kind === 'live' && timer === undefined) startPolling()
+    /** Polls only while the frame is shown; shown again, it samples at once and fills what it missed. */
+    setVisible: (shown: boolean): void => {
+      visible = shown
+      if (!shown) { stopPolling(); return }
+      if (snapshot.phase.kind === 'live' && timer === undefined) { void poll(); startPolling() }
     },
     close: (): void => { closed = true; stopPolling() },
   }

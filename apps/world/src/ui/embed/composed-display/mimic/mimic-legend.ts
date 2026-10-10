@@ -7,7 +7,8 @@ export const mimicLegend = {
   flow: 'flow',
   noFlow: 'no flow',
   unknownFlow: 'not known',
-  command: 'CMD: command not followed',
+  command: 'CMD',
+  commandMeaning: 'command not followed',
   notComputed: 'POS ?: not computed',
   simulator: 'simulator',
 } as const

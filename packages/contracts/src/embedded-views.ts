@@ -42,6 +42,44 @@ export const embeddedViewEnvelopeSchema = z.object({
 })
 export type EmbeddedViewEnvelope = z.infer<typeof embeddedViewEnvelopeSchema>
 
+// What a published view shows, in the terms a text presenting it may cite.
+// The owning Module returns it beside the view publication (`viewContent`);
+// an embedder checks that an answer cites only what its view shows, or says
+// that something is not shown. Values are in the units the view shows them in.
+const viewQuantitySchema = z.object({
+  value: z.number().finite(),
+  unit: z.string().min(1).max(16),
+}).strict()
+export const embeddedViewContentSchema = z.object({
+  items: z.array(z.object({
+    /** Every name the view or its publisher gives the item: tag, path, label, equipment id. */
+    names: z.array(z.string().min(1).max(200)).min(1).max(8),
+    /** What the view reads for it now. */
+    values: z.array(viewQuantitySchema).max(8),
+    /** The alarm, trip and control limits the view marks for it. */
+    limits: z.array(viewQuantitySchema).max(16),
+    /** Whether the view shows its recent history, so earlier values of it may be cited too. */
+    history: z.boolean(),
+    /** Its state as the view draws it, in words ("running", "level 29.6 %"). */
+    state: z.string().min(1).max(200).optional(),
+  }).strict()).max(64),
+  /** How far back the view's time axis reaches now, and the horizon it widens to; null without one. */
+  span: z.object({
+    shownMs: z.number().int().positive(),
+    horizonMs: z.number().int().positive(),
+  }).strict().nullable(),
+  /** The item the view leads with, past or nearest a limit (an index in items), and why in its words. */
+  lead: z.object({
+    item: z.number().int().nonnegative(),
+    reason: z.string().min(1).max(200),
+  }).strict().nullable(),
+}).strict().superRefine((content, ctx) => {
+  if (content.lead !== null && content.lead.item >= content.items.length) {
+    ctx.addIssue({ code: 'custom', path: ['lead', 'item'], message: 'The lead must be one of the items' })
+  }
+})
+export type EmbeddedViewContent = z.infer<typeof embeddedViewContentSchema>
+
 export const parseEmbeddedViewFragment = (hash: string): EmbeddedViewEnvelope => {
   const body = hash.startsWith('#') ? hash.slice(1) : hash
   if (!body.startsWith(EMBEDDED_VIEW_FRAGMENT_KEY)) throw new Error('Embedded view fragment must start with view=')

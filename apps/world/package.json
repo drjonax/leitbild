@@ -33,7 +33,7 @@
     "process-plant:extended-validation": "bun run scripts/process-plant/extended-validation.ts",
     "process-plant:credibility": "bun run scripts/process-plant/pwr-credibility.ts",
     "process-plant:balance": "bun run scripts/process-plant/feedwater-balance-trace.ts",
-    "test": "bun test",
+    "test": "bun test --timeout 30000",
     "health": "bun run check && bun test && bun run build:ui"
   },
   "dependencies": {

@@ -262,6 +262,37 @@ describe('composed display session', () => {
     controller.close()
   })
 
+  test('a frame hidden before its display has started does not poll until it is shown', async () => {
+    const { client, calls } = fakeClient({ presence: { title: 'Run', loaded: true, playback: 'playing', currentSimulationTime: at(0) }, samples: [{ time: at(0), value: 15.4 }, { time: at(1_000), value: 15.5 }] })
+    const { controller } = session(client)
+    controller.setVisible(false)
+    await controller.start()
+    await Bun.sleep(1_300)
+    expect(calls.filter(call => call === 'sample')).toHaveLength(1)
+    // Shown again, it samples at once rather than a second later.
+    controller.setVisible(true)
+    await Bun.sleep(50)
+    expect(calls.filter(call => call === 'sample')).toHaveLength(2)
+    controller.close()
+  })
+
+  test("samples missed while hidden or suspended are read from the Run's history, not drawn as a held value", async () => {
+    const wall = { now: 0 }
+    const { client, calls } = fakeClient({ presence: { title: 'Run', loaded: true, playback: 'playing', currentSimulationTime: at(0) }, samples: [{ time: at(0), value: 15.4 }, { time: at(1_000), value: 15.5 }, { time: at(60_000), value: 15.9 }] })
+    const { controller } = session(client, wall)
+    await controller.start({ poll: false })
+    const histories = () => calls.filter(call => call === 'history:series:pressure').length
+    expect(histories()).toBe(1)
+    wall.now = 1_000
+    await controller.poll()
+    expect(histories()).toBe(1)
+    // A minute without samples: the history is read again before the new sample is drawn.
+    wall.now = 61_000
+    await controller.poll()
+    expect(histories()).toBe(2)
+    controller.close()
+  })
+
   test('an operating overview keeps updating however long it is left unattended', async () => {
     const wall = { now: 0 }
     const { client, calls } = fakeClient({ presence: { title: 'Run', loaded: true, playback: 'playing', currentSimulationTime: at(0) }, samples: [{ time: at(0), value: 15.4 }, { time: at(1_000), value: 15.5 }] })

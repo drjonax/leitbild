@@ -27,7 +27,7 @@ import {
   credibilityListPayloadSchema,
   credibilityReadPayloadSchema,
 } from './queries/credibility-query.ts'
-import { embeddedViewPublicationSchema } from '@leitbild/contracts'
+import { embeddedViewContentSchema, embeddedViewPublicationSchema } from '@leitbild/contracts'
 import {
   displayComposeQuerySchema,
   displayOverviewQuerySchema,
@@ -182,6 +182,7 @@ const queryOutputById: Readonly<Record<string, z.ZodType>> = {
     margins: z.array(z.string()),
     warnings: z.array(z.string()),
     equipment: z.array(z.object({ id: z.string(), label: z.string(), state: z.string() }).strict()),
+    viewContent: embeddedViewContentSchema,
   }).strict(),
   'world.process-plant.display.overview': z.object({
     plantId: plantIdSchema,

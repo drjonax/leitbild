@@ -20,8 +20,15 @@ export interface ComposedDisplayThreshold {
   /** Low thresholds act when the value falls; high ones when it rises. */
   readonly direction: 'low' | 'high'
   readonly value: number
-  /** The declared operating modes the rule only acts in; drawn dashed. */
+  /**
+   * 1 for the first limit of its kind in its direction, 2 and more for those
+   * beyond it: the first low alarm reads LO ALM, the next one below it LO-LO ALM.
+   */
+  readonly escalation: number
+  /** The declared operating modes the rule only acts in, as the Plant names them. */
   readonly modeLabel?: string
+  /** The same modes by id, to tell whether the rule acts in the Plant's current mode. */
+  readonly modeIds?: ReadonlyArray<string>
 }
 
 /** A rule that watches the signal inside a combined condition (vote, all,
@@ -60,9 +67,12 @@ const labelFor = (rule: ProcessPlantIcRule): string => {
   return rule.label ?? rule.id
 }
 
-// The declared operating modes a rule acts in, as the Plant names them ("Power operation").
-const modeLabelFor = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule): string | undefined =>
-  rule.modes?.map(id => plant.automation.operatingModes.find(mode => mode.id === id)!.label).join(' or ')
+// The declared operating modes a rule acts in, as the Plant names them ("Power operation"), and by id.
+const modesOf = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule): Pick<ComposedDisplayThreshold, 'modeLabel' | 'modeIds'> =>
+  rule.modes === undefined ? {} : {
+    modeLabel: rule.modes.map(id => plant.automation.operatingModes.find(mode => mode.id === id)!.label).join(' or '),
+    modeIds: [...rule.modes],
+  }
 
 const conditionWatches = (
   plant: CompiledProcessPlant,
@@ -74,11 +84,29 @@ const conditionWatches = (
   return condition.conditions.some(child => conditionWatches(plant, child, path))
 }
 
+// Two limits act together unless their rules act only in different modes.
+const actTogether = ({ modeIds: left }: Pick<ComposedDisplayThreshold, 'modeIds'>, { modeIds: right }: Pick<ComposedDisplayThreshold, 'modeIds'>): boolean =>
+  left === undefined || right === undefined || left.some(mode => right.includes(mode))
+
+/**
+ * A signal's limits of one kind escalate away from normal in each direction:
+ * each counts the distinct values of its kind and direction closer to normal
+ * that can act with it. Limits of different modes are alternatives, not steps.
+ */
+export const escalateLimits = (thresholds: ReadonlyArray<Omit<ComposedDisplayThreshold, 'escalation'>>): ComposedDisplayThreshold[] =>
+  thresholds.map(threshold => ({
+    ...threshold,
+    escalation: 1 + new Set(thresholds
+      .filter(other => other.kind === threshold.kind && other.direction === threshold.direction && actTogether(other, threshold))
+      .filter(other => threshold.direction === 'low' ? other.value > threshold.value : other.value < threshold.value)
+      .map(other => other.value)).size,
+  }))
+
 export const icThresholdsForSignal = (
   plant: CompiledProcessPlant,
   path: VariablePath,
 ): ComposedDisplayIcThresholds => {
-  const thresholds: ComposedDisplayThreshold[] = []
+  const thresholds: Array<Omit<ComposedDisplayThreshold, 'escalation'>> = []
   const combinedRules: ComposedDisplayCombinedRule[] = []
   for (const rule of plant.automation.rules) {
     if (!rule.enabled) continue
@@ -87,7 +115,6 @@ export const icThresholdsForSignal = (
       if (resolveProcessPlantSignalPath(plant.graph, condition.signal) !== path) continue
       // Equality rules act on discrete states; they have no position on a value axis.
       if (typeof condition.value !== 'number' || condition.operator === '==' || condition.operator === '!=') continue
-      const modeLabel = modeLabelFor(plant, rule)
       const severity = severityFor(rule)
       thresholds.push({
         ruleId: rule.id,
@@ -97,7 +124,7 @@ export const icThresholdsForSignal = (
         operator: condition.operator,
         direction: condition.operator === '<' || condition.operator === '<=' ? 'low' : 'high',
         value: condition.value,
-        ...(modeLabel === undefined ? {} : { modeLabel }),
+        ...modesOf(plant, rule),
       })
       continue
     }
@@ -106,7 +133,7 @@ export const icThresholdsForSignal = (
     }
   }
   return {
-    thresholds: thresholds.sort((left, right) => left.value - right.value || left.ruleId.localeCompare(right.ruleId)),
+    thresholds: escalateLimits(thresholds).sort((left, right) => left.value - right.value || left.ruleId.localeCompare(right.ruleId)),
     combinedRules: combinedRules.sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
   }
 }
@@ -170,12 +197,6 @@ export const icAlarmRuleIdsForPaths = (
     .filter(rule => conditionBindings(plant, rule.condition).some(binding => watched.has(String(binding.path))))
     .map(rule => rule.id)
 }
-
-/** Every signal an alarm or trip rule judges: trips first, each kind in rule order. */
-export const icWatchedPaths = (plant: CompiledProcessPlant): ReadonlyArray<VariablePath> => [...new Set((['trip', 'alarm'] as const)
-  .flatMap(kind => plant.automation.rules
-    .filter(rule => rule.enabled && kindFor(rule) === kind)
-    .flatMap(rule => conditionBindings(plant, rule.condition).map(binding => binding.path))))]
 
 /** Every signal a trip rule judges, in rule order: what the Plant's protection treats as decisive. */
 export const icTripWatchedPaths = (plant: CompiledProcessPlant): ReadonlyArray<VariablePath> => [...new Set(plant.automation.rules

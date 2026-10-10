@@ -189,6 +189,16 @@ export const drawnLook = (binding: MimicItemBinding, rows: ReadonlyArray<MimicRo
   return { state, notMeasured: looks.some(look => look.notMeasured), mismatch, words }
 }
 
+/**
+ * How a drawn item stands out (ISA-101): framed in its alarm's colour while
+ * an alarm of its own is active; outlined as abnormal, in no alarm colour,
+ * while it (or a member of its group) does not follow its command, so the
+ * cause of an upset shows on the drawing before any alarm it leads to; drawn
+ * as normal otherwise.
+ */
+export const itemTreatment = (look: ItemLook, alarmed: boolean): 'alarm' | 'abnormal' | 'normal' =>
+  alarmed ? 'alarm' : look.mismatch !== null ? 'abnormal' : 'normal'
+
 /** A pipe standing for parallel pipes carries flow while any of them does; it is unknown when none does and any is unknown. */
 export const bundleFlowLook = (flows: ReadonlyArray<MimicFlowBinding>, index: SampleIndex): FlowLook => {
   const looks = flows.map(flow => flowLook(flow, index))

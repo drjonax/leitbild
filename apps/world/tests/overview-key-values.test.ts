@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
-import { equipmentKeyValues, overviewKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
+import { equipmentKeyValues, leadValuesKey, overviewKeyValues, type PlantNow } from '../src/packs/process-plant/displays/overview-key-values.ts'
 import { annunciatorSystems } from '../src/packs/process-plant/displays/annunciators.ts'
-import { processPlantIcConfigSchema } from '../src/packs/process-plant/runtime/index.ts'
+import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, processPlantOperatingMode } from '../src/packs/process-plant/runtime/index.ts'
+import type { SimulationRunId } from '../src/core/model/index.ts'
 
 describe('the values a unit overview leads with', () => {
   test('come from what protection trips on outside the loops, then the energy source and sink', () => {
@@ -25,18 +26,53 @@ describe('the values a unit overview leads with', () => {
 
 describe('the values equipment opened from the overview leads with', () => {
   const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:equipment-values', loopCount: 4 }))
-  const of = (...ids: ReadonlyArray<string>) => equipmentKeyValues(plant, ids.map(id => plant.graph.componentIndexById.get(id as never)!))
+  // The reference Plant at power: in power operation, its source range de-energized above P-6.
+  const runtime = createProcessPlantRuntime({ system: plant })
+  runtime.tick(1_000)
+  const atPower: PlantNow = { mode: 'powerOperation', read: path => runtime.readVariable(path) }
+  const of = (ids: ReadonlyArray<string>, now: PlantNow = atPower) => equipmentKeyValues(plant, ids.map(id => plant.graph.componentIndexById.get(id as never)!), now)
 
   test('are its signals the I&C rules judge, then its key values and instruments; never a demand', () => {
-    expect(of('core').slice(0, 2)).toEqual(['core.powerMw', 'core.coolantOutletTemperatureC'] as never)
     // A pump's run command and a valve's position demand are writable: the drawing shows them, the values do not.
     // A valve's values lead with its position feedback instead.
-    expect(of('feedwaterControlValveA')).toEqual(['feedwaterControlValveA.effectivePositionFraction'] as never)
-    expect(of('rcpA')).not.toContain('rcpA.running' as never)
+    expect(of(['feedwaterControlValveA'])).toEqual(['feedwaterControlValveA.effectivePositionFraction'] as never)
+    expect(of(['rcpA'])).not.toContain('rcpA.running' as never)
+  })
+
+  test('at power the core leads with its power, the subcooling margin and its outlet temperature, and the de-energized source range last', () => {
+    // The subcooling margin is bound to the reactor coolant system, as the core's outlet temperature is: its alarms are the core's related alarms.
+    expect(of(['core'])).toEqual(['core.powerMw', 'vessel.subcoolingMarginC', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.sourceRangeEnergized', 'core.sourceRangeCountRateCps'] as never)
+    // With its high voltage on, the source range counts something and ranks as an instrument.
+    const counting: PlantNow = { ...atPower, read: path => String(path) === 'core.sourceRangeEnergized' ? true : runtime.readVariable(path) }
+    expect(of(['core'], counting).slice(3)).toEqual(['core.sourceRangeEnergized', 'core.sourceRangeCountRateCps', 'core.intermediateRangeCurrentAmps'] as never)
+  })
+
+  test('a signal only rules of other modes judge follows its key values and instruments', () => {
+    // RCP A's low loop flow alarm acts in power operation only.
+    expect(of(['rcpA'])).toEqual(['rcpA.loopFlowKgPerS', 'rcpA.runningState'] as never)
+    expect(of(['rcpA'], { ...atPower, mode: 'coldShutdown' })).toEqual(['rcpA.runningState', 'rcpA.loopFlowKgPerS'] as never)
+    // Where no declared mode holds, a rule declared for modes acts in none.
+    expect(of(['rcpA'], { ...atPower, mode: null })).toEqual(['rcpA.runningState', 'rcpA.loopFlowKgPerS'] as never)
   })
 
   test('parallel equipment is compared value by value', () => {
-    expect(of('sgA', 'sgB')).toEqual(['sgA.levelPercent', 'sgB.levelPercent', 'sgA.secondaryRadiationMSvPerH', 'sgB.secondaryRadiationMSvPerH', 'sgA.pressureMPa', 'sgB.pressureMPa'] as never)
+    expect(of(['sgA', 'sgB'])).toEqual(['sgA.levelPercent', 'sgB.levelPercent', 'sgA.secondaryRadiationMSvPerH', 'sgB.secondaryRadiationMSvPerH', 'sgA.pressureMPa', 'sgB.pressureMPa'] as never)
+  })
+
+  test('a detail reflects the mode it was opened in: a trip changes the mode, and so what it leads with', () => {
+    const now = (system: typeof plant, run: ReturnType<typeof createProcessPlantRuntime>): PlantNow => ({
+      mode: processPlantOperatingMode({ system, runtime: run, modes: system.automation.operatingModes })?.id ?? null,
+      read: path => run.readVariable(path),
+    })
+    expect(leadValuesKey(plant, now(plant, runtime))).toBe('powerOperation|core.sourceRangeCountRateCps,core.sourceRangeEnergized')
+    const tripped = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:equipment-values-trip', valueOverrides: { 'pressurizer.pressureMPa': 10 } }))
+    const run = createProcessPlantRuntime({ system: tripped })
+    const protection = createProcessPlantProtectionRunner({ system: tripped, protection: tripped.automation })
+    for (let second = 0; second < 10; second += 1) {
+      run.tick(1_000)
+      protection.evaluate({ runtime: run, elapsedMs: run.elapsedMs(), simulationRunId: 'run-key-values' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+    }
+    expect(leadValuesKey(tripped, now(tripped, run))).toStartWith('hotStandby|')
   })
 })
 
