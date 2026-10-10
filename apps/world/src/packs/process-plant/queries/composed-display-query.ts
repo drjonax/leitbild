@@ -37,7 +37,7 @@ import { requirePlant } from './common.ts'
 import { simulationClock } from '../displays/display-text.ts'
 import { indexSample, itemLook } from '../displays/mimic/evaluate.ts'
 import { mimicItemId } from '../displays/mimic/bindings.ts'
-import { TREND_HISTORY_LIMIT, trendPoints, type PlantModeNow } from '../displays/trend-reading.ts'
+import { trendPoints, type PlantModeNow } from '../displays/trend-reading.ts'
 
 export const processPlantComposedDisplayQueryKinds = [
   'world.process-plant.display.compose',
@@ -141,9 +141,9 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       simulationMs: Date.parse(simulationTime),
       mode: modeNow(system),
       activeRuleIds: new Set((annunciated(system) ?? []).filter(lifecycle => lifecycle.active).map(lifecycle => lifecycle.ruleId)),
-      history: (seriesId: string, window: { readonly from: number; readonly to: number }) => {
+      history: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => {
         if (recordedHistory === undefined) throw new Error(`${config.request.capabilityId} requires the history recorded by the answering runtime`)
-        return trendPoints(recordedHistory.read({ seriesId, from: new Date(window.from).toISOString() as IsoTimestamp, to: new Date(window.to).toISOString() as IsoTimestamp, limit: TREND_HISTORY_LIMIT }))
+        return trendPoints(recordedHistory.read({ seriesId, from: new Date(window.from).toISOString() as IsoTimestamp, to: new Date(window.to).toISOString() as IsoTimestamp, limit }))
       },
     }
     const opened = readComposedDisplay(display, opening)

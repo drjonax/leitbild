@@ -161,6 +161,14 @@ export const projectionBasis = (points: ReadonlyArray<TrendPoint>, windowMs: num
   return steps >= CHANGE_MIN_DISTINCT_VALUES - 1
 }
 
+/**
+ * How far back a reading over this window looks: every point it weighs lies
+ * this close to the latest (the change qualifier's three windows); of older
+ * points it asks only whether there is one (projectionBasis). So the points
+ * within it and the newest one before it read exactly as the whole history.
+ */
+export const readingLookBackMs = (windowMs: number): number => 3 * Math.max(windowMs, CHANGE_MIN_WINDOW_MS, PROJECTION_BASIS_MS)
+
 /** Minutes until the value reaches the threshold at the current rate, if moving toward it. */
 export const minutesToThreshold = (value: number, rate: number | null, threshold: ComposedDisplayThreshold): number | null => {
   if (rate === null || rate === 0) return null

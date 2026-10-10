@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
-import { limitStateText, projectedMinutes, rateWindowMs, travelOf, travelText, trendPoints, trendReading, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { limitStateText, projectedMinutes, rateWindowMs, readingLookBackMs, travelOf, travelText, trendPoints, trendReading, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
 
 // Pressurizer pressure limits as the reference PWR's I&C draws them.
 const pressureLimits: ReadonlyArray<ComposedDisplayThreshold> = [
@@ -93,5 +93,28 @@ describe('how a trend reads now', () => {
       { simulationTime: '2026-01-01T10:00:03.000Z', value: true },
       { value: 4 },
     ])).toEqual([{ t: Date.parse('2026-01-01T10:00:01.000Z'), v: 1 }, { t: Date.parse('2026-01-01T10:00:02.000Z'), v: 2 }])
+  })
+
+  test('the points within the look-back and the newest before them read as the whole history', () => {
+    // As compose reads the Run's history: two small reads instead of the trend's whole window.
+    const bounded = (points: ReadonlyArray<TrendPoint>, windowMs: number) => {
+      const from = points.at(-1)!.t - readingLookBackMs(windowMs)
+      return [...points.filter(point => point.t < from).slice(-1), ...points.filter(point => point.t >= from)]
+    }
+    const fixtures: ReadonlyArray<ReadonlyArray<TrendPoint>> = [
+      seconds(600, second => 17 - second / 300),
+      seconds(600, second => 14.9 + 0.9 * Math.exp(-second / 40)),
+      // Held values re-recorded once a minute, then a fall in the last 40 s.
+      [...seconds(560, () => 15.5).filter(point => point.t % 60_000 === 0), ...seconds(40, second => 15.5 - second * 0.02).map(point => ({ t: point.t + 560_000, v: point.v }))],
+      // A gap: nothing between 100 s and 20 s before now.
+      [...seconds(500, second => 16 - second / 600), ...seconds(20, second => 15 - second * 0.01).map(point => ({ t: point.t + 580_000, v: point.v }))],
+      seconds(20, second => 15 + second * 0.01),
+    ]
+    for (const windowMs of [rateWindowMs(120_000), rateWindowMs(600_000)]) {
+      for (const points of fixtures) {
+        const value = points.at(-1)!.v
+        expect(read(bounded(points, windowMs), value, { windowMs })).toEqual(read(points, value, { windowMs }))
+      }
+    }
   })
 })

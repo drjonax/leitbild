@@ -192,15 +192,18 @@ describe('world.process-plant.display.compose', () => {
         return { seriesId, observedAt: at, simulationTime: at, value: now + (120 - index) / 60, quality: 'good' as const }
       }),
     })
-    const reads: Array<{ readonly seriesId: string; readonly from: string; readonly to: string }> = []
+    const reads: Array<{ readonly seriesId: string; readonly from: string; readonly to: string; readonly limit: number }> = []
     const recorded = recordedHistoryOf(historian, 'process-plant')
     const result = ask('world.process-plant.display.compose', {
       ...composition([{ ref: 'PT-455', role: 'primary' }, { ref: 'SG-B-LVL-NR', role: 'context' }]),
       panels: [{ kind: 'trend', horizon: '10m', signals: [{ ref: 'PT-455', role: 'primary' }, { ref: 'SG-B-LVL-NR', role: 'context' }] }],
     }, simulationTime, { read: query => { reads.push(query); return recorded.read(query) } }) as { margins: ReadonlyArray<string>; viewContent: unknown }
     historian.close()
-    // One bounded read per trended signal, over the trend's horizon up to now.
-    expect(reads.map(read => [read.seriesId, read.from, read.to])).toEqual([seriesId, recordingSeriesIdFor(compiled.id, level)].map(id => [id, '2026-10-08T20:50:00.000Z', simulationTime]))
+    // Per trended signal two bounded reads: what its reading weighs (the last 90 s), and the newest sample before that in the trend's window.
+    expect(reads.map(read => [read.seriesId, read.from, read.to, read.limit])).toEqual([seriesId, recordingSeriesIdFor(compiled.id, level)].flatMap(id => [
+      [id, '2026-10-08T20:58:30.000Z', simulationTime, 4_000],
+      [id, '2026-10-08T20:50:00.000Z', '2026-10-08T20:58:29.999Z', 1],
+    ]))
     const margin = now - 14.8
     // The rate as the legend words it (1 MPa/min reads 1.000 just below one).
     expect(result.margins[0]).toBe(`PT-455: ${formatQuantity(now, 'MPa')}, falling 1.000 MPa/min, ${formatQuantity(margin, 'MPa')} above LO ALM 14.8 MPa · ≈${Math.round(margin * 60)} s`)

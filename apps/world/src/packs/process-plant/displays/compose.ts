@@ -41,7 +41,7 @@ import {
   type ComposedPanelSize,
 } from './composition.ts'
 import { displayValue, formatQuantity, isPast, nearestThresholdMargin, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
-import { appendPoint, COMPARISON_HISTORY_MS, limitsInForce, limitStateText, rateWindowMs, travelText, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
+import { appendPoint, COMPARISON_HISTORY_MS, limitsInForce, limitStateText, rateWindowMs, readingLookBackMs, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
@@ -1102,8 +1102,8 @@ export const composedDisplayShows = (display: CompiledComposedDisplay, historyMs
 /**
  * What a composed display reads as it opens: each value now, the Plant's
  * mode and active rules (which limits act), and the recorded history of a
- * signal it draws over time. The history is the Run's: a series between two
- * Run times, oldest first, read once per signal over the window it draws.
+ * signal it draws over time. The history is the Run's: the newest samples of
+ * a series between two Run times, up to a limit, oldest first.
  */
 export interface ComposedDisplayNow {
   readonly read: (path: VariablePath) => unknown
@@ -1111,7 +1111,7 @@ export interface ComposedDisplayNow {
   readonly simulationMs: number
   readonly mode: PlantModeNow
   readonly activeRuleIds: ReadonlySet<string>
-  readonly history: (seriesId: string, window: { readonly from: number; readonly to: number }) => ReadonlyArray<TrendPoint>
+  readonly history: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => ReadonlyArray<TrendPoint>
 }
 
 /** Each signal the view shows once, in display order. */
@@ -1153,10 +1153,22 @@ interface PenReading {
 }
 
 /**
+ * The recorded history a reading over the window needs, as the display's
+ * whole window would give it: the samples within its look-back and the
+ * newest one before them (readingLookBackMs). Two small reads, however long
+ * the trend's horizon and the Run.
+ */
+const historyForReading = (now: ComposedDisplayNow, seriesId: string, windowStart: number, windowMs: number): ReadonlyArray<TrendPoint> => {
+  const recentFrom = Math.max(windowStart, now.simulationMs - readingLookBackMs(windowMs))
+  const recent = now.history(seriesId, { from: recentFrom, to: now.simulationMs }, TREND_HISTORY_LIMIT)
+  return recentFrom <= windowStart ? recent : [...now.history(seriesId, { from: windowStart, to: recentFrom - 1 }, 1), ...recent]
+}
+
+/**
  * Each shown value read as the display reads it on opening: its recorded
  * history up to now and the value now, through the legend's own functions
  * (trend-reading.ts), worded as its panel words it. Recorded history is read
- * only for signals drawn over time, over the window they are drawn.
+ * only for signals drawn over time, and only what their reading needs.
  */
 const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ReadonlyArray<PenReading> => shownPens(display).flatMap(pen => {
   const value = now.read(pen.path)
@@ -1164,11 +1176,12 @@ const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow):
   const view = penView(display, pen)
   const overTime = view.kind === 'legend' || view.kind === 'comparison' ? view : null
   const windowStart = overTime === null ? now.simulationMs : now.simulationMs - overTime.horizonMs
-  const history = overTime === null || !pen.recorded ? [] : now.history(pen.seriesId, { from: windowStart, to: now.simulationMs })
+  const windowMs = rateWindowMs(overTime?.horizonMs ?? COMPARISON_HISTORY_MS)
+  const history = overTime === null || !pen.recorded ? [] : historyForReading(now, pen.seriesId, windowStart, windowMs)
   const reading = trendReading({
     value,
     points: overTime === null ? null : appendPoint(history, { t: now.simulationMs, v: value }, windowStart),
-    windowMs: rateWindowMs(overTime?.horizonMs ?? COMPARISON_HISTORY_MS),
+    windowMs,
     unit: pen.unit,
     thresholds: pen.thresholds,
     mode: now.mode,
