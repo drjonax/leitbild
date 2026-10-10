@@ -18,6 +18,7 @@
 //! physical admission is a separate account.
 mod account;
 mod evaluate;
+pub mod heaters;
 mod jacobian;
 pub mod packet;
 pub mod prepare;
