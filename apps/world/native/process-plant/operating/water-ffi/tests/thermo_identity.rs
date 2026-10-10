@@ -9,7 +9,7 @@
 //! can be dumped (`LD01_IDENTITY_DUMP`) to compare separately built archives
 //! and implementations input by input.
 use leitbild_operating_plant::{
-    network::{Network, Properties, RotorState, Water, packet::Packet},
+    network::{BandReport, MetastableBand, Network, Properties, RotorState, Water, packet::Packet},
     rotor::{Shaft, SpeedRequest, Support},
     thermal::{Saturation, Scalar},
 };
@@ -629,6 +629,12 @@ impl Properties for Census {
     fn saturation(&self, pressure: Scalar) -> Result<Saturation, String> {
         self.count(5);
         Properties::saturation(&If97, pressure)
+    }
+    fn metastable_band(&self) -> Result<MetastableBand, String> {
+        If97.metastable_band()
+    }
+    fn band(&self, point: &CaloricLinearization) -> BandReport {
+        If97.band(point)
     }
 }
 

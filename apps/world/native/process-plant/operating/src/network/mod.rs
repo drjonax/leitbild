@@ -27,7 +27,7 @@ mod tolerance;
 
 pub use account::{Tolerances, empty_energy_ratio};
 pub use jacobian::{CscOut, DensePattern, SparseJacobian};
-pub use properties::{Properties, Reuse, Water};
+pub use properties::{Band, BandReport, MetastableBand, Properties, Reuse, Water};
 pub use tolerance::ToleranceClasses;
 
 use crate::{
@@ -266,6 +266,13 @@ impl<P: Properties> Network<P> {
             physical.extend([p, mass, u, 0., 0., b]);
             scales.extend([p, mass, u, mass, u, if b == 0. { mass * 0.001 } else { b }]);
             differential.extend([0., 1., 1., 1., 1., 1.]);
+        }
+        let compiled = properties.metastable_band().map_err(bad)?;
+        if compiled != cell.metastable {
+            return Err(bad(format!(
+                "packet pzr.cell.metastable {:?} differs from the property implementation's compiled band {compiled:?}",
+                cell.metastable
+            )));
         }
         let pzr_layout = PzrLayout {
             cell: pzr,
@@ -565,8 +572,6 @@ fn not_integrated(what: &str) -> Failure {
 
 /// Prepared physical PZR coordinates at the packet's operating point
 /// (`stratified::prepare`), in the contract order.
-// TODO(INTEG C): refuse unless pzr.cell.metastable equals the band compiled
-// into the property artifact (`ld01_water_metastable_band`, PROPS).
 fn stratified_preparation<P: Properties>(
     _packet: &packet::Packet,
     _properties: &P,

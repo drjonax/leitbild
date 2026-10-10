@@ -8,6 +8,7 @@
 //! re-evaluated. Failure invalidates the slot. Nothing persists across trials.
 use super::Failure;
 use crate::thermal::{Saturation, Scalar};
+use serde::{Deserialize, Serialize};
 
 /// Maintained-EOS values, or the directional derivatives of the same fields.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -22,6 +23,49 @@ pub struct Water {
     pub compressibility_per_pa: f64,
     pub viscosity_pa_s: f64,
     pub conductivity_w_m_k: f64,
+}
+
+/// The bounded metastable band (`ld01-metastable-band`) in the packet's
+/// field names: the band a property implementation was compiled with must be
+/// the packet's, or the network refuses to compile.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetastableBand {
+    #[serde(rename = "pressureRange_Pa")]
+    pub pressure_range_pa: [f64; 2],
+    #[serde(rename = "lowerBoundExclusive")]
+    pub lower_bound_exclusive: bool,
+    #[serde(rename = "liquidSuperheatMax_K")]
+    pub liquid_superheat_max_k: f64,
+    #[serde(rename = "vaporSubcoolingMax_K")]
+    pub vapor_subcooling_max_k: f64,
+    #[serde(rename = "trialMax_K")]
+    pub trial_max_k: f64,
+    #[serde(rename = "creditedMax_K")]
+    pub credited_max_k: f64,
+    #[serde(rename = "liquidTemperatureMax_K")]
+    pub liquid_temperature_max_k: f64,
+    #[serde(rename = "liquidPressureCeiling_Pa")]
+    pub liquid_pressure_ceiling_pa: f64,
+    #[serde(rename = "vaporPressureCeiling_Pa")]
+    pub vapor_pressure_ceiling_pa: f64,
+}
+
+/// Where an accepted state lies relative to saturation on its own branch.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub enum Band {
+    /// Saturated, or on the stable side of saturation for its branch.
+    Stable,
+    /// Metastable inside the admitted band; `credited` within `creditedMax_K`.
+    Admitted { credited: bool },
+    /// Metastable beyond the admitted band (reachable only as a trial state).
+    Exceeded,
+}
+/// Signed departure `T - Tsat(p)` of an accepted state on its branch.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct BandReport {
+    pub departure_k: f64,
+    pub band: Band,
 }
 
 pub trait Properties {
@@ -40,6 +84,10 @@ pub trait Properties {
     /// Directional derivative of every field; zero directions return zero.
     fn direction(&self, point: &Self::Caloric, dp: f64, dtarget: f64) -> Result<Water, String>;
     fn saturation(&self, pressure: Scalar) -> Result<Saturation, String>;
+    /// The metastable band this implementation was compiled with.
+    fn metastable_band(&self) -> Result<MetastableBand, String>;
+    /// Band report of an ACCEPTED point; never called inside a residual.
+    fn band(&self, point: &Self::Caloric) -> BandReport;
 }
 
 type Key = (u64, u64, bool);

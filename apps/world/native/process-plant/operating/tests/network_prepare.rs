@@ -5,7 +5,7 @@ use leitbild_operating_plant::{
     hydraulics::{Pump as Impeller, Section, WallLaw},
     local_flow::{MomentumSupport, PressureSegment},
     network::{
-        Failure, Network, Properties, RotorState, Water,
+        Band, BandReport, Failure, MetastableBand, Network, Properties, RotorState, Water,
         packet::*,
         prepare::{OperatingPoint, Settings, prepare},
     },
@@ -124,7 +124,40 @@ impl Properties for Analytic {
             surface_tension: c(4e-3),
         })
     }
+    fn metastable_band(&self) -> Result<MetastableBand, String> {
+        Ok(BAND)
+    }
+    /// The fixture's caloric point carries no branch, so its departure is
+    /// read against the liquid side only; it is never used by these tests.
+    fn band(&self, point: &Water) -> BandReport {
+        let departure_k = point.temperature_k - saturation_temperature(point.pressure_pa);
+        BandReport {
+            departure_k,
+            band: if departure_k <= 0. {
+                Band::Stable
+            } else if departure_k <= BAND.liquid_superheat_max_k {
+                Band::Admitted {
+                    credited: departure_k <= BAND.credited_max_k,
+                }
+            } else {
+                Band::Exceeded
+            },
+        }
+    }
 }
+
+/// Synthetic band shared by the fixture properties and packet.
+const BAND: MetastableBand = MetastableBand {
+    pressure_range_pa: [10e6, 16e6],
+    lower_bound_exclusive: true,
+    liquid_superheat_max_k: 2.,
+    vapor_subcooling_max_k: 1.4,
+    trial_max_k: 3.,
+    credited_max_k: 0.5,
+    liquid_temperature_max_k: 623.15,
+    liquid_pressure_ceiling_pa: 17e6,
+    vapor_pressure_ceiling_pa: 16e6,
+};
 
 const AUTHORED_PA: f64 = 15.6e6;
 const TRACER_PER_KG: f64 = 1e-3;
@@ -258,6 +291,7 @@ fn packet() -> Packet {
                     face: 5,
                     bore_m: 0.25,
                 }],
+                metastable: BAND,
             },
         },
         hydraulics: Hydraulics {
@@ -371,6 +405,9 @@ fn compile_refuses_a_misplaced_pzr_cell_port_or_force() {
         normal: [0., 1.],
     });
     assert!(compile(&force).contains("force projection refuses"));
+    let mut band = packet();
+    band.pzr.cell.metastable.credited_max_k = 0.6;
+    assert!(compile(&band).contains("compiled band"));
     let mut ports = packet();
     let extra = PzrPort {
         id: "PZR.SPRAY".into(),

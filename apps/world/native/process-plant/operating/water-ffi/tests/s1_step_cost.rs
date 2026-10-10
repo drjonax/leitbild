@@ -9,7 +9,8 @@
 #![cfg(all(feature = "ida", target_os = "macos"))]
 use leitbild_operating_plant::{
     network::{
-        Network, Properties, RotorState, SparseJacobian, ToleranceClasses, Water,
+        BandReport, MetastableBand, Network, Properties, RotorState, SparseJacobian,
+        ToleranceClasses, Water,
         packet::Packet,
         prepare::{self, OperatingPoint, Settings},
     },
@@ -124,6 +125,12 @@ impl Properties for Timed {
     }
     fn direction(&self, point: &CaloricLinearization, dp: f64, de: f64) -> Result<Water, String> {
         self.time(|l| &mut l.direction, || If97.direction(point, dp, de))
+    }
+    fn metastable_band(&self) -> Result<MetastableBand, String> {
+        If97.metastable_band()
+    }
+    fn band(&self, point: &CaloricLinearization) -> BandReport {
+        If97.band(point)
     }
     fn saturation(&self, pressure: Scalar) -> Result<Saturation, String> {
         if pressure.direction == 0. {

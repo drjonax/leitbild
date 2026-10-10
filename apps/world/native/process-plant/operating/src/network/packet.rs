@@ -3,6 +3,7 @@
 //!
 //! The TypeScript input compilers own every value; this boundary only
 //! validates shapes. Unknown sibling packet fields belong to other consumers.
+use super::properties::MetastableBand;
 use crate::{
     hydraulics::Section,
     local_flow::{MomentumSupport, PressureSegment},
@@ -118,6 +119,8 @@ pub struct PzrCell {
     #[serde(rename = "fluidVolume_m3")]
     pub fluid_volume_m3: f64,
     pub ports: Vec<PzrPort>,
+    /// Must equal the band compiled into the property implementation.
+    pub metastable: MetastableBand,
 }
 #[derive(Debug, Deserialize)]
 pub struct PzrPort {

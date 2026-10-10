@@ -2,9 +2,9 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#actual-local-pressure-pilot-and-step-work-blocker
 //! Maintained-IF97 implementation of the composed network's property
 //! boundary, and the narrow adapter that hands the network to stock IDA.
-use crate::{Branch, CaloricLinearization, If97, WaterPoint, point};
+use crate::{Branch, CaloricLinearization, If97, MetastableBand as Compiled, WaterPoint, point};
 use leitbild_operating_plant::{
-    network::{Properties, Water},
+    network::{Band, BandReport, MetastableBand, Properties, Water},
     thermal::{Saturation, Scalar, WaterProperties},
 };
 
@@ -63,6 +63,36 @@ impl Properties for If97 {
     }
     fn saturation(&self, pressure: Scalar) -> Result<Saturation, String> {
         WaterProperties::saturation(self, pressure).map_err(|e| e.to_string())
+    }
+    fn metastable_band(&self) -> Result<MetastableBand, String> {
+        let b = Compiled::compiled();
+        let lower_bound_exclusive = match b.lower_bound_exclusive {
+            0 => false,
+            1 => true,
+            other => return Err(format!("compiled band lower-bound flag {other}")),
+        };
+        Ok(MetastableBand {
+            pressure_range_pa: [b.pressure_low_pa, b.pressure_high_pa],
+            lower_bound_exclusive,
+            liquid_superheat_max_k: b.liquid_superheat_max_k,
+            vapor_subcooling_max_k: b.vapor_subcooling_max_k,
+            trial_max_k: b.trial_max_k,
+            credited_max_k: b.credited_max_k,
+            liquid_temperature_max_k: b.liquid_temperature_max_k,
+            liquid_pressure_ceiling_pa: b.liquid_pressure_ceiling_pa,
+            vapor_pressure_ceiling_pa: b.vapor_pressure_ceiling_pa,
+        })
+    }
+    fn band(&self, point: &CaloricLinearization) -> BandReport {
+        let report = point.band();
+        BandReport {
+            departure_k: report.departure_k,
+            band: match report.band {
+                crate::Band::Stable => Band::Stable,
+                crate::Band::Admitted { credited } => Band::Admitted { credited },
+                crate::Band::Exceeded => Band::Exceeded,
+            },
+        }
     }
 }
 
