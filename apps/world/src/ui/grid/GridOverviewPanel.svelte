@@ -148,10 +148,15 @@
     }
   }
 
-  const applyFrame = (next: PanelFrame): void => {
+  const applyFrame = (next: PanelFrame): PanelFrame => {
     const clamped = clampFrame(next)
     frame = clamped
-    persistFrame(clamped)
+    return clamped
+  }
+
+  // A pointer gesture persists its frame once, when it ends; keyboard steps are discrete moves.
+  const applyAndPersistFrame = (next: PanelFrame): void => {
+    persistFrame(applyFrame(next))
   }
 
   const ensureFrame = (): void => {
@@ -194,6 +199,7 @@
     if (!gesture || event.pointerId !== gesture.pointerId) return
     panelElement?.releasePointerCapture(event.pointerId)
     gesture = null
+    if (frame) persistFrame(frame)
   }
 
   const moveFrameByKeyboard = (event: KeyboardEvent): void => {
@@ -201,19 +207,19 @@
     const step = event.shiftKey ? 40 : 12
     if (event.key === 'ArrowLeft') {
       event.preventDefault()
-      applyFrame({ ...frame, left: frame.left - step })
+      applyAndPersistFrame({ ...frame, left: frame.left - step })
     }
     if (event.key === 'ArrowRight') {
       event.preventDefault()
-      applyFrame({ ...frame, left: frame.left + step })
+      applyAndPersistFrame({ ...frame, left: frame.left + step })
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      applyFrame({ ...frame, top: frame.top - step })
+      applyAndPersistFrame({ ...frame, top: frame.top - step })
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      applyFrame({ ...frame, top: frame.top + step })
+      applyAndPersistFrame({ ...frame, top: frame.top + step })
     }
   }
 
@@ -399,11 +405,11 @@
     display: flex;
     overflow: hidden;
     flex-direction: column;
-    color: #0f172a;
-    background: rgba(248, 250, 252, 0.94);
-    border: 1px solid rgba(148, 163, 184, 0.55);
+    /* Opaque theme surface: a backdrop blur over the live map is recomputed on every map frame. */
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--border);
     box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
-    backdrop-filter: blur(14px);
     border-radius: 6px;
     padding: 16px;
     box-sizing: border-box;
@@ -425,12 +431,6 @@
   .panel-navigation label { display: flex; align-items: center; gap: 5px; color: #64748b; font-size: 10px; }
   .panel-navigation select { max-width: 180px; padding: 4px 6px; color: inherit; border: 1px solid rgba(148, 163, 184, .4); border-radius: 4px; background: transparent; font: inherit; }
   .summary-view { min-height: 0; overflow: auto; }
-
-  :global(.dark) .grid-overview {
-    color: #e5e7eb;
-    background: rgba(15, 23, 42, 0.92);
-    border-color: rgba(71, 85, 105, 0.85);
-  }
 
   .overview-titlebar {
     display: flex;

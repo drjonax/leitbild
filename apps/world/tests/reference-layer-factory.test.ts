@@ -1,19 +1,34 @@
 import { describe, expect, test } from 'bun:test'
-import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
-import { gridNorwayStyleModule } from '../src/packs/electric-grid/ui/grid-norway-style.ts'
+import type { PackReferenceDatasetStyle } from '../src/core/packs/reference-style.ts'
 import {
   buildReferenceDatasetLayers,
   __internals,
   type DatasetManifestForLayers,
-  type DatasetStyleModule,
 } from '../src/ui/map/reference-layer-factory.ts'
 
-const testStyle: DatasetStyleModule = {
+const testStyle: PackReferenceDatasetStyle = {
+  datasetId: 'reference-areas',
   outputLayer: 'areas',
-  fillFor: () => ({ 'fill-color': '#345', 'fill-opacity': 0.2 }),
-  lineFor: () => ({ 'line-color': '#345', 'line-width': 1 }),
-  pointFor: category => category === 'landmark' ? { paint: { 'circle-radius': 4, 'circle-color': '#345' } } : null,
-  labelFor: category => category === 'landmark' ? { layout: { 'text-field': ['get', 'name'] }, paint: {} } : null,
+  categories: ['area', 'landmark'],
+  layersFor: ({ theme }) => [{
+    id: 'areas:fill',
+    type: 'fill',
+    filter: ['all', ['==', ['geometry-type'], 'Polygon'], ['==', ['get', 'category'], 'area']],
+    paint: { 'fill-color': theme === 'dark' ? '#223344' : '#ccddee' },
+  }, {
+    id: 'landmarks:point',
+    type: 'circle',
+    minzoom: 8,
+    filter: ['all', ['==', ['geometry-type'], 'Point'], ['==', ['get', 'category'], 'landmark']],
+    paint: { 'circle-radius': 4, 'circle-color': '#345678' },
+  }, {
+    id: 'landmarks:label',
+    type: 'symbol',
+    minzoom: 10,
+    filter: ['==', ['get', 'category'], 'landmark'],
+    layout: { 'text-field': ['get', 'name'] },
+    paint: {},
+  }],
 }
 
 const baseManifest: DatasetManifestForLayers = {
@@ -24,188 +39,88 @@ const baseManifest: DatasetManifestForLayers = {
     outputLayer: 'areas',
   },
   categories: [
-    { category: 'area-a', minZoom: 6, maxZoom: 14, featureCount: 8 },
-    { category: 'area-b', minZoom: 8, maxZoom: 14, featureCount: 4 },
-    { category: 'landmark', minZoom: 6, maxZoom: 14, featureCount: 42 },
+    { category: 'area', minZoom: 6, maxZoom: 14, featureCount: 8 },
+    { category: 'landmark', minZoom: 7, maxZoom: 13, featureCount: 42 },
+    { category: 'empty', minZoom: 2, maxZoom: 14, featureCount: 0 },
   ],
   licences: [
     { id: 'cc-by-nc-sa-4.0', attribution: '© Map dataset A contributors · CC BY-NC-SA 4.0' },
     { id: 'nlod-2.0', attribution: '© Map dataset B · NLOD 2.0' },
+    { id: 'nlod-2.0', attribution: '© Map dataset B · NLOD 2.0' },
   ],
 }
 
-const expressionContains = (value: unknown, token: string): boolean =>
-  Array.isArray(value)
-    ? value.some(item => expressionContains(item, token))
-    : value === token
-
-const validateMapLibrePaint = (
-  type: 'line' | 'circle',
-  paint: Record<string, unknown>,
-): ReadonlyArray<string> => {
-  const errors = validateStyleMin({
-    version: 8,
-    sources: {
-      reference: {
-        type: 'vector',
-        tiles: ['/test/{z}/{x}/{y}.mvt'],
-      },
-    },
-    layers: [{
-      id: 'reference-test',
-      type,
-      source: 'reference',
-      'source-layer': 'grid',
-      paint,
-    }],
-  })
-  return errors.map(error => error.message)
-}
-
 describe('buildReferenceDatasetLayers', () => {
-  test('emits one fill + one line per category, in deterministic order', () => {
-    const built = buildReferenceDatasetLayers(baseManifest, testStyle)
-    const ids = built.layers.map(l => l.id)
-    expect(ids).toContain('reference:reference-areas:area-a:fill')
-    expect(ids).toContain('reference:reference-areas:area-a:line')
-    expect(ids).toContain('reference:reference-areas:area-b:fill')
-    expect(ids).toContain('reference:reference-areas:area-b:line')
-    // Fill layers come before line layers (deterministic ordering for paint stack).
-    const areaAFill = ids.indexOf('reference:reference-areas:area-a:fill')
-    const areaALine = ids.indexOf('reference:reference-areas:area-a:line')
-    expect(areaAFill).toBeLessThan(areaALine)
+  test('publishes the Pack layers in paint order under dataset-scoped ids', () => {
+    const built = buildReferenceDatasetLayers(baseManifest, testStyle, { theme: 'light' })
+    expect(built.layers.map(layer => layer.id)).toEqual([
+      'reference:reference-areas:areas:fill',
+      'reference:reference-areas:landmarks:point',
+      'reference:reference-areas:landmarks:label',
+    ])
+    for (const layer of built.layers) {
+      expect(layer.source).toBe('reference:reference-areas')
+      expect(layer['source-layer']).toBe('areas')
+      expect(layer.layout.visibility).toBe('visible')
+    }
+    expect(built.layers[2]!.layout['text-field']).toEqual(['get', 'name'])
   })
 
-  test('landmark category emits point + label layers', () => {
-    const built = buildReferenceDatasetLayers(baseManifest, testStyle)
-    const ids = built.layers.map(l => l.id)
-    expect(ids).toContain('reference:reference-areas:landmark:point')
-    expect(ids).toContain('reference:reference-areas:landmark:label')
+  test('passes the map appearance to the Pack style', () => {
+    const light = buildReferenceDatasetLayers(baseManifest, testStyle, { theme: 'light' })
+    const dark = buildReferenceDatasetLayers(baseManifest, testStyle, { theme: 'dark' })
+    expect(light.layers[0]!.paint['fill-color']).toBe('#ccddee')
+    expect(dark.layers[0]!.paint['fill-color']).toBe('#223344')
   })
 
-  test('non-landmark categories do not emit point/label layers', () => {
-    const built = buildReferenceDatasetLayers(baseManifest, testStyle)
-    expect(built.layers.find(l => l.id === 'reference:reference-areas:area-a:point')).toBeUndefined()
-    expect(built.layers.find(l => l.id === 'reference:reference-areas:area-b:label')).toBeUndefined()
+  test('keeps Pack minzoom and never limits layers with maxzoom', () => {
+    const built = buildReferenceDatasetLayers(baseManifest, testStyle, { theme: 'light' })
+    expect(built.layers.map(layer => layer.minzoom)).toEqual([undefined, 8, 10])
+    for (const layer of built.layers) expect('maxzoom' in layer).toBe(false)
   })
 
-  test('source tiles use plain HTTP MVT templates', () => {
-    const built = buildReferenceDatasetLayers(baseManifest, testStyle)
+  test('source spans the populated categories and overzooms past the archive', () => {
+    const built = buildReferenceDatasetLayers(baseManifest, testStyle, { theme: 'light' })
     expect(built.sourceId).toBe('reference:reference-areas')
-    expect(built.source.tiles).toEqual(['/map/datasets/reference-areas/current/reference-areas/{z}/{x}/{y}.mvt'])
-    expect(built.source.minzoom).toBe(6)
-    expect(built.source.maxzoom).toBe(14)
-    expect(built.source.type).toBe('vector')
+    expect(built.source).toEqual({
+      type: 'vector',
+      tiles: ['/map/datasets/reference-areas/current/reference-areas/{z}/{x}/{y}.mvt'],
+      minzoom: 6,
+      maxzoom: 14,
+      attribution: '© Map dataset A contributors · CC BY-NC-SA 4.0 • © Map dataset B · NLOD 2.0',
+    })
   })
 
-  test('source attribution composes all licences', () => {
-    const built = buildReferenceDatasetLayers(baseManifest, testStyle)
-    expect(built.source.attribution).toContain('Map dataset A')
-    expect(built.source.attribution).toContain('Map dataset B')
-    expect(built.source.attribution).toContain(' • ')
+  test('rejects a style written for another dataset or tile layer', () => {
+    expect(() => buildReferenceDatasetLayers({ ...baseManifest, datasetId: 'other' }, testStyle, { theme: 'light' }))
+      .toThrow('cannot draw dataset other')
+    expect(() => buildReferenceDatasetLayers({ ...baseManifest, artifact: { ...baseManifest.artifact, outputLayer: 'zones' } }, testStyle, { theme: 'light' }))
+      .toThrow('build wrote "zones"')
   })
 
-  test('layers carry per-category zoom hints from the manifest', () => {
-    const built = buildReferenceDatasetLayers(baseManifest, testStyle)
-    const areaAFill = built.layers.find(l => l.id === 'reference:reference-areas:area-a:fill')!
-    expect(areaAFill.minzoom).toBe(6)
-    expect(areaAFill.maxzoom).toBe(14)
-  })
-
-  test('filter on category property', () => {
-    const built = buildReferenceDatasetLayers(baseManifest, testStyle)
-    const areaAFill = built.layers.find(l => l.id === 'reference:reference-areas:area-a:fill')!
-    expect(areaAFill.filter).toEqual(['==', ['get', 'category'], 'area-a'])
-  })
-
-  test('unknown category falls back to default style without throwing', () => {
+  test('rejects published categories the style does not draw, ignoring empty ones', () => {
     const manifest: DatasetManifestForLayers = {
       ...baseManifest,
-      categories: [{ category: 'something-novel', minZoom: 5, maxZoom: 12, featureCount: 1 }],
+      categories: [...baseManifest.categories, { category: 'novel', minZoom: 5, maxZoom: 12, featureCount: 3 }],
     }
-    const built = buildReferenceDatasetLayers(manifest, testStyle)
-    expect(built.layers.length).toBeGreaterThan(0)
-    const fill = built.layers.find(l => l.id.endsWith(':something-novel:fill'))!
-    expect(fill.paint).toBeDefined()
+    expect(() => buildReferenceDatasetLayers(manifest, testStyle, { theme: 'light' })).toThrow('does not draw published categories: novel')
   })
 
-  test('layer ids never collide across categories', () => {
-    const manifest: DatasetManifestForLayers = {
-      ...baseManifest,
-      categories: [
-        { category: 'a', minZoom: 4, maxZoom: 12, featureCount: 1 },
-        { category: 'b', minZoom: 4, maxZoom: 12, featureCount: 1 },
-        { category: 'c', minZoom: 4, maxZoom: 12, featureCount: 1 },
-      ],
-    }
-    const built = buildReferenceDatasetLayers(manifest, testStyle)
-    const ids = built.layers.map(l => l.id)
-    expect(new Set(ids).size).toBe(ids.length)
+  test('rejects a dataset without features and duplicate layer ids', () => {
+    const empty: DatasetManifestForLayers = { ...baseManifest, categories: [{ category: 'area', minZoom: 4, maxZoom: 14, featureCount: 0 }] }
+    expect(() => buildReferenceDatasetLayers(empty, testStyle, { theme: 'light' })).toThrow('publishes no features')
+    const duplicated: PackReferenceDatasetStyle = { ...testStyle, layersFor: appearance => [...testStyle.layersFor(appearance), testStyle.layersFor(appearance)[0]!] }
+    expect(() => buildReferenceDatasetLayers(baseManifest, duplicated, { theme: 'light' })).toThrow('declares layer reference:reference-areas:areas:fill twice')
   })
 })
 
 describe('reference-layer-factory internals', () => {
-  test('layerIdFor encodes dataset + category + kind', () => {
-    expect(__internals.layerIdFor('reference-areas', 'area-a', 'fill')).toBe('reference:reference-areas:area-a:fill')
+  test('layer ids are dataset-scoped Pack layer ids', () => {
+    expect(__internals.layerIdFor('reference-areas', 'areas:fill')).toBe('reference:reference-areas:areas:fill')
+    expect(__internals.sourceIdFor('reference-areas')).toBe('reference:reference-areas')
   })
 
   test('sourceTilesFor builds the API-served MVT tile template', () => {
     expect(__internals.sourceTilesFor('foo', 'foo.pmtiles')).toEqual(['/map/datasets/foo/current/foo/{z}/{x}/{y}.mvt'])
-  })
-
-  test('categoryFilter is the canonical MapLibre expression', () => {
-    expect(__internals.categoryFilter('exclusion')).toEqual(['==', ['get', 'category'], 'exclusion'])
-  })
-})
-
-describe('grid-norway style module', () => {
-  test('line and cable categories render as lines without point symbols', () => {
-    expect(gridNorwayStyleModule.lineFor('line')['line-color']).toBeDefined()
-    expect(gridNorwayStyleModule.lineFor('cable')['line-dasharray']).toEqual([4, 2])
-    expect(gridNorwayStyleModule.pointFor?.('line')).toBeNull()
-    expect(gridNorwayStyleModule.pointFor?.('cable')).toBeNull()
-  })
-
-  test('substations and plants render as point and label layers', () => {
-    expect(gridNorwayStyleModule.pointFor?.('substation')).not.toBeNull()
-    expect(gridNorwayStyleModule.labelFor?.('substation')).not.toBeNull()
-    expect(gridNorwayStyleModule.pointFor?.('plant')).not.toBeNull()
-    expect(gridNorwayStyleModule.labelFor?.('plant')).not.toBeNull()
-  })
-
-  test('grid labels show named high-voltage sites without falling back to raw OSM ids', () => {
-    const label = gridNorwayStyleModule.labelFor?.('substation')
-    expect(label?.layout?.['text-field']).toEqual([
-      'case',
-      ['all', ['>=', ['coalesce', ['get', 'maxVoltageKv'], 0], 300], ['has', 'name']],
-      ['get', 'name'],
-      '',
-    ])
-    expect(label?.layout?.['text-font']).toEqual(['Noto Sans Regular'])
-  })
-
-  test('grid opacity expressions are valid MapLibre style expressions', () => {
-    const linePaint = gridNorwayStyleModule.lineFor('line')
-    const substationPaint = gridNorwayStyleModule.pointFor?.('substation')?.paint
-    const transformerPaint = gridNorwayStyleModule.pointFor?.('transformer')?.paint
-
-    expect(expressionContains(linePaint['line-opacity'], 'zoom')).toBe(true)
-    expect(validateMapLibrePaint('line', linePaint)).toEqual([])
-    expect(validateMapLibrePaint('circle', substationPaint ?? {})).toEqual([])
-    expect(validateMapLibrePaint('circle', transformerPaint ?? {})).toEqual([])
-  })
-})
-
-describe('style module abstraction', () => {
-  test('factory accepts any DatasetStyleModule', () => {
-    const minimalStyle: DatasetStyleModule = {
-      outputLayer: 'areas',
-      fillFor: () => ({ 'fill-color': '#000', 'fill-opacity': 0.1 }),
-      lineFor: () => ({ 'line-color': '#000', 'line-width': 1 }),
-    }
-    const built = buildReferenceDatasetLayers(baseManifest, minimalStyle)
-    // No point/label layers since the minimal style omits those callbacks.
-    expect(built.layers.find(l => l.type === 'circle')).toBeUndefined()
-    expect(built.layers.find(l => l.type === 'symbol')).toBeUndefined()
   })
 })

@@ -40,7 +40,8 @@ import {
   type ComposedPanelShape,
   type ComposedPanelSize,
 } from './composition.ts'
-import { displayValue, formatQuantity, marginText, nearestThresholdMargin, thresholdName, trendSpanMs, unitLabel, type ThresholdMargin } from './display-text.ts'
+import { displayValue, formatQuantity, isPast, nearestThresholdMargin, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
+import { appendPoint, COMPARISON_HISTORY_MS, limitsInForce, limitStateText, rateWindowMs, readingLookBackMs, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
@@ -1036,7 +1037,7 @@ const signalName = (pen: ComposedDisplayPen): string => `${pen.name} (${pen.tagI
 // Lines are named as the display labels them ("LO ALM 30 %"), so an answer
 // can refer to them by the same name.
 const thresholdText = (threshold: ComposedTrendThreshold, unit: ProcessUnit): string =>
-  `${threshold.kind === 'control' ? `I&C control set point marked on the axis: ${threshold.label}` : `"${thresholdName(threshold, unit)}" ${threshold.kind} line: ${threshold.label}`}, acts ${operatorText[threshold.operator]} ${threshold.value} ${unit} for ${threshold.signals.join(', ')}${threshold.modeLabel === undefined ? '' : ` (only in ${threshold.modeLabel})`}`
+  `${threshold.kind === 'control' ? `I&C control set point marked on the axis: ${threshold.label}` : `"${thresholdName(threshold, unit)}" ${threshold.kind} line: ${threshold.label}`}, acts ${operatorText[threshold.operator]} ${threshold.value} ${unit} for ${threshold.signals.join(', ')}${threshold.modeLabel === undefined ? '' : ` (only in ${threshold.modeLabel})`}${threshold.gatedBy === undefined ? '' : ` (only while ${threshold.gatedBy.join(' and ')})`}`
 
 /** How each requested reference resolved, so the agent learns exact tags, paths and units. */
 export const composedDisplaySignals = (display: CompiledComposedDisplay): ReadonlyArray<{
@@ -1099,36 +1100,149 @@ export const composedDisplayShows = (display: CompiledComposedDisplay, historyMs
 })
 
 /**
- * Each displayed numeric signal's nearest alarm or trip limit now, worded as
- * the display words it, nearest first relative to the limit. The answer's
- * "what to watch" should start from these, not from a limit the signal is
- * moving away from.
+ * What a composed display reads as it opens: each value now, the Plant's
+ * mode and active rules (which limits act), and the recorded history of a
+ * signal it draws over time. The history is the Run's: the newest samples of
+ * a series between two Run times, up to a limit, oldest first.
  */
-export const composedDisplayMargins = (
-  display: CompiledComposedDisplay,
-  read: (path: VariablePath) => unknown,
-): ReadonlyArray<string> => rankedMargins(display, read).map(entry => entry.text)
+export interface ComposedDisplayNow {
+  readonly read: (path: VariablePath) => unknown
+  /** The Run time the display opens at, in epoch milliseconds. */
+  readonly simulationMs: number
+  readonly mode: PlantModeNow
+  readonly activeRuleIds: ReadonlySet<string>
+  readonly history: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => ReadonlyArray<TrendPoint>
+}
 
 /** Each signal the view shows once, in display order. */
 const shownPens = (display: CompiledComposedDisplay): ReadonlyArray<ComposedDisplayPen> =>
   [...new Map(display.panels.flatMap(composedPanelPens).map(pen => [pen.path, pen])).values()]
 
-// Past a trip limit first, then past an alarm limit, then nearest relative
-// to the limit: the first is what the display leads with.
-const passedRank = (margin: ThresholdMargin): number => margin.margin >= 0 ? 2 : margin.threshold.kind === 'trip' ? 0 : 1
-const rankedMargins = (
-  display: CompiledComposedDisplay,
-  read: (path: VariablePath) => unknown,
-): ReadonlyArray<{ readonly pen: ComposedDisplayPen; readonly text: string }> => shownPens(display)
-  .flatMap(pen => {
-    const value = read(pen.path)
-    if (typeof value !== 'number') return []
-    const margin = nearestThresholdMargin(value, pen.thresholds)
-    if (margin === null) return []
-    const relative = margin.margin / Math.max(Math.abs(margin.threshold.value), Number.EPSILON)
-    return [{ pen, rank: passedRank(margin), relative, text: `${pen.name}: ${formatQuantity(value, pen.unit)}, ${marginText(margin, pen.unit)}` }]
+/**
+ * Where the display states a signal's limit and rate: a trend strip's legend
+ * (rate over the trend's horizon, the limit ahead in words); a legend row of
+ * a trended signal the Run does not record (no rate, the nearest limit in
+ * words); a comparison row (rate over ten minutes, limits drawn as lines); or
+ * a readout (the nearest limit's margin). A legend takes precedence where a
+ * signal is in more than one panel.
+ */
+type PenView =
+  | { readonly kind: 'legend'; readonly horizonMs: number }
+  | { readonly kind: 'live' }
+  | { readonly kind: 'comparison'; readonly horizonMs: number }
+  | { readonly kind: 'readout' }
+
+const penView = (display: CompiledComposedDisplay, pen: ComposedDisplayPen): PenView => {
+  const trends = display.panels.filter((panel): panel is ComposedTrendPanel => panel.kind === 'trend')
+  const legend = trends.find(panel => panel.strips.some(strip => strip.pens.some(candidate => candidate.path === pen.path)))
+  if (legend !== undefined) return { kind: 'legend', horizonMs: legend.horizonMs }
+  if (trends.some(panel => panel.live.some(candidate => candidate.path === pen.path))) return { kind: 'live' }
+  const compared = display.panels.some(panel => panel.kind === 'comparison' && panel.pens.some(candidate => candidate.path === pen.path))
+  return compared ? { kind: 'comparison', horizonMs: COMPARISON_HISTORY_MS } : { kind: 'readout' }
+}
+
+interface PenReading {
+  readonly pen: ComposedDisplayPen
+  readonly value: number
+  readonly reading: TrendReading
+  /** Whether a trend legend words its limit, so the limit it names is the one ahead. */
+  readonly legend: boolean
+  readonly text: string
+  /** Its order in what the display leads with; null where it names no limit. */
+  readonly rank: { readonly order: number; readonly by: number } | null
+}
+
+/**
+ * The recorded history a reading over the window needs, as the display's
+ * whole window would give it: the samples within its look-back and the
+ * newest one before them (readingLookBackMs). Two small reads, however long
+ * the trend's horizon and the Run.
+ */
+const historyForReading = (now: ComposedDisplayNow, seriesId: string, windowStart: number, windowMs: number): ReadonlyArray<TrendPoint> => {
+  const recentFrom = Math.max(windowStart, now.simulationMs - readingLookBackMs(windowMs))
+  const recent = now.history(seriesId, { from: recentFrom, to: now.simulationMs }, TREND_HISTORY_LIMIT)
+  return recentFrom <= windowStart ? recent : [...now.history(seriesId, { from: windowStart, to: recentFrom - 1 }, 1), ...recent]
+}
+
+/**
+ * Each shown value read as the display reads it on opening: its recorded
+ * history up to now and the value now, through the legend's own functions
+ * (trend-reading.ts), worded as its panel words it. Recorded history is read
+ * only for signals drawn over time, and only what their reading needs.
+ */
+const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ReadonlyArray<PenReading> => shownPens(display).flatMap(pen => {
+  const value = now.read(pen.path)
+  if (typeof value !== 'number') return []
+  const view = penView(display, pen)
+  const overTime = view.kind === 'legend' || view.kind === 'comparison' ? view : null
+  const windowStart = overTime === null ? now.simulationMs : now.simulationMs - overTime.horizonMs
+  const windowMs = rateWindowMs(overTime?.horizonMs ?? COMPARISON_HISTORY_MS)
+  const history = overTime === null || !pen.recorded ? [] : historyForReading(now, pen.seriesId, windowStart, windowMs)
+  const reading = trendReading({
+    value,
+    points: overTime === null ? null : appendPoint(history, { t: now.simulationMs, v: value }, windowStart),
+    windowMs,
+    unit: pen.unit,
+    thresholds: pen.thresholds,
+    mode: now.mode,
+    activeRuleIds: now.activeRuleIds,
   })
-  .sort((left, right) => left.rank - right.rank || left.relative - right.relative)
+  // A legend words every state of its limits; a readout and a comparison show only a margin to one, in words or as lines.
+  const worded = view.kind === 'legend' || view.kind === 'live' || reading.limit?.kind === 'margin'
+  const limit = reading.limit === null || !worded ? '' : limitStateText(reading.limit, pen.unit)
+  const travel = travelText(reading.rate, value, pen.unit, reading.change)
+  if (limit === '' && travel === '') return []
+  // The alarm chip beside the value names the active limit, where the words do not say it is past one.
+  const saysPast = worded && reading.limit?.kind === 'margin' && isPast(reading.limit.margin)
+  const chip = reading.inAlarm === null || saysPast ? '' : `in ${thresholdName(reading.inAlarm, pen.unit)}`
+  return [{
+    pen,
+    value,
+    reading,
+    legend: view.kind === 'legend',
+    text: [`${pen.name}: ${formatQuantity(value, pen.unit)}`, travel, chip, limit].filter(part => part !== '').join(', '),
+    rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode, now.activeRuleIds)),
+  }]
+})
+
+// The shortest projected time to a limit first; then past a trip limit, past
+// an alarm limit, and nearest relative to the limit it names: the first is
+// what the display leads with.
+const penRank = (value: number, reading: TrendReading, inForce: ReadonlyArray<ComposedDisplayThreshold>): PenReading['rank'] => {
+  const limit = reading.limit
+  if (limit?.kind === 'margin' && limit.minutes !== null) return { order: 0, by: limit.minutes }
+  const nearest = nearestThresholdMargin(value, inForce)
+  if (nearest !== null && isPast(nearest)) return { order: nearest.threshold.kind === 'trip' ? 1 : 2, by: 0 }
+  if (limit?.kind !== 'margin') return null
+  return { order: 3, by: limit.margin.margin / Math.max(Math.abs(limit.margin.threshold.value), Number.EPSILON) }
+}
+
+/** How a display reads as it opens: the values now and each signal's reading, in the order it leads with them. */
+export interface ComposedDisplayReading {
+  readonly now: ComposedDisplayNow
+  readonly readings: ReadonlyArray<PenReading>
+}
+
+/** Reads a display once as it opens; its margins and view content are stated from this. */
+export const readComposedDisplay = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ComposedDisplayReading => {
+  const readings = penReadings(display, now)
+  const ranked = readings.filter(entry => entry.rank !== null)
+    .sort((left, right) => left.rank!.order - right.rank!.order || left.rank!.by - right.rank!.by)
+  return { now, readings: [...ranked, ...readings.filter(entry => entry.rank === null)] }
+}
+
+/**
+ * Each displayed numeric signal as the display states it: its value, which
+ * way it is going and how fast over the legend's window, and the limit the
+ * legend names (the one ahead in its direction of travel, with the time to it
+ * or "approaching, not projected"; the nearest for a value shown now only).
+ * The shortest time to a limit first, then values past a trip or alarm limit,
+ * then the nearest; the first is what the display leads with. The answer's
+ * "what to watch" should start from these, not from a limit the signal is
+ * moving away from.
+ */
+export const composedDisplayMargins = (reading: ComposedDisplayReading): ReadonlyArray<string> =>
+  reading.readings.map(entry => entry.text)
 
 /** A native value as the view shows it, to six digits, or nothing for a state. */
 export const shownQuantity = (value: number, unit: string): EmbeddedViewContent['items'][number]['values'] =>
@@ -1138,34 +1252,56 @@ const penNames = (pen: ComposedDisplayPen): Array<string> =>
   [...new Set([pen.name, ...(pen.tagId === undefined ? [] : [pen.tagId]), String(pen.path), pen.label, pen.described])]
 
 /**
+ * How the view shows a signal moving: its rate and direction; and where its
+ * trend legend names the limit ahead (not yet passed), that limit and the
+ * projected time to it.
+ */
+const travelContent = (entry: PenReading | undefined): Pick<EmbeddedViewContent['items'][number], 'trend' | 'limitAhead' | 'timeToLimitMs'> => {
+  if (entry === undefined) return {}
+  const { pen, reading } = entry
+  const unit = unitLabel(pen.unit)
+  const trend = reading.travel === null || reading.rate === null ? {} : { trend: { rate: Number(displayValue(reading.rate, pen.unit).toPrecision(6)), unit, direction: reading.travel } }
+  const limit = reading.limit
+  if (!entry.legend || limit?.kind !== 'margin' || isPast(limit.margin)) return trend
+  const threshold = limit.margin.threshold
+  return {
+    ...trend,
+    limitAhead: { name: thresholdName(threshold, pen.unit), value: displayValue(threshold.value, pen.unit), unit },
+    ...(limit.minutes === null ? {} : { timeToLimitMs: Math.max(1, Math.round(limit.minutes * 60_000)) }),
+  }
+}
+
+/**
  * What the view shows in the terms an answer may cite (the contract's
- * embedded view content): each signal with its current value and limits, the
- * equipment its mimics draw (from the caller, which reads their states), the
- * related or plant alarms, how far back the trend reaches now, and the signal
- * the display leads with, which the answer must name.
+ * embedded view content): each signal with its current value, limits, rate
+ * and direction and the limit ahead of it, the equipment its mimics draw
+ * (from the caller, which reads their states), the related or plant alarms,
+ * how far back the trend reaches now, and the signal the display leads with,
+ * which the answer must name.
  */
 export const composedDisplayContent = (
   display: CompiledComposedDisplay,
-  read: (path: VariablePath) => unknown,
+  { now, readings }: ComposedDisplayReading,
   historyMs: number,
   equipment: EmbeddedViewContent['items'],
 ): EmbeddedViewContent => {
   const pens = shownPens(display)
   const trended = new Set(display.panels.flatMap(panel => panel.kind === 'trend' ? panel.strips.flatMap(strip => strip.pens.filter(pen => pen.recorded).map(pen => pen.path)) : []))
   const items = pens.map(pen => {
-    const value = read(pen.path)
+    const value = now.read(pen.path)
     return {
       names: penNames(pen),
       values: typeof value === 'number' ? shownQuantity(value, pen.unit) : [],
       limits: pen.thresholds.flatMap(threshold => shownQuantity(threshold.value, pen.unit)),
       history: trended.has(pen.path),
+      ...travelContent(readings.find(entry => entry.pen.path === pen.path)),
     }
   })
   const alarms = display.panels.flatMap(panel => panel.kind === 'alarms' && (panel.scope === 'plant' || panel.ruleIds.length > 0)
     ? [{ names: [panel.scope === 'plant' ? 'Active alarms and trips of the Plant' : 'Active alarms and trips of the displayed signals and equipment'], values: [], limits: [], history: false }]
     : [])
   const trend = display.panels.find(panel => panel.kind === 'trend')
-  const lead = rankedMargins(display, read)[0]
+  const lead = readings[0]?.rank === null ? undefined : readings[0]
   return {
     items: [...items, ...equipment, ...alarms],
     span: trend === undefined ? null : { shownMs: trendSpanMs(trend.horizonMs, historyMs), horizonMs: trend.horizonMs },

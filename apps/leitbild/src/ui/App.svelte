@@ -8,6 +8,7 @@
     type ResourceSummaryItem,
     type Workspace,
     type ModuleQueryOutcome,
+    type WorkspaceResourceReference,
     type WorkspaceSubjectReference,
   } from '@leitbild/contracts'
   import JsonTree from './JsonTree.svelte'
@@ -20,7 +21,7 @@
   import RunRoomControls from './RunRoomControls.svelte'
   import { request, jsonRequest } from './api.ts'
   import { cardCapability } from './card-actions.ts'
-  import { roomScopeIncludingRun, roomSelectsRun, roomUsesFamily, runFamilyFor } from './run-room-scope.ts'
+  import { roomScopeIncludingRun, roomSelectsRun, roomUsesFamily, runFamilyFor, sameResource } from './run-room-scope.ts'
 
   type Page = { readonly kind: 'list' } | { readonly kind: 'workspace'; readonly id: string }
   interface InvocationResponse {
@@ -325,6 +326,22 @@
     else history.pushState(null, '', url)
   }
 
+  // The process display window opens a chat display's Run beside the chat only
+  // when this Workspace lists it, reading the catalog again on a miss (an agent
+  // may just have started the Run), and when the shown room's scope contains it,
+  // so opening the Run never closes the chat the display was opened from.
+  const runRefusal = async (run: WorkspaceResourceReference): Promise<string | null> => {
+    const listed = (): ModuleResourceDescriptor | undefined =>
+      resources.find(resource => resource.ref.type === 'world.simulation-run' && sameResource(resource.ref, run))
+    if (listed() === undefined && workspace) await refreshResources(workspace.id)
+    const found = listed()
+    if (found === undefined) return 'The display\'s Run is not in this Workspace'
+    if (selectedAgentsResource && !roomSelectsRun(selectedAgentsResource, found)) {
+      return 'The display\'s Run is outside this room\'s scope; open the Run to see the display'
+    }
+    return null
+  }
+
   const closeWorldRun = (): void => {
     location.href = workspace ? `/workspaces/${encodeURIComponent(workspace.id)}` : '/workspaces'
   }
@@ -517,6 +534,7 @@
               currentRun={selectedWorldResource}
               rooms={applicableRunRooms}
               activeRoomId={selectedAgentsRoomId}
+              activeRoom={selectedAgentsResource}
               {capabilities}
               onRoomSelected={selectRunRoom}
               onChanged={refreshAndSelectRunRoom}
@@ -556,7 +574,8 @@
     {#each catalogFailures as outcome (outcome.moduleId)}{#if outcome.status === 'failed'}<p class="notice error" role="alert">{moduleTitles[outcome.moduleId]}: {outcome.failure.message}</p>{/if}{/each}
     {#if refreshError}<p class="notice error" role="alert">Catalog refresh failed: {refreshError}</p>{/if}
     {#if showingComposer}
-    <WorkspaceComposer workspaceId={workspace.id} worldRunId={selectedWorldRunId} {focusedSubjects} agentsRoomId={selectedAgentsRoomId} {agentsVisible} onShowAgents={showRunAssistant} />
+    <WorkspaceComposer workspaceId={workspace.id} worldRunId={selectedWorldRunId} {focusedSubjects} agentsRoomId={selectedAgentsRoomId} {agentsVisible} onShowAgents={showRunAssistant}
+      {runRefusal} onOpenRun={runId => switchWorldRun(runId)} onError={message => { error = message }} />
     {:else}
       <section class="workspace-home">
         {#if error}<p class="notice error">{error}</p>{/if}
@@ -618,7 +637,7 @@
       </section>
     {/if}
 
-    {#if error && showingComposer}<p class="workspace-error">{error}</p>{/if}
+    {#if error && showingComposer}<p class="workspace-error" role="alert">{error}<button type="button" aria-label="Dismiss" onclick={() => { error = null }}>×</button></p>{/if}
     <dialog class="inspection-dialog" bind:this={inspectionDialog}>
       <header>
         <div><p class="eyebrow">{inspectionSubject?.kind === 'definition' ? 'Reusable definition' : 'Live resource'}</p><h2>{inspectionView?.title ?? inspectionSubject?.descriptor.title ?? 'Inspect'}</h2>{#if inspectionView?.description}<p>{inspectionView.description}</p>{/if}</div>

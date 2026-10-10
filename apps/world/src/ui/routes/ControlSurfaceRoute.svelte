@@ -1,6 +1,7 @@
 <script lang="ts">
   import { packDataChangedSchema } from '../../core/packs/protocol.ts'
   import type { MapView } from '../map-view.ts'
+  import type { EmbeddedViewListing } from '@leitbild/contracts'
   import type { Component } from 'svelte'
   import { tick, untrack } from 'svelte'
   import type {
@@ -53,6 +54,8 @@
   import ScenarioGuidance from '../ScenarioGuidance.svelte'
   import StartupModal from '../StartupModal.svelte'
   import { processPlantIdForObject, type ProcessPlantArtifactKind } from '../process-display/process-display-client.ts'
+  import type { DeckRunJoin, DisplayWindowRequest, DisplayWindowTarget } from '../process-display/display-deck.ts'
+  import { displayWindowReadyMessage, readDisplayWindowHostMessage } from '../process-display/display-window-messages.ts'
   import { createProcedureSession, type ProcedureSession } from '../procedures/procedure-session.ts'
   import {
     procedureRunSummariesForScope,
@@ -98,12 +101,9 @@
   const emptyStringArray: ReadonlyArray<string> = []
   const emptyMapLayerGroups: NonNullable<PackPresentationContribution['mapLayerGroups']> = []
   const emptyMapFeatureLayers: NonNullable<PackPresentationContribution['mapFeatureLayers']> = []
-  const emptyProcedureRunSummaries: ProcedureRunSummaryGroup = { active: [], completed: [] }
-
-  interface ProcessDisplayWindowEntry {
-    readonly id: string
-    readonly objectId: ObjectId
-  }
+  const emptyReferenceStyles: NonNullable<PackPresentationContribution['referenceStyles']> = []
+  const emptyMapLegends: NonNullable<PackPresentationContribution['mapLegends']> = []
+  const emptyProcedureRunSummaries: ProcedureRunSummaryGroup = { active: [], inactive: [] }
 
   interface DroneWindowEntry {
     readonly id: string
@@ -116,11 +116,6 @@
     readonly id: string
     readonly objectId: ObjectId
     readonly initialProcedureId?: ProcedureId
-  }
-
-  interface ProcessDisplayWindowModel extends ProcessDisplayWindowEntry {
-    readonly object: OperationalObject
-    readonly index: number
   }
 
   interface DroneWindowModel extends DroneWindowEntry {
@@ -172,7 +167,7 @@
   let OperationalMap = $state<Component | null>(null)
   let CreateObjectModal = $state<Component | null>(null)
   let SettingsModal = $state<Component | null>(null)
-  let ProcessDisplayModal = $state<Component | null>(null)
+  let DisplayWindow = $state<Component | null>(null)
   let surfacePanelComponents = $state<Record<string, Component>>({})
   let ProcedureSystemModal = $state<Component | null>(null)
   let ProcessPlantArtifactModal = $state<Component | null>(null)
@@ -180,7 +175,19 @@
   let ProcessPlantCredibilityModal = $state<Component | null>(null)
   let DroneControlModal = $state<Component | null>(null)
   let DroneProfileEditorModal = $state<Component | null>(null)
-  let processDisplayWindows = $state<ReadonlyArray<ProcessDisplayWindowEntry>>([])
+  // The one process display window. The Host relays the conversation's
+  // displays and requests to open one; both are kept here from the start, so
+  // nothing is lost while the window's code or the Run is still loading. The
+  // window needs only the Run named in the address: a display samples its Run
+  // itself, so it shows while this page still opens the Run, or after that
+  // failed (the window says why its Plant controls are off), and a display of
+  // another Run needs nothing from this one.
+  let displayWindowRunId = $state<SimulationRunId | null>(null)
+  let displayWindowOpen = $state(false)
+  let displayWindowRequest = $state.raw<DisplayWindowRequest | null>(null)
+  let conversationDisplays = $state.raw<ReadonlyArray<EmbeddedViewListing>>([])
+  let displayWindowRequestSequence = 0
+  let displayWindowReturnFocus: HTMLElement | null = null
   let droneControlWindows = $state<ReadonlyArray<DroneWindowEntry>>([])
   let droneProfileEditorWindows = $state<ReadonlyArray<DroneWindowEntry>>([])
   let procedureSystemWindows = $state<ReadonlyArray<ProcedureSystemWindowEntry>>([])
@@ -198,7 +205,7 @@
   let weatherLayerVisible = $state(true)
   let surfaceLoadGeneration = 0
   let operationalMapLoadPromise: Promise<Component> | null = null
-  let processDisplayModalLoadPromise: Promise<Component> | null = null
+  let displayWindowLoadPromise: Promise<Component> | null = null
   const surfacePanelLoadPromises = new Map<string, Promise<Component>>()
   let surfacePanelOpen = $state<Record<string, boolean>>({})
   let appliedSurfacePanelKey = ''
@@ -258,6 +265,11 @@
   const surfacePanels = $derived(activePack?.surfacePanels ?? [])
   const surfacePanelLaunchers = $derived(surfacePanels.map(panel => ({ id: panel.id, label: panel.label, open: surfacePanelOpen[panel.id] ?? panel.defaultOpen })))
   const mapStartupFailed = $derived(startupSteps.find(step => step.id === 'map')?.status === 'failed')
+  const displayRunJoin = $derived.by<DeckRunJoin>(() => {
+    if (simulationRunId !== null) return { state: 'joined' }
+    const step = startupSteps.find(candidate => candidate.id === 'simulation-run')
+    return step?.status === 'failed' ? { state: 'failed', reason: step.error ?? `${step.label} failed` } : { state: 'joining' }
+  })
   const richOperationalUiReady = $derived(!mapVisible || mapReady || mapStartupFailed)
   const mapAssignmentController = $derived(mapAssignment ? objects.find(object => object.id === mapAssignment.controllerId) ?? null : null)
   const mapAssignmentContribution = $derived(mapAssignmentController && activePack ? activePack.packForObject(mapAssignmentController).mapAssignment ?? null : null)
@@ -338,6 +350,8 @@
   const activePackFeatureLayers = $derived(activePack?.presentation.mapFeatureLayers ?? emptyMapFeatureLayers)
   const activePackFeatureSourcePackIds = $derived(activePack?.mapFeatureSourcePackIds ?? emptyStringArray)
   const activeReferenceDatasetIds = $derived(activePack?.referenceDatasetIds?.map(String) ?? emptyStringArray)
+  const activeReferenceStyles = $derived(activePack?.referenceStyles ?? emptyReferenceStyles)
+  const activeMapLegends = $derived(activePack?.presentation.mapLegends ?? emptyMapLegends)
   let mapLayerGroupVisibility = $state<Record<string, boolean>>({})
   // Re-seed when the group list changes. `untrack` keeps the write from
   // re-triggering this effect (a new object literal every time would otherwise
@@ -533,7 +547,7 @@
       void (async (): Promise<void> => {
         try {
           markStartup('process-display-preload:start')
-          await loadProcessDisplayModal()
+          await loadDisplayWindow()
           markStartup('process-display-preload:done')
         } catch (err) {
           if (debugStartup) console.warn(err)
@@ -583,16 +597,16 @@
     SettingsModal = module.default
   }
 
-  const loadProcessDisplayModal = async (): Promise<void> => {
-    if (ProcessDisplayModal) return
-    processDisplayModalLoadPromise ??= (async (): Promise<Component> => {
-      const module = await import('../process-display/ProcessDisplayModal.svelte')
+  const loadDisplayWindow = async (): Promise<void> => {
+    if (DisplayWindow) return
+    displayWindowLoadPromise ??= (async (): Promise<Component> => {
+      const module = await import('../process-display/DisplayWindow.svelte')
       return module.default
     })()
     try {
-      ProcessDisplayModal = await processDisplayModalLoadPromise
+      DisplayWindow = await displayWindowLoadPromise
     } catch (err) {
-      processDisplayModalLoadPromise = null
+      displayWindowLoadPromise = null
       throw err
     }
   }
@@ -828,23 +842,39 @@
     return `${prefix}:${objectId}:${floatingWindowSequence}`
   }
 
-  const openProcessDisplay = (object: OperationalObject): void => {
-    const windowId = nextFloatingWindowId('process-display', object.id)
-    processDisplayWindows = [
-      ...processDisplayWindows,
-      {
-        id: windowId,
-        objectId: object.id,
-      },
-    ]
-    void loadProcessDisplayModal().catch(err => {
-      closeProcessDisplay(windowId)
-      status = `Could not open process display: ${err instanceof Error ? err.message : String(err)}`
-    })
+  const closeDisplayWindow = (): void => {
+    displayWindowOpen = false
+    displayWindowRequest = null
+    const returnFocus = displayWindowReturnFocus
+    displayWindowReturnFocus = null
+    if (returnFocus?.isConnected) returnFocus.focus()
   }
 
-  const closeProcessDisplay = (windowId: string): void => {
-    processDisplayWindows = processDisplayWindows.filter(entry => entry.id !== windowId)
+  // Opened (or jumped) from the rail, the window takes focus and gives it back
+  // on close; opened from chat, it leaves focus with the conversation.
+  const requestDisplayWindow = (target: DisplayWindowTarget, focus: boolean): void => {
+    if (focus) {
+      const active = document.activeElement
+      displayWindowReturnFocus = active instanceof HTMLElement ? active : null
+    } else if (!displayWindowOpen) {
+      displayWindowReturnFocus = null
+    }
+    displayWindowRequestSequence += 1
+    displayWindowRequest = { sequence: displayWindowRequestSequence, target, focus }
+    displayWindowOpen = true
+    void (async (): Promise<void> => {
+      try {
+        await loadDisplayWindow()
+      } catch (err) {
+        closeDisplayWindow()
+        status = `Could not open the process display window: ${err instanceof Error ? err.message : String(err)}`
+      }
+    })()
+  }
+
+  const openProcessDisplay = (object: OperationalObject): void => {
+    if (processPlantIdForObject(object) === null) return
+    requestDisplayWindow({ kind: 'overview', objectId: object.id }, true)
   }
 
   const openDroneControl = (object: OperationalObject): void => {
@@ -923,12 +953,12 @@
         }]
   }))
 
-  const processDisplayWindowModels = $derived<ReadonlyArray<ProcessDisplayWindowModel>>(
-    processDisplayWindows.flatMap((entry, index) => {
-      const object = objectById.get(entry.objectId)
-      return object === undefined ? [] : [{ ...entry, object, index }]
-    }),
-  )
+  // The window steps through the Plants' overviews in rail order; Plants the rail does not list follow.
+  const processPlantObjects = $derived.by<ReadonlyArray<OperationalObject>>(() => {
+    const inRail = categoryRows.flatMap(row => row.objects).filter(object => processPlantIdForObject(object) !== null)
+    const railIds = new Set(inRail.map(object => object.id))
+    return [...inRail, ...objects.filter(object => processPlantIdForObject(object) !== null && !railIds.has(object.id))]
+  })
 
   const droneControlWindowModels = $derived<ReadonlyArray<DroneWindowModel>>(
     droneControlWindows.flatMap((entry, index) => {
@@ -957,10 +987,6 @@
   $effect(() => {
     const liveObjectIds = new Set(objects.map(object => object.id))
     untrack(() => {
-      const nextProcessDisplayWindows = processDisplayWindows.filter(entry => liveObjectIds.has(entry.objectId))
-      if (nextProcessDisplayWindows.length !== processDisplayWindows.length) {
-        processDisplayWindows = nextProcessDisplayWindows
-      }
       const nextDroneControlWindows = droneControlWindows.filter(entry => liveObjectIds.has(entry.objectId))
       if (nextDroneControlWindows.length !== droneControlWindows.length) {
         droneControlWindows = nextDroneControlWindows
@@ -1497,12 +1523,31 @@
         clearStartupAutoDismissTimer()
       }
     }
+    // Before any awaited startup: the Host may relay displays as soon as this page listens.
+    displayWindowRunId = route.simulationRunId
+    const workspaceId = route.workspaceId
+    const receiveDisplayWindowMessage = (event: MessageEvent): void => {
+      const message = readDisplayWindowHostMessage(event, { origin: location.origin, parent: window.parent, workspaceId })
+      if (message === null) return
+      if (message.kind === 'rejected') {
+        status = `Process display window: ${message.reason}`
+        return
+      }
+      if (message.kind === 'views') {
+        conversationDisplays = message.views
+        return
+      }
+      requestDisplayWindow({ kind: 'listing', listing: message.view }, false)
+    }
+    window.addEventListener('message', receiveDisplayWindowMessage)
+    window.parent.postMessage(displayWindowReadyMessage(), location.origin)
     completeStep('route')
     completeStep('interface')
     preloadOperationalMapModule()
     void joinSimulationRun()
     const executionPoll = window.setInterval(() => { void refreshExecution() }, 1_000)
     return () => {
+      window.removeEventListener('message', receiveDisplayWindowMessage)
       cleanupInternalDiagnosticsGlobal()
       longTaskMonitor?.stop()
       longTaskMonitor = null
@@ -1627,6 +1672,7 @@
         {openSettings}
         {toggleCategoryMapVisibility}
         mapLayerGroups={activeMapLayerGroups}
+        mapLegends={activeMapLegends}
         {mapLayerGroupVisibility}
         onMapLayerGroupToggle={toggleMapLayerGroup}
         surfacePanels={surfacePanelLaunchers}
@@ -1670,10 +1716,9 @@
           {simulationRunId}
           packDataRevisionKey={JSON.stringify(packDataRevisions)}
           onPackFeatureSelected={selection => { if (surfacePanels.some(panel => panel.id === selection.panelId)) { packPanelSelections = { ...packPanelSelections, [selection.panelId]: selection.itemId }; setSurfacePanelOpen(selection.panelId, true) } }}
-          activePackIds={scenarioDefinition?.packs ?? emptyStringArray}
           mapLayerGroups={activeMapLayerGroups}
           {mapLayerGroupVisibility}
-          referenceDatasetIds={activeReferenceDatasetIds}
+          referenceStyles={activeReferenceStyles}
           packFeatureLayers={activePackFeatureLayers}
           packFeatureSourcePackIds={activePackFeatureSourcePackIds}
           focusRequest={mapFocusRequest}
@@ -1766,17 +1811,17 @@
   {/each}
 {/if}
 
-{#if ProcessDisplayModal && simulationRunId}
-  {#each processDisplayWindowModels as windowEntry (windowEntry.id)}
-    <ProcessDisplayModal
-      {simulationRunId}
-      object={windowEntry.object}
-      procedureSummaries={procedureSummariesForObject(windowEntry.object)}
-      windowOffsetIndex={windowEntry.index}
-      openProcedureSystemAt={(summary?: ProcedureRunSummary) => openProcedureSystemAt(windowEntry.object, summary)}
-      close={() => closeProcessDisplay(windowEntry.id)}
-    />
-  {/each}
+{#if DisplayWindow && displayWindowRunId && displayWindowOpen && displayWindowRequest}
+  <DisplayWindow
+    simulationRunId={displayWindowRunId}
+    runJoin={displayRunJoin}
+    plantObjects={processPlantObjects}
+    listings={conversationDisplays}
+    request={displayWindowRequest}
+    procedureSummariesFor={procedureSummariesForObject}
+    {openProcedureSystemAt}
+    close={closeDisplayWindow}
+  />
 {/if}
 
 {#if ProcedureSystemModal && simulationRunId && procedureSession}

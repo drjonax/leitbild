@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
 import { limitLabelRanks, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
-import { activeThreshold, agoText, alarmAge, fitMarginText, limitAhead, limitInForce, limitsInForce, projectionBasis, returningText, median, minutesToThreshold, movingAwayFromLimits, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, visibleAlarms, annunciatorStates } from '../src/ui/embed/composed-display/panel-presenters.ts'
+import { agoText, alarmAge, fitMarginText, median, visibleAlarms, annunciatorStates } from '../src/ui/embed/composed-display/panel-presenters.ts'
+import { activeThreshold, limitAhead, limitInForce, limitsInForce, projectionBasis, returningText, minutesToThreshold, movingAwayFromLimits, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { formatQuantity, limitKindName, marginText, marginTextForms, nearestThresholdMargin, simulationClock, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
 import { escalateLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import type { ComposedDisplayAlarm } from '../src/ui/embed/composed-display/composed-display-client.ts'
@@ -64,6 +65,20 @@ describe('composed display panel presenters', () => {
     expect(marginTextForms({ threshold: netFlowTrip, margin: -5 }, 'kg/s')).toEqual(['past LO TRIP -250 kg/s (Power operation)', 'past LO TRIP -250 kg/s', 'past LO TRIP -250', 'past LO TRIP'])
     // A unitless limit without modes has fewer forms, none repeated.
     expect(marginTextForms({ threshold: { ...thresholds[1]!, value: 0.5 }, margin: 0.25 }, 'boolean')).toEqual(['0.250 above LO ALM 0.5', '0.250 above LO ALM'])
+  })
+
+  test('a value on a limit that acts at equality is past it', () => {
+    // Subcooling at exactly 0 °C: LO-LO ALM acts at "<= 0", so it leads, not the 16.7 °C alarm.
+    const subcooling = [
+      { ruleId: 'margin-low', label: 'RCS subcooling margin low', kind: 'alarm', operator: '<', direction: 'low', value: 16.7, escalation: 1 },
+      { ruleId: 'margin-lost', label: 'RCS subcooling lost', kind: 'alarm', operator: '<=', direction: 'low', value: 0, escalation: 2 },
+    ] as const
+    const margin = nearestThresholdMargin(0, subcooling)!
+    expect(margin.threshold.ruleId).toBe('margin-lost')
+    expect(marginText(margin, 'degC')).toBe('past LO-LO ALM 0 °C')
+    // On a limit that acts only beyond it, the value is not past it yet.
+    expect(nearestThresholdMargin(16.7, subcooling)!.threshold.ruleId).toBe('margin-low')
+    expect(marginText(nearestThresholdMargin(16.7, subcooling)!, 'degC')).not.toMatch(/^past/)
   })
 
   test('fractions read as percent wherever the display or the answer names them', () => {

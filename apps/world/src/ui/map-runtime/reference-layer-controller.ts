@@ -1,4 +1,5 @@
 import type { PackMapLayerGroup } from '../../core/packs/protocol.ts'
+import type { PackMapAppearance, PackReferenceDatasetStyle } from '../../core/packs/reference-style.ts'
 import { createMapLayerRegistry, type MapLayerRegistry } from './map-layer-registry.ts'
 import { mapPerformanceDiagnostics } from './map-performance-diagnostics.ts'
 import type { MapRuntimeHandle } from './types.ts'
@@ -6,7 +7,8 @@ import type { MapRuntimeHandle } from './types.ts'
 export interface ReferenceLayerControllerRegistration {
   readonly runtime: MapRuntimeHandle
   readonly simulationRunId: string | null
-  readonly datasetIds: ReadonlyArray<string>
+  readonly styles: ReadonlyArray<PackReferenceDatasetStyle>
+  readonly appearance: PackMapAppearance
   readonly layerGroups: ReadonlyArray<PackMapLayerGroup>
   readonly visibility: Readonly<Record<string, boolean>>
 }
@@ -27,7 +29,8 @@ const referenceKeyFor = (
   registration: ReferenceLayerControllerRegistration,
 ): string => [
   registration.simulationRunId ?? 'no-simulation-run',
-  registration.datasetIds.join(','),
+  registration.appearance.theme,
+  registration.styles.map(style => style.datasetId).join(','),
   registration.layerGroups.map(group => `${group.id}:${group.layerIdPattern}:${group.defaultVisible}`).join(','),
 ].join('|')
 
@@ -64,7 +67,7 @@ export const createReferenceLayerController = (
         status: 'running',
         message: 'Registering reference layers',
         details: [
-          { label: 'Datasets', value: String(registration.datasetIds.length) },
+          { label: 'Datasets', value: String(registration.styles.length) },
           { label: 'Layer groups', value: String(registration.layerGroups.length) },
         ],
       })
@@ -73,7 +76,8 @@ export const createReferenceLayerController = (
         'registerReferenceLayers',
         async () => registry.registerReferenceLayers({
           map: runtime.map,
-          datasetIds: registration.datasetIds,
+          styles: registration.styles,
+          appearance: registration.appearance,
           layerGroups: registration.layerGroups,
           visibility: registration.visibility,
           logger: message => {
@@ -81,7 +85,7 @@ export const createReferenceLayerController = (
           },
         }),
         {
-          datasetIds: registration.datasetIds.length,
+          datasets: registration.styles.length,
           layerGroups: registration.layerGroups.length,
         },
       )
@@ -120,7 +124,7 @@ export const createReferenceLayerController = (
       serial += 1
       const registrationSerial = serial
       registry.reset()
-      if (registration.datasetIds.length === 0 && registration.layerGroups.length === 0) {
+      if (registration.styles.length === 0 && registration.layerGroups.length === 0) {
         registration.runtime.reportDiagnosticPhase({
           phase: 'reference',
           status: 'ready',

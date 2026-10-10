@@ -68,13 +68,32 @@ const sampleFromRow = (row: SampleRow): RecordedSample => ({
   quality: row.quality,
 })
 
+export interface SeriesWindowQuery {
+  readonly runtimeId: string
+  readonly seriesId: string
+  readonly from: string
+  readonly to: string
+  readonly limit: number
+}
+
 export interface RunHistorian {
   readonly record: (runtimeId: string, batch: PackRuntimeRecordingBatch) => void
   readonly listSeries: () => ReadonlyArray<RecordingSeriesDescriptor & { readonly runtimeId: string }>
   readonly query: (query: RecordingSeriesQuery) => RecordingPage
+  /** One runtime's series between two simulation times, the newest up to the limit: raw rows only, without the window summary a query computes. */
+  readonly seriesWindow: (query: SeriesWindowQuery) => ReadonlyArray<RecordedSample>
   readonly status: () => RunHistorianStatus
   readonly close: () => void
 }
+
+/**
+ * One runtime's own series read back by simulation time, newest first up to
+ * the limit: what a Pack runtime reads of what it recorded (the
+ * PackRuntimeRecordedHistory port).
+ */
+export const recordedHistoryOf = (historian: Pick<RunHistorian, 'seriesWindow'>, runtimeId: string) => ({
+  read: (query: Omit<SeriesWindowQuery, 'runtimeId'>): ReadonlyArray<RecordedSample> => historian.seriesWindow({ ...query, runtimeId }),
+})
 
 const currentSchema = 1
 
@@ -105,7 +124,7 @@ export const openRunHistorian = (path: string, options: Parameters<typeof create
       limits,
     })
     const unavailable = (): never => { throw Object.assign(new Error(message), { code: 'history_unavailable', status: status() }) }
-    return { record: (_runtimeId, batch) => { discardedSinceOpen += batch.samples.length }, status, listSeries: unavailable, query: unavailable, close: () => {} }
+    return { record: (_runtimeId, batch) => { discardedSinceOpen += batch.samples.length }, status, listSeries: unavailable, query: unavailable, seriesWindow: unavailable, close: () => {} }
   }
 }
 
@@ -434,6 +453,17 @@ export const createRunHistorian = (path: string, options: { readonly limits?: Pa
         nextBeforeSequence: rows.length > limit ? samples.at(-1)!.sequence : null,
       }
     },
+    // The same rows a raw query by simulation time returns for the series,
+    // without its window summary and retained bounds, which cost more than
+    // the rows on a long Run.
+    seriesWindow: (query): ReadonlyArray<RecordedSample> => database.query<SampleRow, [string, string, string, string, number]>(`
+      SELECT sequence, runtime_id, series_id, observed_at, simulation_time, elapsed_ms,
+             value_type, value_number, value_text, value_boolean, quality
+      FROM recording_samples
+      WHERE runtime_id = ? AND series_id = ? AND simulation_time >= ? AND simulation_time <= ?
+      ORDER BY sequence DESC
+      LIMIT ?
+    `).all(query.runtimeId, query.seriesId, new Date(query.from).toISOString(), new Date(query.to).toISOString(), query.limit).map(sampleFromRow),
     status: (): RunHistorianStatus => {
       const first = frozenBounds ? { observed_at: frozenBounds.first } : database.query<{ observed_at: string }, []>('SELECT observed_at FROM recording_samples ORDER BY observed_at LIMIT 1').get()
       const last = frozenBounds ? { observed_at: frozenBounds.last } : database.query<{ observed_at: string }, []>('SELECT observed_at FROM recording_samples ORDER BY observed_at DESC LIMIT 1').get()

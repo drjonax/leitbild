@@ -1,8 +1,10 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import type { PackMapLayerGroup } from '../../core/packs/protocol.ts'
+import type { PackMapAppearance, PackReferenceDatasetStyle } from '../../core/packs/reference-style.ts'
 import type { RenderPhase } from './types.ts'
-import { createReferenceDataController, type ReferenceDatasetController } from '../map/reference-data-controller.ts'
+import { createReferenceDataController } from '../map/reference-data-controller.ts'
 import { createPackLayerGroupControllerFromGroups, type PackLayerGroupController } from '../map/pack-layer-group-controller.ts'
+import { referenceLayerAnchorId } from './reference-layer-order.ts'
 
 export interface MapLayerRegistration {
   readonly phase: RenderPhase
@@ -19,31 +21,23 @@ export interface MapLayerRegistry {
 
 export interface ReferenceLayerRegistrationConfig {
   readonly map: MapLibreMap
-  readonly datasetIds: ReadonlyArray<string>
+  readonly styles: ReadonlyArray<PackReferenceDatasetStyle>
+  readonly appearance: PackMapAppearance
   readonly layerGroups: ReadonlyArray<PackMapLayerGroup>
   readonly visibility: Readonly<Record<string, boolean>>
-  readonly beforeLayerId?: string | null
   readonly logger?: (message: string) => void
 }
 
-const collectSourceIds = (controller: ReferenceDatasetController): ReadonlyArray<string> =>
-  controller.registered.map(dataset => `reference:${dataset.datasetId}`)
-
-const collectLayerIds = (controller: ReferenceDatasetController): ReadonlyArray<string> =>
-  controller.registered.flatMap(dataset =>
-    Object.values(dataset.layerIdsByCategory).flatMap(ids => ids),
-  )
-
 export const createMapLayerRegistry = (): MapLayerRegistry => {
-  let referenceController: ReferenceDatasetController | null = null
   let layerGroupController: PackLayerGroupController | null = null
 
   return {
     registerReferenceLayers: async (config) => {
-      referenceController = await createReferenceDataController({
+      const referenceController = await createReferenceDataController({
         map: config.map,
-        beforeLayerId: config.beforeLayerId ?? null,
-        datasetIds: config.datasetIds,
+        styles: config.styles,
+        appearance: config.appearance,
+        beforeLayerId: () => referenceLayerAnchorId(config.map.getStyle()),
         ...(config.logger === undefined ? {} : { logger: config.logger }),
       })
       if (config.layerGroups.length > 0) {
@@ -55,8 +49,8 @@ export const createMapLayerRegistry = (): MapLayerRegistry => {
       }
       return {
         phase: 'reference',
-        sourceIds: referenceController ? collectSourceIds(referenceController) : [],
-        layerIds: referenceController ? collectLayerIds(referenceController) : [],
+        sourceIds: referenceController.registered.map(dataset => dataset.sourceId),
+        layerIds: referenceController.registered.flatMap(dataset => dataset.layerIds),
       }
     },
     applyLayerGroupVisibility: (visibility) => {
@@ -65,7 +59,6 @@ export const createMapLayerRegistry = (): MapLayerRegistry => {
       controller.apply({ ...controller.defaults, ...visibility })
     },
     reset: () => {
-      referenceController = null
       layerGroupController = null
     },
   }

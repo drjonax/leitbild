@@ -3,8 +3,9 @@
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
-  import { displayValue, marginText, nearestThresholdMargin, unitLabel, valueDigits, type ThresholdMargin } from '../../../packs/process-plant/displays/display-text.ts'
-  import { activeThreshold, fitMarginText, limitsInForce } from './panel-presenters.ts'
+  import { displayValue, isPast, marginText, nearestThresholdMargin, shownReading, type ThresholdMargin, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
+  import { fitMarginText } from './panel-presenters.ts'
+  import { activeThreshold, limitsInForce } from '../../../packs/process-plant/displays/trend-reading.ts'
   import { displayName, fitName } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
   import { SPARKLINE_SIZE, sparklineWindowText } from './sparkline.ts'
@@ -42,7 +43,7 @@
   const marginRooms: Record<string, number> = $state({})
   const fittedMargin = (path: string, margin: ThresholdMargin, unit: string): string => {
     const room = marginRooms[path] ?? 0
-    const measure = margin.margin < 0 ? measureMargin.beyond : measureMargin.near
+    const measure = isPast(margin) ? measureMargin.beyond : measureMargin.near
     return room === 0 ? marginText(margin, unit) : fitMarginText(margin, unit, text => measure(text) <= room)
   }
   const sampled = (path: string) => latest?.values.find(entry => entry.path === path)
@@ -58,7 +59,7 @@
 <ul class="readouts" style={size}>
   {#each panel.pens as pen (pen.path)}
     {@const entry = sampled(String(pen.path))}
-    {@const value = entry?.value}
+    {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.limits) : entry?.value}
     {@const margin = typeof value === 'number' ? nearestThresholdMargin(value, limitsInForce(pen.thresholds, latest?.mode, activeRuleIds)) : null}
     {@const inAlarm = activeThreshold(pen.thresholds, activeRuleIds)}
     <li class:primary={pen.role === 'primary'} title={`${pen.label} · ${pen.role}`}>
@@ -80,7 +81,7 @@
             <Sparkline
               {pen}
               windowMs={sparklineMs}
-              points={history.series.get(String(pen.path)) ?? []}
+              points={(history.series.get(String(pen.path)) ?? []).map(point => ({ t: point.t, v: shownReading(point.v, pen.limits) }))}
               {now}
               value={typeof value === 'number' ? value : undefined}
               {inAlarm}
@@ -91,7 +92,7 @@
         </span>
       {/if}
       {#if margin !== null}
-        <span class="margin" class:beyond={margin.margin < 0} title={marginText(margin, pen.unit)} bind:clientWidth={marginRooms[String(pen.path)]}>{fittedMargin(String(pen.path), margin, pen.unit)}</span>
+        <span class="margin" class:beyond={isPast(margin)} title={marginText(margin, pen.unit)} bind:clientWidth={marginRooms[String(pen.path)]}>{fittedMargin(String(pen.path), margin, pen.unit)}</span>
       {:else if entry?.quality === 'outside-hard-range'}
         <span class="margin beyond">outside range</span>
       {/if}

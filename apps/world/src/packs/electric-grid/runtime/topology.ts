@@ -1,117 +1,166 @@
 import type { GridBranchDefinition } from '../grid-model.ts'
-import type { GridLinearFactor, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
+import type { GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
+import { compiledGridNetworkFor, type CompiledGridNetwork } from './network/compiled-network.ts'
+import { createGridIslandSystem, solveGridIslandInto, type GridIslandSystem } from './network/dc-power-flow.ts'
+import { findGridIslands } from './network/islands.ts'
 
 export const gridBranchIsClosed = (grid: GridRuntimeInstance, branch: GridBranchDefinition): boolean =>
   grid.branches.get(branch.id)?.state === 'closed'
 
-const topologySignature = (grid: GridRuntimeInstance): string => grid.definition.model.branches
-  .map(branch => `${branch.id}:${gridBranchIsClosed(grid, branch) ? '1' : '0'}`)
-  .join('|')
+/** One island structure (its buses and closed branches) with the views and factor built from it. */
+interface CachedIsland {
+  readonly buses: Int32Array
+  readonly branches: Int32Array
+  readonly island: GridTopologyIsland
+  readonly system: GridIslandSystem
+}
 
-const islandsFor = (grid: GridRuntimeInstance): ReadonlyArray<GridTopologyIsland> => {
-  const adjacency = new Map(grid.definition.model.buses.map(bus => [bus.id, new Set<string>()]))
-  for (const branch of grid.definition.model.branches) {
-    if (!gridBranchIsClosed(grid, branch)) continue
-    adjacency.get(branch.fromBusId)?.add(branch.toBusId)
-    adjacency.get(branch.toBusId)?.add(branch.fromBusId)
+/** Island structures of a grid's current and previous plan, so unchanged islands and a branch switched back reuse their factors. */
+interface IslandCache {
+  readonly current: Map<number, CachedIsland[]>
+  readonly previous: Map<number, CachedIsland[]>
+}
+
+const islandCaches = new WeakMap<GridRuntimeInstance, IslandCache>()
+
+// 32-bit FNV-1a offset basis and prime.
+const fnvOffsetBasis = 2166136261
+const fnvPrime = 16777619
+
+const structureHash = (buses: Int32Array, branches: Int32Array): number => {
+  let hash = fnvOffsetBasis
+  for (let index = 0; index < buses.length; index += 1) hash = Math.imul(hash ^ buses[index]!, fnvPrime)
+  hash = Math.imul(hash ^ -1, fnvPrime)
+  for (let index = 0; index < branches.length; index += 1) hash = Math.imul(hash ^ branches[index]!, fnvPrime)
+  return hash >>> 0
+}
+
+const sameIndices = (a: Int32Array, b: Int32Array): boolean => {
+  if (a.length !== b.length) return false
+  for (let index = 0; index < a.length; index += 1) if (a[index] !== b[index]) return false
+  return true
+}
+
+const cachedIsland = (cache: ReadonlyMap<number, ReadonlyArray<CachedIsland>>, hash: number, buses: Int32Array, branches: Int32Array): CachedIsland | undefined =>
+  cache.get(hash)?.find(entry => sameIndices(entry.buses, buses) && sameIndices(entry.branches, branches))
+
+/** Branch states are keyed in model order; any other order means the runtime state no longer matches its Model. */
+const branchStateOrderError = (grid: GridRuntimeInstance, detail: string): Error =>
+  new Error(`Grid ${grid.definition.gridId} branch states do not follow its Model's branch order: ${detail}`)
+
+const closedBranchFlags = (grid: GridRuntimeInstance, network: CompiledGridNetwork): Uint8Array => {
+  const closed = new Uint8Array(network.branchCount)
+  let index = 0
+  for (const [id, state] of grid.branches) {
+    if (id !== network.branchIds[index]) throw branchStateOrderError(grid, `found ${id} at position ${index}`)
+    closed[index] = state.state === 'closed' ? 1 : 0
+    index += 1
   }
-  const seen = new Set<string>()
+  if (index !== network.branchCount) throw branchStateOrderError(grid, `${index} states for ${network.branchCount} branches`)
+  return closed
+}
+
+const closedBranchesChanged = (grid: GridRuntimeInstance, network: CompiledGridNetwork, closed: Uint8Array): boolean => {
+  let index = 0
+  for (const [id, state] of grid.branches) {
+    if (id !== network.branchIds[index]) throw branchStateOrderError(grid, `found ${id} at position ${index}`)
+    if ((state.state === 'closed' ? 1 : 0) !== closed[index]) return true
+    index += 1
+  }
+  if (index !== network.branchCount) throw branchStateOrderError(grid, `${index} states for ${network.branchCount} branches`)
+  return false
+}
+
+const createCachedIsland = (
+  grid: GridRuntimeInstance,
+  network: CompiledGridNetwork,
+  buses: Int32Array,
+  branches: Int32Array,
+  localOfBus: Int32Array,
+): CachedIsland => {
+  const { model, index } = grid.definition
+  let namingBus = buses[0]!
+  for (const bus of buses) if (network.busIdSortRank[bus]! < network.busIdSortRank[namingBus]!) namingBus = bus
+  const id = `island:${network.busIds[namingBus]!}`
+  const busIds = Array.from(buses, bus => network.busIds[bus]!)
+  const island: GridTopologyIsland = {
+    id,
+    referenceBusId: busIds[0]!,
+    buses: busIds,
+    busSet: new Set(busIds),
+    branches: Array.from(branches, branch => model.branches[branch]!),
+    generators: busIds.flatMap(busId => index.generatorsByBus.get(busId) ?? []),
+    loads: busIds.flatMap(busId => index.loadsByBus.get(busId) ?? []),
+    storage: busIds.flatMap(busId => index.storageByBus.get(busId) ?? []),
+  }
+  return { buses, branches, island, system: createGridIslandSystem({ network, islandId: id, buses, branches, localOfBus }) }
+}
+
+const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwork, closedBranches: Uint8Array): GridTopologyPlan => {
+  const found = findGridIslands(network, closedBranches)
+  const cache = islandCaches.get(grid) ?? { current: new Map(), previous: new Map() }
+  const generation = new Map<number, CachedIsland[]>()
+  const localOfBus = new Int32Array(network.busCount)
   const islands: GridTopologyIsland[] = []
-  for (const bus of grid.definition.model.buses) {
-    if (seen.has(bus.id)) continue
-    const queue = [bus.id]
-    const buses: string[] = []
-    seen.add(bus.id)
-    while (queue.length > 0) {
-      const current = queue.shift()!
-      buses.push(current)
-      for (const next of adjacency.get(current) ?? []) {
-        if (seen.has(next)) continue
-        seen.add(next)
-        queue.push(next)
-      }
-    }
-    const id = `island:${[...buses].sort()[0]}`
-    const busSet = new Set(buses)
-    islands.push({
-      id,
-      buses,
-      busSet,
-      branches: grid.definition.model.branches.filter(branch => gridBranchIsClosed(grid, branch) && busSet.has(branch.fromBusId) && busSet.has(branch.toBusId)),
-      generators: buses.flatMap(busId => grid.definition.index.generatorsByBus.get(busId) ?? []),
-      loads: buses.flatMap(busId => grid.definition.index.loadsByBus.get(busId) ?? []),
-      storage: buses.flatMap(busId => grid.definition.index.storageByBus.get(busId) ?? []),
-    })
+  const systems: GridIslandSystem[] = []
+  const islandIdByBus = new Map<string, string>()
+  for (let island = 0; island < found.count; island += 1) {
+    const buses = found.busOrder.subarray(found.busStart[island]!, found.busStart[island + 1]!)
+    const branches = found.branchOrder.subarray(found.branchStart[island]!, found.branchStart[island + 1]!)
+    const hash = structureHash(buses, branches)
+    const entry = cachedIsland(cache.current, hash, buses, branches)
+      ?? cachedIsland(cache.previous, hash, buses, branches)
+      ?? createCachedIsland(grid, network, buses.slice(), branches.slice(), localOfBus)
+    const sameHash = generation.get(hash)
+    if (sameHash) sameHash.push(entry)
+    else generation.set(hash, [entry])
+    islands.push(entry.island)
+    systems.push(entry.system)
+    for (const busId of entry.island.buses) islandIdByBus.set(busId, entry.island.id)
   }
-  return islands
+  islandCaches.set(grid, { current: generation, previous: cache.current })
+  return {
+    network,
+    closedBranches,
+    islands,
+    systems,
+    islandIdByBus,
+    injectionsMw: new Float64Array(network.busCount),
+    anglesRad: new Float64Array(network.busCount),
+    referenceMismatchMw: new Float64Array(found.count),
+  }
 }
 
-const factorFor = (island: GridTopologyIsland): GridLinearFactor => {
-  const buses = island.buses.slice(1)
-  const indexByBus = new Map(buses.map((bus, index) => [bus, index]))
-  const matrix = buses.map(() => buses.map(() => 0))
-  for (const branch of island.branches) {
-    const susceptance = 1 / Math.max(0.0001, branch.reactancePu)
-    const i = indexByBus.get(branch.fromBusId)
-    const j = indexByBus.get(branch.toBusId)
-    if (i !== undefined) matrix[i]![i] = (matrix[i]![i] ?? 0) + susceptance
-    if (j !== undefined) matrix[j]![j] = (matrix[j]![j] ?? 0) + susceptance
-    if (i !== undefined && j !== undefined) {
-      matrix[i]![j] = (matrix[i]![j] ?? 0) - susceptance
-      matrix[j]![i] = (matrix[j]![i] ?? 0) - susceptance
-    }
-  }
-  const lower = buses.map(() => buses.map(() => 0))
-  for (let row = 0; row < buses.length; row += 1) {
-    for (let col = 0; col <= row; col += 1) {
-      let value = matrix[row]![col]!
-      for (let k = 0; k < col; k += 1) value -= lower[row]![k]! * lower[col]![k]!
-      lower[row]![col] = row === col
-        ? Math.sqrt(Math.max(value, 1e-9))
-        : value / Math.max(lower[col]![col]!, 1e-9)
-    }
-  }
-  const upper = buses.map((_, row) => buses.map((__, col) => lower[col]?.[row] ?? 0))
-  return { buses, lower, upper }
-}
-
+/** The grid's islands and factors; rebuilt only when a branch's closed state differs from the cached plan, however it changed. */
 export const topologyPlanForGrid = (grid: GridRuntimeInstance): GridTopologyPlan => {
-  const signature = topologySignature(grid)
-  if (grid.topologyPlan?.signature === signature) return grid.topologyPlan
+  const network = compiledGridNetworkFor(grid.definition.model)
+  const cached = grid.topologyPlan
+  if (cached !== null && cached.network === network && !closedBranchesChanged(grid, network, cached.closedBranches)) return cached
   const startedAtMs = performance.now()
-  const islands = islandsFor(grid)
-  const factors = new Map(islands.map(island => [island.id, factorFor(island)]))
-  const islandIdByBus = new Map(islands.flatMap(island => island.buses.map(bus => [bus, island.id] as const)))
-  const plan = { signature, islands, factors, islandIdByBus }
+  const plan = buildTopologyPlan(grid, network, closedBranchFlags(grid, network))
   grid.topologyPlan = plan
   grid.diagnostics.topologyRebuildCount += 1
   grid.diagnostics.lastTopologyRebuildDurationMs = performance.now() - startedAtMs
   return plan
 }
 
-const solveFactor = (factor: GridLinearFactor, rhs: ReadonlyArray<number>): ReadonlyArray<number> => {
-  const y = rhs.map(() => 0)
-  for (let row = 0; row < rhs.length; row += 1) {
-    let value = rhs[row] ?? 0
-    for (let col = 0; col < row; col += 1) value -= factor.lower[row]![col]! * y[col]!
-    y[row] = value / Math.max(factor.lower[row]![row]!, 1e-9)
+/** Solves every island into the plan's per-bus angle and per-island reference-mismatch arrays. */
+const solvePlan = (plan: GridTopologyPlan, injections: ReadonlyMap<string, number>): void => {
+  const { network, injectionsMw, anglesRad } = plan
+  for (let bus = 0; bus < network.busCount; bus += 1) {
+    const injectionMw = injections.get(network.busIds[bus]!)
+    if (injectionMw === undefined || !Number.isFinite(injectionMw)) throw new Error(`Grid bus ${network.busIds[bus]!} has no finite injection: ${injectionMw}`)
+    injectionsMw[bus] = injectionMw
   }
-  const result = rhs.map(() => 0)
-  for (let row = rhs.length - 1; row >= 0; row -= 1) {
-    let value = y[row] ?? 0
-    for (let col = row + 1; col < rhs.length; col += 1) value -= factor.upper[row]![col]! * result[col]!
-    result[row] = value / Math.max(factor.upper[row]![row]!, 1e-9)
+  for (let island = 0; island < plan.systems.length; island += 1) {
+    plan.referenceMismatchMw[island] = solveGridIslandInto(network, plan.systems[island]!, injectionsMw, anglesRad)
   }
-  return result
 }
 
+/** Bus voltage angles in radians for bus injections in MW. */
 export const solveGridAngles = (plan: GridTopologyPlan, injections: ReadonlyMap<string, number>): ReadonlyMap<string, number> => {
+  solvePlan(plan, injections)
   const angles = new Map<string, number>()
-  for (const island of plan.islands) {
-    const factor = plan.factors.get(island.id)!
-    const solved = solveFactor(factor, factor.buses.map(bus => injections.get(bus) ?? 0))
-    angles.set(island.buses[0]!, 0)
-    for (let index = 0; index < factor.buses.length; index += 1) angles.set(factor.buses[index]!, solved[index] ?? 0)
-  }
+  for (let bus = 0; bus < plan.network.busCount; bus += 1) angles.set(plan.network.busIds[bus]!, plan.anglesRad[bus]!)
   return angles
 }

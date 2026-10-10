@@ -18,6 +18,7 @@ import {
   sceneryRoadTileTemplate,
 } from './scenery.ts'
 import { createLeitbildMapStyle, type MapTheme } from './style.ts'
+import { acceptsGzipEncoding, createCompressedTileCache, gzipTile } from './tile-compression.ts'
 
 export interface MapArtifactConfig {
   readonly rootDir: string
@@ -115,6 +116,10 @@ type ReferenceDatasetArtifactResult = ReferenceDatasetArtifactResolution | Refer
 
 const pmtilesArchiveCache = new Map<string, CachedPmtilesArchive>()
 const validatedJsonTextCache = new Map<string, CachedValidatedJsonText>()
+const defaultTileCacheControl = 'public, max-age=3600'
+// Gzipped vector tiles shared by the base map, the overview and reference datasets. The largest
+// grid tile is about 160 KB gzipped and a base-map tile about 20 KB.
+const compressedVectorTiles = createCompressedTileCache({ maxBytes: 64 * 1024 * 1024 })
 
 export const createMapArtifactConfigFromEnv = (): MapArtifactConfig => ({
   rootDir: resolve(process.env.LEITBILD_MAP_ROOT ?? '/opt/leitbild/maps'),
@@ -224,7 +229,7 @@ const emptyVectorTileResponse = (): Response =>
     headers: {
       'Content-Type': vectorTileContentType,
       'Content-Length': '0',
-      'Cache-Control': 'public, max-age=3600',
+      'Cache-Control': defaultTileCacheControl,
     },
   })
 
@@ -236,7 +241,24 @@ const emptyRasterDemTileResponse = (): Response =>
     },
   })
 
+const encodedVectorTileResponse = (
+  bytes: Uint8Array<ArrayBuffer>,
+  cacheControl: string,
+  contentEncoding: 'gzip' | 'identity',
+): Response => {
+  const headers = new Headers({
+    'Content-Type': vectorTileContentType,
+    'Content-Length': String(bytes.byteLength),
+    'Cache-Control': cacheControl,
+    // The same URL is served gzip-coded or as identity bytes depending on Accept-Encoding.
+    Vary: 'Accept-Encoding',
+  })
+  if (contentEncoding === 'gzip') headers.set('Content-Encoding', 'gzip')
+  return new Response(bytes, { headers })
+}
+
 const vectorTileResponse = async (
+  req: Request,
   filePath: string,
   coordinates: TileCoordinates,
   missing: { readonly error: string; readonly status: number },
@@ -270,17 +292,26 @@ const vectorTileResponse = async (
     }, { status: 415 })
   }
 
-  const tile = await archive.getZxy(coordinates.z, coordinates.x, coordinates.y)
-  if (!tile) return emptyVectorTileResponse()
+  // PMTiles hands out decompressed tile bytes, and the reverse proxy does not compress the
+  // vector-tile media type, so the module codes the tile itself.
+  if (!acceptsGzipEncoding(req.headers.get('accept-encoding'))) {
+    const tile = await archive.getZxy(coordinates.z, coordinates.x, coordinates.y)
+    if (!tile) return emptyVectorTileResponse()
+    return encodedVectorTileResponse(new Uint8Array(tile.data), tile.cacheControl ?? defaultTileCacheControl, 'identity')
+  }
 
-  const bytes = tile.data
-  return new Response(bytes, {
-    headers: {
-      'Content-Type': vectorTileContentType,
-      'Content-Length': String(bytes.byteLength),
-      'Cache-Control': tile.cacheControl ?? 'public, max-age=3600',
-    },
+  // The source key carries the archive's path, modification time and size.
+  const tileKey = `${archive.source.getKey()}#${coordinates.z}/${coordinates.x}/${coordinates.y}`
+  const compressed = await compressedVectorTiles.get(tileKey, async () => {
+    const tile = await archive.getZxy(coordinates.z, coordinates.x, coordinates.y)
+    if (!tile) return null
+    return {
+      bytes: await gzipTile(new Uint8Array(tile.data)),
+      cacheControl: tile.cacheControl ?? defaultTileCacheControl,
+    }
   })
+  if (!compressed) return emptyVectorTileResponse()
+  return encodedVectorTileResponse(compressed.bytes, compressed.cacheControl, 'gzip')
 }
 
 const rasterDemTileResponse = async (
@@ -536,6 +567,7 @@ export const currentTerrainPmtilesResponse = async (req: Request, config: MapArt
   })
 
 export const currentVectorTileResponse = async (
+  req: Request,
   url: URL,
   config: MapArtifactConfig,
 ): Promise<Response | null> => {
@@ -550,7 +582,7 @@ export const currentVectorTileResponse = async (
   if (!coordinates) {
     return Response.json({ ok: false, error: 'invalid map tile coordinates' }, { status: 400 })
   }
-  return vectorTileResponse(overview ? overviewPmtilesPathForRoot(config.rootDir) : currentPmtilesPath(config), coordinates, {
+  return vectorTileResponse(req, overview ? overviewPmtilesPathForRoot(config.rootDir) : currentPmtilesPath(config), coordinates, {
     error: 'vector map artifact unavailable',
     status: 503,
   })
@@ -744,6 +776,7 @@ export const referenceDatasetPmtilesResponse = async (
 }
 
 export const referenceDatasetVectorTileResponse = async (
+  req: Request,
   url: URL,
   config: ReferenceDatasetArtifactConfig = { referenceRoot: referenceRootFromEnv() },
 ): Promise<Response | null> => {
@@ -765,7 +798,7 @@ export const referenceDatasetVectorTileResponse = async (
   const resolved = await referenceDatasetArtifactPath(datasetId, `${pmtilesBaseName}.pmtiles`, config)
   if (!resolved.ok) return resolved.response
 
-  return vectorTileResponse(resolved.filePath, coordinates, {
+  return vectorTileResponse(req, resolved.filePath, coordinates, {
     error: 'reference dataset artifact unavailable',
     status: 503,
   })

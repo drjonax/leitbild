@@ -11,6 +11,7 @@ import type {
   PackSurfacePanelContribution,
   WorldPackView,
 } from './protocol.ts'
+import type { PackReferenceDatasetStyle } from './reference-style.ts'
 
 export interface ActivePackViews {
   readonly packs: ReadonlyArray<WorldPackView>
@@ -19,6 +20,7 @@ export interface ActivePackViews {
   readonly creation?: PackCreationContribution
   readonly targeting?: PackTargetingContribution
   readonly referenceDatasetIds: ReadonlyArray<string>
+  readonly referenceStyles: ReadonlyArray<PackReferenceDatasetStyle>
   readonly mapFeatureSourcePackIds: ReadonlyArray<string>
   readonly surfacePanels: ReadonlyArray<PackSurfacePanelContribution>
   readonly packForObject: (object: OperationalObject) => WorldPackView
@@ -31,6 +33,21 @@ const assertUniqueIds = (values: ReadonlyArray<{ readonly id: string }>, kind: s
     if (seen.has(value.id)) throw new Error(`duplicate ${kind}: ${value.id}`)
     seen.add(value.id)
   }
+}
+
+/** Each reference dataset a Pack declares is drawn by exactly one style from the same Pack. */
+const referenceStylesFor = (pack: WorldPackView): ReadonlyArray<PackReferenceDatasetStyle> => {
+  const packId = pack.descriptor.id
+  const datasetIds = (pack.referenceData?.datasetIds ?? []).map(String)
+  const styles = pack.presentation.referenceStyles ?? []
+  for (const style of styles) {
+    if (!datasetIds.includes(style.datasetId)) throw new Error(`Pack ${packId} styles undeclared reference dataset ${style.datasetId}`)
+  }
+  for (const datasetId of datasetIds) {
+    const count = styles.filter(style => style.datasetId === datasetId).length
+    if (count !== 1) throw new Error(`Pack ${packId} declares reference dataset ${datasetId} with ${count} styles; exactly one is required`)
+  }
+  return styles
 }
 
 export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): ActivePackViews => {
@@ -70,7 +87,13 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
   const surfacePanels = packs.flatMap(pack => pack.ui?.surfacePanels ?? [])
   assertUniqueIds(surfacePanels, 'surface panel')
 
-  const referenceDatasetIds = [...new Set(packs.flatMap(pack => pack.referenceData?.datasetIds.map(String) ?? []))]
+  const referenceStyles = packs.flatMap(referenceStylesFor)
+  if (new Set(referenceStyles.map(style => style.datasetId)).size !== referenceStyles.length) {
+    throw new Error('active Packs declare the same reference dataset more than once')
+  }
+  const referenceDatasetIds = referenceStyles.map(style => style.datasetId)
+  const mapLegends = packs.flatMap(pack => pack.presentation.mapLegends ?? [])
+  assertUniqueIds(mapLegends, 'map legend')
   const hasTargeting = packs.some(pack => pack.targeting !== undefined)
 
   return {
@@ -114,6 +137,7 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
           return request
         })),
       mapLayerGroups,
+      mapLegends,
     },
     ...(createObjectTypes.length === 0
       ? {}
@@ -159,6 +183,7 @@ export const createActivePackViews = (packs: ReadonlyArray<WorldPackView>): Acti
         }
       : {}),
     referenceDatasetIds,
+    referenceStyles,
     mapFeatureSourcePackIds,
     surfacePanels,
     packForObject: ownerForObject,

@@ -11,6 +11,9 @@
   --font-family-main: "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 :root.dark { color-scheme: dark; }
+/* A sideways trackpad swipe over a display scrolls the display, never the
+   browser's history (Back/Forward) or the window around the frame. */
+:root { overscroll-behavior-x: none; }
 
 * { box-sizing: border-box; }
 

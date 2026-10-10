@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { EMBEDDED_VIEW_MAX_HEIGHT, embeddedViewContentSchema, embeddedViewPublicationSchema } from '@leitbild/contracts'
 import { idSchema, type IsoTimestamp, type ObjectId, type OperationalObject } from '../../../core/model/index.ts'
-import type { PackRuntimeQuery } from '../../../simulation/protocol.ts'
+import type { PackRuntimeQuery, PackRuntimeRecordedHistory } from '../../../simulation/protocol.ts'
 import { rejectCapabilityInput, rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import { variablePathSchema, type VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
@@ -27,6 +27,7 @@ import {
   shownQuantity,
   composedDisplayShows,
   composedDisplayMargins,
+  readComposedDisplay,
   composedDisplaySignals,
   composedDisplayWarnings,
   formatComposedDisplayIssues,
@@ -36,6 +37,7 @@ import { requirePlant } from './common.ts'
 import { simulationClock } from '../displays/display-text.ts'
 import { indexSample, itemLook } from '../displays/mimic/evaluate.ts'
 import { mimicItemId } from '../displays/mimic/bindings.ts'
+import { trendPoints, type PlantModeNow } from '../displays/trend-reading.ts'
 
 export const processPlantComposedDisplayQueryKinds = [
   'world.process-plant.display.compose',
@@ -65,9 +67,29 @@ export const displaySampleQuerySchema = z.object({
 
 // Generated displays per Plant, by what they show and the view size: windows
 // rarely change size, an operator returns to the same equipment, and
-// resizing recompiles only for sizes not yet drawn.
+// resizing recompiles only for sizes not yet drawn. The display used longest
+// ago is evicted first.
 const GENERATED_CACHE_SIZE = 16
 const generatedCache = new WeakMap<ProcessPlantRuntimeInstance, Map<string, CompiledComposedDisplay>>()
+
+/**
+ * The alarms and trips a display shows: shelved, suppressed and
+ * out-of-service ones annunciate nowhere; one that cleared unacknowledged
+ * stays listed until it is acknowledged.
+ */
+const annunciated = (system: ProcessPlantRuntimeInstance) => {
+  const protection = system.protection?.snapshot()
+  return protection === undefined ? undefined : [...protection.alarms, ...protection.trips]
+    .filter(lifecycle => !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService && (lifecycle.active || lifecycle.phase === 'clearedUnacknowledged'))
+}
+
+/** Where the Plant declares operating modes, the one it is in, or null where none holds. */
+const modeNow = (system: ProcessPlantRuntimeInstance): PlantModeNow => {
+  const modes = system.plant.automation.operatingModes
+  if (modes.length === 0) return undefined
+  const mode = processPlantOperatingMode({ system: system.plant, runtime: system.runtime, modes })
+  return mode === null ? null : { id: mode.id, label: mode.label }
+}
 
 const compiledOrRejected = (
   system: ProcessPlantRuntimeInstance,
@@ -86,6 +108,8 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
   readonly objects: ReadonlyMap<ObjectId, Pick<OperationalObject, 'id' | 'label'>>
   readonly simulationTime?: IsoTimestamp
   readonly recordedSeriesIds?: ReadonlySet<string>
+  /** What the Run's historian holds: a composed display reads the recent history of the signals it draws over time. */
+  readonly recordedHistory?: PackRuntimeRecordedHistory
 }): unknown | undefined => {
   if (!processPlantComposedDisplayQueryKinds.some(kind => kind === config.request.capabilityId)) return undefined
   const simulationTime = config.simulationTime
@@ -109,6 +133,20 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       return { path, value: snapshot.value, quality: processPlantSignalQuality(snapshot).status }
     }))
     const read = (path: VariablePath) => system.runtime.readVariableSnapshot(path).value
+    // The display opens on the history the Run recorded, as the operator's
+    // view reads it: one bounded read per signal it draws over time.
+    const recordedHistory = config.recordedHistory
+    const opening = {
+      read,
+      simulationMs: Date.parse(simulationTime),
+      mode: modeNow(system),
+      activeRuleIds: new Set((annunciated(system) ?? []).filter(lifecycle => lifecycle.active).map(lifecycle => lifecycle.ruleId)),
+      history: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => {
+        if (recordedHistory === undefined) throw new Error(`${config.request.capabilityId} requires the history recorded by the answering runtime`)
+        return trendPoints(recordedHistory.read({ seriesId, from: new Date(window.from).toISOString() as IsoTimestamp, to: new Date(window.to).toISOString() as IsoTimestamp, limit }))
+      },
+    }
+    const opened = readComposedDisplay(display, opening)
     // The trend's axis reaches back as far as the Plant has run, up to its horizon.
     const historyMs = system.runtime.elapsedMs()
     const drawn = mimics.flatMap(mimic => mimic.items.map(item => ({
@@ -135,12 +173,12 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       simulationClock: simulationClock(Date.parse(simulationTime)),
       signals: composedDisplaySignals(display),
       shows: composedDisplayShows(display, historyMs),
-      margins: composedDisplayMargins(display, read),
+      margins: composedDisplayMargins(opened),
       warnings: composedDisplayWarnings(display),
       // What the mimic draws now, so the answer states equipment exactly as the operator sees it.
       equipment: drawn.map(({ id, label, state }) => ({ id, label, state })),
       // What the view shows, for Agents to check the answer that presents it against.
-      viewContent: embeddedViewContentSchema.parse(composedDisplayContent(display, read, historyMs, drawn.map(item => ({
+      viewContent: embeddedViewContentSchema.parse(composedDisplayContent(display, opened, historyMs, drawn.map(item => ({
         names: [...new Set([item.label, item.id, ...item.values.map(value => value.label)])],
         values: item.values.map(value => value.quantity),
         limits: [],
@@ -161,11 +199,16 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     refusal: string | null,
   ) => {
     const key = `${shows}|${view === null ? 'natural' : `${view.width}x${view.height}`}`
-    const cached = generatedCache.get(system)?.get(key)
-    if (cached !== undefined) return cached
+    const displays = generatedCache.get(system) ?? new Map<string, CompiledComposedDisplay>()
+    const cached = displays.get(key)
+    if (cached !== undefined) {
+      // Used last, evicted last: sweeping a display's zoom through many sizes never evicts the size its window shows.
+      displays.delete(key)
+      displays.set(key, cached)
+      return cached
+    }
     const result = compile()
     if (!result.ok) return rejectCapabilityTarget(`${refusal === null ? '' : `${refusal}: `}${result.issues.map(issue => issue.message).join('; ')}`)
-    const displays = generatedCache.get(system) ?? new Map<string, CompiledComposedDisplay>()
     if (displays.size >= GENERATED_CACHE_SIZE) displays.delete(displays.keys().next().value!)
     displays.set(key, result.display)
     generatedCache.set(system, displays)
@@ -235,21 +278,16 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
 
   const payload = displaySampleQuerySchema.parse(config.request.input)
   const system = requirePlant(config.plants, payload.plantId)
-  const protection = payload.alarms ? system.protection?.snapshot() : undefined
-  if (payload.alarms && protection === undefined) return rejectCapabilityTarget(`Process Plant ${payload.plantId} has no configured alarms`)
-  // Where the Plant declares operating modes, the one it is in, or null where none holds.
-  const modes = system.plant.automation.operatingModes
-  const mode = modes.length === 0 ? undefined : processPlantOperatingMode({ system: system.plant, runtime: system.runtime, modes })
+  const alarms = payload.alarms ? annunciated(system) : undefined
+  if (payload.alarms && alarms === undefined) return rejectCapabilityTarget(`Process Plant ${payload.plantId} has no configured alarms`)
+  const mode = modeNow(system)
   return {
     plantId: payload.plantId,
     simulationTime,
     plantElapsedMs: system.runtime.elapsedMs(),
-    ...(mode === undefined ? {} : { mode: mode === null ? null : { id: mode.id, label: mode.label } }),
-    ...(protection === undefined ? {} : {
-      // Shelved, suppressed and out-of-service alarms annunciate nowhere; one
-      // that cleared unacknowledged stays listed until it is acknowledged.
-      alarms: [...protection.alarms, ...protection.trips]
-        .filter(lifecycle => !lifecycle.shelved && !lifecycle.suppressed && !lifecycle.outOfService && (lifecycle.active || lifecycle.phase === 'clearedUnacknowledged'))
+    ...(mode === undefined ? {} : { mode }),
+    ...(alarms === undefined ? {} : {
+      alarms: alarms
         .map(lifecycle => ({
           id: lifecycle.id,
           ruleId: lifecycle.ruleId,

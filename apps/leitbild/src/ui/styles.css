@@ -49,6 +49,7 @@ button, input { font: inherit; }
 .run-room-controls select { width: min(180px, 18vw); min-height: 32px; padding: .35rem .5rem; border: 1px solid #526056; border-radius: 8px; color: #e8f1e6; background: #223127; }
 .run-room-controls button { min-height: 32px; padding: .35rem .55rem; border-color: #526056; color: #dce9da; background: #223127; font-size: .74rem; white-space: nowrap; }
 .run-room-controls .icon-control { width: 32px; padding: 0; font-size: 1rem; }
+.run-room-controls .room-scope { min-height: 32px; display: inline-flex; align-items: center; padding: .35rem .55rem; border: 1px solid #526056; border-radius: 9px; color: #dce9da; font-size: .74rem; white-space: nowrap; cursor: default; }
 .run-room-dialog { width: min(540px, calc(100vw - 2rem)); padding: 0; border: 1px solid #aeb9ad; border-radius: 15px; color: #172019; background: #f7f9f5; box-shadow: 0 24px 80px rgba(0,0,0,.34); }
 .run-room-dialog::backdrop { background: rgba(10,15,11,.58); backdrop-filter: blur(3px); }
 .run-room-dialog form { padding: 1.15rem; display: grid; gap: .9rem; }
@@ -266,7 +267,7 @@ button:disabled { opacity: .55; cursor: wait; }
 .workspace-error {
   position: fixed;
   z-index: 30;
-  right: 1rem;
+  left: 1rem;
   bottom: 1rem;
   max-width: min(440px, calc(100vw - 2rem));
   margin: 0;
@@ -277,6 +278,8 @@ button:disabled { opacity: .55; cursor: wait; }
   background: #fff7f6;
   box-shadow: 0 12px 36px rgba(0,0,0,.16);
 }
+.workspace-error { display: flex; gap: .75rem; align-items: flex-start; }
+.workspace-error button { flex: none; margin: -.25rem -.4rem 0 auto; padding: 0 .35rem; border: 0; background: none; color: inherit; font-size: 1.1rem; line-height: 1.4; cursor: pointer; }
 
 .inspection-dialog {
   width: min(980px, calc(100vw - 2rem));
@@ -363,6 +366,9 @@ button:disabled { opacity: .55; cursor: wait; }
   .split-handle, .reopen-handle { display: none; }
   .module-pane.collapsed { display: block; }
   .module-pane.hidden-pane { display: none; }
+  /* A maximised process display window takes the chat's row too. */
+  .workspace-composer.window-maximised { grid-template-rows: minmax(0, 1fr); }
+  .workspace-composer.window-maximised .agents-pane { display: none; }
 }
 
 /* Card actions are sibling controls, never nested interactive elements. */

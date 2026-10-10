@@ -1,21 +1,14 @@
+import type {
+  PackMapAppearance,
+  PackReferenceDatasetStyle,
+  PackReferenceLayerType,
+} from '../../core/packs/reference-style.ts'
 import { composeAttributionFromManifest } from './reference-attribution.ts'
 
-// Manifest-driven MapLibre source + layer factory for reference datasets.
-// Pure: no MapLibre instance, no side effects. The imperative wiring in
-// OperationalMap calls this and applies the result via map.addSource /
-// map.addLayer / map.setLayoutProperty for visibility.
-
-export interface DatasetStyleModule {
-  readonly outputLayer: string
-  readonly fillFor: (category: string) => Record<string, unknown>
-  readonly lineFor: (category: string) => Record<string, unknown>
-  readonly pointFor?: (category: string) => { readonly paint: Record<string, unknown> } | null
-  readonly labelFor?: (category: string) => {
-    readonly layout: Record<string, unknown>
-    readonly paint: Record<string, unknown>
-  } | null
-  readonly labelMinZoomFor?: (category: string, categoryMinZoom: number) => number
-}
+// Manifest-driven MapLibre source + layers for a reference dataset. Pure: no
+// MapLibre instance. The Pack style owns every filter and paint; this module
+// adds the vector source, published layer ids and `source-layer`, and checks
+// that the style matches the published artifact.
 
 export interface DatasetManifestForLayers {
   readonly datasetId: string
@@ -38,20 +31,20 @@ export interface DatasetManifestForLayers {
 
 export interface ReferenceLayerSpec {
   readonly id: string
-  readonly type: 'fill' | 'line' | 'circle' | 'symbol'
+  readonly type: PackReferenceLayerType
   readonly source: string
   readonly 'source-layer': string
-  readonly minzoom: number
-  readonly maxzoom: number
+  readonly minzoom?: number
   readonly filter: ReadonlyArray<unknown>
-  readonly layout?: Record<string, unknown>
-  readonly paint?: Record<string, unknown>
+  readonly layout: Readonly<Record<string, unknown>>
+  readonly paint: Readonly<Record<string, unknown>>
 }
 
 export interface ReferenceSourceSpec {
   readonly type: 'vector'
   readonly tiles: ReadonlyArray<string>
   readonly minzoom: number
+  /** Highest zoom the archive holds; MapLibre overzooms these tiles beyond it. */
   readonly maxzoom: number
   readonly attribution: string
 }
@@ -59,118 +52,76 @@ export interface ReferenceSourceSpec {
 export interface ReferenceDatasetLayers {
   readonly sourceId: string
   readonly source: ReferenceSourceSpec
+  /** Paint order, bottom first. */
   readonly layers: ReadonlyArray<ReferenceLayerSpec>
 }
 
-const sourceIdFor = (datasetId: string): string => `reference:${datasetId}`
+export const referenceLayerIdPrefix = 'reference:'
 
-const layerIdFor = (datasetId: string, category: string, kind: 'fill' | 'line' | 'point' | 'label'): string =>
-  `reference:${datasetId}:${category}:${kind}`
+const sourceIdFor = (datasetId: string): string => `${referenceLayerIdPrefix}${datasetId}`
 
-const categoryFilter = (category: string): ReadonlyArray<unknown> =>
-  ['==', ['get', 'category'], category] as const
+const layerIdFor = (datasetId: string, styleLayerId: string): string => `${referenceLayerIdPrefix}${datasetId}:${styleLayerId}`
 
+// The manifest's pmtilesPath is the archive file name ("<dataset>.pmtiles"); the
+// World API serves its tiles as plain HTTP MVT, so startup needs no PMTiles protocol.
 const sourceTilesFor = (datasetId: string, manifestPmtilesPath: string): ReadonlyArray<string> => {
-  // Manifest writes pmtilesPath relative to the build dir. Browser fetches via
-  // the Leitbild API under /map/datasets/<id>/current/<file-base>. We construct
-  // an ordinary HTTP MVT template so MapLibre does not depend on a browser-side
-  // PMTiles custom protocol during startup.
-  // pmtilesPath is the file name only ("grid-norway.pmtiles") per A.1.
   const pmtilesBaseName = manifestPmtilesPath.replace(/\.pmtiles$/, '')
   return [`/map/datasets/${datasetId}/current/${pmtilesBaseName}/{z}/{x}/{y}.mvt`]
 }
 
 const sourceZoomRangeFor = (
-  categories: DatasetManifestForLayers['categories'],
+  manifest: DatasetManifestForLayers,
 ): { readonly minzoom: number; readonly maxzoom: number } => {
-  if (categories.length === 0) return { minzoom: 0, maxzoom: 14 }
+  const populated = manifest.categories.filter(category => category.featureCount > 0)
+  if (populated.length === 0) throw new Error(`reference dataset ${manifest.datasetId} publishes no features`)
   return {
-    minzoom: Math.min(...categories.map(category => category.minZoom)),
-    maxzoom: Math.max(...categories.map(category => category.maxZoom)),
+    minzoom: Math.min(...populated.map(category => category.minZoom)),
+    maxzoom: Math.max(...populated.map(category => category.maxZoom)),
+  }
+}
+
+const assertStyleMatchesManifest = (manifest: DatasetManifestForLayers, style: PackReferenceDatasetStyle): void => {
+  if (style.datasetId !== manifest.datasetId) {
+    throw new Error(`reference style for ${style.datasetId} cannot draw dataset ${manifest.datasetId}`)
+  }
+  if (style.outputLayer !== manifest.artifact.outputLayer) {
+    throw new Error(`reference style for ${style.datasetId} reads tile layer "${style.outputLayer}" but the build wrote "${manifest.artifact.outputLayer}"`)
+  }
+  const undrawn = manifest.categories
+    .filter(category => category.featureCount > 0 && !style.categories.includes(category.category))
+    .map(category => category.category)
+  if (undrawn.length > 0) {
+    throw new Error(`reference style for ${style.datasetId} does not draw published categories: ${undrawn.join(', ')}`)
   }
 }
 
 export const buildReferenceDatasetLayers = (
   manifest: DatasetManifestForLayers,
-  style: DatasetStyleModule,
+  style: PackReferenceDatasetStyle,
+  appearance: PackMapAppearance,
 ): ReferenceDatasetLayers => {
+  assertStyleMatchesManifest(manifest, style)
   const sourceId = sourceIdFor(manifest.datasetId)
-  const sourceZoomRange = sourceZoomRangeFor(manifest.categories)
   const source: ReferenceSourceSpec = {
     type: 'vector',
     tiles: sourceTilesFor(manifest.datasetId, manifest.artifact.pmtilesPath),
-    minzoom: sourceZoomRange.minzoom,
-    maxzoom: sourceZoomRange.maxzoom,
+    ...sourceZoomRangeFor(manifest),
     attribution: composeAttributionFromManifest(manifest),
   }
-
-  const fillLayers: ReferenceLayerSpec[] = []
-  const lineLayers: ReferenceLayerSpec[] = []
-  const pointLayers: ReferenceLayerSpec[] = []
-  const labelLayers: ReferenceLayerSpec[] = []
-
-  for (const cat of manifest.categories) {
-    const layout = { visibility: 'visible' as const }
-    fillLayers.push({
-      id: layerIdFor(manifest.datasetId, cat.category, 'fill'),
-      type: 'fill',
-      source: sourceId,
-      'source-layer': manifest.artifact.outputLayer,
-      minzoom: cat.minZoom,
-      maxzoom: cat.maxZoom,
-      filter: categoryFilter(cat.category),
-      layout,
-      paint: style.fillFor(cat.category),
-    })
-    lineLayers.push({
-      id: layerIdFor(manifest.datasetId, cat.category, 'line'),
-      type: 'line',
-      source: sourceId,
-      'source-layer': manifest.artifact.outputLayer,
-      minzoom: cat.minZoom,
-      maxzoom: cat.maxZoom,
-      filter: categoryFilter(cat.category),
-      layout: { ...layout, 'line-join': 'round', 'line-cap': 'round' },
-      paint: style.lineFor(cat.category),
-    })
-    const pointSpec = style.pointFor?.(cat.category) ?? null
-    if (pointSpec) {
-      pointLayers.push({
-        id: layerIdFor(manifest.datasetId, cat.category, 'point'),
-        type: 'circle',
-        source: sourceId,
-        'source-layer': manifest.artifact.outputLayer,
-        minzoom: cat.minZoom,
-        maxzoom: cat.maxZoom,
-        filter: categoryFilter(cat.category),
-        layout,
-        paint: pointSpec.paint,
-      })
-    }
-    const labelSpec = style.labelFor?.(cat.category) ?? null
-    if (labelSpec) {
-      labelLayers.push({
-        id: layerIdFor(manifest.datasetId, cat.category, 'label'),
-        type: 'symbol',
-        source: sourceId,
-        'source-layer': manifest.artifact.outputLayer,
-        minzoom: style.labelMinZoomFor?.(cat.category, cat.minZoom) ?? cat.minZoom,
-        maxzoom: cat.maxZoom,
-        filter: categoryFilter(cat.category),
-        layout: { ...layout, ...labelSpec.layout },
-        paint: labelSpec.paint,
-      })
-    }
-  }
-
-  return {
-    sourceId,
-    source,
-    // Order: fills below lines below points below labels. Wiring in A.6 inserts
-    // the whole block above the base map and below operational layers via
-    // MapLibre's beforeId parameter.
-    layers: [...fillLayers, ...lineLayers, ...pointLayers, ...labelLayers],
-  }
+  const layers = style.layersFor(appearance).map((spec): ReferenceLayerSpec => ({
+    id: layerIdFor(manifest.datasetId, spec.id),
+    type: spec.type,
+    source: sourceId,
+    'source-layer': manifest.artifact.outputLayer,
+    ...(spec.minzoom === undefined ? {} : { minzoom: spec.minzoom }),
+    filter: spec.filter,
+    layout: { visibility: 'visible', ...spec.layout },
+    paint: spec.paint,
+  }))
+  const ids = layers.map(layer => layer.id)
+  const duplicate = ids.find((id, index) => ids.indexOf(id) !== index)
+  if (duplicate) throw new Error(`reference style for ${style.datasetId} declares layer ${duplicate} twice`)
+  return { sourceId, source, layers }
 }
 
-export const __internals = { sourceIdFor, layerIdFor, sourceTilesFor, categoryFilter }
+export const __internals = { sourceIdFor, layerIdFor, sourceTilesFor }

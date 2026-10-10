@@ -1,8 +1,9 @@
 import type { SimulationRunId } from '../../core/model/index.ts'
 
-// Where an operator left a Plant's process display window in a Run. The
-// display inside is generated and fixed: positions of what it draws are not
-// the operator's to move, so only the window is remembered.
+// Where an operator left the process display window in a Run. There is one
+// window per Run, whichever display it shows. The displays inside are drawn
+// for their frame and are not the operator's to move, so only the window is
+// remembered.
 
 export interface ProcessDisplayWindowBounds {
   readonly x: number
@@ -16,18 +17,17 @@ interface StorageLike {
   readonly setItem: (key: string, value: string) => void
 }
 
-const windowStoragePrefix = 'leitbild.processDisplayWindow.v1'
+const windowStoragePrefix = 'leitbild.processDisplayWindow.v2'
 
 const browserStorage = (): StorageLike | null =>
   typeof localStorage === 'undefined' ? null : localStorage
 
 interface WindowAddress {
   readonly simulationRunId: SimulationRunId
-  readonly plantId: string
 }
 
 const windowStorageKeyFor = (address: WindowAddress): string =>
-  `${windowStoragePrefix}:${address.simulationRunId}:${address.plantId}`
+  `${windowStoragePrefix}:${address.simulationRunId}`
 
 const isFiniteCoordinate = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)

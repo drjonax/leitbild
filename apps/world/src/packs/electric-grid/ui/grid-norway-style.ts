@@ -1,294 +1,265 @@
-import type { DatasetStyleModule } from '../../../ui/map/reference-layer-factory.ts'
+import type {
+  PackMapAppearance,
+  PackReferenceDatasetStyle,
+  PackReferenceLayerSpec,
+} from '../../../core/packs/reference-style.ts'
+import {
+  gridMapPalette,
+  gridVoltageStops,
+  type GridMapPalette,
+  type GridVoltageClassId,
+} from './grid-map-palette.ts'
 
-interface GridCategoryStyle {
-  readonly fillColor: string
-  readonly fillOpacity: number
-  readonly lineColor: string
-  readonly lineOpacity: number
-  readonly lineWidth: number
-  readonly circleColor: string
-  readonly circleRadius: number
+// Explicit, geometry-aware layers for the OSM-derived Norwegian grid. Classes
+// are hidden by `filter` (zoom-stepped) and layer `minzoom`, never by opacity.
+// No layer sets `maxzoom`: the source overzooms past its z14 tiles.
+//
+// Today's tiles carry substations and plants mostly as (Multi)Polygons at every
+// zoom. MapLibre cannot draw one circle per polygon (a circle layer draws one
+// per vertex), so below z12 the outline layers draw polygon sites with a thick
+// round-joined stroke that reads as a single dot; from z12 the stroke thins to a
+// footprint outline over a fill. Circle layers take Point features only, which
+// covers generators and transformers today and site points once the tile build
+// emits them below z12.
+
+type VoltageValues<T> = Readonly<Record<GridVoltageClassId, T>>
+
+const category = ['get', 'category'] as const
+const voltage = ['get', 'maxVoltageKv'] as const
+const output = ['get', 'outputMw'] as const
+const isCategory = (value: string): ReadonlyArray<unknown> => ['==', category, value]
+const isAnyCategory = (values: ReadonlyArray<string>): ReadonlyArray<unknown> => ['in', category, ['literal', values]]
+const isPoint: ReadonlyArray<unknown> = ['==', ['geometry-type'], 'Point']
+const isPolygon: ReadonlyArray<unknown> = ['==', ['geometry-type'], 'Polygon']
+const isPolygonOrLine: ReadonlyArray<unknown> = ['in', ['geometry-type'], ['literal', ['Polygon', 'LineString']]]
+
+/** One value per voltage class; features without `maxVoltageKv` take the explicit `unknown` value. */
+const byVoltage = <T>(values: VoltageValues<T>): ReadonlyArray<unknown> => [
+  'case',
+  ['has', 'maxVoltageKv'],
+  ['step', voltage,
+    values.kv66,
+    gridVoltageStops.kv110, values.kv110,
+    gridVoltageStops.kv132, values.kv132,
+    gridVoltageStops.kv220, values.kv220,
+    gridVoltageStops.kv300, values.kv300,
+    gridVoltageStops.kv420, values.kv420,
+  ],
+  values.unknown,
+]
+
+/** Plant size class by nameplate output; plants without `outputMw` take the smallest class. */
+const byPlantOutput = <T>(values: { readonly small: T; readonly medium: T; readonly large: T }): ReadonlyArray<unknown> => [
+  'case',
+  ['has', 'outputMw'],
+  ['step', output, values.small, 100, values.medium, 500, values.large],
+  values.small,
+]
+
+const visibleFrom = (minZoom: ReadonlyArray<unknown> | number): ReadonlyArray<unknown> => ['>=', ['zoom'], minZoom]
+
+// Tile zoom from which each class is drawn; matches the tile-build projection plan
+// (≥300 kV national, 220 kV z5, 132 kV z6, distribution z8+).
+const lineMinZoom: VoltageValues<number> = { kv420: 4, kv300: 4, kv220: 5, kv132: 6, kv110: 8, kv66: 8, unknown: 9 }
+const siteMinZoom: VoltageValues<number> = { kv420: 5, kv300: 5, kv220: 7, kv132: 7, kv110: 9, kv66: 9, unknown: 9 }
+const siteLabelMinZoom: VoltageValues<number> = { kv420: 7, kv300: 7, kv220: 9, kv132: 9, kv110: 11, kv66: 11, unknown: 11 }
+const plantMinZoom = byPlantOutput({ small: 9, medium: 7, large: 5 })
+const plantLabelMinZoom = byPlantOutput({ small: 11, medium: 9, large: 7 })
+const transformerMinZoom = 10
+const generatorMinZoom = 9
+/** Only transmission lines (≥ 200 kV class) carry along-line labels. */
+const lineLabelMinKv = gridVoltageStops.kv220
+
+const lineWidthAt: Readonly<Record<4 | 8 | 12 | 16, VoltageValues<number>>> = {
+  4: { kv420: 1.8, kv300: 1.5, kv220: 1.2, kv132: 1.0, kv110: 0.8, kv66: 0.7, unknown: 0.7 },
+  8: { kv420: 3.0, kv300: 2.6, kv220: 2.2, kv132: 1.8, kv110: 1.4, kv66: 1.1, unknown: 1.1 },
+  12: { kv420: 5.0, kv300: 4.2, kv220: 3.6, kv132: 3.0, kv110: 2.4, kv66: 1.8, unknown: 1.8 },
+  16: { kv420: 8.0, kv300: 7.0, kv220: 6.0, kv132: 5.0, kv110: 4.0, kv66: 3.0, unknown: 3.0 },
 }
 
-const maxVoltageKvExpression: ReadonlyArray<unknown> = ['coalesce', ['get', 'maxVoltageKv'], 0]
-
-const voltageAtLeastExpression = (kv: number): ReadonlyArray<unknown> => [
-  '>=',
-  maxVoltageKvExpression,
-  kv,
-]
-
-const voltageColorExpression: ReadonlyArray<unknown> = [
-  'case',
-  voltageAtLeastExpression(400),
-  '#c0262d',
-  voltageAtLeastExpression(300),
-  '#b34ac0',
-  voltageAtLeastExpression(220),
-  '#c56a00',
-  voltageAtLeastExpression(132),
-  '#229746',
-  voltageAtLeastExpression(110),
-  '#35a853',
-  voltageAtLeastExpression(66),
-  '#b59a00',
-  '#6f9fc7',
-]
-
-const nationalVoltageOpacityExpression: ReadonlyArray<unknown> = [
-  'case',
-  voltageAtLeastExpression(300),
-  0.90,
-  0.00,
-]
-
-const regionalVoltageOpacityExpression: ReadonlyArray<unknown> = [
-  'case',
-  voltageAtLeastExpression(300),
-  0.94,
-  voltageAtLeastExpression(220),
-  0.70,
-  0.00,
-]
-
-const areaVoltageOpacityExpression: ReadonlyArray<unknown> = [
-  'case',
-  voltageAtLeastExpression(300),
-  0.94,
-  voltageAtLeastExpression(132),
-  0.80,
-  voltageAtLeastExpression(66),
-  0.34,
-  0.08,
-]
-
-const detailedVoltageOpacityExpression: ReadonlyArray<unknown> = [
-  'case',
-  voltageAtLeastExpression(300),
-  0.94,
-  voltageAtLeastExpression(132),
-  0.82,
-  voltageAtLeastExpression(66),
-  0.68,
-  0.46,
-]
-
-const voltageOpacityExpression: ReadonlyArray<unknown> = [
-  'interpolate',
-  ['linear'],
-  ['zoom'],
-  5,
-  nationalVoltageOpacityExpression,
-  7,
-  regionalVoltageOpacityExpression,
-  9,
-  areaVoltageOpacityExpression,
-  11,
-  detailedVoltageOpacityExpression,
-]
-
-const voltageWidthExpression: ReadonlyArray<unknown> = [
-  'interpolate',
-  ['linear'],
-  ['zoom'],
-  5,
-  ['case',
-    voltageAtLeastExpression(400), 3.4,
-    voltageAtLeastExpression(300), 3.0,
-    voltageAtLeastExpression(132), 1.7,
-    0.55,
-  ],
-  12,
-  ['case',
-    voltageAtLeastExpression(400), 6.0,
-    voltageAtLeastExpression(300), 5.2,
-    voltageAtLeastExpression(132), 3.2,
-    voltageAtLeastExpression(66), 2.0,
-    1.35,
-  ],
-]
-
-const siteOpacityExpression: ReadonlyArray<unknown> = [
-  'interpolate',
-  ['linear'],
-  ['zoom'],
-  5,
-  ['case', voltageAtLeastExpression(300), 0.92, 0.00],
-  8,
-  ['case', voltageAtLeastExpression(300), 0.94, voltageAtLeastExpression(132), 0.72, 0.00],
-  11,
-  ['case', voltageAtLeastExpression(300), 0.94, voltageAtLeastExpression(132), 0.86, 0.64],
-]
-
-const siteRadiusExpression: ReadonlyArray<unknown> = [
-  'interpolate',
-  ['linear'],
-  ['zoom'],
-  7,
-  ['case',
-    voltageAtLeastExpression(300), 4.2,
-    voltageAtLeastExpression(132), 3.1,
-    2.0,
-  ],
-  13,
-  ['case',
-    voltageAtLeastExpression(300), 6.0,
-    voltageAtLeastExpression(132), 4.4,
-    3.0,
-  ],
-]
-
-const visibleVoltageLabelExpression: ReadonlyArray<unknown> = [
-  '>=', maxVoltageKvExpression, 220,
-]
-
-const voltageTextExpression: ReadonlyArray<unknown> = [
-  'case',
-  visibleVoltageLabelExpression,
-  ['concat', ['to-string', ['round', ['get', 'maxVoltageKv']]], ' kV'],
-  '',
-]
-
-const siteLabelExpression: ReadonlyArray<unknown> = [
-  'case',
-  ['all', voltageAtLeastExpression(300), ['has', 'name']],
-  ['get', 'name'],
-  '',
-]
-
-const styles: Readonly<Record<string, GridCategoryStyle>> = {
-  line:        { fillColor: '#64748b', fillOpacity: 0.00, lineColor: '#64748b', lineOpacity: 0.70, lineWidth: 1.6, circleColor: '#64748b', circleRadius: 3.5 },
-  cable:       { fillColor: '#0f766e', fillOpacity: 0.00, lineColor: '#0f766e', lineOpacity: 0.70, lineWidth: 1.4, circleColor: '#0f766e', circleRadius: 3.5 },
-  substation:  { fillColor: '#475569', fillOpacity: 0.10, lineColor: '#334155', lineOpacity: 0.75, lineWidth: 1.2, circleColor: '#475569', circleRadius: 5.0 },
-  transformer: { fillColor: '#7c3aed', fillOpacity: 0.07, lineColor: '#7c3aed', lineOpacity: 0.65, lineWidth: 1.0, circleColor: '#7c3aed', circleRadius: 4.2 },
-  plant:       { fillColor: '#15803d', fillOpacity: 0.08, lineColor: '#166534', lineOpacity: 0.70, lineWidth: 1.0, circleColor: '#15803d', circleRadius: 5.0 },
-  generator:   { fillColor: '#16a34a', fillOpacity: 0.08, lineColor: '#15803d', lineOpacity: 0.65, lineWidth: 1.0, circleColor: '#16a34a', circleRadius: 4.5 },
-  load:        { fillColor: '#2563eb', fillOpacity: 0.07, lineColor: '#1d4ed8', lineOpacity: 0.65, lineWidth: 1.0, circleColor: '#2563eb', circleRadius: 4.0 },
-  unknown:     { fillColor: '#94a3b8', fillOpacity: 0.05, lineColor: '#94a3b8', lineOpacity: 0.35, lineWidth: 0.8, circleColor: '#94a3b8', circleRadius: 3.0 },
+const siteRadiusAt: Readonly<Record<5 | 9 | 13, VoltageValues<number>>> = {
+  5: { kv420: 3.5, kv300: 3.0, kv220: 2.5, kv132: 2.2, kv110: 2.0, kv66: 1.8, unknown: 1.8 },
+  9: { kv420: 5.0, kv300: 4.5, kv220: 4.0, kv132: 3.5, kv110: 3.0, kv66: 2.6, unknown: 2.6 },
+  13: { kv420: 7.0, kv300: 6.5, kv220: 6.0, kv132: 5.5, kv110: 5.0, kv66: 4.5, unknown: 4.5 },
 }
 
-const styleFor = (category: string): GridCategoryStyle => styles[category] ?? styles.unknown!
+const doubled = (values: VoltageValues<number>): VoltageValues<number> =>
+  Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value * 2])) as unknown as VoltageValues<number>
 
-export const gridNorwayStyleModule: DatasetStyleModule = {
+const lineWidth: ReadonlyArray<unknown> = ['interpolate', ['exponential', 1.4], ['zoom'],
+  4, byVoltage(lineWidthAt[4]),
+  8, byVoltage(lineWidthAt[8]),
+  12, byVoltage(lineWidthAt[12]),
+  16, byVoltage(lineWidthAt[16]),
+]
+
+const siteRadius: ReadonlyArray<unknown> = ['interpolate', ['linear'], ['zoom'],
+  5, byVoltage(siteRadiusAt[5]),
+  9, byVoltage(siteRadiusAt[9]),
+  13, byVoltage(siteRadiusAt[13]),
+]
+
+// Below z12 a polygon site is a few pixels across, so a stroke as wide as the
+// matching circle's diameter draws it as one dot; at z12 it becomes an outline.
+const siteOutlineWidth: ReadonlyArray<unknown> = ['interpolate', ['linear'], ['zoom'],
+  5, byVoltage(doubled(siteRadiusAt[5])),
+  10, byVoltage(doubled(siteRadiusAt[9])),
+  12, 1.4,
+  16, 2.4,
+]
+
+const plantOutlineWidth: ReadonlyArray<unknown> = ['interpolate', ['linear'], ['zoom'], 5, 5, 10, 6, 12, 1.4, 16, 2.4]
+
+/** Circle area proportional to nameplate output: radius grows with √MW. */
+const generationRadiusAt = (basePx: number, pxPerSqrtMw: number): ReadonlyArray<unknown> => [
+  'case',
+  ['has', 'outputMw'],
+  ['+', basePx, ['*', pxPerSqrtMw, ['sqrt', output]]],
+  basePx,
+]
+
+const generationRadius: ReadonlyArray<unknown> = ['interpolate', ['linear'], ['zoom'],
+  5, generationRadiusAt(1.5, 0.18),
+  9, generationRadiusAt(2.0, 0.28),
+  13, generationRadiusAt(3.0, 0.4),
+]
+
+const voltageText: ReadonlyArray<unknown> = ['concat', ['to-string', ['round', voltage]], ' kV']
+const font = ['Noto Sans Regular']
+
+const lineLayers = (palette: GridMapPalette): ReadonlyArray<PackReferenceLayerSpec> => {
+  const color = byVoltage(palette.voltage)
+  const line = (id: string, categoryId: string, extraPaint: Readonly<Record<string, unknown>>): PackReferenceLayerSpec => ({
+    id,
+    type: 'line',
+    minzoom: lineMinZoom.kv420,
+    filter: ['all', isCategory(categoryId), visibleFrom(byVoltage(lineMinZoom))],
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: { 'line-color': color, 'line-width': lineWidth, ...extraPaint },
+  })
+  return [
+    line('lines:line', 'line', {}),
+    // Dash lengths are multiples of the line width.
+    line('cables:line', 'cable', { 'line-dasharray': [2.5, 1.5] }),
+  ]
+}
+
+const siteLayers = (palette: GridMapPalette): ReadonlyArray<PackReferenceLayerSpec> => {
+  const color = byVoltage(palette.voltage)
+  const sites = isAnyCategory(['substation', 'transformer'])
+  return [{
+    id: 'substations:fill',
+    type: 'fill',
+    minzoom: 12,
+    filter: ['all', isPolygon, sites],
+    paint: { 'fill-color': color, 'fill-opacity': palette.siteFillOpacity },
+  }, {
+    id: 'substations:outline',
+    type: 'line',
+    minzoom: siteMinZoom.kv420,
+    filter: ['all', isPolygonOrLine, sites, visibleFrom(byVoltage(siteMinZoom))],
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: { 'line-color': color, 'line-width': siteOutlineWidth },
+  }, {
+    id: 'substations:point',
+    type: 'circle',
+    minzoom: siteMinZoom.kv420,
+    filter: ['all', isPoint, sites, visibleFrom(['match', category, 'transformer', transformerMinZoom, byVoltage(siteMinZoom)])],
+    paint: {
+      'circle-color': color,
+      'circle-radius': siteRadius,
+      'circle-stroke-color': palette.halo,
+      'circle-stroke-width': 1,
+    },
+  }]
+}
+
+const generationLayers = (palette: GridMapPalette): ReadonlyArray<PackReferenceLayerSpec> => [{
+  id: 'generation:outline',
+  type: 'line',
+  minzoom: 5,
+  filter: ['all', isPolygonOrLine, isAnyCategory(['plant', 'generator']), visibleFrom(['match', category, 'generator', generatorMinZoom, plantMinZoom])],
+  layout: { 'line-join': 'round', 'line-cap': 'round' },
+  paint: { 'line-color': palette.generation, 'line-width': plantOutlineWidth },
+}, {
+  id: 'generation:point',
+  type: 'circle',
+  minzoom: 5,
+  filter: ['all', isPoint, isAnyCategory(['plant', 'generator']), visibleFrom(['match', category, 'generator', generatorMinZoom, plantMinZoom])],
+  paint: {
+    'circle-color': palette.generation,
+    'circle-opacity': 0.8,
+    'circle-radius': generationRadius,
+    'circle-stroke-color': palette.halo,
+    'circle-stroke-width': 1,
+  },
+}]
+
+const labelPaint = (palette: GridMapPalette): Readonly<Record<string, unknown>> => ({
+  'text-color': palette.text,
+  'text-halo-color': palette.halo,
+  'text-halo-width': 1.5,
+})
+
+const siteLabelLayout = (sortKey: ReadonlyArray<unknown>): Readonly<Record<string, unknown>> => ({
+  'text-field': ['get', 'name'],
+  'text-font': font,
+  'text-size': ['interpolate', ['linear'], ['zoom'], 7, 10, 13, 12],
+  'text-anchor': 'top',
+  'text-offset': [0, 0.8],
+  'text-max-width': 8,
+  'symbol-sort-key': sortKey,
+})
+
+const labelLayers = (palette: GridMapPalette): ReadonlyArray<PackReferenceLayerSpec> => [{
+  id: 'lines:label',
+  type: 'symbol',
+  minzoom: 8,
+  filter: ['all', isCategory('line'), ['has', 'maxVoltageKv'], ['>=', voltage, lineLabelMinKv]],
+  layout: {
+    'symbol-placement': 'line',
+    'symbol-spacing': 360,
+    'text-field': ['case', ['has', 'name'], ['concat', ['get', 'name'], ' (', voltageText, ')'], voltageText],
+    'text-font': font,
+    'text-size': ['interpolate', ['linear'], ['zoom'], 8, 10, 13, 12],
+    'text-max-angle': 30,
+    // Beside the line rather than on it, so light lines in the dark theme stay legible under the text.
+    'text-offset': [0, -0.9],
+  },
+  paint: labelPaint(palette),
+}, {
+  id: 'substations:label',
+  type: 'symbol',
+  minzoom: siteLabelMinZoom.kv420,
+  filter: ['all', isCategory('substation'), ['has', 'name'], visibleFrom(byVoltage(siteLabelMinZoom))],
+  // Lower sort keys are placed first, so higher voltage wins label collisions.
+  layout: siteLabelLayout(byVoltage({ kv420: 0, kv300: 1, kv220: 2, kv132: 3, kv110: 4, kv66: 5, unknown: 6 })),
+  paint: labelPaint(palette),
+}, {
+  id: 'generation:label',
+  type: 'symbol',
+  minzoom: 7,
+  filter: ['all', isCategory('plant'), ['has', 'name'], visibleFrom(plantLabelMinZoom)],
+  layout: siteLabelLayout(byPlantOutput({ small: 2, medium: 1, large: 0 })),
+  paint: labelPaint(palette),
+}]
+
+const layersFor = (appearance: PackMapAppearance): ReadonlyArray<PackReferenceLayerSpec> => {
+  const palette = gridMapPalette(appearance.theme)
+  const sites = siteLayers(palette)
+  // Site footprints sit under the lines that terminate in them; markers and labels sit above.
+  return [
+    ...sites.filter(layer => layer.type === 'fill'),
+    ...lineLayers(palette),
+    ...sites.filter(layer => layer.type !== 'fill'),
+    ...generationLayers(palette),
+    ...labelLayers(palette),
+  ]
+}
+
+export const gridNorwayStyle: PackReferenceDatasetStyle = {
+  datasetId: 'grid-norway',
   outputLayer: 'grid',
-  labelMinZoomFor: (category, categoryMinZoom) => {
-    if (category === 'line' || category === 'cable') return Math.max(categoryMinZoom, 7)
-    if (category === 'substation' || category === 'plant') return Math.max(categoryMinZoom, 8)
-    return Math.max(categoryMinZoom, 9)
-  },
-  fillFor: (category) => {
-    const style = styleFor(category)
-    return {
-      'fill-color': style.fillColor,
-      'fill-opacity': [
-        'case',
-        ['boolean', ['feature-state', 'hover'], false],
-        Math.min(0.22, style.fillOpacity + 0.10),
-        style.fillOpacity,
-      ],
-    }
-  },
-  lineFor: (category) => {
-    const style = styleFor(category)
-    if (category === 'line' || category === 'cable') {
-      return {
-        'line-color': voltageColorExpression,
-        'line-opacity': voltageOpacityExpression,
-        'line-width': voltageWidthExpression,
-        ...(category === 'cable' ? { 'line-dasharray': [4, 2] } : {}),
-      }
-    }
-    return {
-      'line-color': style.lineColor,
-      'line-opacity': [
-        'case',
-        ['boolean', ['feature-state', 'hover'], false],
-        Math.min(0.95, style.lineOpacity + 0.20),
-        style.lineOpacity,
-      ],
-      'line-width': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        5,
-        style.lineWidth,
-        12,
-        style.lineWidth * 1.8,
-      ],
-      ...(category === 'cable' ? { 'line-dasharray': [4, 3] } : {}),
-    }
-  },
-  pointFor: (category) => {
-    if (category === 'line' || category === 'cable') return null
-    const style = styleFor(category)
-    if (category === 'substation' || category === 'transformer') {
-      return {
-        paint: {
-          'circle-color': voltageColorExpression,
-          'circle-opacity': siteOpacityExpression,
-          'circle-radius': siteRadiusExpression,
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-opacity': 0.92,
-          'circle-stroke-width': [
-            'case',
-            voltageAtLeastExpression(300),
-            1.5,
-            1.0,
-          ],
-        },
-      }
-    }
-    return {
-      paint: {
-        'circle-color': style.circleColor,
-        'circle-radius': style.circleRadius,
-        'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 1.2,
-      },
-    }
-  },
-  labelFor: (category) => {
-    if (category === 'line' || category === 'cable') {
-      return {
-        layout: {
-          'symbol-placement': 'line',
-          'text-field': [
-            'case',
-            ['>', ['coalesce', ['get', 'maxVoltageKv'], 0], 0],
-            voltageTextExpression,
-            '',
-          ],
-          'text-font': ['Noto Sans Regular'],
-          'text-size': ['interpolate', ['linear'], ['zoom'], 8, 9, 13, 11],
-          'text-allow-overlap': false,
-          'text-optional': true,
-        },
-        paint: {
-          'text-color': '#283241',
-          'text-halo-color': '#ffffff',
-          'text-halo-width': 1.8,
-        },
-      }
-    }
-    if (category === 'unknown') return null
-    const textField = category === 'substation' || category === 'transformer'
-      ? siteLabelExpression
-      : ['coalesce', ['get', 'name'], ['get', 'operator'], '']
-    return {
-      layout: {
-        'text-field': textField,
-        'text-font': ['Noto Sans Regular'],
-        'text-size': ['interpolate', ['linear'], ['zoom'], 8, 10, 13, 11.5],
-        'text-offset': [0, 1.15],
-        'text-anchor': 'top',
-        'text-allow-overlap': false,
-        'text-optional': true,
-      },
-      paint: {
-        'text-color': '#172033',
-        'text-halo-color': '#ffffff',
-        'text-halo-width': 1.4,
-      },
-    }
-  },
+  categories: ['line', 'cable', 'substation', 'transformer', 'plant', 'generator'],
+  layersFor,
 }

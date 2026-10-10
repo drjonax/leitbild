@@ -3,7 +3,7 @@
   import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
   import { alertTypeOf } from './panel-presenters.ts'
   import { SPARKLINE_SIZE, sparkline, sparklineText } from './sparkline.ts'
-  import type { TrendPoint } from './trend-geometry.ts'
+  import type { TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
 
   // A lead value's direction and rate at a glance (ISA-101 Level 1): a grey
   // line in OpenBridge's instrument frame, with no axes. It takes the alarm

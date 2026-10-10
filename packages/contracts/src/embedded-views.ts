@@ -3,13 +3,14 @@ import { moduleIdSchema } from './ids.ts'
 import { workspaceResourceReferenceSchema } from './resources.ts'
 import {
   EMBEDDED_VIEW_FRAGMENT_KEY,
+  EMBEDDED_VIEW_LISTING_MAX,
   EMBEDDED_VIEW_MAX_HEIGHT,
   EMBEDDED_VIEW_MIN_HEIGHT,
   EMBEDDED_VIEW_STATE_MAX_LENGTH,
 } from './embedded-view-route.ts'
 
-// A view that its owning Module publishes for another Module to embed, e.g. a
-// World display shown below an Agents message. The owning Module defines,
+// A view that its owning Module publishes for another Module to show, e.g. a
+// World display an Agents answer composed. The owning Module defines,
 // validates and renders `state`; an embedder only reserves space, builds the
 // route from these fields and treats `state` as opaque.
 export const embeddedViewTypeSchema = z.string()
@@ -62,16 +63,33 @@ export const embeddedViewContentSchema = z.object({
     history: z.boolean(),
     /** Its state as the view draws it, in words ("running", "level 29.6 %"). */
     state: z.string().min(1).max(200).optional(),
-  }).strict()).max(64),
+    /** Which way the view shows it going: its rate per minute in `unit` per minute, where the view shows a rate. */
+    trend: z.object({
+      rate: z.number().finite(),
+      unit: z.string().min(1).max(16),
+      direction: z.enum(['rising', 'falling', 'steady']),
+    }).strict().optional(),
+    /** The limit the view names ahead of it in its direction of travel, not yet passed ("LO ALM 14.8 MPa"). */
+    limitAhead: viewQuantitySchema.extend({ name: z.string().min(1).max(64) }).strict().optional(),
+    /** The time to the limit ahead at the current rate, where the view projects one. */
+    timeToLimitMs: z.number().int().positive().optional(),
+  }).strict().superRefine((item, ctx) => {
+    if (item.timeToLimitMs !== undefined && item.limitAhead === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['timeToLimitMs'], message: 'A time to a limit needs the limit ahead' })
+    }
+  })).max(64),
   /** How far back the view's time axis reaches now, and the horizon it widens to; null without one. */
   span: z.object({
     shownMs: z.number().int().positive(),
     horizonMs: z.number().int().positive(),
   }).strict().nullable(),
-  /** The item the view leads with, past or nearest a limit (an index in items), and why in its words. */
+  /**
+   * The item the view leads with (an index in items): the shortest projected
+   * time to a limit, else past or nearest a limit; and why in its words.
+   */
   lead: z.object({
     item: z.number().int().nonnegative(),
-    reason: z.string().min(1).max(200),
+    reason: z.string().min(1).max(300),
   }).strict().nullable(),
 }).strict().superRefine((content, ctx) => {
   if (content.lead !== null && content.lead.item >= content.items.length) {
@@ -79,6 +97,60 @@ export const embeddedViewContentSchema = z.object({
   }
 })
 export type EmbeddedViewContent = z.infer<typeof embeddedViewContentSchema>
+
+// Same-origin browser messages for the one window that shows a Workspace's
+// embedded views. A Module UI lists the views it holds (Agents: the displays
+// its answers composed) and asks for one to be opened; the Host validates each
+// message, keeps nothing beyond the latest list, and relays it to the Module
+// whose page shows the window (World). A listing is self-contained: opening a
+// view never depends on an earlier list.
+export const embeddedViewListingSchema = z.object({
+  // Stable for one view across re-renders and reloads, unique within one list.
+  key: z.string().min(1).max(512),
+  envelope: embeddedViewEnvelopeSchema,
+  // Where the view comes from, as the window's caption says it, e.g. "Answer 14:02:31".
+  caption: z.string().min(1).max(120),
+}).strict()
+export type EmbeddedViewListing = z.infer<typeof embeddedViewListingSchema>
+
+/** The full current list of one publisher, oldest first; it replaces the previous one. */
+export const embeddedViewsMessageSchema = z.object({
+  type: z.literal('leitbild:views'),
+  views: z.array(embeddedViewListingSchema).max(EMBEDDED_VIEW_LISTING_MAX),
+}).strict().superRefine((message, ctx) => {
+  const keys = new Set<string>()
+  message.views.forEach((view, index) => {
+    if (keys.has(view.key)) ctx.addIssue({ code: 'custom', path: ['views', index, 'key'], message: 'Listed view keys must be unique' })
+    keys.add(view.key)
+  })
+})
+export type EmbeddedViewsMessage = z.infer<typeof embeddedViewsMessageSchema>
+
+/** Asks for the window to show this view, opening the window when it is closed. */
+export const embeddedViewOpenMessageSchema = z.object({
+  type: z.literal('leitbild:view-open'),
+  view: embeddedViewListingSchema,
+}).strict()
+export type EmbeddedViewOpenMessage = z.infer<typeof embeddedViewOpenMessageSchema>
+
+/** Host -> Module UI on frame load: views listed or opened from this frame reach a window. */
+export const embeddedViewHostMessageSchema = z.object({
+  type: z.literal('leitbild:view-host'),
+}).strict()
+export type EmbeddedViewHostMessage = z.infer<typeof embeddedViewHostMessageSchema>
+
+/** Module UI showing the window -> Host once it listens; the Host then sends the latest list and any pending open. */
+export const embeddedViewWindowReadyMessageSchema = z.object({
+  type: z.literal('leitbild:view-window-ready'),
+}).strict()
+export type EmbeddedViewWindowReadyMessage = z.infer<typeof embeddedViewWindowReadyMessageSchema>
+
+/** Module UI showing the window -> Host: give the window's pane the whole Workspace area, or restore the split. */
+export const embeddedViewWindowMaximiseMessageSchema = z.object({
+  type: z.literal('leitbild:view-window-maximise'),
+  maximised: z.boolean(),
+}).strict()
+export type EmbeddedViewWindowMaximiseMessage = z.infer<typeof embeddedViewWindowMaximiseMessageSchema>
 
 export const parseEmbeddedViewFragment = (hash: string): EmbeddedViewEnvelope => {
   const body = hash.startsWith('#') ? hash.slice(1) : hash
@@ -89,6 +161,7 @@ export const parseEmbeddedViewFragment = (hash: string): EmbeddedViewEnvelope =>
 export {
   embeddedViewFragment,
   embeddedViewPath,
+  EMBEDDED_VIEW_LISTING_MAX,
   EMBEDDED_VIEW_MAX_HEIGHT,
   EMBEDDED_VIEW_MIN_HEIGHT,
   EMBEDDED_VIEW_STATE_MAX_LENGTH,

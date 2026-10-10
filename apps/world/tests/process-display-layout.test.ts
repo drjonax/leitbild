@@ -8,6 +8,7 @@ import {
 const createMemoryStorage = () => {
   const values = new Map<string, string>()
   return {
+    values,
     getItem: (key: string): string | null => values.get(key) ?? null,
     setItem: (key: string, value: string): void => {
       values.set(key, value)
@@ -16,26 +17,25 @@ const createMemoryStorage = () => {
 }
 
 describe('process display window storage', () => {
-  test('stores window bounds per Simulation Run and Plant', () => {
+  test('stores the one window bounds per Simulation Run', () => {
     const storage = createMemoryStorage()
     const simulationRunId = 'run-window-test' as SimulationRunId
     storeProcessDisplayWindowBounds({
       simulationRunId,
-      plantId: 'unit-a',
       bounds: { x: 40, y: 50, width: 900, height: 640 },
     }, storage)
 
-    expect(readProcessDisplayWindowBounds({ simulationRunId, plantId: 'unit-a' }, storage)).toEqual({ x: 40, y: 50, width: 900, height: 640 })
-    expect(readProcessDisplayWindowBounds({ simulationRunId, plantId: 'unit-b' }, storage)).toBeNull()
+    expect(readProcessDisplayWindowBounds({ simulationRunId }, storage)).toEqual({ x: 40, y: 50, width: 900, height: 640 })
+    expect(readProcessDisplayWindowBounds({ simulationRunId: 'run-other' as SimulationRunId }, storage)).toBeNull()
+    expect([...storage.values.keys()]).toEqual(['leitbild.processDisplayWindow.v2:run-window-test'])
   })
 
   test('rejects corrupted window bounds visibly', () => {
     const storage = createMemoryStorage()
-    storage.setItem('leitbild.processDisplayWindow.v1:run-window-test:unit-a', '{"x":1,"y":2,"width":"wide","height":4}')
+    storage.setItem('leitbild.processDisplayWindow.v2:run-window-test', '{"x":1,"y":2,"width":"wide","height":4}')
 
     expect(() => readProcessDisplayWindowBounds({
       simulationRunId: 'run-window-test' as SimulationRunId,
-      plantId: 'unit-a',
     }, storage)).toThrow('invalid coordinates')
   })
 })

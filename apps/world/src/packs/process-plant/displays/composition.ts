@@ -199,7 +199,8 @@ export const composedDisplayLayout = {
   comparisonRow: 24,
   comparisonCaption: 14,
   readoutsPerRow: 3,
-  readoutsRow: 74,
+  /** A row of readouts: name, readout (44 px as OpenBridge draws it small) and margin lines, 78 px, and the gap under it. */
+  readoutsRow: 82,
   /** Title row plus four alarm rows; more are summarised as a count. */
   alarms: 110,
   alarmRows: 4,

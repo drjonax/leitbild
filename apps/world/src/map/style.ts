@@ -13,6 +13,16 @@ export type MapTheme = 'light' | 'dark'
 
 const sourceId = 'leitbild-osm'
 
+// Line alpha belongs in `line-color`. MapLibre draws a line layer whose `line-opacity` evaluates to
+// a value strictly between 0 and 1 for the current zoom into a full-viewport framebuffer and
+// composites it, on every frame.
+const translucent = (hex: string, alpha: number): string => {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  if (!match) throw new Error(`expected a #rrggbb colour, got ${hex}`)
+  const [, red = '', green = '', blue = ''] = match
+  return `rgba(${parseInt(red, 16)}, ${parseInt(green, 16)}, ${parseInt(blue, 16)}, ${alpha})`
+}
+
 const mapThemePalette = (theme: MapTheme) => {
   if (theme === 'dark') {
     return {
@@ -109,7 +119,7 @@ export const createLeitbildMapStyle = (theme: MapTheme = 'light', bases: Readonl
       },
       ...(overview ? [
         { id: 'overview-land', type: 'fill', source: overview.id, 'source-layer': 'countries', paint: { 'fill-color': palette.background } },
-        { id: 'overview-boundaries', type: 'line', source: overview.id, 'source-layer': 'countries', paint: { 'line-color': palette.boundary, 'line-width': .7, 'line-opacity': .6 } },
+        { id: 'overview-boundaries', type: 'line', source: overview.id, 'source-layer': 'countries', paint: { 'line-color': translucent(palette.boundary, 0.6), 'line-width': .7 } },
       ] : []),
       {
         id: 'landuse',
@@ -184,7 +194,7 @@ export const createLeitbildMapStyle = (theme: MapTheme = 'light', bases: Readonl
         'source-layer': 'transportation',
         filter: ['in', ['get', 'class'], ['literal', ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service']]],
         paint: {
-          'line-color': palette.roadCasing,
+          'line-color': translucent(palette.roadCasing, 0.92),
           'line-width': [
             'interpolate',
             ['linear'],
@@ -194,7 +204,6 @@ export const createLeitbildMapStyle = (theme: MapTheme = 'light', bases: Readonl
             15,
             ['match', ['get', 'class'], 'motorway', 10, 'trunk', 9, 'primary', 8, 'secondary', 6, 'tertiary', 5, 'minor', 3.4, 2.4],
           ],
-          'line-opacity': 0.92,
         },
       },
       {
@@ -243,10 +252,9 @@ export const createLeitbildMapStyle = (theme: MapTheme = 'light', bases: Readonl
         source: sourceId,
         'source-layer': 'boundary',
         paint: {
-          'line-color': palette.boundary,
+          'line-color': translucent(palette.boundary, 0.52),
           'line-width': 0.8,
           'line-dasharray': [2, 2],
-          'line-opacity': 0.52,
         },
       },
       {

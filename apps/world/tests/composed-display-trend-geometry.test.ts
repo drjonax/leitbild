@@ -1,8 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { formatValue } from '../src/packs/process-plant/displays/display-text.ts'
+import { appendPoint, HOLD_GAP_MS } from '../src/packs/process-plant/displays/trend-reading.ts'
 import {
-  appendPoint,
-  HOLD_GAP_MS,
   paddedDomain,
   rawDomain,
   stepPath,

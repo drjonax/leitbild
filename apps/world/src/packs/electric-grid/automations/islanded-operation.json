@@ -1,0 +1,331 @@
+{
+  "id": "electric-grid.frequency.islanded-operation",
+  "title": "Islanded operation",
+  "description": "An island separated from the Nordic synchronous area: Nordic FCR, LFDD and protection settings with reserves dimensioned from the island's own demand and largest unit, island aFRR able to replace the largest unit, and Nordic FFR from storage.",
+  "sources": [
+    {
+      "section": "simulation",
+      "title": "Commission Regulation (EU) 2017/1485 (SO GL), Annex III",
+      "url": "https://www.legislation.gov.uk/eur/2017/1485/annex/III/adopted/data.xml",
+      "accessedOn": "2026-10-10",
+      "status": "modelling-choice",
+      "note": "A 0.1 s sub-step and a 120 s catch-up limit are Leitbild modelling choices; they resolve the 0.24 Hz/s RoCoF of the reference incident and the FCR-D activation lag. SO GL Annex III (Nordic: time to restore frequency 15 min, standard range ±100 mHz) frames the time scales."
+    },
+    {
+      "section": "swing",
+      "title": "Technical Requirements for Frequency Containment Reserve Provision in the Nordic Synchronous Area, v1.1 (28 March 2025)",
+      "url": "https://www.statnett.no/link/fe89e089e1fd4154947ca28e6ea8c3fc.aspx",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Table 7 of the FCR requirements models load frequency dependence Kf = 0.01 p.u./Hz (1 %/Hz) with Sn 42,000 MW / 190,000 MWs and 23,000 MW / 120,000 MWs."
+    },
+    {
+      "section": "swing",
+      "title": "Nordic TSOs: Requirements for minimum inertia in the Nordic power system (August 2025)",
+      "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/tiedotteet/2025---requirements-for-minimum-inertia-in-the-nordic-power-system.pdf",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Nordic kinetic energy 2020-24: minimum 110-138 GWs, average 190-195 GWs; design levels 150 GWs (FCR-D performance) and 120 GWs (stability)."
+    },
+    {
+      "section": "fcrN",
+      "title": "Technical Requirements for Frequency Containment Reserve Provision in the Nordic Synchronous Area, v1.1 (28 March 2025)",
+      "url": "https://www.statnett.no/link/fe89e089e1fd4154947ca28e6ea8c3fc.aspx",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Table 1: FCR-N linear from 0 % at 50.0 Hz to 100 % at 49.9/50.1 Hz; no deadband is allowed and the response must not be artificially delayed."
+    },
+    {
+      "section": "fcrN",
+      "title": "Fingrid: Frequency Containment Reserves (FCR) products",
+      "url": "https://www.fingrid.fi/en/electricity-market/reserves/reserve-products/frequency-containment-reserves-fcr-products",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Indicative FCR-N response about 63 % within 1 minute and 95 % within 3 minutes, i.e. a 60 s first-order lag. The new requirements specify FCR-N dynamics in the frequency domain instead (disturbance profile 1/(70s+1))."
+    },
+    {
+      "section": "fcrD",
+      "title": "Technical Requirements for Frequency Containment Reserve Provision in the Nordic Synchronous Area, v1.1 (28 March 2025)",
+      "url": "https://www.statnett.no/link/fe89e089e1fd4154947ca28e6ea8c3fc.aspx",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Table 1: FCR-D up 49.9 to 49.5 Hz, down 50.1 to 50.5 Hz. Requirement 2: at least 0.86 of steady-state response 7.5 s after the start of a 0.24 Hz/s ramp from 49.9 Hz to 49.0 Hz; the slowest compliant first-order lag is 3.37 s, so 3.3 s is used (derived)."
+    },
+    {
+      "section": "generatorProtection",
+      "title": "Commission Regulation (EU) 2016/631 (NC RfG), Article 13",
+      "url": "https://www.legislation.gov.uk/eur/2016/631/article/13/adopted/data.xml",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Article 13(1)(a) Table 2, Nordic: 47.5-48.5 Hz 30 min; 48.5-49.0 Hz TSO-specified, at least 30 min; 49.0-51.0 Hz unlimited; 51.0-51.5 Hz 30 min. Generators may disconnect outside these ranges."
+    },
+    {
+      "section": "generatorProtection",
+      "title": "Statnett: Nasjonal veileder for funksjonskrav i kraftsystemet (NVF 2025)",
+      "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/systemansvaret/retningslinjer-fos/nvf-2025.pdf",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "NVF 2025 Table 12-4 (Norway): 47.5-49.0 Hz 30 min; 51.0-52.5 Hz 30 min; synchronous units withstand ±1.5 Hz/s over 1 s."
+    },
+    {
+      "section": "generatorProtection",
+      "title": "Fingrid: Grid Code Specifications for Power Generating Facilities VJV2024 (unofficial translation 15.1.2025)",
+      "url": "https://fingrid.fi/globalassets/dokumentit/fi/palvelut/kulutuksen-ja-tuotannon-liittaminen-kantaverkkoon/vjv2024---unofficial-english-translation.pdf",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "VJV2024 §10.2.3: withstand 2.0 Hz/s; RoCoF protection may trip only above 4 Hz/s lasting at least 250 ms."
+    },
+    {
+      "section": "generatorProtection",
+      "title": "Commission Regulation (EU) 2016/631 (NC RfG), Article 13",
+      "url": "https://www.legislation.gov.uk/eur/2016/631/article/13/adopted/data.xml",
+      "accessedOn": "2026-10-10",
+      "status": "modelling-choice",
+      "note": "The 0.5 s delay of the 47.5 Hz and 51.5 Hz instantaneous elements is a modelling choice; the codes set withstand ranges, not relay delays."
+    },
+    {
+      "section": "lfdd",
+      "title": "Commission Regulation (EU) 2017/2196 (NC ER), Annex and Article 15",
+      "url": "https://www.legislation.gov.uk/eur/2017/2196/annex/adopted/data.xml",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Annex, Nordic: start 48.7-48.8 Hz with 5 % of load, final 48.0 Hz with 30 % cumulative, at least 2 steps, at most 15 % per step. Article 15(7)(a): no intentional time delay beyond relay and breaker operating time."
+    },
+    {
+      "section": "lfdd",
+      "title": "Nordic SOA Annex Emergency and Restoration, revised 11/12/2024",
+      "url": "https://eepublicdownloads.entsoe.eu/clean-documents/SOC%20documents/Nordic/2024/Nordic%20SOA_Annex%20ER_v2_Approved.pdf",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Nordic LFDD design: five steps at 48.8 / 48.6 / 48.4 / 48.2 / 48.0 Hz, the first four aiming at 5 % each. The 10 % at 48.0 Hz is derived so that the cumulative disconnection reaches the NC ER 30 %."
+    },
+    {
+      "section": "lfdd",
+      "title": "Commission Regulation (EU) 2016/1388 (Demand Connection Code), Article 19",
+      "url": "https://www.legislation.gov.uk/eur/2016/1388/article/19/adopted/data.xml",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Article 19(1)(c): LFDD relays operate within 150 ms; used as the stage delay."
+    },
+    {
+      "section": "fcrN",
+      "title": "Technical Requirements for Frequency Containment Reserve Provision in the Nordic Synchronous Area, v1.1 (28 March 2025)",
+      "url": "https://www.statnett.no/link/fe89e089e1fd4154947ca28e6ea8c3fc.aspx",
+      "accessedOn": "2026-10-10",
+      "status": "derived",
+      "note": "FCR-N is 1.43 % of island demand: the 600 MW Nordic requirement over the 42,000 MW system size of Table 7, so FCR-N strength scales with the island."
+    },
+    {
+      "section": "fcrD",
+      "title": "Svenska kraftnät: How is the FCR volume requirement determined?",
+      "url": "https://www.svk.se/en/stakeholders-portal/electricity-market/provision-of-ancillary-services/questions-and-answers-about-reserves/fcr/how-is-the-fcr-volume-requirement-determined/",
+      "accessedOn": "2026-10-10",
+      "status": "derived",
+      "note": "FCR-D must cover the reference incident; for an island this is taken as the output of its largest synchronised unit in each direction."
+    },
+    {
+      "section": "afrr",
+      "title": "Statnett: Technical product and interface specification for delivery of aFRR to Statnett, v4.0 (June 2023)",
+      "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/marked/reservemarkeder/afrr/technical-product-and-interface-specification-for-delivery-of-automatic-frequency-restoration-reserves-to-statnett.pdf",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "Table 1: aFRR full activation 300 s maximum (120 s preferred); set-points sent no more often than every 4 s, used as the controller cycle."
+    },
+    {
+      "section": "afrr",
+      "title": "Nordic FRR dimensioning methodology under SO GL Article 157 (2022)",
+      "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/systemansvaret/metoder---innsendt-til-godkjenning/metode-iht.-sogl-art-157-29.06.2022.pdf",
+      "accessedOn": "2026-10-10",
+      "status": "modelling-choice",
+      "note": "Without neighbours the island restores frequency itself: aFRR equals its largest unit output so that it can replace that unit within the 300 s full activation time."
+    },
+    {
+      "section": "mfrr",
+      "title": "Fingrid: Terms and conditions for providers of manual frequency restoration reserve (30.9.2026)",
+      "url": "https://www.fingrid.fi/globalassets/dokumentit/en/electricity-market/reserves/terms-and-conditions-for-providers-of-manual-frequency-restoration-reserve-30.9.2026.pdf",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "§7.3.1: mFRR full activation time 12.5 min (2.5 min preparation and 10 min ramp); minimum bid 1 MW."
+    },
+    {
+      "section": "mfrr",
+      "title": "Nordic FRR dimensioning methodology under SO GL Article 157 (2022)",
+      "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/systemansvaret/metoder---innsendt-til-godkjenning/metode-iht.-sogl-art-157-29.06.2022.pdf",
+      "accessedOn": "2026-10-10",
+      "status": "modelling-choice",
+      "note": "mFRR equals the largest unit output so that it can take over FCR and aFRR after the island's dimensioning incident."
+    },
+    {
+      "section": "storage",
+      "title": "Nordic SOA Annex Load-Frequency Control & Reserves (LFCR) v8",
+      "url": "https://eepublicdownloads.entsoe.eu/clean-documents/SOC%20documents/LFC/Annex_LFCR_v8.pdf",
+      "accessedOn": "2026-10-10",
+      "status": "verified",
+      "note": "§13.4.1: FFR trigger 49.7 Hz with full activation within 1.30 s (49.6 Hz / 1.00 s and 49.5 Hz / 0.70 s also allowed); short-duration support at least 5 s with deactivation at most 20 %/s; ready again within 15 min."
+    }
+  ],
+  "simulation": {
+    "subStepSeconds": 0.1,
+    "maximumCatchUpSeconds": 120
+  },
+  "swing": {
+    "nominalFrequencyHz": 50,
+    "loadDampingPercentPerHz": 1
+  },
+  "fcrN": {
+    "deadbandHz": 0,
+    "fullActivationDeviationHz": 0.1,
+    "timeConstantSeconds": 60,
+    "requirement": {
+      "basis": "share-of-island-load",
+      "fraction": 0.0143
+    },
+    "eligibleGovernorClasses": [
+      "hydro",
+      "steam"
+    ]
+  },
+  "fcrD": {
+    "up": {
+      "startHz": 49.9,
+      "fullHz": 49.5,
+      "timeConstantSeconds": 3.3,
+      "requirement": {
+        "basis": "largest-unit-output",
+        "factor": 1
+      }
+    },
+    "down": {
+      "startHz": 50.1,
+      "fullHz": 50.5,
+      "timeConstantSeconds": 3.3,
+      "requirement": {
+        "basis": "largest-unit-output",
+        "factor": 1
+      }
+    },
+    "eligibleGovernorClasses": [
+      "hydro",
+      "steam"
+    ]
+  },
+  "afrr": {
+    "enabled": true,
+    "controlMode": "flat-frequency",
+    "frequencyBiasFactor": 1,
+    "proportionalGain": 0,
+    "integralTimeSeconds": 60,
+    "cycleSeconds": 4,
+    "fullActivationSeconds": 300,
+    "requirement": {
+      "up": {
+        "basis": "largest-unit-output",
+        "factor": 1
+      },
+      "down": {
+        "basis": "largest-unit-output",
+        "factor": 1
+      }
+    },
+    "eligibleGovernorClasses": [
+      "hydro"
+    ]
+  },
+  "mfrr": {
+    "enabled": true,
+    "afrrUtilisationThresholdFraction": 0.5,
+    "sustainedSeconds": 120,
+    "fullActivationSeconds": 750,
+    "minimumActivationMw": 1,
+    "requirement": {
+      "up": {
+        "basis": "largest-unit-output",
+        "factor": 1
+      },
+      "down": {
+        "basis": "largest-unit-output",
+        "factor": 1
+      }
+    },
+    "eligibleGovernorClasses": [
+      "hydro",
+      "steam"
+    ]
+  },
+  "lfdd": {
+    "stages": [
+      {
+        "id": "stage-1",
+        "thresholdHz": 48.8,
+        "delaySeconds": 0.15,
+        "shareOfLoad": 0.05
+      },
+      {
+        "id": "stage-2",
+        "thresholdHz": 48.6,
+        "delaySeconds": 0.15,
+        "shareOfLoad": 0.05
+      },
+      {
+        "id": "stage-3",
+        "thresholdHz": 48.4,
+        "delaySeconds": 0.15,
+        "shareOfLoad": 0.05
+      },
+      {
+        "id": "stage-4",
+        "thresholdHz": 48.2,
+        "delaySeconds": 0.15,
+        "shareOfLoad": 0.05
+      },
+      {
+        "id": "stage-5",
+        "thresholdHz": 48.0,
+        "delaySeconds": 0.15,
+        "shareOfLoad": 0.1
+      }
+    ]
+  },
+  "storage": {
+    "mode": "ffr",
+    "triggerHz": 49.7,
+    "fullActivationSeconds": 1.3,
+    "supportDurationSeconds": 5,
+    "deactivationRateFractionPerSecond": 0.2,
+    "rearmDelaySeconds": 900,
+    "stateOfChargeLimits": {
+      "minimumFraction": 0.05,
+      "maximumFraction": 0.95
+    }
+  },
+  "generatorProtection": {
+    "underFrequency": [
+      {
+        "id": "under-frequency-instant",
+        "thresholdHz": 47.5,
+        "delaySeconds": 0.5
+      },
+      {
+        "id": "under-frequency-sustained",
+        "thresholdHz": 49.0,
+        "delaySeconds": 1800
+      }
+    ],
+    "overFrequency": [
+      {
+        "id": "over-frequency-instant",
+        "thresholdHz": 51.5,
+        "delaySeconds": 0.5
+      },
+      {
+        "id": "over-frequency-sustained",
+        "thresholdHz": 51.0,
+        "delaySeconds": 1800
+      }
+    ],
+    "rocof": {
+      "thresholdHzPerSecond": 4,
+      "delaySeconds": 0.25
+    }
+  }
+}

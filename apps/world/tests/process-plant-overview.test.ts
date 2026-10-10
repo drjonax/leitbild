@@ -42,6 +42,8 @@ describe('the unit overview World generates for a Plant', () => {
     objects: new Map([[system.plant.id as ObjectId, { id: system.plant.id as ObjectId, label: 'Halden Unit 1' }]]),
     simulationTime: '2026-10-09T10:00:00.000Z' as IsoTimestamp,
     recordedSeriesIds: new Set(recordedPlantVariables(system.plant, 'operations').map(variable => recordingSeriesIdFor(system.plant.id, variable.path))),
+    // The Plant has not run, so its Run has recorded nothing yet.
+    recordedHistory: { read: () => [] },
   })
 
   test('opens as a view of its own, saying what it shows and the state of every drawn item', () => {

@@ -6,6 +6,7 @@ import type { RoutingAdapter } from '../../routing/protocol.ts'
 import type { GeoJsonPoint,GeoJsonPolygon,InteractionHandler,IsoTimestamp,MapLayerId,ObjectId,OperationalObject,ProcedureTag,RecordingProfileDescriptor } from '../model/index.ts'
 import { geoJsonPointSchema,geoJsonPolygonSchema,isoTimestampSchema } from '../model/index.ts'
 import { geoJsonGeometrySchema, type GeoJsonGeometry } from '../model/geo.ts'
+import type { PackMapLegend,PackMapLegendSwatch,PackReferenceDatasetStyle } from './reference-style.ts'
 
 export type WorldPackDescriptor = PackDescriptor & { readonly description: string }
 export const packDataChangedSchema = z.object({ packId: z.string().min(1), revision: z.number().int().nonnegative() }).strict()
@@ -28,6 +29,8 @@ export interface PackMapLayerGroup {
   readonly defaultVisible: boolean
   /** MapLibre layer-id glob. `*` matches one ':'-separated segment. */
   readonly layerIdPattern: string
+  /** Key drawn beside the toggle in the layers panel. */
+  readonly swatch?: PackMapLegendSwatch
 }
 
 export interface PackObjectCategory {
@@ -354,6 +357,10 @@ export interface PackPresentationContribution {
     context: PackObjectPresentationContext,
   ) => ReadonlyArray<PackMapFeatureQuery>
   readonly mapLayerGroups?: ReadonlyArray<PackMapLayerGroup>
+  /** One style for each dataset in this Pack's `referenceData.datasetIds`. */
+  readonly referenceStyles?: ReadonlyArray<PackReferenceDatasetStyle>
+  /** Keys the layers panel renders for this Pack's map encodings. */
+  readonly mapLegends?: ReadonlyArray<PackMapLegend>
 }
 
 export interface PackCreationContribution {

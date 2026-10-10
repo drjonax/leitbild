@@ -5,29 +5,37 @@ import { createWorldPackDescriptor } from '../../core/packs/protocol.ts'
 import { asDatasetId } from '../../reference-data/types.ts'
 import { electricGridPackId, parseElectricGridObjectData } from './model.ts'
 import { electricGridRuntimeId } from './sim/constants.ts'
+import { gridGenerationColor, gridVoltageLegend, neutralSwatchColor } from './ui/grid-map-palette.ts'
+import { gridNorwayStyle } from './ui/grid-norway-style.ts'
 
 const mw = (value: number): string => `${Math.round(value).toLocaleString()} MW`
 
+const referenceLayerPattern = (group: string): string => `reference:${gridNorwayStyle.datasetId}:${group}:*`
+
 const layerGroups: ReadonlyArray<PackMapLayerGroup> = [{
   id: 'electric-grid:reference-lines',
-  label: 'Reference lines',
+  label: 'Power lines',
   defaultVisible: true,
-  layerIdPattern: 'reference:grid-norway:line:*',
+  layerIdPattern: referenceLayerPattern('lines'),
+  swatch: { symbol: 'line', color: neutralSwatchColor, sizePx: 3 },
 }, {
   id: 'electric-grid:reference-cables',
-  label: 'Reference cables',
+  label: 'Power cables',
   defaultVisible: true,
-  layerIdPattern: 'reference:grid-norway:cable:*',
+  layerIdPattern: referenceLayerPattern('cables'),
+  swatch: { symbol: 'dashed-line', color: neutralSwatchColor, sizePx: 3 },
 }, {
   id: 'electric-grid:reference-substations',
-  label: 'Reference substations',
+  label: 'Substations and transformers',
   defaultVisible: true,
-  layerIdPattern: 'reference:grid-norway:substation:*',
+  layerIdPattern: referenceLayerPattern('substations'),
+  swatch: { symbol: 'circle', color: neutralSwatchColor, sizePx: 9 },
 }, {
   id: 'electric-grid:reference-generation',
-  label: 'Reference generation',
+  label: 'Power plants and generators',
   defaultVisible: true,
-  layerIdPattern: 'reference:grid-norway:plant:*',
+  layerIdPattern: referenceLayerPattern('generation'),
+  swatch: { symbol: 'circle', color: gridGenerationColor, sizePx: 11 },
 }]
 
 const presentationForGrid = (object: OperationalObject): PackObjectPresentation => {
@@ -77,9 +85,11 @@ export const electricGridPackView: WorldPackView = {
     runtimes: [{ id: electricGridRuntimeId, version: '1.0.0', label: 'Local electric grid runtime', kind: 'local', clock: 'simulation' }],
     defaultRuntimeId: electricGridRuntimeId,
   },
-  referenceData: { datasetIds: [asDatasetId('grid-norway')] },
+  referenceData: { datasetIds: [asDatasetId(gridNorwayStyle.datasetId)] },
   presentation: {
     mapLayerGroups: layerGroups,
+    referenceStyles: [gridNorwayStyle],
+    mapLegends: [gridVoltageLegend],
     categories: [{
       id: 'electric-grids',
       label: 'Electric grids',

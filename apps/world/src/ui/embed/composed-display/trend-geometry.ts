@@ -1,21 +1,12 @@
 // Pure geometry for composed-display trends. Time is Simulation Run time in
 // epoch milliseconds; values are the signal's native unit.
 import { formatValue, trendSpanMs } from '../../../packs/process-plant/displays/display-text.ts'
-
-export interface TrendPoint {
-  readonly t: number
-  readonly v: number
-}
+import { HOLD_GAP_MS, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
 
 export interface ValueDomain {
   readonly min: number
   readonly max: number
 }
-
-// The operations Historian re-records an unchanged value at most once per
-// minute, so a held value is drawn across gaps up to this length and broken
-// beyond it.
-export const HOLD_GAP_MS = 90_000
 
 const PAD_FRACTION = 0.08
 
@@ -36,12 +27,14 @@ export const paddedDomain = (raw: ValueDomain): ValueDomain => {
   const span = raw.max - raw.min
   const magnitude = Math.max(Math.abs(raw.max), Math.abs(raw.min))
   const minimum = magnitude >= 1 ? Math.max(magnitude * MIN_SPAN_FRACTION, 1) : magnitude * MIN_SPAN_FRACTION
-  if (span === 0 && minimum === 0) return { min: raw.min - 1, max: raw.max + 1 }
-  if (span < minimum) {
-    const middle = (raw.max + raw.min) / 2
-    return { min: middle - minimum / 2, max: middle + minimum / 2 }
-  }
-  return { min: raw.min - span * PAD_FRACTION, max: raw.max + span * PAD_FRACTION }
+  const middle = (raw.max + raw.min) / 2
+  const padded = span < minimum
+    ? { min: middle - minimum / 2, max: middle + minimum / 2 }
+    : { min: raw.min - span * PAD_FRACTION, max: raw.max + span * PAD_FRACTION }
+  // Values so near zero that their share underflows (a decayed power of
+  // 1e-320 MW) would give a scale of no height and every point NaN: such a
+  // scale spans one unit around them instead.
+  return padded.max - padded.min > 0 && Number.isFinite(padded.max - padded.min) ? padded : { min: middle - 1, max: middle + 1 }
 }
 
 const niceStep = (span: number, count: number): number => {
@@ -113,16 +106,6 @@ export const timeTicks = (now: number, windowMs: number): ReadonlyArray<TimeTick
 /** The time a trend spans now (trendSpanMs); its full horizon until the Run's start is known. */
 export const trendWindowMs = (horizonMs: number, now: number, runStartedAt: number | null): number =>
   runStartedAt === null ? horizonMs : trendSpanMs(horizonMs, now - runStartedAt)
-
-/** Keeps points ordered and drops those that can no longer influence the window. */
-export const appendPoint = (
-  points: ReadonlyArray<TrendPoint>,
-  point: TrendPoint,
-  windowStart: number,
-): ReadonlyArray<TrendPoint> => {
-  const kept = points.filter(existing => existing.t >= windowStart - HOLD_GAP_MS && existing.t < point.t)
-  return [...kept, point]
-}
 
 /**
  * Step-hold SVG path: a sampled value holds until the next sample. Holds end

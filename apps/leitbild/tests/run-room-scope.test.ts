@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { moduleResourceDescriptorSchema, newWorkspaceId, workspaceResourceReferenceSchema } from '@leitbild/contracts'
-import { roomScopeIncludingRun, roomSelectsRun, sameResource } from '../src/ui/run-room-scope.ts'
+import { roomScopeIncludingRun, roomScopeKind, roomSelectsRun, sameResource } from '../src/ui/run-room-scope.ts'
 
 const workspaceId = newWorkspaceId()
 const observedAt = new Date().toISOString()
@@ -12,12 +12,38 @@ const run = moduleResourceDescriptorSchema.parse({
   links: [{ rel: 'member-of', ref: familyRef }],
   capabilityIds: [], summary: [], observedAt,
 })
-const room = (subjectLinks: unknown[]) => moduleResourceDescriptorSchema.parse({
-  ref: { workspaceId, moduleId: 'agents', type: 'agents.room', id: crypto.randomUUID() },
+const room = (subjectLinks: unknown[], inWorkspace: string = workspaceId) => moduleResourceDescriptorSchema.parse({
+  ref: { workspaceId: inWorkspace, moduleId: 'agents', type: 'agents.room', id: crypto.randomUUID() },
   title: 'Assistant', links: subjectLinks, capabilityIds: [], summary: [], observedAt,
 })
+const agentLink = { rel: 'member', ref: { workspaceId, moduleId: 'agents', type: 'agents.agent', id: 'assistant' } }
 
 describe('Run Room scope', () => {
+  test('a Workspace-scoped Room selects every Run of its Workspace, not of another', () => {
+    const workspaceRoom = room([agentLink])
+    expect(roomScopeKind(workspaceRoom)).toBe('workspace')
+    expect(roomSelectsRun(workspaceRoom, run)).toBe(true)
+    const unrelated = moduleResourceDescriptorSchema.parse({ ...run, ref: { ...run.ref, id: 'unrelated' }, links: [] })
+    expect(roomSelectsRun(workspaceRoom, unrelated)).toBe(true)
+    expect(roomSelectsRun(room([], newWorkspaceId()), run)).toBe(false)
+  })
+
+  test('a Resource-scoped Room selects exactly the Run it names', () => {
+    const runRoom = room([{ rel: 'scope-resource', ref: runRef }, agentLink])
+    expect(roomScopeKind(runRoom)).toBe('resource')
+    expect(roomSelectsRun(runRoom, run)).toBe(true)
+    const sibling = moduleResourceDescriptorSchema.parse({ ...run, ref: { ...run.ref, id: 'sibling' } })
+    expect(roomSelectsRun(runRoom, sibling)).toBe(false)
+    // The family shares the Run's id but is another Resource, so it selects nothing here.
+    expect(roomSelectsRun(room([{ rel: 'scope-resource', ref: familyRef }]), run)).toBe(false)
+  })
+
+  test('scope links it does not understand select no Run', () => {
+    const malformed = room([{ rel: 'scope-member', ref: runRef }])
+    expect(roomScopeKind(malformed)).toBe('collection')
+    expect(roomSelectsRun(malformed, run)).toBe(false)
+  })
+
   test('compares complete Resource identity when family and original share an id', () => {
     expect(sameResource(run.ref, familyRef)).toBe(false)
     expect(roomSelectsRun(room([{ rel: 'scope-collection', ref: familyRef }]), run)).toBe(true)

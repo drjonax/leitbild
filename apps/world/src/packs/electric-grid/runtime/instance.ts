@@ -9,6 +9,8 @@ import type {
 } from '../grid-model.ts'
 import type { GridProjection } from '../model.ts'
 import type { ElectricalConnectionDefinition } from '../../../core/model/index.ts'
+import type { CompiledGridNetwork } from './network/compiled-network.ts'
+import type { GridIslandSystem } from './network/dc-power-flow.ts'
 
 export interface GridBusState {
   readonly busId: string
@@ -59,6 +61,9 @@ export interface GridStorageState {
 
 export interface GridTopologyIsland {
   readonly id: string
+  /** The island's first bus in model order: the angle reference, which absorbs the island's injection mismatch. */
+  readonly referenceBusId: string
+  /** Buses in model order. */
   readonly buses: ReadonlyArray<string>
   readonly busSet: ReadonlySet<string>
   readonly branches: ReadonlyArray<GridBranchDefinition>
@@ -67,17 +72,19 @@ export interface GridTopologyIsland {
   readonly storage: ReadonlyArray<GridStorageDefinition>
 }
 
-export interface GridLinearFactor {
-  readonly buses: ReadonlyArray<string>
-  readonly lower: ReadonlyArray<ReadonlyArray<number>>
-  readonly upper: ReadonlyArray<ReadonlyArray<number>>
-}
-
 export interface GridTopologyPlan {
-  readonly signature: string
+  readonly network: CompiledGridNetwork
+  /** Closed flag (1) per model branch this plan was built from; compared with live branch states every tick. */
+  readonly closedBranches: Uint8Array
   readonly islands: ReadonlyArray<GridTopologyIsland>
+  /** DC systems aligned with `islands`. */
+  readonly systems: ReadonlyArray<GridIslandSystem>
   readonly islandIdByBus: ReadonlyMap<string, string>
-  readonly factors: ReadonlyMap<string, GridLinearFactor>
+  /** Latest solve per bus in model order: scheduled injection (MW) and angle (rad). */
+  readonly injectionsMw: Float64Array
+  readonly anglesRad: Float64Array
+  /** Latest solve per island, aligned with `islands`: MW absorbed by the reference bus (the island's injection sum). */
+  readonly referenceMismatchMw: Float64Array
 }
 
 export interface GridRuntimeDiagnostics {

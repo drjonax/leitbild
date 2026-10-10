@@ -1,20 +1,14 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
+import type { PackMapAppearance, PackReferenceDatasetStyle } from '../../core/packs/reference-style.ts'
 import {
   buildReferenceDatasetLayers,
   type DatasetManifestForLayers,
-  type DatasetStyleModule,
-  type ReferenceLayerSpec,
 } from './reference-layer-factory.ts'
-import { gridNorwayStyleModule } from '../../packs/electric-grid/ui/grid-norway-style.ts'
 
-// Imperative controller that fetches /map/capabilities.json, registers
-// reference-data vector sources + layers against an active MapLibre map, and
-// applies per-category visibility from the layers panel.
-//
-// Pure logic only; no DOM, no Svelte. The Svelte component (OperationalMap)
-// instantiates the controller and forwards toggle events. The controller
-// buffers visibility state so toggles arriving before the map finishes
-// registering layers are applied as soon as the layers exist.
+// Imperative registration of Pack-styled reference datasets: fetches
+// /map/capabilities.json and adds one vector source plus the Pack's layers for
+// every active style whose dataset the server publishes. Visibility belongs to
+// the Pack layer-group controller; stacking to the caller's `beforeLayerId`.
 
 const CAPABILITIES_URL = '/map/capabilities.json'
 
@@ -47,11 +41,6 @@ interface ManifestForController {
 const isReference = (entry: { readonly kind: string }): entry is ReferenceTilesetForController =>
   entry.kind === 'reference'
 
-const styleModuleFor = (datasetId: string): DatasetStyleModule | null => {
-  if (datasetId === 'grid-norway') return gridNorwayStyleModule
-  return null
-}
-
 const manifestEntryForLayers = (tileset: ReferenceTilesetForController): DatasetManifestForLayers => ({
   datasetId: tileset.datasetId,
   artifact: tileset.artifact,
@@ -61,8 +50,10 @@ const manifestEntryForLayers = (tileset: ReferenceTilesetForController): Dataset
 
 export interface ReferenceDatasetControllerConfig {
   readonly map: MapLibreMap
-  readonly beforeLayerId?: string | null
-  readonly datasetIds?: ReadonlyArray<string>
+  readonly styles: ReadonlyArray<PackReferenceDatasetStyle>
+  readonly appearance: PackMapAppearance
+  /** Evaluated just before the layers are added; null appends them on top. */
+  readonly beforeLayerId: () => string | null
   readonly fetchFn?: (input: string) => Promise<Response>
   readonly capabilitiesUrl?: string
   readonly logger?: (message: string) => void
@@ -70,42 +61,12 @@ export interface ReferenceDatasetControllerConfig {
 
 export interface RegisteredReferenceDataset {
   readonly datasetId: string
-  readonly categories: ReadonlyArray<string>
-  readonly layerIdsByCategory: Readonly<Record<string, ReadonlyArray<string>>>
+  readonly sourceId: string
+  readonly layerIds: ReadonlyArray<string>
 }
 
 export interface ReferenceDatasetController {
   readonly registered: ReadonlyArray<RegisteredReferenceDataset>
-  readonly setCategoryVisibility: (datasetId: string, category: string, visible: boolean) => void
-  readonly setBulkVisibility: (datasetId: string, visibility: Readonly<Record<string, boolean>>) => void
-}
-
-const collectLayerIdsByCategory = (layers: ReadonlyArray<ReferenceLayerSpec>): Record<string, string[]> => {
-  const byCategory: Record<string, string[]> = {}
-  for (const layer of layers) {
-    // Layer id encoded as `reference:<dataset>:<category>:<kind>`; pull category.
-    const parts = layer.id.split(':')
-    const category = parts[2]
-    if (!category) continue
-    const list = byCategory[category] ?? []
-    list.push(layer.id)
-    byCategory[category] = list
-  }
-  return byCategory
-}
-
-const safeSetVisibility = (
-  map: MapLibreMap,
-  layerId: string,
-  visible: boolean,
-  log: (m: string) => void,
-): void => {
-  try {
-    if (!map.getLayer(layerId)) return
-    map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none')
-  } catch (err) {
-    log(`reference-data: setLayoutProperty failed for ${layerId} — ${err instanceof Error ? err.message : String(err)}`)
-  }
 }
 
 const fetchManifest = async (
@@ -134,37 +95,33 @@ const fetchManifest = async (
 const registerOne = (
   map: MapLibreMap,
   tileset: ReferenceTilesetForController,
-  style: DatasetStyleModule,
+  style: PackReferenceDatasetStyle,
+  appearance: PackMapAppearance,
   beforeLayerId: string | null,
-  log: (m: string) => void,
-): RegisteredReferenceDataset | null => {
-  try {
-    const built = buildReferenceDatasetLayers(manifestEntryForLayers(tileset), style)
-    if (!map.getSource(built.sourceId)) {
-      map.addSource(built.sourceId, {
-        type: built.source.type,
-        tiles: [...built.source.tiles],
-        minzoom: built.source.minzoom,
-        maxzoom: built.source.maxzoom,
-        attribution: built.source.attribution,
-      })
-    }
-    for (const layer of built.layers) {
-      if (map.getLayer(layer.id)) continue
-      const before = beforeLayerId && map.getLayer(beforeLayerId) ? beforeLayerId : undefined
-      // Cast to unknown then to maplibre's expected layer spec shape; our specs
-      // are structurally compatible but the loose `Record<string, unknown>` paint
-      // doesn't satisfy maplibre's strict types here.
-      map.addLayer(layer as unknown as Parameters<MapLibreMap['addLayer']>[0], before)
-    }
-    return {
-      datasetId: tileset.datasetId,
-      categories: tileset.categories.map(c => c.category),
-      layerIdsByCategory: collectLayerIdsByCategory(built.layers),
-    }
-  } catch (err) {
-    log(`reference-data: failed to register ${tileset.datasetId} — ${err instanceof Error ? err.message : String(err)}`)
-    return null
+): RegisteredReferenceDataset => {
+  const built = buildReferenceDatasetLayers(manifestEntryForLayers(tileset), style, appearance)
+  if (beforeLayerId !== null && !map.getLayer(beforeLayerId)) {
+    throw new Error(`reference layers for ${tileset.datasetId} must be inserted before missing layer ${beforeLayerId}`)
+  }
+  if (!map.getSource(built.sourceId)) {
+    map.addSource(built.sourceId, {
+      type: built.source.type,
+      tiles: [...built.source.tiles],
+      minzoom: built.source.minzoom,
+      maxzoom: built.source.maxzoom,
+      attribution: built.source.attribution,
+    })
+  }
+  for (const layer of built.layers) {
+    if (map.getLayer(layer.id)) continue
+    // Pack specs are validated MapLibre JSON; their loose records do not satisfy
+    // MapLibre's per-type paint unions statically.
+    map.addLayer(layer as unknown as Parameters<MapLibreMap['addLayer']>[0], beforeLayerId ?? undefined)
+  }
+  return {
+    datasetId: tileset.datasetId,
+    sourceId: built.sourceId,
+    layerIds: built.layers.map(layer => layer.id),
   }
 }
 
@@ -172,52 +129,23 @@ export const createReferenceDataController = async (
   config: ReferenceDatasetControllerConfig,
 ): Promise<ReferenceDatasetController> => {
   const log = config.logger ?? ((msg: string) => console.warn(msg))
+  if (config.styles.length === 0) return { registered: [] }
   const fetchFn = config.fetchFn ?? ((input: string) => globalThis.fetch(input))
-  const url = config.capabilitiesUrl ?? CAPABILITIES_URL
-  const beforeLayerId = config.beforeLayerId ?? null
-  const allowedDatasetIds = config.datasetIds === undefined ? null : new Set(config.datasetIds)
+  const manifest = await fetchManifest(config.capabilitiesUrl ?? CAPABILITIES_URL, fetchFn, log)
+  if (!manifest) return { registered: [] }
 
-  if (allowedDatasetIds?.size === 0) {
-    return {
-      registered: [],
-      setCategoryVisibility: () => undefined,
-      setBulkVisibility: () => undefined,
-    }
-  }
-
-  const manifest = await fetchManifest(url, fetchFn, log)
+  const tilesets = new Map<string, ReferenceTilesetForController>()
+  for (const entry of manifest.tilesets) if (isReference(entry)) tilesets.set(entry.datasetId, entry)
   const registered: RegisteredReferenceDataset[] = []
-  if (manifest) {
-    for (const entry of manifest.tilesets) {
-      if (!isReference(entry)) continue
-      if (allowedDatasetIds && !allowedDatasetIds.has(entry.datasetId)) continue
-      const style = styleModuleFor(entry.datasetId)
-      if (!style) {
-        log(`reference-data: no style module registered for dataset "${entry.datasetId}" — skipping`)
-        continue
-      }
-      const result = registerOne(config.map, entry, style, beforeLayerId, log)
-      if (result) registered.push(result)
+  for (const style of config.styles) {
+    const tileset = tilesets.get(style.datasetId)
+    if (!tileset) {
+      log(`reference-data: dataset "${style.datasetId}" is not published in the map capabilities; its layers are not shown`)
+      continue
     }
+    registered.push(registerOne(config.map, tileset, style, config.appearance, config.beforeLayerId()))
   }
-
-  return {
-    registered,
-    setCategoryVisibility: (datasetId, category, visible) => {
-      const dataset = registered.find(d => d.datasetId === datasetId)
-      if (!dataset) return
-      const layerIds = dataset.layerIdsByCategory[category] ?? []
-      for (const id of layerIds) safeSetVisibility(config.map, id, visible, log)
-    },
-    setBulkVisibility: (datasetId, visibility) => {
-      const dataset = registered.find(d => d.datasetId === datasetId)
-      if (!dataset) return
-      for (const [category, visible] of Object.entries(visibility)) {
-        const layerIds = dataset.layerIdsByCategory[category] ?? []
-        for (const id of layerIds) safeSetVisibility(config.map, id, visible, log)
-      }
-    },
-  }
+  return { registered }
 }
 
-export const __internals = { collectLayerIdsByCategory, isReference, styleModuleFor }
+export const __internals = { isReference }

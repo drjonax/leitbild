@@ -242,10 +242,143 @@ const leadIssues = (prose: string, view: EmbeddedViewContent): ReadonlyArray<str
   return [`It leaves out what the display leads with: ${view.lead.reason}.`]
 }
 
+// --- Direction and the limit ahead -------------------------------------------
+
+type Item = EmbeddedViewContent['items'][number]
+type Direction = NonNullable<Item['trend']>['direction']
+
+/** Word pairs and the longer words of an item's names: "SG B" tells SG B from SG A, where "level" does not. */
+const itemTerms = (item: Item) => {
+  const sequences = item.names.map(wordsOf)
+  return {
+    pairs: new Set(sequences.flatMap(sequence => sequence.slice(1).map((word, at) => `${sequence[at]} ${word}`))),
+    words: new Set(sequences.flat().filter(word => word.length >= 3 && !FILLER.has(word) && !UNIT_WORDS.has(word))),
+  }
+}
+
+/**
+ * The items a clause is about: those it names best by their word pairs and
+ * longer words, or whose current value it cites; none where nothing names an
+ * item at least by a pair or two words.
+ */
+const itemsNamed = (clause: string, items: ReadonlyArray<Item>): ReadonlyArray<Item> => {
+  const said = wordsOf(clause)
+  const pairs = new Set(said.slice(1).map((word, at) => `${said[at]} ${word}`))
+  const words = new Set(said)
+  const cited = quantitiesIn(clause)
+  const scored = items.map(item => {
+    const terms = itemTerms(item)
+    const valued = cited.some(quantity => item.values.some(value => canonicalUnit(value.unit) === quantity.unit && near(quantity.value, quantity.text, value.value)))
+    return { item, score: 2 * [...terms.pairs].filter(pair => pairs.has(pair)).length + [...terms.words].filter(word => words.has(word)).length + (valued ? 2 : 0) }
+  })
+  const best = Math.max(0, ...scored.map(entry => entry.score))
+  return best < 2 ? [] : scored.filter(entry => entry.score === best).map(entry => entry.item)
+}
+
+// A direction stated as it is now. Past tenses ("fell", "had fallen") tell
+// history the trend shows and are left alone.
+const DIRECTIONS: ReadonlyArray<readonly [Direction, RegExp]> = [
+  ['falling', /\b(?:falling|decreasing|dropping|declining|trending down|going down|continu(?:es|ing) to (?:fall|drop|decrease|decline))\b/i],
+  ['rising', /\b(?:rising|increasing|climbing|trending up|going up|continu(?:es|ing) to (?:rise|increase|climb))\b/i],
+  ['steady', /\b(?:stable|steady|flat|unchanged|constant|holding (?:steady|at)|level(?:l)?ing off|level(?:l)?ed off)\b/i],
+]
+// A clause that asks or supposes rather than states: "watch whether it keeps falling".
+const HEDGED = /\b(?:watch|monitor|track|whether|if|could|can|may|might|would|will|should|expect(?:s|ed)?|risk|until|unless|confirm|verify|check|look for|for (?:a|any)|in case|once|when|before|after)\b/i
+// A denial before the direction denies it: "does not establish that it is still falling", "no longer rising".
+const DENIED = /\b(?:not|no longer|never|nor|neither|without|stopped|ceased|instead of|rather than)\b|n't\b/i
+const WAS = /\b(?:was|were|had been)\s+(?:\w+\s+)?$/i
+// A small change the display may still read as steady.
+const SLIGHT = /\b(?:slightly|slowly|marginally|gently|barely|edging|a little|creeping)\b/i
+
+/** Clauses of a sentence, split where it may turn to another item: "SG A is rising, while SG B is falling". */
+const clausesOf = (sentence: string): ReadonlyArray<string> =>
+  sentence.split(/;|—|–|,\s*(?:but|while|whereas|and|although|though|yet)\s+/i).map(clause => clause.trim()).filter(clause => clause.length > 0)
+
+const directionStated = (clause: string): { readonly direction: Direction; readonly slight: boolean } | null => {
+  if (HEDGED.test(clause)) return null
+  const stated = DIRECTIONS.flatMap(([direction, pattern]) => {
+    const match = pattern.exec(clause)
+    if (match === null) return []
+    const before = clause.slice(0, match.index)
+    return WAS.test(before) || DENIED.test(before) ? [] : [direction]
+  })
+  // A clause saying two ways ("rising, then falling") states none plainly.
+  return stated.length === 1 ? { direction: stated[0]!, slight: SLIGHT.test(clause) } : null
+}
+
+const contradicts = (stated: { readonly direction: Direction; readonly slight: boolean }, shown: Direction): boolean =>
+  stated.direction !== shown && !(stated.slight && (stated.direction === 'steady' || shown === 'steady'))
+
+const names = (items: ReadonlyArray<Item>): string => items.map(item => item.names[0]!).join(', ')
+const travelShown = (trend: NonNullable<Item['trend']>): string =>
+  trend.direction === 'steady' ? 'steady' : `${trend.direction} ${Number(Math.abs(trend.rate).toPrecision(3))} ${trend.unit}/min`
+
+/**
+ * A direction the answer states for an item that the display shows going
+ * another way. A clause is about the items it names (or, naming none, those
+ * of the clause before it in its sentence); only where the display shows a
+ * rate for every one of them, and they all go another way, is it flagged.
+ */
+const directionIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent): ReadonlyArray<string> => sentences.flatMap(sentence => {
+  let about: ReadonlyArray<Item> = []
+  return clausesOf(sentence).flatMap(clause => {
+    const named = itemsNamed(clause, view.items)
+    about = named.length > 0 ? named : about
+    const stated = directionStated(clause)
+    if (stated === null || about.length === 0 || !about.every(item => item.trend !== undefined && contradicts(stated, item.trend.direction))) return []
+    const shown = [...new Set(about.map(item => travelShown(item.trend!)))]
+    return [`It says ${names(about)} ${about.length === 1 ? 'is' : 'are'} ${stated.direction}, but the display shows ${about.length === 1 ? 'it' : 'them'} ${shown.join(', ')}.`]
+  })
+})
+
+// A limit named as the display names them: "HI ALM 16 MPa", "LO-LO TRIP 20%", "low alarm at 14.8 MPa".
+const LIMIT = new RegExp(`\\b(HI(?:-HI)?|LO(?:-LO)?|high(?:[- ]high)?|low(?:[- ]low)?)[- ](ALM|TRIP|alarm|trip)(?:\\s+(?:limit|threshold|line|set ?point))?(?:\\s+(?:at|of))?\\s+([-−]?\\d+(?:\\.\\d+)?)\\s?(${UNIT_PATTERN})(?![\\w/])`, 'gi')
+
+/**
+ * A limit the answer names for an item, not yet passed, other than the limit
+ * ahead the display's legend names for it, where the answer never names that
+ * one: "0.542 MPa below HI ALM 16 MPa" beside a legend reading "0.658 MPa
+ * above LO ALM 14.8 MPa" for a falling pressure. A limit the value is past
+ * ("below LO TRIP 20%") is what the display marks too, and is left alone.
+ */
+const limitAheadIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent): ReadonlyArray<string> => {
+  const aheadNamed = new Set<Item>()
+  const other = new Map<Item, string>()
+  for (const sentence of sentences) {
+    for (const match of sentence.matchAll(LIMIT)) {
+      const cited = { value: Number(match[3]!.replace('−', '-')), unit: canonicalUnit(match[4]!), text: match[0] }
+      const low = /^lo/i.test(match[1]!)
+      const limited = view.items.filter(item => item.limitAhead !== undefined && item.limits.some(limit => canonicalUnit(limit.unit) === cited.unit && near(cited.value, match[3]!, limit.value)))
+      const named = itemsNamed(sentence, limited)
+      for (const item of named.length > 0 ? named : limited) {
+        const ahead = item.limitAhead!
+        if (canonicalUnit(ahead.unit) === cited.unit && near(cited.value, match[3]!, ahead.value)) { aheadNamed.add(item); continue }
+        const value = item.values.find(reading => canonicalUnit(reading.unit) === cited.unit)?.value
+        const unpassed = value !== undefined && (low ? value > cited.value : value < cited.value)
+        if (unpassed && !other.has(item)) other.set(item, cited.text)
+      }
+    }
+  }
+  const byFix = new Map<string, Item[]>()
+  for (const [item, cited] of other) {
+    if (aheadNamed.has(item)) continue
+    const key = `${cited}|${item.limitAhead!.name}`
+    byFix.set(key, [...(byFix.get(key) ?? []), item])
+  }
+  return [...byFix.entries()].map(([key, items]) => {
+    const [cited, ahead] = key.split('|') as [string, string]
+    const trend = items[0]!.trend
+    const moving = trend === undefined || trend.direction === 'steady' ? '' : ` as ${items.length === 1 ? 'it is' : 'they are'} ${trend.direction}`
+    return `It names ${cited} for ${names(items)}, but the display names ${ahead} as the limit ahead${moving}: name ${ahead} as the display does.`
+  })
+}
+
 /**
  * Where an answer and the display it presents disagree: quantities and
  * "watch" items the display does not show (unless the answer says so), a time
- * window longer than the display's axis, and the display's lead left out.
+ * window longer than the display's axis, the display's lead left out, a
+ * direction the display shows otherwise, and a limit other than the one the
+ * display names ahead.
  */
 export const answerViewIssues = (answer: string, view: EmbeddedViewContent): ReadonlyArray<string> => {
   const prose = stripMarkdown(answer)
@@ -255,5 +388,7 @@ export const answerViewIssues = (answer: string, view: EmbeddedViewContent): Rea
     ...quantityIssues(sentences, view),
     ...watchIssues(sentences, view),
     ...spanIssues(prose, view),
+    ...directionIssues(sentences, view),
+    ...limitAheadIssues(sentences, view),
   ])]
 }

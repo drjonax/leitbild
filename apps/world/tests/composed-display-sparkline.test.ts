@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import type { ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import { SPARKLINE_SIZE, sparkline, sparklineText, sparklineWindowText } from '../src/ui/embed/composed-display/sparkline.ts'
-import type { TrendPoint } from '../src/ui/embed/composed-display/trend-geometry.ts'
+import type { TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { paddedDomain } from '../src/ui/embed/composed-display/trend-geometry.ts'
+import { shownReading } from '../src/packs/process-plant/displays/display-text.ts'
 
 const now = 1_000_000
 const windowMs = 600_000
@@ -93,5 +95,28 @@ describe('lead value sparklines', () => {
     expect(text({ line: null, historyError: 'Reading history failed with HTTP 503' }))
       .toBe('No values in the last 10 min yet · its history could not be read (Reading history failed with HTTP 503), so the line starts when this display opened')
     expect(text({ recorded: false, line: null })).toBe('Not recorded by this Run\'s historian, so no trend: current value only')
+  })
+})
+
+describe('readings near nothing', () => {
+  test('a decayed power reads 0 within its declared range, and its sparkline still draws', () => {
+    const range = { hardRange: { min: 0, max: 4500 } }
+    expect(shownReading(1e-13, range)).toBe(0)
+    expect(shownReading(3400, range)).toBe(3400)
+    // An intermediate-range current is a real reading far below a billionth of a megawatt range.
+    expect(shownReading(5e-11, { hardRange: { min: 1e-11, max: 1e-3 } })).toBe(5e-11)
+    expect(shownReading(1e-13, undefined)).toBe(1e-13)
+  })
+
+  test('a scale over values whose share underflows still has height, and no reading is NaN', () => {
+    const domain = paddedDomain({ min: 5e-324, max: 5e-324 })
+    expect(domain.max - domain.min).toBeGreaterThan(0)
+    const now = Date.parse('2026-01-01T10:10:00Z')
+    const output = sparkline({
+      points: [{ t: now - 300_000, v: 1e-320 }, { t: now - 200_000, v: Number.NaN }, { t: now - 100_000, v: 5e-324 }],
+      now, windowMs: 600_000, size: { width: 112, height: 28 }, value: 5e-324, thresholds: [],
+    })
+    expect(output.path).not.toContain('NaN')
+    expect(output.end === null || Number.isFinite(output.end.y)).toBe(true)
   })
 })

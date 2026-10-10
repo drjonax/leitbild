@@ -16,7 +16,25 @@ export const runFamilyFor = (run: ModuleResourceDescriptor): WorkspaceResourceRe
 export const roomUsesFamily = (room: ModuleResourceDescriptor, family: WorkspaceResourceReference): boolean =>
   room.links.some(link => link.rel === 'scope-collection' && sameResource(link.ref, family))
 
+/**
+ * A Room's scope kind as its catalog links publish it. Agents publishes no
+ * scope link for a Workspace scope, one `scope-resource` link for a Resource
+ * scope and a `scope-collection` link (with member or excluded links) for a
+ * collection scope. Any other `scope-*` link counts as a collection scope, so
+ * a Room whose links are not understood selects no Run rather than every Run.
+ */
+export const roomScopeKind = (room: ModuleResourceDescriptor): WorkspaceRoomScope['kind'] => {
+  const scope = room.links.filter(link => link.rel.startsWith('scope-'))
+  if (scope.length === 0) return 'workspace'
+  return scope.some(link => link.rel === 'scope-resource') ? 'resource' : 'collection'
+}
+
+/** Whether a Room may serve beside this Run: its scope must contain the Run. */
 export const roomSelectsRun = (room: ModuleResourceDescriptor, run: ModuleResourceDescriptor): boolean => {
+  if (room.ref.workspaceId !== run.ref.workspaceId) return false
+  const kind = roomScopeKind(room)
+  if (kind === 'workspace') return true
+  if (kind === 'resource') return room.links.some(link => link.rel === 'scope-resource' && sameResource(link.ref, run.ref))
   const family = runFamilyFor(run)
   if (!family || !roomUsesFamily(room, family)) return false
   const selected = room.links.filter(link => link.rel === 'scope-member')

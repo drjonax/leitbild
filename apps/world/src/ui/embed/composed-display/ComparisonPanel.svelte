@@ -3,11 +3,12 @@
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { displayValue, formatQuantity, formatValue, limitKindName, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
-  import { activeThreshold, limitAhead, limitInForce, limitsInForce, median, ratePerMinute, rateText, rateWindowMs, windowText } from './panel-presenters.ts'
+  import { median } from './panel-presenters.ts'
+  import { activeThreshold, COMPARISON_HISTORY_MS, limitAhead, limitInForce, limitsInForce, ratePerMinute, rateText, rateWindowMs, windowText, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import { limitLabelRanks, stackLabels, type LabelSlot } from './limit-labels.ts'
   import { displayName, fitName } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
-  import { paddedDomain, rawDomain, type TrendPoint, type ValueDomain } from './trend-geometry.ts'
+  import { paddedDomain, rawDomain, type ValueDomain } from './trend-geometry.ts'
 
   let { panel, latest, series, range, activeRuleIds }: {
     panel: ComposedComparisonPanel
@@ -59,7 +60,7 @@
   }
   const lines = $derived(panel.thresholds.filter(threshold => threshold.kind !== 'control'))
   // The same 30 s window as a 10-minute trend's legend, so one signal never shows two rates.
-  const RATE_WINDOW_MS = rateWindowMs(600_000)
+  const RATE_WINDOW_MS = rateWindowMs(COMPARISON_HISTORY_MS)
   const activeOf = (threshold: (typeof lines)[number]): string | null =>
     threshold.ruleIds.some(ruleId => activeRuleIds.has(ruleId)) ? threshold.severity ?? 'warning' : null
   // As on a trend: a mode-qualified limit that does not act in the current

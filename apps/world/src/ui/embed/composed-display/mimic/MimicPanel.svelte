@@ -11,6 +11,7 @@
   import { mimicLegend } from './mimic-legend.ts'
   import { openBridgeDevice } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
   import type * as OpenBridgeMimic from './openbridge-mimic.ts'
+  import { embeddedDisplayFrame } from '../../view-host.ts'
 
   // A generated equipment mimic drawn with OpenBridge: pipes on a canvas by
   // connector-diagram, equipment as positioned OpenBridge elements. The
@@ -33,6 +34,8 @@
   const scale = $derived(columnWidth === 0 ? 1 : Math.min(1, Math.max(mimic.minScale, columnWidth / mimic.width)))
   let theme = $state(document.documentElement.dataset.obcTheme ?? '')
   let canvas = $state<HTMLCanvasElement | undefined>(undefined)
+  // The display window may paint the view magnified; canvases are drawn for the zoom it is painted at.
+  const displayFrame = embeddedDisplayFrame()
 
   onMount(() => {
     let alive = true
@@ -127,7 +130,7 @@
 
   $effect(() => {
     void theme
-    if (openBridge !== null && canvas !== undefined) openBridge.drawPipes(canvas, mimic.width, mimic.height, segments)
+    if (openBridge !== null && canvas !== undefined) openBridge.drawPipes(canvas, mimic.width, mimic.height, segments, $displayFrame.zoom)
   })
 
   type Ob = typeof OpenBridgeMimic
@@ -184,11 +187,11 @@
     return { update: apply, destroy: () => element.remove() }
   }
 
-  const keyGlyph = (host: HTMLCanvasElement, params: { ob: Ob; value: 'open-flow' | 'empty' | 'closed-dash'; chevron: boolean; theme: string }) => {
+  const keyGlyph = (host: HTMLCanvasElement, params: { ob: Ob; value: 'open-flow' | 'empty' | 'closed-dash'; chevron: boolean; theme: string; zoom: number }) => {
     const draw = (next: typeof params) => next.ob.drawPipes(host, 24, 10, [
       ...pipeSegments('key', [[0, 5], [24, 5]], [], next.value, 'medium'),
       ...(next.chevron ? [chevronSegment('key', [[0, 5], [24, 5]], [], next.value, 'medium', false)!] : []),
-    ])
+    ], next.zoom)
     draw(params)
     return { update: draw }
   }
@@ -281,9 +284,9 @@
   <p class="legend">
     {#if stale}<span class="stale-tag">{mimicLegend.stale}</span><span>{mimicLegend.staleMeaning}</span>{/if}
     {#if openBridge !== null}
-      <span class="key"><canvas use:keyGlyph={{ ob: openBridge, value: 'open-flow', chevron: true, theme }}></canvas>{mimicLegend.flow}</span>
-      <span class="key"><canvas use:keyGlyph={{ ob: openBridge, value: 'empty', chevron: false, theme }}></canvas>{mimicLegend.noFlow}</span>
-      <span class="key"><canvas use:keyGlyph={{ ob: openBridge, value: 'closed-dash', chevron: false, theme }}></canvas>{mimicLegend.unknownFlow}</span>
+      <span class="key"><canvas use:keyGlyph={{ ob: openBridge, value: 'open-flow', chevron: true, theme, zoom: $displayFrame.zoom }}></canvas>{mimicLegend.flow}</span>
+      <span class="key"><canvas use:keyGlyph={{ ob: openBridge, value: 'empty', chevron: false, theme, zoom: $displayFrame.zoom }}></canvas>{mimicLegend.noFlow}</span>
+      <span class="key"><canvas use:keyGlyph={{ ob: openBridge, value: 'closed-dash', chevron: false, theme, zoom: $displayFrame.zoom }}></canvas>{mimicLegend.unknownFlow}</span>
     {/if}
     <span class="key"><span class="abnormal-key">{mimicLegend.command}</span>{mimicLegend.commandMeaning}</span>
     {#if drawsRelief}<span>{mimicLegend.notComputed}</span>{/if}
