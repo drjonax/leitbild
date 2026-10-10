@@ -40,7 +40,7 @@ export const compileGridTopology = (
   const inheritedKv = inferVoltages({
     unknownLines: classified.acLines.filter(line => line.levels.some(level => level.system === 'ac50' && level.voltageKv === null)),
     knownVoltagesAtKey: classified.knownVoltagesAtKey,
-    isStationKey: key => terminals.busbarGroupOf(key) !== null || terminals.groupsAtPoint(terminals.coordinateOf(key)).length > 0,
+    stationAtKey: key => terminals.busbarGroupOf(key)?.id ?? terminals.groupsAtPoint(terminals.coordinateOf(key))[0]?.id ?? null,
   }, ledger)
   for (const line of classified.acLines) {
     const kv = inheritedKv.get(line.featureId)

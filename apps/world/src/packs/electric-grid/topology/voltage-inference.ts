@@ -8,7 +8,7 @@ import type { TopologyLedger } from './ledger.ts'
 export type VoltageInferenceInput = {
   readonly unknownLines: ReadonlyArray<TopologyLineInput>
   readonly knownVoltagesAtKey: ReadonlyMap<string, ReadonlySet<number>>
-  readonly isStationKey: (key: string) => boolean
+  readonly stationAtKey: (key: string) => string | null    // station group id at a vertex, if any
 }
 
 const endKeys = (line: TopologyLineInput): readonly [string, string] =>
@@ -26,7 +26,7 @@ export const inferVoltages = (input: VoltageInferenceInput, ledger: TopologyLedg
   const firstAtKey = new Map<string, number>()
   lines.forEach((line, index) => {
     for (const key of new Set(line.vertexKeys)) {
-      if (input.isStationKey(key)) continue
+      if (input.stationAtKey(key) !== null) continue
       const other = firstAtKey.get(key)
       if (other === undefined) firstAtKey.set(key, index)
       else {
@@ -65,16 +65,24 @@ export const inferVoltages = (input: VoltageInferenceInput, ledger: TopologyLedg
       })
       continue
     }
+    const describeEnd = (key: string, index: number): string => {
+      const set = contacts[index]!
+      if (set.size > 0) return `${[...set].sort((l, r) => l - r).join('/')} kV`
+      const station = input.stationAtKey(key)
+      return station ? `station ${station}` : 'nothing'
+    }
     const unmet = contacts.filter(set => set.size === 0).length
     const why = ends.length < 2
       ? `chain has ${ends.length} free end(s)`
       : unmet > 0
         ? `${unmet} of ${ends.length} chain ends meet no way of known voltage`
-        : `chain ends meet ${contacts.map(set => `{${[...set].sort((l, r) => l - r).join(',')}}`).join(' / ')} kV; no single common voltage`
+        : 'no single voltage common to all chain ends'
+    const met = contacts.flatMap(set => [...set])
     ledger.add({
       reason: 'voltage-unknown',
       elementIds: [...ids, ...members.flatMap(line => line.osmWayIds)],
-      detail: `${members.length} voltage-less way(s): ${why}`,
+      ...(met.length > 0 ? { voltageKv: Math.max(...met) } : {}),
+      detail: `${members.length} voltage-less way(s): ${why}; ends meet ${ends.map(describeEnd).join(' | ') || 'nothing'}`,
     })
   }
   return assigned

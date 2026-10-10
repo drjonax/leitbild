@@ -66,9 +66,11 @@ export const adaptNodeSidecar = (raw: unknown, sourceId: string): NodeSidecarAda
   const features: TopologyInputFeature[] = []
   const ledger: TopologyLedgerEntry[] = []
   const ignored: Record<string, number> = {}
+  // Portal and terminal nodes are where lines end on station structures; a node of a line there is a
+  // terminal candidate even when the line continues.
   const portalNodes = new Set<string>()
-  for (const { properties } of sidecar.features) {
-    if ((properties.category === 'portal' || properties.category === 'terminal') && properties.lifecycle === 'operational') {
+  for (const { properties, geometry } of sidecar.features) {
+    if ((properties.category === 'portal' || properties.category === 'terminal') && properties.lifecycle === 'operational' && geometry.type === 'Point') {
       portalNodes.add(nodeKey(properties.externalId))
     }
   }
@@ -82,7 +84,13 @@ export const adaptNodeSidecar = (raw: unknown, sourceId: string): NodeSidecarAda
     switch (properties.category) {
       case 'line':
       case 'cable':
-      case 'busbar': {
+      case 'busbar':
+      case 'portal': {
+        // A portal mapped as a way is a gantry: like a busbar it connects only inside its station.
+        if (properties.category === 'portal' && geometry.type === 'Point') {
+          ignored.portal = (ignored.portal ?? 0) + 1
+          break
+        }
         if (geometry.type !== 'LineString') {
           unsupported(feature, `${properties.category} with ${geometry.type} geometry`)
           break
@@ -91,7 +99,7 @@ export const adaptNodeSidecar = (raw: unknown, sourceId: string): NodeSidecarAda
         const nodeIds = properties.osmNodeIds
         if (!nodeIds || nodeIds.length !== coordinates.length) throw new Error(`node sidecar: ${id} needs osmNodeIds aligned with its coordinates`)
         const vertexKeys = nodeIds.map(nodeKey)
-        if (properties.category === 'busbar') {
+        if (properties.category === 'busbar' || properties.category === 'portal') {
           features.push({ kind: 'busbar', featureId: id, osmWayIds: [id], lifecycle: properties.lifecycle, coordinates, vertexKeys })
           break
         }
@@ -164,7 +172,6 @@ export const adaptNodeSidecar = (raw: unknown, sourceId: string): NodeSidecarAda
           osmWayIds: properties.members.flatMap(member => member.id.startsWith('way/') ? [member.id] : []),
         })
         break
-      case 'portal':
       case 'terminal':
       case 'generator':
         ignored[properties.category] = (ignored[properties.category] ?? 0) + 1

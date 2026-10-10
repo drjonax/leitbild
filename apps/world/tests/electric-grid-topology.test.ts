@@ -79,6 +79,11 @@ describe('electric-grid topology compiler', () => {
     expect(result.branches.some(branch => branch.osmWayIds.includes('way/303') || branch.osmWayIds.includes('way/305'))).toBe(false)
   })
 
+  test('joins a line ending on a portal gantry to its point-only station', () => {
+    // way/602 ends 198 m from the Quebec node, beyond the 150 m point radius, on portal way/601.
+    expect(branchBetween(result, 'bus:osm-node-7000@132', 'bus:osm-way-41@132')?.osmWayIds).toEqual(['way/602'])
+  })
+
   test('counts circuits from route=power relations', () => {
     expect(branchBetween(result, 'bus:osm-way-25@300', 'bus:osm-way-26@300')).toMatchObject({ circuits: 2, circuitsSource: 'route-relation' })
   })
@@ -118,7 +123,7 @@ describe('electric-grid topology compiler', () => {
   })
 
   test('excludes 16.7 Hz railway traction circuits', () => {
-    const oscarPapa = result.branches.filter(branch => [branch.fromBusId, branch.toBusId].includes('bus:osm-way-41@132'))
+    const oscarPapa = result.branches.filter(branch => [branch.fromBusId, branch.toBusId].sort().join(' ') === 'bus:osm-way-41@132 bus:osm-way-42@132')
     expect(oscarPapa.map(branch => branch.osmWayIds)).toEqual([['way/501']])
     expect(oscarPapa[0]!.circuitsSource).toBe('voltage-list')
     expect(ledgerOf(result, 'traction-system').map(entry => entry.elementIds)).toEqual([['way/501'], ['way/502']])
@@ -153,11 +158,11 @@ describe('electric-grid topology compiler', () => {
       .filter(branch => !branch.osmWayIds.some(wayId => skip.has(wayId)))
       .map(branch => `${[branch.fromBusId, branch.toBusId].map(id => id.replace(/junction-[^@]+/, 'junction')).sort().join(' ')} ${branch.osmWayIds.join(',')}`)
       .sort()
-    // The legacy build dropped voltage-less ways and route relations.
-    const differ = new Set(['way/201', 'way/306'])
+    // The legacy build dropped voltage-less ways, route relations and portals.
+    const differ = new Set(['way/201', 'way/306', 'way/602'])
     expect(shape(legacy, differ)).toEqual(shape(result, differ))
     expect(legacy.buses.some(bus => bus.id === 'bus:junction-coordinate-10.1500000_60.0000000@420')).toBe(true)
-    expect(ledgerOf(legacy, 'corridor-dangling').map(entry => entry.elementIds.filter(id => id.startsWith('way/')))).toEqual([['way/201'], ['way/203']])
+    expect(ledgerOf(legacy, 'corridor-dangling').flatMap(entry => entry.elementIds.filter(id => id.startsWith('way/'))).sort()).toEqual(['way/201', 'way/203', 'way/602'])
   })
 
   test('refuses a node sidecar whose tags disagree with its parsed fields', () => {
