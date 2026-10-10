@@ -4,8 +4,9 @@ import type { TopologyBranch, TopologyBus, TopologyHvdcLink } from './result.ts'
 
 // Zero-impedance connections join buses: corridors shorter than the threshold (their impedance is
 // below what a DC flow can carry stably) and busbars that span two stations of the same voltage.
-// The surviving bus is the most specific kind (substation, plant terminal, junction), then the
-// smallest id; it lists every bus it absorbed. Boundary buses are never merged.
+// The surviving bus is the most specific kind (substation, plant terminal, junction), then the bus
+// of the station with the most voltage levels, then the smallest id; it lists every bus it
+// absorbed. Boundary buses are never merged.
 
 export type BusTie = {
   readonly a: string
@@ -54,10 +55,15 @@ export const mergeBuses = (
     if (root !== id) parent.set(id, root)
     return root
   }
+  // A station with more voltage levels keeps its bus, so its transformers stay inside one station.
+  const levelCount = new Map<string, number>()
+  for (const bus of buses.values()) if (bus.stationId !== null) levelCount.set(bus.stationId, (levelCount.get(bus.stationId) ?? 0) + 1)
+  const levelsOf = (bus: TopologyBus): number => bus.stationId === null ? 0 : levelCount.get(bus.stationId)!
   const better = (left: string, right: string): string => {
     const a = buses.get(left)!
     const b = buses.get(right)!
-    return kindRank[a.kind] - kindRank[b.kind] < 0 || (a.kind === b.kind && compareText(left, right) < 0) ? left : right
+    const order = kindRank[a.kind] - kindRank[b.kind] || levelsOf(b) - levelsOf(a) || compareText(left, right)
+    return order < 0 ? left : right
   }
   for (const tie of ties) {
     const a = find(tie.a)
