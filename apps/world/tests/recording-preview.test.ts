@@ -14,8 +14,9 @@ test('Halden recording preview uses Pack-owned series selection and sampling cad
     const definition = testScenarioDefinitions.find(source => source.id === 'halden-power-complex')!
     const preview = await registry.previewScenario(definition)
     const plants = preview.recording.selections.find(selection => selection.packId === 'process-plant')!
-    expect(plants.initialSeriesCount).toBe(1968)
-    expect(plants.samplesPerSimulationSecond).toBe(1968)
+    // Every published signal of the reference Plant, the electrical, protection and secondary work's among them.
+    expect(plants.initialSeriesCount).toBe(2276)
+    expect(plants.samplesPerSimulationSecond).toBe(2276)
     expect(preview.recording.selections.every(selection => selection.initialSeriesCount !== null)).toBe(true)
     expect(preview.recording.sampleWindowSimulationSeconds).toBeLessThan(138)
     const slower = await registry.previewScenario({ ...definition, packs: definition.packs.map(pack => pack.id === 'process-plant' ? { ...pack, recording: { profileId: 'operations', intervalMs: 5000 } } : pack) })

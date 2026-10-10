@@ -133,7 +133,8 @@ describe('overtemperature and overpower delta-T', () => {
     plantRun.run(5_000)
     for (const loop of ['411', '421', '431', '441']) {
       const deltaT = Number(plantRun.tag(`TDI-${loop}`))
-      expect(deltaT).toBeGreaterThan(40)
+      // The core's rated rise from IF97 enthalpy at coolant pressure, about 35 degC.
+      expect(deltaT).toBeGreaterThan(33)
       // At rated Tavg and pressure the setpoints are K1 = 1.18 and K4 = 1.10 times the rated delta-T.
       expect(Number(plantRun.tag(`OTDT-${loop}-SP`)) / deltaT).toBeCloseTo(1.18, 1)
       expect(Number(plantRun.tag(`OPDT-${loop}-SP`)) / deltaT).toBeCloseTo(1.10, 1)

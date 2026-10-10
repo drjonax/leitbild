@@ -318,13 +318,14 @@ describe('process plant runtime', () => {
     expect(activeLifecycleIds(snapshot).alarms).toContain('alarm:offsite-grid-degraded-voltage:offsite-grid-degraded-voltage')
   })
 
-  // This test plant starts from the raw template, not an operating point, and
-  // heats up by itself until overtemperature delta-T trips its reactor about
-  // 50 s in; what shows at 90 s is what remains after that trip.
+  // This test plant starts at the full-power operating point, so at 90 s the
+  // reactor is still at power unless the action trips it.
   describe('demo action catalog produces reference I&C lifecycle indications', () => {
     const expectedLifecycleIds = new Map<string, ReadonlyArray<string>>([
-      // N-16 is gone once the reactor trips; the inventory balance still shows the leak.
+      // At power the steam line's N-16 shows the leaking generator, and the inventory balance the leak.
       ['steam-generator-tube-leak-a', [
+        'alarm:sg-a-tube-leak-indication:tube-leak',
+        'alarm:sg-a-secondary-radiation-high:secondary-radiation-high',
         'alarm:rcs-leak-rate-high:leak-rate-high',
       ]],
       ['trip-reactor-coolant-pumps', [
@@ -337,8 +338,9 @@ describe('process plant runtime', () => {
       ['loss-main-feedwater', [
         'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       ]],
+      // A feedwater valve failed to 35 % at full power boils steam generator B down until its low-low level trips the reactor.
       ['steam-generator-b-feedwater-runback', [
-        'trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip',
+        'trip:sg-b-level-low-low-reactor-trip:low-low-level-reactor-trip',
       ]],
       ['pressurizer-relief-open', [
         'alarm:pzr-relief-flow-high:relief-flow-high',
@@ -396,9 +398,9 @@ describe('process plant runtime', () => {
       ['loss-main-feedwater', [
         'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       ]],
-      // This test plant heats up by itself until overtemperature delta-T trips its reactor about 50 s in.
+      // A feedwater valve failed to 35 % at full power boils steam generator B down until its low-low level trips the reactor.
       ['steam-generator-b-feedwater-runback', [
-        'trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip',
+        'trip:sg-b-level-low-low-reactor-trip:low-low-level-reactor-trip',
       ]],
       ['pressurizer-relief-open', [
         'alarm:pzr-relief-flow-high:relief-flow-high',
