@@ -56,15 +56,29 @@ export interface FrequencyLoad {
   readonly protectedMw: number
 }
 
-/** Equivalent of a synchronously connected neighbouring system. */
+/** Reserve volumes an external equivalent holds for the synchronous area, in MW. FCR-N is symmetric. */
+export interface ExternalReserveAllocation {
+  readonly fcrNMw: number
+  readonly fcrDUpMw: number
+  readonly fcrDDownMw: number
+  readonly afrrUpMw: number
+  readonly afrrDownMw: number
+}
+
+/**
+ * Equivalent of a synchronously connected neighbouring system. Its own generation balances its own
+ * demand at nominal frequency, so it acts on the island through its kinetic energy, the scheduled
+ * exchange, the self-regulation of its demand and the reserves it activates.
+ */
 export interface ExternalFrequencyEquivalent {
   readonly id: string
   readonly kineticEnergyMws: number
   /** Scheduled import into the island; negative exports. */
   readonly scheduledImportMw: number
-  readonly frequencyResponseMwPerHz: number
-  readonly responseTimeConstantSeconds: number
-  readonly responseLimitMw: number
+  /** Demand of the external system; only its frequency-dependent part acts on the island. */
+  readonly loadMw: number
+  /** Reserves of the external system; its own headroom is outside the model, so they are always deliverable. */
+  readonly reserves: ExternalReserveAllocation
 }
 
 export interface IslandFrequencyInput {
@@ -75,6 +89,8 @@ export interface IslandFrequencyInput {
   readonly externals: ReadonlyArray<ExternalFrequencyEquivalent>
   /** Network losses carried by the island over the advance. */
   readonly lossesMw: number
+  /** Injections fixed over the advance and outside frequency control (connected systems, HVDC); negative draws power. */
+  readonly fixedInjectionMw: number
   /** Measured minus scheduled net export on tie lines; required by tie-line-bias aFRR. */
   readonly tieLineDeviationMw?: number
 }

@@ -17,9 +17,15 @@ export interface UnitFrequencyState {
   readonly protection: GeneratorProtectionState
 }
 
+/** Activated reserves of an external equivalent, in MW; positive raises its export into the island. */
 export interface ExternalFrequencyState {
-  readonly responseMw: number
+  readonly fcrNMw: number
+  readonly fcrDUpMw: number
+  readonly fcrDDownMw: number
+  readonly afrrMw: number
 }
+
+export const idleExternalFrequencyState: ExternalFrequencyState = Object.freeze({ fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrMw: 0 })
 
 /** Everything the frequency library owns for one synchronous island between advances. */
 export interface IslandFrequencyState {
@@ -72,7 +78,7 @@ export const createIslandFrequencyState = (automation: GridAutomation, input: Is
       if (fraction === undefined) throw new Error(`no initial state of charge for storage ${unit.id}`)
       return [unit.id, createStorageFrequencyState(unit, fraction, config.startSeconds)]
     })),
-    externals: Object.fromEntries(input.externals.map(external => [external.id, { responseMw: 0 }])),
+    externals: Object.fromEntries(input.externals.map(external => [external.id, idleExternalFrequencyState])),
     agc: automation.afrr.enabled ? createAgcState(config.startSeconds) : null,
     mfrr: automation.mfrr.enabled ? createMfrrState() : null,
     lfdd: createLfddState(automation.lfdd),
@@ -106,27 +112,55 @@ const requireFinite = (value: number, subject: string, minimum?: number): void =
   }
 }
 
-const requireSameIds = (kind: string, inputIds: ReadonlyArray<string>, stateIds: ReadonlyArray<string>): void => {
-  const state = new Set(stateIds)
+const reserveFields = ['fcrNMw', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw', 'mfrrUpMw', 'mfrrDownMw'] as const
+
+const requireSameIds = (kind: string, inputIds: ReadonlyArray<string>, stateRecord: Readonly<Record<string, unknown>>): void => {
+  let stateCount = 0
+  for (const id in stateRecord) if (Object.hasOwn(stateRecord, id)) stateCount += 1
   const input = new Set(inputIds)
+  if (input.size === inputIds.length && stateCount === inputIds.length && inputIds.every(id => Object.hasOwn(stateRecord, id))) return
   if (input.size !== inputIds.length) throw new Error(`duplicate ${kind} ids in island input`)
-  const missing = inputIds.filter(id => !state.has(id))
+  const stateIds = Object.keys(stateRecord)
+  const missing = inputIds.filter(id => !Object.hasOwn(stateRecord, id))
   const extra = stateIds.filter(id => !input.has(id))
-  if (missing.length > 0 || extra.length > 0) {
-    throw new Error(`island ${kind} set changed without new frequency state (missing state: ${missing.join(', ') || 'none'}; not in input: ${extra.join(', ') || 'none'})`)
-  }
+  throw new Error(`island ${kind} set changed without new frequency state (missing state: ${missing.join(', ') || 'none'}; not in input: ${extra.join(', ') || 'none'})`)
+}
+
+const finiteAtLeast = (value: number, minimum: number): boolean => Number.isFinite(value) && value >= minimum
+
+/** The common case of one unit's checks, without building messages; failures are re-checked in detail. */
+const unitPlainlyValid = (unit: IslandFrequencyInput['units'][number]): boolean => {
+  const reserves = unit.reserves
+  return finiteAtLeast(unit.ratedMva, Number.MIN_VALUE) && finiteAtLeast(unit.inertiaConstantSeconds, 0)
+    && (unit.connection !== 'converter' || unit.inertiaConstantSeconds === 0)
+    && finiteAtLeast(unit.minimumMw, 0) && finiteAtLeast(unit.maximumMw, unit.minimumMw)
+    && finiteAtLeast(unit.rampRateMwPerSecond, Number.MIN_VALUE) && finiteAtLeast(unit.targetMw, 0)
+    && (!unit.synchronised || (unit.targetMw >= unit.minimumMw && unit.targetMw <= unit.maximumMw))
+    && finiteAtLeast(reserves.fcrNMw, 0) && finiteAtLeast(reserves.fcrDUpMw, 0) && finiteAtLeast(reserves.fcrDDownMw, 0)
+    && finiteAtLeast(reserves.afrrUpMw, 0) && finiteAtLeast(reserves.afrrDownMw, 0) && finiteAtLeast(reserves.mfrrUpMw, 0) && finiteAtLeast(reserves.mfrrDownMw, 0)
 }
 
 /** Validates an island input against its state before an advance. */
 export const validateIslandInput = (automation: GridAutomation, state: IslandFrequencyState, input: IslandFrequencyInput): void => {
   if (state.islandId !== input.islandId) throw new Error(`frequency state belongs to island ${state.islandId}, not ${input.islandId}`)
   if (state.automationId !== automation.id) throw new Error(`frequency state was created for automation ${state.automationId}, not ${automation.id}`)
-  requireSameIds('unit', input.units.map(unit => unit.id), Object.keys(state.units))
-  requireSameIds('storage', input.storage.map(unit => unit.id), Object.keys(state.storage))
-  requireSameIds('external equivalent', input.externals.map(external => external.id), Object.keys(state.externals))
+  requireSameIds('unit', input.units.map(unit => unit.id), state.units)
+  requireSameIds('storage', input.storage.map(unit => unit.id), state.storage)
+  requireSameIds('external equivalent', input.externals.map(external => external.id), state.externals)
   requireFinite(input.lossesMw, `island ${input.islandId} losses`, 0)
+  requireFinite(input.fixedInjectionMw, `island ${input.islandId} fixed injection`)
   if (input.tieLineDeviationMw !== undefined) requireFinite(input.tieLineDeviationMw, 'tie-line deviation')
+  const fcrNClasses: ReadonlyArray<string> = automation.fcrN.eligibleGovernorClasses
+  const fcrDClasses: ReadonlyArray<string> = automation.fcrD.eligibleGovernorClasses
+  const afrrClasses: ReadonlyArray<string> | null = automation.afrr.enabled ? automation.afrr.eligibleGovernorClasses : null
+  const mfrrClasses: ReadonlyArray<string> | null = automation.mfrr.enabled ? automation.mfrr.eligibleGovernorClasses : null
   for (const unit of input.units) {
+    const reserved = unit.reserves
+    const eligible = (reserved.fcrNMw === 0 || fcrNClasses.includes(unit.governorClass))
+      && ((reserved.fcrDUpMw === 0 && reserved.fcrDDownMw === 0) || fcrDClasses.includes(unit.governorClass))
+      && ((reserved.afrrUpMw === 0 && reserved.afrrDownMw === 0) || (afrrClasses !== null && afrrClasses.includes(unit.governorClass)))
+      && ((reserved.mfrrUpMw === 0 && reserved.mfrrDownMw === 0) || (mfrrClasses !== null && mfrrClasses.includes(unit.governorClass)))
+    if (eligible && unitPlainlyValid(unit) && !(unit.synchronised && state.units[unit.id]!.protection.trip)) continue
     const subject = `unit ${unit.id}`
     requireFinite(unit.ratedMva, `${subject} rated MVA`, Number.MIN_VALUE)
     requireFinite(unit.inertiaConstantSeconds, `${subject} inertia constant`, 0)
@@ -138,13 +172,12 @@ export const validateIslandInput = (automation: GridAutomation, state: IslandFre
     if (unit.synchronised && (unit.targetMw < unit.minimumMw || unit.targetMw > unit.maximumMw)) {
       throw new Error(`${subject} target ${unit.targetMw} MW lies outside ${unit.minimumMw}..${unit.maximumMw} MW`)
     }
-    for (const [field, value] of Object.entries(unit.reserves)) requireFinite(value, `${subject} ${field}`, 0)
-    const reserved = unit.reserves
-    const eligible = (classes: ReadonlyArray<string>): boolean => classes.includes(unit.governorClass)
-    if ((reserved.fcrNMw > 0 && !eligible(automation.fcrN.eligibleGovernorClasses))
-      || ((reserved.fcrDUpMw > 0 || reserved.fcrDDownMw > 0) && !eligible(automation.fcrD.eligibleGovernorClasses))
-      || ((reserved.afrrUpMw > 0 || reserved.afrrDownMw > 0) && !(automation.afrr.enabled && eligible(automation.afrr.eligibleGovernorClasses)))
-      || ((reserved.mfrrUpMw > 0 || reserved.mfrrDownMw > 0) && !(automation.mfrr.enabled && eligible(automation.mfrr.eligibleGovernorClasses)))) {
+    for (const field of reserveFields) requireFinite(reserved[field], `${subject} ${field}`, 0)
+    const isEligible = (classes: ReadonlyArray<string>): boolean => classes.includes(unit.governorClass)
+    if ((reserved.fcrNMw > 0 && !isEligible(automation.fcrN.eligibleGovernorClasses))
+      || ((reserved.fcrDUpMw > 0 || reserved.fcrDDownMw > 0) && !isEligible(automation.fcrD.eligibleGovernorClasses))
+      || ((reserved.afrrUpMw > 0 || reserved.afrrDownMw > 0) && !(automation.afrr.enabled && isEligible(automation.afrr.eligibleGovernorClasses)))
+      || ((reserved.mfrrUpMw > 0 || reserved.mfrrDownMw > 0) && !(automation.mfrr.enabled && isEligible(automation.mfrr.eligibleGovernorClasses)))) {
       throw new Error(`${subject} holds a reserve its governor class ${unit.governorClass} cannot provide under automation ${automation.id}`)
     }
     const trip = state.units[unit.id]!.protection.trip
@@ -164,15 +197,18 @@ export const validateIslandInput = (automation: GridAutomation, state: IslandFre
     }
   }
   for (const load of input.loads) {
+    if (finiteAtLeast(load.demandMw, 0) && finiteAtLeast(load.protectedMw, 0)) continue
     requireFinite(load.demandMw, `load ${load.id} demand`, 0)
     requireFinite(load.protectedMw, `load ${load.id} protected demand`, 0)
   }
   for (const external of input.externals) {
     const subject = `external equivalent ${external.id}`
-    requireFinite(external.kineticEnergyMws, `${subject} kinetic energy`, 0)
+    requireFinite(external.kineticEnergyMws, `${subject} kinetic energy`, Number.MIN_VALUE)
     requireFinite(external.scheduledImportMw, `${subject} scheduled import`)
-    requireFinite(external.frequencyResponseMwPerHz, `${subject} frequency response`, 0)
-    requireFinite(external.responseTimeConstantSeconds, `${subject} response time constant`, Number.MIN_VALUE)
-    requireFinite(external.responseLimitMw, `${subject} response limit`, 0)
+    requireFinite(external.loadMw, `${subject} load`, 0)
+    for (const [field, value] of Object.entries(external.reserves)) requireFinite(value, `${subject} ${field}`, 0)
+    if ((external.reserves.afrrUpMw > 0 || external.reserves.afrrDownMw > 0) && !automation.afrr.enabled) {
+      throw new Error(`${subject} holds aFRR, which automation ${automation.id} does not run`)
+    }
   }
 }

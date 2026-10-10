@@ -22,6 +22,8 @@ export interface SwingSubStepInput {
   readonly loadMw: number
   /** Load self-regulation as a fraction of load per Hz. */
   readonly loadDampingPerHz: number
+  /** Self-regulation of demand balanced outside the island (external equivalents): −D·Δf with no nominal term. */
+  readonly externalDampingMwPerHz: number
   readonly elements: ReadonlyArray<ResponseElement>
 }
 
@@ -47,7 +49,7 @@ const lagEnergyWeight = (y: number): number =>
   y < 0.01 ? y * y * (1 / 6 - y / 24 + y * y / 120) : y / 2 - 1 - Math.expm1(-y) / y
 
 /** 1 − (1 − e^−y)/y, the share of a lag's input change that reaches its output within the step. */
-const lagOutputWeight = (y: number): number =>
+export const lagOutputWeight = (y: number): number =>
   y < 0.01 ? y * (0.5 - y / 6 + y * y / 24) : 1 + Math.expm1(-y) / y
 
 interface PreparedElement {
@@ -91,9 +93,9 @@ export const integrateSwingSubStep = (input: SwingSubStepInput): SwingSubStepRes
       outputWeight: lagOutputWeight(y),
     }
   })
-  const fixedTermMws = input.loadMw * h * (1 + input.loadDampingPerHz * deviationHz) - input.fixedEnergyMws
-    - prepared.reduce((sum, item) => sum + item.baseEnergyMws, 0)
-  const ownSlope = inertiaMwsPerHz + dampingMwPerHz * h / 2
+  const fixedTermMws = input.loadMw * h * (1 + input.loadDampingPerHz * deviationHz) + input.externalDampingMwPerHz * h * deviationHz
+    - input.fixedEnergyMws - prepared.reduce((sum, item) => sum + item.baseEnergyMws, 0)
+  const ownSlope = inertiaMwsPerHz + (dampingMwPerHz + input.externalDampingMwPerHz) * h / 2
   const residual = (x: number): number => {
     let response = 0
     for (const item of prepared) response += item.energyWeightSeconds * (item.element.target(f0 + x) - item.initialTargetMw)

@@ -65,7 +65,7 @@ const buildIsland = (spec: IslandSpec): BuiltIsland => {
   const allocation = allocateFrequencyReserves({ automation: spec.automation, units: raw, islandLoadMw: spec.loadMw })
   const units: FrequencyUnit[] = raw.map(unit => ({ ...unit, reserves: allocation.allocations.get(unit.id)! }))
   const loads = spec.loads ?? [{ id: 'demand', priority: 'normal', demandMw: spec.loadMw, protectedMw: 0 }]
-  const before: IslandFrequencyInput = { islandId: 'island', units: [...units, lost], storage: spec.storage ?? [], loads, externals: [], lossesMw: 0 }
+  const before: IslandFrequencyInput = { islandId: 'island', units: [...units, lost], storage: spec.storage ?? [], loads, externals: [], lossesMw: 0, fixedInjectionMw: 0 }
   const after: IslandFrequencyInput = { ...before, units: [...units, { ...lost, synchronised: false }] }
   const state = createIslandFrequencyState(spec.automation, before, {
     frequencyHz: 50,
@@ -150,7 +150,7 @@ describe('island swing equation', () => {
   test('a constant imbalance changes frequency by ΔP·h·f0/(2·E_k) and load damping relaxes it', () => {
     const step = integrateSwingSubStep({
       nominalFrequencyHz: 50, frequencyHz: 50, kineticEnergyMws: 10_000, stepSeconds: 0.1,
-      fixedEnergyMws: 900 * 0.1, loadMw: 1_000, loadDampingPerHz: 0, elements: [],
+      fixedEnergyMws: 900 * 0.1, loadMw: 1_000, loadDampingPerHz: 0, externalDampingMwPerHz: 0, elements: [],
     })
     expect(step.frequencyHz - 50).toBeCloseTo(-100 * 0.1 * 50 / 20_000, 12)
     expect(step.rocofHzPerSecond).toBeCloseTo(-0.25, 12)
@@ -173,7 +173,7 @@ describe('island swing equation', () => {
       rampRateMwPerSecond: 10, reserves: { ...noReserves, fcrNMw: allocationMw },
     }
     const lost: FrequencyUnit = { ...machine, id: 'lost', governorClass: 'none', ratedMva: 12, inertiaConstantSeconds: 0, maximumMw: lossMw, targetMw: lossMw, reserves: noReserves }
-    const before: IslandFrequencyInput = { islandId: 'single', units: [machine, lost], storage: [], loads: [{ id: 'load', priority: 'normal', demandMw: loadMw, protectedMw: 0 }], externals: [], lossesMw: 0 }
+    const before: IslandFrequencyInput = { islandId: 'single', units: [machine, lost], storage: [], loads: [{ id: 'load', priority: 'normal', demandMw: loadMw, protectedMw: 0 }], externals: [], lossesMw: 0, fixedInjectionMw: 0 }
     const after: IslandFrequencyInput = { ...before, units: [machine, { ...lost, synchronised: false }] }
     let state = createIslandFrequencyState(automation, before, { frequencyHz: 50, startSeconds: 0, storageStateOfChargeFraction: {} })
     const h = automation.simulation.subStepSeconds
@@ -382,7 +382,7 @@ describe('generator frequency protection', () => {
     // A synchronous neighbour keeps the island energised after its own units trip.
     const island = buildIsland({ automation: nordic, loadMw: 2_000, kineticEnergyMws: 12_000, lossMw: 900, unitCount: 10,
       loads: [{ id: 'essential', priority: 'critical', demandMw: 2_000, protectedMw: 2_000 }] })
-    const neighbour = { id: 'neighbour', kineticEnergyMws: 20_000, scheduledImportMw: 0, frequencyResponseMwPerHz: 0, responseTimeConstantSeconds: 1, responseLimitMw: 0 }
+    const neighbour = { id: 'neighbour', kineticEnergyMws: 20_000, scheduledImportMw: 0, loadMw: 0, reserves: { fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrUpMw: 0, afrrDownMw: 0 } }
     const before = { ...island.before, externals: [neighbour] }
     const after = { ...island.after, externals: [neighbour] }
     let state = createIslandFrequencyState(nordic, before, { frequencyHz: 50, startSeconds: 0, storageStateOfChargeFraction: {} })
