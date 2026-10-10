@@ -498,13 +498,13 @@ describe('repository golden list and curations', () => {
     expect({
       stations: golden.stations.length, substations: golden.substations.length, corridors: golden.corridors.length,
       interconnectors: golden.interconnectors.length, radial: golden.radialAllowList.length, curations: curations.features.length,
-    }).toEqual({ stations: 85, substations: 37, corridors: 24, interconnectors: 14, radial: 29, curations: 6 })
+    }).toEqual({ stations: 85, substations: 37, corridors: 25, interconnectors: 14, radial: 29, curations: 20 })
     const entries = [...golden.stations, ...golden.substations, ...golden.corridors, ...golden.excludedCorridors, ...golden.interconnectors, ...golden.radialAllowList]
     expect(entries.every(entry => entry.evidence.length > 0 && entry.evidence.every(item => item.url.startsWith('https://')))).toBe(true)
   })
 
-  // Baseline of today's v1 model (audit B, 2026-10-10). The model build lane replaces this with a
-  // passing audit of the v2 model; until then it pins the measured gaps so regressions stay visible.
+  // Baseline of today's v1 model (audit B, 2026-10-10), kept until the runtime switches to the
+  // generated v2 model (electric-grid-model-golden.test.ts); it pins the measured v1 gaps.
   test("today's v1 Norway model reproduces the measured gap baseline", async () => {
     const golden = gridGoldenSchema.parse(await load('norway-grid-golden.json'))
     const curations = gridCurationCollectionSchema.parse(await load('norway-grid-curations.geojson'))
@@ -519,9 +519,10 @@ describe('repository golden list and curations', () => {
     expect(check(report, 'golden-interconnectors').metrics).toEqual({ total: 14, present: 0 })
     expect(check(report, 'golden-substations').metrics).toEqual({ total: 37, present: 34, inMainComponent: 19, degreeMet: 20 })
     const corridorFailures = messages(report, 'golden-corridors')
-    for (const corridor of ['Kvinesdal – Lista 1 and 2', 'Sylling – Hamang 1 and 2', 'Nordreisa – Guolasjokka 1 and 2', 'Skillemoen – Kvænangen 1 and 2']) {
+    for (const corridor of ['Kvinesdal – Lista 1 and 2', 'Sylling – Hamang 1 and 2', 'Vinnelys – Guolasjokka 1 and 2', 'Skillemoen – Kvænangen 1 and 2']) {
       expect(corridorFailures).toContain(`${corridor} `)
     }
-    expect(check(report, 'golden-corridors').metrics).toEqual({ total: 24, connected: 13, circuitsMet: 9 })
+    // Balsfjord – Skillemoen became Balsfjord – Vinnelys – Skillemoen; v1 has no Vinnelys station.
+    expect(check(report, 'golden-corridors').metrics).toEqual({ total: 25, connected: 11, circuitsMet: 8 })
   })
 })

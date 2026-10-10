@@ -158,14 +158,14 @@
     },
     "load": {
       "sourceId": "elhub-consumption",
-      "referenceHour": "2026-01-15T00:00:00+01:00",
-      "note": "Metered consumption over all Elhub consumption groups for the hour 00:00–01:00 Europe/Oslo on 2026-01-15, in MWh/h ≈ MW. Replace together with the model reference hour.",
+      "referenceHour": "2026-01-12T08:00:00+01:00",
+      "note": "Metered consumption over all Elhub consumption groups (CONSUMPTION_PER_GROUP_MBA_HOUR) for the hour 08:00–09:00 Europe/Oslo on Monday 2026-01-12, the highest national weekday hour of the week 2026-01-12–18 (22,883 MW), in MWh/h ≈ MW. Replace together with the model reference hour.",
       "demandMwByArea": {
-        "NO1": 5496.5,
-        "NO2": 4804.6,
-        "NO3": 3671.1,
-        "NO4": 2726.6,
-        "NO5": 2182.8
+        "NO1": 7238.7,
+        "NO2": 5817.4,
+        "NO3": 4262.9,
+        "NO4": 3047.1,
+        "NO5": 2516.8
       }
     }
   },
@@ -969,7 +969,8 @@
       "id": "leirdola",
       "name": "Leirdøla",
       "osmIds": [
-        "relation/7814748"
+        "relation/7814748",
+        "way/845807670"
       ],
       "evidence": [
         {
@@ -977,6 +978,12 @@
           "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B590C3CB0-25E7-4609-9945-237144BF44D2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
           "ref": "{590C3CB0-25E7-4609-9945-237144BF44D2}",
           "note": "NVE transformer station \"Leirdøla\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/845807670",
+          "ref": "way/845807670",
+          "note": "substation \"Leirdøla trafostasjon\" 300/66 kV, operator Statnett: the Leirdøla station of the OSM extract 2026-10-08"
         }
       ]
     },
@@ -1088,7 +1095,8 @@
       "id": "nesbyen",
       "name": "Nesbyen (OSM: Nes koblingsstasjon)",
       "osmIds": [
-        "relation/7851611"
+        "relation/7851611",
+        "relation/7851610"
       ],
       "evidence": [
         {
@@ -1096,6 +1104,12 @@
           "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B8C2DD958-6A70-488A-AED9-666F69DFD41E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
           "ref": "{8C2DD958-6A70-488A-AED9-666F69DFD41E}",
           "note": "NVE transformer station \"Nesbyen\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/relation/7851610",
+          "ref": "relation/7851610",
+          "note": "substation \"Nes trafostasjon\": the site whose outline contains Nes koblingsstasjon (relation/7851611) in the OSM extract 2026-10-08"
         }
       ]
     },
@@ -1136,17 +1150,29 @@
       ]
     },
     {
-      "id": "nordreisa",
-      "name": "Nordreisa",
+      "id": "vinnelys",
+      "name": "Vinnelys (replaces Nordreisa)",
       "osmIds": [
-        "relation/8280502"
+        "way/1250704825"
       ],
       "evidence": [
         {
           "sourceId": "nve-nettanlegg5",
-          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B20F733F0-6464-4120-8738-D3127AA6B9DB%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
-          "ref": "{20F733F0-6464-4120-8738-D3127AA6B9DB}",
-          "note": "NVE transmission line \"Nordreisa - Guolasjokka\" 132 kV (STATNETT SF)"
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BF1CFBAB8-2896-4EC2-967A-B0365C73A787%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{F1CFBAB8-2896-4EC2-967A-B0365C73A787}",
+          "note": "NVE transformer station \"Vinnelys\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/vinnelys-transformatorstasjon/",
+          "ref": "Vinnelys transformatorstasjon project page",
+          "note": "420/132/66 kV station that replaces today's Nordreisa station; the 420 kV line runs Balsfjord – Vinnelys – Skillemoen"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/1250704825",
+          "ref": "way/1250704825",
+          "note": "substation \"Vinnelys trafostasjon\" 420/132/66 kV, operator Statnett (OSM extract 2026-10-08)"
         }
       ]
     },
@@ -2612,18 +2638,46 @@
       ]
     },
     {
-      "id": "balsfjord-skillemoen",
-      "name": "Balsfjord – Skillemoen",
+      "id": "balsfjord-vinnelys",
+      "name": "Balsfjord – Vinnelys",
       "fromStationId": "balsfjord",
+      "toStationId": "vinnelys",
+      "voltageKv": 420,
+      "minCircuits": 1,
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9578AAAA-31F1-4CA9-B855-86E82D5F0E5A%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9578AAAA-31F1-4CA9-B855-86E82D5F0E5A}",
+          "note": "NVE transmission line \"Balsfjord - Vinnelys\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/vinnelys-transformatorstasjon/",
+          "ref": "Vinnelys transformatorstasjon project page",
+          "note": "420/132/66 kV station that replaces today's Nordreisa station; the 420 kV line runs Balsfjord – Vinnelys – Skillemoen"
+        }
+      ]
+    },
+    {
+      "id": "vinnelys-skillemoen",
+      "name": "Vinnelys – Skillemoen",
+      "fromStationId": "vinnelys",
       "toStationId": "skillemoen",
       "voltageKv": 420,
       "minCircuits": 1,
       "evidence": [
         {
           "sourceId": "nve-nettanlegg5",
-          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
-          "ref": "{73E3DC31-A5AC-4025-9C15-5D4F4F46FAA6}",
-          "note": "NVE transmission line \"Balsfjord - Skillemoen\" 420 kV (STATNETT SF)"
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B8859AAE8-B1CB-427E-9123-E9BE967EAB32%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8859AAE8-B1CB-427E-9123-E9BE967EAB32}",
+          "note": "NVE transmission line \"Vinnelys - Skillemoen\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/vinnelys-transformatorstasjon/",
+          "ref": "Vinnelys transformatorstasjon project page",
+          "note": "420/132/66 kV station that replaces today's Nordreisa station; the 420 kV line runs Balsfjord – Vinnelys – Skillemoen"
         }
       ]
     },
@@ -2734,36 +2788,36 @@
       ]
     },
     {
-      "id": "nordreisa-guolasjokka",
-      "name": "Nordreisa – Guolasjokka 1 and 2",
-      "fromStationId": "nordreisa",
+      "id": "vinnelys-guolasjokka",
+      "name": "Vinnelys – Guolasjokka 1 and 2",
+      "fromStationId": "vinnelys",
       "toStationId": "guolasjokka",
       "voltageKv": 132,
       "minCircuits": 2,
       "evidence": [
         {
           "sourceId": "nve-nettanlegg5",
-          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B20F733F0-6464-4120-8738-D3127AA6B9DB%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
-          "ref": "{20F733F0-6464-4120-8738-D3127AA6B9DB}",
-          "note": "NVE transmission line \"Nordreisa - Guolasjokka\" 132 kV (STATNETT SF)"
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B6A4BFB54-5ABD-4EBA-BBF8-1A81330423EA%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6A4BFB54-5ABD-4EBA-BBF8-1A81330423EA}",
+          "note": "NVE transmission line \"Vinnelys - Guolasjokka\" 132 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "statnett",
+          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-nord/vinnelys-transformatorstasjon/tilleggssoknad-vinnelys-transformatorstasjon.pdf",
+          "ref": "Tilleggssøknad Vinnelys transformatorstasjon (21/00290-1, 2021-05-19)",
+          "note": "Nordreisa station is demolished; its 132 kV lines Kvænangen – Vinnelys – Guolasjohka are moved into Vinnelys"
         },
         {
           "sourceId": "openstreetmap",
-          "url": "https://www.openstreetmap.org/way/586427553",
-          "ref": "way/586427553",
-          "note": "circuit \"Nordreisa - Guolášjohka 1\""
+          "url": "https://www.openstreetmap.org/way/572898604",
+          "ref": "way/572898604",
+          "note": "circuit \"Guolášjohka - Vinnelys 1\" 132 kV (OSM extract 2026-10-08)"
         },
         {
           "sourceId": "openstreetmap",
-          "url": "https://www.openstreetmap.org/way/586427555",
-          "ref": "way/586427555",
-          "note": "circuit \"Nordreisa - Guolášjohka 2\""
-        },
-        {
-          "sourceId": "openstreetmap",
-          "url": "https://www.openstreetmap.org/way/586427554",
-          "ref": "way/586427554",
-          "note": "shared section \"1&2\", circuits=2"
+          "url": "https://www.openstreetmap.org/way/1250704820",
+          "ref": "way/1250704820",
+          "note": "circuit \"Guolášjohka - Vinnelys 2\" 132 kV (OSM extract 2026-10-08)"
         }
       ]
     },
@@ -3621,7 +3675,7 @@
       "stationId": "skillemoen",
       "voltageKv": 420,
       "reason": "radial-supply",
-      "note": "Skillemoen is the end of the 420 kV operation from Balsfjord: Skillemoen – Skaidi is built for 420 kV but operated at 132 kV.",
+      "note": "Skillemoen is the end of the 420 kV operation from Balsfjord via Vinnelys: Skillemoen – Skaidi is built for 420 kV but operated at 132 kV.",
       "evidence": [
         {
           "sourceId": "nve-nettanlegg5",
