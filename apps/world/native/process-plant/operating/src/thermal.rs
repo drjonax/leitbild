@@ -1,3 +1,5 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-thermal.md#compact-hot-thermal-closure
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#derivatives-without-reimplementing-a-property-library
 //! Compact physical thermal equations. Temperatures are current algebraic
 //! coordinates; every returned heat has one finite donor and recipient. No
 //! integrator, thermostat, fitted h, fuel/source reset or nested surface solve.

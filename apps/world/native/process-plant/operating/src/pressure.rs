@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#initialization-and-pressure-projection-have-limited-roles
 //! Sound-filtered fixed-volume primary continuity/enthalpy projection.
 //! One thermodynamic pressure; no independent acoustic node pressures. The
 //! current EOS gives Mdot=A*pdot+B*Udot. Udot contains the SAME signed enthalpy

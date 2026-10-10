@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hydraulics.md#local-pressure-and-phase-path-impulse
 //! Coarse local-pressure face mechanics with finite, current material.
 //!
 //! One retained generalized impulse Pi (Pa s) projects physical momentum on

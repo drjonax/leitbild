@@ -1,3 +1,5 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-equations.md#extensive-regional-kinetics
+//! spec: world/packs/process-plant/reference-designs/ld-01/systems/reactor/kinetics.md#selected-compact-source-and-material-ownership
 //! Regional neutron-equivalent populations with ONE material-owned precursor bank.
 //!
 //! State: [N_region..., C_material,group...], six groups per material carrier.
