@@ -7,8 +7,10 @@
 //! The stratified PZR cell's inventory belongs to its owner and enters
 //! through the integration point.
 use super::{
-    Failure, Network, PZR_COORDINATES, PZR_ENERGY, PZR_MASS, PZR_TRACER, Properties, not_integrated,
+    Failure, Network, PZR_COORDINATES, PZR_ENERGY, PZR_MASS, PZR_TRACER, PZR_VOLUME, Properties,
+    stratified,
 };
+use crate::rotor;
 use serde_json::{Value, json};
 
 /// Solver error scaling used for numerical admission of empty-phase energy.
@@ -183,16 +185,18 @@ impl<P: Properties> Network<P> {
             boron += bd;
             boron_abs += bd.abs();
         }
-        // The PZR stock rows in the same `rate - receipt` convention; its energy
-        // rows also carry the zones' p dV/dt, whose sum is the reported
-        // hydrostatic remainder.
+        // The PZR stock rows in the same `rate - receipt` convention. Its
+        // fluid energy receipt is what its rows imply enters the cell: the
+        // zones' U' plus the volume work p_k V_k' they pay, plus the energy the
+        // zones hand to the mass-only transit stocks at the evaluated
+        // saturation, M_b' h_g(p_s) + M_d' h_f(p_s), plus the saturation drift
+        // [Q_b, Q_d] their hosts pay. Each part is reported.
         let rhs = |offset: usize| {
             let i = self.pzr.base + offset;
             (yp[i] - self.rows[i].value) * self.scales[i]
         };
         for (offsets, sum, abs) in [
             (&PZR_MASS[..], &mut mass, &mut mass_abs),
-            (&PZR_ENERGY[..], &mut energy, &mut energy_abs),
             (&PZR_TRACER[..], &mut boron, &mut boron_abs),
         ] {
             for offset in offsets {
@@ -200,14 +204,47 @@ impl<P: Properties> Network<P> {
                 *abs += rhs(*offset).abs();
             }
         }
+        let mut pzr = json!(null);
+        if let (Some(column), Some(evaluation)) =
+            (self.pzr_column.as_ref(), self.pzr_evaluation.as_ref())
+        {
+            let zones: f64 = PZR_ENERGY.iter().map(|o| rhs(*o)).sum();
+            let rate = |o: usize| yp[self.pzr.base + o] * self.scales[self.pzr.base + o];
+            let work: f64 = [column.vapor, column.admitted, column.resident]
+                .iter()
+                .zip(&PZR_VOLUME[..3])
+                .map(|(zone, o)| zone.pressure.value * rate(*o))
+                .sum();
+            let sat = &column.interface_saturation;
+            let (bubbles, drops) = (rhs(stratified::BUBBLE_MASS), rhs(stratified::DROP_MASS));
+            let transit = bubbles * sat.vapor.enthalpy.value + drops * sat.liquid.enthalpy.value;
+            let drift = evaluation.flows.transit_drift.map(|q| q.value);
+            let received = zones + work + transit + drift[0] + drift[1];
+            energy += received;
+            energy_abs +=
+                zones.abs() + work.abs() + transit.abs() + drift[0].abs() + drift[1].abs();
+            pzr = json!({"zone_internal_energy_rate_w":zones,"zone_volume_work_w":work,"transit_energy_rate_w":transit,"bubble_mass_rate_kg_s":bubbles,"drop_mass_rate_kg_s":drops,"transit_drift_w":drift,"received_w":received});
+        }
         let mut motor_work = 0.;
         let mut electric = 0.;
         let mut motor_heat = 0.;
+        let mut rotor_accepted = 0.;
         for (r, index) in self.rotor_index.iter().enumerate() {
             let omega = y[*index] * self.scales[*index] / self.rotor_inertia;
             if let Some(law) = self.motor[r] {
-                // dL/dt from the accepted rate; the row residual is not a rate.
-                rotor += yp[*index] * self.scales[*index] * omega;
+                // A free rotor pays dL/dt as its row implies, the net torque,
+                // like every fluid stock pays its receipts; a locked rotor's
+                // row is a speed constraint, so its accepted rate is used. The
+                // accepted-rate power is reported beside it.
+                let accepted = yp[*index] * self.scales[*index];
+                rotor_accepted += accepted * omega;
+                rotor += omega
+                    * match law.rotor {
+                        rotor::RotorRow::Free { .. } => {
+                            (yp[*index] - self.rows[*index].value) * self.scales[*index]
+                        }
+                        rotor::RotorRow::Locked { .. } => accepted,
+                    };
                 bearing += law.drag_torque_nm.value * omega;
                 motor_work += law.motor_work_w.value;
                 electric += law.electric_w.value;
@@ -224,7 +261,7 @@ impl<P: Properties> Network<P> {
             .filter(|h| h.rotor.is_some())
             .map(|h| self.cells[h.region].phase[0].map_or(0., |p| p.fraction.value))
             .fold(1., f64::min);
-        json!({"mass_receipt_sum_kg_s":mass,"mass_receipt_abs_sum_kg_s":mass_abs,"boron_receipt_sum_kg_eq_s":boron,"boron_receipt_abs_sum_kg_eq_s":boron_abs,"fluid_energy_receipt_sum_w":energy,"fluid_energy_receipt_abs_sum_w":energy_abs,"once_paid_shaft_power_w":self.shaft_power.value,"fluid_energy_minus_shaft_w":energy-self.shaft_power.value,"rotor_energy_rate_w":rotor,"bearing_loss_w":bearing,"motor_work_w":motor_work,"motor_electric_w":electric,"motor_conversion_heat_w":motor_heat,"fluid_plus_rotor_plus_bearing_minus_motor_w":energy+rotor+bearing-motor_work,"max_primary_void_fraction":max_primary_void,"min_pump_liquid_fraction":min_pump_liquid})
+        json!({"mass_receipt_sum_kg_s":mass,"mass_receipt_abs_sum_kg_s":mass_abs,"boron_receipt_sum_kg_eq_s":boron,"boron_receipt_abs_sum_kg_eq_s":boron_abs,"fluid_energy_receipt_sum_w":energy,"fluid_energy_receipt_abs_sum_w":energy_abs,"once_paid_shaft_power_w":self.shaft_power.value,"fluid_energy_minus_shaft_w":energy-self.shaft_power.value,"rotor_energy_rate_w":rotor,"rotor_energy_rate_accepted_w":rotor_accepted,"bearing_loss_w":bearing,"motor_work_w":motor_work,"motor_electric_w":electric,"motor_conversion_heat_w":motor_heat,"fluid_plus_rotor_plus_bearing_minus_motor_w":energy+rotor+bearing-motor_work,"identity_terms_abs_sum_w":energy_abs+rotor.abs()+bearing.abs()+motor_work.abs(),"pzr":pzr,"max_primary_void_fraction":max_primary_void,"min_pump_liquid_fraction":min_pump_liquid})
     }
 
     /// Coordinate labels: (category, label) for receipts and error accounts.
@@ -330,9 +367,33 @@ impl<P: Properties> Network<P> {
 
     /// The PZR cell's admitted inventory (`stratified::inventory`): totals
     /// [mass, tracer, fluid internal energy, 0] with its transit stocks'
-    /// saturated energy, and its receipt.
-    fn stratified_inventory(&self, _y: &[f64]) -> Result<StratifiedInventory, Failure> {
-        Err(not_integrated("the PZR inventory"))
+    /// saturated energy, and its receipt. Every stock must be finite and
+    /// every mass and tracer nonnegative.
+    fn stratified_inventory(&self, y: &[f64]) -> Result<StratifiedInventory, Failure> {
+        let mut values = [0.; PZR_COORDINATES];
+        for (v, i) in values.iter_mut().zip(self.pzr.coordinates()) {
+            *v = y[i] * self.scales[i];
+        }
+        let nonnegative = PZR_MASS.iter().chain(&PZR_TRACER);
+        if values.iter().any(|v| !v.is_finite()) || nonnegative.into_iter().any(|o| values[*o] < 0.)
+        {
+            return Err(Failure::Fatal(format!(
+                "physical PZR stock admission failed: {values:?}"
+            )));
+        }
+        let x = stratified::Coordinates::values(&values);
+        let column = self.stratified.column(&self.properties, &x, None)?;
+        let inventory = self.stratified.inventory(&x, &column);
+        let energy: f64 = PZR_ENERGY.iter().map(|o| values[*o]).sum();
+        Ok(StratifiedInventory {
+            totals: [
+                inventory.mass_kg.value,
+                inventory.boron_kg.value,
+                inventory.energy_j.value,
+                0.,
+            ],
+            receipt: json!({"mass_kg":inventory.mass_kg.value,"boron_kg_eq":inventory.boron_kg.value,"energy_j":inventory.energy_j.value,"zone_internal_energy_j":energy,"bubble_mass_kg":x.bubble_mass.value,"drop_mass_kg":x.drop_mass.value,"drop_boron_kg_eq":x.drop_boron.value,"mixture_level_m":column.mixture_elevation.value-column.bottom_m,"collapsed_level_m":column.collapsed_elevation.value-column.bottom_m,"admitted_thickness_m":column.admitted_thickness.value}),
+        })
     }
 }
 

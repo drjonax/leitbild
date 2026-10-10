@@ -379,10 +379,10 @@ impl Parameters {
                 return Err(fatal(format!("upper port {} must sit at top_m", p.id)));
             }
             if (p.kind == PortKind::Relief) != p.relief.is_some()
-                || (p.kind != PortKind::Relief && p.face.is_none())
+                || (p.kind == PortKind::Surge && p.face.is_none())
             {
                 return Err(fatal(format!(
-                    "port {}: a relief port declares its device and no other port does; flow ports name their face",
+                    "port {}: a relief port declares its device and no other port does; the surge port names its face",
                     p.id
                 )));
             }
@@ -418,18 +418,31 @@ impl Parameters {
     }
 }
 
+/// The verification cases' declared sensitivity families, as their block
+/// lists them beside the nominal values.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SensitivityFamilies {
+    pub relaxation: Vec<f64>,
+    #[serde(rename = "sprayDrop_m")]
+    pub spray_drop_m: Vec<f64>,
+    pub bubble_m: Vec<f64>,
+}
+
 /// One run's sensitivity selection, taken only from the declared lists.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Case {
     /// Factor applied to both relaxation times.
     pub relaxation_factor: f64,
     pub drop_diameter_m: f64,
+    pub bubble_diameter_m: f64,
 }
 impl Case {
     pub fn nominal(parameters: &Parameters) -> Self {
         Self {
             relaxation_factor: 1.,
             drop_diameter_m: parameters.stratified.spray_drop_diameter_m,
+            bubble_diameter_m: parameters.stratified.bubble_diameter_m,
         }
     }
 }
@@ -784,10 +797,11 @@ pub struct HeaterReceipt {
     /// The bank's active span on the plant datum.
     pub bottom_m: f64,
     pub top_m: f64,
-    /// Heat `q` delivered on the wetted area, W (signed).
-    pub wet_heat_w: Scalar,
-    /// Wall-born vapor `Γ` on the wetted area, kg/s, into the bubble stock.
-    pub wet_vapor_kg_s: Scalar,
+    /// Heat delivered on A's and R's wetted contact, W (signed), each from
+    /// the wall law at that zone's own state.
+    pub wet_heat_w: [Scalar; 2],
+    /// Wall-born vapor on A's and R's wetted contact, kg/s, into the bubbles.
+    pub wet_vapor_kg_s: [Scalar; 2],
     /// Sensible and radiative heat into the vapor zone on the exposed area, W.
     pub exposed_heat_w: Scalar,
     /// Vapor condensed on the exposed rods, kg/s, entering R.
@@ -809,6 +823,8 @@ pub struct ReliefState {
 pub struct Boundary {
     pub heat: Heat,
     pub heaters: Vec<HeaterReceipt>,
+    /// One receipt per shell band or head, from the wall owner.
+    pub walls: Vec<WallReceipt>,
     /// Present exactly when the cell declares a relief port.
     pub relief: Option<ReliefState>,
 }
@@ -817,9 +833,49 @@ impl Boundary {
         Self {
             heat: Heat::zero(),
             heaters: Vec::new(),
+            walls: Vec::new(),
             relief: None,
         }
     }
+}
+
+/// A wall element of the PZR: a shell band over a span on the plant datum,
+/// or one of the flat heads at `bottom_m` and `top_m`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WallElement {
+    Band { bottom_m: f64, top_m: f64 },
+    BottomHead,
+    TopHead,
+}
+
+/// One wall element's sources, evaluated by the wall owner from its metal on
+/// the contact [`Cell::wall_wetting`] gives it. The cell routes them; the
+/// metal receives the opposite of every term.
+#[derive(Clone, Copy, Debug)]
+pub struct WallReceipt {
+    pub element: WallElement,
+    /// Heat into the wetted liquid of A and of R, W (signed).
+    pub wet_heat_w: [Scalar; 2],
+    /// Wall-born vapor from A's and R's contact, kg/s, into the bubbles.
+    pub wet_vapor_kg_s: [Scalar; 2],
+    /// Heat into the vapor zone on the dry contact, W (signed).
+    pub dry_heat_w: Scalar,
+    /// Vapor condensed on the dry contact, kg/s, entering R.
+    pub condensate_kg_s: Scalar,
+    /// The condensate's liquid enthalpy at wall temperature, J/kg.
+    pub condensate_enthalpy_j_kg: Scalar,
+}
+
+/// Contact of a wall element with the zones, as fractions of its area that
+/// sum to one, and for a shell band its lengths.
+#[derive(Clone, Copy, Debug)]
+pub struct WallWetting {
+    pub admitted_fraction: Scalar,
+    pub resident_fraction: Scalar,
+    /// Dry contact with the vapor zone.
+    pub vapor_fraction: Scalar,
+    /// The band's lengths by level; `None` for a head.
+    pub band: Option<Wetting>,
 }
 
 /// One phase's quasi-steady restriction flux on its energy adiabat.
@@ -876,7 +932,54 @@ pub struct ReliefRoots {
     pub travel: Option<Scalar>,
 }
 
+/// The mechanical-stop transaction at an end-of-travel root, reported per
+/// event.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stop {
+    pub motion_before: ReliefMotion,
+    pub motion_after: ReliefMotion,
+    pub lift_before: f64,
+    /// Exactly 1 at full lift or 0 on the seat.
+    pub lift_after: f64,
+    /// `lift_before − lift_after`, removed by the transaction.
+    pub defect: f64,
+}
+
 impl ReliefDevice {
+    /// Mechanical stop at the travel root located by the harness: an opening
+    /// lift is set exactly to 1 and becomes `Open`, a closing lift exactly to
+    /// 0 and becomes `Closed`. Refuses a motion without travel, or a lift
+    /// farther than `root_bound` from its stop, which is not that root.
+    pub fn stop(
+        &self,
+        motion: ReliefMotion,
+        lift: &mut f64,
+        root_bound: f64,
+    ) -> Result<Stop, Failure> {
+        let (end, after) = match motion {
+            ReliefMotion::Opening => (1., ReliefMotion::Open),
+            ReliefMotion::Closing => (0., ReliefMotion::Closed),
+            ReliefMotion::Open | ReliefMotion::Closed => {
+                return Err(fatal(format!("relief {motion:?} has no travel to stop")));
+            }
+        };
+        let before = *lift;
+        let defect = before - end;
+        let beyond = defect.is_nan() || defect.abs() > root_bound;
+        if !(root_bound.is_finite() && root_bound >= 0.) || beyond {
+            return Err(fatal(format!(
+                "relief lift {before} is {defect} from its stop, beyond the root bound {root_bound}"
+            )));
+        }
+        *lift = end;
+        Ok(Stop {
+            motion_before: motion,
+            motion_after: after,
+            lift_before: before,
+            lift_after: end,
+            defect,
+        })
+    }
     /// Lift rate of a motion state, full strokes per second.
     pub fn lift_rate(&self, motion: ReliefMotion) -> f64 {
         match motion {
@@ -1311,6 +1414,109 @@ pub fn restriction_flux<P: Properties>(
     })
 }
 
+/// One restriction evaluation held for a matrix: the flux and throat
+/// pressure with their exact partials with respect to `(p0, h0, p_back)`,
+/// the derivatives of the same discrete computation `restriction_flux`
+/// differentiates. The lift enters outside the flux, linearly.
+#[derive(Clone, Copy, Debug)]
+pub struct HeldFlux {
+    pub mass_flux: f64,
+    pub mass_flux_partials: [f64; 3],
+    pub throat_pressure_pa: f64,
+    pub throat_partials: [f64; 3],
+    pub choked: bool,
+    pub saturation_calls: usize,
+    pub inversions: usize,
+}
+
+/// The restriction at constant inputs with its three exact partials: one
+/// pass of [`restriction_flux`] per unit input direction.
+pub fn restriction_partials<P: Properties>(
+    properties: &P,
+    vapor: bool,
+    p0: f64,
+    h0: f64,
+    p_back: f64,
+) -> Result<HeldFlux, Failure> {
+    let mut held: Option<HeldFlux> = None;
+    let mut partials = [0.; 3];
+    let mut throat = [0.; 3];
+    for k in 0..3 {
+        let unit = |j: usize, v: f64| Scalar::new(v, if j == k { 1. } else { 0. });
+        let f = restriction_flux(properties, vapor, unit(0, p0), unit(1, h0), unit(2, p_back))?;
+        partials[k] = f.mass_flux.direction;
+        throat[k] = f.throat_pressure_pa.direction;
+        let h = held.get_or_insert(HeldFlux {
+            mass_flux: f.mass_flux.value,
+            mass_flux_partials: [0.; 3],
+            throat_pressure_pa: f.throat_pressure_pa.value,
+            throat_partials: [0.; 3],
+            choked: f.choked,
+            saturation_calls: 0,
+            inversions: 0,
+        });
+        if h.mass_flux.to_bits() != f.mass_flux.value.to_bits() || h.choked != f.choked {
+            return Err(fatal("restriction value depends on its direction"));
+        }
+        h.saturation_calls += f.saturation_calls;
+        h.inversions += f.inversions;
+    }
+    let mut held = held.ok_or_else(|| fatal("restriction partials not evaluated"))?;
+    held.mass_flux_partials = partials;
+    held.throat_partials = throat;
+    Ok(held)
+}
+
+impl HeldFlux {
+    /// The flux at directed inputs by the chain rule; no property call.
+    pub fn at(&self, p0: Scalar, h0: Scalar, p_back: Scalar) -> Flux {
+        let d = [p0.direction, h0.direction, p_back.direction];
+        let dot = |g: &[f64; 3]| g[0] * d[0] + g[1] * d[1] + g[2] * d[2];
+        Flux {
+            mass_flux: Scalar::new(self.mass_flux, dot(&self.mass_flux_partials)),
+            throat_pressure_pa: Scalar::new(self.throat_pressure_pa, dot(&self.throat_partials)),
+            choked: self.choked,
+            saturation_calls: 0,
+            inversions: 0,
+        }
+    }
+}
+
+/// The restriction for one residual. With a matrix reuse, every column
+/// takes the held value and partials of its exact base point, evaluated
+/// once per matrix, and the chain rule. Without one, a plain or directional
+/// pass of the same computation, equal to the chain rule to roundoff.
+fn relief_flux<P: Properties>(
+    properties: &P,
+    vapor: bool,
+    p0: Scalar,
+    h0: Scalar,
+    p_back: Scalar,
+    reuse: Option<&mut Reuse<P::Caloric>>,
+) -> Result<Flux, Failure> {
+    match reuse {
+        Some(reuse) => {
+            let key = [
+                u64::from(vapor),
+                p0.value.to_bits(),
+                h0.value.to_bits(),
+                p_back.value.to_bits(),
+            ];
+            let held = match reuse.held_restriction(key) {
+                Some(held) => held,
+                None => {
+                    let held =
+                        restriction_partials(properties, vapor, p0.value, h0.value, p_back.value)?;
+                    reuse.hold_restriction(key, held);
+                    held
+                }
+            };
+            Ok(held.at(p0, h0, p_back))
+        }
+        _ => restriction_flux(properties, vapor, p0, h0, p_back),
+    }
+}
+
 /// `max(0, min(a, b) − c)` style overlap length of `[low, high]` with
 /// `[bottom, top]`, with one-sided directions at exact ties.
 fn overlap(low: f64, high: f64, bottom: Scalar, top: Scalar) -> Scalar {
@@ -1356,13 +1562,44 @@ pub struct Cell {
 }
 
 impl Cell {
+    /// The cell for a case from the strict block's own lists; the bubble
+    /// diameter is then the nominal one.
     pub fn new(parameters: Parameters, case: Case) -> Result<Self, Failure> {
+        Self::for_case(parameters, case, None)
+    }
+
+    /// The cell for a case drawn from the verification cases' declared
+    /// `sensitivityFamilies`. Each family member must also be a case of the
+    /// strict block where that block lists one; the bubble diameter is the
+    /// nominal or a member of the declared bubble family.
+    pub fn for_case(
+        parameters: Parameters,
+        case: Case,
+        families: Option<&SensitivityFamilies>,
+    ) -> Result<Self, Failure> {
         parameters.validate()?;
         let x = &parameters.stratified;
+        if let Some(f) = families
+            && (f
+                .relaxation
+                .iter()
+                .any(|v| !x.relaxation_sensitivity.contains(v))
+                || f.spray_drop_m
+                    .iter()
+                    .any(|v| !x.drop_diameter_sensitivity_m.contains(v))
+                || f.bubble_m.iter().any(|v| !(v.is_finite() && *v > 0.)))
+        {
+            return Err(fatal(format!(
+                "declared sensitivity families {f:?} disagree with the strict block"
+            )));
+        }
+        let bubble = case.bubble_diameter_m == x.bubble_diameter_m
+            || families.is_some_and(|f| f.bubble_m.contains(&case.bubble_diameter_m));
         if !x.relaxation_sensitivity.contains(&case.relaxation_factor)
             || !x
                 .drop_diameter_sensitivity_m
                 .contains(&case.drop_diameter_m)
+            || !bubble
         {
             return Err(fatal(format!(
                 "case {case:?} is not in the declared sensitivity lists"
@@ -1625,7 +1862,7 @@ impl Cell {
         let p = &self.parameters;
         if !(bottom_m >= p.bottom_m && bottom_m < top_m && top_m <= p.top_m) {
             return Err(fatal(format!(
-                "heater span {bottom_m}..{top_m} m is outside the vessel"
+                "contact span {bottom_m}..{top_m} m is outside the vessel"
             )));
         }
         let admitted = overlap(bottom_m, top_m, s(p.bottom_m), column.boundary_elevation);
@@ -1646,6 +1883,58 @@ impl Cell {
         })
     }
 
+    /// A wall element's contact by level. A shell band is wetted over its
+    /// overlap with A's region `[bottom, z_AR]` and R's `[z_AR, z_mix]` and
+    /// dry above `z_mix`, as a heater bank is. The bottom head contacts the
+    /// lowest zone present at `bottom_m` and the top head the vapor zone; a
+    /// mixture level reaching the top head is the solid-PZR structural limit.
+    pub fn wall_wetting(
+        &self,
+        column: &Column,
+        element: WallElement,
+    ) -> Result<WallWetting, Failure> {
+        let one = |zone: usize| {
+            let mut f = [s(0.); 3];
+            f[zone] = s(1.);
+            WallWetting {
+                admitted_fraction: f[0],
+                resident_fraction: f[1],
+                vapor_fraction: f[2],
+                band: None,
+            }
+        };
+        match element {
+            WallElement::Band { bottom_m, top_m } => {
+                let w = self.heater_wetting(column, bottom_m, top_m)?;
+                let span = s(top_m - bottom_m);
+                Ok(WallWetting {
+                    admitted_fraction: w.admitted_length_m / span,
+                    resident_fraction: w.resident_length_m / span,
+                    vapor_fraction: w.exposed_length_m / span,
+                    band: Some(w),
+                })
+            }
+            WallElement::BottomHead => {
+                let bottom = self.parameters.bottom_m;
+                Ok(if column.boundary_elevation.value > bottom {
+                    one(0)
+                } else if column.mixture_elevation.value > bottom {
+                    one(1)
+                } else {
+                    one(2)
+                })
+            }
+            WallElement::TopHead => {
+                if column.mixture_elevation.value >= self.parameters.top_m {
+                    return Err(recoverable(
+                        "mixture level reaches the top head: the solid-PZR structural limit",
+                    ));
+                }
+                Ok(one(2))
+            }
+        }
+    }
+
     /// The 17 scaled rows from coordinates `x`, their rates and the signed
     /// port receipts. `scales` are the coordinate scales; the volume row is
     /// scaled by `fluidVolume_m3`, every other row by its coordinate scale.
@@ -1660,14 +1949,22 @@ impl Cell {
         scales: &[f64; COORDINATES],
         reuse: Option<(&mut Reuse<P::Caloric>, Slots)>,
     ) -> Result<Evaluation, Failure> {
-        let column = self.column(properties, x, reuse)?;
-        self.residual_on(properties, column, x, rate, receipts, boundary, scales)
+        let mut reuse = reuse;
+        let column = self.column(properties, x, reuse.as_mut().map(|(r, k)| (&mut **r, *k)))?;
+        self.residual_on_reusing(
+            properties,
+            column,
+            x,
+            rate,
+            receipts,
+            boundary,
+            scales,
+            reuse.map(|(r, _)| r),
+        )
     }
 
     /// The rows of [`Cell::residual`] on a column already evaluated at the
-    /// same coordinates `x`. Its only property calls are the relief
-    /// restriction's, while the relief has lift. `residual` is `column`
-    /// followed by this, so both give bitwise identical rows.
+    /// same coordinates `x`, without a matrix reuse.
     #[allow(clippy::too_many_arguments)]
     pub fn residual_on<P: Properties>(
         &self,
@@ -1678,6 +1975,27 @@ impl Cell {
         receipts: &[Receipt],
         boundary: &Boundary,
         scales: &[f64; COORDINATES],
+    ) -> Result<Evaluation, Failure> {
+        self.residual_on_reusing(properties, c, x, rate, receipts, boundary, scales, None)
+    }
+
+    /// The rows of [`Cell::residual`] on a column already evaluated at the
+    /// same coordinates `x`. Its only property calls are the relief
+    /// restriction's, while the relief has lift; with `reuse` they are made
+    /// once per exact base point of the matrix and its directed columns
+    /// take the held partials. `residual` is `column` followed by this with
+    /// the same reuse, so both give bitwise identical rows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn residual_on_reusing<P: Properties>(
+        &self,
+        properties: &P,
+        c: Column,
+        x: &Coordinates,
+        rate: &Coordinates,
+        receipts: &[Receipt],
+        boundary: &Boundary,
+        scales: &[f64; COORDINATES],
+        mut reuse: Option<&mut Reuse<P::Caloric>>,
     ) -> Result<Evaluation, Failure> {
         if receipts.len() != self.parameters.ports.len() {
             return Err(fatal(format!(
@@ -1800,12 +2118,19 @@ impl Cell {
                     }
                     let alpha = x.drop_volume / (x.vapor_volume + x.drop_volume);
                     let back = state.back_pressure_pa;
-                    let vapor =
-                        restriction_flux(properties, true, c.roof_pressure, g.enthalpy, back)?;
+                    let vapor = relief_flux(
+                        properties,
+                        true,
+                        c.roof_pressure,
+                        g.enthalpy,
+                        back,
+                        reuse.as_deref_mut(),
+                    )?;
                     flow.vapor_kg_s = (s(1.) - alpha) * area * vapor.mass_flux;
                     flow.vapor = Some(vapor);
                     if x.drop_volume.value != 0. || x.drop_volume.direction != 0. {
-                        let drop = restriction_flux(properties, false, c.roof_pressure, hf, back)?;
+                        let drop =
+                            relief_flux(properties, false, c.roof_pressure, hf, back, reuse)?;
                         flow.drop_kg_s = alpha * area * drop.mass_flux;
                         flow.drop = Some(drop);
                     }
@@ -1835,34 +2160,74 @@ impl Cell {
 
         // Heater banks: wet sources into A and R by wetted length, wall-born
         // vapor into the bubble stock, exposed heat and condensation with g.
+        let absent = |v: Scalar| v.value == 0. && v.direction == 0.;
         for heater in &boundary.heaters {
             let w = self.heater_wetting(&c, heater.bottom_m, heater.top_m)?;
-            let gamma = heater.wet_vapor_kg_s;
-            let q = heater.wet_heat_w;
-            if w.wet_length_m.value == 0. && w.wet_length_m.direction == 0. {
-                if [q, gamma]
-                    .iter()
-                    .any(|v| v.value != 0. || v.direction != 0.)
-                {
-                    return Err(recoverable(
-                        "a bank with no wetted length cannot deliver wet sources",
-                    ));
+            for (k, (zone, length)) in [(AV, w.admitted_length_m), (RV, w.resident_length_m)]
+                .into_iter()
+                .enumerate()
+            {
+                let (q, gamma) = (heater.wet_heat_w[k], heater.wet_vapor_kg_s[k]);
+                if absent(length) && !(absent(q) && absent(gamma)) {
+                    return Err(fatal(format!(
+                        "heater span [{}, {}] m delivers wet sources to a zone it does not touch",
+                        heater.bottom_m, heater.top_m
+                    )));
                 }
-            } else {
-                let share_a = w.admitted_length_m / w.wet_length_m;
-                for (zone, share) in [(AV, share_a), (RV, s(1.) - share_a)] {
-                    mass[zone] = mass[zone] - share * gamma;
-                    energy[zone] = energy[zone] + share * (q - gamma * hg);
-                }
+                mass[zone] = mass[zone] - gamma;
+                energy[zone] = energy[zone] + q - gamma * hg;
                 bubbles = bubbles + gamma;
+                receipt[1] = receipt[1] + q;
             }
             let j = heater.condensate_kg_s;
+            if absent(w.exposed_length_m) && !(absent(heater.exposed_heat_w) && absent(j)) {
+                return Err(fatal(format!(
+                    "heater span [{}, {}] m delivers exposed sources without exposed length",
+                    heater.bottom_m, heater.top_m
+                )));
+            }
             energy[GV] = energy[GV] + heater.exposed_heat_w - j * g.enthalpy;
             mass[GV] = mass[GV] - j;
             mass[RV] = mass[RV] + j;
             energy[RV] = energy[RV] + j * heater.condensate_enthalpy_j_kg;
-            receipt[1] = receipt[1] + q + heater.exposed_heat_w - j * g.enthalpy
+            receipt[1] = receipt[1] + heater.exposed_heat_w - j * g.enthalpy
                 + j * heater.condensate_enthalpy_j_kg;
+        }
+
+        // Shell bands and heads: wet heat and wall vapor into the liquid zone
+        // each contacts, the vapor into the bubble stock, dry heat and
+        // condensation with g, the condensate into R.
+        for wall in &boundary.walls {
+            let w = self.wall_wetting(&c, wall.element)?;
+            for (k, (zone, share)) in [(AV, w.admitted_fraction), (RV, w.resident_fraction)]
+                .into_iter()
+                .enumerate()
+            {
+                let (q, gamma) = (wall.wet_heat_w[k], wall.wet_vapor_kg_s[k]);
+                if absent(share) && !(absent(q) && absent(gamma)) {
+                    return Err(fatal(format!(
+                        "wall {:?} delivers wet sources to a zone it does not contact",
+                        wall.element
+                    )));
+                }
+                mass[zone] = mass[zone] - gamma;
+                energy[zone] = energy[zone] + q - gamma * hg;
+                bubbles = bubbles + gamma;
+                receipt[1] = receipt[1] + q;
+            }
+            let j = wall.condensate_kg_s;
+            if absent(w.vapor_fraction) && !(absent(wall.dry_heat_w) && absent(j)) {
+                return Err(fatal(format!(
+                    "wall {:?} delivers dry sources without dry contact",
+                    wall.element
+                )));
+            }
+            energy[GV] = energy[GV] + wall.dry_heat_w - j * g.enthalpy;
+            mass[GV] = mass[GV] - j;
+            mass[RV] = mass[RV] + j;
+            energy[RV] = energy[RV] + j * wall.condensate_enthalpy_j_kg;
+            receipt[1] =
+                receipt[1] + wall.dry_heat_w - j * g.enthalpy + j * wall.condensate_enthalpy_j_kg;
         }
 
         // Bulk relaxation on each zone's own metastable excess. A liquid
@@ -1883,7 +2248,7 @@ impl Cell {
 
         // Transit: bubbles rise through R's region, drops fall through the
         // vapor region, both at their terminal velocities.
-        let bubble = terminal_velocity(x_params.bubble_diameter_m, sat.liquid, sat.vapor.density)?;
+        let bubble = terminal_velocity(self.case.bubble_diameter_m, sat.liquid, sat.vapor.density)?;
         let drop = terminal_velocity(self.case.drop_diameter_m, sat.vapor, sat.liquid.density)?;
         let rise = c.bubble_mass * bubble.velocity / (c.mixture_elevation - c.boundary_elevation);
         let vapor_height = s(c.top_m) - c.mixture_elevation;

@@ -37,7 +37,7 @@ fn parameters() -> Parameters {
 fn all_ports() -> Parameters {
     let mut p = parameters();
     let upper: Vec<st::Port> = serde_json::from_str(
-        r#"[{"id":"PZR.SPRAY","kind":"spray","elevation_m":18.5,"face":35,"bore_m":0.012},
+        r#"[{"id":"PZR.SPRAY","kind":"spray","elevation_m":18.5,"face":null,"bore_m":0.012},
             {"id":"PZR.RELIEF","kind":"relief","elevation_m":18.5,"bore_m":0.15,
              "relief":{"opening_Pa":15800000,"reseat_Pa":15600000,"fullStrokes_per_s":20,"effectiveAreaPerLift_m2":0.00411672057382}}]"#,
     )
@@ -764,11 +764,12 @@ fn prepared_all() -> Prepared {
         ..base
     }
 }
+/// One bank's receipt with its wet sources already per zone [A, R].
 fn bank(
     bottom_m: f64,
     top_m: f64,
-    q: f64,
-    gamma: f64,
+    q: [f64; 2],
+    gamma: [f64; 2],
     exposed: f64,
     j: f64,
     hl: f64,
@@ -776,8 +777,8 @@ fn bank(
     st::HeaterReceipt {
         bottom_m,
         top_m,
-        wet_heat_w: s(q),
-        wet_vapor_kg_s: s(gamma),
+        wet_heat_w: q.map(s),
+        wet_vapor_kg_s: gamma.map(s),
         exposed_heat_w: s(exposed),
         condensate_kg_s: s(j),
         condensate_enthalpy_j_kg: s(hl),
@@ -859,9 +860,11 @@ fn heater_sources_go_to_the_zones_the_rods_wet_by_level() {
         .value;
     // Prepared levels: A to 6.80 m, the mixture to 12.5 m. Both banks wet.
     let receipts = [Receipt::zero(); 3];
+    // Per-zone wet sources, as the heater owner evaluates them at each
+    // zone's own state (A is deeper and more subcooled than R).
     let banks = vec![
-        bank(6.5, 7.5, 1.2e5, 0.02, 0., 0., 0.),
-        bank(6.5, 9.5, 2.0e5, 0.05, 0., 0., 0.),
+        bank(6.5, 7.5, [2.9e4, 9.1e4], [0.004, 0.016], 0., 0., 0.),
+        bank(6.5, 9.5, [1.6e4, 1.84e5], [0.003, 0.047], 0., 0., 0.),
     ];
     let boundary = Boundary {
         heaters: banks.clone(),
@@ -878,12 +881,11 @@ fn heater_sources_go_to_the_zones_the_rods_wet_by_level() {
             (w.wet_fraction.value - 1.).abs() < 1e-12 && w.exposed_length_m.value.abs() < 1e-12
         );
         assert!((w.admitted_length_m.value - 0.3).abs() < 1e-12);
-        let share = w.admitted_length_m.value / w.wet_length_m.value;
-        let (q, gamma) = (b.wet_heat_w.value, b.wet_vapor_kg_s.value);
-        expected[0] += share * (q - gamma * hg);
-        expected[1] += (1. - share) * (q - gamma * hg);
-        expected_mass[0] -= share * gamma;
-        expected_mass[1] -= (1. - share) * gamma;
+        for k in 0..2 {
+            let (q, gamma) = (b.wet_heat_w[k].value, b.wet_vapor_kg_s[k].value);
+            expected[k] += q - gamma * hg;
+            expected_mass[k] -= gamma;
+        }
     }
     let src = &ev.flows.sources;
     let d = |i: usize| src[i].value - rest[i].value;
@@ -901,7 +903,15 @@ fn heater_sources_go_to_the_zones_the_rods_wet_by_level() {
     // 3 m (0.3 m in A, 1.7 m in R) and exposed over 1 m.
     v[st::RESIDENT_VOLUME] = p.cell.volume_below(s(8.5)).value - v[st::ADMITTED_VOLUME];
     let hl = 1.55e6;
-    let banks = vec![bank(6.5, 9.5, 1.5e5, 0.03, 4.0e3, 0.002, hl)];
+    let banks = vec![bank(
+        6.5,
+        9.5,
+        [0.15 * 1.5e5, 0.85 * 1.5e5],
+        [0.15 * 0.03, 0.85 * 0.03],
+        4.0e3,
+        0.002,
+        hl,
+    )];
     let boundary = Boundary {
         heaters: banks,
         ..shut()
@@ -944,9 +954,10 @@ fn every_port_kind_and_both_banks_are_conserved_exactly() {
             resident: s(5.0e4),
         },
         heaters: vec![
-            bank(6.5, 7.5, 1.1e5, 0.01, 0., 0., 0.),
-            bank(6.5, 9.5, 2.3e5, 0.04, 2.0e3, 0.001, 1.5e6),
+            bank(6.5, 7.5, [3.0e4, 8.0e4], [0.002, 0.008], 0., 0., 0.),
+            bank(6.5, 9.5, [2.5e4, 2.05e5], [0.004, 0.036], 0., 0., 0.),
         ],
+        walls: Vec::new(),
         relief: Some(relief),
     };
     let receipts = [
@@ -993,8 +1004,7 @@ fn every_port_kind_and_both_banks_are_conserved_exactly() {
         + implied[st::DROP_MASS] * sat.liquid.enthalpy.value
         + f.transit_drift[0].value
         + f.transit_drift[1].value;
-    let gv = ev.column.vapor.enthalpy.value;
-    let heater = 1.1e5 + 2.3e5 + 2.0e3 - 0.001 * gv + 0.001 * 1.5e6;
+    let heater = 1.1e5 + 2.3e5;
     let expect_mass = -21. + 2.4 - out.vapor_kg_s.value - out.drop_kg_s.value;
     let expect_energy =
         -21. * 1.6e6 + 7.0e4 + 2.4 * 1.25e6 + 1.1e4 + 5.0e4 + heater - out.enthalpy_w.value;
@@ -1142,4 +1152,522 @@ fn restriction_flux_directions_match_central_differences() {
             seeded.mass_flux.value
         );
     }
+}
+
+fn wall(
+    element: st::WallElement,
+    wet: [f64; 2],
+    vapor: [f64; 2],
+    dry: f64,
+    j: f64,
+    hl: f64,
+) -> st::WallReceipt {
+    st::WallReceipt {
+        element,
+        wet_heat_w: wet.map(s),
+        wet_vapor_kg_s: vapor.map(s),
+        dry_heat_w: s(dry),
+        condensate_kg_s: s(j),
+        condensate_enthalpy_j_kg: s(hl),
+    }
+}
+
+#[test]
+fn wall_receipts_are_routed_to_the_zones_their_wetting_reports() {
+    use st::WallElement::{Band, BottomHead, TopHead};
+    let p = prepared_all();
+    let v = physical(&coordinates(&p.y, &p.scales, None));
+    let zero = [0.; st::COORDINATES];
+    let receipts = [Receipt::zero(); 3];
+    let rest = evaluate_all(&p, &v, &zero, receipts, &shut());
+    let c = &rest.column;
+    // Prepared levels: A to 6.80 m, the mixture to 12.5 m.
+    let cases = [
+        (
+            Band {
+                bottom_m: 6.5,
+                top_m: 7.5,
+            },
+            [0.3, 0.7, 0.],
+        ),
+        (
+            Band {
+                bottom_m: 9.5,
+                top_m: 13.5,
+            },
+            [0., 0.75, 0.25],
+        ),
+        (
+            Band {
+                bottom_m: 13.5,
+                top_m: 18.5,
+            },
+            [0., 0., 1.],
+        ),
+        (BottomHead, [1., 0., 0.]),
+        (TopHead, [0., 0., 1.]),
+    ];
+    let hg = c.interface_saturation.vapor.enthalpy.value;
+    let gv = c.vapor.enthalpy.value;
+    let hl = 1.5e6;
+    let mut walls = Vec::new();
+    let mut expected = [[0.; 2]; 3];
+    let mut bubbles = 0.;
+    for (n, (element, fractions)) in cases.iter().enumerate() {
+        let w = p.cell.wall_wetting(c, *element).unwrap();
+        let got = [
+            w.admitted_fraction.value,
+            w.resident_fraction.value,
+            w.vapor_fraction.value,
+        ];
+        for (a, b) in got.iter().zip(fractions) {
+            assert!((a - b).abs() < 1e-12, "{element:?}: {got:?}");
+        }
+        assert_eq!(w.band.is_some(), matches!(element, Band { .. }));
+        // A wall owner scales its flux by the contact fractions.
+        let flux = 1.0e4 * (n as f64 + 1.);
+        let wet = [flux * got[0], flux * got[1]];
+        let boil = [1e-3 * got[0], 2e-3 * got[1]];
+        let (dry, j) = (300. * got[2], 4e-4 * got[2]);
+        walls.push(wall(*element, wet, boil, dry, j, hl));
+        expected[0][0] += wet[0] - boil[0] * hg;
+        expected[0][1] -= boil[0];
+        expected[1][0] += wet[1] - boil[1] * hg + j * hl;
+        expected[1][1] += j - boil[1];
+        expected[2][0] += dry - j * gv;
+        expected[2][1] -= j;
+        bubbles += boil[0] + boil[1];
+    }
+    let boundary = Boundary { walls, ..shut() };
+    let ev = evaluate_all(&p, &v, &zero, receipts, &boundary);
+    let d = |i: usize| ev.flows.sources[i].value - rest.flows.sources[i].value;
+    for (zone, [e, m]) in [
+        (st::ADMITTED_ENERGY, expected[0]),
+        (st::RESIDENT_ENERGY, expected[1]),
+        (st::VAPOR_ENERGY, expected[2]),
+    ] {
+        assert!(
+            (d(zone) - e).abs() <= 1e-9 * e.abs().max(1.),
+            "energy row {zone}"
+        );
+        assert!((d(zone - 1) - m).abs() <= 1e-15, "mass row {}", zone - 1);
+    }
+    assert!((d(st::BUBBLE_MASS) - bubbles).abs() <= 1e-15);
+    let b = &ev.balance;
+    assert!((b.energy_w.value - b.receipt_energy_w.value).abs() <= 1e-6);
+    // A wall cannot heat a zone it does not contact.
+    let bad = Boundary {
+        walls: vec![wall(
+            Band {
+                bottom_m: 13.5,
+                top_m: 18.5,
+            },
+            [0., 1e3],
+            [0.; 2],
+            0.,
+            0.,
+            0.,
+        )],
+        ..shut()
+    };
+    let x = Coordinates::values(&v);
+    let r = Coordinates::values(&zero);
+    let refused = p
+        .cell
+        .residual(&If97, &x, &r, &receipts, &bad, &p.scales, None);
+    assert!(matches!(refused, Err(Failure::Fatal(_))));
+    let wet_top = Boundary {
+        walls: vec![wall(TopHead, [1e3, 0.], [0.; 2], 0., 0., 0.)],
+        ..shut()
+    };
+    assert!(
+        p.cell
+            .residual(&If97, &x, &r, &receipts, &wet_top, &p.scales, None)
+            .is_err()
+    );
+}
+
+#[test]
+fn walls_with_every_port_kind_are_conserved_exactly() {
+    use st::WallElement::{Band, BottomHead, TopHead};
+    let p = prepared_all();
+    let v = active(&p);
+    let rate = active_rates();
+    let probe = evaluate_all(&p, &v, &rate, [Receipt::zero(); 3], &shut());
+    let c = probe.column;
+    let mut walls = Vec::new();
+    for (n, element) in [
+        Band {
+            bottom_m: 6.5,
+            top_m: 9.5,
+        },
+        Band {
+            bottom_m: 9.5,
+            top_m: 14.5,
+        },
+        Band {
+            bottom_m: 14.5,
+            top_m: 18.5,
+        },
+        BottomHead,
+        TopHead,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let w = p.cell.wall_wetting(&c, element).unwrap();
+        let k = n as f64 + 1.;
+        let f = [
+            w.admitted_fraction.value,
+            w.resident_fraction.value,
+            w.vapor_fraction.value,
+        ];
+        walls.push(wall(
+            element,
+            [-2.0e3 * k * f[0], 3.0e3 * k * f[1]],
+            [5e-4 * f[0], 7e-4 * f[1]],
+            -150. * k * f[2],
+            2e-4 * f[2],
+            1.45e6,
+        ));
+    }
+    let boundary = Boundary {
+        heaters: vec![bank(6.5, 9.5, [1.2e4, 1.08e5], [0.002, 0.018], 0., 0., 0.)],
+        walls: walls.clone(),
+        relief: Some(st::ReliefState {
+            lift: s(0.4),
+            back_pressure_pa: s(2.5e5),
+        }),
+        ..Boundary::closed()
+    };
+    let receipts = [
+        Receipt {
+            mass: s(9.),
+            enthalpy: s(9. * 1.28e6),
+            boron: s(0.011),
+        },
+        Receipt {
+            mass: s(1.1),
+            enthalpy: s(1.1 * 1.3e6),
+            boron: s(0.0013),
+        },
+        Receipt::zero(),
+    ];
+    let ev = evaluate_all(&p, &v, &rate, receipts, &boundary);
+    let f = &ev.flows;
+    let out = f.relief.unwrap();
+    let implied: Vec<f64> = (0..st::COORDINATES)
+        .map(|i| rate[i] - ev.rows[i].value * p.scales[i])
+        .collect();
+    let sat = &ev.column.interface_saturation;
+    let mass = [
+        st::VAPOR_MASS,
+        st::ADMITTED_MASS,
+        st::RESIDENT_MASS,
+        st::BUBBLE_MASS,
+        st::DROP_MASS,
+    ]
+    .iter()
+    .map(|i| implied[*i])
+    .sum::<f64>();
+    let boron = implied[st::ADMITTED_BORON] + implied[st::RESIDENT_BORON] + implied[st::DROP_BORON];
+    let work: f64 = f.work.iter().map(|w| w.value).sum();
+    let energy = implied[st::VAPOR_ENERGY]
+        + implied[st::ADMITTED_ENERGY]
+        + implied[st::RESIDENT_ENERGY]
+        + work
+        + implied[st::BUBBLE_MASS] * sat.vapor.enthalpy.value
+        + implied[st::DROP_MASS] * sat.liquid.enthalpy.value
+        + f.transit_drift[0].value
+        + f.transit_drift[1].value;
+    let gv = ev.column.vapor.enthalpy.value;
+    let walls_energy: f64 = walls
+        .iter()
+        .map(|w| {
+            w.wet_heat_w[0].value + w.wet_heat_w[1].value + w.dry_heat_w.value
+                - w.condensate_kg_s.value * gv
+                + w.condensate_kg_s.value * w.condensate_enthalpy_j_kg.value
+        })
+        .sum();
+    let expect_mass = 9. + 1.1 - out.vapor_kg_s.value - out.drop_kg_s.value;
+    let expect_energy = 9. * 1.28e6 + 1.1 * 1.3e6 + 1.2e5 + walls_energy - out.enthalpy_w.value;
+    let expect_boron = 0.011 + 0.0013 - out.boron_kg_s.value;
+    assert!(
+        (mass - expect_mass).abs() <= 1e-12 * 1e3,
+        "mass {mass} vs {expect_mass}"
+    );
+    assert!(
+        (boron - expect_boron).abs() <= 1e-12,
+        "boron {boron} vs {expect_boron}"
+    );
+    assert!(
+        (energy - expect_energy).abs() <= 1e-12 * 1e10,
+        "energy {energy} vs {expect_energy}"
+    );
+    let b = &ev.balance;
+    assert!((b.energy_w.value - b.receipt_energy_w.value).abs() <= 1e-12 * 1e10);
+}
+
+/// Cost of one 18-column directional Jacobian of the cell with the relief
+/// open and drops present: one seeded residual per coordinate (and one for
+/// the lift). A cost report only.
+#[test]
+#[ignore = "cost report only; run explicitly with --ignored --nocapture in release"]
+fn relief_open_jacobian_cost_report() {
+    let p = prepared_all();
+    let v = active(&p);
+    let rate = active_rates();
+    let y: Vec<f64> = (0..st::COORDINATES).map(|i| v[i] / p.scales[i]).collect();
+    let yp: Vec<f64> = (0..st::COORDINATES)
+        .map(|i| rate[i] / p.scales[i])
+        .collect();
+    let receipts = [Receipt::zero(); 3];
+    let jacobian = |reuse: bool| {
+        let mut held = leitbild_operating_plant::network::Reuse::new(2, 2);
+        let started = thread_cpu_s();
+        for column in 0..=st::COORDINATES {
+            let mut seed = vec![0.; st::COORDINATES];
+            let mut lift = 0.;
+            if column < st::COORDINATES {
+                seed[column] = 1.;
+            } else {
+                lift = 1.;
+            }
+            let x = coordinates(&y, &p.scales, Some(&seed));
+            let r = rates(&yp, &p.scales, Some(&seed), 40.);
+            let boundary = Boundary {
+                relief: Some(st::ReliefState {
+                    lift: Scalar::new(0.6, lift),
+                    back_pressure_pa: s(3.0e5),
+                }),
+                ..Boundary::closed()
+            };
+            let slots = st::Slots {
+                vapor_and_resident: 0,
+                admitted: 1,
+                interface: 0,
+                boundary: 1,
+            };
+            p.cell
+                .residual(
+                    &If97,
+                    &x,
+                    &r,
+                    &receipts,
+                    &boundary,
+                    &p.scales,
+                    reuse.then_some((&mut held, slots)),
+                )
+                .unwrap();
+        }
+        thread_cpu_s() - started
+    };
+    // Interleaved rounds, so a changing load affects both alike. Without a
+    // matrix reuse every column takes its own directional pass, the cost
+    // before the held partials.
+    let mut best = [f64::INFINITY; 2];
+    for _ in 0..7 {
+        for (k, reuse) in [false, true].into_iter().enumerate() {
+            best[k] = best[k].min(jacobian(reuse));
+        }
+    }
+    println!(
+        "18-column Jacobian with the relief open, thread CPU: per-column passes {:.3} ms, held partials {:.3} ms",
+        best[0] * 1e3,
+        best[1] * 1e3
+    );
+}
+
+#[repr(C)]
+struct Timespec {
+    seconds: i64,
+    nanoseconds: i64,
+}
+unsafe extern "C" {
+    fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
+}
+/// CLOCK_THREAD_CPUTIME_ID (macOS 16, Linux 3).
+const THREAD_CPU_CLOCK: i32 = if cfg!(target_os = "macos") { 16 } else { 3 };
+fn thread_cpu_s() -> f64 {
+    let mut t = Timespec {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+    // SAFETY: one live stack Timespec matching the C layout; the C library
+    // writes it and keeps no pointer.
+    let status = unsafe { clock_gettime(THREAD_CPU_CLOCK, &mut t) };
+    assert_eq!(status, 0, "thread CPU clock unavailable");
+    t.seconds as f64 + t.nanoseconds as f64 * 1e-9
+}
+
+#[test]
+fn held_relief_partials_reproduce_the_per_column_dual_directions() {
+    let p = prepared_all();
+    let v = active(&p);
+    let rate = active_rates();
+    let y: Vec<f64> = (0..st::COORDINATES).map(|i| v[i] / p.scales[i]).collect();
+    let yp: Vec<f64> = (0..st::COORDINATES)
+        .map(|i| rate[i] / p.scales[i])
+        .collect();
+    let receipts = [Receipt::zero(); 3];
+    let slots = st::Slots {
+        vapor_and_resident: 0,
+        admitted: 1,
+        interface: 0,
+        boundary: 1,
+    };
+    let mut held = leitbild_operating_plant::network::Reuse::new(2, 2);
+    let mut worst: f64 = 0.;
+    for column in 0..=st::COORDINATES {
+        let mut seed = vec![0.; st::COORDINATES];
+        let mut lift = 0.;
+        if column < st::COORDINATES {
+            seed[column] = 1.;
+        } else {
+            lift = 1.;
+        }
+        let x = coordinates(&y, &p.scales, Some(&seed));
+        let r = rates(&yp, &p.scales, Some(&seed), 40.);
+        let boundary = Boundary {
+            relief: Some(st::ReliefState {
+                lift: Scalar::new(0.6, lift),
+                back_pressure_pa: Scalar::new(3.0e5, 0.),
+            }),
+            ..Boundary::closed()
+        };
+        let dual = p
+            .cell
+            .residual(&If97, &x, &r, &receipts, &boundary, &p.scales, None)
+            .unwrap();
+        let reused = p
+            .cell
+            .residual(
+                &If97,
+                &x,
+                &r,
+                &receipts,
+                &boundary,
+                &p.scales,
+                Some((&mut held, slots)),
+            )
+            .unwrap();
+        let out = reused.flows.relief.unwrap();
+        // The base point's partials are evaluated once; later columns hold them.
+        if column > 0 {
+            assert_eq!(out.vapor.unwrap().saturation_calls, 0, "column {column}");
+        }
+        for i in 0..st::COORDINATES {
+            let (a, b) = (dual.rows[i], reused.rows[i]);
+            assert_eq!(
+                a.value.to_bits(),
+                b.value.to_bits(),
+                "column {column} row {i}"
+            );
+            let error = (a.direction - b.direction).abs() / a.direction.abs().max(1e-300);
+            if a.direction != 0. {
+                worst = worst.max(error);
+            }
+            assert!(
+                (a.direction - b.direction).abs() <= 1e-10 * a.direction.abs() + 1e-300,
+                "column {column} row {i}: dual {:e} held {:e}",
+                a.direction,
+                b.direction
+            );
+        }
+    }
+    println!("held relief partials against per-column duals: worst relative {worst:e}");
+}
+
+#[test]
+fn relief_stops_exactly_at_its_ends_and_reports_the_transaction() {
+    let p = all_ports();
+    let device = p.ports[2].relief.unwrap();
+    let mut lift = 1. - 3e-13;
+    let stop = device
+        .stop(st::ReliefMotion::Opening, &mut lift, 1e-9)
+        .unwrap();
+    assert_eq!(lift, 1.);
+    assert_eq!(stop.motion_after, st::ReliefMotion::Open);
+    assert_eq!(stop.lift_before, 1. - 3e-13);
+    assert_eq!(stop.defect, stop.lift_before - 1.);
+    assert_eq!(device.lift_rate(stop.motion_after), 0.);
+    let mut seat = 2e-12;
+    let stop = device
+        .stop(st::ReliefMotion::Closing, &mut seat, 1e-9)
+        .unwrap();
+    assert_eq!((seat, stop.motion_after), (0., st::ReliefMotion::Closed));
+    // Not at its root, or with no travel: refused, the lift unchanged.
+    let mut far = 0.7;
+    assert!(
+        device
+            .stop(st::ReliefMotion::Opening, &mut far, 1e-9)
+            .is_err()
+    );
+    assert_eq!(far, 0.7);
+    let mut open = 1.;
+    assert!(
+        device
+            .stop(st::ReliefMotion::Open, &mut open, 1e-9)
+            .is_err()
+    );
+}
+
+#[test]
+fn cases_take_bubble_diameters_only_from_the_declared_list() {
+    let p = all_ports();
+    let nominal = Case::nominal(&p);
+    assert_eq!(nominal.bubble_diameter_m, 0.00075);
+    assert!(Cell::new(p.clone(), nominal).is_ok());
+    // Without a declared list only the nominal diameter is a case.
+    let half = Case {
+        bubble_diameter_m: 0.000375,
+        ..nominal
+    };
+    assert!(Cell::new(p.clone(), half).is_err());
+    // The verification cases declare the bubble family beside the nominal.
+    let families: st::SensitivityFamilies = serde_json::from_str(
+        r#"{"relaxation":[0.5,2],"sprayDrop_m":[0.0015,0.006],"bubble_m":[0.000375,0.0015]}"#,
+    )
+    .unwrap();
+    assert!(Cell::for_case(p.clone(), half, Some(&families)).is_ok());
+    let off = Case {
+        bubble_diameter_m: 0.0009,
+        ..nominal
+    };
+    assert!(Cell::for_case(p.clone(), off, Some(&families)).is_err());
+    let disagreeing = st::SensitivityFamilies {
+        spray_drop_m: vec![0.002],
+        ..families
+    };
+    assert!(Cell::for_case(p.clone(), nominal, Some(&disagreeing)).is_err());
+    // The spray port is a recorded boundary flow with no face.
+    assert!(p.ports[1].face.is_none() && p.validate().is_ok());
+}
+
+#[test]
+fn heater_wet_sources_are_refused_on_a_zone_the_span_does_not_touch() {
+    let p = prepared_all();
+    let v = physical(&coordinates(&p.y, &p.scales, None));
+    let x = Coordinates::values(&v);
+    let r = Coordinates::values(&[0.; st::COORDINATES]);
+    let receipts = [Receipt::zero(); 3];
+    let run = |heater: st::HeaterReceipt| {
+        let boundary = Boundary {
+            heaters: vec![heater],
+            ..shut()
+        };
+        p.cell
+            .residual(&If97, &x, &r, &receipts, &boundary, &p.scales, None)
+    };
+    // [6.5, 6.7] m lies wholly in A (to 6.80 m): R heat is refused.
+    assert!(run(bank(6.5, 6.7, [1e3, 0.], [0.; 2], 0., 0., 0.)).is_ok());
+    assert!(matches!(
+        run(bank(6.5, 6.7, [1e3, 5e2], [0.; 2], 0., 0., 0.)),
+        Err(Failure::Fatal(_))
+    ));
+    // A fully wet bank has no exposed length for exposed sources.
+    assert!(matches!(
+        run(bank(6.5, 9.5, [1e3, 1e3], [0.; 2], 50., 0., 0.)),
+        Err(Failure::Fatal(_))
+    ));
 }
