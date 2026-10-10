@@ -251,9 +251,13 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       // The indicated narrow-range level reads the mixture over its span: a
       // sudden fall in steaming collapses the voids and the level shrinks.
       context.write(levelPath, steamGeneratorNarrowRangeLevelPercent(steamGeneratorNarrowRange(component.parameters as Record<string, unknown>), collapsedLevel + swellLevel))
+      // Steam piling up in a generator with nowhere to go raises its pressure
+      // over the whole range its steam mass may take, so the pressure climbs
+      // until a dump, relief or safety valve opens rather than levelling off
+      // while the steam is lost.
       const steamMassPressureBias = optionalParameterNumber(component, 'steamMassPressureGainFraction', 1)
         * nominalPressure
-        * (clamp(nextSteamMass / nominalSteamMass, 0.2, 1.6) - 1)
+        * (clamp(nextSteamMass / nominalSteamMass, 0.15, 2.5) - 1)
       const nominalCollapsedLevel = steamGeneratorOperatingLevel(component.parameters as Record<string, unknown>).collapsed / 100
       const inventoryPressureBias = ((nextInventory / nominalInventory) - nominalCollapsedLevel) * optionalParameterNumber(component, 'pressureInventoryGainMPaPerFraction', 0.6)
       const demandPressureBias = (boilingRate - mainSteamOutflow) * optionalParameterNumber(component, 'steamPressureGainMPaPerKgS', 0.006)

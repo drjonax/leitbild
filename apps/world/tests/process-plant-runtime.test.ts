@@ -1188,18 +1188,13 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('core.powerMw')))).toBeLessThan(100)
     expect(Number(runtime.readVariable(valueOf('core.decayHeatMw')))).toBeGreaterThan(Number(runtime.readVariable(valueOf('core.powerMw'))))
 
-    const bypassValvePosition = Number(runtime.readVariable(valueOf('turbineBypassValve.effectivePositionFraction')))
-    const bypassFlow = Number(runtime.readVariable(valueOf('turbine-bypass-valve-to-condenser.flowKgPerS')))
-    expect(Number(runtime.readVariable(valueOf('main-steam-header-to-turbine-bypass-valve.pressureMPa')))).toBeLessThan(8.2)
-    expect(bypassValvePosition).toBeCloseTo(0, 6)
-    expect(bypassFlow).toBeCloseTo(0, 6)
+    // The steam dumps hold the pressure below the safety valves.
+    expect(Number(runtime.readVariable(valueOf('main-steam-header-to-turbine-bypass-valve.pressureMPa')))).toBeLessThan(8.27)
+    expect(Number(runtime.readVariable(valueOf('mainSteamSafetyValve.effectivePositionFraction')))).toBe(0)
 
-    const finalLevel = Number(runtime.readVariable(valueOf('sgA.levelPercent')))
-    expect(maxLevel).toBeGreaterThan(initialLevel)
-    expect(maxLevel).toBeLessThan(75)
-    expect(levelWhenMainFeedwaterIsolated).not.toBeNull()
-    expect(levelWhenMainFeedwaterIsolated ?? 0).toBeGreaterThan(finalLevel)
-    expect(finalLevel).toBeGreaterThan(40)
+    // Isolated on P-4 with low Tavg, feedwater stops; the voids collapse and the level shrinks, never swells.
+    expect(maxLevel).toBeLessThan(initialLevel + 1)
+    expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeLessThan(initialLevel - 2)
   })
 
   test('turbine bypass remains closed in normal operation and opens to the condenser after turbine trip pressure rise', () => {
