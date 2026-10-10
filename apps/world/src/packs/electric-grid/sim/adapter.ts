@@ -32,6 +32,7 @@ import { createGridRecordingPlan } from '../recording.ts'
 import { balanceInitialGridDispatch,createGridRuntimeInstance,type GridRuntimeInstance } from '../runtime/instance.ts'
 import { applyGridCommand } from '../runtime/apply-command.ts'
 import { advanceGrid } from '../runtime/solver.ts'
+import { commandProvenanceSource } from './command-provenance.ts'
 import { electricGridAdapterId,electricGridRuntimeId } from './constants.ts'
 import { gridProjectionEvents,projectGridObject,projectedInitialGridObjects } from './object-projection.ts'
 import { electricGridRuntimeStateSchema,restoredGridRuntimeStateFor,runtimeStateForElectricGrids } from './runtime-state.ts'
@@ -345,7 +346,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
             grids: new Map([[grid.definition.gridId, grid]]),
             previousKeys: projectionKeys,
             at: nowIso(),
-            provenance: { source: 'operator', causedByCommandId: command.id },
+            provenance: { source: commandProvenanceSource(command.actorId), causedByCommandId: command.id },
             history: 'record',
           })
           await persistence.saveNow()

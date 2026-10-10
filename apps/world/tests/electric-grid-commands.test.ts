@@ -29,11 +29,15 @@ import { gridIslandIsEnergized } from '../src/packs/electric-grid/runtime/island
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { topologyPlanForGrid } from '../src/packs/electric-grid/runtime/topology.ts'
 import { generatorMinimumStableMw, generatorStartupSeconds } from '../src/packs/electric-grid/runtime/unit-commitment.ts'
+import { createLocalElectricGridPackRuntimeAdapter } from '../src/packs/electric-grid/sim/adapter.ts'
+import { electricGridRuntimeId } from '../src/packs/electric-grid/sim/constants.ts'
 import {
   electricGridRuntimeStateSchema,
   restoredGridRuntimeStateFor,
   runtimeStateForElectricGrids,
 } from '../src/packs/electric-grid/sim/runtime-state.ts'
+import type { PackRuntimeEvent } from '../src/simulation/protocol.ts'
+import { scenarios } from './fixtures/scenarios.ts'
 
 const startsAtMs = Date.parse('2026-01-01T10:00:00.000Z')
 const isoAt = (seconds: number): IsoTimestamp => new Date(startsAtMs + seconds * 1_000).toISOString() as IsoTimestamp
@@ -329,5 +333,70 @@ describe('electric grid command state persistence', () => {
     })
     expect(restored.generators.get(kvilldalId)).toMatchObject({ state: 'starting', synchronisesAtElapsedMs: grid.generators.get(kvilldalId)!.synchronisesAtElapsedMs })
     expect(restored.loads.get(evLoadId)!.manualDemandLimitMw).toBe(80)
+  })
+})
+
+const connectAdapter = async () => {
+  const scenario = scenarios.find(candidate => candidate.id === 'test-grid')!
+  return await createLocalElectricGridPackRuntimeAdapter().connect({
+    simulationRunId: 'run:grid-commands' as SimulationRunId,
+    scenario: {
+      scenarioId: scenario.id,
+      runtimeIds: [electricGridRuntimeId],
+      connections: [],
+      world: scenario.world,
+      initialObjects: scenario.initialObjects,
+      runtimeConfigByRuntimeId: {},
+      runtimeConfig: {},
+    },
+  })
+}
+
+describe('electric grid command Capabilities', () => {
+  test('publish absolute, idempotent commands with consequence risk and bilingual search terms', () => {
+    const commands = createLocalElectricGridPackRuntimeAdapter().capabilities.filter(capability => capability.kind === 'command')
+    expect(commands.map(capability => capability.id)).not.toContain('world.electric-grid.return-generator-to-service')
+    expect(commands.map(capability => capability.id)).toEqual(expect.arrayContaining([
+      gridResetGeneratorTripCommandKind, gridStartGeneratorCommandKind, gridStopGeneratorCommandKind,
+    ]))
+    expect(commands.every(capability => capability.idempotent && capability.schedulable === true)).toBe(true)
+    expect(commands.filter(capability => capability.risk === 'destructive').map(capability => capability.id).sort())
+      .toEqual([gridOpenBranchCommandKind, gridShedLoadCommandKind, gridTripGeneratorCommandKind].sort())
+    expect(commands.every(capability => (capability.searchTerms?.length ?? 0) >= 8)).toBe(true)
+    const shed = commands.find(capability => capability.id === gridShedLoadCommandKind)!
+    expect(shed.searchTerms).toEqual(expect.arrayContaining(['load shedding', 'lastfrakobling', 'UFLS', 'frekvens', 'reserve']))
+    expect(commands.find(capability => capability.id === gridOpenBranchCommandKind)!.searchTerms).toContain('effektbryter')
+  })
+
+  test('labels the Grid change a command causes with the provenance of its actor', async () => {
+    const connection = await connectAdapter()
+    try {
+      const emitted: PackRuntimeEvent[] = []
+      const unsubscribe = connection.subscribe(emission => emitted.push(...emission.events))
+      const sourceAfter = async (actorId: string, kind: string, payload: Readonly<Record<string, unknown>>) => {
+        emitted.length = 0
+        const result = await connection.sendCommand({
+          id: `command:${crypto.randomUUID()}` as CommandId,
+          simulationRunId: 'run:grid-commands' as SimulationRunId,
+          actorId: actorId as ActorId,
+          kind,
+          targetObjectIds: ['grid:norway' as ObjectId],
+          payload,
+          issuedAt: isoAt(0),
+        })
+        expect(result.ok).toBe(true)
+        const upsert = emitted.find(event => event.type === 'object.upserted')!
+        expect(upsert.provenance.causedByCommandId).toBe(result.commandId)
+        return upsert.provenance.source
+      }
+      const branchId = definition.model.branches[0]!.id
+      expect(await sourceAfter('actor:ai:agent-7', gridDerateBranchCommandKind, { assetId: branchId, availability: 0.5 })).toBe('ai')
+      expect(await sourceAfter('actor:scenario-timeline', gridDerateBranchCommandKind, { assetId: branchId, availability: 0.6 })).toBe('system')
+      expect(await sourceAfter('actor:human:user-1', gridDerateBranchCommandKind, { assetId: branchId, availability: 0.7 })).toBe('operator')
+      expect(await sourceAfter('actor:operator', gridClearDerateCommandKind, { assetId: branchId })).toBe('operator')
+      unsubscribe()
+    } finally {
+      await connection.close()
+    }
   })
 })
