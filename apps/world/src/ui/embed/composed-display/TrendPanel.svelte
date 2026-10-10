@@ -9,12 +9,11 @@
     tickLabels,
     timeTicks,
     valueTicks,
-    type TrendPoint,
     type ValueDomain,
   } from './trend-geometry.ts'
   import { limitLabelRanks, stackLabels, type LabelSlot } from './limit-labels.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
-  import { limitAhead, limitInForce, limitsInForce, ratePerMinute, rateWindowMs } from './panel-presenters.ts'
+  import { limitAhead, limitInForce, limitsInForce, ratePerMinute, rateWindowMs, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import { fitName, penStroke } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
 

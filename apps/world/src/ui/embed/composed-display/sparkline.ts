@@ -4,7 +4,8 @@
 // milliseconds; values are the signal's native unit.
 import { displayValue, formatQuantity, formatValue, nearestThresholdMargin, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
 import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
-import { HOLD_GAP_MS, paddedDomain, rawDomain, stepPath, type TrendPoint, type ValueDomain } from './trend-geometry.ts'
+import { HOLD_GAP_MS, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+import { paddedDomain, rawDomain, stepPath, type ValueDomain } from './trend-geometry.ts'
 
 /** Every sparkline's size, so one window label over the column lines up with all of them. */
 export const SPARKLINE_SIZE = { width: 112, height: 28 } as const

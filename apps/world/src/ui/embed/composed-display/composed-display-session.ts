@@ -1,7 +1,8 @@
 import type { SimulationRunId } from '../../../core/model/index.ts'
 import type { CompiledComposedPanel, ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
 import type { ComposedDisplayClient, ComposedDisplaySample, ComposedDisplayViewResult, ViewSize } from './composed-display-client.ts'
-import { appendPoint, HOLD_GAP_MS, type TrendPoint, type ValueDomain } from './trend-geometry.ts'
+import { appendPoint, HOLD_GAP_MS, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+import type { ValueDomain } from './trend-geometry.ts'
 
 export type ComposedDisplayPhase =
   | { readonly kind: 'checking' }

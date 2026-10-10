@@ -2,7 +2,7 @@ import type { SimulationRunId } from '../../../core/model/index.ts'
 import type { CompiledComposedDisplay } from '../../../packs/process-plant/displays/compose.ts'
 import { querySimulationRunCapability } from '../../simulation-run-client.ts'
 import { workspaceApiPath } from '../../workspace-context.ts'
-import type { TrendPoint } from './trend-geometry.ts'
+import { TREND_HISTORY_LIMIT, trendPoints, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
 
 export interface RunPresence {
   /** The Run's name, so a display says which Run its advice is about. */
@@ -90,10 +90,6 @@ const failureMessage = async (response: Response, action: string): Promise<strin
   return `${action} failed with HTTP ${response.status}`
 }
 
-// One window of a 30 minute horizon at the operations interval is 1 800
-// samples; the page size leaves room for faster recording profiles.
-const HISTORY_PAGE_LIMIT = 4_000
-
 interface RecordedSamplePage {
   readonly samples?: ReadonlyArray<{ readonly simulationTime?: string; readonly value: unknown }>
 }
@@ -118,16 +114,12 @@ export const composedDisplayClient: ComposedDisplayClient = {
       timeAxis: 'simulation',
       from: new Date(window.from).toISOString(),
       to: new Date(window.to).toISOString(),
-      limit: String(HISTORY_PAGE_LIMIT),
+      limit: String(TREND_HISTORY_LIMIT),
     })
     const response = await fetch(`${runPath(runId, '/history/samples')}?${query}`)
     if (!response.ok) throw new Error(await failureMessage(response, 'Reading history'))
     const page = await response.json() as RecordedSamplePage
-    return (page.samples ?? [])
-      .flatMap(sample => typeof sample.value === 'number' && sample.simulationTime !== undefined
-        ? [{ t: Date.parse(sample.simulationTime), v: sample.value }]
-        : [])
-      .sort((left, right) => left.t - right.t)
+    return trendPoints(page.samples ?? [])
   },
   sample: (runId, plantId, paths, alarms) => querySimulationRunCapability<ComposedDisplaySample>(runId, 'world.process-plant.display.sample', { plantId, paths, alarms }),
 }
