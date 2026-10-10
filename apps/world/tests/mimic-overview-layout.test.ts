@@ -266,12 +266,12 @@ describe('the unit overview of the principal circuits', () => {
   })
 
   // The reference design is the 4-loop Plant (owner, 2026-10-10). Its own
-  // cost is the fastest main-thread CPU time of three compiles, judged against
-  // the reference computation timed alongside (cpu-cost.ts): wall time
-  // measured the shared machine's load (586 ms with seven agents' test suites
-  // running), not the code.
+  // cost is its main-thread CPU time in reference computations timed
+  // immediately before it, the median of five compiles (cpu-cost.ts): wall
+  // time measured the shared machine's load (586 ms with seven agents' test
+  // suites running), not the code.
   test('compiles the 4-loop overview within 500 ms quiet', () => {
-    const [cost] = costsInReferences([() => overview(plantOf(4), budgetFor(4))], 3)
+    const [cost] = costsInReferences([() => overview(plantOf(4), budgetFor(4))], 5)
     expect(cost).toBeLessThan(500 / referenceQuietMs)
   }, 120_000) // A watchdog for the whole sweep, not the property it measures.
 })

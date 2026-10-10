@@ -367,11 +367,11 @@ describe('diagram layout engine', () => {
     }
   })
 
-  // What a layout costs is its fastest main-thread CPU time of five rounds,
-  // judged against the reference computation timed at the start of each
-  // round (cpu-cost.ts). A loaded shared machine slows both alike: at load 120
-  // the dense graph kept 1.5 to 1.8 references while its wall time reached a
-  // second.
+  // What a layout costs is its main-thread CPU time in reference
+  // computations timed immediately before it, the median of five rounds
+  // (cpu-cost.ts). A loaded shared machine slows both alike: at load 30 to
+  // 120 the dense graph kept 1.3 to 2.2 references while its wall time
+  // reached a second.
   test('lays out within four reference computations (50 ms quiet), up to 40 nodes and 60 edges', () => {
     const largest = dense()
     expect([largest.nodes.length, largest.edges.length]).toEqual([40, 60])

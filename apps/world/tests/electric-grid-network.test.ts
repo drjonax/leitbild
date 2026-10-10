@@ -297,10 +297,10 @@ describe('electric-grid sparse network core', () => {
     expect(worst / largestFlowMw).toBeLessThan(1e-12)
   })
 
-  // Costs are the fastest main-thread CPU time, judged against the reference
-  // computation timed alongside (cpu-cost.ts): wall time measures a loaded
-  // shared machine, not the solver. The gates keep a 3x margin over 50 ms and
-  // 5 ms on a quiet machine.
+  // Costs are main-thread CPU time in reference computations timed
+  // immediately before each run, the median of five (cpu-cost.ts): wall time
+  // measures a loaded shared machine, not the solver. The gates keep a 3x
+  // margin over 50 ms and 5 ms on a quiet machine.
   test('rebuilds a 10k-bus synthetic topology within 50 ms and solves it within 5 ms quiet (3x margin)', () => {
     const busCount = 10_000
     const definition = syntheticGridDefinition(busCount)

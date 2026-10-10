@@ -30,16 +30,20 @@ export const threadCpuMs = (run: () => unknown): number => {
 }
 
 /**
- * Each run's fastest CPU time in multiples of the reference's fastest, over
- * `rounds` rounds that each time the reference and then every run. Slow
- * samples measure the machine, not the code.
+ * Each run's cost in references: over `rounds` rounds, the median ratio of
+ * the run's CPU time to the reference's, timed immediately before it. The
+ * two of a pair share a core and a moment; the fastest of each, taken from
+ * different rounds, did not (a lucky performance-core reference against
+ * dense layouts all on efficiency cores read 4.3 where pairs read 1.5 to 2).
+ * The median discards pairs that a migration or a collection split.
  */
 export const costsInReferences = (runs: ReadonlyArray<() => unknown>, rounds: number): ReadonlyArray<number> => {
-  const runMs = runs.map(() => Number.POSITIVE_INFINITY)
-  let referenceMs = Number.POSITIVE_INFINITY
+  const ratios = runs.map((): number[] => [])
   for (let round = 0; round < rounds; round += 1) {
-    referenceMs = Math.min(referenceMs, threadCpuMs(referenceComputation))
-    runs.forEach((run, index) => { runMs[index] = Math.min(runMs[index]!, threadCpuMs(run)) })
+    runs.forEach((run, index) => {
+      const referenceMs = threadCpuMs(referenceComputation)
+      ratios[index]!.push(threadCpuMs(run) / referenceMs)
+    })
   }
-  return runMs.map(ms => ms / referenceMs)
+  return ratios.map(values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]!)
 }

@@ -288,10 +288,10 @@ describe('electric grid Pack', () => {
     }
   })
 
-  // A tick's cost is the main-thread CPU time per tick of the fastest of four
-  // ten-tick batches, judged against the reference computation timed
-  // alongside (cpu-cost.ts), not wall time, which measures a loaded shared
-  // machine.
+  // A tick's cost is the main-thread CPU time of a ten-tick batch in
+  // reference computations timed immediately before it, per tick, the median
+  // of five batches (cpu-cost.ts), not wall time, which measures a loaded
+  // shared machine.
   test('keeps steady-topology Grid ticks within the lightweight runtime budget of 5 ms quiet', () => {
     const data = electricGridPackDataSchema.parse(gridScenario().initialObjects.find(object => object.id === 'grid:norway')?.packData)
     const definition = compileGridDefinition(gridDefinitionSchema.parse({ id: 'grid:norway', model: data.model, operatingPoint: data.operatingPoint, automation: data.automation }))
@@ -304,8 +304,8 @@ describe('electric grid Pack', () => {
         advanceGrid(grid, 2, new Date(Date.parse('2026-01-01T10:00:00.000Z') + ticks * 2_000).toISOString() as IsoTimestamp)
       }
     }
-    const [cost] = costsInReferences([tenTicks], 4)
-    expect(ticks).toBe(40)
+    const [cost] = costsInReferences([tenTicks], 5)
+    expect(ticks).toBe(50)
     expect(cost! / 10).toBeLessThan(5 / referenceQuietMs)
     expect(grid.diagnostics.topologyRebuildCount).toBe(1)
     expect(grid.diagnostics.lastSuccessfulTickAt).not.toBeNull()
