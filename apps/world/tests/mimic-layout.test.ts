@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
-import { cpus, loadavg } from 'node:os'
 import { join } from 'node:path'
 import {
   layoutDiagram,
@@ -12,6 +11,7 @@ import {
   type DiagramProfile,
   type DiagramText,
 } from '../src/packs/process-plant/displays/mimic/layout/index.ts'
+import { costsInReferences } from './cpu-cost.ts'
 
 // Synthetic, Plant-agnostic fixtures: the engine sees only structure.
 
@@ -367,41 +367,17 @@ describe('diagram layout engine', () => {
     }
   })
 
-  // What a layout costs is its fastest of 8 runs, judged against a fixed
-  // reference computation of the same kind (allocating, sorting, keyed
-  // lookups) timed between them: load slows both alike, keeping a ratio of
-  // about 8 to 10 at a moderate load. On a quiet machine the reference takes
-  // about 3 ms, so sixteen references is the 50 ms budget. A machine loaded
-  // beyond one and a half runnable tasks per core (several agents' suites at
-  // once) slows the allocating layout far more than the reference, ratios of
-  // 50 to 100, and is no place to judge speed: the test is skipped there,
-  // and says so in the run, rather than failing an unrelated deploy.
-  const overloaded = loadavg()[0]! > 1.5 * cpus().length
-  test.skipIf(overloaded)('lays out within sixteen reference computations (50 ms quiet), up to 40 nodes and 60 edges', () => {
+  // What a layout costs is its fastest main-thread CPU time of five rounds,
+  // judged against the reference computation timed at the start of each
+  // round (cpu-cost.ts). A loaded shared machine slows both alike: at load 120
+  // the dense graph kept 1.5 to 1.8 references while its wall time reached a
+  // second.
+  test('lays out within four reference computations (50 ms quiet), up to 40 nodes and 60 edges', () => {
     const largest = dense()
     expect([largest.nodes.length, largest.edges.length]).toEqual([40, 60])
     const graphs = [...fixtures.map(([, graph]) => graph), largest]
-    const reference = (): number => {
-      let sum = 0
-      for (let round = 0; round < 10; round++) {
-        const values = Array.from({ length: 2_000 }, (_, index) => ({ id: `n${(index * 7919) % 2_000}`, x: (index * 104729) % 1_013 }))
-        values.sort((a, b) => a.x - b.x || a.id.localeCompare(b.id))
-        const byId = new Map(values.map(value => [value.id, value.x]))
-        for (const value of values) sum += byId.get(value.id)!
-      }
-      return sum
-    }
-    const timed = (run: () => unknown): number => {
-      const start = performance.now()
-      run()
-      return performance.now() - start
-    }
-    let referenceCost = Infinity
-    const costs = graphs.map(graph => Math.min(...Array.from({ length: 8 }, () => {
-      referenceCost = Math.min(referenceCost, timed(reference))
-      return timed(() => layoutDiagram(graph, profile))
-    })))
-    expect(Math.max(...costs)).toBeLessThan(16 * referenceCost)
+    const costs = costsInReferences(graphs.map(graph => () => layoutDiagram(graph, profile)), 5)
+    expect(Math.max(...costs)).toBeLessThan(4)
   }, 30_000)
 })
 

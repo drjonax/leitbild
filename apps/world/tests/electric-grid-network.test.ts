@@ -9,6 +9,7 @@ import { createGridIslandSystem, gridBranchFlowMw, gridBranchFlowsMwInto } from 
 import { findGridIslands } from '../src/packs/electric-grid/runtime/network/islands.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { solveGridAngles, topologyPlanForGrid } from '../src/packs/electric-grid/runtime/topology.ts'
+import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
 import { gridDefinitionForModel, syntheticGridDefinition } from './fixtures/synthetic-grid.ts'
 
 const at = '2026-01-01T10:00:00.000Z' as IsoTimestamp
@@ -127,8 +128,6 @@ const kclResidualsMw = (grid: GridRuntimeInstance): Map<string, number> => {
   }
   return residuals
 }
-
-const median = (values: ReadonlyArray<number>): number => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]!
 
 describe('electric-grid sparse network core', () => {
   test('solves an analytic three-bus DC case exactly, in radians, with the first bus as reference', () => {
@@ -298,40 +297,31 @@ describe('electric-grid sparse network core', () => {
     expect(worst / largestFlowMw).toBeLessThan(1e-12)
   })
 
-  test('rebuilds a 10k-bus synthetic topology within 50 ms and solves it within 5 ms (3x CI margin)', () => {
+  // Costs are the fastest main-thread CPU time, judged against the reference
+  // computation timed alongside (cpu-cost.ts): wall time measures a loaded
+  // shared machine, not the solver. The gates keep a 3x margin over 50 ms and
+  // 5 ms on a quiet machine.
+  test('rebuilds a 10k-bus synthetic topology within 50 ms and solves it within 5 ms quiet (3x margin)', () => {
     const busCount = 10_000
     const definition = syntheticGridDefinition(busCount)
     const grid = gridFor(definition)
-    const firstStartedAt = performance.now()
     const plan = topologyPlanForGrid(grid)
-    const firstBuildMs = performance.now() - firstStartedAt
     expect(plan.islands.length).toBe(1)
+    for (let run = 0; run < 20; run += 1) expect(topologyPlanForGrid(grid)).toBe(plan)
     const injections = new Map(definition.model.buses.map((bus, index) => [bus.id, ((index * 7919) % 401) - 200]))
-    const solveMs: number[] = []
-    for (let run = 0; run < 20; run += 1) {
-      const startedAt = performance.now()
-      solveGridAngles(plan, injections)
-      solveMs.push(performance.now() - startedAt)
-    }
-    const unchangedMs: number[] = []
-    for (let run = 0; run < 20; run += 1) {
-      const startedAt = performance.now()
-      expect(topologyPlanForGrid(grid)).toBe(plan)
-      unchangedMs.push(performance.now() - startedAt)
-    }
+    const [solveCost] = costsInReferences([() => solveGridAngles(plan, injections)], 5)
     // The first busCount - 1 branches are the fixture's spanning tree; opening a meshing branch keeps one island.
-    const rebuildMs: number[] = []
-    for (let run = 0; run < 5; run += 1) {
-      grid.branches.get(definition.model.branches[busCount + 500 * run]!.id)!.state = 'open'
-      const startedAt = performance.now()
-      const rebuilt = topologyPlanForGrid(grid)
-      rebuildMs.push(performance.now() - startedAt)
-      expect(rebuilt.islands.length).toBe(1)
+    const rebuiltIslands: number[] = []
+    const rebuild = (): void => {
+      grid.branches.get(definition.model.branches[busCount + 500 * rebuiltIslands.length]!.id)!.state = 'open'
+      rebuiltIslands.push(topologyPlanForGrid(grid).islands.length)
     }
+    const [rebuildCost] = costsInReferences([rebuild], 5)
+    expect(rebuiltIslands).toEqual([1, 1, 1, 1, 1])
     const nnz = plan.systems[0]!.factor.structure.rowIndex.length
-    console.log(`10k synthetic: first build ${firstBuildMs.toFixed(1)} ms, rebuild median ${median(rebuildMs).toFixed(1)} ms (max ${Math.max(...rebuildMs).toFixed(1)}), solve median ${median(solveMs).toFixed(2)} ms (max ${Math.max(...solveMs).toFixed(2)}), unchanged-topology check median ${median(unchangedMs).toFixed(3)} ms, nnz(L) ${nnz}`)
-    expect(median(rebuildMs)).toBeLessThan(3 * 50)
-    expect(median(solveMs)).toBeLessThan(3 * 5)
+    console.log(`10k synthetic: rebuild ${(rebuildCost! * referenceQuietMs).toFixed(1)} ms quiet, solve ${(solveCost! * referenceQuietMs).toFixed(2)} ms quiet, nnz(L) ${nnz}`)
+    expect(rebuildCost).toBeLessThan(3 * 50 / referenceQuietMs)
+    expect(solveCost).toBeLessThan(3 * 5 / referenceQuietMs)
     expect(nnz).toBeLessThan(8 * busCount)
   })
 })
