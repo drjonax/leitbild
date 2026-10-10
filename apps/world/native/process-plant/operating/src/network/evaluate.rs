@@ -113,7 +113,7 @@ impl<P: Properties> Network<P> {
                 best
             }
         });
-        if !(largest <= bound) {
+        if largest.is_nan() || largest > bound {
             return Err(Failure::Fatal(format!(
                 "the prepared pair is not consistent: largest scaled row {largest} > {bound}"
             )));
