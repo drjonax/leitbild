@@ -11,7 +11,7 @@ import {
   averageOutgoingComponentLinkValue as averageOutgoingLinkValue,
 } from '../component-link-helpers.ts'
 import { inventoryBalanceStep } from '../physics.ts'
-import { steamGeneratorOperatingLevel } from '../../steam-generator-operating-level.ts'
+import { steamGeneratorNarrowRange, steamGeneratorNarrowRangeLevelPercent, steamGeneratorOperatingLevel } from '../../steam-generator-operating-level.ts'
 import {
   energyBalanceTemperatureStep,
   heatMwFromWaterFlowAndDeltaT,
@@ -26,7 +26,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
     id: 'steam-generator-heat-transfer',
     phase: 'solveThermalTransfer',
     componentKind: 'steamGenerator',
-    reads: ['tubeMetalTemperatureC', 'secondaryTemperatureC', 'levelPercent', 'incoming:primaryCoolant.temperatureC', 'incoming:primaryCoolant.flowKgPerS'],
+    reads: ['tubeMetalTemperatureC', 'secondaryTemperatureC', 'collapsedLevelPercent', 'swellLevelPercent', 'incoming:primaryCoolant.temperatureC', 'incoming:primaryCoolant.flowKgPerS'],
     writes: ['heatTransferMw', 'steamFlowKgPerS', 'boilingRateKgPerS', 'tubeCoverageFraction', 'tubeUncoveredFraction', 'availableHeatTransferFraction'],
     update: ({ system, component, context }): void => {
       const primaryWaterTemperature = averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
@@ -34,22 +34,25 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       const primaryWaterFlow = averageIncomingLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'primaryCoolant') ?? 0
       const secondaryTemperature = context.readNumber(componentVariablePath(component, 'secondaryTemperatureC'))
       const tubeMetalTemperature = context.readNumber(componentVariablePath(component, 'tubeMetalTemperatureC'))
-      const nominalLevelFraction = parameterNumber(component, 'nominalLevelPercent')
-      const levelFraction = clamp(context.readNumber(componentVariablePath(component, 'levelPercent')) / 100, 0, 1)
-      const tubeBottomLevel = optionalParameterNumber(component, 'tubeBundleBottomLevelPercent', 0.08)
-      const tubeTopLevel = optionalParameterNumber(component, 'tubeBundleTopLevelPercent', Math.max(tubeBottomLevel + 0.01, nominalLevelFraction))
+      // The tubes are covered while the two-phase mixture (collapsed water and
+      // its boiling swell, in fractions of the full-scale inventory) stands
+      // above the bundle. The narrow range spans the region above it, so they
+      // transfer heat in full at any narrow-range level, the low-low trip set
+      // point included, and uncover only as the generator boils toward dry.
+      const levelFraction = clamp((context.readNumber(componentVariablePath(component, 'collapsedLevelPercent')) + context.readNumber(componentVariablePath(component, 'swellLevelPercent'))) / 100, 0, 1)
+      const tubeBottomLevel = optionalParameterNumber(component, 'tubeBundleBottomLevelPercent', 0.01)
+      const tubeTopLevel = optionalParameterNumber(component, 'tubeBundleTopLevelPercent', tubeBottomLevel + 0.05)
       const tubeCoverage = clamp((levelFraction - tubeBottomLevel) / Math.max(0.01, tubeTopLevel - tubeBottomLevel), 0, 1)
       const tubeUncovered = 1 - tubeCoverage
       const minimumHeatTransferFraction = optionalParameterNumber(component, 'minimumUncoveredTubeHeatTransferFraction', 0.12)
       const availableHeatTransferFraction = clamp(minimumHeatTransferFraction + (1 - minimumHeatTransferFraction) * tubeCoverage, minimumHeatTransferFraction, 1)
-      const levelHeatTransferFactor = clamp(levelFraction / Math.max(0.05, nominalLevelFraction), 0.05, 1.15)
       const recirculationRatio = optionalParameterNumber(component, 'recirculationRatio', 4)
       const recirculationHeatTransferFactor = clamp(0.65 + recirculationRatio * 0.09, 0.8, 1.35)
       const transferCapacity = parameterNumber(component, 'heatTransferCoefficientMwPerK')
         * recirculationHeatTransferFactor
         * Math.max(0, tubeMetalTemperature - secondaryTemperature)
       const flowCapacity = heatMwFromWaterFlowAndDeltaT(primaryWaterFlow, Math.max(0, primaryWaterTemperature - secondaryTemperature))
-      const heatTransfer = Math.max(0, Math.min(transferCapacity, flowCapacity) * levelHeatTransferFactor * availableHeatTransferFraction)
+      const heatTransfer = Math.max(0, Math.min(transferCapacity, flowCapacity) * availableHeatTransferFraction)
       const boilingRate = steamFlowKgPerSFromHeatMw(heatTransfer)
       context.write(componentVariablePath(component, 'heatTransferMw'), heatTransfer)
       context.write(componentVariablePath(component, 'boilingRateKgPerS'), boilingRate)
@@ -245,7 +248,9 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       context.write(componentVariablePath(component, 'voidFraction'), voidFraction)
       const swellLevel = clamp(voidFraction * optionalParameterNumber(component, 'swellLevelGainPercent', 26), 0, 35)
       context.write(componentVariablePath(component, 'swellLevelPercent'), swellLevel)
-      context.write(levelPath, clamp(collapsedLevel + swellLevel, 0, 100))
+      // The indicated narrow-range level reads the mixture over its span: a
+      // sudden fall in steaming collapses the voids and the level shrinks.
+      context.write(levelPath, steamGeneratorNarrowRangeLevelPercent(steamGeneratorNarrowRange(component.parameters as Record<string, unknown>), collapsedLevel + swellLevel))
       const steamMassPressureBias = optionalParameterNumber(component, 'steamMassPressureGainFraction', 1)
         * nominalPressure
         * (clamp(nextSteamMass / nominalSteamMass, 0.2, 1.6) - 1)

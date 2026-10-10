@@ -141,8 +141,8 @@ describe('world.process-plant.display.compose', () => {
     expect(state).toMatchObject({ issuedAt: simulationTime, modelDigest: compiled.modelDigest })
     expect(result.shows.join('\n')).toContain('"LO ALM 30 %" alarm line: Steam generator B level low · Steam generator A level low, acts below 30 percent for SG-B-LVL-NR, SG-A-LVL-NR')
     expect((result as unknown as { signals: unknown }).signals).toEqual([
-      { ref: 'SG-B-LVL-NR', tagId: 'SG-B-LVL-NR', path: 'sgB.levelPercent', label: 'Steam generator level', name: 'SG-B-LVL-NR', unit: 'percent' },
-      { ref: 'SG-A-LVL-NR', tagId: 'SG-A-LVL-NR', path: 'sgA.levelPercent', label: 'Steam generator level', name: 'SG-A-LVL-NR', unit: 'percent' },
+      { ref: 'SG-B-LVL-NR', tagId: 'SG-B-LVL-NR', path: 'sgB.levelPercent', label: 'Steam generator narrow-range level', name: 'SG-B-LVL-NR', unit: 'percent' },
+      { ref: 'SG-A-LVL-NR', tagId: 'SG-A-LVL-NR', path: 'sgA.levelPercent', label: 'Steam generator narrow-range level', name: 'SG-A-LVL-NR', unit: 'percent' },
     ])
     expect(result.shows.join('\n')).toContain('"LO TRIP 20 %" trip line: Steam generator B low-low level · Steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR')
     expect((result as unknown as { simulationClock: string }).simulationClock).toBe('21:00:00')
@@ -260,7 +260,7 @@ describe('world.process-plant.display.compose', () => {
     expect(suggestions('FW-A-FLOW')).toContain('sgA.feedwaterFlowKgPerS (Feedwater inflow, kg/s)')
     expect(suggestions('PZR-PRESS')).toStartWith('PT-455 (Pressurizer pressure, MPa)')
     expect(suggestions('dieselGenA.running')).toStartWith('EDG-A-RUN (Diesel running, boolean)')
-    expect(suggestions('SG1-LVL')).toStartWith('SG-A-LVL-NR (Steam generator level, percent)')
+    expect(suggestions('SG1-LVL')).toStartWith('SG-A-LVL-NR (Steam generator narrow-range level, percent)')
     expect(suggestions('RCS-TAVG')).toStartWith('TAVG (Mean primary coolant temperature, degC)')
     // Evaluation run 16: "reactor power" is the reactor core's power, never a trip breaker's or a pump's ("per" of kg/s).
     expect(suggestions('reactor power')).toStartWith('core.powerMw (Core fission power, MW)')

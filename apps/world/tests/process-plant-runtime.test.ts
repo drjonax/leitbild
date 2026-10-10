@@ -238,7 +238,9 @@ describe('process plant runtime', () => {
     expect(Number(level?.canonicalValue)).toBeCloseTo(0.55, 6)
     const collapsed = Number(snapshot.variables.find(variable => variable.path === valueOf('sgA.collapsedLevelPercent'))?.value)
     const swell = Number(snapshot.variables.find(variable => variable.path === valueOf('sgA.swellLevelPercent'))?.value)
-    expect(collapsed + swell).toBeCloseTo(55, 6)
+    // The narrow range spans 32 % to 92 % of the generator's full-height
+    // inventory and reads the boiling mixture: 55 % on it is 65 % of full height.
+    expect(collapsed + swell).toBeCloseTo(65, 6)
     expect(Number(snapshot.variables.find(variable => variable.path === valueOf('sgA.voidFraction'))?.value)).toBeGreaterThan(0)
     expect(Number(snapshot.variables.find(variable => variable.path === valueOf('sgA.steamMassKg'))?.value)).toBeCloseTo(15_500, 6)
     expect(Number(snapshot.variables.find(variable => variable.path === valueOf('pressurizer.levelPercent'))?.value)).toBeCloseTo(55, 6)
@@ -493,9 +495,9 @@ describe('process plant runtime', () => {
     const active = activeLifecycleIds(snapshot)
 
     expect(active.alarms.length).toBeGreaterThan(0)
-    // The loss of feedwater heats the plant up enough to trip the reactor before the pumps stop.
-    expect(active.trips.length).toBeGreaterThan(0)
-    expect(runtime.readVariable(valueOf('reactorTripBreakerA.closedState'))).toBe(false)
+    // Losing both main feedwater pumps trips the reactor on low-low level before the RCPs are tripped.
+    expect(active.trips).toContain('trip:sg-a-level-low-low-reactor-trip:low-low-level-reactor-trip')
+    expect(snapshot.trips.find(lifecycle => lifecycle.firstOut)?.ruleId).toMatch(/^sg-[a-d]-level-low-low-reactor-trip$/u)
   }, 120_000) // 450 s correctness trajectory, same watchdog as the normal-hold case.
 
   test('scheduled typed PWR fault actions compile to validated runtime writes', () => {
@@ -1520,10 +1522,12 @@ describe('process plant runtime', () => {
     for (let index = 0; index < 120; index += 1) runtime.tick(100)
 
     expect(Number(runtime.readVariable(valueOf('sgA.collapsedLevelPercent')))).toBeLessThan(beforeCollapsedLevel)
-    expect(Number(runtime.readVariable(valueOf('sgA.secondaryInventoryKg')))).toBeLessThan(56_000 * beforeCollapsedLevel / 100)
+    // The collapsed level is a share of the 100 t full-height inventory.
+    expect(Number(runtime.readVariable(valueOf('sgA.secondaryInventoryKg')))).toBeLessThan(100_000 * beforeCollapsedLevel / 100)
     expect(Number(runtime.readVariable(valueOf('sgA.feedwaterFlowKgPerS')))).toBeLessThan(initialFeedwaterFlow)
-    expect(Number(runtime.readVariable(valueOf('sgA.levelPercent'))))
-      .toBeGreaterThan(Number(runtime.readVariable(valueOf('sgA.collapsedLevelPercent'))))
+    // The narrow range reads the boiling mixture, collapsed water and swell, over its 32 % to 92 % span of full height.
+    const mixture = Number(runtime.readVariable(valueOf('sgA.collapsedLevelPercent'))) + Number(runtime.readVariable(valueOf('sgA.swellLevelPercent')))
+    expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeCloseTo((mixture / 100 - 0.32) / 0.6 * 100, 6)
     expect(Number(runtime.readVariable(valueOf('sgA.voidFraction')))).toBeGreaterThan(0)
 
     const diagnostics = runtime.pwrTransientDiagnostics()
@@ -1532,13 +1536,15 @@ describe('process plant runtime', () => {
     expect(diagnostics.balanceOfPlant.turbineSteamFlowKgPerS).toBeGreaterThanOrEqual(0)
   })
 
-  test('low steam generator level uncovers tube bundle and degrades heat transfer', () => {
+  test('a steam generator boiled nearly dry uncovers its tube bundle and degrades heat transfer', () => {
     const baseline = createProcessPlantRuntime({ system: compiledSystem() })
     const uncovered = createProcessPlantRuntime({
       system: compiledSystemWithInitialState({
-        'sgA.levelPercent': 15,
-        'sgA.collapsedLevelPercent': 15,
-        'sgA.secondaryInventoryKg': 8_400,
+        'sgA.levelPercent': 0,
+        'sgA.collapsedLevelPercent': 0.3,
+        'sgA.secondaryInventoryKg': 300,
+        'sgA.voidFraction': 0,
+        'sgA.swellLevelPercent': 0,
       }),
     })
 

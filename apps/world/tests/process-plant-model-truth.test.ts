@@ -479,7 +479,8 @@ describe('alarms that apply only in power operation', () => {
   test('clear after a reactor trip, though their own clear condition still reads abnormal', () => {
     const plantRun = started()
     plantRun.act('steam-generator-b-feedwater-runback')
-    plantRun.run(90_000)
+    // Long enough for the flow alarm, short of the low-low level trip the runback leads to.
+    plantRun.run(40_000)
     const feedLow = 'alarm:sg-b-feedwater-flow-low:feedwater-flow-low'
     expect(plantRun.activeIds()).toContain(feedLow)
 
@@ -681,7 +682,7 @@ describe('steam generator low-low level', () => {
   const runToReactorTrip = (plantRun: ReturnType<typeof started>) => {
     for (let second = 1; second <= 300; second += 1) {
       plantRun.run(1_000)
-      if (plantRun.tag('TRIP-BKR-A-POS') === false) return { second, level: Number(plantRun.tag('SG-A-LVL-NR')) }
+      if (plantRun.tag('TRIP-BKR-A-POS') === false) return { second, level: Number(plantRun.tag('SG-A-LVL-NR')), tubeCoverage: Number(plantRun.read('sgA.tubeCoverageFraction')) }
     }
     throw new Error('the reactor did not trip within 300 s of the loss of main feedwater')
   }
@@ -694,7 +695,9 @@ describe('steam generator low-low level', () => {
     // The trip comes in as the level crosses the 20 % set point, not later on another limit.
     expect(tripped.level).toBeLessThan(20)
     expect(tripped.level).toBeGreaterThan(18)
-    plantRun.run(15_000)
+    // The narrow range sits above the tube bundle: at the trip the tubes are still covered.
+    expect(tripped.tubeCoverage).toBe(1)
+    plantRun.run(30_000)
     expect(lifecycleOf(plantRun, reactorTripOf('a'))).toMatchObject({ active: true, firstOut: true })
     const active = plantRun.protection.snapshot().trips.filter(lifecycle => lifecycle.active)
     expect(active.filter(lifecycle => lifecycle.firstOut).map(lifecycle => lifecycle.id)).toEqual([reactorTripOf('a')])
