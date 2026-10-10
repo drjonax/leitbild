@@ -1,5 +1,5 @@
-//! spec: world/packs/process-plant/reference-designs/engineering/development/decisions/0013-coarse-local-pressure.md#mechanical-ownership-and-terminology
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/computational-design-review.md#pressure-realization-approved-10-october (exit 3: a consistent initial pair)
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/computational-design-review.md#pressure-realization-approved-10-october
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/build-readiness.md#s1-declaration-hydraulics-admission
 //! EOS-consistent hydrostatic preparation of the composed network at a
 //! declared operating point. This is a deterministic construction of one
 //! prepared state, not an iterative plant solver:
