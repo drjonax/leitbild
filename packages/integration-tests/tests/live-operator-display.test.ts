@@ -10,11 +10,11 @@ import { createWorldWorkspaceRuntimeRegistry } from '../../../apps/world/src/cor
 import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring } from '../../../apps/world/tests/helpers.ts'
 import { handleAgentsModuleApi } from '../../../apps/agents/src/api/workspace-module-api.ts'
 import { collectViewRefs } from '../../../apps/agents/src/agents/evaluation.ts'
-import { checkViewEnvelope } from '../../../apps/agents/src/core/render-validators/view-fence.ts'
+import { checkViewEnvelope, parseViewFenceBody } from '../../../apps/agents/src/core/render-validators/view-fence.ts'
 import { createDeploymentRuntime } from '../../../apps/agents/src/core/deployment-runtime.ts'
 import { createGetTimeTool, createPlaceResolveTool, createProductKnowledgeTools } from '../../../apps/agents/src/tools/built-in/index.ts'
 import { createAgentsModuleState } from '../../../apps/agents/src/core/workspaces/module-state.ts'
-import { resolveViewFence } from '../../../apps/agents/src/ui/modules/live-view/resolve.ts'
+import { resolveViewReference } from '../../../apps/agents/src/ui/modules/live-view/resolve.ts'
 import {
   createWorkspaceRuntimeRegistry as createAgentsWorkspaceRuntimeRegistry,
   type WorkspaceRuntimeRegistry as AgentsWorkspaceRuntimeRegistry,
@@ -143,7 +143,9 @@ describe('live operator display chain with real Modules', () => {
     expect([...viewRefs]).toEqual(['call_0_0/display'])
 
     // The chat resolves the fence from the turn evidence, never from the fence text.
-    const resolution = await resolveViewFence('view call_0_0/display', { roomId: room.profile.id, turnId: 'turn-1', workspaceId: workspace.id }, async () => ({
+    const fence = parseViewFenceBody('view call_0_0/display')
+    if (fence.kind !== 'reference') throw new Error(fence.error)
+    const resolution = await resolveViewReference(fence.ref, { roomId: room.profile.id, turnId: 'turn-1', workspaceId: workspace.id }, async () => ({
       status: 200, body: { id: 'call_0_0', tool: 'workspace_call', arguments: {}, result: composed },
     }))
     expect(resolution.kind).toBe('view')
