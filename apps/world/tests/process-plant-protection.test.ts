@@ -92,3 +92,58 @@ describe('overtemperature and overpower delta-T', () => {
     expect(plantRun.activeIds()).not.toContain('alarm:rcs-subcooling-lost:subcooling-lost')
   })
 })
+
+describe('a reactor coolant pump that stops at power', () => {
+  const rcpTrip = 'trip:reactor-rcp-breaker-open-trip:rcp-breaker-open-trip'
+
+  test('trips the reactor on the first scan after all pumps trip, before the loop flow coasts down', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    const coreExitBefore = Number(plantRun.tag('CET-AVG'))
+    plantRun.act('trip-reactor-coolant-pumps')
+    expect(plantRun.secondsUntil(rcpTrip, 2)).toBe(1)
+    expect(plantRun.trip(rcpTrip)).toMatchObject({ firstOut: true })
+    let coreExitPeak = coreExitBefore
+    for (let second = 0; second < 30; second += 1) {
+      plantRun.step()
+      coreExitPeak = Math.max(coreExitPeak, Number(plantRun.tag('CET-AVG')))
+    }
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
+    expect(plantRun.tag('TRIP-BKR-B-POS')).toBe(false)
+    // The rods are in while the coasting pumps still move most of the flow, so the core exit barely rises.
+    expect(coreExitPeak).toBeLessThan(coreExitBefore + 2)
+    expect(plantRun.activeIds()).not.toContain('trip:reactor-low-rcp-flow-trip:low-rcp-flow-trip')
+  })
+
+  test('above P-8 one stopped pump trips the reactor', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcpC.running' as VariablePath, value: false })
+    expect(plantRun.secondsUntil(rcpTrip, 2)).toBe(1)
+  })
+
+  test('between P-7 and P-8 one stopped pump leaves the reactor at power and a second trips it', () => {
+    const partPower = compileProcessPlant(createPwrReferencePlantDefinition({
+      id: 'plant:between-p7-p8',
+      loopCount: 4,
+      parameterOverrides: { core: { initialPowerFraction: 0.3 } },
+    }))
+    const runtime = createProcessPlantRuntime({ system: partPower })
+    const protection = createProcessPlantProtectionRunner({ system: partPower, protection: partPower.automation })
+    const step = () => {
+      runtime.tick(1_000)
+      protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-protection' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+    }
+    const tripped = () => protection.snapshot().trips.find(lifecycle => lifecycle.id === rcpTrip)?.active === true
+    for (let second = 0; second < 5; second += 1) step()
+    expect(Number(runtime.readVariable('core.powerMw' as VariablePath))).toBeGreaterThan(340)
+    expect(Number(runtime.readVariable('core.powerMw' as VariablePath))).toBeLessThan(1_632)
+    runtime.writeCommand({ type: 'setVariable', path: 'rcpA.running' as VariablePath, value: false })
+    for (let second = 0; second < 5; second += 1) step()
+    expect(tripped()).toBe(false)
+    expect(runtime.readVariable('reactorTripBreakerA.closedState' as VariablePath)).toBe(true)
+    runtime.writeCommand({ type: 'setVariable', path: 'rcpB.running' as VariablePath, value: false })
+    step()
+    expect(tripped()).toBe(true)
+  })
+})

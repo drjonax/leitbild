@@ -316,7 +316,7 @@ describe('process plant runtime', () => {
         'alarm:rcp-b-trip:not-running',
         'alarm:rcp-c-trip:not-running',
         'alarm:rcp-d-trip:not-running',
-        'trip:reactor-low-rcp-flow-trip:low-rcp-flow-trip',
+        'trip:reactor-rcp-breaker-open-trip:rcp-breaker-open-trip',
       ]],
       ['loss-main-feedwater', [
         'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
@@ -371,7 +371,7 @@ describe('process plant runtime', () => {
         'alarm:rcp-b-trip:not-running',
         'alarm:rcp-c-trip:not-running',
         'alarm:rcp-d-trip:not-running',
-        'trip:reactor-low-rcp-flow-trip:low-rcp-flow-trip',
+        'trip:reactor-rcp-breaker-open-trip:rcp-breaker-open-trip',
       ]],
       ['loss-main-feedwater', [
         'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
@@ -1158,7 +1158,7 @@ describe('process plant runtime', () => {
     }
 
     const active = activeLifecycleIds(protection.snapshot())
-    expect(active.trips).toContain('trip:reactor-low-rcp-flow-trip:low-rcp-flow-trip')
+    expect(active.trips).toContain('trip:reactor-rcp-breaker-open-trip:rcp-breaker-open-trip')
     expect(active.alarms).toEqual(expect.arrayContaining([
       'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       'alarm:rcp-a-trip:not-running',

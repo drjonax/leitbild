@@ -1,6 +1,6 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
-import { alarm, all, annunciator, comparison, reactorTripBreakerWrites, rule, trip, vote, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, reactorTripBreakerWrites, rule, trip, vote, write } from './reference-ic-helpers.ts'
 
 const reactorAlarm = annunciator({
   system: 'reactorProtection',
@@ -30,6 +30,13 @@ const lowRcpFlowTripThresholdKgPerS = 3_000
 // trip the reactor, as two of four do at the reference four-loop plant
 // (NUREG-1431 Table 3.3.1-1, functions 6 and 7).
 const deltaTTripVoteFor = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): number => Math.min(2, loops.length)
+
+// P-7 and P-8, on fission power as the power-range channels read it: above
+// P-8 (48 % of the reference core's 3,400 MW rated power) the loss of one
+// loop's forced flow trips the reactor; between P-7 (10 %) and P-8 the loss
+// of two (NUREG-1431 Table 3.3.1-1, functions 10, 11 and 16).
+const p7PowerMw = 340
+const p8PowerMw = 1_632
 
 // P-9: above half of the reference core's 3,400 MW rated power the steam
 // dumps cannot take the whole load a turbine trip rejects, so the turbine
@@ -146,6 +153,35 @@ export const reactorReferenceIcRules = (
       }),
       ...reactorTripBreakerWrites('turbine-trip'),
       write('insert-control-rods-turbine-trip', { path: 'core.rodInsertionFraction' }, 1),
+    ],
+  }),
+  rule({
+    id: 'reactor-rcp-breaker-open-trip',
+    label: 'Reactor trip on reactor coolant pump breaker open',
+    ruleClass: 'protection',
+    modes: ['powerOperation'],
+    // On each pump's run feedback, which reads not running once its breaker
+    // opens or its bus goes dead, so the reactor trips on the first scan
+    // rather than waiting for the loop flow to coast down to the low-flow trip.
+    condition: any([
+      all([
+        comparison({ path: 'core.powerMw' }, '>', p8PowerMw),
+        vote(1, loops.map(loop => comparison({ tagId: `RCP-${loop}-RUNNING` }, '==', false))),
+      ]),
+      all([
+        comparison({ path: 'core.powerMw' }, '>', p7PowerMw),
+        vote(Math.min(2, loops.length), loops.map(loop => comparison({ tagId: `RCP-${loop}-RUNNING` }, '==', false))),
+      ]),
+    ]),
+    effects: [
+      trip({
+        id: 'rcp-breaker-open-trip',
+        title: 'Reactor trip on RCP breaker open',
+        message: `A reactor coolant pump stopped, its breaker open or its bus dead, with power above P-8 (${p8PowerMw} MW), or two stopped above P-7 (${p7PowerMw} MW).`,
+        annunciator: reactorAction,
+      }),
+      ...reactorTripBreakerWrites('rcp-breaker-open-trip'),
+      write('insert-control-rods-rcp-breaker-open', { path: 'core.rodInsertionFraction' }, 1),
     ],
   }),
   rule({
