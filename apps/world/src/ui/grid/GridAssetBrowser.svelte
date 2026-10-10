@@ -5,15 +5,19 @@
     gridClearDerateCommandKind,
     gridCloseBranchCommandKind,
     gridDerateBranchCommandKind,
-    gridDispatchGeneratorCommandKind,
     gridOpenBranchCommandKind,
-    gridRestoreLoadCommandKind,
+  } from '../../packs/electric-grid/commands/branch.ts'
+  import {
+    gridDispatchGeneratorCommandKind,
     gridReturnGeneratorToServiceCommandKind,
-    gridSetEvChargingDemandCommandKind,
     gridSetGeneratorAvailabilityCommandKind,
-    gridShedLoadCommandKind,
     gridTripGeneratorCommandKind,
-  } from '../../packs/electric-grid/commands.ts'
+  } from '../../packs/electric-grid/commands/generator.ts'
+  import {
+    gridRestoreLoadCommandKind,
+    gridSetEvChargingDemandCommandKind,
+    gridShedLoadCommandKind,
+  } from '../../packs/electric-grid/commands/load.ts'
   import { invokeSimulationRunCapability, querySimulationRunCapability } from '../simulation-run-client.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
 

@@ -23,31 +23,34 @@ import type {
   PackRuntimeQuery,
 } from '../../../simulation/protocol.ts'
 import {
-  electricGridCommandCapabilities,
-  electricGridCommandKinds,
   gridClearDerateCommandKind,
   gridClearDeratePayloadSchema,
   gridCloseBranchCommandKind,
   gridCloseBranchPayloadSchema,
   gridDerateBranchCommandKind,
   gridDerateBranchPayloadSchema,
-  gridDispatchGeneratorCommandKind,
-  gridDispatchGeneratorPayloadSchema,
   gridOpenBranchCommandKind,
   gridOpenBranchPayloadSchema,
-  gridRestoreLoadCommandKind,
-  gridRestoreLoadPayloadSchema,
+} from '../commands/branch.ts'
+import {
+  gridDispatchGeneratorCommandKind,
+  gridDispatchGeneratorPayloadSchema,
   gridReturnGeneratorToServiceCommandKind,
   gridReturnGeneratorToServicePayloadSchema,
-  gridSetEvChargingDemandCommandKind,
-  gridSetEvChargingDemandPayloadSchema,
   gridSetGeneratorAvailabilityCommandKind,
   gridSetGeneratorAvailabilityPayloadSchema,
-  gridShedLoadCommandKind,
-  gridShedLoadPayloadSchema,
   gridTripGeneratorCommandKind,
   gridTripGeneratorPayloadSchema,
-} from '../commands.ts'
+} from '../commands/generator.ts'
+import { electricGridCommandCapabilities,electricGridCommandKinds } from '../commands/index.ts'
+import {
+  gridRestoreLoadCommandKind,
+  gridRestoreLoadPayloadSchema,
+  gridSetEvChargingDemandCommandKind,
+  gridSetEvChargingDemandPayloadSchema,
+  gridShedLoadCommandKind,
+  gridShedLoadPayloadSchema,
+} from '../commands/load.ts'
 import { gridDefinitionSchema } from '../config.ts'
 import { defaultSimulationRunRuntimePolicy } from '../../../core/simulation-runs/runtime-persistence-policy.ts'
 import { createRuntimeStateWriter } from '../../../simulation/runtime-state-writer.ts'

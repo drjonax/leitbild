@@ -2,13 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import type { ActorId, CommandEnvelope, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import { nowIso } from '../src/core/model/index.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
+import { gridDerateBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import {
-  gridDerateBranchCommandKind,
   gridDispatchGeneratorCommandKind,
   gridReturnGeneratorToServiceCommandKind,
   gridSetGeneratorAvailabilityCommandKind,
   gridTripGeneratorCommandKind,
-} from '../src/packs/electric-grid/commands.ts'
+} from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { compileGridDefinition, compileGridModelIndex } from '../src/packs/electric-grid/definitions.ts'
 import { electricGridPackDataSchema } from '../src/packs/electric-grid/model.ts'

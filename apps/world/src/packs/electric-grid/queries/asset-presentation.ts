@@ -3,15 +3,19 @@ import {
   gridClearDerateCommandKind,
   gridCloseBranchCommandKind,
   gridDerateBranchCommandKind,
-  gridDispatchGeneratorCommandKind,
   gridOpenBranchCommandKind,
-  gridRestoreLoadCommandKind,
+} from '../commands/branch.ts'
+import {
+  gridDispatchGeneratorCommandKind,
   gridReturnGeneratorToServiceCommandKind,
-  gridSetEvChargingDemandCommandKind,
   gridSetGeneratorAvailabilityCommandKind,
-  gridShedLoadCommandKind,
   gridTripGeneratorCommandKind,
-} from '../commands.ts'
+} from '../commands/generator.ts'
+import {
+  gridRestoreLoadCommandKind,
+  gridSetEvChargingDemandCommandKind,
+  gridShedLoadCommandKind,
+} from '../commands/load.ts'
 import type { GridAssetDefinition } from '../grid-model.ts'
 import type { GridAssetSnapshot, GridRuntimeInstance } from '../runtime/instance.ts'
 import { assetKindSchema } from './common.ts'
