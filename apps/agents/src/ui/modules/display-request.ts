@@ -10,6 +10,7 @@
 // updates its answer's row whenever it renders, live or re-rendered.
 
 import { apiFetch } from './api-client.ts'
+import { openDisplayIn } from './live-view/open.ts'
 import { icon } from './icon.ts'
 import { showToast } from './toast.ts'
 import { posterForRoom } from './room-poster.ts'
@@ -137,8 +138,11 @@ const paint = (host: HTMLElement, row: Row): void => {
   const request = pending.get(answer.id)
   host.replaceChildren()
   if (displayReply !== undefined) {
-    const below = rowButton('Display below ↓', icon('chart-line', { size: 13 }), `Scroll to the live display ${agentName} posted in reply`)
-    below.onclick = () => revealMessage(document, displayReply, 'The reply with the display is no longer shown here.')
+    const below = rowButton('Open display', icon('chart-line', { size: 13 }), `Open the live display ${agentName} posted in reply`)
+    below.onclick = () => {
+      const reply = findCard(document, displayReply)
+      if (reply === null || !openDisplayIn(reply)) revealMessage(document, displayReply, 'The reply with the display is no longer shown here.')
+    }
     host.appendChild(below)
   } else if (request) {
     const spinner = icon('refresh-cw', { size: 13 })

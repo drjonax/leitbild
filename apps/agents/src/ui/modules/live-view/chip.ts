@@ -109,6 +109,12 @@ export const promoteUnhostedChips = (root: ParentNode, open: (listing: EmbeddedV
   }
 }
 
+/** The listing of the first chip under `root` that opens its display, if any. */
+export const firstAvailableListing = (root: ParentNode): EmbeddedViewListing | null => {
+  const host = root.querySelector<HTMLElement>('[data-live-view="available"]')
+  return host === null ? null : chipListings.get(host) ?? null
+}
+
 /** Fences outside a posted answer (human messages, comparison reruns) never become displays. */
 export const fenceNotice = (text: string): HTMLElement => {
   const element = document.createElement('div')

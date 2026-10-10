@@ -4,18 +4,17 @@
 // produced the display; everywhere else (human messages, comparison reruns)
 // it is an explicit notice. Agents shows no display itself and frames no
 // World page: the Host relays the list and every open request to World.
-import type { EmbeddedViewListing } from '@leitbild/contracts'
 import { addPostRenderProcessor } from '../extensions/post-render-registry.ts'
 import { apiFetch, currentWorkspaceId } from '../api-client.ts'
 import { $roomMessages, $selectedRoomId } from '../stores.ts'
 import { VIEW_FENCE_LANGUAGE } from '../../../core/render-validators/view-fence.ts'
 import { findPostedAnswer, roomViewFences, viewFenceOf, viewListingOf, type ViewFence } from './listing.ts'
 import { createViewResolutionCache, resolveViewReference } from './resolve.ts'
+import { openView } from './open.ts'
 import {
   createViewListPublisher,
   createViewListSync,
   isViewHostAnnouncement,
-  viewOpenMessage,
   workspaceRoomHref,
   type ViewHostMessage,
 } from './host-link.ts'
@@ -41,10 +40,6 @@ let hosted = false
 
 const postToHost = (message: ViewHostMessage): void => {
   window.parent.postMessage(message, location.origin)
-}
-
-const openView = (listing: EmbeddedViewListing): void => {
-  postToHost(viewOpenMessage(listing))
 }
 
 const publisher = createViewListPublisher({
