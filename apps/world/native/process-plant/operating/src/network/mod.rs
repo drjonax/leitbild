@@ -14,6 +14,7 @@ mod account;
 mod evaluate;
 mod jacobian;
 pub mod packet;
+pub mod prepare;
 pub mod properties;
 mod structure;
 mod tolerance;
