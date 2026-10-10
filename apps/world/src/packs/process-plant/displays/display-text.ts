@@ -25,6 +25,18 @@ export const displayValue = (value: number, unit: string): number =>
   unit === 'fraction' ? Number((value * 100).toPrecision(12)) : unit === 'Pa' ? Number((value / 1000).toPrecision(12)) : value
 
 /** Precision follows magnitude; trend readers compare, they do not audit digits. */
+/**
+ * A reading as a display shows it: a magnitude below a billionth of the
+ * signal's declared range is no reading at all, so it shows as 0 rather than
+ * as the tail of an exponential decay ("0.000000000000 MW" for a tripped
+ * core). Without a declared range the reading is shown as it is.
+ */
+export const shownReading = (value: number, limits: { readonly hardRange?: { readonly min: number; readonly max: number } } | undefined): number => {
+  const range = limits?.hardRange
+  if (range === undefined) return value
+  return Math.abs(value) < (range.max - range.min) * 1e-9 ? 0 : value
+}
+
 export const valueDigits = (value: number): number => {
   const magnitude = Math.abs(value)
   // An exact zero (a closed valve, a stopped flow) reads "0", not "0.000".

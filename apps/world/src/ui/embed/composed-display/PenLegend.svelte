@@ -2,7 +2,7 @@
   import { untrack } from 'svelte'
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { composedTrendLegendHeight } from '../../../packs/process-plant/displays/composition.ts'
-  import { formatQuantity, isPast, marginText, nearestThresholdMargin } from '../../../packs/process-plant/displays/display-text.ts'
+  import { formatQuantity, isPast, marginText, nearestThresholdMargin, shownReading } from '../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { displayName, fitName, penStroke, roleLabel } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
@@ -56,7 +56,7 @@
 <ul class="legend" style={`height:${composedTrendLegendHeight(pens.length)}px`} bind:clientWidth={width} bind:this={legend}>
   {#each pens as pen, index (pen.path)}
     {@const entry = sampled(String(pen.path))}
-    {@const value = entry?.value}
+    {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.limits) : entry?.value}
     {@const points = series.get(String(pen.path)) ?? []}
     {@const liveOnly = live || historyMissing.has(String(pen.path))}
     {@const inAlarm = activeThreshold(pen.thresholds, activeRuleIds)}

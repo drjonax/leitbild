@@ -45,8 +45,10 @@ export const sparkline = (input: {
   const { points, now, windowMs, size } = input
   const start = now - windowMs
   // What the line draws: each value whose hold reaches into the window.
-  const drawn = points.filter((point, index) => {
-    const holdEnd = Math.min(points[index + 1]?.t ?? now, point.t + HOLD_GAP_MS, now)
+  // A reading that is no number (NaN, infinity) is no reading: it is left out, as a gap.
+  const readings = points.filter(point => Number.isFinite(point.v))
+  const drawn = readings.filter((point, index) => {
+    const holdEnd = Math.min(readings[index + 1]?.t ?? now, point.t + HOLD_GAP_MS, now)
     return point.t <= now && holdEnd >= start
   })
   const range = rawDomain(drawn.map(point => point.v))
