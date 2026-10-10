@@ -10,6 +10,8 @@ export const EMBEDDED_VIEW_STATE_MAX_LENGTH = 4096
 export const EMBEDDED_VIEW_MIN_HEIGHT = 120
 // Views up to 960 px tall: a live equipment mimic with its trend and alarms needs about 900.
 export const EMBEDDED_VIEW_MAX_HEIGHT = 960
+// The most views one publisher lists for the display window at a time.
+export const EMBEDDED_VIEW_LISTING_MAX = 30
 
 /** Same-origin route of an embedded view; the envelope itself goes in the fragment. */
 export const embeddedViewPath = (envelope: EmbeddedViewEnvelope): string =>

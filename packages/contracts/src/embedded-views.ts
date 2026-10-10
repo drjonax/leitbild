@@ -3,6 +3,7 @@ import { moduleIdSchema } from './ids.ts'
 import { workspaceResourceReferenceSchema } from './resources.ts'
 import {
   EMBEDDED_VIEW_FRAGMENT_KEY,
+  EMBEDDED_VIEW_LISTING_MAX,
   EMBEDDED_VIEW_MAX_HEIGHT,
   EMBEDDED_VIEW_MIN_HEIGHT,
   EMBEDDED_VIEW_STATE_MAX_LENGTH,
@@ -86,7 +87,6 @@ export type EmbeddedViewContent = z.infer<typeof embeddedViewContentSchema>
 // message, keeps nothing beyond the latest list, and relays it to the Module
 // whose page shows the window (World). A listing is self-contained: opening a
 // view never depends on an earlier list.
-export const EMBEDDED_VIEW_LISTING_MAX = 30
 export const embeddedViewListingSchema = z.object({
   // Stable for one view across re-renders and reloads, unique within one list.
   key: z.string().min(1).max(512),
@@ -144,6 +144,7 @@ export const parseEmbeddedViewFragment = (hash: string): EmbeddedViewEnvelope =>
 export {
   embeddedViewFragment,
   embeddedViewPath,
+  EMBEDDED_VIEW_LISTING_MAX,
   EMBEDDED_VIEW_MAX_HEIGHT,
   EMBEDDED_VIEW_MIN_HEIGHT,
   EMBEDDED_VIEW_STATE_MAX_LENGTH,
