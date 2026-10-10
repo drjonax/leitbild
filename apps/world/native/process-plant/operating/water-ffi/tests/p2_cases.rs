@@ -589,9 +589,12 @@ fn compare(a: &Run, b: &Run, ctx: &Context) -> Value {
         level = level.max((sa.collapsed_level_m - sb.collapsed_level_m).abs());
         mixture = mixture.max((sa.mixture_level_m - sb.mixture_level_m).abs());
     }
+    // Relief events inside the window both runs cover.
+    let window = a.reached_s.min(b.reached_s);
     let kinds = |r: &Run| -> Vec<(f64, String)> {
         r.relief_events
             .iter()
+            .filter(|e| e["t"].as_f64().unwrap() <= window)
             .map(|e| {
                 (
                     e["t"].as_f64().unwrap(),
@@ -613,7 +616,6 @@ fn compare(a: &Run, b: &Run, ctx: &Context) -> Value {
     let bias = ctx.budgets.f64(&["pzrRoofPressureBias_Pa"]);
     let lvl = ctx.budgets.f64(&["pzrLevel_m"]);
     let tim = ctx.budgets.f64(&["thresholdTiming_s"]);
-    let window = a.reached_s.min(b.reached_s);
     let pass = n > 0 && roof <= bias && level <= lvl && timing <= tim;
     json!({"compared_samples":n,"common_window_s":window,"pt1_max_abs_difference_pa":roof,"pt1_mean_difference_pa":if n>0 {mean/n as f64} else {0.},
         "pt1_sample_to_sample_noise_pa":noise,"collapsed_level_max_abs_difference_m":level,"mixture_level_max_abs_difference_m":mixture,

@@ -793,17 +793,33 @@ fn calcic(
     y: &mut [f64],
     yp: &mut [f64],
 ) -> Result<Value, String> {
-    ida.initialize(horizon, y, yp)?;
-    let e = ida
-        .system()
-        .system
-        .evaluate(t, y, yp, None, None)
-        .map_err(|f| format!("post-CalcIC residual: {}", text(&f)))?;
     let n = ida.system().system.n();
-    let (largest, row) = (0..n)
-        .map(|i| (e.row(i).value.abs(), i))
+    let rows = |ida: &Ida<Segment>, y: &[f64], yp: &[f64]| -> Result<Vec<f64>, String> {
+        let e = ida
+            .system()
+            .system
+            .evaluate(t, y, yp, None, None)
+            .map_err(|f| text(&f))?;
+        Ok((0..n).map(|i| e.row(i).value).collect())
+    };
+    let before = rows(ida, y, yp).ok();
+    let (y0, yp0) = (y.to_vec(), yp.to_vec());
+    ida.initialize(horizon, y, yp)?;
+    let after = rows(ida, y, yp).map_err(|e| format!("post-CalcIC residual: {e}"))?;
+    let (largest, row) = after
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.abs(), i))
         .fold((0., 0), |b, x| if x.0 > b.0 { x } else { b });
-    Ok(json!({"t":t,"max_abs_scaled_row":largest,"row":row}))
+    let pre = before
+        .as_ref()
+        .map(|b| b.iter().map(|r| r.abs()).fold(0., f64::max));
+    let dy = (0..n).map(|i| (y[i] - y0[i]).abs()).fold(0., f64::max);
+    let dyp: Vec<f64> = (0..n).map(|i| yp[i] - yp0[i]).collect();
+    Ok(
+        json!({"t":t,"max_abs_scaled_row":largest,"row":row,"pre_calcic_max_abs_scaled_row":pre,
+        "post_rows":after,"pre_rows":before,"max_abs_y_change":dy,"yp_change":dyp}),
+    )
 }
 
 /// Accepted-state stop rules on a sample. Returns the rule and reason.
