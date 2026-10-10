@@ -5,8 +5,8 @@ use leitbild_operating_plant::{
     hydraulics::{Pump as Impeller, Section, WallLaw},
     local_flow::{MomentumSupport, PressureSegment},
     network::{
-        Band, BandReport, Failure, MetastableBand, Network, Properties, PzrPreparation, RotorState,
-        Water,
+        Band, BandReport, ConsistentSystem, Failure, MetastableBand, Network, Properties,
+        PzrPreparation, RotorState, Water, consistent_rates, consistent_start,
         packet::*,
         prepare::{OperatingPoint, Receipt, Settings, prepare},
         stratified::{Band as FreeArea, Heaters, Metastable, PortKind, Stratified, Tap},
@@ -601,22 +601,90 @@ fn the_declared_point_must_match_the_compiled_cell() {
 }
 
 #[test]
-fn the_prepared_pair_is_made_consistent_from_its_own_rows_without_calcic() {
+fn the_network_constraints_are_autonomous() {
     let (mut network, prepared, _) =
         prepare(&packet(), Analytic, &point(6.), &[RUNNING], &SETTINGS).unwrap();
-    let (yp, largest) = network
-        .consistent_rates(0., &prepared.y, &prepared.differential, 1e-12)
+    // The algebraic rows (EOS and volume rows) carry no time: the same state
+    // evaluates them bitwise equal at different t, so dg/dt = 0.
+    network
+        .evaluate(0., &prepared.y, &prepared.yp, None, 0., None)
         .unwrap();
-    assert!(largest <= 1e-12, "{largest}");
-    for (rate, id) in yp.iter().zip(&prepared.differential) {
-        if *id == 0. {
-            assert_eq!(*rate, 0.);
+    let at_zero: Vec<u64> = network.rows().iter().map(|r| r.value.to_bits()).collect();
+    network
+        .evaluate(123.4, &prepared.y, &prepared.yp, None, 0., None)
+        .unwrap();
+    for (i, r) in network.rows().iter().enumerate() {
+        if prepared.differential[i] == 0. {
+            assert_eq!(r.value.to_bits(), at_zero[i], "row {i}");
         }
     }
-    // The fixture's loop is not isothermal: its impulses accelerate at rest.
-    assert!(network.face_layout.iter().any(|l| yp[l.index] != 0.));
-    match network.consistent_rates(0., &prepared.y, &prepared.differential, f64::NAN) {
-        Err(Failure::Fatal(m)) => assert!(m.contains("layout or bound"), "{m}"),
+}
+
+/// A small index-1 system shaped like the PZR rows: the algebraic rate z'
+/// enters a differential row, as V_k' enters the zone energy rows.
+/// x' + 3 z' - (2 - x) = 0, w' - x z = 0, g = z - x w / 2 = 0.
+struct Toy;
+impl ConsistentSystem for Toy {
+    fn system_dimension(&self) -> usize {
+        3
+    }
+    fn rows_at(&mut self, _: f64, y: &[f64], yp: &[f64]) -> Result<Vec<f64>, Failure> {
+        let (x, w, z) = (y[0], y[1], y[2]);
+        Ok(vec![
+            yp[0] + 3. * yp[2] - (2. - x),
+            yp[1] - x * z,
+            z - x * w / 2.,
+        ])
+    }
+    fn pencil_at(&mut self, _: f64, y: &[f64], _: &[f64]) -> Result<(Vec<f64>, Vec<f64>), Failure> {
+        let (x, w, z) = (y[0], y[1], y[2]);
+        // Column-major dF/dy and dF/dy'.
+        let a = vec![1., -z, -w / 2., 0., 0., -x / 2., 0., -x, 1.];
+        let b = vec![1., 0., 0., 0., 1., 0., 3., 0., 0.];
+        Ok((a, b))
+    }
+}
+
+#[test]
+fn the_exact_consistent_rate_solve_takes_algebraic_rates_from_the_constraints() {
+    let (x, w) = (0.5, 2.);
+    let y = [x, w, x * w / 2.];
+    let ids = [1., 1., 0.];
+    let (yp, pair) = consistent_rates(&mut Toy, 0., &y, &ids, 1e-12, 2).unwrap();
+    // Exact: w' = x z; z' = (x' w + x w')/2; x' = 2 - x - 3 z'.
+    let wp = x * y[2];
+    let xp = (2. - x - 1.5 * x * wp) / (1. + 1.5 * w);
+    let zp = (xp * w + x * wp) / 2.;
+    for (got, want) in yp.iter().zip([xp, wp, zp]) {
+        assert!((got - want).abs() <= 1e-15, "{yp:?}");
+    }
+    assert_eq!(pair.passes, 1, "linear in y': one pass is exact");
+    assert!(pair.residual.value <= 1e-15 && pair.constraint_rate.value <= 1e-15);
+    // A state off its constraint refuses, naming the row.
+    match consistent_rates(&mut Toy, 0., &[x, w, 0.6], &ids, 1e-12, 2) {
+        Err(Failure::Fatal(m)) => assert!(m.contains("algebraic row 2"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+    // The projection is a bitwise no-op on an exact state, removes Newton
+    // slack inside the error scale, and refuses a larger correction.
+    let weights: Vec<f64> = y.iter().map(|v| 1. / (1e-5 * v.abs() + 1e-8)).collect();
+    let mut exact = y;
+    let (_, start) = consistent_start(&mut Toy, 0., &mut exact, &ids, &weights, 1e-12, 2).unwrap();
+    assert_eq!(exact.map(f64::to_bits), y.map(f64::to_bits));
+    assert_eq!(start.projection.as_ref().unwrap().passes, 0);
+    let mut slack = [x, w, y[2] + 1e-9];
+    let (rates, start) =
+        consistent_start(&mut Toy, 0., &mut slack, &ids, &weights, 1e-12, 2).unwrap();
+    let projection = start.projection.unwrap();
+    assert_eq!(
+        [slack[0], slack[1]].map(f64::to_bits),
+        [x, w].map(f64::to_bits)
+    );
+    assert!((slack[2] - y[2]).abs() <= 1e-15 && projection.correction_wrms <= 1.);
+    assert!((rates[2] - zp).abs() <= 1e-15);
+    let mut unconverged = [x, w, y[2] + 1e-3];
+    match consistent_start(&mut Toy, 0., &mut unconverged, &ids, &weights, 1e-12, 2) {
+        Err(Failure::Fatal(m)) => assert!(m.contains("error scale") && m.contains("row 2"), "{m}"),
         other => panic!("{other:?}"),
     }
 }

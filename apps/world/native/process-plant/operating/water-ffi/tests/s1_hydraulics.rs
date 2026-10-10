@@ -11,7 +11,8 @@
 #![cfg(all(feature = "ida", target_os = "macos"))]
 use leitbild_operating_plant::{
     network::{
-        Band, CscOut, Network, PzrPreparation, RotorState, ToleranceClasses,
+        Band, ConsistentPair, CscOut, Network, PzrPreparation, RotorState, ToleranceClasses,
+        consistent_start,
         packet::Packet,
         prepare::{self, OperatingPoint, Settings},
         stratified,
@@ -314,9 +315,8 @@ struct Run {
     solver_cpu_s: f64,
     evaluation_wall_s: f64,
     jacobian_wall_s: f64,
-    /// Largest |scaled row| and its index of F(t0, y, y') right after
-    /// IDACalcIC, reported, never hidden.
-    post_calcic_max_row: Option<(f64, usize)>,
+    /// The run's exact consistent-rate solve at its start (no IDACalcIC).
+    initial_pair: Option<ConsistentPair>,
     failure: Option<String>,
 }
 struct Spec<'a> {
@@ -328,24 +328,43 @@ struct Spec<'a> {
     step_cap: i64,
     cpu_cap_s: f64,
     blocked_path_limit_m3_s: f64,
-    /// IDACalcIC before the first step: event reinitializations only. The
-    /// prepared start and a settled restart begin from their own pair.
-    calcic: bool,
 }
-/// Advance one declared run from a consistent or event-changed state.
-#[allow(clippy::too_many_arguments)] // One run's complete, explicit inputs.
+/// Advance one declared run from a prepared, settled or event-changed state.
+/// Its start projects the algebraic coordinates onto the constraints within
+/// the run's own error weights (a bitwise no-op on an exact state) and then
+/// solves the exact consistent rates, at t = 0 and every event alike;
+/// IDACalcIC is never called.
 fn advance_run(
-    network: Network<If97>,
+    mut network: Network<If97>,
     taps: &Taps,
     y0: &[f64],
-    yp0: &[f64],
     ids: &[f64],
     spec: Spec<'_>,
     stop: &dyn Fn(&[Sample]) -> bool,
 ) -> Run {
     let started = cpu_s();
     let mut y = y0.to_vec();
-    let mut yp = yp0.to_vec();
+    let weights: Vec<f64> = y0
+        .iter()
+        .zip(spec.atol)
+        .map(|(v, a)| 1. / (spec.rtol * v.abs() + a))
+        .collect();
+    let (mut yp, initial_pair, mut failure) = match consistent_start(
+        &mut network,
+        0.,
+        &mut y,
+        ids,
+        &weights,
+        CONSISTENT_ROW_BOUND,
+        2,
+    ) {
+        Ok((yp, pair)) => (yp, Some(pair), None),
+        Err(e) => (
+            vec![0.; y0.len()],
+            None,
+            Some(format!("consistent-rate solve: {e:?}")),
+        ),
+    };
     let system = Integrated::colored(network).expect("colored assembly");
     let mut ida = Ida::new(
         system,
@@ -364,36 +383,8 @@ fn advance_run(
     ida.constrain_nonnegative(&stocks)
         .expect("nonnegative stocks");
     ida.stop_at(spec.duration_s).expect("stop time");
-    let mut failure = if spec.calcic {
-        ida.initialize(spec.output_s, &mut y, &mut yp).err()
-    } else {
-        None
-    };
     let mut samples = Vec::new();
     let mut diagnostic_cpu = 0.;
-    let mut post_calcic_max_row = None;
-    if failure.is_none() && spec.calcic {
-        let d = cpu_s();
-        let network = &mut ida.system_mut().network;
-        post_calcic_max_row = match network.evaluate(0., &y, &yp, None, 0., None) {
-            Ok(()) => Some(
-                network
-                    .rows()
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| (r.value.abs(), i))
-                    .fold(
-                        (0., 0),
-                        |best, next| if next.0 > best.0 { next } else { best },
-                    ),
-            ),
-            Err(e) => {
-                failure = Some(format!("post-CalcIC residual: {e:?}"));
-                None
-            }
-        };
-        diagnostic_cpu += cpu_s() - d;
-    }
     if failure.is_none() {
         let d = cpu_s();
         samples.push(sample(&mut ida.system_mut().network, taps, 0., &y, &yp));
@@ -472,7 +463,7 @@ fn advance_run(
         solver_cpu_s: cpu - diagnostic_cpu,
         evaluation_wall_s: network.counters.evaluation_wall_s,
         jacobian_wall_s: network.counters.jacobian_wall_s,
-        post_calcic_max_row,
+        initial_pair,
         failure,
     }
 }
@@ -498,7 +489,7 @@ fn run_json(run: &Run, duration: f64) -> Value {
         })
     };
     let pzr = json!({"max_departure_k":[extreme(|s|s.departure_k[0]),extreme(|s|s.departure_k[1]),extreme(|s|s.departure_k[2])],"min_gap_margin":run.samples.iter().map(|s|s.gap_margin).fold(f64::INFINITY,f64::min),"min_admitted_mass_kg":run.samples.iter().map(|s|s.admitted_mass_kg).fold(f64::INFINITY,f64::min),"max_transit_drift_w":[extreme(|s|s.transit_drift_w[0]),extreme(|s|s.transit_drift_w[1])],"max_interface_pressure_rate_pa_s":extreme(|s|s.interface_pressure_rate_pa_s)});
-    json!({"post_calcic_max_scaled_row":run.post_calcic_max_row,"pzr":pzr,"steps":run.steps,"residuals":run.residuals,"jacobians":run.jacobians,"error_failures":run.error_failures,"convergence_failures":run.convergence_failures,"cpu_s":run.cpu_s,"solver_cpu_s":run.solver_cpu_s,"evaluation_wall_s":run.evaluation_wall_s,"jacobian_wall_s":run.jacobian_wall_s,"steps_per_simulated_s":run.steps as f64/duration,"solver_cpu_s_per_simulated_s":run.solver_cpu_s/duration,"reached_s":run.samples.last().map(|s|s.t),"failure":run.failure})
+    json!({"initial_pair":run.initial_pair,"pzr":pzr,"steps":run.steps,"residuals":run.residuals,"jacobians":run.jacobians,"error_failures":run.error_failures,"convergence_failures":run.convergence_failures,"cpu_s":run.cpu_s,"solver_cpu_s":run.solver_cpu_s,"evaluation_wall_s":run.evaluation_wall_s,"jacobian_wall_s":run.jacobian_wall_s,"steps_per_simulated_s":run.steps as f64/duration,"solver_cpu_s_per_simulated_s":run.solver_cpu_s/duration,"reached_s":run.samples.last().map(|s|s.t),"failure":run.failure})
 }
 /// Largest credited-output differences between two runs at common times.
 fn compare(a: &Run, b: &Run, window_s: f64) -> Value {
@@ -708,19 +699,12 @@ fn s1_hydraulics_admission() {
     };
     // A hydrostatic rest start has no physical phase birth at t=0, so no
     // leading-receipt selection is made; a later birth is the declared no-go.
-    // Decision 0013's exit: a consistent initial pair from the preparation,
-    // verified, with no IDACalcIC at t = 0.
-    let mut settle_network = network;
-    let (yp0, consistency) = settle_network
-        .consistent_rates(0., &y0, &prepared.differential, CONSISTENT_ROW_BOUND)
-        .expect("consistent prepared pair");
-    receipt["initial_pair"] =
-        json!({"largest_scaled_row":consistency,"bound":CONSISTENT_ROW_BOUND,"calcic_at_t0":false});
+    // Decision 0013's exit: the run starts from the exact consistent pair of
+    // the preparation, with no IDACalcIC at t = 0.
     let settle = advance_run(
-        settle_network,
+        network,
         &taps,
         &y0,
-        &yp0,
         &prepared.differential,
         Spec {
             rtol: gates.relative_tolerance,
@@ -731,7 +715,6 @@ fn s1_hydraulics_admission() {
             step_cap: i64::MAX,
             cpu_cap_s: gates.settling.max_cpu_s,
             blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
-            calcic: false,
         },
         &settled,
     );
@@ -878,20 +861,16 @@ fn s1_hydraulics_admission() {
     let interval = gates.output_interval_s;
     // Event runs reinitialize with IDACalcIC and report its residual; the
     // hold restarts from the settled pair itself.
-    let base =
-        |duration: f64, rate: f64, rtol: f64, atol: &'static [f64], order: usize, calcic: bool| {
-            Spec {
-                rtol,
-                atol,
-                max_order: order,
-                duration_s: duration,
-                output_s: interval,
-                step_cap: (gates.run_cap_factor * rate * duration) as i64,
-                cpu_cap_s: gates.total_cpu_s,
-                blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
-                calcic,
-            }
-        };
+    let base = |duration: f64, rate: f64, rtol: f64, atol: &'static [f64], order: usize| Spec {
+        rtol,
+        atol,
+        max_order: order,
+        duration_s: duration,
+        output_s: interval,
+        step_cap: (gates.run_cap_factor * rate * duration) as i64,
+        cpu_cap_s: gates.total_cpu_s,
+        blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
+    };
     let atol_static: &'static [f64] = Box::leak(atol.clone().into_boxed_slice());
     let refined: &'static [f64] = Box::leak(
         atol.iter()
@@ -933,7 +912,6 @@ fn s1_hydraulics_admission() {
         n,
         &taps,
         &ys,
-        &yps,
         &i,
         base(
             gates.hold.duration_s,
@@ -941,7 +919,6 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.max_order,
-            false,
         ),
         &never,
     );
@@ -950,7 +927,6 @@ fn s1_hydraulics_admission() {
         n,
         &taps,
         &ys,
-        &yps,
         &i,
         base(
             gates.hold.duration_s,
@@ -958,7 +934,6 @@ fn s1_hydraulics_admission() {
             rtol_ref,
             refined,
             gates.max_order,
-            false,
         ),
         &never,
     );
@@ -982,7 +957,6 @@ fn s1_hydraulics_admission() {
         n,
         &taps,
         &y,
-        &yps,
         &i,
         base(
             sl.duration_s,
@@ -990,7 +964,6 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.max_order,
-            true,
         ),
         &never,
     );
@@ -999,7 +972,6 @@ fn s1_hydraulics_admission() {
         n,
         &taps,
         &ys,
-        &yps,
         &i,
         base(
             sl.duration_s,
@@ -1007,7 +979,6 @@ fn s1_hydraulics_admission() {
             rtol_ref,
             refined,
             gates.max_order,
-            true,
         ),
         &never,
     );
@@ -1016,7 +987,6 @@ fn s1_hydraulics_admission() {
         n,
         &taps,
         &ys,
-        &yps,
         &i,
         base(
             sl.control_window_s,
@@ -1024,7 +994,6 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.control_max_order,
-            true,
         ),
         &never,
     );
@@ -1050,7 +1019,6 @@ fn s1_hydraulics_admission() {
         n,
         &taps,
         &y,
-        &yps,
         &i,
         base(
             sz.duration_s,
@@ -1058,7 +1026,6 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.max_order,
-            true,
         ),
         &never,
     );
@@ -1068,7 +1035,6 @@ fn s1_hydraulics_admission() {
         n,
         &taps,
         &y,
-        &yps,
         &i,
         base(
             sz.duration_s,
@@ -1076,7 +1042,6 @@ fn s1_hydraulics_admission() {
             rtol_ref,
             refined,
             gates.max_order,
-            true,
         ),
         &never,
     );
@@ -1086,7 +1051,6 @@ fn s1_hydraulics_admission() {
         n,
         &taps,
         &y,
-        &yps,
         &i,
         base(
             sz.control_window_s,
@@ -1094,7 +1058,6 @@ fn s1_hydraulics_admission() {
             rtol,
             atol_static,
             gates.control_max_order,
-            true,
         ),
         &never,
     );
@@ -1190,15 +1153,10 @@ fn s1_harness_smoke() {
             },
         )
         .expect("tolerances");
-    let mut network = network;
-    let (yp0, _) = network
-        .consistent_rates(0., &y0, &prepared.differential, CONSISTENT_ROW_BOUND)
-        .expect("consistent prepared pair");
     let run = advance_run(
         network,
         &taps,
         &y0,
-        &yp0,
         &prepared.differential,
         Spec {
             rtol: gates.relative_tolerance,
@@ -1209,7 +1167,6 @@ fn s1_harness_smoke() {
             step_cap: 200_000,
             cpu_cap_s: 60.,
             blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
-            calcic: false,
         },
         &|_: &[Sample]| false,
     );
@@ -1254,22 +1211,57 @@ fn s1_zero_time_consistent_pair() {
     let structure = network.sparse_jacobian().expect("structure");
     let algebraic = prepared.differential.iter().filter(|v| **v == 0.).count();
     let before = network.counters;
-    let (yp, largest) = network
-        .consistent_rates(0., &y, &prepared.differential, CONSISTENT_ROW_BOUND)
-        .expect("consistent prepared pair");
+    let atol = network
+        .absolute_tolerances(
+            &y,
+            ToleranceClasses {
+                relative: 1e-5,
+                stock_scaled: 1e-8,
+                tracer_scaled: 1e-8,
+                rotor_scaled: 1e-8,
+                volume_flow_m3_s: 1e-3,
+            },
+        )
+        .expect("tolerances");
+    let weights: Vec<f64> = y
+        .iter()
+        .zip(&atol)
+        .map(|(v, a)| 1. / (1e-5 * v.abs() + a))
+        .collect();
+    let mut projected = y.clone();
+    let (yp, pair) = consistent_start(
+        &mut network,
+        0.,
+        &mut projected,
+        &prepared.differential,
+        &weights,
+        CONSISTENT_ROW_BOUND,
+        2,
+    )
+    .expect("consistent prepared pair");
+    // The prepared state is exact: the projection is a bitwise no-op.
+    assert_eq!(
+        projected.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+        y.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+    );
+    assert_eq!(pair.projection.as_ref().map(|p| p.passes), Some(0));
     let during = network.counters;
-    assert!(largest <= CONSISTENT_ROW_BOUND, "{largest}");
-    let rows: Vec<f64> = network.rows().iter().map(|r| r.value).collect();
+    assert!(pair.residual.value <= CONSISTENT_ROW_BOUND, "{pair:?}");
+    assert!(
+        pair.constraint_rate.value <= CONSISTENT_ROW_BOUND,
+        "{pair:?}"
+    );
     let labels = network.labels();
-    let at = (0..rows.len())
-        .max_by(|a, b| rows[*a].abs().total_cmp(&rows[*b].abs()))
-        .unwrap();
-    // Algebraic rates are exactly zero; impulse rates carry the loop drive.
-    for (i, id) in prepared.differential.iter().enumerate() {
-        if *id == 0. {
-            assert_eq!(yp[i], 0.);
-        }
-    }
+    // At rest the stock and algebraic rates vanish to rounding; the impulse
+    // rates carry the loop drive.
+    let algebraic_rate = prepared
+        .differential
+        .iter()
+        .zip(&yp)
+        .filter(|(id, _)| **id == 0.)
+        .map(|(_, v)| v.abs())
+        .fold(0., f64::max);
+    assert!(algebraic_rate <= CONSISTENT_ROW_BOUND, "{algebraic_rate}");
     let impulse = network
         .face_layout
         .iter()
@@ -1283,7 +1275,7 @@ fn s1_zero_time_consistent_pair() {
             "census":{"coordinates":y.len(),"algebraic":algebraic,"differential":y.len()-algebraic},
             "structure":{"nonzeros":structure.pattern.nonzeros(),"colors":structure.coloring.count()},
             "preparation":{"max_eos_row":preparation.max_eos_row,"max_tree_rest_pa":preparation.max_tree_rest_pa,"max_loop_rest_pa":preparation.max_loop_rest_pa,"pzr_representation_steps":preparation.pzr["representation_steps"],"pzr_specific_energy_exact":preparation.pzr["specific_energy_exact"]},
-            "initial_pair":{"largest_scaled_row":largest,"row":at,"coordinate":labels[at].1,"bound":CONSISTENT_ROW_BOUND,"largest_impulse_rate_pa":impulse,"evaluations":during.evaluations-before.evaluations,"pzr_columns":during.pzr_columns-before.pzr_columns},
+            "initial_pair":{"pair":pair,"residual_coordinate":labels[pair.residual.row].1,"largest_algebraic_rate":algebraic_rate,"largest_impulse_rate_pa":impulse,"evaluations":during.evaluations-before.evaluations,"pzr_columns":during.pzr_columns-before.pzr_columns},
             "pzr":{"pt1_pa":taps.pt1_pa.value,"collapsed_level_m":taps.collapsed_level_m.value,"mixture_level_m":taps.mixture_level_m.value,"departure_k":bands.map(|b|b.departure_k),"bands":format!("{:?}",bands.map(|b|b.band))}})
     );
 }
@@ -1317,7 +1309,7 @@ fn s1_settled_energy_identity() {
         representation_search: 8,
     };
     let taps = taps(&packet, &fresh(&packet));
-    let (mut network, prepared, _) =
+    let (network, prepared, _) =
         prepare::prepare(&packet, If97, &point, &rotors, &settings).expect("preparation");
     let mut y0 = prepared.y.clone();
     for index in &network.rotor_index {
@@ -1335,9 +1327,6 @@ fn s1_settled_energy_identity() {
             },
         )
         .expect("tolerances");
-    let (yp0, _) = network
-        .consistent_rates(0., &y0, &prepared.differential, CONSISTENT_ROW_BOUND)
-        .expect("consistent prepared pair");
     let (window, rotor_rel, flow_rel) = (
         gates.settling.window_s,
         gates.settling.rotor_speed_relative,
@@ -1360,7 +1349,6 @@ fn s1_settled_energy_identity() {
         network,
         &taps,
         &y0,
-        &yp0,
         &prepared.differential,
         Spec {
             rtol: gates.relative_tolerance,
@@ -1371,7 +1359,6 @@ fn s1_settled_energy_identity() {
             step_cap: i64::MAX,
             cpu_cap_s: gates.settling.max_cpu_s,
             blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
-            calcic: false,
         },
         &settled,
     );
@@ -1393,4 +1380,52 @@ fn s1_settled_energy_identity() {
         identity.abs() <= IDENTITY_RELATIVE_BOUND * (1. + terms),
         "identity {identity} W against terms {terms} W"
     );
+    // The event transactions at that state, each started by the exact
+    // consistent-rate solve (no IDACalcIC).
+    let mut supply = fresh(&packet);
+    supply.set_rotor_state(
+        gates.supply_loss.rotor,
+        RotorState {
+            support: Support::Unsupported,
+            shaft: Shaft::Free,
+        },
+    );
+    let weights = |y: &[f64]| -> Vec<f64> {
+        y.iter()
+            .zip(&atol)
+            .map(|(v, a)| 1. / (gates.relative_tolerance * v.abs() + a))
+            .collect()
+    };
+    let mut y_supply = run.y.clone();
+    let supply_pair = consistent_start(
+        &mut supply,
+        0.,
+        &mut y_supply,
+        &prepared.differential,
+        &weights(&run.y),
+        CONSISTENT_ROW_BOUND,
+        2,
+    );
+    let mut locked = fresh(&packet);
+    let mut y_post = run.y.clone();
+    locked
+        .seize(gates.seizure.rotor, &mut y_post)
+        .expect("seizure");
+    let locked_ids = locked.differential(&prepared.differential);
+    let seizure_weights = weights(&y_post);
+    let seizure_pair = consistent_start(
+        &mut locked,
+        0.,
+        &mut y_post,
+        &locked_ids,
+        &seizure_weights,
+        CONSISTENT_ROW_BOUND,
+        2,
+    );
+    println!(
+        "{}",
+        json!({"kind":"s1-event-consistent-pairs-FIXTURE-NOT-EVIDENCE","initial":run.initial_pair,"supply_loss":supply_pair.as_ref().map(|(_, p)| p.clone()).map_err(|e| format!("{e:?}")),"seizure":seizure_pair.as_ref().map(|(_, p)| p.clone()).map_err(|e| format!("{e:?}"))})
+    );
+    supply_pair.expect("supply-loss consistent pair");
+    seizure_pair.expect("seizure consistent pair");
 }
