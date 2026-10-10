@@ -72,8 +72,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const reliefSetpoint = optionalParameterNumber(component, 'reliefSetpointMPa', nominalPressure * 1.08)
       const reliefCapacity = optionalParameterNumber(component, 'reliefCapacityKgPerS', 80)
       const currentPressure = context.readNumber(componentVariablePath(component, 'pressureMPa'))
-      const powered = componentHasElectricalPower(system, component, context)
-      const heaterPower = powered
+      const heaterPower = componentHasElectricalPower(system, component, context, 'heaterPower')
         ? clamp(context.readNumber(componentVariablePath(component, 'heaterPowerMw')), 0, 50)
         : 0
       context.write(componentVariablePath(component, 'demandMw'), heaterPower)
@@ -85,9 +84,9 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const reliefOpening = reliefValveFailureActive
         ? reliefValveFailedPosition
         : Math.max(reliefValvePosition, automaticReliefDemand)
-      // The block valve's motor is fed from the safety bus that feeds the heaters; without it the valve stays where it is.
+      // The block valve's motor has its own supply, apart from the heaters'; without it the valve stays where it is.
       const blockValvePosition = context.readNumber(componentVariablePath(component, 'blockValveEffectivePositionFraction'))
-      const nextBlockValvePosition = powered
+      const nextBlockValvePosition = componentHasElectricalPower(system, component, context, 'blockValvePower')
         ? approach(blockValvePosition, clamp(context.readNumber(componentVariablePath(component, 'blockValvePositionFraction')), 0, 1), context.dtSeconds / parameterNumber(component, 'blockValveStrokeTimeS'))
         : blockValvePosition
       const reliefFlow = reliefCapacity * Math.min(reliefOpening, nextBlockValvePosition) * clamp(currentPressure / nominalPressure, 0.1, 1.4)

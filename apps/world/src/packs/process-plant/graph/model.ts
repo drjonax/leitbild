@@ -253,6 +253,12 @@ export const portDefinitionSchema = z.object({
    * (a pump's power supply, a valve's demand signal).
    */
   circuit: z.string().min(1).optional(),
+  /**
+   * On a power supply port, the solved power the component draws through it,
+   * which the line and the bus feeding it carry. A supply port that names
+   * none draws too little to count beside a bus (a valve motor's kilowatts).
+   */
+  demand: z.string().min(1).optional(),
 })
 export type PortDefinition = z.infer<typeof portDefinitionSchema>
 
@@ -513,6 +519,7 @@ export interface CompiledPort {
   readonly kind: PortKind
   readonly direction: PortDirection
   readonly circuit?: string
+  readonly demand?: LocalVariablePath
 }
 
 export interface CompiledComponent {

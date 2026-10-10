@@ -33,16 +33,19 @@ export const sourcePowerForComponent = (
   }
 }
 
+/** The power reaching a component on its supply lines, or on those into the one port named. */
 export const incomingElectricalPower = (
   system: CompiledProcessPlant,
   component: CompiledComponent,
   context: ProcessPlantBehaviorContext,
+  port?: string,
 ): { readonly energized: boolean; readonly availablePowerMw: number; readonly voltageFraction: number } => {
   let availablePowerMw = 0
   let voltageFraction = 0
   for (const linkIndex of system.graph.incomingLinksByComponent[component.index] ?? []) {
     const link = system.graph.links[linkIndex]
     if (!link || link.kind !== 'electricalPower') continue
+    if (port !== undefined && String(link.toPortName) !== port) continue
     const source = system.graph.components[link.fromComponentIndex]
     if (!source) continue
     const sourcePower = sourcePowerForComponent(source, context)
@@ -60,17 +63,28 @@ export const incomingElectricalPower = (
 const hasIncomingElectricalPowerPort = (
   system: CompiledProcessPlant,
   component: CompiledComponent,
+  port?: string,
 ): boolean =>
   (system.graph.incomingLinksByComponent[component.index] ?? [])
-    .some(linkIndex => system.graph.links[linkIndex]?.kind === 'electricalPower')
+    .some(linkIndex => {
+      const link = system.graph.links[linkIndex]
+      return link?.kind === 'electricalPower' && (port === undefined || String(link.toPortName) === port)
+    })
 
+/**
+ * Whether a component has usable power on its supply, or on the one supply
+ * port named where it has several (a pressurizer's heaters and its PORV block
+ * valve's motor are fed apart). A supply the Plant draws no line to is not
+ * modelled, and counts as live.
+ */
 export const componentHasElectricalPower = (
   system: CompiledProcessPlant,
   component: CompiledComponent,
   context: ProcessPlantBehaviorContext,
+  port?: string,
 ): boolean => {
-  if (!hasIncomingElectricalPowerPort(system, component)) return true
-  const incoming = incomingElectricalPower(system, component, context)
+  if (!hasIncomingElectricalPowerPort(system, component, port)) return true
+  const incoming = incomingElectricalPower(system, component, context, port)
   return incoming.energized && incoming.voltageFraction >= 0.7
 }
 
@@ -89,8 +103,10 @@ const outgoingLoadDemand = (
       demand += parameterNumber(target, 'nominalLoadMw')
       continue
     }
-    const demandPath = componentVariablePath(target, 'demandMw')
-    if (context.has(demandPath)) demand += context.readNumber(demandPath)
+    // What the target draws through the port this line feeds: a pressurizer's heater load is its heater bus's, not the
+    // bus that feeds its block valve's motor.
+    const drawn = target.ports[String(link.toPortName)]?.demand
+    if (drawn !== undefined) demand += context.readNumber(componentVariablePath(target, drawn))
   }
   return demand
 }

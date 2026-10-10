@@ -42,9 +42,11 @@ describe('process plant model composition', () => {
     // buses, again when the diesels, buses and unit auxiliary transformer
     // were given realistic ratings, and again when the turbine-driven AFW
     // pump lost its AC feed, and again when the reactor protection gained
-    // its loop delta-T channels; PWR Runs checkpointed before then must be
-    // restarted.
-    expect(system.modelDigest).toBe('DIGEST-PENDING')
+    // its loop delta-T channels, safety injection pump curves, accumulator
+    // injection and the PORV block valve, its motor fed from safety bus A
+    // apart from the heaters' unit bus; PWR Runs checkpointed before then
+    // must be restarted.
+    expect(system.modelDigest).toBe('2d1361665a70a3528f4b50154885897fd966c8fe79b0a6d83d751c25412f27f1')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

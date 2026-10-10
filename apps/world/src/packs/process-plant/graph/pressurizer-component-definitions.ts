@@ -11,7 +11,10 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       surgeLine: { kind: 'hydraulicThermal', direction: 'bidirectional', circuit: 'coolant' },
       sprayInlet: { kind: 'hydraulicThermal', direction: 'in', circuit: 'coolant' },
       reliefOutlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'coolant' },
-      heaterPower: { kind: 'electricalAc', direction: 'in' },
+      heaterPower: { kind: 'electricalAc', direction: 'in', demand: 'demandMw' },
+      // The PORV block valve's motor has its own supply, apart from the heaters': the valve must close on a stuck-open
+      // PORV after a loss of offsite power, when the heaters' bus is dead and only the diesel-backed buses are live.
+      blockValvePower: { kind: 'electricalAc', direction: 'in' },
     },
     parametersSchema: z.object({
       nominalPressureMPa: z.number().finite().positive(),

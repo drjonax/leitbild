@@ -73,17 +73,25 @@ const parseWithContext = <T>(schema: z.ZodType<T>, input: unknown, context: stri
   throw new Error(`${context}: ${result.error.issues.map(issue => `${issue.path.join('.') || '<root>'} ${issue.message}`).join('; ')}`)
 }
 
-const compilePorts = (definition: ComponentDefinition): Readonly<Record<string, CompiledPort>> =>
-  Object.fromEntries(Object.entries(definition.ports).map(([name, port], index) => [
-    name,
-    {
-      index,
-      name: name as PortName,
-      kind: port.kind,
-      direction: port.direction,
-      ...(port.circuit === undefined ? {} : { circuit: port.circuit }),
-    },
-  ]))
+const compilePorts = (componentId: ComponentId, definition: ComponentDefinition): Readonly<Record<string, CompiledPort>> =>
+  Object.fromEntries(Object.entries(definition.ports).map(([name, port], index) => {
+    if (port.demand !== undefined) {
+      const variable = definition.variables.find(candidate => String(candidate.path) === port.demand)
+      const supply = port.kind === 'electricalAc' && port.direction === 'in' && port.circuit === undefined
+      if (!supply || variable?.quantity !== 'power' || variable.writable) throw new Error(`component ${componentId} port ${name}: demand ${port.demand} must be a solved power drawn through a power supply port`)
+    }
+    return [
+      name,
+      {
+        index,
+        name: name as PortName,
+        kind: port.kind,
+        direction: port.direction,
+        ...(port.circuit === undefined ? {} : { circuit: port.circuit }),
+        ...(port.demand === undefined ? {} : { demand: port.demand as LocalVariablePath }),
+      },
+    ]
+  }))
 
 const resolveComponentPorts = (
   componentId: ComponentId,
@@ -467,7 +475,7 @@ export const compilePlantGraph = (
       label: component.label,
       parameters,
       ...(component.metadata === undefined ? {} : { metadata: component.metadata }),
-      ports: compilePorts({ ...definition, ports }),
+      ports: compilePorts(component.id, { ...definition, ports }),
       variables,
       semantics: compileComponentSemantics(component.id, definition.semantics(parameters), variables, ports, parameters),
     }

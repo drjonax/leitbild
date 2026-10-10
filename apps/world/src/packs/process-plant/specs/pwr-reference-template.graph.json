@@ -9936,6 +9936,12 @@
       "from": "unitBusA.outlet",
       "to": "pressurizer.heaterPower",
       "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-a-to-pressurizer-porv-block-valve",
+      "from": "safetyBusA.outlet",
+      "to": "pressurizer.blockValvePower",
+      "connectionKind": "electricalPower"
     }
   ],
   "publishedVariables": [

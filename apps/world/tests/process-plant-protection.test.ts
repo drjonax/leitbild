@@ -272,6 +272,31 @@ describe('the PORV block valve', () => {
     expect(plantRun.tag('MOV-8000A')).toBe(0)
     expect(plantRun.tag('MOV-8000A-POS')).toBe(1)
   })
+
+  test('after a loss of offsite power it still closes on its diesel-backed bus, though the heaters\' unit bus is dead', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    plantRun.act('loss-offsite-power')
+    plantRun.run(30_000)
+    expect(plantRun.tag('UNIT-BUS-A-ENERGIZED')).toBe(false)
+    expect(plantRun.tag('BUS-A-ENERGIZED')).toBe(true)
+    plantRun.act('pressurizer-porv-block-valve-close')
+    plantRun.run(15_000)
+    expect(plantRun.tag('MOV-8000A-POS')).toBe(0)
+  })
+
+  test('its motor\'s supply carries none of the heaters\' load, which stays on their unit bus', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    const loads = () => ({ safety: Number(plantRun.read('safetyBusA.servedLoadMw')), unit: Number(plantRun.read('unitBusA.servedLoadMw')) })
+    const before = loads()
+    // Without the I&C, so no pressure controller takes the heaters back.
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 1.8 })
+    for (let second = 0; second < 3; second += 1) plantRun.runtime.tick(1_000)
+    const after = loads()
+    expect(after.safety).toBeCloseTo(before.safety, 3)
+    expect(after.unit - before.unit).toBeCloseTo(1.8, 1)
+  })
 })
 
 describe('steam generator tube leak detection', () => {

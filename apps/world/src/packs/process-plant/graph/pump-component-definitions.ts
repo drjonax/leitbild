@@ -11,7 +11,7 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       inlet: { kind: 'hydraulicThermal', direction: 'in', circuit: 'flow' },
       outlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'flow' },
       speedDemand: { kind: 'controlSignal', direction: 'in' },
-      power: { kind: 'electricalAc', direction: 'in' },
+      power: { kind: 'electricalAc', direction: 'in', demand: 'demandMw' },
     },
     parametersSchema: z.object({
       nominalFlowKgPerS: z.number().finite().positive(),
