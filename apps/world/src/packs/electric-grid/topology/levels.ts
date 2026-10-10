@@ -1,8 +1,7 @@
 import { chainCircuits, chainLengthKm, chainPieces, type Chain, type CircuitEvidence } from './corridor-chain.ts'
-import { buildLevelGraph, freeNodeKey, isFreeNode, type CorridorLink, type LevelWay, type NodeRef } from './corridor-graph.ts'
+import { buildLevelGraph, freeNodeKey, isFreeNode, type CorridorLink, type DanglingCorridor, type LevelWay, type NodeRef } from './corridor-graph.ts'
 import { compareText } from './ids.ts'
 import type { TopologyLevelInput, TopologyLineInput, TopologyRouteInput } from './input.ts'
-import type { PreparedInterconnectors } from './interconnectors.ts'
 import type { TopologyLedger } from './ledger.ts'
 import type { TopologyOptions } from './options.ts'
 import type { StationGroups } from './station-groups.ts'
@@ -10,9 +9,12 @@ import type { StationIndex } from './station-index.ts'
 import type { TerminalResolver } from './terminals.ts'
 
 export type LevelLink = CorridorLink & { readonly kv: number }
+export type LevelDangling = DanglingCorridor & { readonly kv: number }
 
 export type LevelsResult = {
   readonly links: ReadonlyArray<LevelLink>
+  // Corridors with a free end; the caller resolves cross-border ones and ledgers the rest.
+  readonly dangling: ReadonlyArray<LevelDangling>
   readonly levelsKv: ReadonlyArray<number>
 }
 
@@ -23,7 +25,6 @@ export type LevelsInput = {
   readonly terminals: TerminalResolver
   readonly index: StationIndex
   readonly groups: StationGroups
-  readonly interconnectors: PreparedInterconnectors
   readonly options: TopologyOptions
 }
 
@@ -66,10 +67,30 @@ const describeChain = (chain: Chain): { elementIds: string[]; names: string; len
   }
 }
 
-const describeNode = (node: string): string => isFreeNode(node) ? `node ${freeNodeKey(node)}` : node.slice(2)
+export const describeNode = (node: string): string => isFreeNode(node) ? `node ${freeNodeKey(node)}` : node.slice(2)
+
+export type DanglingLedgerContext = Pick<LevelsInput, 'terminals' | 'index' | 'groups' | 'options'>
+
+export const ledgerDanglingCorridor = (stub: LevelDangling, context: DanglingLedgerContext, ledger: TopologyLedger): void => {
+  const described = describeChain(stub.chain)
+  const ends = stub.danglingKeys.map(key => {
+    const location = context.terminals.coordinateOf(key)
+    return { key, location, nearest: context.index.nearest(location, context.options.nearestStationSearchKm) }
+  }).sort((left, right) => (left.nearest?.distanceKm ?? Infinity) - (right.nearest?.distanceKm ?? Infinity))
+  const end = ends[0]!
+  const nearestGroup = end.nearest ? context.groups.groupOf(end.nearest.container) : null
+  ledger.add({
+    reason: stub.anchor === null ? 'corridor-isolated' : 'corridor-dangling',
+    elementIds: described.elementIds,
+    voltageKv: stub.kv,
+    location: end.location,
+    ...(end.nearest && nearestGroup ? { distanceM: end.nearest.distanceKm * 1000, stationId: nearestGroup.id } : {}),
+    detail: `${described.names}, ${described.lengthKm.toFixed(2)} km${stub.anchor ? ` from ${describeNode(stub.anchor)}` : ''}; free end ${end.key}${end.nearest ? ` is ${(end.nearest.distanceKm * 1000).toFixed(0)} m from the nearest station` : ` has no station within ${context.options.nearestStationSearchKm} km`}`,
+  })
+}
 
 export const buildLevels = (input: LevelsInput, ledger: TopologyLedger): LevelsResult => {
-  const { terminals, interconnectors, options } = input
+  const { terminals, options } = input
   const routeCounts = routeCountsOf(input.routes)
   const waysByKv = new Map<number, LevelWay[]>()
   for (const line of input.acLines) {
@@ -85,6 +106,7 @@ export const buildLevels = (input: LevelsInput, ledger: TopologyLedger): LevelsR
   }
   const levelsKv = [...waysByKv.keys()].sort((left, right) => right - left)
   const links: LevelLink[] = []
+  const dangling: LevelDangling[] = []
   const lineById = new Map(input.acLines.map(line => [line.featureId, line]))
   const stationGroupsOfFeature = new Map<string, Set<string>>()
   const throughPasses = new Map<string, { featureId: string; groupId: string; kvs: Set<number>; location: readonly [number, number] }>()
@@ -116,16 +138,7 @@ export const buildLevels = (input: LevelsInput, ledger: TopologyLedger): LevelsR
           }
         }
       }
-      if (groupId) {
-        const foreign = interconnectors.foreignGroupEntry.get(groupId)
-        if (!foreign) return { kind: 'station', groupId }
-        return foreign.kind === 'ac' && foreign.normalisedKv === kv ? { kind: 'boundary', interconnectorId: foreign.id } : { kind: 'free' }
-      }
-      if (occurrence.wayEnds === 1 && occurrence.interior === 0) {
-        const entry = interconnectors.acForeignEndAt(terminals.coordinateOf(key), kv)
-        if (entry) return { kind: 'boundary', interconnectorId: entry.id }
-      }
-      return { kind: 'free' }
+      return groupId ? { kind: 'station', groupId } : { kind: 'free' }
     }
     const pieceInsideStation = (line: TopologyLineInput, from: number, to: number, groupId: string): boolean => {
       for (let index = from; index <= to; index += 1) {
@@ -141,21 +154,7 @@ export const buildLevels = (input: LevelsInput, ledger: TopologyLedger): LevelsR
     for (const link of graph.links) consume(link.chain)
     for (const stub of graph.dangling) {
       consume(stub.chain)
-      const described = describeChain(stub.chain)
-      const ends = stub.danglingKeys.map(key => {
-        const location = terminals.coordinateOf(key)
-        return { key, location, nearest: input.index.nearest(location, options.nearestStationSearchKm) }
-      }).sort((left, right) => (left.nearest?.distanceKm ?? Infinity) - (right.nearest?.distanceKm ?? Infinity))
-      const end = ends[0]!
-      const nearestGroup = end.nearest ? input.groups.groupOf(end.nearest.container) : null
-      ledger.add({
-        reason: stub.anchor === null ? 'corridor-isolated' : 'corridor-dangling',
-        elementIds: described.elementIds,
-        voltageKv: kv,
-        location: end.location,
-        ...(end.nearest && nearestGroup ? { distanceM: end.nearest.distanceKm * 1000, stationId: nearestGroup.id } : {}),
-        detail: `${described.names}, ${described.lengthKm.toFixed(2)} km${stub.anchor ? ` from ${describeNode(stub.anchor)}` : ''}; free end ${end.key}${end.nearest ? ` is ${(end.nearest.distanceKm * 1000).toFixed(0)} m from the nearest station` : ` has no station within ${options.nearestStationSearchKm} km`}`,
-      })
+      dangling.push({ ...stub, kv })
     }
     for (const loop of graph.selfLoops) {
       consume(loop.chain)
@@ -224,5 +223,5 @@ export const buildLevels = (input: LevelsInput, ledger: TopologyLedger): LevelsR
       detail: `interior vertices of a ${[...pass.kvs].sort((l, r) => r - l).join('/')} kV way lie inside ${pass.groupId}; not a terminal${line.osmWayIds.length > 1 ? ` (source feature merges ${line.osmWayIds.length} ways; their joints are unknown)` : ''}`,
     })
   }
-  return { links, levelsKv }
+  return { links, dangling, levelsKv }
 }

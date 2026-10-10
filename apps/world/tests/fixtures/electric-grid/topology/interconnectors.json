@@ -11,19 +11,12 @@
    "osmWayIds": [
     "way/402"
    ],
-   "foreignEnd": {
-    "location": [
-     6.9,
-     54
-    ],
-    "radiusKm": 2
-   },
    "sources": [
     "fixture"
    ]
   },
   {
-   "id": "interconnector:test-tie",
+   "id": "ac:test-tie",
    "label": "Test tie",
    "kind": "ac",
    "externalArea": "SE3",
@@ -32,13 +25,6 @@
    "osmWayIds": [
     "way/403"
    ],
-   "foreignEnd": {
-    "location": [
-     8,
-     58.7
-    ],
-    "radiusKm": 1
-   },
    "sources": [
     "fixture"
    ]

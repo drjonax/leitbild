@@ -1,4 +1,4 @@
-import { haversineKm, polylineKm, type LonLat } from './geometry.ts'
+import { polylineKm, type LonLat } from './geometry.ts'
 import { compareText, hvdcBoundaryBusId } from './ids.ts'
 import type { TopologyLineInput } from './input.ts'
 import type { PreparedInterconnectors } from './interconnectors.ts'
@@ -7,8 +7,9 @@ import type { TopologyHvdcLink, TopologyProvenance } from './result.ts'
 import type { StationGroup } from './station-groups.ts'
 
 // HVDC ways form networks independent of pole voltage (bipoles, electrodes and cable/line
-// transitions differ in tagged voltage). A link is accepted only when the interconnector table
-// names its ways, its converter station and the foreign end, and the converter has an AC bus.
+// transitions differ in tagged voltage). A link is accepted only when the network holding the
+// listed ways reaches the listed converter station, leaves the extract at a free way end (the
+// foreign landfall), and the converter has an AC bus.
 
 export type HvdcInput = {
   readonly lines: ReadonlyArray<TopologyLineInput>
@@ -20,6 +21,7 @@ export type HvdcInput = {
 
 export type HvdcResult = {
   readonly links: ReadonlyArray<TopologyHvdcLink>
+  readonly foreignEnds: ReadonlyMap<string, LonLat>     // link id → free way end abroad
   readonly usedFeatureIds: ReadonlySet<string>
   readonly touchedGroupIds: ReadonlySet<string>
 }
@@ -78,6 +80,7 @@ export const resolveHvdcLinks = (input: HvdcInput, ledger: TopologyLedger): Hvdc
   for (const line of lines) for (const wayId of line.osmWayIds) lineByWayId.set(wayId, line)
 
   const links: TopologyHvdcLink[] = []
+  const foreignEnds = new Map<string, LonLat>()
   const usedFeatureIds = new Set<string>()
   const touchedGroupIds = new Set<string>()
   for (const entry of input.interconnectors.hvdc) {
@@ -85,6 +88,11 @@ export const resolveHvdcLinks = (input: HvdcInput, ledger: TopologyLedger): Hvdc
     const missing = entry.osmWayIds.filter(wayId => !lineByWayId.has(wayId)).sort(compareText)
     if (present.length === 0) {
       ledger.add({ reason: 'interconnector-unmatched', elementIds: [entry.id, ...entry.osmWayIds], detail: 'none of the listed ways is an operational HVDC way in the source' })
+      continue
+    }
+    // A missing way would let a gap inside Norway pass for the foreign end.
+    if (missing.length > 0) {
+      ledger.add({ reason: 'interconnector-way-missing', elementIds: [entry.id, ...missing], detail: `${missing.length} listed way(s) are not operational HVDC ways in the source` })
       continue
     }
     const entryLines = [...new Set(present.map(wayId => lineByWayId.get(wayId)!))]
@@ -99,10 +107,11 @@ export const resolveHvdcLinks = (input: HvdcInput, ledger: TopologyLedger): Hvdc
       ledger.add({ reason: 'interconnector-terminal-mismatch', elementIds: [entry.id, ...present], stationId: converter.id, detail: `HVDC network does not reach the listed converter station ${entry.norwegianStationId}` })
       continue
     }
-    const foreignDangling = network.danglingEnds.filter(end => haversineKm(end.coordinate, entry.foreignEnd.location) <= entry.foreignEnd.radiusKm)
-    const foreignGroups = [...network.groupIds].filter(groupId => input.interconnectors.foreignGroupEntry.get(groupId)?.id === entry.id)
-    if (foreignDangling.length === 0 && foreignGroups.length === 0) {
-      ledger.add({ reason: 'interconnector-foreign-end-missing', elementIds: [entry.id, ...present], location: entry.foreignEnd.location, detail: `no HVDC way end or foreign station within ${entry.foreignEnd.radiusKm} km of the listed foreign end` })
+    // Prefer a free end on the link's own ways (the landfall of this cable) over other ends of a shared network.
+    const ownKeys = new Set(entryLines.flatMap(line => line.vertexKeys))
+    const foreignEnd = network.danglingEnds.find(end => ownKeys.has(end.key)) ?? network.danglingEnds[0]
+    if (!foreignEnd) {
+      ledger.add({ reason: 'interconnector-foreign-end-missing', elementIds: [entry.id, ...present], stationId: converter.id, detail: 'the HVDC network has no free way end, so it never leaves the extract' })
       continue
     }
     const fromBusId = input.acBusOfGroup(converter.id)
@@ -110,15 +119,13 @@ export const resolveHvdcLinks = (input: HvdcInput, ledger: TopologyLedger): Hvdc
       ledger.add({ reason: 'converter-without-ac-bus', elementIds: [entry.id, ...present], stationId: converter.id, detail: 'no AC corridor at or above the minimum voltage terminates at the converter station' })
       continue
     }
-    if (missing.length > 0) {
-      ledger.add({ reason: 'interconnector-way-missing', elementIds: [entry.id, ...missing], detail: `${missing.length} listed way(s) absent from the source HVDC ways` })
-    }
     for (const line of entryLines) usedFeatureIds.add(line.featureId)
+    foreignEnds.set(entry.id, foreignEnd.coordinate)
     touchedGroupIds.add(converter.id)
     const provenance: TopologyProvenance = {
       sources: [...input.sourceIds],
       method: 'curated',
-      confidence: missing.length === 0 ? 'high' : 'medium',
+      confidence: 'high',
       note: `route mapped in OSM (${present.length} way(s)); endpoints verified against the interconnector table`,
     }
     links.push({
@@ -148,5 +155,5 @@ export const resolveHvdcLinks = (input: HvdcInput, ledger: TopologyLedger): Hvdc
       detail: `${unused.length} HVDC way(s) touching station(s) [${[...network.groupIds].sort(compareText).join(', ')}] are not part of a listed interconnector`,
     })
   }
-  return { links: links.sort((left, right) => compareText(left.id, right.id)), usedFeatureIds, touchedGroupIds }
+  return { links: links.sort((left, right) => compareText(left.id, right.id)), foreignEnds, usedFeatureIds, touchedGroupIds }
 }

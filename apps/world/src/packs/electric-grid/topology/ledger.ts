@@ -25,6 +25,7 @@ const reasonDispositions = {
   'interconnector-split': 'unresolved',
   'interconnector-foreign-end-missing': 'unresolved',
   'interconnector-terminal-mismatch': 'unresolved',
+  'interconnector-way-missing': 'unresolved',
   'converter-without-ac-bus': 'unresolved',
   // inferred: the model contains the element, but a value was inferred rather than mapped
   'terminal-buffer': 'inferred',
@@ -42,8 +43,6 @@ const reasonDispositions = {
   'same-name-nearby-stations': 'reported',
   'station-without-corridor': 'reported',
   'plant-contains-multiple-stations': 'reported',
-  'foreign-station': 'reported',
-  'interconnector-way-missing': 'reported',
   'transformer-unmatched': 'reported',
   'traction-station-fed': 'reported',
 } as const

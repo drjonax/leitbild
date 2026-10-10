@@ -1,13 +1,15 @@
+import { resolveAcTies } from './ac-ties.ts'
 import { busIdOfNode, corridorBranch, type BranchContext } from './branches.ts'
 import { classifyInput } from './classify.ts'
 import { chainPieces } from './corridor-chain.ts'
 import { freeNodeKey, isFreeNode } from './corridor-graph.ts'
+import type { LonLat } from './geometry.ts'
 import { resolveHvdcLinks } from './hvdc.ts'
 import { acBoundaryBusId, compareText, hvdcBoundaryBusId, stationBusId } from './ids.ts'
 import type { ExternalArea, TopologyInput, TopologyInterconnectorTable } from './input.ts'
 import { prepareInterconnectors, type PreparedInterconnector } from './interconnectors.ts'
 import { createTopologyLedger, topologyLedgerReasons } from './ledger.ts'
-import { buildLevels, type LevelLink } from './levels.ts'
+import { buildLevels, ledgerDanglingCorridor, type LevelLink } from './levels.ts'
 import { createTopologyOptions, type TopologyOptions } from './options.ts'
 import type { TopologyBoundary, TopologyBranch, TopologyBus, TopologyResult, TopologySummary } from './result.ts'
 import { groupStations, reportSameNameStations } from './station-groups.ts'
@@ -47,43 +49,14 @@ export const compileGridTopology = (
     }
   }
 
-  const levels = buildLevels({ acLines: classified.acLines, inheritedKv, routes: classified.routes, terminals, index, groups, interconnectors, options }, ledger)
-
-  // AC interconnectors: a corridor reaching a foreign end must start at the listed Norwegian station
-  // and use at least one listed way.
-  const accepted: Array<{ link: LevelLink; entry: PreparedInterconnector | null }> = []
-  const reachedEntries = new Set<string>()
-  for (const link of levels.links) {
-    const boundaryEnds = [link.a, link.b].filter(node => node.startsWith('B|'))
-    if (boundaryEnds.length === 0) {
-      accepted.push({ link, entry: null })
-      continue
-    }
-    const entry = interconnectors.byId.get(boundaryEnds[0]!.slice(2))!
-    reachedEntries.add(entry.id)
-    const other = link.a === boundaryEnds[0] ? link.b : link.a
-    const wayIds = chainPieces(link.chain).flatMap(piece => piece.osmWayIds)
-    const usesListedWay = wayIds.some(wayId => entry.osmWayIds.includes(wayId))
-    if (boundaryEnds.length === 1 && other === `S|${entry.norwegianGroup.id}` && usesListedWay) {
-      accepted.push({ link, entry })
-      continue
-    }
-    ledger.add({
-      reason: 'interconnector-terminal-mismatch',
-      elementIds: [entry.id, ...chainPieces(link.chain).map(piece => piece.featureId), ...wayIds],
-      voltageKv: link.kv,
-      stationId: entry.norwegianGroup.id,
-      detail: boundaryEnds.length > 1
-        ? 'corridor joins two foreign ends'
-        : !usesListedWay
-          ? `corridor reaching the foreign end uses none of the listed ways (from ${isFreeNode(other) ? `node ${freeNodeKey(other)}` : other.slice(2)})`
-          : `corridor reaching the foreign end starts at ${isFreeNode(other) ? `node ${freeNodeKey(other)}` : other.slice(2)}, not at ${entry.norwegianGroup.id}`,
-    })
-  }
-  for (const entry of interconnectors.ac) {
-    if (reachedEntries.has(entry.id)) continue
-    ledger.add({ reason: 'interconnector-unmatched', elementIds: [entry.id, ...entry.osmWayIds], voltageKv: entry.normalisedKv, location: entry.foreignEnd.location, detail: `no ${entry.normalisedKv} kV way ends within ${entry.foreignEnd.radiusKm} km of the listed foreign end` })
-  }
+  const levels = buildLevels({ acLines: classified.acLines, inheritedKv, routes: classified.routes, terminals, index, groups, options }, ledger)
+  const acTies = resolveAcTies(levels, interconnectors, terminals.coordinateOf, ledger)
+  for (const stub of acTies.unclaimed) ledgerDanglingCorridor(stub, { terminals, index, groups, options }, ledger)
+  const accepted: Array<{ link: LevelLink; entry: PreparedInterconnector | null }> = [
+    ...levels.links.map(link => ({ link, entry: null })),
+    ...acTies.ties.map(tie => ({ link: tie.link, entry: tie.entry })),
+  ]
+  const foreignEnds = new Map<string, LonLat>(acTies.ties.map(tie => [tie.entry.id, tie.foreignEnd]))
 
   const levelsOfGroup = new Map<string, Set<number>>()
   const junctions = new Map<string, { key: string; kv: number; names: Set<string> }>()
@@ -180,6 +153,7 @@ export const compileGridTopology = (
   for (const link of hvdc.links) {
     const entry = interconnectors.byId.get(link.id)!
     noteBoundary(hvdcBoundaryBusId(entry.externalArea), entry, entry.normalisedKv)
+    foreignEnds.set(entry.id, hvdc.foreignEnds.get(entry.id)!)
   }
   const boundaries: TopologyBoundary[] = []
   for (const [busId, boundary] of [...boundaryMap].sort(([left], [right]) => compareText(left, right))) {
@@ -194,7 +168,7 @@ export const compileGridTopology = (
       stationRoles: [],
       vertexKey: null,
       nominalKv: boundary.kv,
-      location: entries[0]!.foreignEnd.location,
+      location: foreignEnds.get(entries[0]!.id)!,
       externalArea: boundary.area,
       provenance: { sources: [interconnectorTable.sourceId], method: 'curated', confidence: 'high', note: `foreign end of ${entries.map(entry => entry.id).join(', ')}` },
     })
@@ -225,7 +199,7 @@ export const compileGridTopology = (
       ledger.add({ reason: 'traction-station-fed', elementIds: group.members.map(member => member.station.featureId), location: group.location, stationId: group.id, detail: `railway converter fed at ${[...levelsOfGroup.get(group.id)!].join('/')} kV 50 Hz` })
     }
     const inScope = [...group.taggedVoltagesKv].filter(kv => kv >= options.minimumKv)
-    if (inScope.length === 0 || usedGroups.has(group.id) || interconnectors.foreignGroupEntry.has(group.id)) continue
+    if (inScope.length === 0 || usedGroups.has(group.id)) continue
     ledger.add({
       reason: 'station-without-corridor',
       elementIds: group.members.map(member => member.station.featureId),

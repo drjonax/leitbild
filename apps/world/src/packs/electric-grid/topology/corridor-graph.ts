@@ -27,7 +27,6 @@ export type KeyOccurrence = {
 
 export type NodeRef =
   | { readonly kind: 'station'; readonly groupId: string }
-  | { readonly kind: 'boundary'; readonly interconnectorId: string }
   | { readonly kind: 'free' }
 
 export type CorridorLink = { readonly id: number; readonly a: string; readonly b: string; readonly chain: Chain }
@@ -55,8 +54,7 @@ export type LevelGraphInput = {
   readonly pieceInsideStation: (line: TopologyLineInput, from: number, to: number, groupId: string) => boolean
 }
 
-const nodeIdOf = (key: string, ref: NodeRef): string =>
-  ref.kind === 'station' ? `S|${ref.groupId}` : ref.kind === 'boundary' ? `B|${ref.interconnectorId}` : `F|${key}`
+const nodeIdOf = (key: string, ref: NodeRef): string => ref.kind === 'station' ? `S|${ref.groupId}` : `F|${key}`
 
 export const isFreeNode = (nodeId: string): boolean => nodeId.startsWith('F|')
 export const freeNodeKey = (nodeId: string): string => nodeId.slice(2)

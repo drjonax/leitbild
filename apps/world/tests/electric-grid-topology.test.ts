@@ -93,7 +93,7 @@ describe('electric-grid topology compiler', () => {
       dcVoltagesKv: [450],
       osmWayIds: ['way/402'],
     })
-    expect(branchBetween(result, 'bus:osm-way-31@420', 'bus:boundary-SE3@420')).toMatchObject({ interconnectorId: 'interconnector:test-tie', toBusId: 'bus:boundary-SE3@420' })
+    expect(branchBetween(result, 'bus:osm-way-31@420', 'bus:boundary-SE3@420')).toMatchObject({ interconnectorId: 'ac:test-tie', toBusId: 'bus:boundary-SE3@420' })
     expect(result.boundaries.map(boundary => [boundary.busId, boundary.kind, boundary.externalArea])).toEqual([
       ['bus:boundary-NL', 'hvdc', 'NL'],
       ['bus:boundary-SE3@420', 'ac', 'SE3'],
@@ -102,10 +102,19 @@ describe('electric-grid topology compiler', () => {
   })
 
   test('rejects an interconnector whose corridor starts at another station', () => {
-    const wrong = { ...table, interconnectors: table.interconnectors.map(entry => entry.id === 'interconnector:test-tie' ? { ...entry, norwegianStationId: 'way/23' } : entry) }
+    const wrong = { ...table, interconnectors: table.interconnectors.map(entry => entry.id === 'ac:test-tie' ? { ...entry, norwegianStationId: 'way/23' } : entry) }
     const topology = compileNode(wrong)
-    expect(topology.branches.some(branch => branch.interconnectorId === 'interconnector:test-tie')).toBe(false)
-    expect(ledgerOf(topology, 'interconnector-terminal-mismatch').map(entry => entry.elementIds[0])).toEqual(['interconnector:test-tie'])
+    expect(topology.branches.some(branch => branch.interconnectorId === 'ac:test-tie')).toBe(false)
+    expect(ledgerOf(topology, 'interconnector-terminal-mismatch').map(entry => entry.elementIds[0])).toEqual(['ac:test-tie'])
+  })
+
+  test('rejects an HVDC link whose listed ways are not all in the source', () => {
+    // A missing cable would let a gap inside Norway pass for the foreign landfall.
+    const incomplete = { ...table, interconnectors: table.interconnectors.map(entry => entry.id === 'hvdc:test-link' ? { ...entry, osmWayIds: ['way/402', 'way/999'] } : entry) }
+    const topology = compileNode(incomplete)
+    expect(topology.hvdcLinks).toEqual([])
+    expect(ledgerOf(topology, 'interconnector-way-missing').map(entry => entry.elementIds)).toEqual([['hvdc:test-link', 'way/999']])
+    expect(ledgerOf(topology, 'hvdc-unmatched').map(entry => entry.elementIds)).toEqual([['way/402']])
   })
 
   test('excludes 16.7 Hz railway traction circuits', () => {

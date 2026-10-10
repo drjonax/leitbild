@@ -84,18 +84,17 @@ export type TopologyInput = {
   readonly adapterLedger: ReadonlyArray<TopologyLedgerEntry>
 }
 
-// One cross-border link. The compiler resolves it from source geometry and verifies it against
-// this table: the link's ways, its Norwegian station, and the place where the mapped route leaves
-// the Norwegian network (border crossing, landfall, or a foreign station inside the extract).
+// One cross-border link. The compiler finds it in the source geometry through its listed ways and
+// verifies it: the mapped route must start at the listed Norwegian station and leave the extract
+// (a free way end abroad or at a landfall), never end at another station.
 export type TopologyInterconnector = {
-  readonly id: string                                // hvdc:<slug> for HVDC, interconnector:<slug> for AC
+  readonly id: string                                // ac:<slug> or hvdc:<slug>
   readonly label: string
   readonly kind: 'ac' | 'hvdc'
   readonly externalArea: ExternalArea
   readonly voltageKv: number                         // AC level, or the highest DC pole voltage
   readonly norwegianStationId: string                // station feature id (AC terminal or HVDC converter)
   readonly osmWayIds: ReadonlyArray<string>
-  readonly foreignEnd: { readonly location: LonLat; readonly radiusKm: number }
   readonly sources: ReadonlyArray<string>
 }
 
