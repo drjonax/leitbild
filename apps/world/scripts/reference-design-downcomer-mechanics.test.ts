@@ -60,5 +60,5 @@ describe('offline authored downcomer mechanical selection', () => {
       expect(Math.abs(coarse.samples.at(-1)!.ul - fine.samples.at(-1)!.ul)).toBeLessThan(.0001);
       expect(Math.abs(coarse.samples.at(-1)!.uv - fine.samples.at(-1)!.uv)).toBeLessThan(.001);
     }
-  }, 20_000); // Refined pulse trajectories; the runtime's long-trajectory watchdog, not a cost gate.
+  });
 });
