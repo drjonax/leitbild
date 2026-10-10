@@ -19,7 +19,7 @@ mod structure;
 mod tolerance;
 
 pub use account::{Tolerances, empty_energy_ratio};
-pub use jacobian::{CscOut, DensePattern};
+pub use jacobian::{CscOut, DensePattern, SparseJacobian};
 pub use properties::{Properties, Reuse, Water};
 pub use tolerance::ToleranceClasses;
 

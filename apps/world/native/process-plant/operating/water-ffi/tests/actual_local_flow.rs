@@ -284,3 +284,59 @@ fn structural_pattern_contains_sampled_dense_jacobians() {
         json!({"kind":"structural-pattern-containment","packet":path,"unknowns":n,"structural_nonzeros":nnz,"dense_entries_checked":checked,"largest_sampled_dense_nonzeros":largest_dense,"states":states.len()})
     );
 }
+
+#[test]
+#[ignore = "requires actual compiled owner packet and maintained IF97"]
+fn colored_jacobian_equals_dense_jacobian_bitwise() {
+    use leitbild_operating_plant::{network::CscOut, sparse::compare_with_dense};
+    let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
+    let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let (mut network, prepared) = Network::new(&packet, If97).unwrap();
+    network
+        .select_leading_receipts(&prepared.y, &prepared.yp)
+        .unwrap();
+    let structure = network.sparse_jacobian().unwrap();
+    let n = prepared.y.len();
+    let mut mixed = prepared.y.clone();
+    for (j, l) in network.face_layout.iter().enumerate() {
+        let liquid = packet.mechanics.faces[l.face]
+            .supports
+            .iter()
+            .all(|s| network.cell_layout[s.region].phase == 0);
+        if l.phase == 0 && liquid && j % 3 != 0 {
+            mixed[l.index] = if j % 2 == 0 { 0.02 } else { -0.013 };
+        }
+    }
+    let mut reports = Vec::new();
+    for y in [&prepared.y, &mixed] {
+        let (mut dense, mut rows, mut pointers) =
+            (vec![0.; n * n], vec![0i64; n * n], vec![0i64; n + 1]);
+        network
+            .jacobian_dense(
+                0.,
+                2.1,
+                y,
+                &prepared.yp,
+                CscOut {
+                    data: &mut dense,
+                    rows: &mut rows,
+                    pointers: &mut pointers,
+                },
+            )
+            .unwrap();
+        let before = network.counters;
+        let mut values = vec![0.; structure.pattern.nonzeros()];
+        let started = std::time::Instant::now();
+        network
+            .jacobian_colored(0., 2.1, y, &prepared.yp, &structure, &mut values)
+            .unwrap();
+        let colored_wall = started.elapsed().as_secs_f64();
+        let comparison = compare_with_dense(&structure.pattern, &values, &dense).unwrap();
+        assert!(comparison.is_bitwise_exact(), "{comparison:?}");
+        reports.push(json!({"colors":structure.coloring.count(),"structural_nonzeros":structure.pattern.nonzeros(),"colored_wall_s":colored_wall,"evaluations":network.counters.evaluations-before.evaluations}));
+    }
+    println!(
+        "{}",
+        json!({"kind":"colored-jacobian-bitwise-gate","packet":path,"unknowns":n,"states":reports})
+    );
+}

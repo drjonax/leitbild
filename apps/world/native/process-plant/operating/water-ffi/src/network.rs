@@ -67,12 +67,14 @@ impl Properties for If97 {
 }
 
 #[cfg(feature = "ida")]
-pub use integrated::Integrated;
+pub use integrated::{Assembly, Integrated};
 
 #[cfg(feature = "ida")]
 mod integrated {
     use crate::ida::{Failure, System};
-    use leitbild_operating_plant::network::{self, CscOut, DensePattern, Network, Properties};
+    use leitbild_operating_plant::network::{
+        self, CscOut, DensePattern, Network, Properties, SparseJacobian,
+    };
 
     fn failure(f: network::Failure) -> Failure {
         match f {
@@ -81,16 +83,55 @@ mod integrated {
         }
     }
 
+    /// Stage-Jacobian assembly selected for one integration.
+    pub enum Assembly {
+        /// Complete n*n structure; only for equivalence checks.
+        Dense,
+        /// Compiled structural pattern with one evaluation per color.
+        Colored {
+            structure: SparseJacobian,
+            rows: Vec<i64>,
+            pointers: Vec<i64>,
+        },
+    }
+
     /// The network as one stock-IDA system; no solver logic lives here.
     pub struct Integrated<P: Properties> {
         pub network: Network<P>,
+        assembly: Assembly,
+    }
+    impl<P: Properties> Integrated<P> {
+        pub fn dense(network: Network<P>) -> Self {
+            Self {
+                network,
+                assembly: Assembly::Dense,
+            }
+        }
+        pub fn colored(network: Network<P>) -> Result<Self, String> {
+            let structure = network.sparse_jacobian().map_err(|e| format!("{e:?}"))?;
+            let (pointers, rows) = structure.pattern.to_i64()?;
+            Ok(Self {
+                network,
+                assembly: Assembly::Colored {
+                    structure,
+                    rows,
+                    pointers,
+                },
+            })
+        }
+        pub fn assembly(&self) -> &Assembly {
+            &self.assembly
+        }
     }
     impl<P: Properties> System for Integrated<P> {
         fn dimension(&self) -> usize {
             self.network.dimension()
         }
         fn nonzeros(&self) -> usize {
-            DensePattern::nonzeros(self.network.dimension())
+            match &self.assembly {
+                Assembly::Dense => DensePattern::nonzeros(self.network.dimension()),
+                Assembly::Colored { structure, .. } => structure.pattern.nonzeros(),
+            }
         }
         fn residual(
             &mut self,
@@ -117,19 +158,33 @@ mod integrated {
             rows: &mut [i64],
             pointers: &mut [i64],
         ) -> Result<(), Failure> {
-            self.network
-                .jacobian_dense(
-                    time,
-                    cj,
-                    y,
-                    yp,
-                    CscOut {
-                        data,
-                        rows,
-                        pointers,
-                    },
-                )
-                .map_err(failure)
+            match &self.assembly {
+                Assembly::Dense => self
+                    .network
+                    .jacobian_dense(
+                        time,
+                        cj,
+                        y,
+                        yp,
+                        CscOut {
+                            data,
+                            rows,
+                            pointers,
+                        },
+                    )
+                    .map_err(failure),
+                Assembly::Colored {
+                    structure,
+                    rows: compiled_rows,
+                    pointers: compiled_pointers,
+                } => {
+                    rows.copy_from_slice(compiled_rows);
+                    pointers.copy_from_slice(compiled_pointers);
+                    self.network
+                        .jacobian_colored(time, cj, y, yp, structure, data)
+                        .map_err(failure)
+                }
+            }
         }
     }
 }
