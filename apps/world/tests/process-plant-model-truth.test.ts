@@ -272,6 +272,9 @@ describe('auxiliary feedwater on a loss of offsite power', () => {
     expect(firstTrue['AFW-PUMP-A-RUNNING']!).toBeLessThanOrEqual(25)
     expect(firstTrue['AFW-PUMP-T-RUNNING']!).toBeLessThanOrEqual(firstTrue['AFW-PUMP-A-RUNNING']!)
     expect(plantRun.activeIds()).toContain('trip:loss-of-offsite-power-afw-actuation:afw-actuation')
+    // The main feedwater pumps stop with their unit buses, which is no main feedwater pump trip: it would start the
+    // motor-driven pumps with the block of loads, ahead of their sequencer step.
+    expect(plantRun.activeIds()).not.toContain('trip:main-feedwater-pumps-tripped-afw-start:afw-start')
     // Lined up wide open, the pumps rated like a 4-loop PWR's feed each steam generator about its share of the design flow.
     for (const loop of ['a', 'b', 'c', 'd']) {
       const flow = Number(plantRun.read(`aux-feedwater-valve-${loop}-to-sg-${loop}.flowKgPerS`))

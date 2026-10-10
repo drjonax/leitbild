@@ -73,9 +73,17 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
     // The standard technical specifications' modes 1 and 2: below them the
     // main feedwater pumps may be shut down without a heat sink at stake.
     modes: ['powerOperation', 'startup'],
+    // Pumps stopped with a unit bus still live were tripped. With both unit
+    // buses dead it is a loss of offsite power: the safety buses are dead too
+    // until the diesels pick them up, and each motor-driven pump starts on its
+    // diesel's load sequencer, not with the block of loads that come back.
     condition: all([
       comparison({ tagId: 'MFW-PUMP-A-RUNNING' }, '==', false),
       comparison({ tagId: 'MFW-PUMP-B-RUNNING' }, '==', false),
+      any([
+        comparison({ tagId: 'UNIT-BUS-A-ENERGIZED' }, '==', true),
+        comparison({ tagId: 'UNIT-BUS-B-ENERGIZED' }, '==', true),
+      ]),
     ]),
     effects: [
       trip({
