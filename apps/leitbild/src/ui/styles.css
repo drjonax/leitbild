@@ -278,6 +278,8 @@ button:disabled { opacity: .55; cursor: wait; }
   background: #fff7f6;
   box-shadow: 0 12px 36px rgba(0,0,0,.16);
 }
+.workspace-error { display: flex; gap: .75rem; align-items: flex-start; }
+.workspace-error button { flex: none; margin: -.25rem -.4rem 0 auto; padding: 0 .35rem; border: 0; background: none; color: inherit; font-size: 1.1rem; line-height: 1.4; cursor: pointer; }
 
 .inspection-dialog {
   width: min(980px, calc(100vw - 2rem));

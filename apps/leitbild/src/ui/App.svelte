@@ -625,7 +625,7 @@
       </section>
     {/if}
 
-    {#if error && showingComposer}<p class="workspace-error">{error}</p>{/if}
+    {#if error && showingComposer}<p class="workspace-error" role="alert">{error}<button type="button" aria-label="Dismiss" onclick={() => { error = null }}>×</button></p>{/if}
     <dialog class="inspection-dialog" bind:this={inspectionDialog}>
       <header>
         <div><p class="eyebrow">{inspectionSubject?.kind === 'definition' ? 'Reusable definition' : 'Live resource'}</p><h2>{inspectionView?.title ?? inspectionSubject?.descriptor.title ?? 'Inspect'}</h2>{#if inspectionView?.description}<p>{inspectionView.description}</p>{/if}</div>
