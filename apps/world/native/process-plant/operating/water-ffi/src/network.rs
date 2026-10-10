@@ -1,0 +1,135 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#actual-local-pressure-pilot-and-step-work-blocker
+//! Maintained-IF97 implementation of the composed network's property
+//! boundary, and the narrow adapter that hands the network to stock IDA.
+use crate::{Branch, CaloricLinearization, If97, WaterPoint, point};
+use leitbild_operating_plant::{
+    network::{Properties, Water},
+    thermal::{Saturation, Scalar, WaterProperties},
+};
+
+fn branch(vapor: bool) -> Branch {
+    if vapor { Branch::Vapor } else { Branch::Liquid }
+}
+fn water(q: WaterPoint) -> Water {
+    Water {
+        pressure_pa: q.pressure_pa,
+        temperature_k: q.temperature_k,
+        density_kg_m3: q.density_kg_m3,
+        internal_energy_j_kg: q.internal_energy_j_kg,
+        enthalpy_j_kg: q.enthalpy_j_kg,
+        cp_j_kg_k: q.cp_j_kg_k,
+        expansion_per_k: q.expansion_per_k,
+        compressibility_per_pa: q.compressibility_per_pa,
+        viscosity_pa_s: q.viscosity_pa_s,
+        conductivity_w_m_k: q.conductivity_w_m_k,
+    }
+}
+
+impl Properties for If97 {
+    type Caloric = CaloricLinearization;
+    fn forward(&self, vapor: bool, pressure_pa: f64, temperature_k: f64) -> Result<Water, String> {
+        point(branch(vapor), pressure_pa, temperature_k)
+            .map(water)
+            .map_err(|e| e.to_string())
+    }
+    fn caloric(
+        &self,
+        vapor: bool,
+        pressure_pa: f64,
+        target: f64,
+        enthalpy: bool,
+    ) -> Result<CaloricLinearization, String> {
+        if enthalpy {
+            CaloricLinearization::enthalpy(branch(vapor), pressure_pa, target)
+        } else {
+            CaloricLinearization::internal_energy(branch(vapor), pressure_pa, target)
+        }
+        .map_err(|e| e.to_string())
+    }
+    fn values(&self, point: &CaloricLinearization) -> Water {
+        water(point.point())
+    }
+    fn direction(
+        &self,
+        point: &CaloricLinearization,
+        dp: f64,
+        dtarget: f64,
+    ) -> Result<Water, String> {
+        point
+            .directional(dp, dtarget)
+            .map(water)
+            .map_err(|e| e.to_string())
+    }
+    fn saturation(&self, pressure: Scalar) -> Result<Saturation, String> {
+        WaterProperties::saturation(self, pressure).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(feature = "ida")]
+pub use integrated::Integrated;
+
+#[cfg(feature = "ida")]
+mod integrated {
+    use crate::ida::{Failure, System};
+    use leitbild_operating_plant::network::{self, CscOut, DensePattern, Network, Properties};
+
+    fn failure(f: network::Failure) -> Failure {
+        match f {
+            network::Failure::Recoverable(reason) => Failure::Recoverable(reason),
+            network::Failure::Fatal(reason) => Failure::Fatal(reason),
+        }
+    }
+
+    /// The network as one stock-IDA system; no solver logic lives here.
+    pub struct Integrated<P: Properties> {
+        pub network: Network<P>,
+    }
+    impl<P: Properties> System for Integrated<P> {
+        fn dimension(&self) -> usize {
+            self.network.dimension()
+        }
+        fn nonzeros(&self) -> usize {
+            DensePattern::nonzeros(self.network.dimension())
+        }
+        fn residual(
+            &mut self,
+            time: f64,
+            y: &[f64],
+            yp: &[f64],
+            out: &mut [f64],
+        ) -> Result<(), Failure> {
+            self.network
+                .evaluate(time, y, yp, None, 0., None)
+                .map_err(failure)?;
+            for (r, v) in out.iter_mut().zip(self.network.rows()) {
+                *r = v.value;
+            }
+            Ok(())
+        }
+        fn jacobian(
+            &mut self,
+            time: f64,
+            cj: f64,
+            y: &[f64],
+            yp: &[f64],
+            data: &mut [f64],
+            rows: &mut [i64],
+            pointers: &mut [i64],
+        ) -> Result<(), Failure> {
+            self.network
+                .jacobian_dense(
+                    time,
+                    cj,
+                    y,
+                    yp,
+                    CscOut {
+                        data,
+                        rows,
+                        pointers,
+                    },
+                )
+                .map_err(failure)
+        }
+    }
+}
