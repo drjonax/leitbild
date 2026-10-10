@@ -21,6 +21,51 @@ void require(bool condition,const std::string& message) {
 }
 thread_local double max_forward_p=0,max_dense_endpoint_p_error=0;
 ${nativeIf97Source(true)}
+// Caloric-inverse state of the SAME forward point, for its brackets and iterates
+// only: rho, u, h, cp and alpha, the fields that inverse reads. Each function
+// mirrors its full counterpart above: the same checks in the same order and the
+// same member calls on the same arguments, without entropy, cv, sound speed,
+// compressibility, transport or the p-only saturation slope. Its values are
+// therefore bit-identical to ld01_water_point's. R3, R5 and dilute states, all
+// refused by this R1/R2 boundary, take the full path.
+template<class R> State gibbs_caloric(const R& r,int region,double T,double p) {
+ const double none=std::numeric_limits<double>::quiet_NaN(),rho=r.rhomass(T,p);
+ const State q{region,p,T,rho,r.umass(T,p),r.hmass(T,p),none,r.cpmass(T,p),
+  none,none,r.alpha(T,p),none,none,none};
+ const std::array<double,7> fields{{q.p,q.T,q.rho,q.u,q.h,q.cp,q.alpha}};
+ require(std::all_of(fields.begin(),fields.end(),[](double value){return std::isfinite(value);}),
+  "Nonfinite field in returned native tuple");
+ return q;
+}
+State point_caloric(double T,double p) {
+ if (!std::isfinite(T)||!std::isfinite(p)||p<=0||T<=0)
+  throw std::domain_error("Invalid finite positive PT input");
+ switch(IF97::RegionDetermination_TP(T,p)) {
+  case IF97::REGION_1: return gibbs_caloric(r1,1,T,p);
+  case IF97::REGION_2: return gibbs_caloric(r2,2,T,p);
+  case IF97::REGION_3: case IF97::REGION_5: return point(T,p);
+  default: throw std::domain_error("Ambiguous PT saturation pair needs explicit endpoint/inventory");
+ }
+}
+State vapor_caloric(double T,double pv) {
+ require(std::isfinite(pv)&&pv>0&&T>=IF97::Tmin&&T<=IF97::Text,"Invalid actual vapor PT");
+ if(T<=IF97::Tcrit) require(pv<=r4.p_T(T),"Supersaturated vapor is not this active branch");
+ if(pv<IF97::Pmin) return vapor(T,pv);
+ const auto q=point_caloric(T,pv);
+ require(q.region==2||q.region==3||q.region==5,"Actual gas queried a liquid branch");
+ return q;
+}
+State liquid_caloric(double T,double p) {
+ require(p>0&&p<IF97::Pcrit&&T<=r4.T_p(p),"Liquid left its stable subcritical branch");
+ const auto q=point_caloric(T,p);
+ require(q.region==1||q.region==3,"Actual liquid queried a gas branch"); return q;
+}
+State endpoint_caloric(double p,bool is_liquid) {
+ require(p>=IF97::Pmin&&p<IF97::Pcrit,"Unsupported saturation endpoint domain");
+ const double T=r4.T_p(p);
+ if(T<=IF97::T23min) return is_liquid?gibbs_caloric(r1,1,T,p):gibbs_caloric(r2,2,T,p);
+ return endpoint(p,is_liquid);
+}
 extern "C" {
 struct OperatingWaterPoint {
  int region;
@@ -44,6 +89,28 @@ int ld01_water_point(int branch,double p,double T,OperatingWaterPoint* out) noex
   const double slope=saturation_slope(p);
   require(std::isfinite(slope)&&slope>0,"Invalid saturation derivative");
   *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,q.cv,q.alpha,q.kappa,q.mu,q.conductivity,slope};
+  return 0;
+ }catch(const std::domain_error&){return 1;}
+ catch(const std::exception&){return 3;}
+ catch(...){return 3;}
+}
+// The same branches, checks and status codes as ld01_water_point. Fields it
+// does not evaluate (cv, kappa, mu, conductivity, saturation slope) are NaN.
+int ld01_water_caloric(int branch,double p,double T,OperatingWaterPoint* out) noexcept {
+ if(!out) return 2;
+ try {
+  require(std::isfinite(p)&&p>=1e5&&p<=16e6,"Operating water pressure domain");
+  State q;
+  switch(branch) {
+   case 0:q=T==r4.T_p(p)?endpoint_caloric(p,true):liquid_caloric(T,p);break;
+   case 1:q=T==r4.T_p(p)?endpoint_caloric(p,false):vapor_caloric(T,p);break;
+   case 2:q=endpoint_caloric(p,true);break;
+   case 3:q=endpoint_caloric(p,false);break;
+   default:return 2;
+  }
+  require(q.region==1||q.region==2,"Operating water admits R1/R2 only");
+  const double none=std::numeric_limits<double>::quiet_NaN();
+  *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,none,q.alpha,none,none,none,none};
   return 0;
  }catch(const std::domain_error&){return 1;}
  catch(const std::exception&){return 3;}

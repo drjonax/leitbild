@@ -52,6 +52,12 @@ unsafe extern "C" {
         temperature_k: f64,
         output: *mut WaterPoint,
     ) -> i32;
+    fn ld01_water_caloric(
+        branch: i32,
+        pressure_pa: f64,
+        temperature_k: f64,
+        output: *mut WaterPoint,
+    ) -> i32;
     fn ld01_water_direction(
         branch: i32,
         pressure_pa: f64,
@@ -83,6 +89,30 @@ pub fn point(branch: Branch, pressure_pa: f64, temperature_k: f64) -> Result<Wat
     // only the four supported ABI discriminants. No buffer or allocator crosses.
     let status =
         unsafe { ld01_water_point(branch as i32, pressure_pa, temperature_k, &mut output) };
+    match status {
+        0 => Ok(output),
+        1 => Err(Error::Domain),
+        2 => Err(Error::AbiArgument),
+        _ => Err(Error::NativeFailure),
+    }
+}
+
+/// The caloric-inverse state of the SAME forward point, for its brackets and
+/// iterates only: the same branch, domain and region checks and bit-identical
+/// rho/u/h/cp/alpha, the fields that inverse reads. Entropy, cv, sound speed,
+/// compressibility, transport and the p-only saturation slope are not
+/// evaluated; their fields are NaN. Never returned to a caller.
+fn caloric_state(
+    branch: Branch,
+    pressure_pa: f64,
+    temperature_k: f64,
+) -> Result<WaterPoint, Error> {
+    let mut output = WaterPoint::default();
+    // SAFETY: the same C-layout contract as `point`: a unique live stack
+    // allocation, completely written on success and retained nowhere; the
+    // native function catches every C++ exception.
+    let status =
+        unsafe { ld01_water_caloric(branch as i32, pressure_pa, temperature_k, &mut output) };
     match status {
         0 => Ok(output),
         1 => Err(Error::Domain),
@@ -216,25 +246,24 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
     }
     // These are the normative IF97 R1/R2 temperature bounds already selected
     // by this boundary. Pressure/domain admission remains in the native EOS.
-    let (mut low, mut high) = match branch {
-        Branch::Liquid => (
-            point(branch, p, 273.15)?,
-            point(Branch::SaturatedLiquid, p, 0.)?,
-        ),
-        Branch::Vapor => (
-            point(Branch::SaturatedVapor, p, 0.)?,
-            point(branch, p, 1073.15)?,
-        ),
+    let ((low_branch, low_t), (high_branch, high_t)) = match branch {
+        Branch::Liquid => ((branch, 273.15), (Branch::SaturatedLiquid, 0.)),
+        Branch::Vapor => ((Branch::SaturatedVapor, 0.), (branch, 1073.15)),
         _ => return Err(Error::AbiArgument),
     };
+    // Brackets and iterates read only the caloric state. The returned state is
+    // the complete forward point at the selected temperature, so the iteration
+    // path and every returned field are those of full-point queries.
+    let mut low = caloric_state(low_branch, p, low_t)?;
+    let mut high = caloric_state(high_branch, p, high_t)?;
     if target < kind.value(low) || target > kind.value(high) {
         return Err(Error::Domain);
     }
     if target == kind.value(low) {
-        return Ok(low);
+        return point(low_branch, p, low_t);
     }
     if target == kind.value(high) {
-        return Ok(high);
+        return point(high_branch, p, high_t);
     }
     let mut t = low.temperature_k
         + (high.temperature_k - low.temperature_k) * (target - kind.value(low))
@@ -243,7 +272,7 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
     // only a root-finding safeguard, never a replacement EOS value or state.
     // The bound is a numerical termination guard, not a simulation timestep.
     for _ in 0..64 {
-        let q = point(branch, p, t)?;
+        let q = caloric_state(branch, p, t)?;
         let defect = kind.value(q) - target;
         let (_, ut) = kind.partials(q);
         if !ut.is_finite() || ut <= 0. {
@@ -253,7 +282,7 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
         // An arbitrary EOS datum can make target U zero without making the
         // attainable numerical precision or the heat capacity zero.
         if defect.abs() <= 2e-12 * target.abs().max(ut * q.temperature_k).max(1.) {
-            return Ok(q);
+            return point(branch, p, t);
         }
         if defect < 0. {
             low = q;
