@@ -1,21 +1,36 @@
 import {expect,test} from 'bun:test'
 import {compileOperatingHydraulics,loadOperatingHydraulics,operatingCirculationCycles,operatingHydraulicFrame,
-  operatingMainInertance,operatingPumpParameters,parseOperatingHydraulics,type Section} from './reference-design-operating-hydraulics'
+  operatingMainInertance,operatingPumpParameters,parseOperatingHydraulics,parseRcpDrive,type Section} from './reference-design-operating-hydraulics'
 import {prepareOperatingFluid} from './reference-design-operating-fluid'
 
 // Test-only commissioning record. Actual source qualification reads the wiki.
 const record={referenceDensity_kg_m3:745.3288701999253,referenceMassflow_kg_s:4424.53961576215,
   referenceFluidPower_W:4188754.3780218355,referenceHead_Pa:600000,referenceRpm:1500,shapeFraction:.2,
-  dragFraction:.01,inertiaDecay_s:10,mixedDegradationDepth:.5},document='```reference-operating-hydraulics\n'+JSON.stringify(record)+'\n```'
+  dragFraction:.01,inertiaDecay_s:10,mixedDegradationDepth:.5},document='```reference-operating-hydraulics\n'+JSON.stringify(record)+'\n```',
+  driveRecord={driveTrackingTime_s:5,driveTorqueCapFactor:1.5,driveEfficiency:.96},
+  driveDocument='```reference-rcp-drive\n'+JSON.stringify(driveRecord)+'\n```',drive=parseRcpDrive(driveDocument)
 test('one-time reviewed pump calibration recovers pressure, fluid duty and finite rotor',()=>{
-  const p=operatingPumpParameters(parseOperatingHydraulics(document)),q=record.referenceMassflow_kg_s/record.referenceDensity_kg_m3,w=p.referenceOmega_rad_s,
+  const p=operatingPumpParameters(parseOperatingHydraulics(document),drive),q=record.referenceMassflow_kg_s/record.referenceDensity_kg_m3,w=p.referenceOmega_rad_s,
     dp=record.referenceDensity_kg_m3*w*(p.a*w-p.b*q)-p.resistance*record.referenceDensity_kg_m3*q*q,
     shaft=record.referenceDensity_kg_m3*q*w*(p.a*w-p.b*q)
   expect(dp).toBeCloseTo(record.referenceHead_Pa,8);expect(shaft).toBeCloseTo(record.referenceFluidPower_W,7)
   expect(p.rotorInertia_kg_m2).toBeCloseTo(1714.614588,5)
-  expect(()=>parseOperatingHydraulics(document.replace('600000','1e12'))&&operatingPumpParameters(parseOperatingHydraulics(document.replace('600000','1e12')))).toThrow('Incompatible')
+  expect(()=>parseOperatingHydraulics(document.replace('600000','1e12'))&&operatingPumpParameters(parseOperatingHydraulics(document.replace('600000','1e12')),drive)).toThrow('Incompatible')
   expect(()=>parseOperatingHydraulics(document.replace('745.3288701999253','0'))).toThrow()
   expect(()=>parseOperatingHydraulics(document+'\n'+document)).toThrow('exactly one')
+})
+
+test('drive record adds only its owned values; the consumer can derive drag power and inertia',()=>{
+  const p=operatingPumpParameters(parseOperatingHydraulics(document),drive),w=p.referenceOmega_rad_s,dragPower=p.drag_Nm_per_rad_s*w*w
+  expect(Object.keys(p)).toEqual(['a','b','resistance','mixed_degradation_depth','rotorInertia_kg_m2','drag_Nm_per_rad_s',
+    'referenceOmega_rad_s','nominalFluidPower_W','driveTrackingTime_s','driveTorqueCapFactor','driveEfficiency'])
+  expect(p.nominalFluidPower_W).toBe(record.referenceFluidPower_W)
+  expect(dragPower).toBeCloseTo(.01*p.nominalFluidPower_W,8)
+  expect(p.rotorInertia_kg_m2).toBeCloseTo((p.nominalFluidPower_W+dragPower)*10/w**2,10)
+  expect([p.driveTrackingTime_s,p.driveTorqueCapFactor,p.driveEfficiency]).toEqual([5,1.5,.96])
+  for(const bad of [{...driveRecord,driveEfficiency:1.2},{...driveRecord,driveTorqueCapFactor:.9},{...driveRecord,driveTrackingTime_s:0},{...driveRecord,extra:1}])
+    expect(()=>parseRcpDrive('```reference-rcp-drive\n'+JSON.stringify(bad)+'\n```')).toThrow()
+  expect(()=>parseRcpDrive(driveDocument+'\n'+driveDocument)).toThrow('exactly one')
 })
 
 // Explicit structural fixture, not production plant data or a hydraulic solve.
@@ -72,6 +87,9 @@ test.skipIf(!wiki||!if97)('actual19 circulation supports,29 covered contacts, ow
   expect(h.mainInertanceSupports.find(s=>s.section==='PUMP.A1')!.mainWeights).toEqual([.5,0])
   expect(h.mainInertanceSupports.find(s=>s.section==='CORE.NE.1')!.mainWeights).toEqual([.25,.25])
   expect(h.sections.filter(s=>s.parameters.pump)).toHaveLength(4)
+  expect([h.pump.nominalFluidPower_W,h.pump.driveTrackingTime_s,h.pump.driveTorqueCapFactor,h.pump.driveEfficiency]).toEqual([4188754.3780218355,5,1.5,.96])
+  expect(h.pump.rotorInertia_kg_m2).toBeCloseTo((h.pump.nominalFluidPower_W+h.pump.drag_Nm_per_rad_s*h.pump.referenceOmega_rad_s**2)*10/h.pump.referenceOmega_rad_s**2,10)
+  expect(h.pumpSources.driveEfficiency.page).toBe('systems/primary-coolant/pumps-and-support.md')
   expect(h.sections.filter(s=>s.parameters.wall==='rod').every(s=>s.parameters.grid_count===4)).toBe(true)
   expect(h.sections.find(s=>s.id==='DOWN')!.parameters.wall).toBe('annular_churchill')
   expect(h.sections.find(s=>s.id==='DOWN')!.parameters.form_loss).toBe(1)
