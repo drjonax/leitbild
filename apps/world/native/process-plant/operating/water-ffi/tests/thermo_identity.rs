@@ -1,10 +1,13 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#one-maintained-water-implementation
 //! The caloric inverse brackets and iterates on the caloric state (rho, u, h,
 //! cp, alpha) of the maintained forward point and evaluates ONE full point at
-//! the selected temperature. That is a cost change only. The earlier
-//! full-point iteration is restated here, on the public forward `point`, solely
-//! as the comparison oracle: every recovered tuple, refusal and caloric
-//! direction must agree bit for bit.
+//! the selected temperature. The earlier full-point iteration over the stable
+//! branch is restated here, on the public forward `point`, solely as the
+//! comparison oracle: every tuple and caloric direction it recovers must agree
+//! bit for bit. States it refuses may since be admitted (bounded metastable
+//! admission, the liquid pressure ceiling); they are counted, and every outcome
+//! can be dumped (`LD01_IDENTITY_DUMP`) to compare separately built archives
+//! and implementations input by input.
 use leitbild_operating_plant::{
     network::{Network, Properties, RotorState, Water, packet::Packet},
     rotor::{Shaft, SpeedRequest, Support},
@@ -167,28 +170,53 @@ struct Ledger {
     recovered: usize,
     directions: usize,
     forward: usize,
+    /// Oracle-refused targets the production inverse now recovers.
+    admitted: usize,
     digest: u64,
     forward_digest: u64,
+    /// (status tag, FNV-1a of the tuple bits) per outcome, in input order.
+    records: Vec<[u64; 2]>,
+    /// (branch, kind or direction, pressure bits) per record, for attribution.
+    inputs: Vec<[u64; 3]>,
 }
 fn mix(digest: &mut u64, word: u64) {
     for byte in word.to_le_bytes() {
         *digest = (*digest ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
     }
 }
+/// Error kinds by name, so that archives with and without later kinds compare.
+fn tag(outcome: &Result<WaterPoint, Error>) -> u64 {
+    match outcome {
+        Ok(_) => 0,
+        Err(e) => match format!("{e:?}").as_str() {
+            "Domain" => 1,
+            "AbiArgument" => 2,
+            "NativeFailure" => 3,
+            _ => 4,
+        },
+    }
+}
 fn absorb(digest: &mut u64, outcome: Result<WaterPoint, Error>) {
     match outcome {
         Ok(q) => bits(q).into_iter().for_each(|w| mix(digest, w)),
-        Err(e) => mix(
-            digest,
-            0xEEEE_0000
-                + match e {
-                    Error::Domain => 1,
-                    Error::AbiArgument => 2,
-                    Error::NativeFailure => 3,
-                },
-        ),
+        Err(_) => mix(digest, 0xEEEE_0000 + tag(&outcome)),
     }
 }
+fn record(ledger: &mut Ledger, outcome: Result<WaterPoint, Error>) {
+    let mut hash = 0xcbf2_9ce4_8422_2325;
+    absorb(&mut hash, outcome);
+    ledger.records.push([tag(&outcome), hash]);
+}
+fn input(ledger: &mut Ledger, branch: Branch, what: u64, p: f64, count: usize) {
+    for k in 0..count as u64 {
+        ledger
+            .inputs
+            .push([branch as u64, what * 16 + k, p.to_bits()]);
+    }
+}
+/// Placeholder for a direction of a target that was not recovered, so that
+/// every input contributes the same number of records in every build.
+const ABSENT: [u64; 2] = [9, 0];
 
 /// splitmix64 mapped to [0, 1): deterministic, platform-independent inputs.
 fn unit(state: &mut u64) -> f64 {
@@ -277,15 +305,27 @@ fn check(ledger: &mut Ledger, branch: Branch, kind: Kind, p: f64, target: f64) {
     let recovered = kind.recover(branch, p, target);
     let actual = recovered.map(CaloricLinearization::point);
     let expected = full_point_inverse(branch, p, target, kind);
-    assert!(
-        same(actual, expected),
-        "{branch:?} {kind:?} p={p:e} target={target:e}: {actual:?} versus {expected:?}"
-    );
     ledger.inverses += 1;
-    absorb(&mut ledger.digest, actual);
-    let (Ok(recovered), Ok(expected)) = (recovered, expected) else {
+    input(ledger, branch, kind as u64, p, 1 + DIRECTIONS.len());
+    record(ledger, actual);
+    let Ok(expected) = expected else {
+        // Refused by the earlier stable-branch inverse: may since be admitted.
+        if let Ok(recovered) = recovered {
+            ledger.admitted += 1;
+            for (dp, de) in DIRECTIONS {
+                record(ledger, recovered.directional(dp, de));
+            }
+        } else {
+            ledger.records.extend([ABSENT; DIRECTIONS.len()]);
+        }
         return;
     };
+    assert!(
+        same(actual, Ok(expected)),
+        "{branch:?} {kind:?} p={p:e} target={target:e}: {actual:?} versus {expected:?}"
+    );
+    absorb(&mut ledger.digest, actual);
+    let recovered = recovered.unwrap();
     ledger.recovered += 1;
     for (dp, de) in DIRECTIONS {
         let actual = recovered.directional(dp, de);
@@ -296,6 +336,7 @@ fn check(ledger: &mut Ledger, branch: Branch, kind: Kind, p: f64, target: f64) {
         );
         ledger.directions += 1;
         absorb(&mut ledger.digest, actual);
+        record(ledger, actual);
     }
 }
 
@@ -306,8 +347,11 @@ fn caloric_state_iteration_recovers_the_full_point_iteration_bit_for_bit() {
         recovered: 0,
         directions: 0,
         forward: 0,
+        admitted: 0,
         digest: 0xcbf2_9ce4_8422_2325,
         forward_digest: 0xcbf2_9ce4_8422_2325,
+        records: Vec::new(),
+        inputs: Vec::new(),
     };
     let mut state = 0x5EED_0002;
     let grid = pressures();
@@ -320,8 +364,8 @@ fn caloric_state_iteration_recovers_the_full_point_iteration_bit_for_bit() {
             }
         }
     }
-    // Refusals keep their kind: non-finite targets, pressures outside the
-    // admitted 0.1-16 MPa domain, and the saturated branches' ABI argument.
+    // Refusals: non-finite targets, pressures outside the stable 0.1-16 MPa
+    // domain, and the saturated branches' ABI argument.
     for kind in [Kind::Internal, Kind::Enthalpy] {
         for branch in [
             Branch::Liquid,
@@ -374,13 +418,26 @@ fn caloric_state_iteration_recovers_the_full_point_iteration_bit_for_bit() {
             Branch::SaturatedLiquid,
             Branch::SaturatedVapor,
         ] {
+            // The digest covers the stable side of saturation and the
+            // endpoints, which no admission change may alter.
+            let stable_side = |t: f64| match branch {
+                Branch::Liquid => t <= saturation,
+                Branch::Vapor => t >= saturation,
+                _ => true,
+            };
             for &t in &temperatures {
-                absorb(&mut ledger.forward_digest, point(branch, p, t));
-                absorb(
-                    &mut ledger.forward_digest,
+                let stable = stable_side(t);
+                for outcome in [
+                    point(branch, p, t),
                     directional(branch, p, t, 1e4, 0.5).map(|(_, d)| d),
-                );
-                ledger.forward += 2;
+                ] {
+                    if stable {
+                        absorb(&mut ledger.forward_digest, outcome);
+                    }
+                    record(&mut ledger, outcome);
+                    input(&mut ledger, branch, 9, p, 1);
+                    ledger.forward += 1;
+                }
             }
         }
     }
@@ -393,23 +450,63 @@ fn caloric_state_iteration_recovers_the_full_point_iteration_bit_for_bit() {
             "recovered": ledger.recovered,
             "refused": ledger.inverses - ledger.recovered,
             "directions": ledger.directions,
+            "oracle_refused_now_admitted": ledger.admitted,
             "inverse_digest": format!("{:016x}", ledger.digest),
             "forward_calls": ledger.forward,
-            "forward_digest": format!("{:016x}", ledger.forward_digest),
+            "forward_stable_side_digest": format!("{:016x}", ledger.forward_digest),
+            "records": ledger.records.len(),
         })
     );
+    if let Ok(path) = std::env::var("LD01_IDENTITY_DUMP") {
+        let bytes: Vec<u8> = ledger
+            .records
+            .iter()
+            .flatten()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        std::fs::write(&path, bytes).unwrap();
+        let inputs: Vec<u8> = ledger
+            .inputs
+            .iter()
+            .flatten()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        std::fs::write(format!("{path}.inputs"), inputs).unwrap();
+    }
     assert!(ledger.inverses > 50_000 && ledger.recovered > 40_000);
 }
 
-/// Interleaved best of three: every round times each candidate once, so a
-/// changing load on a shared machine affects all candidates alike.
+#[repr(C)]
+struct Timespec {
+    seconds: i64,
+    nanoseconds: i64,
+}
+unsafe extern "C" {
+    fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
+}
+/// CLOCK_THREAD_CPUTIME_ID (macOS 16, Linux 3).
+const THREAD_CPU_CLOCK: i32 = if cfg!(target_os = "macos") { 16 } else { 3 };
+fn thread_cpu_s() -> f64 {
+    let mut t = Timespec {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+    // SAFETY: one live stack Timespec matching the C layout; the C library
+    // writes it and keeps no pointer.
+    let status = unsafe { clock_gettime(THREAD_CPU_CLOCK, &mut t) };
+    assert_eq!(status, 0, "thread CPU clock unavailable");
+    t.seconds as f64 + t.nanoseconds as f64 * 1e-9
+}
+
+/// Interleaved best of three in thread CPU time: every round times each
+/// candidate once, so a changing load affects all candidates alike.
 fn interleaved_best<const N: usize>(runs: &mut [&mut dyn FnMut(); N]) -> [f64; N] {
     let mut best = [f64::INFINITY; N];
     for _ in 0..3 {
         for (b, run) in best.iter_mut().zip(runs.iter_mut()) {
-            let started = Instant::now();
+            let started = thread_cpu_s();
             run();
-            *b = b.min(started.elapsed().as_secs_f64());
+            *b = b.min(thread_cpu_s() - started);
         }
     }
     best
@@ -462,9 +559,28 @@ fn caloric_inverse_cost() {
             },
         ])
         .map(|seconds| 1e6 * seconds / cases.len() as f64);
+        // Band states 1 K past saturation at 10.5-16 MPa, timed only by a
+        // build that admits them.
+        let band: Vec<(f64, f64)> = (0..16)
+            .filter_map(|i| {
+                let p = 10.5e6 + 0.35e6 * f64::from(i);
+                let ts = point(Branch::SaturatedLiquid, p, 0.).ok()?.temperature_k;
+                let t = if name == "liquid" { ts + 1. } else { ts - 1. };
+                Some((p, point(branch, p, t).ok()?.internal_energy_j_kg))
+            })
+            .collect();
+        let metastable = (band.len() == 16).then(|| {
+            let [seconds] = interleaved_best(&mut [&mut || {
+                for &(p, u) in &band {
+                    black_box(point_pu(branch, black_box(p), black_box(u)).unwrap());
+                }
+            }]);
+            1e6 * seconds / band.len() as f64
+        });
         reports.push(json!({
             "branch": name,
             "calls": cases.len(),
+            "metastable_point_pu_us": metastable,
             "point_pu_us": pu,
             "point_ph_us": ph,
             "full_point_iteration_pu_us": pu_full,
@@ -474,7 +590,7 @@ fn caloric_inverse_cost() {
     }
     println!(
         "{}",
-        json!({"kind": "caloric-inverse-cost", "best_of": 3, "interleaved": true, "branches": reports})
+        json!({"kind": "caloric-inverse-cost", "clock": "thread CPU", "best_of": 3, "interleaved": true, "branches": reports})
     );
 }
 

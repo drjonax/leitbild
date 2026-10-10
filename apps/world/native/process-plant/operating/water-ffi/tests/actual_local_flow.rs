@@ -162,7 +162,7 @@ fn exact_current_property_reuse_matches_uncached_and_invalidates_every_key() {
             }
         }
     }
-    assert!(inverse(&If97, s(17e6), s(1e6), 0, false, Some((&mut reuse, 0))).is_err());
+    assert!(inverse(&If97, s(17.5e6), s(1e6), 0, false, Some((&mut reuse, 0))).is_err());
     assert!(reuse.caloric_key(0, 0).is_none());
     let q = point(Branch::Liquid, 15e6, 600.).unwrap();
     inverse(

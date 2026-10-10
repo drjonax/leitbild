@@ -175,14 +175,22 @@ fn pu_does_not_flash_clamp_or_query_an_undefined_phase() {
     let l = point(Branch::SaturatedLiquid, p, 0.).unwrap();
     let g = point(Branch::SaturatedVapor, p, 0.).unwrap();
     let gap = 0.5 * (l.internal_energy_j_kg + g.internal_energy_j_kg);
-    assert_eq!(point_pu(Branch::Liquid, p, gap).unwrap_err(), Error::Domain);
-    assert_eq!(point_pu(Branch::Vapor, p, gap).unwrap_err(), Error::Domain);
+    // Between the saturated energies lies no state of either branch: the gap
+    // is beyond both bounded metastable trial bands, never a flash.
+    assert_eq!(
+        point_pu(Branch::Liquid, p, gap).unwrap_err(),
+        Error::TrialBand
+    );
+    assert_eq!(
+        point_pu(Branch::Vapor, p, gap).unwrap_err(),
+        Error::TrialBand
+    );
     assert_eq!(
         point_pu(Branch::Liquid, p, f64::NAN).unwrap_err(),
         Error::Domain
     );
     assert_eq!(
-        point_pu(Branch::Liquid, 17e6, l.internal_energy_j_kg).unwrap_err(),
+        point_pu(Branch::Liquid, 17.5e6, l.internal_energy_j_kg).unwrap_err(),
         Error::Domain
     );
     assert_eq!(

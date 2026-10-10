@@ -129,7 +129,7 @@ attest an independently substituted binary.
 From the app root, then the package directory respectively:
 
 ```sh
-bun apps/world/scripts/reference-design-operating-water.ts /path/to/pinned-IF97 /path/to/water-artifact
+bun apps/world/scripts/reference-design-operating-water.ts /path/to/pinned-IF97 /path/to/Leitbild-wiki /path/to/water-artifact
 ```
 
 ```sh
