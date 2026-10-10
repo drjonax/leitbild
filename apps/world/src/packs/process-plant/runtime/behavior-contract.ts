@@ -68,6 +68,8 @@ export interface ComponentBehaviorDefinition {
 export interface ComponentInitialReconciliationDefinition {
   readonly id: string
   readonly componentKind: string
+  /** Runs once the links' initial flows and pressures are solved, for values derived from them. */
+  readonly afterLinks?: boolean
   readonly reads: ReadonlyArray<string>
   readonly writes: ReadonlyArray<string>
   readonly reconcile: (input: {

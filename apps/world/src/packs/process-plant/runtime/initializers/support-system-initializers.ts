@@ -43,7 +43,8 @@ export const supportSystemInitialValueDefinitions: ReadonlyArray<ComponentInitia
       }
       if (localPath === 'pressureMPa') return pressure
       if (localPath === 'temperatureC') return temperatureC
-      if (localPath === 'humidityFraction') return optionalParameterNumber(component, 'initialHumidityFraction', 0.35)
+      // As the containment behavior reads it: steam's share of the atmosphere.
+      if (localPath === 'humidityFraction') return steamMass / (airMass + steamMass)
       if (localPath === 'incomingMassKgPerS') return 0
       if (localPath === 'sprayFlowKgPerS') return 0
       if (localPath === 'releaseFlowKgPerS') return 0

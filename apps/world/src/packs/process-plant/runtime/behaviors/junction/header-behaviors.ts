@@ -1,5 +1,5 @@
 import type { CompiledProcessLink } from '../../../graph/index.ts'
-import { componentVariablePath, processLinkVariablePath, type ComponentBehaviorDefinition } from '../../behavior-contract.ts'
+import { componentVariablePath, processLinkVariablePath, type ComponentBehaviorDefinition, type ComponentInitialReconciliationDefinition } from '../../behavior-contract.ts'
 import {
   firstFluidService,
   fluidLinksForService,
@@ -88,6 +88,17 @@ const headerDiagnosticsBehavior = (componentKind: 'processHeader' | 'steamHeader
   writes: ['inventoryKg', 'inletFlowKgPerS', 'outletFlowKgPerS', 'flowBalanceResidualKgPerS', 'mixedTemperatureC', 'mixedPressureMPa', 'pressureNodeMPa', 'unmetDemandKgPerS'],
   update: updateHeaderDiagnostics,
 })
+
+// With no time elapsed the header keeps its mixed state and inventory and
+// takes its flows from the solved links.
+export const headerInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = (['processHeader', 'steamHeader'] as const).map(componentKind => ({
+  id: `${componentKind}-initial-mixing-diagnostics`,
+  componentKind,
+  afterLinks: true,
+  reads: headerDiagnosticsBehavior(componentKind).reads,
+  writes: headerDiagnosticsBehavior(componentKind).writes,
+  reconcile: updateHeaderDiagnostics,
+}))
 
 export const headerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   headerDiagnosticsBehavior('processHeader'),

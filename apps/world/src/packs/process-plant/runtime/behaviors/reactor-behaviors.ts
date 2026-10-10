@@ -557,4 +557,14 @@ export const reactorInitialReconciliationDefinitions: ReadonlyArray<ComponentIni
         ))
     },
   },
+  {
+    id: 'reactor-vessel-initial-boundary-flows',
+    componentKind: 'reactorVessel',
+    afterLinks: true,
+    reads: ['charging:flowKgPerS', 'primaryInjection:flowKgPerS', 'safetyInjection:flowKgPerS', 'letdown:flowKgPerS', 'primaryRelief:flowKgPerS', 'primaryCoolant:leakFlowKgPerS', 'steamGenerator.primaryToSecondaryLeakKgPerS'],
+    writes: ['chargingFlowKgPerS', 'safetyInjectionFlowKgPerS', 'letdownFlowKgPerS', 'reliefOutflowKgPerS', 'primaryLeakFlowKgPerS', 'tubeLeakFlowKgPerS', 'netInventoryFlowKgPerS'],
+    reconcile: ({ system, component, context }): void => {
+      writePrimaryBoundaryFlows(component, context, primaryBoundaryFlows(system, component, context))
+    },
+  },
 ]

@@ -1,5 +1,5 @@
 import type { CompiledComponent, CompiledProcessLink, VariablePath } from '../../../graph/index.ts'
-import { componentVariablePath, processLinkVariablePath, type ComponentBehaviorDefinition } from '../../behavior-contract.ts'
+import { componentVariablePath, processLinkVariablePath, type ComponentBehaviorDefinition, type ComponentInitialReconciliationDefinition } from '../../behavior-contract.ts'
 import {
   firstFluidService,
   fluidLinksForService,
@@ -228,6 +228,20 @@ const valveDiagnosticsBehavior = (componentKind: 'processValve' | 'steamValve'):
   writes: ['inletFlowKgPerS', 'outletFlowKgPerS', 'flowBalanceResidualKgPerS', 'availablePressureDropMPa', 'capacityLimitedFlowKgPerS', 'reverseFlowKgPerS', 'leakageFlowKgPerS'],
   update: updateValveFlowDiagnostics,
 })
+
+const valveDiagnosticsReconciliation = (componentKind: 'processValve' | 'steamValve'): ComponentInitialReconciliationDefinition => ({
+  id: `${componentKind}-initial-flow-diagnostics`,
+  componentKind,
+  afterLinks: true,
+  reads: valveDiagnosticsBehavior(componentKind).reads,
+  writes: valveDiagnosticsBehavior(componentKind).writes,
+  reconcile: updateValveFlowDiagnostics,
+})
+
+export const valveInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
+  valveDiagnosticsReconciliation('processValve'),
+  valveDiagnosticsReconciliation('steamValve'),
+]
 
 export const valveBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   valvePositionControllerBehavior('processValve'),

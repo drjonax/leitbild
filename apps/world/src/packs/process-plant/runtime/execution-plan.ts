@@ -213,21 +213,25 @@ export const runProcessPlantInitialReconciliation = (config: {
   readonly plan: ProcessPlantExecutionPlan
 }): void => {
   const context = createReusableBehaviorContext(config.table)
-  for (const invocation of config.plan.initialReconciliationInvocations) {
-    const component = config.system.graph.components[invocation.componentIndex]
-    if (!component) throw new Error(`process plant initial reconciliation references missing component index: ${invocation.componentIndex}`)
-    context.configure({
-      behaviorId: invocation.behavior.id,
-      phase: 'solveFluidFlowComponents',
-      dtSeconds: 0,
-      writablePaths: invocation.writablePaths,
-    })
-    invocation.behavior.reconcile({
-      system: config.system,
-      component,
-      context,
-    })
+  const reconcile = (afterLinks: boolean): void => {
+    for (const invocation of config.plan.initialReconciliationInvocations) {
+      if ((invocation.behavior.afterLinks ?? false) !== afterLinks) continue
+      const component = config.system.graph.components[invocation.componentIndex]
+      if (!component) throw new Error(`process plant initial reconciliation references missing component index: ${invocation.componentIndex}`)
+      context.configure({
+        behaviorId: invocation.behavior.id,
+        phase: 'solveFluidFlowComponents',
+        dtSeconds: 0,
+        writablePaths: invocation.writablePaths,
+      })
+      invocation.behavior.reconcile({
+        system: config.system,
+        component,
+        context,
+      })
+    }
   }
+  reconcile(false)
   runProcessPlantExecutionPhase({
     system: config.system,
     plan: config.plan,
@@ -242,6 +246,8 @@ export const runProcessPlantInitialReconciliation = (config: {
     phase: 'updateProcessLinkState',
     dtSeconds: 0,
   })
+  // Values derived from link flows and pressures read true before the first step.
+  reconcile(true)
 }
 
 export const runProcessPlantExecutionPhase = (config: {
