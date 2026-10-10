@@ -392,7 +392,9 @@ const SETTINGS: Settings = Settings {
     eos_row_bound: 1e-12,
     tree_face_bound_pa: 1e-6,
     representation_search: 4,
+    pzr_phase_margin_k: MARGIN_K,
 };
+const MARGIN_K: f64 = 1.;
 
 fn prepared(level: f64) -> (Network<Analytic>, Prepared, Receipt) {
     prepare(&packet(), Analytic, &point(level), &[RUNNING], &SETTINGS)
@@ -457,9 +459,15 @@ fn at_rest(packet: &Packet, receipt: &Receipt) -> Vec<f64> {
         }
     }
     for r in &receipt.regions {
-        for p in r.phases.iter().flatten() {
+        for (k, p) in r.phases.iter().enumerate() {
+            let Some(p) = p else { continue };
             if r.region > SURGE {
-                assert!(p.saturation_margin_k.unwrap().abs() <= 1e-9);
+                // Declared margin from LOCAL saturation: subcooled liquid,
+                // superheated vapor; never on the stable-branch bound.
+                let expected = if k == 0 { -MARGIN_K } else { MARGIN_K };
+                assert!((p.saturation_distance_k.unwrap() - expected).abs() <= 1e-9);
+            } else {
+                assert_eq!(p.saturation_distance_k, None);
             }
         }
         let volume: f64 = r.phases.iter().flatten().map(|p| p.volume_m3).sum();
@@ -617,13 +625,18 @@ fn a_level_inside_a_vapor_band_makes_that_band_two_phase() {
         for p in [liquid, vapor] {
             assert!((p.volume_m3 - v / 2.).abs() <= 1e-14 * v);
         }
-        // Saturated phases at the band's own pressure.
+        // Phases at the declared margin from the band's own saturation; they
+        // share the band pressure, not a temperature.
         let t = saturation_temperature(r.pressure_pa);
         assert!(
-            (liquid.mass_kg - v / 2. * liquid_density(r.pressure_pa, t)).abs()
+            (liquid.mass_kg - v / 2. * liquid_density(r.pressure_pa, t - MARGIN_K)).abs()
                 <= 1e-12 * liquid.mass_kg
         );
-        assert!((vapor.mass_kg - v / 2. * r.pressure_pa / (R * t)).abs() <= 1e-12 * vapor.mass_kg);
+        assert!(
+            (vapor.mass_kg - v / 2. * r.pressure_pa / (R * (t + MARGIN_K))).abs()
+                <= 1e-12 * vapor.mass_kg
+        );
+        assert!((vapor.temperature_k - liquid.temperature_k - 2. * MARGIN_K).abs() <= 1e-9);
         // Liquid tracer at the concentration of the liquid band below.
         let below = &receipt.regions[node - 2];
         let c = below.tracer_kg_eq / phase(&receipt, node - 2, 0).mass_kg;
@@ -655,7 +668,7 @@ fn a_level_inside_a_vapor_band_makes_that_band_two_phase() {
 }
 
 #[test]
-fn the_network_reconstructs_the_prepared_saturated_states_exactly() {
+fn the_network_reconstructs_the_prepared_pzr_states_exactly() {
     for level in [6., 7.] {
         let (network, prepared, receipt) = prepared(level);
         assert!(receipt.representation_offset <= SETTINGS.representation_search);
@@ -676,11 +689,15 @@ fn the_network_reconstructs_the_prepared_saturated_states_exactly() {
                 };
                 assert_eq!((m, u), (phase.mass_kg, phase.internal_energy_j));
                 if node > SURGE {
-                    // Exactly the saturated specific energy at the network's
-                    // own pressure: on the stable-branch bound, not across it.
+                    // Exactly the declared-margin specific energy at the
+                    // network's own pressure.
                     let t = saturation_temperature(p);
-                    let saturated = if k == 0 { liquid(p, t) } else { vapor(p, t) };
-                    assert_eq!((u / m).to_bits(), saturated.internal_energy_j_kg.to_bits());
+                    let declared = if k == 0 {
+                        liquid(p, t - MARGIN_K)
+                    } else {
+                        vapor(p, t + MARGIN_K)
+                    };
+                    assert_eq!((u / m).to_bits(), declared.internal_energy_j_kg.to_bits());
                 }
             }
         }
@@ -814,6 +831,16 @@ fn explicit_limits_and_inputs_are_enforced() {
         },
     );
     assert!(strict.contains("EOS rows are not at round-off"), "{strict}");
+    for margin in [0., -1., f64::NAN] {
+        let invalid = refused(
+            &point(6.),
+            &Settings {
+                pzr_phase_margin_k: margin,
+                ..SETTINGS
+            },
+        );
+        assert!(invalid.contains("invalid settings"), "{invalid}");
+    }
     let wide = refused(
         &point(6.),
         &Settings {
