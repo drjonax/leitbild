@@ -140,8 +140,7 @@ test('actual five-piece surge splits at8m with disjoint inertia, head, elbow and
     properties: '## Bounded metastable admission\n\n' + record('ld01-metastable-band', { pressureRange_Pa: [1e7, 1.6e7], lowerBoundExclusive: true,
       liquidSuperheatMax_K: 2, vaporSubcoolingMax_K: 1.4, trialMax_K: 3, creditedMax_K: .5, liquidTemperatureMax_K: 623.15,
       liquidPressureCeiling_Pa: 1.7e7, vaporPressureCeiling_Pa: 1.6e7 }),
-    observations: '## Primary pressure, inventory and heat transport\n\nSelect the PZR PT1/PT2/PT3 direct pressure interfaces at the top fluid boundary, +18.5 m on the current plant datum.\n',
-    measurements: '### PZR electronic differential level\n\nTwo isolated flush interfaces sample static pressures at bottom +6.5 m and top +18.5 m.\n' },
+    measurements: '### PZR electronic differential level\n\n' + record('ld01-pzr-taps', { pt1Elevation_m: 18.5, ltLowElevation_m: 6.5, ltHighElevation_m: 18.5 }) + '\n' },
   { id: 'HOT.A', volume_m3: 15, mainFlowArea_m2: Math.PI / 4, elevation_m: 2.5 })
   const h = compileOperatingSurgeHydraulics(pzr), A = Math.PI * .3 ** 2 / 4
   expect(h.halves.map(p => p.length_m)).toEqual([8, 8])

@@ -56,29 +56,20 @@ export function ownedBlock(text:string,heading:string,fence:string):unknown{
   if(all.length!==1||owned.length!==1)throw Error(`Expected one ${fence} block, under ${heading}`)
   return JSON.parse(owned[0]![1]!)
 }
-/** One owner statement under its heading; a reworded or repeated statement refuses. */
-function statement(text:string,heading:string,pattern:RegExp){
-  const found=[...ownedText(text,heading).matchAll(pattern)]
-  if(found.length!==1)throw Error(`Expected one tap statement under ${heading}`)
-  return found[0]!.slice(1).map(Number)
-}
+const tapsSchema=z.object({pt1Elevation_m:z.number().finite(),ltLowElevation_m:z.number().finite(),ltHighElevation_m:z.number().finite()}).strict()
 export const pzrOwners={
   stratified:{page:'systems/primary-coolant/pressurizer-thermal-state.md',heading:'Stratified PZR cell',fence:'ld01-pzr-stratified'},
   metastable:{page:'model/operating-phase-properties.md',heading:'Bounded metastable admission',fence:'ld01-metastable-band'},
-  pressureTap:{page:'systems/instrumentation/operational-observations.md',heading:'Primary pressure, inventory and heat transport'},
-  levelTaps:{page:'systems/instrumentation/phase-dependent-measurements.md',heading:'PZR electronic differential level'},
+  taps:{page:'systems/instrumentation/phase-dependent-measurements.md',heading:'PZR electronic differential level',fence:'ld01-pzr-taps'},
 } as const
-/** PT1 roof tap and the two LT pressure interfaces, from the instrumentation owners. */
-export function parsePzrTaps(observations:string,measurements:string){
-  const [roof]=statement(observations,pzrOwners.pressureTap.heading,
-      /Select the PZR PT1\/PT2\/PT3 direct pressure interfaces at the top fluid boundary, \+([0-9]+(?:\.[0-9]+)?) m on the current plant datum/g),
-    [low,high]=statement(measurements,pzrOwners.levelTaps.heading,
-      /Two isolated flush interfaces sample [^.]*?at bottom \+([0-9]+(?:\.[0-9]+)?) m and top \+([0-9]+(?:\.[0-9]+)?) m/g)
-  return [{id:'PT1',elevation_m:roof!},{id:'LT.LOW',elevation_m:low!},{id:'LT.HIGH',elevation_m:high!}]
+/** PT1 roof tap and the two LT pressure interfaces, from the instrumentation owner's block. */
+export function parsePzrTaps(measurements:string){
+  const t=tapsSchema.parse(ownedBlock(measurements,pzrOwners.taps.heading,pzrOwners.taps.fence))
+  return [{id:'PT1',elevation_m:t.pt1Elevation_m},{id:'LT.LOW',elevation_m:t.ltLowElevation_m},{id:'LT.HIGH',elevation_m:t.ltHighElevation_m}]
 }
 
 export type HotEnvelope={id:string,volume_m3:number,mainFlowArea_m2:number,elevation_m:number}
-export type PzrSources={selection:string,surge:string,properties:string,observations:string,measurements:string}
+export type PzrSources={selection:string,surge:string,properties:string,measurements:string}
 export function compileOperatingPzr(d:PzrSources,hot:HotEnvelope){
   const b=parseOperatingPzr(d.selection),hardware=heaterBankBasis,bank=heaterBankGeometry(hardware.vesselHeight_m),
     stratified=stratifiedSchema.parse(ownedBlock(d.selection,pzrOwners.stratified.heading,pzrOwners.stratified.fence)),
@@ -101,7 +92,7 @@ export function compileOperatingPzr(d:PzrSources,hot:HotEnvelope){
     if(last&&last.area_m2===band.area_m2)last.to_m=band.to_m;else pieces.push({...band});return pieces},[])
   const fluidVolume=freeArea.reduce((v,p)=>v+(p.to_m-p.from_m)*p.area_m2,0)
   if(Math.abs(fluidVolume+bank.totalSolid_m3-hardware.vesselArea_m2*hardware.vesselHeight_m)>1e-12)throw Error('PZR displaced volume mismatch')
-  const taps=parsePzrTaps(d.observations,d.measurements)
+  const taps=parsePzrTaps(d.measurements)
   if(taps.some(t=>!Number.isFinite(t.elevation_m)||t.elevation_m<bottom||t.elevation_m>top))throw Error('A PZR tap lies outside the cell')
   const area=route.area_m2,
     mouth={id:'PZR.SURGE.MOUTH',area_m2:area,elevation_m:bottom,normal:[0,0,1] as [number,number,number],
@@ -136,9 +127,9 @@ export function compileOperatingPzr(d:PzrSources,hot:HotEnvelope){
 
 export async function prepareOperatingPzr(wikiRoot:string,hot:HotEnvelope){
   const base=join(wikiRoot,'world/packs/process-plant/reference-designs/ld-01'),
-    paths=[pzrOwners.stratified.page,'systems/primary-coolant/surge-route.md',pzrOwners.metastable.page,pzrOwners.pressureTap.page,pzrOwners.levelTaps.page],
+    paths=[pzrOwners.stratified.page,'systems/primary-coolant/surge-route.md',pzrOwners.metastable.page,pzrOwners.taps.page],
     docs=await Promise.all(paths.map(p=>Bun.file(join(base,p)).text())),
-    g=compileOperatingPzr({selection:docs[0]!,surge:docs[1]!,properties:docs[2]!,observations:docs[3]!,measurements:docs[4]!},hot),
+    g=compileOperatingPzr({selection:docs[0]!,surge:docs[1]!,properties:docs[2]!,measurements:docs[3]!},hot),
     hash=(s:string)=>createHash('sha256').update(s).digest('hex')
   return {...g,provenance:{sourceSha256:hash(await Bun.file(import.meta.path).text()),consumed:paths.map((name,i)=>({name,sha256:hash(docs[i]!)})),
     geometryHelperSha256:hash(await Bun.file(new URL('./reference-design-pressurizer-heater-banks.ts',import.meta.url)).text()),

@@ -22,8 +22,7 @@ function pzrSources(): PzrSources {
       +'\n\n## Stratified PZR cell\n\n### Parameters\n\n'+fence('ld01-pzr-stratified',stratified)+'\n\n## Other\n\nText.\n',
     surge:fence('reference-surge-route',route),
     properties:'# Properties\n\n## Bounded metastable admission\n\n'+fence('ld01-metastable-band',metastable)+'\n',
-    observations:'## Primary pressure, inventory and heat transport\n\nSelect the PZR PT1/PT2/PT3 direct pressure interfaces at the top fluid boundary, +18.5 m on the current plant datum (12 m above the PZR bottom).\n',
-    measurements:'### PZR electronic differential level\n\nTwo isolated flush interfaces sample actual static pressures at bottom +6.5 m and top +18.5 m, with the vessel-side limit used at the wall.\n'}
+    measurements:'### PZR electronic differential level\n\n'+fence('ld01-pzr-taps',{pt1Elevation_m:18.5,ltLowElevation_m:6.5,ltHighElevation_m:18.5})+'\n\n### Other\n'}
 }
 
 test('one stratified PZR cell from the band data: free area, volume, ports, taps, heaters and strict selections',()=>{
@@ -58,12 +57,13 @@ test('missing, misplaced, repeated or malformed owner selections refuse instead 
   expect(()=>compileOperatingPzr(edit('selection',',"bubbleDiameter_m":0.004',''),hot)).toThrow()
   expect(()=>compileOperatingPzr(edit('properties','"creditedMax_K":0.5','"creditedMax_K":1.5'),hot)).toThrow('credited')
   expect(()=>compileOperatingPzr(edit('properties','## Bounded metastable admission','## Elsewhere'),hot)).toThrow()
-  expect(()=>compileOperatingPzr(edit('measurements','at bottom +6.5 m','at the bottom'),hot)).toThrow('tap statement')
-  expect(()=>compileOperatingPzr(edit('observations','+18.5 m','+19.5 m'),hot)).toThrow('outside the cell')
+  expect(()=>compileOperatingPzr(edit('measurements','"ltLowElevation_m":6.5,',''),hot)).toThrow()
+  expect(()=>compileOperatingPzr(edit('measurements','### PZR electronic differential level','### Elsewhere'),hot)).toThrow()
+  expect(()=>compileOperatingPzr(edit('measurements','"pt1Elevation_m":18.5','"pt1Elevation_m":19.5'),hot)).toThrow('outside the cell')
   expect(()=>compileOperatingPzr(edit('surge','6.5','7.5'),hot)).toThrow('datum')
   expect(()=>compileOperatingPzr(d,{...hot,elevation_m:3})).toThrow('envelope')
   expect(ownedBlock(d.selection,'Stratified PZR cell','ld01-pzr-stratified')).toEqual(stratified)
-  expect(parsePzrTaps(d.observations,d.measurements).map(t=>t.id)).toEqual(['PT1','LT.LOW','LT.HIGH'])
+  expect(parsePzrTaps(d.measurements).map(t=>t.id)).toEqual(['PT1','LT.LOW','LT.HIGH'])
 })
 
 const wiki=process.env.LD01_WIKI_ROOT,if97=process.env.LD01_IF97_DIRECTORY
@@ -73,5 +73,5 @@ test.skipIf(!wiki||!if97)('actual owner pages compile one stratified PZR cell wi
   expect(p.cell.fluidVolume_m3).toBeCloseTo(59.74867258771282,12)
   expect(p.cell.freeArea).toHaveLength(3);expect(p.cell.taps.map(t=>t.id)).toEqual(['PT1','LT.LOW','LT.HIGH'])
   expect([p.cell.absorberMassFraction,p.cell.interfacialLength_m]).toEqual([.001,.003])
-  expect(p.provenance.consumed).toHaveLength(5)
+  expect(p.provenance.consumed).toHaveLength(4)
 },15000)
