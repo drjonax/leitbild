@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { compileGridTopology } from '../src/packs/electric-grid/topology/compile.ts'
+import { adaptCoordinateSidecar } from '../src/packs/electric-grid/topology/coordinate-sidecar.ts'
 import type { TopologyInterconnectorTable } from '../src/packs/electric-grid/topology/input.ts'
 import { adaptNodeSidecar } from '../src/packs/electric-grid/topology/node-sidecar.ts'
 import type { TopologyBranch, TopologyResult } from '../src/packs/electric-grid/topology/result.ts'
@@ -135,6 +136,19 @@ describe('electric-grid topology compiler', () => {
     const again = compileGridTopology(adaptNodeSidecar(shuffled, 'osm:fixture').input, table)
     expect(JSON.stringify(again)).toBe(JSON.stringify(result))
     expect(JSON.stringify(compileNode())).toBe(JSON.stringify(result))
+  })
+
+  test('reads the coordinate-keyed legacy sidecar into the same network', () => {
+    const legacy = compileGridTopology(adaptCoordinateSidecar(fixture('coordinate-sidecar.geojson'), 'osm:fixture-legacy').input, table)
+    const shape = (topology: TopologyResult, skip: ReadonlySet<string>) => topology.branches
+      .filter(branch => !branch.osmWayIds.some(wayId => skip.has(wayId)))
+      .map(branch => `${[branch.fromBusId, branch.toBusId].map(id => id.replace(/junction-[^@]+/, 'junction')).sort().join(' ')} ${branch.osmWayIds.join(',')}`)
+      .sort()
+    // The legacy build dropped voltage-less ways and route relations.
+    const differ = new Set(['way/201', 'way/306'])
+    expect(shape(legacy, differ)).toEqual(shape(result, differ))
+    expect(legacy.buses.some(bus => bus.id === 'bus:junction-coordinate-10.1500000_60.0000000@420')).toBe(true)
+    expect(ledgerOf(legacy, 'corridor-dangling').map(entry => entry.elementIds.filter(id => id.startsWith('way/')))).toEqual([['way/201'], ['way/203']])
   })
 
   test('refuses a node sidecar whose tags disagree with its parsed fields', () => {
