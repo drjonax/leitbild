@@ -5,6 +5,7 @@ import {
   answerDeckKey,
   buildDisplayDeck,
   deckEntryPlant,
+  mountedDeckEntries,
   newDisplayAnnouncement,
   observeListingsForShown,
   openingAcknowledgement,
@@ -177,14 +178,39 @@ describe('new displays', () => {
 })
 
 describe('mounted frames', () => {
+  const entries = Object.fromEntries(['a', 'b', 'c', 'd', 'e'].map(key => [key, buildDisplayDeck({ simulationRunId: runId, plants: [], listings: [listing(key)], shown: null })[0]!]))
+
   test('keep their mount order and drop the least recently shown beyond four', () => {
-    let frames = touchMountedFrames([], 'a', 1)
-    frames = touchMountedFrames(frames, 'b', 2)
-    frames = touchMountedFrames(frames, 'c', 3)
-    frames = touchMountedFrames(frames, 'd', 4)
-    frames = touchMountedFrames(frames, 'a', 5)
-    expect(frames.map(frame => frame.key)).toEqual(['a', 'b', 'c', 'd'])
-    frames = touchMountedFrames(frames, 'e', 6)
-    expect(frames.map(frame => frame.key)).toEqual(['a', 'c', 'd', 'e'])
+    let frames = touchMountedFrames([], entries.a!, 1)
+    frames = touchMountedFrames(frames, entries.b!, 2)
+    frames = touchMountedFrames(frames, entries.c!, 3)
+    frames = touchMountedFrames(frames, entries.d!, 4)
+    frames = touchMountedFrames(frames, entries.a!, 5)
+    expect(frames.map(frame => frame.key)).toEqual(['answer:a', 'answer:b', 'answer:c', 'answer:d'])
+    frames = touchMountedFrames(frames, entries.e!, 6)
+    expect(frames.map(frame => frame.key)).toEqual(['answer:a', 'answer:c', 'answer:d', 'answer:e'])
+  })
+
+  test('outlive their displays leaving the list for a moment, without being stepped to', () => {
+    const listings = [listing('one'), listing('two')]
+    let deck = buildDisplayDeck({ simulationRunId: runId, plants, listings, shown: null })
+    let frames = touchMountedFrames([], deck[2]!, 1)
+    frames = touchMountedFrames(frames, deck[3]!, 2)
+    frames = touchMountedFrames(frames, deck[0]!, 3)
+    const shown = shownDeckEntry(deck, deck[0]!, listings)
+
+    // The chat page reloads: the Host lists nothing until its list arrives again.
+    deck = buildDisplayDeck({ simulationRunId: runId, plants, listings: [], shown })
+    expect(keys(deck)).toEqual([overviewDeckKey(runId, 'unit-a'), overviewDeckKey(runId, 'unit-b')])
+    expect(keys(mountedDeckEntries(frames, deck))).toEqual([answerDeckKey('one'), answerDeckKey('two'), overviewDeckKey(runId, 'unit-a')])
+    expect(steppedDeckEntry(deck, deck[1]!.key, 'next')).toBeNull()
+    expect(steppedDeckEntry(deck, deck[1]!.key, 'last')?.key).toBe(overviewDeckKey(runId, 'unit-b'))
+
+    // The list is back: the frames show the deck's own entries again.
+    const back = [listing('one'), listing('two')]
+    deck = buildDisplayDeck({ simulationRunId: runId, plants, listings: back, shown })
+    const mounted = mountedDeckEntries(frames, deck)
+    expect(mounted[0]).toBe(deck[2]!)
+    expect(mounted[0]).toMatchObject({ source: 'answer', listing: back[0] })
   })
 })

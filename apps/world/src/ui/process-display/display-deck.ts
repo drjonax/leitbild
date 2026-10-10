@@ -236,22 +236,29 @@ export const newDisplayAnnouncement = (unseen: ReadonlyArray<EmbeddedViewListing
   return newest === undefined ? '' : `New display from ${newest.caption}: ${newest.envelope.title}`
 }
 
-/** A mounted frame, in the order frames were mounted so none moves (moving an iframe reloads it). */
+/**
+ * A mounted frame, in the order frames were mounted so none moves (moving an
+ * iframe reloads it). It keeps the entry it was last shown as, so its frame
+ * outlives the entry leaving the deck: the Host empties the conversation's
+ * list whenever the chat page loads, and the list returns a moment later.
+ */
 export interface MountedDeckFrame {
   readonly key: string
+  readonly entry: DeckEntry
   readonly lastShown: number
 }
 
 /** Shows an entry: it is mounted (or stays mounted) and the least recently shown beyond the limit goes. */
 export const touchMountedFrames = (
   frames: ReadonlyArray<MountedDeckFrame>,
-  key: string,
+  entry: DeckEntry,
   shownAt: number,
   limit: number = DISPLAY_DECK_MOUNTED_LIMIT,
 ): ReadonlyArray<MountedDeckFrame> => {
+  const key = entry.key
   const touched = frames.some(frame => frame.key === key)
-    ? frames.map(frame => frame.key === key ? { key, lastShown: shownAt } : frame)
-    : [...frames, { key, lastShown: shownAt }]
+    ? frames.map(frame => frame.key === key ? { key, entry, lastShown: shownAt } : frame)
+    : [...frames, { key, entry, lastShown: shownAt }]
   if (touched.length <= limit) return touched
   const evicted = new Set(
     touched
@@ -262,6 +269,16 @@ export const touchMountedFrames = (
   )
   return touched.filter(frame => !evicted.has(frame.key))
 }
+
+/**
+ * The entries of the mounted frames, in mount order: the deck's own while the
+ * deck has it, else the entry the frame was last shown as. Such a frame stays
+ * mounted (hidden) but cannot be stepped to, since stepping walks the deck.
+ */
+export const mountedDeckEntries = (
+  frames: ReadonlyArray<MountedDeckFrame>,
+  deck: ReadonlyArray<DeckEntry>,
+): ReadonlyArray<DeckEntry> => frames.map(frame => deck.find(entry => entry.key === frame.key) ?? frame.entry)
 
 /** The Plant that Plant actions, procedures and the status dot act on for an entry, or why there is none. */
 export type DeckPlantTarget =

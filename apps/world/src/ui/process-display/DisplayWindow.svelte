@@ -35,6 +35,7 @@
     acknowledgeShown,
     buildDisplayDeck,
     deckEntryPlant,
+    mountedDeckEntries,
     newDisplayAnnouncement,
     observeListingsForShown,
     openingAcknowledgement,
@@ -250,10 +251,10 @@
     { id: 'plants', label: 'Plant displays', entries: deck.filter(entry => entry.source === 'overview') },
     { id: 'answers', label: 'From answers', entries: deck.filter(entry => entry.source === 'answer') },
   ].filter(group => group.entries.length > 0))
-  const mountedEntries = $derived(mountedFrames.flatMap(frame => {
-    const entry = deck.find(candidate => candidate.key === frame.key)
-    const envelope = entry === undefined ? null : envelopeFor(entry)
-    return entry === undefined || envelope === null ? [] : [{ entry, envelope }]
+  // A frame stays while its display briefly leaves the deck (the chat page reloading empties the list).
+  const mountedEntries = $derived(mountedDeckEntries(mountedFrames, deck).flatMap(entry => {
+    const envelope = envelopeFor(entry)
+    return envelope === null ? [] : [{ entry, envelope }]
   }))
 
   function envelopeFor(entry: DeckEntry): EmbeddedViewEnvelope | null {
@@ -404,7 +405,7 @@
     shown = nextShown
     mountedFrames = touchMountedFrames(
       mountedFrames.filter(frame => nextDeck.some(candidate => candidate.key === frame.key)),
-      entry.key,
+      entry,
       showSequence,
     )
     acknowledgement = acknowledgeShown(acknowledgement, listings, entry)
