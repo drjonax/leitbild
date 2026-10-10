@@ -4,10 +4,12 @@ import type { DisplayKind } from './display-zoom.ts'
 
 // The displays the one process display window steps through: the unit
 // overview of each Process Plant in the Run, in rail order, then the displays
-// the conversation's answers composed, oldest first. New answers append, so a
-// position never renumbers. The window never changes what it shows by itself:
-// the shown display stays (and says why) when it leaves the Run or the
-// conversation, and a new answer only raises "New".
+// the conversation's answers composed, oldest first. New answers append, but
+// positions do shift: the conversation lists only its 30 most recent displays,
+// so the oldest drops off the front, and the overviews are inserted ahead of
+// the answers as the Run's Plants load. The window never changes what it shows
+// by itself: the shown display stays (and says why) when it leaves the Run or
+// the conversation, and a new answer only raises "New".
 
 /** Mounted display frames: the shown one and the three most recently shown. */
 export const DISPLAY_DECK_MOUNTED_LIMIT = 4
