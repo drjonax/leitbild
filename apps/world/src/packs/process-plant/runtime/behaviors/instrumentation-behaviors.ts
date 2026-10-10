@@ -91,7 +91,17 @@ const writeDeltaTChannel = (system: CompiledProcessPlant, channel: CompiledCompo
 const balanceVessel = (system: CompiledProcessPlant, balance: CompiledComponent): CompiledComponent =>
   required(primarySystemReactorVessel(system), `RCS inventory balance ${balance.id} needs a reactor vessel`)
 
-const rcsInventoryReads = ['vessel.chargingFlowKgPerS', 'vessel.safetyInjectionFlowKgPerS', 'vessel.letdownFlowKgPerS', 'vessel.reliefOutflowKgPerS', 'vessel.primaryCoolantInventoryKg', 'leakRateKgPerS', 'balancedInventoryKg']
+// The reactor coolant system's water is the loops' and the pressurizer's: the
+// surge between them, and the steam the pressurizer holds over its water,
+// moves coolant inside the system and is no leak.
+const rcsInventoryKg = (system: CompiledProcessPlant, balance: CompiledComponent, context: Pick<ProcessPlantBehaviorContext, 'readNumber'>): number => {
+  const pressurizer = required(primarySystemPressurizer(system), `RCS inventory balance ${balance.id} needs a pressurizer`)
+  return context.readNumber(componentVariablePath(balanceVessel(system, balance), 'primaryCoolantInventoryKg'))
+    + context.readNumber(componentVariablePath(pressurizer, 'waterInventoryKg'))
+    + context.readNumber(componentVariablePath(pressurizer, 'steamMassKg'))
+}
+
+const rcsInventoryReads = ['vessel.chargingFlowKgPerS', 'vessel.safetyInjectionFlowKgPerS', 'vessel.letdownFlowKgPerS', 'vessel.reliefOutflowKgPerS', 'vessel.primaryCoolantInventoryKg', 'pressurizer.waterInventoryKg', 'pressurizer.steamMassKg', 'leakRateKgPerS', 'balancedInventoryKg']
 
 const siBlockWrites = ['blockPushbutton', 'blocked', 'belowP11']
 
@@ -129,7 +139,7 @@ export const instrumentationBehaviorDefinitions: ReadonlyArray<ComponentBehavior
     update: ({ system, component, context }): void => {
       const vessel = balanceVessel(system, component)
       const flow = (localPath: string) => context.readNumber(componentVariablePath(vessel, localPath))
-      const inventory = flow('primaryCoolantInventoryKg')
+      const inventory = rcsInventoryKg(system, component, context)
       const inventoryChange = (inventory - context.readNumber(componentVariablePath(component, 'balancedInventoryKg'))) / Math.max(context.dtSeconds, 1e-9)
       const unaccounted = flow('chargingFlowKgPerS') + flow('safetyInjectionFlowKgPerS') - flow('letdownFlowKgPerS') - flow('reliefOutflowKgPerS') - inventoryChange
       const leakRate = context.readNumber(componentVariablePath(component, 'leakRateKgPerS'))
@@ -161,11 +171,13 @@ export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<Comp
   {
     id: 'rcs-inventory-balance-initial-state',
     componentKind: 'rcsInventoryBalance',
-    reads: ['vessel.primaryCoolantInventoryKg'],
+    reads: ['vessel.primaryCoolantInventoryKg', 'pressurizer.waterInventoryKg', 'pressurizer.steamMassKg'],
     writes: ['leakRateKgPerS', 'balancedInventoryKg'],
+    // After the pressurizer and the loops have taken their initial inventories.
+    afterLinks: true,
     reconcile: ({ system, component, context }): void => {
       context.write(componentVariablePath(component, 'leakRateKgPerS'), 0)
-      context.write(componentVariablePath(component, 'balancedInventoryKg'), context.readNumber(componentVariablePath(balanceVessel(system, component), 'primaryCoolantInventoryKg')))
+      context.write(componentVariablePath(component, 'balancedInventoryKg'), rcsInventoryKg(system, component, context))
     },
   },
   {
