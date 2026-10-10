@@ -9,7 +9,7 @@ use leitbild_operating_plant::{
         heaters::{
             BanksBlock, Caloric304, ContactBlock, HeaterCase, Heaters, LiquidContact, Rates,
         },
-        stratified::{self as st, Boundary, Case, Cell, Column, Coordinates, Heat, Receipt},
+        stratified::{self as st, Boundary, Case, Cell, Column, Coordinates, Receipt},
     },
     thermal::{Scalar, WaterProperties},
 };
@@ -246,9 +246,8 @@ fn account(
     scales[st::DROP_MASS] = 30.;
     scales[st::DROP_BORON] = 0.03;
     let boundary = Boundary {
-        heat: Heat::zero(),
         heaters: r.receipts(),
-        relief: None,
+        ..Boundary::closed()
     };
     let ev = state
         .cell
