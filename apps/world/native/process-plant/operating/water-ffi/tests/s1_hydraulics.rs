@@ -11,9 +11,10 @@
 #![cfg(all(feature = "ida", target_os = "macos"))]
 use leitbild_operating_plant::{
     network::{
-        CscOut, Network, PzrPreparation, RotorState, ToleranceClasses,
+        Band, CscOut, Network, PzrPreparation, RotorState, ToleranceClasses,
         packet::Packet,
         prepare::{self, OperatingPoint, Settings},
+        stratified,
     },
     rotor::{Shaft, SpeedRequest, Support},
 };
@@ -173,11 +174,14 @@ fn strict_block<T: for<'a> Deserialize<'a>>(page: &str, fence: &str) -> T {
 /// Named topology used by the credited outputs, resolved from packet ids.
 /// The PZR roof pressure and level come from the stratified cell's taps.
 struct Taps {
+    /// The A layer's coordinate and the packet's `resolvabilityFactor`.
+    admitted_mass: usize,
+    resolvability_factor: f64,
     loop_faces: [usize; 2],
     lower: usize,
     upper: usize,
 }
-fn taps(packet: &Packet) -> Taps {
+fn taps(packet: &Packet, network: &Network<If97>) -> Taps {
     let face = |id: &str| {
         packet
             .mechanics
@@ -195,6 +199,8 @@ fn taps(packet: &Packet) -> Taps {
             .unwrap_or_else(|| panic!("no region {id}"))
     };
     Taps {
+        admitted_mass: network.pzr.base + stratified::ADMITTED_MASS,
+        resolvability_factor: packet.pzr.cell.stratified.resolvability_factor,
         loop_faces: [face("RETURN.A->DOWN"), face("RETURN.B->DOWN")],
         lower: region("LOWER"),
         upper: region("UPPER"),
@@ -216,6 +222,17 @@ struct Sample {
     blocked_path_m3_s: f64,
     /// (face, phase) carrying it, if any.
     blocked_path_at: Option<(usize, usize)>,
+    /// Accepted-state band reports of the vapor, A and R zones: signed
+    /// `T - Tsat(p)`, beyond the admitted band, above the credited bound.
+    departure_k: [f64; 3],
+    band_exceeded: bool,
+    uncredited: bool,
+    /// Smallest drag-law gap margin of the bubble and drop terminals.
+    gap_margin: f64,
+    admitted_mass_kg: f64,
+    /// Transit saturation-drift heats [bubbles, drops], W, and p_s'.
+    transit_drift_w: [f64; 2],
+    interface_pressure_rate_pa_s: f64,
 }
 fn sample<P: leitbild_operating_plant::network::Properties>(
     network: &mut Network<P>,
@@ -230,6 +247,13 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
     let pzr = network
         .pzr_taps()
         .unwrap_or_else(|e| panic!("PZR taps at t={t}: {e:?}"));
+    let bands = network
+        .pzr_band_reports()
+        .unwrap_or_else(|e| panic!("PZR band reports at t={t}: {e:?}"));
+    let flows = network
+        .pzr_evaluation()
+        .unwrap_or_else(|| panic!("PZR rows unevaluated at t={t}"))
+        .flows;
     let loop_kg_s = taps
         .loop_faces
         .map(|f| network.chart(f, 0).map_or(0., |c| c.mass_flow_kg_s.value));
@@ -261,6 +285,15 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
             .unwrap(),
         blocked_path_m3_s,
         blocked_path_at,
+        departure_k: bands.map(|b| b.departure_k),
+        band_exceeded: bands.iter().any(|b| b.band == Band::Exceeded),
+        uncredited: bands
+            .iter()
+            .any(|b| b.band == Band::Admitted { credited: false }),
+        gap_margin: flows.bubble.gap_margin.min(flows.drop.gap_margin),
+        admitted_mass_kg: pzr.admitted_mass_kg.value,
+        transit_drift_w: flows.transit_drift.map(|q| q.value),
+        interface_pressure_rate_pa_s: flows.interface_pressure_rate.value,
         ..Sample::default()
     }
 }
@@ -278,6 +311,9 @@ struct Run {
     solver_cpu_s: f64,
     evaluation_wall_s: f64,
     jacobian_wall_s: f64,
+    /// Largest |scaled row| and its index of F(t0, y, y') right after
+    /// IDACalcIC, reported, never hidden.
+    post_calcic_max_row: Option<(f64, usize)>,
     failure: Option<String>,
 }
 struct Spec<'a> {
@@ -325,6 +361,29 @@ fn advance_run(
     let mut failure = ida.initialize(spec.output_s, &mut y, &mut yp).err();
     let mut samples = Vec::new();
     let mut diagnostic_cpu = 0.;
+    let mut post_calcic_max_row = None;
+    if failure.is_none() {
+        let d = cpu_s();
+        let network = &mut ida.system_mut().network;
+        post_calcic_max_row = match network.evaluate(0., &y, &yp, None, 0., None) {
+            Ok(()) => Some(
+                network
+                    .rows()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| (r.value.abs(), i))
+                    .fold(
+                        (0., 0),
+                        |best, next| if next.0 > best.0 { next } else { best },
+                    ),
+            ),
+            Err(e) => {
+                failure = Some(format!("post-CalcIC residual: {e:?}"));
+                None
+            }
+        };
+        diagnostic_cpu += cpu_s() - d;
+    }
     if failure.is_none() {
         let d = cpu_s();
         samples.push(sample(&mut ida.system_mut().network, taps, 0., &y, &yp));
@@ -343,7 +402,26 @@ fn advance_run(
                 s.last_step = stats.last_step;
                 samples.push(s);
                 let blocked = samples.last().map_or(0., |s: &Sample| s.blocked_path_m3_s);
-                if blocked > spec.blocked_path_limit_m3_s {
+                let last = samples.last().unwrap();
+                // Frozen failure rules on accepted states (S1 declaration).
+                let admitted_atol = spec.atol[taps.admitted_mass]
+                    * ida.system().network.scales()[taps.admitted_mass];
+                if last.band_exceeded {
+                    failure = Some(format!(
+                        "metastable departure beyond the admitted band at t={t}: {:?}",
+                        last.departure_k
+                    ));
+                } else if last.uncredited {
+                    failure = Some(format!(
+                        "credited departure above creditedMax_K at nominal theta at t={t}: {:?}",
+                        last.departure_k
+                    ));
+                } else if last.admitted_mass_kg < taps.resolvability_factor * admitted_atol {
+                    failure = Some(format!(
+                        "A-layer resolvability report at t={t}: M_A={} kg < {} x atol {admitted_atol} kg",
+                        last.admitted_mass_kg, taps.resolvability_factor
+                    ));
+                } else if blocked > spec.blocked_path_limit_m3_s {
                     let at = samples.last().and_then(|s: &Sample| s.blocked_path_at);
                     failure = Some(format!(
                         "phantom momentum: blocked phase path (face, phase) {at:?} carries {blocked} m3/s at t={t}"
@@ -379,6 +457,7 @@ fn advance_run(
         solver_cpu_s: cpu - diagnostic_cpu,
         evaluation_wall_s: network.counters.evaluation_wall_s,
         jacobian_wall_s: network.counters.jacobian_wall_s,
+        post_calcic_max_row,
         failure,
     }
 }
@@ -394,7 +473,17 @@ fn steps_between(run: &Run, from: f64, to: f64) -> f64 {
     (at(to) - at(from)) as f64
 }
 fn run_json(run: &Run, duration: f64) -> Value {
-    json!({"steps":run.steps,"residuals":run.residuals,"jacobians":run.jacobians,"error_failures":run.error_failures,"convergence_failures":run.convergence_failures,"cpu_s":run.cpu_s,"solver_cpu_s":run.solver_cpu_s,"evaluation_wall_s":run.evaluation_wall_s,"jacobian_wall_s":run.jacobian_wall_s,"steps_per_simulated_s":run.steps as f64/duration,"solver_cpu_s_per_simulated_s":run.solver_cpu_s/duration,"reached_s":run.samples.last().map(|s|s.t),"failure":run.failure})
+    let extreme = |f: fn(&Sample) -> f64| {
+        run.samples.iter().map(f).fold(f64::NAN, |a: f64, b| {
+            if a.is_nan() || b.abs() > a.abs() {
+                b
+            } else {
+                a
+            }
+        })
+    };
+    let pzr = json!({"max_departure_k":[extreme(|s|s.departure_k[0]),extreme(|s|s.departure_k[1]),extreme(|s|s.departure_k[2])],"min_gap_margin":run.samples.iter().map(|s|s.gap_margin).fold(f64::INFINITY,f64::min),"min_admitted_mass_kg":run.samples.iter().map(|s|s.admitted_mass_kg).fold(f64::INFINITY,f64::min),"max_transit_drift_w":[extreme(|s|s.transit_drift_w[0]),extreme(|s|s.transit_drift_w[1])],"max_interface_pressure_rate_pa_s":extreme(|s|s.interface_pressure_rate_pa_s)});
+    json!({"post_calcic_max_scaled_row":run.post_calcic_max_row,"pzr":pzr,"steps":run.steps,"residuals":run.residuals,"jacobians":run.jacobians,"error_failures":run.error_failures,"convergence_failures":run.convergence_failures,"cpu_s":run.cpu_s,"solver_cpu_s":run.solver_cpu_s,"evaluation_wall_s":run.evaluation_wall_s,"jacobian_wall_s":run.jacobian_wall_s,"steps_per_simulated_s":run.steps as f64/duration,"solver_cpu_s_per_simulated_s":run.solver_cpu_s/duration,"reached_s":run.samples.last().map(|s|s.t),"failure":run.failure})
 }
 /// Largest credited-output differences between two runs at common times.
 fn compare(a: &Run, b: &Run, window_s: f64) -> Value {
@@ -512,7 +601,7 @@ fn s1_hydraulics_admission() {
     );
     // The declared 6.00 m saturated preparation (S1 re-declaration).
     let point = OperatingPoint::from(declared);
-    let taps = taps(&packet);
+    let taps = taps(&packet, &fresh(&packet));
     assert!(
         gates.spectrum.fast_mode_hz >= budgets.uncredited_above_hz,
         "spectral fast-mode limit must not reach into the credited band"
@@ -1020,7 +1109,7 @@ fn s1_harness_smoke() {
     let declared = &packet.preparation.operating_point;
     // The declared 6.00 m saturated preparation (S1 re-declaration).
     let point = OperatingPoint::from(declared);
-    let taps = taps(&packet);
+    let taps = taps(&packet, &fresh(&packet));
     let rotors = vec![
         RotorState {
             support: Support::Supported(SpeedRequest::Nominal),
@@ -1075,5 +1164,124 @@ fn s1_harness_smoke() {
     println!(
         "{}",
         json!({"kind":"s1-harness-smoke-NOT-EVIDENCE","packet":packet_path,"preparation_passes":preparation.pass_changes_pa.len(),"max_eos_row":preparation.max_eos_row,"max_loop_rest_pa":preparation.max_loop_rest_pa,"max_phase_drive_pa":preparation.max_phase_drive_pa,"mass_change_kg":preparation.mass_change_kg,"run":run_json(&run,3.),"samples":run.samples.iter().map(|s|json!({"t":s.t,"roof_pa":s.roof_pa,"loop_kg_s":s.loop_kg_s,"omega":s.omega,"steps":s.steps,"h":s.last_step,"energy_identity_w":s.energy_identity_w,"blocked_path_m3_s":s.blocked_path_m3_s})).collect::<Vec<_>>()})
+    );
+}
+
+/// Zero-time receipt only, NOT S1 evidence: the declared 6.00 m preparation,
+/// RCPs at rest, IDACalcIC on the colored network and the residual right
+/// after it, plus the census and the property calls per residual. Advances
+/// no time.
+#[test]
+#[ignore = "requires the actual packet, the wiki, maintained IF97 and stock IDA/KLU"]
+fn s1_zero_time_calcic_receipt() {
+    let packet_path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
+    let wiki = std::env::var("LD01_WIKI_ROOT").unwrap();
+    let model = format!("{wiki}/world/packs/process-plant/reference-designs/ld-01/model");
+    let gates: Gates = strict_block(&format!("{model}/build-readiness.md"), "ld01-s1-gates");
+    let packet: Packet =
+        serde_json::from_slice(&std::fs::read(&packet_path).unwrap()).expect("packet");
+    let point = OperatingPoint::from(&packet.preparation.operating_point);
+    let rotors = vec![
+        RotorState {
+            support: Support::Supported(SpeedRequest::Nominal),
+            shaft: Shaft::Free,
+        };
+        4
+    ];
+    let settings = Settings {
+        pressure_tolerance_pa: PZR.pressure_tolerance_pa,
+        max_passes: PZR.max_passes,
+        level_match_m: 1e-9,
+        eos_row_bound: 1e-12,
+        tree_face_bound_pa: 1e-6,
+        representation_search: 8,
+    };
+    let (network, prepared, preparation) =
+        prepare::prepare(&packet, If97, &point, &rotors, &settings).expect("preparation");
+    let mut y = prepared.y.clone();
+    for index in &network.rotor_index {
+        y[*index] = 0.;
+    }
+    let atol = network
+        .absolute_tolerances(
+            &y,
+            ToleranceClasses {
+                relative: gates.relative_tolerance,
+                stock_scaled: gates.stock_scaled_absolute,
+                tracer_scaled: gates.tracer_scaled_absolute,
+                rotor_scaled: gates.rotor_scaled_absolute,
+                volume_flow_m3_s: gates.volume_flow_absolute_m3_s,
+            },
+        )
+        .expect("tolerances");
+    let structure = network.sparse_jacobian().expect("structure");
+    let (nonzeros, colors) = (structure.pattern.nonzeros(), structure.coloring.count());
+    let algebraic = prepared.differential.iter().filter(|v| **v == 0.).count();
+    let mut yp = prepared.yp.clone();
+    let system = Integrated::colored(network).expect("colored assembly");
+    let mut ida = Ida::new(
+        system,
+        Initial {
+            time: 0.,
+            y: &y,
+            yp: &yp,
+            differential: &prepared.differential,
+            absolute_tolerance: &atol,
+            relative_tolerance: gates.relative_tolerance,
+        },
+    )
+    .expect("stock IDA construction");
+    ida.set_max_order(gates.max_order).expect("max order");
+    let stocks = ida.system().network.nonnegative_stocks();
+    ida.constrain_nonnegative(&stocks)
+        .expect("nonnegative stocks");
+    let before = ida.system().network.counters;
+    let calcic = ida.initialize(gates.output_interval_s, &mut y, &mut yp);
+    let stats = ida.stats().expect("stats");
+    let network = &mut ida.system_mut().network;
+    let during = network.counters;
+    network
+        .evaluate(0., &y, &yp, None, 0., None)
+        .expect("post-CalcIC residual");
+    let rows: Vec<f64> = network.rows().iter().map(|r| r.value).collect();
+    let (largest, at) =
+        rows.iter()
+            .enumerate()
+            .map(|(i, r)| (r.abs(), i))
+            .fold(
+                (0., 0),
+                |best, next| if next.0 > best.0 { next } else { best },
+            );
+    let weights: Vec<f64> = y
+        .iter()
+        .zip(&atol)
+        .map(|(v, a)| 1. / (gates.relative_tolerance * v.abs() + a))
+        .collect();
+    let wrms = (rows
+        .iter()
+        .zip(&weights)
+        .map(|(r, w)| (r * w).powi(2))
+        .sum::<f64>()
+        / rows.len() as f64)
+        .sqrt();
+    let labels = network.labels();
+    let mut ranked: Vec<usize> = (0..rows.len()).collect();
+    ranked.sort_by(|a, b| rows[*b].abs().total_cmp(&rows[*a].abs()));
+    let top: Vec<Value> = ranked[..8]
+        .iter()
+        .map(|i| json!({"row":i,"coordinate":labels[*i].1,"scaled_row":rows[*i],"scaled_y":y[*i],"scaled_yp":yp[*i],"weight":weights[*i]}))
+        .collect();
+    let pzr_rows: Vec<f64> = network.pzr.coordinates().map(|i| rows[i]).collect();
+    let taps = network.pzr_taps().expect("taps");
+    let bands = network.pzr_band_reports().expect("band reports");
+    println!(
+        "{}",
+        json!({"kind":"s1-zero-time-calcic-NOT-EVIDENCE","packet":packet_path,
+            "census":{"coordinates":y.len(),"algebraic":algebraic,"differential":y.len()-algebraic},
+            "structure":{"nonzeros":nonzeros,"colors":colors},
+            "preparation":{"max_eos_row":preparation.max_eos_row,"max_tree_rest_pa":preparation.max_tree_rest_pa,"max_loop_rest_pa":preparation.max_loop_rest_pa,"initial_rows":preparation.initial_rows,"pzr_representation_steps":preparation.pzr["representation_steps"],"pzr_specific_energy_exact":preparation.pzr["specific_energy_exact"]},
+            "calcic":{"ok":calcic.is_ok(),"error":calcic.err(),"residuals":stats.residuals,"jacobians":stats.jacobians,"network_evaluations":during.evaluations-before.evaluations,"pzr_columns":during.pzr_columns-before.pzr_columns},
+            "post_calcic":{"max_abs_scaled_row":largest,"row":at,"coordinate":labels[at].1,"wrms_state_weighted":wrms,"top_rows":top,"pzr_rows":pzr_rows},
+            "pzr":{"pt1_pa":taps.pt1_pa.value,"collapsed_level_m":taps.collapsed_level_m.value,"mixture_level_m":taps.mixture_level_m.value,"departure_k":bands.map(|b|b.departure_k),"bands":format!("{:?}",bands.map(|b|b.band)),"tap_departures":format!("{:?}",taps.departures)}})
     );
 }
