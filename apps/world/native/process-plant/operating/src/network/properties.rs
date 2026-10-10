@@ -112,13 +112,27 @@ type Key = (u64, u64, bool);
 pub struct Reuse<C> {
     caloric: Vec<[Option<(Key, C)>; 2]>,
     saturation: Vec<Option<(u64, Saturation)>>,
+    /// Stratified-cell restriction evaluations with their exact partials,
+    /// keyed by the exact bits of their inputs.
+    restriction: Vec<([u64; 4], super::stratified::HeldFlux)>,
 }
 impl<C: Copy> Reuse<C> {
     pub fn new(cells: usize, saturation_points: usize) -> Self {
         Self {
             caloric: vec![[None; 2]; cells],
             saturation: vec![None; saturation_points],
+            restriction: Vec::new(),
         }
+    }
+    pub(crate) fn held_restriction(&self, key: [u64; 4]) -> Option<super::stratified::HeldFlux> {
+        self.restriction
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, held)| *held)
+    }
+    pub(crate) fn hold_restriction(&mut self, key: [u64; 4], held: super::stratified::HeldFlux) {
+        self.restriction.retain(|(k, _)| *k != key);
+        self.restriction.push((key, held));
     }
     /// Read-only inspection: exact (p bits, target bits, enthalpy) key held.
     pub fn caloric_key(&self, node: usize, k: usize) -> Option<(u64, u64, bool)> {
