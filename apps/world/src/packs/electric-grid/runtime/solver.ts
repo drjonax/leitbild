@@ -2,7 +2,7 @@ import type { IsoTimestamp } from '../../../core/model/index.ts'
 import { applyGridDemand } from './demand.ts'
 import { advanceGridFrequencyControl } from './frequency-control.ts'
 import type { GridRuntimeInstance } from './instance.ts'
-import { solveGridNetwork } from './network.ts'
+import { solveGridNetwork } from './power-flow.ts'
 import { projectGridSystem } from './projection.ts'
 import { topologyPlanForGrid } from './topology.ts'
 

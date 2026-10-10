@@ -157,23 +157,10 @@ const solvePlan = (plan: GridTopologyPlan, injections: ReadonlyMap<string, numbe
   }
 }
 
-const scaledAngles = (plan: GridTopologyPlan, scale: number): ReadonlyMap<string, number> => {
-  const angles = new Map<string, number>()
-  for (let bus = 0; bus < plan.network.busCount; bus += 1) angles.set(plan.network.busIds[bus]!, plan.anglesRad[bus]! * scale)
-  return angles
-}
-
 /** Bus voltage angles in radians for bus injections in MW. */
-export const solveGridAnglesRad = (plan: GridTopologyPlan, injections: ReadonlyMap<string, number>): ReadonlyMap<string, number> => {
-  solvePlan(plan, injections)
-  return scaledAngles(plan, 1)
-}
-
-/**
- * Bus angles as θ·S_base (radians times the system base in MVA), the unit `advanceGrid`
- * divides by branch reactance to obtain flow in MW. `solveGridAnglesRad` returns radians.
- */
 export const solveGridAngles = (plan: GridTopologyPlan, injections: ReadonlyMap<string, number>): ReadonlyMap<string, number> => {
   solvePlan(plan, injections)
-  return scaledAngles(plan, plan.network.sBaseMva)
+  const angles = new Map<string, number>()
+  for (let bus = 0; bus < plan.network.busCount; bus += 1) angles.set(plan.network.busIds[bus]!, plan.anglesRad[bus]!)
+  return angles
 }

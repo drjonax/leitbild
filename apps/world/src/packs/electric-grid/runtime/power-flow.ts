@@ -1,4 +1,5 @@
 import type { GridBusState, GridRuntimeInstance, GridTopologyPlan } from './instance.ts'
+import { gridBranchFlowMw } from './network/dc-power-flow.ts'
 import { gridBranchIsClosed, solveGridAngles } from './topology.ts'
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value))
@@ -26,9 +27,7 @@ const applyBranchFlows = (
   const branchLoadingByBus = new Map<string, number>()
   for (const branch of model.branches) {
     const state = grid.branches.get(branch.id)!
-    const flowMw = gridBranchIsClosed(grid, branch)
-      ? ((angles.get(branch.fromBusId) ?? 0) - (angles.get(branch.toBusId) ?? 0)) / Math.max(0.0001, branch.reactancePu)
-      : 0
+    const flowMw = gridBranchIsClosed(grid, branch) ? gridBranchFlowMw(angles, branch) : 0
     const ratingMw = branch.ratingMw * state.availability
     state.flowMw = flowMw
     state.loadingPercent = Math.abs(flowMw) / Math.max(1, ratingMw) * 100
