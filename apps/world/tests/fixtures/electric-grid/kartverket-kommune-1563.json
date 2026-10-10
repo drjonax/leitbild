@@ -1,0 +1,71 @@
+{
+ "avgrensningsboks": {
+  "coordinates": [
+   [
+    [
+     8.20613337726,
+     62.353193382695
+    ],
+    [
+     8.20613337726,
+     62.941262076134
+    ],
+    [
+     9.24382224311,
+     62.941262076134
+    ],
+    [
+     9.24382224311,
+     62.353193382695
+    ],
+    [
+     8.20613337726,
+     62.353193382695
+    ]
+   ]
+  ],
+  "crs": {
+   "properties": {
+    "name": "EPSG:4258"
+   },
+   "type": "name"
+  },
+  "type": "Polygon"
+ },
+ "fylkesnavn": "Møre og Romsdal",
+ "fylkesnummer": "15",
+ "gyldigeNavn": [
+  {
+   "navn": "Sunndal",
+   "prioritet": 1,
+   "sprak": "Norwegian"
+  },
+  {
+   "navn": null,
+   "prioritet": 2,
+   "sprak": null
+  },
+  {
+   "navn": null,
+   "prioritet": 3,
+   "sprak": null
+  }
+ ],
+ "kommunenavn": "Sunndal",
+ "kommunenavnNorsk": "Sunndal",
+ "kommunenummer": "1563",
+ "punktIOmrade": {
+  "coordinates": [
+   8.652670242239,
+   62.647028857602
+  ],
+  "crs": {
+   "properties": {
+    "name": "EPSG:4258"
+   },
+   "type": "name"
+  },
+  "type": "Point"
+ },
+ "samiskForvaltningsomrade": false
+}

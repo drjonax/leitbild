@@ -1,0 +1,198 @@
+{
+ "meta": {
+  "created": "2026-10-10T20:05:10+02:00",
+  "lastUpdated": "2026-06-16T22:39:00+02:00"
+ },
+ "links": {
+  "self": "https://api.elhub.no/energy-data/v0/municipalities?dataset=CONSUMPTION_PER_GROUP_MUNICIPALITY_HOUR&startDate=2026-01-12T00%3A00%3A00%2B01%3A00&endDate=2026-01-13T00%3A00%3A00%2B01%3A00"
+ },
+ "data": [
+  {
+   "type": "municipality",
+   "id": "*",
+   "attributes": {
+    "municipalityNumber": "*",
+    "name": "*",
+    "nameNo": "*",
+    "consumptionPerGroupMunicipalityHour": []
+   }
+  },
+  {
+   "type": "municipality",
+   "id": "0000",
+   "attributes": {
+    "municipalityNumber": "0000",
+    "name": "Ukjent tilhørighet",
+    "nameNo": "Ukjent tilhørighet",
+    "consumptionPerGroupMunicipalityHour": [
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "consumptionGroup": "business",
+      "quantityKwh": 2038.111,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 168
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "consumptionGroup": "business",
+      "quantityKwh": 2049.996,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 168
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "consumptionGroup": "industry",
+      "quantityKwh": 11124.057,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 72
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "consumptionGroup": "industry",
+      "quantityKwh": 11215.269,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 72
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "consumptionGroup": "private",
+      "quantityKwh": 2035.026,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 798
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "consumptionGroup": "private",
+      "quantityKwh": 2023.548,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 798
+     }
+    ]
+   }
+  },
+  {
+   "type": "municipality",
+   "id": "0301",
+   "attributes": {
+    "municipalityNumber": "0301",
+    "name": "Oslo",
+    "nameNo": "Oslo",
+    "consumptionPerGroupMunicipalityHour": [
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "consumptionGroup": "business",
+      "quantityKwh": 668650.8,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 23133
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "consumptionGroup": "business",
+      "quantityKwh": 720273.9,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 23133
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "consumptionGroup": "industry",
+      "quantityKwh": 347182.88,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 2302
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "consumptionGroup": "industry",
+      "quantityKwh": 192966.4,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 2302
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "consumptionGroup": "private",
+      "quantityKwh": 931847.94,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 356929
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "consumptionGroup": "private",
+      "quantityKwh": 928106.75,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 356929
+     }
+    ]
+   }
+  },
+  {
+   "type": "municipality",
+   "id": "1563",
+   "attributes": {
+    "municipalityNumber": "1563",
+    "name": "Sunndal",
+    "nameNo": "Sunndal",
+    "consumptionPerGroupMunicipalityHour": [
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "consumptionGroup": "business",
+      "quantityKwh": 5191.282,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 546
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "consumptionGroup": "business",
+      "quantityKwh": 5676.313,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 546
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "consumptionGroup": "industry",
+      "quantityKwh": 692222.8,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 157
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "consumptionGroup": "industry",
+      "quantityKwh": 692399.1,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 157
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "consumptionGroup": "private",
+      "quantityKwh": 10096.455,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 4376
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "consumptionGroup": "private",
+      "quantityKwh": 10275.159,
+      "lastUpdatedTime": "2026-06-16T22:39:00+02:00",
+      "meteringPointCount": 4376
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,129 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": 1638247,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     5.836068882144676,
+     58.52400915169869
+    ]
+   },
+   "properties": {
+    "objectid": 1638247,
+    "vannkraftverknr": 146,
+    "vannkraftverknavn": "Hetland",
+    "vannkraftverktype": "KS",
+    "status": "D",
+    "idriftsattaar": 1983,
+    "maksytelse_mw": 1.48,
+    "vannkraftverkeier": "LYSE KRAFT DA",
+    "kommunenummer": "1119",
+    "kommunenavn": "Hå",
+    "fylke": "Rogaland"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 1638645,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     13.786225522126028,
+     64.65249316675566
+    ]
+   },
+   "properties": {
+    "objectid": 1638645,
+    "vannkraftverknr": 245,
+    "vannkraftverknavn": "Linvasselv",
+    "vannkraftverktype": "K",
+    "status": "D",
+    "idriftsattaar": 1962,
+    "maksytelse_mw": 25,
+    "vannkraftverkeier": "NTE ENERGI AS",
+    "kommunenummer": "",
+    "kommunenavn": "",
+    "fylke": ""
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 1638841,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     13.70776254711626,
+     66.37726561740472
+    ]
+   },
+   "properties": {
+    "objectid": 1638841,
+    "vannkraftverknr": 1225,
+    "vannkraftverknavn": "Isvatn",
+    "vannkraftverktype": "P",
+    "status": "D",
+    "idriftsattaar": 2004,
+    "maksytelse_mw": -0.1,
+    "vannkraftverkeier": "HELGELAND KRAFT VANNKRAFT AS",
+    "kommunenummer": "1833",
+    "kommunenavn": "Rana",
+    "fylke": "Nordland"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 1639613,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     5.725836770428808,
+     59.593349939901316
+    ]
+   },
+   "properties": {
+    "objectid": 1639613,
+    "vannkraftverknr": 1389,
+    "vannkraftverknavn": "Hetland",
+    "vannkraftverktype": "Mini",
+    "status": "D",
+    "idriftsattaar": 2008,
+    "maksytelse_mw": 0.28,
+    "vannkraftverkeier": "HETLAND KRAFT AS",
+    "kommunenummer": "1160",
+    "kommunenavn": "Vindafjord",
+    "fylke": "Rogaland"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 1639767,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     11.175109672580671,
+     59.54051591406454
+    ]
+   },
+   "properties": {
+    "objectid": 1639767,
+    "vannkraftverknr": 488,
+    "vannkraftverknavn": "Vamma",
+    "vannkraftverktype": "K",
+    "status": "D",
+    "idriftsattaar": 1915,
+    "maksytelse_mw": 344,
+    "vannkraftverkeier": "HAFSLUND KRAFT AS",
+    "kommunenummer": "3116",
+    "kommunenavn": "Skiptvet",
+    "fylke": "Østfold"
+   }
+  }
+ ],
+ "exceededTransferLimit": true,
+ "properties": {
+  "exceededTransferLimit": true
+ }
+}
