@@ -4,6 +4,7 @@ import { ADVICE_MIN_WIDTH, adviceExtent, generatedExtent } from '../src/ui/embed
 import {
   createViewHost,
   createZoomAccumulator,
+  followPresentation,
   trackVisibility,
   wheelZoomFactor,
   zoomStepOfKey,
@@ -205,6 +206,26 @@ describe('a framed view samples only while it can be seen', () => {
     page.fromWindow({ type: 'world:display-frame', shown: false, zoom: 1.25 })
     expect(calls).toEqual([true, false, true, false, true])
   })
+})
+
+test('stepping to a view or zooming it in its window counts as the operator attending to it', () => {
+  const page = framedPage()
+  page.host.listen()
+  let presented = 0
+  const stop = followPresentation({ host: page.host, presented: () => { presented += 1 } })
+  // Subscribing and the first presentation of a view already shown are not acts of the operator.
+  page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 1 })
+  expect(presented).toBe(0)
+  page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 1.25 })
+  expect(presented).toBe(1)
+  page.fromWindow({ type: 'world:display-frame', shown: false, zoom: 1.25 })
+  page.fromWindow({ type: 'world:display-frame', shown: false, zoom: 1.5 })
+  expect(presented).toBe(1)
+  page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 1.5 })
+  expect(presented).toBe(2)
+  stop()
+  page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 2 })
+  expect(presented).toBe(2)
 })
 
 describe('the room an embedded display needs', () => {

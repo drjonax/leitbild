@@ -75,6 +75,7 @@
       card: document.querySelector<HTMLElement>('article.card'),
       drawing: () => (snapshot === null || snapshot.phase.kind === 'checking' || snapshot.phase.kind === 'starting' ? undefined : snapshot.view ?? snapshot.phase),
       setVisible: visible => active.setVisible(visible),
+      presented: () => { active.resume(); lastInputWallMs = Date.now() },
     })
     return () => {
       active.close()

@@ -152,6 +152,24 @@ export const trackVisibility = (config: {
   }
 }
 
+/**
+ * The operator acts on a view through its window: stepping to it shows it, and
+ * zooming it changes its scale. Either counts as attention to the view, as
+ * input inside it does, so a view the operator returns to resumes sampling.
+ */
+export const followPresentation = (config: {
+  readonly host: Pick<ViewHost, 'subscribe'>
+  readonly presented: () => void
+}): (() => void) => {
+  let previous: DisplayPresentation | null = null
+  return config.host.subscribe(presentation => {
+    const before = previous
+    previous = presentation
+    if (before === null || !presentation.shown) return
+    if (!before.shown || before.zoom !== presentation.zoom) config.presented()
+  })
+}
+
 let pageHost: ViewHost | undefined
 
 /** This page's view host; a page has one framing window, so it has one host. */
@@ -230,6 +248,8 @@ export const hostDisplayFrame = (config: {
   /** What the view draws now, a new value for every drawing; undefined while it connects. */
   readonly drawing: () => object | undefined
   readonly setVisible: (visible: boolean) => void
+  /** The operator stepped to the view or zoomed it in its window. */
+  readonly presented: () => void
 }): (() => void) => {
   const card = config.card
   if (card === null) throw new Error('An embedded display has no card to measure')
@@ -241,6 +261,7 @@ export const hostDisplayFrame = (config: {
       onDocumentVisibility: changed => listenTo(document, 'visibilitychange', changed),
       setVisible: config.setVisible,
     }),
+    followPresentation({ host, presented: config.presented }),
     ...(host.framed ? [forwardZoomGestures(host), observeDisplayExtent({ kind: config.kind, card, drawing: config.drawing, report: host.reportExtent })] : []),
     host.listen(),
   ]
