@@ -219,10 +219,12 @@ const labelLayers = (palette: GridMapPalette): ReadonlyArray<PackReferenceLayerS
   layout: {
     'symbol-placement': 'line',
     'symbol-spacing': 360,
-    'text-field': ['case', ['has', 'name'], ['concat', ['get', 'name'], ' · ', voltageText], voltageText],
+    'text-field': ['case', ['has', 'name'], ['concat', ['get', 'name'], ' (', voltageText, ')'], voltageText],
     'text-font': font,
     'text-size': ['interpolate', ['linear'], ['zoom'], 8, 10, 13, 12],
     'text-max-angle': 30,
+    // Beside the line rather than on it, so light lines in the dark theme stay legible under the text.
+    'text-offset': [0, -0.9],
   },
   paint: labelPaint(palette),
 }, {

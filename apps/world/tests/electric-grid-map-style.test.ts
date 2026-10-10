@@ -176,7 +176,7 @@ describe('grid-norway reference style: zoom classes through filters', () => {
     expect(labels.minzoom).toBe(8)
     expect(draws(labels, 8, 'LineString', { category: 'line', maxVoltageKv: 420, name: 'Holen - Rød' })).toBe(true)
     expect(draws(labels, 12, 'LineString', { category: 'line', maxVoltageKv: 132, name: 'Lokal' })).toBe(false)
-    expect(String(evaluate(labels, 'text-field', 9, 'LineString', { category: 'line', maxVoltageKv: 420, name: 'Holen - Rød' }))).toBe('Holen - Rød · 420 kV')
+    expect(String(evaluate(labels, 'text-field', 9, 'LineString', { category: 'line', maxVoltageKv: 420, name: 'Holen - Rød' }))).toBe('Holen - Rød (420 kV)')
     expect(String(evaluate(labels, 'text-field', 9, 'LineString', { category: 'line', maxVoltageKv: 300 }))).toBe('300 kV')
     const sites = layer('substations:label')
     expect(draws(sites, 7, 'Polygon', { category: 'substation', maxVoltageKv: 420, name: 'Sylling' })).toBe(true)
