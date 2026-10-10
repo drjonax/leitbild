@@ -6,8 +6,8 @@ import type {
   RecordingSeriesDescriptor,
   ScenarioRecordingSelection,
 } from '../../core/model/index.ts'
+import type { GridModelAssetCounts } from './definition-refs.ts'
 import type { GridRuntimeInstance } from './runtime/instance.ts'
-import type { CompiledGridDefinition } from './grid-model.ts'
 
 export const electricGridRecordingProfiles: ReadonlyArray<RecordingProfileDescriptor> = [{
   id: 'operations',
@@ -83,11 +83,9 @@ const operations = [{
 }] as const
 const operationsSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => operations.map(({ key, ...item }) => series({ grid, ...item, value: () => grid.projection[key] }))
 
-export const gridRecordingSeriesCount = (definition: CompiledGridDefinition, profileId: string): number => {
-  const model = definition.model
-  return operations.length + (profileId === 'engineering'
-    ? model.buses.length * 2 + model.branches.length * 2 + model.generators.length + model.loads.length + model.storage.length : 0)
-}
+export const gridRecordingSeriesCount = (counts: GridModelAssetCounts, profileId: string): number =>
+  operations.length + (profileId === 'engineering'
+    ? counts.bus * 2 + counts.branch * 2 + counts.generator + counts.load + counts.storage : 0)
 
 const engineeringSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => [
   ...grid.definition.model.buses.flatMap(bus => {

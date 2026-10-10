@@ -6,10 +6,8 @@ import {
   gridModelSelectionSchema,
   gridOperatingPointSelectionSchema,
 } from './config.ts'
-import { electricGridDefinitionCatalog } from './definition-refs.ts'
 import { electricGridPackId, emptyGridProjection, type ElectricGridPackData } from './model.ts'
 import { electricGridAdapterId } from './sim/constants.ts'
-import { compileGridDefinition } from './definitions.ts'
 import { gridDefinitionSchema } from './config.ts'
 import { gridElectricalPortDefinitions } from './electrical-ports.ts'
 import { z } from 'zod'
@@ -40,12 +38,12 @@ const pointFromSpec = (spec: PackScenarioItemSpec): GeoJsonPoint => {
   return geoPointFromLonLat(location[0], location[1])
 }
 
-const expandGridObject = (spec: PackScenarioItemSpec, at: IsoTimestamp): OperationalObject => {
+const expandGridObject = async (spec: PackScenarioItemSpec, at: IsoTimestamp): Promise<OperationalObject> => {
   const model = gridModelSelectionSchema.parse(spec.model)
-  const modelMetadata = electricGridDefinitionCatalog.models.find(candidate => candidate.id === model.ref)
-  if (!modelMetadata) throw new Error(`unknown Grid Model: ${model.ref}`)
   const operatingPoint = gridOperatingPointSelectionSchema.parse(spec.operatingPoint)
   const automation = gridAutomationSelectionSchema.parse(spec.automation)
+  // Loaded on first expansion so that importing the Pack never reads or compiles a model.
+  const { compileGridDefinition } = await import('./definitions.ts')
   const compiledGrid = compileGridDefinition(gridDefinitionSchema.parse({ id: spec.id, model, operatingPoint, automation }))
   const packData: ElectricGridPackData = {
     type: 'electric-grid',
@@ -54,7 +52,7 @@ const expandGridObject = (spec: PackScenarioItemSpec, at: IsoTimestamp): Operati
     operatingPoint,
     automation,
     electricalPorts: [...gridElectricalPortDefinitions(compiledGrid)],
-    projection: emptyGridProjection(at, modelMetadata.nominalFrequencyHz),
+    projection: emptyGridProjection(at, compiledGrid.model.nominalFrequencyHz),
   }
   return {
     id: objectIdSchema.parse(spec.id),
@@ -82,8 +80,8 @@ const expandGridObject = (spec: PackScenarioItemSpec, at: IsoTimestamp): Operati
 
 export const electricGridScenarioSupport: PackScenarioSupport = {
   itemSchemas: { grid: electricGridScenarioItemSchema },
-  expandItem: (spec, context) => {
+  expandItem: async (spec, context) => {
     const parsed = electricGridScenarioItemSchema.parse(spec)
-    return { objects: [expandGridObject(parsed, context.at)] }
+    return { objects: [await expandGridObject(parsed, context.at)] }
   },
 }

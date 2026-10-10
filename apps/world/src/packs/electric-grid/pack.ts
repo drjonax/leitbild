@@ -2,13 +2,13 @@ import type { WorldPack } from '../../core/packs/protocol.ts'
 import { electricGridPackConfigSchema } from './config.ts'
 import {
   electricGridDefinitionCatalog,
+  gridModelCatalogEntry,
   norwayGridModelRef,
   norwayNormalOperatingPointRef,
   norwayStandardAutomationRef,
 } from './definition-refs.ts'
 import { electricGridRecordingProfiles, gridRecordingSeriesCount } from './recording.ts'
 import { electricGridPackDataSchema } from './model.ts'
-import { compileGridDefinition } from './definitions.ts'
 import { electricGridScenarioSupport } from './scenario.ts'
 import { electricGridPackView } from './ui-pack.ts'
 
@@ -54,7 +54,7 @@ export const electricGridPack: WorldPack = {
   },
   recording: { profiles: electricGridRecordingProfiles, estimateSeries: (objects, profileId) => objects.reduce((sum, object) => {
     const data = electricGridPackDataSchema.parse(object.packData)
-    return sum + gridRecordingSeriesCount(compileGridDefinition({ id: object.id, model: data.model, operatingPoint: data.operatingPoint, automation: data.automation }), profileId)
+    return sum + gridRecordingSeriesCount(gridModelCatalogEntry(data.model.ref).assetCounts, profileId)
   }, 0) },
   scenario: electricGridScenarioSupport,
 }

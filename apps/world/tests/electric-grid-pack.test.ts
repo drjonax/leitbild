@@ -13,7 +13,7 @@ import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { compileGridDefinition, compileGridModelIndex } from '../src/packs/electric-grid/definitions.ts'
 import { electricGridPackDataSchema } from '../src/packs/electric-grid/model.ts'
 import { electricGridPack } from '../src/packs/electric-grid/pack.ts'
-import { addGridModelAssets, gridModelAdditionSchema, gridModelAdditions } from '../src/packs/electric-grid/model-additions.ts'
+import { addGridModelAssets, gridModelAdditionSchema } from '../src/packs/electric-grid/model-additions.ts'
 import { balanceInitialGridDispatch, createGridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { createLocalElectricGridPackRuntimeAdapter } from '../src/packs/electric-grid/sim/adapter.ts'
@@ -69,19 +69,20 @@ const objectResult = (response: unknown): Record<string, unknown> => {
 }
 
 describe('electric grid Pack', () => {
-  test('discovers declarative topology additions without coupling the compiler to Halden', () => {
+  test('composes declarative topology additions without coupling the compiler to Halden', async () => {
     const definition = (modelRef: string, operatingPointRef: string) => compileGridDefinition(gridDefinitionSchema.parse({
       id: 'grid:test', model: { ref: modelRef }, operatingPoint: { ref: operatingPointRef }, automation: { ref: 'electric-grid.norway.standard' },
     }))
     const base = definition('electric-grid.norway.transmission', 'electric-grid.norway.normal').model
-    const addition = gridModelAdditionSchema.parse({ ...gridModelAdditions[0], id: 'electric-grid.test.addition', title: 'Test addition' })
-    const combined = addGridModelAssets(base, addition)
+    const haldenJson = await Bun.file(new URL('../src/packs/electric-grid/models/halden.grid-model.json', import.meta.url)).json() as object
+    const addition = gridModelAdditionSchema.parse({ ...haldenJson, id: 'electric-grid.test.addition', title: 'Test addition' })
+    const combined = addGridModelAssets(base, addition, 'test addition')
     expect(combined.id).toBe('electric-grid.test.addition')
     expect(combined.buses.length).toBe(base.buses.length + addition.buses.length)
     expect(combined.generators).toEqual(base.generators)
     expect(() => compileGridModelIndex(combined)).not.toThrow()
     expect(() => compileGridModelIndex({ ...combined, connectionPoints: [{ ...combined.connectionPoints[0]!, busId: 'missing' }] })).toThrow()
-    expect(() => addGridModelAssets(base, { ...addition, baseModelRef: 'missing' })).toThrow('base mismatch')
+    expect(() => addGridModelAssets(base, { ...addition, baseModelRef: 'missing' }, 'test addition')).toThrow('base mismatch')
     // A published model is an immutable artifact used by persisted Run state.
     expect(definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal').definitionDigest)
       .toBe('2f785ba0ebb800eb206d3d3890f8e3713d6bb6c06bd9802832b3c8dc889b8ac0')
