@@ -33,6 +33,8 @@ const additionJson = () => ({
     reactancePu: 0.0015, resistancePu: 0.0001, chargingSusceptancePu: 0.04, osmWayIds: [],
     provenance: { sources: ['leitbild:second-plant@2026-10-10'], method: 'curated', confidence: 'low', note: 'Fixture.' },
   }],
+  hvdcLinks: [] as unknown[],
+  externalSystems: [] as unknown[],
   generators: [],
   loads: [{
     id: 'load:site-second-plant-auxiliaries', label: 'Second plant auxiliaries', kind: 'industry-site', busId: 'bus:curated-second-plant@420',
@@ -68,12 +70,28 @@ describe('Grid Model Addition v2', () => {
     expect(message(() => compose(unrecorded))).toContain('$.buses[0].provenance.sources[0]: leitbild:second-plant@2026-10-10 is not a sourceBuild input')
   })
 
+  test('appends HVDC links and external systems, with the composed model\'s boundary rules', () => {
+    const provenance = { sources: ['leitbild:second-plant@2026-10-10'], method: 'curated', confidence: 'low', note: 'Fixture.' }
+    const json = {
+      ...additionJson(),
+      buses: [...additionJson().buses, { id: 'bus:boundary-GB', label: 'Great Britain HVDC terminal', kind: 'boundary', nominalKv: 400, location: [-1.5, 55.1], externalArea: 'GB', provenance }],
+      hvdcLinks: [{ id: 'hvdc:test-gb-link', label: 'Test GB link', fromBusId: 'bus:osm-relation-7928148@420', toBusId: 'bus:boundary-GB', ratingMw: 1400, lossPercent: 3, rampMwPerMinute: 30, osmWayIds: ['300'], provenance }],
+      externalSystems: [{ id: 'external:GB', label: 'Great Britain', area: 'GB', synchronous: false, boundaryBusIds: ['bus:boundary-GB'], provenance }],
+    }
+    const composed = compose(json)
+    expect(composed.hvdcLinks.map(link => link.id)).toEqual(['hvdc:test-link', 'hvdc:test-gb-link'])
+    expect(composed.externalSystems.map(system => system.id)).toEqual(['external:nordic-remainder', 'external:DE', 'external:GB'])
+    expect(message(() => compose({ ...json, externalSystems: [] }))).toContain('$.buses[1].id: a boundary bus must belong to exactly one external system')
+    expect(message(() => compose({ ...json, externalSystems: [{ ...json.externalSystems[0]!, boundaryBusIds: ['bus:boundary-DE'], id: 'external:DE', area: 'DE' }] })))
+      .toContain('$.externalSystems[0].id: duplicates the id at externalSystems[1]')
+  })
+
   test('stays one level, explicitly based and additive only', () => {
     const chained = validateGridModelAddition(additionJson(), 'first')
     expect(message(() => composeOnto({ kind: 'addition', addition: chained }, { ...additionJson(), id: 'electric-grid.test.v2-fixture.third-plant', baseModelRef: chained.id })))
       .toContain('$.baseModelRef: electric-grid.test.v2-fixture.second-plant is itself a Model Addition')
     expect(message(() => composeOnto(undefined, additionJson()))).toContain('$.baseModelRef: unknown Grid Model electric-grid.test.v2-fixture')
-    expect(message(() => validateGridModelAddition({ ...additionJson(), hvdcLinks: [] }, 'x'))).toContain('hvdcLinks')
+    expect(message(() => validateGridModelAddition({ ...additionJson(), storage: [] }, 'x'))).toContain('storage')
     expect(message(() => validateGridModelAddition({ ...additionJson(), removeBusIds: ['bus:boundary-DE'] }, 'x'))).toContain('removeBusIds')
     const { baseModelRef: _baseModelRef, ...unbased } = additionJson()
     expect(message(() => validateGridModelAddition(unbased, 'x'))).toContain('$.baseModelRef')
