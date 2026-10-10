@@ -152,6 +152,8 @@ export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<Comp
   {
     id: 'delta-t-protection-channel-initial-state',
     componentKind: 'deltaTProtectionChannel',
+    // Its RTDs read the loop legs, so it starts from their temperatures once the links are solved.
+    afterLinks: true,
     reads: ['hot leg:temperatureC', 'cold leg:temperatureC', 'pressurizer.pressureMPa', 'reactorCore rated heat balance'],
     writes: deltaTChannelWrites,
     reconcile: ({ system, component, context }): void => writeDeltaTChannel(system, component, context),
