@@ -32,6 +32,7 @@ const reasonDispositions = {
   'terminal-buffer-review': 'inferred',
   'short-branch-merged': 'inferred',
   'busbar-tie-merged': 'inferred',
+  'switching-point-joined': 'inferred',
   'terminal-point-radius': 'inferred',
   'voltage-inherited': 'inferred',
   'voltage-normalised': 'inferred',

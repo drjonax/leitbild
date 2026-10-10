@@ -52,9 +52,9 @@ export type LevelGraphInput = {
   readonly resolveNode: (key: string, occurrence: KeyOccurrence) => NodeRef
   // True when every vertex of the way between `from` and `to` lies in the station.
   readonly pieceInsideStation: (line: TopologyLineInput, from: number, to: number, groupId: string) => boolean
+  // The key of the switching point a free vertex lies on (all its vertices are one node), or null.
+  readonly switchingPointOf: (key: string) => string | null
 }
-
-const nodeIdOf = (key: string, ref: NodeRef): string => ref.kind === 'station' ? `S|${ref.groupId}` : `F|${key}`
 
 export const isFreeNode = (nodeId: string): boolean => nodeId.startsWith('F|')
 export const freeNodeKey = (nodeId: string): string => nodeId.slice(2)
@@ -78,6 +78,7 @@ const collectOccurrences = (ways: ReadonlyArray<LevelWay>): Map<string, { wayEnd
 export const buildLevelGraph = (input: LevelGraphInput): LevelGraphResult => {
   const occurrences = collectOccurrences(input.ways)
   const nodeOfKey = new Map<string, string>()
+  const nodeIdOf = (key: string, ref: NodeRef): string => ref.kind === 'station' ? `S|${ref.groupId}` : `F|${input.switchingPointOf(key) ?? key}`
   for (const [key, occurrence] of occurrences) nodeOfKey.set(key, nodeIdOf(key, input.resolveNode(key, occurrence)))
 
   const links = new Map<number, CorridorLink>()
@@ -122,7 +123,7 @@ export const buildLevelGraph = (input: LevelGraphInput): LevelGraphResult => {
       const key = line.vertexKeys[index]!
       const node = nodeOfKey.get(key)!
       const occurrence = occurrences.get(key)!
-      const isBreak = index === last || !isFreeNode(node) || occurrence.wayEnds + occurrence.interior >= 2
+      const isBreak = index === last || !isFreeNode(node) || occurrence.wayEnds + occurrence.interior >= 2 || input.switchingPointOf(key) !== null
       if (!isBreak) continue
       const a = nodeOfKey.get(line.vertexKeys[start]!)!
       const lengthKm = polylineKm(line.coordinates, start, index)

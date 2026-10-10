@@ -7,7 +7,8 @@ import type { StationHit, StationIndex } from './station-index.ts'
 
 // Decides which station a vertex belongs to. A way end inside a station polygon, within the
 // polygon buffer, or within the point-station radius is a terminal candidate; every buffer and
-// radius use is logged. Busbars and bays only ever connect inside their own station.
+// radius use is logged. Busbars and bays connect inside their own station; busbars and bays
+// mapped without any station join the lines that touch them into one switching point.
 
 export type StationLocation = { readonly group: StationGroup; readonly hit: StationHit }
 
@@ -22,6 +23,11 @@ export type TerminalResolver = {
   readonly noteTerminal: (key: string, kv: number, location: StationLocation) => void
   // Busbars and bays touching several stations; each vertex joins only its own station.
   readonly spanningBusbars: ReadonlyArray<SpanningBusbar>
+  /**
+   * The one vertex key standing for a switching point mapped as busbars or bays outside every
+   * station that line vertices touch; null for any other key.
+   */
+  readonly switchingPointOf: (key: string) => string | null
   readonly flush: () => void
 }
 
@@ -81,12 +87,13 @@ export const createTerminalResolver = (input: TerminalResolverInput, ledger: Top
 
   const busbarGroups = new Map<string, StationGroup>()
   const spanningBusbars: SpanningBusbar[] = []
+  const freeBusbars: TopologyBusbarInput[] = []
   for (const busbar of [...input.busbars].sort((left, right) => compareText(left.featureId, right.featureId))) {
     const located = busbar.vertexKeys.map((key, index) => ({ key, location: locatePoint(busbar.coordinates[index]!, null) }))
     const groups = [...new Set(located.flatMap(entry => entry.location ? [entry.location.group] : []))]
     const elementIds = [busbar.featureId, ...busbar.osmWayIds]
     if (groups.length === 0) {
-      ledger.add({ reason: 'busbar-outside-station', elementIds, location: busbar.coordinates[0]!, detail: 'busbar/bay has no vertex in or near a station' })
+      freeBusbars.push(busbar)
       continue
     }
     if (groups.length > 1) {
@@ -97,12 +104,15 @@ export const createTerminalResolver = (input: TerminalResolverInput, ledger: Top
     for (const key of busbar.vertexKeys) if (!busbarGroups.has(key)) busbarGroups.set(key, groups[0]!)
   }
 
+  const switchingPoints = createSwitchingPoints(freeBusbars, input.lines, ledger)
+
   const notes = new Map<string, { location: StationLocation; kvs: Set<number> }>()
   return {
     coordinateOf,
     locateKey,
     busbarGroupOf: key => busbarGroups.get(key) ?? null,
     spanningBusbars,
+    switchingPointOf: key => switchingPoints.get(key) ?? null,
     groupsAtPoint: point => [...new Set(input.index.locate(point).map(hit => input.groups.groupOf(hit.container)))],
     containingGroups: point => [...new Set(input.index.containing(point).map(container => input.groups.groupOf(container)))],
     noteTerminal: (key, kv, location) => {
@@ -131,4 +141,66 @@ export const createTerminalResolver = (input: TerminalResolverInput, ledger: Top
       notes.clear()
     },
   }
+}
+
+/**
+ * Busbars and bays outside every station form clusters of shared vertices. A cluster that the
+ * vertices of two or more lines touch is a switching point (an outdoor switching station mapped
+ * without a station outline): every vertex of it maps to its lowest vertex key, so the lines
+ * meeting there share one node. Any other cluster joins nothing and is ledgered as dropped.
+ */
+const createSwitchingPoints = (
+  busbars: ReadonlyArray<TopologyBusbarInput>,
+  lines: ReadonlyArray<TopologyLineInput>,
+  ledger: TopologyLedger,
+): ReadonlyMap<string, string> => {
+  const parent = new Map<string, string>()
+  const find = (key: string): string => {
+    let root = key
+    while (parent.get(root) !== root) root = parent.get(root)!
+    parent.set(key, root)
+    return root
+  }
+  const union = (left: string, right: string): void => {
+    const a = find(left)
+    const b = find(right)
+    if (a === b) return
+    if (compareText(a, b) < 0) parent.set(b, a)
+    else parent.set(a, b)
+  }
+  for (const busbar of busbars) for (const key of busbar.vertexKeys) if (!parent.has(key)) parent.set(key, key)
+  for (const busbar of busbars) for (const key of busbar.vertexKeys.slice(1)) union(busbar.vertexKeys[0]!, key)
+  const linesAtRoot = new Map<string, Set<string>>()
+  for (const line of lines) {
+    for (const key of line.vertexKeys) {
+      if (!parent.has(key)) continue
+      const root = find(key)
+      const set = linesAtRoot.get(root) ?? new Set<string>()
+      set.add(line.featureId)
+      linesAtRoot.set(root, set)
+    }
+  }
+  const busbarsAtRoot = new Map<string, TopologyBusbarInput[]>()
+  for (const busbar of busbars) {
+    const root = find(busbar.vertexKeys[0]!)
+    busbarsAtRoot.set(root, [...(busbarsAtRoot.get(root) ?? []), busbar])
+  }
+  const canonical = new Map<string, string>()
+  for (const [root, members] of [...busbarsAtRoot].sort(([left], [right]) => compareText(left, right))) {
+    const elementIds = members.flatMap(busbar => [busbar.featureId, ...busbar.osmWayIds])
+    const touching = [...(linesAtRoot.get(root) ?? [])].sort(compareText)
+    if (touching.length < 2) {
+      ledger.add({ reason: 'busbar-outside-station', elementIds: [...elementIds, ...touching], location: members[0]!.coordinates[0]!, detail: `busbar/bay has no vertex in or near a station and touches ${touching.length === 0 ? 'no line' : 'one line only'}` })
+      continue
+    }
+    for (const busbar of members) for (const key of busbar.vertexKeys) canonical.set(key, root)
+    const location = members.flatMap(busbar => busbar.vertexKeys.map((key, index) => [key, busbar.coordinates[index]!] as const)).find(([key]) => key === root)![1]
+    ledger.add({
+      reason: 'switching-point-joined',
+      elementIds: [...elementIds, ...touching],
+      location,
+      detail: `${members.length} busbar/bay way${members.length === 1 ? '' : 's'} outside every station join ${touching.length} lines at one switching point (vertex ${root})`,
+    })
+  }
+  return canonical
 }

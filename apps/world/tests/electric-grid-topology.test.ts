@@ -214,6 +214,46 @@ describe('electric-grid topology compiler', () => {
     expect(ledgerOf(result, 'busbar-tie-merged').map(entry => entry.elementIds)).toEqual([['way/706', 'way/75', 'way/76']])
   })
 
+  test('joins the lines meeting on busbars mapped outside every station into one switching point', () => {
+    // Three 132 kV lines end on two connected busbar/bay ways that no station outline contains;
+    // a fourth busbar outside every station touches one line end only.
+    const kv = { voltageKv: [132], maxVoltageKv: 132, voltageBelowThresholdV: [], frequencyHz: [], systems: ['ac50'], systemProvenance: 'inferred', lifecycle: 'operational', plantSource: null, outputMw: null, propertyProvenance: 'observed', confidence: 'high', members: [], ref: null, operator: null }
+    const station = (id: string, name: string, [lon, lat]: readonly [number, number], node: number) => ({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [[[lon - 0.002, lat - 0.001], [lon + 0.002, lat - 0.001], [lon + 0.002, lat + 0.001], [lon - 0.002, lat + 0.001], [lon - 0.002, lat - 0.001]]] },
+      properties: { ...kv, source: 'osm:pbf-power:fixture', category: 'substation', externalId: id, osmNodeIds: [`node/${node}`, `node/${node + 1}`, `node/${node + 2}`, `node/${node + 3}`, `node/${node}`], name, circuits: null, cables: null, power: 'substation', geometrySource: 'osm-way', tags: { power: 'substation', name, voltage: '132000' } },
+    })
+    const way = (id: string, category: 'line' | 'busbar', coordinates: ReadonlyArray<readonly [number, number]>, nodes: ReadonlyArray<number>, name: string | null) => ({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates },
+      properties: {
+        ...kv, source: 'osm:pbf-power:fixture', category, externalId: id, osmNodeIds: nodes.map(node => `node/${node}`), name, circuits: null, cables: category === 'line' ? 3 : null, power: 'line', geometrySource: 'osm-way',
+        tags: category === 'line' ? { power: 'line', voltage: '132000', cables: '3', ...(name === null ? {} : { name }) } : { power: 'line', line: 'busbar' },
+      },
+    })
+    const sidecar = {
+      type: 'FeatureCollection',
+      features: [
+        station('way/8001', 'Uniform', [14.0, 66.0], 980100), station('way/8002', 'Victor', [14.2, 66.0], 980200), station('way/8003', 'Yankee', [14.1, 66.2], 980300),
+        way('way/8101', 'line', [[14.0, 66.0], [14.05, 66.05], [14.1, 66.1]], [981001, 981002, 981003], 'Uniform - Yankee'),
+        way('way/8102', 'line', [[14.2, 66.0], [14.15, 66.05], [14.1008, 66.1]], [981011, 981012, 981013], 'Victor - Yankee'),
+        way('way/8103', 'line', [[14.1, 66.2], [14.1, 66.15], [14.1004, 66.1001]], [981021, 981022, 981023], 'Yankee - Uniform/Victor'),
+        way('way/8201', 'busbar', [[14.1, 66.1], [14.1004, 66.1001]], [981003, 981023], null),
+        way('way/8202', 'busbar', [[14.1004, 66.1001], [14.1008, 66.1]], [981023, 981013], null),
+        way('way/8301', 'line', [[14.0, 66.0], [14.3, 66.3]], [980101, 981031], 'Uniform - nowhere'),
+        way('way/8302', 'busbar', [[14.3, 66.3], [14.3005, 66.3]], [981031, 981032], null),
+      ],
+    }
+    const topology = compileNode(table, noCurations, sidecar)
+    const point = topology.buses.find(bus => bus.id === 'bus:junction-osm-node-981003@132')!
+    expect(point.kind).toBe('junction')
+    const incident = topology.branches.filter(branch => branch.fromBusId === point.id || branch.toBusId === point.id)
+    expect(incident.map(branch => branch.fromBusId === point.id ? branch.toBusId : branch.fromBusId).sort()).toEqual(['bus:osm-way-8001@132', 'bus:osm-way-8002@132', 'bus:osm-way-8003@132'])
+    expect(ledgerOf(topology, 'switching-point-joined').map(entry => entry.elementIds)).toEqual([['way/8101', 'way/8102', 'way/8103', 'way/8201', 'way/8202']])
+    expect(ledgerOf(topology, 'busbar-outside-station').map(entry => entry.elementIds)).toEqual([['way/8301', 'way/8302']])
+    expect(ledgerOf(topology, 'corridor-dangling').map(entry => entry.elementIds)).toEqual([['way/8301']])
+  })
+
   test('applies curations only where open data needs them and ledgers every record', () => {
     const stale = withFeature('way/402', { lifecycle: 'construction' })
     const rejected = compileNode(table, noCurations, stale)

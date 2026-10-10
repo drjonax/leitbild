@@ -146,7 +146,7 @@ export const buildLevels = (input: LevelsInput, ledger: TopologyLedger): LevelsR
       }
       return true
     }
-    const graph = buildLevelGraph({ ways, resolveNode, pieceInsideStation })
+    const graph = buildLevelGraph({ ways, resolveNode, pieceInsideStation, switchingPointOf: terminals.switchingPointOf })
     for (const link of graph.links) links.push({ ...link, kv })
 
     const consumed = new Set<string>()
