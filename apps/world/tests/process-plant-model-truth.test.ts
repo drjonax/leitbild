@@ -385,7 +385,9 @@ describe('pumps', () => {
     }
     // The pressurizer heaters are a unit bus load too: they draw nothing until offsite power returns.
     expect(plantRun.read('pressurizer.demandMw')).toBe(0)
-    expect(plantRun.activeIds()).toEqual(expect.arrayContaining(['alarm:rcp-a-trip:not-running', 'trip:reactor-low-rcp-flow-trip:low-rcp-flow-trip']))
+    // The reactor trips on the pumps' run feedback as their bus goes dead; with its trip breakers open the Plant is out
+    // of power operation, where the low-flow trip acts, so that trip never comes in.
+    expect(plantRun.activeIds()).toEqual(expect.arrayContaining(['alarm:rcp-a-trip:not-running', 'trip:reactor-rcp-breaker-open-trip:rcp-breaker-open-trip']))
   })
 
   test('a reactor coolant pump that loses its power alarms as not running, though its run command stands', () => {
