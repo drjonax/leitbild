@@ -18,6 +18,7 @@
     PackMapAssignmentHandle,
     PackObjectPresentation,
   } from '../core/packs/protocol.ts'
+  import type { PackReferenceDatasetStyle } from '../core/packs/reference-style.ts'
   import { createMapPopupController } from './map/map-popup-controller.ts'
   import type { MapInputDebugController } from './map/map-input-debug.ts'
   import { simulationTimeAt } from './simulation-clock.ts'
@@ -70,10 +71,9 @@
     readonly onMapError: (message: string) => void
     readonly onMapDiagnostic?: (snapshot: MapRuntimeDiagnosticsSnapshot) => void
     readonly simulationRunId?: string | null
-    readonly activePackIds?: ReadonlyArray<string>
     readonly mapLayerGroups?: ReadonlyArray<PackMapLayerGroup>
     readonly mapLayerGroupVisibility?: Readonly<Record<string, boolean>>
-    readonly referenceDatasetIds?: ReadonlyArray<string>
+    readonly referenceStyles?: ReadonlyArray<PackReferenceDatasetStyle>
     readonly packFeatureLayers?: ReadonlyArray<MapLayerId>
     readonly packFeatureSourcePackIds?: ReadonlyArray<string>
     readonly focusRequest?: MapFocusRequest | null
@@ -112,10 +112,9 @@
     onMapError,
     onMapDiagnostic = () => undefined,
     simulationRunId = null,
-    activePackIds = [],
     mapLayerGroups = [],
     mapLayerGroupVisibility = {},
-    referenceDatasetIds = [],
+    referenceStyles = [],
     packFeatureLayers = [],
     packFeatureSourcePackIds = [],
     focusRequest = null,
@@ -265,15 +264,9 @@
   const currentDisplayTime = (): IsoTimestamp | undefined =>
     simulationTimeAt(clock)
 
-  const visibleFamilies = (): ReadonlySet<string> => {
-    const enabled = new Set<string>()
-    for (const layer of mapConfig.layers) {
-      if (layer === 'weather' && !activePackIds.includes('weather')) continue
-      if (layer === 'grid' && !activePackIds.includes('electric-grid')) continue
-      enabled.add(layer)
-    }
-    return enabled
-  }
+  // The scenario compiler builds the Starting View layer list from the active
+  // Packs' declared map feature layers, so it needs no Pack-id gate here.
+  const visibleFamilies = (): ReadonlySet<string> => new Set(mapConfig.layers)
 
   const mapLayerEnabled = (layer: MapLayerId): boolean =>
     visibleFamilies().has(layer)
@@ -342,7 +335,8 @@
     referenceLayerController.register({
       runtime: currentRuntime,
       simulationRunId,
-      datasetIds: referenceDatasetIds,
+      styles: referenceStyles,
+      appearance: { theme },
       layerGroups: mapLayerGroups,
       visibility: mapLayerGroupVisibility,
     })
@@ -544,7 +538,6 @@
 
   $effect(() => {
     mapConfig.layers.join('|')
-    activePackIds.join('|')
     packFeatureLayers.join('|')
     packFeatureSourcePackIds.join('|')
     untrack(() => {
@@ -582,7 +575,7 @@
 
   $effect(() => {
     runtime
-    referenceDatasetIds
+    referenceStyles
     mapLayerGroups
     simulationRunId
     untrack(() => registerReferenceLayers())

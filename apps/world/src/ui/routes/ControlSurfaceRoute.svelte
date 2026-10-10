@@ -98,6 +98,7 @@
   const emptyStringArray: ReadonlyArray<string> = []
   const emptyMapLayerGroups: NonNullable<PackPresentationContribution['mapLayerGroups']> = []
   const emptyMapFeatureLayers: NonNullable<PackPresentationContribution['mapFeatureLayers']> = []
+  const emptyReferenceStyles: NonNullable<PackPresentationContribution['referenceStyles']> = []
   const emptyProcedureRunSummaries: ProcedureRunSummaryGroup = { active: [], completed: [] }
 
   interface ProcessDisplayWindowEntry {
@@ -338,6 +339,7 @@
   const activePackFeatureLayers = $derived(activePack?.presentation.mapFeatureLayers ?? emptyMapFeatureLayers)
   const activePackFeatureSourcePackIds = $derived(activePack?.mapFeatureSourcePackIds ?? emptyStringArray)
   const activeReferenceDatasetIds = $derived(activePack?.referenceDatasetIds?.map(String) ?? emptyStringArray)
+  const activeReferenceStyles = $derived(activePack?.referenceStyles ?? emptyReferenceStyles)
   let mapLayerGroupVisibility = $state<Record<string, boolean>>({})
   // Re-seed when the group list changes. `untrack` keeps the write from
   // re-triggering this effect (a new object literal every time would otherwise
@@ -1670,10 +1672,9 @@
           {simulationRunId}
           packDataRevisionKey={JSON.stringify(packDataRevisions)}
           onPackFeatureSelected={selection => { if (surfacePanels.some(panel => panel.id === selection.panelId)) { packPanelSelections = { ...packPanelSelections, [selection.panelId]: selection.itemId }; setSurfacePanelOpen(selection.panelId, true) } }}
-          activePackIds={scenarioDefinition?.packs ?? emptyStringArray}
           mapLayerGroups={activeMapLayerGroups}
           {mapLayerGroupVisibility}
-          referenceDatasetIds={activeReferenceDatasetIds}
+          referenceStyles={activeReferenceStyles}
           packFeatureLayers={activePackFeatureLayers}
           packFeatureSourcePackIds={activePackFeatureSourcePackIds}
           focusRequest={mapFocusRequest}
