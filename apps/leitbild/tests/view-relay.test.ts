@@ -20,7 +20,10 @@ const views = (...listings: ReadonlyArray<ReturnType<typeof listing>>) => ({ typ
 const open = (view: ReturnType<typeof listing>) => ({ type: 'leitbild:view-open', view })
 const ready = { type: 'leitbild:view-window-ready' }
 
-const harness = (options: { pane?: WorldPane; runs?: ReadonlyArray<string> } = {}) => {
+// Lets the relay's asynchronous Run check settle.
+const settle = async (): Promise<void> => { for (let turn = 0; turn < 3; turn += 1) await Promise.resolve() }
+
+const harness = (options: { pane?: WorldPane; runs?: ReadonlyArray<string>; refusal?: string } = {}) => {
   const state = {
     pane: options.pane ?? 'shown' as WorldPane,
     world: [] as Array<{ readonly type: string; readonly views?: ReadonlyArray<{ readonly key: string }>; readonly view?: { readonly key: string } }>,
@@ -30,12 +33,17 @@ const harness = (options: { pane?: WorldPane; runs?: ReadonlyArray<string> } = {
     shownWorld: 0,
     maximised: [] as boolean[],
     timers: [] as Array<{ readonly ms: number; readonly expire: () => void; cancelled: boolean }>,
+    runChecks: 0,
   }
   const runs = new Set(options.runs ?? [])
   const relay = createViewRelay({
     workspaceId: () => workspaceId,
     worldPane: () => state.pane,
-    hasRun: (run: WorkspaceResourceReference) => run.workspaceId === workspaceId && run.type === 'world.simulation-run' && runs.has(run.id),
+    runRefusal: async (run: WorkspaceResourceReference) => {
+      state.runChecks += 1
+      if (options.refusal !== undefined) return options.refusal
+      return run.workspaceId === workspaceId && run.type === 'world.simulation-run' && runs.has(run.id) ? null : 'The display\'s Run is not in this Workspace'
+    },
     postToWorld: message => { state.world.push(message) },
     postToAgents: message => { state.agents.push(message) },
     showWorld: () => { state.shownWorld += 1; state.pane = 'shown' },
@@ -140,10 +148,11 @@ describe('process display relay', () => {
     expect(state.world.at(-1)).toEqual(open(listing('a', 'run-2')))
   })
 
-  test('without a World pane opens the display\'s Run beside the chat and shows the display once World listens', () => {
+  test('without a World pane opens the display\'s Run beside the chat and shows the display once World listens', async () => {
     const { relay, state, liveTimers } = harness({ pane: 'absent', runs: ['run-2'] })
     relay.fromAgents(views(listing('a', 'run-2')))
     relay.fromAgents(open(listing('a', 'run-2')))
+    await settle()
     expect(state.openedRuns).toEqual(['run-2'])
     expect(liveTimers()).toHaveLength(1)
 
@@ -153,12 +162,38 @@ describe('process display relay', () => {
     expect(state.errors).toEqual([])
   })
 
-  test('never opens a Run this Workspace does not list', () => {
+  test('never opens a Run this Workspace does not list', async () => {
     const { relay, state, liveTimers } = harness({ pane: 'absent', runs: ['run-1'] })
     relay.fromAgents(open(listing('a', 'missing')))
+    await settle()
     expect(state.openedRuns).toEqual([])
     expect(liveTimers()).toEqual([])
     expect(state.errors).toEqual(['The display\'s Run is not in this Workspace'])
+  })
+
+  test('says why a Run may not be opened beside the chat instead of closing the chat', async () => {
+    const { relay, state } = harness({ pane: 'absent', refusal: 'The display\'s Run is outside this room\'s scope' })
+    relay.fromAgents(open(listing('a', 'run-2')))
+    await settle()
+    expect(state.openedRuns).toEqual([])
+    expect(state.errors).toEqual(['The display\'s Run is outside this room\'s scope'])
+  })
+
+  test('only the latest open acts once its Run check settles, and a pane opened meanwhile takes it', async () => {
+    const { relay, state } = harness({ pane: 'absent', runs: ['run-2', 'run-3'] })
+    relay.fromAgents(open(listing('a', 'run-2')))
+    relay.fromAgents(open(listing('b', 'run-3')))
+    await settle()
+    expect(state.openedRuns).toEqual(['run-3'])
+    expect(state.runChecks).toBe(2)
+
+    const other = harness({ pane: 'absent', runs: ['run-2'] })
+    other.relay.fromWorld(ready)
+    other.relay.fromAgents(open(listing('a', 'run-2')))
+    other.state.pane = 'shown'
+    await settle()
+    expect(other.state.openedRuns).toEqual([])
+    expect(other.state.world.at(-1)).toEqual(open(listing('a', 'run-2')))
   })
 
   test('refuses invalid or foreign messages visibly and keeps the previous list', () => {

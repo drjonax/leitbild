@@ -11,8 +11,8 @@
     readonly agentsRoomId: string | null
     readonly agentsVisible: boolean
     readonly onShowAgents: () => void
-    /** Whether this Workspace's catalog lists the Run. */
-    readonly hasRun: (run: WorkspaceResourceReference) => boolean
+    /** Why a chat display's Run may not be opened beside the chat, or null when it may. */
+    readonly runRefusal: (run: WorkspaceResourceReference) => Promise<string | null>
     /** Opens a Run in a World pane beside the chat, as switching Runs does. */
     readonly onOpenRun: (runId: string) => void
     readonly onError: (message: string) => void
@@ -24,7 +24,7 @@
   const collapseThreshold = 12
   const minimumOpenShare = 20
 
-  let { workspaceId, worldRunId, focusedSubjects, agentsRoomId, agentsVisible, onShowAgents, hasRun, onOpenRun, onError }: Props = $props()
+  let { workspaceId, worldRunId, focusedSubjects, agentsRoomId, agentsVisible, onShowAgents, runRefusal, onOpenRun, onError }: Props = $props()
   let splitPercent = $state(initialSplit)
   let lastOpenSplit = $state(initialSplit)
   let collapsedPane = $state<CollapsedPane>(null)
@@ -121,7 +121,7 @@
   const relay = createViewRelay({
     workspaceId: () => workspaceId,
     worldPane: (): WorldPane => worldRunId === null ? 'absent' : collapsedPane === 'world' ? 'collapsed' : 'shown',
-    hasRun: run => hasRun(run),
+    runRefusal: run => runRefusal(run),
     postToWorld: message => worldFrame?.contentWindow?.postMessage(message, location.origin),
     postToAgents: message => agentsFrame?.contentWindow?.postMessage(message, location.origin),
     showWorld: () => restoreSplit(),
@@ -135,11 +135,26 @@
   })
   onDestroy(() => relay.dispose())
 
+  // The World document that last said it listens; a frame that loads another
+  // document (a reload, or the World start page) no longer listens.
+  let listeningWorldDocument: Document | null = null
+
   // Only the two frames' own documents take part in the window's protocol.
   const receiveViewMessage = (event: MessageEvent): void => {
     if (event.origin !== location.origin || event.source === null) return
     if (event.source === agentsFrame?.contentWindow) relay.fromAgents(event.data)
-    else if (event.source === worldFrame?.contentWindow) relay.fromWorld(event.data)
+    else if (event.source === worldFrame?.contentWindow) {
+      if ((event.data as { readonly type?: unknown } | null)?.type === 'leitbild:view-window-ready') listeningWorldDocument = worldFrame?.contentDocument ?? null
+      relay.fromWorld(event.data)
+    }
+  }
+
+  // World says it listens as its route mounts, which can be before or after the
+  // frame's load event: only a load of a document other than the listening one ends it.
+  const worldFrameLoaded = (): void => {
+    if (worldFrame?.contentDocument === listeningWorldDocument) return
+    listeningWorldDocument = null
+    relay.worldFrameUnloaded()
   }
 
   // A new Run gives the World frame a new document (or none), which listens only
@@ -197,6 +212,7 @@
       class="module-frame active"
       src={`/workspaces/${encodeURIComponent(workspaceId)}/world/runs/${encodeURIComponent(worldRunId)}`}
       title="World simulations"
+      onload={worldFrameLoaded}
     ></iframe>
   </section>{/if}
 

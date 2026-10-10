@@ -48,8 +48,12 @@ export const createViewRelay = (config: {
   /** The Workspace this page shows; a view of any other Workspace is refused. */
   readonly workspaceId: () => string
   readonly worldPane: () => WorldPane
-  /** Whether this Workspace's catalog lists the Run, so the Host may open it. */
-  readonly hasRun: (run: WorkspaceResourceReference) => boolean
+  /**
+   * Why the Run may not be opened beside the chat, or null when it may: the
+   * Workspace must list it (after reading the catalog again on a miss, since
+   * an agent may just have started it) and the shown room's scope contain it.
+   */
+  readonly runRefusal: (run: WorkspaceResourceReference) => Promise<string | null>
   readonly postToWorld: (message: EmbeddedViewsMessage | EmbeddedViewOpenMessage) => void
   readonly postToAgents: (message: EmbeddedViewHostMessage) => void
   /** Brings a collapsed World pane back beside the chat. */
@@ -68,6 +72,8 @@ export const createViewRelay = (config: {
   let worldListening = false
   // The one open that waits for a World document to listen; a later open replaces it.
   let pending: { readonly view: EmbeddedViewListing; readonly cancel: () => void } | null = null
+  // Counts opens, so a Run check still running for an earlier one does nothing.
+  let openSequence = 0
 
   const viewsMessage = (): EmbeddedViewsMessage => embeddedViewsMessageSchema.parse({ type: 'leitbild:views', views })
   const openMessage = (view: EmbeddedViewListing): EmbeddedViewOpenMessage =>
@@ -108,20 +114,35 @@ export const createViewRelay = (config: {
     if (!parsed.success) return config.reportError(`Display could not be opened: ${firstIssue(parsed.error)}`)
     const view = parsed.data.view
     if (foreign(view)) return config.reportError('Display could not be opened: it belongs to another Workspace')
-    const pane = config.worldPane()
-    if (pane === 'absent') {
-      // Chat only: open the display's Run beside the chat, then show the display
-      // once its World page listens. A Run this Workspace does not list is never opened.
-      if (!config.hasRun(view.envelope.subject)) return config.reportError('The display\'s Run is not in this Workspace')
-      keepPending(view)
-      config.openRun(view.envelope.subject.id)
-      return
-    }
+    const sequence = ++openSequence
+    if (config.worldPane() === 'absent') return void openBesideChat(view, sequence)
+    deliver(view)
+  }
+
+  const deliver = (view: EmbeddedViewListing): void => {
     // A shown World pane keeps its Run: the window shows a display of another Run as it is.
-    if (pane === 'collapsed') config.showWorld()
+    if (config.worldPane() === 'collapsed') config.showWorld()
     if (!worldListening) return keepPending(view)
     dropPending()
     config.postToWorld(openMessage(view))
+  }
+
+  // Chat only: open the display's Run beside the chat, then show the display
+  // once its World page listens. A Run that may not be opened there is refused
+  // visibly, never opened in a way that closes the chat.
+  const openBesideChat = async (view: EmbeddedViewListing, sequence: number): Promise<void> => {
+    let refusal: string | null
+    try {
+      refusal = await config.runRefusal(view.envelope.subject)
+    } catch (error) {
+      refusal = `Display could not be opened: ${error instanceof Error ? error.message : String(error)}`
+    }
+    if (sequence !== openSequence) return
+    if (refusal !== null) return config.reportError(refusal)
+    // A World pane opened meanwhile shows the display as any open would.
+    if (config.worldPane() !== 'absent') return deliver(view)
+    keepPending(view)
+    config.openRun(view.envelope.subject.id)
   }
 
   const receiveReady = (data: unknown): void => {

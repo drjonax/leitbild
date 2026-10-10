@@ -326,9 +326,21 @@
     else history.pushState(null, '', url)
   }
 
-  // The process display window opens a chat display's Run only when this Workspace lists it.
-  const listsRun = (run: WorkspaceResourceReference): boolean =>
-    resources.some(resource => resource.ref.type === 'world.simulation-run' && sameResource(resource.ref, run))
+  // The process display window opens a chat display's Run beside the chat only
+  // when this Workspace lists it, reading the catalog again on a miss (an agent
+  // may just have started the Run), and when the shown room's scope contains it,
+  // so opening the Run never closes the chat the display was opened from.
+  const runRefusal = async (run: WorkspaceResourceReference): Promise<string | null> => {
+    const listed = (): ModuleResourceDescriptor | undefined =>
+      resources.find(resource => resource.ref.type === 'world.simulation-run' && sameResource(resource.ref, run))
+    if (listed() === undefined && workspace) await refreshResources(workspace.id)
+    const found = listed()
+    if (found === undefined) return 'The display\'s Run is not in this Workspace'
+    if (selectedAgentsResource && !roomSelectsRun(selectedAgentsResource, found)) {
+      return 'The display\'s Run is outside this room\'s scope; open the Run to see the display'
+    }
+    return null
+  }
 
   const closeWorldRun = (): void => {
     location.href = workspace ? `/workspaces/${encodeURIComponent(workspace.id)}` : '/workspaces'
@@ -563,7 +575,7 @@
     {#if refreshError}<p class="notice error" role="alert">Catalog refresh failed: {refreshError}</p>{/if}
     {#if showingComposer}
     <WorkspaceComposer workspaceId={workspace.id} worldRunId={selectedWorldRunId} {focusedSubjects} agentsRoomId={selectedAgentsRoomId} {agentsVisible} onShowAgents={showRunAssistant}
-      hasRun={listsRun} onOpenRun={runId => switchWorldRun(runId)} onError={message => { error = message }} />
+      {runRefusal} onOpenRun={runId => switchWorldRun(runId)} onError={message => { error = message }} />
     {:else}
       <section class="workspace-home">
         {#if error}<p class="notice error">{error}</p>{/if}
