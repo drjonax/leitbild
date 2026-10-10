@@ -857,9 +857,8 @@
         <button
           type="button"
           class="display-window-button"
-          aria-label="Maximise the display window"
+          aria-label={maximised ? 'Restore the display window' : 'Maximise the display window'}
           title={maximised ? 'Restore' : 'Maximise'}
-          aria-pressed={maximised}
           onclick={() => setMaximised(!maximised)}
         >
           {#if maximised}<Minimize2 size={16} aria-hidden="true" />{:else}<Maximize2 size={16} aria-hidden="true" />{/if}

@@ -93,10 +93,12 @@ const inlineButton = (host: HTMLElement, listing: EmbeddedViewListing, actions: 
   const button = document.createElement('button')
   button.type = 'button'
   button.className = SIDE_BUTTON
-  button.setAttribute('aria-controls', inlineSlotOf(host).id)
   const paint = (): void => {
     const shown = actions.inlineShown(listing.key)
     button.setAttribute('aria-expanded', String(shown))
+    // It controls the inline display only while that is in the answer.
+    if (shown) button.setAttribute('aria-controls', inlineSlotOf(host).id)
+    else button.removeAttribute('aria-controls')
     button.setAttribute('aria-label', `${shown ? 'Hide' : 'Show'} the live display in this answer: ${title}`)
     button.title = shown ? 'Hide the display in this answer' : 'Show the display in this answer'
     const glyph = icon('chevron-down', { size: 14, className: shown ? 'rotate-180' : '' })
