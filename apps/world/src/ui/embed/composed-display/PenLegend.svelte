@@ -2,7 +2,7 @@
   import { untrack } from 'svelte'
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { composedTrendLegendHeight } from '../../../packs/process-plant/displays/composition.ts'
-  import { formatQuantity, marginText, nearestThresholdMargin } from '../../../packs/process-plant/displays/display-text.ts'
+  import { formatQuantity, isPast, marginText, nearestThresholdMargin } from '../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { displayName, fitName, penStroke, roleLabel } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
@@ -74,7 +74,7 @@
       <span class="value">{typeof value === 'number' ? formatQuantity(value, pen.unit) : typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'}</span>
       <span class="state">
         {#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}
-        {#if back !== ''}<span>{back}</span>{:else if margin !== null}<span class:beyond={margin.margin < 0}>{marginText(margin, pen.unit)}{#if typeof value === 'number' && margin.margin >= 0}{@const eta = timeToThresholdText(value, rate, margin.threshold, projectable)}{eta === '' ? '' : ` · ${eta}`}{/if}</span>{:else if away !== null}<span>no {away === 'rising' ? 'HI' : 'LO'} limit ahead</span>{:else if !limited && typeof value === 'number'}<span>no I&amp;C limit</span>{:else if idle && typeof value === 'number' && latest?.mode !== undefined}<span>no limit acts {latest.mode === null ? 'now' : `in ${latest.mode.label}`}</span>{/if}
+        {#if back !== ''}<span>{back}</span>{:else if margin !== null}<span class:beyond={isPast(margin)}>{marginText(margin, pen.unit)}{#if typeof value === 'number' && !isPast(margin)}{@const eta = timeToThresholdText(value, rate, margin.threshold, projectable)}{eta === '' ? '' : ` · ${eta}`}{/if}</span>{:else if away !== null}<span>no {away === 'rising' ? 'HI' : 'LO'} limit ahead</span>{:else if !limited && typeof value === 'number'}<span>no I&amp;C limit</span>{:else if idle && typeof value === 'number' && latest?.mode !== undefined}<span>no limit acts {latest.mode === null ? 'now' : `in ${latest.mode.label}`}</span>{/if}
         {#if entry?.quality === 'outside-hard-range'}<span class="beyond">outside range</span>{/if}
       </span>
       <span class="rate">{typeof value === 'number' && !live ? rateText(rate, value, pen.unit, { windowMs, change: rateChange(points, windowMs, value) }) : ''}{liveOnly && !live ? ' · live only' : ''}</span>

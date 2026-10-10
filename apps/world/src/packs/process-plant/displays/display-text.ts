@@ -67,6 +67,13 @@ export interface ThresholdMargin {
 }
 
 /**
+ * Whether the value is past the threshold, so its rule acts: beyond it, or on
+ * it where the rule acts at equality ("≤ 0 °C" at 0 °C).
+ */
+export const isPast = (margin: ThresholdMargin): boolean =>
+  margin.margin < 0 || (margin.margin === 0 && (margin.threshold.operator === '<=' || margin.threshold.operator === '>='))
+
+/**
  * The alarm or trip threshold the value is closest to acting on or, once it
  * is past some, the outermost it has passed: 19.5 % is past LO TRIP 20 %, not
  * only past LO ALM 30 % (evaluation run 19: steam generators below their
@@ -83,7 +90,7 @@ export const nearestThresholdMargin = (
       margin: threshold.operator === '<' || threshold.operator === '<=' ? value - threshold.value : threshold.value - value,
     }))
   if (margins.length === 0) return null
-  const passed = margins.filter(margin => margin.margin < 0)
+  const passed = margins.filter(isPast)
   if (passed.length > 0) return passed.reduce((outermost, candidate) => candidate.margin > outermost.margin ? candidate : outermost)
   return margins.reduce((nearest, candidate) => candidate.margin < nearest.margin ? candidate : nearest)
 }
@@ -96,7 +103,7 @@ export const nearestThresholdMargin = (
  */
 export const marginTextForms = (margin: ThresholdMargin, unit: string): ReadonlyArray<string> => {
   const threshold = margin.threshold
-  const lead = margin.margin < 0 ? 'past' : `${formatQuantity(margin.margin, unit)} ${threshold.direction === 'low' ? 'above' : 'below'}`
+  const lead = isPast(margin) ? 'past' : `${formatQuantity(margin.margin, unit)} ${threshold.direction === 'low' ? 'above' : 'below'}`
   return [...new Set([
     `${lead} ${thresholdName(threshold, unit)}${threshold.modeLabel === undefined ? '' : ` (${threshold.modeLabel})`}`,
     `${lead} ${thresholdName(threshold, unit)}`,
