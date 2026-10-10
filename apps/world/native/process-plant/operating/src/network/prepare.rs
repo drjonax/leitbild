@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#preparation-at-600-m-saturated
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/build-readiness.md#s1-declaration-hydraulics-admission
 //! EOS-consistent hydrostatic preparation of the composed network at a
 //! declared operating point. This is a deterministic construction of one
