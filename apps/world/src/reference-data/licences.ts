@@ -23,6 +23,17 @@ export const osmOdbl: LicenceRef = {
   shareAlike: true,
 }
 
+// Elhub open energy data and Kartverket municipality data are published under CC BY 4.0.
+export const ccBy40: LicenceRef = {
+  id: asLicenceId('cc-by-4.0'),
+  name: 'Creative Commons Attribution 4.0 International',
+  url: 'https://creativecommons.org/licenses/by/4.0/',
+  attribution: '© Elhub AS; © Kartverket · CC BY 4.0',
+  commercialUseAllowed: true,
+  redistributionAllowed: true,
+  shareAlike: false,
+}
+
 export const repoOwned: LicenceRef = {
   id: asLicenceId('repo-owned'),
   name: 'Repository-owned content',
@@ -33,7 +44,7 @@ export const repoOwned: LicenceRef = {
   shareAlike: false,
 }
 
-const knownLicences: ReadonlyArray<LicenceRef> = [nveNlod20, osmOdbl, repoOwned]
+const knownLicences: ReadonlyArray<LicenceRef> = [nveNlod20, osmOdbl, ccBy40, repoOwned]
 
 export const findLicence = (id: LicenceId): LicenceRef | null =>
   knownLicences.find(licence => licence.id === id) ?? null
