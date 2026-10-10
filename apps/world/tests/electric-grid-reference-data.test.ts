@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createGridNorwayDataset } from '../src/packs/electric-grid/datasets/grid-norway.ts'
 import { compileGridReferenceGraph } from '../src/packs/electric-grid/reference-graph.ts'
-import { gridReferenceFeatureSchema, type GridReferenceFeatureProperties } from '../src/packs/electric-grid/schemas/grid-reference.ts'
+import {
+  gridReferenceFeatureSchema,
+  gridReferenceSidecarManifestSchema,
+  type GridReferenceFeatureProperties,
+} from '../src/packs/electric-grid/schemas/grid-reference.ts'
 import {
   assertOsmPbfPin,
   extractOsmPower,
@@ -377,5 +381,40 @@ describe('OSM PBF pinned input and source snapshot', () => {
       },
     }])
     expect(manifest.licences.map(licence => licence.id)).toEqual(['osm-odbl-1.0'])
+  })
+})
+
+describe('standalone sidecar build', () => {
+  const runSidecarBuild = (args: ReadonlyArray<string>) => Bun.spawnSync(
+    ['bun', 'run', join(import.meta.dir, '..', 'scripts', 'electric-grid', 'build-osm-power-sidecar.ts'), ...args],
+    { stdout: 'pipe', stderr: 'pipe' },
+  )
+
+  test('writes the sidecar and a schema-valid manifest, and refuses to overwrite them', async () => {
+    const out = join(directory, 'sidecar-build')
+    const sha256 = (await inspectOsmPbf(fixturePath)).sha256
+    const first = runSidecarBuild(['--pbf', fixturePath, '--sha256', sha256, '--out', out])
+    expect(first.exitCode).toBe(0)
+    const manifest = gridReferenceSidecarManifestSchema.parse(
+      JSON.parse(await readFile(join(out, 'grid-norway.sidecar-manifest.json'), 'utf8')),
+    )
+    const sidecarText = await readFile(join(out, 'grid-norway.features.geojson'), 'utf8')
+    expect(manifest.source.snapshot).toEqual({
+      origin: fixturePath,
+      sha256,
+      byteLength: encodeOsmPbf(fixture).byteLength,
+      dataTimestamp: '2026-10-08T20:21:06.000Z',
+    })
+    expect(manifest.sidecar.featureCount).toBe(extraction.features.length)
+    expect(manifest.sidecar.sha256).toBe(new Bun.CryptoHasher('sha256').update(sidecarText).digest('hex'))
+    expect(manifest.featureCounts.circuit).toBe(1)
+    expect(manifest.ledger).toEqual(extraction.ledger)
+    expect(runSidecarBuild(['--pbf', fixturePath, '--sha256', sha256, '--out', out]).stderr.toString()).toContain('already exists')
+  })
+
+  test('refuses an extract whose hash does not match the pin', () => {
+    const result = runSidecarBuild(['--pbf', fixturePath, '--sha256', '0'.repeat(64), '--out', join(directory, 'mismatch')])
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr.toString()).toContain('pinned input expects')
   })
 })

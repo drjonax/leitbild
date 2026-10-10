@@ -68,3 +68,42 @@ export const gridReferenceFeatureSchema = z.object({
 })
 
 export type GridReferenceFeatureProperties = z.infer<typeof gridReferenceFeatureSchema>
+
+const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/)
+
+// Manifest written next to a standalone sidecar build (scripts/electric-grid/build-osm-power-sidecar.ts).
+export const gridReferenceSidecarManifestSchema = z.object({
+  kind: z.literal('grid-norway-osm-sidecar'),
+  builtAt: z.string().min(1),
+  generator: z.object({
+    script: z.string().min(1),
+    commit: z.string().regex(/^[0-9a-f]{40}$/),
+    workingTreeClean: z.boolean(),
+  }),
+  source: z.object({
+    id: z.string().min(1),
+    snapshot: z.object({
+      origin: z.string().min(1),
+      sha256: sha256Schema,
+      byteLength: z.number().int().positive(),
+      dataTimestamp: z.string().min(1),
+    }),
+    osmHeader: z.object({
+      writingProgram: z.string().nullable(),
+      source: z.string().nullable(),
+      replicationSequenceNumber: z.number().int().nullable(),
+      replicationBaseUrl: z.string().nullable(),
+    }),
+    licence: z.object({ id: z.string().min(1), attribution: z.string().min(1), url: z.string().min(1) }),
+  }),
+  sidecar: z.object({
+    path: z.string().min(1),
+    sha256: sha256Schema,
+    byteLength: z.number().int().positive(),
+    featureCount: z.number().int().nonnegative(),
+  }),
+  featureCounts: z.record(gridReferenceCategorySchema, z.number().int().nonnegative()),
+  ledger: z.record(z.string(), z.number().int().positive()),
+})
+
+export type GridReferenceSidecarManifest = z.infer<typeof gridReferenceSidecarManifestSchema>
