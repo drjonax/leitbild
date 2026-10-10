@@ -272,7 +272,7 @@ describe('auxiliary feedwater on a loss of offsite power', () => {
     expect(firstTrue['AFW-PUMP-A-RUNNING']!).toBeLessThanOrEqual(25)
     expect(firstTrue['AFW-PUMP-T-RUNNING']!).toBeLessThanOrEqual(firstTrue['AFW-PUMP-A-RUNNING']!)
     expect(plantRun.activeIds()).toContain('trip:loss-of-offsite-power-afw-actuation:afw-actuation')
-    // Lined up at about the design flow to each steam generator, not wide open.
+    // Lined up wide open, the pumps rated like a 4-loop PWR's feed each steam generator about its share of the design flow.
     for (const loop of ['a', 'b', 'c', 'd']) {
       const flow = Number(plantRun.read(`aux-feedwater-valve-${loop}-to-sg-${loop}.flowKgPerS`))
       expect(flow, loop).toBeGreaterThan(15)

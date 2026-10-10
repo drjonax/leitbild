@@ -95,11 +95,11 @@ const dieselGeneratorRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRul
 // Both unit buses dead is a loss of offsite power to the unit: the steam-driven
 // auxiliary feedwater pump starts at once and auxiliary feedwater is lined up
 // to every steam generator; the motor-driven pumps follow on the sequencer.
-// Each line opens to a quarter, about 26 kg/s per steam generator and some
-// 105 kg/s in all, a 4-loop PWR's auxiliary feedwater design flow. Wide open,
-// the reference pumps would feed four times that and overfill the steam
-// generators within minutes; operators throttle from there.
-const afwLineUpPositionFraction = 0.25
+// Each line opens fully, as on low-low level: the pumps are rated like a
+// 4-loop PWR's (two motor-driven of 30 kg/s, one turbine-driven of 60 kg/s),
+// so all three together feed some 120 kg/s, about 30 kg/s per steam
+// generator, enough for decay heat; operators throttle from there.
+const afwLineUpPositionFraction = 1
 
 const lossOfOffsitePowerAuxiliaryFeedwater = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlantIcRule => rule({
   id: 'loss-of-offsite-power-afw-actuation',
