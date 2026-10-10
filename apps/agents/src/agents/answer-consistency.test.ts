@@ -140,3 +140,66 @@ describe('answers consistent with their display', () => {
     )).toEqual([])
   })
 })
+
+// Trends as World now states them from the Run's history (evaluation run 21,
+// reconstructed): rate per minute, direction, and the limit the legend names ahead.
+const moving = (item: Item, rate: number, direction: 'rising' | 'falling' | 'steady', ahead?: { readonly name: string; readonly value: number; readonly timeToLimitMs?: number }): Item => ({
+  ...item,
+  trend: { rate, unit: item.values[0]!.unit, direction },
+  ...(ahead === undefined ? {} : { limitAhead: { name: ahead.name, value: ahead.value, unit: item.values[0]!.unit }, ...(ahead.timeToLimitMs === undefined ? {} : { timeToLimitMs: ahead.timeToLimitMs }) }),
+})
+const pressure = (value: number) => signal(['PT-455', 'pressurizer.pressureMPa', 'Pressurizer pressure'], value, 'MPa', [13.8, 14.8, 16])
+
+describe('answers that state a direction or limit the display shows otherwise', () => {
+  test('production: the nearest limit named for a pressure falling toward the other one', () => {
+    const view_ = view([moving(pressure(15.458), -1, 'falling', { name: 'LO ALM 14.8 MPa', value: 14.8, timeToLimitMs: 39_000 })], { lead: { item: 0, reason: 'PT-455: 15.5 MPa, falling 1.00 MPa/min, 0.658 MPa above LO ALM 14.8 MPa · ≈39 s' } })
+    expect(answerViewIssues('Unit 2 pressurizer pressure (PT-455) is **15.46 MPa**, **0.542 MPa below HI ALM 16 MPa**.' + FENCE, view_)).toEqual([
+      'It names HI ALM 16 MPa for PT-455, but the display names LO ALM 14.8 MPa as the limit ahead as it is falling: name LO ALM 14.8 MPa as the display does.',
+    ])
+    // Naming the limit ahead as the display does, the higher one may be mentioned too.
+    expect(answerViewIssues('PT-455 is 15.46 MPa and falling, 0.658 MPa above LO ALM 14.8 MPa (about 39 s at this rate); HI ALM 16 MPa is behind it.' + FENCE, view_)).toEqual([])
+  })
+
+  test('a direction the trend shows the other way, or as moving where it is said to be stable', () => {
+    expect(answerViewIssues('At sim 10:02:00 Unit 2 pressurizer pressure is rising at 15.46 MPa.' + FENCE, view([moving(pressure(15.458), -1, 'falling')]))).toEqual([
+      'It says PT-455 is rising, but the display shows it falling 1 MPa/min.',
+    ])
+    // A denial after the direction does not deny it (sg-b-runback, turned around).
+    expect(answerViewIssues('Unit 2 SG B is genuinely low and still trending up, not just reading oddly.' + FENCE, view([moving(sgLevels(29.6)[1]!, -2.25, 'falling', { name: 'LO TRIP 20 %', value: 20 })]))).toEqual([
+      'It says SG-B-LVL-NR is rising, but the display shows it falling 2.25 %/min.',
+    ])
+    // turbine-trip: the four levels rise 25.2 %/min toward HI ALM 75 %.
+    expect(answerViewIssues('Unit 2’s steam-generator levels are stable at about **73%**.' + FENCE, view(sgLevels(73).map(level => moving(level, 25.2, 'rising', { name: 'HI ALM 75 %', value: 75, timeToLimitMs: 5_000 }))))).toEqual([
+      'It says SG-A-LVL-NR, SG-B-LVL-NR, SG-C-LVL-NR, SG-D-LVL-NR are steady, but the display shows them rising 25.2 %/min.',
+    ])
+  })
+})
+
+describe('answers whose directions and limits agree with the display', () => {
+  test('porv-open: history in the past tense, and a direction the answer declines to state', () => {
+    expect(answerViewIssues(
+      'By sim 10:02:00, pressure had fallen from 15.49 to **4.01 MPa** over the recorded two minutes; the low-pressure reactor trip is active. The latest pressure is slightly above the sampled minimum of 3.97 MPa, so the evidence does not establish that it is *still* falling at this instant.' + FENCE,
+      view([moving(pressure(4.01), 0.202, 'rising')], { span: { shownMs: 120_000, horizonMs: 120_000 } }),
+    )).toEqual([])
+  })
+
+  test('sg-b-runback: past the low alarm, with the low trip named as the next limit', () => {
+    expect(answerViewIssues(
+      'At sim 10:03:00, Unit 2’s SG B narrow-range level is **29.6%**, just below **LO ALM 30%** and falling; SG A is 53.8%. **LO TRIP 20%** is the next level threshold shown.' + FENCE,
+      view([moving(sgLevels(29.6)[1]!, -2.25, 'falling', { name: 'LO TRIP 20 %', value: 20, timeToLimitMs: 255_000 }), moving(signal(['SG-A-LVL-NR', 'sgA.levelPercent', 'Steam generator level'], 53.8, '%', [20, 30, 75]), -1.28, 'falling', { name: 'LO ALM 30 %', value: 30 })]),
+    )).toEqual([])
+  })
+
+  test('turbine-trip: the limit ahead, and watching for either direction', () => {
+    expect(answerViewIssues(
+      'Over the next minutes, watch all four steam-generator levels for a fall or divergence. The levels are about **73%**, only **2 percentage points below HI ALM 75%**, so watch for a rise as well as a fall.' + FENCE,
+      view(sgLevels(73).map(level => moving(level, 25.2, 'rising', { name: 'HI ALM 75 %', value: 75, timeToLimitMs: 5_000 })), { lead: { item: 0, reason: 'SG-A-LVL-NR: 73.0 %, rising 25.2 %/min, 2.02 % below HI ALM 75 % · ≈5 s' } }),
+    )).toEqual([])
+  })
+
+  test('each item its own direction, and a slight change the display reads as steady', () => {
+    const levels = [moving(sgLevels(55)[0]!, 1.2, 'rising'), moving(sgLevels(48)[1]!, -2.1, 'falling'), moving(sgLevels(55.1)[2]!, 0.02, 'steady')]
+    expect(answerViewIssues('SG A level is rising at 55%, while SG B level is falling at 48%. SG C level is slightly rising.' + FENCE, view(levels))).toEqual([])
+  })
+})
+
