@@ -186,7 +186,9 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const steamToWaterSaturation = steamAtWaterSaturation - steam - loopSteamMass
       let phaseChange = 0
       if (superheat > 0) {
-        phaseChange = Math.min(water * superheat / latentHeat * Math.min(1, dt / flashingTimeConstant), Math.max(0, steamToWaterSaturation))
+        // No more than the water there is: heater heat in the last few
+        // kilograms of a draining pressurizer superheats them without bound.
+        phaseChange = Math.min(water, water * superheat / latentHeat * Math.min(1, dt / flashingTimeConstant), Math.max(0, steamToWaterSaturation))
       } else if (steam > 0) {
         phaseChange = -Math.min(steam, water * -superheat / latentHeat * Math.min(1, dt / condensationTimeConstant), Math.max(0, -steamToWaterSaturation))
       }
