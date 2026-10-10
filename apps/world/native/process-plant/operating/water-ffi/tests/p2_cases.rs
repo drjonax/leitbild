@@ -6,22 +6,25 @@
 //! standalone DAE (`p2_harness`).
 //!
 //! The case block `ld01-p2-cases` is the single numeric owner of the set:
-//! boundaries, source states, durations, CPU gates, sensitivities. The
-//! tolerance classes, orders and output interval are the S1 declaration's
-//! (`ld01-s1-gates`), the refinement budgets the accuracy contract's
-//! (`ld01-accuracy-contract`), the relief device its owner block
-//! (`ld01-pzr-relief-device`) and the benchmark its frozen prescription
-//! (`reference-pressurizer-transport`). Every block is read from the wiki's
-//! committed HEAD and hashed into each receipt. The cell's parameters are the
-//! compiled packet's `pzr.cell`. Nothing is retuned: a failure is a result.
+//! boundaries, source states, durations, CPU gates, sensitivities and the
+//! relief lift's tolerance class. The other tolerance classes, orders and
+//! output interval are the S1 declaration's (`ld01-s1-gates`), the
+//! refinement budgets the accuracy contract's (`ld01-accuracy-contract`) and
+//! the benchmark its frozen prescription (`reference-pressurizer-transport`).
+//! Every block is read from the wiki's committed HEAD and hashed into each
+//! receipt. The cell, its spray and relief ports and the relief calibration
+//! are the case-set packet's `pzr` section, unchanged. Nothing is retuned: a
+//! failure is a result.
 #![cfg(all(feature = "ida", target_os = "macos"))]
 mod p2_harness;
 
 use leitbild_operating_plant::{
     network::{
-        Properties, properties as props,
+        ConsistentSystem, Failure as CellFailure, Properties, consistent_start,
+        properties as props,
         stratified::{
-            self as st, Case, Cell, Parameters, Port, PortKind, ReliefDevice, ReliefMotion,
+            self as st, Case, Cell, Parameters, PortKind, ReliefDevice, ReliefMotion,
+            SensitivityFamilies,
         },
     },
     pzr_field as pf,
@@ -44,7 +47,6 @@ const READINESS: &str =
     "world/packs/process-plant/reference-designs/ld-01/model/build-readiness.md";
 const HOT_SPINE: &str =
     "world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md";
-const INVENTORY: &str = "world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressure-and-inventory.md";
 const SURGE_HISTORY: &str = "world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-surge-history.md";
 
 /// The S1 harness's declared PZR preparation controls (`s1_hydraulics.rs`).
@@ -52,6 +54,10 @@ const PREPARATION_TOLERANCE_PA: f64 = 1e-6;
 const PREPARATION_PASSES: usize = 50;
 /// The S1 harness's exact-representation search.
 const REPRESENTATION_SEARCH: usize = 8;
+/// The S1 harness's consistent-pair bound and passes (lead ruling): every
+/// start, at t = 0 and at every event, holds every scaled row to it.
+const CONSISTENT_ROW_BOUND: f64 = 1e-12;
+const CONSISTENT_PASSES: usize = 2;
 
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
@@ -149,12 +155,9 @@ struct Sources {
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Families {
-    relaxation: Vec<f64>,
-    #[serde(rename = "sprayDrop_m")]
-    spray_drop_m: Vec<f64>,
-    #[serde(rename = "bubble_m")]
-    bubble_m: Vec<f64>,
+struct CaseTolerances {
+    #[serde(rename = "reliefLiftScaledAbsolute")]
+    relief_lift_scaled_absolute: f64,
 }
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -195,10 +198,11 @@ struct CaseSet {
     #[serde(rename = "cpuBound_s")]
     cpu_bound_s: f64,
     run_cap_factor: f64,
-    sensitivity_families: Families,
+    sensitivity_families: SensitivityFamilies,
     sources: Sources,
     #[serde(rename = "reliefBackPressure_Pa")]
     relief_back_pressure_pa: f64,
+    tolerance_classes: CaseTolerances,
     cases: Vec<Entry>,
 }
 
@@ -212,11 +216,10 @@ struct Context {
     cases_block: Block,
     gates: Block,
     budgets: Block,
-    relief_block: Block,
-    spray_block: Block,
     transport: Block,
     parameters: Parameters,
-    faces: usize,
+    /// The packet's `pzr.reliefCalibration`, from the relief device owner.
+    relief_calibration: Value,
 }
 impl Context {
     fn load() -> Self {
@@ -226,26 +229,27 @@ impl Context {
         let cases_block = Block::read(&wiki, PTS, "ld01-p2-cases");
         let gates = Block::read(&wiki, READINESS, "ld01-s1-gates");
         let budgets = Block::read(&wiki, HOT_SPINE, "ld01-accuracy-contract");
-        let relief_block = Block::read(&wiki, INVENTORY, "ld01-pzr-relief-device");
-        let spray_block = Block::read(&wiki, INVENTORY, "ld01-pzr-spray-port");
         let transport = Block::read(&wiki, SURGE_HISTORY, "reference-pressurizer-transport");
         let set: CaseSet = serde_json::from_value(cases_block.value.clone()).expect("case set");
         let bytes = std::fs::read(&packet_path).expect("packet");
         let packet: Value = serde_json::from_slice(&bytes).expect("packet json");
         let parameters: Parameters =
             serde_json::from_value(packet["pzr"]["cell"].clone()).expect("pzr.cell");
-        let faces = packet["mechanics"]["faces"]
-            .as_array()
-            .expect("faces")
-            .len();
+        let relief_calibration = packet["pzr"]["reliefCalibration"].clone();
+        // The case-set packet's composition record, when it sits beside it.
+        let sidecar = packet_path.replace(".json", ".provenance.json");
+        let composition: Value = std::fs::read(&sidecar)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or(Value::Null);
         let app = std::env::current_dir().unwrap().display().to_string();
         let provenance = json!({
             "app_commit":sh(&["rev-parse","HEAD"],&app),"app_dirty":!sh(&["status","--porcelain"],&app).is_empty(),
             "wiki_root":wiki,"wiki_commit":sh(&["rev-parse","HEAD"],&wiki),"wiki_dirty":!sh(&["status","--porcelain"],&wiki).is_empty(),
             "blocks_read_from":"wiki HEAD",
-            "packet":packet_path,"packet_sha256":sha256(&bytes),
+            "packet":packet_path,"packet_sha256":sha256(&bytes),"packet_composition":composition,
             "case_block":cases_block.provenance(),"gates_block":gates.provenance(),"accuracy_block":budgets.provenance(),
-            "relief_device_block":relief_block.provenance(),"spray_port_block":spray_block.provenance(),"transport_block":transport.provenance()});
+            "transport_block":transport.provenance()});
         let receipts_dir = format!(
             "{}/cases",
             Path::new(&packet_path).parent().unwrap().display()
@@ -259,11 +263,9 @@ impl Context {
             cases_block,
             gates,
             budgets,
-            relief_block,
-            spray_block,
             transport,
             parameters,
-            faces,
+            relief_calibration,
         }
     }
     fn rtol(&self) -> f64 {
@@ -272,13 +274,19 @@ impl Context {
     fn output_s(&self) -> f64 {
         self.gates.f64(&["outputInterval_s"])
     }
+    /// The packet's relief port device.
     fn relief_device(&self) -> ReliefDevice {
-        ReliefDevice {
-            opening_pa: self.relief_block.f64(&["openingPressure_Pa"]),
-            reseat_pa: self.relief_block.f64(&["reseatPressure_Pa"]),
-            full_strokes_per_s: self.relief_block.f64(&["fullStrokesPerSecond"]),
-            effective_area_per_lift_m2: self.relief_block.f64(&["effectiveAreaPerLift_m2"]),
-        }
+        self.parameters
+            .ports
+            .iter()
+            .find(|p| p.kind == PortKind::Relief)
+            .and_then(|p| p.relief)
+            .expect("the case-set packet declares the relief port")
+    }
+    /// A relief lift farther than its own scaled tolerance from the stop is
+    /// not that travel root (`ReliefDevice::stop`), in full strokes.
+    fn lift_root_bound(&self) -> f64 {
+        self.set.tolerance_classes.relief_lift_scaled_absolute
     }
     fn write(&self, id: &str, receipt: &Value) {
         std::fs::create_dir_all(&self.receipts_dir).unwrap();
@@ -296,39 +304,6 @@ struct Variant {
     bubble_diameter_m: f64,
 }
 
-/// The cell section for a case: the packet's `pzr.cell`, plus the spray
-/// inlet (`ld01-pzr-spray-port`) and relief outlet (`ld01-pzr-relief-device`)
-/// the case declares, plus a variant's bubble diameter (the cell's `Case`
-/// carries no bubble diameter). The cell refuses an upper port that does not
-/// sit at its top.
-fn case_parameters(ctx: &Context, entry: &Entry, bubble_m: f64) -> Parameters {
-    let mut p = ctx.parameters.clone();
-    p.stratified.bubble_diameter_m = bubble_m;
-    if entry.spray.is_some() {
-        p.ports.push(Port {
-            id: "PZR.SPRAY".into(),
-            kind: PortKind::Spray,
-            elevation_m: ctx.spray_block.f64(&["elevation_m"]),
-            // The standalone harness has no network face; the next free face
-            // index labels the port the validation requires to name one.
-            face: Some(ctx.faces),
-            bore_m: ctx.spray_block.f64(&["exitBore_m"]),
-            relief: None,
-        });
-    }
-    if entry.relief == Some(true) {
-        p.ports.push(Port {
-            id: "PZR.RELIEF".into(),
-            kind: PortKind::Relief,
-            elevation_m: ctx.relief_block.f64(&["elevation_m"]),
-            face: None,
-            bore_m: ctx.relief_block.f64(&["bore_m"]),
-            relief: Some(ctx.relief_device()),
-        });
-    }
-    p
-}
-
 fn enthalpy(state: &SourceState) -> f64 {
     If97.forward(false, state.pressure_pa, state.temperature_k)
         .expect("source state")
@@ -338,8 +313,9 @@ fn enthalpy(state: &SourceState) -> f64 {
 /// Solver scales (contract amendment 4): prepared roof pressure, zone
 /// volumes, masses and energies; transit volumes by `fluidVolume_m3`;
 /// transit masses by their host zone's mass (bubbles by g, drops by R);
-/// tracers by host mass times `absorberMassFraction`. The relief lift by its
-/// full stroke, the unit of `effectiveAreaPerLift_m2`.
+/// tracers by host mass times `absorberMassFraction`. The relief lift, when
+/// the case arms the outlet, by its full stroke, the unit of its declared
+/// tolerance class and of `effectiveAreaPerLift_m2`.
 fn scales(p: &Parameters, values: &[f64; st::COORDINATES], relief: bool) -> Vec<f64> {
     let mut sc = values.to_vec();
     sc[st::BUBBLE_VOLUME] = p.fluid_volume_m3;
@@ -364,13 +340,17 @@ fn scales(p: &Parameters, values: &[f64; st::COORDINATES], relief: bool) -> Vec<
 }
 
 /// Absolute tolerances from the S1 classes: volumes, masses and energies
-/// the stock class, tracers the tracer class, the lift the stock class, and
-/// the roof pressure `relative / (κ_eff · scale)` with the prepared cell's
-/// effective isentropic compressibility, as the network weights it.
+/// the stock class, tracers the tracer class, the roof pressure
+/// `relative / (κ_eff · scale)` with the prepared cell's effective isentropic
+/// compressibility, as the network weights it; the relief lift the case
+/// block's `toleranceClasses.reliefLiftScaledAbsolute`.
 fn tolerances(ctx: &Context, column: &st::Column, sc: &[f64], rtol: f64) -> Vec<f64> {
     let stock = ctx.gates.f64(&["stockScaledAbsolute"]);
     let tracer = ctx.gates.f64(&["tracerScaledAbsolute"]);
     let mut atol = vec![stock; sc.len()];
+    if sc.len() > st::COORDINATES {
+        atol[p2_harness::LIFT] = ctx.lift_root_bound();
+    }
     for t in [st::ADMITTED_BORON, st::RESIDENT_BORON, st::DROP_BORON] {
         atol[t] = tracer;
     }
@@ -400,7 +380,7 @@ struct Prepared {
 }
 
 fn prepare(ctx: &Context, entry: &Entry) -> Prepared {
-    let p = case_parameters(ctx, entry, ctx.parameters.stratified.bubble_diameter_m);
+    let p = ctx.parameters.clone();
     let cell = Cell::new(p.clone(), Case::nominal(&p)).expect("cell");
     let roof = entry.roof_pressure_pa.expect("roofPressure_Pa");
     let level = entry.level_m.expect("level_m");
@@ -437,13 +417,15 @@ fn prepare(ctx: &Context, entry: &Entry) -> Prepared {
 }
 
 fn system(ctx: &Context, entry: &Entry, prepared: &Prepared, v: Variant) -> CellSystem {
-    let p = case_parameters(ctx, entry, v.bubble_diameter_m);
-    let cell = Cell::new(
+    let p = ctx.parameters.clone();
+    let cell = Cell::for_case(
         p.clone(),
         Case {
             relaxation_factor: v.relaxation_factor,
             drop_diameter_m: v.drop_diameter_m,
+            bubble_diameter_m: v.bubble_diameter_m,
         },
+        Some(&ctx.set.sensitivity_families),
     )
     .expect("cell variant");
     let port = |kind: PortKind| p.ports.iter().position(|q| q.kind == kind);
@@ -460,12 +442,15 @@ fn system(ctx: &Context, entry: &Entry, prepared: &Prepared, v: Variant) -> Cell
         enthalpy_j_kg: enthalpy(&ctx.set.sources.spray),
         concentration: c,
     });
-    let relief = (entry.relief == Some(true)).then(|| Relief {
-        port: port(PortKind::Relief).unwrap(),
+    // The packet declares the relief port for every case; only a case with
+    // `relief: true` arms it. The receiver backpressure is the case block's.
+    let relief = port(PortKind::Relief).map(|port| Relief {
+        port,
         device: ctx.relief_device(),
         back_pressure_pa: ctx.set.relief_back_pressure_pa,
         motion: ReliefMotion::Closed,
         demand_open: false,
+        armed: entry.relief == Some(true),
     });
     // Internal free-area band edges for the mixture level and A/R boundary,
     // then the structural limits.
@@ -698,6 +683,9 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             credited,
             limit,
             resolvability_factor: ctx.parameters.stratified.resolvability_factor,
+            consistent_bound: CONSISTENT_ROW_BOUND,
+            consistent_passes: CONSISTENT_PASSES,
+            lift_root_bound: ctx.lift_root_bound(),
         };
         let sys = system(ctx, entry, &prepared, v);
         let r = run(sys, &prepared.y0, &spec);
@@ -759,17 +747,18 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             checks.insert("refined_agreement".into(), cmp);
         }
     }
-    let p = case_parameters(ctx, entry, ctx.parameters.stratified.bubble_diameter_m);
+    let p = &ctx.parameters;
     let top = p.top_m;
     match gate {
         4 => {
-            // Drop stock against the quasi-steady W_s (top − z_mix)/u_d.
+            // Drop stock against the quasi-steady (W_s + W_c)(top − z_mix)/u_d:
+            // the drops carry the spray and the vapor condensed at entry.
             let quasi: Vec<Value> = nominal
                 .samples
                 .iter()
                 .filter(|s| s.event.is_none() && s.spray_kg_s > 0. && (s.t.fract() < 1e-9 || s.t.fract() > 1. - 1e-9) && (s.t as i64) % 5 == 0)
                 .map(|s| {
-                    let q = s.spray_kg_s * (top - (s.mixture_level_m + p.bottom_m)) / s.drop_velocity_m_s;
+                    let q = (s.spray_kg_s + s.spray_condensation_kg_s) * (top - (s.mixture_level_m + p.bottom_m)) / s.drop_velocity_m_s;
                     json!({"t":s.t,"drop_stock_kg":s.masses[4],"quasi_steady_kg":q,"ratio":s.masses[4]/q,"spray_kg_s":s.spray_kg_s,"entry_condensation_kg_s":s.spray_condensation_kg_s,"rain_kg_s":s.rain_kg_s,"drop_velocity_m_s":s.drop_velocity_m_s})
                 })
                 .collect();
@@ -802,7 +791,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
                     travel.push(json!({"from_s":a["t"],"to_s":b["t"],"duration_s":b["t"].as_f64().unwrap()-a["t"].as_f64().unwrap(),"declared_s":1./device.full_strokes_per_s}));
                 }
             }
-            let cal = &ctx.relief_block.value["calibration"];
+            let cal = &ctx.relief_calibration;
             let p0 = cal["inletPressure_Pa"].as_f64().unwrap();
             let back = cal["backPressure_Pa"].as_f64().unwrap();
             let sat = If97.saturation(s(p0)).expect("saturation");
@@ -1114,6 +1103,38 @@ impl Bench {
         }))
     }
 }
+/// Exact consistent rates of the benchmark's rows (all six differential):
+/// its stroke starts never use IDACalcIC either.
+impl ConsistentSystem for Bench {
+    fn system_dimension(&self) -> usize {
+        6
+    }
+    fn rows_at(&mut self, _: f64, y: &[f64], yp: &[f64]) -> Result<Vec<f64>, CellFailure> {
+        let r = self.rows(y, yp, None).map_err(CellFailure::Recoverable)?;
+        Ok(r.iter().map(|v| v.value).collect())
+    }
+    fn pencil_at(
+        &mut self,
+        _: f64,
+        y: &[f64],
+        yp: &[f64],
+    ) -> Result<(Vec<f64>, Vec<f64>), CellFailure> {
+        let (mut a, mut b) = (vec![0.; 36], vec![0.; 36]);
+        for j in 0..6 {
+            let ra = self
+                .rows(y, yp, Some((j, 0.)))
+                .map_err(CellFailure::Recoverable)?;
+            let rb = self
+                .rows(y, yp, Some((j, 1.)))
+                .map_err(CellFailure::Recoverable)?;
+            for i in 0..6 {
+                a[j * 6 + i] = ra[i].direction;
+                b[j * 6 + i] = rb[i].direction - ra[i].direction;
+            }
+        }
+        Ok((a, b))
+    }
+}
 impl System for Bench {
     fn dimension(&self) -> usize {
         6
@@ -1261,7 +1282,26 @@ fn benchmark(ctx: &Context, entry: &Entry, deadline: f64) -> Value {
         jacobians: 0,
     };
     let mut y = vec![1.; 6];
-    let mut yp = vec![0.; 6];
+    let mut bench = bench;
+    let mut pairs: Vec<Value> = Vec::new();
+    let weights = |y: &[f64]| -> Vec<f64> {
+        y.iter()
+            .zip(&atol)
+            .map(|(v, a)| 1. / (rtol * v.abs() + a))
+            .collect()
+    };
+    let w0 = weights(&y);
+    let (mut yp, pair) = consistent_start(
+        &mut bench,
+        0.,
+        &mut y,
+        &[1.; 6],
+        &w0,
+        CONSISTENT_ROW_BOUND,
+        CONSISTENT_PASSES,
+    )
+    .expect("benchmark consistent start");
+    pairs.push(json!({"t":0.,"pair":pair}));
     let mut ida = Ida::new(
         bench,
         Initial {
@@ -1291,16 +1331,33 @@ fn benchmark(ctx: &Context, entry: &Entry, deadline: f64) -> Value {
                 totals.4 += st.convergence_failures;
             }
             ida.system_mut().stroke = *stroke;
+            // The stroke changes the receipts discontinuously: the exact
+            // consistent rates at the stroke start, then IDAReInit.
+            let w = weights(&y);
+            match consistent_start(
+                ida.system_mut(),
+                *from,
+                &mut y,
+                &[1.; 6],
+                &w,
+                CONSISTENT_ROW_BOUND,
+                CONSISTENT_PASSES,
+            ) {
+                Ok((rates, pair)) => {
+                    yp = rates;
+                    pairs.push(json!({"t":from,"pair":pair}));
+                }
+                Err(e) => {
+                    failure = Some(format!("consistent start at {from} s: {e:?}"));
+                    break;
+                }
+            }
             if let Err(e) = ida.reinitialize(*from, &y, &yp) {
                 failure = Some(e);
                 break;
             }
         }
         ida.stop_at(*to).unwrap();
-        if let Err(e) = ida.initialize(from + output, &mut y, &mut yp) {
-            failure = Some(format!("CalcIC at {from} s: {e}"));
-            break;
-        }
         if let Stroke::Withdraw { .. } = stroke {
             let sys = ida.system();
             let xv: [Scalar; 6] = std::array::from_fn(|i| s(y[i] * sys.scales[i]));
@@ -1428,7 +1485,7 @@ fn benchmark(ctx: &Context, entry: &Entry, deadline: f64) -> Value {
         "result":{"mass_weighted_mean_abs_outlet_error_k":mean_error,"max_local_outlet_error_k":max_local,"withdrawn_enthalpy_relative_error":enthalpy_error,
             "integrated_withdrawn_mass_kg":total_m,"screens":{"maximumOutletMeanAbsoluteError_K":screen_t,"maximumRelativeWithdrawnEnthalpyError":screen_h},
             "meets_history_screen":mean_error <= screen_t,"meets_enthalpy_screen":enthalpy_error.abs() <= screen_h},
-        "run":{"failure":failure,"steps":totals.0,"residuals":totals.1,"jacobians":totals.2,"error_test_failures":totals.3,"convergence_failures":totals.4,
+        "consistent_pairs":pairs,"run":{"failure":failure,"steps":totals.0,"residuals":totals.1,"jacobians":totals.2,"error_test_failures":totals.3,"convergence_failures":totals.4,
             "harness_residual_calls":sys.residuals,"harness_jacobian_calls":sys.jacobians,"cpu_s":cpu_s()-started,"thread_cpu_s":thread_cpu_s()-thread_started,"cpu_cap_s":cap},
         "series":samples,
         "verdict":if failure.is_none() { "REPORTED (not a P2 gate)" } else { "FAILED RUN" }})

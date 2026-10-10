@@ -10,16 +10,19 @@
 //! the copied absorber fraction, an outsurge the port view's φ-weighted
 //! liquid. Nothing here is a law of the cell: every row is the cell's own.
 //! Relief demand and end of travel are roots on raw PT1 and the lift through
-//! `ReliefDevice::roots`; each starts a new handle from the located state and
-//! IDACalcIC, as the S1 harness starts an event run. The free-area steps are
-//! roots that only record the crossing. Zone masses reaching zero and the
-//! mixture reaching the roof are structural roots.
+//! `ReliefDevice::roots`; an end of travel is `ReliefDevice::stop`. Every run
+//! starts, at t = 0 and at every relief event, from the exact consistent pair
+//! of `consistent_start` on this system's own rows; IDACalcIC is never
+//! called. A case without the relief outlet keeps the packet's declared port
+//! closed and unarmed: no lift coordinate, no root, never any flow. The
+//! free-area steps are roots that only record the crossing. Zone masses
+//! reaching zero and the mixture reaching the roof are structural roots.
 #![allow(dead_code)]
 // Zones, ledgers and rows are parallel fixed arrays indexed together.
 #![allow(clippy::needless_range_loop)]
 use leitbild_operating_plant::{
     network::{
-        Failure as CellFailure, Reuse,
+        ConsistentSystem, Failure as CellFailure, Reuse, consistent_start,
         stratified::{
             self as st, Boundary, Cell, Coordinates, Heat, Receipt, ReliefDevice, ReliefMotion,
             ReliefState, Slots, Taps,
@@ -158,6 +161,8 @@ pub struct Flow {
 }
 
 /// The relief device, its receiver backpressure and its discrete state.
+/// `armed` is the case's `relief: true`: only then does the outlet carry a
+/// lift coordinate and roots; otherwise the declared port stays closed.
 #[derive(Clone, Copy, Debug)]
 pub struct Relief {
     pub port: usize,
@@ -165,6 +170,7 @@ pub struct Relief {
     pub back_pressure_pa: f64,
     pub motion: ReliefMotion,
     pub demand_open: bool,
+    pub armed: bool,
 }
 
 /// Root functions of one integration segment.
@@ -244,10 +250,14 @@ impl CellSystem {
     }
     pub fn differential(&self) -> Vec<f64> {
         let mut ids = st::DIFFERENTIAL.to_vec();
-        if self.relief.is_some() {
+        if self.armed() {
             ids.push(1.);
         }
         ids
+    }
+    /// The case declares the relief outlet: the lift is a coordinate.
+    pub fn armed(&self) -> bool {
+        self.relief.is_some_and(|r| r.armed)
     }
     pub fn cell_scales(&self) -> [f64; st::COORDINATES] {
         let mut out = [0.; st::COORDINATES];
@@ -258,7 +268,7 @@ impl CellSystem {
     /// the lift moves, its end of travel.
     pub fn roots_active(&self) -> Vec<Root> {
         let mut roots = self.fixed_roots.clone();
-        if let Some(r) = &self.relief {
+        if let Some(r) = self.relief.as_ref().filter(|r| r.armed) {
             roots.push(Root::Demand);
             if matches!(r.motion, ReliefMotion::Opening | ReliefMotion::Closing) {
                 roots.push(Root::Travel);
@@ -317,7 +327,7 @@ impl CellSystem {
         y: &[f64],
         yp: &[f64],
         seed: Option<(usize, f64)>,
-        reuse: Option<&mut Reuse<CaloricLinearization>>,
+        mut reuse: Option<&mut Reuse<CaloricLinearization>>,
     ) -> Result<Evaluated, CellFailure> {
         let sc = &self.scales;
         let dir = |i: usize, rate: bool| match seed {
@@ -338,9 +348,20 @@ impl CellSystem {
             .collect();
         let x = Coordinates::from_slice(&xv)?;
         let rate = Coordinates::from_slice(&rv)?;
-        let column = self.cell.column(&If97, &x, reuse.map(|r| (r, SLOTS)))?;
+        let column = self
+            .cell
+            .column(&If97, &x, reuse.as_deref_mut().map(|r| (r, SLOTS)))?;
         let receipts = self.receipts(t, &column)?;
         let (lift, lift_row, relief) = match &self.relief {
+            // The declared outlet of a case without it: closed, unarmed.
+            Some(r) if !r.armed => (
+                s(0.),
+                s(0.),
+                Some(ReliefState {
+                    lift: s(0.),
+                    back_pressure_pa: s(r.back_pressure_pa),
+                }),
+            ),
             Some(r) => {
                 let lift = Scalar::new(y[LIFT] * sc[LIFT], dir(LIFT, false));
                 let lift_rate = Scalar::new(yp[LIFT] * sc[LIFT], dir(LIFT, true));
@@ -358,10 +379,10 @@ impl CellSystem {
         };
         let boundary = Boundary {
             heat: Heat::zero(),
-            heaters: Vec::new(),
             relief,
+            ..Boundary::closed()
         };
-        let ev = self.cell.residual_on(
+        let ev = self.cell.residual_on_reusing(
             &If97,
             column,
             &x,
@@ -369,6 +390,7 @@ impl CellSystem {
             &receipts,
             &boundary,
             &self.cell_scales(),
+            reuse,
         )?;
         Ok(Evaluated {
             ev,
@@ -419,6 +441,38 @@ impl CellSystem {
             };
         }
         Ok(())
+    }
+}
+
+/// The exact consistent-rate solve on this system's own rows: the rows, and
+/// the dense pencil `dF/dy`, `dF/dy'` from seeded columns, one matrix reuse
+/// per pencil half.
+impl ConsistentSystem for CellSystem {
+    fn system_dimension(&self) -> usize {
+        self.n()
+    }
+    fn rows_at(&mut self, t: f64, y: &[f64], yp: &[f64]) -> Result<Vec<f64>, CellFailure> {
+        let e = self.evaluate(t, y, yp, None, None)?;
+        Ok((0..self.n()).map(|i| e.row(i).value).collect())
+    }
+    fn pencil_at(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+    ) -> Result<(Vec<f64>, Vec<f64>), CellFailure> {
+        let n = self.n();
+        let (mut a, mut b) = (vec![0.; n * n], vec![0.; n * n]);
+        let (mut ra, mut rb) = (Reuse::new(2, 2), Reuse::new(2, 2));
+        for j in 0..n {
+            let ea = self.evaluate(t, y, yp, Some((j, 0.)), Some(&mut ra))?;
+            let eb = self.evaluate(t, y, yp, Some((j, 1.)), Some(&mut rb))?;
+            for i in 0..n {
+                a[j * n + i] = ea.row(i).direction;
+                b[j * n + i] = eb.row(i).direction - ea.row(i).direction;
+            }
+        }
+        Ok((a, b))
     }
 }
 
@@ -682,6 +736,11 @@ pub struct RunSpec {
     /// Limit runs (gate 8) end at their first limit and report it.
     pub limit: bool,
     pub resolvability_factor: f64,
+    /// Bound and passes of every consistent pair (the S1 lead ruling).
+    pub consistent_bound: f64,
+    pub consistent_passes: usize,
+    /// Largest lift defect a travel root may hand `ReliefDevice::stop`.
+    pub lift_root_bound: f64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -785,41 +844,32 @@ fn new_handle(
     Ok(ida)
 }
 
-/// IDACalcIC at a segment start and the scaled residual right after it.
-fn calcic(
-    ida: &mut Ida<Segment>,
+/// The exact consistent pair at a segment start, t = 0 or an event: the
+/// algebraic coordinates projected onto the constraints within the run's
+/// own error weights, then the exact rates. Never IDACalcIC.
+fn start(
+    system: &mut CellSystem,
     t: f64,
-    horizon: f64,
     y: &mut [f64],
-    yp: &mut [f64],
-) -> Result<Value, String> {
-    let n = ida.system().system.n();
-    let rows = |ida: &Ida<Segment>, y: &[f64], yp: &[f64]| -> Result<Vec<f64>, String> {
-        let e = ida
-            .system()
-            .system
-            .evaluate(t, y, yp, None, None)
-            .map_err(|f| text(&f))?;
-        Ok((0..n).map(|i| e.row(i).value).collect())
-    };
-    let before = rows(ida, y, yp).ok();
-    let (y0, yp0) = (y.to_vec(), yp.to_vec());
-    ida.initialize(horizon, y, yp)?;
-    let after = rows(ida, y, yp).map_err(|e| format!("post-CalcIC residual: {e}"))?;
-    let (largest, row) = after
+    spec: &RunSpec,
+) -> Result<(Vec<f64>, Value), String> {
+    let ids = system.differential();
+    let weights: Vec<f64> = y
         .iter()
-        .enumerate()
-        .map(|(i, r)| (r.abs(), i))
-        .fold((0., 0), |b, x| if x.0 > b.0 { x } else { b });
-    let pre = before
-        .as_ref()
-        .map(|b| b.iter().map(|r| r.abs()).fold(0., f64::max));
-    let dy = (0..n).map(|i| (y[i] - y0[i]).abs()).fold(0., f64::max);
-    let dyp: Vec<f64> = (0..n).map(|i| yp[i] - yp0[i]).collect();
-    Ok(
-        json!({"t":t,"max_abs_scaled_row":largest,"row":row,"pre_calcic_max_abs_scaled_row":pre,
-        "post_rows":after,"pre_rows":before,"max_abs_y_change":dy,"yp_change":dyp}),
+        .zip(&spec.atol)
+        .map(|(v, a)| 1. / (spec.rtol * v.abs() + a))
+        .collect();
+    let (yp, pair) = consistent_start(
+        system,
+        t,
+        y,
+        &ids,
+        &weights,
+        spec.consistent_bound,
+        spec.consistent_passes,
     )
+    .map_err(|e| format!("consistent pair at t={t} s: {}", text(&e)))?;
+    Ok((yp, json!({"t":t,"pair":pair})))
 }
 
 /// Accepted-state stop rules on a sample. Returns the rule and reason.
@@ -870,7 +920,7 @@ fn stop_rules(sample: &Sample, spec: &RunSpec, admitted_atol_kg: f64) -> Option<
 }
 
 /// Integrate one declared run from the prepared state `y0` at rest.
-pub fn run(system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
+pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     let started = cpu_s();
     let thread_started = thread_cpu_s();
     let wall = Instant::now();
@@ -942,6 +992,26 @@ pub fn run(system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
         out.yp = yp.to_vec();
     }
     let mut totals = Totals::default();
+    match start(&mut system, t, &mut y, spec) {
+        Ok((rates, pair)) => {
+            yp = rates;
+            out.initializations.push(pair);
+        }
+        Err(e) => {
+            finish(
+                &mut out,
+                End::Failure {
+                    reason: format!("initial consistent pair: {e}"),
+                },
+                None,
+                &totals,
+                t,
+                &y,
+                &yp,
+            );
+            return out;
+        }
+    }
     let mut ida = match new_handle(system, t, &y, &yp, spec, next_break(t)) {
         Ok(h) => h,
         Err(e) => {
@@ -960,23 +1030,6 @@ pub fn run(system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
         }
     };
     out.handles = 1;
-    match calcic(&mut ida, t, spec.output_s, &mut y, &mut yp) {
-        Ok(v) => out.initializations.push(v),
-        Err(e) => {
-            finish(
-                &mut out,
-                End::Failure {
-                    reason: format!("initial CalcIC: {e}"),
-                },
-                Some(&ida),
-                &totals,
-                t,
-                &y,
-                &yp,
-            );
-            return out;
-        }
-    }
     let record = |out: &mut Run,
                   ida: &Ida<Segment>,
                   totals: &Totals,
@@ -1206,64 +1259,66 @@ pub fn run(system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                 let travel = fired.iter().any(|(r, _)| *r == Root::Travel);
                 if end.is_none() && (demand.is_some() || travel) {
                     let mut next = ida.system().system.clone();
-                    let relief = next
-                        .relief
-                        .as_mut()
-                        .expect("relief roots imply a relief outlet");
-                    let before = (relief.demand_open, relief.motion);
-                    let located = y[LIFT] * next.scales[LIFT];
-                    let mut set_lift = None;
-                    if travel {
-                        match relief.motion {
-                            ReliefMotion::Opening => {
-                                relief.motion = ReliefMotion::Open;
-                                set_lift = Some(1.);
+                    let scale = next.scales[LIFT];
+                    let located = y[LIFT] * scale;
+                    let (before, after, rate, stop) = {
+                        let relief = next
+                            .relief
+                            .as_mut()
+                            .expect("relief roots imply an armed outlet");
+                        let before = (relief.demand_open, relief.motion);
+                        let mut stop = None;
+                        if travel {
+                            // The mechanical-stop transaction at the located root.
+                            let mut lift = located;
+                            match relief
+                                .device
+                                .stop(relief.motion, &mut lift, spec.lift_root_bound)
+                            {
+                                Ok(report) => {
+                                    relief.motion = report.motion_after;
+                                    y[LIFT] = lift / scale;
+                                    stop = Some(report);
+                                }
+                                Err(e) => {
+                                    end = Some(End::Failure {
+                                        reason: format!("mechanical stop at t={t} s: {}", text(&e)),
+                                    })
+                                }
                             }
-                            ReliefMotion::Closing => {
-                                relief.motion = ReliefMotion::Closed;
-                                set_lift = Some(0.);
-                            }
-                            m => {
+                        }
+                        if let Some(d) = demand {
+                            let expected = if relief.demand_open { -1 } else { 1 };
+                            if d != expected {
                                 end = Some(End::Failure {
-                                    reason: format!("travel root while {m:?}"),
+                                    reason: format!(
+                                        "relief demand root crossed in direction {d} with demand_open={}",
+                                        relief.demand_open
+                                    ),
                                 });
                             }
+                            relief.demand_open = !relief.demand_open;
+                            relief.motion = match (relief.demand_open, relief.motion) {
+                                (true, ReliefMotion::Closed | ReliefMotion::Closing) => {
+                                    ReliefMotion::Opening
+                                }
+                                (false, ReliefMotion::Open | ReliefMotion::Opening) => {
+                                    ReliefMotion::Closing
+                                }
+                                (_, m) => m,
+                            };
                         }
-                    }
-                    if let Some(d) = demand {
-                        let expected = if relief.demand_open { -1 } else { 1 };
-                        if d != expected {
-                            end = Some(End::Failure {
-                                reason: format!(
-                                    "relief demand root crossed in direction {d} with demand_open={}",
-                                    relief.demand_open
-                                ),
-                            });
-                        }
-                        relief.demand_open = !relief.demand_open;
-                        relief.motion = match (relief.demand_open, relief.motion) {
-                            (true, ReliefMotion::Closed | ReliefMotion::Closing) => {
-                                ReliefMotion::Opening
-                            }
-                            (false, ReliefMotion::Open | ReliefMotion::Opening) => {
-                                ReliefMotion::Closing
-                            }
-                            (_, m) => m,
-                        };
-                    }
-                    let after = (relief.demand_open, relief.motion);
-                    let rate = relief.device.lift_rate(relief.motion);
-                    if let Some(stop_value) = set_lift {
-                        // The mechanical stop the located root reached.
-                        y[LIFT] = stop_value / next.scales[LIFT];
-                    }
-                    yp[LIFT] = rate / next.scales[LIFT];
-                    out.relief_events.push(json!({"t":t,"pt1_pa":y[st::ROOF_PRESSURE]*next.scales[st::ROOF_PRESSURE],
+                        let after = (relief.demand_open, relief.motion);
+                        (before, after, relief.device.lift_rate(relief.motion), stop)
+                    };
+                    let mut event = json!({"t":t,"pt1_pa":y[st::ROOF_PRESSURE]*next.scales[st::ROOF_PRESSURE],
                         "demand_root":demand,"travel_root":travel,
                         "before":{"demand_open":before.0,"motion":format!("{:?}",before.1)},
                         "after":{"demand_open":after.0,"motion":format!("{:?}",after.1)},
-                        "lift_located":located,"lift_set":set_lift,"stop_adjustment":set_lift.map(|v| (v - located).abs()),
-                        "lift_rate_per_s":rate}));
+                        "lift_located":located,
+                        "stop":stop.map(|r| json!({"motion_before":format!("{:?}",r.motion_before),"motion_after":format!("{:?}",r.motion_after),
+                            "lift_before":r.lift_before,"lift_after":r.lift_after,"defect":r.defect})),
+                        "lift_rate_per_s":rate});
                     if end.is_none() {
                         if let Ok(s) = ida.stats() {
                             totals.add(&s);
@@ -1275,28 +1330,31 @@ pub fn run(system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                         out.counters.jacobian_wall_s += c.jacobian_wall_s;
                         out.counters.root_calls += c.root_calls;
                         next.counters = Counters::default();
-                        match new_handle(next, t, &y, &yp, spec, next_break(t)) {
-                            Ok(h) => {
-                                ida = h;
-                                out.handles += 1;
-                                match calcic(&mut ida, t, t + spec.output_s, &mut y, &mut yp) {
-                                    Ok(v) => out.initializations.push(v),
+                        match start(&mut next, t, &mut y, spec) {
+                            Ok((rates, pair)) => {
+                                yp = rates;
+                                event["consistent_pair"] = pair["pair"].clone();
+                                out.initializations.push(pair);
+                                match new_handle(next, t, &y, &yp, spec, next_break(t)) {
+                                    Ok(h) => {
+                                        ida = h;
+                                        out.handles += 1;
+                                    }
                                     Err(e) => {
                                         end = Some(End::Failure {
-                                            reason: format!(
-                                                "CalcIC after the relief event at t={t} s: {e}"
-                                            ),
+                                            reason: format!("relief event handle at t={t} s: {e}"),
                                         })
                                     }
                                 }
                             }
                             Err(e) => {
                                 end = Some(End::Failure {
-                                    reason: format!("relief reinitialization at t={t} s: {e}"),
+                                    reason: format!("relief event start: {e}"),
                                 })
                             }
                         }
                     }
+                    out.relief_events.push(event);
                 }
                 if end.is_none()
                     && let Some(smp) = &smp
@@ -1538,7 +1596,7 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
     json!({"label":run.label,"end":end,"reached_s":run.reached_s,"totals":run.totals.json(),"handles":run.handles,
         "cpu_s":run.cpu_s,"thread_cpu_s":run.thread_cpu_s,"diagnostic_cpu_s":run.diagnostic_cpu_s,"solver_cpu_s":run.cpu_s-run.diagnostic_cpu_s,"wall_s":run.wall_s,
         "harness_counters":{"residual_calls":run.counters.residuals,"jacobian_calls":run.counters.jacobians,"residual_wall_s":run.counters.residual_wall_s,"jacobian_wall_s":run.counters.jacobian_wall_s,"root_calls":run.counters.root_calls},
-        "initializations":run.initializations,"max_abs_scaled_row_at_samples":max_row,
+        "consistent_pairs":run.initializations,"max_abs_scaled_row_at_samples":max_row,
         "metastable_peaks":Value::Object(peaks),"accepted_step_checks":run.accepted_checks,
         "min_drag_gap_margin":min_gap,"min_admitted_mass_kg":{"value":min_a.0,"at_s":min_a.1},
         "relief_events":run.relief_events,"area_step_crossings":run.area_crossings,"structural_events":run.structural,
