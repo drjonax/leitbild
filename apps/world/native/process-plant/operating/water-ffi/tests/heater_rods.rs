@@ -194,8 +194,8 @@ fn heater_wet_and_exposed_areas_follow_the_cells_wetting() {
             assert_eq!(out.resident.is_some(), out.areas[1].value != 0.);
             assert_eq!(out.exposed.is_some(), out.areas[2].value != 0.);
             if out.areas[0].value == 0. && out.areas[1].value == 0. {
-                assert_eq!(out.receipt.wet_heat_w.value, 0.);
-                assert_eq!(out.receipt.wet_vapor_kg_s.value, 0.);
+                assert_eq!(out.receipt.wet_heat_w.map(|q| q.value), [0.; 2]);
+                assert_eq!(out.receipt.wet_vapor_kg_s.map(|g| g.value), [0.; 2]);
             }
             println!(
                 "level {level} m segment [{}, {}]: f_wet {:.4}, areas {:?} m², wet {:.1} W, exposed {:.1} W",
@@ -203,7 +203,7 @@ fn heater_wet_and_exposed_areas_follow_the_cells_wetting() {
                 g.top_m,
                 w.wet_fraction.value,
                 out.areas.map(|a| a.value),
-                out.receipt.wet_heat_w.value,
+                out.receipt.wet_heat_w[0].value + out.receipt.wet_heat_w[1].value,
                 out.receipt.exposed_heat_w.value
             );
         }
@@ -308,7 +308,7 @@ fn heater_electrical_input_equals_steel_rate_plus_fluid_receipts() {
         let vapor: f64 = r
             .segments
             .iter()
-            .map(|x| x.receipt.wet_vapor_kg_s.value)
+            .map(|x| x.receipt.wet_vapor_kg_s[0].value + x.receipt.wet_vapor_kg_s[1].value)
             .sum();
         let modes: Vec<_> = r
             .segments
@@ -325,6 +325,61 @@ fn heater_electrical_input_equals_steel_rate_plus_fluid_receipts() {
         );
         if level == 2.0 && steel < 610. {
             assert!(condensate > 0.);
+        }
+        // Each zone receives exactly its own contact's heat and wall vapor.
+        let zero = [0.; st::COORDINATES];
+        let (x, c) = column(&state, &state.values, &zero);
+        let hg = c.interface_saturation.vapor.enthalpy.value;
+        let mut scales = state.values;
+        for (i, v) in [
+            (st::BUBBLE_VOLUME, 0.5),
+            (st::DROP_VOLUME, 0.05),
+            (st::BUBBLE_MASS, 50.),
+            (st::DROP_MASS, 30.),
+            (st::DROP_BORON, 0.03),
+        ] {
+            scales[i] = v;
+        }
+        let rest = state
+            .cell
+            .residual_on(
+                &If97,
+                c,
+                &x,
+                &Coordinates::values(&zero),
+                &[Receipt::zero()],
+                &Boundary::closed(),
+                &scales,
+            )
+            .unwrap();
+        for (zone, energy, mass) in [
+            (0, st::ADMITTED_ENERGY, st::ADMITTED_MASS),
+            (1, st::RESIDENT_ENERGY, st::RESIDENT_MASS),
+        ] {
+            let (mut q, mut gamma) = (0., 0.);
+            for x in &r.segments {
+                q += x.receipt.wet_heat_w[zone].value;
+                gamma += x.receipt.wet_vapor_kg_s[zone].value;
+            }
+            // R also receives the exposed rods' condensate at its enthalpy.
+            let (mut j, mut jh) = (0., 0.);
+            if zone == 1 {
+                for x in &r.segments {
+                    let k = x.receipt;
+                    j += k.condensate_kg_s.value;
+                    jh += k.condensate_kg_s.value * k.condensate_enthalpy_j_kg.value;
+                }
+            }
+            let de = ev.flows.sources[energy].value - rest.flows.sources[energy].value;
+            let dm = ev.flows.sources[mass].value - rest.flows.sources[mass].value;
+            assert!(
+                (de - (q - gamma * hg + jh)).abs() <= 1e-9 * size,
+                "zone {zone} energy"
+            );
+            assert!(
+                (dm - (j - gamma)).abs() <= 1e-12 * size.max(1.),
+                "zone {zone} mass"
+            );
         }
         if steel == state.liquid_k {
             // Rods at the prepared liquid temperature carry no heat, to the
@@ -522,8 +577,10 @@ fn heater_directions_match_central_differences() {
                     let k = x.receipt;
                     [
                         x.metal_rate,
-                        k.wet_heat_w,
-                        k.wet_vapor_kg_s,
+                        k.wet_heat_w[0],
+                        k.wet_heat_w[1],
+                        k.wet_vapor_kg_s[0],
+                        k.wet_vapor_kg_s[1],
                         k.exposed_heat_w,
                         k.condensate_kg_s,
                         k.condensate_kg_s * k.condensate_enthalpy_j_kg,

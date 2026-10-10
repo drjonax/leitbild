@@ -20,7 +20,8 @@
 //! g's column point as the donor steam. Every constant comes from
 //! `ld01-pzr-heater-contact`.
 //!
-//! A segment's receipt reaches the cell by its span, and its steel receives
+//! A segment's receipt reaches the cell by its span, with its wet heat and
+//! wall vapor per zone as each zone's own contact gives them; its steel receives
 //! the opposite of every fluid term. The band enclosure's radiation belongs
 //! to the walls module, which owns its shell member; the rods alone have no
 //! enclosure, so there an exposed segment of a powered bank refuses by
@@ -910,11 +911,16 @@ impl Heaters {
         } else {
             None
         };
-        let (mut wet_heat, mut wet_vapor) = (s(0.), s(0.));
-        for (a, q) in [(areas[0], on_admitted), (areas[1], on_resident)] {
+        // Per zone, as the cell routes them: A's and R's own contact.
+        let mut wet_heat = [s(0.); 2];
+        let mut wet_vapor = [s(0.); 2];
+        for (z, (a, q)) in [(areas[0], on_admitted), (areas[1], on_resident)]
+            .into_iter()
+            .enumerate()
+        {
             if let Some(q) = q {
-                wet_heat = wet_heat + a * q.heat;
-                wet_vapor = wet_vapor + a * q.vapor_mass;
+                wet_heat[z] = finite(a * q.heat, "heater wet heat")?;
+                wet_vapor[z] = finite(a * q.vapor_mass, "heater wall vapor")?;
             }
         }
         // No condensate carries no enthalpy: its product with j is zero.
@@ -925,13 +931,13 @@ impl Heaters {
                 Some(c) => (areas[2] * x.sensible, areas[2] * c.mass, c.liquid_enthalpy),
             },
         };
-        let fluid = wet_heat + exposed_heat - condensate * column.vapor.enthalpy
+        let fluid = wet_heat[0] + wet_heat[1] + exposed_heat - condensate * column.vapor.enthalpy
             + condensate * condensate_enthalpy;
         let receipt = HeaterReceipt {
             bottom_m: g.bottom_m,
             top_m: g.top_m,
-            wet_heat_w: finite(wet_heat, "heater wet heat")?,
-            wet_vapor_kg_s: finite(wet_vapor, "heater wall vapor")?,
+            wet_heat_w: wet_heat,
+            wet_vapor_kg_s: wet_vapor,
             exposed_heat_w: finite(exposed_heat, "heater exposed heat")?,
             condensate_kg_s: finite(condensate, "heater condensate")?,
             condensate_enthalpy_j_kg: finite(condensate_enthalpy, "condensate enthalpy")?,
