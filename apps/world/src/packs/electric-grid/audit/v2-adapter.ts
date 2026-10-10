@@ -1,5 +1,4 @@
 import {
-  osmIdPattern,
   type AuditBranch,
   type AuditBus,
   type AuditBusKind,
@@ -12,8 +11,10 @@ import {
 import { pairBranchEnds, type ReferenceGeometry } from './reference-geometry.ts'
 
 // Grid Model v2 → audit graph. Typed structurally against the fields the audit reads, so the
-// Pack's v2 schema type is assignable to it. Curated assets name their curation in
-// provenance.sources as `curation:<id>`.
+// Pack's v2 schema type is assignable to it. The v2 schema writes stations as `osm-way-<n>` and
+// way ids as bare numbers; the audit, golden list and curations use OSM's `way/<n>` notation, so
+// both are converted here (strictly). Curated assets name their curation in provenance.sources
+// as `curation:<id>`.
 
 interface ProvenanceInput { readonly sources: ReadonlyArray<string> }
 
@@ -94,6 +95,8 @@ const loadFamilies: Readonly<Record<GridModelV2AuditInput['loads'][number]['kind
 }
 
 const curationSourcePattern = /^curation:([a-z0-9]+(?:-[a-z0-9]+)*)$/
+const v2SubstationPattern = /^osm-(node|way|relation)-([1-9][0-9]*)$/
+const v2WayPattern = /^[1-9][0-9]*$/
 
 const curationIdsOf = (provenance: ProvenanceInput): ReadonlyArray<string> =>
   provenance.sources.flatMap(source => {
@@ -105,20 +108,24 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
   const fail = (message: string): never => {
     throw new Error(`Grid Model v2 ${model.id}: ${message}`)
   }
+  const osmStation = (busId: string, substationId: string): string => {
+    const match = v2SubstationPattern.exec(substationId) ?? fail(`bus ${busId} substationId ${substationId} is not of the form osm-<node|way|relation>-<number>`)
+    return `${match[1]!}/${match[2]!}`
+  }
+  const osmWays = (assetId: string, wayIds: ReadonlyArray<string>): ReadonlyArray<string> =>
+    wayIds.map(wayId => v2WayPattern.test(wayId) ? `way/${wayId}` : fail(`${assetId} osmWayId ${wayId} is not a positive OSM way number`))
   const buses = model.buses.map((bus): AuditBus => {
-    if (bus.substationId !== undefined && !osmIdPattern.test(bus.substationId)) {
-      fail(`bus ${bus.id} substationId ${bus.substationId} is not an OSM id of the form <node|way|relation>/<number>`)
-    }
+    const substationId = bus.substationId === undefined ? undefined : osmStation(bus.id, bus.substationId)
     const footprint = bus.kind === 'junction'
       ? { kind: 'point' as const, location: bus.location }
-      : bus.substationId === undefined ? undefined : reference?.footprint(bus.substationId)
+      : substationId === undefined ? undefined : reference?.footprint(substationId)
     return {
       id: bus.id,
       label: bus.label,
       kind: bus.kind,
       nominalKv: bus.nominalKv,
       location: bus.location,
-      ...(bus.substationId === undefined ? {} : { substationId: bus.substationId }),
+      ...(substationId === undefined ? {} : { substationId }),
       ...(bus.priceArea === undefined ? {} : { priceArea: bus.priceArea }),
       ...(bus.externalArea === undefined ? {} : { externalArea: bus.externalArea }),
       curationIds: curationIdsOf(bus.provenance),
@@ -127,9 +134,10 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
   })
   const busById = new Map(buses.map(bus => [bus.id, bus]))
   const branches = model.branches.map((branch): AuditBranch => {
-    const parts = reference === undefined || branch.osmWayIds.length === 0
+    const osmWayIds = osmWays(branch.id, branch.osmWayIds)
+    const parts = reference === undefined || osmWayIds.length === 0
       ? undefined
-      : branch.osmWayIds.map(id => reference.polylines(id))
+      : osmWayIds.map(id => reference.polylines(id))
     const geometry = parts === undefined || parts.some(part => part === undefined) ? undefined : parts.flatMap(part => part ?? [])
     const from = busById.get(branch.fromBusId) ?? fail(`branch ${branch.id} references unknown bus ${branch.fromBusId}`)
     const to = busById.get(branch.toBusId) ?? fail(`branch ${branch.id} references unknown bus ${branch.toBusId}`)
@@ -143,7 +151,7 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
       nominalKv: branch.nominalKv,
       ...(branch.lengthKm === undefined ? {} : { lengthKm: branch.lengthKm }),
       circuits: branch.circuits,
-      osmWayIds: branch.osmWayIds,
+      osmWayIds,
       curationIds: curationIdsOf(branch.provenance),
       ...(ends === undefined ? {} : { ends }),
       ...(geometry === undefined ? {} : { geometry }),
@@ -162,7 +170,7 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
       fromBusId: link.fromBusId,
       toBusId: link.toBusId,
       ratingMw: link.ratingMw,
-      osmWayIds: link.osmWayIds,
+      osmWayIds: osmWays(link.id, link.osmWayIds),
       curationIds: curationIdsOf(link.provenance),
     })),
     generators: model.generators.map(generator => ({

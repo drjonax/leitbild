@@ -419,13 +419,13 @@ describe('model adapters', () => {
   const v2Model = (): GridModelV2AuditInput => ({
     id: 'v2-fixture', referenceHour: '2026-01-15T00:00:00+01:00',
     buses: [
-      { id: 'bus:osm-way-1@420', label: 'A', kind: 'substation', substationId: 'way/1', nominalKv: 420, location: [10, 60], priceArea: 'NO1', provenance: { sources: ['osm'] } },
-      { id: 'bus:osm-relation-2@420', label: 'B', kind: 'substation', substationId: 'relation/2', nominalKv: 420, location: [10.5, 60], priceArea: 'NO1', provenance: { sources: ['osm', 'curation:b-terminal'] } },
+      { id: 'bus:osm-way-1@420', label: 'A', kind: 'substation', substationId: 'osm-way-1', nominalKv: 420, location: [10, 60], priceArea: 'NO1', provenance: { sources: ['osm'] } },
+      { id: 'bus:osm-relation-2@420', label: 'B', kind: 'substation', substationId: 'osm-relation-2', nominalKv: 420, location: [10.5, 60], priceArea: 'NO1', provenance: { sources: ['osm', 'curation:b-terminal'] } },
       { id: 'bus:boundary-SE3', label: 'SE3', kind: 'boundary', nominalKv: 420, location: [11, 59], externalArea: 'SE3', provenance: { sources: ['curation:se3'] } },
     ],
     branches: [
-      { id: 'branch:osm-x', label: 'A – B', kind: 'ac_line', fromBusId: 'bus:osm-way-1@420', toBusId: 'bus:osm-relation-2@420', nominalKv: 420, lengthKm: 28, circuits: 2, osmWayIds: ['way/10', 'way/11'], provenance: { sources: ['osm'] } },
-      { id: 'branch:osm-y', label: 'A – SE3', kind: 'ac_line', fromBusId: 'bus:osm-way-1@420', toBusId: 'bus:boundary-SE3', nominalKv: 420, lengthKm: 50, circuits: 1, osmWayIds: ['way/12'], provenance: { sources: ['osm'] } },
+      { id: 'branch:osm-x', label: 'A – B', kind: 'ac_line', fromBusId: 'bus:osm-way-1@420', toBusId: 'bus:osm-relation-2@420', nominalKv: 420, lengthKm: 28, circuits: 2, osmWayIds: ['10', '11'], provenance: { sources: ['osm'] } },
+      { id: 'branch:osm-y', label: 'A – SE3', kind: 'ac_line', fromBusId: 'bus:osm-way-1@420', toBusId: 'bus:boundary-SE3', nominalKv: 420, lengthKm: 50, circuits: 1, osmWayIds: ['12'], provenance: { sources: ['osm'] } },
     ],
     hvdcLinks: [],
     generators: [{ id: 'generator:nve-hydro-1', label: 'G', kind: 'hydro-pumped', busId: 'bus:osm-relation-2@420', capacityMw: 10, priceArea: 'NO1', attachmentKm: 2 }],
@@ -440,6 +440,8 @@ describe('model adapters', () => {
     const graph = auditGraphFromGridModelV2(v2Model(), lines)
     expect(graph.busPerVoltageLevel).toBe(true)
     expect(graph.buses.map(bus => bus.curationIds)).toEqual([[], ['b-terminal'], ['se3']])
+    expect(graph.buses.map(bus => bus.substationId)).toEqual(['way/1', 'relation/2', undefined])
+    expect(graph.branches[0]!.osmWayIds).toEqual(['way/10', 'way/11'])
     expect(graph.branches[0]).toMatchObject({ circuits: 2, ends: { from: [10, 60], to: [10.5, 60] } })
     expect(graph.branches[0]!.geometry).toHaveLength(2)
     expect(graph.branches[1]!.geometry).toBeUndefined()
@@ -447,9 +449,10 @@ describe('model adapters', () => {
     expect(graph.loads[0]).toMatchObject({ family: 'distributed', demandMw: 5 })
   })
 
-  test('refuse a v2 station id that is not an OSM id', () => {
+  test('refuse v2 station and way ids outside the v2 grammar', () => {
     const model = v2Model()
-    expect(() => auditGraphFromGridModelV2({ ...model, buses: [{ ...model.buses[0]!, substationId: 'osm-way-1' }, ...model.buses.slice(1)] })).toThrow('is not an OSM id')
+    expect(() => auditGraphFromGridModelV2({ ...model, buses: [{ ...model.buses[0]!, substationId: 'way/1' }, ...model.buses.slice(1)] })).toThrow('is not of the form osm-')
+    expect(() => auditGraphFromGridModelV2({ ...model, branches: [{ ...model.branches[0]!, osmWayIds: ['way/10'] }] })).toThrow('is not a positive OSM way number')
   })
 
   test('parse sidecar and NVE inputs with validation', () => {
