@@ -100,19 +100,24 @@ test('regression: pause longer than peer TTL preserves electrical connection on 
   const registry = createSimulationRunRegistry({ dataDir,workspaceId,...testScenarioAuthoring(),runtimeAdapters:createTestPackRuntimeAdapters(),scenarioRuntimeResolver:createTestScenarioRuntimeResolver(),idleRuntimeCloseDelayMs:-1 })
   try {
     const run = await registry.create({scenarioId:'halden-power-complex'})
+    // Each Pack tick commits events and exchanges connection states; a loaded machine delays ticks, so wait for them.
+    const ticked = (label: string, afterSeq: number) => waitForCondition(label, () => run.snapshot().seq > afterSeq, { timeoutMs: 20_000 })
     await Bun.sleep(2100)
+    await ticked('Packs observe one another before the pause', 0)
     await run.setClock({paused:true})
     const states = () => run.snapshot().objects.flatMap(o=>electricalPortsFromObject(o).map(p=>({object:o.id,port:p.id,state:p.state})))
     const before = states()
-    await Bun.sleep(5500)
+    await Bun.sleep(5500) // The property: a wall-clock pause longer than the former 5 s peer TTL.
     await run.setClock({paused:false})
+    const resumedSeq = run.snapshot().seq
     await Bun.sleep(2200)
+    await ticked('Packs tick after resuming', resumedSeq)
     await run.setClock({paused:true})
     expect(before).toHaveLength(8)
     expect(before.every(p => p.state?.connected === true)).toBe(true)
     expect(states().every(p => p.state?.connected === true)).toBe(true)
   } finally { for(const run of registry.list())await registry.close(run.id);await rm(dataDir,{recursive:true,force:true}) }
-},15000)
+},60_000) // A watchdog: at load 100 creating the four-unit Run alone takes seconds.
 
 test('regression: API-only run lifetime honors idle policy and recent access', async () => {
   const dataDir = await mkdtemp(join(tmpdir(),'audit-run-leases-'))
