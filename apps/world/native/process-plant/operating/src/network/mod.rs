@@ -22,6 +22,7 @@ mod jacobian;
 pub mod packet;
 pub mod prepare;
 pub mod properties;
+pub mod stratified;
 mod structure;
 mod tolerance;
 
