@@ -856,7 +856,7 @@ fn s1_hydraulics_admission() {
                     .take(6)
                     .map(|(w, j)| json!({"coordinate":labels[*j].1,"weight":w}))
                     .collect();
-                json!({"hz":m.frequency_hz,"re":m.lambda.re,"im":m.lambda.im,"e_fold_s":m.e_fold_s,"dominant":dominant})
+                json!({"hz":m.frequency_hz,"re":m.lambda.re,"im":m.lambda.im,"e_fold_s":m.e_fold_s,"marginal":m.marginal,"error_bound":m.error_bound,"condition":m.condition,"dominant":dominant})
             })
             .collect()
     };
