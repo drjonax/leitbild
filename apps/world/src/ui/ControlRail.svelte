@@ -2,6 +2,7 @@
   import type { OperationalObject } from '../core/model/index.ts'
   import type { StartingRailView } from '../core/model/index.ts'
   import type { PackCreateObjectType, PackMapLayerGroup, PackObjectPresentation } from '../core/packs/protocol.ts'
+  import type { PackMapLegend } from '../core/packs/reference-style.ts'
   import RailLayerGroupSection from './RailLayerGroupSection.svelte'
   import { PanelRightOpen, X } from 'lucide-svelte'
   import CategorySection from './CategorySection.svelte'
@@ -60,6 +61,7 @@
     readonly openSettings: () => void
     readonly toggleCategoryMapVisibility?: (categoryId: string) => void
     readonly mapLayerGroups?: ReadonlyArray<PackMapLayerGroup>
+    readonly mapLegends?: ReadonlyArray<PackMapLegend>
     readonly mapLayerGroupVisibility?: Readonly<Record<string, boolean>>
     readonly onMapLayerGroupToggle?: (groupId: string) => void
     readonly surfacePanels?: ReadonlyArray<{ readonly id: string; readonly label: string; readonly open: boolean }>
@@ -99,6 +101,7 @@
     openSettings,
     toggleCategoryMapVisibility = () => undefined,
     mapLayerGroups = [],
+    mapLegends = [],
     mapLayerGroupVisibility = {},
     onMapLayerGroupToggle = () => undefined,
     surfacePanels = [],
@@ -218,6 +221,7 @@
 
   <RailLayerGroupSection
     groups={mapLayerGroups}
+    legends={mapLegends}
     visibility={mapLayerGroupVisibility}
     onToggle={onMapLayerGroupToggle}
   />

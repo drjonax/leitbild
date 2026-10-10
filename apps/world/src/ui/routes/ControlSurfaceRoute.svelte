@@ -99,6 +99,7 @@
   const emptyMapLayerGroups: NonNullable<PackPresentationContribution['mapLayerGroups']> = []
   const emptyMapFeatureLayers: NonNullable<PackPresentationContribution['mapFeatureLayers']> = []
   const emptyReferenceStyles: NonNullable<PackPresentationContribution['referenceStyles']> = []
+  const emptyMapLegends: NonNullable<PackPresentationContribution['mapLegends']> = []
   const emptyProcedureRunSummaries: ProcedureRunSummaryGroup = { active: [], completed: [] }
 
   interface ProcessDisplayWindowEntry {
@@ -340,6 +341,7 @@
   const activePackFeatureSourcePackIds = $derived(activePack?.mapFeatureSourcePackIds ?? emptyStringArray)
   const activeReferenceDatasetIds = $derived(activePack?.referenceDatasetIds?.map(String) ?? emptyStringArray)
   const activeReferenceStyles = $derived(activePack?.referenceStyles ?? emptyReferenceStyles)
+  const activeMapLegends = $derived(activePack?.presentation.mapLegends ?? emptyMapLegends)
   let mapLayerGroupVisibility = $state<Record<string, boolean>>({})
   // Re-seed when the group list changes. `untrack` keeps the write from
   // re-triggering this effect (a new object literal every time would otherwise
@@ -1629,6 +1631,7 @@
         {openSettings}
         {toggleCategoryMapVisibility}
         mapLayerGroups={activeMapLayerGroups}
+        mapLegends={activeMapLegends}
         {mapLayerGroupVisibility}
         onMapLayerGroupToggle={toggleMapLayerGroup}
         surfacePanels={surfacePanelLaunchers}
