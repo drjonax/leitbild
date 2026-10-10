@@ -39,10 +39,12 @@ describe('the values equipment opened from the overview leads with', () => {
     expect(of(['rcpA'])).not.toContain('rcpA.running' as never)
   })
 
-  test('at power the core leads with its power, the subcooling margin, the RCS leak rate and its outlet temperature, and the de-energized source range last', () => {
-    // The subcooling margin and the RCS leak rate are bound to the reactor coolant system, as the core's outlet
-    // temperature is: their alarms are the core's related alarms. Of the source range only its flag fits the six.
-    expect(of(['core'])).toEqual(['core.powerMw', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.sourceRangeEnergized'] as never)
+  test('at power the core leads with its power, the subcooling margin, the RCS leak rate and its outlet temperature, and ranks the de-energized source range after every live reading', () => {
+    // The subcooling margin and the RCS leak rate are bound to the reactor coolant system, as the core exit
+    // thermocouples are: their alarms are the core's related alarms. The core exit thermocouples read their own
+    // variable beside the mixed outlet temperature, an instrument after the intermediate range, so the de-energized
+    // source range, last, no longer fits the six.
+    expect(of(['core'])).toEqual(['core.powerMw', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
     // With its high voltage on, the source range counts something and ranks as an instrument, ahead of the
     // intermediate range, which no longer fits.
     const counting: PlantNow = { ...atPower, read: path => String(path) === 'core.sourceRangeEnergized' ? true : runtime.readVariable(path) }
