@@ -4,7 +4,6 @@
 #include <nvector/nvector_serial.h>
 #include <sunmatrix/sunmatrix_sparse.h>
 #include <sunlinsol/sunlinsol_klu.h>
-#include <klu.h>
 #include <sundials/sundials_config.h>
 #include <sundials/sundials_version.h>
 #include <stdlib.h>
@@ -12,9 +11,6 @@
 #include <stdint.h>
 #if SUNDIALS_VERSION_MAJOR != 7 || SUNDIALS_VERSION_MINOR != 5
 #error "Admit a changed stock SUNDIALS version explicitly before using it"
-#endif
-#if KLU_MAIN_VERSION != 2 || KLU_SUB_VERSION != 3 || KLU_SUBSUB_VERSION != 6
-#error "Admit a changed stock KLU version explicitly before using it"
 #endif
 _Static_assert(sizeof(sunrealtype) == sizeof(double), "DOUBLE required");
 _Static_assert(sizeof(sunindextype) == sizeof(int64_t), "INT64 required");
@@ -206,60 +202,3 @@ int operating_ida_differential(OperatingIDA *o,const double *ids) {
     return IDASetId(o->ida,o->ids);
 }
 
-/* Direct stock KLU (64-bit klu_l) on one fixed CSC pattern. Rust validates
-   every pattern/value/buffer before these calls; KLU keeps no caller pointer.
-   A failed factorization leaves no Numeric, so nothing solves with it. */
-typedef struct {
-    klu_l_common common;
-    klu_l_symbolic *symbolic;
-    klu_l_numeric *numeric;
-} OperatingKLU;
-#define OPERATING_KLU_VERSION (-100)
-void operating_klu_free(OperatingKLU *k) {
-    if (!k) return;
-    if (k->numeric) klu_l_free_numeric(&k->numeric,&k->common);
-    if (k->symbolic) klu_l_free_symbolic(&k->symbolic,&k->common);
-    free(k);
-}
-OperatingKLU *operating_klu_analyze(int64_t n,int64_t *pointers,int64_t *rows,int *status,int *loaded) {
-    klu_version(loaded);
-    if (loaded[0]!=KLU_MAIN_VERSION || loaded[1]!=KLU_SUB_VERSION || loaded[2]!=KLU_SUBSUB_VERSION) {
-        *status=OPERATING_KLU_VERSION;
-        return NULL;
-    }
-    OperatingKLU *k=calloc(1,sizeof(*k));
-    if (!k) { *status=KLU_OUT_OF_MEMORY; return NULL; }
-    if (!klu_l_defaults(&k->common)) { *status=k->common.status; free(k); return NULL; }
-    k->symbolic=klu_l_analyze(n,pointers,rows,&k->common);
-    *status=k->common.status;
-    if (!k->symbolic || *status!=KLU_OK) { operating_klu_free(k); return NULL; }
-    return k;
-}
-/* Keep Numeric only for a complete nonsingular factorization. */
-static int operating_klu_settle(OperatingKLU *k,int succeeded,int64_t *singular) {
-    int status=k->common.status;
-    *singular=k->common.singular_col;
-    if (succeeded && status==KLU_OK && k->numeric) return KLU_OK;
-    if (k->numeric) klu_l_free_numeric(&k->numeric,&k->common);
-    return status==KLU_OK ? KLU_INVALID : status;
-}
-int operating_klu_factor(OperatingKLU *k,int64_t *pointers,int64_t *rows,double *values,int64_t *singular) {
-    if (k->numeric) klu_l_free_numeric(&k->numeric,&k->common);
-    k->numeric=klu_l_factor(pointers,rows,values,k->symbolic,&k->common);
-    return operating_klu_settle(k,k->numeric!=NULL,singular);
-}
-int operating_klu_refactor(OperatingKLU *k,int64_t *pointers,int64_t *rows,double *values,int64_t *singular) {
-    int succeeded=klu_l_refactor(pointers,rows,values,k->symbolic,k->numeric,&k->common);
-    return operating_klu_settle(k,succeeded,singular);
-}
-int operating_klu_solve(OperatingKLU *k,int64_t n,double *rhs) {
-    int succeeded=klu_l_solve(k->symbolic,k->numeric,n,1,rhs,&k->common);
-    return succeeded && k->common.status==KLU_OK ? KLU_OK
-        : (k->common.status==KLU_OK ? KLU_INVALID : k->common.status);
-}
-int operating_klu_rcond(OperatingKLU *k,double *rcond) {
-    int succeeded=klu_l_rcond(k->symbolic,k->numeric,&k->common);
-    *rcond=k->common.rcond;
-    return succeeded && k->common.status==KLU_OK ? KLU_OK
-        : (k->common.status==KLU_OK ? KLU_INVALID : k->common.status);
-}
