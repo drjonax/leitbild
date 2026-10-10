@@ -691,7 +691,29 @@ fn s1_hydraulics_admission() {
         let (a, b) = pencil(&mut probe, &settle.y, &settle.yp);
         if let Ok(stop) = spectrum::decompose(settle.y.len(), &a, &b) {
             let algebraic = prepared.differential.iter().filter(|v| **v == 0.).count();
-            receipt["diagnostic_spectrum_at_stop"] = json!({"finite":stop.modes.len(),"infinite":stop.infinite.count,"algebraic":algebraic,"unstable":stop.modes.iter().filter(|m|m.unstable).map(|m|json!({"hz":m.frequency_hz,"re":m.lambda.re,"e_fold_s":m.e_fold_s})).collect::<Vec<_>>(),"marginal":stop.modes.iter().filter(|m|m.marginal).count()});
+            let labels = probe.labels();
+            let localize = |m: usize| -> Vec<Value> {
+                let mut weight: Vec<(f64, usize)> = stop.shapes[m]
+                    .right
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| (v.abs(), i))
+                    .collect();
+                weight.sort_by(|a, b| b.0.total_cmp(&a.0));
+                weight
+                    .iter()
+                    .take(4)
+                    .map(|(w, i)| json!({"coordinate":labels[*i].1,"weight":w}))
+                    .collect()
+            };
+            let unstable: Vec<Value> = stop
+                .modes
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.unstable)
+                .map(|(i, m)| json!({"hz":m.frequency_hz,"re":m.lambda.re,"e_fold_s":m.e_fold_s,"dominant":localize(i)}))
+                .collect();
+            receipt["diagnostic_spectrum_at_stop"] = json!({"finite":stop.modes.len(),"infinite":stop.infinite.count,"algebraic":algebraic,"unstable":unstable,"marginal":stop.modes.iter().filter(|m|m.marginal).count()});
         }
         receipt["stop_sample"] = json!(format!("{:?}", settle.samples.last()));
         finish(
