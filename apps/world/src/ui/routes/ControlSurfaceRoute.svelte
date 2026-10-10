@@ -19,13 +19,15 @@
   } from '../../core/model/index.ts'
   import { deleteObjectCommandKind } from '../../core/model/index.ts'
   import { createPackPresentationComposer } from '../../core/packs/presentation-composer.ts'
-  import type { PackCreateObjectType, PackMapAssignmentMode, PackMapAssignmentTarget, PackObjectPresentation, PackObjectPresentationTier, PackObjectStatusPresentation, PackPresentationContribution, PackProcedureContribution } from '../../core/packs/protocol.ts'
+  import type { PackCreateObjectType, PackMapAssignmentMode, PackMapAssignmentTarget, PackMapFeatureQuery, PackObjectPresentation, PackObjectPresentationTier, PackObjectStatusPresentation, PackPresentationContribution, PackProcedureContribution } from '../../core/packs/protocol.ts'
+  import type { PackLiveMapLayerBinding } from '../map-runtime/pack-live-layer.ts'
   import type { ActivePackViews } from '../../core/packs/active-views.ts'
   import {
     fetchScenario,
     joinSimulationRun as joinSimulationRunClient,
     resetSimulationRun,
     invokeSimulationRunCapability,
+    querySimulationRunCapability,
     fetchRunExecution,
     syncSimulationRunSnapshot as syncSimulationRunSnapshotClient,
   } from '../simulation-run-client.ts'
@@ -103,6 +105,7 @@
   const emptyMapFeatureLayers: NonNullable<PackPresentationContribution['mapFeatureLayers']> = []
   const emptyReferenceStyles: NonNullable<PackPresentationContribution['referenceStyles']> = []
   const emptyMapLegends: NonNullable<PackPresentationContribution['mapLegends']> = []
+  const emptyLiveMapLayers: ReadonlyArray<PackLiveMapLayerBinding> = []
   const emptyProcedureRunSummaries: ProcedureRunSummaryGroup = { active: [], inactive: [] }
 
   interface DroneWindowEntry {
@@ -155,7 +158,7 @@
   let routeRevision = $state(0)
   let procedureRevision = $state(0)
   let packDataRevisions = $state<Record<string, number>>({})
-  let packPanelSelections = $state<Record<string, string>>({})
+  let packPanelSelections = $state<Record<string, string | null>>({})
   let panelMapView = $state<MapView | null>(null)
   let startupSteps = $state<ReadonlyArray<StartupStep>>(createStartupSteps())
   let mapReady = $state(false)
@@ -352,6 +355,14 @@
   const activeReferenceDatasetIds = $derived(activePack?.referenceDatasetIds?.map(String) ?? emptyStringArray)
   const activeReferenceStyles = $derived(activePack?.referenceStyles ?? emptyReferenceStyles)
   const activeMapLegends = $derived(activePack?.presentation.mapLegends ?? emptyMapLegends)
+  const activeLiveMapLayers = $derived(activePack
+    ? activePack.packs.flatMap(pack => (pack.presentation.liveMapLayers ?? []).map(layer => ({ packId: pack.descriptor.id, layer })))
+    : emptyLiveMapLayers)
+  const queryLiveMapLayer = async (request: PackMapFeatureQuery, signal: AbortSignal): Promise<unknown> => {
+    const runId = simulationRunId
+    if (!runId) throw new Error('live map layers query a Simulation Run, and none is joined')
+    return await querySimulationRunCapability(runId, request.capabilityId, request.input, { signal })
+  }
   let mapLayerGroupVisibility = $state<Record<string, boolean>>({})
   // Re-seed when the group list changes. `untrack` keeps the write from
   // re-triggering this effect (a new object literal every time would otherwise
@@ -1719,6 +1730,9 @@
           mapLayerGroups={activeMapLayerGroups}
           {mapLayerGroupVisibility}
           referenceStyles={activeReferenceStyles}
+          liveMapLayers={activeLiveMapLayers}
+          {queryLiveMapLayer}
+          packSelections={packPanelSelections}
           packFeatureLayers={activePackFeatureLayers}
           packFeatureSourcePackIds={activePackFeatureSourcePackIds}
           focusRequest={mapFocusRequest}
@@ -1766,7 +1780,7 @@
         {#each surfacePanels as panel (panel.id)}
           {@const Panel = surfacePanelComponents[panel.id]}
           {#if (surfacePanelOpen[panel.id] ?? panel.defaultOpen) && Panel}
-            <Panel {simulationRunId} {objects} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} />
+            <Panel {simulationRunId} {objects} mapView={panelMapView} dataRevision={packDataRevisions[panel.id.split('.')[0]! ] ?? 0} selectedItemId={packPanelSelections[panel.id] ?? null} onSelectItem={(itemId: string | null) => { packPanelSelections = { ...packPanelSelections, [panel.id]: itemId } }} onClose={() => setSurfacePanelOpen(panel.id, false)} onFocusMap={focusMapTarget} />
           {/if}
         {/each}
       {/if}

@@ -1,10 +1,12 @@
 import { Popup, type Map as MapLibreMap } from 'maplibre-gl'
 import type { GeoJsonPoint, OperationalObject } from '../../core/model/index.ts'
-import type { PackObjectPresentation } from '../../core/packs/protocol.ts'
-import { objectHoverCardHtml } from './object-hover-card.ts'
+import type { PackObjectField, PackObjectPresentation } from '../../core/packs/protocol.ts'
+import { featureHoverCardHtml, objectHoverCardHtml } from './object-hover-card.ts'
 
 export interface MapPopupController {
   readonly show: (object: OperationalObject) => void
+  /** Shows a card for a map feature that is not an operational object. */
+  readonly showCard: (card: { readonly lngLat: readonly [number, number]; readonly title: string; readonly fields: ReadonlyArray<PackObjectField> }) => void
   readonly hide: () => void
   readonly refresh: (sourceObjects: ReadonlyArray<OperationalObject>) => void
   readonly hoveredObjectId: () => string | null
@@ -37,7 +39,26 @@ export const createMapPopupController = (config: {
       : sourceObjects.find(candidate => candidate.id === objectId) ?? null
   )
 
+  const popup = (): Popup => {
+    markerPopup = markerPopup ?? new Popup({
+      closeButton: false,
+      closeOnClick: false,
+      offset: 26,
+      className: 'object-popup',
+    })
+    return markerPopup
+  }
+
   return {
+    showCard: (card) => {
+      const current = config.getMap()
+      if (!current) return
+      hoveredObjectId = null
+      popup()
+        .setLngLat([card.lngLat[0], card.lngLat[1]])
+        .setHTML(featureHoverCardHtml(card))
+        .addTo(current)
+    },
     show: (object) => {
       const current = config.getMap()
       const point = pointOf(object)

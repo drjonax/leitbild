@@ -16,6 +16,7 @@
     PackMapFeature,
     PackMapLayerGroup,
     PackMapAssignmentHandle,
+    PackMapFeatureQuery,
     PackObjectPresentation,
   } from '../core/packs/protocol.ts'
   import type { PackReferenceDatasetStyle } from '../core/packs/reference-style.ts'
@@ -29,6 +30,8 @@
   import { createOperationalRenderController } from './map-runtime/operational-render-controller.ts'
   import { createPackOverlayController } from './map-runtime/pack-overlay-controller.ts'
   import { createPackFeatureLayer } from './map-runtime/pack-feature-layer.ts'
+  import { createPackLiveLayerController, maplibreLiveMapPort, type PackLiveMapLayerBinding } from './map-runtime/pack-live-layer.ts'
+  import { rasterizeSymbol } from './map-runtime/map-symbols.ts'
   import { createReferenceLayerController } from './map-runtime/reference-layer-controller.ts'
   import {
     installMapPerformanceDiagnosticsGlobal,
@@ -74,6 +77,10 @@
     readonly mapLayerGroups?: ReadonlyArray<PackMapLayerGroup>
     readonly mapLayerGroupVisibility?: Readonly<Record<string, boolean>>
     readonly referenceStyles?: ReadonlyArray<PackReferenceDatasetStyle>
+    readonly liveMapLayers?: ReadonlyArray<PackLiveMapLayerBinding>
+    readonly queryLiveMapLayer?: (request: PackMapFeatureQuery, signal: AbortSignal) => Promise<unknown>
+    /** The selected item per surface panel; live map layers highlight it. */
+    readonly packSelections?: Readonly<Record<string, string | null>>
     readonly packFeatureLayers?: ReadonlyArray<MapLayerId>
     readonly packFeatureSourcePackIds?: ReadonlyArray<string>
     readonly focusRequest?: MapFocusRequest | null
@@ -115,6 +122,9 @@
     mapLayerGroups = [],
     mapLayerGroupVisibility = {},
     referenceStyles = [],
+    liveMapLayers = [],
+    queryLiveMapLayer = async () => { throw new Error('live map layers need a capability query') },
+    packSelections = {},
     packFeatureLayers = [],
     packFeatureSourcePackIds = [],
     focusRequest = null,
@@ -237,6 +247,41 @@
       onMapError(message)
     },
   })
+
+  // The theme of the loaded style; null while a style change is loading.
+  let liveStyleTheme: ThemeMode | null = null
+  const liveLayerController = createPackLiveLayerController({
+    query: (request, signal) => queryLiveMapLayer(request, signal),
+    rasterize: rasterizeSymbol,
+    documentHidden: () => document.hidden,
+    onSelect: selection => { if (!placementMode) onPackFeatureSelected(selection) },
+    onHover: hover => { if (hover) popupController.showCard(hover); else popupController.hide() },
+    onError: message => onMapError(`Live map layer: ${message}`),
+  })
+
+  const liveLayerGroupVisible = (groupId: string): boolean => {
+    const group = mapLayerGroups.find(candidate => candidate.id === groupId)
+    if (!group) throw new Error(`live map layer group ${groupId} is not a declared Pack layer group`)
+    return mapLayerGroupVisibility[groupId] ?? group.defaultVisible
+  }
+
+  const syncLiveLayers = (): void => {
+    const currentRuntime = runtime
+    if (!currentRuntime || liveStyleTheme === null) return
+    try {
+      liveLayerController.sync({
+        map: maplibreLiveMapPort(currentRuntime.map),
+        bindings: simulationRunId === null ? [] : liveMapLayers,
+        objects,
+        appearance: { theme: liveStyleTheme },
+        groupVisible: liveLayerGroupVisible,
+        referenceStyles,
+        selections: packSelections,
+      })
+    } catch (err) {
+      onMapError(`Live map layer: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
 
   const styleUrlFor = (mode: ThemeMode): string =>
     `/map/style.json?theme=${encodeURIComponent(mode)}`
@@ -460,6 +505,8 @@
       notifyMapReady()
       registerReferenceLayers()
       packOverlayController.syncEnabled()
+      liveStyleTheme = theme
+      syncLiveLayers()
     }
 
     const runInitializeMap = async (): Promise<void> => {
@@ -471,9 +518,13 @@
     }
 
     void runInitializeMap()
+    document.addEventListener('visibilitychange', syncLiveLayers)
 
     return () => {
       cancelled = true
+      document.removeEventListener('visibilitychange', syncLiveLayers)
+      liveLayerController.destroy()
+      liveStyleTheme = null
       stopFrameLagMonitor()
       cleanupMapGestures()
       cleanupMapPerformanceGlobal()
@@ -551,6 +602,7 @@
     const currentRuntime = runtime
     if (!currentRuntime || appliedTheme === null || theme === appliedTheme) return
     appliedTheme = theme
+    liveStyleTheme = null
     packOverlayController.abort('map style changed before pack map-area query completed')
     popupController.hide()
     void (async (): Promise<void> => {
@@ -560,6 +612,8 @@
         registerReferenceLayers()
         operationalRenderController.flushNow()
         syncPackFeatures()
+        liveStyleTheme = appliedTheme
+        syncLiveLayers()
       } catch (err) {
         onMapError(err instanceof Error ? err.message : String(err))
       }
@@ -584,6 +638,17 @@
   $effect(() => {
     mapLayerGroupVisibility
     untrack(() => referenceLayerController.applyVisibility(mapLayerGroupVisibility))
+  })
+
+  $effect(() => {
+    objects
+    liveMapLayers
+    mapLayerGroups
+    mapLayerGroupVisibility
+    referenceStyles
+    packSelections
+    simulationRunId
+    untrack(() => syncLiveLayers())
   })
 </script>
 
