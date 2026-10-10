@@ -18,6 +18,7 @@
 //! physical admission is a separate account.
 mod account;
 mod evaluate;
+pub mod heaters;
 mod jacobian;
 pub mod packet;
 pub mod prepare;
@@ -25,6 +26,7 @@ pub mod properties;
 pub mod stratified;
 mod structure;
 mod tolerance;
+pub mod walls;
 
 pub use account::{Tolerances, empty_energy_ratio};
 pub use jacobian::{

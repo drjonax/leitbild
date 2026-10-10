@@ -7,7 +7,7 @@
 
 use std::ops::{Add, Div, Mul, Neg, Sub};
 const PI: f64 = std::f64::consts::PI;
-const SB: f64 = 5.670374419e-8;
+pub(crate) const SB: f64 = 5.670374419e-8;
 const G: f64 = 9.80665;
 const BTU: f64 = 1055.05585262 / 3600. / 0.3048 * 1.8;
 pub type Result<T> = std::result::Result<T, &'static str>;
@@ -434,6 +434,42 @@ pub enum Film {
     Core,
     Tube,
     External,
+    /// The PZR heater rod's selected wet law: the shared CTF onset, CTF
+    /// Gorenflo, boiling-increment turnover, minimum-film and transition
+    /// structure with its own constants. The caller supplies the 304
+    /// material at the self-consistent minimum-film temperature.
+    Heater(HeaterFilm),
+}
+/// Constants of the PZR wet law (`ld01-pzr-heater-contact`, and the shell
+/// and heads' `ld01-pzr-shell`), owned by the caller's strict blocks;
+/// nothing here is defaulted. The shell and heads reuse the heater's
+/// complete source construction with their own coefficient and film.
+#[derive(Clone, Copy, Debug)]
+pub struct HeaterFilm {
+    /// Signed sensible contact `qFC = h (Tw − TL)`, W/(m² K).
+    pub sensible_w_m2_k: f64,
+    pub onset_contact_angle_deg: f64,
+    /// `chi`: the boiling increment's share born as wall vapor.
+    pub wall_birth_fraction: f64,
+    /// Bounds of the CTF minimum-film selector, K.
+    pub minimum_film_bounds_k: [f64; 2],
+    pub film: FilmBranch,
+}
+/// The film-boiling branch of the PZR wet law, with the film radiation
+/// `emissivity σ (Tw⁴ − Tsat⁴)` of the law in both.
+#[derive(Clone, Copy, Debug)]
+pub enum FilmBranch {
+    /// Bromley's vertical film over a fixed development length (rods:
+    /// the full rod length; shell: its declared length), its convection
+    /// term scaled by a factor (1 or a declared sensitivity).
+    Vertical {
+        coefficient: f64,
+        length_m: f64,
+        convection_factor: f64,
+    },
+    /// The heads' effective vapor thermal resistance `kv(Tf) (Tw − Tsat) /
+    /// length`; the length is not a film thickness.
+    Resistance { length_m: f64 },
 }
 #[derive(Clone, Copy, Debug)]
 pub struct WallMaterial {
@@ -488,6 +524,10 @@ fn liquid_film<P: WaterProperties>(
     let d = law.diameter_m;
     if !d.is_finite() || d <= 0. {
         return Err("invalid film diameter");
+    }
+    if let Film::Heater(f) = law.film {
+        // The heater's selected constant sensible coefficient.
+        return Ok(s(f.sensible_w_m2_k));
     }
     let pr = bulk.viscosity * bulk.cp / bulk.conductivity;
     if matches!(law.film, Film::Core) {
@@ -567,39 +607,70 @@ fn wet<P: WaterProperties>(
 ) -> Result<(Scalar, Scalar, Scalar, Scalar)> {
     let h = liquid_film(props, pressure, bulk_t, wall_t, flux, law, sat, bulk)?;
     let sensible = h * (wall_t - bulk_t);
+    if let Film::Heater(f) = law.film
+        && bulk.enthalpy.value >= sat.liquid.enthalpy.value
+    {
+        // Saturated or superheated bulk (SPEC 59a1c83): CTF's net boiling
+        // increment on the wall superheat with zero initiation flux, added
+        // to the signed sensible term outside the cube root. Continuous at
+        // Tw = Tsat and with no branch at Tw = T_L.
+        let onset = sat.temperature;
+        if wall_t.value <= onset.value {
+            return Ok((sensible, s(0.), onset, sensible));
+        }
+        let superheat = wall_t - sat.temperature;
+        let wall_sensible = h * superheat;
+        let boiling = (wall_sensible.pow(3.) + pool(pressure, superheat, true).pow(3.))
+            .pow(1. / 3.)
+            - wall_sensible;
+        let gamma = s(f.wall_birth_fraction) * boiling / (sat.vapor.enthalpy - bulk.enthalpy);
+        return Ok((sensible + boiling, gamma, onset, sensible));
+    }
     if wall_t.value <= bulk_t.value {
         return Ok((sensible, s(0.), bulk_t, sensible));
     }
-    let shape = 1. - (-38_f64.to_radians().powi(3) - 0.5 * 38_f64.to_radians()).exp();
+    let shape = if let Film::Heater(f) = law.film {
+        let angle = f.onset_contact_angle_deg.to_radians();
+        1. - (-angle.powi(3) - 0.5 * angle).exp()
+    } else {
+        1. - (-38_f64.to_radians().powi(3) - 0.5 * 38_f64.to_radians()).exp()
+    };
+    // The heater follows the CTF (core) choices: saturated-liquid
+    // conductivity, the onset's saturation form and the CTF Gorenflo factor.
+    let ctf = matches!(law.film, Film::Core | Film::Heater(_));
     let latent = sat.vapor.enthalpy - sat.liquid.enthalpy;
     let d0 = s(2. / (shape * shape)) * h * sat.surface_tension * sat.temperature
         / (sat.vapor.density
             * latent
-            * if matches!(law.film, Film::Core) {
+            * if ctf {
                 sat.liquid.conductivity
             } else {
                 bulk.conductivity
             });
     let sub = sat.temperature - bulk_t;
-    let onset = if matches!(law.film, Film::Core) {
-        sat.temperature + s(0.5) * (d0 + (d0 * d0 + s(4.) * d0 * sub).pow(0.5))
-    } else {
-        bulk_t + s(0.25) * (d0.pow(0.5) + (d0 + s(4.) * sub).pow(0.5)).pow(2.)
+    let onset = match law.film {
+        // The heater reaches here only with subcooled bulk: the tangency.
+        // Its step from the saturated combination at h_L = h_f,sat is the
+        // heater page's declared discontinuity.
+        Film::Core | Film::Heater(_) => {
+            sat.temperature + s(0.5) * (d0 + (d0 * d0 + s(4.) * d0 * sub).pow(0.5))
+        }
+        Film::Tube | Film::External => {
+            bulk_t + s(0.25) * (d0.pow(0.5) + (d0 + s(4.) * sub).pow(0.5)).pow(2.)
+        }
     };
     if wall_t.value <= onset.value {
         return Ok((sensible, s(0.), onset, sensible));
     }
-    let enhancement = pool(
-        pressure,
-        wall_t - sat.temperature,
-        matches!(law.film, Film::Core),
-    ) - pool(
-        pressure,
-        onset - sat.temperature,
-        matches!(law.film, Film::Core),
-    );
+    let enhancement = pool(pressure, wall_t - sat.temperature, ctf)
+        - pool(pressure, onset - sat.temperature, ctf);
     let q = (sensible.pow(3.) + enhancement.pow(3.)).pow(1. / 3.);
     let qb = q - sensible;
+    if let Film::Heater(f) = law.film {
+        // Wall birth pays the actual liquid subcooling (or superheat).
+        let gamma = s(f.wall_birth_fraction) * qb / (sat.vapor.enthalpy - bulk.enthalpy);
+        return Ok((q, gamma, onset, sensible));
+    }
     let gamma = if matches!(law.film, Film::Core) {
         let pe = flux.abs() * s(law.diameter_m) * sat.liquid.cp / bulk.conductivity;
         let det = qb * s(law.diameter_m) * sat.liquid.cp
@@ -620,7 +691,16 @@ fn wet<P: WaterProperties>(
     };
     Ok((q, gamma, onset, sensible))
 }
-fn minimum_film(pressure: Scalar, bulk_t: Scalar, law: WallLaw, sat: Saturation) -> Result<Scalar> {
+/// The CTF equations 466–470 minimum-film selector with the law's material.
+/// Public as the material-at-temperature hook: a caller that selects a
+/// self-consistent endpoint `Tm = Tmin(material at Tm)` evaluates it here
+/// and passes that material to [`liquid_wall`].
+pub fn minimum_film(
+    pressure: Scalar,
+    bulk_t: Scalar,
+    law: WallLaw,
+    sat: Saturation,
+) -> Result<Scalar> {
     positive(law.material.conductivity)?;
     positive(law.material.cp)?;
     let l = sat.liquid;
@@ -644,6 +724,10 @@ fn minimum_film(pressure: Scalar, bulk_t: Scalar, law: WallLaw, sat: Saturation)
         + s(0.42)
             * (tb - bulk_t)
             * (eff * latent / (law.material.cp * (tb - sat.temperature))).pow(0.6);
+    if let Film::Heater(f) = law.film {
+        let [low, high] = f.minimum_film_bounds_k;
+        return Ok(s(low).max(s(high).min(hnc.max(henry))));
+    }
     Ok(s(755.3722222222222).max(s(898.7055555555555).min(hnc.max(henry))))
 }
 fn film_heat<P: WaterProperties>(
@@ -655,10 +739,38 @@ fn film_heat<P: WaterProperties>(
 ) -> Result<Scalar> {
     let vapor = props.vapor(pressure, s(0.5) * (wall_t + sat.temperature))?;
     check_water(vapor)?;
-    let (coefficient, length, latent) = if matches!(law.film, Film::Core) {
-        (1.13, 0.25, sat.vapor.enthalpy - sat.liquid.enthalpy)
-    } else {
-        (0.62, law.diameter_m, vapor.enthalpy - sat.liquid.enthalpy)
+    let radiation = s(law.emissivity * SB) * (wall_t.pow(4.) - sat.temperature.pow(4.));
+    // The PZR film: Bromley's vertical film over its fixed length, with the
+    // latent-enthalpy form and a convection factor, or the heads' vapor
+    // resistance.
+    let (coefficient, length, latent, factor) = match law.film {
+        Film::Core => (1.13, 0.25, sat.vapor.enthalpy - sat.liquid.enthalpy, None),
+        Film::Heater(HeaterFilm {
+            film: FilmBranch::Resistance { length_m },
+            ..
+        }) => {
+            return Ok(vapor.conductivity * (wall_t - sat.temperature) / s(length_m) + radiation);
+        }
+        Film::Heater(HeaterFilm {
+            film:
+                FilmBranch::Vertical {
+                    coefficient,
+                    length_m,
+                    convection_factor,
+                },
+            ..
+        }) => (
+            coefficient,
+            length_m,
+            sat.vapor.enthalpy - sat.liquid.enthalpy,
+            Some(convection_factor),
+        ),
+        Film::Tube | Film::External => (
+            0.62,
+            law.diameter_m,
+            vapor.enthalpy - sat.liquid.enthalpy,
+            None,
+        ),
     };
     let h = s(coefficient)
         * (vapor.conductivity.pow(3.)
@@ -668,8 +780,11 @@ fn film_heat<P: WaterProperties>(
             * latent
             / (s(length) * vapor.viscosity * (wall_t - sat.temperature)))
             .pow(0.25);
-    Ok(h * (wall_t - sat.temperature)
-        + s(law.emissivity * SB) * (wall_t.pow(4.) - sat.temperature.pow(4.)))
+    let convection = match factor {
+        Some(f) => s(f) * h * (wall_t - sat.temperature),
+        None => h * (wall_t - sat.temperature),
+    };
+    Ok(convection + radiation)
 }
 
 fn liquid_wall_inputs(
@@ -731,12 +846,17 @@ pub(crate) fn liquid_wall_current<P: WaterProperties>(
             bulk
         };
     check_water(bulk)?;
-    if bulk_t.value > sat.temperature.value {
+    // The heater admits metastable bulk liquid through its saturated-bulk
+    // onset; the other films keep the stable recipient.
+    if bulk_t.value > sat.temperature.value && !matches!(law.film, Film::Heater(_)) {
         return Err("stable liquid wall recipient required");
     }
     let (pre, pre_gamma, onset, _) =
         wet(props, pressure, bulk_t, wall_t, mass_flux, law, sat, bulk)?;
-    if wall_t.value <= onset.value || wall_t.value <= bulk_t.value {
+    // The heater's saturated-bulk combination boils above Tsat even with
+    // the wall below a superheated liquid; its sensible region is below onset.
+    let heater = matches!(law.film, Film::Heater(_));
+    if wall_t.value <= onset.value || (!heater && wall_t.value <= bulk_t.value) {
         return Ok(WallFlux {
             heat: pre.finite()?,
             vapor_mass: s(0.),
@@ -845,8 +965,9 @@ pub(crate) fn liquid_wall_current<P: WaterProperties>(
         (q, q / (sat.vapor.enthalpy - bulk.enthalpy), "film")
     };
     // SG fluids are equilibrium owners: gamma is a diagnostic ONLY for core's
-    // separated-temperature recipient, never a second SG phase-mass source.
-    let gamma = if matches!(law.film, Film::Core) {
+    // separated-temperature recipient and the heater's wall birth into its
+    // cell's bubble stock, never a second SG phase-mass source.
+    let gamma = if matches!(law.film, Film::Core | Film::Heater(_)) {
         gamma
     } else {
         s(0.)
@@ -1025,6 +1146,59 @@ pub fn steam_generator_rates(
         secondary: metal_to_secondary,
     })
 }
+/// Exposed gas contact on one square metre: signed sensible heat into the
+/// gas and, below the dew point with steam present, the condensate.
+#[derive(Clone, Copy, Debug)]
+pub struct GasContact {
+    /// `h (Tw − Tgas)`, W/m², from the wall into the gas.
+    pub sensible: Scalar,
+    /// Present only with steam and `Tw < Tsat(p)`.
+    pub condensation: Option<Condensation>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Condensation {
+    /// `speed · max(0, ρ_steam − ρ_sat,vapor(Tw))`, kg/(m² s).
+    pub mass: Scalar,
+    /// Donor steam enthalpy, J/kg.
+    pub vapor_enthalpy: Scalar,
+    /// Condensed liquid enthalpy at the wall temperature and local pressure.
+    pub liquid_enthalpy: Scalar,
+}
+/// The selected exposed gas law with its components. `steam` supplies the
+/// actual donor steam point at `(p, bulk_t)`; it is evaluated only below the
+/// dew point, and `None` means no steam, with no saturation lookup.
+pub fn gas_contact<P: WaterProperties, F: FnOnce() -> Result<WaterPoint>>(
+    props: &P,
+    p: Scalar,
+    bulk_t: Scalar,
+    wall_t: Scalar,
+    coefficient: f64,
+    speed: f64,
+    steam: Option<F>,
+) -> Result<GasContact> {
+    let sensible = s(coefficient) * (wall_t - bulk_t);
+    let mut condensation = None;
+    if let Some(steam) = steam {
+        let sat = props.saturation(p)?;
+        if wall_t.value < sat.temperature.value {
+            let vapor = steam()?;
+            check_water(vapor)?;
+            let demand =
+                s(speed) * (vapor.density - props.saturated_vapor_density(wall_t)?).max(s(0.));
+            let liquid = props.liquid(p, wall_t)?;
+            check_water(liquid)?;
+            condensation = Some(Condensation {
+                mass: demand,
+                vapor_enthalpy: vapor.enthalpy,
+                liquid_enthalpy: liquid.enthalpy,
+            });
+        }
+    }
+    Ok(GasContact {
+        sensible,
+        condensation,
+    })
+}
 /// Selected exposed SG gas law. h=5W/m²K and 0.01m/s are explicitly owned
 /// service-contact reductions, not fabricated replacements for tube flow.
 /// Condensation is ONLY an energy demand; no extra SG phase-mass source.
@@ -1035,18 +1209,18 @@ pub fn sg_gas_wall<P: WaterProperties>(
     wall_t: Scalar,
     steam_present: bool,
 ) -> Result<Scalar> {
-    let mut q = s(5.) * (wall_t - bulk_t);
-    if steam_present {
-        let sat = props.saturation(p)?;
-        if wall_t.value < sat.temperature.value {
-            let vapor = props.vapor(p, bulk_t)?;
-            check_water(vapor)?;
-            let demand =
-                s(0.01) * (vapor.density - props.saturated_vapor_density(wall_t)?).max(s(0.));
-            let liquid = props.liquid(p, wall_t)?;
-            check_water(liquid)?;
-            q = q - demand * (vapor.enthalpy - liquid.enthalpy);
-        }
+    let contact = gas_contact(
+        props,
+        p,
+        bulk_t,
+        wall_t,
+        5.,
+        0.01,
+        steam_present.then_some(|| props.vapor(p, bulk_t)),
+    )?;
+    let mut q = contact.sensible;
+    if let Some(c) = contact.condensation {
+        q = q - c.mass * (c.vapor_enthalpy - c.liquid_enthalpy);
     }
     q.finite()
 }
