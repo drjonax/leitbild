@@ -1119,16 +1119,26 @@ const shownPens = (display: CompiledComposedDisplay): ReadonlyArray<ComposedDisp
   [...new Map(display.panels.flatMap(composedPanelPens).map(pen => [pen.path, pen])).values()]
 
 /**
- * How the display draws a signal over time: a trend strip's legend over the
- * trend's horizon, or a comparison's rate over ten minutes; null for a value
- * shown now only (a readout, or a trended signal the Run does not record).
- * A trend's legend takes precedence where a signal is in both.
+ * Where the display states a signal's limit and rate: a trend strip's legend
+ * (rate over the trend's horizon, the limit ahead in words); a legend row of
+ * a trended signal the Run does not record (no rate, the nearest limit in
+ * words); a comparison row (rate over ten minutes, limits drawn as lines); or
+ * a readout (the nearest limit's margin). A legend takes precedence where a
+ * signal is in more than one panel.
  */
-const drawnOverTime = (display: CompiledComposedDisplay, pen: ComposedDisplayPen): { readonly legend: boolean; readonly horizonMs: number } | null => {
-  const trend = display.panels.find((panel): panel is ComposedTrendPanel => panel.kind === 'trend' && panel.strips.some(strip => strip.pens.some(candidate => candidate.path === pen.path)))
-  if (trend !== undefined) return { legend: true, horizonMs: trend.horizonMs }
+type PenView =
+  | { readonly kind: 'legend'; readonly horizonMs: number }
+  | { readonly kind: 'live' }
+  | { readonly kind: 'comparison'; readonly horizonMs: number }
+  | { readonly kind: 'readout' }
+
+const penView = (display: CompiledComposedDisplay, pen: ComposedDisplayPen): PenView => {
+  const trends = display.panels.filter((panel): panel is ComposedTrendPanel => panel.kind === 'trend')
+  const legend = trends.find(panel => panel.strips.some(strip => strip.pens.some(candidate => candidate.path === pen.path)))
+  if (legend !== undefined) return { kind: 'legend', horizonMs: legend.horizonMs }
+  if (trends.some(panel => panel.live.some(candidate => candidate.path === pen.path))) return { kind: 'live' }
   const compared = display.panels.some(panel => panel.kind === 'comparison' && panel.pens.some(candidate => candidate.path === pen.path))
-  return compared ? { legend: false, horizonMs: COMPARISON_HISTORY_MS } : null
+  return compared ? { kind: 'comparison', horizonMs: COMPARISON_HISTORY_MS } : { kind: 'readout' }
 }
 
 interface PenReading {
@@ -1145,34 +1155,39 @@ interface PenReading {
 /**
  * Each shown value read as the display reads it on opening: its recorded
  * history up to now and the value now, through the legend's own functions
- * (trend-reading.ts). Recorded history is read only for signals drawn over
- * time, over the window they are drawn.
+ * (trend-reading.ts), worded as its panel words it. Recorded history is read
+ * only for signals drawn over time, over the window they are drawn.
  */
 const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ReadonlyArray<PenReading> => shownPens(display).flatMap(pen => {
   const value = now.read(pen.path)
   if (typeof value !== 'number') return []
-  const drawn = drawnOverTime(display, pen)
-  const windowStart = drawn === null ? now.simulationMs : now.simulationMs - drawn.horizonMs
-  const history = drawn === null || !pen.recorded ? [] : now.history(pen.seriesId, { from: windowStart, to: now.simulationMs })
-  const points = drawn === null ? null : appendPoint(history, { t: now.simulationMs, v: value }, windowStart)
+  const view = penView(display, pen)
+  const overTime = view.kind === 'legend' || view.kind === 'comparison' ? view : null
+  const windowStart = overTime === null ? now.simulationMs : now.simulationMs - overTime.horizonMs
+  const history = overTime === null || !pen.recorded ? [] : now.history(pen.seriesId, { from: windowStart, to: now.simulationMs })
   const reading = trendReading({
     value,
-    points,
-    windowMs: rateWindowMs(drawn?.horizonMs ?? COMPARISON_HISTORY_MS),
+    points: overTime === null ? null : appendPoint(history, { t: now.simulationMs, v: value }, windowStart),
+    windowMs: rateWindowMs(overTime?.horizonMs ?? COMPARISON_HISTORY_MS),
     unit: pen.unit,
     thresholds: pen.thresholds,
     mode: now.mode,
     activeRuleIds: now.activeRuleIds,
   })
-  const limit = reading.limit === null ? '' : limitStateText(reading.limit, pen.unit)
+  // A legend words every state of its limits; a readout and a comparison show only a margin to one, in words or as lines.
+  const worded = view.kind === 'legend' || view.kind === 'live' || reading.limit?.kind === 'margin'
+  const limit = reading.limit === null || !worded ? '' : limitStateText(reading.limit, pen.unit)
   const travel = travelText(reading.rate, value, pen.unit, reading.change)
   if (limit === '' && travel === '') return []
+  // The alarm chip beside the value names the active limit, where the words do not say it is past one.
+  const saysPast = worded && reading.limit?.kind === 'margin' && isPast(reading.limit.margin)
+  const chip = reading.inAlarm === null || saysPast ? '' : `in ${thresholdName(reading.inAlarm, pen.unit)}`
   return [{
     pen,
     value,
     reading,
-    legend: drawn?.legend === true,
-    text: [`${pen.name}: ${formatQuantity(value, pen.unit)}`, travel, limit].filter(part => part !== '').join(', '),
+    legend: view.kind === 'legend',
+    text: [`${pen.name}: ${formatQuantity(value, pen.unit)}`, travel, chip, limit].filter(part => part !== '').join(', '),
     rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode, now.activeRuleIds)),
   }]
 })

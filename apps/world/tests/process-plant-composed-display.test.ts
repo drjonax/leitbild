@@ -220,6 +220,15 @@ describe('world.process-plant.display.compose', () => {
     expect(embeddedViewContentSchema.parse(unrecorded.viewContent).items[0]!.trend).toBeUndefined()
   })
 
+  test('states a readout as the readout shows it: the nearest limit, no rate and nothing where it has none', () => {
+    const pressure = runtime.readVariableSnapshot(compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path).value as number
+    const result = ask('world.process-plant.display.compose', {
+      ...composition([{ ref: 'PT-455', role: 'primary' }]),
+      panels: [{ kind: 'readouts', signals: [{ ref: 'PT-455', role: 'primary' }, { ref: 'core.totalThermalPowerMw', role: 'context' }] }],
+    }) as { margins: ReadonlyArray<string> }
+    expect(result.margins).toEqual([`PT-455: ${formatQuantity(pressure, 'MPa')}, ${formatQuantity(16 - pressure, 'MPa')} below HI ALM 16 MPa`])
+  })
+
   test('a recorded signal needs the Run\'s history to be composed', () => {
     expect(() => answerProcessPlantQuery({
       request: { capabilityId: 'world.process-plant.display.compose', input: composition([{ ref: 'PT-455', role: 'primary' }]) },
