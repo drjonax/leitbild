@@ -13,7 +13,7 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
-import { itemBinding, framingRules } from '../src/packs/process-plant/displays/mimic/bindings.ts'
+import { itemBinding, flapText, framingRules } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { indexSample, itemLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import { formatQuantity } from '../src/packs/process-plant/displays/display-text.ts'
@@ -238,6 +238,19 @@ describe('breakers', () => {
     expect(tag('TRIP-BKR-B-POS')).toBe(false)
     // The turbine follows the reactor trip, as the breakers' position reads it.
     expect(Number(runtime.readVariable('turbineStopValve.positionFraction' as VariablePath))).toBe(0)
+  })
+})
+
+describe('offsite power alarms', () => {
+  test('each names one cause: a grid with no voltage is lost, a sagging grid degraded', () => {
+    const flap = (ruleId: string) => flapText(plant, plant.automation.rules.find(rule => rule.id === ruleId)!, undefined)
+    expect(flap('loss-of-offsite-power')).toBe('V LO-LO')
+    expect(flap('offsite-grid-degraded-voltage')).toBe('V LO')
+    const plantRun = started()
+    plantRun.run(2_000)
+    plantRun.act('loss-offsite-power')
+    plantRun.run(5_000)
+    expect(plantRun.activeIds()).toContain('alarm:loss-of-offsite-power:loss-of-offsite-power')
   })
 })
 

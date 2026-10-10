@@ -1,5 +1,5 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, rule, trip, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, comparison, rule, trip, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 
 const electricalAlarm = annunciator({
@@ -232,15 +232,15 @@ export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantRefe
     ],
   }),
   lossOfOffsitePowerAuxiliaryFeedwater(loops),
+  // One cause per alarm: offsite power is lost when the grid gives no
+  // voltage, whether it is disconnected or dead; a sagging grid is the
+  // degraded-voltage alarm's.
   rule({
     id: 'loss-of-offsite-power',
     label: 'Loss of offsite power',
     ruleClass: 'alarm',
-    condition: any([
-      comparison({ tagId: 'GRID-AVAIL' }, '==', false),
-      comparison({ tagId: 'GRID-MW' }, '<', 1),
-    ]),
-    clearCondition: comparison({ tagId: 'GRID-AVAIL' }, '==', true),
+    condition: comparison({ tagId: 'GRID-VOLTAGE' }, '<=', 0),
+    clearCondition: comparison({ tagId: 'GRID-VOLTAGE' }, '>', 0),
     clearDelayMs: 2_000,
     delayMs: 1_000,
     latch: false,
@@ -248,7 +248,7 @@ export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantRefe
     effects: [alarm({
       id: 'loss-of-offsite-power',
       title: 'Loss of offsite power',
-      message: 'The offsite grid source is unavailable or providing no usable power.',
+      message: 'The offsite grid gives no voltage.',
       severity: 'critical',
       annunciator: annunciator({ ...electricalAlarm, equipmentId: 'offsiteGrid', role: 'cause' }),
     })],
