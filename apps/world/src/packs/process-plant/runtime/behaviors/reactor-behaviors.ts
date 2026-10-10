@@ -1,3 +1,4 @@
+import { primaryLoopPumps } from '../../graph/index.ts'
 import type { ComponentBehaviorDefinition } from '../behavior-contract.ts'
 import { componentVariablePath, processLinkVariablePath } from '../behavior-contract.ts'
 import {
@@ -21,7 +22,8 @@ import {
   reactorKineticsPowerStep,
 } from '../physics.ts'
 import { primarySystemPressurizer, primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
-import { saturationTemperatureCFromPressureMPa, waterDeltaTFromHeatMw } from '../thermophysics.ts'
+import { saturationTemperatureCFromPressureMPa } from '../thermophysics.ts'
+import { liquidEnthalpyKjPerKg, liquidTemperatureCFromEnthalpy } from '../water-properties.ts'
 import { nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
 
 type ReactorBehaviorSystem = Parameters<ComponentBehaviorDefinition['update']>[0]['system']
@@ -98,6 +100,18 @@ const boundaryInflowByService = (
   }
 }
 
+/** Reactor coolant pressure: the pressurizer's, or the core's nominal pressure in a Plant without one. */
+const coolantPressureMPa = (
+  system: ReactorBehaviorSystem,
+  core: ReactorBehaviorSystem['graph']['components'][number],
+  context: ReactorBehaviorContext,
+): number => {
+  const pressurizer = primarySystemPressurizer(system)
+  return pressurizer === null
+    ? parameterNumber(core, 'nominalCoolantPressureMPa')
+    : context.readNumber(componentVariablePath(pressurizer, 'pressureMPa'))
+}
+
 const combineBoundaryInflows = (inflows: ReadonlyArray<BoundaryInflow>): BoundaryInflow => {
   const flowKgPerS = inflows.reduce((total, inflow) => total + inflow.flowKgPerS, 0)
   const soluteWeightedTotal = inflows.reduce(
@@ -135,10 +149,16 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
     id: 'reactor-core-heat-to-coolant',
     phase: 'solveThermalTransfer',
     componentKind: 'reactorCore',
-    reads: ['totalThermalPowerMw'],
-    writes: ['heatToCoolantMw'],
-    update: ({ component, context }): void => {
-      context.write(componentVariablePath(component, 'heatToCoolantMw'), Math.max(0, context.readNumber(componentVariablePath(component, 'totalThermalPowerMw'))))
+    reads: ['totalThermalPowerMw', 'reactor coolant pump demandMw'],
+    writes: ['pumpHeatMw', 'heatToCoolantMw'],
+    update: ({ system, component, context }): void => {
+      // The reactor coolant pumps' shaft power, about 4.5 MW a pump, ends up
+      // in the coolant as heat, on top of the core's own thermal power.
+      let pumpHeat = 0
+      for (const pump of primaryLoopPumps(system.graph)) pumpHeat += Math.max(0, context.readNumber(componentVariablePath(pump, 'demandMw')))
+      const coreHeat = Math.max(0, context.readNumber(componentVariablePath(component, 'totalThermalPowerMw')))
+      context.write(componentVariablePath(component, 'pumpHeatMw'), pumpHeat)
+      context.write(componentVariablePath(component, 'heatToCoolantMw'), coreHeat + pumpHeat)
     },
   },
   {
@@ -213,11 +233,17 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'boronFeedbackPcm'), boronFeedbackPcm)
       context.write(componentVariablePath(component, 'effectiveReactivityPcm'), effectiveReactivity)
 
-      const decayTarget = Math.max(currentPower, nextPower) * optionalParameterNumber(component, 'decayHeatFractionAtPower', 0.06)
+      // Core thermal power is the prompt share of fission power plus the decay
+      // heat of earlier fissions. At equilibrium the decay heat is that same
+      // share of fission power, so thermal and fission power agree at steady
+      // power and part after a trip, when the decay heat lingers.
+      const decayFraction = optionalParameterNumber(component, 'decayHeatFractionAtPower', 0.06)
+      const decayTarget = Math.max(currentPower, nextPower) * decayFraction
       const decayHeat = context.readNumber(componentVariablePath(component, 'decayHeatMw'))
       const nextDecayHeat = relaxToward(decayHeat, decayTarget, context.dtSeconds, optionalParameterNumber(component, 'decayHeatTimeConstantS', 900))
+      const totalThermalPower = nextPower * (1 - decayFraction) + nextDecayHeat
       context.write(componentVariablePath(component, 'decayHeatMw'), nextDecayHeat)
-      context.write(componentVariablePath(component, 'totalThermalPowerMw'), nextPower + nextDecayHeat)
+      context.write(componentVariablePath(component, 'totalThermalPowerMw'), totalThermalPower)
 
       const primaryFlow = sumIncomingLinkValue(system, component.index, 'flowKgPerS', context, link => link.service === 'primaryCoolant')
       const nominalPrimaryFlow = optionalParameterNumber(component, 'nominalPrimaryFlowKgPerS', Math.max(1, primaryFlow))
@@ -225,9 +251,8 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'averageHotLegFlowKgPerS'), primaryFlow)
       const coolingMargin = clamp(primaryFlow / Math.max(1, nominalPrimaryFlow), minimumCooling, 1.2)
       const creditedCooling = clamp(coolingMargin, 0, 1)
-      const totalThermalPower = nextPower + nextDecayHeat
       const heatRemovalDeficit = Math.max(0, totalThermalPower * (1 - creditedCooling))
-      const thermalFraction = clamp((nextPower + nextDecayHeat) / ratedPower, 0, 1.25)
+      const thermalFraction = clamp(totalThermalPower / ratedPower, 0, 1.25)
       const fuelRise = optionalParameterNumber(component, 'fuelTemperatureRiseAtRatedPowerC', 140)
         * thermalFraction
         / Math.sqrt(Math.max(0.05, coolingMargin))
@@ -254,24 +279,37 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
     id: 'reactor-core-coolant-temperature-state',
     phase: 'updateComponentState',
     componentKind: 'reactorCore',
-    reads: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'heatToCoolantMw', 'incoming:temperatureC', 'incoming:flowKgPerS'],
-    writes: ['coolantInletTemperatureC', 'coolantOutletTemperatureC'],
+    reads: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC', 'totalThermalPowerMw', 'pumpHeatMw', 'incoming:temperatureC', 'incoming:flowKgPerS', 'pressurizer.pressureMPa'],
+    writes: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC'],
     update: ({ system, component, context }): void => {
       const primaryInletLink = (link: { readonly service?: unknown }): boolean =>
         link.service === 'primaryCoolant'
         || link.service === 'charging'
         || link.service === 'primaryInjection'
         || link.service === 'safetyInjection'
-      const inletTemperature = flowWeightedIncomingLinkValue(system, component.index, 'temperatureC', context, primaryInletLink)
+      const mixedInletTemperature = flowWeightedIncomingLinkValue(system, component.index, 'temperatureC', context, primaryInletLink)
         ?? averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
         ?? context.readNumber(componentVariablePath(component, 'coolantInletTemperatureC'))
       const flow = Math.max(1, sumIncomingLinkValue(system, component.index, 'flowKgPerS', context, link => link.service === 'primaryCoolant'))
-      const heatToCoolant = context.readNumber(componentVariablePath(component, 'heatToCoolantMw'))
-      const outletTarget = clamp(inletTemperature + waterDeltaTFromHeatMw(heatToCoolant, flow), 220, 360)
-      const currentOutlet = context.readNumber(componentVariablePath(component, 'coolantOutletTemperatureC'))
+      const pressure = coolantPressureMPa(system, component, context)
+      // An energy balance on enthalpy at coolant pressure: the pumps heat the
+      // cold legs, the core heats the flow through it. The core-exit
+      // thermocouples read the fuelled channels, hotter than the mixed vessel
+      // outlet by the bypass flow that carries no core heat.
+      const coreHeat = Math.max(0, context.readNumber(componentVariablePath(component, 'totalThermalPowerMw')))
+      const pumpHeat = context.readNumber(componentVariablePath(component, 'pumpHeatMw'))
+      const bypassFraction = optionalParameterNumber(component, 'coreBypassFlowFraction', 0)
+      const inletEnthalpy = liquidEnthalpyKjPerKg(mixedInletTemperature, pressure) + pumpHeat * 1_000 / flow
+      const outletEnthalpy = inletEnthalpy + coreHeat * 1_000 / flow
+      const coreExitEnthalpy = outletEnthalpy + coreHeat * 1_000 * bypassFraction / ((1 - bypassFraction) * flow)
       const timeConstantSeconds = optionalParameterNumber(component, 'coolantThermalTimeConstantS', 8)
-      context.write(componentVariablePath(component, 'coolantInletTemperatureC'), relaxToward(context.readNumber(componentVariablePath(component, 'coolantInletTemperatureC')), inletTemperature, context.dtSeconds, timeConstantSeconds))
-      context.write(componentVariablePath(component, 'coolantOutletTemperatureC'), relaxToward(currentOutlet, outletTarget, context.dtSeconds, timeConstantSeconds))
+      const relax = (localPath: string, target: number): void => {
+        const path = componentVariablePath(component, localPath)
+        context.write(path, relaxToward(context.readNumber(path), target, context.dtSeconds, timeConstantSeconds))
+      }
+      relax('coolantInletTemperatureC', liquidTemperatureCFromEnthalpy(pressure, inletEnthalpy))
+      relax('coolantOutletTemperatureC', liquidTemperatureCFromEnthalpy(pressure, outletEnthalpy))
+      relax('coreExitTemperatureC', liquidTemperatureCFromEnthalpy(pressure, coreExitEnthalpy))
     },
   },
   {
@@ -376,7 +414,15 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       const pressureMPa = pressurizer === null
         ? 15.5
         : context.readNumber(componentVariablePath(pressurizer, 'pressureMPa'))
-      const subcoolingMargin = saturationTemperatureCFromPressureMPa(pressureMPa) - meanPrimaryCoolantTemperature
+      // A subcooling monitor takes the hottest reading: the core exit, or the
+      // hot leg should it ever read hotter.
+      const hottestCoolantTemperature = core === null
+        ? meanPrimaryCoolantTemperature
+        : Math.max(
+          context.readNumber(componentVariablePath(core, 'coreExitTemperatureC')),
+          context.readNumber(componentVariablePath(core, 'coolantOutletTemperatureC')),
+        )
+      const subcoolingMargin = saturationTemperatureCFromPressureMPa(pressureMPa) - hottestCoolantTemperature
       context.write(componentVariablePath(component, 'chargingFlowKgPerS'), chargingFlow)
       context.write(componentVariablePath(component, 'safetyInjectionFlowKgPerS'), primaryInjectionFlow)
       context.write(componentVariablePath(component, 'letdownFlowKgPerS'), letdownFlow)

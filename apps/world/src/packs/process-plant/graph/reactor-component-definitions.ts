@@ -39,12 +39,15 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       ])),
     parametersSchema: z.object({
       ratedPowerMw: z.number().finite().positive(),
+      /** Reactor coolant pressure at which the initial coolant temperatures are sized. */
+      nominalCoolantPressureMPa: z.number().finite().positive(),
       primaryLoopIds: z.array(idSchema).min(1).max(64).optional(),
       initialPowerFraction: normalized,
       initialCoolantInletTemperatureC: z.number().finite().optional(),
       coolantThermalTimeConstantS: z.number().finite().positive().optional(),
       fuelThermalTimeConstantS: z.number().finite().positive().optional(),
       fuelTemperatureRiseAtRatedPowerC: z.number().finite().positive().optional(),
+      /** The share of core thermal power that fission products release later as decay heat, at equilibrium. */
       decayHeatFractionAtPower: z.number().finite().min(0).max(0.2).optional(),
       decayHeatTimeConstantS: z.number().finite().positive().optional(),
       referenceCoolantOutletTemperatureC: z.number().finite().optional(),
@@ -59,6 +62,10 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       maxPowerRampFractionPerS: z.number().finite().positive().optional(),
       fuelThermalCapacityMjPerC: z.number().finite().positive(),
       nominalPrimaryFlowKgPerS: z.number().finite().positive().optional(),
+      /** The share of vessel flow that bypasses the fuel (head, baffle and guide-thimble flow), so carries no core heat. */
+      coreBypassFlowFraction: z.number().finite().min(0).max(0.3).optional(),
+      /** Design shaft power the running reactor coolant pumps put into the coolant; sizes the initial loop temperatures. */
+      reactorCoolantPumpHeatMw: z.number().finite().nonnegative().optional(),
       /** Source-range count rate at P-6, where its high voltage is cut. */
       nominalSourceRangeCountRateCps: z.number().finite().positive().optional(),
       /** Intermediate-range current at rated power. */
@@ -74,9 +81,12 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       energy: [{ role: 'source', circuit: 'coolant', rate: 'totalThermalPowerMw' }],
     }),
     variables: [
+      // Fission power is what the power-range channels read: calibrated so that
+      // at equilibrium it equals core thermal power, the prompt share of
+      // fission energy plus the decay heat of earlier fissions.
       variable({ path: 'powerMw', label: 'Core fission power', kind: 'state', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'fissionPowerMw', label: 'Core fission power diagnostic', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
-      variable({ path: 'totalThermalPowerMw', label: 'Core total thermal power', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
+      variable({ path: 'totalThermalPowerMw', label: 'Core thermal power', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'reactivityPcm', label: 'Reactivity', kind: 'state', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'promptReactivityPcm', label: 'Rod-programmed reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'temperatureFeedbackPcm', label: 'Temperature feedback reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
@@ -88,6 +98,7 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'intermediateRangeCurrentAmps', label: 'Intermediate-range neutron current', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'electricalCurrent', unit: 'amps' }),
       variable({ path: 'coolantInletTemperatureC', label: 'Core coolant inlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'coolantOutletTemperatureC', label: 'Core coolant outlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
+      variable({ path: 'coreExitTemperatureC', label: 'Core-exit temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'averageHotLegFlowKgPerS', label: 'Average hot-leg primary flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
       variable({ path: 'fuelTemperatureC', label: 'Core fuel temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'fuelLowerTemperatureC', label: 'Lower fuel temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
@@ -98,6 +109,7 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'coreHeatRemovalDeficitMw', label: 'Core heat removal deficit', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'powerDelta', unit: 'MW' }),
       variable({ path: 'fuelHeatupRateCPerS', label: 'Fuel heatup rate', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperatureRate', unit: 'degC/s' }),
       variable({ path: 'decayHeatMw', label: 'Decay heat', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
+      variable({ path: 'pumpHeatMw', label: 'Reactor coolant pump heat', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'heatToCoolantMw', label: 'Heat to coolant', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
     ],
   }),

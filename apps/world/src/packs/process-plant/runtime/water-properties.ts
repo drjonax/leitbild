@@ -81,11 +81,14 @@ export const compressedWaterState = (temperatureC: number, pressureMPa: number):
   return region1(temperature + kelvinOffset, Math.max(pressureMPa, saturationPressureMPaFromTemperatureC(temperature)))
 }
 
-/** Liquid enthalpy at a pressure that may lie below the liquid's saturation
- * pressure: the region 1 equation continues smoothly into that superheated
- * (metastable) liquid, which is what flashes. */
-export const liquidEnthalpyKjPerKg = (temperatureC: number, pressureMPa: number): number =>
-  region1(Math.min(370, Math.max(0, temperatureC)) + kelvinOffset, Math.max(0.01, Math.min(100, pressureMPa))).enthalpyKjPerKg
+/** Liquid enthalpy. A liquid's enthalpy hardly depends on pressure, so liquid
+ * hotter than saturation at this pressure (superheated, about to flash) is
+ * given its enthalpy at its own saturation pressure; it stays defined to
+ * 370 °C, beyond region 1's 350 °C, along the saturation line. */
+export const liquidEnthalpyKjPerKg = (temperatureC: number, pressureMPa: number): number => {
+  const temperature = Math.min(370, Math.max(0, temperatureC))
+  return region1(temperature + kelvinOffset, Math.min(100, Math.max(pressureMPa, saturationPressureMPaFromTemperatureC(temperature)))).enthalpyKjPerKg
+}
 
 // Region 1 backward equation T(p, h), table 6.
 const backwardI = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 4, 5, 6]
@@ -97,14 +100,18 @@ const backwardN = [
   0.66456186191635e-7, 0.80670734103027e-10, -0.93477771213947e-12, 0.58265442020601e-14, -0.15020185953503e-16,
 ]
 
-/** Liquid temperature from pressure and enthalpy (IF97 eq. 11). An enthalpy
- * a little above saturated liquid continues the same curve, as superheated
- * liquid about to flash; the result is held below 370 °C. */
+/** Liquid temperature from pressure and enthalpy (IF97 eq. 11). Liquid with
+ * more enthalpy than saturated liquid at this pressure is superheated liquid
+ * about to flash: its temperature is that of saturated liquid with the same
+ * enthalpy, up to 370 °C. */
 export const liquidTemperatureCFromEnthalpy = (pressureMPa: number, enthalpyKjPerKg: number): number => {
-  const pi = Math.max(0.01, Math.min(100, pressureMPa))
+  const pressure = Math.max(tableFirstMPa, Math.min(100, pressureMPa))
+  if (pressure < criticalPressureMPa && enthalpyKjPerKg > saturatedWaterSteam(pressure).liquidEnthalpyKjPerKg) {
+    return Math.min(370, saturationTemperatureCFromLiquidEnthalpy(enthalpyKjPerKg))
+  }
   const eta1 = Math.max(0, enthalpyKjPerKg) / 2_500 + 1
   let theta = 0
-  for (let i = 0; i < backwardN.length; i++) theta += backwardN[i]! * pi ** backwardI[i]! * eta1 ** backwardJ[i]!
+  for (let i = 0; i < backwardN.length; i++) theta += backwardN[i]! * pressure ** backwardI[i]! * eta1 ** backwardJ[i]!
   return Math.min(370, theta - kelvinOffset)
 }
 
@@ -180,7 +187,10 @@ const tableFirstMPa = 0.05
 const regionTwoLimitMPa = 18.5
 const saturationTable = (() => {
   const rows: SaturatedWaterSteam[] = []
-  for (let pressure = tableFirstMPa; pressure <= regionTwoLimitMPa + 1e-9; pressure += tableStepMPa) {
+  const pressureAt = (index: number): number => tableFirstMPa + index * tableStepMPa
+  const lastFormulationIndex = Math.round((regionTwoLimitMPa - tableFirstMPa) / tableStepMPa)
+  for (let index = 0; index <= lastFormulationIndex; index++) {
+    const pressure = pressureAt(index)
     const temperature = saturationTemperatureCFromPressureMPa(pressure)
     const liquid = region1(temperature + kelvinOffset, pressure)
     const vapour = steamState(temperature, pressure)
@@ -192,13 +202,14 @@ const saturationTable = (() => {
       vapourEnthalpyKjPerKg: vapour.enthalpyKjPerKg,
     })
   }
-  const last = rows[rows.length - 1]!
-  const lastPressure = tableFirstMPa + (rows.length - 1) * tableStepMPa
-  for (let pressure = lastPressure + tableStepMPa; pressure < criticalPressureMPa + tableStepMPa; pressure += tableStepMPa) {
-    const fraction = Math.min(1, (pressure - lastPressure) / (criticalPressureMPa - lastPressure))
+  const last = rows[lastFormulationIndex]!
+  const lastPressure = pressureAt(lastFormulationIndex)
+  for (let index = lastFormulationIndex + 1; pressureAt(index - 1) < criticalPressureMPa; index++) {
+    const pressure = Math.min(criticalPressureMPa, pressureAt(index))
+    const fraction = (pressure - lastPressure) / (criticalPressureMPa - lastPressure)
     const blend = (from: number, to: number): number => from + (to - from) * fraction
     rows.push({
-      temperatureC: saturationTemperatureCFromPressureMPa(Math.min(pressure, criticalPressureMPa)),
+      temperatureC: saturationTemperatureCFromPressureMPa(pressure),
       liquidDensityKgPerM3: blend(last.liquidDensityKgPerM3, criticalDensityKgPerM3),
       vapourDensityKgPerM3: blend(last.vapourDensityKgPerM3, criticalDensityKgPerM3),
       liquidEnthalpyKjPerKg: blend(last.liquidEnthalpyKjPerKg, criticalEnthalpyKjPerKg),
@@ -225,21 +236,38 @@ export const saturatedWaterSteam = (pressureMPa: number): SaturatedWaterSteam =>
   }
 }
 
+const saturationRowIndexBelow = (value: number, field: 'vapourDensityKgPerM3' | 'liquidEnthalpyKjPerKg'): number => {
+  let low = 0
+  let high = saturationTable.length - 1
+  while (high - low > 1) {
+    const middle = (low + high) >> 1
+    if (saturationTable[middle]![field] <= value) low = middle
+    else high = middle
+  }
+  return low
+}
+
+/** The saturation temperature of liquid with this enthalpy. */
+const saturationTemperatureCFromLiquidEnthalpy = (enthalpyKjPerKg: number): number => {
+  const last = saturationTable[saturationTable.length - 1]!
+  if (enthalpyKjPerKg >= last.liquidEnthalpyKjPerKg) return last.temperatureC
+  const low = saturationRowIndexBelow(enthalpyKjPerKg, 'liquidEnthalpyKjPerKg')
+  const from = saturationTable[low]!
+  const to = saturationTable[low + 1]!
+  const fraction = Math.max(0, (enthalpyKjPerKg - from.liquidEnthalpyKjPerKg) / (to.liquidEnthalpyKjPerKg - from.liquidEnthalpyKjPerKg))
+  return from.temperatureC + (to.temperatureC - from.temperatureC) * fraction
+}
+
 /** The pressure at which saturated steam has this density: the pressure of a
  * steam space in contact with boiling water. */
 export const saturationPressureMPaFromVapourDensity = (densityKgPerM3: number): number => {
   if (densityKgPerM3 <= saturationTable[0]!.vapourDensityKgPerM3) {
     return tableFirstMPa * Math.max(0, densityKgPerM3) / saturationTable[0]!.vapourDensityKgPerM3
   }
-  let low = 0
-  let high = saturationTable.length - 1
-  if (densityKgPerM3 >= saturationTable[high]!.vapourDensityKgPerM3) return criticalPressureMPa
-  while (high - low > 1) {
-    const middle = (low + high) >> 1
-    if (saturationTable[middle]!.vapourDensityKgPerM3 <= densityKgPerM3) low = middle
-    else high = middle
-  }
+  const last = saturationTable.length - 1
+  if (densityKgPerM3 >= saturationTable[last]!.vapourDensityKgPerM3) return criticalPressureMPa
+  const low = saturationRowIndexBelow(densityKgPerM3, 'vapourDensityKgPerM3')
   const lowDensity = saturationTable[low]!.vapourDensityKgPerM3
-  const fraction = (densityKgPerM3 - lowDensity) / (saturationTable[high]!.vapourDensityKgPerM3 - lowDensity)
-  return tableFirstMPa + (low + fraction) * tableStepMPa
+  const fraction = (densityKgPerM3 - lowDensity) / (saturationTable[low + 1]!.vapourDensityKgPerM3 - lowDensity)
+  return Math.min(criticalPressureMPa, tableFirstMPa + (low + fraction) * tableStepMPa)
 }

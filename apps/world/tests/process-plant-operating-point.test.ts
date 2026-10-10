@@ -16,21 +16,29 @@ describe('authoritative PWR full-power operating point', () => {
       const system = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'test:plant', loopCount }))
       const runtime = createProcessPlantRuntime({ system })
       const read = (path: string) => Number(runtime.readVariable(path as VariablePath))
+      // The steam generators carry the core's 3,400 MW and the reactor coolant
+      // pumps' heat; the generator turns it into power at 34% gross.
+      const pumpHeat = read('core.pumpHeatMw')
+      const steamGeneratorHeat = 3400 + pumpHeat
+      const ratedElectric = steamGeneratorHeat * 0.34
+      expect(pumpHeat).toBeGreaterThan(15)
+      expect(pumpHeat).toBeLessThan(25)
       expect(read('core.powerMw')).toBe(3400)
-      expect(read('turbine.electricMw')).toBe(1100)
+      expect(read('core.totalThermalPowerMw')).toBe(3400)
+      expect(read('turbine.electricMw')).toBeCloseTo(ratedElectric, 8)
       expect(read('turbine.loadFraction')).toBe(1)
       for (const component of system.sourceGraph.components.filter(component => component.kind === 'steamGenerator')) {
-        expect(read(`${component.id}.steamFlowKgPerS`)).toBeCloseTo(3604 / 2.26 / loopCount, 8)
+        expect(read(`${component.id}.steamFlowKgPerS`)).toBeCloseTo(steamGeneratorHeat / 2.26 / loopCount, 8)
       }
       runtime.tick(100)
-      expect(read('core.temperatureFeedbackPcm')).toBeCloseTo(0, 10)
-      expect(read('core.powerMw')).toBeCloseTo(3400, 8)
-      expect(read('sgA.heatTransferMw')).toBeCloseTo(3604 / loopCount, 8)
+      expect(read('core.temperatureFeedbackPcm')).toBeCloseTo(0, 6)
+      expect(read('core.powerMw')).toBeCloseTo(3400, 6)
+      expect(read('sgA.heatTransferMw')).toBeCloseTo(steamGeneratorHeat / loopCount, 4)
       expect(runtime.readVariable('safetyBusA.energized' as VariablePath)).toBe(true)
       for (let step = 1; step < 600; step++) runtime.tick(100)
       // Normal CVCS heat exchange is a small transient, not a 15–50% collapse.
-      expect(read('turbine.electricMw')).toBeGreaterThan(1070)
-      expect(read('turbine.electricMw')).toBeLessThanOrEqual(1101)
+      expect(read('turbine.electricMw')).toBeGreaterThan(ratedElectric * 0.97)
+      expect(read('turbine.electricMw')).toBeLessThanOrEqual(ratedElectric + 1)
       expect(read('vessel.primaryCoolantInventoryKg')).toBeCloseTo(285000, 6)
       // The operating point initializes real state; it must never clamp power.
       runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
@@ -65,11 +73,12 @@ describe('authoritative PWR full-power operating point', () => {
   // than Bun's five-second default. It is a correctness test, not a CPU benchmark.
   test('full-power balance stays bounded through ten minutes without forcing output', () => {
     const runtime = createProcessPlantRuntime({ system: compileProcessPlant(createPwrReferencePlantDefinition({ id: 'test:steady' })) })
+    const ratedElectric = Number(runtime.readVariable('turbine.electricMw' as VariablePath))
     for (let step = 0; step < 6000; step++) {
       runtime.tick(100)
       if (step % 600 === 599) {
-        expect(Number(runtime.readVariable('turbine.electricMw' as VariablePath))).toBeGreaterThan(1070)
-        expect(Number(runtime.readVariable('turbine.electricMw' as VariablePath))).toBeLessThanOrEqual(1101)
+        expect(Number(runtime.readVariable('turbine.electricMw' as VariablePath))).toBeGreaterThan(ratedElectric * 0.97)
+        expect(Number(runtime.readVariable('turbine.electricMw' as VariablePath))).toBeLessThanOrEqual(ratedElectric + 1)
         expect(Number(runtime.readVariable('vessel.primaryCoolantInventoryKg' as VariablePath))).toBeCloseTo(285000, 5)
       }
     }

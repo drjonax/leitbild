@@ -11,11 +11,13 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       const ratedPowerMw = parameterNumber(component, 'ratedPowerMw')
       const initialPowerFraction = parameterNumber(component, 'initialPowerFraction')
       const initialFissionPower = ratedPowerMw * initialPowerFraction
-      const { inlet: initialCoolantInlet, outlet: initialCoolantOutlet, lower: initialFuelLower, mid: initialFuelMid, upper: initialFuelUpper, average: initialFuelAverage } = reactorInitialThermalState(component.parameters as Record<string, unknown>)
+      const { inlet: initialCoolantInlet, outlet: initialCoolantOutlet, coreExit: initialCoreExit, pumpHeatMw: initialPumpHeat, lower: initialFuelLower, mid: initialFuelMid, upper: initialFuelUpper, average: initialFuelAverage } = reactorInitialThermalState(component.parameters as Record<string, unknown>)
+      // At equilibrium the decay heat is its share of fission power, and the
+      // two parts of core thermal power add up to the fission power.
       const initialDecayHeat = initialFissionPower * optionalParameterNumber(component, 'decayHeatFractionAtPower', 0.06)
       if (localPath === 'powerMw') return initialFissionPower
       if (localPath === 'fissionPowerMw') return initialFissionPower
-      if (localPath === 'totalThermalPowerMw') return initialFissionPower + initialDecayHeat
+      if (localPath === 'totalThermalPowerMw') return initialFissionPower
       if (localPath === 'reactivityPcm') return 0
       if (localPath === 'promptReactivityPcm') return 0
       if (localPath === 'temperatureFeedbackPcm') return 0
@@ -27,6 +29,7 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'intermediateRangeCurrentAmps') return nuclearInstrumentationReading(component, initialFissionPower).intermediateRangeCurrentAmps
       if (localPath === 'coolantInletTemperatureC') return initialCoolantInlet
       if (localPath === 'coolantOutletTemperatureC') return initialCoolantOutlet
+      if (localPath === 'coreExitTemperatureC') return initialCoreExit
       if (localPath === 'averageHotLegFlowKgPerS') return optionalParameterNumber(component, 'nominalPrimaryFlowKgPerS', 0)
       if (localPath === 'fuelTemperatureC') return initialFuelAverage
       if (localPath === 'fuelLowerTemperatureC') return initialFuelLower
@@ -37,7 +40,8 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'coreHeatRemovalDeficitMw') return 0
       if (localPath === 'fuelHeatupRateCPerS') return 0
       if (localPath === 'decayHeatMw') return initialDecayHeat
-      if (localPath === 'heatToCoolantMw') return initialFissionPower + initialDecayHeat
+      if (localPath === 'pumpHeatMw') return initialPumpHeat
+      if (localPath === 'heatToCoolantMw') return initialFissionPower + initialPumpHeat
       return undefined
     },
   },

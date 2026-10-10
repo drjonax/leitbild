@@ -13,6 +13,7 @@ import {
   type ProcessPlantScheduledAction,
   type ProcessPlantTelemetrySeries,
 } from '../../src/packs/process-plant/engineering/index.ts'
+import { pwrReferenceTemplate } from '../../src/packs/process-plant/specs/pwr-reference-template.ts'
 
 const durationMs = 240_000
 const stepMs = 1_000
@@ -486,12 +487,16 @@ const maxAbsoluteValue = (
   return maxValue
 }
 
+// Core thermal power is the prompt share of fission power plus decay heat.
+const promptFissionShare = 1 - Number((pwrReferenceTemplate.components.find(component => component.kind === 'reactorCore')!.parameters as Record<string, unknown>).decayHeatFractionAtPower)
+
 const maxAbsoluteComputedDelta = (
   telemetry: ReadonlyArray<ProcessPlantTelemetrySeries>,
   observedPath: string,
-  addendPaths: ReadonlyArray<string>,
+  addends: ReadonlyArray<readonly [path: string, weight: number]>,
 ): number => {
   const observed = seriesFor(telemetry, observedPath).points
+  const addendPaths = addends.map(([path]) => path)
   const addendSeries = addendPaths.map(path => seriesFor(telemetry, path).points)
   let maxDelta = 0
   for (let index = 0; index < observed.length; index += 1) {
@@ -503,7 +508,7 @@ const maxAbsoluteComputedDelta = (
       const addendPath = addendPaths[seriesIndex]
       if (!addendPoint || addendPoint.elapsedMs !== observedPoint.elapsedMs) throw new Error(`acceptance computed series timestamp mismatch: ${observedPath} vs ${String(addendPath)}`)
       if (typeof addendPoint.value !== 'number') throw new Error(`acceptance computed series is not numeric: ${String(addendPath)}`)
-      expected += addendPoint.value
+      expected += addendPoint.value * addends[seriesIndex]![1]
     }
     maxDelta = Math.max(maxDelta, Math.abs(observedPoint.value - expected))
   }
@@ -592,12 +597,12 @@ const evaluateTelemetryIntegrity = (
   const maxThermalPowerMismatch = maxAbsoluteComputedDelta(
     telemetry,
     'core.totalThermalPowerMw',
-    ['core.fissionPowerMw', 'core.decayHeatMw'],
+    [['core.fissionPowerMw', promptFissionShare], ['core.decayHeatMw', 1]],
   )
   const maxPressureBiasMismatch = maxAbsoluteComputedDelta(
     telemetry,
     'vessel.primaryPressureBiasMPa',
-    ['vessel.compressibilityPressureBiasMPa', 'vessel.thermalExpansionPressureBiasMPa'],
+    [['vessel.compressibilityPressureBiasMPa', 1], ['vessel.thermalExpansionPressureBiasMPa', 1]],
   )
   const maxSgInventoryResidual = maxAbsoluteValue(telemetry, 'sgA.secondaryInventoryBalanceResidualKg')
   const maxSgSteamResidual = maxAbsoluteValue(telemetry, 'sgA.steamMassBalanceResidualKg')
@@ -629,7 +634,7 @@ const evaluateTelemetryIntegrity = (
     ),
     check(
       caseId,
-      'reactor thermal power equals fission plus decay heat',
+      'reactor thermal power equals the prompt share of fission power plus decay heat',
       maxThermalPowerMismatch < 1e-6,
       `maxMismatch=${maxThermalPowerMismatch.toExponential(2)}MW`,
     ),

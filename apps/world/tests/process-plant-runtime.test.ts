@@ -1263,8 +1263,12 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('core.promptReactivityPcm')))).toBeCloseTo(0, 6)
     expect(Math.abs(Number(runtime.readVariable(valueOf('core.effectiveReactivityPcm'))))).toBeLessThan(35)
     expect(Number(runtime.readVariable(valueOf('core.fissionPowerMw')))).toBeCloseTo(Number(runtime.readVariable(valueOf('core.powerMw'))), 6)
+    // Core thermal power is the prompt 94% of fission power plus decay heat,
+    // which at steady power is the other 6%: the two powers agree.
     expect(Number(runtime.readVariable(valueOf('core.totalThermalPowerMw'))))
-      .toBeCloseTo(Number(runtime.readVariable(valueOf('core.fissionPowerMw'))) + Number(runtime.readVariable(valueOf('core.decayHeatMw'))), 6)
+      .toBeCloseTo(Number(runtime.readVariable(valueOf('core.fissionPowerMw'))) * 0.94 + Number(runtime.readVariable(valueOf('core.decayHeatMw'))), 6)
+    expect(Number(runtime.readVariable(valueOf('core.totalThermalPowerMw'))))
+      .toBeCloseTo(Number(runtime.readVariable(valueOf('core.fissionPowerMw'))), -1)
     expect(Number(runtime.readVariable(valueOf('core.fuelStoredEnergyMj')))).toBeGreaterThan(0)
     expect(Number(runtime.readVariable(valueOf('core.fuelMidTemperatureC'))))
       .toBeGreaterThan(Number(runtime.readVariable(valueOf('core.fuelLowerTemperatureC'))))

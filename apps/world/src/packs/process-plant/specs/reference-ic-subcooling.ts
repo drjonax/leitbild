@@ -2,7 +2,8 @@ import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { alarm, annunciator, comparison, rule } from './reference-ic-helpers.ts'
 
 // RCS subcooling margin (SUB-MARGIN, saturation temperature at pressurizer
-// pressure minus mean coolant temperature) at the reference procedures'
+// pressure minus the hotter of the core-exit and hot-leg temperatures, as a
+// subcooling monitor takes the hottest reading) at the reference procedures'
 // values: 30 °F (16.7 °C) is their minimum margin and RCP trip criterion
 // (E-1, ES-0.1, FR-P.1), and zero margin is a saturated RCS (FR-C.1, FR-C.3).
 // Each clears 5 °F (2.8 °C) above where it acts, so a margin hovering at a

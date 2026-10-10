@@ -18,23 +18,45 @@ export const pwrFullPowerParameters = (graph: PlantGraphSpec, authored: Readonly
   if (!core || !turbine || !condenser || generators.length < 1) throw new Error('PWR operating point requires core, steam generators, turbine and condenser')
   set(core, { initialPowerFraction: 1 })
   const coreParameters = effective(core)
-  const thermal = reactorInitialThermalState(coreParameters)
-  const thermalMw = Number(coreParameters.ratedPowerMw) * Number(coreParameters.initialPowerFraction) * (1 + Number(coreParameters.decayHeatFractionAtPower ?? 0.06))
   const primaryFlow = Number(coreParameters.nominalPrimaryFlowKgPerS)
+  const pumpsFor = (service: string) => graph.components.filter(component => component.kind === 'centrifugalPump' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === service))
+  const sizePumps = (service: string, flow: number): void => {
+    const pumps = pumpsFor(service)
+    if (pumps.length === 0) throw new Error(`PWR operating point has no ${service} pump`)
+    for (const pump of pumps) {
+      const p = effective(pump)
+      const loopId = p.primaryLoopId
+      const loopResistance = service === 'primaryCoolant' ? graph.connections.filter(link => link.service === 'primaryCoolant' && link.metadata?.loopId === loopId).reduce((sum, link) => sum + Number(link.physical?.nominalResistance ?? 0), 0) / 0.5 : 0
+      const resistanceFactor = 1 + loopResistance + Number(p.loopResistanceCoefficient ?? 0)
+      set(pump, { nominalFlowKgPerS: flow / pumps.length * Math.sqrt(resistanceFactor) })
+    }
+  }
+  sizePumps('primaryCoolant', primaryFlow)
+  // Running reactor coolant pumps heat the coolant by their shaft power (flow
+  // times head over density and hydraulic efficiency, the pump model's own
+  // defaults), so the steam generators carry the core's heat and theirs.
+  const pumpHeatMw = pumpsFor('primaryCoolant').reduce((sum, pump) => {
+    const p = effective(pump)
+    return p.initialRunning === false ? sum : sum + Number(p.nominalFlowKgPerS) * Number(p.nominalHeadPa) / Number(p.fluidDensityKgPerM3 ?? 800) / Number(p.hydraulicEfficiencyFraction ?? 0.82) / 1_000_000
+  }, 0)
+  set(core, { ...result[core.id], reactorCoolantPumpHeatMw: pumpHeatMw })
+  const thermal = reactorInitialThermalState(effective(core))
+  const thermalMw = thermal.coreHeatMw + thermal.pumpHeatMw
   const steamFlow = thermalMw / latentHeatSteamMjPerKg
   set(core, { ...result[core.id], referenceCoolantOutletTemperatureC: thermal.outlet, referenceFuelTemperatureC: thermal.average })
   for (const generator of generators) {
     const p = effective(generator)
     const secondary = saturationTemperatureCFromPressureMPa(Number(p.nominalPressureMPa))
     const recirculation = Math.max(0.8, Math.min(1.35, 0.65 + Number(p.recirculationRatio ?? 4) * 0.09))
-    // The lumped tube equation limits primary heat by flow * cp * (hot - tube).
-    // At design balance the tube is the cold-end datum, not the hot/secondary mean.
-    const tube = thermal.inlet
-    if (thermal.inlet <= secondary || thermal.outlet <= tube) throw new Error('PWR full-power operating point has no positive primary/secondary temperature approach')
+    // The lumped tube equation limits primary heat by the coolant's enthalpy
+    // drop from hot leg to tube. At design balance the tube is the cold-end
+    // datum, the steam generator outlet, not the hot/secondary mean.
+    const tube = thermal.steamGeneratorOutlet
+    if (tube <= secondary || thermal.outlet <= tube) throw new Error('PWR full-power operating point has no positive primary/secondary temperature approach')
     set(generator, {
       initialSteamFlowFraction: 1, nominalSteamFlowKgPerS: steamFlow / generators.length,
       heatTransferCoefficientMwPerK: thermalMw / generators.length / (recirculation * (tube - secondary)),
-      initialPrimaryInletTemperatureC: thermal.outlet, initialPrimaryOutletTemperatureC: thermal.inlet,
+      initialPrimaryInletTemperatureC: thermal.outlet, initialPrimaryOutletTemperatureC: thermal.steamGeneratorOutlet,
       initialSecondaryTemperatureC: secondary, tubeMetalInitialTemperatureC: tube,
     })
   }
@@ -51,19 +73,13 @@ export const pwrFullPowerParameters = (graph: PlantGraphSpec, authored: Readonly
   const balancedCondenser = condenserThermalBalance({ ...baseline, coolingWaterFlow })
   set(condenser, { nominalSteamFlowKgPerS: steamFlow, maxCondensateOutletFlowKgPerS: steamFlow, nominalCoolingWaterFlowKgPerS: coolingWaterFlow,
     initialSteamFlowFraction: 1, initialSteamTemperatureC: exhaustTemperature })
-  set(turbine, { initialLoadFraction: 1, nominalSteamFlowKgPerS: steamFlow, nominalSteamPressureMPa: Number(effective(generators[0]!).nominalPressureMPa), nominalBackPressurePa: balancedCondenser.targetBackPressure })
-  const pumpsFor = (service: string) => graph.components.filter(component => component.kind === 'centrifugalPump' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === service))
-  for (const [service, flow] of [['primaryCoolant', primaryFlow], ['feedwater', steamFlow], ['condensate', steamFlow], ['coolingWater', coolingWaterFlow]] as const) {
-    const pumps = pumpsFor(service)
-    if (pumps.length === 0) throw new Error(`PWR operating point has no ${service} pump`)
-    for (const pump of pumps) {
-      const p = effective(pump)
-      const loopId = p.primaryLoopId
-      const loopResistance = service === 'primaryCoolant' ? graph.connections.filter(link => link.service === 'primaryCoolant' && link.metadata?.loopId === loopId).reduce((sum, link) => sum + Number(link.physical?.nominalResistance ?? 0), 0) / 0.5 : 0
-      const resistanceFactor = 1 + loopResistance + Number(p.loopResistanceCoefficient ?? 0)
-      set(pump, { nominalFlowKgPerS: flow / pumps.length * Math.sqrt(resistanceFactor) })
-    }
-  }
+  // The generator delivers the steam generators' heat at the turbine cycle's
+  // gross efficiency.
+  set(turbine, {
+    initialLoadFraction: 1, nominalSteamFlowKgPerS: steamFlow, nominalSteamPressureMPa: Number(effective(generators[0]!).nominalPressureMPa), nominalBackPressurePa: balancedCondenser.targetBackPressure,
+    nominalElectricMw: thermalMw * Number(t.grossCycleEfficiencyFraction),
+  })
+  for (const [service, flow] of [['feedwater', steamFlow], ['condensate', steamFlow], ['coolingWater', coolingWaterFlow]] as const) sizePumps(service, flow)
   for (const component of graph.components) {
     if (component.kind === 'reactorVessel') set(component, { referencePrimaryCoolantTemperatureC: (thermal.inlet + thermal.outlet) / 2 })
     if (component.kind === 'processTank' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === 'feedwater')) set(component, { makeupFlowKgPerS: 0, maxOutletFlowKgPerS: steamFlow })

@@ -42,6 +42,8 @@ export const balanceOfPlantComponentDefinitions: ReadonlyArray<ComponentDefiniti
     },
     parametersSchema: z.object({
       nominalElectricMw: z.number().finite().positive(),
+      /** Generator output over the steam generators' heat at rated load; an operating point sizes nominalElectricMw from it. */
+      grossCycleEfficiencyFraction: z.number().finite().gt(0).lt(1).optional(),
       nominalBackPressurePa: z.number().finite().positive().optional(),
       nominalSteamPressureMPa: z.number().finite().positive().optional(),
       initialLoadFraction: normalized,

@@ -12,8 +12,9 @@
       "label": "Reactor Core",
       "parameters": {
         "ratedPowerMw": 3400,
+        "nominalCoolantPressureMPa": 15.5,
         "initialPowerFraction": 0.85,
-        "initialCoolantInletTemperatureC": 290,
+        "initialCoolantInletTemperatureC": 288,
         "coolantThermalTimeConstantS": 8,
         "fuelThermalTimeConstantS": 20,
         "fuelTemperatureRiseAtRatedPowerC": 140,
@@ -31,6 +32,7 @@
         "maxPowerRampFractionPerS": 0.18,
         "fuelThermalCapacityMjPerC": 45000,
         "nominalPrimaryFlowKgPerS": 17000,
+        "coreBypassFlowFraction": 0.05,
         "nominalSourceRangeCountRateCps": 100000,
         "nominalIntermediateRangeCurrentAmps": 0.0005,
         "minimumNaturalCirculationCoolingFraction": 0.08
@@ -84,10 +86,10 @@
           ]
         },
         {
-          "path": "coolantOutletTemperatureC",
+          "path": "coreExitTemperatureC",
           "tagId": "CET-AVG",
           "equipmentId": "rcs",
-          "description": "Core-exit thermocouple average represented by core coolant outlet temperature",
+          "description": "Core-exit thermocouple average: the fuelled channels' outlet, above the mixed vessel outlet by the core bypass flow",
           "externalRefs": [
             "rcs.core_exit.thermocouple.avg"
           ]
@@ -174,7 +176,7 @@
           "path": "subcoolingMarginC",
           "tagId": "SUB-MARGIN",
           "equipmentId": "rcs",
-          "description": "RCS subcooling margin, saturation temperature at pressurizer pressure minus mean primary coolant temperature",
+          "description": "RCS subcooling margin, saturation temperature at pressurizer pressure minus the hotter of core-exit and hot-leg temperature",
           "externalRefs": [
             "rcs.subcooling_margin"
           ]
@@ -2190,6 +2192,7 @@
       "label": "Turbine Generator",
       "parameters": {
         "nominalElectricMw": 1100,
+        "grossCycleEfficiencyFraction": 0.34,
         "initialLoadFraction": 0.85,
         "nominalSteamFlowKgPerS": 1340,
         "electricalTimeConstantS": 5
@@ -10878,7 +10881,9 @@
     "core.decayHeatMw",
     "core.coolantInletTemperatureC",
     "core.coolantOutletTemperatureC",
+    "core.coreExitTemperatureC",
     "core.averageHotLegFlowKgPerS",
+    "core.pumpHeatMw",
     "core.heatToCoolantMw",
     "pressurizer.pressureMPa",
     "pressurizer.levelPercent",

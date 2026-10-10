@@ -39,6 +39,17 @@ const primaryLoopPumpsById = (graph: CompiledPlantGraph): ReadonlyMap<PrimaryLoo
   return pumps
 }
 
+const primaryLoopPumpListCache = new WeakMap<CompiledPlantGraph, ReadonlyArray<CompiledComponent>>()
+
+/** Every primary loop's pump, in component order. */
+export const primaryLoopPumps = (graph: CompiledPlantGraph): ReadonlyArray<CompiledComponent> => {
+  const cached = primaryLoopPumpListCache.get(graph)
+  if (cached !== undefined) return cached
+  const pumps = [...primaryLoopPumpsById(graph).values()]
+  primaryLoopPumpListCache.set(graph, pumps)
+  return pumps
+}
+
 export const primaryLoopIdForLink = (
   graph: CompiledPlantGraph,
   link: CompiledProcessLink,
