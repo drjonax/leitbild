@@ -26,9 +26,11 @@ const levelHighHighPercent = 82
 const levelLowLowPercent = 20
 
 // Steam pressure ladder of the reference main steam system: the steam dumps
-// hold no-load pressure, 7.6 MPa (1,092 psig); the high-pressure alarm comes in
-// above them and below the lowest safety valve set pressure, 8.27 MPa (the
-// 1,185 psig design pressure).
+// hold no-load pressure, 7.6 MPa (1,092 psig); each generator's atmospheric
+// relief valve opens above 7.86 MPa (1,125 psig) when the condenser is not
+// there to take the steam; the high-pressure alarm comes in above them and
+// below the lowest safety valve set pressure, 8.27 MPa (the 1,185 psig design
+// pressure).
 const pressureHighMPa = 8.1
 
 export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop): ReadonlyArray<ProcessPlantIcRule> => {
@@ -197,6 +199,24 @@ export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop):
         message: `Steam generator ${loop} pressure is above the reference high-pressure threshold.`,
         severity: 'warning',
         annunciator: sgAlarm,
+      })],
+    }),
+    rule({
+      id: `sg-${lower}-atmospheric-relief-valve-open`,
+      label: `Steam generator ${loop} atmospheric relief valve open`,
+      ruleClass: 'alarm',
+      condition: comparison({ tagId: `SG-${loop}-ARV-POS` }, '>', 0.05),
+      clearCondition: comparison({ tagId: `SG-${loop}-ARV-POS` }, '<', 0.02),
+      clearDelayMs: 1_000,
+      delayMs: 1_000,
+      latch: false,
+      resetWhenClear: true,
+      effects: [alarm({
+        id: 'atmospheric-relief-valve-open',
+        title: `Steam generator ${loop} atmospheric relief valve open`,
+        message: `Steam generator ${loop} atmospheric relief valve reads open: it is venting steam to the atmosphere.`,
+        severity: 'warning',
+        annunciator: annunciator({ system: 'mainSteam', equipmentId: `steamGeneratorReliefValve${loop}`, group: 'main-steam', priority: 'high', role: 'status' }),
       })],
     }),
     rule({

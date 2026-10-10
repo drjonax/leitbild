@@ -802,6 +802,39 @@ describe('main steam safety valves', () => {
   })
 })
 
+describe('steam generator atmospheric relief valves', () => {
+  test('with the condenser lost, they hold steam pressure near their set point and the coolant subcooled on natural circulation', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    // A loss of offsite power as the steam side sees it: the coolant pumps, the
+    // main feedwater pumps and circulating water all stop.
+    for (const path of ['rcpA.running', 'rcpB.running', 'rcpC.running', 'rcpD.running', 'mainFeedwaterPumpA.running', 'mainFeedwaterPumpB.running', 'circulatingWaterPump.running']) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: path as VariablePath, value: false })
+    }
+    let leastSubcooling = Number.POSITIVE_INFINITY
+    let dumpOpening = 0
+    let safetyValveOpening = 0
+    const pressures: number[] = []
+    for (let second = 1; second <= 1_200; second += 1) {
+      plantRun.run(1_000)
+      leastSubcooling = Math.min(leastSubcooling, Number(plantRun.tag('SUB-MARGIN')))
+      if (second > 120) dumpOpening = Math.max(dumpOpening, Number(plantRun.tag('TURB-BYP-POS')))
+      safetyValveOpening = Math.max(safetyValveOpening, Number(plantRun.read('mainSteamSafetyValve.effectivePositionFraction')))
+      if (second > 900) pressures.push(Number(plantRun.tag('SG-A-PRESS')))
+    }
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
+    // Without circulating water the dumps are blocked (C-9); the relief valves vent to the atmosphere instead.
+    expect(dumpOpening).toBeLessThan(0.01)
+    expect(Number(plantRun.tag('SG-A-ARV-POS'))).toBeGreaterThan(0.05)
+    expect(plantRun.activeIds()).toContain('alarm:sg-a-atmospheric-relief-valve-open:atmospheric-relief-valve-open')
+    expect(Number(plantRun.read('atmosphere.releasedMassKg'))).toBeGreaterThan(1_000)
+    expect(Math.min(...pressures)).toBeGreaterThan(7.86)
+    expect(Math.max(...pressures)).toBeLessThan(8.1)
+    expect(safetyValveOpening).toBe(0)
+    expect(leastSubcooling).toBeGreaterThan(15)
+  })
+})
+
 describe('signal labels', () => {
   test('no label in the reference model begins with a kebab-case id; link labels name the link by its ends', () => {
     const kebab = /^[a-z0-9]+(-[a-z0-9]+){2,}\b/u

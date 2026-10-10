@@ -1826,6 +1826,270 @@
       }
     },
     {
+      "id": "steamGeneratorReliefValveA",
+      "kind": "steamValve",
+      "label": "Steam Generator A Atmospheric Relief Valve",
+      "parameters": {
+        "initialPositionFraction": 0,
+        "valveMode": "relief",
+        "cvKgPerSPerSqrtMPa": 21,
+        "strokeOpenTimeS": 3,
+        "strokeCloseTimeS": 5,
+        "reverseFlowAllowed": false,
+        "controller": {
+          "kind": "proportionalPosition",
+          "measuredPath": "sgA.pressureMPa",
+          "setpoint": 7.86,
+          "biasPositionFraction": 0,
+          "gainPerUnit": 10,
+          "direction": "direct",
+          "deadband": 0.02,
+          "minPositionFraction": 0,
+          "maxPositionFraction": 1,
+          "timeConstantS": 2
+        }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "SG-A-ARV",
+          "equipmentId": "steamGeneratorReliefValveA",
+          "description": "Steam generator A atmospheric relief valve position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "SG-A-ARV-POS",
+          "equipmentId": "steamGeneratorReliefValveA",
+          "description": "Steam generator A atmospheric relief valve position feedback"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "ARV A"
+        }
+      }
+    },
+    {
+      "id": "steamGeneratorReliefValveB",
+      "kind": "steamValve",
+      "label": "Steam Generator B Atmospheric Relief Valve",
+      "parameters": {
+        "initialPositionFraction": 0,
+        "valveMode": "relief",
+        "cvKgPerSPerSqrtMPa": 21,
+        "strokeOpenTimeS": 3,
+        "strokeCloseTimeS": 5,
+        "reverseFlowAllowed": false,
+        "controller": {
+          "kind": "proportionalPosition",
+          "measuredPath": "sgB.pressureMPa",
+          "setpoint": 7.86,
+          "biasPositionFraction": 0,
+          "gainPerUnit": 10,
+          "direction": "direct",
+          "deadband": 0.02,
+          "minPositionFraction": 0,
+          "maxPositionFraction": 1,
+          "timeConstantS": 2
+        }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "SG-B-ARV",
+          "equipmentId": "steamGeneratorReliefValveB",
+          "description": "Steam generator B atmospheric relief valve position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "SG-B-ARV-POS",
+          "equipmentId": "steamGeneratorReliefValveB",
+          "description": "Steam generator B atmospheric relief valve position feedback"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "ARV B"
+        }
+      }
+    },
+    {
+      "id": "steamGeneratorReliefValveC",
+      "kind": "steamValve",
+      "label": "Steam Generator C Atmospheric Relief Valve",
+      "parameters": {
+        "initialPositionFraction": 0,
+        "valveMode": "relief",
+        "cvKgPerSPerSqrtMPa": 21,
+        "strokeOpenTimeS": 3,
+        "strokeCloseTimeS": 5,
+        "reverseFlowAllowed": false,
+        "controller": {
+          "kind": "proportionalPosition",
+          "measuredPath": "sgC.pressureMPa",
+          "setpoint": 7.86,
+          "biasPositionFraction": 0,
+          "gainPerUnit": 10,
+          "direction": "direct",
+          "deadband": 0.02,
+          "minPositionFraction": 0,
+          "maxPositionFraction": 1,
+          "timeConstantS": 2
+        }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "SG-C-ARV",
+          "equipmentId": "steamGeneratorReliefValveC",
+          "description": "Steam generator C atmospheric relief valve position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "SG-C-ARV-POS",
+          "equipmentId": "steamGeneratorReliefValveC",
+          "description": "Steam generator C atmospheric relief valve position feedback"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "ARV C"
+        }
+      }
+    },
+    {
+      "id": "steamGeneratorReliefValveD",
+      "kind": "steamValve",
+      "label": "Steam Generator D Atmospheric Relief Valve",
+      "parameters": {
+        "initialPositionFraction": 0,
+        "valveMode": "relief",
+        "cvKgPerSPerSqrtMPa": 21,
+        "strokeOpenTimeS": 3,
+        "strokeCloseTimeS": 5,
+        "reverseFlowAllowed": false,
+        "controller": {
+          "kind": "proportionalPosition",
+          "measuredPath": "sgD.pressureMPa",
+          "setpoint": 7.86,
+          "biasPositionFraction": 0,
+          "gainPerUnit": 10,
+          "direction": "direct",
+          "deadband": 0.02,
+          "minPositionFraction": 0,
+          "maxPositionFraction": 1,
+          "timeConstantS": 2
+        }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "SG-D-ARV",
+          "equipmentId": "steamGeneratorReliefValveD",
+          "description": "Steam generator D atmospheric relief valve position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "SG-D-ARV-POS",
+          "equipmentId": "steamGeneratorReliefValveD",
+          "description": "Steam generator D atmospheric relief valve position feedback"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "ARV D"
+        }
+      }
+    },
+    {
+      "id": "steamGeneratorReliefValveE",
+      "kind": "steamValve",
+      "label": "Steam Generator E Atmospheric Relief Valve",
+      "parameters": {
+        "initialPositionFraction": 0,
+        "valveMode": "relief",
+        "cvKgPerSPerSqrtMPa": 21,
+        "strokeOpenTimeS": 3,
+        "strokeCloseTimeS": 5,
+        "reverseFlowAllowed": false,
+        "controller": {
+          "kind": "proportionalPosition",
+          "measuredPath": "sgE.pressureMPa",
+          "setpoint": 7.86,
+          "biasPositionFraction": 0,
+          "gainPerUnit": 10,
+          "direction": "direct",
+          "deadband": 0.02,
+          "minPositionFraction": 0,
+          "maxPositionFraction": 1,
+          "timeConstantS": 2
+        }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "SG-E-ARV",
+          "equipmentId": "steamGeneratorReliefValveE",
+          "description": "Steam generator E atmospheric relief valve position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "SG-E-ARV-POS",
+          "equipmentId": "steamGeneratorReliefValveE",
+          "description": "Steam generator E atmospheric relief valve position feedback"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "ARV E"
+        }
+      }
+    },
+    {
+      "id": "steamGeneratorReliefValveF",
+      "kind": "steamValve",
+      "label": "Steam Generator F Atmospheric Relief Valve",
+      "parameters": {
+        "initialPositionFraction": 0,
+        "valveMode": "relief",
+        "cvKgPerSPerSqrtMPa": 21,
+        "strokeOpenTimeS": 3,
+        "strokeCloseTimeS": 5,
+        "reverseFlowAllowed": false,
+        "controller": {
+          "kind": "proportionalPosition",
+          "measuredPath": "sgF.pressureMPa",
+          "setpoint": 7.86,
+          "biasPositionFraction": 0,
+          "gainPerUnit": 10,
+          "direction": "direct",
+          "deadband": 0.02,
+          "minPositionFraction": 0,
+          "maxPositionFraction": 1,
+          "timeConstantS": 2
+        }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "SG-F-ARV",
+          "equipmentId": "steamGeneratorReliefValveF",
+          "description": "Steam generator F atmospheric relief valve position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "SG-F-ARV-POS",
+          "equipmentId": "steamGeneratorReliefValveF",
+          "description": "Steam generator F atmospheric relief valve position feedback"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "ARV F"
+        }
+      }
+    },
+    {
       "id": "mainSteamHeader",
       "kind": "steamHeader",
       "label": "Main Steam Header",
@@ -1888,12 +2152,16 @@
           "measuredPath": "main-steam-header-to-turbine-bypass-valve.pressureMPa",
           "setpoint": 7.6,
           "biasPositionFraction": 0,
-          "gainPerUnit": 2.5,
+          "gainPerUnit": 10,
           "direction": "direct",
           "deadband": 0.05,
           "minPositionFraction": 0,
           "maxPositionFraction": 1,
-          "timeConstantS": 2
+          "timeConstantS": 2,
+          "permissive": {
+            "path": "condenser.coolingWaterFlowKgPerS",
+            "minimum": 7000
+          }
         }
       },
       "variables": [
@@ -9600,6 +9868,612 @@
         {
           "path": "radiationMSvPerH",
           "label": "Main steam safety release radiation",
+          "kind": "derived",
+          "discipline": "radiological",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "radiationDoseRate",
+          "unit": "mSv/h",
+          "initialValue": 0.02
+        }
+      ]
+    },
+    {
+      "id": "sg-a-steam-to-relief-valve-a",
+      "from": "sgA.steamReliefOutlet",
+      "to": "steamGeneratorReliefValveA.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator A atmospheric relief valve inlet flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator A atmospheric relief valve inlet temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator A atmospheric relief valve inlet pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "steam-generator-relief-valve-a-to-atmosphere",
+      "from": "steamGeneratorReliefValveA.outlet",
+      "to": "atmosphere.releaseIn",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator A atmospheric relief to atmosphere flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator A atmospheric relief temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator A atmospheric relief downstream pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 0.101325
+        },
+        {
+          "path": "radiationMSvPerH",
+          "label": "Steam generator A atmospheric relief radiation",
+          "kind": "derived",
+          "discipline": "radiological",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "radiationDoseRate",
+          "unit": "mSv/h",
+          "initialValue": 0.02
+        }
+      ]
+    },
+    {
+      "id": "sg-b-steam-to-relief-valve-b",
+      "from": "sgB.steamReliefOutlet",
+      "to": "steamGeneratorReliefValveB.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator B atmospheric relief valve inlet flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator B atmospheric relief valve inlet temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator B atmospheric relief valve inlet pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "steam-generator-relief-valve-b-to-atmosphere",
+      "from": "steamGeneratorReliefValveB.outlet",
+      "to": "atmosphere.releaseIn",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator B atmospheric relief to atmosphere flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator B atmospheric relief temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator B atmospheric relief downstream pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 0.101325
+        },
+        {
+          "path": "radiationMSvPerH",
+          "label": "Steam generator B atmospheric relief radiation",
+          "kind": "derived",
+          "discipline": "radiological",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "radiationDoseRate",
+          "unit": "mSv/h",
+          "initialValue": 0.02
+        }
+      ]
+    },
+    {
+      "id": "sg-c-steam-to-relief-valve-c",
+      "from": "sgC.steamReliefOutlet",
+      "to": "steamGeneratorReliefValveC.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator C atmospheric relief valve inlet flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator C atmospheric relief valve inlet temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator C atmospheric relief valve inlet pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "steam-generator-relief-valve-c-to-atmosphere",
+      "from": "steamGeneratorReliefValveC.outlet",
+      "to": "atmosphere.releaseIn",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator C atmospheric relief to atmosphere flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator C atmospheric relief temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator C atmospheric relief downstream pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 0.101325
+        },
+        {
+          "path": "radiationMSvPerH",
+          "label": "Steam generator C atmospheric relief radiation",
+          "kind": "derived",
+          "discipline": "radiological",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "radiationDoseRate",
+          "unit": "mSv/h",
+          "initialValue": 0.02
+        }
+      ]
+    },
+    {
+      "id": "sg-d-steam-to-relief-valve-d",
+      "from": "sgD.steamReliefOutlet",
+      "to": "steamGeneratorReliefValveD.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator D atmospheric relief valve inlet flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator D atmospheric relief valve inlet temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator D atmospheric relief valve inlet pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "steam-generator-relief-valve-d-to-atmosphere",
+      "from": "steamGeneratorReliefValveD.outlet",
+      "to": "atmosphere.releaseIn",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator D atmospheric relief to atmosphere flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator D atmospheric relief temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator D atmospheric relief downstream pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 0.101325
+        },
+        {
+          "path": "radiationMSvPerH",
+          "label": "Steam generator D atmospheric relief radiation",
+          "kind": "derived",
+          "discipline": "radiological",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "radiationDoseRate",
+          "unit": "mSv/h",
+          "initialValue": 0.02
+        }
+      ]
+    },
+    {
+      "id": "sg-e-steam-to-relief-valve-e",
+      "from": "sgE.steamReliefOutlet",
+      "to": "steamGeneratorReliefValveE.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator E atmospheric relief valve inlet flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator E atmospheric relief valve inlet temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator E atmospheric relief valve inlet pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "steam-generator-relief-valve-e-to-atmosphere",
+      "from": "steamGeneratorReliefValveE.outlet",
+      "to": "atmosphere.releaseIn",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator E atmospheric relief to atmosphere flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator E atmospheric relief temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator E atmospheric relief downstream pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 0.101325
+        },
+        {
+          "path": "radiationMSvPerH",
+          "label": "Steam generator E atmospheric relief radiation",
+          "kind": "derived",
+          "discipline": "radiological",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "radiationDoseRate",
+          "unit": "mSv/h",
+          "initialValue": 0.02
+        }
+      ]
+    },
+    {
+      "id": "sg-f-steam-to-relief-valve-f",
+      "from": "sgF.steamReliefOutlet",
+      "to": "steamGeneratorReliefValveF.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator F atmospheric relief valve inlet flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator F atmospheric relief valve inlet temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator F atmospheric relief valve inlet pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 6.9
+        }
+      ]
+    },
+    {
+      "id": "steam-generator-relief-valve-f-to-atmosphere",
+      "from": "steamGeneratorReliefValveF.outlet",
+      "to": "atmosphere.releaseIn",
+      "connectionKind": "fluidFlow",
+      "service": "mainSteam",
+      "nominalFluid": "steam",
+      "designPhase": "steam",
+      "solverModel": "compressibleSteam",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Steam generator F atmospheric relief to atmosphere flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Steam generator F atmospheric relief temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 285
+        },
+        {
+          "path": "pressureMPa",
+          "label": "Steam generator F atmospheric relief downstream pressure",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "pressure",
+          "unit": "MPa",
+          "initialValue": 0.101325
+        },
+        {
+          "path": "radiationMSvPerH",
+          "label": "Steam generator F atmospheric relief radiation",
           "kind": "derived",
           "discipline": "radiological",
           "writable": false,

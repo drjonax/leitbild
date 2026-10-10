@@ -23,6 +23,7 @@ interface ValvePositionController {
   readonly minPositionFraction: number
   readonly maxPositionFraction: number
   readonly timeConstantS: number
+  readonly permissive: { readonly path: VariablePath; readonly minimum: number } | null
 }
 
 const valveModes: ReadonlySet<ValveMode> = new Set(['control', 'isolation', 'check', 'relief', 'safety', 'throttle', 'bypass'])
@@ -67,9 +68,19 @@ const valvePositionControllerFor = (component: CompiledComponent): ValvePosition
     minPositionFraction: clamp(minPositionFraction, 0, 1),
     maxPositionFraction: clamp(maxPositionFraction, 0, 1),
     timeConstantS: typeof config.timeConstantS === 'number' && Number.isFinite(config.timeConstantS) ? Math.max(1e-9, config.timeConstantS) : 1,
+    permissive: permissiveFor(component, config.permissive),
   }
   valveControllerByComponent.set(component, parsed)
   return parsed
+}
+
+const permissiveFor = (component: CompiledComponent, value: unknown): ValvePositionController['permissive'] => {
+  if (value === undefined) return null
+  const permissive = value as Record<string, unknown>
+  if (typeof permissive.path !== 'string' || typeof permissive.minimum !== 'number' || !Number.isFinite(permissive.minimum)) {
+    throw new Error(`component ${component.id} valve controller permissive needs a variable path and a numeric minimum`)
+  }
+  return { path: permissive.path as VariablePath, minimum: permissive.minimum }
 }
 
 const deadbandedError = (error: number, deadband: number): number => {
@@ -147,11 +158,11 @@ const updateValvePositionController = (
   const measured = context.readNumber(controller.measuredPath)
   const error = deadbandedError(measured - controller.setpoint, controller.deadband)
   const action = controller.direction === 'direct' ? error : -error
-  const target = clamp(
-    controller.biasPositionFraction + controller.gainPerUnit * action,
-    controller.minPositionFraction,
-    controller.maxPositionFraction,
-  )
+  // Without its permissive the controller holds the valve at its minimum.
+  const permitted = controller.permissive === null || context.readNumber(controller.permissive.path) >= controller.permissive.minimum
+  const target = permitted
+    ? clamp(controller.biasPositionFraction + controller.gainPerUnit * action, controller.minPositionFraction, controller.maxPositionFraction)
+    : controller.minPositionFraction
   const positionPath = componentVariablePath(component, 'positionFraction')
   context.write(
     positionPath,
@@ -204,7 +215,7 @@ const valvePositionControllerBehavior = (componentKind: 'processValve' | 'steamV
   id: `${componentKind}-position-controller`,
   phase: 'updateControlLogic',
   componentKind,
-  reads: ['positionFraction', 'controller.measuredPath'],
+  reads: ['positionFraction', 'controller.measuredPath', 'controller.permissive.path?'],
   writes: ['positionFraction'],
   update: updateValvePositionController,
 })

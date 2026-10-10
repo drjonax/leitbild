@@ -1148,7 +1148,6 @@ describe('process plant runtime', () => {
     }
 
     let maxLevel = initialLevel
-    let levelWhenMainFeedwaterIsolated: number | null = null
     for (let elapsedMs = 1_000; elapsedMs <= 180_000; elapsedMs += 1_000) {
       runtime.tick(1_000)
       protection.evaluate({
@@ -1157,15 +1156,15 @@ describe('process plant runtime', () => {
         simulationRunId: 'run-runtime-rps-test' as SimulationRunId,
         sourceRuntimeId: 'process-plant.local',
       })
-      const currentLevel = Number(runtime.readVariable(valueOf('sgA.levelPercent')))
-      maxLevel = Math.max(maxLevel, currentLevel)
-      if (runtime.readVariable(valueOf('mainFeedwaterPumpA.running')) === false && levelWhenMainFeedwaterIsolated === null) {
-        levelWhenMainFeedwaterIsolated = currentLevel
-      }
+      maxLevel = Math.max(maxLevel, Number(runtime.readVariable(valueOf('sgA.levelPercent'))))
     }
 
     const active = activeLifecycleIds(protection.snapshot())
-    expect(active.trips).toContain('trip:reactor-rcp-breaker-open-trip:rcp-breaker-open-trip')
+    // The stopped pumps trip the reactor at once; the coolant then cools below no-load and P-4 isolates feedwater.
+    expect(active.trips).toEqual(expect.arrayContaining([
+      'trip:reactor-rcp-breaker-open-trip:rcp-breaker-open-trip',
+      'trip:reactor-trip-low-tavg-feedwater-isolation:feedwater-isolation',
+    ]))
     expect(active.alarms).toEqual(expect.arrayContaining([
       'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
       'alarm:rcp-a-trip:not-running',
@@ -1927,7 +1926,7 @@ describe('process plant runtime', () => {
     let maxSafetyPosition = 0
     let maxHeaderFlow = 0
     let maxReleaseFlow = 0
-    let releasedBySafetyValve = 0
+    let releasedToAtmosphere = 0
     let maxContainmentIncomingMass = 0
     for (let index = 0; index < 900; index += 1) {
       runtime.tick(100)
@@ -1935,7 +1934,8 @@ describe('process plant runtime', () => {
       maxHeaderFlow = Math.max(maxHeaderFlow, Number(runtime.readVariable(valueOf('main-steam-header-to-safety-valve.flowKgPerS'))))
       const releaseFlow = Number(runtime.readVariable(valueOf('main-steam-safety-valve-to-atmosphere.flowKgPerS')))
       maxReleaseFlow = Math.max(maxReleaseFlow, releaseFlow)
-      releasedBySafetyValve += releaseFlow * 0.1
+      // The generators' atmospheric relief valves open too, above 7.86 MPa.
+      releasedToAtmosphere += (releaseFlow + ['a', 'b', 'c', 'd'].reduce((sum, loop) => sum + Number(runtime.readVariable(valueOf(`steam-generator-relief-valve-${loop}-to-atmosphere.flowKgPerS`))), 0)) * 0.1
       maxContainmentIncomingMass = Math.max(maxContainmentIncomingMass, Number(runtime.readVariable(valueOf('containment.incomingMassKgPerS'))))
     }
 
@@ -1943,8 +1943,8 @@ describe('process plant runtime', () => {
     expect(maxHeaderFlow).toBeGreaterThan(100)
     expect(maxReleaseFlow).toBeGreaterThan(100)
     expect(Number(runtime.readVariable(valueOf('main-steam-safety-valve-to-atmosphere.pressureMPa')))).toBeCloseTo(0.101325, 6)
-    // The atmosphere totals what the valve relieved.
-    expect(Number(runtime.readVariable(valueOf('atmosphere.releasedMassKg'))) - releasedBefore).toBeCloseTo(releasedBySafetyValve, 3)
+    // The atmosphere totals what the valves relieved.
+    expect(Number(runtime.readVariable(valueOf('atmosphere.releasedMassKg'))) - releasedBefore).toBeCloseTo(releasedToAtmosphere, 3)
     // Containment sees none of it.
     expect(maxContainmentIncomingMass).toBe(0)
     expect(Number(runtime.readVariable(valueOf('containment.pressureMPa')))).toBeCloseTo(initialContainmentPressure, 9)

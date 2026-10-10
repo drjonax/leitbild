@@ -17,7 +17,7 @@ export const pwrReferenceParametersSchema = z.object({
   title: z.string().min(1).optional(),
 }).strict()
 
-const loopComponentIdPattern = /^(?:sg|rcp|feedwaterControlValve|auxFeedwaterValve|mainSteamIsolationValve|safetyAccumulator|deltaTChannel)([A-F])$/u
+const loopComponentIdPattern = /^(?:sg|rcp|feedwaterControlValve|auxFeedwaterValve|mainSteamIsolationValve|steamGeneratorReliefValve|safetyAccumulator|deltaTChannel)([A-F])$/u
 
 const loopIdForComponent = (component: Pick<ComponentInstanceSpec, 'id'>): LoopId | null => {
   const match = loopComponentIdPattern.exec(String(component.id))
@@ -77,6 +77,9 @@ const componentMetadata = (
   const base = loopMetadata(loopIds, loopId, component.metadata)
   if (component.kind === 'steamGenerator') return { ...base, role: 'heat-sink', equipmentClass: 'steam-generator' }
   if (component.kind === 'centrifugalPump') return { ...base, role: 'primary-pump', equipmentClass: 'reactor-coolant-pump' }
+  if (component.kind === 'steamValve' && String(component.id).startsWith('steamGeneratorReliefValve')) {
+    return { ...base, role: 'steam-relief', equipmentClass: 'steam-generator-relief-valve' }
+  }
   if (component.kind === 'steamValve') return { ...base, role: 'steam-isolation', equipmentClass: 'main-steam-isolation-valve' }
   if (component.kind === 'accumulator') return { ...base, role: 'safety-injection-source', equipmentClass: 'accumulator' }
   if (component.kind === 'processValve' && String(component.id).startsWith('feedwaterControlValve')) {

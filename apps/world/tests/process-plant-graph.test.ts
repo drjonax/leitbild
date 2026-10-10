@@ -47,10 +47,11 @@ describe('process plant model composition', () => {
     // apart from the heaters' unit bus. Changed again on 2026-10-10,
     // approved by the owner as model-truth changes, when the main steam
     // safety valve was made to discharge to the atmosphere instead of into
-    // containment, and again for the steam generators' narrow-range level,
-    // the auxiliary feedwater ratings and the main steam pressure set
-    // points; PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('b8dba0581362f585ecc4c5db8bbe4fc4fd4ca2442619c6e25ae258ac8be8613b')
+    // containment, again for the steam generators' narrow-range level, the
+    // auxiliary feedwater ratings and the main steam pressure set points,
+    // and again for the steam generators' tube metal and their atmospheric
+    // relief valves; PWR Runs checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('bdad8cc9fafd08a305285864d97ddaac2942348ff603c684d9df7d1c1008d589')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

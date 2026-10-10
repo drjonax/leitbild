@@ -12,6 +12,9 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       primaryOutlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'primary' },
       feedwaterInlet: { kind: 'hydraulicThermal', direction: 'in', circuit: 'secondary' },
       steamOutlet: { kind: 'steam', direction: 'out', circuit: 'secondary' },
+      // The steam line's atmospheric relief branch, ahead of the isolation
+      // valve: steam it vents leaves the Plant, so it is a circuit of its own.
+      steamReliefOutlet: { kind: 'steam', direction: 'out', circuit: 'relief' },
       isolationSignal: { kind: 'logicSignal', direction: 'in' },
     },
     parametersSchema: z.object({

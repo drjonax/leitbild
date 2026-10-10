@@ -8,7 +8,7 @@ import {
 } from '../component-helpers.ts'
 import {
   averageIncomingComponentLinkValue as averageIncomingLinkValue,
-  averageOutgoingComponentLinkValue as averageOutgoingLinkValue,
+  sumOutgoingComponentLinkValue,
 } from '../component-link-helpers.ts'
 import { inventoryBalanceStep } from '../physics.ts'
 import { steamGeneratorNarrowRange, steamGeneratorNarrowRangeLevelPercent, steamGeneratorOperatingLevel } from '../../steam-generator-operating-level.ts'
@@ -148,7 +148,8 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
         + (averageIncomingLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'auxFeedwater') ?? 0)
       const tubeLeakFlow = context.readNumber(componentVariablePath(component, 'primaryToSecondaryLeakKgPerS'))
       context.write(componentVariablePath(component, 'feedwaterFlowKgPerS'), feedwaterFlow)
-      const mainSteamOutflow = averageOutgoingLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'mainSteam') ?? 0
+      // A generator's steam leaves by every main steam line on its outlet: to its isolation valve and to its atmospheric relief valve.
+      const mainSteamOutflow = sumOutgoingComponentLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'mainSteam')
       context.write(componentVariablePath(component, 'steamOutflowKgPerS'), mainSteamOutflow)
       const pressurePath = componentVariablePath(component, 'pressureMPa')
       const levelPath = componentVariablePath(component, 'levelPercent')

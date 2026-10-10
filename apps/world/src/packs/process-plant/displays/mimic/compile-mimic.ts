@@ -144,14 +144,19 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   // Equipment the mimic cannot draw ends the drawing like any other stop.
   const notDrawn = new Set(scope.components.filter(index => presentationFor(graph.components[index]!).element === 'not-drawn'))
   const links = scope.links.filter(index => !notDrawn.has(graph.links[index]!.fromComponentIndex) && !notDrawn.has(graph.links[index]!.toComponentIndex))
+  // A relief valve venting out of the Plant (into equipment not drawn that takes the flow no further, the atmosphere) ends the drawing itself.
+  const ventsOutOfPlant = (link: CompiledProcessLink): boolean => graph.components[link.fromComponentIndex]!.semantics.function === 'relieving'
+    && notDrawn.has(link.toComponentIndex) && (graph.outgoingLinksByComponent[link.toComponentIndex] ?? []).length === 0
   const extraStubs: MimicStub[] = scope.links.flatMap((index): MimicStub[] => {
     const link = graph.links[index]!
+    if (ventsOutOfPlant(link)) return []
     if (notDrawn.has(link.toComponentIndex) && !notDrawn.has(link.fromComponentIndex)) return [{ component: link.fromComponentIndex, port: String(link.fromPortName), direction: 'out' as const, links: [index], others: [{ component: link.toComponentIndex, port: String(link.toPortName) }] }]
     if (notDrawn.has(link.fromComponentIndex) && !notDrawn.has(link.toComponentIndex)) return [{ component: link.toComponentIndex, port: String(link.toPortName), direction: 'in' as const, links: [index], others: [{ component: link.fromComponentIndex, port: String(link.fromPortName) }] }]
     return []
   })
   const farLabel = (component: number): string => graph.components[component]!.metadata?.presentation?.shortLabel ?? graph.components[component]!.label
-  const scopeStubs = [...scope.stubs, ...extraStubs]
+  // Equipment the mimic does not draw has no ends to stop at: what else flows into it (the atmosphere many vents discharge to) is not this drawing's.
+  const scopeStubs = [...scope.stubs.filter(stub => !notDrawn.has(stub.component)), ...extraStubs]
 
   const items = new Map<string, PlannedItem>()
   const nodes: DiagramNode[] = []

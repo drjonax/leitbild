@@ -114,7 +114,8 @@ export const topologyAwareMainSteamReleaseAvailabilityForSourceLink = (
   sourceLink: CompiledProcessLink,
   context: LinkBehaviorReadContext,
 ): number => {
-  const paths = collectReleasePaths(system, sourceLink.toComponentIndex, new Set(), false)
+  // A relief valve right on the generator's outlet (its atmospheric relief valve) is itself the release.
+  const paths = collectReleasePaths(system, sourceLink.toComponentIndex, new Set(), isSteamReleaseValve(system.graph.components[sourceLink.toComponentIndex]))
   if (paths.length === 0) return 0
   return componentValveAvailabilityForLink(system, sourceLink, context) * pathAvailability(system, paths, context)
 }

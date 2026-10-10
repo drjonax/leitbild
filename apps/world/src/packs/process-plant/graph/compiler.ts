@@ -370,8 +370,12 @@ const validateValveComponent = (component: CompiledComponent): void => {
   if (component.kind !== 'processValve' && component.kind !== 'steamValve') return
   const parameters = parameterRecord(component)
   const mode = parameters.valveMode
-  if ((mode === 'relief' || mode === 'safety') && parameters.setpointMPa === undefined) {
-    throw new Error(`component ${component.id} ${mode} valve requires setpointMPa`)
+  // A safety valve lifts on its set pressure; a relief valve on its set pressure or its pressure controller.
+  if (mode === 'safety' && parameters.setpointMPa === undefined) {
+    throw new Error(`component ${component.id} safety valve requires setpointMPa`)
+  }
+  if (mode === 'relief' && parameters.setpointMPa === undefined && parameters.controller === undefined) {
+    throw new Error(`component ${component.id} relief valve requires setpointMPa or a controller`)
   }
   if (typeof parameters.reseatMPa === 'number' && typeof parameters.setpointMPa === 'number' && parameters.reseatMPa > parameters.setpointMPa) {
     throw new Error(`component ${component.id} valve reseatMPa cannot exceed setpointMPa`)
@@ -398,6 +402,15 @@ const validateValveControllerBindings = (
     }
     if (measuredVariable.descriptor.quantity === 'boolean') {
       throw new Error(`component ${component.id} valve controller measuredPath must reference a numeric variable: ${measuredPath}`)
+    }
+    const permissive = (controller as { readonly permissive?: { readonly path: string } }).permissive
+    if (permissive === undefined) continue
+    const permissiveVariable = variableByPath.get(permissive.path as VariablePath)
+    if (!permissiveVariable) {
+      throw new Error(`component ${component.id} valve controller permissive references unknown path ${permissive.path}`)
+    }
+    if (permissiveVariable.descriptor.quantity === 'boolean') {
+      throw new Error(`component ${component.id} valve controller permissive must reference a numeric variable: ${permissive.path}`)
     }
   }
 }

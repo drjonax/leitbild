@@ -58,6 +58,12 @@ const valvePositionControllerSchema = z.object({
   minPositionFraction: z.number().finite().min(0).max(1).optional(),
   maxPositionFraction: z.number().finite().min(0).max(1).optional(),
   timeConstantS: z.number().finite().positive().optional(),
+  /**
+   * An interlock the controller acts under: while the signal reads below the
+   * minimum the valve is driven to its minimum position (steam dumps blocked
+   * while the condenser is unavailable, C-9).
+   */
+  permissive: z.object({ path: variablePathSchema, minimum: z.number().finite() }).strict().optional(),
 }).strict().superRefine((controller, ctx) => {
   if (
     controller.minPositionFraction !== undefined

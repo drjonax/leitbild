@@ -86,8 +86,8 @@ describe('mimic scope from the agent\'s intent', () => {
     expect(scope.carriers).toEqual(['auxFeedwater', 'electricalPower'])
     expect(scope.stubs.map(stub => `${label(graph, stub.component)}: ${stubText(graph, stub)}`)).toContain('Bus A: to CHG A, CS A, HHSI A and 2 more')
     // Narrowed to its loop, a steam generator draws both sides and stops at the shared headers.
-    expect(drawn(graph, { around: ['SG B'], loops: ['B'], reach: 1 }).labels).toEqual(['AFW valve B', 'Core', 'FCV B', 'MSIV B', 'RCP B', 'SG B'])
-    expect(drawn(graph, { around: ['steam generators'], services: ['mainSteam'], reach: 1 }).labels).toEqual(['MSIV A', 'MSIV B', 'MSIV C', 'MSIV D', 'SG A', 'SG B', 'SG C', 'SG D'])
+    expect(drawn(graph, { around: ['SG B'], loops: ['B'], reach: 1 }).labels).toEqual(['AFW valve B', 'ARV B', 'ATM', 'Core', 'FCV B', 'MSIV B', 'RCP B', 'SG B'])
+    expect(drawn(graph, { around: ['steam generators'], services: ['mainSteam'], reach: 1 }).labels).toEqual(['ARV A', 'ARV B', 'ARV C', 'ARV D', 'ATM', 'MSIV A', 'MSIV B', 'MSIV C', 'MSIV D', 'SG A', 'SG B', 'SG C', 'SG D'])
     expect(rejection(graph, { around: ['sgB'], from: ['core'] })).toEqual([{ field: 'around', message: 'around draws what feeds items and where their outflow goes; give it without from or to' }])
     expect(rejection(graph, { from: ['feedwaterTank'], to: ['sgB'], reach: 1 })).toEqual([{ field: 'reach', message: 'a route draws every link between its ends; reach applies to one end (from or to alone) or around' }])
   })
@@ -95,8 +95,8 @@ describe('mimic scope from the agent\'s intent', () => {
   test('an item\'s services lead with the circuit its energy role names, then by how many of its links each takes', () => {
     const index = (id: string) => graph.componentIndexById.get(id as never)!
     expect(itemServices(graph, [index('core')])[0]).toBe('primaryCoolant')
-    // Both sides of a steam generator are its energy circuits; the primary takes two of its links.
-    expect(itemServices(graph, [index('sgB')])).toEqual(['primaryCoolant', 'auxFeedwater', 'feedwater', 'mainSteam'])
+    // Both sides of a steam generator are its energy circuits; main steam (to its isolation and its atmospheric relief valve) and the primary take two of its links each.
+    expect(itemServices(graph, [index('sgB')])).toEqual(['mainSteam', 'primaryCoolant', 'auxFeedwater', 'feedwater'])
     expect(itemServices(graph, [index('auxFeedwaterPumpMotor')])).toEqual(['auxFeedwater', 'electricalPower'])
   })
 
