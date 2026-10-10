@@ -312,12 +312,28 @@ export type DeckPlantTarget =
   | { readonly ok: true; readonly plant: DeckPlant }
   | { readonly ok: false; readonly reason: string }
 
-export const deckEntryPlant = (entry: DeckEntry, plants: ReadonlyArray<DeckPlant>): DeckPlantTarget => {
+/**
+ * Whether the page has opened the window's Run. Its Plants, their actions and
+ * procedures need the opened Run; a display does not, since it samples its
+ * Run itself, so the window shows displays while the Run opens or after it
+ * failed to, and says why the Plant controls are off.
+ */
+export type DeckRunJoin =
+  | { readonly state: 'joining' }
+  | { readonly state: 'joined' }
+  | { readonly state: 'failed'; readonly reason: string }
+
+const runJoinReason = (join: DeckRunJoin): string | null =>
+  join.state === 'joined' ? null : join.state === 'joining' ? 'This Run is still opening' : `This Run could not be opened: ${join.reason}`
+
+export const deckEntryPlant = (entry: DeckEntry, plants: ReadonlyArray<DeckPlant>, join: DeckRunJoin): DeckPlantTarget => {
+  if (entry.source === 'answer' && entry.otherRun) return { ok: false, reason: 'Belongs to another Run' }
+  const waiting = runJoinReason(join)
+  if (waiting !== null) return { ok: false, reason: waiting }
   if (entry.source === 'overview') {
     const plant = plants.find(candidate => candidate.objectId === entry.plant.objectId)
     return plant ? { ok: true, plant } : { ok: false, reason: 'The Plant is no longer in this Run' }
   }
-  if (entry.otherRun) return { ok: false, reason: 'Belongs to another Run' }
   const plantId = parseListingState(entry.listing).plantId
   if (plantId === null) return { ok: false, reason: 'The display names no Plant World can read' }
   const plant = plants.find(candidate => candidate.plantId === plantId)

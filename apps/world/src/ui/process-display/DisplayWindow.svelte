@@ -48,6 +48,7 @@
     type DeckAcknowledgement,
     type DeckEntry,
     type DeckPlant,
+    type DeckRunJoin,
     type DeckStep,
     type DisplayWindowRequest,
     type MountedDeckFrame,
@@ -89,7 +90,10 @@
   // Esc never closes it (inside a display, Esc is the display's Back).
 
   interface Props {
+    /** The Run of the page, from its address: the window opens without waiting for the page to open the Run. */
     readonly simulationRunId: SimulationRunId
+    /** Whether the page has opened the Run; its Plants, actions and procedures wait for it. */
+    readonly runJoin: DeckRunJoin
     /** The Run's Process Plants, in rail order. */
     readonly plantObjects: ReadonlyArray<OperationalObject>
     /** The conversation's displays, oldest first, as the Host relays them. */
@@ -102,6 +106,7 @@
 
   let {
     simulationRunId,
+    runJoin,
     plantObjects,
     listings,
     request,
@@ -215,7 +220,7 @@
   const announcement = $derived(newDisplayAnnouncement(unseen))
   const plantTarget = $derived(current === null
     ? { ok: false as const, reason: 'No display is shown' }
-    : deckEntryPlant(current, plants))
+    : deckEntryPlant(current, plants, runJoin))
   const plantObject = $derived(plantTarget.ok
     ? plantObjects.find(object => String(object.id) === plantTarget.plant.objectId) ?? null
     : null)

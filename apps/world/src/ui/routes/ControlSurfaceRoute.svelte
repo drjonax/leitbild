@@ -54,7 +54,7 @@
   import ScenarioGuidance from '../ScenarioGuidance.svelte'
   import StartupModal from '../StartupModal.svelte'
   import { processPlantIdForObject, type ProcessPlantArtifactKind } from '../process-display/process-display-client.ts'
-  import type { DisplayWindowRequest, DisplayWindowTarget } from '../process-display/display-deck.ts'
+  import type { DeckRunJoin, DisplayWindowRequest, DisplayWindowTarget } from '../process-display/display-deck.ts'
   import { displayWindowReadyMessage, readDisplayWindowHostMessage } from '../process-display/display-window-messages.ts'
   import { createProcedureSession, type ProcedureSession } from '../procedures/procedure-session.ts'
   import {
@@ -177,7 +177,12 @@
   let DroneProfileEditorModal = $state<Component | null>(null)
   // The one process display window. The Host relays the conversation's
   // displays and requests to open one; both are kept here from the start, so
-  // nothing is lost while the window's code or the Run is still loading.
+  // nothing is lost while the window's code or the Run is still loading. The
+  // window needs only the Run named in the address: a display samples its Run
+  // itself, so it shows while this page still opens the Run, or after that
+  // failed (the window says why its Plant controls are off), and a display of
+  // another Run needs nothing from this one.
+  let displayWindowRunId = $state<SimulationRunId | null>(null)
   let displayWindowOpen = $state(false)
   let displayWindowRequest = $state.raw<DisplayWindowRequest | null>(null)
   let conversationDisplays = $state.raw<ReadonlyArray<EmbeddedViewListing>>([])
@@ -260,6 +265,11 @@
   const surfacePanels = $derived(activePack?.surfacePanels ?? [])
   const surfacePanelLaunchers = $derived(surfacePanels.map(panel => ({ id: panel.id, label: panel.label, open: surfacePanelOpen[panel.id] ?? panel.defaultOpen })))
   const mapStartupFailed = $derived(startupSteps.find(step => step.id === 'map')?.status === 'failed')
+  const displayRunJoin = $derived.by<DeckRunJoin>(() => {
+    if (simulationRunId !== null) return { state: 'joined' }
+    const step = startupSteps.find(candidate => candidate.id === 'simulation-run')
+    return step?.status === 'failed' ? { state: 'failed', reason: step.error ?? `${step.label} failed` } : { state: 'joining' }
+  })
   const richOperationalUiReady = $derived(!mapVisible || mapReady || mapStartupFailed)
   const mapAssignmentController = $derived(mapAssignment ? objects.find(object => object.id === mapAssignment.controllerId) ?? null : null)
   const mapAssignmentContribution = $derived(mapAssignmentController && activePack ? activePack.packForObject(mapAssignmentController).mapAssignment ?? null : null)
@@ -1514,6 +1524,7 @@
       }
     }
     // Before any awaited startup: the Host may relay displays as soon as this page listens.
+    displayWindowRunId = route.simulationRunId
     const workspaceId = route.workspaceId
     const receiveDisplayWindowMessage = (event: MessageEvent): void => {
       const message = readDisplayWindowHostMessage(event, { origin: location.origin, parent: window.parent, workspaceId })
@@ -1800,9 +1811,10 @@
   {/each}
 {/if}
 
-{#if DisplayWindow && simulationRunId && displayWindowOpen && displayWindowRequest}
+{#if DisplayWindow && displayWindowRunId && displayWindowOpen && displayWindowRequest}
   <DisplayWindow
-    {simulationRunId}
+    simulationRunId={displayWindowRunId}
+    runJoin={displayRunJoin}
     plantObjects={processPlantObjects}
     listings={conversationDisplays}
     request={displayWindowRequest}

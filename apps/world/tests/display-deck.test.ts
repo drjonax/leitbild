@@ -18,6 +18,7 @@ import {
   unseenListings,
   type DeckEntry,
   type DeckPlant,
+  type DeckRunJoin,
 } from '../src/ui/process-display/display-deck.ts'
 
 const workspaceId = '1e828b43-37fc-4437-aa70-302d7f442ceb'
@@ -56,6 +57,8 @@ const plants: ReadonlyArray<DeckPlant> = [
 
 const keys = (deck: ReadonlyArray<DeckEntry>): ReadonlyArray<string> => deck.map(entry => entry.key)
 
+const joined: DeckRunJoin = { state: 'joined' }
+
 describe('display deck', () => {
   test('lists the overviews in rail order, then the answers oldest first', () => {
     const deck = buildDisplayDeck({ simulationRunId: runId, plants, listings: [listing('one'), listing('two')], shown: null })
@@ -73,28 +76,43 @@ describe('display deck', () => {
     const deck = buildDisplayDeck({ simulationRunId: runId, plants, listings: [listing('one', { run: 'run-2' })], shown: null })
     const entry = deck[2]!
     expect(entry.caption).toBe('Answer one · other Run')
-    expect(deckEntryPlant(entry, plants)).toEqual({ ok: false, reason: 'Belongs to another Run' })
+    expect(deckEntryPlant(entry, plants, joined)).toEqual({ ok: false, reason: 'Belongs to another Run' })
   })
 
   test('acts on the Plant an answer names when it is in this Run', () => {
     const deck = buildDisplayDeck({ simulationRunId: runId, plants, listings: [listing('b', { plantId: 'unit-b' }), listing('z', { plantId: 'unit-z' })], shown: null })
-    expect(deckEntryPlant(deck[0]!, plants)).toEqual({ ok: true, plant: plants[0]! })
-    expect(deckEntryPlant(deck[2]!, plants)).toEqual({ ok: true, plant: plants[1]! })
-    expect(deckEntryPlant(deck[3]!, plants)).toEqual({ ok: false, reason: 'Plant unit-z is not in this Run' })
+    expect(deckEntryPlant(deck[0]!, plants, joined)).toEqual({ ok: true, plant: plants[0]! })
+    expect(deckEntryPlant(deck[2]!, plants, joined)).toEqual({ ok: true, plant: plants[1]! })
+    expect(deckEntryPlant(deck[3]!, plants, joined)).toEqual({ ok: false, reason: 'Plant unit-z is not in this Run' })
+  })
+
+  test('shows displays while the page opens the Run, with Plant controls off and saying why', () => {
+    // Before the Run is opened the page knows none of its Plants; the display still opens.
+    const deck = buildDisplayDeck({ simulationRunId: runId, plants: [], listings: [listing('one', { plantId: 'unit-b' }), listing('far', { run: 'run-2' })], shown: null })
+    expect(keys(deck)).toEqual([answerDeckKey('one'), answerDeckKey('far')])
+    expect(deckEntryPlant(deck[0]!, [], { state: 'joining' })).toEqual({ ok: false, reason: 'This Run is still opening' })
+    expect(deckEntryPlant(deck[0]!, [], { state: 'failed', reason: 'Run run-1 is not loaded' }))
+      .toEqual({ ok: false, reason: 'This Run could not be opened: Run run-1 is not loaded' })
+    // A display of another Run needs nothing from this one.
+    expect(deckEntryPlant(deck[1]!, [], { state: 'joining' })).toEqual({ ok: false, reason: 'Belongs to another Run' })
+    // Once opened, the Plants arrive and their overviews go ahead of the answers.
+    const opened = buildDisplayDeck({ simulationRunId: runId, plants, listings: [listing('one', { plantId: 'unit-b' })], shown: null })
+    expect(opened.findIndex(entry => entry.key === answerDeckKey('one'))).toBe(2)
+    expect(deckEntryPlant(opened[2]!, plants, joined)).toEqual({ ok: true, plant: plants[1]! })
   })
 
   test('a display World cannot read still opens but names no Plant', () => {
     const unreadable = listing('odd', { state: '{"composition":{}}' })
     const deck = buildDisplayDeck({ simulationRunId: runId, plants, listings: [unreadable], shown: null })
     expect(deck[2]).toMatchObject({ kind: 'advice' })
-    expect(deckEntryPlant(deck[2]!, plants)).toEqual({ ok: false, reason: 'The display names no Plant World can read' })
+    expect(deckEntryPlant(deck[2]!, plants, joined)).toEqual({ ok: false, reason: 'The display names no Plant World can read' })
   })
 
   test('a listed overview or detail is drawn for its frame', () => {
     const overview = listing('overview', { state: JSON.stringify({ overview: { plantId: 'unit-b' } }) })
     const deck = buildDisplayDeck({ simulationRunId: runId, plants, listings: [overview], shown: null })
     expect(deck[2]).toMatchObject({ kind: 'generated' })
-    expect(deckEntryPlant(deck[2]!, plants)).toEqual({ ok: true, plant: plants[1]! })
+    expect(deckEntryPlant(deck[2]!, plants, joined)).toEqual({ ok: true, plant: plants[1]! })
   })
 
   test('steps without wrapping and jumps to the ends', () => {
@@ -141,7 +159,7 @@ describe('the shown display', () => {
     const shown = shownDeckEntry(before, before[1]!, [])
     const after = buildDisplayDeck({ simulationRunId: runId, plants: [plants[0]!], listings: [], shown })
     expect(after[1]).toMatchObject({ caption: 'No longer in this Run', inRun: false })
-    expect(deckEntryPlant(after[1]!, [plants[0]!])).toEqual({ ok: false, reason: 'The Plant is no longer in this Run' })
+    expect(deckEntryPlant(after[1]!, [plants[0]!], joined)).toEqual({ ok: false, reason: 'The Plant is no longer in this Run' })
   })
 
   test('a rail request opens that Plant overview, a chat request the listed display', () => {
