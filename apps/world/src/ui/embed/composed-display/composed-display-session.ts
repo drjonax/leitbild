@@ -1,7 +1,7 @@
 import type { SimulationRunId } from '../../../core/model/index.ts'
 import type { CompiledComposedPanel, ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
 import type { ComposedDisplayClient, ComposedDisplaySample, ComposedDisplayViewResult, ViewSize } from './composed-display-client.ts'
-import { appendPoint, HOLD_GAP_MS, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+import { appendPoint, COMPARISON_HISTORY_MS, HOLD_GAP_MS, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
 import type { ValueDomain } from './trend-geometry.ts'
 
 export type ComposedDisplayPhase =
@@ -45,7 +45,6 @@ const PRESENCE_EVERY_SAMPLES = 5
 // After this long without interaction the view stops polling, so a forgotten
 // open chat cannot keep a Run simulating indefinitely.
 export const IDLE_SUSPEND_MS = 15 * 60_000
-const COMPARISON_SERIES_MS = 600_000
 // Alarm state marks values in alarm on every panel, not only the alarms strip.
 const WITH_ALARMS = true
 
@@ -113,7 +112,7 @@ export const createComposedDisplaySession = (config: {
     shown.flatMap(panel => plottedPensOf(panel).map(pen => ({
       path: String(pen.path),
       seriesId: pen.seriesId,
-      horizonMs: panel.kind === 'trend' ? panel.horizonMs : COMPARISON_SERIES_MS,
+      horizonMs: panel.kind === 'trend' ? panel.horizonMs : COMPARISON_HISTORY_MS,
     })))
 
   /** A generated display's lead values keep their sparklines' window: the recorded numeric ones. */

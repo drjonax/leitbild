@@ -230,6 +230,8 @@ describe('mimic panels in composed displays', () => {
     objects: new Map(),
     simulationTime: '2026-10-09T10:00:00.000Z' as IsoTimestamp,
     recordedSeriesIds,
+    // The Plant has not run, so its Run has recorded nothing yet.
+    recordedHistory: { read: () => [] },
   })
   const display = (panels: ReadonlyArray<unknown>) => ({
     plantId: system.plant.id,

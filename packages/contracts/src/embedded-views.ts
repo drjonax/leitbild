@@ -63,16 +63,33 @@ export const embeddedViewContentSchema = z.object({
     history: z.boolean(),
     /** Its state as the view draws it, in words ("running", "level 29.6 %"). */
     state: z.string().min(1).max(200).optional(),
-  }).strict()).max(64),
+    /** Which way the view shows it going: its rate per minute in `unit` per minute, where the view shows a rate. */
+    trend: z.object({
+      rate: z.number().finite(),
+      unit: z.string().min(1).max(16),
+      direction: z.enum(['rising', 'falling', 'steady']),
+    }).strict().optional(),
+    /** The limit the view names ahead of it in its direction of travel, not yet passed ("LO ALM 14.8 MPa"). */
+    limitAhead: viewQuantitySchema.extend({ name: z.string().min(1).max(64) }).strict().optional(),
+    /** The time to the limit ahead at the current rate, where the view projects one. */
+    timeToLimitMs: z.number().int().positive().optional(),
+  }).strict().superRefine((item, ctx) => {
+    if (item.timeToLimitMs !== undefined && item.limitAhead === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['timeToLimitMs'], message: 'A time to a limit needs the limit ahead' })
+    }
+  })).max(64),
   /** How far back the view's time axis reaches now, and the horizon it widens to; null without one. */
   span: z.object({
     shownMs: z.number().int().positive(),
     horizonMs: z.number().int().positive(),
   }).strict().nullable(),
-  /** The item the view leads with, past or nearest a limit (an index in items), and why in its words. */
+  /**
+   * The item the view leads with (an index in items): the shortest projected
+   * time to a limit, else past or nearest a limit; and why in its words.
+   */
   lead: z.object({
     item: z.number().int().nonnegative(),
-    reason: z.string().min(1).max(200),
+    reason: z.string().min(1).max(300),
   }).strict().nullable(),
 }).strict().superRefine((content, ctx) => {
   if (content.lead !== null && content.lead.item >= content.items.length) {

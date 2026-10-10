@@ -24,7 +24,7 @@ describe('how a trend reads now', () => {
     expect(reading.rate).toBeCloseTo(-1, 6)
     expect(reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { ruleId: 'pzr-low' } } })
     expect(limitStateText(reading.limit!, 'MPa')).toBe('0.658 MPa above LO ALM 14.8 MPa · ≈39 s')
-    expect(reading.limit!.kind === 'margin' && reading.limit.minutes).toBeCloseTo(0.658, 3)
+    expect(reading.limit?.kind === 'margin' ? reading.limit.minutes : null).toBeCloseTo(0.658, 3)
     expect(travelText(reading.rate, falling.at(-1)!.v, 'MPa', reading.change)).toBe('falling 1.00 MPa/min')
     // A fall the display shows in one step per half minute (one decimal at 15 MPa) gives no basis for a time.
     const slow = seconds(120, second => 15.858 - second * (0.4 / 120))

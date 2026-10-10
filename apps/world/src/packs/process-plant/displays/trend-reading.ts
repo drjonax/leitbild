@@ -32,11 +32,15 @@ export const appendPoint = (
 export const TREND_HISTORY_LIMIT = 4_000
 
 /** A recorded page as points: numeric samples with a Run time, oldest first. */
-export const trendPoints = (samples: ReadonlyArray<{ readonly simulationTime?: string; readonly value: unknown }>): ReadonlyArray<TrendPoint> => samples
+export const trendPoints = (samples: ReadonlyArray<{ readonly simulationTime?: string | undefined; readonly value: unknown }>): ReadonlyArray<TrendPoint> => samples
   .flatMap(sample => typeof sample.value === 'number' && sample.simulationTime !== undefined
     ? [{ t: Date.parse(sample.simulationTime), v: sample.value }]
     : [])
   .sort((left, right) => left.t - right.t)
+
+// A comparison keeps ten minutes of each signal and reads its rate as a
+// 10-minute trend's legend does, so one signal never shows two rates.
+export const COMPARISON_HISTORY_MS = 600_000
 
 // A rate needs some history: two points at least this far apart.
 const RATE_MIN_SPAN_MS = 10_000

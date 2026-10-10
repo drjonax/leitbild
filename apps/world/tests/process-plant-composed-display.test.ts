@@ -14,9 +14,11 @@ import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
-import { thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
 import { composedDisplayStateSchema } from '../src/packs/process-plant/displays/composition.ts'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
+import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
+import { createRunHistorian, recordedHistoryOf } from '../src/features/historian/store.ts'
 
 const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:composed-display', loopCount: 4 }))
 const runtime = createProcessPlantRuntime({ system: compiled })
@@ -29,13 +31,16 @@ const plant: ProcessPlantRuntimeInstance = {
 }
 const plants = new Map([[compiled.id, plant]])
 const simulationTime = '2026-10-08T21:00:00.000Z' as IsoTimestamp
+// The Plant has not run, so its Run has recorded nothing yet.
+const notRunYet: PackRuntimeRecordedHistory = { read: () => [] }
 // The Run records the operations profile: tagged instruments, states, controls and power.
 const recordedSeriesIds = new Set(recordedPlantVariables(compiled, 'operations').map(variable => recordingSeriesIdFor(compiled.id, variable.path)))
-const ask = (capabilityId: string, input: unknown, at: IsoTimestamp | null = simulationTime) => answerProcessPlantQuery({
+const ask = (capabilityId: string, input: unknown, at: IsoTimestamp | null = simulationTime, recordedHistory: PackRuntimeRecordedHistory = notRunYet) => answerProcessPlantQuery({
   request: { capabilityId, input },
   plants,
   objects: new Map(),
   recordedSeriesIds,
+  recordedHistory,
   ...(at === null ? {} : { simulationTime: at }),
 })
 
@@ -170,6 +175,59 @@ describe('world.process-plant.display.compose', () => {
     expect(result.shows[0]).toStartWith("Live trend of the last 1 min (the Run's history so far; it widens to 10m as the Run continues)")
     // The published Capability returns it: its output schema is enforced at the boundary.
     expect(() => processPlantCapabilities.find(capability => capability.id === 'world.process-plant.display.compose')!.output.parse(result)).not.toThrow()
+  })
+
+  test('states each trended signal as its legend will: rate, direction, the limit ahead and the time to it', () => {
+    // Production: pressure falling, 0.542 MPa below HI ALM 16 but heading for LO ALM 14.8.
+    const pressure = compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path
+    const level = compiled.graph.signalBindingByTagId.get('SG-B-LVL-NR' as never)!.path
+    const now = runtime.readVariableSnapshot(pressure).value as number
+    const seriesId = recordingSeriesIdFor(compiled.id, pressure)
+    // The Run's historian holds two minutes of a fall of 1 MPa/min to the value now.
+    const historian = createRunHistorian(':memory:')
+    historian.record('process-plant', {
+      descriptors: [{ id: seriesId, subjectId: compiled.id, signalId: String(pressure), title: 'Pressurizer pressure', valueType: 'number', quantity: 'pressure', unit: 'MPa' }],
+      samples: Array.from({ length: 120 }, (_, index) => {
+        const at = new Date(Date.parse(simulationTime) - (120 - index) * 1000).toISOString() as IsoTimestamp
+        return { seriesId, observedAt: at, simulationTime: at, value: now + (120 - index) / 60, quality: 'good' as const }
+      }),
+    })
+    const reads: Array<{ readonly seriesId: string; readonly from: string; readonly to: string }> = []
+    const recorded = recordedHistoryOf(historian, 'process-plant')
+    const result = ask('world.process-plant.display.compose', {
+      ...composition([{ ref: 'PT-455', role: 'primary' }, { ref: 'SG-B-LVL-NR', role: 'context' }]),
+      panels: [{ kind: 'trend', horizon: '10m', signals: [{ ref: 'PT-455', role: 'primary' }, { ref: 'SG-B-LVL-NR', role: 'context' }] }],
+    }, simulationTime, { read: query => { reads.push(query); return recorded.read(query) } }) as { margins: ReadonlyArray<string>; viewContent: unknown }
+    historian.close()
+    // One bounded read per trended signal, over the trend's horizon up to now.
+    expect(reads.map(read => [read.seriesId, read.from, read.to])).toEqual([seriesId, recordingSeriesIdFor(compiled.id, level)].map(id => [id, '2026-10-08T20:50:00.000Z', simulationTime]))
+    const margin = now - 14.8
+    // The rate as the legend words it (1 MPa/min reads 1.000 just below one).
+    expect(result.margins[0]).toBe(`PT-455: ${formatQuantity(now, 'MPa')}, falling 1.000 MPa/min, ${formatQuantity(margin, 'MPa')} above LO ALM 14.8 MPa · ≈${Math.round(margin * 60)} s`)
+    const content = embeddedViewContentSchema.parse(result.viewContent)
+    const item = content.items.find(candidate => candidate.names.includes('PT-455'))!
+    expect(item.trend).toEqual({ rate: expect.closeTo(-1, 6), unit: 'MPa', direction: 'falling' })
+    expect(item.limitAhead).toEqual({ name: 'LO ALM 14.8 MPa', value: 14.8, unit: 'MPa' })
+    expect(item.timeToLimitMs).toBe(Math.round(margin * 60_000))
+    // The shortest time to a limit leads.
+    expect(content.lead).toEqual({ item: content.items.indexOf(item), reason: result.margins[0]! })
+    // The level has no recorded history: no rate, so no direction, and its nearest limit.
+    const levelItem = content.items.find(candidate => candidate.names.includes('SG-B-LVL-NR'))!
+    expect([levelItem.trend, levelItem.timeToLimitMs]).toEqual([undefined, undefined])
+    // Without history the same pressure reads as before: the nearest limit, no direction.
+    const unrecorded = ask('world.process-plant.display.compose', composition([{ ref: 'PT-455', role: 'primary' }])) as { margins: ReadonlyArray<string>; viewContent: unknown }
+    expect(unrecorded.margins).toEqual([`PT-455: ${formatQuantity(now, 'MPa')}, ${formatQuantity(16 - now, 'MPa')} below HI ALM 16 MPa`])
+    expect(embeddedViewContentSchema.parse(unrecorded.viewContent).items[0]!.trend).toBeUndefined()
+  })
+
+  test('a recorded signal needs the Run\'s history to be composed', () => {
+    expect(() => answerProcessPlantQuery({
+      request: { capabilityId: 'world.process-plant.display.compose', input: composition([{ ref: 'PT-455', role: 'primary' }]) },
+      plants,
+      objects: new Map(),
+      recordedSeriesIds,
+      simulationTime,
+    })).toThrow('world.process-plant.display.compose requires the history recorded by the answering runtime')
   })
 
   test('rejects every issue at once with did-you-mean suggestions and never repairs', () => {
