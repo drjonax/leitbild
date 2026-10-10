@@ -724,6 +724,36 @@ describe('steam generator low-low level', () => {
   })
 })
 
+describe('main steam safety valves', () => {
+  test('lift to the atmosphere outside containment, which does not pressurize', () => {
+    const discharge = graph.links.find(link => graph.components[link.fromComponentIndex]!.id === 'mainSteamSafetyValve')!
+    expect(String(graph.components[discharge.toComponentIndex]!.kind)).toBe('atmosphereBoundary')
+
+    const overpressured = compileProcessPlant(createPwrReferencePlantDefinition({
+      id: 'plant:mssv-lift',
+      valueOverrides: Object.fromEntries(['A', 'B', 'C', 'D'].map(loop => [`sg${loop}.pressureMPa`, 10])),
+    }))
+    const runtime = createProcessPlantRuntime({ system: overpressured })
+    const protection = createProcessPlantProtectionRunner({ system: overpressured, protection: overpressured.automation })
+    const read = (path: string) => Number(runtime.readVariable(path as VariablePath))
+    runtime.tick(1_000)
+    const containmentPressure = read('containment.pressureMPa')
+    let lift = 0
+    let containmentInflow = 0
+    for (let second = 0; second < 30; second += 1) {
+      runtime.tick(1_000)
+      protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-model-truth' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+      lift = Math.max(lift, read('mainSteamSafetyValve.effectivePositionFraction'))
+      containmentInflow = Math.max(containmentInflow, read('containment.incomingMassKgPerS'))
+    }
+    expect(lift).toBeGreaterThan(0.9)
+    expect(read('atmosphere.releasedMassKg')).toBeGreaterThan(1_000)
+    expect(protection.snapshot().alarms.find(lifecycle => lifecycle.id === 'alarm:main-steam-safety-valve-open:safety-valve-open')!.firstActiveElapsedMs).toBeDefined()
+    expect(containmentInflow).toBe(0)
+    expect(read('containment.pressureMPa')).toBeCloseTo(containmentPressure, 9)
+  })
+})
+
 describe('signal labels', () => {
   test('no label in the reference model begins with a kebab-case id; link labels name the link by its ends', () => {
     const kebab = /^[a-z0-9]+(-[a-z0-9]+){2,}\b/u

@@ -90,7 +90,8 @@ const telemetryVariables = [
   'aux-feedwater-valve-a-to-sg-a.flowKgPerS',
   'mainSteamSafetyValve.effectivePositionFraction',
   'main-steam-header-to-safety-valve.flowKgPerS',
-  'main-steam-safety-valve-to-containment.flowKgPerS',
+  'main-steam-safety-valve-to-atmosphere.flowKgPerS',
+  'atmosphere.releasedMassKg',
   'condenser.heatRejectedMw',
   'condenser.backPressurePa',
   'condenser.condensateInventoryKg',
@@ -304,7 +305,7 @@ const cases: ReadonlyArray<AcceptanceCase> = [
   {
     id: 'main-steam-safety-release',
     title: 'Main Steam Safety Release',
-    description: 'An isolated high-pressure main steam path routes steam through a safety valve to containment.',
+    description: 'An isolated high-pressure main steam path relieves steam through a safety valve to the atmosphere outside containment.',
     initialState: {
       'sgA.pressureMPa': 9.85,
       'sgB.pressureMPa': 9.85,
@@ -554,7 +555,8 @@ const nonnegativeTelemetryPaths: ReadonlySet<string> = new Set([
   'aux-feedwater-valve-a-to-sg-a.flowKgPerS',
   'mainSteamSafetyValve.effectivePositionFraction',
   'main-steam-header-to-safety-valve.flowKgPerS',
-  'main-steam-safety-valve-to-containment.flowKgPerS',
+  'main-steam-safety-valve-to-atmosphere.flowKgPerS',
+  'atmosphere.releasedMassKg',
   'condenser.heatRejectedMw',
   'condenser.backPressurePa',
   'condenser.condensateInventoryKg',
@@ -750,17 +752,19 @@ const evaluateCase = (
   if (caseId === 'main-steam-safety-release') {
     const safetyPosition = maxAfter(telemetry, 'mainSteamSafetyValve.effectivePositionFraction', 0)
     const headerFlow = maxAfter(telemetry, 'main-steam-header-to-safety-valve.flowKgPerS', 0)
-    const containmentFlow = maxAfter(telemetry, 'main-steam-safety-valve-to-containment.flowKgPerS', 0)
-    const initialContainmentPressure = valueAtOrAfter(telemetry, 'containment.pressureMPa', 0)
-    const peakContainmentPressure = maxAfter(telemetry, 'containment.pressureMPa', 0)
-    const initialContainmentSump = valueAtOrAfter(telemetry, 'containment.sumpInventoryKg', 0)
-    const endContainmentSump = valueAtOrAfter(telemetry, 'containment.sumpInventoryKg', durationMs)
+    const releaseFlow = maxAfter(telemetry, 'main-steam-safety-valve-to-atmosphere.flowKgPerS', 0)
+    const released = valueAtOrAfter(telemetry, 'atmosphere.releasedMassKg', durationMs)
+    // Containment settles in its first step; from then on the safety valve release must not reach it.
+    const settledContainmentPressure = valueAtOrAfter(telemetry, 'containment.pressureMPa', 1_000)
+    const peakContainmentPressure = maxAfter(telemetry, 'containment.pressureMPa', 1_000)
+    const containmentInflow = maxAfter(telemetry, 'containment.incomingMassKgPerS', 0)
     return [
       check(caseId, 'main steam safety valve opens on isolated turbine path pressure', safetyPosition > 0.9, `maxPosition=${safetyPosition.toFixed(2)}`),
       check(caseId, 'main steam safety path carries header flow', headerFlow > 100, `maxHeaderFlow=${headerFlow.toFixed(1)}kg/s`),
-      check(caseId, 'main steam safety valve routes steam to containment', containmentFlow > 100, `maxContainmentFlow=${containmentFlow.toFixed(1)}kg/s`),
-      check(caseId, 'containment pressure rises from steam release', peakContainmentPressure > initialContainmentPressure, `initial=${initialContainmentPressure.toFixed(3)} peak=${peakContainmentPressure.toFixed(3)}MPa`),
-      check(caseId, 'containment inventory increases from steam release', endContainmentSump > initialContainmentSump, `initial=${initialContainmentSump.toFixed(0)} end=${endContainmentSump.toFixed(0)}kg`),
+      check(caseId, 'main steam safety valve relieves steam to atmosphere', releaseFlow > 100, `maxReleaseFlow=${releaseFlow.toFixed(1)}kg/s`),
+      check(caseId, 'the atmosphere totals the steam released', released > 1_000, `released=${released.toFixed(0)}kg`),
+      check(caseId, 'containment receives none of the steam release', containmentInflow === 0, `maxContainmentInflow=${containmentInflow.toFixed(3)}kg/s`),
+      check(caseId, 'containment pressure does not rise from the steam release', peakContainmentPressure - settledContainmentPressure < 1e-6, `settled=${settledContainmentPressure.toFixed(4)} peak=${peakContainmentPressure.toFixed(4)}MPa`),
     ]
   }
   if (caseId === 'load-reduction') {

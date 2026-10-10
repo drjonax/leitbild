@@ -322,7 +322,7 @@ const telemetryVariables = [
   'main-steam-header-to-turbine-bypass-valve.pressureMPa',
   'mainSteamSafetyValve.effectivePositionFraction',
   'main-steam-header-to-safety-valve.flowKgPerS',
-  'main-steam-safety-valve-to-containment.flowKgPerS',
+  'main-steam-safety-valve-to-atmosphere.flowKgPerS',
   'condenser.backPressurePa',
   'containment.pressureMPa',
   'containment.incomingMassKgPerS',

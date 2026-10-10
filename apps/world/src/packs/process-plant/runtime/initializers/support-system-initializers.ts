@@ -55,6 +55,15 @@ export const supportSystemInitialValueDefinitions: ReadonlyArray<ComponentInitia
     },
   },
   {
+    componentKind: 'atmosphereBoundary',
+    initialValueFor: (component, localPath) => {
+      if (localPath === 'pressureMPa') return parameterNumber(component, 'pressureMPa')
+      if (localPath === 'releaseFlowKgPerS') return 0
+      if (localPath === 'releasedMassKg') return 0
+      return undefined
+    },
+  },
+  {
     componentKind: 'accumulator',
     initialValueFor: (component, localPath) => {
       const liquidInventory = parameterNumber(component, 'initialLiquidInventoryKg')

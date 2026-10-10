@@ -71,6 +71,7 @@ const byKind: Readonly<Record<string, MimicPresentation | ((component: CompiledC
   electricalLoad: { element: 'not-drawn', reason: 'a load is where power ends; it is named where its supply stops' },
   deltaTProtectionChannel: { element: 'not-drawn', reason: 'an instrument channel moves no fluid; it is read through the values it computes' },
   rcsInventoryBalance: { element: 'not-drawn', reason: 'an instrument channel moves no fluid; it is read through the values it computes' },
+  atmosphereBoundary: { element: 'not-drawn', reason: 'the atmosphere is where a release leaves the Plant; it is named where the discharge pipe ends' },
 }
 
 /** Kinds the table covers, for the completeness test against the component registry. */

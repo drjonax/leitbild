@@ -44,9 +44,11 @@ describe('process plant model composition', () => {
     // pump lost its AC feed, and again when the reactor protection gained
     // its loop delta-T channels, safety injection pump curves, accumulator
     // injection and the PORV block valve, its motor fed from safety bus A
-    // apart from the heaters' unit bus; PWR Runs checkpointed before then
-    // must be restarted.
-    expect(system.modelDigest).toBe('2d1361665a70a3528f4b50154885897fd966c8fe79b0a6d83d751c25412f27f1')
+    // apart from the heaters' unit bus, and again, as a model-truth change,
+    // when the main steam safety valve was made to discharge to the
+    // atmosphere instead of into containment; PWR Runs checkpointed before
+    // then must be restarted.
+    expect(system.modelDigest).toBe('fea645af3f9d7d8291d5eee8a8f64d85d2786059c38018249ac69fa92aa73f15')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

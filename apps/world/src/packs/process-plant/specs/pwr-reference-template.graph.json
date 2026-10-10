@@ -2841,6 +2841,19 @@
       }
     },
     {
+      "id": "atmosphere",
+      "kind": "atmosphereBoundary",
+      "label": "Atmosphere",
+      "parameters": {
+        "pressureMPa": 0.101325
+      },
+      "metadata": {
+        "presentation": {
+          "shortLabel": "ATM"
+        }
+      }
+    },
+    {
       "id": "offsiteGrid",
       "kind": "electricalGridSource",
       "label": "420 kV Grid Interface",
@@ -9485,9 +9498,9 @@
       ]
     },
     {
-      "id": "main-steam-safety-valve-to-containment",
+      "id": "main-steam-safety-valve-to-atmosphere",
       "from": "mainSteamSafetyValve.outlet",
-      "to": "containment.steamIn",
+      "to": "atmosphere.releaseIn",
       "connectionKind": "fluidFlow",
       "service": "mainSteam",
       "nominalFluid": "steam",
@@ -9496,7 +9509,7 @@
       "variables": [
         {
           "path": "flowKgPerS",
-          "label": "Main steam safety release to containment flow",
+          "label": "Main steam safety release to atmosphere flow",
           "kind": "derived",
           "discipline": "hydraulic",
           "writable": false,
@@ -10467,9 +10480,11 @@
     "mainSteamSafetyValve.flowBalanceResidualKgPerS",
     "main-steam-header-to-safety-valve.flowKgPerS",
     "main-steam-header-to-safety-valve.pressureMPa",
-    "main-steam-safety-valve-to-containment.flowKgPerS",
-    "main-steam-safety-valve-to-containment.pressureMPa",
-    "main-steam-safety-valve-to-containment.radiationMSvPerH",
+    "main-steam-safety-valve-to-atmosphere.flowKgPerS",
+    "main-steam-safety-valve-to-atmosphere.pressureMPa",
+    "main-steam-safety-valve-to-atmosphere.radiationMSvPerH",
+    "atmosphere.releaseFlowKgPerS",
+    "atmosphere.releasedMassKg",
     "msiv-a-to-main-steam-header.pressureMPa",
     "msiv-b-to-main-steam-header.pressureMPa",
     "msiv-c-to-main-steam-header.pressureMPa",

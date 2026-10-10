@@ -65,7 +65,8 @@ const telemetryVariables = [
   'main-feedwater-pump-b-to-header.flowKgPerS',
   'aux-feedwater-valve-a-to-sg-a.flowKgPerS',
   'mainSteamSafetyValve.effectivePositionFraction',
-  'main-steam-safety-valve-to-containment.flowKgPerS',
+  'main-steam-safety-valve-to-atmosphere.flowKgPerS',
+  'atmosphere.releasedMassKg',
   'turbine.electricMw',
   'turbine.steamDemandKgPerS',
   'turbine.steamAvailabilityFraction',
@@ -259,7 +260,7 @@ const cases: ReadonlyArray<ValidationCase> = [
   {
     id: 'main-steam-isolation-release',
     title: 'Steam isolation and safety release',
-    description: 'Turbine stop valve closes under high SG pressure to exercise main steam safety release.',
+    description: 'Turbine stop valve closes under high SG pressure to exercise main steam safety release to atmosphere.',
     initialState: {
       'sgA.pressureMPa': 9.85,
       'sgB.pressureMPa': 9.85,
@@ -585,13 +586,13 @@ const evaluateCase = (
   }
   if (caseId === 'main-steam-isolation-release') {
     const valve = maxAfter(telemetry, 'mainSteamSafetyValve.effectivePositionFraction', 0)
-    const release = maxAfter(telemetry, 'main-steam-safety-valve-to-containment.flowKgPerS', 0)
-    const containmentBefore = valueAtOrAfter(telemetry, 'containment.pressureMPa', 0)
-    const containmentPeak = maxAfter(telemetry, 'containment.pressureMPa', 0)
+    const release = maxAfter(telemetry, 'main-steam-safety-valve-to-atmosphere.flowKgPerS', 0)
+    const released = valueAtOrAfter(telemetry, 'atmosphere.releasedMassKg', durationMs)
+    const containmentInflow = maxAfter(telemetry, 'containment.incomingMassKgPerS', 0)
     return [
       check(caseId, 'main steam safety valve opens on isolated high pressure path', valve > 0.9, `valve=${valve.toFixed(2)}`),
-      check(caseId, 'main steam safety path releases steam to containment', release > 100, `release=${release.toFixed(1)}kg/s`),
-      check(caseId, 'steam release raises containment pressure', containmentPeak > containmentBefore, `before=${containmentBefore.toFixed(3)} peak=${containmentPeak.toFixed(3)}MPa`),
+      check(caseId, 'main steam safety path relieves steam to atmosphere', release > 100 && released > 1_000, `release=${release.toFixed(1)}kg/s released=${released.toFixed(0)}kg`),
+      check(caseId, 'the steam release does not enter containment', containmentInflow === 0, `maxContainmentInflow=${containmentInflow.toFixed(3)}kg/s`),
     ]
   }
   if (caseId === 'boration-and-letdown') {

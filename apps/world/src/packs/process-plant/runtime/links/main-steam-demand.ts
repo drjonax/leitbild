@@ -71,8 +71,10 @@ const isSteamReleaseValve = (component: CompiledComponent | undefined): boolean 
   return mode === 'relief' || mode === 'safety' || mode === 'bypass'
 }
 
+// Where relieved steam ends: the condenser (steam dumps), the atmosphere (safety
+// and atmospheric relief valves) or containment (a break inside it).
 const isSteamReleaseTerminal = (component: CompiledComponent | undefined): boolean =>
-  component?.kind === 'containmentVolume' || component?.kind === 'condenserSink'
+  component?.kind === 'containmentVolume' || component?.kind === 'condenserSink' || component?.kind === 'atmosphereBoundary'
 
 const matchingSteamReleaseService = (
   link: CompiledProcessLink,

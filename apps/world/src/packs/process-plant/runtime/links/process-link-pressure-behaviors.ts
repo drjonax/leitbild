@@ -41,7 +41,9 @@ export const processLinkPressureBehaviorDefinitions: ReadonlyArray<ProcessLinkBe
       const fromComponent = system.graph.components[link.fromComponentIndex]
       const toComponent = system.graph.components[link.toComponentIndex]
       if (!fromComponent) throw new Error(`process link ${link.id} references missing source component`)
-      if (toComponent?.kind === 'containmentVolume' && (String(link.toPortName) === 'massEnergyIn' || String(link.toPortName) === 'steamIn')) {
+      // A release reads the pressure of the volume it discharges into: containment, or the atmosphere outside.
+      const releasesIntoContainment = toComponent?.kind === 'containmentVolume' && (String(link.toPortName) === 'massEnergyIn' || String(link.toPortName) === 'steamIn')
+      if (toComponent !== undefined && (releasesIntoContainment || toComponent.kind === 'atmosphereBoundary')) {
         context.write(processLinkVariablePath(link, 'pressureMPa'), context.readNumber(componentVariablePath(toComponent, 'pressureMPa')))
         return
       }

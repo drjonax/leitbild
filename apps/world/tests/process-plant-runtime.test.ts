@@ -1899,7 +1899,7 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('main-steam-header-to-turbine-stop-valve.pressureMPa')))).toBeLessThan(7.2)
   })
 
-  test('main steam safety valve releases steam to containment when the turbine path is isolated', () => {
+  test('main steam safety valve relieves steam to atmosphere, not into containment, when the turbine path is isolated', () => {
     const runtime = createProcessPlantRuntime({
       system: compiledSystemWithInitialState({
         'sgA.pressureMPa': 10,
@@ -1909,27 +1909,36 @@ describe('process plant runtime', () => {
       }),
     })
 
+    runtime.tick(100)
     const initialContainmentPressure = Number(runtime.readVariable(valueOf('containment.pressureMPa')))
     const initialContainmentMass = Number(runtime.readVariable(valueOf('containment.sumpInventoryKg')))
+    const releasedBefore = Number(runtime.readVariable(valueOf('atmosphere.releasedMassKg')))
     runtime.writeCommand({ type: 'setVariable', path: valueOf('turbineStopValve.positionFraction'), value: 0 })
     let maxSafetyPosition = 0
     let maxHeaderFlow = 0
-    let maxContainmentFlow = 0
+    let maxReleaseFlow = 0
+    let releasedBySafetyValve = 0
     let maxContainmentIncomingMass = 0
     for (let index = 0; index < 900; index += 1) {
       runtime.tick(100)
       maxSafetyPosition = Math.max(maxSafetyPosition, Number(runtime.readVariable(valueOf('mainSteamSafetyValve.effectivePositionFraction'))))
       maxHeaderFlow = Math.max(maxHeaderFlow, Number(runtime.readVariable(valueOf('main-steam-header-to-safety-valve.flowKgPerS'))))
-      maxContainmentFlow = Math.max(maxContainmentFlow, Number(runtime.readVariable(valueOf('main-steam-safety-valve-to-containment.flowKgPerS'))))
+      const releaseFlow = Number(runtime.readVariable(valueOf('main-steam-safety-valve-to-atmosphere.flowKgPerS')))
+      maxReleaseFlow = Math.max(maxReleaseFlow, releaseFlow)
+      releasedBySafetyValve += releaseFlow * 0.1
       maxContainmentIncomingMass = Math.max(maxContainmentIncomingMass, Number(runtime.readVariable(valueOf('containment.incomingMassKgPerS'))))
     }
 
     expect(maxSafetyPosition).toBeGreaterThan(0.9)
     expect(maxHeaderFlow).toBeGreaterThan(100)
-    expect(maxContainmentFlow).toBeGreaterThan(100)
-    expect(maxContainmentIncomingMass).toBeGreaterThan(100)
-    expect(Number(runtime.readVariable(valueOf('containment.pressureMPa')))).toBeGreaterThan(initialContainmentPressure)
-    expect(Number(runtime.readVariable(valueOf('containment.sumpInventoryKg')))).toBeGreaterThan(initialContainmentMass)
+    expect(maxReleaseFlow).toBeGreaterThan(100)
+    expect(Number(runtime.readVariable(valueOf('main-steam-safety-valve-to-atmosphere.pressureMPa')))).toBeCloseTo(0.101325, 6)
+    // The atmosphere totals what the valve relieved.
+    expect(Number(runtime.readVariable(valueOf('atmosphere.releasedMassKg'))) - releasedBefore).toBeCloseTo(releasedBySafetyValve, 3)
+    // Containment sees none of it.
+    expect(maxContainmentIncomingMass).toBe(0)
+    expect(Number(runtime.readVariable(valueOf('containment.pressureMPa')))).toBeCloseTo(initialContainmentPressure, 9)
+    expect(Number(runtime.readVariable(valueOf('containment.sumpInventoryKg')))).toBe(initialContainmentMass)
   })
 
   test('runtime restore preserves primary loop inertia state per unit', () => {

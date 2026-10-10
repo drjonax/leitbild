@@ -5,6 +5,7 @@ import type {
 import type { ComponentKind } from '../../graph/index.ts'
 import { accumulatorBehaviorDefinitions } from './accumulator-behaviors.ts'
 import { balanceOfPlantBehaviorDefinitions } from './balance-of-plant-behaviors.ts'
+import { boundaryBehaviorDefinitions } from './boundary-behaviors.ts'
 import { containmentBehaviorDefinitions } from './containment-behaviors.ts'
 import { electricalBehaviorDefinitions, electricalInitialReconciliationDefinitions } from './electrical-behaviors.ts'
 import { heatExchangerBehaviorDefinitions } from './heat-exchanger-behaviors.ts'
@@ -20,6 +21,7 @@ const behaviorDefinitionsByFamily: ReadonlyArray<ComponentBehaviorDefinition> = 
   ...balanceOfPlantBehaviorDefinitions,
   ...heatExchangerBehaviorDefinitions,
   ...containmentBehaviorDefinitions,
+  ...boundaryBehaviorDefinitions,
   ...accumulatorBehaviorDefinitions,
   ...junctionBehaviorDefinitions,
   ...electricalBehaviorDefinitions,
@@ -63,6 +65,7 @@ export const componentBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefini
   behaviorDefinitionById('condenser-steam-sink-state'),
   behaviorDefinitionById('heat-exchanger-thermal-transfer'),
   behaviorDefinitionById('containment-lumped-atmosphere-sump'),
+  behaviorDefinitionById('atmosphere-boundary-release'),
   behaviorDefinitionById('accumulator-pressure-driven-discharge'),
   behaviorDefinitionById('processValve-flow-diagnostics'),
   behaviorDefinitionById('steamValve-flow-diagnostics'),
@@ -92,6 +95,7 @@ export const processPlantComponentBehaviorSourcePathByKind: ReadonlyMap<Componen
   ['condenserSink' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/balance-of-plant-behaviors.ts'],
   ['heatExchanger' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/heat-exchanger-behaviors.ts'],
   ['containmentVolume' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/containment-behaviors.ts'],
+  ['atmosphereBoundary' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/boundary-behaviors.ts'],
   ['accumulator' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/accumulator-behaviors.ts'],
   ['processHeader' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/junction/header-behaviors.ts'],
   ['steamHeader' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/junction/header-behaviors.ts'],
