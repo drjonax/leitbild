@@ -3,14 +3,11 @@
 // to the display window does not flap when the chat re-renders. Pure: no DOM,
 // no stores, no network.
 import type { EmbeddedViewEnvelope, EmbeddedViewListing } from '@leitbild/contracts'
+import { EMBEDDED_VIEW_LISTING_MAX } from '@leitbild/contracts/embedded-view-route'
 import { marked } from 'marked'
 import { parseViewFenceBody, viewRefFor, VIEW_FENCE_LANGUAGE, type ViewReference } from '../../../core/render-validators/view-fence.ts'
 import type { UIMessage } from '../render/render-types.ts'
 import type { ViewResolution } from './resolve.ts'
-
-// The contract's EMBEDDED_VIEW_LISTING_MAX lives beside its zod schemas, which
-// the browser bundle must not load; listing.test.ts keeps the two equal.
-export const VIEW_LISTING_MAX = 30
 
 /** A posted answer: the only message whose ```leitbild-view fences become displays. */
 export interface PostedAnswer {
@@ -108,8 +105,8 @@ export interface ResolvedViewFence {
   readonly resolution: ViewResolution
 }
 
-/** The listings the Host relays, oldest first: refused displays left out, the most recent VIEW_LISTING_MAX kept. */
+/** The listings the Host relays, oldest first: refused displays left out, the most recent EMBEDDED_VIEW_LISTING_MAX kept. */
 export const viewListings = (resolved: ReadonlyArray<ResolvedViewFence>): ReadonlyArray<EmbeddedViewListing> =>
   resolved
     .flatMap(({ fence, resolution }) => resolution.kind === 'view' ? [viewListingOf(fence, resolution.envelope)] : [])
-    .slice(-VIEW_LISTING_MAX)
+    .slice(-EMBEDDED_VIEW_LISTING_MAX)

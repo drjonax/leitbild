@@ -10,7 +10,6 @@ import {
   viewFenceKey,
   viewFenceOf,
   viewListings,
-  VIEW_LISTING_MAX,
   type ResolvedViewFence,
 } from './listing.ts'
 import type { ViewResolution } from './resolve.ts'
@@ -90,21 +89,17 @@ describe('the list of a room\'s displays', () => {
   })
 
   test('leaves refused displays out and keeps the most recent, oldest first', () => {
-    const messages = Array.from({ length: VIEW_LISTING_MAX + 5 }, (_, index) => answer(`tr_${index}`, fence(`call_1_0/d${index}`), at(10, 0, index)))
+    const messages = Array.from({ length: EMBEDDED_VIEW_LISTING_MAX + 5 }, (_, index) => answer(`tr_${index}`, fence(`call_1_0/d${index}`), at(10, 0, index)))
     const resolved: ResolvedViewFence[] = roomViewFences(messages).map((item, index) => ({
       fence: item,
-      resolution: (index === VIEW_LISTING_MAX + 4
+      resolution: (index === EMBEDDED_VIEW_LISTING_MAX + 4
         ? { kind: 'refused', code: 'view_evidence_unavailable', message: 'gone' }
         : { kind: 'view', envelope: envelope(`Display ${index}`) }) as ViewResolution,
     }))
     const listings = viewListings(resolved)
-    expect(listings).toHaveLength(VIEW_LISTING_MAX)
+    expect(listings).toHaveLength(EMBEDDED_VIEW_LISTING_MAX)
     expect(listings[0]).toMatchObject({ key: 'room-1/tr_4/call_1_0/d4', caption: 'Answer 10:00:04', envelope: { title: 'Display 4' } })
     expect(listings.at(-1)).toMatchObject({ key: 'room-1/tr_33/call_1_0/d33', caption: 'Answer 10:00:33' })
-    expect(embeddedViewsMessageSchema.parse({ type: 'leitbild:views', views: listings }).views).toHaveLength(VIEW_LISTING_MAX)
-  })
-
-  test('caps the list where the contract does', () => {
-    expect(VIEW_LISTING_MAX).toBe(EMBEDDED_VIEW_LISTING_MAX)
+    expect(embeddedViewsMessageSchema.parse({ type: 'leitbild:views', views: listings }).views).toHaveLength(EMBEDDED_VIEW_LISTING_MAX)
   })
 })
