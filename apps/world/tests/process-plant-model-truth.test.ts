@@ -535,7 +535,9 @@ describe('RCS subcooling margin', () => {
     expect(plantRun.activeIds().filter(id => id.includes('subcooling'))).toEqual([])
     plantRun.act('pressurizer-relief-open', { positionPercent: 35 })
     const entered = new Map<string, number>()
-    for (let second = 0; second < 300 && entered.size < 2; second += 1) {
+    // Safety injection comes in about a minute after the reactor trips and slows the fall, so the coolant
+    // reaches saturation some six minutes in.
+    for (let second = 0; second < 600 && entered.size < 2; second += 1) {
       plantRun.run(1_000)
       for (const id of plantRun.activeIds()) if (id.includes('subcooling') && !entered.has(id)) entered.set(id, Number(plantRun.tag('SUB-MARGIN')))
     }

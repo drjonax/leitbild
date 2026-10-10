@@ -104,8 +104,9 @@ describe('a stuck-open PORV', () => {
     }
     let lowestLevel = 100
     plantRun.run(90, () => { lowestLevel = Math.min(lowestLevel, plantRun.read('pressurizer.levelPercent')) })
-    // The reactor trips on low pressure; the coolant shrinks and then flashes.
-    expect(plantRun.active()).toContain('trip:pzr-pressure-low-reactor-trip:low-pzr-pressure-reactor-trip')
+    // The falling pressure lowers the overtemperature delta-T set point onto the loop delta-T, which trips the
+    // reactor before the low-pressure trip would; the coolant shrinks and then flashes.
+    expect(plantRun.active()).toContain('trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip')
     expect(lowestLevel).toBeLessThan(40)
     const pressures: number[] = []
     plantRun.run(450, () => pressures.push(plantRun.read('pressurizer.pressureMPa')))

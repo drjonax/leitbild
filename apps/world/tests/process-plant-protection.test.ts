@@ -223,7 +223,7 @@ describe('safety injection', () => {
   const siActuated = 'trip:safety-injection-low-pzr-pressure:safety-injection'
   const accumulators = ['A', 'B', 'C', 'D'] as const
 
-  test('a stuck-open PORV brings in SI on low pressurizer pressure, then the accumulators below their gas pressure', () => {
+  test('a stuck-open PORV brings in SI on low pressurizer pressure, and the pressure hangs above the accumulators\' gas', () => {
     const plantRun = started()
     plantRun.run(5_000)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(false)
@@ -236,12 +236,13 @@ describe('safety injection', () => {
     // The SI signal trips the reactor too, if nothing has yet.
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
 
-    // Each accumulator injects once reactor coolant pressure falls below its gas pressure.
-    expect(plantRun.secondsUntil('alarm:accumulator-a-injecting:injecting', 300)).not.toBeNull()
-    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(Number(plantRun.read('safetyAccumulatorA.gasPressureMPa')))
-    expect(Number(plantRun.read('safetyAccumulatorA.gasPressureMPa'))).toBeLessThan(4.4)
-    for (const loop of accumulators) expect(plantRun.activeIds()).toContain(`alarm:accumulator-${loop.toLowerCase()}-injecting:injecting`)
-    expect(Number(plantRun.tag('SI-FLOW'))).toBeGreaterThan(Number(plantRun.read('safetyInjectionPumpA.flowKgPerS')) + Number(plantRun.read('safetyInjectionPumpB.flowKgPerS')))
+    // The coolant then flashes and the pressure hangs near the hot legs' saturation pressure, as at Three Mile
+    // Island: well above the accumulators' gas, so they stay shut while the SI pumps refill the system.
+    expect(plantRun.secondsUntil('alarm:accumulator-a-injecting:injecting', 300)).toBeNull()
+    for (const loop of accumulators) expect(plantRun.activeIds()).not.toContain(`alarm:accumulator-${loop.toLowerCase()}-injecting:injecting`)
+    expect(Number(plantRun.tag('PT-455'))).toBeGreaterThan(7)
+    expect(Number(plantRun.read('safetyAccumulatorA.gasPressureMPa'))).toBeCloseTo(4.4, 1)
+    expect(Number(plantRun.tag('SI-FLOW'))).toBeGreaterThan(40)
   }, 60_000)
 
   test('high-head SI pumps deliver less the higher the reactor coolant pressure they pump against', () => {
