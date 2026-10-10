@@ -7,7 +7,7 @@
 
 use std::ops::{Add, Div, Mul, Neg, Sub};
 const PI: f64 = std::f64::consts::PI;
-const SB: f64 = 5.670374419e-8;
+pub(crate) const SB: f64 = 5.670374419e-8;
 const G: f64 = 9.80665;
 const BTU: f64 = 1055.05585262 / 3600. / 0.3048 * 1.8;
 pub type Result<T> = std::result::Result<T, &'static str>;

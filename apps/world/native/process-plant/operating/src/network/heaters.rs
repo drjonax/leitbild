@@ -21,8 +21,9 @@
 //! `ld01-pzr-heater-contact`.
 //!
 //! A segment's receipt reaches the cell by its span, and its steel receives
-//! the opposite of every fluid term. The area-mixed enclosure's shell member
-//! has no owner yet, so an exposed segment of a powered bank refuses by
+//! the opposite of every fluid term. The band enclosure's radiation belongs
+//! to the walls module, which owns its shell member; the rods alone have no
+//! enclosure, so there an exposed segment of a powered bank refuses by
 //! name. Nothing is clipped, floored, defaulted or prescribed.
 use super::{
     Failure,
@@ -121,7 +122,7 @@ pub struct Caloric304 {
     pub maximum_k: f64,
 }
 impl Caloric304 {
-    fn validate(&self) -> Result<(), Failure> {
+    pub fn validate(&self) -> Result<(), Failure> {
         positive_finite(&[
             ("density_kg_m3", self.density_kg_m3),
             ("datum_K", self.datum_k),
@@ -241,7 +242,7 @@ pub struct ContactBlock {
     pub conductivity_304: Conductivity304,
 }
 impl ContactBlock {
-    fn validate(&self) -> Result<(), Failure> {
+    pub fn validate(&self) -> Result<(), Failure> {
         let (w, x) = (&self.wet, &self.exposed);
         positive_finite(&[
             ("sensibleCoefficient_W_m2K", w.sensible_coefficient_w_m2_k),
@@ -300,7 +301,7 @@ impl HeaterCase {
             gas_coefficient_factor: 1.,
         }
     }
-    fn validate(&self, contact: &ContactBlock) -> Result<(), Failure> {
+    pub fn validate(&self, contact: &ContactBlock) -> Result<(), Failure> {
         let w = &contact.wet;
         let declared = |v: f64, list: &[f64]| v == 1. || list.contains(&v);
         if !(self.wall_birth_fraction == w.wall_birth_fraction
@@ -371,6 +372,13 @@ pub struct LiquidContact {
     /// `Tm = Tmin(304 properties at Tm)`, with its implicit direction.
     pub minimum_film: Scalar,
     material: WallMaterial,
+}
+impl LiquidContact {
+    /// The 304 properties at the self-consistent endpoint, which every PZR
+    /// wet law in this zone uses for its minimum-film selector.
+    pub fn material(&self) -> WallMaterial {
+        self.material
+    }
 }
 
 /// One segment's sources in one evaluation.
@@ -853,7 +861,9 @@ impl Heaters {
     /// One segment's receipt and steel energy rate from the column, the
     /// segment's wetting (`Cell::heater_wetting` over its span), its steel
     /// energy coordinate, its bank's delivered Joule power and the shared
-    /// zone contacts of [`Heaters::contacts`].
+    /// zone contacts of [`Heaters::contacts`]. The steel rate excludes the
+    /// band enclosure's radiation, which the walls module owns and adds
+    /// (`walls::Walls::rates`).
     #[allow(clippy::too_many_arguments)]
     pub fn segment_rates<P: WaterProperties>(
         &self,
@@ -875,12 +885,6 @@ impl Heaters {
             return Err(fatal(format!("bank {} power is not finite", bank.id)));
         }
         let joule = bank_power_w * g.power_share;
-        if w.exposed_length_m.value > 0. && joule != 0. {
-            return Err(recoverable(format!(
-                "{} segment [{}, {}] m is exposed while powered: shell radiation recipient not owned",
-                bank.id, g.bottom_m, g.top_m
-            )));
-        }
         let t = self.caloric.temperature(metal / s(g.steel_mass_kg))?;
         let length = s(g.top_m - g.bottom_m);
         let area = |l: Scalar| s(g.lateral_area_m2) * l / length;
@@ -948,7 +952,10 @@ impl Heaters {
 
     /// Every segment's receipt and steel energy rate from the column, the
     /// steel energy coordinates (in segment order) and each bank's
-    /// delivered Joule power (in bank order).
+    /// delivered Joule power (in bank order), for rods without the walls
+    /// module. These rods have no enclosure, so an exposed segment of a
+    /// powered bank refuses by name; with the walls module use
+    /// `walls::Walls::rates`, which supplies the shell member.
     pub fn rates<P: WaterProperties>(
         &self,
         cell: &Cell,
@@ -973,6 +980,12 @@ impl Heaters {
         let mut saturation_calls = contacts.iter().flatten().count();
         let mut segments = Vec::with_capacity(self.segments.len());
         for (j, (g, w)) in self.segments.iter().zip(&wetting).enumerate() {
+            if w.exposed_length_m.value > 0. && bank_power_w[g.bank] != 0. {
+                return Err(recoverable(format!(
+                    "{} segment [{}, {}] m is exposed while powered: shell radiation recipient not owned",
+                    self.banks[g.bank].id, g.bottom_m, g.top_m
+                )));
+            }
             let out = self.segment_rates(
                 j,
                 column,
