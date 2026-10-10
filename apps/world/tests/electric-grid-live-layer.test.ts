@@ -211,9 +211,19 @@ describe('Grid live layer: geometry and state from the map queries', () => {
       expect(geometry.fidForSelection(selection)).toBe(feature.fid)
     }
     expect(geometry.fidForSelection({ panelId: gridOverviewPanelId, itemId: gridAssetItemId('grid:other', norway.model.buses[0]!.id) })).toBeNull()
-    const state = geometry.presentState(wire(grid, 'world.electric-grid.map.state'))
+    const rawState = wire(grid, 'world.electric-grid.map.state') as { islands: Array<{ energized: boolean }>; buses: { island: number[] } }
+    const state = geometry.presentState(rawState)
     expect([...state.featureStates.keys()]).toEqual(geometry.features.map(feature => feature.fid))
     expect(state.labels.length).toBeLessThanOrEqual(20)
+    // The largest energised island keeps the plain stroke; every other island takes a categorical colour.
+    const busesPerIsland = rawState.islands.map((_, island) => rawState.buses.island.filter(candidate => candidate === island).length)
+    const mainIsland = busesPerIsland.indexOf(Math.max(...busesPerIsland.filter((_, island) => rawState.islands[island]!.energized)))
+    const busFids = geometry.features.filter(feature => feature.properties.kind === 'bus').map(feature => feature.fid)
+    busFids.forEach((fid, bus) => {
+      const island = state.featureStates.get(fid)!.island as number
+      if (rawState.buses.island[bus] === mainIsland) expect(island).toBe(-1)
+      else expect(island).toBeGreaterThanOrEqual(0)
+    })
     const branchCard = state.hoverCard(0)!
     expect(branchCard.title).toBe(norway.model.branches[0]!.label)
     expect(branchCard.fields.find(field => field.key === 'path')!.value).toBe('Straight line between its buses (no mapped route)')

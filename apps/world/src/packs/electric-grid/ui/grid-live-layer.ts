@@ -362,7 +362,13 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
   requireAligned(geometry, result)
   const refs = refsFor(geometry)
   const featureStates = new Map<number, PackLiveFeatureState>()
-  const multipleIslands = result.islands.length > 1
+  // The largest energised island is the main grid and keeps the plain stroke; every other
+  // island takes a categorical stroke colour, repeating after eight.
+  const busesPerIsland = result.islands.map(() => 0)
+  for (const island of result.buses.island) busesPerIsland[island]! += 1
+  const mainIsland = result.islands.reduce((main, island, position) =>
+    island.energized && (main < 0 || busesPerIsland[position]! > busesPerIsland[main]!) ? position : main, -1)
+  const islandColor = (island: number): number => island === mainIsland ? -1 : (mainIsland >= 0 && island > mainIsland ? island - 1 : island) % 8
   const busEnergized = (bus: number): boolean => result.buses.energized[bus] === 1
   geometry.branches.forEach((branch, position) => {
     const closed = result.branches.closed[position] === 1
@@ -383,8 +389,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
     featureStates.set(refs.busStart + position, {
       live: true,
       energized,
-      // Island stroke colours repeat after eight islands; one island draws no stroke colour.
-      island: multipleIslands ? result.buses.island[position]! % 8 : -1,
+      island: islandColor(result.buses.island[position]!),
       alarm: !energized,
     })
   })
