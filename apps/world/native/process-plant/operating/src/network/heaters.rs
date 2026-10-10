@@ -29,8 +29,8 @@ use super::{
     stratified::{Cell, Column, HeaterReceipt, Wetting, Zone},
 };
 use crate::thermal::{
-    self, Film, GasContact, HeaterFilm, Saturation, Scalar, WallFlux, WallLaw, WallMaterial,
-    WaterPoint, WaterProperties,
+    self, Film, FilmBranch, GasContact, HeaterFilm, Saturation, Scalar, WallFlux, WallLaw,
+    WallMaterial, WaterPoint, WaterProperties,
 };
 use serde::Deserialize;
 
@@ -669,10 +669,12 @@ impl Heaters {
                 sensible_w_m2_k: w.sensible_coefficient_w_m2_k,
                 onset_contact_angle_deg: w.onset_contact_angle_deg,
                 wall_birth_fraction: self.case.wall_birth_fraction,
-                bromley_coefficient: w.bromley_coefficient,
-                film_convection_factor: self.case.film_convection_factor,
                 minimum_film_bounds_k: w.minimum_film_bounds_k,
-                rod_length_m: b.top_m - b.bottom_m,
+                film: FilmBranch::Vertical {
+                    coefficient: w.bromley_coefficient,
+                    length_m: b.top_m - b.bottom_m,
+                    convection_factor: self.case.film_convection_factor,
+                },
             }),
             emissivity: w.film_radiation_coefficient,
             material,

@@ -440,8 +440,10 @@ pub enum Film {
     /// material at the self-consistent minimum-film temperature.
     Heater(HeaterFilm),
 }
-/// Constants of the heater's wet law (`ld01-pzr-heater-contact`), owned by
-/// the caller's strict block; nothing here is defaulted.
+/// Constants of the PZR wet law (`ld01-pzr-heater-contact`, and the shell
+/// and heads' `ld01-pzr-shell`), owned by the caller's strict blocks;
+/// nothing here is defaulted. The shell and heads reuse the heater's
+/// complete source construction with their own coefficient and film.
 #[derive(Clone, Copy, Debug)]
 pub struct HeaterFilm {
     /// Signed sensible contact `qFC = h (Tw − TL)`, W/(m² K).
@@ -449,14 +451,25 @@ pub struct HeaterFilm {
     pub onset_contact_angle_deg: f64,
     /// `chi`: the boiling increment's share born as wall vapor.
     pub wall_birth_fraction: f64,
-    /// Bromley's vertical film coefficient.
-    pub bromley_coefficient: f64,
-    /// Factor on the film convection term: 1, or a declared sensitivity.
-    pub film_convection_factor: f64,
     /// Bounds of the CTF minimum-film selector, K.
     pub minimum_film_bounds_k: [f64; 2],
-    /// The bank's full physical rod length for the vertical film, m.
-    pub rod_length_m: f64,
+    pub film: FilmBranch,
+}
+/// The film-boiling branch of the PZR wet law, with the film radiation
+/// `emissivity σ (Tw⁴ − Tsat⁴)` of the law in both.
+#[derive(Clone, Copy, Debug)]
+pub enum FilmBranch {
+    /// Bromley's vertical film over a fixed development length (rods:
+    /// the full rod length; shell: its declared length), its convection
+    /// term scaled by a factor (1 or a declared sensitivity).
+    Vertical {
+        coefficient: f64,
+        length_m: f64,
+        convection_factor: f64,
+    },
+    /// The heads' effective vapor thermal resistance `kv(Tf) (Tw − Tsat) /
+    /// length`; the length is not a film thickness.
+    Resistance { length_m: f64 },
 }
 #[derive(Clone, Copy, Debug)]
 pub struct WallMaterial {
@@ -726,15 +739,31 @@ fn film_heat<P: WaterProperties>(
 ) -> Result<Scalar> {
     let vapor = props.vapor(pressure, s(0.5) * (wall_t + sat.temperature))?;
     check_water(vapor)?;
-    // The heater's vertical film: its own Bromley coefficient over the full
-    // rod length, with the latent-enthalpy form and a convection factor.
+    let radiation = s(law.emissivity * SB) * (wall_t.pow(4.) - sat.temperature.pow(4.));
+    // The PZR film: Bromley's vertical film over its fixed length, with the
+    // latent-enthalpy form and a convection factor, or the heads' vapor
+    // resistance.
     let (coefficient, length, latent, factor) = match law.film {
         Film::Core => (1.13, 0.25, sat.vapor.enthalpy - sat.liquid.enthalpy, None),
-        Film::Heater(f) => (
-            f.bromley_coefficient,
-            f.rod_length_m,
+        Film::Heater(HeaterFilm {
+            film: FilmBranch::Resistance { length_m },
+            ..
+        }) => {
+            return Ok(vapor.conductivity * (wall_t - sat.temperature) / s(length_m) + radiation);
+        }
+        Film::Heater(HeaterFilm {
+            film:
+                FilmBranch::Vertical {
+                    coefficient,
+                    length_m,
+                    convection_factor,
+                },
+            ..
+        }) => (
+            coefficient,
+            length_m,
             sat.vapor.enthalpy - sat.liquid.enthalpy,
-            Some(f.film_convection_factor),
+            Some(convection_factor),
         ),
         Film::Tube | Film::External => (
             0.62,
@@ -755,7 +784,7 @@ fn film_heat<P: WaterProperties>(
         Some(f) => s(f) * h * (wall_t - sat.temperature),
         None => h * (wall_t - sat.temperature),
     };
-    Ok(convection + s(law.emissivity * SB) * (wall_t.pow(4.) - sat.temperature.pow(4.)))
+    Ok(convection + radiation)
 }
 
 fn liquid_wall_inputs(
