@@ -33,6 +33,8 @@ export const toUIMessage = (m: Message): UIMessage => ({
   // arrives at the UI with cause=undefined regardless of what the server
   // stamped.
   ...(m.cause ? { cause: m.cause } : {}),
+  // A display-request reply links back to its answer through inReplyTo[0].
+  ...(m.inReplyTo ? { inReplyTo: m.inReplyTo } : {}),
   ...(m.attachments ? { attachments: m.attachments } : {}),
   ...(m.toolTrace ? { toolTrace: m.toolTrace } : {}),
 })

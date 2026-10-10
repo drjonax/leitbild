@@ -3,7 +3,10 @@
  * optionally injects a Pack-declared fault on Unit 2, advances simulated time,
  * asks a fresh Assistant Room one question and records what it presented.
  *
- *   bun scripts/agent-display-probe.ts <stage> <absolute-output-dir> [scenario-id ...]
+ *   bun scripts/agent-display-probe.ts <stage> <absolute-output-dir> [--request-display] [scenario-id ...]
+ *
+ * --request-display asks for a display after every answer that showed none,
+ * as the "Show display" action under an answer does, and records the reply.
  *
  * Uses the configured production Assistant and provider; never reads
  * credentials. LEITBILD_PROBE_ORIGIN selects another deployment. Results are
@@ -24,6 +27,8 @@ interface Scenario {
   readonly keyPanel?: 'trend' | 'comparison' | 'readouts' | 'alarms' | 'mimic'
   /** Whether an equipment mimic is expected, to be avoided, or either is fine. */
   readonly mimic?: 'expected' | 'avoid'
+  /** Whether a requested display should appear when the answer showed none; absent means either is fine. */
+  readonly requested?: 'display' | 'none'
 }
 
 const scenarios: ReadonlyArray<Scenario> = [
@@ -58,23 +63,25 @@ const scenarios: ReadonlyArray<Scenario> = [
     prompt: 'Show me the safety injection lineup to loop C on Unit 2.' },
   { id: 'afw-pump-around', fault: { actionId: 'loss-main-feedwater' }, advanceMinutes: 2, expect: 'display', keyPanel: 'mimic', mimic: 'expected',
     prompt: 'On Unit 2, what does motor-driven auxiliary feedwater pump A take its water and power from, and where does its flow go?' },
-  { id: 'single-state', advanceMinutes: 1, expect: 'none', mimic: 'avoid', prompt: 'Is main feedwater pump A on Unit 2 running?' },
+  { id: 'single-state', advanceMinutes: 1, expect: 'none', mimic: 'avoid', requested: 'display', prompt: 'Is main feedwater pump A on Unit 2 running?' },
   { id: 'power-stable', advanceMinutes: 1, expect: 'display', mimic: 'avoid',
     prompt: 'Is reactor power on Unit 2 stable over the last few minutes?', keySignals: ['core.powerMw', 'NIS-PR', 'GEN-MW'] },
   { id: 'compare-sg-levels', advanceMinutes: 1, expect: 'display', keyPanel: 'comparison', mimic: 'avoid',
     prompt: 'Compare the four steam generator levels on Unit 2.', keySignals: ['SG-A-LVL-NR', 'SG-B-LVL-NR'] },
   { id: 'show-tavg', advanceMinutes: 1, expect: 'display', mimic: 'avoid',
     prompt: 'Show me Unit 2 average coolant temperature over the last 10 minutes.', keySignals: ['TAVG'] },
-  { id: 'single-value', advanceMinutes: 1, expect: 'none', prompt: 'What is the current pressurizer pressure on Unit 2?' },
+  { id: 'single-value', advanceMinutes: 1, expect: 'none', requested: 'display', prompt: 'What is the current pressurizer pressure on Unit 2?' },
   { id: 'explanation', expect: 'none', prompt: 'Briefly explain what the pressurizer spray does in this model.' },
-  { id: 'text-only', advanceMinutes: 1, expect: 'none', prompt: 'Give me Unit 2 status in one sentence, text only please.' },
-  { id: 'product-question', expect: 'none', prompt: 'What is a reference design in Leitbild?' },
+  { id: 'text-only', advanceMinutes: 1, expect: 'none', requested: 'display', prompt: 'Give me Unit 2 status in one sentence, text only please.' },
+  { id: 'product-question', expect: 'none', requested: 'none', prompt: 'What is a reference design in Leitbild?' },
 ]
 
-const [stage, directory, ...selected] = Bun.argv.slice(2)
+const [stage, directory, ...rest] = Bun.argv.slice(2)
 if (!stage || !/^[a-z0-9-]+$/.test(stage) || !directory || !isAbsolute(directory)) {
-  throw new Error('Usage: bun scripts/agent-display-probe.ts <stage> <absolute-output-dir> [scenario-id ...]')
+  throw new Error('Usage: bun scripts/agent-display-probe.ts <stage> <absolute-output-dir> [--request-display] [scenario-id ...]')
 }
+const requestDisplays = rest.includes('--request-display')
+const selected = rest.filter(argument => argument !== '--request-display')
 const unknown = selected.filter(id => !scenarios.some(scenario => scenario.id === id))
 if (unknown.length > 0) throw new Error(`Unknown scenarios: ${unknown.join(', ')}`)
 const chosen = selected.length === 0 ? scenarios : scenarios.filter(scenario => selected.includes(scenario.id))
@@ -163,6 +170,48 @@ const composeOutcomes = async (roomId: string, turnId: string): Promise<Readonly
   return outcomes
 }
 
+// The agent's first new answer, pass or error, polled until the probe deadline.
+const nextReply = async (roomPath: string, prior: ReadonlySet<string>, agentId: string, label: string): Promise<any> => {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < 300_000) { // Probe deadline, not a product limit.
+    const reply = (await request(roomPath + '?limit=100')).messages.find((message: { id: string; senderId: string; type: string }) =>
+      !prior.has(message.id) && message.senderId === agentId && ['chat', 'pass', 'error'].includes(message.type))
+    if (reply) return reply
+    await Bun.sleep(2_000)
+  }
+  throw new Error(`No reply for ${label} within the probe deadline`)
+}
+
+const viewFence = (content: string): string | null => /```leitbild-view\n(view \S+)\n```/.exec(content)?.[1] ?? null
+
+// Asks the answer's author for a display, as the "Show display" action does,
+// and records what the reply presents.
+const requestDisplay = async (roomId: string, roomPath: string, human: { id: string }, agentId: string, answer: { id: string }, label: string) => {
+  const prior = new Set((await request(roomPath + '?limit=100')).messages.map((message: { id: string }) => message.id))
+  const startedAt = Date.now()
+  const accepted = await request(`/api/workspaces/${workspaceId}/agents/rooms/${encodeURIComponent(roomId)}/messages/${encodeURIComponent(answer.id)}/display-request`, { requesterId: human.id })
+  const reply = await nextReply(roomPath, prior, agentId, `${label} display request`)
+  const composes = reply.generationTraceId ? await composeOutcomes(roomId, reply.generationTraceId) : []
+  return {
+    reply,
+    row: {
+      queued: accepted.queued,
+      type: reply.type,
+      cause: reply.cause ?? null,
+      repliesToAnswer: reply.inReplyTo?.[0] === answer.id,
+      displayed: viewFence(reply.content) !== null,
+      composeCalls: composes.length,
+      validWithinTwo: composes.length === 0 ? null : composes.slice(0, 2).some(outcome => outcome.accepted),
+      panels: composes.filter(outcome => outcome.accepted).at(-1)?.panels ?? [],
+      signals: composes.filter(outcome => outcome.accepted).at(-1)?.signals ?? [],
+      rejections: composes.filter(outcome => !outcome.accepted).map(outcome => outcome.error),
+      wallMs: Date.now() - startedAt,
+      modelCalls: reply.modelCalls,
+      replyChars: reply.content.length,
+    },
+  }
+}
+
 const rows: Array<Record<string, unknown>> = []
 for (const scenario of chosen) {
   const copy = await invoke(workspaceId, 'world.simulation-run.copy', { name: `Display probe · ${stage} · ${scenario.id}` }, { resource: seed.resource })
@@ -181,16 +230,9 @@ for (const scenario of chosen) {
   const prior = new Set((await request(roomPath + '?limit=100')).messages.map((message: { id: string }) => message.id))
   const startedAt = Date.now()
   await request(`/api/workspaces/${workspaceId}/agents/messages`, { senderId: human.id, senderName: human.name, content: scenario.prompt, target: { rooms: [roomId] } })
-  let answer: any
-  while (Date.now() - startedAt < 300_000) { // Probe deadline, not a product limit.
-    answer = (await request(roomPath + '?limit=100')).messages.find((message: { id: string; senderId: string; type: string }) =>
-      !prior.has(message.id) && message.senderId === agent.id && message.type === 'chat')
-    if (answer) break
-    await Bun.sleep(2_000)
-  }
-  if (!answer) throw new Error(`No answer for ${scenario.id} within the probe deadline`)
+  const answer = await nextReply(roomPath, prior, agent.id, scenario.id)
   const wallMs = Date.now() - startedAt
-  const fence = /```leitbild-view\n(view \S+)\n```/.exec(answer.content)?.[1] ?? null
+  const fence = viewFence(answer.content)
   const composes = answer.generationTraceId ? await composeOutcomes(roomId, answer.generationTraceId) : []
   const accepted = composes.filter(outcome => outcome.accepted)
   const usedSignals = new Set(accepted.flatMap(outcome => outcome.signals))
@@ -220,9 +262,16 @@ for (const scenario of chosen) {
     roomId,
     runId: resource.id,
   }
-  rows.push(row)
-  await save(`${stage}-${scenario.id}`, { scenario, row, answer })
-  console.log(JSON.stringify(row))
+  const requested = requestDisplays && fence === null && answer.type === 'chat'
+    ? await requestDisplay(roomId, roomPath, human, agent.id, answer, scenario.id)
+    : null
+  const fullRow = requested === null ? row : {
+    ...row,
+    requested: { ...requested.row, expected: scenario.requested ?? null, correct: scenario.requested === undefined ? null : requested.row.displayed === (scenario.requested === 'display') },
+  }
+  rows.push(fullRow)
+  await save(`${stage}-${scenario.id}`, { scenario, row: fullRow, answer, ...(requested === null ? {} : { requestedReply: requested.reply }) })
+  console.log(JSON.stringify(fullRow))
 }
 
 const ratio = (hits: number, total: number): number | null => total === 0 ? null : Math.round((hits / total) * 100) / 100
@@ -244,6 +293,18 @@ const summary = {
   mimicFalsePositives: ratio(rows.filter(row => row.mimic === 'avoid' && row.mimicShown).length, rows.filter(row => row.mimic === 'avoid').length),
   medianWallMs: latencies[Math.floor(latencies.length / 2)] ?? null,
   meanPromptTokens: rows.length === 0 ? null : Math.round(rows.reduce((sum, row) => sum + (row.promptTokens as number), 0) / rows.length),
+  ...(requestDisplays ? (() => {
+    const requests = rows.flatMap(row => row.requested === undefined ? [] : [row.requested as { correct: boolean | null; displayed: boolean; repliesToAnswer: boolean; validWithinTwo: boolean | null }])
+    const judged = requests.filter(entry => entry.correct !== null)
+    const composedRequests = requests.filter(entry => entry.validWithinTwo !== null)
+    return {
+      displayRequests: requests.length,
+      requestedCorrect: ratio(judged.filter(entry => entry.correct).length, judged.length),
+      requestedDisplayed: ratio(requests.filter(entry => entry.displayed).length, requests.length),
+      requestedValidWithinTwo: ratio(composedRequests.filter(entry => entry.validWithinTwo).length, composedRequests.length),
+      requestedRepliesToAnswer: ratio(requests.filter(entry => entry.repliesToAnswer).length, requests.length),
+    }
+  })() : {}),
   rows,
 }
 await save(`${stage}-summary`, summary)

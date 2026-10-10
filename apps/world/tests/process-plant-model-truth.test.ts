@@ -361,7 +361,7 @@ describe('nuclear instrumentation', () => {
     expect(Number(tag('NIS-SR'))).toBeGreaterThanOrEqual(10)
     expect(Number(tag('NIS-SR'))).toBeLessThan(100)
     expect(Number(tag('NIS-IR'))).toBe(1e-11)
-  })
+  }, 20_000) // A tripped Run held for minutes, the same watchdog as the runtime's long trajectories.
 })
 
 describe('steam generator high level', () => {

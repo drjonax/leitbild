@@ -26,6 +26,7 @@ import type {
 import { derivePhase, phaseLabel, THINKING_MARKER } from './thinking-phase.ts'
 import { openTextEditorModal } from './modals/detail-modal.ts'
 import { openSendAsPicker } from './send-as-picker.ts'
+import { posterForRoom } from './room-poster.ts'
 import { reconcileSelectionForRoom } from './agent-selection.ts'
 import { wsDispatch } from './ws-dispatch/index.ts'
 import { batched } from '../lib/nanostores.ts'
@@ -78,7 +79,6 @@ import {
   $agentWarnings,
   $roomListView,
   $agentListView,
-  $selectedHumanByRoom,
   type AgentEntry,
 } from './stores.ts'
 
@@ -539,23 +539,12 @@ chatForm.onsubmit = (e) => {
   const roomName = roomIdToName(roomId)
   if (!roomName) return
 
-  const posterMap = $selectedHumanByRoom.get()
-  let senderId = posterMap[roomId]
-
-  // If no human selected for this room, try to resolve. Auto-select the
-  // single human in the room; otherwise open the picker modal.
-  if (!senderId) {
-    const view = $agentListView.get()
-    const memberSet = new Set(view.roomMemberIds)
-    const humansInRoom = Object.values(view.agents).filter(a => a.kind === 'human' && memberSet.has(a.id))
-    if (humansInRoom.length === 1) {
-      senderId = humansInRoom[0]!.id
-      $selectedHumanByRoom.setKey(roomId, senderId)
-    } else {
-      // Hand off to the send-as picker. It re-submits when the user selects.
-      void openSendAsPicker(roomId, content, { chatInput, resetChatInputHeight })
-      return
-    }
+  // The chosen human, else the room's single human; otherwise the reader
+  // picks one in the send-as picker, which re-submits on selection.
+  const senderId = posterForRoom(roomId)
+  if (senderId === undefined) {
+    void openSendAsPicker(roomId, content, { chatInput, resetChatInputHeight })
+    return
   }
 
   const pendingAtts = getAttachments(roomId)

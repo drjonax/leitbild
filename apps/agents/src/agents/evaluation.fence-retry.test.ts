@@ -243,3 +243,71 @@ describe('evaluation view-fence guard', () => {
     expect(callLog[1]!.request.messages.at(-1)!.content).toContain('at most one display per answer')
   })
 })
+
+describe('evaluation required view (display requests)', () => {
+  const viewFence = (ref: string): string => `The display tracks pressurizer level against its alarms.\n\n\`\`\`leitbild-view\nview ${ref}\n\`\`\``
+  const composeCall = { content: '', toolCalls: [{ id: 'w1', function: { name: 'workspace_call', arguments: { calls: [] } } }] }
+  const scripted = (answers: ReadonlyArray<{ content: string; toolCalls?: ChatResponse['toolCalls'] }>) => {
+    let index = 0
+    const calls: ChatRequest[] = []
+    const provider: LLMProvider = {
+      models: async () => [],
+      // The loop keeps appending to the same context array; record each request as sent.
+      chat: async request => { calls.push(structuredClone(request)); return { ...mkResponse(''), ...answers[index++]! } },
+    }
+    return { provider, calls }
+  }
+  // The compose result names the call that produced it, as workspace_call does.
+  const executor = async (calls: ReadonlyArray<{ callId?: string }>) => [{
+    success: true,
+    data: { results: [{ key: 'compose', operationId: 'world.process-plant.display.compose', success: true, data: {}, viewRef: `${calls[0]!.callId}/compose` }] },
+  }]
+  const options = { toolDefinitions: [{ type: 'function' as const, function: { name: 'workspace_call', description: 'call', parameters: {} } }], requireView: true }
+
+  test('an answer without a display is asked once more, and can still compose one', async () => {
+    const { provider, calls } = scripted([
+      { content: 'Pressurizer level is steady at 55 %.' },
+      composeCall,
+      { content: viewFence('call_1_0/compose') },
+    ])
+    const result = await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', options)
+    expect(calls).toHaveLength(3)
+    expect(calls[1]!.messages.at(-2)).toEqual({ role: 'assistant', content: 'Pressurizer level is steady at 55 %.' })
+    expect(calls[1]!.messages.at(-1)!.content).toContain('The reader asked for a live display, and this response presents none.')
+    expect(result.decision.response).toEqual({ action: 'respond', content: viewFence('call_1_0/compose') })
+  })
+
+  test('the second answer without a display stands', async () => {
+    const { provider, calls } = scripted([
+      { content: 'Pressurizer level is steady at 55 %.' },
+      { content: 'No display can be produced: the answer is about the product, not the plant.' },
+    ])
+    const result = await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', options)
+    expect(calls).toHaveLength(2)
+    expect(result.decision.response).toEqual({ action: 'respond', content: 'No display can be produced: the answer is about the product, not the plant.' })
+  })
+
+  test('an answer that presents the display it composed is not asked again', async () => {
+    const { provider, calls } = scripted([composeCall, { content: viewFence('call_0_0/compose') }])
+    const result = await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', options)
+    expect(calls).toHaveLength(2)
+    expect(result.decision.response).toEqual({ action: 'respond', content: viewFence('call_0_0/compose') })
+  })
+
+  test('asking again does not count against the tool iteration limit', async () => {
+    const { provider, calls } = scripted([
+      { content: 'Pressurizer level is steady at 55 %.' },
+      composeCall,
+      { content: viewFence('call_1_0/compose') },
+    ])
+    const result = await evaluate(mkContext(), mkConfig(), provider, executor, 1, 'room-1', options)
+    expect(calls).toHaveLength(3)
+    expect(result.decision.response).toEqual({ action: 'respond', content: viewFence('call_1_0/compose') })
+  })
+
+  test('without the requirement an answer without a display is final', async () => {
+    const { provider, calls } = scripted([{ content: 'Pressurizer level is steady at 55 %.' }])
+    await evaluate(mkContext(), mkConfig(), provider, executor, 5, 'room-1', { ...options, requireView: false })
+    expect(calls).toHaveLength(1)
+  })
+})

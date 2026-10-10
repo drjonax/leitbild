@@ -60,6 +60,13 @@ describe('toUIMessage', () => {
     expect(ui.content).toBe('hello')
   })
 
+  test('forwards the cause and the messages a reply answers', () => {
+    const ui = toUIMessage({ ...base, cause: { kind: 'display-request', name: 'Hilde' }, inReplyTo: ['answer-1'] })
+    expect(ui.cause).toEqual({ kind: 'display-request', name: 'Hilde' })
+    expect(ui.inReplyTo).toEqual(['answer-1'])
+    expect('inReplyTo' in toUIMessage(base)).toBe(false)
+  })
+
   test('forwards provider + model strings when present', () => {
     const ui = toUIMessage({
       ...base,

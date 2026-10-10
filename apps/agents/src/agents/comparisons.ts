@@ -259,7 +259,7 @@ export const createComparisons = (deps: Dependencies) => {
           }
           return results
         }
-        const result=await evaluate({...source.context,messages,systemBlocks,tokenBudget,flushInfo:{ids:new Set(),triggerRoomId:roomId}},config,provider,tracked,undefined,roomId,{executionTurnId:alternative.id,toolDefinitions:tools,signal:controller.signal})
+        const result=await evaluate({...source.context,messages,systemBlocks,tokenBudget,flushInfo:{ids:new Set(),triggerRoomId:roomId}},config,provider,tracked,undefined,roomId,{executionTurnId:alternative.id,toolDefinitions:tools,signal:controller.signal,...(source.requireView?{requireView:true}:{})})
         const response=result.decision.response
         if(response.action==='respond') alternative.content=response.content
         else if(response.action==='error') alternative.error=response.message

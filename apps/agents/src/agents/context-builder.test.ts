@@ -354,3 +354,23 @@ describe('buildContext — end-to-end snapshots (wire-format parity guard)', () 
     expect(result.systemBlocks![0]!.cacheable).toBe(false)
   })
 })
+
+describe('requested turn instruction', () => {
+  test('ends the normal context as a transient user message counted in the history budget', () => {
+    const history = mkHistory('room-1', 'General', undefined, Array.from({ length: 4 }, (_, i) => ({
+      id: `m${i}`, roomId: 'room-1', senderId: 'human', content: `message ${i} ${'x'.repeat(200)}`, timestamp: i, type: 'chat' as const,
+    })))
+    const includes = { includeContext: { participants: false, activity: false, knownAgents: false }, includePrompts: { workspace: false, room: false, persona: false, responseFormat: false, skills: false } }
+    const instruction = `[Display request] ${'y'.repeat(400)}`
+    const without = buildContext(mkDeps({ history, contextTokenBudget: 260, ...includes }), 'room-1')
+    const withInstruction = buildContext(mkDeps({ history, contextTokenBudget: 260, turnInstruction: instruction, ...includes }), 'room-1')
+    expect(withInstruction.messages.at(-1)).toEqual({ role: 'user', content: instruction })
+    expect(withInstruction.messages.length - 1).toBeLessThan(without.messages.length)
+    expect(withInstruction.flushInfo.ids.size).toBe(0)
+  })
+
+  test('is refused where a script directs the room', () => {
+    expect(() => buildContext(mkScriptDeps({ turnInstruction: 'Show a display.' }), 'room-1'))
+      .toThrow('A requested turn cannot run while a script directs this room')
+  })
+})

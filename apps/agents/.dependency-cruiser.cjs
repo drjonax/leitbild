@@ -15,11 +15,11 @@ module.exports = {
     {
       name: 'ui-must-not-import-core-internals',
       severity: 'error',
-      comment: 'UI talks to backend via HTTP/WS. Direct imports of core/* runtime modules bypass the API contract. Pure type modules (anything named types.ts or under core/types/) are fine — they cross the boundary as type information only, not runtime code.',
+      comment: 'UI talks to backend via HTTP/WS. Direct imports of core/* runtime modules bypass the API contract. Pure type modules (anything named types.ts or under core/types/) are fine — they cross the boundary as type information only, not runtime code. Browser-safe contracts shared with a route (render-validators, display-request.ts) are allowed by name.',
       from: { path: '^src/ui/' },
       to: {
         path: '^src/core/',
-        pathNot: ['^src/core/types/', '/types\\.ts$', '/render-validators/', '/scripts/script-md-parser\\.ts$'],
+        pathNot: ['^src/core/types/', '/types\\.ts$', '/render-validators/', '/scripts/script-md-parser\\.ts$', '^src/core/display-request\\.ts$'],
       },
     },
     {

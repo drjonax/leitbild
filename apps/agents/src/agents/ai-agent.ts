@@ -19,7 +19,7 @@
 // Side effects are handled via the onDecision callback.
 // ============================================================================
 
-import type { AIAgent, AIAgentConfig, IncludeContext, IncludePrompts, PromptSection, ContextSection } from '../core/types/agent.ts'
+import type { AIAgent, AIAgentConfig, IncludeContext, IncludePrompts, PromptSection, ContextSection, RequestedTurn } from '../core/types/agent.ts'
 import type { AgentHistory, Message } from '../core/types/messaging.ts'
 import type { EvalEvent, EvalEventCore, EvalEventScope } from '../core/types/agent-eval.ts'
 import { generateTraceId } from '../core/types/agent-eval.ts'
@@ -54,6 +54,8 @@ export interface AgentTurnStart {
   readonly toolDefinitions: ReadonlyArray<ToolDefinition>
   readonly focusedSubjects: ReadonlyArray<WorkspaceSubjectReference>
   readonly inReplyTo?: ReadonlyArray<string>
+  // A requested turn that must present a live view; a comparison replays it so.
+  readonly requireView?: boolean
 }
 
 export interface AIAgentOptions {
@@ -104,6 +106,10 @@ export interface AIAgentOptions {
   // bump `multimodalImagesDropped`. Wired by spawn.ts from shared.limitMetrics.
   readonly metricsSink?: { inc: (field: 'multimodalImagesDropped', by?: number) => void }
 }
+
+// Messages that ask the agent for an answer; the others only join its view.
+const triggersEvaluation = (message: Message): boolean =>
+  message.type !== 'system' && message.type !== 'join' && message.type !== 'leave' && message.type !== 'pass' && message.type !== 'error'
 
 // === Factory ===
 
@@ -210,6 +216,11 @@ export const createAIAgent = (
   // Set LEITBILD_TOOL_CHECKIN_ABANDON_MS=0 to disable the pause entirely
   // (headless / batch / test mode): evaluation stops at maxToolIterations.
   const pendingCheckins = new Map<string, (continueTurn: boolean) => void>()
+  // Requested turns (requestTurn): waiting for their room's next evaluation,
+  // and rooms whose requested turn is running. At most one of either per
+  // room. Waiting ones are dropped with all pending work by cancelGeneration.
+  const requestedTurns = new Map<string, RequestedTurn>()
+  const runningRequests = new Set<string>()
   const parsedAbandonMs = Number.parseInt(process.env.LEITBILD_TOOL_CHECKIN_ABANDON_MS ?? '', 10)
   const abandonMs = Number.isFinite(parsedAbandonMs) && parsedAbandonMs >= 0
     ? parsedAbandonMs
@@ -226,7 +237,7 @@ export const createAIAgent = (
 
   // --- Context deps ---
 
-  const contextDeps = (effectiveModel: string, definitions: ReadonlyArray<ToolDefinition> | undefined): BuildContextDeps => ({
+  const contextDeps = (effectiveModel: string, definitions: ReadonlyArray<ToolDefinition> | undefined, turnInstruction?: string): BuildContextDeps => ({
     agentId,
     persona: currentPersona,
     workspacePrompt: getWorkspacePrompt?.(),
@@ -247,6 +258,7 @@ export const createAIAgent = (
     supportsImages: modelSupportsImages(effectiveModel),
     modelForWarn: effectiveModel,
     metricsSink: options?.metricsSink,
+    ...(turnInstruction === undefined ? {} : { turnInstruction }),
   })
   // buildContext walks five sources to assemble the LLM context. Order in
   // src/agents/context-builder.ts top header. Quick map of sources here so
@@ -286,6 +298,7 @@ export const createAIAgent = (
     traceId: string,
     evalToolDefs: ReadonlyArray<ToolDefinition> | undefined,
     inReplyTo?: ReadonlyArray<string>,
+    requireView?: boolean,
   ): Promise<EvalResult> => {
     const evalConfig = {
       ...baseConfig,
@@ -332,6 +345,7 @@ export const createAIAgent = (
       executionTurnId: traceId,
       ...(evalToolDefs ? { toolDefinitions: evalToolDefs } : {}),
       ...(inReplyTo ? { inReplyTo } : {}),
+      ...(requireView ? { requireView } : {}),
       ...(evalEventCb ? { onEvent: evalEventCb } : {}),
       signal,
       ...(checkinEnabled && maxToolIterationsCfg !== undefined ? { requestToolCheckin } : {}),
@@ -348,6 +362,7 @@ export const createAIAgent = (
           toolDefinitions: evalToolDefs ?? [],
           focusedSubjects: focusedSubjectsByRoom.get(triggerRoomId) ?? [],
           ...(inReplyTo ? { inReplyTo } : {}),
+          ...(requireView ? { requireView } : {}),
         }))
       } catch (error) {
         // Comparison evidence is optional; its failure must not break ordinary
@@ -391,6 +406,26 @@ export const createAIAgent = (
     }
   }
 
+  // A waiting requested turn runs once the room's own questions are answered:
+  // they get an ordinary turn first, so a requested reply never swallows them.
+  // One that a script now directs is dropped with a posted reason, because the
+  // script's context has no place for its instruction.
+  const takeRequestedTurn = (roomId: string): RequestedTurn | undefined => {
+    const turn = requestedTurns.get(roomId)
+    if (turn === undefined) return undefined
+    if (agentHistory.incoming.some(message => message.roomId === roomId && triggersEvaluation(message))) return undefined
+    requestedTurns.delete(roomId)
+    if (getScriptContext?.(roomId, resolveName(agentId))) {
+      onDecision({
+        response: { action: 'error', code: 'request_dropped', message: 'A script started directing this room before the requested turn ran; ask again when it ends.' },
+        generationMs: 0, triggerRoomId: roomId, inReplyTo: turn.inReplyTo, cause: turn.cause,
+      })
+      return undefined
+    }
+    runningRequests.add(roomId)
+    return turn
+  }
+
   const tryEvaluate = (triggerRoomId: string): void => {
     if (cm.isBusy()) {
       cm.addPending(triggerRoomId)
@@ -399,6 +434,7 @@ export const createAIAgent = (
 
     cm.startGeneration(triggerRoomId)
     cm.notifyState('generating', triggerRoomId)
+    const requested = takeRequestedTurn(triggerRoomId)
 
     // Use the newest transient focus carried by this pending turn. It lives
     // only for tool context; it never enters the prompt history or snapshots.
@@ -455,14 +491,16 @@ export const createAIAgent = (
         if (!cm.isEpochCurrent(epoch) || abortController.signal.aborted) return
         describedModel = { requested: effectiveModel, info: info ?? { id: effectiveModel, provider: 'unknown', contextMax: 0, source: 'unavailable' } }
         const effectiveToolDefs = effectiveToolsForRoom(triggerRoomId)
-        const initialContext = buildContext(contextDeps(effectiveModel, effectiveToolDefs), triggerRoomId)
+        const initialContext = buildContext(contextDeps(effectiveModel, effectiveToolDefs, requested?.instruction), triggerRoomId)
         // Only prior replay uses the working target. During a tool turn, keep
         // complete new evidence and fit older history to actual known capacity.
         const toolTokens = estimateTokens(JSON.stringify(effectiveToolDefs ?? []))
         const contextResult: ContextResult = { ...initialContext,
           tokenBudget: info && info.contextMax > 0 ? Math.max(0, info.contextMax - toolTokens - OUTPUT_RESERVE - SAFETY_MARGIN) : undefined,
         }
-        const inReplyTo = contextResult.flushInfo.ids.size > 0 ? [...contextResult.flushInfo.ids] : undefined
+        // A requested turn replies first to what it was asked about.
+        const replyIds = [...new Set([...(requested?.inReplyTo ?? []), ...contextResult.flushInfo.ids])]
+        const inReplyTo = replyIds.length > 0 ? replyIds : undefined
         // Pack-aware tool count for the context_ready event — same resolution
         // path the eval will take, so the UI's tool-count badge matches what
         // the LLM actually sees.
@@ -501,7 +539,7 @@ export const createAIAgent = (
           }
         }
         const { decision, flushInfo } = await runEvaluate(
-          contextResult, effectiveModel, triggerRoomId, abortController.signal, traceId, effectiveToolDefs, inReplyTo,
+          contextResult, effectiveModel, triggerRoomId, abortController.signal, traceId, effectiveToolDefs, inReplyTo, requested?.requireView,
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
 
@@ -510,7 +548,7 @@ export const createAIAgent = (
         // Flush incoming always — on both respond and pass.
         // On pass, the agent has consciously evaluated these messages; they belong in history.
         flushIncoming(flushInfo, agentHistory, historyLimit)
-        onDecision({ ...decision, generationTraceId: traceId })
+        onDecision({ ...decision, generationTraceId: traceId, ...(requested ? { cause: requested.cause } : {}) })
       } catch (err) {
         if (!cm.isEpochCurrent(epoch)) return  // cancelled, ignore error
         // Unexpected throw — evaluate() catches LLM-layer errors and converts
@@ -530,13 +568,17 @@ export const createAIAgent = (
             generationMs: 0,
             triggerRoomId,
             generationTraceId: traceId,
+            ...(requested ? { inReplyTo: requested.inReplyTo, cause: requested.cause } : {}),
           })
         } catch (decisionErr) {
           console.error(`[${config.name}] onDecision threw while reporting eval error:`, decisionErr)
         }
       } finally {
+        if (requested) runningRequests.delete(triggerRoomId)
         notifyTurnFinished(traceId)
         if (cm.isEpochCurrent(epoch)) {
+          // A requested turn that waited behind this room's questions runs next.
+          if (requestedTurns.has(triggerRoomId)) cm.addPending(triggerRoomId)
           cm.endGeneration(triggerRoomId)
           // Check for pending work: same room first, then any other room
           const nextRoom = cm.consumePending(triggerRoomId)
@@ -574,7 +616,7 @@ export const createAIAgent = (
 
     agentHistory.incoming.push(message)
 
-    if (message.type === 'system' || message.type === 'join' || message.type === 'leave' || message.type === 'pass' || message.type === 'error') return
+    if (!triggersEvaluation(message)) return
 
     tryEvaluate(message.roomId)
   }
@@ -713,7 +755,15 @@ export const createAIAgent = (
       ...(maxToolIterationsCfg !== undefined ? { maxToolIterations: maxToolIterationsCfg } : {}),
       ...(currentTriggers.length > 0 ? { triggers: [...currentTriggers] } : {}),
     }),
-    cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; cm.cancelAll() },
+    cancelGeneration: () => { activeAbortController?.abort(); activeAbortController = null; requestedTurns.clear(); cm.cancelAll() },
+    requestTurn: (roomId: string, turn: RequestedTurn) => {
+      if (requestedTurns.has(roomId) || runningRequests.has(roomId)) return { kind: 'refused', reason: 'pending', message: `${config.name} is already working on a request in this room; ask again when its reply arrives` }
+      if (getScriptContext?.(roomId, resolveName(agentId))) return { kind: 'refused', reason: 'script', message: 'A script directs this room; requested turns wait until it ends' }
+      const queued = cm.isBusy()
+      requestedTurns.set(roomId, turn)
+      tryEvaluate(roomId)
+      return { kind: 'accepted', queued }
+    },
     continueTools: (roomId: string): boolean => {
       const pending = pendingCheckins.get(roomId)
       if (!pending) return false
@@ -866,9 +916,12 @@ export const createAIAgent = (
         }
         if (cm.isEpochCurrent(epoch)) {
           cm.endGeneration(roomId)
-          // Resume normal eval if anything is queued.
-          if (agentHistory.incoming.length > 0) {
-            tryEvaluate(agentHistory.incoming[0]!.roomId)
+          // Resume queued work: rooms that asked while the trigger ran (a
+          // requested turn has no incoming message), then held messages.
+          const next = cm.nextPending() ?? agentHistory.incoming[0]?.roomId
+          if (next !== undefined) {
+            cm.consumePending(next)
+            tryEvaluate(next)
           }
         }
       }

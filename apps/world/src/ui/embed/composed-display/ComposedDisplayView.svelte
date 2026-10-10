@@ -273,7 +273,7 @@
       <div class="column" style={`width:${layout.overviewColumn}px;gap:${layout.panelGap}px`}>
         {#each view.display.panels as panel, index (index)}
           {#if panel.kind === 'readouts'}
-            <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} column />
+            <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} column history={snapshot} />
           {:else if panel.kind === 'alarms'}
             {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} selected={systemFilter} select={selectSystem} />{/if}
             <AlarmsPanel {panel} latest={snapshot.latest} fill only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />

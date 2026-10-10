@@ -11,7 +11,8 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
-import { compileDetailDisplay, compileOverviewDisplay, overviewDrawingRoom, type CompiledComposedDisplay, type OverviewView } from '../src/packs/process-plant/displays/compose.ts'
+import { annunciatorHeight, compileDetailDisplay, compileOverviewDisplay, composedDisplayShows, overviewDrawingRoom, type CompiledComposedDisplay, type OverviewView } from '../src/packs/process-plant/displays/compose.ts'
+import { composedDisplayLayout } from '../src/packs/process-plant/displays/composition.ts'
 
 // Process display windows as measured on production in Full HD and QHD browsers.
 const fullHd: OverviewView = { width: 1896, height: 972 }
@@ -119,6 +120,38 @@ describe('the unit overview World generates for a Plant', () => {
     expect(panel.mimic.width).toBeLessThanOrEqual(column.maxWidth)
     expect(panel.mimic.height).toBeLessThanOrEqual(column.maxHeight)
     expect(panel.mimic.readoutSize).toBe('regular')
+  })
+
+  test('each lead value the Run records has a ten-minute sparkline, and the column that labels its window still fits Full HD', () => {
+    const recorded = new Set(recordedPlantVariables(system.plant, 'operations').map(variable => recordingSeriesIdFor(system.plant.id, variable.path)))
+    const result = compileOverviewDisplay(system, recorded, fullHd)
+    if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))
+    const readouts = result.display.panels.find(candidate => candidate.kind === 'readouts')!
+    if (readouts.kind !== 'readouts') throw new Error('expected the lead values')
+    expect(readouts.sparklineMs).toBe(600_000)
+    // The vessel's net inventory flow is not recorded: it has no sparkline, and the agent is told so.
+    expect(readouts.pens.filter(pen => !pen.recorded).map(pen => String(pen.path))).toEqual(['vessel.netInventoryFlowKgPerS'])
+    const shows = composedDisplayShows(result.display).join(' ')
+    expect(shows).toContain('each recorded one has a sparkline of its last 10 min, for direction and rate only (no value scale); not recorded by this Run, so without one: ')
+    // The column as drawn: the title over six lead values, nine tiles two to a row, the alarms and the footer, under the window's header row.
+    const layout = composedDisplayLayout
+    const column = layout.overviewReadoutsTitle + readouts.pens.length * layout.overviewReadoutRow + layout.panelGap
+      + annunciatorHeight(9, 134, layout.overviewColumn) + layout.alarms + layout.overviewFooter
+    expect(readouts.pens).toHaveLength(6)
+    expect(layout.overviewFrame + column).toBe(904)
+    expect(result.display.height).toBe(904)
+    expect(result.display.height).toBeLessThanOrEqual(fullHd.height)
+    // Advice readouts show current values only.
+    const advice = ask('world.process-plant.display.compose', {
+      plantId: system.plant.id,
+      title: 'Pressurizer pressure',
+      question: 'Is pressurizer pressure holding?',
+      need: 'Decide on spray',
+      subjects: ['pressurizer'],
+      panels: [{ kind: 'readouts', signals: [{ ref: 'pressurizer.pressureMPa', role: 'primary' }] }],
+    }) as { view: { state: string } }
+    const opened = ask('world.process-plant.display.view', { plantId: system.plant.id, state: advice.view.state }) as { display: CompiledComposedDisplay }
+    expect(opened.display.panels[0]).not.toHaveProperty('sparklineMs')
   })
 
   test('a window a little too short keeps the drawing beside the column and scrolls by only what it lacks', () => {

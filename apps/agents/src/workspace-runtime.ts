@@ -72,6 +72,8 @@ import { createDocumentManager, type DocumentManager } from './documents/manager
 import type { DocumentMetadata } from './documents/types.ts'
 import { dirname, join } from 'node:path'
 import { createComparisons } from './agents/comparisons.ts'
+import { requestDisplay } from './agents/display-requests.ts'
+import type { DisplayRequestAccepted } from './core/display-request.ts'
 // Native-only tool calling — no capability probing needed
 import { type SkillStore } from './skills/loader.ts'
 import type { ScriptStore } from './core/scripts/script-store.ts'
@@ -178,6 +180,9 @@ export interface AgentsWorkspaceRuntime {
   readonly spawnHumanAgent: (config: HumanAgentConfig, send: TransportSend, options?: { overrideId?: string }) => Promise<HumanAgent>
   // Manual-mode activation: catch the agent up and force one eval.
   readonly activateAgentInRoom: (agentId: string, roomId: string) => { ok: boolean; queued: boolean; reason?: string }
+  // Asks the author of an answer to show it as a live display (see
+  // core/display-request.ts). Throws DisplayRequestRefusal naming the rule.
+  readonly requestDisplay: (roomId: string, messageId: string, requesterId: string) => DisplayRequestAccepted
   readonly setOnMessagePosted: (callback: OnMessagePosted) => void
   readonly setOnTurnChanged: (callback: OnTurnChanged) => void
   readonly setOnDeliveryModeChanged: (callback: OnDeliveryModeChanged) => void
@@ -982,6 +987,9 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
       spawnAIAgent: boundSpawnAIAgent,
       spawnHumanAgent: boundSpawnHumanAgent,
       activateAgentInRoom,
+      requestDisplay: (roomId, messageId, requesterId) => requestDisplay({
+        rooms, team, isScriptRunning: roomId => scriptRunnerRef?.getRun(roomId) !== undefined,
+      }, roomId, messageId, requesterId),
       setOnMessagePosted: messagePosted.set,
       setOnMessagesRemoved: messagesRemoved.set,
       setOnTurnChanged: turnChanged.set,

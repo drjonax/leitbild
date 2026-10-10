@@ -125,7 +125,7 @@ const roomProfileSchema = z.object({
 }).strict()
 
 const messageCauseSchema = z.object({
-  kind: z.enum(['script', 'trigger', 'biometric', 'resource-event']),
+  kind: z.enum(['script', 'trigger', 'biometric', 'resource-event', 'display-request']),
   name: z.string(),
   step: z.number().int().optional(),
 }).strict()
@@ -166,7 +166,7 @@ const messageSchema = z.object({
   errorCode: z.enum([
     'no_api_key', 'model_unavailable', 'rate_limited', 'network',
     'provider_down', 'tool_loop_exceeded', 'empty_response',
-    'tools_unavailable', 'unknown',
+    'tools_unavailable', 'request_dropped', 'unknown',
   ]).optional(),
   errorProvider: z.string().optional(),
   agentName: z.string().optional(),

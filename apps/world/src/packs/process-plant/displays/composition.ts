@@ -16,6 +16,14 @@ export const composedDisplayHorizonMs = {
 export const composedDisplayHorizonSchema = z.enum(['2m', '10m', '30m'])
 export type ComposedDisplayHorizon = z.infer<typeof composedDisplayHorizonSchema>
 
+/**
+ * The time each lead value's sparkline spans on a display World generates.
+ * Ten minutes holds the onset of a transient and the way a value settled
+ * after it, and still draws a trip's step as a step; one window for every
+ * row, so their slopes compare.
+ */
+export const LEAD_VALUE_SPARKLINE_MS = composedDisplayHorizonMs['10m']
+
 export const composedDisplaySignalRoleSchema = z.enum(['primary', 'context', 'counter-evidence'])
 export type ComposedDisplaySignalRole = z.infer<typeof composedDisplaySignalRoleSchema>
 
@@ -210,8 +218,13 @@ export const composedDisplayLayout = {
   /** On a window wide enough, the column of lead values and alarms beside the drawing, and the gap before it. */
   overviewColumn: 280,
   overviewColumnGap: 12,
-  /** A lead value in that column, one per row: its name, readout and margin lines (78 px) and the gap under it. */
+  /**
+   * A lead value in that column, one per row: its name line, its readout with
+   * its sparkline beside it, and its margin line (78 px), and the gap under it.
+   */
   overviewReadoutRow: 82,
+  /** Over the column's lead values: the title line that labels their sparklines' window once, and the gap under it. */
+  overviewReadoutsTitle: 16,
   /**
    * Annunciator tiles over a generated display's alarm list: each tile's
    * least width, widest first (a column too short for two tiles to a row

@@ -32,6 +32,20 @@ test('tool evidence budget includes system blocks and removes whole older turns'
   expect(fit.overBudget).toBe(false)
 })
 
+test('tool evidence keeps the message that opened the turn after a later correction', () => {
+  // A requested turn: its instruction opened the turn, then the loop insisted once.
+  const context: Array<ChatRequest['messages'][number]>=[
+    {role:'user',content:'old request'.repeat(20)},
+    {role:'assistant',content:'old response'.repeat(20)},
+    {role:'user',content:'instruction carrying the answer'},
+    {role:'assistant',content:'first answer'},
+    {role:'user',content:'correction'},
+  ]
+  const fit=fitToolEvidence(context,{role:'assistant',content:''},[{role:'tool',toolCallId:'call',content:'x'.repeat(100)}],100,60,2)
+  expect(fit.droppedHistory).toBe(2)
+  expect(context.map(message=>message.content).slice(0,3)).toEqual(['instruction carrying the answer','first answer','correction'])
+})
+
 const makeConfig = (over: Partial<AIAgentConfig> = {}): AIAgentConfig => ({
   name: 'Tester',
   model: 'test-model',

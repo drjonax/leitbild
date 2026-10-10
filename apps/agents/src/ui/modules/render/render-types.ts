@@ -36,6 +36,9 @@ export interface UIMessage {
   // Causality: which automation subsystem produced this message. Mirrors
   // server Message.cause; rendered as a small caption under the bubble.
   cause?: MessageCause
+  // Messages this one was produced in response to. A display-request reply
+  // names the answer it shows first.
+  inReplyTo?: ReadonlyArray<string>
   // Image attachments forwarded from server Message.attachments. Rendered
   // as inline thumbnails below the message body; click → full-size modal.
   attachments?: ReadonlyArray<MessageAttachment>

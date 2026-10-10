@@ -210,6 +210,9 @@ export interface BuildContextDeps {
   // /api/system/health surfaces cumulative drops alongside the warn-once
   // journal lines. Optional for tests.
   readonly metricsSink?: { inc: (field: 'multimodalImagesDropped', by?: number) => void }
+  // One requested turn's instruction (core/types/agent.ts RequestedTurn).
+  // Ends the context as a transient user message; never enters history.
+  readonly turnInstruction?: string
 }
 
 const resolveIncludes = (inc: IncludePrompts | undefined): Required<IncludePrompts> => ({
@@ -592,7 +595,8 @@ const createNormalStrategy = (
     const systemContent = buildSystemBlocksFn().map(b => b.text).filter(Boolean).join('\n\n')
     const systemTokens = estimateTokens(systemContent)
     const freshTokens = formattedFresh.reduce((sum, f) => sum + estimateTokens(f.formatted.content), 0)
-    const budgetForOld = maxContextTokens - systemTokens - freshTokens
+    const instructionTokens = deps.turnInstruction === undefined ? 0 : estimateTokens(deps.turnInstruction)
+    const budgetForOld = maxContextTokens - systemTokens - freshTokens - instructionTokens
 
     let trimmedOld = [...formattedOld]
     if (budgetForOld > 0) {
@@ -623,7 +627,7 @@ const createNormalStrategy = (
   return {
     buildSystemBlocks: buildSystemBlocksFn,
     buildHistoryMessages: buildHistoryMessagesFn,
-    buildTrailingInstruction: () => null,
+    buildTrailingInstruction: () => deps.turnInstruction === undefined ? null : { role: 'user', content: deps.turnInstruction },
   }
 }
 
@@ -682,6 +686,10 @@ const selectStrategy = (deps: BuildContextDeps, triggerRoomId: string): ContextS
   // call once and stash the result on the strategy closure so a future
   // change to ScriptStrategy doesn't accidentally re-render.
   const scriptCtx = deps.getScriptContext?.(triggerRoomId, ownName)
+  // A script replaces the whole context and ends it with its own line cue;
+  // a requested turn's instruction has no place there. requestTurn refuses
+  // scripted rooms, so this only fires if a script started in between.
+  if (scriptCtx && deps.turnInstruction !== undefined) throw new Error('A requested turn cannot run while a script directs this room')
   return scriptCtx
     ? createScriptStrategy(deps, triggerRoomId, ownName, scriptCtx)
     : createNormalStrategy(deps, triggerRoomId)

@@ -197,6 +197,62 @@ describe('composed display session', () => {
     controller.close()
   })
 
+  test('a generated display reads its lead values\' history once as it opens, then only extends it with live samples', async () => {
+    const pen = (path: string, overrides: Record<string, unknown> = {}) => ({
+      ref: path, role: 'primary', path, label: path, name: path, described: path, measurement: path, unit: 'MPa', quantity: 'pressure',
+      valueKind: 'number', seriesId: `series:${path}`, recorded: true, command: false, thresholds: [], combinedRules: [], ...overrides,
+    })
+    const leadValues = (paths: ReadonlyArray<string>, extra: ReadonlyArray<ReturnType<typeof pen>> = []) => ({
+      kind: 'readouts', sparklineMs: 600_000, pens: [...paths.map(path => pen(path)), ...extra],
+    })
+    const generated = (kind: 'overview' | 'detail', readouts: ReturnType<typeof leadValues>): ComposedDisplayViewResult => ({
+      kind, plantId: 'plant:1', plantLabel: 'Unit 1', simulationTime: at(0),
+      display: { plantId: 'plant:1', title: kind, advice: null, modelDigest: 'a'.repeat(64), height: 900, panels: [readouts] } as unknown as ComposedDisplayViewResult['display'],
+    })
+    const overview = generated('overview', leadValues(['pressurizer.pressureMPa', 'core.powerMw'], [
+      // Not recorded, and a state: neither has a sparkline to read.
+      pen('vessel.netInventoryFlowKgPerS', { recorded: false }),
+      pen('bus.energized', { valueKind: 'boolean' }),
+    ]))
+    const detail = generated('detail', leadValues(['sgB.levelPercent']))
+    const reads: string[] = []
+    let samples = 0
+    const client: ComposedDisplayClient = {
+      presence: async () => ({ title: 'Run', loaded: true, playback: 'playing', currentSimulationTime: at(0) }),
+      loadRun: async () => {},
+      view: async (_run, _plant, state) => state === 'detail' ? detail : overview,
+      history: async (_run, seriesId, window) => {
+        reads.push(`${seriesId} from ${(window.from - Date.parse(at(0))) / 1000} s`)
+        if (seriesId === 'series:core.powerMw') throw new Error('Reading history failed with HTTP 503')
+        return [{ t: Date.parse(at(-650_000)), v: 15.5 }, { t: Date.parse(at(-60_000)), v: 15.4 }]
+      },
+      sample: async (_run, _plant, paths) => ({
+        simulationTime: at(1_000 * samples++), plantElapsedMs: 0,
+        values: paths.map(path => ({ path, value: path === 'bus.energized' ? true : 15.45, quality: 'good' as const })),
+      }),
+    }
+    const { controller, last } = session(client, { now: 0 }, false, () => ({ width: 1896, height: 972 }))
+    await controller.start({ poll: false })
+    // From one hold gap (90 s) before the ten-minute window, so the value held at its start is known.
+    expect(reads).toEqual(['series:pressurizer.pressureMPa from -690 s', 'series:core.powerMw from -690 s'])
+    expect(last().phase.kind).toBe('live')
+    // A history that cannot be read is said on its row; the line starts with the live samples.
+    expect([...last().historyErrors]).toEqual([['core.powerMw', 'Reading history failed with HTTP 503']])
+    expect(last().series.get('pressurizer.pressureMPa')!.map(point => point.v)).toEqual([15.5, 15.4])
+    await controller.poll()
+    await controller.poll()
+    expect(reads).toHaveLength(2)
+    expect(last().series.get('pressurizer.pressureMPa')!.map(point => point.v)).toEqual([15.5, 15.4, 15.45, 15.45])
+    expect(last().series.get('core.powerMw')!.map(point => point.v)).toEqual([15.45, 15.45])
+    expect(last().series.has('vessel.netInventoryFlowKgPerS')).toBe(false)
+    // Equipment opened from it reads its own lead values' history, once.
+    await controller.open('detail')
+    expect(reads.slice(2)).toEqual(['series:sgB.levelPercent from -690 s'])
+    expect([...last().series.keys()]).toEqual(['sgB.levelPercent'])
+    expect(last().historyErrors.size).toBe(0)
+    controller.close()
+  })
+
   test('advice keeps the size it was composed with', async () => {
     const { client, calls } = fakeClient({ presence: { title: 'Run', loaded: true, playback: 'playing', currentSimulationTime: at(0) }, samples: [{ time: at(0), value: 15.4 }] })
     const { controller } = session(client)
