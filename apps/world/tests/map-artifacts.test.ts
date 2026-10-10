@@ -370,15 +370,16 @@ describe('vector map artifacts', () => {
   test('reference dataset PMTiles route serves promoted datasets from the manifest', async () => {
     __clearManifestCacheForTests()
     const referenceRoot = await mkdtemp(join(tmpdir(), 'leitbild-reference-test-'))
-    await writeReferenceDataset(referenceRoot, 'grid-norway', '20260530-120000', 'reference-bytes')
+    const archive = mvtArchive(fixtureTileBytes(5))
+    await writeReferenceDataset(referenceRoot, 'grid-norway', '20260530-120000', archive)
 
     const served = await referenceDatasetPmtilesResponse(new Request(
       'http://localhost/map/datasets/grid-norway/current/grid-norway.pmtiles',
-      { headers: { range: 'bytes=0-8' } },
+      { headers: { range: 'bytes=0-6' } },
     ), new URL('http://localhost/map/datasets/grid-norway/current/grid-norway.pmtiles'), { referenceRoot })
     expect(served?.status).toBe(206)
-    expect(served?.headers.get('content-range')).toBe('bytes 0-8/15')
-    expect(await served?.text()).toBe('reference')
+    expect(served?.headers.get('content-range')).toBe(`bytes 0-6/${archive.byteLength}`)
+    expect(await served?.text()).toBe('PMTiles')
 
     const unknown = await referenceDatasetPmtilesResponse(new Request(
       'http://localhost/map/datasets/missing/current/missing.pmtiles',
@@ -399,11 +400,11 @@ describe('vector map artifacts', () => {
 
     const referenceRoot = await mkdtemp(join(tmpdir(), 'leitbild-reference-test-'))
     await writeReferenceDataset(referenceRoot, 'grid-norway', '20260530-120000', 'not-a-real-pmtiles')
-    const invalidReferenceUrl = new URL('http://localhost/map/datasets/grid-norway/current/grid-norway/0/0/1.mvt')
+    const invalidReferenceUrl = new URL('http://localhost/map/datasets/grid-norway/current/grid-norway/0/0/1.mvt?build=20260530-120000')
     const invalidReference = await referenceDatasetVectorTileResponse(new Request(invalidReferenceUrl), invalidReferenceUrl, { referenceRoot })
     expect(invalidReference?.status).toBe(400)
 
-    const unknownReferenceUrl = new URL('http://localhost/map/datasets/missing/current/missing/0/0/0.mvt')
+    const unknownReferenceUrl = new URL('http://localhost/map/datasets/missing/current/missing/0/0/0.mvt?build=20260530-120000')
     const unknownReference = await referenceDatasetVectorTileResponse(new Request(unknownReferenceUrl), unknownReferenceUrl, { referenceRoot })
     expect(unknownReference?.status).toBe(404)
   })
@@ -492,12 +493,51 @@ describe('vector map artifacts', () => {
     const tileBytes = fixtureTileBytes(3)
     await writeReferenceDataset(referenceRoot, 'grid-norway', '20260530-120000', mvtArchive(tileBytes))
 
-    const url = new URL('http://localhost/map/datasets/grid-norway/current/grid-norway/1/1/0.mvt')
+    const url = new URL('http://localhost/map/datasets/grid-norway/current/grid-norway/1/1/0.mvt?build=20260530-120000')
     const response = await referenceDatasetVectorTileResponse(new Request(url, { headers: { 'Accept-Encoding': 'gzip, br' } }), url, { referenceRoot })
     expect(response?.status).toBe(200)
     expect(response?.headers.get('content-encoding')).toBe('gzip')
     expect(response?.headers.get('vary')).toBe('Accept-Encoding')
     expect(new Uint8Array(gunzipSync(new Uint8Array(await response!.arrayBuffer())))).toEqual(tileBytes)
+  })
+
+  test('reference dataset tiles of the current build are immutable; other builds are refused, never served stale', async () => {
+    __clearManifestCacheForTests()
+    const referenceRoot = await mkdtemp(join(tmpdir(), 'leitbild-reference-test-'))
+    await writeReferenceDataset(referenceRoot, 'grid-norway', '20260530-120000', mvtArchive(fixtureTileBytes(3)))
+    const tile = async (query: string, path = '1/1/0') => {
+      const url = new URL(`http://localhost/map/datasets/grid-norway/current/grid-norway/${path}.mvt${query}`)
+      return (await referenceDatasetVectorTileResponse(new Request(url, { headers: { 'Accept-Encoding': 'gzip' } }), url, { referenceRoot }))!
+    }
+    for (const response of [await tile('?build=20260530-120000'), await tile('?build=20260530-120000', '1/0/0')]) {
+      expect(response.status).toBe(200)
+      expect(response.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+    }
+    expect((await tile('?build=20260530-120000', '1/0/0')).headers.get('content-length')).toBe('0')
+    expect((await tile('')).status).toBe(400)
+    expect((await tile('?build=')).status).toBe(400)
+
+    // Promote a newer build: the old build id now conflicts and names the current one.
+    await writeReferenceDataset(referenceRoot, 'grid-norway', '20261010-192738', mvtArchive(fixtureTileBytes(4)))
+    __clearManifestCacheForTests()
+    const stale = await tile('?build=20260530-120000')
+    expect(stale.status).toBe(409)
+    expect(stale.headers.get('cache-control')).toBe('no-store')
+    expect(await stale.json()).toMatchObject({ requestedBuildId: '20260530-120000', currentBuildId: '20261010-192738' })
+    expect((await tile('?build=20261010-192738')).status).toBe(200)
+  })
+
+  test('reference dataset tiles fail while the release and its manifest disagree on the build', async () => {
+    __clearManifestCacheForTests()
+    const referenceRoot = await mkdtemp(join(tmpdir(), 'leitbild-reference-test-'))
+    await writeReferenceDataset(referenceRoot, 'grid-norway', '20260530-120000', mvtArchive(fixtureTileBytes(3)))
+    const buildDir = join(referenceRoot, 'builds', 'grid-norway', '20260530-120000')
+    const manifestPath = join(buildDir, 'grid-norway.manifest.json')
+    const manifest = JSON.parse(await Bun.file(manifestPath).text()) as Record<string, unknown>
+    await writeFile(manifestPath, JSON.stringify({ ...manifest, buildId: '20261010-192738' }))
+    const url = new URL('http://localhost/map/datasets/grid-norway/current/grid-norway/1/1/0.mvt?build=20261010-192738')
+    const response = await referenceDatasetVectorTileResponse(new Request(url), url, { referenceRoot })
+    expect(response?.status).toBe(503)
   })
 
   test('reference dataset PMTiles route rejects unsafe paths', async () => {

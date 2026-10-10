@@ -12,6 +12,7 @@ import { composeAttributionFromManifest } from './reference-attribution.ts'
 
 export interface DatasetManifestForLayers {
   readonly datasetId: string
+  readonly buildId: string
   readonly artifact: {
     readonly pmtilesPath: string
     readonly sidecarGeoJsonPath: string
@@ -27,6 +28,12 @@ export interface DatasetManifestForLayers {
     readonly id: string
     readonly attribution: string
   }>
+  /** Zoom range and bounds of the served archive, from its PMTiles header. */
+  readonly tiles: {
+    readonly minZoom: number
+    readonly maxZoom: number
+    readonly bounds: readonly [number, number, number, number]
+  }
 }
 
 export interface ReferenceLayerSpec {
@@ -46,6 +53,8 @@ export interface ReferenceSourceSpec {
   readonly minzoom: number
   /** Highest zoom the archive holds; MapLibre overzooms these tiles beyond it. */
   readonly maxzoom: number
+  /** MapLibre requests no tiles outside these [west, south, east, north] degrees. */
+  readonly bounds: readonly [number, number, number, number]
   readonly attribution: string
 }
 
@@ -64,19 +73,15 @@ const layerIdFor = (datasetId: string, styleLayerId: string): string => `${refer
 
 // The manifest's pmtilesPath is the archive file name ("<dataset>.pmtiles"); the
 // World API serves its tiles as plain HTTP MVT, so startup needs no PMTiles protocol.
-const sourceTilesFor = (datasetId: string, manifestPmtilesPath: string): ReadonlyArray<string> => {
+// The build id makes each URL name immutable bytes the browser may cache for good.
+const sourceTilesFor = (datasetId: string, manifestPmtilesPath: string, buildId: string): ReadonlyArray<string> => {
   const pmtilesBaseName = manifestPmtilesPath.replace(/\.pmtiles$/, '')
-  return [`/map/datasets/${datasetId}/current/${pmtilesBaseName}/{z}/{x}/{y}.mvt`]
+  return [`/map/datasets/${datasetId}/current/${pmtilesBaseName}/{z}/{x}/{y}.mvt?build=${encodeURIComponent(buildId)}`]
 }
 
-const sourceZoomRangeFor = (
-  manifest: DatasetManifestForLayers,
-): { readonly minzoom: number; readonly maxzoom: number } => {
-  const populated = manifest.categories.filter(category => category.featureCount > 0)
-  if (populated.length === 0) throw new Error(`reference dataset ${manifest.datasetId} publishes no features`)
-  return {
-    minzoom: Math.min(...populated.map(category => category.minZoom)),
-    maxzoom: Math.max(...populated.map(category => category.maxZoom)),
+const assertPublishesFeatures = (manifest: DatasetManifestForLayers): void => {
+  if (!manifest.categories.some(category => category.featureCount > 0)) {
+    throw new Error(`reference dataset ${manifest.datasetId} publishes no features`)
   }
 }
 
@@ -101,11 +106,14 @@ export const buildReferenceDatasetLayers = (
   appearance: PackMapAppearance,
 ): ReferenceDatasetLayers => {
   assertStyleMatchesManifest(manifest, style)
+  assertPublishesFeatures(manifest)
   const sourceId = sourceIdFor(manifest.datasetId)
   const source: ReferenceSourceSpec = {
     type: 'vector',
-    tiles: sourceTilesFor(manifest.datasetId, manifest.artifact.pmtilesPath),
-    ...sourceZoomRangeFor(manifest),
+    tiles: sourceTilesFor(manifest.datasetId, manifest.artifact.pmtilesPath, manifest.buildId),
+    minzoom: manifest.tiles.minZoom,
+    maxzoom: manifest.tiles.maxZoom,
+    bounds: manifest.tiles.bounds,
     attribution: composeAttributionFromManifest(manifest),
   }
   const layers = style.layersFor(appearance).map((spec): ReferenceLayerSpec => ({

@@ -36,7 +36,12 @@ describe('createReferenceDataController', () => {
     const registered = controller.registered[0]!
     expect(controller.registered).toHaveLength(1)
     expect(registered.sourceId).toBe('reference:grid-norway')
-    expect(sources.get('reference:grid-norway')?.tiles).toEqual(['/map/datasets/grid-norway/current/grid-norway/{z}/{x}/{y}.mvt'])
+    expect(sources.get('reference:grid-norway')).toMatchObject({
+      tiles: ['/map/datasets/grid-norway/current/grid-norway/{z}/{x}/{y}.mvt?build=20260528-230419'],
+      minzoom: 4,
+      maxzoom: 14,
+      bounds: [-0.4, 53.45, 31.02, 78.23],
+    })
     expect(registered.layerIds.length).toBeGreaterThan(0)
     const order = layerOrder(layers)
     const firstLabel = order.indexOf('poi-emergency')

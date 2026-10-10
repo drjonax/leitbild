@@ -31,6 +31,7 @@ interface ReferenceTilesetForController {
   }>
   readonly sources: ReadonlyArray<{ readonly id: string; readonly kind: string }>
   readonly licences: ReadonlyArray<{ readonly id: string; readonly attribution: string }>
+  readonly tiles: DatasetManifestForLayers['tiles']
 }
 
 interface ManifestForController {
@@ -43,9 +44,11 @@ const isReference = (entry: { readonly kind: string }): entry is ReferenceTilese
 
 const manifestEntryForLayers = (tileset: ReferenceTilesetForController): DatasetManifestForLayers => ({
   datasetId: tileset.datasetId,
+  buildId: tileset.buildId,
   artifact: tileset.artifact,
   categories: tileset.categories,
   licences: tileset.licences.map(l => ({ id: l.id, attribution: l.attribution })),
+  tiles: tileset.tiles,
 })
 
 export interface ReferenceDatasetControllerConfig {
@@ -109,6 +112,7 @@ const registerOne = (
       tiles: [...built.source.tiles],
       minzoom: built.source.minzoom,
       maxzoom: built.source.maxzoom,
+      bounds: [...built.source.bounds],
       attribution: built.source.attribution,
     })
   }
