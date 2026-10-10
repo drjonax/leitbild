@@ -93,6 +93,8 @@ describe('overtemperature and overpower delta-T', () => {
   })
 
   test('a loss of feedwater at power trips the reactor on overtemperature delta-T before the coolant saturates', () => {
+    // Low-low steam generator level trips the reactor first, about a minute in. Without it the generators boil down
+    // until their tubes uncover, the coolant heats up and overtemperature delta-T trips the reactor as the backup.
     const plantRun = started(withOnlyReactorTrips(['reactor-overtemperature-delta-t-trip']))
     plantRun.run(5_000)
     plantRun.act('loss-main-feedwater')

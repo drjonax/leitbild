@@ -26,7 +26,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
     id: 'steam-generator-heat-transfer',
     phase: 'solveThermalTransfer',
     componentKind: 'steamGenerator',
-    reads: ['tubeMetalTemperatureC', 'secondaryTemperatureC', 'collapsedLevelPercent', 'swellLevelPercent', 'incoming:primaryCoolant.temperatureC', 'incoming:primaryCoolant.flowKgPerS'],
+    reads: ['tubeMetalTemperatureC', 'secondaryTemperatureC', 'collapsedLevelPercent', 'swellLevelPercent', 'voidFraction', 'incoming:primaryCoolant.temperatureC', 'incoming:primaryCoolant.flowKgPerS'],
     writes: ['heatTransferMw', 'steamFlowKgPerS', 'boilingRateKgPerS', 'tubeCoverageFraction', 'tubeUncoveredFraction', 'availableHeatTransferFraction'],
     update: ({ system, component, context }): void => {
       const primaryWaterTemperature = averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
@@ -39,7 +39,12 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       // above the bundle. The narrow range spans the region above it, so they
       // transfer heat in full at any narrow-range level, the low-low trip set
       // point included, and uncover only as the generator boils toward dry.
-      const levelFraction = clamp((context.readNumber(componentVariablePath(component, 'collapsedLevelPercent')) + context.readNumber(componentVariablePath(component, 'swellLevelPercent'))) / 100, 0, 1)
+      // The mixture swells by the voids in the water there is, so a generator
+      // boiled dry has no mixture left to cover them, however hard it boiled.
+      const collapsedLevel = context.readNumber(componentVariablePath(component, 'collapsedLevelPercent'))
+      const voidFraction = clamp(context.readNumber(componentVariablePath(component, 'voidFraction')), 0, 0.95)
+      const mixtureSwell = Math.min(context.readNumber(componentVariablePath(component, 'swellLevelPercent')), collapsedLevel * voidFraction / (1 - voidFraction))
+      const levelFraction = clamp((collapsedLevel + mixtureSwell) / 100, 0, 1)
       const tubeBottomLevel = optionalParameterNumber(component, 'tubeBundleBottomLevelPercent', 0.01)
       const tubeTopLevel = optionalParameterNumber(component, 'tubeBundleTopLevelPercent', tubeBottomLevel + 0.05)
       const tubeCoverage = clamp((levelFraction - tubeBottomLevel) / Math.max(0.01, tubeTopLevel - tubeBottomLevel), 0, 1)
