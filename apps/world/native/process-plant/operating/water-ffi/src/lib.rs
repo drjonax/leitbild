@@ -67,6 +67,13 @@ unsafe extern "C" {
         output: *mut WaterPoint,
         direction: *mut WaterPoint,
     ) -> i32;
+    fn ld01_water_direction_held(
+        branch: i32,
+        held: *const WaterPoint,
+        pressure_direction: f64,
+        temperature_direction: f64,
+        direction: *mut WaterPoint,
+    ) -> i32;
     fn ld01_water_surface(
         temperature: f64,
         temperature_direction: f64,
@@ -144,6 +151,28 @@ pub fn directional(
     }
 }
 
+/// `directional(branch, held.pressure_pa, held.temperature_k, dp, dt).1` at a
+/// point this boundary already returned as exactly that forward point, without
+/// evaluating it again: only the coefficient probes are evaluated.
+fn directional_held(
+    branch: Branch,
+    held: &WaterPoint,
+    dp: f64,
+    dt: f64,
+) -> Result<WaterPoint, Error> {
+    let mut direction = WaterPoint::default();
+    // SAFETY: `held` is a live shared C-layout tuple that C only reads during
+    // the call; `direction` is a unique live stack allocation written on
+    // success. Nothing is retained and the native function catches errors.
+    let status = unsafe { ld01_water_direction_held(branch as i32, held, dp, dt, &mut direction) };
+    match status {
+        0 => Ok(direction),
+        1 => Err(Error::Domain),
+        2 => Err(Error::AbiArgument),
+        _ => Err(Error::NativeFailure),
+    }
+}
+
 /// Invert the maintained pure-phase EOS at the SAME pressure and specific U.
 /// This is a local coordinate elimination, not a flash calculation or a new
 /// property fit. A target outside the selected stable R1/R2 branch is rejected;
@@ -205,14 +234,9 @@ impl CaloricLinearization {
         if !ut.is_finite() || ut <= 0. {
             return Err(Error::NativeFailure);
         }
-        directional(
-            self.branch,
-            self.point.pressure_pa,
-            self.point.temperature_k,
-            dp,
-            (dtarget - up * dp) / ut,
-        )
-        .map(|(_, d)| d)
+        // The held point is the forward point at exactly (branch, its p, its
+        // T), the saturated-endpoint bracket included, so it is not repeated.
+        directional_held(self.branch, &self.point, dp, (dtarget - up * dp) / ut)
     }
 }
 

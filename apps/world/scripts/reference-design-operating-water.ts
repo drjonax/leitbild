@@ -120,11 +120,9 @@ int ld01_water_caloric(int branch,double p,double T,OperatingWaterPoint* out) no
 // third/transport derivatives: cp/alpha/kappa/mu/k use same-branch, second-order
 // local coefficient probes. These are disclosed inexact Newton coefficients,
 // never a replacement EOS value or a finite-difference whole-plant Jacobian.
-int ld01_water_direction(int branch,double p,double T,double dp,double dT,
- OperatingWaterPoint* out,OperatingWaterPoint* direction) noexcept {
- if(!out||!direction||!std::isfinite(dp)||!std::isfinite(dT))return 2;
- OperatingWaterPoint q{};
- const int status=ld01_water_point(branch,p,T,&q);if(status)return status;
+// Direction at q, which is ld01_water_point(branch,p,T)'s own complete output.
+static int water_direction_at(int branch,double p,double T,double dp,double dT,
+ const OperatingWaterPoint& q,OperatingWaterPoint* direction) noexcept {
  const bool saturated=branch==2||branch==3;
  const double actual_dT=saturated?q.saturation_slope*dp:dT;
  OperatingWaterPoint d{};d.region=q.region;d.p=dp;d.T=actual_dT;
@@ -154,7 +152,25 @@ int ld01_water_direction(int branch,double p,double T,double dp,double dT,
  }
  const std::array<double,12> fields{{d.p,d.T,d.rho,d.u,d.h,d.cp,d.cv,d.alpha,d.kappa,d.mu,d.conductivity,d.saturation_slope}};
  if(!std::all_of(fields.begin(),fields.end(),[](double v){return std::isfinite(v);}))return 3;
+ *direction=d;return 0;
+}
+int ld01_water_direction(int branch,double p,double T,double dp,double dT,
+ OperatingWaterPoint* out,OperatingWaterPoint* direction) noexcept {
+ if(!out||!direction||!std::isfinite(dp)||!std::isfinite(dT))return 2;
+ OperatingWaterPoint q{},d{};
+ int status=ld01_water_point(branch,p,T,&q);if(status)return status;
+ status=water_direction_at(branch,p,T,dp,dT,q,&d);if(status)return status;
  *out=q;*direction=d;return 0;
+}
+// The same direction at a point the caller already holds: held must be the
+// complete output of ld01_water_point(branch,held->p,held->T), which is then
+// not evaluated a second time. Only the probes are evaluated here.
+int ld01_water_direction_held(int branch,const OperatingWaterPoint* held,double dp,double dT,
+ OperatingWaterPoint* direction) noexcept {
+ if(!held||!direction||!std::isfinite(dp)||!std::isfinite(dT))return 2;
+ OperatingWaterPoint d{};
+ const int status=water_direction_at(branch,held->p,held->T,dp,dT,*held,&d);if(status)return status;
+ *direction=d;return 0;
 }
 int ld01_water_surface(double T,double dT,double* value,double* direction) noexcept {
  if(!value||!direction||!std::isfinite(T)||!std::isfinite(dT))return 2;
