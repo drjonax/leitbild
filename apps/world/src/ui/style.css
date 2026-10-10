@@ -1259,39 +1259,71 @@ body.rail-resizing {
   pointer-events: auto;
 }
 
-.process-display-statusbar {
+.display-window:focus {
+  outline: none;
+}
+
+.display-window:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.display-window-header {
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 10px 0 14px;
+  gap: 6px;
+  padding: 0 6px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--panel-strong) 82%, var(--panel));
   user-select: none;
 }
 
-.process-display-drag-handle {
+.display-window-nav,
+.display-window-zoom,
+.display-window-plant {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.display-window-plant {
+  gap: 4px;
+}
+
+.display-window-title {
+  flex: 1 1 auto;
   min-width: 0;
   height: 100%;
-  display: grid;
-  grid-template-columns: minmax(120px, auto) minmax(0, 1fr);
+  display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
+  padding: 0 6px;
   overflow: hidden;
+  white-space: nowrap;
   cursor: move;
   touch-action: none;
 }
 
-.process-display-drag-handle strong {
+.display-window.maximised .display-window-title {
+  cursor: default;
+}
+
+.display-window-title strong {
   min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 15px;
+  font-size: 14px;
+}
+
+.display-window-caption {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .process-display-asset-dot {
@@ -1302,38 +1334,216 @@ body.rail-resizing {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--panel) 80%, transparent);
 }
 
-.process-display-statusbar button {
-  width: 30px;
+.process-display-asset-dot.unknown {
+  border: 1.5px solid var(--muted);
+  background: transparent;
+}
+
+.display-window-header button,
+.display-window-popover button {
   height: 30px;
-  display: grid;
-  place-items: center;
-  border: 0;
+  min-width: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 4px;
+  border: 1px solid transparent;
   border-radius: 6px;
   color: var(--muted);
   background: transparent;
-  font-size: 22px;
+  font: inherit;
+  font-size: 12px;
   line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.process-display-statusbar button:hover {
+.display-window-header button:hover:not(:disabled):not([aria-disabled="true"]),
+.display-window-popover button:hover:not(:disabled):not([aria-disabled="true"]) {
   color: var(--text);
   background: color-mix(in srgb, var(--border) 45%, transparent);
 }
 
-.process-display-window-actions {
+.display-window-header button:disabled,
+.display-window-header button[aria-disabled="true"],
+.display-window-popover button:disabled,
+.display-window-popover button[aria-disabled="true"] {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.display-window-header button:focus-visible,
+.display-window-popover button:focus-visible,
+.display-window-slider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.display-window-header button[aria-pressed="true"],
+.display-window-popover button[aria-pressed="true"] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.display-window-header .display-window-position {
+  min-width: 58px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* New displays use the accent, never an alarm colour: a new answer is not a process abnormality. */
+.display-window-header .display-window-new {
+  padding: 0 8px;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-weight: 650;
+}
+
+.display-window-slider {
+  width: 96px;
+  accent-color: var(--accent);
+}
+
+.display-window-header .display-window-percent,
+.display-window-popover .display-window-reset {
+  min-width: 52px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A scaled display is never taken for 1:1. */
+.display-window-header .display-window-percent.scaled {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.display-window-more {
+  position: relative;
+}
+
+.display-window-count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  color: var(--panel);
+  background: var(--accent);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.display-window-popover {
+  position: absolute;
+  top: 44px;
+  z-index: 3;
+  max-height: calc(100% - 52px);
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(16, 24, 40, 0.24);
+}
+
+.display-window-popover.list {
+  left: 6px;
+  width: min(420px, calc(100% - 12px));
+}
+
+.display-window-popover.zoom {
+  right: 6px;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.process-display-statusbar .process-display-icon-button {
-  font-size: 0;
+.display-window-popover.more {
+  right: 6px;
+  min-width: 220px;
+  display: grid;
+  gap: 4px;
 }
 
-.process-display-statusbar .process-display-icon-button[aria-pressed="true"] {
+.display-window-popover .display-window-menu-item {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 8px;
+  color: var(--text);
+}
+
+.display-window-listbox:focus {
+  outline: none;
+}
+
+.display-window-group-label {
+  padding: 6px 8px 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.display-window-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.display-window-option.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.display-window-listbox:focus-visible .display-window-option.active {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.display-window-check {
+  display: grid;
+  place-items: center;
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.display-window-option-text {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.display-window-option-text strong,
+.display-window-option-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.display-window-option-text strong {
+  font-size: 13px;
+}
+
+.display-window-option-text small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.display-window-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .process-transient-backdrop {
@@ -1486,28 +1696,72 @@ body.rail-resizing {
   cursor: default;
 }
 
-.process-display-window-body {
+.display-window-body {
   position: relative;
   min-height: 0;
-  padding: 0;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+/* Every mounted display keeps its size; hidden ones stay laid out so showing one again is instant. */
+.display-frame-layer {
+  position: absolute;
+  inset: 0;
   overflow: hidden;
 }
 
-.process-display-loading {
-  position: absolute;
-  right: 20px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel-strong);
-  box-shadow: 0 8px 28px #0003;
-  pointer-events: auto;
+.display-frame-layer.scrolls {
+  overflow: auto;
 }
 
-.process-display-loading button,
+.display-frame-layer.hidden {
+  visibility: hidden;
+}
+
+.display-frame-box {
+  position: relative;
+  overflow: hidden;
+}
+
+.display-frame {
+  display: block;
+  border: 0;
+  transform-origin: 0 0;
+}
+
+.display-window.dragging .display-frame {
+  pointer-events: none;
+}
+
+.display-window-message {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 14px;
+}
+
+.display-window-message.error {
+  color: var(--critical);
+}
+
+.display-window-message button {
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--panel);
+  font: inherit;
+  cursor: pointer;
+}
+
 .process-display-notice button {
   display: inline-flex;
   border: 0;
@@ -1533,6 +1787,7 @@ body.rail-resizing {
 
 .process-display-notice {
   position: absolute;
+  z-index: 2;
   top: 8px;
   left: 8px;
   right: 8px;

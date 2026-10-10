@@ -68,25 +68,22 @@ describe('Svelte lifecycle policy', () => {
     expect(procedureBackdrop).toContain('pointer-events: auto')
   })
 
-  test('process display loader stays independent from live object telemetry and window geometry', () => {
-    const source = readFileSync(join(uiRoot, 'process-display', 'ProcessDisplayModal.svelte'), 'utf8')
-    const mountStart = source.indexOf('runOnMount(() => {')
-    const mount = source.slice(mountStart, source.indexOf('</script>', mountStart))
+  test('process display window stays independent from live object telemetry and window geometry', () => {
+    const windowSource = readFileSync(join(uiRoot, 'process-display', 'DisplayWindow.svelte'), 'utf8')
+    const frameSource = readFileSync(join(uiRoot, 'process-display', 'DisplayFrame.svelte'), 'utf8')
 
-    // Startup is deliberately non-reactive. Live telemetry and dragging must
-    // never reopen the overview or blank it; the framed view samples the
-    // Plant itself, so the window installs no poller.
-    expect(source).not.toContain('$effect(')
-    expect(source).toContain('untrack(() => plantIdFor(object))')
-    expect(source).toContain('untrack(() => simulationRunId)')
-    expect(mount).toContain('void loadOverview()')
-    expect(mount).toContain('disposed = true')
-    expect(source).not.toContain('setInterval(')
+    // A display's page is fixed for the life of its frame: live telemetry,
+    // zoom and dragging resize the frame but never reload or blank it. The
+    // framed views sample the Run themselves, so the window installs no poller.
+    expect(frameSource).toContain('const source = untrack(() =>')
+    expect(windowSource).toContain('const runId = untrack(() => simulationRunId)')
+    expect(windowSource).not.toContain('setInterval(')
+    expect(frameSource).not.toContain('setInterval(')
   })
 
   test('floating window drag guards ignore icon clicks inside buttons', () => {
     const procedureSource = readFileSync(join(uiRoot, 'procedures', 'ProcedureSystemModal.svelte'), 'utf8')
-    const processDisplaySource = readFileSync(join(uiRoot, 'process-display', 'ProcessDisplayModal.svelte'), 'utf8')
+    const processDisplaySource = readFileSync(join(uiRoot, 'process-display', 'DisplayWindow.svelte'), 'utf8')
 
     expect(procedureSource).toContain('target instanceof Element && target.closest')
     expect(processDisplaySource).toContain('target instanceof Element && target.closest')
