@@ -2161,16 +2161,18 @@ describe('process plant runtime', () => {
     expect(runtime.readVariable(valueOf('bus.energized'))).toBe(true)
   })
 
-  test('reference I&C starts emergency diesels after safety bus loss', () => {
+  test('reference I&C starts emergency diesels after safety bus loss and closes them onto their buses', () => {
     const system = compiledSystem()
     const runtime = createProcessPlantRuntime({ system })
+    expect(runtime.readVariable(valueOf('dieselBreakerA.closedState'))).toBe(false)
+    expect(runtime.readVariable(valueOf('dieselBreakerB.closedState'))).toBe(false)
     runtime.writeCommand({ type: 'setVariable', path: valueOf('offsiteBreakerA.closed'), value: false })
     runtime.writeCommand({ type: 'setVariable', path: valueOf('offsiteBreakerB.closed'), value: false })
 
     runWithReferenceProtection({
       system,
       runtime,
-      durationMs: 15_000,
+      durationMs: 20_000,
     })
 
     const diagnostics = runtime.pwrTransientDiagnostics()
@@ -2178,6 +2180,8 @@ describe('process plant runtime', () => {
     expect(runtime.readVariable(valueOf('dieselGeneratorB.startCommand'))).toBe(true)
     expect(runtime.readVariable(valueOf('dieselGeneratorA.running'))).toBe(true)
     expect(runtime.readVariable(valueOf('dieselGeneratorB.running'))).toBe(true)
+    expect(runtime.readVariable(valueOf('dieselBreakerA.closedState'))).toBe(true)
+    expect(runtime.readVariable(valueOf('dieselBreakerB.closedState'))).toBe(true)
     expect(diagnostics.safetySystems.deenergizedSafetyBusCount).toBe(0)
     expect(diagnostics.safetySystems.runningDieselCount).toBe(2)
     expect(diagnostics.electrical.deenergizedBusCount).toBe(0)

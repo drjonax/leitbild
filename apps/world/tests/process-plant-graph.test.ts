@@ -36,8 +36,10 @@ describe('process plant model composition', () => {
     // checkpointed before then cannot be restored and must be restarted.
     // Changed again on 2026-10-10, approved by the owner, when the model was
     // made to report equipment state truthfully; PWR Runs checkpointed before
-    // then must be restarted.
-    expect(system.modelDigest).toBe('7ea5b4b52e74b1652b3cadd87a5f97745d4462a2c21f2050f2b57cf9317819fd')
+    // then must be restarted. Changed again on 2026-10-10, approved by the
+    // owner, when the emergency diesels' output breakers were made to stand
+    // open in standby; PWR Runs checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('adec85b97a654ae0fa6e0d9f78acc434e042bc24cc7f0c5cd06451073e994f51')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

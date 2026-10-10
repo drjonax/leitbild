@@ -3140,9 +3140,22 @@
       "label": "Diesel Breaker A",
       "parameters": {
         "nominalPowerMw": 45,
-        "initialClosed": true
+        "initialClosed": false
       },
-      "variables": [],
+      "variables": [
+        {
+          "path": "closed",
+          "tagId": "BRK-EDG-A-CLOSED",
+          "equipmentId": "dieselBreakerA",
+          "description": "Diesel breaker A close command"
+        },
+        {
+          "path": "closedState",
+          "tagId": "BRK-EDG-A-POS",
+          "equipmentId": "dieselBreakerA",
+          "description": "Diesel breaker A position feedback, closed while true"
+        }
+      ],
       "metadata": {
         "presentation": {
           "shortLabel": "EDG BKR A"
@@ -3155,9 +3168,22 @@
       "label": "Diesel Breaker B",
       "parameters": {
         "nominalPowerMw": 45,
-        "initialClosed": true
+        "initialClosed": false
       },
-      "variables": [],
+      "variables": [
+        {
+          "path": "closed",
+          "tagId": "BRK-EDG-B-CLOSED",
+          "equipmentId": "dieselBreakerB",
+          "description": "Diesel breaker B close command"
+        },
+        {
+          "path": "closedState",
+          "tagId": "BRK-EDG-B-POS",
+          "equipmentId": "dieselBreakerB",
+          "description": "Diesel breaker B position feedback, closed while true"
+        }
+      ],
       "metadata": {
         "presentation": {
           "shortLabel": "EDG BKR B"

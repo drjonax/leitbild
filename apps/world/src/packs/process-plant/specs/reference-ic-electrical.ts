@@ -1,5 +1,5 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, annunciator, any, comparison, rule, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, rule, write } from './reference-ic-helpers.ts'
 
 const electricalAlarm = annunciator({
   system: 'electrical',
@@ -7,6 +7,47 @@ const electricalAlarm = annunciator({
   priority: 'high',
   role: 'automaticAction',
 })
+
+// A standby diesel's output breaker stands open. The load sequencer closes it
+// only once the diesel reads running, at rated voltage and frequency, onto a
+// dead safety bus: never in parallel with offsite power. The bus's loads,
+// still commanded on, then come back on the diesel. The breaker opens again
+// when its diesel stops or fails, as the generator protection would trip it,
+// so it stands open for the next dead-bus start; with offsite power restored
+// the operator stops the diesel and the bus stays on offsite power.
+const dieselOutputBreakerRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRule> => {
+  const lower = train.toLowerCase()
+  return [
+    rule({
+      id: `diesel-generator-${lower}-output-breaker-close`,
+      label: `Diesel generator ${train} output breaker close on dead bus`,
+      ruleClass: 'normalControl',
+      condition: all([
+        comparison({ tagId: `EDG-${train}-RUN` }, '==', true),
+        comparison({ tagId: `BUS-${train}-ENERGIZED` }, '==', false),
+      ]),
+      latch: false,
+      resetWhenClear: true,
+      effects: [
+        write(`close-diesel-breaker-${lower}`, { tagId: `BRK-EDG-${train}-CLOSED` }, true),
+      ],
+    }),
+    rule({
+      id: `diesel-generator-${lower}-output-breaker-open`,
+      label: `Diesel generator ${train} output breaker open on diesel stop`,
+      ruleClass: 'normalControl',
+      condition: all([
+        comparison({ tagId: `EDG-${train}-RUN` }, '==', false),
+        comparison({ tagId: `BRK-EDG-${train}-POS` }, '==', true),
+      ]),
+      latch: false,
+      resetWhenClear: true,
+      effects: [
+        write(`open-diesel-breaker-${lower}`, { tagId: `BRK-EDG-${train}-CLOSED` }, false),
+      ],
+    }),
+  ]
+}
 
 export const electricalReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
@@ -42,6 +83,7 @@ export const electricalReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> 
       write('start-diesel-generator-a', { tagId: 'EDG-A-START' }, true),
     ],
   }),
+  ...dieselOutputBreakerRules('A'),
   rule({
     id: 'safety-bus-a-degraded-voltage',
     label: 'Safety bus A degraded voltage',
@@ -95,6 +137,7 @@ export const electricalReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> 
       write('start-diesel-generator-b', { tagId: 'EDG-B-START' }, true),
     ],
   }),
+  ...dieselOutputBreakerRules('B'),
   rule({
     id: 'safety-bus-b-degraded-voltage',
     label: 'Safety bus B degraded voltage',

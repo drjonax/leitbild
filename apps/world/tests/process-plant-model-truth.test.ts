@@ -106,6 +106,60 @@ describe('breakers', () => {
     expect(breakerLook(plant, 'offsiteBreakerA', plantRun.read)).toMatchObject({ state: { kind: 'open' }, mismatch: 'CMD CLOSE', words: 'open; commanded close disagrees' })
   })
 
+  test('a standby diesel output breaker stands open and closes onto its dead bus only once the diesel runs', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    for (const train of ['A', 'B']) {
+      expect(plantRun.tag(`EDG-${train}-RUN`), train).toBe(false)
+      expect(plantRun.tag(`BRK-EDG-${train}-POS`), train).toBe(false)
+    }
+    expect(breakerLook(plant, 'dieselBreakerA', plantRun.read)).toMatchObject({ state: { kind: 'open' }, mismatch: null, words: 'open' })
+
+    plantRun.act('loss-offsite-power')
+    const firstTrue: Record<string, number> = {}
+    for (let second = 1; second <= 30; second += 1) {
+      plantRun.run(1_000)
+      for (const train of ['A', 'B']) {
+        // Never closed onto the bus before its diesel runs.
+        if (plantRun.tag(`BRK-EDG-${train}-POS`) === true) expect(plantRun.tag(`EDG-${train}-RUN`), `${train} at ${second} s`).toBe(true)
+        for (const tagId of [`EDG-${train}-RUN`, `BRK-EDG-${train}-POS`, `BUS-${train}-ENERGIZED`]) {
+          if (plantRun.tag(tagId) === true) firstTrue[tagId] ??= second
+        }
+      }
+    }
+    for (const train of ['A', 'B']) {
+      // The dead bus starts its diesel; it runs after its 10 s start, and then the sequencer closes its breaker.
+      expect(firstTrue[`EDG-${train}-RUN`]!).toBeGreaterThanOrEqual(10)
+      expect(firstTrue[`BRK-EDG-${train}-POS`]!).toBeGreaterThan(firstTrue[`EDG-${train}-RUN`]!)
+      expect(firstTrue[`BRK-EDG-${train}-POS`]!).toBeLessThanOrEqual(15)
+      expect(firstTrue[`BUS-${train}-ENERGIZED`]).toBe(firstTrue[`BRK-EDG-${train}-POS`])
+    }
+    expect(breakerLook(plant, 'dieselBreakerA', plantRun.read)).toMatchObject({ state: { kind: 'closed' }, mismatch: null, words: 'closed' })
+
+    // The safety loads run on the diesels when demanded.
+    const safetyPumps = ['AFW-PUMP-A', 'AFW-PUMP-B', 'SI-PUMP-A', 'SI-PUMP-B', 'CHG-PUMP-A', 'CHG-PUMP-B', 'RHR-PUMP-A', 'RHR-PUMP-B', 'CSPRAY-A', 'CSPRAY-B']
+    for (const tagId of safetyPumps) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: resolveProcessPlantSignalBinding(graph, { tagId: tagId as never }).path, value: true })
+    }
+    plantRun.run(2_000)
+    for (const tagId of safetyPumps) expect(plantRun.tag(`${tagId}-RUNNING`), tagId).toBe(true)
+
+    // A diesel that fails opens its breaker, as its generator protection would;
+    // back in service, it starts again and its breaker closes again onto the dead bus.
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'dieselGeneratorA.available' as VariablePath, value: false })
+    plantRun.run(2_000)
+    expect(plantRun.tag('EDG-A-RUN')).toBe(false)
+    expect(plantRun.tag('BRK-EDG-A-CLOSED')).toBe(false)
+    expect(plantRun.tag('BRK-EDG-A-POS')).toBe(false)
+    expect(plantRun.tag('BUS-A-ENERGIZED')).toBe(false)
+    expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(false)
+    expect(plantRun.tag('SI-PUMP-B-RUNNING')).toBe(true)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'dieselGeneratorA.available' as VariablePath, value: true })
+    plantRun.run(15_000)
+    expect(plantRun.tag('BRK-EDG-A-POS')).toBe(true)
+    expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
+  })
+
   test('a reactor trip opens both reactor trip breakers, read from their position feedback', () => {
     const tripped = compileProcessPlant(createPwrReferencePlantDefinition({
       id: 'plant:reactor-trip',

@@ -260,6 +260,22 @@ const cases: ReadonlyArray<AcceptanceCase> = [
         path: variablePath('dieselGeneratorB.startCommand'),
         value: true,
       },
+      // These traces run without the I&C, so no sequencer ties the diesels to
+      // their dead buses: close each output breaker once its diesel is up to speed.
+      {
+        id: 'close-diesel-breaker-a',
+        atMs: 90_000,
+        type: 'setVariable',
+        path: variablePath('dieselBreakerA.closed'),
+        value: true,
+      },
+      {
+        id: 'close-diesel-breaker-b',
+        atMs: 90_000,
+        type: 'setVariable',
+        path: variablePath('dieselBreakerB.closed'),
+        value: true,
+      },
     ],
   },
   {
