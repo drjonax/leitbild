@@ -204,6 +204,29 @@ describe('pumps', () => {
     }
   })
 
+  test('after a loss of offsite power the non-safety pumps coast down and stay off while the diesels carry the safety buses', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    plantRun.act('loss-offsite-power')
+    plantRun.run(60_000)
+    // The safety buses are back on their diesels; the unit buses, fed only from offsite through the UAT, stay dead.
+    expect(plantRun.tag('BUS-A-ENERGIZED')).toBe(true)
+    expect(plantRun.tag('BUS-B-ENERGIZED')).toBe(true)
+    expect(plantRun.tag('UNIT-BUS-A-ENERGIZED')).toBe(false)
+    expect(plantRun.tag('UNIT-BUS-B-ENERGIZED')).toBe(false)
+    for (const loop of ['A', 'B', 'C', 'D']) {
+      expect(plantRun.tag(`RCP-${loop}-RUN`), loop).toBe(true)
+      expect(plantRun.tag(`RCP-${loop}-RUNNING`), loop).toBe(false)
+      expect(Number(plantRun.tag(`RCP-${loop}-FLOW`)), loop).toBeLessThan(600)
+    }
+    for (const id of ['mainFeedwaterPumpA', 'mainFeedwaterPumpB', 'condensatePumpA', 'condensatePumpB', 'circulatingWaterPump']) {
+      expect(plantRun.read(`${id}.runningState`), id).toBe(false)
+    }
+    // The pressurizer heaters are a unit bus load too: they draw nothing until offsite power returns.
+    expect(plantRun.read('pressurizer.demandMw')).toBe(0)
+    expect(plantRun.activeIds()).toEqual(expect.arrayContaining(['alarm:rcp-a-trip:not-running', 'trip:reactor-low-rcp-flow-trip:low-rcp-flow-trip']))
+  })
+
   test('a reactor coolant pump that loses its power alarms as not running, though its run command stands', () => {
     const plantRun = started()
     plantRun.run(2_000)

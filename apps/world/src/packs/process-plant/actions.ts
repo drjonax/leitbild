@@ -155,7 +155,7 @@ export const processPlantActions: ReadonlyArray<ProcessPlantActionDefinition> = 
   {
     id: 'loss-offsite-power',
     title: 'Loss of offsite power',
-    description: 'Mark the offsite grid unavailable and open every offsite power breaker.',
+    description: 'Mark the offsite grid unavailable and open every breaker that feeds a bus from offsite power.',
     parameters: [],
     commands: (_values, graph) => [
       ...commandsForRole(graph, 'offsite-power-source', 'available', false),

@@ -90,7 +90,8 @@ const sharedComponentMetadata = (component: ComponentInstanceSpec): ProcessGraph
   const id = String(component.id)
   if (id.startsWith('mainFeedwaterPump')) return { ...component.metadata, role: 'main-feedwater-pump', equipmentClass: 'feedwater-pump' }
   if (id === 'offsiteGrid') return { ...component.metadata, role: 'offsite-power-source', equipmentClass: 'electrical-grid' }
-  if (id.startsWith('offsiteBreaker')) return { ...component.metadata, role: 'offsite-power-breaker', equipmentClass: 'electrical-breaker' }
+  // The safety buses' and the unit buses' supply breakers both bring offsite power to a bus.
+  if (id.startsWith('offsiteBreaker') || id.startsWith('unitBusBreaker')) return { ...component.metadata, role: 'offsite-power-breaker', equipmentClass: 'electrical-breaker' }
   if (id === 'pressurizer') return { ...component.metadata, role: 'pressure-control', equipmentClass: 'pressurizer' }
   if (id === 'turbineStopValve') return { ...component.metadata, role: 'turbine-stop', equipmentClass: 'steam-valve' }
   if (id === 'turbine') return { ...component.metadata, role: 'turbine-generator', equipmentClass: 'steam-turbine' }

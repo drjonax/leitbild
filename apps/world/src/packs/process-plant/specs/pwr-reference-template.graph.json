@@ -3067,6 +3067,118 @@
       }
     },
     {
+      "id": "unitBusBreakerA",
+      "kind": "electricalBreaker",
+      "label": "Unit Bus Supply Breaker A",
+      "parameters": {
+        "nominalPowerMw": 40,
+        "initialClosed": true
+      },
+      "variables": [
+        {
+          "path": "closed",
+          "tagId": "BRK-UNIT-A-CLOSED",
+          "equipmentId": "unitBusBreakerA",
+          "description": "Unit bus A supply breaker close command"
+        },
+        {
+          "path": "closedState",
+          "tagId": "BRK-UNIT-A-POS",
+          "equipmentId": "unitBusBreakerA",
+          "description": "Unit bus A supply breaker position feedback, closed while true"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "Unit BKR A"
+        }
+      }
+    },
+    {
+      "id": "unitBusBreakerB",
+      "kind": "electricalBreaker",
+      "label": "Unit Bus Supply Breaker B",
+      "parameters": {
+        "nominalPowerMw": 40,
+        "initialClosed": true
+      },
+      "variables": [
+        {
+          "path": "closed",
+          "tagId": "BRK-UNIT-B-CLOSED",
+          "equipmentId": "unitBusBreakerB",
+          "description": "Unit bus B supply breaker close command"
+        },
+        {
+          "path": "closedState",
+          "tagId": "BRK-UNIT-B-POS",
+          "equipmentId": "unitBusBreakerB",
+          "description": "Unit bus B supply breaker position feedback, closed while true"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "Unit BKR B"
+        }
+      }
+    },
+    {
+      "id": "unitBusA",
+      "kind": "electricalBus",
+      "label": "Unit Bus A",
+      "parameters": {
+        "nominalPowerMw": 40,
+        "degradedVoltageFraction": 0.9
+      },
+      "variables": [
+        {
+          "path": "energized",
+          "tagId": "UNIT-BUS-A-ENERGIZED",
+          "equipmentId": "unitBusA",
+          "description": "Unit bus A energized status"
+        },
+        {
+          "path": "voltageFraction",
+          "tagId": "UNIT-BUS-A-VOLTAGE",
+          "equipmentId": "unitBusA",
+          "description": "Unit bus A voltage fraction"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "Unit Bus A"
+        }
+      }
+    },
+    {
+      "id": "unitBusB",
+      "kind": "electricalBus",
+      "label": "Unit Bus B",
+      "parameters": {
+        "nominalPowerMw": 40,
+        "degradedVoltageFraction": 0.9
+      },
+      "variables": [
+        {
+          "path": "energized",
+          "tagId": "UNIT-BUS-B-ENERGIZED",
+          "equipmentId": "unitBusB",
+          "description": "Unit bus B energized status"
+        },
+        {
+          "path": "voltageFraction",
+          "tagId": "UNIT-BUS-B-VOLTAGE",
+          "equipmentId": "unitBusB",
+          "description": "Unit bus B voltage fraction"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "Unit Bus B"
+        }
+      }
+    },
+    {
       "id": "dieselGeneratorA",
       "kind": "dieselGenerator",
       "label": "Emergency Diesel Generator A",
@@ -9297,6 +9409,30 @@
       "connectionKind": "electricalPower"
     },
     {
+      "id": "unit-aux-transformer-to-unit-bus-breaker-a",
+      "from": "unitAuxTransformer.secondary",
+      "to": "unitBusBreakerA.inlet",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "unit-aux-transformer-to-unit-bus-breaker-b",
+      "from": "unitAuxTransformer.secondary",
+      "to": "unitBusBreakerB.inlet",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "unit-bus-breaker-a-to-unit-bus-a",
+      "from": "unitBusBreakerA.outlet",
+      "to": "unitBusA.inlet",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "unit-bus-breaker-b-to-unit-bus-b",
+      "from": "unitBusBreakerB.outlet",
+      "to": "unitBusB.inlet",
+      "connectionKind": "electricalPower"
+    },
+    {
       "id": "diesel-generator-a-to-breaker-a",
       "from": "dieselGeneratorA.outlet",
       "to": "dieselBreakerA.inlet",
@@ -9345,26 +9481,26 @@
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-a-to-rcpA",
-      "from": "safetyBusA.outlet",
+      "id": "unit-bus-a-to-rcpA",
+      "from": "unitBusA.outlet",
       "to": "rcpA.power",
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-a-to-rcpC",
-      "from": "safetyBusA.outlet",
+      "id": "unit-bus-a-to-rcpC",
+      "from": "unitBusA.outlet",
       "to": "rcpC.power",
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-a-to-rcpE",
-      "from": "safetyBusA.outlet",
+      "id": "unit-bus-a-to-rcpE",
+      "from": "unitBusA.outlet",
       "to": "rcpE.power",
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-a-to-mainFeedwaterPumpA",
-      "from": "safetyBusA.outlet",
+      "id": "unit-bus-a-to-mainFeedwaterPumpA",
+      "from": "unitBusA.outlet",
       "to": "mainFeedwaterPumpA.power",
       "connectionKind": "electricalPower"
     },
@@ -9381,38 +9517,38 @@
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-a-to-condensatePumpA",
-      "from": "safetyBusA.outlet",
+      "id": "unit-bus-a-to-condensatePumpA",
+      "from": "unitBusA.outlet",
       "to": "condensatePumpA.power",
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-a-to-circulatingWaterPump",
-      "from": "safetyBusA.outlet",
+      "id": "unit-bus-a-to-circulatingWaterPump",
+      "from": "unitBusA.outlet",
       "to": "circulatingWaterPump.power",
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-b-to-rcpB",
-      "from": "safetyBusB.outlet",
+      "id": "unit-bus-b-to-rcpB",
+      "from": "unitBusB.outlet",
       "to": "rcpB.power",
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-b-to-rcpD",
-      "from": "safetyBusB.outlet",
+      "id": "unit-bus-b-to-rcpD",
+      "from": "unitBusB.outlet",
       "to": "rcpD.power",
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-b-to-rcpF",
-      "from": "safetyBusB.outlet",
+      "id": "unit-bus-b-to-rcpF",
+      "from": "unitBusB.outlet",
       "to": "rcpF.power",
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-b-to-mainFeedwaterPumpB",
-      "from": "safetyBusB.outlet",
+      "id": "unit-bus-b-to-mainFeedwaterPumpB",
+      "from": "unitBusB.outlet",
       "to": "mainFeedwaterPumpB.power",
       "connectionKind": "electricalPower"
     },
@@ -9423,8 +9559,8 @@
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-b-to-condensatePumpB",
-      "from": "safetyBusB.outlet",
+      "id": "unit-bus-b-to-condensatePumpB",
+      "from": "unitBusB.outlet",
       "to": "condensatePumpB.power",
       "connectionKind": "electricalPower"
     },
@@ -9477,8 +9613,8 @@
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-a-to-pressurizer-heater",
-      "from": "safetyBusA.outlet",
+      "id": "unit-bus-a-to-pressurizer-heater",
+      "from": "unitBusA.outlet",
       "to": "pressurizer.heaterPower",
       "connectionKind": "electricalPower"
     }
@@ -10044,6 +10180,10 @@
     "safetyBusB.voltageFraction",
     "safetyBusB.degraded",
     "safetyBusB.marginMw",
+    "unitBusA.energized",
+    "unitBusA.voltageFraction",
+    "unitBusB.energized",
+    "unitBusB.voltageFraction",
     "dieselGeneratorA.running",
     "dieselGeneratorA.availablePowerMw",
     "dieselGeneratorB.running",

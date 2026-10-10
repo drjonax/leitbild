@@ -424,15 +424,22 @@ describe('process plant runtime', () => {
   })
 
   test('explicit electrical links make train loss disable train-powered pumps', () => {
-    const system = compiledSystemWithInitialState({ 'offsiteBreakerA.closed': false })
-    const runtime = createProcessPlantRuntime({ system })
-    runtime.tick(2_000)
+    // Safety bus A carries train A's safety loads; the reactor coolant pumps run from the unit buses.
+    const safetyTrain = createProcessPlantRuntime({ system: compiledSystemWithInitialState({ 'offsiteBreakerA.closed': false }) })
+    safetyTrain.tick(2_000)
+    expect(safetyTrain.readVariable(valueOf('safetyBusA.energized'))).toBe(false)
+    expect(Number(safetyTrain.readVariable(valueOf('chargingPump.flowKgPerS')))).toBeLessThan(90)
+    expect(Number(safetyTrain.readVariable(valueOf('rcpA.developedHeadPa')))).toBeGreaterThan(0)
 
-    expect(runtime.readVariable(valueOf('safetyBusA.energized'))).toBe(false)
-    expect(Number(runtime.readVariable(valueOf('rcpA.developedHeadPa')))).toBe(0)
-    expect(Number(runtime.readVariable(valueOf('rcpC.developedHeadPa')))).toBe(0)
-    expect(Number(runtime.readVariable(valueOf('chargingPump.flowKgPerS')))).toBeLessThan(90)
-    expect(Number(runtime.readVariable(valueOf('rcpB.developedHeadPa')))).toBeGreaterThan(0)
+    const unitTrain = createProcessPlantRuntime({ system: compiledSystemWithInitialState({ 'unitBusBreakerA.closed': false }) })
+    unitTrain.tick(2_000)
+    expect(unitTrain.readVariable(valueOf('unitBusA.energized'))).toBe(false)
+    expect(unitTrain.readVariable(valueOf('safetyBusA.energized'))).toBe(true)
+    expect(Number(unitTrain.readVariable(valueOf('rcpA.developedHeadPa')))).toBe(0)
+    expect(Number(unitTrain.readVariable(valueOf('rcpC.developedHeadPa')))).toBe(0)
+    expect(Number(unitTrain.readVariable(valueOf('rcpB.developedHeadPa')))).toBeGreaterThan(0)
+    expect(unitTrain.readVariable(valueOf('mainFeedwaterPumpA.runningState'))).toBe(false)
+    expect(unitTrain.readVariable(valueOf('mainFeedwaterPumpB.runningState'))).toBe(true)
   })
 
   test('CVCS charging carries tank solute into primary coolant and contributes boron feedback', () => {
@@ -499,8 +506,12 @@ describe('process plant runtime', () => {
       runtime.tick(1_000)
     }
 
+    // A scheduled loss of offsite power is the named action: the grid is lost and every offsite supply breaker opens.
+    expect(runtime.readVariable(valueOf('offsiteGrid.available'))).toBe(false)
     expect(runtime.readVariable(valueOf('offsiteBreakerA.closed'))).toBe(false)
     expect(runtime.readVariable(valueOf('offsiteBreakerB.closed'))).toBe(false)
+    expect(runtime.readVariable(valueOf('unitBusBreakerA.closed'))).toBe(false)
+    expect(runtime.readVariable(valueOf('unitBusBreakerB.closed'))).toBe(false)
     expect(runtime.readVariable(valueOf('rcpA.running'))).toBe(false)
     expect(runtime.readVariable(valueOf('rcs-hot-leg-a.leak.areaFraction'))).toBe(0.2)
     expect(runtime.readVariable(valueOf('sgA.tubeLeakFraction'))).toBe(0.15)

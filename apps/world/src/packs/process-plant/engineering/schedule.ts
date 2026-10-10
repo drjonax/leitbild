@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { componentIdSchema, connectionIdSchema, processVariableValueSchema, variablePathSchema, type ComponentId, type ConnectionId, type VariablePath } from '../graph/index.ts'
+import { commandsForProcessPlantAction } from '../actions.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantRuntime } from '../runtime/model.ts'
 
@@ -148,10 +149,9 @@ export const createProcessPlantScheduleRunner = (config: {
       if (component !== undefined && component.kind !== 'steamGenerator') throw new Error(`process plant steamGeneratorTubeLeak action requires steamGenerator component: ${action.componentId}`)
       return [{ path: `${action.componentId}.tubeLeakFraction` as VariablePath, value: action.leakFraction }]
     }
-    return [
-      { path: 'offsiteBreakerA.closed' as VariablePath, value: false },
-      { path: 'offsiteBreakerB.closed' as VariablePath, value: false },
-    ]
+    // A scheduled loss of offsite power is the named action operators inject.
+    if (config.system === undefined) throw new Error(`process plant ${action.type} action ${action.id} requires the Plant it applies to`)
+    return commandsForProcessPlantAction({ actionId: 'loss-offsite-power', parameters: {}, graph: config.system.graph })
   }
 
   if (config.system !== undefined) {

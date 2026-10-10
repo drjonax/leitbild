@@ -219,6 +219,8 @@ const cases: ReadonlyArray<ValidationCase> = [
       set('loss-offsite', 90_000, 'offsiteGrid.available', false),
       set('open-offsite-a-on-loss', 90_000, 'offsiteBreakerA.closed', false),
       set('open-offsite-b-on-loss', 90_000, 'offsiteBreakerB.closed', false),
+      set('open-unit-a-on-loss', 90_000, 'unitBusBreakerA.closed', false),
+      set('open-unit-b-on-loss', 90_000, 'unitBusBreakerB.closed', false),
       set('start-diesel-a', 150_000, 'dieselGeneratorA.startCommand', true),
       set('start-diesel-b', 150_000, 'dieselGeneratorB.startCommand', true),
       set('close-diesel-a', 210_000, 'dieselBreakerA.closed', true),
