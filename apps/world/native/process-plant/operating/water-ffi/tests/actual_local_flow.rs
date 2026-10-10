@@ -217,3 +217,70 @@ fn actual_prepared_network_admits_and_evaluates() {
         json!({"kind":"prepared-network-admission","packet":path,"unknowns":network.dimension(),"inventory":inventory,"current_budget":budget})
     );
 }
+
+#[test]
+#[ignore = "requires actual compiled owner packet and maintained IF97"]
+fn structural_pattern_contains_sampled_dense_jacobians() {
+    use leitbild_operating_plant::network::CscOut;
+    let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
+    let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let (mut network, prepared) = Network::new(&packet, If97).unwrap();
+    network
+        .select_leading_receipts(&prepared.y, &prepared.yp)
+        .unwrap();
+    let pattern = network.structural_pattern();
+    let n = prepared.y.len();
+    let nnz: usize = pattern.iter().map(Vec::len).sum();
+    let mut states = vec![prepared.y.clone()];
+    for (sign, magnitude) in [(1., 0.015), (-1., 0.02)] {
+        let mut y = prepared.y.clone();
+        for (j, l) in network.face_layout.iter().enumerate() {
+            let liquid_supports = packet.mechanics.faces[l.face]
+                .supports
+                .iter()
+                .all(|s| network.cell_layout[s.region].phase == 0);
+            if l.phase == 0 && liquid_supports && j % 5 != 0 {
+                y[l.index] = sign * magnitude * if j % 2 == 0 { 1. } else { -0.6 };
+            }
+        }
+        states.push(y);
+    }
+    let mut checked = 0usize;
+    let mut largest_dense = 0usize;
+    for y in &states {
+        let (mut data, mut rows, mut pointers) =
+            (vec![0.; n * n], vec![0i64; n * n], vec![0i64; n + 1]);
+        network
+            .jacobian_dense(
+                0.,
+                1.3,
+                y,
+                &prepared.yp,
+                CscOut {
+                    data: &mut data,
+                    rows: &mut rows,
+                    pointers: &mut pointers,
+                },
+            )
+            .unwrap();
+        let mut dense_nnz = 0;
+        for col in 0..n {
+            for row in 0..n {
+                let v = data[col * n + row];
+                if v != 0. {
+                    dense_nnz += 1;
+                    assert!(
+                        pattern[col].binary_search(&row).is_ok(),
+                        "dense entry outside structural pattern: row {row} col {col} value {v}"
+                    );
+                }
+                checked += 1;
+            }
+        }
+        largest_dense = largest_dense.max(dense_nnz);
+    }
+    println!(
+        "{}",
+        json!({"kind":"structural-pattern-containment","packet":path,"unknowns":n,"structural_nonzeros":nnz,"dense_entries_checked":checked,"largest_sampled_dense_nonzeros":largest_dense,"states":states.len()})
+    );
+}

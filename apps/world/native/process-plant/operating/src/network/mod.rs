@@ -15,6 +15,7 @@ mod evaluate;
 mod jacobian;
 pub mod packet;
 pub mod properties;
+mod structure;
 
 pub use account::{Tolerances, empty_energy_ratio};
 pub use jacobian::{CscOut, DensePattern};
