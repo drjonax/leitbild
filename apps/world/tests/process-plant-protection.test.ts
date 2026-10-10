@@ -59,6 +59,23 @@ const started = (automation: ProcessPlantIcConfig = plant.automation) => {
   return { runtime, protection, step, run, act, tag, read, activeIds, trip, secondsUntil }
 }
 
+describe('high pressurizer pressure', () => {
+  test('trips the reactor when nothing relieves or sprays the pressure down', () => {
+    // Pressure control and the PORV's opening left out, the PORV isolated by its block valve, and the heaters full on.
+    const automation = withOnlyReactorTrips(['pzr-pressure-high-reactor-trip'])
+    const plantRun = started({ ...automation, rules: automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-') || rule.id === 'pzr-pressure-high-reactor-trip') })
+    plantRun.run(5_000)
+    plantRun.act('pressurizer-porv-block-valve-close')
+    plantRun.run(12_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 30 })
+    expect(plantRun.secondsUntil('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip', 120)).not.toBeNull()
+    expect(Number(plantRun.tag('PT-455'))).toBeGreaterThan(16.35)
+    plantRun.run(10_000)
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
+    expect(Number(plantRun.read('core.powerMw'))).toBeLessThan(500)
+  })
+})
+
 describe('overtemperature and overpower delta-T', () => {
   test('each loop channel holds its setpoints above its delta-T at rated power', () => {
     const plantRun = started()
