@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ActorId, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
+import { gridCloseBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridRearmLfddStageCommandKind, gridRestoreLfddStageCommandKind } from '../src/packs/electric-grid/commands/frequency.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
@@ -381,6 +382,56 @@ describe('HVDC links', () => {
     expect(eastOutputMw - 100 - 200 - servedMw('east-load')).toBeCloseTo(0, 6)
     expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
     expect(run.grid.frequencyEvents.some(event => event.kind === 'lfdd-stage-operated')).toBe(false)
+  })
+})
+
+describe('synchro-check on closing a loop', () => {
+  test('closing a branch inside one energised island is limited by the voltage-angle difference across it', () => {
+    // Two parallel lines carry 300 MW from hydro units at A to a load at B: a short one (x 0.02 pu)
+    // and a long one (x 0.25 pu). With only the long one closed, A–B differ by P·x = 3 pu · 0.25 = 0.75 rad.
+    const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.5, 60] as const })
+    const line = (id: string, reactancePu: number): GridBranchDefinition => ({
+      id, label: id, kind: 'ac_line', fromBusId: 'bus:a', toBusId: 'bus:b', nominalKv: 420, ratingMw: 2_000, emergencyRatingMw: 2_000,
+      reactancePu, resistancePu: 0, weatherExposure: 'low',
+    })
+    const model: GridModelDefinition = {
+      id: 'loop-closing', title: 'Loop-closing test', description: 'Hydro units at A feed a load at B over a short and a long line.', nominalFrequencyHz: 50,
+      fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
+      sourceBuild: { id: 'physics-test', generatedAt: '2026-10-10T00:00:00.000Z' }, sourceIds: [],
+      buses: [bus('bus:a', 0), bus('bus:b', 1)],
+      branches: [line('short', 0.02), line('long', 0.25)],
+      generators: Array.from({ length: 4 }, (_, index) => ({
+        id: `hydro-${index}`, label: `Hydro ${index}`, kind: 'hydro' as const, busId: 'bus:a', location: [10, 60] as const,
+        capacityMw: 150, availableMw: 150, reserveMw: 0, rampRateMwPerMinute: 150, inertiaSeconds: 3,
+      })),
+      loads: [{ id: 'load', label: 'Load', kind: 'industry', busId: 'bus:b', location: [10.5, 60], demandMw: 300, criticalMw: 0, reactiveDemandMvar: 0, priority: 'normal', controllable: false }],
+      storage: [], connectionPoints: [],
+    }
+    const run = runningGrid({ ...gridDefinitionForModel(model), gridId: 'grid:test' })
+    run.advance(10)
+    const send = (kind: string, assetId: string) => {
+      const result = applyGridCommand(run.grid, command(kind, { assetId }))
+      if (result.ok) run.advance(0)
+      return result
+    }
+    const angleDegrees = (): number =>
+      Math.abs(run.grid.busStates.get('bus:a')!.angleRad - run.grid.busStates.get('bus:b')!.angleRad) * 180 / Math.PI
+    const limit = run.grid.definition.automation.synchroCheck.maximumAngleDifferenceDegrees
+
+    expect(send(gridOpenBranchCommandKind, 'long').ok).toBe(true)
+    const shortOnlyDegrees = angleDegrees()
+    expect(shortOnlyDegrees).toBeLessThan(limit)
+    expect(send(gridCloseBranchCommandKind, 'long')).toEqual({ ok: true })
+
+    expect(send(gridOpenBranchCommandKind, 'short').ok).toBe(true)
+    const longOnlyDegrees = angleDegrees()
+    expect(longOnlyDegrees).toBeGreaterThan(limit)
+    const rejected = send(gridCloseBranchCommandKind, 'short')
+    if (rejected.ok) throw new Error('closing the short line across a wide angle must be rejected')
+    expect(rejected.reason).toContain(`voltage angles differ by ${longOnlyDegrees.toFixed(1)}°`)
+    expect(rejected.reason).toContain(`${limit}° loop-closing limit`)
+    expect(run.grid.branches.get('short')!.state).toBe('open')
+    console.info(`loop closing: ${shortOnlyDegrees.toFixed(2)}° across the long line closes; ${longOnlyDegrees.toFixed(2)}° across the short line is rejected`)
   })
 })
 
