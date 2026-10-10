@@ -65,7 +65,8 @@ export const displaySampleQuerySchema = z.object({
 
 // Generated displays per Plant, by what they show and the view size: windows
 // rarely change size, an operator returns to the same equipment, and
-// resizing recompiles only for sizes not yet drawn.
+// resizing recompiles only for sizes not yet drawn. The display used longest
+// ago is evicted first.
 const GENERATED_CACHE_SIZE = 16
 const generatedCache = new WeakMap<ProcessPlantRuntimeInstance, Map<string, CompiledComposedDisplay>>()
 
@@ -161,11 +162,16 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     refusal: string | null,
   ) => {
     const key = `${shows}|${view === null ? 'natural' : `${view.width}x${view.height}`}`
-    const cached = generatedCache.get(system)?.get(key)
-    if (cached !== undefined) return cached
+    const displays = generatedCache.get(system) ?? new Map<string, CompiledComposedDisplay>()
+    const cached = displays.get(key)
+    if (cached !== undefined) {
+      // Used last, evicted last: sweeping a display's zoom through many sizes never evicts the size its window shows.
+      displays.delete(key)
+      displays.set(key, cached)
+      return cached
+    }
     const result = compile()
     if (!result.ok) return rejectCapabilityTarget(`${refusal === null ? '' : `${refusal}: `}${result.issues.map(issue => issue.message).join('; ')}`)
-    const displays = generatedCache.get(system) ?? new Map<string, CompiledComposedDisplay>()
     if (displays.size >= GENERATED_CACHE_SIZE) displays.delete(displays.keys().next().value!)
     displays.set(key, result.display)
     generatedCache.set(system, displays)
