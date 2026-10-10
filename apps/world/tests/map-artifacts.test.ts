@@ -5,8 +5,16 @@ import { tmpdir } from 'node:os'
 import { gunzipSync } from 'node:zlib'
 import { TileType } from 'pmtiles'
 import {
+  expression,
+  latest,
+  type PropertyValueSpecification,
+  type StylePropertySpecification,
+} from '@maplibre/maplibre-gl-style-spec'
+import {
   __clearManifestCacheForTests,
+  createBaseTileset,
   createMapCapabilityManifest,
+  createOverviewTileset,
   findBaseTileset,
   mapCapabilityManifestSchema,
 } from '../src/map/capabilities.ts'
@@ -26,6 +34,24 @@ import { writePmtilesArchive } from '../src/map/pmtiles-writer.ts'
 import { buildSceneryTilesetDocument } from '../src/map/scenery-tileset.ts'
 import type { SceneryAssetTileSummary } from '../src/map/scenery.ts'
 import { createLeitbildMapStyle } from '../src/map/style.ts'
+
+// MapLibre 6 (`LineStyleLayer.hasOffscreenPass`) renders a line layer into a full-viewport
+// framebuffer and composites it every frame when its `line-opacity`, possibly evaluated for the
+// current zoom, lies strictly between 0 and 1. Constant and zoom-only values evaluate to a
+// constant; feature-dependent expressions do not and draw without the extra pass.
+const offscreenLineOpacityZooms = (layer: Record<string, unknown>): ReadonlyArray<number> => {
+  const opacity = (layer.paint as Record<string, unknown> | undefined)?.['line-opacity']
+  if (opacity === undefined) return []
+  const compiled = expression.normalizePropertyExpression(
+    opacity as PropertyValueSpecification<number>,
+    latest.paint_line['line-opacity'] as StylePropertySpecification,
+  )
+  if (compiled.kind !== 'constant' && compiled.kind !== 'camera') return []
+  return Array.from({ length: 49 }, (_, index) => index / 2).filter(zoom => {
+    const value = compiled.evaluate({ zoom }) as number
+    return value > 0 && value < 1
+  })
+}
 
 // Stand-in MVT payload: the server never decodes tiles, it only codes and caches their bytes.
 const fixtureTileBytes = (seed: number): Uint8Array<ArrayBuffer> => {
@@ -196,6 +222,27 @@ describe('vector map artifacts', () => {
     expect(darkStyle.sources).toEqual(lightStyle.sources)
     expect(darkStyle.name).toContain('dark')
     expect(JSON.stringify(darkStyle.layers)).toContain('#0e1521')
+  })
+
+  test('offscreen line opacity detection mirrors MapLibre 6', () => {
+    expect(offscreenLineOpacityZooms({ type: 'line', paint: { 'line-opacity': 0.5 } })).toHaveLength(49)
+    expect(offscreenLineOpacityZooms({ type: 'line', paint: { 'line-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0, 8, 1] } })).toEqual([6.5, 7, 7.5])
+    expect(offscreenLineOpacityZooms({ type: 'line', paint: { 'line-opacity': ['get', 'opacity'] } })).toEqual([])
+    expect(offscreenLineOpacityZooms({ type: 'line', paint: { 'line-opacity': 1, 'line-color': 'rgba(0, 0, 0, 0.5)' } })).toEqual([])
+  })
+
+  test('base style line layers carry alpha in their colour, never in a fractional line-opacity', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      const style = createLeitbildMapStyle(theme, [createBaseTileset(), createOverviewTileset(0)])
+      const lineLayers = style.layers.filter(layer => layer.type === 'line')
+      expect(lineLayers.map(layer => layer.id)).toEqual(expect.arrayContaining(['overview-boundaries', 'road-casing', 'boundary']))
+      for (const layer of lineLayers) expect({ id: layer.id, zooms: offscreenLineOpacityZooms(layer) }).toEqual({ id: layer.id, zooms: [] })
+    }
+    const lineColor = (id: string): unknown =>
+      (createLeitbildMapStyle('light', [createBaseTileset(), createOverviewTileset(0)]).layers.find(layer => layer.id === id)?.paint as Record<string, unknown>)['line-color']
+    expect(lineColor('overview-boundaries')).toBe('rgba(154, 166, 178, 0.6)')
+    expect(lineColor('road-casing')).toBe('rgba(255, 255, 255, 0.92)')
+    expect(lineColor('boundary')).toBe('rgba(154, 166, 178, 0.52)')
   })
 
   test('PMTiles serving supports byte ranges and fails visibly when missing', async () => {
