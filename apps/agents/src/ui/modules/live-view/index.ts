@@ -1,22 +1,91 @@
-// ```leitbild-view post-render processor. A fence becomes a live Module view
-// only inside a posted AI answer whose own turn produced it; everywhere else
-// (human messages, comparison alternatives) it is an explicit notice.
+// ```leitbild-view fences become display chips, and the displays of the shown
+// room's answers are listed for the Workspace's one process display window.
+// A fence becomes a chip only inside a posted AI answer whose own turn
+// produced the display; everywhere else (human messages, comparison reruns)
+// it is an explicit notice. Agents shows no display itself and frames no
+// World page: the Host relays the list and every open request to World.
+import type { EmbeddedViewListing } from '@leitbild/contracts'
 import { addPostRenderProcessor } from '../extensions/post-render-registry.ts'
 import { apiFetch, currentWorkspaceId } from '../api-client.ts'
+import { $roomMessages, $selectedRoomId } from '../stores.ts'
 import { VIEW_FENCE_LANGUAGE } from '../../../core/render-validators/view-fence.ts'
-import { resolveViewFence } from './resolve.ts'
-import { registerLiveView } from './liveness.ts'
+import { findPostedAnswer, roomViewFences, viewFenceOf, viewListingOf, type ViewFence } from './listing.ts'
+import { createViewResolutionCache, resolveViewReference } from './resolve.ts'
+import {
+  createViewListPublisher,
+  createViewListSync,
+  isViewHostAnnouncement,
+  viewOpenMessage,
+  workspaceRoomHref,
+  type ViewHostMessage,
+} from './host-link.ts'
+import { createChipHost, fenceNotice, promoteUnhostedChips, showAvailable, showPreparing, showRefused, showUnhosted } from './chip.ts'
+
+// Long enough for a burst of re-renders and resolutions to settle into one
+// list, short enough that a new answer's display reaches the window at once.
+const LIST_SETTLE_MS = 250
 
 const fetchJson = async (path: string): Promise<{ readonly status: number; readonly body: unknown }> => {
   const response = await apiFetch(path)
   return { status: response.status, body: response.status === 200 ? await response.json() : null }
 }
 
-const notice = (text: string): HTMLElement => {
-  const element = document.createElement('div')
-  element.className = 'my-2 px-3 py-2 rounded border border-border text-xs text-text-muted'
-  element.textContent = text
-  return element
+const resolutions = createViewResolutionCache<ViewFence>(fence =>
+  resolveViewReference(fence.ref, { roomId: fence.answer.roomId, turnId: fence.answer.turnId, workspaceId: currentWorkspaceId() }, fetchJson))
+
+// Set once the Host announces itself on this frame document; a reload starts unhosted again.
+let hosted = false
+
+const postToHost = (message: ViewHostMessage): void => {
+  window.parent.postMessage(message, location.origin)
+}
+
+const openView = (listing: EmbeddedViewListing): void => {
+  postToHost(viewOpenMessage(listing))
+}
+
+const publisher = createViewListPublisher({
+  post: postToHost,
+  delayMs: LIST_SETTLE_MS,
+  setTimer: (run, delayMs) => setTimeout(run, delayMs),
+  clearTimer: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
+})
+
+const syncViewList = createViewListSync({
+  fences: () => {
+    const roomId = $selectedRoomId.get()
+    return roomId === null ? [] : roomViewFences($roomMessages.get()[roomId] ?? [])
+  },
+  resolve: fence => resolutions.resolve(fence),
+  offer: views => publisher.offer(views),
+})
+
+const refreshViewList = (): void => {
+  // Unhosted, no window receives the list; the Host's announcement refreshes it.
+  if (!hosted) return
+  void syncViewList()
+}
+
+const settleChip = async (host: HTMLElement, roomId: string, turnId: string, body: string): Promise<void> => {
+  // renderMessage renders only messages of the room store, so the answer is there.
+  const answer = findPostedAnswer($roomMessages.get()[roomId] ?? [], turnId)
+  if (answer === null) {
+    showRefused(host, 'view_answer_missing', 'the answer that composed this display is not loaded')
+    return
+  }
+  const parsed = viewFenceOf(answer, body)
+  if (parsed.kind === 'invalid') {
+    showRefused(host, 'view_reference_invalid', parsed.error)
+    return
+  }
+  const resolution = await resolutions.resolve(parsed.fence)
+  if (resolution.kind === 'refused') {
+    showRefused(host, resolution.code, resolution.message)
+    return
+  }
+  const listing = viewListingOf(parsed.fence, resolution.envelope)
+  if (hosted) showAvailable(host, listing, openView)
+  else showUnhosted(host, listing, workspaceRoomHref(currentWorkspaceId(), roomId))
 }
 
 const renderViewBlocks = async (container: HTMLElement): Promise<void> => {
@@ -24,25 +93,36 @@ const renderViewBlocks = async (container: HTMLElement): Promise<void> => {
   if (blocks.length === 0) return
   const roomId = container.dataset.viewRoom
   const turnId = container.dataset.viewTurn
+  const settling: Promise<void>[] = []
   for (const code of blocks) {
     const pre = code.closest('pre') ?? code
     if (roomId === undefined || turnId === undefined) {
-      pre.replaceWith(notice('Live displays appear only in the posted answer that composed them.'))
+      pre.replaceWith(fenceNotice('Live displays appear only in the posted answer that composed them.'))
       continue
     }
-    const wrapper = document.createElement('div')
-    wrapper.className = 'my-2 rounded border border-border overflow-hidden'
-    const body = document.createElement('div')
-    wrapper.appendChild(body)
-    body.appendChild(notice('Preparing display…'))
-    pre.replaceWith(wrapper)
-    const resolution = await resolveViewFence(code.textContent ?? '', { roomId, turnId, workspaceId: currentWorkspaceId() }, fetchJson)
-    if (resolution.kind === 'refused') {
-      wrapper.replaceWith(notice(`This display cannot be shown (${resolution.code}): ${resolution.message}.`))
-      continue
-    }
-    registerLiveView(wrapper, body, resolution.envelope)
+    const host = createChipHost()
+    showPreparing(host)
+    pre.replaceWith(host)
+    settling.push(settleChip(host, roomId, turnId, code.textContent ?? '').catch((error: unknown) => {
+      showRefused(host, 'view_chip_failed', error instanceof Error ? error.message : String(error))
+    }))
   }
+  await Promise.all(settling)
 }
 
 addPostRenderProcessor('leitbild-view', renderViewBlocks)
+
+window.addEventListener('message', event => {
+  if (!isViewHostAnnouncement(event, { origin: location.origin, parent: window.parent, self: window })) return
+  // The Host announces once per frame load; a repeated announcement changes nothing.
+  if (hosted) return
+  hosted = true
+  promoteUnhostedChips(document, openView)
+  refreshViewList()
+})
+
+$selectedRoomId.listen(() => refreshViewList())
+$roomMessages.listen((_messages, _previous, changedRoomId) => {
+  // A whole-store replacement (room deleted) names no room; it may have been the shown one.
+  if (changedRoomId === undefined || changedRoomId === $selectedRoomId.get()) refreshViewList()
+})

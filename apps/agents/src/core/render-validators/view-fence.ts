@@ -1,9 +1,10 @@
-// ```leitbild-view fences place a Module-published live view below an answer.
+// ```leitbild-view fences present a Module-published live view with an answer.
 // The fence never carries a URL or the view itself: it names the exact tool
 // call result (`view <callId>/<batch key>`) whose validated envelope Agents
 // already holds as execution evidence. Shared by the evaluation loop (which
 // rejects fences without evidence in the same turn) and the browser renderer
-// (which resolves the evidence and builds the same-origin frame).
+// (which resolves the evidence and asks the Workspace's display window to
+// show it).
 //
 // Browser-safe: no schema runtime. Server-side completion of envelopes lives in
 // view-envelope.ts.
@@ -16,7 +17,7 @@ import {
 
 export const VIEW_FENCE_LANGUAGE = 'leitbild-view'
 
-// Modules whose views may be embedded below an answer. Agents never embeds
+// Modules whose views an answer may present. Agents never presents
 // its own pages, and a new Module must be added deliberately.
 export const EMBEDDABLE_VIEW_MODULES: ReadonlySet<string> = new Set(['world'])
 
