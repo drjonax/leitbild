@@ -16,10 +16,12 @@ mod jacobian;
 pub mod packet;
 pub mod properties;
 mod structure;
+mod tolerance;
 
 pub use account::{Tolerances, empty_energy_ratio};
 pub use jacobian::{CscOut, DensePattern};
 pub use properties::{Properties, Reuse, Water};
+pub use tolerance::ToleranceClasses;
 
 use crate::{
     hydraulics::Section,
