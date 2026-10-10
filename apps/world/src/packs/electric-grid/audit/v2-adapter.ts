@@ -25,11 +25,11 @@ export interface GridModelV2AuditInput {
     readonly id: string
     readonly label: string
     readonly kind: AuditBusKind
-    readonly substationId?: string
+    readonly substationId?: string | undefined
     readonly nominalKv: number
     readonly location: LonLat
-    readonly priceArea?: string
-    readonly externalArea?: string
+    readonly priceArea?: string | undefined
+    readonly externalArea?: string | undefined
     readonly provenance: ProvenanceInput
   }>
   readonly branches: ReadonlyArray<{
@@ -39,7 +39,7 @@ export interface GridModelV2AuditInput {
     readonly fromBusId: string
     readonly toBusId: string
     readonly nominalKv: number
-    readonly lengthKm?: number
+    readonly lengthKm?: number | undefined
     readonly circuits: number
     readonly osmWayIds: ReadonlyArray<string>
     readonly provenance: ProvenanceInput
