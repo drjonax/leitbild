@@ -1,0 +1,32 @@
+import type { PackRuntimeQuery, SimulationCapability } from '../../../simulation/protocol.ts'
+import { gridAssetGetQuery, gridAssetSearchQuery } from './assets.ts'
+import { gridCatalogQuery } from './catalog.ts'
+import type { ElectricGridQuery, GridRuntimes } from './common.ts'
+import { gridConnectionPointsQuery } from './connection-points.ts'
+import { gridPowerFlowQuery } from './power-flow.ts'
+import { gridSummaryQuery } from './summary.ts'
+
+/** Published order of the Electric Grid query Capabilities. */
+const electricGridQueries: ReadonlyArray<ElectricGridQuery> = [
+  gridCatalogQuery,
+  gridSummaryQuery,
+  gridAssetSearchQuery,
+  gridAssetGetQuery,
+  gridPowerFlowQuery,
+  gridConnectionPointsQuery,
+]
+
+const queryById = new Map(electricGridQueries.map(query => [query.capability.id, query]))
+
+export const electricGridQueryKinds: ReadonlyArray<string> = electricGridQueries.map(query => query.capability.id)
+
+export const electricGridQueryCapabilities: ReadonlyArray<SimulationCapability> = electricGridQueries.map(query => query.capability)
+
+export const answerElectricGridQuery = (config: {
+  readonly request: PackRuntimeQuery
+  readonly grids: GridRuntimes
+}): unknown => {
+  const query = queryById.get(config.request.capabilityId)
+  if (!query) throw new Error(`unsupported Electric Grid query Capability: ${config.request.capabilityId}`)
+  return query.answer(config.request.input, config.grids)
+}
