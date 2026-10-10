@@ -73,8 +73,17 @@ describe('a view framed by the display window', () => {
     expect(page.refused).toHaveLength(2)
   })
 
-  test('reports the room its content needs only when it changes', () => {
+  // A window presents its frame on the frame's ready message.
+  const presented = () => {
     const page = framedPage()
+    page.host.listen()
+    page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 1 })
+    page.posted.length = 0
+    return page
+  }
+
+  test('reports the room its content needs only when it changes', () => {
+    const page = presented()
     const extent = { kind: 'advice', minWidth: 640, width: 900, height: 512 } as const
     page.host.reportExtent(extent)
     page.host.reportExtent({ ...extent })
@@ -86,7 +95,7 @@ describe('a view framed by the display window', () => {
   })
 
   test('sends zoom gestures as messages the window reads', () => {
-    const page = framedPage()
+    const page = presented()
     page.host.requestZoom({ step: 'in' })
     page.host.requestZoom({ step: 'reset' })
     page.host.requestZoom({ factor: 0.9 })
@@ -101,6 +110,22 @@ describe('a view framed by the display window', () => {
       { type: 'world:display-zoom', factor: 0.9 },
       { type: 'world:display-extent', kind: 'generated', minWidth: 1200, width: 1200, height: 700 },
     ])
+  })
+
+  test('a frame no window presents (a chat answer\'s inline display) says only that it listens', () => {
+    const page = framedPage()
+    let started = 0
+    page.host.whenPresented(() => { started += 1 })
+    page.host.listen()
+    page.host.requestZoom({ step: 'in' })
+    page.host.reportExtent({ kind: 'advice', minWidth: 640, width: 900, height: 512 })
+    expect(page.posted.map(post => post.message)).toEqual([{ type: 'world:display-frame-ready' }])
+    expect(started).toBe(0)
+    page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 1 })
+    page.fromWindow({ type: 'world:display-frame', shown: true, zoom: 1.5 })
+    expect(started).toBe(1)
+    page.host.whenPresented(() => { started += 1 })
+    expect(started).toBe(2)
   })
 })
 

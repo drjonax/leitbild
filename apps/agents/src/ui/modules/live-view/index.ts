@@ -2,8 +2,9 @@
 // room's answers are listed for the Workspace's one process display window.
 // A fence becomes a chip only inside a posted AI answer whose own turn
 // produced the display; everywhere else (human messages, comparison reruns)
-// it is an explicit notice. Agents shows no display itself and frames no
-// World page: the Host relays the list and every open request to World.
+// it is an explicit notice. The Host relays the list and every open request
+// to World's window; a display the reader asks to see inline is also framed
+// in its answer (inline.ts).
 import { addPostRenderProcessor } from '../extensions/post-render-registry.ts'
 import { apiFetch, currentWorkspaceId } from '../api-client.ts'
 import { $roomMessages, $selectedRoomId } from '../stores.ts'
@@ -18,7 +19,7 @@ import {
   workspaceRoomHref,
   type ViewHostMessage,
 } from './host-link.ts'
-import { createChipHost, fenceNotice, promoteUnhostedChips, showAvailable, showPreparing, showRefused, showUnhosted } from './chip.ts'
+import { createChipHost, fenceNotice, promoteUnhostedChips, showAvailable, showPreparing, showRefused, showUnhosted, type ChipActions } from './chip.ts'
 
 // Long enough for a burst of re-renders and resolutions to settle into one
 // list, short enough that a new answer's display reaches the window at once.
@@ -37,6 +38,16 @@ const resolutions = createViewResolutionCache<ViewFence>(fence =>
 
 // Set once the Host announces itself on this frame document; a reload starts unhosted again.
 let hosted = false
+
+// Displays the reader shows inline, by key, for this page's life: an answer
+// rendered again (room switch, realtime snapshot) shows them inline again.
+const inlineKeys = new Set<string>()
+
+const chipActions: ChipActions = {
+  open: listing => openView(listing),
+  inlineShown: key => inlineKeys.has(key),
+  setInlineShown: (key, shown) => { if (shown) inlineKeys.add(key); else inlineKeys.delete(key) },
+}
 
 const postToHost = (message: ViewHostMessage): void => {
   window.parent.postMessage(message, location.origin)
@@ -81,8 +92,8 @@ const settleChip = async (host: HTMLElement, roomId: string, turnId: string, bod
     return
   }
   const listing = viewListingOf(parsed.fence, resolution.envelope)
-  if (hosted) showAvailable(host, listing, openView)
-  else showUnhosted(host, listing, workspaceRoomHref(currentWorkspaceId(), roomId))
+  if (hosted) showAvailable(host, listing, chipActions)
+  else showUnhosted(host, listing, workspaceRoomHref(currentWorkspaceId(), roomId), chipActions)
 }
 
 const renderViewBlocks = async (container: HTMLElement): Promise<void> => {
@@ -114,7 +125,7 @@ window.addEventListener('message', event => {
   // The Host announces once per frame load; a repeated announcement changes nothing.
   if (hosted) return
   hosted = true
-  promoteUnhostedChips(document, openView)
+  promoteUnhostedChips(document, chipActions)
   refreshViewList()
 })
 

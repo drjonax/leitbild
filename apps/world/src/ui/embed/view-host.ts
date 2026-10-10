@@ -2,7 +2,9 @@
 // (display-frame-protocol.ts). Framed by the window, a view learns whether it
 // is shown and at what zoom, tells the window how much room its content needs,
 // and hands zoom gestures made inside it to the window instead of zooming the
-// browser page. A view that is not framed is shown, at 1:1, and sends nothing.
+// browser page. A view that no window presents (a page of its own, or a
+// display shown inline in a chat answer) is shown at 1:1 and only says once
+// that it listens.
 import { parseDisplayFramePresentation, type DisplayFrameMessage } from './display-frame-protocol.ts'
 import { observeDisplayExtent, type DisplayExtent } from './display-extent.ts'
 
@@ -34,8 +36,10 @@ export type ZoomStep = 'in' | 'out' | 'reset'
 
 export const createViewHost = (ports: ViewHostPorts) => {
   let presentation = UNFRAMED_PRESENTATION
+  let presentedByWindow = false
   let reported: string | null = null
   const subscribers = new Set<(presentation: DisplayPresentation) => void>()
+  const onWindow = new Set<() => void>()
   const post = (message: DisplayFrameMessage): void => ports.parent?.postMessage(message, ports.origin)
 
   const receive = (message: ReceivedMessage): void => {
@@ -45,6 +49,11 @@ export const createViewHost = (ports: ViewHostPorts) => {
     if (next === null) {
       ports.refused(message.data)
       return
+    }
+    if (!presentedByWindow) {
+      presentedByWindow = true
+      for (const started of [...onWindow]) started()
+      onWindow.clear()
     }
     if (next.shown === presentation.shown && next.zoom === presentation.zoom) return
     presentation = { shown: next.shown, zoom: next.zoom }
@@ -61,6 +70,12 @@ export const createViewHost = (ports: ViewHostPorts) => {
       return stop
     },
     current: (): DisplayPresentation => presentation,
+    /** Runs `start` once a display window presents this view (at once if one already has). */
+    whenPresented: (start: () => void): (() => void) => {
+      if (presentedByWindow) { start(); return () => {} }
+      onWindow.add(start)
+      return () => { onWindow.delete(start) }
+    },
     /** Svelte's store contract: called at once with the presentation, then on every change. */
     subscribe: (subscriber: (presentation: DisplayPresentation) => void): (() => void) => {
       subscriber(presentation)
@@ -69,13 +84,14 @@ export const createViewHost = (ports: ViewHostPorts) => {
     },
     /** Tells the framing window the room the content needs, when it changed. */
     reportExtent: (extent: DisplayExtent): void => {
-      if (ports.parent === null) return
+      if (ports.parent === null || !presentedByWindow) return
       const key = `${extent.kind} ${extent.minWidth} ${extent.width} ${extent.height}`
       if (key === reported) return
       reported = key
       post({ type: 'world:display-extent', kind: extent.kind, minWidth: extent.minWidth, width: extent.width, height: extent.height })
     },
     requestZoom: (request: { readonly step: ZoomStep } | { readonly factor: number }): void => {
+      if (!presentedByWindow) return
       post('step' in request ? { type: 'world:display-zoom', step: request.step } : { type: 'world:display-zoom', factor: request.factor })
     },
   }
@@ -254,6 +270,9 @@ export const hostDisplayFrame = (config: {
   const card = config.card
   if (card === null) throw new Error('An embedded display has no card to measure')
   const host = embeddedDisplayFrame()
+  // Gestures and the room needed go to a display window only; a frame no window
+  // presents (a chat answer's inline display) zooms and scrolls as any page.
+  const windowStops: Array<() => void> = []
   const stops = [
     trackVisibility({
       host,
@@ -262,8 +281,10 @@ export const hostDisplayFrame = (config: {
       setVisible: config.setVisible,
     }),
     followPresentation({ host, presented: config.presented }),
-    ...(host.framed ? [forwardZoomGestures(host), observeDisplayExtent({ kind: config.kind, card, drawing: config.drawing, report: host.reportExtent })] : []),
+    host.whenPresented(() => {
+      windowStops.push(forwardZoomGestures(host), observeDisplayExtent({ kind: config.kind, card, drawing: config.drawing, report: host.reportExtent }))
+    }),
     host.listen(),
   ]
-  return () => { for (const stop of stops) stop() }
+  return () => { for (const stop of [...stops, ...windowStops]) stop() }
 }
