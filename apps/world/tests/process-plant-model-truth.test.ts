@@ -280,6 +280,20 @@ describe('auxiliary feedwater on a loss of offsite power', () => {
     }
   })
 
+  test('in a station blackout only the turbine-driven pump feeds, as ECA-0.0 expects', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    for (const train of ['A', 'B']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `dieselGenerator${train}.available` as VariablePath, value: false })
+    plantRun.act('loss-offsite-power')
+    plantRun.run(60_000)
+    expect(plantRun.tag('BUS-A-ENERGIZED')).toBe(false)
+    expect(plantRun.tag('BUS-B-ENERGIZED')).toBe(false)
+    expect(plantRun.tag('AFW-PUMP-T-RUNNING')).toBe(true)
+    expect(plantRun.tag('AFW-PUMP-A-RUNNING')).toBe(false)
+    expect(plantRun.tag('AFW-PUMP-B-RUNNING')).toBe(false)
+    expect(Number(plantRun.read('aux-feedwater-valve-a-to-sg-a.flowKgPerS'))).toBeGreaterThan(5)
+  })
+
   test('a turbine trip with offsite power available does not start it', () => {
     const plantRun = started()
     plantRun.run(2_000)

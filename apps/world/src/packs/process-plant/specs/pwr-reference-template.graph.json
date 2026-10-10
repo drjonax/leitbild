@@ -9553,12 +9553,6 @@
       "connectionKind": "electricalPower"
     },
     {
-      "id": "safety-bus-b-to-auxFeedwaterPumpTurbine",
-      "from": "safetyBusB.outlet",
-      "to": "auxFeedwaterPumpTurbine.power",
-      "connectionKind": "electricalPower"
-    },
-    {
       "id": "unit-bus-b-to-condensatePumpB",
       "from": "unitBusB.outlet",
       "to": "condensatePumpB.power",
