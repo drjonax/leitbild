@@ -780,6 +780,8 @@ fn s1_hydraulics_admission() {
     let mut probe = fresh(&packet);
     let (a, b) = pencil(&mut probe, &ys, &yps);
     let before = rows(&mut probe, &ys, &yps);
+    // Diagnostic only: the full energy/mass budget at the settled state.
+    receipt["settled_budget"] = probe.current_budget(&ys, &yps);
     probe.set_rotor_state(
         gates.supply_loss.rotor,
         RotorState {
@@ -830,14 +832,55 @@ fn s1_hydraulics_admission() {
             .map(|(r, m)| json!({"hz":m.frequency_hz,"zeta":m.damping_ratio,"ratio":r.ratio,"coordinate":r.coordinate}))
             .collect()
     };
+    // Diagnostic only (not a gate): locate each growing mode on its dominant
+    // coordinates, with its growth rate, so a no-go is attributable.
+    let labels = probe.labels();
+    let growing = |spectrum: &spectrum::Spectrum| -> Vec<Value> {
+        spectrum
+            .modes
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.unstable)
+            .map(|(i, m)| {
+                let mut weight: Vec<(f64, usize)> = spectrum.shapes[i]
+                    .right
+                    .iter()
+                    .enumerate()
+                    .map(|(j, v)| (v.abs(), j))
+                    .collect();
+                weight.sort_by(|a, b| b.0.total_cmp(&a.0));
+                let dominant: Vec<Value> = weight
+                    .iter()
+                    .take(6)
+                    .map(|(w, j)| json!({"coordinate":labels[*j].1,"weight":w}))
+                    .collect();
+                json!({"hz":m.frequency_hz,"re":m.lambda.re,"im":m.lambda.im,"e_fold_s":m.e_fold_s,"marginal":m.marginal,"error_bound":m.error_bound,"condition":m.condition,"dominant":dominant})
+            })
+            .collect()
+    };
+    let growing_pre = growing(&pre);
+    let growing_post = growing(&post);
     let spectral = json!({
+        "growing_pre": growing_pre,
+        "growing_post": growing_post,
         "pre":{"finite":pre_report.finite,"infinite":pre_report.infinite.count,"algebraic":algebraic,"unstable":pre_report.unstable,"marginal":pre_report.marginal,"fast_excited":fast_excited(&pre_report),"max_ratio":pre_report.events[0].max_ratio,"dggev_s":pre_report.dggev_seconds,
             "modes_above_fast_hz":pre_report.modes.iter().filter(|m|m.frequency_hz>gates.spectrum.fast_mode_hz).map(|m|json!({"hz":m.frequency_hz,"zeta":m.damping_ratio})).collect::<Vec<_>>(),
             "slowest_oscillatory":pre_report.modes.iter().filter(|m|m.frequency_hz>0.).take(8).map(|m|json!({"hz":m.frequency_hz,"zeta":m.damping_ratio,"e_fold_s":m.e_fold_s})).collect::<Vec<_>>()},
         "post_seizure":{"finite":post_report.finite,"infinite":post_report.infinite.count,"algebraic":algebraic+1,"unstable":post_report.unstable,"marginal":post_report.marginal,"fast_excited":fast_excited(&post_report),"max_ratio":post_report.events[0].max_ratio,"removed_rotor_energy_j":locking.event.map(|e|e.removed_kinetic_energy_j)}
     });
-    let go = pre_report.unstable == 0
-        && post_report.unstable == 0
+    // A positive real part counts only where it is resolved: a mode whose
+    // first-order error bound covers Re λ has an unresolved sign (the
+    // spectrum's `marginal`), as for an exactly conserved inventory.
+    let resolved_growing = |spectrum: &spectrum::Spectrum| {
+        spectrum
+            .modes
+            .iter()
+            .filter(|m| m.unstable && !m.marginal)
+            .count()
+    };
+    let (resolved_pre, resolved_post) = (resolved_growing(&pre), resolved_growing(&post));
+    let go = resolved_pre == 0
+        && resolved_post == 0
         && pre_report.infinite.count == algebraic
         && post_report.infinite.count == algebraic + 1
         && spectral["pre"]["fast_excited"]
@@ -849,6 +892,8 @@ fn s1_hydraulics_admission() {
             .unwrap()
             .is_empty();
     receipt["spectrum"] = spectral;
+    receipt["spectrum"]["resolved_growing_pre"] = json!(resolved_pre);
+    receipt["spectrum"]["resolved_growing_post"] = json!(resolved_post);
     if !go {
         finish(
             &mut receipt,
