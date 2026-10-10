@@ -277,14 +277,19 @@ const contrast = (left: string, right: string): number => {
   return (high! + 0.05) / (low! + 0.05)
 }
 
+// The largest canvas every browser allocates (iOS Safari: 4096 x 4096), and as
+// much memory as one drawing should hold; a larger drawing is drawn coarser.
+const MAX_CANVAS_PIXELS = 4096 * 4096
+
 /**
- * Draws the pipes on a canvas sized for the device pixel ratio. Where a theme
- * draws the flow chevron in the pipe's own colour (dusk), the chevrons are
- * drawn again with the pipe fill as their halo and the background as their
- * body, so they stay visible without forking OpenBridge's renderer.
+ * Draws the pipes on a canvas sized for the device pixel ratio times the zoom
+ * the display window paints the view at, so a magnified drawing stays sharp.
+ * Where a theme draws the flow chevron in the pipe's own colour (dusk), the
+ * chevrons are drawn again with the pipe fill as their halo and the background
+ * as their body, so they stay visible without forking OpenBridge's renderer.
  */
-export const drawPipes = (canvas: HTMLCanvasElement, width: number, height: number, segments: ReadonlyArray<Segment>): void => {
-  const ratio = window.devicePixelRatio || 1
+export const drawPipes = (canvas: HTMLCanvasElement, width: number, height: number, segments: ReadonlyArray<Segment>, zoom: number): void => {
+  const ratio = Math.min((window.devicePixelRatio || 1) * zoom, Math.sqrt(MAX_CANVAS_PIXELS / (width * height)))
   canvas.style.width = `${width}px`
   canvas.style.height = `${height}px`
   canvas.width = Math.round(width * ratio)

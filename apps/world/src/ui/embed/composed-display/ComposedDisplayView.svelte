@@ -5,6 +5,7 @@
   import type { MimicDrawnItem } from '../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { simulationClock } from '../../../packs/process-plant/displays/display-text.ts'
   import { runOnMount } from '../../svelte-lifecycle.svelte.ts'
+  import { hostDisplayFrame } from '../view-host.ts'
   import { composedDisplayClient } from './composed-display-client.ts'
   import { createComposedDisplaySession, type ComposedDisplaySnapshot } from './composed-display-session.ts'
   import AlarmsPanel from './AlarmsPanel.svelte'
@@ -30,7 +31,8 @@
   // How long a window must keep its size before an overview is drawn again for it.
   const RELAYOUT_AFTER_MS = 300
 
-  let snapshot = $state<ComposedDisplaySnapshot | null>(null)
+  // Raw: the session replaces its snapshot whole, so a drawing keeps its identity from sample to sample.
+  let snapshot = $state.raw<ComposedDisplaySnapshot | null>(null)
   let wallNow = $state(Date.now())
   // Created once on mount; the envelope of an embedded view never changes.
   let session: ReturnType<typeof createComposedDisplaySession> | undefined
@@ -48,7 +50,6 @@
     session = active
     void active.start()
     const interacted = (): void => { active.interacted(); lastInputWallMs = Date.now() }
-    const visibility = (): void => active.setVisible(document.visibilityState === 'visible')
     const clock = setInterval(() => {
       wallNow = Date.now()
       void active.sized()
@@ -68,7 +69,13 @@
     document.addEventListener('keydown', interacted)
     const escape = (event: KeyboardEvent): void => { if (event.key === 'Escape') back() }
     document.addEventListener('keydown', escape)
-    document.addEventListener('visibilitychange', visibility)
+    // Framed by World's display window, the view samples only while it is shown in a visible tab, tells the window the room it needs and passes zoom gestures to it.
+    const unhost = hostDisplayFrame({
+      kind: advice === null ? 'generated' : 'advice',
+      card: document.querySelector<HTMLElement>('article.card'),
+      drawing: () => (snapshot === null || snapshot.phase.kind === 'checking' || snapshot.phase.kind === 'starting' ? undefined : snapshot.view ?? snapshot.phase),
+      setVisible: visible => active.setVisible(visible),
+    })
     return () => {
       active.close()
       clearInterval(clock)
@@ -76,7 +83,7 @@
       document.removeEventListener('pointermove', interacted)
       document.removeEventListener('keydown', interacted)
       document.removeEventListener('keydown', escape)
-      document.removeEventListener('visibilitychange', visibility)
+      unhost()
       window.removeEventListener('resize', resized)
       clearTimeout(resizing)
     }
@@ -342,6 +349,8 @@
   .chip.warn { color: var(--alert-caution-color); border-color: var(--alert-caution-color); }
   .caption { margin: 0; font-size: 12px; color: var(--element-active-color); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .need { color: var(--element-neutral-color); }
+  /* Advice is as tall as its content, whatever its frame: the display window sizes the frame to the height it reports. */
+  .card:not(.overview) { height: auto; }
   .banner { margin: 0; height: 22px; padding: 0 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--container-section-color); border-left: 3px solid var(--alert-caution-color); }
   .banner.quiet { background: none; border-left-color: transparent; color: var(--element-neutral-color); padding-left: 0; }
   .banner.trip { border-left-color: var(--alert-alarm-color); font-weight: 600; }
