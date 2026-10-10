@@ -108,12 +108,16 @@ export const waitForCondition = async (
     readonly intervalMs?: number
   },
 ): Promise<void> => {
-  const timeoutMs = options?.timeoutMs ?? 3_000
+  // The deadline reports a condition that never holds; it is not a budget, so
+  // it leaves a loaded machine room, and the condition is checked once more
+  // after a sleep that the machine stretched past it.
+  const timeoutMs = options?.timeoutMs ?? 10_000
   const intervalMs = options?.intervalMs ?? 25
   const startedAt = Date.now()
 
-  while (Date.now() - startedAt <= timeoutMs) {
+  for (;;) {
     if (condition()) return
+    if (Date.now() - startedAt > timeoutMs) break
     await Bun.sleep(intervalMs)
   }
 

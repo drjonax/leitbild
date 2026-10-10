@@ -168,17 +168,44 @@ const horizontalDistanceM = (
   return Math.hypot(eastM, northM)
 }
 
+/** A motion frame and the main thread's CPU milliseconds when it arrived. */
+interface ArrivedMotionFrame {
+  readonly frame: DroneMotionFrame
+  readonly cpuMs: number
+}
+
+const threadCpuNowMs = (): number => {
+  const used = process.threadCpuUsage()
+  return (used.user + used.system) / 1_000
+}
+
+/** The longest the event loop went without running a probe timer, within [fromMs, toMs]. */
+const longestLoopSilenceMs = (probeTicksMs: ReadonlyArray<number>, fromMs: number, toMs: number): number => {
+  let longest = 0
+  for (let index = 1; index < probeTicksMs.length; index += 1) {
+    longest = Math.max(longest, Math.min(probeTicksMs[index]!, toMs) - Math.max(probeTicksMs[index - 1]!, fromMs))
+  }
+  return longest
+}
+
 const assertSmoothMotionFrames = (
-  frames: ReadonlyArray<DroneMotionFrame>,
+  frames: ReadonlyArray<ArrivedMotionFrame>,
+  probeTicksMs: ReadonlyArray<number>,
 ): void => {
   expect(frames.length).toBeGreaterThan(8)
   for (let index = 1; index < frames.length; index += 1) {
-    const previous = frames[index - 1]!
-    const current = frames[index]!
-    const dtMs = Date.parse(current.observedAt) - Date.parse(previous.observedAt)
+    const { frame: previous, cpuMs: previousCpuMs } = frames[index - 1]!
+    const { frame: current, cpuMs } = frames[index]!
+    const fromMs = Date.parse(previous.observedAt)
+    const toMs = Date.parse(current.observedAt)
+    const dtMs = toMs - fromMs
     const dtSeconds = Math.max(0.001, dtMs / 1_000)
     expect(current.sequence).toBeGreaterThan(previous.sequence)
-    expect(dtMs).toBeLessThanOrEqual(250)
+    // A loaded machine that starves the whole process delays frames through no
+    // fault of the runtime, and silences the probe timer alike (266 ms at load 150).
+    expect(dtMs - longestLoopSilenceMs(probeTicksMs, fromMs, toMs)).toBeLessThanOrEqual(250)
+    // Work that blocks the event loop silences the probe too, but spends the thread's CPU time.
+    expect(cpuMs - previousCpuMs).toBeLessThanOrEqual(250)
     expect(horizontalDistanceM(previous, current)).toBeLessThanOrEqual(85 * dtSeconds + 1.5)
     expect(Math.abs(current.altitudeM - previous.altitudeM)).toBeLessThanOrEqual(24 * dtSeconds + 1.2)
   }
@@ -289,7 +316,7 @@ describe('drone pack native runtime', () => {
         return data.pose.altitudeM > 0.2
           && data.pose.point.coordinates[0] > initial.spatial.position!.point.coordinates[0]
           && data.control.inputSource?.kind === 'keyboard'
-      }, { timeoutMs: 900, intervalMs: 20 })
+      }, { intervalMs: 20 })
       const data = droneData(seen.get(initial.id)!)
       expect(data.attitude.pitchDeg).toBeLessThan(-0.1)
       expect(Math.abs(data.attitude.rollDeg)).toBeLessThan(4)
@@ -334,7 +361,7 @@ describe('drone pack native runtime', () => {
         if (!current) return false
         const data = droneData(current)
         return data.pose.headingDeg > 1 && data.pose.headingDeg < 40 && (data.attitude.yawRateDegPerSec ?? 0) > 1
-      }, { timeoutMs: 800, intervalMs: 20 })
+      }, { intervalMs: 20 })
     } finally {
       unsubscribe()
       await connection.close()
@@ -368,7 +395,7 @@ describe('drone pack native runtime', () => {
     })
 
     try {
-      await waitForCondition('native runtime emits compact motion frames', () => frames.length > 0, { timeoutMs: 500, intervalMs: 10 })
+      await waitForCondition('native runtime emits compact motion frames', () => frames.length > 0, { intervalMs: 10 })
       const first = frames[0]
       expect(first?.objectId).toBe(initial.id)
       expect(first?.altitudeM).toBeGreaterThan(17)
@@ -429,7 +456,7 @@ describe('drone pack native runtime', () => {
         return latest !== undefined
           && latest.altitudeM > droneData(initial).pose.altitudeM
           && latest.eastMps > 0
-      }, { timeoutMs: 500, intervalMs: 10 })
+      }, { intervalMs: 10 })
     } finally {
       unsubscribe()
       await connection.close()
@@ -457,14 +484,17 @@ describe('drone pack native runtime', () => {
         runtimeConfig: { maxDrones: 10, stepIntervalMs: 10, projectionIntervalMs: 250, motionFrameIntervalMs: 10 },
       },
     })
-    const framesByDrone = new Map<string, DroneMotionFrame[]>()
+    const probeTicksMs = [Date.now()]
+    const probe = setInterval(() => { probeTicksMs.push(Date.now()) }, 5)
+    const framesByDrone = new Map<string, ArrivedMotionFrame[]>()
     const unsubscribe = connection.subscribe(emission => {
+      const cpuMs = threadCpuNowMs()
       for (const message of emission.realtimeMessages ?? []) {
         const parsed = parseDroneMotionFramesRealtimeMessage(message)
         if (!parsed) continue
         for (const frame of parsed.payload.frames) {
           const frames = framesByDrone.get(frame.objectId) ?? []
-          frames.push(frame)
+          frames.push({ frame, cpuMs })
           framesByDrone.set(frame.objectId, frames)
         }
       }
@@ -492,18 +522,22 @@ describe('drone pack native runtime', () => {
       await waitForCondition('bursty manual fleet input emits moving frames for every drone', () =>
         fleet.every(object => {
           const frames = framesByDrone.get(object.id) ?? []
-          const latest = frames.at(-1)
+          const latest = frames.at(-1)?.frame
           return frames.length > 8
             && latest !== undefined
             && latest.eastMps > 0.2
             && latest.verticalSpeedMps > 0.05
-        }), { timeoutMs: 1_500, intervalMs: 20 })
+        }), { intervalMs: 20 })
 
+      unsubscribe()
+      clearInterval(probe)
+      probeTicksMs.push(Date.now())
       for (const object of fleet) {
-        assertSmoothMotionFrames(framesByDrone.get(object.id) ?? [])
+        assertSmoothMotionFrames(framesByDrone.get(object.id) ?? [], probeTicksMs)
       }
     } finally {
       unsubscribe()
+      clearInterval(probe)
       await connection.close()
     }
   })
@@ -534,7 +568,7 @@ describe('drone pack native runtime', () => {
     try {
       expect((await connection.sendCommand(command(armDroneCommandKind, { droneId: initial.id, armed: true }, [initial.id]))).ok).toBe(true)
       expect((await connection.sendCommand(command(takeoffDroneCommandKind, { droneId: initial.id, altitudeM: 20 }, [initial.id]))).ok).toBe(true)
-      await waitForCondition('native takeoff climbs', () => (droneData(seen.get(initial.id) ?? initial).pose.altitudeM > 1), { timeoutMs: 800, intervalMs: 20 })
+      await waitForCondition('native takeoff climbs', () => (droneData(seen.get(initial.id) ?? initial).pose.altitudeM > 1), { intervalMs: 20 })
 
       expect((await connection.sendCommand(command(navigateDroneCommandKind, {
         droneId: initial.id,
@@ -547,7 +581,7 @@ describe('drone pack native runtime', () => {
       await waitForCondition('native goto moves east', () => {
         const current = seen.get(initial.id)
         return current !== undefined && droneData(current).pose.point.coordinates[0] > initial.spatial.position!.point.coordinates[0]
-      }, { timeoutMs: 900, intervalMs: 20 })
+      }, { intervalMs: 20 })
 
       const current = seen.get(initial.id)
       expect(current).toBeDefined()
@@ -562,7 +596,7 @@ describe('drone pack native runtime', () => {
       await waitForCondition('manual control records controller binding', () => {
         const object = seen.get(initial.id)
         return object !== undefined && droneData(object).control.inputSource?.kind === 'keyboard'
-      }, { timeoutMs: 600, intervalMs: 20 })
+      }, { intervalMs: 20 })
     } finally {
       unsubscribe()
       await connection.close()
