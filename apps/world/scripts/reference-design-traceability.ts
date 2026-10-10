@@ -115,9 +115,10 @@ export const checkTraceability = async ({ appRoot, wikiRoot, packets = [], stric
     .map(path => path.replaceAll('\\', '/')).filter(path => safeDocumentPath(path) && path !== 'AGENTS.md').sort()
   const pages = new Map(await Promise.all(paths.map(async path => [path, await readFile(join(wikiRoot, path), 'utf8')] as const)))
   const links = (await Promise.all([...pages].map(([page, content]) => nativeSourceLinks(page, content, appRoot)))).flat()
-  const modules = (await Promise.all(MODULE_DIRECTORIES.map(async directory =>
-    (await readdir(join(appRoot, directory), { withFileTypes: true }))
-      .filter(entry => entry.isFile() && entry.name.endsWith('.rs')).map(entry => `${directory}/${entry.name}`)))).flat().sort()
+  // Every Rust module below the native source roots, including module directories.
+  const modules = MODULE_DIRECTORIES.flatMap(directory =>
+    [...new Bun.Glob('**/*.rs').scanSync({ cwd: join(appRoot, directory) })]
+      .map(path => `${directory}/${path.replaceAll('\\', '/')}`)).sort()
 
   const headingCache = new Map<string, ReadonlyArray<KnowledgeHeading>>()
   const headingsOf = (page: string, content: string) => {

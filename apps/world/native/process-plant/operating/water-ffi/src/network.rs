@@ -1,4 +1,4 @@
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#one-maintained-water-implementation
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#actual-local-pressure-pilot-and-step-work-blocker
 //! Maintained-IF97 implementation of the composed network's property
 //! boundary, and the narrow adapter that hands the network to stock IDA.

@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/computational-design-review.md#41-native-rust-compact-implicit-equations
 //! Reusable equation blocks for the approved compact operating model.
 //!
 //! This standalone crate does not import the fine research kernel, select a

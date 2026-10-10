@@ -1,4 +1,4 @@
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#one-maintained-water-implementation
 //! Property boundary of the composed network and exact per-matrix reuse.
 //!
 //! The pure crate never evaluates water itself. A caller supplies maintained

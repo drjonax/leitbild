@@ -1,3 +1,4 @@
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-equations.md#6-solver-properties-and-cost-obligations
 //! Owned, opt-in boundary to the explicitly linked stock IDA/KLU build.
 //! No solver implementation, numerical fallback, or physical model lives here.
 use std::{

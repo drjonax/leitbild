@@ -1,4 +1,4 @@
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md
+//! spec: world/packs/process-plant/reference-designs/engineering/development/decisions/0013-coarse-local-pressure.md#numerical-treatment-of-uncredited-lumped-modes
 //! Zero-time modal diagnostic of one DAE linearization: the generalized
 //! eigen-decomposition of its pencil and the modal excitation of a discrete
 //! event, compared with the solver tolerance before any trajectory is run.

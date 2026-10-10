@@ -1,4 +1,4 @@
-//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-scale-realization.md#high-performance-mathematics-without-changing-the-physical-question
+//! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-equations.md#6-solver-properties-and-cost-obligations
 //! Fixed sparse structure and exact compressed directional Jacobian recovery.
 //!
 //! A `Pattern` is an immutable, validated compressed-sparse-column structure:
