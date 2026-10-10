@@ -111,6 +111,11 @@ const emitRuntimeFailure = (config: {
   }])
 }
 
+/** The Grid boundary state a Plant reads: a live port has voltage and frequency, a dead one has neither. */
+type NetworkPortState =
+  | { readonly connected: boolean; readonly energized: true; readonly voltagePu: number; readonly frequencyHz: number }
+  | { readonly connected: boolean; readonly energized: false; readonly voltagePu: 0; readonly frequencyHz: null }
+
 export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter => ({
   id: processPlantSimRuntimeId,
   version: '1.0.0',
@@ -135,17 +140,20 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
 
     const queueNetworkState = (
       connection: ElectricalConnectionDefinition,
-      state: { readonly connected: boolean; readonly energized: boolean; readonly voltagePu: number; readonly frequencyHz: number },
+      state: NetworkPortState,
     ): void => {
       const plant = plants.get(connection.system.objectId)
       if (!plant) return
       const boundary = processPlantElectricalBoundaries(plant.plant)
         .find(candidate => candidate.port.id === connection.system.portId)
       if (!boundary) throw new Error(`process plant electrical boundary disappeared: ${connection.system.objectId}:${connection.system.portId}`)
-      const available = state.connected && state.energized
-      plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'available'), value: available })
-      plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'voltageFraction'), value: available ? state.voltagePu : 0 })
-      plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'frequencyHz'), value: available ? state.frequencyHz : 0 })
+      // A dead Grid boundary has no frequency: it makes offsite power unavailable at voltage 0, and no
+      // frequency is written into the Plant.
+      const live = state.connected && state.energized ? state : null
+      plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'available'), value: live !== null })
+      plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'voltageFraction'), value: live === null ? 0 : live.voltagePu })
+      if (live !== null) plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'frequencyHz'), value: live.frequencyHz })
+      const available = live !== null
       networkAvailableByPlant.set(String(connection.system.objectId), available)
     }
 
@@ -227,7 +235,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
       for (const connection of systemConnections) {
         const plantId = String(connection.system.objectId)
         if (config.isObjectProviderAvailable?.(connection.network.objectId) === false && networkAvailableByPlant.get(plantId) !== false) {
-          queueNetworkState(connection, { connected: false, energized: false, voltagePu: 0, frequencyHz: 0 })
+          queueNetworkState(connection, { connected: false, energized: false, voltagePu: 0, frequencyHz: null })
         }
       }
       const events: PackRuntimeEvent[] = []
@@ -464,7 +472,7 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
           }
           for (const connection of systemConnections) {
             if (connection.network.objectId !== event.objectId) continue
-            queueNetworkState(connection, { connected: false, energized: false, voltagePu: 0, frequencyHz: 0 })
+            queueNetworkState(connection, { connected: false, energized: false, voltagePu: 0, frequencyHz: null })
           }
         }
         observeNetworkObjects(events.flatMap(event => event.type === 'object.upserted' ? [event.object] : []))

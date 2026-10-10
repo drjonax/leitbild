@@ -2,15 +2,28 @@ import { z } from 'zod'
 import { idSchema, objectIdSchema, type ObjectId } from './ids.ts'
 import { isoTimestampSchema, type IsoTimestamp } from './time.ts'
 
-export interface ElectricalPortState {
+interface ElectricalPortStateBase {
   /** Positive values leave the owning Operational Object. */
   readonly activePowerMw: number
-  readonly voltagePu: number
-  readonly frequencyHz: number
-  readonly energized: boolean
   readonly connected: boolean
   readonly observedAt: IsoTimestamp
 }
+
+/** A live port: positive finite voltage (pu) and frequency (Hz). */
+export interface EnergizedElectricalPortState extends ElectricalPortStateBase {
+  readonly energized: true
+  readonly voltagePu: number
+  readonly frequencyHz: number
+}
+
+/** A dead port: no voltage and no frequency (frequency is absent, never 0 Hz). */
+export interface DeenergizedElectricalPortState extends ElectricalPortStateBase {
+  readonly energized: false
+  readonly voltagePu: 0
+  readonly frequencyHz: null
+}
+
+export type ElectricalPortState = EnergizedElectricalPortState | DeenergizedElectricalPortState
 
 export interface ElectricalPortDefinition {
   readonly id: string
@@ -39,14 +52,26 @@ export interface ElectricalConnectionDefinition {
   readonly systemInertiaSeconds?: number | undefined
 }
 
-export const electricalPortStateSchema = z.object({
+const electricalPortStateBaseShape = {
   activePowerMw: z.number().finite(),
-  voltagePu: z.number().finite().nonnegative(),
-  frequencyHz: z.number().finite().nonnegative(),
-  energized: z.boolean(),
   connected: z.boolean(),
   observedAt: isoTimestampSchema,
-}).strict()
+}
+
+export const electricalPortStateSchema = z.discriminatedUnion('energized', [
+  z.object({
+    ...electricalPortStateBaseShape,
+    energized: z.literal(true),
+    voltagePu: z.number().finite().positive(),
+    frequencyHz: z.number().finite().positive(),
+  }).strict(),
+  z.object({
+    ...electricalPortStateBaseShape,
+    energized: z.literal(false),
+    voltagePu: z.literal(0),
+    frequencyHz: z.null(),
+  }).strict(),
+])
 
 export const electricalPortDefinitionSchema = z.object({
   id: idSchema,
