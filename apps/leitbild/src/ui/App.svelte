@@ -517,6 +517,7 @@
               currentRun={selectedWorldResource}
               rooms={applicableRunRooms}
               activeRoomId={selectedAgentsRoomId}
+              activeRoom={selectedAgentsResource}
               {capabilities}
               onRoomSelected={selectRunRoom}
               onChanged={refreshAndSelectRunRoom}

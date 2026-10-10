@@ -6,6 +6,7 @@
     WorkspaceRoomScope,
   } from '@leitbild/contracts'
   import { jsonRequest, request } from './api.ts'
+  import { roomScopeKind } from './run-room-scope.ts'
 
   interface InvocationResponse {
     readonly result: { readonly resource: WorkspaceResourceReference }
@@ -15,14 +16,24 @@
     readonly workspaceId: string
     readonly family: ModuleResourceDescriptor
     readonly currentRun: ModuleResourceDescriptor
+    /** The family's Rooms that serve this Run. */
     readonly rooms: ReadonlyArray<ModuleResourceDescriptor>
     readonly activeRoomId: string | null
+    /** The open Room, which may be scoped to the Workspace or to this Run rather than to the family. */
+    readonly activeRoom: ModuleResourceDescriptor | undefined
     readonly capabilities: ReadonlyArray<ModuleCapabilityDescriptor>
     readonly onRoomSelected: (roomId: string) => void
     readonly onChanged: (roomId: string) => Promise<void>
   }
 
-  let { workspaceId, family, currentRun, rooms, activeRoomId, capabilities, onRoomSelected, onChanged }: Props = $props()
+  const scopeLabels: Readonly<Record<WorkspaceRoomScope['kind'], { readonly label: string; readonly title: string }>> = {
+    workspace: { label: 'Whole Workspace', title: 'Agents in this Room may use every Resource in the Workspace' },
+    resource: { label: 'This Run', title: 'Agents in this Room may use only this Run' },
+    // A collection Room outside this list does not contain this Run (any that did would be listed).
+    collection: { label: 'Other Runs', title: 'This Room\'s scope does not include this Run' },
+  }
+
+  let { workspaceId, family, currentRun, rooms, activeRoomId, activeRoom, capabilities, onRoomSelected, onChanged }: Props = $props()
   let dialog = $state<HTMLDialogElement | null>(null)
   let mode = $state<'edit' | 'create'>('edit')
   let name = $state('')
@@ -32,13 +43,18 @@
   let error = $state('')
 
   const members = $derived(family.links.filter(link => link.rel === 'contains').map(link => link.ref))
-  const activeRoom = $derived(rooms.find(room => room.ref.id === activeRoomId))
-  const revision = $derived(Number(activeRoom?.summary.find(item => item.key === 'scope-revision')?.value ?? 0))
+  const familyRoom = $derived(rooms.find(room => room.ref.id === activeRoomId))
+  // A Room scoped to the whole Workspace or to this Run also serves it. It stays
+  // open and listed beside the family's Rooms; only family scopes are edited here.
+  const otherRoom = $derived(familyRoom === undefined && activeRoom?.ref.id === activeRoomId ? activeRoom : undefined)
+  const choices = $derived(otherRoom === undefined ? rooms : [otherRoom, ...rooms])
+  const otherScope = $derived(otherRoom === undefined ? undefined : scopeLabels[roomScopeKind(otherRoom)])
+  const revision = $derived(Number(familyRoom?.summary.find(item => item.key === 'scope-revision')?.value ?? 0))
   const roomSelectedCount = $derived.by(() => {
-    if (!activeRoom) return 0
-    const explicit = activeRoom.links.filter(link => link.rel === 'scope-member')
+    if (!familyRoom) return 0
+    const explicit = familyRoom.links.filter(link => link.rel === 'scope-member')
     if (explicit.length > 0) return explicit.length
-    const excluded = new Set(activeRoom.links.filter(link => link.rel === 'scope-excluded').map(link => link.ref.id))
+    const excluded = new Set(familyRoom.links.filter(link => link.rel === 'scope-excluded').map(link => link.ref.id))
     return members.filter(member => !excluded.has(member.id)).length
   })
 
@@ -52,11 +68,11 @@
   }
 
   const openEdit = (): void => {
-    if (!activeRoom) return
+    if (!familyRoom) return
     mode = 'edit'
-    name = activeRoom.title
+    name = familyRoom.title
     error = ''
-    initialSelection(activeRoom)
+    initialSelection(familyRoom)
     dialog?.showModal()
   }
 
@@ -96,9 +112,9 @@
         `/api/workspaces/${encodeURIComponent(workspaceId)}/capabilities/${encodeURIComponent(capabilityId)}/invoke`,
         jsonRequest('POST', mode === 'create'
           ? { input: { scope: scope(), title: name.trim() }, actor: { kind: 'human' } }
-          : { resource: activeRoom!.ref, input: { scope: scope(), expectedRevision: revision }, actor: { kind: 'human' } }),
+          : { resource: familyRoom!.ref, input: { scope: scope(), expectedRevision: revision }, actor: { kind: 'human' } }),
       )
-      const roomId = mode === 'create' ? response.result.resource.id : activeRoom!.ref.id
+      const roomId = mode === 'create' ? response.result.resource.id : familyRoom!.ref.id
       await onChanged(roomId)
       dialog?.close()
     } catch (cause) {
@@ -108,13 +124,15 @@
 </script>
 
 <div class="run-room-controls">
-  {#if rooms.length > 1}
+  {#if choices.length > 1}
     <select aria-label="Run Assistant room" value={activeRoomId ?? ''} onchange={event => onRoomSelected(event.currentTarget.value)}>
-      {#each rooms as room (room.ref.id)}<option value={room.ref.id}>{room.title}</option>{/each}
+      {#each choices as room (room.ref.id)}<option value={room.ref.id}>{room.title}</option>{/each}
     </select>
   {/if}
-  {#if activeRoom}
+  {#if familyRoom}
     <button type="button" title="Choose Runs available in this Room" onclick={openEdit}>{roomSelectedCount}/{members.length} Runs</button>
+  {:else if otherRoom && otherScope}
+    <span class="room-scope" title={`${otherRoom.title}: ${otherScope.title}`}>{otherScope.label}</span>
   {/if}
   <button type="button" class="icon-control" title="Create another Run Assistant Room" aria-label="Create another Run Assistant Room" onclick={openCreate}>+</button>
 </div>
