@@ -465,6 +465,23 @@ impl<P: Properties> Network<P> {
     pub fn face_drive(&self, face: usize, phase: usize) -> Scalar {
         self.face_drive[face][phase]
     }
+    /// Phase-path chart of the last evaluation (flows, head), read-only.
+    pub fn chart(&self, face: usize, phase: usize) -> Option<Chart> {
+        self.charts[face][phase]
+    }
+    /// Cell state of the last evaluation (pressure, phase fractions), read-only.
+    pub fn cell(&self, node: usize) -> Cell {
+        self.cells[node]
+    }
+    pub fn volume(&self, node: usize) -> f64 {
+        self.volumes[node]
+    }
+    pub fn pzr_begin(&self) -> usize {
+        self.pzr_begin
+    }
+    pub fn rotor_inertia(&self) -> f64 {
+        self.rotor_inertia
+    }
     pub fn properties(&self) -> &P {
         &self.properties
     }
