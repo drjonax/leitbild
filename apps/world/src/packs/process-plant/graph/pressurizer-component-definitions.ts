@@ -26,12 +26,24 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       reliefCapacityKgPerS: z.number().finite().nonnegative().optional(),
       sprayCondensationKgPerKg: z.number().finite().nonnegative().optional(),
       nominalWaterDensityKgPerM3: z.number().finite().positive().optional(),
+      /** Full stroke time of the motor-operated PORV block valve. */
+      blockValveStrokeTimeS: z.number().finite().positive(),
     }),
     semantics: fixedSemantics({ keyValues: ['pressureMPa', 'levelPercent'],
       aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })],
-      // The PORV is modelled inside the pressurizer, on its relief outlet. Its position is the opening the model relieves
-      // through: the demand, the automatic opening above the relief setpoint, or a failed position.
+      // The PORV and its block valve are modelled inside the pressurizer, on its relief outlet, in the order they sit on
+      // the relief line: the motor-operated block valve next to the pressurizer, then the PORV. The pressurizer solves
+      // the relief flow itself, so both valves that throttle it belong to it; the line passes what the less open allows.
+      // The PORV's position is its own opening: the demand, the automatic opening above the relief setpoint, or a failed
+      // position. The block valve's is where its motor has driven it.
       embedded: [{
+        id: 'blockValve',
+        label: 'block valve',
+        function: 'isolating',
+        port: 'reliefOutlet',
+        aspects: [aspect('position', { variable: 'blockValveEffectivePositionFraction', reading: 'value' }, 'blockValvePositionFraction')],
+        variables: ['blockValvePositionFraction', 'blockValveEffectivePositionFraction'],
+      }, {
         id: 'reliefValve',
         label: 'relief valve',
         function: 'relieving',
@@ -65,6 +77,8 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'reliefValveFailedPositionFraction', label: 'Pressurizer relief valve failed position', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'faultInjection', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'reliefValveEffectivePositionFraction', label: 'Pressurizer relief valve effective position', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
       variable({ path: 'reliefFlowKgPerS', label: 'Pressurizer relief flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
+      variable({ path: 'blockValvePositionFraction', label: 'Pressurizer PORV block valve position command', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
+      variable({ path: 'blockValveEffectivePositionFraction', label: 'Pressurizer PORV block valve position', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
     ],
   }),
 ]

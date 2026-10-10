@@ -202,7 +202,8 @@
         "reliefSetpointMPa": 16.2,
         "reliefCapacityKgPerS": 85,
         "sprayCondensationKgPerKg": 0.08,
-        "nominalWaterDensityKgPerM3": 700
+        "nominalWaterDensityKgPerM3": 700,
+        "blockValveStrokeTimeS": 10
       },
       "variables": [
         {
@@ -240,13 +241,26 @@
           "tagId": "PORV-456A-POS",
           "equipmentId": "pressurizer",
           "description": "Pressurizer PORV 456A position feedback"
+        },
+        {
+          "path": "blockValvePositionFraction",
+          "tagId": "MOV-8000A",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer PORV 456A block valve 8000A position command"
+        },
+        {
+          "path": "blockValveEffectivePositionFraction",
+          "tagId": "MOV-8000A-POS",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer PORV 456A block valve 8000A position feedback"
         }
       ],
       "metadata": {
         "presentation": {
           "shortLabel": "PZR",
           "embedded": {
-            "reliefValve": "PORV"
+            "reliefValve": "PORV",
+            "blockValve": "PORV block"
           }
         }
       }
@@ -10689,6 +10703,8 @@
     "deltaTChannelF.overtemperatureSetpointC",
     "deltaTChannelF.overpowerSetpointC",
     "deltaTChannelF.overtemperatureMarginC",
-    "deltaTChannelF.overpowerMarginC"
+    "deltaTChannelF.overpowerMarginC",
+    "pressurizer.blockValvePositionFraction",
+    "pressurizer.blockValveEffectivePositionFraction"
   ]
 }

@@ -56,7 +56,12 @@ describe('model semantics declared per component kind', () => {
   })
 
   test('the PORV is a device on the pressurizer relief outlet whose position is the opening the model relieves through', () => {
-    const [porv] = componentById(graph, 'pressurizer').semantics.embedded
+    const [block, porv] = componentById(graph, 'pressurizer').semantics.embedded
+    // Its motor-operated block valve sits before it on the same line, read from its own position feedback.
+    expect(block).toMatchObject({ id: 'blockValve', function: 'isolating', port: 'reliefOutlet' })
+    expect(block!.aspects).toEqual([
+      { aspect: 'position', state: { path: 'pressurizer.blockValveEffectivePositionFraction' as never, reading: 'value' }, command: 'pressurizer.blockValvePositionFraction' as never },
+    ])
     expect(porv).toMatchObject({ id: 'reliefValve', function: 'relieving', port: 'reliefOutlet' })
     expect(porv!.aspects).toEqual([
       { aspect: 'position', state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' }, command: 'pressurizer.reliefValvePositionFraction' as never },
@@ -191,7 +196,7 @@ describe('operator names', () => {
       expect(new Set(labels).size).toBe(labels.length)
     }
     expect(componentById(graph, 'feedwaterControlValveB').metadata?.presentation?.shortLabel).toBe('FCV B')
-    expect(componentById(graph, 'pressurizer').metadata?.presentation?.embedded).toEqual({ reliefValve: 'PORV' })
+    expect(componentById(graph, 'pressurizer').metadata?.presentation?.embedded).toEqual({ reliefValve: 'PORV', blockValve: 'PORV block' })
   })
 
   test('renaming equipment never changes the Plant identity that persisted Runs are bound to', () => {

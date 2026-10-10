@@ -87,10 +87,13 @@ describe('generated equipment mimics', () => {
 
   test('the PORV the model bundles in the pressurizer is drawn on the relief line with the opening it relieves through', () => {
     const mimic = generated(system, { from: ['pressurizer'], to: ['PRT'] })
-    expect(mimic.items.map(item => item.binding.label).sort()).toEqual(['PORV', 'PRT', 'PZR'])
+    expect(mimic.items.map(item => item.binding.label).sort()).toEqual(['PORV', 'PORV block', 'PRT', 'PZR'])
     const porv = mimic.items.find(item => item.binding.label === 'PORV')!
     expect(porv.presentation).toEqual({ element: 'device', icon: 'valve-digital', aspect: 'position' })
     expect(porv.rows.map(row => row.kind)).toEqual(['position', 'mismatch'])
+    // Its block valve is drawn in series on the same line, between it and the pressurizer.
+    const block = mimic.items.find(item => item.binding.label === 'PORV block')!
+    expect(block.presentation).toEqual({ element: 'device', icon: 'valve-digital', aspect: 'position' })
     expect(mimic.summary.unmeasuredStates).toEqual([])
   })
 
@@ -120,10 +123,10 @@ describe('generated equipment mimics', () => {
     if (result.ok) return
     expect(result.issues[0]!.message).toMatch(/it fits with "loops":\["A"/)
     // Around an item, the first narrower drawing offered stays centred on it: fewer links out.
-    const around = compileMimic(system.plant, { around: ['pressurizer'] }, { profile: chatMimicProfile, maxWidth: MIMIC_MAX_WIDTH, maxHeight: 628 })
+    const around = compileMimic(system.plant, { around: ['containment'] }, { profile: chatMimicProfile, maxWidth: MIMIC_MAX_WIDTH, maxHeight: 628 })
     if (around.ok) throw new Error('expected a refusal')
     expect(around.issues[0]!.message).toMatch(/it fits with "reach":1/)
-    expect(compileMimic(system.plant, { around: ['pressurizer'], reach: 1 }, { profile: chatMimicProfile, maxWidth: MIMIC_MAX_WIDTH, maxHeight: 628 }).ok).toBe(true)
+    expect(compileMimic(system.plant, { around: ['containment'], reach: 1 }, { profile: chatMimicProfile, maxWidth: MIMIC_MAX_WIDTH, maxHeight: 628 }).ok).toBe(true)
   })
 
   test('names that do not resolve come back with suggestions', () => {
@@ -265,8 +268,9 @@ describe('mimic panels in composed displays', () => {
 
   test('a stored display re-opens with its drawing, and relates its alarms to the drawn equipment', () => {
     const composed = ask('world.process-plant.display.compose', { ...display([{ kind: 'mimic', from: ['pressurizer'], to: ['PRT'] }, { kind: 'alarms', scope: 'related' }]), subjects: ['pressurizer'] }) as { view: { state: string }; equipment: ReadonlyArray<{ id: string; label: string; state: string }> }
-    expect(composed.equipment.map(item => item.label)).toEqual(['PZR', 'PRT', 'PORV'])
+    expect(composed.equipment.map(item => item.label)).toEqual(['PZR', 'PRT', 'PORV block', 'PORV'])
     expect(composed.equipment.find(item => item.label === 'PORV')!.state).toBe('closed')
+    expect(composed.equipment.find(item => item.label === 'PORV block')!.state).toBe('open')
     const result = ask('world.process-plant.display.view', { plantId: system.plant.id, state: composed.view.state }) as {
       drawingChanged: boolean
       display: { panels: ReadonlyArray<{ kind: string; ruleIds?: ReadonlyArray<string> }> }

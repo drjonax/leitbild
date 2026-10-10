@@ -215,3 +215,44 @@ describe('safety injection accumulators', () => {
     expect(Number(plantRun.read('safetyAccumulatorA.depletedFraction'))).toBeGreaterThan(0.2)
   })
 })
+
+describe('the PORV block valve', () => {
+  test('closing it isolates a stuck-open PORV: the relief flow stops though the PORV still reads open', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    expect(plantRun.tag('MOV-8000A')).toBe(1)
+    expect(plantRun.tag('MOV-8000A-POS')).toBe(1)
+    plantRun.act('pressurizer-relief-open', { positionPercent: 100 })
+    plantRun.run(3_000)
+    expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBeGreaterThan(30)
+    plantRun.act('pressurizer-porv-block-valve-close')
+    plantRun.run(5_000)
+    // A motor-operated valve: halfway through its stroke it still passes flow.
+    expect(Number(plantRun.tag('MOV-8000A-POS'))).toBeGreaterThan(0)
+    expect(Number(plantRun.tag('MOV-8000A-POS'))).toBeLessThan(1)
+    expect(plantRun.activeIds()).toContain('alarm:pzr-porv-block-valve-not-open:porv-block-valve-not-open')
+    plantRun.run(10_000)
+    expect(plantRun.tag('MOV-8000A')).toBe(0)
+    expect(plantRun.tag('MOV-8000A-POS')).toBe(0)
+    expect(plantRun.tag('PORV-456A-POS')).toBe(1)
+    expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBe(0)
+    expect(Number(plantRun.read('pressurizer-relief-to-tank.flowKgPerS'))).toBe(0)
+    plantRun.run(3_000)
+    expect(plantRun.activeIds()).not.toContain('alarm:pzr-relief-flow-high:relief-flow-high')
+  })
+
+  test('without power on its motor it stays where it is', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    // Offsite power lost and no diesel started: safety bus A, which feeds the valve's motor, is dead.
+    for (const path of ['offsiteGrid.available', 'offsiteBreakerA.closed', 'offsiteBreakerB.closed']) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: path as VariablePath, value: false })
+    }
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'dieselGeneratorA.available' as VariablePath, value: false })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.blockValvePositionFraction' as VariablePath, value: 0 })
+    for (let second = 0; second < 15; second += 1) plantRun.runtime.tick(1_000)
+    expect(plantRun.read('safetyBusA.energized')).toBe(false)
+    expect(plantRun.tag('MOV-8000A')).toBe(0)
+    expect(plantRun.tag('MOV-8000A-POS')).toBe(1)
+  })
+})

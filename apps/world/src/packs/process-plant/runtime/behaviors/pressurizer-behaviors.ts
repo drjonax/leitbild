@@ -1,5 +1,6 @@
 import { componentVariablePath, type ComponentBehaviorDefinition } from '../behavior-contract.ts'
 import {
+  approach,
   clamp,
   optionalParameterNumber,
   parameterNumber,
@@ -36,6 +37,8 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'reliefValvePositionFraction',
       'reliefValveFailureActive',
       'reliefValveFailedPositionFraction',
+      'blockValvePositionFraction',
+      'blockValveEffectivePositionFraction',
       'incoming:primaryCoolant.temperatureC',
       'reactor vessel primaryPressureBiasMPa',
     ],
@@ -53,6 +56,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'waterTemperatureC',
       'steamTemperatureC',
       'reliefValveEffectivePositionFraction',
+      'blockValveEffectivePositionFraction',
       'reliefFlowKgPerS',
       'demandMw',
     ],
@@ -68,7 +72,8 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const reliefSetpoint = optionalParameterNumber(component, 'reliefSetpointMPa', nominalPressure * 1.08)
       const reliefCapacity = optionalParameterNumber(component, 'reliefCapacityKgPerS', 80)
       const currentPressure = context.readNumber(componentVariablePath(component, 'pressureMPa'))
-      const heaterPower = componentHasElectricalPower(system, component, context)
+      const powered = componentHasElectricalPower(system, component, context)
+      const heaterPower = powered
         ? clamp(context.readNumber(componentVariablePath(component, 'heaterPowerMw')), 0, 50)
         : 0
       context.write(componentVariablePath(component, 'demandMw'), heaterPower)
@@ -80,7 +85,12 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const reliefOpening = reliefValveFailureActive
         ? reliefValveFailedPosition
         : Math.max(reliefValvePosition, automaticReliefDemand)
-      const reliefFlow = reliefCapacity * reliefOpening * clamp(currentPressure / nominalPressure, 0.1, 1.4)
+      // The block valve's motor is fed from the safety bus that feeds the heaters; without it the valve stays where it is.
+      const blockValvePosition = context.readNumber(componentVariablePath(component, 'blockValveEffectivePositionFraction'))
+      const nextBlockValvePosition = powered
+        ? approach(blockValvePosition, clamp(context.readNumber(componentVariablePath(component, 'blockValvePositionFraction')), 0, 1), context.dtSeconds / parameterNumber(component, 'blockValveStrokeTimeS'))
+        : blockValvePosition
+      const reliefFlow = reliefCapacity * Math.min(reliefOpening, nextBlockValvePosition) * clamp(currentPressure / nominalPressure, 0.1, 1.4)
 
       const surgeTemperature = averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
         ?? context.readNumber(componentVariablePath(component, 'waterTemperatureC'))
@@ -136,6 +146,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       )
 
       context.write(componentVariablePath(component, 'reliefValveEffectivePositionFraction'), reliefOpening)
+      context.write(componentVariablePath(component, 'blockValveEffectivePositionFraction'), nextBlockValvePosition)
       context.write(componentVariablePath(component, 'reliefFlowKgPerS'), reliefFlow)
       context.write(componentVariablePath(component, 'waterTemperatureC'), nextWaterTemperature)
       context.write(componentVariablePath(component, 'steamTemperatureC'), nextSteamTemperature)

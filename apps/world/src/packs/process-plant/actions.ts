@@ -143,6 +143,16 @@ export const processPlantActions: ReadonlyArray<ProcessPlantActionDefinition> = 
     },
   },
   {
+    id: 'pressurizer-porv-block-valve-close',
+    title: 'Close PORV block valve',
+    description: 'Close the motor-operated block valve in series with the pressurizer PORV, isolating the relief line whatever the PORV does.',
+    parameters: [],
+    commands: (_values, graph) => {
+      const pressurizer = requiredComponent(graph, component => component.metadata?.equipmentClass === 'pressurizer', 'pressurizer')
+      return [{ path: path(`${pressurizer.id}.blockValvePositionFraction`), value: 0 }]
+    },
+  },
+  {
     id: 'turbine-trip',
     title: 'Turbine trip',
     description: 'Close the turbine stop valve and reject turbine load.',
