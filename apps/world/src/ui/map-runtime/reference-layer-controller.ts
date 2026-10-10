@@ -56,6 +56,20 @@ export const createReferenceLayerController = (
     registry.reset()
   }
 
+  const reportFailure = (runtime: MapRuntimeHandle, message: string): void => {
+    runtime.reportDiagnosticPhase({
+      phase: 'reference',
+      status: 'failed',
+      message,
+      error: {
+        phase: 'reference',
+        message,
+        recoverable: true,
+      },
+    })
+    config.onError(`Reference map overlay failed: ${message}`)
+  }
+
   const runRegistration = async (
     registration: ReferenceLayerControllerRegistration,
     registrationSerial: number,
@@ -83,6 +97,9 @@ export const createReferenceLayerController = (
           logger: message => {
             console.warn(message)
           },
+          onError: message => {
+            if (registrationSerial === serial) reportFailure(runtime, message)
+          },
         }),
         {
           datasets: registration.styles.length,
@@ -101,18 +118,7 @@ export const createReferenceLayerController = (
       })
     } catch (err) {
       if (registrationSerial !== serial) return
-      const message = err instanceof Error ? err.message : String(err)
-      runtime.reportDiagnosticPhase({
-        phase: 'reference',
-        status: 'failed',
-        message,
-        error: {
-          phase: 'reference',
-          message,
-          recoverable: true,
-        },
-      })
-      config.onError(`Reference map overlay failed: ${message}`)
+      reportFailure(runtime, err instanceof Error ? err.message : String(err))
     }
   }
 
