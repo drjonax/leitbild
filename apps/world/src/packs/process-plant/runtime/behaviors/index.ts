@@ -70,6 +70,7 @@ export const componentBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefini
   behaviorDefinitionById('steamHeader-mixing-diagnostics'),
   behaviorDefinitionById('electrical-load-service'),
   behaviorDefinitionById('delta-t-protection-channel'),
+  behaviorDefinitionById('rcs-inventory-balance'),
 ]
 
 export const componentInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
@@ -108,4 +109,5 @@ export const processPlantComponentBehaviorSourcePathByKind: ReadonlyMap<Componen
   ['steamGenerator' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/steam-generator-behaviors.ts'],
   ['pressurizer' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/pressurizer-behaviors.ts'],
   ['deltaTProtectionChannel' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/instrumentation-behaviors.ts'],
+  ['rcsInventoryBalance' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/instrumentation-behaviors.ts'],
 ])

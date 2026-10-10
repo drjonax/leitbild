@@ -1,6 +1,14 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { alarm, all, annunciator, any, comparison, rule, trip, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
+import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
+
+// A tube leak shows on instruments, never on the fault that makes it: primary
+// water carries N-16 into this steam generator's steam, so its secondary
+// radiation (SG-<loop>-N16) rises above its 0.02 mSv/h background, and the
+// RCS inventory balance shows water leaving by an unmeasured path. Both
+// together point at this generator's tubes.
+const tubeLeakRadiationMSvPerH = 0.03
 
 // Narrow-range level limits above the 55 % program: a high alarm, and P-14
 // high-high, which isolates main feedwater by tripping its pumps and trips the
@@ -30,11 +38,15 @@ export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop):
       id: `sg-${lower}-tube-leak-indication`,
       label: `Steam generator ${loop} tube leak indication`,
       ruleClass: 'alarm',
-      condition: comparison({ tagId: `SG-${loop}-TUBE-LEAK` }, '>', 0.002),
+      condition: all([
+        comparison({ tagId: `SG-${loop}-N16` }, '>', tubeLeakRadiationMSvPerH),
+        comparison({ tagId: 'RCS-LEAK-RATE' }, '>', rcsLeakRateAlarmKgPerS),
+      ]),
+      delayMs: 10_000,
       effects: [alarm({
         id: 'tube-leak',
         title: `Steam generator ${loop} tube leak indicated`,
-        message: `Steam generator ${loop} tube leak fraction is above the reference indication threshold.`,
+        message: `Steam generator ${loop} secondary radiation is above ${tubeLeakRadiationMSvPerH} mSv/h while the RCS inventory balance shows a leak above 0.063 kg/s: primary water is leaking through its tubes.`,
         severity: 'warning',
         annunciator: sgAlarm,
       })],

@@ -338,12 +338,6 @@
           "tagId": "SG-A-N16",
           "equipmentId": "sgA",
           "description": "Steam generator A secondary radiation indication"
-        },
-        {
-          "path": "tubeLeakFraction",
-          "tagId": "SG-A-TUBE-LEAK",
-          "equipmentId": "sgA",
-          "description": "Steam generator A tube leak fraction"
         }
       ],
       "metadata": {
@@ -406,12 +400,6 @@
           "tagId": "SG-B-N16",
           "equipmentId": "sgB",
           "description": "Steam generator B secondary radiation indication"
-        },
-        {
-          "path": "tubeLeakFraction",
-          "tagId": "SG-B-TUBE-LEAK",
-          "equipmentId": "sgB",
-          "description": "Steam generator B tube leak fraction"
         }
       ],
       "metadata": {
@@ -474,12 +462,6 @@
           "tagId": "SG-C-N16",
           "equipmentId": "sgC",
           "description": "Steam generator C secondary radiation indication"
-        },
-        {
-          "path": "tubeLeakFraction",
-          "tagId": "SG-C-TUBE-LEAK",
-          "equipmentId": "sgC",
-          "description": "Steam generator C tube leak fraction"
         }
       ],
       "metadata": {
@@ -542,12 +524,6 @@
           "tagId": "SG-D-N16",
           "equipmentId": "sgD",
           "description": "Steam generator D secondary radiation indication"
-        },
-        {
-          "path": "tubeLeakFraction",
-          "tagId": "SG-D-TUBE-LEAK",
-          "equipmentId": "sgD",
-          "description": "Steam generator D tube leak fraction"
         }
       ],
       "metadata": {
@@ -610,12 +586,6 @@
           "tagId": "SG-E-N16",
           "equipmentId": "sgE",
           "description": "Steam generator E secondary radiation indication"
-        },
-        {
-          "path": "tubeLeakFraction",
-          "tagId": "SG-E-TUBE-LEAK",
-          "equipmentId": "sgE",
-          "description": "Steam generator E tube leak fraction"
         }
       ],
       "metadata": {
@@ -678,12 +648,6 @@
           "tagId": "SG-F-N16",
           "equipmentId": "sgF",
           "description": "Steam generator F secondary radiation indication"
-        },
-        {
-          "path": "tubeLeakFraction",
-          "tagId": "SG-F-TUBE-LEAK",
-          "equipmentId": "sgF",
-          "description": "Steam generator F tube leak fraction"
         }
       ],
       "metadata": {
@@ -3817,6 +3781,27 @@
       "metadata": {
         "presentation": {
           "shortLabel": "dT channel F"
+        }
+      }
+    },
+    {
+      "id": "rcsInventoryBalance",
+      "kind": "rcsInventoryBalance",
+      "label": "RCS Inventory Balance",
+      "parameters": {
+        "averagingTimeConstantS": 10
+      },
+      "variables": [
+        {
+          "path": "leakRateKgPerS",
+          "tagId": "RCS-LEAK-RATE",
+          "equipmentId": "rcs",
+          "description": "RCS leak rate from the RCS water inventory balance: charging and safety injection in, less letdown and PORV relief out, less the change in RCS water inventory"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "RCS leak rate"
         }
       }
     }
@@ -10705,6 +10690,7 @@
     "deltaTChannelF.overtemperatureMarginC",
     "deltaTChannelF.overpowerMarginC",
     "pressurizer.blockValvePositionFraction",
-    "pressurizer.blockValveEffectivePositionFraction"
+    "pressurizer.blockValveEffectivePositionFraction",
+    "rcsInventoryBalance.leakRateKgPerS"
   ]
 }

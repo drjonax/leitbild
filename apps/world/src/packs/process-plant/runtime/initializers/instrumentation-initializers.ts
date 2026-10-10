@@ -10,4 +10,8 @@ export const instrumentationInitialValueDefinitions: ReadonlyArray<ComponentInit
     componentKind: 'deltaTProtectionChannel',
     initialValueFor: (_component, localPath) => channelPaths.has(localPath) ? 0 : undefined,
   },
+  {
+    componentKind: 'rcsInventoryBalance',
+    initialValueFor: (_component, localPath) => localPath === 'leakRateKgPerS' || localPath === 'balancedInventoryKg' ? 0 : undefined,
+  },
 ]

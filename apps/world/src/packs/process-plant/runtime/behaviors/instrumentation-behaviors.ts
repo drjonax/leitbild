@@ -8,8 +8,8 @@ import {
   type ComponentInitialReconciliationDefinition,
   type ProcessPlantBehaviorContext,
 } from '../behavior-contract.ts'
-import { parameterNumber } from '../component-helpers.ts'
-import { primarySystemPressurizer, primarySystemReactorCore } from '../system-topology.ts'
+import { parameterNumber, relaxToward } from '../component-helpers.ts'
+import { primarySystemPressurizer, primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
 
 interface LoopLegs {
   readonly hotLeg: CompiledProcessLink
@@ -88,6 +88,11 @@ const writeDeltaTChannel = (system: CompiledProcessPlant, channel: CompiledCompo
   context.write(componentVariablePath(channel, 'overpowerMarginC'), reading.overpowerSetpoint - reading.deltaT)
 }
 
+const balanceVessel = (system: CompiledProcessPlant, balance: CompiledComponent): CompiledComponent =>
+  required(primarySystemReactorVessel(system), `RCS inventory balance ${balance.id} needs a reactor vessel`)
+
+const rcsInventoryReads = ['vessel.chargingFlowKgPerS', 'vessel.safetyInjectionFlowKgPerS', 'vessel.letdownFlowKgPerS', 'vessel.reliefOutflowKgPerS', 'vessel.primaryCoolantInventoryKg', 'leakRateKgPerS', 'balancedInventoryKg']
+
 export const instrumentationBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
     id: 'delta-t-protection-channel',
@@ -99,6 +104,24 @@ export const instrumentationBehaviorDefinitions: ReadonlyArray<ComponentBehavior
     writes: deltaTChannelWrites,
     update: ({ system, component, context }): void => writeDeltaTChannel(system, component, context),
   },
+  {
+    id: 'rcs-inventory-balance',
+    // After the vessel's own update, so the flows and the inventory are this step's.
+    phase: 'updateComponentState',
+    componentKind: 'rcsInventoryBalance',
+    reads: rcsInventoryReads,
+    writes: ['leakRateKgPerS', 'balancedInventoryKg'],
+    update: ({ system, component, context }): void => {
+      const vessel = balanceVessel(system, component)
+      const flow = (localPath: string) => context.readNumber(componentVariablePath(vessel, localPath))
+      const inventory = flow('primaryCoolantInventoryKg')
+      const inventoryChange = (inventory - context.readNumber(componentVariablePath(component, 'balancedInventoryKg'))) / Math.max(context.dtSeconds, 1e-9)
+      const unaccounted = flow('chargingFlowKgPerS') + flow('safetyInjectionFlowKgPerS') - flow('letdownFlowKgPerS') - flow('reliefOutflowKgPerS') - inventoryChange
+      const leakRate = context.readNumber(componentVariablePath(component, 'leakRateKgPerS'))
+      context.write(componentVariablePath(component, 'leakRateKgPerS'), relaxToward(leakRate, unaccounted, context.dtSeconds, parameterNumber(component, 'averagingTimeConstantS')))
+      context.write(componentVariablePath(component, 'balancedInventoryKg'), inventory)
+    },
+  },
 ]
 
 export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
@@ -108,5 +131,15 @@ export const instrumentationInitialReconciliationDefinitions: ReadonlyArray<Comp
     reads: ['hot leg:temperatureC', 'cold leg:temperatureC', 'pressurizer.pressureMPa', 'reactorCore rated heat balance'],
     writes: deltaTChannelWrites,
     reconcile: ({ system, component, context }): void => writeDeltaTChannel(system, component, context),
+  },
+  {
+    id: 'rcs-inventory-balance-initial-state',
+    componentKind: 'rcsInventoryBalance',
+    reads: ['vessel.primaryCoolantInventoryKg'],
+    writes: ['leakRateKgPerS', 'balancedInventoryKg'],
+    reconcile: ({ system, component, context }): void => {
+      context.write(componentVariablePath(component, 'leakRateKgPerS'), 0)
+      context.write(componentVariablePath(component, 'balancedInventoryKg'), context.readNumber(componentVariablePath(balanceVessel(system, component), 'primaryCoolantInventoryKg')))
+    },
   },
 ]

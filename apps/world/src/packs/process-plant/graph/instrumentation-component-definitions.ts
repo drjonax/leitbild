@@ -52,4 +52,26 @@ export const instrumentationComponentDefinitions: ReadonlyArray<ComponentDefinit
       variable({ path: 'overpowerMarginC', label: 'Overpower delta-T margin', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
     ],
   }),
+  defineComponent({
+    kind: 'rcsInventoryBalance' as ComponentKind,
+    label: 'RCS Inventory Balance',
+    // The plant computer's RCS water inventory balance: what the measured
+    // flows put into the reactor coolant system (charging, safety injection)
+    // less what they take out (letdown, PORV relief, which is identified
+    // leakage to the relief tank) and less the change in its water inventory
+    // is water leaving it by an unmeasured path: a leak, into containment or
+    // through steam generator tubes. A plant infers the inventory change from
+    // the pressurizer level; the model's pressurizer level does not follow the
+    // RCS inventory, so the balance reads the inventory the model solves.
+    ports: {},
+    parametersSchema: z.object({
+      /** Time constant of the balance's averaging, which steadies it through transients. */
+      averagingTimeConstantS: positive,
+    }).strict(),
+    semantics: fixedSemantics({ keyValues: ['leakRateKgPerS'] }),
+    variables: [
+      variable({ path: 'leakRateKgPerS', label: 'RCS leak rate', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
+      variable({ path: 'balancedInventoryKg', label: 'RCS inventory at the last balance', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'internal', quantity: 'mass', unit: 'kg' }),
+    ],
+  }),
 ]

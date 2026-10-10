@@ -256,3 +256,55 @@ describe('the PORV block valve', () => {
     expect(plantRun.tag('MOV-8000A-POS')).toBe(1)
   })
 })
+
+describe('steam generator tube leak detection', () => {
+  const tubeLeak = (loop: string) => `alarm:sg-${loop}-tube-leak-indication:tube-leak`
+  const leakRateHigh = 'alarm:rcs-leak-rate-high:leak-rate-high'
+
+  const conditionPaths = (condition: ProcessPlantIcConfig['rules'][number]['condition']): ReadonlyArray<string> => {
+    if (condition.type === 'comparison') return [String(resolveProcessPlantSignalBinding(graph, condition.signal).path)]
+    if (condition.type === 'not') return conditionPaths(condition.condition)
+    return condition.conditions.flatMap(conditionPaths)
+  }
+
+  test('no rule reads the leak a fault injects, and it carries no instrument tag', () => {
+    for (const rule of plant.automation.rules) {
+      expect(conditionPaths(rule.condition).filter(path => path.endsWith('.tubeLeakFraction')), rule.id).toEqual([])
+    }
+    expect(graph.signalBindingByTagId.has('SG-A-TUBE-LEAK' as never)).toBe(false)
+  })
+
+  test('a tube leak alarms from its steam generator\'s radiation and the RCS inventory balance, which estimates its rate', () => {
+    const plantRun = started()
+    plantRun.run(10_000)
+    expect(Number(plantRun.tag('RCS-LEAK-RATE'))).toBeCloseTo(0, 6)
+    plantRun.act('steam-generator-tube-leak-a', { leakPercent: 1.2 })
+    expect(plantRun.secondsUntil(tubeLeak('a'), 60)).not.toBeNull()
+    expect(Number(plantRun.tag('SG-A-N16'))).toBeGreaterThan(0.03)
+    expect(Number(plantRun.tag('RCS-LEAK-RATE'))).toBeGreaterThan(0.063)
+    expect(plantRun.activeIds()).toEqual(expect.arrayContaining([leakRateHigh, 'alarm:sg-a-secondary-radiation-high:secondary-radiation-high']))
+    for (const loop of ['b', 'c', 'd']) expect(plantRun.activeIds()).not.toContain(tubeLeak(loop))
+    // Settled, the balance reads the flow through the tubes.
+    plantRun.run(60_000)
+    const tubeFlow = Number(plantRun.read('sgA.primaryToSecondaryLeakKgPerS'))
+    expect(Number(plantRun.tag('RCS-LEAK-RATE'))).toBeCloseTo(tubeFlow, 1)
+  })
+
+  test('a hot-leg leak shows on the inventory balance but on no steam generator', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-hot-leg-a.leak.areaFraction' as VariablePath, value: 0.01 })
+    expect(plantRun.secondsUntil(leakRateHigh, 60)).not.toBeNull()
+    plantRun.run(30_000)
+    for (const loop of ['a', 'b', 'c', 'd']) expect(plantRun.activeIds()).not.toContain(tubeLeak(loop))
+  })
+
+  test('a stuck-open PORV relieves to the relief tank, which the balance counts as identified, not as a leak', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('pressurizer-relief-open', { positionPercent: 100 })
+    plantRun.run(120_000)
+    expect(Math.abs(Number(plantRun.tag('RCS-LEAK-RATE')))).toBeLessThan(0.063)
+    expect(plantRun.activeIds()).not.toContain(leakRateHigh)
+  })
+})
