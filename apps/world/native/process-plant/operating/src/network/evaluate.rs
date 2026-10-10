@@ -516,15 +516,16 @@ impl<P: Properties> Network<P> {
             .parameters()
             .ports
             .iter()
-            .position(|p| p.face == self.pzr.port_face)
+            .position(|p| p.face == Some(self.pzr.port_face))
             .ok_or_else(|| Failure::Fatal("the port face has no PZR port".into()))
     }
 
     /// The stratified cell's 17 rows on this evaluation's column from its
     /// coordinates, rates and the liquid port receipt `self.receipts[pzr]`
-    /// (`stratified::residual_on`, no property call). S1 composes no zone
-    /// heat; a vapor arrival through the surge port is outside the composed
-    /// cell and refuses.
+    /// (`stratified::residual_on`, no property call with a closed boundary).
+    /// S1's boundary is closed: no heater, zone heat or relief; a vapor
+    /// arrival through the surge port is outside the composed cell and
+    /// refuses.
     fn compose_stratified(
         &mut self,
         column: stratified::Column,
@@ -551,11 +552,12 @@ impl<P: Properties> Network<P> {
             .try_into()
             .map_err(|_| Failure::Fatal("PZR scale layout".into()))?;
         let evaluation = self.stratified.residual_on(
+            &self.properties,
             column,
             &x,
             &rate,
             &receipts,
-            stratified::Heat::zero(),
+            &stratified::Boundary::closed(),
             &scales,
         )?;
         for (index, row) in self.pzr.coordinates().zip(evaluation.rows) {

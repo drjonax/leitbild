@@ -258,21 +258,28 @@ impl<P: Properties> Network<P> {
                 "no network region owns a nonpressure force; a force projection refuses",
             ));
         }
-        // One port, whose face ends at the cell. The PZR side contributes its
-        // port view only: no support, segment or other face touches the cell.
+        // One surge port, whose face ends at the cell. The network composes
+        // no spray or relief owner, so those ports refuse here. The PZR side
+        // contributes its port view only: no support, segment or other face
+        // touches the cell.
         let [port] = &cell.ports[..] else {
             return Err(bad("the stratified PZR cell needs exactly one port"));
+        };
+        let (stratified::PortKind::Surge, Some(port_face)) = (port.kind, port.face) else {
+            return Err(bad(
+                "the network composes only the surge port, with its face",
+            ));
         };
         let touching: Vec<usize> = (0..faces.len())
             .filter(|j| faces[*j].from == pzr || faces[*j].to == pzr)
             .collect();
-        if touching != [port.face]
-            || faces[port.face].to != pzr
-            || faces[port.face]
+        if touching != [port_face]
+            || faces[port_face].to != pzr
+            || faces[port_face]
                 .supports
                 .iter()
                 .any(|support| support.region == pzr)
-            || faces[port.face]
+            || faces[port_face]
                 .pressure_segments
                 .iter()
                 .any(|segment| segment.region == pzr)
@@ -329,7 +336,7 @@ impl<P: Properties> Network<P> {
         let pzr_layout = PzrLayout {
             cell: pzr,
             base: physical.len(),
-            port_face: port.face,
+            port_face,
         };
         let stratified = stratified::Cell::new(cell.clone(), stratified::Case::nominal(cell))?;
         let values = stratified_preparation(packet, &stratified, &properties, pzr_preparation)?;

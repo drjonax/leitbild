@@ -636,7 +636,7 @@ impl<P: Properties> Network<P> {
             .parameters()
             .ports
             .iter()
-            .find(|p| p.face == self.pzr.port_face)
+            .find(|p| p.face == Some(self.pzr.port_face))
             .ok_or_else(|| fatal("the port face has no PZR port"))?;
         let port_pressure_pa = column.pressure_at(port.elevation_m).value;
         let zone = |z: &stratified::Zone| json!({"pressure_pa":z.pressure.value,"temperature_k":z.temperature.value,"mass_kg":z.mass.value,"volume_m3":z.volume.value,"specific_energy_j_kg":z.specific_energy.value,"density_kg_m3":z.density.value});

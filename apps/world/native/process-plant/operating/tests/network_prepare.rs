@@ -173,8 +173,9 @@ fn surge_port() -> PzrPort {
         id: "PZR.SURGE.MOUTH".into(),
         kind: PortKind::Surge,
         elevation_m: 10.,
-        face: 5,
+        face: Some(5),
         bore_m: 0.25,
+        relief: None,
     }
 }
 
