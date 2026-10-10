@@ -150,6 +150,18 @@ describe('display fit', () => {
     expect(reduceDisplayZoom({ zoom: 1, fit: true, auto: false, corrections: 1 }, { type: 'extent' }, generated({ extent: { ...whole, width: 1000, height: 600 } })).zoom).toBe(1)
   })
 
+  test('Fit settled on a generated display follows window resizes without flip-flopping', () => {
+    // Settled at 80 %: the display needs 1250 x 600 and the body is 1000 x 600.
+    const needed = { kind: 'generated' as const, minWidth: 1, width: 1250, height: 600 }
+    let state: DisplayZoomState = { zoom: 0.8, fit: true, auto: false, corrections: 0 }
+    const zooms: number[] = []
+    for (const width of [1002, 1004, 1006, 1008, 1010]) {
+      state = reduceDisplayZoom(state, { type: 'body' }, generated({ body: { width, height: 600 }, extent: needed }))
+      zooms.push(state.zoom)
+    }
+    expect(zooms).toEqual([0.801, 0.803, 0.804, 0.806, 0.808])
+  })
+
   test('advice under Fit refits on every report and body change', () => {
     let state = reduceDisplayZoom(initialDisplayZoom(advice(), null), { type: 'toggle-fit' }, advice())
     expect(state.fit).toBe(true)
@@ -176,18 +188,23 @@ describe('display zoom defaults', () => {
 
   test('advice opens at Fit held to 75-100 % and follows its extent until the operator zooms', () => {
     let state = initialDisplayZoom(advice({ body: null }), null)
-    expect(state).toEqual({ zoom: 1, fit: false, auto: true, corrections: 0 })
+    expect(state).toEqual({ zoom: 1, fit: false, auto: true, corrections: 1 })
     state = reduceDisplayZoom(state, { type: 'body' }, advice())
     expect(state.zoom).toBe(0.75)
     state = reduceDisplayZoom(state, { type: 'extent' }, advice({ extent: { kind: 'advice', minWidth: 400, width: 400, height: 300 } }))
     expect(state.zoom).toBe(1)
     expect(storedDisplayZoom(state)).toBeNull()
+    // Its correction spent, a report may only shrink it: a caption that re-wraps with the zoom cannot make it oscillate.
+    state = reduceDisplayZoom(state, { type: 'extent' }, advice({ extent: { kind: 'advice', minWidth: 400, width: 400, height: 700 } }))
+    expect(state.zoom).toBe(0.857)
+    state = reduceDisplayZoom(state, { type: 'extent' }, advice({ extent: { kind: 'advice', minWidth: 400, width: 400, height: 300 } }))
+    expect(state.zoom).toBe(0.857)
 
     state = reduceDisplayZoom(state, { type: 'step', step: 'out' }, advice())
     expect(state.auto).toBe(false)
     state = reduceDisplayZoom(state, { type: 'extent' }, advice({ extent: { kind: 'advice', minWidth: 400, width: 400, height: 2000 } }))
-    expect(state.zoom).toBe(0.9)
-    expect(storedDisplayZoom(state)).toEqual({ zoom: 0.9, fit: false })
+    expect(state.zoom).toBe(0.75)
+    expect(storedDisplayZoom(state)).toEqual({ zoom: 0.75, fit: false })
   })
 
   test('a remembered zoom wins over the default, and a remembered Fit fits', () => {

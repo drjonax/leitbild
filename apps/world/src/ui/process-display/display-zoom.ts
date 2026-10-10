@@ -170,25 +170,41 @@ const drawnWholeAt = (context: DisplayZoomContext, zoom: number): boolean =>
   && context.extent.width <= context.body.width / zoom + 0.5
   && context.extent.height <= context.body.height / zoom + 0.5
 
-const fitted = (context: DisplayZoomContext, zoom: number): DisplayZoomState => {
-  // Drawn whole below 100 %, it may be drawn whole larger too: Fit tries 100 % and
-  // takes the one correction its next report allows.
-  if (context.kind === 'generated' && zoom < GENERATED_FIT_MAX - SAME_ZOOM && drawnWholeAt(context, zoom)) {
-    return { zoom: GENERATED_FIT_MAX, fit: true, auto: false, corrections: 1 }
+// Each fit, by the operator or for a new body size, may follow the display's
+// next report once both ways. After that a report may only shrink the zoom:
+// advice re-wraps its caption with its width and a generated display changes
+// arrangement with its size, so following every report both ways would
+// oscillate between two zooms.
+const FIT_CORRECTIONS = 1
+
+const fitted = (context: DisplayZoomContext, zoom: number, options: { readonly tryFull: boolean } = { tryFull: false }): DisplayZoomState => {
+  // Fit chosen while a generated display is drawn whole below 100 %: it may be
+  // drawn whole larger too, so Fit tries 100 % and takes the next report's
+  // correction. Only the operator's Fit does this; refits for a new body size
+  // scale from the room the display last needed, which follows the body both ways.
+  if (options.tryFull && context.kind === 'generated' && zoom < GENERATED_FIT_MAX - SAME_ZOOM && drawnWholeAt(context, zoom)) {
+    return { zoom: GENERATED_FIT_MAX, fit: true, auto: false, corrections: FIT_CORRECTIONS }
   }
-  return {
-    zoom: fitDisplayZoom(context, zoom),
-    fit: true,
-    auto: false,
-    corrections: context.kind === 'generated' ? 1 : 0,
-  }
+  return { zoom: fitDisplayZoom(context, zoom), fit: true, auto: false, corrections: FIT_CORRECTIONS }
 }
+
+const adviceDefault = (context: DisplayZoomContext): DisplayZoomState =>
+  ({ zoom: adviceDefaultZoom(context), fit: false, auto: true, corrections: FIT_CORRECTIONS })
 
 /** A display's zoom when the window first shows it: what the operator left, else 100 % (generated) or the advice default. */
 export const initialDisplayZoom = (context: DisplayZoomContext, stored: StoredDisplayZoom | null): DisplayZoomState => {
   if (stored !== null) return stored.fit ? fitted(context, stored.zoom) : manual(stored.zoom)
   if (context.kind === 'generated') return manual(1)
-  return { zoom: adviceDefaultZoom(context), fit: false, auto: true, corrections: 0 }
+  return adviceDefault(context)
+}
+
+// A report under Fit or the advice default: followed both ways while a
+// correction is left, then only where it shrinks the zoom (advice), or not at
+// all (a generated display, whose report changes with its arrangement).
+const followReport = (state: DisplayZoomState, next: number, context: DisplayZoomContext): DisplayZoomState => {
+  if (state.corrections > 0) return { ...state, zoom: next, corrections: state.corrections - 1 }
+  if (context.kind === 'advice' && next < state.zoom - SAME_ZOOM) return { ...state, zoom: next }
+  return state
 }
 
 export const reduceDisplayZoom = (
@@ -204,15 +220,14 @@ export const reduceDisplayZoom = (
     case 'scale':
       return Number.isFinite(action.factor) && action.factor > 0 ? manual(state.zoom * action.factor) : state
     case 'toggle-fit':
-      return state.fit ? { ...state, fit: false, corrections: 0 } : fitted(context, state.zoom)
+      return state.fit ? { ...state, fit: false, corrections: 0 } : fitted(context, state.zoom, { tryFull: true })
     case 'body':
       if (state.fit) return fitted(context, state.zoom)
-      if (state.auto) return { ...state, zoom: adviceDefaultZoom(context) }
+      if (state.auto) return adviceDefault(context)
       return state
     case 'extent':
-      if (state.fit && context.kind === 'advice') return { ...state, zoom: fitDisplayZoom(context, state.zoom) }
-      if (state.fit && state.corrections > 0) return { ...state, zoom: fitDisplayZoom(context, state.zoom), corrections: state.corrections - 1 }
-      if (state.auto) return { ...state, zoom: adviceDefaultZoom(context) }
+      if (state.fit) return followReport(state, fitDisplayZoom(context, state.zoom), context)
+      if (state.auto) return followReport(state, adviceDefaultZoom(context), context)
       return state
   }
 }
