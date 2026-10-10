@@ -65,7 +65,10 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
       initialEnergized: z.boolean().optional(),
       degradedVoltageFraction: z.number().finite().min(0).max(1.2).optional(),
     }).strict(),
-    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' })] }),
+    // Its voltage, as a fraction of nominal, is what an operator reads on it
+    // first. The model solves no machine speed, so a bus has no frequency of
+    // its own to show.
+    semantics: fixedSemantics({ keyValues: ['voltageFraction'], aspects: [aspect('energized', { variable: 'energized', reading: 'true' })] }),
     variables: [
       ...energizedVariables('Electrical bus'),
       variable({ path: 'servedLoadMw', label: 'Bus served load', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),

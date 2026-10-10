@@ -20,7 +20,7 @@ import { formatQuantity } from '../src/packs/process-plant/displays/display-text
 import { compileMimic } from '../src/packs/process-plant/displays/mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
-import { pipeStatesLook } from '../src/packs/process-plant/displays/mimic/rows.ts'
+import { itemRowTexts, pipeStatesLook } from '../src/packs/process-plant/displays/mimic/rows.ts'
 
 // The reference PWR reports what its equipment does, beside what it is told
 // to do: a feedback tag for each command tag, read from the solved state.
@@ -196,6 +196,30 @@ describe('breakers', () => {
     const feeders = around.mimic.stubs.find(stub => stub.states.length === 2 && stub.states.every(state => state.kind === 'power'))!
     expect(feeders.states.map(state => pipeStatesLook([state], around.sample)).sort()).toEqual(['dead', 'live'])
     expect(pipeStatesLook(feeders.states, around.sample)).toBe('live')
+  })
+
+  test('a drawn bus reads its voltage, and a drawn diesel its running state from its run feedback', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    const drawing = compileMimic(plant, { from: ['dieselGeneratorA'], to: ['auxFeedwaterPumpMotor'] }, { profile: chatMimicProfile, maxWidth: MIMIC_MAX_WIDTH, maxHeight: 900 })
+    if (!drawing.ok) throw new Error(JSON.stringify(drawing.issues))
+    const rowsOf = (label: string) => {
+      const item = drawing.mimic.items.find(candidate => candidate.binding.label === label)!
+      const sample = indexSample(drawing.mimic.paths.map(path => ({ path, value: plantRun.read(path), quality: 'good' })))
+      return itemRowTexts(item.binding, item.presentation, item.rows, sample, formatQuantity)
+    }
+    expect(drawing.mimic.items.find(item => item.binding.label === 'EDG A')!.binding.state).toMatchObject({ aspect: 'running', state: { path: 'dieselGeneratorA.running' }, command: 'dieselGeneratorA.startCommand' })
+    expect(rowsOf('Bus A')).toEqual(['100 %'])
+    expect(rowsOf('EDG A')).toEqual(['STOP'])
+    plantRun.act('loss-offsite-power')
+    plantRun.run(5_000)
+    // Started on the dead bus and not yet up to speed: its start command shows beside it.
+    expect(rowsOf('EDG A')).toEqual(['CMD RUN'])
+    expect(rowsOf('Bus A')).toEqual(['0 %'])
+    plantRun.run(20_000)
+    // Running, the symbol shows it, as a pump's does.
+    expect(rowsOf('EDG A')).toEqual([''])
+    expect(rowsOf('Bus A')).toEqual(['100 %'])
   })
 
   test('a reactor trip opens both reactor trip breakers, read from their position feedback', () => {
