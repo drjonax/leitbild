@@ -440,7 +440,7 @@ describe('electric grid query Capabilities', () => {
 
   test('every asset of both published Models fits the typed asset.get output', () => {
     const halden = compileGridDefinition(gridDefinitionSchema.parse({
-      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: 'electric-grid.halden.four-unit.normal' }, automation: { ref: norwayStandardAutomationRef },
+      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: 'electric-grid.norway.normal' }, automation: { ref: norwayStandardAutomationRef },
     }))
     for (const compiled of [definition, halden]) {
       const grid = createGridRuntimeInstance({ definition: compiled, at: isoAt(0) })

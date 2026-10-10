@@ -29,6 +29,22 @@ const catalogResultSchema = z.object({
     description: z.string(),
     nominalFrequencyHz: z.number().positive(),
     fidelity: modelFidelitySchema,
+    assetCounts: z.object({
+      bus: z.number().int().nonnegative(),
+      branch: z.number().int().nonnegative(),
+      generator: z.number().int().nonnegative(),
+      load: z.number().int().nonnegative(),
+      storage: z.number().int().nonnegative(),
+      connectionPoint: z.number().int().nonnegative(),
+    }).strict(),
+    connectionPoints: z.array(z.object({
+      id: z.string(),
+      label: z.string(),
+      busId: z.string(),
+      nominalKv: z.number().positive(),
+      maximumExportMw: z.number().nonnegative(),
+      maximumImportMw: z.number().nonnegative(),
+    }).strict()),
   }).strict()),
   operatingPoints: z.array(compatibleDefinitionSchema),
   automations: z.array(compatibleDefinitionSchema),
@@ -42,6 +58,20 @@ const catalogResultSchema = z.object({
   }).strict()),
 }).strict()
 
+interface CompatibleCatalogEntry {
+  readonly id: string
+  readonly title: string
+  readonly description: string
+  readonly compatibleModelRefs: ReadonlyArray<string>
+}
+
+const compatibleDefinition = (entry: CompatibleCatalogEntry): z.infer<typeof compatibleDefinitionSchema> => ({
+  id: entry.id,
+  title: entry.title,
+  description: entry.description,
+  compatibleModelRefs: [...entry.compatibleModelRefs],
+})
+
 export const gridCatalogQuery = defineGridQuery({
   id: 'world.electric-grid.catalog.list',
   title: 'List Grid catalog',
@@ -50,7 +80,17 @@ export const gridCatalogQuery = defineGridQuery({
   input: emptyPayloadSchema,
   output: catalogResultSchema,
   answer: (_payload, grids) => ({
-    ...electricGridDefinitionCatalog,
+    models: electricGridDefinitionCatalog.models.map(model => ({
+      id: model.id,
+      title: model.title,
+      description: model.description,
+      nominalFrequencyHz: model.nominalFrequencyHz,
+      fidelity: model.fidelity,
+      assetCounts: model.assetCounts,
+      connectionPoints: model.connectionPoints,
+    })),
+    operatingPoints: electricGridDefinitionCatalog.operatingPoints.map(compatibleDefinition),
+    automations: electricGridDefinitionCatalog.automations.map(compatibleDefinition),
     operatingPointOverridesSchema: z.toJSONSchema(gridOperatingPointOverridesSchema),
     grids: [...grids.values()].map(grid => ({
       id: grid.definition.gridId,
