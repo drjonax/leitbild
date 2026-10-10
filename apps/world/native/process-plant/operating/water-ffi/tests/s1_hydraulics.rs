@@ -218,6 +218,8 @@ struct Sample {
     steps: i64,
     last_step: f64,
     energy_identity_w: f64,
+    /// Sum of the identity's absolute terms, for its relative bound.
+    energy_identity_terms_w: f64,
     /// Largest retained |volume flow| on a phase path with an absent donor.
     blocked_path_m3_s: f64,
     /// (face, phase) carrying it, if any.
@@ -283,6 +285,7 @@ fn sample<P: leitbild_operating_plant::network::Properties>(
         energy_identity_w: budget["fluid_plus_rotor_plus_bearing_minus_motor_w"]
             .as_f64()
             .unwrap(),
+        energy_identity_terms_w: budget["identity_terms_abs_sum_w"].as_f64().unwrap(),
         blocked_path_m3_s,
         blocked_path_at,
         departure_k: bands.map(|b| b.departure_k),
@@ -413,7 +416,12 @@ fn advance_run(
                 // Frozen failure rules on accepted states (S1 declaration).
                 let admitted_atol = spec.atol[taps.admitted_mass]
                     * ida.system().network.scales()[taps.admitted_mass];
-                if last.band_exceeded {
+                if !identity_closes(last) {
+                    failure = Some(format!(
+                        "energy identity open at t={t}: {} W against terms {} W",
+                        last.energy_identity_w, last.energy_identity_terms_w
+                    ));
+                } else if last.band_exceeded {
                     failure = Some(format!(
                         "metastable departure beyond the admitted band at t={t}: {:?}",
                         last.departure_k
@@ -544,6 +552,13 @@ fn running(network: &mut Network<If97>) {
         );
     }
 }
+/// The declared S1 exit: the energy identity closes within
+/// `1e-9 (1 + sum |terms|)` at every accepted sample.
+const IDENTITY_RELATIVE_BOUND: f64 = 1e-9;
+fn identity_closes(s: &Sample) -> bool {
+    s.energy_identity_w.abs() <= IDENTITY_RELATIVE_BOUND * (1. + s.energy_identity_terms_w)
+}
+
 /// Largest scaled row of the consistent initial pair at t = 0 (lead ruling).
 const CONSISTENT_ROW_BOUND: f64 = 1e-12;
 
@@ -1270,5 +1285,112 @@ fn s1_zero_time_consistent_pair() {
             "preparation":{"max_eos_row":preparation.max_eos_row,"max_tree_rest_pa":preparation.max_tree_rest_pa,"max_loop_rest_pa":preparation.max_loop_rest_pa,"pzr_representation_steps":preparation.pzr["representation_steps"],"pzr_specific_energy_exact":preparation.pzr["specific_energy_exact"]},
             "initial_pair":{"largest_scaled_row":largest,"row":at,"coordinate":labels[at].1,"bound":CONSISTENT_ROW_BOUND,"largest_impulse_rate_pa":impulse,"evaluations":during.evaluations-before.evaluations,"pzr_columns":during.pzr_columns-before.pzr_columns},
             "pzr":{"pt1_pa":taps.pt1_pa.value,"collapsed_level_m":taps.collapsed_level_m.value,"mixture_level_m":taps.mixture_level_m.value,"departure_k":bands.map(|b|b.departure_k),"bands":format!("{:?}",bands.map(|b|b.band))}})
+    );
+}
+
+/// Test fixture, NOT S1 evidence and no gate: the declared settling segment
+/// from the consistent prepared pair, then the energy identity at the settled
+/// state against the declared bound, with the PZR's split recorded.
+#[test]
+#[ignore = "requires the actual packet, the wiki, maintained IF97 and stock IDA/KLU"]
+fn s1_settled_energy_identity() {
+    let packet_path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
+    let wiki = std::env::var("LD01_WIKI_ROOT").unwrap();
+    let model = format!("{wiki}/world/packs/process-plant/reference-designs/ld-01/model");
+    let gates: Gates = strict_block(&format!("{model}/build-readiness.md"), "ld01-s1-gates");
+    let packet: Packet =
+        serde_json::from_slice(&std::fs::read(&packet_path).unwrap()).expect("packet");
+    let point = OperatingPoint::from(&packet.preparation.operating_point);
+    let rotors = vec![
+        RotorState {
+            support: Support::Supported(SpeedRequest::Nominal),
+            shaft: Shaft::Free,
+        };
+        4
+    ];
+    let settings = Settings {
+        pressure_tolerance_pa: PZR.pressure_tolerance_pa,
+        max_passes: PZR.max_passes,
+        level_match_m: 1e-9,
+        eos_row_bound: 1e-12,
+        tree_face_bound_pa: 1e-6,
+        representation_search: 8,
+    };
+    let taps = taps(&packet, &fresh(&packet));
+    let (mut network, prepared, _) =
+        prepare::prepare(&packet, If97, &point, &rotors, &settings).expect("preparation");
+    let mut y0 = prepared.y.clone();
+    for index in &network.rotor_index {
+        y0[*index] = 0.;
+    }
+    let atol = network
+        .absolute_tolerances(
+            &y0,
+            ToleranceClasses {
+                relative: gates.relative_tolerance,
+                stock_scaled: gates.stock_scaled_absolute,
+                tracer_scaled: gates.tracer_scaled_absolute,
+                rotor_scaled: gates.rotor_scaled_absolute,
+                volume_flow_m3_s: gates.volume_flow_absolute_m3_s,
+            },
+        )
+        .expect("tolerances");
+    let (yp0, _) = network
+        .consistent_rates(0., &y0, &prepared.differential, CONSISTENT_ROW_BOUND)
+        .expect("consistent prepared pair");
+    let (window, rotor_rel, flow_rel) = (
+        gates.settling.window_s,
+        gates.settling.rotor_speed_relative,
+        gates.settling.loop_flow_relative_change,
+    );
+    let omega0 = network.drive().reference_omega_rad_s;
+    let settled = move |samples: &[Sample]| {
+        let last = samples.last().unwrap();
+        let Some(earlier) = samples.iter().rev().find(|s| s.t <= last.t - window) else {
+            return false;
+        };
+        last.omega
+            .iter()
+            .all(|w| ((w - omega0) / omega0).abs() < rotor_rel)
+            && (0..2).all(|k| {
+                ((last.loop_kg_s[k] - earlier.loop_kg_s[k]) / last.loop_kg_s[k]).abs() < flow_rel
+            })
+    };
+    let run = advance_run(
+        network,
+        &taps,
+        &y0,
+        &yp0,
+        &prepared.differential,
+        Spec {
+            rtol: gates.relative_tolerance,
+            atol: &atol,
+            max_order: gates.max_order,
+            duration_s: gates.settling.max_simulated_s,
+            output_s: 1.,
+            step_cap: i64::MAX,
+            cpu_cap_s: gates.settling.max_cpu_s,
+            blocked_path_limit_m3_s: gates.blocked_path_max_volume_flow_m3_s,
+            calcic: false,
+        },
+        &settled,
+    );
+    assert!(run.failure.is_none(), "{:?}", run.failure);
+    let mut probe = fresh(&packet);
+    probe
+        .evaluate(0., &run.y, &run.yp, None, 0., None)
+        .expect("settled residual");
+    let budget = probe.current_budget(&run.y, &run.yp);
+    let identity = budget["fluid_plus_rotor_plus_bearing_minus_motor_w"]
+        .as_f64()
+        .unwrap();
+    let terms = budget["identity_terms_abs_sum_w"].as_f64().unwrap();
+    println!(
+        "{}",
+        json!({"kind":"s1-settled-energy-identity-FIXTURE-NOT-EVIDENCE","packet":packet_path,"settled_t_s":run.samples.last().map(|s|s.t),"identity_w":identity,"terms_abs_w":terms,"bound_w":IDENTITY_RELATIVE_BOUND*(1.+terms),"budget":budget,"max_sample_identity_w":run.samples.iter().map(|s|s.energy_identity_w.abs()).fold(0.,f64::max)})
+    );
+    assert!(
+        identity.abs() <= IDENTITY_RELATIVE_BOUND * (1. + terms),
+        "identity {identity} W against terms {terms} W"
     );
 }

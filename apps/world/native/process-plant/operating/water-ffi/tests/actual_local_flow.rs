@@ -361,3 +361,74 @@ fn colored_jacobian_equals_dense_jacobian_bitwise() {
         json!({"kind":"colored-jacobian-bitwise-gate","packet":path,"unknowns":n,"states":reports})
     );
 }
+
+#[test]
+#[ignore = "requires actual compiled owner packet and maintained IF97"]
+fn fluid_energy_pairs_with_shaft_power_through_the_pzr_transit_stocks() {
+    use leitbild_operating_plant::network::stratified as st;
+    let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
+    let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let (mut network, prepared) = Network::new(&packet, If97, &PZR).unwrap();
+    running(&mut network);
+    let mut reports = Vec::new();
+    for perturbed in [false, true] {
+        // Liquid paths in motion, face 34 included; the PZR either prepared or
+        // off equilibrium with transit stocks and moving zone volumes.
+        let mut y = prepared.y.clone();
+        let mut yp = vec![0.; y.len()];
+        for (j, l) in network.face_layout.iter().enumerate() {
+            let liquid = packet.mechanics.faces[l.face]
+                .supports
+                .iter()
+                .all(|s| network.cell_layout[s.region].phase == 0);
+            if l.phase == 0 && liquid && j % 3 != 0 {
+                y[l.index] = if j % 2 == 0 { 0.02 } else { -0.013 };
+            }
+        }
+        let base = network.pzr.base;
+        let scale = |o: usize| network.scales()[base + o];
+        if perturbed {
+            y[base + st::RESIDENT_ENERGY] *= 1.002;
+            y[base + st::ADMITTED_ENERGY] *= 1.004;
+            y[base + st::VAPOR_ENERGY] *= 0.999;
+            y[base + st::BUBBLE_MASS] = 2. / scale(st::BUBBLE_MASS);
+            y[base + st::DROP_MASS] = 3. / scale(st::DROP_MASS);
+            y[base + st::DROP_BORON] = 0.003 / scale(st::DROP_BORON);
+            for (o, rate) in [
+                (st::ROOF_PRESSURE, 1e3),
+                (st::VAPOR_VOLUME, 0.01),
+                (st::ADMITTED_VOLUME, -0.002),
+                (st::RESIDENT_VOLUME, -0.008),
+            ] {
+                yp[base + o] = rate / scale(o);
+            }
+        }
+        network.evaluate(0., &y, &yp, None, 0., None).unwrap();
+        let budget = network.current_budget(&y, &yp);
+        let fluid = budget["fluid_energy_minus_shaft_w"].as_f64().unwrap();
+        let terms = budget["fluid_energy_receipt_abs_sum_w"].as_f64().unwrap();
+        // CORE's own balance closes the cell; the network's pairing must too.
+        let balance = network.pzr_evaluation().unwrap().balance;
+        assert!(
+            (balance.energy_w.value - balance.receipt_energy_w.value).abs()
+                <= 1e-9 * balance.receipt_energy_w.value.abs()
+        );
+        assert!(fluid.abs() <= 1e3, "{budget}");
+        assert!(fluid.abs() <= 1e-9 * (1. + terms), "{budget}");
+        if perturbed {
+            assert!(
+                budget["pzr"]["transit_energy_rate_w"]
+                    .as_f64()
+                    .unwrap()
+                    .abs()
+                    > 1e6
+            );
+            assert!(budget["pzr"]["zone_volume_work_w"].as_f64().unwrap() != 0.);
+        }
+        reports.push(budget);
+    }
+    println!(
+        "{}",
+        json!({"kind":"fluid-energy-pairing-with-transit","packet":path,"budgets":reports})
+    );
+}
