@@ -1,0 +1,136 @@
+{
+  "hostility": { "north": ["south"], "south": ["north"] },
+  "lexicon": { "tracks": "Sightings", "contact": "Sighting", "hold": "Stop" },
+  "loadClasses": [
+    { "id": "L1", "label": "Critical", "code": "A", "noun": { "one": "person", "other": "people" } },
+    { "id": "L2", "label": "Serious", "code": "B", "noun": { "one": "person", "other": "people" } }
+  ],
+  "unitTypes": [
+    {
+      "id": "scout",
+      "label": "Scout",
+      "icon": "binoculars",
+      "tags": ["light", "observer"],
+      "components": {
+        "mobility": { "mode": "road", "speedFactor": 0.8 },
+        "service": { "provides": ["screen"], "onSceneS": 60 },
+        "sensor": { "detectM": 3000, "identifyM": 2000 },
+        "signature": { "factor": 0.6 },
+        "durability": { "stepFireS": 20 }
+      },
+      "lexicon": { "hold": "Halt", "on-task": "Screening" },
+      "standingOrders": { "withdraw": { "whenDamaged": true } }
+    },
+    {
+      "id": "striker",
+      "label": "Striker",
+      "icon": "shield",
+      "tags": ["heavy"],
+      "components": {
+        "mobility": { "mode": "road", "speedFactor": 0.6 },
+        "sensor": { "detectM": 1500, "identifyM": 1000 },
+        "signature": { "factor": 1, "haltedFactor": 0.5, "concealAfterS": 30, "firedFactor": 2 },
+        "effector": { "rangeM": 2000, "fireRate": 1, "targets": ["heavy", "light", "fixed"] },
+        "durability": { "stepFireS": 90 }
+      },
+      "properties": [
+        { "id": "crew", "label": "Crew", "kind": "number", "min": 1, "max": 6, "default": 4, "board": true }
+      ],
+      "standingOrders": { "roe": "free", "withdraw": { "whenDamaged": true }, "onStepLost": { "createTask": "aid", "perStep": { "L2": 1 } } }
+    },
+    {
+      "id": "gunner",
+      "label": "Gunner",
+      "icon": "crosshair",
+      "tags": ["heavy"],
+      "components": {
+        "mobility": { "mode": "direct", "speedMps": 30 },
+        "effector": { "rangeM": 1000, "targets": ["heavy"] },
+        "signature": { "factor": 0.8 },
+        "durability": { "stepFireS": 40 }
+      }
+    },
+    {
+      "id": "post",
+      "label": "Observation post",
+      "icon": "eye",
+      "tags": ["observer"],
+      "components": {
+        "sensor": { "detectM": 2500, "identifyM": 0 }
+      }
+    },
+    {
+      "id": "store",
+      "label": "Store",
+      "icon": "warehouse",
+      "tags": ["fixed"],
+      "components": {
+        "signature": { "factor": 1.2 },
+        "durability": { "stepFireS": 120 }
+      }
+    },
+    {
+      "id": "clinic",
+      "label": "Clinic",
+      "icon": "house-plus",
+      "public": true,
+      "components": {
+        "receiving": { "accepts": ["L1", "L2"], "slots": 2, "handoverS": 600, "accepting": true }
+      }
+    },
+    {
+      "id": "carrier",
+      "label": "Carrier",
+      "icon": "plane",
+      "tags": ["medical"],
+      "components": {
+        "mobility": { "mode": "direct", "speedMps": 60 },
+        "service": { "provides": ["aid"], "onSceneS": 600 },
+        "carry": { "capacity": 2, "classes": ["L1", "L2"] }
+      },
+      "properties": [
+        { "id": "winch", "label": "Winch", "kind": "boolean", "default": false, "board": true },
+        { "id": "grade", "label": "Grade", "kind": "enum", "values": [{ "id": "basic", "label": "Basic" }, { "id": "advanced", "label": "Advanced" }], "default": "basic" },
+        { "id": "rangeKm", "label": "Range", "kind": "number", "unit": "km", "min": 0, "max": 900, "default": 400 }
+      ],
+      "standingOrders": { "deliver": "nearest-accepting", "return": { "afterIdleS": 120 } }
+    }
+  ],
+  "taskTemplates": [
+    {
+      "id": "aid",
+      "label": "Aid call",
+      "icon": "heart-pulse",
+      "requires": [
+        { "provides": "aid", "count": 1, "label": { "one": "carrier", "other": "carriers" }, "where": [{ "property": "grade", "equals": "advanced" }] }
+      ]
+    },
+    {
+      "id": "lift",
+      "label": "Lift",
+      "icon": "cross",
+      "priorityClass": "L2",
+      "requires": [
+        {
+          "provides": "aid",
+          "count": 2,
+          "label": { "one": "carrier with winch", "other": "carriers with winch" },
+          "where": [{ "property": "winch", "equals": true }, { "property": "rangeKm", "atLeast": 100, "atMost": 800 }]
+        }
+      ]
+    },
+    {
+      "id": "screen",
+      "label": "Screen",
+      "icon": "flag",
+      "priorityClass": "L2",
+      "requires": [{ "provides": "screen", "count": 1, "label": { "one": "scout", "other": "scouts" } }]
+    },
+    { "id": "report", "label": "Report", "icon": "message-square" }
+  ],
+  "authority": [
+    { "roleId": "north-aid", "units": { "types": ["carrier"] }, "taskTemplates": ["aid", "lift"] },
+    { "roleId": "north-command", "units": { "tags": ["heavy", "observer"] }, "taskTemplates": ["screen"] },
+    { "roleId": "north-all", "units": { "all": true }, "taskTemplates": ["aid", "lift", "screen", "report"] }
+  ]
+}
