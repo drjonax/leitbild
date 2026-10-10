@@ -93,6 +93,17 @@ describe('Electric Grid definition catalog', () => {
     expect(compiler.compile(definitionFor('electric-grid.norway.transmission')).model.id).toBe('electric-grid.norway.transmission')
   })
 
+  test('validates per-asset Operating Point overrides but refuses to drop the ones the runtime cannot apply', () => {
+    const { compiler } = fixtureCompiler()
+    const definition = definitionFor('electric-grid.test.fixture-addition')
+    const withOverrides = (overrides: object) => ({ ...definition, operatingPoint: { ...definition.operatingPoint, overrides } })
+    expect(() => compiler.compile(withOverrides({ branchStates: [{ assetId: 'branch:curated-fixture-hasle', state: 'open' }] })))
+      .toThrow('valid for electric-grid.test.fixture-addition, but the current Grid runtime does not apply branchStates yet')
+    expect(() => compiler.compile(withOverrides({ branchStates: [{ assetId: 'branch:curated-fixture-missing', state: 'open' }] })))
+      .toThrow('unknown branch branch:curated-fixture-missing')
+    expect(compiler.compile(withOverrides({ branchStates: [], loadScale: 0.9 })).operatingPoint.loadScale).toBe(0.9)
+  })
+
   test('keeps additions one level and the catalog in step with the data', () => {
     const { compiler } = fixtureCompiler()
     expect(() => compiler.compile(definitionFor('electric-grid.test.chained'))).toThrow('base electric-grid.test.fixture-addition is itself a Model Addition')

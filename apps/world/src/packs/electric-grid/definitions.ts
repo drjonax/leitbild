@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { gridOperatingPointOverridesSchema, type GridDefinition } from './config.ts'
+import { z } from 'zod'
+import { gridOperatingPointOverridesSchema, type GridDefinition, type GridOperatingPointOverrides } from './config.ts'
 import {
   catalogEntriesById,
   electricGridDefinitionCatalog,
@@ -18,6 +19,11 @@ import type {
 } from './grid-model.ts'
 import { addGridModelAssets, parseGridModelAddition } from './model-additions.ts'
 import { buildNorwayTransmissionModelV1 } from './models/norway-transmission-v1.ts'
+import {
+  gridOperatingPointPerAssetFields,
+  gridOperatingPointStateIssues,
+  type GridOperatingPointTargets,
+} from './schemas/grid-operating-point.ts'
 
 // The Grid definition loader. Only the runtime connect path and scenario expansion import it,
 // dynamically, so World startup neither reads model data nor compiles a model. Each model is
@@ -179,7 +185,44 @@ export const gridModelFileReader = (directory: URL): GridModelFileReader => file
 interface CompiledModelEntry {
   readonly model: GridModelDefinition
   readonly index: CompiledGridModelIndex
+  readonly targets: GridOperatingPointTargets
   readonly digest: string
+}
+
+/** What Operating Point overrides may address in a v1 model. */
+const operatingPointTargetsFor = (model: GridModelDefinition): GridOperatingPointTargets => ({
+  generators: new Map(model.generators.map(generator => [generator.id, { capacityMw: generator.capacityMw }])),
+  branches: new Set(model.branches.map(branch => branch.id)),
+  // v1 models carry HVDC as AC branches, have no external systems, and give loads no price area.
+  hvdcLinks: new Map(),
+  externalSystems: new Map(),
+  loadPriceAreas: new Set(),
+})
+
+const overridesPath = ['operatingPoint', 'overrides'] as const
+
+/** Overrides the current runtime cannot apply yet are rejected, never silently ignored. */
+const unappliedOverrideFields = (overrides: GridOperatingPointOverrides): ReadonlyArray<string> => [
+  ...gridOperatingPointPerAssetFields.filter(field => overrides[field] !== undefined && overrides[field].length > 0),
+  ...(overrides.priceAreaDemandScale !== undefined && Object.keys(overrides.priceAreaDemandScale).length > 0 ? ['priceAreaDemandScale'] : []),
+]
+
+/** Validates overrides against the compiled model; issue paths are relative to the Grid definition. */
+const resolveOverrides = (definition: GridDefinition, targets: GridOperatingPointTargets): GridOperatingPointOverrides => {
+  const overrides = gridOperatingPointOverridesSchema.parse(definition.operatingPoint.overrides ?? {})
+  const issues = gridOperatingPointStateIssues(overrides, targets)
+  if (issues.length > 0) {
+    throw new z.ZodError(issues.map(issue => ({ code: 'custom' as const, path: [...overridesPath, ...issue.path], message: issue.message })))
+  }
+  const unapplied = unappliedOverrideFields(overrides)
+  if (unapplied.length > 0) {
+    throw new z.ZodError(unapplied.map(field => ({
+      code: 'custom' as const,
+      path: [...overridesPath, field],
+      message: `valid for ${definition.model.ref}, but the current Grid runtime does not apply ${field} yet`,
+    })))
+  }
+  return overrides
 }
 
 export interface GridDefinitionCompiler {
@@ -239,7 +282,7 @@ export const createGridDefinitionCompiler = (config: {
     const entry = modelEntry(ref)
     const model = loadModel(entry)
     requireCatalogMatch(entry, model)
-    const compiled = { model, index: compileGridModelIndex(model), digest: sha256(JSON.stringify(model)) }
+    const compiled = { model, index: compileGridModelIndex(model), targets: operatingPointTargetsFor(model), digest: sha256(JSON.stringify(model)) }
     compiledModels.set(ref, compiled)
     return compiled
   }
@@ -254,7 +297,7 @@ export const createGridDefinitionCompiler = (config: {
     if (!automation.compatibleModelRefs.includes(definition.model.ref)) {
       throw new Error(`Grid Automation ${definition.automation.ref} is not compatible with Model ${definition.model.ref}`)
     }
-    const overrides = gridOperatingPointOverridesSchema.parse(definition.operatingPoint.overrides ?? {})
+    const overrides = resolveOverrides(definition, compiledModel.targets)
     const resolvedOperatingPoint: GridOperatingPointDefinition = {
       id: operatingPoint.id,
       title: operatingPoint.title,

@@ -9,7 +9,7 @@
   ],
   "branches": [
     {
-      "id": "branch:fixture-hasle", "label": "Fixture – Hasle", "kind": "ac_line",
+      "id": "branch:curated-fixture-hasle", "label": "Fixture – Hasle", "kind": "ac_line",
       "fromBusId": "bus:fixture-switchyard-420", "toBusId": "NO-HASLE-TRAFOSTASJON-420-WAY-60495669", "nominalKv": 420,
       "ratingMw": 1850, "emergencyRatingMw": 2183, "reactancePu": 0.02, "resistancePu": 0.004, "weatherExposure": "medium",
       "sourceId": "leitbild:test-fixture", "sourceFeatureId": "fixture-hasle"
