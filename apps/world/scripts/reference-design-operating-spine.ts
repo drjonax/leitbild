@@ -333,6 +333,76 @@ export function compileOperatingMechanics(primary: { regions: readonly { id: str
     scope: 'Physical geometry and force/velocity projection only. No advancement, phase-event, operational-fidelity or performance admission.' }
 }
 
+/** Text owned by exactly one heading, excluding fenced code. */
+function headingText(text: string, heading: string) {
+  const lines = text.split('\n'), headings: { index: number, level: number, title: string }[] = []
+  let fenced = false
+  for (const [index, line] of lines.entries()) {
+    if (/^(```|~~~)/.test(line)) fenced = !fenced
+    const m = fenced ? null : /^(#{1,6}) (.+?)\s*$/.exec(line)
+    if (m) headings.push({ index, level: m[1]!.length, title: m[2]! })
+  }
+  const own = headings.filter(h => h.title === heading)
+  if (own.length !== 1) throw Error('Expected exactly one heading ' + heading)
+  const next = headings.find(h => h.index > own[0]!.index && h.level <= own[0]!.level)
+  return lines.slice(own[0]!.index + 1, next?.index).join('\n')
+}
+
+/** Owner statements for the declared prepared state. These pages hold their
+ * values in reviewed prose, so each must match exactly once under its heading;
+ * a reworded or duplicated statement refuses instead of being guessed. */
+export const operatingPointSources = {
+  pzrRoofPressure_Pa: { page: 'systems/primary-coolant/pressurizer-thermal-state.md', heading: 'Acquisition and initial intent' },
+  pzrRoofElevation_m: { page: 'systems/instrumentation/operational-observations.md', heading: 'Primary pressure, inventory and heat transport' },
+  pzrLevel_m: { page: 'systems/primary-coolant/inventory-and-chemistry.md', heading: 'Normal inventory controller' },
+  rcpSpeedRequest: { page: 'model/connected-primary-initialization.md', heading: 'Current original physical hot preparation' },
+} as const
+const operatingPointChecks = {
+  setpoint: { page: 'systems/primary-coolant/pressure-and-inventory.md', heading: 'Acquired-pressure command comparison' },
+  speedVocabulary: { page: 'systems/primary-coolant/pumps-and-support.md', heading: 'Shaft and energy model' },
+} as const
+export const operatingPointPages = [...new Set([...Object.values(operatingPointSources), ...Object.values(operatingPointChecks)].map(s => s.page))]
+
+/** Declared selections for the prepared state, not targets for any flow. */
+export function compileOperatingPoint(docs: Readonly<Record<string, string>>,
+  pzr: { regions: readonly { id: string, bottom_m: number, top_m: number }[] }, referenceRpm: number) {
+  const phrase = (source: { page: string, heading: string }, pattern: RegExp) => {
+    const text = docs[source.page]
+    if (text === undefined) throw Error('Missing operating-point owner ' + source.page)
+    const found = [...headingText(text, source.heading).matchAll(pattern)]
+    if (found.length !== 1) throw Error(`Expected one selected statement in ${source.page} § ${source.heading}`)
+    return found[0]![1] ?? ''
+  }
+  const value = (s: string) => Number(s.replaceAll(',', '')), src = operatingPointSources, check = operatingPointChecks
+  const setpoint = value(phrase(src.pzrRoofPressure_Pa, /Retain the pressure setpoint \*\*([0-9][0-9,]*\.[0-9]+) Pa\*\*/g)),
+    compared = value(phrase(check.setpoint, /commissioned setpoint ([0-9][0-9,]*\.[0-9]+) Pa/g)),
+    roof = value(phrase(src.pzrRoofElevation_m, /Select the PZR PT1\/PT2\/PT3 direct pressure interfaces at the top fluid boundary, \+([0-9]+(?:\.[0-9]+)?) m on the current plant datum/g)),
+    level = value(phrase(src.pzrLevel_m, /The candidate target is ([0-9]+(?:\.[0-9]+)?) m at the nominal state\./g)),
+    rpm = value(phrase(src.rcpSpeedRequest, /actual supported ([0-9]+) rpm rotor states/g))
+  phrase(src.pzrRoofElevation_m, /(LT datum remains the PZR bottom)/g)
+  phrase(check.speedVocabulary, /(Commands request zero or nominal speed for the initial operational interface)/g)
+  const bottom = Math.min(...pzr.regions.map(r => r.bottom_m)), top = Math.max(...pzr.regions.map(r => r.top_m))
+  if (![setpoint, roof, level, rpm, bottom].every(Number.isFinite) || setpoint <= 0 || level <= 0 || level >= top - bottom)
+    throw Error('Invalid declared PZR/RCP operating point')
+  if (setpoint !== compared) throw Error('PZR pressure setpoint owners disagree')
+  if (roof !== top) throw Error('PT1 roof tap is not the compiled PZR top fluid boundary')
+  if (rpm !== referenceRpm) throw Error('Prepared RCP speed is not the commissioned nominal speed')
+  const surface = bottom + level, below = pzr.regions.filter(r => r.top_m === surface).map(r => r.id),
+    above = pzr.regions.filter(r => r.bottom_m === surface).map(r => r.id)
+  return { pzrRoofPressure_Pa: setpoint, pzrRoofElevation_m: roof, pzrLevel_m: level, rcpSpeedRequest: 'nominal' as const,
+    provenance: { ...src },
+    crossChecks: { ...check },
+    meaning: {
+      pzrRoofPressure_Pa: 'PT1 commissioned proportional-control setpoint: absolute local static pressure at the roof vapor tap, not interface or primary pressure',
+      pzrRoofElevation_m: 'Plant-datum elevation of the PT1/PT2/PT3 roof tap; equals the compiled PZR top fluid boundary',
+      pzrLevel_m: `Indicated liquid height above the PZR bottom at +${bottom} m plant elevation (LT datum); surface at +${surface} m`,
+      rcpSpeedRequest: 'All four supported RCPs request nominal speed, i.e. hydraulics.pump.referenceOmega_rad_s; no second speed value',
+    },
+    pzrBottomElevation_m: bottom, pzrLevelSurfaceElevation_m: surface,
+    pzrLevelRegionBoundary: { onBoundary: below.length > 0 && above.length > 0, below, above },
+    scope: 'Declared selections for a consistent prepared state. They are controller/indication setpoints and the supported speed request, not imposed pressures, levels or flows, and not evidence that the preparation is stationary.' }
+}
+
 export async function prepareOperatingSpine(wiki: string, if97: string) {
   const base = join(wiki, 'world/packs/process-plant/reference-designs/ld-01'), read = (p: string) => Bun.file(join(base, p)).text()
   const [hot, fuelDoc, handlingDoc, controlDoc, thermalDoc, gapDoc] = await Promise.all([
@@ -341,7 +411,9 @@ export async function prepareOperatingSpine(wiki: string, if97: string) {
   const originalThermal = compileOperatingThermal(parseFuelConstruction(fuelDoc), parseFuelHandling(handlingDoc), parseControlAbsorber(controlDoc),
     hot.fluid, hot.energy, parseOperatingThermal(thermalDoc), parseTransferThermal(handlingDoc), parseOperatingFuelGap(gapDoc))
   const hotOwner = hot.fluid.geometry.regions.find(r => r.id === 'HOT.A')!
-  const [pzr, originalHydraulics] = await Promise.all([prepareOperatingPzr(wiki, if97, hotOwner), loadOperatingHydraulics(wiki, hot.fluid.geometry)])
+  const [pzr, originalHydraulics, pointDocs] = await Promise.all([prepareOperatingPzr(wiki, if97, hotOwner), loadOperatingHydraulics(wiki, hot.fluid.geometry),
+    Promise.all(operatingPointPages.map(async page => [page, await read(page)] as const)).then(Object.fromEntries) as Promise<Record<string, string>>])
+  const operatingPoint = compileOperatingPoint(pointDocs, pzr, originalHydraulics.selection.referenceRpm)
   const carved = carveOperatingPrimary(hot.fluid.primary.regions, hot.fluid.primary.edges, pzr.hotPartition)
   const waterIndex = (old: number) => { const i = carved.regionMap[old]; if (i === undefined || i < 0) throw Error('Thermal/source contact requires an explicit physical repartition'); return i }
   const direct = carved.regions.map(() => 0)
@@ -381,10 +453,11 @@ export async function prepareOperatingSpine(wiki: string, if97: string) {
         area_m2: pzr.mouth.area_m2, elevation_m: pzr.mouth.elevation_m, normal: pzr.mouth.normal },
       receiptRule: 'Signed actual donor material/thermal enthalpy; no prescribed flow, pressure matching or zero-filled external equation',
       scope: 'Finite removed line stock and actual geometry/storage ports; native SURGE provides current signed M/H/B transport. Surge/junction forces, PZR pressure/kinematic/inertia and phase events, and complete unit F remain open.' },
-    preparation: { direct_source_projection: projection,
-      scope: 'Preparation-only pressure/enthalpy/continuity check with specified zero cycle currents and no external mass. It is not the joined current-flow solution.' },
+    preparation: { direct_source_projection: projection, operatingPoint,
+      scope: 'Preparation-only pressure/enthalpy/continuity check with specified zero cycle currents and no external mass. It is not the joined current-flow solution. operatingPoint declares the selected PZR roof setpoint, level setpoint and RCP speed request for a consistent preparation.' },
     provenance: { sourceSha256: hash(await Bun.file(import.meta.path).text()), hot: hot.provenance, fluid: hot.fluid.provenance,
       hydraulics: originalHydraulics.provenance, pzr: pzr.provenance,
+      operatingPoint: operatingPointPages.map(name => ({ name, sha256: hash(pointDocs[name]!) })),
       thermalOwners: ['systems/reactor/fuel-construction.md', 'systems/reactor/fuel-handling-and-pool.md', 'systems/reactor/control-absorber-and-guide-water.md',
         'model/operating-thermal.md', 'systems/reactor/phase-dependent-heat-transfer.md'].map((name, i) => ({ name,
           sha256: hash([fuelDoc, handlingDoc, controlDoc, thermalDoc, gapDoc][i]!) })) },
