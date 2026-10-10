@@ -2287,11 +2287,12 @@
       "kind": "centrifugalPump",
       "label": "High-Head Safety Injection Pump A",
       "parameters": {
-        "nominalFlowKgPerS": 320,
-        "nominalHeadPa": 1700000,
+        "nominalFlowKgPerS": 35,
+        "nominalHeadPa": 17300000,
         "flowTimeConstantS": 5,
         "maxFlowRampKgPerS2": 80,
-        "initialRunning": false
+        "initialRunning": false,
+        "reactorCoolantShutoffPressureMPa": 18.5
       },
       "variables": [
         {
@@ -2321,11 +2322,12 @@
       "kind": "centrifugalPump",
       "label": "High-Head Safety Injection Pump B",
       "parameters": {
-        "nominalFlowKgPerS": 320,
-        "nominalHeadPa": 1700000,
+        "nominalFlowKgPerS": 35,
+        "nominalHeadPa": 17300000,
         "flowTimeConstantS": 5,
         "maxFlowRampKgPerS2": 80,
-        "initialRunning": false
+        "initialRunning": false,
+        "reactorCoolantShutoffPressureMPa": 18.5
       },
       "variables": [
         {

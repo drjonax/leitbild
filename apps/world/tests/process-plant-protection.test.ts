@@ -148,6 +148,57 @@ describe('a reactor coolant pump that stops at power', () => {
   })
 })
 
+describe('safety injection', () => {
+  const siActuated = 'trip:safety-injection-low-pzr-pressure:safety-injection'
+  const accumulators = ['A', 'B', 'C', 'D'] as const
+
+  test('a stuck-open PORV brings in SI on low pressurizer pressure, then the accumulators below their gas pressure', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(false)
+    plantRun.act('pressurizer-relief-open', { positionPercent: 100 })
+    expect(plantRun.secondsUntil(siActuated, 120)).not.toBeNull()
+    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(12.7)
+    expect(plantRun.secondsUntil('alarm:si-pump-b-running:running', 10)).not.toBeNull()
+    expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('SI-PUMP-B-RUNNING')).toBe(true)
+    // The SI signal trips the reactor too, if nothing has yet.
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
+
+    // Each accumulator injects once reactor coolant pressure falls below its gas pressure.
+    expect(plantRun.secondsUntil('alarm:accumulator-a-injecting:injecting', 300)).not.toBeNull()
+    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(Number(plantRun.read('safetyAccumulatorA.gasPressureMPa')))
+    expect(Number(plantRun.read('safetyAccumulatorA.gasPressureMPa'))).toBeLessThan(4.4)
+    for (const loop of accumulators) expect(plantRun.activeIds()).toContain(`alarm:accumulator-${loop.toLowerCase()}-injecting:injecting`)
+    expect(Number(plantRun.tag('SI-FLOW'))).toBeGreaterThan(Number(plantRun.read('safetyInjectionPumpA.flowKgPerS')) + Number(plantRun.read('safetyInjectionPumpB.flowKgPerS')))
+  })
+
+  test('high-head SI pumps deliver less the higher the reactor coolant pressure they pump against', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    for (const pump of ['safetyInjectionPumpA', 'safetyInjectionPumpB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${pump}.running` as VariablePath, value: true })
+    plantRun.run(30_000)
+    // At about 15.5 MPa a pump with an 18.5 MPa shutoff and a 35 kg/s runout delivers 35 * sqrt(1 - 15.5 / 18.5), about 14 kg/s.
+    const pressure = Number(plantRun.tag('PT-455'))
+    const flow = Number(plantRun.read('safetyInjectionPumpA.flowKgPerS'))
+    expect(pressure).toBeGreaterThan(14.5)
+    expect(flow).toBeCloseTo(35 * Math.sqrt(1 - pressure / 18.5), 0)
+    expect(flow).toBeLessThan(20)
+  })
+
+  test('acts after a reactor trip, in hot standby, but not on the pressure of a normal trip', () => {
+    const qualified = plant.automation.rules.find(rule => rule.id === 'safety-injection-low-pzr-pressure')!
+    expect(qualified.modes).toEqual(['powerOperation', 'startup', 'hotStandby'])
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('turbine-trip')
+    plantRun.run(120_000)
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
+    expect(plantRun.activeIds()).not.toContain(siActuated)
+    expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(false)
+  })
+})
+
 describe('safety injection accumulators', () => {
   test('keep injecting as long as the reactor coolant pressure stays below their expanding gas', () => {
     const plantRun = started()

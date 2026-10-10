@@ -7,22 +7,38 @@ import {
 import { approach, clamp, optionalParameterNumber, parameterNumber, relaxToward } from '../component-helpers.ts'
 import { pumpHeadResistanceFlowTarget } from '../physics.ts'
 import { primaryLoopLinkResistanceCoefficient } from '../topology-cache.ts'
+import { primarySystemPressurizer } from '../system-topology.ts'
 import { componentHasElectricalPower } from './electrical-behaviors.ts'
+
+type PumpBehaviorInput = Parameters<ComponentBehaviorDefinition['update']>[0]
+
+// A pump that injects into the reactor coolant system pumps against its
+// pressure, read at the pressurizer: Q = Qrunout * n * sqrt(1 - P / (P0 * n^2)),
+// with the shutoff pressure P0 scaled by the square of the speed n.
+const reactorCoolantDeliveryFraction = ({ system, component, context }: PumpBehaviorInput, speed: number): number => {
+  const shutoffPressure = (component.parameters as Readonly<Record<string, unknown>>).reactorCoolantShutoffPressureMPa
+  if (typeof shutoffPressure !== 'number') return 1
+  const pressurizer = primarySystemPressurizer(system)
+  if (pressurizer === null) throw new Error(`pump ${component.id} injects into the reactor coolant system, which has no pressurizer to read its pressure from`)
+  const pressure = context.readNumber(componentVariablePath(pressurizer, 'pressureMPa'))
+  return Math.sqrt(clamp(1 - pressure / Math.max(1e-6, shutoffPressure * speed * speed), 0, 1))
+}
 
 export const pumpBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
     id: 'centrifugal-pump-flow',
     phase: 'solveFluidFlowComponents',
     componentKind: 'centrifugalPump',
-    reads: ['running', 'speedFraction', 'incoming electrical energized?'],
+    reads: ['running', 'speedFraction', 'incoming electrical energized?', 'pressurizer.pressureMPa?'],
     writes: ['runningState', 'flowKgPerS', 'speedRpm', 'demandMw'],
-    update: ({ system, component, context }): void => {
+    update: (input): void => {
+      const { system, component, context } = input
       const running = context.readBoolean(componentVariablePath(component, 'running'))
         && componentHasElectricalPower(system, component, context)
       const speed = clamp(context.readNumber(componentVariablePath(component, 'speedFraction')), 0, 1.2)
       context.write(componentVariablePath(component, 'runningState'), running)
       context.write(componentVariablePath(component, 'speedRpm'), running ? speed * optionalParameterNumber(component, 'nominalSpeedRpm', 3600) : 0)
-      const targetFlow = running ? parameterNumber(component, 'nominalFlowKgPerS') * speed : 0
+      const targetFlow = running ? parameterNumber(component, 'nominalFlowKgPerS') * speed * reactorCoolantDeliveryFraction(input, speed) : 0
       const currentFlow = context.readNumber(componentVariablePath(component, 'flowKgPerS'))
       const timeConstant = optionalParameterNumber(component, 'flowTimeConstantS', 0)
       const maxRamp = optionalParameterNumber(component, 'maxFlowRampKgPerS2', Number.POSITIVE_INFINITY)

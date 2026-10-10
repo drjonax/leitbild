@@ -27,6 +27,13 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       minimumNaturalCirculationFlowKgPerS: z.number().finite().nonnegative().optional(),
       hydraulicEfficiencyFraction: z.number().finite().positive().max(1).optional(),
       fluidDensityKgPerM3: z.number().finite().positive().optional(),
+      /**
+       * For a pump that injects into the reactor coolant system: the reactor
+       * coolant pressure at which it delivers nothing, its shutoff head over
+       * its suction. Its nominal flow is then its runout flow, and it delivers
+       * less as that pressure rises, along a parabolic pump curve.
+       */
+      reactorCoolantShutoffPressureMPa: z.number().finite().positive().optional(),
     }),
     // A pump runs while it is commanded to run and its motor has power.
     semantics: fixedSemantics({ aspects: [aspect('running', { variable: 'runningState', reading: 'true' }, 'running')], ratedOutflow: [{ port: 'outlet', parameter: 'nominalFlowKgPerS' }] }),

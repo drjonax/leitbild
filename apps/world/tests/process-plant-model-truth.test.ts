@@ -448,7 +448,9 @@ describe('alarms that apply only in power operation', () => {
       ],
     }))
     const qualified = plant.automation.rules.filter(rule => rule.modes !== undefined)
-    expect(qualified.every(rule => JSON.stringify(rule.modes) === '["powerOperation"]')).toBe(true)
+    // All act at power only but safety injection, which acts down to hot standby.
+    expect(qualified.filter(rule => JSON.stringify(rule.modes) !== '["powerOperation"]').map(rule => [rule.id, rule.modes]))
+      .toEqual([['safety-injection-low-pzr-pressure', ['powerOperation', 'startup', 'hotStandby']]])
     expect(qualified.map(rule => rule.id)).toEqual(expect.arrayContaining(['generator-output-low', 'turbine-load-low']))
   })
 
