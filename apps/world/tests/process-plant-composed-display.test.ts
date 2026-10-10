@@ -92,7 +92,8 @@ describe('I&C thresholds for composed displays', () => {
     expect(names('SUB-MARGIN', 'degC')).toEqual(['LO-LO ALM 0 °C', 'LO ALM 16.7 °C'])
     // Safety injection actuates below the low-pressure reactor trip: the low-low pressurizer pressure SI signal.
     expect(names('PT-455', 'MPa')).toEqual(['LO-LO TRIP 12.7 MPa', 'LO TRIP 13.8 MPa', 'LO ALM 14.8 MPa', 'HI ALM 16 MPa', 'HI TRIP 16.18 MPa', 'HI-HI TRIP 16.35 MPa'])
-    expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO TRIP 20 %', 'LO ALM 30 %', 'HI ALM 75 %', 'HI TRIP 82 %'])
+    // Low-low level starts auxiliary feedwater and trips the reactor at the one set point: two trips, neither further.
+    expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO TRIP 20 %', 'LO TRIP 20 %', 'LO ALM 30 %', 'HI ALM 75 %', 'HI TRIP 82 %'])
   })
 
   test('draw a limit that only on/off states of other signals gate, naming them', () => {
@@ -163,7 +164,7 @@ describe('world.process-plant.display.compose', () => {
     }) as { shows: ReadonlyArray<string>; margins: ReadonlyArray<string>; viewContent: unknown }
     const content = embeddedViewContentSchema.parse(result.viewContent)
     const level = content.items.find(item => item.names.includes('SG-B-LVL-NR'))!
-    expect(level.names).toEqual(expect.arrayContaining(['sgB.levelPercent', 'Steam generator level']))
+    expect(level.names).toEqual(expect.arrayContaining(['sgB.levelPercent', 'Steam generator narrow-range level']))
     expect(level.history).toBe(true)
     // Its current value and the LO TRIP 20 % and LO ALM 30 % lines, as the display shows them.
     expect(level.values).toEqual([{ value: 55, unit: '%' }])
