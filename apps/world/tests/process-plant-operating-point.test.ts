@@ -27,6 +27,9 @@ describe('authoritative PWR full-power operating point', () => {
       expect(read('core.totalThermalPowerMw')).toBe(3400)
       expect(read('turbine.electricMw')).toBeCloseTo(ratedElectric, 8)
       expect(read('turbine.loadFraction')).toBe(1)
+      // The loops start full at the operating point's temperatures, so they hold their nominal inventory.
+      const initialInventory = read('vessel.primaryCoolantInventoryKg')
+      expect(initialInventory / Number((system.sourceGraph.components.find(component => component.id === 'vessel')!.parameters as Record<string, unknown>).nominalPrimaryCoolantInventoryKg)).toBeCloseTo(1, 6)
       for (const component of system.sourceGraph.components.filter(component => component.kind === 'steamGenerator')) {
         expect(read(`${component.id}.steamFlowKgPerS`)).toBeCloseTo(steamGeneratorHeat / 2.26 / loopCount, 8)
       }
@@ -39,7 +42,8 @@ describe('authoritative PWR full-power operating point', () => {
       // Normal CVCS heat exchange is a small transient, not a 15–50% collapse.
       expect(read('turbine.electricMw')).toBeGreaterThan(ratedElectric * 0.97)
       expect(read('turbine.electricMw')).toBeLessThanOrEqual(ratedElectric + 1)
-      expect(read('vessel.primaryCoolantInventoryKg')).toBeCloseTo(285000, 6)
+      // The loops hold the inventory they started with: charging matches letdown.
+      expect(read('vessel.primaryCoolantInventoryKg') / initialInventory).toBeCloseTo(1, 3)
       // The operating point initializes real state; it must never clamp power.
       runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
       for (let step = 0; step < 150; step++) runtime.tick(100)
@@ -74,12 +78,13 @@ describe('authoritative PWR full-power operating point', () => {
   test('full-power balance stays bounded through ten minutes without forcing output', () => {
     const runtime = createProcessPlantRuntime({ system: compileProcessPlant(createPwrReferencePlantDefinition({ id: 'test:steady' })) })
     const ratedElectric = Number(runtime.readVariable('turbine.electricMw' as VariablePath))
+    const initialInventory = Number(runtime.readVariable('vessel.primaryCoolantInventoryKg' as VariablePath))
     for (let step = 0; step < 6000; step++) {
       runtime.tick(100)
       if (step % 600 === 599) {
         expect(Number(runtime.readVariable('turbine.electricMw' as VariablePath))).toBeGreaterThan(ratedElectric * 0.97)
         expect(Number(runtime.readVariable('turbine.electricMw' as VariablePath))).toBeLessThanOrEqual(ratedElectric + 1)
-        expect(Number(runtime.readVariable('vessel.primaryCoolantInventoryKg' as VariablePath))).toBeCloseTo(285000, 5)
+        expect(Number(runtime.readVariable('vessel.primaryCoolantInventoryKg' as VariablePath)) / initialInventory).toBeCloseTo(1, 3)
       }
     }
   }, 120_000)

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   compressedWaterState,
+  liquidEnthalpyKjPerKg,
   liquidTemperatureCFromEnthalpy,
   saturatedWaterSteam,
   saturationPressureMPaFromTemperatureC,
@@ -25,9 +26,17 @@ describe('IAPWS-IF97 water and steam properties', () => {
     }
   })
 
-  test('the region 1 backward temperature matches table 7', () => {
+  test('liquid temperature inverts liquid enthalpy exactly and agrees with the backward equation of table 7', () => {
+    // The backward equation is within 25 mK of region 1; the runtime refines it to the exact inverse.
     for (const [pressure, enthalpy, temperature] of [[3, 500, 0.391798509e3], [80, 500, 0.378108626e3], [80, 1500, 0.611041229e3]] as const) {
-      expect(liquidTemperatureCFromEnthalpy(pressure, enthalpy)).toBeCloseTo(kelvin(temperature), 5)
+      expect(Math.abs(liquidTemperatureCFromEnthalpy(pressure, enthalpy) - kelvin(temperature))).toBeLessThan(0.025)
+    }
+    for (const [temperature, pressure] of [[50, 0.5], [288, 15.5], [323, 15.5], [344.8, 15.5]] as const) {
+      expect(liquidTemperatureCFromEnthalpy(pressure, liquidEnthalpyKjPerKg(temperature, pressure))).toBeCloseTo(temperature, 6)
+    }
+    // Superheated liquid, about to flash, inverts along the saturation line.
+    for (const [temperature, pressure] of [[300, 8], [323, 8], [352, 15.5]] as const) {
+      expect(liquidTemperatureCFromEnthalpy(pressure, liquidEnthalpyKjPerKg(temperature, pressure))).toBeCloseTo(temperature, 4)
     }
   })
 

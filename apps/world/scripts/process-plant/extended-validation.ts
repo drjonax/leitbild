@@ -35,7 +35,7 @@ const telemetryVariables = [
   'core.effectiveReactivityPcm',
   'core.boronFeedbackPcm',
   'vessel.primaryCoolantInventoryKg',
-  'vessel.primaryPressureBiasMPa',
+  'vessel.surgeFlowKgPerS',
   'vessel.boronConcentrationPpm',
   'vessel.primaryLeakFlowKgPerS',
   'vessel.safetyInjectionFlowKgPerS',

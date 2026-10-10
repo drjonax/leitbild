@@ -97,25 +97,3 @@ export const reactorKineticsPowerStep = (config: {
     maxDelta,
   })
 }
-
-export const primaryCoolantCompressibilityPressureBiasMPa = (config: {
-  readonly inventoryKg: number
-  readonly referenceVolumeM3: number
-  readonly densityKgPerM3: number
-  readonly effectiveBulkModulusMPa: number
-}): number => {
-  const referenceVolume = Math.max(1e-9, config.referenceVolumeM3)
-  const density = Math.max(1e-9, config.densityKgPerM3)
-  const currentVolume = Math.max(0, config.inventoryKg) / density
-  return Math.max(0, config.effectiveBulkModulusMPa) * ((currentVolume - referenceVolume) / referenceVolume)
-}
-
-export const primaryCoolantThermalExpansionPressureBiasMPa = (config: {
-  readonly meanTemperatureC: number
-  readonly referenceTemperatureC: number
-  readonly thermalExpansionCoefficientPerC: number
-  readonly effectiveBulkModulusMPa: number
-}): number =>
-  Math.max(0, config.effectiveBulkModulusMPa)
-  * Math.max(0, config.thermalExpansionCoefficientPerC)
-  * (config.meanTemperatureC - config.referenceTemperatureC)

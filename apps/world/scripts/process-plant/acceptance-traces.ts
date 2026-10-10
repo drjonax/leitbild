@@ -42,9 +42,9 @@ const telemetryVariables = [
   'core.fuelUpperTemperatureC',
   'core.fuelStoredEnergyMj',
   'core.decayHeatMw',
-  'vessel.primaryPressureBiasMPa',
-  'vessel.compressibilityPressureBiasMPa',
-  'vessel.thermalExpansionPressureBiasMPa',
+  'vessel.surgeFlowKgPerS',
+  'vessel.loopVoidFraction',
+  'vessel.primaryInventoryBalanceResidualKg',
   'vessel.meanPrimaryCoolantTemperatureC',
   'vessel.primaryCoolantInventoryKg',
   'vessel.safetyInjectionFlowKgPerS',
@@ -60,8 +60,8 @@ const telemetryVariables = [
   'safetyAccumulatorA.outletFlowKgPerS',
   'safetyAccumulatorA.gasPressureMPa',
   'pressurizer.pressureMPa',
-  'pressurizer.steamPressureMPa',
-  'pressurizer.pressureTargetMPa',
+  'pressurizer.levelPercent',
+  'pressurizer.flashingRateKgPerS',
   'pressurizer.steamMassKg',
   'pressurizer.steamVolumeM3',
   'pressurizer.waterInventoryBalanceResidualKg',
@@ -192,7 +192,7 @@ const cases: ReadonlyArray<AcceptanceCase> = [
   {
     id: 'loca-safety-injection',
     title: 'LOCA / Safety Injection',
-    description: 'A primary boundary leak releases mass to containment and depressurization starts accumulator injection.',
+    description: 'A primary boundary leak releases mass to containment; the coolant falls to saturation and holds there as the loops void, above the accumulators\' gas pressure, as in a small-break LOCA.',
     actions: [{
       id: 'open-primary-boundary-leak',
       atMs: 60_000,
@@ -540,8 +540,6 @@ const nonnegativeTelemetryPaths: ReadonlySet<string> = new Set([
   'safetyAccumulatorA.outletFlowKgPerS',
   'safetyAccumulatorA.gasPressureMPa',
   'pressurizer.pressureMPa',
-  'pressurizer.steamPressureMPa',
-  'pressurizer.pressureTargetMPa',
   'pressurizer.steamMassKg',
   'pressurizer.steamVolumeM3',
   'pressurizer.reliefFlowKgPerS',
@@ -599,11 +597,7 @@ const evaluateTelemetryIntegrity = (
     'core.totalThermalPowerMw',
     [['core.fissionPowerMw', promptFissionShare], ['core.decayHeatMw', 1]],
   )
-  const maxPressureBiasMismatch = maxAbsoluteComputedDelta(
-    telemetry,
-    'vessel.primaryPressureBiasMPa',
-    [['vessel.compressibilityPressureBiasMPa', 1], ['vessel.thermalExpansionPressureBiasMPa', 1]],
-  )
+  const maxLoopInventoryResidual = maxAbsoluteValue(telemetry, 'vessel.primaryInventoryBalanceResidualKg')
   const maxSgInventoryResidual = maxAbsoluteValue(telemetry, 'sgA.secondaryInventoryBalanceResidualKg')
   const maxSgSteamResidual = maxAbsoluteValue(telemetry, 'sgA.steamMassBalanceResidualKg')
   const maxSgSteamMass = maxAbsoluteValue(telemetry, 'sgA.steamMassKg')
@@ -640,9 +634,9 @@ const evaluateTelemetryIntegrity = (
     ),
     check(
       caseId,
-      'reactor vessel pressure bias equals compressibility plus thermal expansion',
-      maxPressureBiasMismatch < 1e-6,
-      `maxMismatch=${maxPressureBiasMismatch.toExponential(2)}MPa`,
+      'reactor coolant loop inventory balance remains conservative',
+      maxLoopInventoryResidual < 1,
+      `maxResidual=${maxLoopInventoryResidual.toExponential(2)}kg`,
     ),
     check(
       caseId,
@@ -703,17 +697,19 @@ const evaluateCase = (
     const containmentSump = valueAtOrAfter(telemetry, 'containment.sumpInventoryKg', durationMs)
     const initialContainmentPressure = valueAtOrAfter(telemetry, 'containment.pressureMPa', 55_000)
     const peakContainmentPressure = maxAfter(telemetry, 'containment.pressureMPa', 70_000)
-    const injection = maxAfter(telemetry, 'safetyAccumulatorA.outletFlowKgPerS', 70_000)
-    const accumulatorStart = valueAtOrAfter(telemetry, 'safetyAccumulatorA.liquidInventoryKg', 55_000)
-    const accumulatorEnd = valueAtOrAfter(telemetry, 'safetyAccumulatorA.liquidInventoryKg', durationMs)
+    const lowestPressure = minAfter(telemetry, 'pressurizer.pressureMPa', 70_000)
+    const accumulatorGasPressure = valueAtOrAfter(telemetry, 'safetyAccumulatorA.gasPressureMPa', 55_000)
+    const loopVoid = maxAfter(telemetry, 'vessel.loopVoidFraction', 70_000)
     const radiation = maxAfter(telemetry, 'containment.radiationSourceTermMSvPerH', 70_000)
     return [
       check(caseId, 'primary boundary leak releases mass to containment', release > 10, `maxRelease=${release.toFixed(1)}kg/s`),
       check(caseId, 'LOCA lowers primary inventory despite injection', endInventory < initialInventory - 20_000, `start=${initialInventory.toFixed(0)} end=${endInventory.toFixed(0)}kg`),
       check(caseId, 'containment receives released primary mass', maxAfter(telemetry, 'containment.incomingMassKgPerS', 70_000) > 10, `incomingMass=${maxAfter(telemetry, 'containment.incomingMassKgPerS', 70_000).toFixed(1)}kg/s sump=${containmentSump.toFixed(0)}kg`),
       check(caseId, 'containment pressure rises after release', peakContainmentPressure > initialContainmentPressure, `initial=${initialContainmentPressure.toFixed(3)} peak=${peakContainmentPressure.toFixed(3)}MPa`),
-      check(caseId, 'accumulator injects after depressurization', injection > 1, `maxInjection=${injection.toFixed(1)}kg/s`),
-      check(caseId, 'accumulator inventory depletes during injection', accumulatorEnd < accumulatorStart, `start=${accumulatorStart.toFixed(0)} end=${accumulatorEnd.toFixed(0)}kg`),
+      // Flashing water holds the pressure at saturation while the loops still
+      // hold water, so this break does not reach the accumulators.
+      check(caseId, 'flashing holds the coolant pressure above the accumulators\' gas pressure', lowestPressure > accumulatorGasPressure, `lowestPressure=${lowestPressure.toFixed(2)} accumulatorGas=${accumulatorGasPressure.toFixed(2)}MPa`),
+      check(caseId, 'the leak voids the loops', loopVoid > 0.05, `maxLoopVoid=${loopVoid.toFixed(3)}`),
       check(caseId, 'containment radiation source term rises after primary release', radiation > 0.02, `maxRadiation=${radiation.toFixed(3)}mSv/h`),
     ]
   }

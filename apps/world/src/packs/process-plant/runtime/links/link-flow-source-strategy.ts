@@ -12,7 +12,7 @@ import {
 import { topologyAwareMainSteamDemandForSourceLink, topologyAwareMainSteamReleaseAvailabilityForSourceLink } from './main-steam-demand.ts'
 import { processPlantServices, serviceUsesDownstreamDemand } from '../service-profiles.ts'
 import { optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
-import { primarySystemPressurizer } from '../system-topology.ts'
+import { primarySystemPressurizer, primarySystemReactorVessel } from '../system-topology.ts'
 
 export interface ProcessLinkFlowSource {
   readonly flowKgPerS: number
@@ -29,6 +29,18 @@ export const processLinkFlowSourceFor = (config: {
   const { system, link, context } = config
   const fromComponent = system.graph.components[link.fromComponentIndex]
   if (!fromComponent) throw new Error(`process link ${link.id} references missing source component`)
+  const toComponent = system.graph.components[link.toComponentIndex]
+  const vessel = toComponent?.kind === 'pressurizer' && link.service === 'primaryCoolant' ? primarySystemReactorVessel(system) : null
+  if (vessel !== null) {
+    // The surge line carries the loops' surge either way; the vessel's
+    // signed surge flow says which.
+    return {
+      flowKgPerS: Math.abs(context.readNumber(componentVariablePath(vessel, 'surgeFlowKgPerS'))),
+      alreadyIncludesPathAvailability: true,
+      alreadyIncludesTargetValveDemand: true,
+      bypassTargetPumpLimit: true,
+    }
+  }
   const primaryLoopPump = primaryLoopPumpForLink(system.graph, link)
   if (primaryLoopPump !== null) {
     return {
@@ -93,12 +105,15 @@ export const processLinkFlowSourceFor = (config: {
     }
   }
   if (fromComponent.kind === 'reactorVessel' && link.service === 'letdown') {
-    // The letdown orifices pass their rated flow at nominal coolant pressure,
-    // less as the pressure behind them falls; the letdown valve sets the rest.
+    // The letdown line's backpressure valve holds the pressure behind the
+    // orifices, so they pass their rated flow while the coolant pressure is
+    // well above it, and less as the coolant pressure falls toward it, with
+    // the square root of the remaining difference. The letdown valve sets the rest.
     const pressurizer = primarySystemPressurizer(system)
+    const backpressure = parameterNumber(fromComponent, 'letdownBackpressureMPa')
     const pressureFraction = pressurizer === null
       ? 1
-      : context.readNumber(componentVariablePath(pressurizer, 'pressureMPa')) / parameterNumber(pressurizer, 'nominalPressureMPa')
+      : (context.readNumber(componentVariablePath(pressurizer, 'pressureMPa')) - backpressure) / backpressure
     return {
       flowKgPerS: optionalParameterNumber(fromComponent, 'normalLetdownFlowKgPerS', 0) * Math.sqrt(Math.max(0, Math.min(1, pressureFraction))),
       alreadyIncludesPathAvailability: false,

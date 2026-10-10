@@ -11,9 +11,9 @@ import { electricalBehaviorDefinitions, electricalInitialReconciliationDefinitio
 import { heatExchangerBehaviorDefinitions } from './heat-exchanger-behaviors.ts'
 import { instrumentationBehaviorDefinitions, instrumentationInitialReconciliationDefinitions } from './instrumentation-behaviors.ts'
 import { junctionBehaviorDefinitions } from './junction-behaviors.ts'
-import { pressurizerBehaviorDefinitions } from './pressurizer-behaviors.ts'
+import { pressurizerBehaviorDefinitions, pressurizerInitialReconciliationDefinitions } from './pressurizer-behaviors.ts'
 import { pumpBehaviorDefinitions, pumpInitialReconciliationDefinitions } from './pump-behaviors.ts'
-import { reactorBehaviorDefinitions } from './reactor-behaviors.ts'
+import { reactorBehaviorDefinitions, reactorInitialReconciliationDefinitions } from './reactor-behaviors.ts'
 import { steamGeneratorBehaviorDefinitions } from './steam-generator-behaviors.ts'
 
 const behaviorDefinitionsByFamily: ReadonlyArray<ComponentBehaviorDefinition> = [
@@ -57,8 +57,9 @@ export const componentBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefini
   behaviorDefinitionById('steam-generator-heat-transfer'),
   behaviorDefinitionById('steam-generator-tube-leak-transfer'),
   behaviorDefinitionById('reactor-core-power-state'),
-  behaviorDefinitionById('pressurizer-pressure-inventory-state'),
+  // The loops' inventory sets the surge the pressurizer then takes.
   behaviorDefinitionById('reactor-vessel-primary-inventory-state'),
+  behaviorDefinitionById('pressurizer-pressure-inventory-state'),
   behaviorDefinitionById('process-tank-inventory-state'),
   behaviorDefinitionById('reactor-core-coolant-temperature-state'),
   behaviorDefinitionById('steam-generator-inventory-pressure-state'),
@@ -80,6 +81,8 @@ export const componentInitialReconciliationDefinitions: ReadonlyArray<ComponentI
   ...pumpInitialReconciliationDefinitions,
   ...electricalInitialReconciliationDefinitions,
   ...instrumentationInitialReconciliationDefinitions,
+  ...pressurizerInitialReconciliationDefinitions,
+  ...reactorInitialReconciliationDefinitions,
 ]
 
 /**

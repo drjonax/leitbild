@@ -19,16 +19,13 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
     parametersSchema: z.object({
       nominalPressureMPa: z.number().finite().positive(),
       nominalLevelPercent: normalized,
-      nominalWaterInventoryKg: z.number().finite().positive(),
-      nominalSteamMassKg: z.number().finite().positive().optional(),
-      initialWaterTemperatureC: z.number().finite().optional(),
-      initialSteamTemperatureC: z.number().finite().optional(),
-      pressureTimeConstantS: z.number().finite().positive().optional(),
-      thermalTimeConstantS: z.number().finite().positive().optional(),
-      reliefSetpointMPa: z.number().finite().positive().optional(),
-      reliefCapacityKgPerS: z.number().finite().nonnegative().optional(),
-      sprayCondensationKgPerKg: z.number().finite().nonnegative().optional(),
-      nominalWaterDensityKgPerM3: z.number().finite().positive().optional(),
+      volumeM3: z.number().finite().positive(),
+      reliefSetpointMPa: z.number().finite().positive(),
+      reliefCapacityKgPerS: z.number().finite().nonnegative(),
+      /** How fast water above saturation flashes to steam. */
+      flashingTimeConstantS: z.number().finite().positive(),
+      /** How fast steam condenses on water below saturation; slow, as the water stratifies under the interface. */
+      condensationTimeConstantS: z.number().finite().positive(),
       /** Full stroke time of the motor-operated PORV block valve. */
       blockValveStrokeTimeS: z.number().finite().positive(),
     }),
@@ -66,8 +63,7 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'steamMassKg', label: 'Pressurizer steam mass', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg' }),
       variable({ path: 'steamMassFlowKgPerS', label: 'Pressurizer steam net mass flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
       variable({ path: 'steamVolumeM3', label: 'Pressurizer steam volume', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'volume', unit: 'm3' }),
-      variable({ path: 'steamPressureMPa', label: 'Pressurizer steam pressure proxy', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
-      variable({ path: 'pressureTargetMPa', label: 'Pressurizer pressure target', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
+      variable({ path: 'flashingRateKgPerS', label: 'Pressurizer flashing rate', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
       variable({ path: 'waterInventoryBalanceResidualKg', label: 'Pressurizer water inventory balance residual', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'massDelta', unit: 'kg' }),
       variable({ path: 'steamMassBalanceResidualKg', label: 'Pressurizer steam mass balance residual', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'massDelta', unit: 'kg' }),
       variable({ path: 'waterTemperatureC', label: 'Pressurizer water temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),

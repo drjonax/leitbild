@@ -1,5 +1,5 @@
 import { primaryLoopPumps } from '../../graph/index.ts'
-import type { ComponentBehaviorDefinition } from '../behavior-contract.ts'
+import type { ComponentBehaviorDefinition, ComponentInitialReconciliationDefinition } from '../behavior-contract.ts'
 import { componentVariablePath, processLinkVariablePath } from '../behavior-contract.ts'
 import {
   approach,
@@ -16,15 +16,17 @@ import {
   sumProcessLinkValueByService as sumLinkValueByService,
 } from '../component-link-helpers.ts'
 import { flowWeightedIncomingLinkValue, sumIncomingLinkValue } from '../links/link-flow-helpers.ts'
-import {
-  inventoryBalanceStep,
-  primaryCoolantCompressibilityPressureBiasMPa,
-  primaryCoolantThermalExpansionPressureBiasMPa,
-  reactorKineticsPowerStep,
-} from '../physics.ts'
+import { reactorKineticsPowerStep } from '../physics.ts'
 import { primarySystemPressurizer, primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
 import { saturationTemperatureCFromPressureMPa } from '../thermophysics.ts'
-import { liquidEnthalpyKjPerKg, liquidTemperatureCFromEnthalpy } from '../water-properties.ts'
+import {
+  compressedWaterState,
+  liquidEnthalpyKjPerKg,
+  liquidTemperatureCFromEnthalpy,
+  saturatedWaterSteam,
+  saturationPressureMPaFromTemperatureC,
+} from '../water-properties.ts'
+import { pressurizerSprayFlowKgPerS } from './pressurizer-behaviors.ts'
 import { nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
 
 type ReactorBehaviorSystem = Parameters<ComponentBehaviorDefinition['update']>[0]['system']
@@ -127,6 +129,47 @@ const combineBoundaryInflows = (inflows: ReadonlyArray<BoundaryInflow>): Boundar
     flowKgPerS,
     soluteConcentrationPpm: soluteWeightKgPerS <= 0 ? null : soluteWeightedTotal / soluteWeightKgPerS,
   }
+}
+
+type ReactorBehaviorComponent = ReactorBehaviorSystem['graph']['components'][number]
+
+/** What crosses the reactor coolant system's boundary: charging and injection
+ * in, letdown, leaks and tube leakage out of the loops, relief out of the pressurizer. */
+const primaryBoundaryFlows = (system: ReactorBehaviorSystem, vessel: ReactorBehaviorComponent, context: ReactorBehaviorContext) => {
+  const primaryBoundaryLink = (link: { readonly toComponentIndex: number }): boolean => {
+    const toComponent = system.graph.components[link.toComponentIndex]
+    return toComponent?.kind === 'reactorCore' || toComponent?.kind === 'reactorVessel' || toComponent?.kind === 'pressurizer'
+  }
+  return {
+    chargingInflow: boundaryInflowByService(system, context, 'charging', primaryBoundaryLink),
+    injectionInflow: combineBoundaryInflows([
+      boundaryInflowByService(system, context, 'primaryInjection', primaryBoundaryLink),
+      boundaryInflowByService(system, context, 'safetyInjection', primaryBoundaryLink),
+    ]),
+    // Letdown is what leaves the vessel on its letdown line, and the same
+    // flow reaches the volume control tank.
+    letdownFlow: sumOutgoingComponentLinkValue(system, vessel, 'flowKgPerS', context, link => link.service === 'letdown'),
+    reliefFlow: sumLinkValueByService(system, 'flowKgPerS', context, 'primaryRelief'),
+    primaryLeakFlow: sumLinkValueByService(system, 'leakFlowKgPerS', context, 'primaryCoolant'),
+    tubeLeakFlow: sumComponentValueByKind(system, 'steamGenerator', 'primaryToSecondaryLeakKgPerS', context),
+  }
+}
+
+const writePrimaryBoundaryFlows = (
+  vessel: ReactorBehaviorComponent,
+  context: ReactorBehaviorContext,
+  flows: ReturnType<typeof primaryBoundaryFlows>,
+): void => {
+  context.write(componentVariablePath(vessel, 'chargingFlowKgPerS'), flows.chargingInflow.flowKgPerS)
+  context.write(componentVariablePath(vessel, 'safetyInjectionFlowKgPerS'), flows.injectionInflow.flowKgPerS)
+  context.write(componentVariablePath(vessel, 'letdownFlowKgPerS'), flows.letdownFlow)
+  context.write(componentVariablePath(vessel, 'reliefOutflowKgPerS'), flows.reliefFlow)
+  context.write(componentVariablePath(vessel, 'primaryLeakFlowKgPerS'), flows.primaryLeakFlow)
+  context.write(componentVariablePath(vessel, 'tubeLeakFlowKgPerS'), flows.tubeLeakFlow)
+  context.write(
+    componentVariablePath(vessel, 'netInventoryFlowKgPerS'),
+    flows.chargingInflow.flowKgPerS + flows.injectionInflow.flowKgPerS - flows.letdownFlow - flows.reliefFlow - flows.primaryLeakFlow - flows.tubeLeakFlow,
+  )
 }
 
 export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
@@ -280,9 +323,10 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
     id: 'reactor-core-coolant-temperature-state',
     phase: 'updateComponentState',
     componentKind: 'reactorCore',
-    reads: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC', 'totalThermalPowerMw', 'pumpHeatMw', 'incoming:temperatureC', 'incoming:flowKgPerS', 'pressurizer.pressureMPa'],
-    writes: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC'],
+    reads: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC', 'totalThermalPowerMw', 'pumpHeatMw', 'incoming:temperatureC', 'incoming:flowKgPerS', 'pressurizer.pressureMPa', 'pressurizer.steamMassKg', 'pressurizer.steamVolumeM3', 'reactorVessel.primaryCoolantInventoryKg', 'reactorVessel.loopSteamMassKg', 'reactorVessel.loopSteamVolumeM3'],
+    writes: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC', 'vapourGenerationKgPerS'],
     update: ({ system, component, context }): void => {
+      const dt = context.dtSeconds
       const primaryInletLink = (link: { readonly service?: unknown }): boolean =>
         link.service === 'primaryCoolant'
         || link.service === 'charging'
@@ -293,40 +337,78 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
         ?? context.readNumber(componentVariablePath(component, 'coolantInletTemperatureC'))
       const flow = Math.max(1, sumIncomingLinkValue(system, component.index, 'flowKgPerS', context, link => link.service === 'primaryCoolant'))
       const pressure = coolantPressureMPa(system, component, context)
+      const saturation = saturatedWaterSteam(pressure)
+      const latentHeat = saturation.vapourEnthalpyKjPerKg - saturation.liquidEnthalpyKjPerKg
       // An energy balance on enthalpy at coolant pressure: the pumps heat the
       // cold legs, the core heats the flow through it. The core-exit
       // thermocouples read the fuelled channels, hotter than the mixed vessel
-      // outlet by the bypass flow that carries no core heat.
+      // outlet by the bypass flow that carries no core heat. Water leaving
+      // the core cannot be hotter than saturation: the surplus boils.
       const coreHeat = Math.max(0, context.readNumber(componentVariablePath(component, 'totalThermalPowerMw')))
       const pumpHeat = context.readNumber(componentVariablePath(component, 'pumpHeatMw'))
       const bypassFraction = optionalParameterNumber(component, 'coreBypassFlowFraction', 0)
       const inletEnthalpy = liquidEnthalpyKjPerKg(mixedInletTemperature, pressure) + pumpHeat * 1_000 / flow
       const outletEnthalpy = inletEnthalpy + coreHeat * 1_000 / flow
       const coreExitEnthalpy = outletEnthalpy + coreHeat * 1_000 * bypassFraction / ((1 - bypassFraction) * flow)
+      const boiling = flow * Math.max(0, outletEnthalpy - saturation.liquidEnthalpyKjPerKg) / latentHeat
       const timeConstantSeconds = optionalParameterNumber(component, 'coolantThermalTimeConstantS', 8)
-      const relax = (localPath: string, target: number): void => {
-        const path = componentVariablePath(component, localPath)
-        context.write(path, relaxToward(context.readNumber(path), target, context.dtSeconds, timeConstantSeconds))
+      const relaxed = (localPath: string, enthalpy: number): number => relaxToward(
+        context.readNumber(componentVariablePath(component, localPath)),
+        liquidTemperatureCFromEnthalpy(pressure, Math.min(enthalpy, saturation.liquidEnthalpyKjPerKg)),
+        dt,
+        timeConstantSeconds,
+      )
+      const inlet = relaxed('coolantInletTemperatureC', inletEnthalpy)
+      let outlet = relaxed('coolantOutletTemperatureC', outletEnthalpy)
+      let coreExit = relaxed('coreExitTemperatureC', coreExitEnthalpy)
+
+      // The hot side of the loops (upper plenum, hot legs, steam generator
+      // inlets: about half their water) flashes when the pressure falls
+      // below its saturation pressure, cooling to it, and takes steam back
+      // into the water when the pressure rises above it; each no further
+      // than brings the system's steam to the hot water's saturation pressure.
+      let vapourGeneration = boiling
+      const vessel = primarySystemReactorVessel(system)
+      const pressurizer = primarySystemPressurizer(system)
+      const loopSteam = vessel === null ? 0 : context.readNumber(componentVariablePath(vessel, 'loopSteamMassKg'))
+      if (vessel !== null && pressurizer !== null && (outlet > saturation.temperatureC || loopSteam > 0)) {
+        const hotLiquid = 0.5 * Math.max(0, context.readNumber(componentVariablePath(vessel, 'primaryCoolantInventoryKg')) - loopSteam)
+        const hotEnthalpy = liquidEnthalpyKjPerKg(outlet, pressure)
+        const surplus = hotEnthalpy - saturation.liquidEnthalpyKjPerKg
+        const steamRoom = context.readNumber(componentVariablePath(vessel, 'loopSteamVolumeM3')) + context.readNumber(componentVariablePath(pressurizer, 'steamVolumeM3'))
+        const steamToHotSaturation = saturatedWaterSteam(saturationPressureMPaFromTemperatureC(outlet)).vapourDensityKgPerM3 * steamRoom
+          - loopSteam - context.readNumber(componentVariablePath(pressurizer, 'steamMassKg'))
+        const phaseChange = surplus > 0
+          ? Math.min(hotLiquid * surplus / latentHeat * Math.min(1, dt / parameterNumber(vessel, 'flashingTimeConstantS')), Math.max(0, steamToHotSaturation))
+          : -Math.min(loopSteam + boiling * dt, hotLiquid * -surplus / latentHeat * Math.min(1, dt / parameterNumber(vessel, 'condensationTimeConstantS')), Math.max(0, -steamToHotSaturation))
+        if (hotLiquid > 0 && phaseChange !== 0) {
+          outlet = liquidTemperatureCFromEnthalpy(pressure, hotEnthalpy - phaseChange * latentHeat / hotLiquid)
+          vapourGeneration += phaseChange / dt
+        }
+        // The core exit flashes as the hot leg does.
+        if (coreExit > saturation.temperatureC) coreExit = Math.max(outlet, saturation.temperatureC)
       }
-      relax('coolantInletTemperatureC', liquidTemperatureCFromEnthalpy(pressure, inletEnthalpy))
-      relax('coolantOutletTemperatureC', liquidTemperatureCFromEnthalpy(pressure, outletEnthalpy))
-      relax('coreExitTemperatureC', liquidTemperatureCFromEnthalpy(pressure, coreExitEnthalpy))
+      context.write(componentVariablePath(component, 'coolantInletTemperatureC'), inlet)
+      context.write(componentVariablePath(component, 'coolantOutletTemperatureC'), outlet)
+      context.write(componentVariablePath(component, 'coreExitTemperatureC'), coreExit)
+      context.write(componentVariablePath(component, 'vapourGenerationKgPerS'), vapourGeneration)
     },
   },
   {
     id: 'reactor-vessel-primary-inventory-state',
     phase: 'updateComponentState',
     componentKind: 'reactorVessel',
-    reads: ['primaryCoolantInventoryKg', 'boronConcentrationPpm', 'charging:flowKgPerS', 'charging:soluteConcentrationPpm', 'primaryInjection:flowKgPerS', 'primaryInjection:soluteConcentrationPpm', 'safetyInjection:flowKgPerS', 'safetyInjection:soluteConcentrationPpm', 'letdown:flowKgPerS', 'primaryRelief:flowKgPerS', 'primaryCoolant:leakFlowKgPerS', 'steamGenerator.primaryToSecondaryLeakKgPerS', 'pressurizer.pressureMPa'],
+    reads: ['primaryCoolantInventoryKg', 'loopSteamMassKg', 'surgeFlowKgPerS', 'boronConcentrationPpm', 'charging:flowKgPerS', 'charging:soluteConcentrationPpm', 'primaryInjection:flowKgPerS', 'primaryInjection:soluteConcentrationPpm', 'safetyInjection:flowKgPerS', 'safetyInjection:soluteConcentrationPpm', 'letdown:flowKgPerS', 'primaryRelief:flowKgPerS', 'primaryCoolant:leakFlowKgPerS', 'steamGenerator.primaryToSecondaryLeakKgPerS', 'pressurizer.pressureMPa', 'pressurizer.sprayFlowKgPerS', 'pressurizer.waterInventoryKg', 'pressurizer.steamMassKg', 'reactorCore.vapourGenerationKgPerS'],
     writes: [
       'primaryCoolantInventoryKg',
       'primaryCoolantInventoryDeviationKg',
+      'loopSteamMassKg',
+      'loopSteamVolumeM3',
+      'loopVoidFraction',
+      'surgeFlowKgPerS',
       'collapsedLiquidLevelPercent',
       'meanPrimaryCoolantTemperatureC',
       'subcoolingMarginC',
-      'compressibilityPressureBiasMPa',
-      'thermalExpansionPressureBiasMPa',
-      'primaryPressureBiasMPa',
       'chargingFlowKgPerS',
       'safetyInjectionFlowKgPerS',
       'letdownFlowKgPerS',
@@ -339,81 +421,80 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       'primaryReleaseRadiationMSvPerH',
     ],
     update: ({ system, component, context }): void => {
+      const dt = context.dtSeconds
       const nominalInventory = parameterNumber(component, 'nominalPrimaryCoolantInventoryKg')
+      const loopVolume = parameterNumber(component, 'primaryCoolantVolumeM3')
       const currentInventory = context.readNumber(componentVariablePath(component, 'primaryCoolantInventoryKg'))
-      const primaryBoundaryLink = (link: { readonly toComponentIndex: number }): boolean => {
-        const toComponent = system.graph.components[link.toComponentIndex]
-        return toComponent?.kind === 'reactorCore' || toComponent?.kind === 'reactorVessel' || toComponent?.kind === 'pressurizer'
-      }
-      const chargingInflow = boundaryInflowByService(system, context, 'charging', primaryBoundaryLink)
-      const injectionInflow = combineBoundaryInflows([
-        boundaryInflowByService(system, context, 'primaryInjection', primaryBoundaryLink),
-        boundaryInflowByService(system, context, 'safetyInjection', primaryBoundaryLink),
-      ])
+      const currentSteam = context.readNumber(componentVariablePath(component, 'loopSteamMassKg'))
+      const boundary = primaryBoundaryFlows(system, component, context)
+      const { chargingInflow, injectionInflow, letdownFlow, reliefFlow, primaryLeakFlow, tubeLeakFlow } = boundary
       const chargingFlow = chargingInflow.flowKgPerS
       const primaryInjectionFlow = injectionInflow.flowKgPerS
-      // Letdown is what leaves the vessel on its letdown line, and the same
-      // flow reaches the volume control tank.
-      const letdownFlow = sumOutgoingComponentLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'letdown')
-      const reliefFlow = sumLinkValueByService(system, 'flowKgPerS', context, 'primaryRelief')
-      const primaryLeakFlow = sumLinkValueByService(system, 'leakFlowKgPerS', context, 'primaryCoolant')
-      const tubeLeakFlow = sumComponentValueByKind(system, 'steamGenerator', 'primaryToSecondaryLeakKgPerS', context)
       const totalInflow = chargingFlow + primaryInjectionFlow
-      const netInventoryFlow = totalInflow - letdownFlow - reliefFlow - primaryLeakFlow - tubeLeakFlow
-      const currentBoron = context.readNumber(componentVariablePath(component, 'boronConcentrationPpm'))
-      const chargingBoron = chargingInflow.soluteConcentrationPpm ?? currentBoron
-      const injectionBoron = injectionInflow.soluteConcentrationPpm
-        ?? averageIncomingLinkValue(system, component, 'soluteConcentrationPpm', context, link => link.service === 'primaryInjection' || link.service === 'safetyInjection')
-        ?? currentBoron
-      const nextInventory = inventoryBalanceStep({
-        currentInventory,
-        inflowKgPerS: totalInflow,
-        outflowKgPerS: letdownFlow + reliefFlow + primaryLeakFlow + tubeLeakFlow,
-        dtSeconds: context.dtSeconds,
-        minInventory: 0,
-        maxInventory: nominalInventory * 1.15,
-      })
-      const outgoingFlow = letdownFlow + reliefFlow + primaryLeakFlow + tubeLeakFlow
-      const nextBoron = nextInventory <= 0
-        ? 0
-        : clamp(
-            (
-              currentBoron * currentInventory
-              + (chargingBoron * chargingFlow + injectionBoron * primaryInjectionFlow) * context.dtSeconds
-              - currentBoron * outgoingFlow * context.dtSeconds
-            ) / nextInventory,
-            0,
-            20_000,
-          )
-      const deviation = nextInventory - nominalInventory
-      const collapsedLevelReference = nominalInventory * optionalParameterNumber(component, 'collapsedLevelReferenceInventoryFraction', 1)
-      const collapsedLiquidLevelPercent = clamp(nextInventory / Math.max(1, collapsedLevelReference) * 100, 0, 100)
+      // Relief leaves from the pressurizer; everything else from the loops.
+      const loopOutflow = letdownFlow + primaryLeakFlow + tubeLeakFlow
+
       const core = primarySystemReactorCore(system)
+      const pressurizer = primarySystemPressurizer(system)
+      if (pressurizer === null) throw new Error(`reactor vessel ${component.id} needs a pressurizer to set its pressure`)
+      const pressureMPa = context.readNumber(componentVariablePath(pressurizer, 'pressureMPa'))
+      const sprayFlow = pressurizerSprayFlowKgPerS(pressurizer, context)
+      const saturation = saturatedWaterSteam(pressureMPa)
       const meanPrimaryCoolantTemperature = core === null
         ? parameterNumber(component, 'referencePrimaryCoolantTemperatureC')
         : (
           context.readNumber(componentVariablePath(core, 'coolantInletTemperatureC'))
           + context.readNumber(componentVariablePath(core, 'coolantOutletTemperatureC'))
         ) / 2
-      const compressibilityPressureBias = primaryCoolantCompressibilityPressureBiasMPa({
-        inventoryKg: nextInventory,
-        referenceVolumeM3: parameterNumber(component, 'primaryCoolantVolumeM3'),
-        densityKgPerM3: parameterNumber(component, 'nominalPrimaryCoolantDensityKgPerM3'),
-        effectiveBulkModulusMPa: parameterNumber(component, 'effectiveBulkModulusMPa'),
-      })
-      const thermalExpansionPressureBias = primaryCoolantThermalExpansionPressureBiasMPa({
-        meanTemperatureC: meanPrimaryCoolantTemperature,
-        referenceTemperatureC: parameterNumber(component, 'referencePrimaryCoolantTemperatureC'),
-        thermalExpansionCoefficientPerC: parameterNumber(component, 'thermalExpansionCoefficientPerC'),
-        effectiveBulkModulusMPa: parameterNumber(component, 'effectiveBulkModulusMPa'),
-      })
+      const liquidDensity = compressedWaterState(meanPrimaryCoolantTemperature, pressureMPa).densityKgPerM3
+
+      // Steam the core and hot legs raise (or the loops' water condenses)
+      // stays in the loops, up in the vessel head and the steam generator
+      // tubes; liquid fills the rest of their fixed volume. The liquid the
+      // loops cannot hold surges into the pressurizer, and the pressurizer
+      // returns water when the loops shrink, as far as it holds any. The
+      // surge line's water takes about a second to follow.
+      const vapourGeneration = core === null ? 0 : context.readNumber(componentVariablePath(core, 'vapourGenerationKgPerS'))
+      let steam = Math.max(0, currentSteam + vapourGeneration * dt)
+      let liquid = currentInventory - currentSteam + (totalInflow - loopOutflow - sprayFlow) * dt - (steam - currentSteam)
+      const steamVolume = Math.min(loopVolume, steam / saturation.vapourDensityKgPerM3)
+      const liquidCapacity = liquidDensity * (loopVolume - steamVolume)
+      const pressurizerWater = context.readNumber(componentVariablePath(pressurizer, 'waterInventoryKg'))
+      const surgeFlow = Math.max(-pressurizerWater / dt, relaxToward(
+        context.readNumber(componentVariablePath(component, 'surgeFlowKgPerS')),
+        (liquid - liquidCapacity) / dt,
+        dt,
+        parameterNumber(component, 'surgeLineTimeConstantS'),
+      ))
+      liquid -= surgeFlow * dt
+      // Loops drained of water discharge their steam instead.
+      if (liquid < 0) {
+        steam = Math.max(0, steam + liquid)
+        liquid = 0
+      }
+      // The room the loops' liquid leaves holds their steam, compressed when
+      // the surge lags the liquid's growth and thin until it flashes when the
+      // surge lags its shrinking.
+      const loopSteamVolume = loopVolume - liquid / liquidDensity
+      const nextInventory = liquid + steam
+
+      // Boron mixes through the loops and the pressurizer alike.
+      const currentBoron = context.readNumber(componentVariablePath(component, 'boronConcentrationPpm'))
+      const chargingBoron = chargingInflow.soluteConcentrationPpm ?? currentBoron
+      const injectionBoron = injectionInflow.soluteConcentrationPpm
+        ?? averageIncomingLinkValue(system, component, 'soluteConcentrationPpm', context, link => link.service === 'primaryInjection' || link.service === 'safetyInjection')
+        ?? currentBoron
+      const systemMass = nextInventory
+        + context.readNumber(componentVariablePath(pressurizer, 'waterInventoryKg'))
+        + context.readNumber(componentVariablePath(pressurizer, 'steamMassKg'))
+        + (surgeFlow - reliefFlow + sprayFlow) * dt
+      const nextBoron = systemMass <= 0
+        ? 0
+        : clamp(currentBoron + (chargingFlow * (chargingBoron - currentBoron) + primaryInjectionFlow * (injectionBoron - currentBoron)) * dt / systemMass, 0, 20_000)
+
       const primaryReleaseRadiation = primaryLeakFlow <= 0
         ? 0.02
         : optionalParameterNumber(component, 'primaryReleaseRadiationMSvPerH', 4)
-      const pressurizer = primarySystemPressurizer(system)
-      const pressureMPa = pressurizer === null
-        ? 15.5
-        : context.readNumber(componentVariablePath(pressurizer, 'pressureMPa'))
       // A subcooling monitor takes the hottest reading: the core exit, or the
       // hot leg should it ever read hotter.
       const hottestCoolantTemperature = core === null
@@ -423,24 +504,57 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
           context.readNumber(componentVariablePath(core, 'coolantOutletTemperatureC')),
         )
       const subcoolingMargin = saturationTemperatureCFromPressureMPa(pressureMPa) - hottestCoolantTemperature
-      context.write(componentVariablePath(component, 'chargingFlowKgPerS'), chargingFlow)
-      context.write(componentVariablePath(component, 'safetyInjectionFlowKgPerS'), primaryInjectionFlow)
-      context.write(componentVariablePath(component, 'letdownFlowKgPerS'), letdownFlow)
-      context.write(componentVariablePath(component, 'reliefOutflowKgPerS'), reliefFlow)
-      context.write(componentVariablePath(component, 'primaryLeakFlowKgPerS'), primaryLeakFlow)
-      context.write(componentVariablePath(component, 'tubeLeakFlowKgPerS'), tubeLeakFlow)
-      context.write(componentVariablePath(component, 'netInventoryFlowKgPerS'), netInventoryFlow)
-      context.write(componentVariablePath(component, 'primaryInventoryBalanceResidualKg'), nextInventory - currentInventory - netInventoryFlow * context.dtSeconds)
+      writePrimaryBoundaryFlows(component, context, boundary)
+      context.write(componentVariablePath(component, 'primaryInventoryBalanceResidualKg'), nextInventory - currentInventory - (totalInflow - loopOutflow - sprayFlow - surgeFlow) * dt)
       context.write(componentVariablePath(component, 'primaryCoolantInventoryKg'), nextInventory)
+      context.write(componentVariablePath(component, 'loopSteamMassKg'), steam)
+      context.write(componentVariablePath(component, 'loopSteamVolumeM3'), loopSteamVolume)
+      context.write(componentVariablePath(component, 'loopVoidFraction'), clamp(loopSteamVolume / loopVolume, 0, 1))
+      context.write(componentVariablePath(component, 'surgeFlowKgPerS'), surgeFlow)
       context.write(componentVariablePath(component, 'boronConcentrationPpm'), nextBoron)
-      context.write(componentVariablePath(component, 'primaryCoolantInventoryDeviationKg'), deviation)
-      context.write(componentVariablePath(component, 'collapsedLiquidLevelPercent'), collapsedLiquidLevelPercent)
+      context.write(componentVariablePath(component, 'primaryCoolantInventoryDeviationKg'), nextInventory - nominalInventory)
+      context.write(componentVariablePath(component, 'collapsedLiquidLevelPercent'), clamp((1 - loopSteamVolume / loopVolume) * 100, 0, 100))
       context.write(componentVariablePath(component, 'meanPrimaryCoolantTemperatureC'), meanPrimaryCoolantTemperature)
       context.write(componentVariablePath(component, 'subcoolingMarginC'), subcoolingMargin)
-      context.write(componentVariablePath(component, 'compressibilityPressureBiasMPa'), compressibilityPressureBias)
-      context.write(componentVariablePath(component, 'thermalExpansionPressureBiasMPa'), thermalExpansionPressureBias)
-      context.write(componentVariablePath(component, 'primaryPressureBiasMPa'), compressibilityPressureBias + thermalExpansionPressureBias)
       context.write(componentVariablePath(component, 'primaryReleaseRadiationMSvPerH'), primaryReleaseRadiation)
+    },
+  },
+]
+
+export const reactorInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
+  {
+    id: 'reactor-vessel-filled-initial-state',
+    componentKind: 'reactorVessel',
+    reads: ['pressurizer.pressureMPa', 'reactorCore.coolantInletTemperatureC', 'reactorCore.coolantOutletTemperatureC'],
+    writes: ['primaryCoolantInventoryKg', 'primaryCoolantInventoryDeviationKg', 'loopSteamMassKg', 'loopSteamVolumeM3', 'loopVoidFraction', 'collapsedLiquidLevelPercent', 'meanPrimaryCoolantTemperatureC', 'subcoolingMarginC'],
+    // The loops start full of water at their initial temperatures and
+    // pressure, short only by the initial inventory fraction, which is steam.
+    reconcile: ({ system, component, context }): void => {
+      const core = primarySystemReactorCore(system)
+      const pressurizer = primarySystemPressurizer(system)
+      if (pressurizer === null) throw new Error(`reactor vessel ${component.id} needs a pressurizer to set its pressure`)
+      const pressureMPa = context.readNumber(componentVariablePath(pressurizer, 'pressureMPa'))
+      const meanTemperature = core === null
+        ? parameterNumber(component, 'referencePrimaryCoolantTemperatureC')
+        : (context.readNumber(componentVariablePath(core, 'coolantInletTemperatureC')) + context.readNumber(componentVariablePath(core, 'coolantOutletTemperatureC'))) / 2
+      const loopVolume = parameterNumber(component, 'primaryCoolantVolumeM3')
+      const filledFraction = parameterNumber(component, 'initialPrimaryCoolantInventoryFraction')
+      const steamVolume = loopVolume * (1 - filledFraction)
+      const steam = saturatedWaterSteam(pressureMPa).vapourDensityKgPerM3 * steamVolume
+      const inventory = compressedWaterState(meanTemperature, pressureMPa).densityKgPerM3 * (loopVolume - steamVolume) + steam
+      context.write(componentVariablePath(component, 'primaryCoolantInventoryKg'), inventory)
+      context.write(componentVariablePath(component, 'primaryCoolantInventoryDeviationKg'), inventory - parameterNumber(component, 'nominalPrimaryCoolantInventoryKg'))
+      context.write(componentVariablePath(component, 'loopSteamMassKg'), steam)
+      context.write(componentVariablePath(component, 'loopSteamVolumeM3'), steamVolume)
+      context.write(componentVariablePath(component, 'loopVoidFraction'), steamVolume / loopVolume)
+      context.write(componentVariablePath(component, 'collapsedLiquidLevelPercent'), filledFraction * 100)
+      context.write(componentVariablePath(component, 'meanPrimaryCoolantTemperatureC'), meanTemperature)
+      context.write(componentVariablePath(component, 'subcoolingMarginC'), core === null
+        ? saturationTemperatureCFromPressureMPa(pressureMPa) - meanTemperature
+        : saturationTemperatureCFromPressureMPa(pressureMPa) - Math.max(
+          context.readNumber(componentVariablePath(core, 'coreExitTemperatureC')),
+          context.readNumber(componentVariablePath(core, 'coolantOutletTemperatureC')),
+        ))
     },
   },
 ]

@@ -42,6 +42,7 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'decayHeatMw') return initialDecayHeat
       if (localPath === 'pumpHeatMw') return initialPumpHeat
       if (localPath === 'heatToCoolantMw') return initialFissionPower + initialPumpHeat
+      if (localPath === 'vapourGenerationKgPerS') return 0
       return undefined
     },
   },
@@ -55,9 +56,10 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'collapsedLiquidLevelPercent') return clamp(initialFraction / optionalParameterNumber(component, 'collapsedLevelReferenceInventoryFraction', 1) * 100, 0, 100)
       if (localPath === 'meanPrimaryCoolantTemperatureC') return parameterNumber(component, 'referencePrimaryCoolantTemperatureC')
       if (localPath === 'subcoolingMarginC') return 0
-      if (localPath === 'compressibilityPressureBiasMPa') return 0
-      if (localPath === 'thermalExpansionPressureBiasMPa') return 0
-      if (localPath === 'primaryPressureBiasMPa') return 0
+      if (localPath === 'loopSteamMassKg') return 0
+      if (localPath === 'loopSteamVolumeM3') return 0
+      if (localPath === 'loopVoidFraction') return 0
+      if (localPath === 'surgeFlowKgPerS') return 0
       if (localPath === 'chargingFlowKgPerS') return 0
       if (localPath === 'safetyInjectionFlowKgPerS') return 0
       if (localPath === 'letdownFlowKgPerS') return optionalParameterNumber(component, 'normalLetdownFlowKgPerS', 0)

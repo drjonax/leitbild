@@ -85,10 +85,13 @@ export const compressedWaterState = (temperatureC: number, pressureMPa: number):
  * hotter than saturation at this pressure (superheated, about to flash) is
  * given its enthalpy at its own saturation pressure; it stays defined to
  * 370 °C, beyond region 1's 350 °C, along the saturation line. */
-export const liquidEnthalpyKjPerKg = (temperatureC: number, pressureMPa: number): number => {
+const liquidState = (temperatureC: number, pressureMPa: number): CompressedWaterState => {
   const temperature = Math.min(370, Math.max(0, temperatureC))
-  return region1(temperature + kelvinOffset, Math.min(100, Math.max(pressureMPa, saturationPressureMPaFromTemperatureC(temperature)))).enthalpyKjPerKg
+  return region1(temperature + kelvinOffset, Math.min(100, Math.max(pressureMPa, saturationPressureMPaFromTemperatureC(temperature))))
 }
+
+export const liquidEnthalpyKjPerKg = (temperatureC: number, pressureMPa: number): number =>
+  liquidState(temperatureC, pressureMPa).enthalpyKjPerKg
 
 // Region 1 backward equation T(p, h), table 6.
 const backwardI = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 4, 5, 6]
@@ -103,16 +106,28 @@ const backwardN = [
 /** Liquid temperature from pressure and enthalpy (IF97 eq. 11). Liquid with
  * more enthalpy than saturated liquid at this pressure is superheated liquid
  * about to flash: its temperature is that of saturated liquid with the same
- * enthalpy, up to 370 °C. */
+ * enthalpy, up to 370 °C. Newton steps on the forward equation (one or two
+ * for subcooled liquid) make this the exact inverse of liquidEnthalpyKjPerKg: the
+ * backward equation alone is only within 25 mK, and a state stored as
+ * temperature and reconverted every step would drift by that much each step. */
 export const liquidTemperatureCFromEnthalpy = (pressureMPa: number, enthalpyKjPerKg: number): number => {
   const pressure = Math.max(tableFirstMPa, Math.min(100, pressureMPa))
+  let estimate: number
   if (pressure < criticalPressureMPa && enthalpyKjPerKg > saturatedWaterSteam(pressure).liquidEnthalpyKjPerKg) {
-    return Math.min(370, saturationTemperatureCFromLiquidEnthalpy(enthalpyKjPerKg))
+    estimate = saturationTemperatureCFromLiquidEnthalpy(enthalpyKjPerKg)
+  } else {
+    const eta1 = Math.max(0, enthalpyKjPerKg) / 2_500 + 1
+    let theta = 0
+    for (let i = 0; i < backwardN.length; i++) theta += backwardN[i]! * pressure ** backwardI[i]! * eta1 ** backwardJ[i]!
+    estimate = theta - kelvinOffset
   }
-  const eta1 = Math.max(0, enthalpyKjPerKg) / 2_500 + 1
-  let theta = 0
-  for (let i = 0; i < backwardN.length; i++) theta += backwardN[i]! * pressure ** backwardI[i]! * eta1 ** backwardJ[i]!
-  return Math.min(370, theta - kelvinOffset)
+  for (let iteration = 0; iteration < 5 && estimate < 370; iteration++) {
+    const state = liquidState(estimate, pressure)
+    const correction = (enthalpyKjPerKg - state.enthalpyKjPerKg) / state.specificHeatKjPerKgK
+    estimate += correction
+    if (Math.abs(correction) < 1e-7) break
+  }
+  return Math.min(370, estimate)
 }
 
 /** Saturation pressure (IF97 region 4, eq. 30). */
@@ -256,6 +271,17 @@ const saturationTemperatureCFromLiquidEnthalpy = (enthalpyKjPerKg: number): numb
   const to = saturationTable[low + 1]!
   const fraction = Math.max(0, (enthalpyKjPerKg - from.liquidEnthalpyKjPerKg) / (to.liquidEnthalpyKjPerKg - from.liquidEnthalpyKjPerKg))
   return from.temperatureC + (to.temperatureC - from.temperatureC) * fraction
+}
+
+/** The saturation pressure of liquid with this enthalpy: the pressure it would flash down to. */
+export const saturationPressureMPaFromLiquidEnthalpy = (enthalpyKjPerKg: number): number => {
+  if (enthalpyKjPerKg <= saturationTable[0]!.liquidEnthalpyKjPerKg) return tableFirstMPa
+  const last = saturationTable.length - 1
+  if (enthalpyKjPerKg >= saturationTable[last]!.liquidEnthalpyKjPerKg) return criticalPressureMPa
+  const low = saturationRowIndexBelow(enthalpyKjPerKg, 'liquidEnthalpyKjPerKg')
+  const lowEnthalpy = saturationTable[low]!.liquidEnthalpyKjPerKg
+  const fraction = (enthalpyKjPerKg - lowEnthalpy) / (saturationTable[low + 1]!.liquidEnthalpyKjPerKg - lowEnthalpy)
+  return Math.min(criticalPressureMPa, tableFirstMPa + (low + fraction) * tableStepMPa)
 }
 
 /** The pressure at which saturated steam has this density: the pressure of a

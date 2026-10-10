@@ -263,7 +263,8 @@ describe('mimic presentation and bindings', () => {
 
   test('pipes draw only flows the runtime solves, against their rated flow', () => {
     const link = (id: string) => graph.links.find(candidate => String(candidate.id) === id)!.index
-    expect(linkFlowBinding(graph, link('pressurizer-surge-line')).fidelity).toBe('unverified')
+    // The surge line carries the size of a surge either way.
+    expect(linkFlowBinding(graph, link('pressurizer-surge-line')).fidelity).toBe('magnitudeOnly')
     expect(linkFlowBinding(graph, link('rcs-hot-leg-a'))).toMatchObject({ fidelity: 'magnitudeOnly', noFlowBelow: 4250 * NO_FLOW_FRACTION })
   })
 })

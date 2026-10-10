@@ -237,7 +237,6 @@ const cases: ReadonlyArray<CredibilityCase> = [
     sourceRefs: ['nrc-srp-ch15', 'iaea-ssg-2', 'leitbild-pwr-scope'],
     initialState: {
       'pressurizer.pressureMPa': 16.45,
-      'pressurizer.steamPressureMPa': 16.45,
     },
     actions: () => [],
   },

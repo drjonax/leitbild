@@ -49,9 +49,13 @@ describe('process plant model composition', () => {
     // safety valve was made to discharge to the atmosphere instead of into
     // containment, again for the steam generators' narrow-range level, the
     // auxiliary feedwater ratings and the main steam pressure set points,
-    // and again for the steam generators' tube metal and their atmospheric
-    // relief valves; PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('bdad8cc9fafd08a305285864d97ddaac2942348ff603c684d9df7d1c1008d589')
+    // again for the steam generators' tube metal and their atmospheric
+    // relief valves, and again when the primary system was given IF97
+    // coolant properties, a closed energy balance, a letdown line, a
+    // pressurizer coupled to the loops' inventory and saturation, and
+    // realistic loop and tube-metal sizes; PWR Runs checkpointed before then
+    // must be restarted.
+    expect(system.modelDigest).toBe('5c4548dcdc971e793a32edf6ac9e75998fff3425caee065244a54c8c22978da5')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

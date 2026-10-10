@@ -3,6 +3,7 @@ import type { ComponentInstanceSpec, PlantGraphSpec } from '../graph/index.ts'
 import { reactorInitialThermalState } from '../reactor-initial-conditions.ts'
 import { condenserThermalBalance } from '../runtime/condenser-thermodynamics.ts'
 import { latentHeatSteamMjPerKg, saturationTemperatureCFromPressureMPa, specificHeatWaterKjPerKgK } from '../runtime/thermophysics.ts'
+import { compressedWaterState } from '../runtime/water-properties.ts'
 
 /** Fixed total Plant rating, divided over the selected loops. These are model
  * sizing equations, evaluated once before compilation, never output corrections. */
@@ -81,8 +82,17 @@ export const pwrFullPowerParameters = (graph: PlantGraphSpec, authored: Readonly
   })
   for (const [service, flow] of [['feedwater', steamFlow], ['condensate', steamFlow], ['coolingWater', coolingWaterFlow]] as const) sizePumps(service, flow)
   for (const component of graph.components) {
-    if (component.kind === 'reactorVessel') set(component, { referencePrimaryCoolantTemperatureC: (thermal.inlet + thermal.outlet) / 2 })
+    if (component.kind === 'reactorVessel') {
+      // The loops hold water at the operating point's mean temperature and pressure.
+      const meanTemperature = (thermal.inlet + thermal.outlet) / 2
+      const density = compressedWaterState(meanTemperature, Number(coreParameters.nominalCoolantPressureMPa)).densityKgPerM3
+      set(component, { referencePrimaryCoolantTemperatureC: meanTemperature, nominalPrimaryCoolantInventoryKg: density * Number(effective(component).primaryCoolantVolumeM3) })
+    }
     if (component.kind === 'processTank' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === 'feedwater')) set(component, { makeupFlowKgPerS: 0, maxOutletFlowKgPerS: steamFlow })
+    // Letdown reaches the volume control tank at cold-leg temperature, since
+    // the CVCS heat exchangers are not modelled, so in a steady plant the tank
+    // and the charging it supplies are at that temperature too.
+    if (component.kind === 'processTank' && graph.connections.some(link => String(link.to).startsWith(`${component.id}.`) && link.service === 'letdown')) set(component, { initialTemperatureC: thermal.inlet })
     if (component.kind === 'processTank' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === 'coolingWater')) set(component, { makeupFlowKgPerS: coolingWaterFlow, maxOutletFlowKgPerS: coolingWaterFlow })
     if (component.kind === 'processValve' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === 'feedwater')) {
       const p = effective(component)

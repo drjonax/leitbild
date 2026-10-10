@@ -41,12 +41,17 @@ import { componentFlowBalanceForService } from '../src/packs/process-plant/runti
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { compileProcessPlant } from '../src/packs/process-plant/plant-compiler.ts'
 import { createPwrReferencePlantDefinition } from '../src/packs/process-plant/plant-definitions.ts'
+import { pwrFullPowerParameters } from '../src/packs/process-plant/assembly/pwr-operating-point.ts'
 
 const pressurizedWaterReactorPlantSpec = assemblePwrReferencePlantGraph({ loopCount: 4 })
 
+// A plant that runs is sized at the full-power operating point, as deployed:
+// the template's own parameters size no steady state for four loops. Tests of
+// a single mechanism take the template as it stands.
 const compileTestSystem = (definition: {
   readonly id: string
   readonly graph: PlantGraphSpec
+  readonly atFullPower?: boolean
   readonly parameters?: Readonly<Record<string, unknown>>
   readonly initialState?: Readonly<Record<string, unknown>>
 }) => compileResolvedProcessPlant({
@@ -55,7 +60,9 @@ const compileTestSystem = (definition: {
   operatingPointRef: 'test.operating-point',
   automationRef: 'test.automation',
   graph: definition.graph,
-  ...(definition.parameters === undefined ? {} : { parameterOverrides: definition.parameters }),
+  ...(definition.atFullPower === true
+    ? { parameterOverrides: pwrFullPowerParameters(definition.graph, definition.parameters ?? {}) }
+    : definition.parameters === undefined ? {} : { parameterOverrides: definition.parameters }),
   ...(definition.initialState === undefined ? {} : { valueOverrides: definition.initialState }),
   automationForGraph: () => ({ operatingModes: [], annunciatorSystems: [], rules: [] }),
 })
@@ -63,6 +70,7 @@ const compileTestSystem = (definition: {
 const compiledSystem = () => compileTestSystem({
   id: 'plant',
   graph: pressurizedWaterReactorPlantSpec,
+  atFullPower: true,
 })
 
 const compiledSystemWithParameters = (parameters: Record<string, Record<string, unknown>>) => compileTestSystem({
@@ -81,6 +89,7 @@ const compiledSystemWithStaticFeedwaterValves = () => compiledSystemWithParamete
 const compiledSystemWithInitialState = (initialState: Record<string, unknown>) => compileTestSystem({
   id: 'plant',
   graph: pressurizedWaterReactorPlantSpec,
+  atFullPower: true,
   initialState,
 })
 
@@ -224,7 +233,7 @@ describe('process plant runtime', () => {
     expect(diagnostics.electrical.minSafetyBusVoltageFraction).toBeGreaterThanOrEqual(0)
     expect(diagnostics.electrical.unservedLoadCount).toBeGreaterThanOrEqual(0)
     expect(snapshot.variables.find(variable => variable.path === valueOf('core.powerMw'))).toMatchObject({
-      value: 2890,
+      value: 3400,
       quantity: 'power',
       unit: 'MW',
       published: true,
@@ -244,7 +253,8 @@ describe('process plant runtime', () => {
     expect(Number(snapshot.variables.find(variable => variable.path === valueOf('sgA.voidFraction'))?.value)).toBeGreaterThan(0)
     expect(Number(snapshot.variables.find(variable => variable.path === valueOf('sgA.steamMassKg'))?.value)).toBeCloseTo(15_500, 6)
     expect(Number(snapshot.variables.find(variable => variable.path === valueOf('pressurizer.levelPercent'))?.value)).toBeCloseTo(55, 6)
-    expect(Number(snapshot.variables.find(variable => variable.path === valueOf('pressurizer.steamMassKg'))?.value)).toBeCloseTo(1_800, 6)
+    // Saturated steam at 15.5 MPa, 101.9 kg/m³, fills the 45% of the 51 m³ pressurizer above the water.
+    expect(Number(snapshot.variables.find(variable => variable.path === valueOf('pressurizer.steamMassKg'))?.value)).toBeCloseTo(101.92 * 51 * 0.45, 0)
   })
 
   // Long deterministic trajectories test correctness, not a five-second CPU budget.
@@ -280,7 +290,8 @@ describe('process plant runtime', () => {
     })
     expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeGreaterThan(50)
     expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeLessThan(60)
-    expect(Number(runtime.readVariable(valueOf('feedwaterControlValveA.positionFraction')))).toBeLessThan(1)
+    // At full power the operating point opens the feedwater control valves wide.
+    expect(Number(runtime.readVariable(valueOf('feedwaterControlValveA.positionFraction')))).toBeGreaterThan(0.9)
   }, 120_000) // A watchdog for hangs: this 600 s trajectory ran 69 s at load 100 to 130.
 
   test('reference protection trips reactor on pressurizer pressure and containment pressure extremes', () => {
@@ -575,9 +586,6 @@ describe('process plant runtime', () => {
       'vessel.primaryCoolantInventoryKg',
       'vessel.primaryCoolantInventoryDeviationKg',
       'vessel.meanPrimaryCoolantTemperatureC',
-      'vessel.compressibilityPressureBiasMPa',
-      'vessel.thermalExpansionPressureBiasMPa',
-      'vessel.primaryPressureBiasMPa',
       'vessel.chargingFlowKgPerS',
       'vessel.letdownFlowKgPerS',
       'vessel.reliefOutflowKgPerS',
@@ -588,8 +596,13 @@ describe('process plant runtime', () => {
       'pressurizer.pressureMPa',
       'pressurizer.levelPercent',
       'pressurizer.steamVolumeM3',
-      'pressurizer.steamPressureMPa',
-      'pressurizer.pressureTargetMPa',
+      'pressurizer.flashingRateKgPerS',
+      'vessel.loopSteamMassKg',
+      'vessel.loopVoidFraction',
+      'vessel.surgeFlowKgPerS',
+      'core.coreExitTemperatureC',
+      'core.pumpHeatMw',
+      'core.vapourGenerationKgPerS',
       'pressurizer.waterInventoryBalanceResidualKg',
       'pressurizer.steamMassBalanceResidualKg',
       'pressurizer.reliefFlowKgPerS',
@@ -1345,39 +1358,42 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('pressurizer.steamMassFlowKgPerS')))).toBeLessThan(0)
   })
 
-  test('pressurizer pressure target follows steam-space state and primary inventory bias', () => {
+  test('pressurizer spray condenses steam and lowers pressure as its water rises', () => {
     const runtime = createProcessPlantRuntime({ system: compiledSystem() })
 
     for (let index = 0; index < 40; index += 1) runtime.tick(100)
     const initialSteamVolume = Number(runtime.readVariable(valueOf('pressurizer.steamVolumeM3')))
-    const initialPressureTarget = Number(runtime.readVariable(valueOf('pressurizer.pressureTargetMPa')))
+    const initialPressure = Number(runtime.readVariable(valueOf('pressurizer.pressureMPa')))
     runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.sprayFlowKgPerS'), value: 160 })
     for (let index = 0; index < 160; index += 1) runtime.tick(100)
 
-    const steamPressure = Number(runtime.readVariable(valueOf('pressurizer.steamPressureMPa')))
-    const target = Number(runtime.readVariable(valueOf('pressurizer.pressureTargetMPa')))
-    const vesselBias = Number(runtime.readVariable(valueOf('vessel.primaryPressureBiasMPa')))
     expect(Number(runtime.readVariable(valueOf('pressurizer.steamVolumeM3')))).toBeLessThan(initialSteamVolume)
-    expect(target).toBeCloseTo(steamPressure + vesselBias, 2)
-    expect(target).toBeLessThan(initialPressureTarget)
+    expect(Number(runtime.readVariable(valueOf('pressurizer.pressureMPa')))).toBeLessThan(initialPressure)
     expect(Number(runtime.readVariable(valueOf('pressurizer.waterInventoryBalanceResidualKg')))).toBeCloseTo(0, 6)
   })
 
-  test('primary coolant inventory feeds the canonical pressurizer pressure response', () => {
+  test('relief drains the reactor coolant system by what it releases', () => {
     const runtime = createProcessPlantRuntime({ system: compiledSystem() })
+    const systemMass = (): number => ['vessel.primaryCoolantInventoryKg', 'pressurizer.waterInventoryKg', 'pressurizer.steamMassKg']
+      .reduce((total, path) => total + Number(runtime.readVariable(valueOf(path))), 0)
 
     for (let index = 0; index < 20; index += 1) runtime.tick(100)
-    const initialInventory = Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryKg')))
+    const initialMass = systemMass()
     const initialPressure = Number(runtime.readVariable(valueOf('pressurizer.pressureMPa')))
     runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.reliefValvePositionFraction'), value: 1 })
-    for (let index = 0; index < 300; index += 1) runtime.tick(100)
+    let relieved = 0
+    let boundaryNet = 0
+    for (let index = 0; index < 300; index += 1) {
+      runtime.tick(100)
+      relieved += Number(runtime.readVariable(valueOf('pressurizer.reliefFlowKgPerS'))) * 0.1
+      boundaryNet += Number(runtime.readVariable(valueOf('vessel.netInventoryFlowKgPerS'))) * 0.1
+    }
 
-    expect(Number(runtime.readVariable(valueOf('pressurizer.reliefFlowKgPerS')))).toBeGreaterThan(0)
-    expect(Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryKg')))).toBeLessThan(initialInventory)
-    expect(Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryDeviationKg')))).toBeLessThan(0)
-    expect(Number(runtime.readVariable(valueOf('vessel.compressibilityPressureBiasMPa')))).toBeLessThan(0)
     expect(Number(runtime.readVariable(valueOf('vessel.reliefOutflowKgPerS')))).toBeGreaterThan(0)
-    expect(Number(runtime.readVariable(valueOf('vessel.safetyInjectionFlowKgPerS')))).toBeGreaterThanOrEqual(0)
+    expect(relieved).toBeGreaterThan(1_000)
+    // Loops and pressurizer together lose what crosses the boundary: the relief, less charging over letdown.
+    // (The boundary flow reads the relief line a solver step late.)
+    expect(Math.abs(systemMass() - initialMass - boundaryNet)).toBeLessThan(relieved * 0.01)
     expect(Number(runtime.readVariable(valueOf('pressurizer.pressureMPa')))).toBeLessThan(initialPressure)
     const hotLegPressureDrop = Number(runtime.readVariable(valueOf('rcs-hot-leg-a.pressureDropMPa')))
     expect(hotLegPressureDrop).toBeGreaterThan(0)
@@ -1385,37 +1401,24 @@ describe('process plant runtime', () => {
       .toBeCloseTo(Number(runtime.readVariable(valueOf('pressurizer.pressureMPa'))) - hotLegPressureDrop, 6)
   })
 
-  test('reactor vessel pressure bias separates compressibility from thermal expansion effects', () => {
+  test('a cold-leg leak drains the pressurizer through the surge line', () => {
     const runtime = createProcessPlantRuntime({ system: compiledSystem() })
-    const hotPrimary = createProcessPlantRuntime({
-      system: compiledSystemWithInitialState({
-        'core.coolantInletTemperatureC': 312,
-        'core.coolantOutletTemperatureC': 336,
-      }),
-    })
 
-    for (let index = 0; index < 40; index += 1) {
+    for (let index = 0; index < 40; index += 1) runtime.tick(100)
+    const initialLevel = Number(runtime.readVariable(valueOf('pressurizer.levelPercent')))
+    const initialInventory = Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryKg')))
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('rcs-cold-leg-a.leak.areaFraction'), value: 0.2 })
+    let largestOutsurge = 0
+    for (let index = 0; index < 240; index += 1) {
       runtime.tick(100)
-      hotPrimary.tick(100)
+      largestOutsurge = Math.min(largestOutsurge, Number(runtime.readVariable(valueOf('vessel.surgeFlowKgPerS'))))
     }
 
-    expect(Number(hotPrimary.readVariable(valueOf('vessel.meanPrimaryCoolantTemperatureC'))))
-      .toBeGreaterThan(Number(runtime.readVariable(valueOf('vessel.meanPrimaryCoolantTemperatureC'))))
-    expect(Number(hotPrimary.readVariable(valueOf('vessel.thermalExpansionPressureBiasMPa'))))
-      .toBeGreaterThan(Number(runtime.readVariable(valueOf('vessel.thermalExpansionPressureBiasMPa'))))
-
-    const beforeLeakCompressibilityBias = Number(runtime.readVariable(valueOf('vessel.compressibilityPressureBiasMPa')))
-    runtime.writeCommand({ type: 'setVariable', path: valueOf('rcs-cold-leg-a.leak.areaFraction'), value: 0.2 })
-    for (let index = 0; index < 240; index += 1) runtime.tick(100)
-
-    expect(Number(runtime.readVariable(valueOf('vessel.compressibilityPressureBiasMPa'))))
-      .toBeLessThan(beforeLeakCompressibilityBias)
-    expect(Number(runtime.readVariable(valueOf('vessel.primaryPressureBiasMPa'))))
-      .toBeCloseTo(
-        Number(runtime.readVariable(valueOf('vessel.compressibilityPressureBiasMPa')))
-        + Number(runtime.readVariable(valueOf('vessel.thermalExpansionPressureBiasMPa'))),
-        6,
-      )
+    // The loops stay full and the pressurizer gives up the water the leak takes.
+    expect(largestOutsurge).toBeLessThan(-100)
+    expect(Number(runtime.readVariable(valueOf('pressurizer.levelPercent')))).toBeLessThan(initialLevel - 10)
+    expect(Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryKg')))).toBeGreaterThan(initialInventory * 0.97)
+    expect(Number(runtime.readVariable(valueOf('vessel.loopVoidFraction')))).toBeCloseTo(0, 6)
   })
 
   test('primary coolant link pressure drop and leaks are link-local hydraulic effects', () => {
@@ -1437,7 +1440,6 @@ describe('process plant runtime', () => {
 
     expect(Number(runtime.readVariable(valueOf('rcs-hot-leg-a.leakFlowKgPerS')))).toBeGreaterThan(0)
     expect(Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryKg')))).toBeLessThan(initialInventory)
-    expect(Number(runtime.readVariable(valueOf('vessel.primaryPressureBiasMPa')))).toBeLessThan(0)
     expect(Number(runtime.readVariable(valueOf('vessel.primaryLeakFlowKgPerS'))))
       .toBeCloseTo(Number(runtime.readVariable(valueOf('rcs-hot-leg-a.leakFlowKgPerS'))), 6)
     expect(Number(runtime.readVariable(valueOf('vessel.netInventoryFlowKgPerS')))).toBeLessThan(0)
@@ -1457,10 +1459,15 @@ describe('process plant runtime', () => {
     const initialContainmentSump = Number(runtime.readVariable(valueOf('containment.sumpInventoryKg')))
     const initialAccumulatorInventory = Number(runtime.readVariable(valueOf('safetyAccumulatorA.liquidInventoryKg')))
 
-    runtime.writeCommand({ type: 'setVariable', path: valueOf('rcs-hot-leg-a.leak.areaFraction'), value: 0.65 })
+    // A full-area hot-leg break; the protection system would trip the reactor
+    // on the falling pressure. The pressure hangs near the steam generators'
+    // saturation pressure until the loops drain, then falls to the
+    // accumulators' gas pressure.
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('rcs-hot-leg-a.leak.areaFraction'), value: 1 })
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('core.rodInsertionFraction'), value: 1 })
     let observedAccumulatorInjection = false
     let observedVesselInjection = false
-    for (let index = 0; index < 1_800; index += 1) {
+    for (let index = 0; index < 4_000; index += 1) {
       runtime.tick(100)
       observedAccumulatorInjection = observedAccumulatorInjection || Number(runtime.readVariable(valueOf('safetyAccumulatorA.outletFlowKgPerS'))) > 0
       observedVesselInjection = observedVesselInjection || Number(runtime.readVariable(valueOf('vessel.safetyInjectionFlowKgPerS'))) > 0
@@ -1813,7 +1820,8 @@ describe('process plant runtime', () => {
   })
 
   test('primary loop link resistance contributes to reactor coolant pump flow target', () => {
-    const baseline = createProcessPlantRuntime({ system: compiledSystem() })
+    // Both as the template stands: the operating point would size the pumps to the resistance.
+    const baseline = createProcessPlantRuntime({ system: compileTestSystem({ id: 'plant', graph: pressurizedWaterReactorPlantSpec }) })
     const restricted = createProcessPlantRuntime({
       system: compiledSystemWithConnectionPhysical('rcs-hot-leg-a', { nominalResistance: 0.4 }),
     })
@@ -2155,7 +2163,10 @@ describe('process plant runtime', () => {
 
     runtime.tick(60_000)
 
-    expect(runtime.readVariable(valueOf('volumeControlTank.soluteConcentrationPpm'))).toBe(2_400)
+    // Letdown returns 1,200 ppm coolant to the tank, diluting it a little.
+    const tankConcentration = Number(runtime.readVariable(valueOf('volumeControlTank.soluteConcentrationPpm')))
+    expect(tankConcentration).toBeLessThan(2_400)
+    expect(tankConcentration).toBeGreaterThan(2_250)
     const chargingConcentration = runtime.readVariable(valueOf('charging-pump-to-cold-leg-a.soluteConcentrationPpm'))
     const vesselConcentration = runtime.readVariable(valueOf('vessel.boronConcentrationPpm'))
     if (typeof chargingConcentration !== 'number' || typeof vesselConcentration !== 'number' || typeof initialVesselConcentration !== 'number') {

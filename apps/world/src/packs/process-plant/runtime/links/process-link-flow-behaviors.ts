@@ -8,6 +8,8 @@ import {
 import { processLinkFlowSourceFor } from './link-flow-source-strategy.ts'
 import { pressureDrivenLeakFlowKgPerS } from '../physics.ts'
 import { physicalFlowCapacityKgPerS, physicalNumber } from './process-link-physical.ts'
+import { primarySystemReactorVessel } from '../system-topology.ts'
+import { saturatedWaterSteam } from '../water-properties.ts'
 
 export const processLinkFlowBehaviorDefinitions: ReadonlyArray<ProcessLinkBehaviorDefinition> = [
   {
@@ -38,20 +40,28 @@ export const processLinkFlowBehaviorDefinitions: ReadonlyArray<ProcessLinkBehavi
   {
     id: 'process-link-pressure-driven-leak',
     phase: 'solveFluidFlowLinks',
-    reads: ['pressureMPa', 'leak.areaFraction?', 'physical.leakCoefficientKgPerSPerSqrtMPa'],
+    reads: ['pressureMPa', 'leak.areaFraction?', 'physical.leakCoefficientKgPerSPerSqrtMPa', 'reactorVessel.loopVoidFraction'],
     writes: ['leakFlowKgPerS'],
     appliesTo: (link): boolean =>
       link.kind === 'fluidFlow'
       && hasProcessLinkVariable(link, 'pressureMPa')
       && hasProcessLinkVariable(link, 'leakFlowKgPerS'),
-    update: ({ link, context }): void => {
+    update: ({ system, link, context }): void => {
       const pressure = context.readNumber(processLinkVariablePath(link, 'pressureMPa'))
       const leakArea = context.readOptionalNumber(processLinkVariablePath(link, 'leak.areaFraction'), 0)
-      context.write(processLinkVariablePath(link, 'leakFlowKgPerS'), pressureDrivenLeakFlowKgPerS({
+      const liquidLeak = pressureDrivenLeakFlowKgPerS({
         areaFraction: leakArea,
         pressureDeltaMPa: pressure - 0.101325,
         coefficientKgPerSPerSqrtMPa: physicalNumber(link, 'leakCoefficientKgPerSPerSqrtMPa', 0),
-      }))
+      })
+      // A break in voided reactor coolant loops discharges steam too, whose
+      // mass flux through the same opening is lower by the square root of
+      // the steam-to-water density ratio.
+      const vessel = link.service === 'primaryCoolant' && liquidLeak > 0 ? primarySystemReactorVessel(system) : null
+      const voidFraction = vessel === null ? 0 : context.readNumber(componentVariablePath(vessel, 'loopVoidFraction'))
+      const saturation = voidFraction > 0 ? saturatedWaterSteam(pressure) : null
+      const steamShare = saturation === null ? 1 : Math.sqrt(saturation.vapourDensityKgPerM3 / saturation.liquidDensityKgPerM3)
+      context.write(processLinkVariablePath(link, 'leakFlowKgPerS'), liquidLeak * (1 - voidFraction + voidFraction * steamShare))
     },
   },
 ]

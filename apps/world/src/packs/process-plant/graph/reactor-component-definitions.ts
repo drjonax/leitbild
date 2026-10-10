@@ -111,6 +111,7 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'decayHeatMw', label: 'Decay heat', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'pumpHeatMw', label: 'Reactor coolant pump heat', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'heatToCoolantMw', label: 'Heat to coolant', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
+      variable({ path: 'vapourGenerationKgPerS', label: 'Reactor coolant steam generation', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
     ],
   }),
   defineComponent({
@@ -125,15 +126,25 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       letdownOutlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'coolant' },
     },
     parametersSchema: z.object({
+      /** Loop coolant at the operating point's temperatures and pressure: the reference inventory deviations are read from. */
       nominalPrimaryCoolantInventoryKg: z.number().finite().positive(),
+      /** The share of the loops' volume that starts filled with water; steam fills the rest. */
       initialPrimaryCoolantInventoryFraction: normalized,
+      /** The loops' volume outside the pressurizer. */
       primaryCoolantVolumeM3: z.number().finite().positive(),
-      nominalPrimaryCoolantDensityKgPerM3: z.number().finite().positive(),
+      /** Water-solid stiffness of the reactor coolant system, its liquid and the piping's stretch together. */
       effectiveBulkModulusMPa: z.number().finite().positive(),
-      thermalExpansionCoefficientPerC: z.number().finite().nonnegative(),
       referencePrimaryCoolantTemperatureC: z.number().finite(),
-      /** Letdown flow through the orifices at nominal coolant pressure. */
+      /** How fast loop water above saturation flashes to steam. */
+      flashingTimeConstantS: z.number().finite().positive(),
+      /** How fast loop water below saturation takes steam back. */
+      condensationTimeConstantS: z.number().finite().positive(),
+      /** How fast the surge line's water follows the loops' expansion and contraction. */
+      surgeLineTimeConstantS: z.number().finite().positive(),
+      /** Letdown flow through the orifices while the coolant is well above the letdown line's backpressure. */
       normalLetdownFlowKgPerS: z.number().finite().nonnegative().optional(),
+      /** Pressure the letdown backpressure valve holds behind the orifices. */
+      letdownBackpressureMPa: z.number().finite().positive(),
       primaryReleaseRadiationMSvPerH: z.number().finite().nonnegative().optional(),
       initialBoronConcentrationPpm: z.number().finite().nonnegative().optional(),
       collapsedLevelReferenceInventoryFraction: normalized.optional(),
@@ -149,9 +160,10 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'collapsedLiquidLevelPercent', label: 'Reactor vessel collapsed liquid level', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
       variable({ path: 'meanPrimaryCoolantTemperatureC', label: 'Mean primary coolant temperature', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'subcoolingMarginC', label: 'RCS subcooling margin', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
-      variable({ path: 'compressibilityPressureBiasMPa', label: 'Primary compressibility pressure bias', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressureDelta', unit: 'MPa' }),
-      variable({ path: 'thermalExpansionPressureBiasMPa', label: 'Primary thermal expansion pressure bias', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressureDelta', unit: 'MPa' }),
-      variable({ path: 'primaryPressureBiasMPa', label: 'Primary pressure inventory bias', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressureDelta', unit: 'MPa' }),
+      variable({ path: 'loopSteamMassKg', label: 'Reactor coolant loop steam', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg' }),
+      variable({ path: 'loopSteamVolumeM3', label: 'Reactor coolant loop steam volume', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'volume', unit: 'm3' }),
+      variable({ path: 'loopVoidFraction', label: 'Reactor coolant loop void fraction', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'void', quantity: 'ratio', unit: 'fraction' }),
+      variable({ path: 'surgeFlowKgPerS', label: 'Pressurizer surge flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
       variable({ path: 'chargingFlowKgPerS', label: 'Primary charging flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
       variable({ path: 'safetyInjectionFlowKgPerS', label: 'Primary safety injection flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
       variable({ path: 'letdownFlowKgPerS', label: 'Primary letdown flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),

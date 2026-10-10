@@ -1,16 +1,42 @@
-import { componentVariablePath, type ComponentBehaviorDefinition } from '../behavior-contract.ts'
+import type { CompiledComponent } from '../../graph/index.ts'
 import {
-  approach,
-  clamp,
-  optionalParameterNumber,
-  parameterNumber,
-  relaxToward,
-} from '../component-helpers.ts'
-import { averageIncomingComponentLinkValue as averageIncomingLinkValue } from '../component-link-helpers.ts'
-import { inventoryBalanceStep } from '../physics.ts'
-import { primarySystemReactorVessel } from '../system-topology.ts'
-import { saturationTemperatureCFromPressureMPa, steamFlowKgPerSFromHeatMw } from '../thermophysics.ts'
+  componentVariablePath,
+  type ComponentBehaviorDefinition,
+  type ComponentInitialReconciliationDefinition,
+  type ProcessPlantBehaviorContext,
+} from '../behavior-contract.ts'
+import { approach, clamp, parameterNumber } from '../component-helpers.ts'
+import { primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
+import { saturationTemperatureCFromPressureMPa } from '../thermophysics.ts'
+import {
+  compressedWaterState,
+  liquidEnthalpyKjPerKg,
+  liquidTemperatureCFromEnthalpy,
+  saturatedWaterSteam,
+  saturationPressureMPaFromLiquidEnthalpy,
+  saturationPressureMPaFromTemperatureC,
+  saturationPressureMPaFromVapourDensity,
+} from '../water-properties.ts'
 import { componentHasElectricalPower } from './electrical-behaviors.ts'
+
+// The pressurizer is a fixed volume of boiling water under its steam. Every
+// solver step it takes the surge the reactor coolant loops push into it or
+// draw from it, spray, heater heat and relief, and then:
+// - water hotter than saturation at its pressure flashes to steam (quickly),
+//   and steam condenses on water colder than saturation (slowly, since the
+//   water stratifies under the interface);
+// - its pressure is that of saturated steam at the density the steam has in
+//   the room the liquid leaves it. Steam trapped in the loops shares that
+//   room and that pressure, so a void growing in the loops pushes water in
+//   and holds the pressure up, as in a stuck-open PORV.
+// No pressure can fall more than a little below the saturation pressure of
+// the hottest water exposed to it, which flashes faster than steam escapes.
+
+/** Spray flow as the pressurizer takes it from the cold legs; the loops lose the same flow. */
+export const pressurizerSprayFlowKgPerS = (pressurizer: CompiledComponent, context: Pick<ProcessPlantBehaviorContext, 'readNumber'>): number =>
+  clamp(context.readNumber(componentVariablePath(pressurizer, 'sprayFlowKgPerS')), 0, 500)
+
+const saturationPressureFloorMarginC = 2
 
 export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
@@ -19,19 +45,10 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
     componentKind: 'pressurizer',
     reads: [
       'pressureMPa',
-      'levelPercent',
       'waterInventoryKg',
       'steamMassKg',
-      'steamMassFlowKgPerS',
-      'steamVolumeM3',
-      'steamPressureMPa',
-      'pressureTargetMPa',
-      'waterInventoryBalanceResidualKg',
-      'steamMassBalanceResidualKg',
       'waterTemperatureC',
-      'steamTemperatureC',
       'heaterPowerMw',
-      'demandMw',
       'incoming electrical energized?',
       'sprayFlowKgPerS',
       'reliefValvePositionFraction',
@@ -39,8 +56,13 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'reliefValveFailedPositionFraction',
       'blockValvePositionFraction',
       'blockValveEffectivePositionFraction',
-      'incoming:primaryCoolant.temperatureC',
-      'reactor vessel primaryPressureBiasMPa',
+      'levelPercent',
+      'reactorVessel.surgeFlowKgPerS',
+      'reactorVessel.loopSteamMassKg',
+      'reactorVessel.loopSteamVolumeM3',
+      'reactorVessel.loopVoidFraction',
+      'reactorCore.coolantInletTemperatureC',
+      'reactorCore.coolantOutletTemperatureC',
     ],
     writes: [
       'pressureMPa',
@@ -49,8 +71,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'steamMassKg',
       'steamMassFlowKgPerS',
       'steamVolumeM3',
-      'steamPressureMPa',
-      'pressureTargetMPa',
+      'flashingRateKgPerS',
       'waterInventoryBalanceResidualKg',
       'steamMassBalanceResidualKg',
       'waterTemperatureC',
@@ -61,104 +82,162 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'demandMw',
     ],
     update: ({ system, component, context }): void => {
+      const dt = context.dtSeconds
+      const volume = parameterNumber(component, 'volumeM3')
       const nominalPressure = parameterNumber(component, 'nominalPressureMPa')
-      const nominalLevelFraction = parameterNumber(component, 'nominalLevelPercent')
-      const nominalInventory = parameterNumber(component, 'nominalWaterInventoryKg')
-      const nominalSteamMass = optionalParameterNumber(component, 'nominalSteamMassKg', 1_800)
-      const nominalWaterDensity = optionalParameterNumber(component, 'nominalWaterDensityKgPerM3', 700)
-      const fullInventory = nominalInventory / Math.max(0.01, nominalLevelFraction)
-      const fullVolume = fullInventory / nominalWaterDensity
-      const nominalSteamVolume = Math.max(0.1, (fullInventory - nominalInventory) / nominalWaterDensity)
-      const reliefSetpoint = optionalParameterNumber(component, 'reliefSetpointMPa', nominalPressure * 1.08)
-      const reliefCapacity = optionalParameterNumber(component, 'reliefCapacityKgPerS', 80)
-      const currentPressure = context.readNumber(componentVariablePath(component, 'pressureMPa'))
+      const reliefSetpoint = parameterNumber(component, 'reliefSetpointMPa')
+      const reliefCapacity = parameterNumber(component, 'reliefCapacityKgPerS')
+      const flashingTimeConstant = parameterNumber(component, 'flashingTimeConstantS')
+      const condensationTimeConstant = parameterNumber(component, 'condensationTimeConstantS')
+      const pressure = context.readNumber(componentVariablePath(component, 'pressureMPa'))
+      const saturation = saturatedWaterSteam(pressure)
+      const latentHeat = saturation.vapourEnthalpyKjPerKg - saturation.liquidEnthalpyKjPerKg
+
       const heaterPower = componentHasElectricalPower(system, component, context, 'heaterPower')
         ? clamp(context.readNumber(componentVariablePath(component, 'heaterPowerMw')), 0, 50)
         : 0
       context.write(componentVariablePath(component, 'demandMw'), heaterPower)
-      const sprayFlow = clamp(context.readNumber(componentVariablePath(component, 'sprayFlowKgPerS')), 0, 500)
+      const sprayFlow = pressurizerSprayFlowKgPerS(component, context)
       const reliefValvePosition = clamp(context.readNumber(componentVariablePath(component, 'reliefValvePositionFraction')), 0, 1)
       const reliefValveFailureActive = context.readBoolean(componentVariablePath(component, 'reliefValveFailureActive'))
       const reliefValveFailedPosition = clamp(context.readNumber(componentVariablePath(component, 'reliefValveFailedPositionFraction')), 0, 1)
-      const automaticReliefDemand = clamp((currentPressure - reliefSetpoint) / Math.max(0.1, reliefSetpoint * 0.04), 0, 1)
+      const automaticReliefDemand = clamp((pressure - reliefSetpoint) / Math.max(0.1, reliefSetpoint * 0.04), 0, 1)
       const reliefOpening = reliefValveFailureActive
         ? reliefValveFailedPosition
         : Math.max(reliefValvePosition, automaticReliefDemand)
       // The block valve's motor has its own supply, apart from the heaters'; without it the valve stays where it is.
       const blockValvePosition = context.readNumber(componentVariablePath(component, 'blockValveEffectivePositionFraction'))
       const nextBlockValvePosition = componentHasElectricalPower(system, component, context, 'blockValvePower')
-        ? approach(blockValvePosition, clamp(context.readNumber(componentVariablePath(component, 'blockValvePositionFraction')), 0, 1), context.dtSeconds / parameterNumber(component, 'blockValveStrokeTimeS'))
+        ? approach(blockValvePosition, clamp(context.readNumber(componentVariablePath(component, 'blockValvePositionFraction')), 0, 1), dt / parameterNumber(component, 'blockValveStrokeTimeS'))
         : blockValvePosition
-      const reliefFlow = reliefCapacity * Math.min(reliefOpening, nextBlockValvePosition) * clamp(currentPressure / nominalPressure, 0.1, 1.4)
+      const reliefFlow = reliefCapacity * Math.min(reliefOpening, nextBlockValvePosition) * clamp(pressure / nominalPressure, 0, 1.4)
 
-      const surgeTemperature = averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
-        ?? context.readNumber(componentVariablePath(component, 'waterTemperatureC'))
-      const waterTemperature = context.readNumber(componentVariablePath(component, 'waterTemperatureC'))
-      const nextWaterTemperature = relaxToward(
-        waterTemperature,
-        clamp(surgeTemperature + heaterPower * 0.35 - sprayFlow * 0.04, 180, 370),
-        context.dtSeconds,
-        optionalParameterNumber(component, 'thermalTimeConstantS', 20),
-      )
-      const steamTemperatureTarget = saturationTemperatureCFromPressureMPa(currentPressure) + heaterPower * 0.2 - sprayFlow * 0.02
-      const nextSteamTemperature = relaxToward(
-        context.readNumber(componentVariablePath(component, 'steamTemperatureC')),
-        clamp(steamTemperatureTarget, 100, 370),
-        context.dtSeconds,
-        optionalParameterNumber(component, 'thermalTimeConstantS', 20),
-      )
-      const currentSteamMass = context.readNumber(componentVariablePath(component, 'steamMassKg'))
-      const heaterSteamGeneration = steamFlowKgPerSFromHeatMw(heaterPower)
-      const sprayCondensation = Math.min(
-        context.dtSeconds > 0 ? currentSteamMass / context.dtSeconds : currentSteamMass,
-        sprayFlow * optionalParameterNumber(component, 'sprayCondensationKgPerKg', 0.08),
-      )
-      const nextSteamMass = inventoryBalanceStep({
-        currentInventory: currentSteamMass,
-        inflowKgPerS: heaterSteamGeneration,
-        outflowKgPerS: sprayCondensation + reliefFlow,
-        dtSeconds: context.dtSeconds,
-        minInventory: nominalSteamMass * 0.05,
-        maxInventory: nominalSteamMass * 3,
-      })
-      const steamMassNetFlow = heaterSteamGeneration - sprayCondensation - reliefFlow
+      const vessel = primarySystemReactorVessel(system)
+      const core = primarySystemReactorCore(system)
+      const surgeFlow = vessel === null ? 0 : context.readNumber(componentVariablePath(vessel, 'surgeFlowKgPerS'))
+      const loopSteamMass = vessel === null ? 0 : context.readNumber(componentVariablePath(vessel, 'loopSteamMassKg'))
+      const loopSteamVolume = vessel === null ? 0 : context.readNumber(componentVariablePath(vessel, 'loopSteamVolumeM3'))
+      const hotLegTemperature = core === null ? saturation.temperatureC : context.readNumber(componentVariablePath(core, 'coolantOutletTemperatureC'))
+      const coldLegTemperature = core === null ? saturation.temperatureC : context.readNumber(componentVariablePath(core, 'coolantInletTemperatureC'))
 
-      const currentInventory = context.readNumber(componentVariablePath(component, 'waterInventoryKg'))
-      const waterNetFlow = sprayFlow + sprayCondensation - heaterSteamGeneration
-      const nextInventory = clamp(currentInventory + waterNetFlow * context.dtSeconds, 0, fullInventory)
-      const steamVolume = Math.max(0.1, fullVolume - nextInventory / nominalWaterDensity)
-      const initialSteamTemperature = optionalParameterNumber(component, 'initialSteamTemperatureC', saturationTemperatureCFromPressureMPa(nominalPressure))
-      const steamPressure = nominalPressure
-        * (nextSteamMass / nominalSteamMass)
-        * ((nextSteamTemperature + 273.15) / Math.max(1, initialSteamTemperature + 273.15))
-        * (nominalSteamVolume / steamVolume)
-      const reactorVessel = primarySystemReactorVessel(system)
-      const inventoryPressureBias = reactorVessel === null || !context.has(componentVariablePath(reactorVessel, 'primaryPressureBiasMPa'))
-        ? 0
-        : context.readNumber(componentVariablePath(reactorVessel, 'primaryPressureBiasMPa'))
-      const pressureTarget = clamp(steamPressure + inventoryPressureBias, 0.2, 18)
-      const nextPressure = relaxToward(
-        currentPressure,
-        pressureTarget,
-        context.dtSeconds,
-        optionalParameterNumber(component, 'pressureTimeConstantS', 12),
-      )
+      const currentWater = context.readNumber(componentVariablePath(component, 'waterInventoryKg'))
+      const currentSteam = context.readNumber(componentVariablePath(component, 'steamMassKg'))
+      const currentSpecificVolume = currentWater > 0
+        ? context.readNumber(componentVariablePath(component, 'levelPercent')) / 100 * volume / currentWater
+        : 1 / saturation.liquidDensityKgPerM3
+      let water = currentWater
+      let steam = currentSteam
+      let waterEnthalpy = water * liquidEnthalpyKjPerKg(context.readNumber(componentVariablePath(component, 'waterTemperatureC')), pressure)
+
+      // Insurge brings hot-leg water; outsurge takes the pressurizer's own.
+      if (surgeFlow >= 0) {
+        water += surgeFlow * dt
+        waterEnthalpy += surgeFlow * dt * liquidEnthalpyKjPerKg(hotLegTemperature, pressure)
+      } else {
+        const outsurge = Math.min(water, -surgeFlow * dt)
+        waterEnthalpy *= (water - outsurge) / Math.max(1e-9, water)
+        water -= outsurge
+      }
+      // Spray heats to saturation by condensing steam, and falls as water.
+      let sprayCondensation = 0
+      if (sprayFlow > 0) {
+        const sprayEnthalpy = liquidEnthalpyKjPerKg(coldLegTemperature, pressure)
+        sprayCondensation = Math.min(steam, sprayFlow * dt * Math.max(0, saturation.liquidEnthalpyKjPerKg - sprayEnthalpy) / latentHeat)
+        steam -= sprayCondensation
+        water += sprayFlow * dt + sprayCondensation
+        waterEnthalpy += sprayFlow * dt * sprayEnthalpy + sprayCondensation * saturation.vapourEnthalpyKjPerKg
+      }
+      waterEnthalpy += heaterPower * 1_000 * dt
+      // The PORV relieves steam while there is a steam space, water once the
+      // pressurizer is solid.
+      const reliefMass = reliefFlow * dt
+      const steamRelief = Math.min(steam, reliefMass)
+      steam -= steamRelief
+      const waterRelief = Math.min(water, reliefMass - steamRelief)
+      if (waterRelief > 0) {
+        waterEnthalpy *= (water - waterRelief) / Math.max(1e-9, water)
+        water -= waterRelief
+      }
+
+      // Flashing and condensation at the steam-water interface, each no
+      // further than brings the steam to the water's own saturation pressure.
+      const specificEnthalpy = water > 0 ? waterEnthalpy / water : saturation.liquidEnthalpyKjPerKg
+      const superheat = specificEnthalpy - saturation.liquidEnthalpyKjPerKg
+      const steamAtWaterSaturation = saturatedWaterSteam(saturationPressureMPaFromLiquidEnthalpy(specificEnthalpy)).vapourDensityKgPerM3
+        * (volume - water * currentSpecificVolume + loopSteamVolume)
+      const steamToWaterSaturation = steamAtWaterSaturation - steam - loopSteamMass
+      let phaseChange = 0
+      if (superheat > 0) {
+        phaseChange = Math.min(water * superheat / latentHeat * Math.min(1, dt / flashingTimeConstant), Math.max(0, steamToWaterSaturation))
+      } else if (steam > 0) {
+        phaseChange = -Math.min(steam, water * -superheat / latentHeat * Math.min(1, dt / condensationTimeConstant), Math.max(0, -steamToWaterSaturation))
+      }
+      water -= phaseChange
+      steam += phaseChange
+      waterEnthalpy -= phaseChange * saturation.vapourEnthalpyKjPerKg
+      const nextWaterTemperature = water > 0
+        ? liquidTemperatureCFromEnthalpy(pressure, waterEnthalpy / water)
+        : saturation.temperatureC
+
+      // The pressure the steam and liquid volumes settle at.
+      const waterVolume = water / compressedWaterState(nextWaterTemperature, pressure).densityKgPerM3
+      const steamRoom = volume - waterVolume + loopSteamVolume
+      const vapourMass = steam + loopSteamMass
+      // Only water still present flashes: the pressurizer's while it holds
+      // any, the hot legs' while the loops are not drained.
+      const loopVoid = vessel === null ? 1 : context.readNumber(componentVariablePath(vessel, 'loopVoidFraction'))
+      const flashingTemperature = Math.max(water > 0 ? nextWaterTemperature : 0, loopVoid < 0.95 ? hotLegTemperature : 0)
+      const floor = flashingTemperature > 0 ? saturationPressureMPaFromTemperatureC(flashingTemperature - saturationPressureFloorMarginC) : 0
+      const minimumSteamRoom = volume * 0.002
+      const waterSolid = steamRoom <= minimumSteamRoom || vapourMass <= 0
+      const steamPressure = waterSolid
+        // Water-solid: the liquid's compression and the piping's stretch set the pressure.
+        ? saturationPressureMPaFromTemperatureC(nextWaterTemperature)
+          + (vessel === null ? 0 : parameterNumber(vessel, 'effectiveBulkModulusMPa'))
+            * Math.max(0, minimumSteamRoom - steamRoom) / (volume + (vessel === null ? 0 : parameterNumber(vessel, 'primaryCoolantVolumeM3')))
+        : saturationPressureMPaFromVapourDensity(vapourMass / steamRoom)
+      const nextPressure = Math.max(floor, steamPressure)
+      const steamVolume = Math.max(0, volume - waterVolume)
+      const perSecond = (mass: number): number => dt > 0 ? mass / dt : 0
+      const steamNetFlow = perSecond(phaseChange - sprayCondensation - steamRelief)
+      const waterFlows = surgeFlow + sprayFlow + perSecond(sprayCondensation - phaseChange - waterRelief)
 
       context.write(componentVariablePath(component, 'reliefValveEffectivePositionFraction'), reliefOpening)
       context.write(componentVariablePath(component, 'blockValveEffectivePositionFraction'), nextBlockValvePosition)
       context.write(componentVariablePath(component, 'reliefFlowKgPerS'), reliefFlow)
       context.write(componentVariablePath(component, 'waterTemperatureC'), nextWaterTemperature)
-      context.write(componentVariablePath(component, 'steamTemperatureC'), nextSteamTemperature)
-      context.write(componentVariablePath(component, 'waterInventoryKg'), nextInventory)
-      context.write(componentVariablePath(component, 'steamMassKg'), nextSteamMass)
-      context.write(componentVariablePath(component, 'steamMassFlowKgPerS'), steamMassNetFlow)
+      context.write(componentVariablePath(component, 'steamTemperatureC'), saturationTemperatureCFromPressureMPa(nextPressure))
+      context.write(componentVariablePath(component, 'waterInventoryKg'), water)
+      context.write(componentVariablePath(component, 'steamMassKg'), steam)
+      context.write(componentVariablePath(component, 'steamMassFlowKgPerS'), steamNetFlow)
+      context.write(componentVariablePath(component, 'flashingRateKgPerS'), perSecond(phaseChange))
       context.write(componentVariablePath(component, 'steamVolumeM3'), steamVolume)
-      context.write(componentVariablePath(component, 'steamPressureMPa'), clamp(steamPressure, 0.2, 18))
-      context.write(componentVariablePath(component, 'pressureTargetMPa'), pressureTarget)
-      context.write(componentVariablePath(component, 'waterInventoryBalanceResidualKg'), nextInventory - currentInventory - waterNetFlow * context.dtSeconds)
-      context.write(componentVariablePath(component, 'steamMassBalanceResidualKg'), nextSteamMass - currentSteamMass - steamMassNetFlow * context.dtSeconds)
-      context.write(componentVariablePath(component, 'levelPercent'), clamp((nextInventory / fullInventory) * 100, 0, 100))
-      context.write(componentVariablePath(component, 'pressureMPa'), clamp(nextPressure, 0.2, 18))
+      context.write(componentVariablePath(component, 'waterInventoryBalanceResidualKg'), water - currentWater - waterFlows * dt)
+      context.write(componentVariablePath(component, 'steamMassBalanceResidualKg'), steam - currentSteam - steamNetFlow * dt)
+      context.write(componentVariablePath(component, 'levelPercent'), clamp(waterVolume / volume * 100, 0, 100))
+      context.write(componentVariablePath(component, 'pressureMPa'), clamp(nextPressure, 0.1, 22))
+    },
+  },
+]
+
+export const pressurizerInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
+  {
+    id: 'pressurizer-saturated-initial-state',
+    componentKind: 'pressurizer',
+    reads: ['pressureMPa', 'levelPercent'],
+    writes: ['waterInventoryKg', 'steamMassKg', 'steamVolumeM3', 'waterTemperatureC', 'steamTemperatureC'],
+    // A pressurizer starts boiling at its initial pressure, so an initial
+    // pressure set on its own is a state the plant can hold.
+    reconcile: ({ component, context }): void => {
+      const volume = parameterNumber(component, 'volumeM3')
+      const pressure = context.readNumber(componentVariablePath(component, 'pressureMPa'))
+      const levelFraction = clamp(context.readNumber(componentVariablePath(component, 'levelPercent')) / 100, 0, 1)
+      const saturation = saturatedWaterSteam(pressure)
+      context.write(componentVariablePath(component, 'waterInventoryKg'), saturation.liquidDensityKgPerM3 * volume * levelFraction)
+      context.write(componentVariablePath(component, 'steamMassKg'), saturation.vapourDensityKgPerM3 * volume * (1 - levelFraction))
+      context.write(componentVariablePath(component, 'steamVolumeM3'), volume * (1 - levelFraction))
+      context.write(componentVariablePath(component, 'waterTemperatureC'), saturation.temperatureC)
+      context.write(componentVariablePath(component, 'steamTemperatureC'), saturation.temperatureC)
     },
   },
 ]

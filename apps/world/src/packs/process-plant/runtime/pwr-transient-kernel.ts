@@ -19,7 +19,8 @@ export interface PwrTransientKernel {
   readonly handles: {
     readonly primaryInventoryKg: NumberHandle | null
     readonly primaryPressureMPa: NumberHandle | null
-    readonly primaryPressureBiasMPa: NumberHandle | null
+    readonly loopVoidFraction: NumberHandle | null
+    readonly surgeFlowKgPerS: NumberHandle | null
     readonly primaryLeakFlowKgPerS: NumberHandle | null
     readonly safetyInjectionFlowKgPerS: NumberHandle | null
     readonly tubeLeakFlowKgPerS: NumberHandle | null
@@ -93,7 +94,8 @@ export interface PwrTransientDiagnostics {
     readonly inventoryKg: number | null
     readonly inventoryFraction: number | null
     readonly pressureMPa: number | null
-    readonly pressureBiasMPa: number | null
+    readonly loopVoidFraction: number | null
+    readonly surgeFlowKgPerS: number | null
     readonly leakFlowKgPerS: number | null
     readonly safetyInjectionFlowKgPerS: number | null
     readonly tubeLeakFlowKgPerS: number | null
@@ -321,7 +323,8 @@ export const compilePwrTransientKernel = (
     handles: {
       primaryInventoryKg: handleFor(table, reactorVessel, 'primaryCoolantInventoryKg'),
       primaryPressureMPa: handleFor(table, pressurizer, 'pressureMPa'),
-      primaryPressureBiasMPa: handleFor(table, reactorVessel, 'primaryPressureBiasMPa'),
+      loopVoidFraction: handleFor(table, reactorVessel, 'loopVoidFraction'),
+      surgeFlowKgPerS: handleFor(table, reactorVessel, 'surgeFlowKgPerS'),
       primaryLeakFlowKgPerS: handleFor(table, reactorVessel, 'primaryLeakFlowKgPerS'),
       safetyInjectionFlowKgPerS: handleFor(table, reactorVessel, 'safetyInjectionFlowKgPerS'),
       tubeLeakFlowKgPerS: handleFor(table, reactorVessel, 'tubeLeakFlowKgPerS'),
@@ -405,7 +408,8 @@ export const evaluatePwrTransientKernel = (
       inventoryKg: primaryInventory,
       inventoryFraction: primaryInventory === null || kernel.nominalPrimaryInventoryKg === null ? null : primaryInventory / kernel.nominalPrimaryInventoryKg,
       pressureMPa: readOptionalNumber(table, handles.primaryPressureMPa),
-      pressureBiasMPa: readOptionalNumber(table, handles.primaryPressureBiasMPa),
+      loopVoidFraction: readOptionalNumber(table, handles.loopVoidFraction),
+      surgeFlowKgPerS: readOptionalNumber(table, handles.surgeFlowKgPerS),
       leakFlowKgPerS: readOptionalNumber(table, handles.primaryLeakFlowKgPerS),
       safetyInjectionFlowKgPerS: readOptionalNumber(table, handles.safetyInjectionFlowKgPerS),
       tubeLeakFlowKgPerS: readOptionalNumber(table, handles.tubeLeakFlowKgPerS),

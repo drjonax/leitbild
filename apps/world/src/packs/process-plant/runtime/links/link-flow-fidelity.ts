@@ -8,7 +8,8 @@ import { processPlantServices } from '../service-profiles.ts'
  * - `solved`: the flow follows from the equipment that drives it, sign included;
  * - `magnitudeOnly`: the size is solved but not the direction (a primary loop
  *   carries its pump's loop flow, which never reverses: an idle loop driven
- *   backwards by the others still reads forward);
+ *   backwards by the others still reads forward; the surge line carries the
+ *   size of a surge that runs either way);
  * - `unverified`: the number is a modelling placeholder, not this link's flow
  *   (a share of a hub's outflow, or a passive flow with nothing feeding it).
  */
@@ -29,6 +30,8 @@ const drivenSources: ReadonlyArray<(source: { readonly kind: string }, link: Com
 export const processLinkFlowFidelityFor = (graph: CompiledPlantGraph, link: CompiledProcessLink): ProcessLinkFlowFidelity => {
   if (link.kind !== 'fluidFlow') throw new Error(`link ${link.id} is not a fluid link and has no flow`)
   if (primaryLoopPumpForLink(graph, link) !== null) return 'magnitudeOnly'
+  // The surge line carries the size of the loops' surge, which runs either way.
+  if (graph.components[link.toComponentIndex]?.kind === 'pressurizer' && link.service === 'primaryCoolant') return 'magnitudeOnly'
   const source = graph.components[link.fromComponentIndex]
   if (source === undefined) throw new Error(`link ${link.id} references a missing source component`)
   if (drivenSources.some(driven => driven(source, link))) return 'solved'

@@ -229,12 +229,13 @@ describe('operator names', () => {
 describe('link flow', () => {
   test('only flows the runtime actually solves count as flow, and loop legs carry size without direction', () => {
     const fidelity = new Map(graph.links.filter(link => link.kind === 'fluidFlow').map(link => [String(link.id), processLinkFlowFidelityFor(graph, link)]))
-    // The surge line gets a share of the core's outflow. The letdown line is fed from the vessel.
-    expect([...fidelity].filter(([, value]) => value === 'unverified').map(([id]) => id).sort()).toEqual(['pressurizer-surge-line'])
+    // Every fluid flow is solved. The letdown line is fed from the vessel; the
+    // surge line carries the size of a surge that runs either way.
+    expect([...fidelity].filter(([, value]) => value === 'unverified').map(([id]) => id)).toEqual([])
     expect(fidelity.get('rcs-letdown')).toBe('solved')
     expect(fidelity.get('letdown-to-vct')).toBe('solved')
     expect([...fidelity].filter(([, value]) => value === 'magnitudeOnly').map(([id]) => id).sort()).toEqual(
-      ['a', 'b', 'c', 'd'].flatMap(loop => [`rcp-${loop}-to-core`, `rcs-cold-leg-${loop}`, `rcs-hot-leg-${loop}`]).sort(),
+      [...['a', 'b', 'c', 'd'].flatMap(loop => [`rcp-${loop}-to-core`, `rcs-cold-leg-${loop}`, `rcs-hot-leg-${loop}`]), 'pressurizer-surge-line'].sort(),
     )
     expect(fidelity.get('feedwater-control-valve-b-to-sg-b')).toBe('solved')
   })
