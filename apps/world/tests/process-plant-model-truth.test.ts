@@ -24,9 +24,9 @@ import { formatQuantity } from '../src/packs/process-plant/displays/display-text
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:model-truth', loopCount: 4 }))
 const graph = plant.graph
 
-const started = () => {
-  const runtime = createProcessPlantRuntime({ system: plant })
-  const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
+const started = (system = plant) => {
+  const runtime = createProcessPlantRuntime({ system })
+  const protection = createProcessPlantProtectionRunner({ system, protection: system.automation })
   const run = (durationMs: number, options: { readonly withIc: boolean } = { withIc: true }) => {
     for (let elapsed = 0; elapsed < durationMs; elapsed += 1_000) {
       runtime.tick(1_000)
@@ -34,11 +34,11 @@ const started = () => {
     }
   }
   const act = (actionId: string, parameters: Readonly<Record<string, unknown>> = {}) => {
-    for (const command of commandsForProcessPlantAction({ actionId, parameters, graph })) {
+    for (const command of commandsForProcessPlantAction({ actionId, parameters, graph: system.graph })) {
       runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
     }
   }
-  const tag = (tagId: string) => runtime.readVariable(resolveProcessPlantSignalBinding(graph, { tagId: tagId as never }).path)
+  const tag = (tagId: string) => runtime.readVariable(resolveProcessPlantSignalBinding(system.graph, { tagId: tagId as never }).path)
   const read = (path: string) => runtime.readVariable(path as VariablePath)
   const activeIds = () => {
     const snapshot = protection.snapshot()
@@ -176,6 +176,40 @@ describe('breakers', () => {
     expect(tag('TRIP-BKR-B-POS')).toBe(false)
     // The turbine follows the reactor trip, as the breakers' position reads it.
     expect(Number(runtime.readVariable('turbineStopValve.positionFraction' as VariablePath))).toBe(0)
+  })
+})
+
+describe('emergency diesel ratings', () => {
+  const trainASafetyPumps = ['AFW-PUMP-A', 'SI-PUMP-A', 'CHG-PUMP-A', 'RHR-PUMP-A', 'CSPRAY-A']
+  const onDieselWithTrainALoads = (plantRun: ReturnType<typeof started>, system: typeof plant) => {
+    plantRun.run(2_000)
+    plantRun.act('loss-offsite-power')
+    plantRun.run(30_000)
+    for (const tagId of trainASafetyPumps) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: resolveProcessPlantSignalBinding(system.graph, { tagId: tagId as never }).path, value: true })
+    }
+    plantRun.run(10_000)
+  }
+
+  test('a diesel is rated as a 4-loop PWR EDG and carries every safety load of its train', () => {
+    for (const id of ['dieselGeneratorA', 'dieselGeneratorB']) {
+      expect(graph.components[graph.componentIndexById.get(id as never)!]!.parameters).toMatchObject({ nominalPowerMw: 7 })
+    }
+    const plantRun = started()
+    onDieselWithTrainALoads(plantRun, plant)
+    for (const tagId of trainASafetyPumps) expect(plantRun.tag(`${tagId}-RUNNING`), tagId).toBe(true)
+    expect(Number(plantRun.read('safetyBusA.servedLoadMw'))).toBeGreaterThan(1)
+    expect(Number(plantRun.tag('BUS-A-MARGIN'))).toBeGreaterThan(3)
+    expect(plantRun.activeIds().filter(id => id.includes('overload'))).toEqual([])
+  })
+
+  test('a diesel loaded to its rating annunciates overload', () => {
+    const small = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:small-diesel', parameterOverrides: { dieselGeneratorA: { nominalPowerMw: 1.5 } } }))
+    const plantRun = started(small)
+    onDieselWithTrainALoads(plantRun, small)
+    expect(Number(plantRun.tag('BUS-A-MARGIN'))).toBe(0)
+    expect(plantRun.activeIds()).toContain('alarm:diesel-generator-a-overload:overload')
+    expect(plantRun.activeIds()).not.toContain('alarm:diesel-generator-b-overload:overload')
   })
 })
 

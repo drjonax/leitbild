@@ -2912,7 +2912,7 @@
       "kind": "electricalTransformer",
       "label": "Unit Auxiliary Transformer",
       "parameters": {
-        "nominalPowerMw": 950,
+        "nominalPowerMw": 80,
         "efficiencyFraction": 0.99
       },
       "variables": [],
@@ -2927,7 +2927,7 @@
       "kind": "electricalBus",
       "label": "Safety Bus A",
       "parameters": {
-        "nominalPowerMw": 420,
+        "nominalPowerMw": 15,
         "degradedVoltageFraction": 0.9
       },
       "variables": [
@@ -2971,7 +2971,7 @@
       "kind": "electricalBus",
       "label": "Safety Bus B",
       "parameters": {
-        "nominalPowerMw": 420,
+        "nominalPowerMw": 15,
         "degradedVoltageFraction": 0.9
       },
       "variables": [
@@ -3015,7 +3015,7 @@
       "kind": "electricalBreaker",
       "label": "Offsite Breaker A",
       "parameters": {
-        "nominalPowerMw": 420,
+        "nominalPowerMw": 15,
         "initialClosed": true
       },
       "variables": [
@@ -3043,7 +3043,7 @@
       "kind": "electricalBreaker",
       "label": "Offsite Breaker B",
       "parameters": {
-        "nominalPowerMw": 420,
+        "nominalPowerMw": 15,
         "initialClosed": true
       },
       "variables": [
@@ -3071,7 +3071,7 @@
       "kind": "electricalBreaker",
       "label": "Unit Bus Supply Breaker A",
       "parameters": {
-        "nominalPowerMw": 40,
+        "nominalPowerMw": 60,
         "initialClosed": true
       },
       "variables": [
@@ -3099,7 +3099,7 @@
       "kind": "electricalBreaker",
       "label": "Unit Bus Supply Breaker B",
       "parameters": {
-        "nominalPowerMw": 40,
+        "nominalPowerMw": 60,
         "initialClosed": true
       },
       "variables": [
@@ -3127,7 +3127,7 @@
       "kind": "electricalBus",
       "label": "Unit Bus A",
       "parameters": {
-        "nominalPowerMw": 40,
+        "nominalPowerMw": 60,
         "degradedVoltageFraction": 0.9
       },
       "variables": [
@@ -3155,7 +3155,7 @@
       "kind": "electricalBus",
       "label": "Unit Bus B",
       "parameters": {
-        "nominalPowerMw": 40,
+        "nominalPowerMw": 60,
         "degradedVoltageFraction": 0.9
       },
       "variables": [
@@ -3183,7 +3183,7 @@
       "kind": "dieselGenerator",
       "label": "Emergency Diesel Generator A",
       "parameters": {
-        "nominalPowerMw": 45,
+        "nominalPowerMw": 7,
         "startDelayS": 10,
         "initialAvailable": true,
         "initialRunning": false
@@ -3217,7 +3217,7 @@
       "kind": "dieselGenerator",
       "label": "Emergency Diesel Generator B",
       "parameters": {
-        "nominalPowerMw": 45,
+        "nominalPowerMw": 7,
         "startDelayS": 10,
         "initialAvailable": true,
         "initialRunning": false
@@ -3251,7 +3251,7 @@
       "kind": "electricalBreaker",
       "label": "Diesel Breaker A",
       "parameters": {
-        "nominalPowerMw": 45,
+        "nominalPowerMw": 7,
         "initialClosed": false
       },
       "variables": [
@@ -3279,7 +3279,7 @@
       "kind": "electricalBreaker",
       "label": "Diesel Breaker B",
       "parameters": {
-        "nominalPowerMw": 45,
+        "nominalPowerMw": 7,
         "initialClosed": false
       },
       "variables": [

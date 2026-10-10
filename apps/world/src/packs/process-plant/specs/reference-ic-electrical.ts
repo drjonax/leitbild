@@ -15,7 +15,7 @@ const electricalAlarm = annunciator({
 // when its diesel stops or fails, as the generator protection would trip it,
 // so it stands open for the next dead-bus start; with offsite power restored
 // the operator stops the diesel and the bus stays on offsite power.
-const dieselOutputBreakerRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRule> => {
+const dieselGeneratorRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRule> => {
   const lower = train.toLowerCase()
   return [
     rule({
@@ -44,6 +44,31 @@ const dieselOutputBreakerRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantI
       resetWhenClear: true,
       effects: [
         write(`open-diesel-breaker-${lower}`, { tagId: `BRK-EDG-${train}-CLOSED` }, false),
+      ],
+    }),
+    // On its diesel alone, the bus can carry no more than the diesel's rating:
+    // a bus margin of 0 MW means the diesel is loaded to its limit.
+    rule({
+      id: `diesel-generator-${lower}-overload`,
+      label: `Diesel generator ${train} overload`,
+      ruleClass: 'alarm',
+      condition: all([
+        comparison({ tagId: `BRK-EDG-${train}-POS` }, '==', true),
+        comparison({ tagId: `BRK-OFFSITE-${train}-POS` }, '==', false),
+        comparison({ tagId: `BUS-${train}-MARGIN` }, '<=', 0),
+      ]),
+      clearDelayMs: 2_000,
+      delayMs: 2_000,
+      latch: false,
+      resetWhenClear: true,
+      effects: [
+        alarm({
+          id: 'overload',
+          title: `EDG ${train} overload`,
+          message: `Emergency diesel generator ${train} carries safety bus ${train} alone and is loaded to its rating: the bus has no power margin left.`,
+          severity: 'warning',
+          annunciator: annunciator({ ...electricalAlarm, equipmentId: `dieselGenerator${train}`, role: 'symptom' }),
+        }),
       ],
     }),
   ]
@@ -83,7 +108,7 @@ export const electricalReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> 
       write('start-diesel-generator-a', { tagId: 'EDG-A-START' }, true),
     ],
   }),
-  ...dieselOutputBreakerRules('A'),
+  ...dieselGeneratorRules('A'),
   rule({
     id: 'safety-bus-a-degraded-voltage',
     label: 'Safety bus A degraded voltage',
@@ -137,7 +162,7 @@ export const electricalReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> 
       write('start-diesel-generator-b', { tagId: 'EDG-B-START' }, true),
     ],
   }),
-  ...dieselOutputBreakerRules('B'),
+  ...dieselGeneratorRules('B'),
   rule({
     id: 'safety-bus-b-degraded-voltage',
     label: 'Safety bus B degraded voltage',

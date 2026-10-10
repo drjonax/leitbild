@@ -38,9 +38,11 @@ describe('process plant model composition', () => {
     // made to report equipment state truthfully; PWR Runs checkpointed before
     // then must be restarted. Changed again on 2026-10-10, approved by the
     // owner, when the emergency diesels' output breakers were made to stand
-    // open in standby, and again when the non-safety loads were moved to
-    // unit buses; PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('7af5b05ad618035ec556c0f3e11d3918b38c99a1ba46a13b4c6945897bf28873')
+    // open in standby, again when the non-safety loads were moved to unit
+    // buses, and again when the diesels, buses and unit auxiliary transformer
+    // were given realistic ratings; PWR Runs checkpointed before then must be
+    // restarted.
+    expect(system.modelDigest).toBe('b0bf5802474d78c28e3291bdb86d049ea9aeb60848c9db643d0b6d7cd33f28c9')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
