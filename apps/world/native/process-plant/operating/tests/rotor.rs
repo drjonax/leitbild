@@ -87,8 +87,8 @@ fn compiled_rotor_values_satisfy_the_wiki_identities() {
     );
     printed(FLUID0, 4.188754e6, 0.5); // P:9
     printed(J, 1714.614588, 0.5e-6); // P:61
-    // The derived P_drag_0 reproduces the selected fraction exactly, so the
-    // packet passes both validate() identities with zero defect.
+    // The derived P_drag_0 reproduces the selected fraction exactly; the
+    // compiler owns these identities and validate() checks only domains.
     let p = parameters();
     assert_eq!(p.nominal_drag_power_w(), drag0);
     assert_eq!(p.nominal_power_w() * DECAY_S / (OMEGA0 * OMEGA0), J);
@@ -148,67 +148,6 @@ fn packet_names_are_exact_and_invalid_coefficients_are_refused() {
                 .is_err()
         );
         assert!(bad.lock(Shaft::Free, OMEGA0).is_err());
-    }
-    // A stale or inconsistent packet is refused at the stated relative
-    // tolerance (P:20-21); a perturbation well inside it is accepted.
-    let rtol = rotor::IDENTITY_RELATIVE_TOLERANCE;
-    assert_eq!(rtol, 1e-12);
-    for (bad, error) in [
-        (
-            Parameters {
-                drag_nm_per_rad_s: DRAG * (1. + 10. * rtol),
-                ..p
-            },
-            Error::InconsistentDrag,
-        ),
-        (
-            Parameters {
-                nominal_fluid_power_w: FLUID0 * (1. - 10. * rtol),
-                ..p
-            },
-            Error::InconsistentDrag,
-        ),
-        (
-            Parameters {
-                drag_nm_per_rad_s: 0.,
-                ..p
-            },
-            Error::InconsistentDrag,
-        ),
-        (
-            Parameters {
-                inertia_kg_m2: J * (1. + 10. * rtol),
-                ..p
-            },
-            Error::InconsistentInertia,
-        ),
-        (
-            Parameters {
-                inertia_kg_m2: 2. * J,
-                ..p
-            },
-            Error::InconsistentInertia,
-        ),
-    ] {
-        assert_eq!(bad.validate(), Err(error));
-        assert_eq!(
-            bad.evaluate(Support::Unsupported, Shaft::Free, input(0., 0., 0.))
-                .unwrap_err(),
-            error
-        );
-        assert_eq!(bad.lock(Shaft::Free, OMEGA0), Err(error));
-    }
-    for near in [
-        Parameters {
-            inertia_kg_m2: J * (1. + 0.1 * rtol),
-            ..p
-        },
-        Parameters {
-            drag_nm_per_rad_s: DRAG * (1. - 0.1 * rtol),
-            ..p
-        },
-    ] {
-        assert_eq!(near.validate(), Ok(()));
     }
     let lossless = Parameters {
         efficiency: 1.,

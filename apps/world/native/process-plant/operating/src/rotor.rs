@@ -24,20 +24,6 @@
 
 use crate::thermal::Scalar;
 
-// Wiki selections used ONLY to refuse a stale or inconsistent packet, never as
-// evaluation coefficients: nominal drag is 1% of nominal fluid power (P:17,
-// P:20) and J follows from the 10 s initial speed-decay scale (P:17, P:21).
-// A change to either selection must change these checks with the packet.
-const SELECTED_DRAG_FRACTION: f64 = 0.01;
-const SELECTED_DECAY_SCALE_S: f64 = 10.;
-/// Relative tolerance of those identities, the wiki's `1e-12` identity scale
-/// (P:59). Compiled values reproduce both identities exactly.
-pub const IDENTITY_RELATIVE_TOLERANCE: f64 = 1e-12;
-
-fn identity(actual: f64, selected: f64) -> bool {
-    (actual - selected).abs() <= IDENTITY_RELATIVE_TOLERANCE * selected.abs()
-}
-
 /// Per-pump drive/rotor coefficients under the fixed packet names of the
 /// compiled `hydraulics.pump` object. Its pump-curve fields belong to
 /// [`crate::hydraulics::Pump`]; the integrator constructs this sub-selection.
@@ -220,12 +206,6 @@ pub struct ReleasePreparation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     InvalidParameter,
-    /// Stale/inconsistent packet: derived `P_drag_0=drag*omega0^2` is not the
-    /// selected fraction of `P_fluid_0` (P:20, P:23).
-    InconsistentDrag,
-    /// Stale/inconsistent packet: `J` is not `(P_fluid_0+P_drag_0)*10/omega0^2`
-    /// (P:21).
-    InconsistentInertia,
     InvalidInput,
     /// Engineering-test speed not strictly between zero and omega0 (P:30).
     InvalidSpeedRequest,
@@ -283,10 +263,10 @@ fn positive_part(x: Scalar, linearizable: &mut bool) -> Scalar {
 }
 
 impl Parameters {
-    /// Domain checks, then the wiki identities `P_drag_0=0.01*P_fluid_0` and
-    /// `J=(P_fluid_0+P_drag_0)*10/omega0^2` (P:20-21), each to
-    /// [`IDENTITY_RELATIVE_TOLERANCE`] relative to the selected value. A stale
-    /// or inconsistent packet is refused, never used.
+    /// Domain checks of the compiled coefficients. The input compiler owns the
+    /// wiki derivations `P_drag_0=0.01*P_fluid_0` and
+    /// `J=(P_fluid_0+P_drag_0)*10/omega0^2` (P:20-21) and tests them; no plant
+    /// selection constant is repeated here.
     pub fn validate(&self) -> Result<(), Error> {
         if ![
             self.inertia_kg_m2,
@@ -309,19 +289,6 @@ impl Parameters {
             || self.efficiency > 1.
         {
             return Err(Error::InvalidParameter);
-        }
-        if !identity(
-            self.nominal_drag_power_w(),
-            SELECTED_DRAG_FRACTION * self.nominal_fluid_power_w,
-        ) {
-            return Err(Error::InconsistentDrag);
-        }
-        let omega0 = self.reference_omega_rad_s;
-        if !identity(
-            self.inertia_kg_m2,
-            self.nominal_power_w() * SELECTED_DECAY_SCALE_S / (omega0 * omega0),
-        ) {
-            return Err(Error::InconsistentInertia);
         }
         Ok(())
     }
