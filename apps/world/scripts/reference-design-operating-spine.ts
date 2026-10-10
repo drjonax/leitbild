@@ -186,11 +186,11 @@ export function compileOperatingSurgeHydraulics(pzr: Pick<Awaited<ReturnType<typ
 type HousingGeometry = Pick<ReturnType<typeof parseControlAbsorber>, 'clusters' | 'rodletsPerCluster' | 'bodyDiameter_m' | 'bodyLength_m'
   | 'insertedBodyBottom_m' | 'spiderBottom_m' | 'spiderHeight_m' | 'spiderMass_kg' | 'steelDensity_kg_m3' | 'stemDiameter_m'
   | 'stemLength_m' | 'headBottom_m' | 'housingID_m' | 'housingTop_m' | 'housingCapHeight_m' | 'neckID_m' | 'neckTop_m'
-  | 'collarID_m' | 'collarOD_m' | 'collarBottoms_m' | 'collarHeight_m' | 'normalTravel_m'>
+  | 'collarID_m' | 'collarOD_m' | 'collarBottoms_m' | 'collarHeight_m' | 'normalTravel_m' | 'headGrossArea_m2'>
 
 /** Actual fixed-pose free sections, including the collar's OUTER bypass. The
- * spider uses its already selected distributed-volume reduction. This does
- * not manufacture a housing loss coefficient or a moving-rod flow law. */
+ * spider uses its already selected distributed-volume reduction; its frame
+ * perimeter is not authored, so that piece has no wall perimeter. */
 export function operatingHousingMechanicalGeometry(c: HousingGeometry, travel: number) {
   if (!Number.isFinite(travel) || travel < 0 || travel > c.normalTravel_m) throw Error('Housing mechanical pose outside normal travel')
   const body0 = c.insertedBodyBottom_m + travel, body1 = body0 + c.bodyLength_m,
@@ -210,14 +210,83 @@ export function operatingHousingMechanicalGeometry(c: HousingGeometry, travel: n
       stem = z >= stem0 && z < stem1 ? c.clusters * Math.PI * c.stemDiameter_m ** 2 / 4 : 0,
       collar = c.collarBottoms_m.some(start => z >= start && z < start + c.collarHeight_m)
         ? c.clusters * Math.PI * (c.collarOD_m ** 2 - c.collarID_m ** 2) / 4 : 0,
-      area = gross - body - spider - stem - collar, length = hi - lo
+      area = gross - body - spider - stem - collar, length = hi - lo,
+      // Bore, body, stem and both collar faces are authored round surfaces.
+      perimeter = c.clusters * Math.PI * ((main ? c.housingID_m : c.neckID_m) + (body ? c.rodletsPerCluster * c.bodyDiameter_m : 0)
+        + (stem ? c.stemDiameter_m : 0) + (collar ? c.collarOD_m + c.collarID_m : 0))
     if (![area, length].every(v => Number.isFinite(v) && v > 0)) throw Error('Nonpositive actual housing aperture')
     return { owner: main ? 'HOUSING.MAIN' : 'HOUSING.NECK', start_m: lo, end_m: hi, length_m: length,
       area_m2: area, volume_m3: area * length, inverse_area_length_per_m: length / area,
-      collar_outer_bypass: collar > 0 }
+      collar_outer_bypass: collar > 0, spider_frame: spider > 0, wetted_perimeter_m: spider > 0 ? null : perimeter }
   })
-  return { pieces, mainPlane_m: mainPlane, neckPlane_m: neckPlane,
-    resistanceScope: 'Actual free geometry only. Housing/spider resistance is not authored; guide-mouth endLossEach is not a housing K.' }
+  return { pieces, mainPlane_m: mainPlane, neckPlane_m: neckPlane }
+}
+
+/** Sharp-edged fitting laws of Idelchik, Handbook of Hydraulic Resistance,
+ * 3rd ed. (1994): sudden contraction (ch. 4) and thin sharp-edged perforated
+ * plate (ch. 8), both referred to the narrow/opening velocity; Borda-Carnot
+ * sudden expansion from the momentum balance. n and f are free-area ratios. */
+export const fittingLoss = {
+  contraction: (n: number) => .5 * (1 - n) ** .75,
+  expansion: (n: number) => (1 - n) ** 2,
+  thinPlate: (f: number) => (.707 * (1 - f) ** .375 + 1 - f) ** 2,
+}
+const ratio = (n: number) => { if (!(Number.isFinite(n) && n > 0 && n < 1)) throw Error('Fitting area ratio outside (0,1)'); return n }
+
+export type FaceLossTerm = { id: string, loss: number, law: string }
+/** A passive loss carried on one mechanical face. Its throughput is that face's
+ * own current (coefficient 1) and its force is applied to that face only, the
+ * same adjoint pairing as the channel sections' weighted ports. It owns no
+ * water, inertia or head: those stay with the face's supports and segments. */
+export type FaceLossSection = { id: string, kind: 'face_loss', face: string, region: number,
+  parameters: Section['parameters'], terms: FaceLossTerm[], conversionRecipients: Section['conversionRecipients'] }
+const faceLossParameters = (piece: { length_m: number, area_m2: number, hydraulic_diameter_m: number, elevation_change_m: number },
+  wall: 'none' | 'smooth_pipe' | 'circular_churchill', loss: number, gravity: number): Section['parameters'] =>
+  ({ ...piece, gravity_m_s2: gravity, wall, form_loss: loss, grid_count: 0, grid_factor: 0, blockage_fraction: 0, pump: null })
+const recipients = (region: number): Section['conversionRecipients'] =>
+  (['wall', 'grid', 'form'] as const).map(term => ({ term, region, fraction: 1 }))
+
+/** Housing paths UPPER->HOUSING.MAIN and HOUSING.MAIN->HOUSING.NECK, piece by
+ * piece over the same free areas as their inertia supports. Every number comes
+ * from the reference-control-absorber record at the compiled pose. Entry/exit
+ * fittings use the mean of their two directional coefficients because the
+ * native face law is reciprocal; pure contraction/expansion pairs are listed. */
+export function compileOperatingHousingLosses(c: HousingGeometry, travel: number, gravity: number, region: (id: string) => number) {
+  const h = operatingHousingMechanicalGeometry(c, travel), bore = c.clusters * Math.PI * c.housingID_m ** 2 / 4,
+    ring = c.clusters * Math.PI * (c.collarOD_m ** 2 - c.collarID_m ** 2) / 4, L = fittingLoss, out: FaceLossSection[] = []
+  for (const [face, lo, hi] of [['UPPER->HOUSING.MAIN', c.headBottom_m, h.mainPlane_m],
+    ['HOUSING.MAIN->HOUSING.NECK', h.mainPlane_m, h.neckPlane_m]] as const) {
+    for (const p of h.pieces.filter(p => p.start_m >= lo && p.end_m <= hi)) {
+      // Coincident body-top/spider-bottom planes leave a sub-nanometre cut.
+      if (p.length_m < 1e-9) continue
+      const terms: FaceLossTerm[] = []
+      if (p.start_m === c.headBottom_m) {
+        const n = ratio(p.area_m2 / c.headGrossArea_m2)
+        terms.push({ id: 'HEAD.MOUTH', loss: (L.contraction(n) + L.expansion(n)) / 2,
+          law: 'mean of sharp contraction from UPPER (inflow) and Borda-Carnot jet into UPPER (outflow), n=A_mouths/headGrossArea' })
+      }
+      if (p.spider_frame) terms.push({ id: 'SPIDER.FRAME', loss: L.thinPlate(ratio(p.area_m2 / bore)),
+        law: 'thin sharp-edged plate at the authored frame porosity A_free/A_bore; frame shape not authored' })
+      if (p.start_m === c.housingTop_m) {
+        const below = h.pieces.find(q => q.end_m === c.housingTop_m)!, n = ratio(p.area_m2 / below.area_m2)
+        terms.push({ id: 'CAP.BORE', loss: (L.contraction(n) + L.expansion(n)) / 2,
+          law: 'mean of sharp contraction into the cap bore (inflow) and Borda-Carnot expansion into the housing (outflow)' })
+      }
+      if (p.collar_outer_bypass) {
+        const n = ratio(p.area_m2 / (p.area_m2 + ring))
+        terms.push({ id: 'COLLAR', loss: L.contraction(n) + L.expansion(n),
+          law: 'sharp contraction plus Borda-Carnot re-expansion through one 0.1 m collar, same in both directions' })
+      }
+      const wall = p.wetted_perimeter_m === null ? 'none' as const : 'smooth_pipe' as const
+      if (wall === 'none' && !terms.length) throw Error('Housing piece without an owned loss')
+      const r = region(p.owner)
+      out.push({ id: `${face}@${p.start_m.toFixed(6)}`, kind: 'face_loss', face, region: r, terms, conversionRecipients: recipients(r),
+        parameters: faceLossParameters({ length_m: p.length_m, area_m2: p.area_m2, elevation_change_m: p.length_m,
+          hydraulic_diameter_m: p.wetted_perimeter_m === null ? 0 : 4 * p.area_m2 / p.wetted_perimeter_m },
+          wall, sum(terms.map(t => t.loss)), gravity) })
+    }
+  }
+  return out
 }
 
 type MomentumSupport = { region: number, path_length_m: number, inverse_area_length_per_m: number, volume_m3: number }
@@ -233,7 +302,7 @@ type PzrGeometry = Pick<ReturnType<typeof compileOperatingPzr>, 'regions' | 'fac
 export function compileOperatingMechanics(primary: { regions: readonly { id: string, volume_m3: number, elevation_m: number }[],
   edges: readonly Edge[], junction: number, surgeStock: { id: string, volume_m3: number, elevation_m: number } },
   hydraulics: { sections: readonly Section[], gravityIncidence: readonly { edge: number, region: number, delta_z_m: number }[] },
-  pzr: PzrGeometry, control: HousingGeometry, travel: number) {
+  pzr: PzrGeometry, control: HousingGeometry, travel: number, faceLosses: readonly FaceLossSection[]) {
   if (primary.regions.length !== 27 || primary.edges.length !== 33) throw Error('Mechanical map requires actual carved27/33 primary')
   const surge = 27, pzrOffset = 28, regions = [...primary.regions, primary.surgeStock, ...pzr.regions]
     .map(r => ({ id: r.id, volume_m3: r.volume_m3, elevation_m: r.elevation_m })),
@@ -323,14 +392,47 @@ export function compileOperatingMechanics(primary: { regions: readonly { id: str
       || f.pressure_segments.some(s => !Number.isFinite(s.path_length_m) || s.path_length_m < 0 || !Number.isFinite(s.elevation_change_m))
       || !near(sum(f.pressure_segments.map(s => s.elevation_change_m)), regions[f.to]!.elevation_m - regions[f.from]!.elevation_m)))
     throw Error('Incomplete physical local-pressure path map')
-  return { regions, faces, force_projection,
-    section_force_projection: hydraulics.sections.flatMap((s, section) => s.force.map(t => ({ face: t.edge, section, coefficient: t.weight }))),
+  // Face losses append after the channel sections, each on its own face only.
+  // PZR-internal faces own their field drag/interphase laws, never a section.
+  const firstPzrFace = primary.edges.length + 2, lossFaces = faceLosses.map(s => {
+    const face = faces.findIndex(f => f.id === s.face)
+    if (face < 0) throw Error('Unknown face for passive loss ' + s.id)
+    if (face >= firstPzrFace) throw Error('A PZR-internal face cannot carry a section loss')
+    if (!faces[face]!.supports.some(t => t.region === s.region)) throw Error('Passive loss region does not support its face ' + s.id)
+    return face
+  })
+  const section_force_projection = [...hydraulics.sections.flatMap((s, section) => s.force.map(t => ({ face: t.edge, section, coefficient: t.weight }))),
+    ...lossFaces.map((face, k) => ({ face, section: hydraulics.sections.length + k, coefficient: 1 }))]
+  const loaded = new Set(section_force_projection.map(t => t.face)),
+    unloaded = faces.flatMap((f, i) => i < firstPzrFace && !loaded.has(i) ? [f.id] : [])
+  return { regions, faces, force_projection, section_force_projection,
     housing, pressureProfile: 'Current mixture hydrostatic head on each segment plus length-linear dynamic pressure remainder; sharp pure-phase rest shares one reconstructed face pressure.',
     radialProfile: 'Exact annular inverse-area integral between selected positive centroids and lane boundary; uniform existing inner-lane rod porosity reduction.',
     momentumScope: 'Generalized hydraulic impulse; parallel half-paths once per component. HOT lateral y profile overlaps main x water, not a second x inertia or a second junction momentum bank.',
     omittedMomentum: 'Mixed LOWER/UPPER/COLD reservoirs have no invented pipe inertia; closed-end beyond-centroid motion is unresolved at this coarse pressure-cell resolution.',
-    resistanceScope: housing.resistanceScope,
+    lossScope: { liquidFacesWithoutSectionLoss: unloaded, pzrFieldFaces: faces.slice(firstPzrFace).map(f => f.id),
+      faceLossFaces: [...new Set(lossFaces)].map(i => faces[i]!.id) },
     scope: 'Physical geometry and force/velocity projection only. No advancement, phase-event, operational-fidelity or performance admission.' }
+}
+
+/** Which faces carry which passive losses, and why the rest do not. Lists are
+ * derived from the compiled projections; reasons name their wiki owners. */
+export function operatingPassiveLossScope(loss: { liquidFacesWithoutSectionLoss: readonly string[], pzrFieldFaces: readonly string[],
+  faceLossFaces: readonly string[] }, faceLosses: readonly FaceLossSection[]) {
+  return {
+    channelSections: 'Primary faces 0-30 keep the 21 channel sections, their weights and owned budgets unchanged (primary-hydraulic-basis.md).',
+    faceLossSections: loss.faceLossFaces.map(face => ({ face,
+      sections: faceLosses.filter(s => s.face === face).map(s => ({ id: s.id, wall: s.parameters.wall,
+        terms: s.terms.map(t => ({ id: t.id, loss: t.loss })) })) })),
+    liquidFacesWithoutSectionLoss: [...loss.liquidFacesWithoutSectionLoss],
+    pzrFieldFaces: { faces: [...loss.pzrFieldFaces], reason: 'Drag and interphase laws belong to the PZR field; section projections are rejected there.' },
+    gasPaths: 'Sections act on the liquid carrier only. Primary/SURGE gas phase paths have no passive drag in this package.',
+    notRepresented: [
+      'COLD->RETURN entrance and RETURN->DOWN turn/expansion: zero credited loss by owner selection (mechanical-energy-and-geometry.md); geometry estimate K=1.777 is an open design-basis question in primary-hydraulic-basis.md, not adopted.',
+      'UPPER->HOT.A/HOT.B nozzle entrance: inside the retained HOT path budget, so no separate coefficient.',
+      'HOT.A run-through momentum exchange with surge flow (about 2*rho*w_main*Q_surge/A_main): odd in surge flow, not expressible by a reciprocal face law.',
+    ],
+  }
 }
 
 /** Text owned by exactly one heading, excluding fenced code. */
@@ -438,12 +540,17 @@ export async function prepareOperatingSpine(wiki: string, if97: string) {
       donors: projection.donors, flows_kg_s: projection.flows_kg_s, pressure_rate_pa_s: projection.pressureRate_Pa_s } }
   const rebasedHydraulics = rebaseOperatingHydraulics(originalHydraulics, carved),
     hydraulics = { ...rebasedHydraulics, surge: { ...rebasedHydraulics.surge, ...compileOperatingSurgeHydraulics(pzr) } }
-  const mechanics = compileOperatingMechanics(carved, hydraulics, pzr, parseControlAbsorber(controlDoc), hot.fluid.geometry.referenceRodTravel_m)
+  const control = parseControlAbsorber(controlDoc), travel = hot.fluid.geometry.referenceRodTravel_m,
+    carvedRegion = (id: string) => { const i = carved.regions.findIndex(r => r.id === id); if (i < 0) throw Error('Unknown carved owner ' + id); return i },
+    faceLosses = compileOperatingHousingLosses(control, travel, hydraulics.gravity_m_s2, carvedRegion)
+  const mechanics = compileOperatingMechanics(carved, hydraulics, pzr, control, travel, faceLosses)
+  const packetHydraulics = { ...hydraulics, sections: [...hydraulics.sections, ...faceLosses],
+    passiveLossScope: operatingPassiveLossScope(mechanics.lossScope, faceLosses) }
   const hash = (s: string) => createHash('sha256').update(s).digest('hex')
   return { identity: 'LD01-HOT-SPINE-1', thermal, hot: { ...hot.nativeInput, fluid: nativeFluid },
     feedback_metadata: operatingSourceNativeMetadata(hot.compiledSource), feedback_reference: hot.compiledSource.reference.conditions,
     edges: carved.edges, source_water, water_flow_area_m2: carved.regions.map(r => r.mainFlowArea_m2),
-    water_boron_amount_kg_eq: carved.regions.map(r => r.absorberTracer_kgEq), hydraulics, pzr, mechanics,
+    water_boron_amount_kg_eq: carved.regions.map(r => r.absorberTracer_kgEq), hydraulics: packetHydraulics, pzr, mechanics,
     external_ports: {
       surge_stock: carved.surgeStock,
       primary_to_surge: { id: 'HOT.A.JUNCTION->SURGE', primary_water: carved.junction, surge_id: carved.surgeStock.id,

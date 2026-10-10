@@ -48,7 +48,7 @@ export function operatingPumpParameters(b:ReturnType<typeof parseOperatingHydrau
 export type FlowTerm={edge:number,weight:number}
 export type Section={id:string,region:number,flow:FlowTerm[],force:FlowTerm[],
   parameters:{length_m:number,area_m2:number,hydraulic_diameter_m:number,elevation_change_m:number,gravity_m_s2:number,
-    wall:'none'|'rod'|'smooth_pipe'|'annular_churchill',form_loss:number,grid_count:number,grid_factor:number,
+    wall:'none'|'rod'|'smooth_pipe'|'annular_churchill'|'circular_churchill',form_loss:number,grid_count:number,grid_factor:number,
     blockage_fraction:number,pump:null|{a:number,b:number,resistance:number,mixed_degradation_depth:number}},
   movingVolume_m3:number,retainedThermalVolume_m3:number,inletElevation_m:number,outletElevation_m:number,
   conversionRecipients:{term:'wall'|'grid'|'form'|'pump_internal'|'braking',region:number,fraction:number}[]}
