@@ -187,6 +187,12 @@ describe('process plant discovery', () => {
     }
   })
 
+  test('capability descriptions fit what the Module contract publishes, 2,048 characters', () => {
+    // The contract (packages/contracts, module capability descriptions) refuses a longer one at the HTTP boundary,
+    // which only the full Module API suite would show: here every growth of a description fails fast.
+    for (const capability of processPlantCapabilities) expect(capability.description.length, capability.id).toBeLessThanOrEqual(2048)
+  })
+
   test('makes unknown variable identities discoverable caller errors', () => {
     const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:missing-targets' }))
     const runtime = createProcessPlantRuntime({ system: plant })
