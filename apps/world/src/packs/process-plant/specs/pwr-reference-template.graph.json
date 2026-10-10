@@ -1336,8 +1336,8 @@
       "kind": "centrifugalPump",
       "label": "Motor-Driven Auxiliary Feedwater Pump",
       "parameters": {
-        "nominalFlowKgPerS": 170,
-        "nominalHeadPa": 1200000,
+        "nominalFlowKgPerS": 30,
+        "nominalHeadPa": 9000000,
         "nominalSpeedRpm": 4500,
         "initialRunning": false,
         "flowTimeConstantS": 4,
@@ -1371,8 +1371,8 @@
       "kind": "centrifugalPump",
       "label": "Motor-Driven Auxiliary Feedwater Pump B",
       "parameters": {
-        "nominalFlowKgPerS": 220,
-        "nominalHeadPa": 1400000,
+        "nominalFlowKgPerS": 30,
+        "nominalHeadPa": 9000000,
         "flowTimeConstantS": 6,
         "maxFlowRampKgPerS2": 45,
         "initialRunning": false
@@ -1405,8 +1405,8 @@
       "kind": "centrifugalPump",
       "label": "Turbine-Driven Auxiliary Feedwater Pump",
       "parameters": {
-        "nominalFlowKgPerS": 170,
-        "nominalHeadPa": 1200000,
+        "nominalFlowKgPerS": 60,
+        "nominalHeadPa": 9000000,
         "initialRunning": false,
         "flowTimeConstantS": 4,
         "maxFlowRampKgPerS2": 90

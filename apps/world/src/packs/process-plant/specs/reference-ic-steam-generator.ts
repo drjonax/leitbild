@@ -115,6 +115,7 @@ export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop):
           annunciator: sgAction,
         }),
         write('start-motor-afw', { path: 'auxFeedwaterPumpMotor.running' }, true),
+        write('start-motor-afw-b', { path: 'auxFeedwaterPumpMotorB.running' }, true),
         write('start-turbine-afw', { path: 'auxFeedwaterPumpTurbine.running' }, true),
         write(`open-afw-valve-${lower}`, { path: `auxFeedwaterValve${loop}.positionFraction` }, 1),
       ],
