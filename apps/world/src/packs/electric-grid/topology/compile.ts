@@ -15,6 +15,7 @@ import { prepareInterconnectors, type PreparedInterconnector } from './interconn
 import { createTopologyLedger, topologyLedgerReasons } from './ledger.ts'
 import { buildLevels, ledgerDanglingCorridor, type LevelLink } from './levels.ts'
 import { createTopologyOptions, type TopologyOptions } from './options.ts'
+import { splitSharedTowers } from './shared-towers.ts'
 import { reportStations } from './reports.ts'
 import type { TopologyBranch, TopologyBus, TopologyResult, TopologySummary } from './result.ts'
 import { groupStations } from './station-groups.ts'
@@ -149,7 +150,9 @@ export const compileGridTopology = (
   reportStations(groups.groups, levelsOfGroup, new Set([...levelsOfGroup.keys(), ...hvdc.touchedGroupIds]), options, ledger)
 
   const branchList = [...branches.values()].sort((left, right) => compareText(left.id, right.id))
-  const merged = mergeBuses(buses, branchList, hvdc.links, [...shortBranchTies(branchList, buses, options.zeroImpedanceMaxM), ...tiesFromBusbars], ledger)
+  const joined = mergeBuses(buses, branchList, hvdc.links, [...shortBranchTies(branchList, buses, options.zeroImpedanceMaxM), ...tiesFromBusbars], ledger)
+  const split = splitSharedTowers(joined.buses, joined.branches, bus => bus.vertexKey !== null && terminals.switchingPointOf(bus.vertexKey) !== null, ledger)
+  const merged = { ...joined, ...split }
   const entries = ledger.entries()
   const count = <T,>(items: ReadonlyArray<T>, predicate: (item: T) => boolean): number => items.filter(predicate).length
   const summary: TopologySummary = {

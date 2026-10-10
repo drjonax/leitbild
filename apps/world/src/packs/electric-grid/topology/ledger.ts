@@ -33,6 +33,7 @@ const reasonDispositions = {
   'short-branch-merged': 'inferred',
   'busbar-tie-merged': 'inferred',
   'switching-point-joined': 'inferred',
+  'shared-tower-split': 'inferred',
   'terminal-point-radius': 'inferred',
   'voltage-inherited': 'inferred',
   'voltage-normalised': 'inferred',

@@ -254,6 +254,37 @@ describe('electric-grid topology compiler', () => {
     expect(ledgerOf(topology, 'corridor-dangling').map(entry => entry.elementIds)).toEqual([['way/8301']])
   })
 
+  test('continues lines that share a tower into a station on their own circuits instead of joining them at a tee', () => {
+    // Xray – Zulu and Yoke – Zulu meet at tower node 982001 outside Zulu and enter it on two
+    // single-circuit ways (an in-out loop-in): the tower is no junction, the lines end at Zulu.
+    const props = { voltageKv: [132], maxVoltageKv: 132, voltageBelowThresholdV: [], frequencyHz: [], systems: ['ac50'], systemProvenance: 'inferred', lifecycle: 'operational', plantSource: null, outputMw: null, propertyProvenance: 'observed', confidence: 'high', members: [], ref: null, operator: null, geometrySource: 'osm-way' }
+    const station = (id: string, name: string, [lon, lat]: readonly [number, number], node: number) => ({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [[[lon - 0.002, lat - 0.001], [lon + 0.002, lat - 0.001], [lon + 0.002, lat + 0.001], [lon - 0.002, lat + 0.001], [lon - 0.002, lat - 0.001]]] },
+      properties: { ...props, source: 'osm:pbf-power:fixture', category: 'substation', externalId: id, osmNodeIds: [`node/${node}`, `node/${node + 1}`, `node/${node + 2}`, `node/${node + 3}`, `node/${node}`], name, circuits: null, cables: null, power: 'substation', tags: { power: 'substation', name, voltage: '132000' } },
+    })
+    const line = (id: string, coordinates: ReadonlyArray<readonly [number, number]>, nodes: ReadonlyArray<number>, name: string) => ({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates },
+      properties: { ...props, source: 'osm:pbf-power:fixture', category: 'line', externalId: id, osmNodeIds: nodes.map(node => `node/${node}`), name, circuits: 1, cables: 3, power: 'line', tags: { power: 'line', voltage: '132000', cables: '3', circuits: '1', name } },
+    })
+    const sidecar = {
+      type: 'FeatureCollection',
+      features: [
+        station('way/8401', 'Xray', [15.0, 67.0], 983100), station('way/8402', 'Yoke', [15.4, 67.0], 983200), station('way/8403', 'Zulu', [15.2, 67.2], 983300),
+        line('way/8501', [[15.0, 67.0], [15.2, 67.19]], [983101, 982001], 'Xray - Zulu'),
+        line('way/8502', [[15.4, 67.0], [15.2, 67.19]], [983201, 982001], 'Yoke - Zulu'),
+        line('way/8503', [[15.2, 67.19], [15.199, 67.2]], [982001, 983301], 'Xray - Zulu'),
+        line('way/8504', [[15.2, 67.19], [15.201, 67.2]], [982001, 983302], 'Yoke - Zulu'),
+      ],
+    }
+    const topology = compileNode(table, noCurations, sidecar)
+    expect(topology.buses.some(bus => bus.id === 'bus:junction-osm-node-982001@132')).toBe(false)
+    expect(branchBetween(topology, 'bus:osm-way-8401@132', 'bus:osm-way-8403@132')).toMatchObject({ osmWayIds: ['way/8501', 'way/8503', 'way/8504'], circuits: 1 })
+    expect(branchBetween(topology, 'bus:osm-way-8402@132', 'bus:osm-way-8403@132')).toMatchObject({ osmWayIds: ['way/8502', 'way/8503', 'way/8504'], circuits: 1 })
+    expect(ledgerOf(topology, 'shared-tower-split').map(entry => entry.elementIds[0])).toEqual(['bus:junction-osm-node-982001@132'])
+  })
+
   test('applies curations only where open data needs them and ledgers every record', () => {
     const stale = withFeature('way/402', { lifecycle: 'construction' })
     const rejected = compileNode(table, noCurations, stale)
