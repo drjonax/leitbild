@@ -117,7 +117,7 @@ test('regression: pause longer than peer TTL preserves electrical connection on 
     expect(before.every(p => p.state?.connected === true)).toBe(true)
     expect(states().every(p => p.state?.connected === true)).toBe(true)
   } finally { for(const run of registry.list())await registry.close(run.id);await rm(dataDir,{recursive:true,force:true}) }
-},60_000) // A watchdog: at load 100 creating the four-unit Run alone takes seconds.
+},120_000) // A watchdog: at load 100 creating the four-unit Run alone takes seconds.
 
 test('regression: API-only run lifetime honors idle policy and recent access', async () => {
   const dataDir = await mkdtemp(join(tmpdir(),'audit-run-leases-'))

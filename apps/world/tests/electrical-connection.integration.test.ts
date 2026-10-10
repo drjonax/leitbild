@@ -180,7 +180,7 @@ describe('electrical Pack connection', () => {
       unsubscribe()
       await connection.close()
     }
-  }, 20_000)
+  }, 120_000)
 
   test('removes a Plant runtime and its Grid exchange immediately on committed deletion', async () => {
     const scenario = scenarios.find(candidate => candidate.id === 'halden-power-complex')

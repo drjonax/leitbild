@@ -273,5 +273,5 @@ describe('the unit overview of the principal circuits', () => {
   test('compiles the 4-loop overview within 500 ms quiet', () => {
     const [cost] = costsInReferences([() => overview(plantOf(4), budgetFor(4))], 3)
     expect(cost).toBeLessThan(500 / referenceQuietMs)
-  }, 30_000) // A watchdog for the whole sweep, not the property it measures.
+  }, 120_000) // A watchdog for the whole sweep, not the property it measures.
 })

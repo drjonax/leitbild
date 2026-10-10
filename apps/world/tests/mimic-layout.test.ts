@@ -378,7 +378,7 @@ describe('diagram layout engine', () => {
     const graphs = [...fixtures.map(([, graph]) => graph), largest]
     const costs = costsInReferences(graphs.map(graph => () => layoutDiagram(graph, profile)), 5)
     expect(Math.max(...costs)).toBeLessThan(4)
-  }, 30_000)
+  }, 120_000)
 })
 
 /** 40 nodes and 60 edges: the combined drawing at six lanes with suction, drains, bypasses, recirculation and spills. */

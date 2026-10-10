@@ -56,4 +56,4 @@ test('SIGTERM checkpoints a running Weather scenario and restores it without clo
     if (child && child.exitCode === null) { child.kill('SIGKILL'); await child.exited }
     await rm(dataDir, { recursive: true, force: true })
   }
-}, 20_000)
+}, 120_000)

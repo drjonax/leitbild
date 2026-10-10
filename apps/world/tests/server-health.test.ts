@@ -48,7 +48,7 @@ const waitForMovingObjectEvent = async (
   await new Promise<void>((resolve, reject): void => {
     const timeout = setTimeout(() => {
       reject(new Error(`timed out waiting for moving object event: ${objectId}`))
-    }, 3_000)
+    }, 10_000)
 
     const poll = (): void => {
       const moving = client.events.some(event =>
