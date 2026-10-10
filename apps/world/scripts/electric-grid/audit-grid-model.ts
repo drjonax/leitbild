@@ -1,7 +1,8 @@
 // Audits a Grid Model against the reviewed golden list and curations, prints the report, and exits
-// non-zero unless every check passes.
+// non-zero unless every check passes. --model names a v1 catalog model; --model-file reads a
+// generated Grid Model v2 JSON file (validated by schemas/grid-model.ts).
 //
-//   bun run scripts/electric-grid/audit-grid-model.ts [--model <ref>] [--sidecar <grid-norway.features.geojson>]
+//   bun run scripts/electric-grid/audit-grid-model.ts [--model <ref> | --model-file <v2 .grid-model.json>] [--sidecar <grid-norway.features.geojson>]
 //     [--nve <Nettanlegg5 transmission layer .geojson>]... [--as-of YYYY-MM-DD] [--json <report.json>]
 //     [--golden <file>] [--curations <file>] [--show <failures per check>]
 //
@@ -20,6 +21,8 @@ import { auditGridTopology } from '../../src/packs/electric-grid/audit/grid-audi
 import type { GridAuditReport } from '../../src/packs/electric-grid/audit/audit-report.ts'
 import type { NveLine } from '../../src/packs/electric-grid/audit/nve-coverage.ts'
 import { auditGraphFromGridModelV1 } from '../../src/packs/electric-grid/audit/v1-adapter.ts'
+import { auditGraphFromGridModelV2 } from '../../src/packs/electric-grid/audit/v2-adapter.ts'
+import { validateGridModel } from '../../src/packs/electric-grid/schemas/grid-model.ts'
 
 const modelsDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/packs/electric-grid/models')
 
@@ -60,7 +63,8 @@ const printReport = (report: GridAuditReport, show: number, asOfSource: string):
 const main = async (): Promise<void> => {
   const { values } = parseArgs({
     options: {
-      model: { type: 'string', default: norwayGridModelRef },
+      model: { type: 'string' },
+      'model-file': { type: 'string' },
       sidecar: { type: 'string' },
       nve: { type: 'string', multiple: true },
       'as-of': { type: 'string' },
@@ -85,11 +89,15 @@ const main = async (): Promise<void> => {
     if (parsed.withoutVoltage > 0) console.log(`NVE input ${path}: ${parsed.withoutVoltage} features without a voltage are not compared`)
     nveLines = [...(nveLines ?? []), ...parsed.lines]
   }
-  const graph = auditGraphFromGridModelV1({
-    model: compileModel(values.model),
-    sourceData: norwayGridSourceData,
-    ...(reference === undefined ? {} : { reference }),
-  })
+  if (values.model !== undefined && values['model-file'] !== undefined) usage('give either --model or --model-file, not both')
+  const modelFile = values['model-file']
+  const graph = modelFile === undefined
+    ? auditGraphFromGridModelV1({
+        model: compileModel(values.model ?? norwayGridModelRef),
+        sourceData: norwayGridSourceData,
+        ...(reference === undefined ? {} : { reference }),
+      })
+    : auditGraphFromGridModelV2(validateGridModel(await readJson(modelFile), modelFile), reference)
   const report = auditGridTopology(graph, golden, { asOf, curations, ...(nveLines === undefined ? {} : { nveLines }) })
   printReport(report, show, asOfSource)
   if (values.json !== undefined) {
