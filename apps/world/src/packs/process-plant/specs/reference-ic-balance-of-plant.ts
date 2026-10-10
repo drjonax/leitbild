@@ -1,5 +1,6 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, reactorTripBreakerOpen, rule, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, reactorTripBreakerOpen, rule, trip, write } from './reference-ic-helpers.ts'
+import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 
 const feedwaterAlarm = annunciator({
   system: 'feedwater',
@@ -9,6 +10,19 @@ const feedwaterAlarm = annunciator({
   role: 'symptom',
 })
 
+const feedwaterAction = annunciator({
+  system: 'feedwater',
+  equipmentId: 'feedwaterHeader',
+  group: 'feedwater',
+  priority: 'urgent',
+  role: 'automaticAction',
+})
+
+// P-4 (the reactor trip breakers open) with average coolant temperature below
+// 564 °F isolates main feedwater, so the steam generators are not overfed as
+// their steaming falls to decay heat and the coolant cools to no-load.
+const lowTavgFeedwaterIsolationC = 295.6
+
 const turbineAlarm = annunciator({
   system: 'balanceOfPlant',
   equipmentId: 'turbine',
@@ -17,7 +31,7 @@ const turbineAlarm = annunciator({
   role: 'status',
 })
 
-export const balanceOfPlantReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> => [
+export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
     id: 'reactor-trip-turbine-trip',
     label: 'Reactor trip turbine trip',
@@ -31,16 +45,48 @@ export const balanceOfPlantReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRu
     ],
   }),
   rule({
-    id: 'reactor-trip-main-feedwater-isolation',
-    label: 'Reactor trip main feedwater isolation',
-    ruleClass: 'normalControl',
-    condition: reactorTripBreakerOpen(),
-    delayMs: 45_000,
-    latch: false,
-    resetWhenClear: true,
+    id: 'reactor-trip-low-tavg-feedwater-isolation',
+    label: 'Feedwater isolation on reactor trip with low Tavg (P-4)',
+    ruleClass: 'protection',
+    // After a trip from operation: in shutdown the feedwater is not in service.
+    modes: ['hotStandby'],
+    condition: all([reactorTripBreakerOpen(), comparison({ tagId: 'TAVG' }, '<', lowTavgFeedwaterIsolationC)]),
+    // The model has neither feedwater isolation valves nor a regulating-valve
+    // bypass (the regulating valves follow their level controllers), so the
+    // isolation stops main feedwater by tripping both pumps, as the high-high
+    // level isolation does.
     effects: [
-      write('trip-main-feedwater-pump-a-on-reactor-trip', { tagId: 'MFW-PUMP-A-RUN' }, false),
-      write('trip-main-feedwater-pump-b-on-reactor-trip', { tagId: 'MFW-PUMP-B-RUN' }, false),
+      trip({
+        id: 'feedwater-isolation',
+        title: 'Feedwater isolation on reactor trip, low Tavg',
+        message: `The reactor trip breakers are open (P-4) and average coolant temperature is below ${lowTavgFeedwaterIsolationC} °C (564 °F): main feedwater is isolated.`,
+        annunciator: feedwaterAction,
+      }),
+      write('trip-main-feedwater-pump-a-on-feedwater-isolation', { tagId: 'MFW-PUMP-A-RUN' }, false),
+      write('trip-main-feedwater-pump-b-on-feedwater-isolation', { tagId: 'MFW-PUMP-B-RUN' }, false),
+    ],
+  }),
+  rule({
+    id: 'main-feedwater-pumps-tripped-afw-start',
+    label: 'Auxiliary feedwater start on trip of all main feedwater pumps',
+    ruleClass: 'protection',
+    // The standard technical specifications' modes 1 and 2: below them the
+    // main feedwater pumps may be shut down without a heat sink at stake.
+    modes: ['powerOperation', 'startup'],
+    condition: all([
+      comparison({ tagId: 'MFW-PUMP-A-RUNNING' }, '==', false),
+      comparison({ tagId: 'MFW-PUMP-B-RUNNING' }, '==', false),
+    ]),
+    effects: [
+      trip({
+        id: 'afw-start',
+        title: 'Auxiliary feedwater start on main feedwater pump trip',
+        message: 'Both main feedwater pumps read stopped: the motor-driven auxiliary feedwater pumps start and feed every steam generator.',
+        annunciator: annunciator({ ...feedwaterAction, equipmentId: 'auxFeedwaterHeader' }),
+      }),
+      write('start-motor-afw-on-main-feedwater-pump-trip', { path: 'auxFeedwaterPumpMotor.running' }, true),
+      write('start-motor-afw-b-on-main-feedwater-pump-trip', { path: 'auxFeedwaterPumpMotorB.running' }, true),
+      ...loops.map(loop => write(`open-afw-valve-${loop.toLowerCase()}-on-main-feedwater-pump-trip`, { path: `auxFeedwaterValve${loop}.positionFraction` }, 1)),
     ],
   }),
   rule({

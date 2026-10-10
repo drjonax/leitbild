@@ -450,12 +450,17 @@ describe('alarms that apply only in power operation', () => {
       ],
     }))
     const qualified = plant.automation.rules.filter(rule => rule.modes !== undefined)
-    // All act at power only but the steam generator low-low level trips, which act wherever the reactor can be
-    // critical, and safety injection, which acts down to hot standby.
-    expect(qualified.filter(rule => JSON.stringify(rule.modes) !== '["powerOperation"]').map(rule => [rule.id, rule.modes])).toEqual([
-      ...['a', 'b', 'c', 'd'].map(loop => [`sg-${loop}-level-low-low-reactor-trip`, ['powerOperation', 'startup']]),
-      ['safety-injection-low-pzr-pressure', ['powerOperation', 'startup', 'hotStandby']],
-    ])
+    // The steam generator low-low level trips and the auxiliary feedwater start on
+    // a main feedwater pump trip act wherever the reactor can be critical, safety
+    // injection down to hot standby, the feedwater isolation after a trip in hot
+    // standby; every other qualified rule only at power.
+    const notOnlyAtPower = Object.fromEntries(qualified.filter(rule => JSON.stringify(rule.modes) !== '["powerOperation"]').map(rule => [rule.id, rule.modes]))
+    expect(notOnlyAtPower).toEqual({
+      ...Object.fromEntries(['a', 'b', 'c', 'd'].map(loop => [`sg-${loop}-level-low-low-reactor-trip`, ['powerOperation', 'startup']])),
+      'safety-injection-low-pzr-pressure': ['powerOperation', 'startup', 'hotStandby'],
+      'main-feedwater-pumps-tripped-afw-start': ['powerOperation', 'startup'],
+      'reactor-trip-low-tavg-feedwater-isolation': ['hotStandby'],
+    })
     expect(qualified.map(rule => rule.id)).toEqual(expect.arrayContaining(['generator-output-low', 'turbine-load-low']))
   })
 
@@ -709,19 +714,31 @@ describe('steam generator low-low level', () => {
     expect(Number(plantRun.tag('GEN-MW'))).toBeLessThan(25)
   })
 
-  test('auxiliary feedwater then restores steam generator level', () => {
+  test('auxiliary feedwater starts with the pumps tripping, then refills the generators with their tubes covered', () => {
     const plantRun = started()
     plantRun.run(5_000)
     plantRun.act('loss-main-feedwater')
+    plantRun.run(3_000)
+    // Losing both main feedwater pumps starts the motor-driven pumps at once.
+    expect(plantRun.activeIds()).toContain('trip:main-feedwater-pumps-tripped-afw-start:afw-start')
+    expect(plantRun.tag('AFW-PUMP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('AFW-PUMP-B-RUNNING')).toBe(true)
     runToReactorTrip(plantRun)
     plantRun.run(30_000)
-    expect(plantRun.tag('AFW-PUMP-A-RUNNING')).toBe(true)
+    // Low-low level starts the turbine-driven pump too.
     expect(plantRun.tag('AFW-PUMP-T-RUNNING')).toBe(true)
-    const levelsAfterTrip = ['A', 'B', 'C', 'D'].map(loop => Number(plantRun.tag(`SG-${loop}-LVL-NR`)))
-    plantRun.run(300_000)
+    // The voids collapse with the trip: the narrow range shrinks off scale low,
+    // while the full-height water inventory stays above the tube bundle.
+    const collapsedAfterTrip = ['A', 'B', 'C', 'D'].map(loop => Number(plantRun.read(`sg${loop}.collapsedLevelPercent`)))
+    let leastCoverage = 1
+    for (let second = 0; second < 300; second += 10) {
+      plantRun.run(10_000)
+      leastCoverage = Math.min(leastCoverage, ...['A', 'B', 'C', 'D'].map(loop => Number(plantRun.read(`sg${loop}.tubeCoverageFraction`))))
+    }
+    expect(leastCoverage).toBe(1)
     for (const [index, loop] of ['A', 'B', 'C', 'D'].entries()) {
       expect(Number(plantRun.read(`sg${loop}.feedwaterFlowKgPerS`)), loop).toBeGreaterThan(20)
-      expect(Number(plantRun.tag(`SG-${loop}-LVL-NR`)), loop).toBeGreaterThan(levelsAfterTrip[index]! + 5)
+      expect(Number(plantRun.read(`sg${loop}.collapsedLevelPercent`)), loop).toBeGreaterThan(collapsedAfterTrip[index]! + 2)
     }
     expect(Number(plantRun.read('core.powerMw'))).toBeLessThan(1)
   })

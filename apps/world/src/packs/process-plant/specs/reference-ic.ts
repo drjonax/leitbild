@@ -31,7 +31,7 @@ export const pressurizedWaterReactorReferenceIcFor = (
     ...safetyInjectionReferenceIcRules(),
     ...containmentReferenceIcRules(),
     ...electricalReferenceIcRules(loops),
-    ...balanceOfPlantReferenceIcRules(),
+    ...balanceOfPlantReferenceIcRules(loops),
   ],
 })
 
