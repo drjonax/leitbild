@@ -22,6 +22,7 @@ import {
 } from '../physics.ts'
 import { primarySystemPressurizer, primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
 import { saturationTemperatureCFromPressureMPa, waterDeltaTFromHeatMw } from '../thermophysics.ts'
+import { nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
 
 type ReactorBehaviorSystem = Parameters<ComponentBehaviorDefinition['update']>[0]['system']
 type ReactorBehaviorContext = Parameters<ComponentBehaviorDefinition['update']>[0]['context']
@@ -173,6 +174,7 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       'fuelHeatupRateCPerS',
       'decayHeatMw',
       'averageHotLegFlowKgPerS',
+      'sourceRangeEnergized',
       'sourceRangeCountRateCps',
       'intermediateRangeCurrentAmps',
     ],
@@ -242,11 +244,10 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'coreCoolingAvailabilityFraction'), creditedCooling)
       context.write(componentVariablePath(component, 'coreHeatRemovalDeficitMw'), heatRemovalDeficit)
       context.write(componentVariablePath(component, 'fuelHeatupRateCPerS'), (nextAverageFuelTemperature - currentFuelTemperature) / Math.max(context.dtSeconds, 1e-9))
-      const powerFraction = clamp(nextPower / ratedPower, 0, 1.2)
-      const sourceRangeNominal = optionalParameterNumber(component, 'nominalSourceRangeCountRateCps', 100_000)
-      const intermediateRangeNominal = optionalParameterNumber(component, 'nominalIntermediateRangeCurrentAmps', 1e-5)
-      context.write(componentVariablePath(component, 'sourceRangeCountRateCps'), Math.min(sourceRangeNominal, 10 + Math.pow(powerFraction, 0.35) * sourceRangeNominal))
-      context.write(componentVariablePath(component, 'intermediateRangeCurrentAmps'), Math.min(intermediateRangeNominal, Math.pow(powerFraction, 0.8) * intermediateRangeNominal))
+      const instruments = nuclearInstrumentationReading(component, nextPower)
+      context.write(componentVariablePath(component, 'sourceRangeEnergized'), instruments.sourceRangeEnergized)
+      context.write(componentVariablePath(component, 'sourceRangeCountRateCps'), instruments.sourceRangeCountRateCps)
+      context.write(componentVariablePath(component, 'intermediateRangeCurrentAmps'), instruments.intermediateRangeCurrentAmps)
     },
   },
   {

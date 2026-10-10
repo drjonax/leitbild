@@ -1,7 +1,7 @@
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { processPlantSignalView, resolveProcessPlantSignalBinding } from '../../signals.ts'
 import type { ProcessPlantSignalReference, ProcessPlantSignalView } from '../../signals.ts'
-import type { ProcessPlantIcCondition, ProcessPlantIcEffect, ProcessPlantIcRule } from './control-protection-model.ts'
+import type { ProcessPlantIcCondition, ProcessPlantIcEffect, ProcessPlantIcOperatingMode, ProcessPlantIcRule } from './control-protection-model.ts'
 
 export interface ProcessPlantIcEffectCatalogEntry {
   readonly id: string
@@ -23,7 +23,8 @@ export interface ProcessPlantIcRuleCatalogEntry {
   readonly label?: string
   readonly enabled: boolean
   readonly ruleClass: ProcessPlantIcRule['ruleClass']
-  readonly modeLabel?: string
+  /** The operating modes it acts in, as declared ("Power operation"); absent, it acts in every mode. */
+  readonly modes?: ReadonlyArray<string>
   readonly watchedSignals: ReadonlyArray<ProcessPlantSignalView>
   readonly effects: ReadonlyArray<ProcessPlantIcEffectCatalogEntry>
   readonly commandGates: ReadonlyArray<ProcessPlantIcCommandGateCatalogEntry>
@@ -86,13 +87,16 @@ const effectCatalogEntry = (
 export const catalogForProcessPlantIcRules = (
   system: CompiledProcessPlant,
   rules: ReadonlyArray<ProcessPlantIcRule>,
+  operatingModes: ReadonlyArray<ProcessPlantIcOperatingMode>,
 ): ProcessPlantIcCatalog => ({
   plantId: system.id,
   ruleCount: rules.length,
   rules: rules.map(rule => {
+    const modes = (rule.modes ?? []).map(id => operatingModes.find(mode => mode.id === id)!)
     const watchedSignals: ProcessPlantSignalReference[] = []
     collectConditionSignals(rule.condition, watchedSignals)
-    if (rule.modeCondition !== undefined) collectConditionSignals(rule.modeCondition, watchedSignals)
+    // A rule watches what decides the Plant's mode: every mode declared before its own can take precedence.
+    if (modes.length > 0) for (const mode of operatingModes.slice(0, Math.max(...modes.map(mode => operatingModes.indexOf(mode))) + 1)) collectConditionSignals(mode.condition, watchedSignals)
     if (rule.clearCondition !== undefined) collectConditionSignals(rule.clearCondition, watchedSignals)
     if (rule.resetCondition !== undefined) collectConditionSignals(rule.resetCondition, watchedSignals)
     for (const effect of rule.effects) {
@@ -104,7 +108,7 @@ export const catalogForProcessPlantIcRules = (
       ...(rule.label === undefined ? {} : { label: rule.label }),
       enabled: rule.enabled,
       ruleClass: rule.ruleClass,
-      ...(rule.modeLabel === undefined ? {} : { modeLabel: rule.modeLabel }),
+      ...(modes.length === 0 ? {} : { modes: modes.map(mode => mode.label) }),
       watchedSignals: uniqueSignalViews(system, watchedSignals),
       effects: rule.effects.map(effect => effectCatalogEntry(system, effect)),
       commandGates: rule.commandGates.map(gate => ({

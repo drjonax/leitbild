@@ -39,7 +39,7 @@ const assessmentDefinitions: ReadonlyArray<ProcessPlantAssessmentDefinition> = [
     title: 'RCS integrity',
     description: 'Leakage and relief position are model diagnostics; neither supplies a qualified pressure-temperature boundary integrity assessment.',
     source: 'source:apps/world/src/packs/process-plant/runtime/pwr-transient-kernel.ts',
-    paths: () => ['vessel.primaryLeakFlowKgPerS', 'pressurizer.reliefValvePositionFraction'],
+    paths: () => ['vessel.primaryLeakFlowKgPerS', 'pressurizer.reliefValveEffectivePositionFraction'],
   },
   {
     id: 'containment',

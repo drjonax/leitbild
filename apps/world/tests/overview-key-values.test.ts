@@ -30,7 +30,9 @@ describe('the values equipment opened from the overview leads with', () => {
   test('are its signals the I&C rules judge, then its key values and instruments; never a demand', () => {
     expect(of('core').slice(0, 2)).toEqual(['core.powerMw', 'core.coolantOutletTemperatureC'] as never)
     // A pump's run command and a valve's position demand are writable: the drawing shows them, the values do not.
-    expect(of('feedwaterControlValveA')).toEqual([])
+    // A valve's values lead with its position feedback instead.
+    expect(of('feedwaterControlValveA')).toEqual(['feedwaterControlValveA.effectivePositionFraction'] as never)
+    expect(of('rcpA')).not.toContain('rcpA.running' as never)
   })
 
   test('parallel equipment is compared value by value', () => {
@@ -80,5 +82,23 @@ describe('a tile never looks quiet while one of its alarms is active', () => {
     expect(issues({ annunciatorSystems: [...declared, { id: 'reactor', label: 'Again' }], rules: [] })).toEqual(['annunciator system reactor is declared twice'])
     // A Plant that annunciates nothing has no tiles.
     expect(issues({ rules: [rule('power-high', [undefined])] })).toEqual([])
+  })
+})
+
+describe('operating modes are declared once', () => {
+  const holds = { type: 'comparison', signal: { path: 'core.powerMw' }, operator: '>', value: 1 }
+  const modes = [{ id: 'powerOperation', label: 'Power operation', condition: holds }, { id: 'shutdown', label: 'Shutdown', condition: holds }]
+  const rule = (id: string, ruleModes?: ReadonlyArray<string>) => ({ id, condition: holds, ...(ruleModes === undefined ? {} : { modes: ruleModes }) })
+  const issues = (config: unknown) => {
+    const parsed = processPlantIcConfigSchema.safeParse(config)
+    return parsed.success ? [] : parsed.error.issues.map(issue => issue.message)
+  }
+
+  test('and a rule acts only in modes the Plant declares, each named once', () => {
+    expect(issues({ operatingModes: modes, rules: [rule('power-high', ['powerOperation']), rule('always')] })).toEqual([])
+    expect(issues({ operatingModes: modes, rules: [rule('power-high', ['powerOperatoin'])] })).toEqual(['power-high acts in operating mode powerOperatoin, which is not declared; declared: powerOperation, shutdown'])
+    expect(issues({ operatingModes: modes, rules: [rule('power-high', ['shutdown', 'shutdown'])] })).toEqual(['power-high names operating mode shutdown twice'])
+    expect(issues({ operatingModes: [...modes, { ...modes[0]!, label: 'Again' }], rules: [] })).toEqual(['operating mode powerOperation is declared twice'])
+    expect(issues({ rules: [rule('power-high', ['powerOperation'])] })).toEqual(['power-high acts in operating mode powerOperation, which is not declared; declared: none'])
   })
 })

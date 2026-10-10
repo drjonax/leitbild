@@ -97,13 +97,14 @@ const glyph = (family: MimicIconFamily, look: ItemLook, orientation: 'horizontal
     case 'battery':
       return { tag: 'obi-battery-vertical-75' }
     // No OpenBridge breaker glyph shows "position unknown", and an open-switch glyph would claim one: no glyph.
+    // The breaker's first readout row says its contacts (CLOSED, OPEN, ?).
     case 'breaker':
       return null
   }
 }
 
 const isOn = (look: ItemLook): boolean =>
-  look.state.kind === 'running' || look.state.kind === 'energized' || look.state.kind === 'passing' || look.state.kind === 'flowing'
+  look.state.kind === 'running' || look.state.kind === 'energized' || look.state.kind === 'passing' || look.state.kind === 'flowing' || look.state.kind === 'closed'
   || (look.state.kind === 'position' && look.state.fraction >= 0.05)
 
 export interface DeviceRows {

@@ -27,10 +27,10 @@ export const headerVariables = (labelPrefix: string): ReadonlyArray<ComponentVar
 ]
 
 export const valveVariables = (labelPrefix: string): ReadonlyArray<ComponentVariableDescriptor> => [
-  variable({ path: 'positionFraction', label: `${labelPrefix} position`, kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
+  variable({ path: 'positionFraction', label: `${labelPrefix} position demand`, kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
   variable({ path: 'positionFailureActive', label: `${labelPrefix} position failure active`, kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'faultInjection', quantity: 'boolean', unit: 'boolean' }),
   variable({ path: 'failedPositionFraction', label: `${labelPrefix} failed position`, kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'faultInjection', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
-  variable({ path: 'demandPositionFraction', label: `${labelPrefix} demand position`, kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
+  variable({ path: 'demandPositionFraction', label: `${labelPrefix} target position`, kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
   variable({ path: 'effectivePositionFraction', label: `${labelPrefix} effective position`, kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
   variable({ path: 'availablePressureDropMPa', label: `${labelPrefix} available pressure drop`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'pressureDelta', unit: 'MPa' }),
   variable({ path: 'capacityLimitedFlowKgPerS', label: `${labelPrefix} capacity limited flow`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),

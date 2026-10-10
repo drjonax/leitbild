@@ -15,11 +15,12 @@ export const pumpBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition>
     phase: 'solveFluidFlowComponents',
     componentKind: 'centrifugalPump',
     reads: ['running', 'speedFraction', 'incoming electrical energized?'],
-    writes: ['flowKgPerS', 'speedRpm', 'demandMw'],
+    writes: ['runningState', 'flowKgPerS', 'speedRpm', 'demandMw'],
     update: ({ system, component, context }): void => {
       const running = context.readBoolean(componentVariablePath(component, 'running'))
         && componentHasElectricalPower(system, component, context)
       const speed = clamp(context.readNumber(componentVariablePath(component, 'speedFraction')), 0, 1.2)
+      context.write(componentVariablePath(component, 'runningState'), running)
       context.write(componentVariablePath(component, 'speedRpm'), running ? speed * optionalParameterNumber(component, 'nominalSpeedRpm', 3600) : 0)
       const targetFlow = running ? parameterNumber(component, 'nominalFlowKgPerS') * speed : 0
       const currentFlow = context.readNumber(componentVariablePath(component, 'flowKgPerS'))
@@ -87,9 +88,10 @@ export const pumpInitialReconciliationDefinitions: ReadonlyArray<ComponentInitia
     id: 'centrifugal-pump-initial-state',
     componentKind: 'centrifugalPump',
     reads: ['running', 'speedFraction'],
-    writes: ['flowKgPerS', 'speedRpm', 'developedHeadPa', 'demandMw', 'loopFlowTargetKgPerS', 'loopFlowKgPerS'],
+    writes: ['runningState', 'flowKgPerS', 'speedRpm', 'developedHeadPa', 'demandMw', 'loopFlowTargetKgPerS', 'loopFlowKgPerS'],
     reconcile: ({ system, component, context }): void => {
       const running = context.readBoolean(componentVariablePath(component, 'running')) && componentHasElectricalPower(system, component, context)
+      context.write(componentVariablePath(component, 'runningState'), running)
       const speed = clamp(context.readNumber(componentVariablePath(component, 'speedFraction')), 0, 1.2)
       const nominalFlow = parameterNumber(component, 'nominalFlowKgPerS')
       const nominalHead = parameterNumber(component, 'nominalHeadPa')

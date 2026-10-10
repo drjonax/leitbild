@@ -68,14 +68,14 @@ describe('I&C thresholds for composed displays', () => {
     const pressure = compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path
     const { thresholds } = icThresholdsForSignal(compiled, pressure)
     expect(thresholds.map(threshold => [threshold.value, threshold.kind, threshold.modeLabel ?? null])).toEqual([
-      [13.8, 'trip', 'power operation'],
+      [13.8, 'trip', 'Power operation'],
       [14.8, 'alarm', null],
       [15.35, 'control', null],
       [15.65, 'control', null],
       [15.85, 'control', null],
       [16, 'alarm', null],
       [16.18, 'trip', null],
-      [16.35, 'trip', 'power operation'],
+      [16.35, 'trip', 'Power operation'],
     ])
   })
 
@@ -108,7 +108,8 @@ describe('world.process-plant.display.compose', () => {
     expect((result as unknown as { simulationClock: string }).simulationClock).toBe('21:00:00')
     const margins = (result as unknown as { margins: ReadonlyArray<string> }).margins
     expect(margins).toHaveLength(2)
-    expect(margins[0]).toMatch(/^SG-[AB]-LVL-NR: [0-9.]+ %, [0-9.]+ % above LO ALM 30 %$/)
+    // At the 55 % program the high alarm is nearer than the low one.
+    expect(margins[0]).toMatch(/^SG-[AB]-LVL-NR: [0-9.]+ %, [0-9.]+ % below HI ALM 75 %$/)
     expect(runtime.checkpoint()).toEqual(before)
   })
 
@@ -140,7 +141,7 @@ describe('world.process-plant.display.compose', () => {
       panels: [{ kind: 'trend', horizon: '2m', signals: [{ ref: 'PT-455', role: 'primary' }] }, { kind: 'readouts', signals: [{ ref: 'PORV-456A', role: 'context' }] }],
     }) as { warnings: ReadonlyArray<string>; shows: ReadonlyArray<string> }
     expect(result.warnings).toContain("PORV-456A is a writable command (a demand), not a measured state; never present it as the equipment's actual state or position.")
-    expect(result.shows.join('\n')).toContain('PORV-456A (Pressurizer relief valve position, fraction, context, a command (demand), shown as demand)')
+    expect(result.shows.join('\n')).toContain('PORV-456A (Pressurizer relief valve position demand, fraction, context, a command (demand), shown as demand)')
   })
 
   test('a line flow the I&C judges on the equipment it passes is refused with the judged signal', () => {
@@ -149,6 +150,25 @@ describe('world.process-plant.display.compose', () => {
     expect(rejectionOf(() => ask('world.process-plant.display.compose', readouts('pressurizer-relief-to-tank.flowKgPerS'))))
       .toContain('show pressurizer.reliefFlowKgPerS (Pressurizer relief flow, HI ALM 1 kg/s) instead')
     expect(() => ask('world.process-plant.display.compose', readouts('pressurizer.reliefFlowKgPerS'))).not.toThrow()
+  })
+
+  test('no tag described as a position or run state binds a writable variable', () => {
+    // A display shows a tag by its label and description; one that reads as a state must be the solved state.
+    const readsAsState = /\b(positions?|running|run status|status|open|closed|insertion|feedback)\b/i
+    const saysDemand = /\b(command|demand)\b/i
+    const tagged = [...compiled.graph.signalBindingByPath.values()].filter(binding => binding.tagId !== undefined)
+    const states = tagged.filter(binding => [binding.label, binding.description ?? ''].some(text => readsAsState.test(text) && !saysDemand.test(text)))
+    for (const binding of states) expect(binding.writable, `${binding.tagId}: ${binding.label} | ${binding.description}`).toBe(false)
+    // Every command tag says it is one, and every position or run command has a feedback tag beside it.
+    const commands = tagged.filter(binding => binding.writable && binding.actuation === 'command')
+    for (const binding of commands) expect(binding.description, `${binding.tagId}`).toMatch(saysDemand)
+    const feedback = new Set(states.map(binding => String(binding.tagId)))
+    for (const tagId of ['PORV-456A', 'TRIP-BKR-A', 'BRK-OFFSITE-B-CLOSED', 'RCP-C-RUN', 'MFW-PUMP-B-RUN', 'AFW-PUMP-T', 'CHG-PUMP-A', 'SI-PUMP-B', 'CSPRAY-A', 'RHR-PUMP-B', 'MFW-D-CV', 'AFW-B-CV', 'MSIV-C', 'TURB-STOP', 'TURB-BYP', 'LET-ISOL', 'RHR-ISOL']) {
+      expect(commands.some(binding => binding.tagId === tagId), tagId).toBe(true)
+    }
+    for (const tagId of ['PORV-456A-POS', 'TRIP-BKR-A-POS', 'BRK-OFFSITE-B-POS', 'RCP-C-RUNNING', 'MFW-PUMP-B-RUNNING', 'AFW-PUMP-T-RUNNING', 'CHG-PUMP-A-RUNNING', 'SI-PUMP-B-RUNNING', 'CSPRAY-A-RUNNING', 'RHR-PUMP-B-RUNNING', 'MFW-D-CV-POS', 'AFW-B-CV-POS', 'MSIV-C-POS', 'TURB-STOP-POS', 'TURB-BYP-POS', 'LET-ISOL-POS', 'RHR-ISOL-POS']) {
+      expect(feedback.has(tagId), tagId).toBe(true)
+    }
   })
 
   test('a state readout names its equipment, so two alike states cannot be confused', () => {
@@ -206,6 +226,8 @@ describe('thresholds drawn on composed trends', () => {
     expect(panel.thresholds.map(threshold => [threshold.value, threshold.kind, threshold.signals])).toEqual([
       [20, 'trip', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
       [30, 'alarm', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
+      [75, 'alarm', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
+      [82, 'trip', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
     ])
     expect((panel.thresholds[1] as unknown as { ruleIds: string[]; direction: string })).toMatchObject({
       direction: 'low', ruleIds: ['sg-b-level-low', 'sg-a-level-low', 'sg-c-level-low'],
@@ -217,6 +239,8 @@ describe('thresholds drawn on composed trends', () => {
     expect(panel.thresholds.map(threshold => [threshold.value, threshold.signals])).toEqual([
       [20, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
       [30, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
+      [75, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
+      [82, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
     ])
     expect(panel.thresholds[1]!.label).toBe('Steam generator A level low · Steam generator B level low')
   })
@@ -453,6 +477,8 @@ describe('world.process-plant.display.view and sample', () => {
     expect(sample.values[0]).toMatchObject({ path: pressure, quality: 'good' })
     const withAlarms = ask('world.process-plant.display.sample', { plantId: compiled.id, paths: [pressure], alarms: true })
     expect(withAlarms).toMatchObject({ alarms: [], plantElapsedMs: 0 })
+    // The operating mode the Plant declares and is in, for the display's header.
+    expect((sample as unknown as { mode: unknown }).mode).toEqual({ id: 'powerOperation', label: 'Power operation' })
     expect(typeof sample.values[0]!.value).toBe('number')
     expect(rejectionOf(() => ask('world.process-plant.display.sample', { plantId: compiled.id, paths: ['nowhere.value' as VariablePath] }))).toContain('signal path not found')
   })
@@ -517,9 +543,9 @@ describe('a display shows what its question is about', () => {
   })
 
   test('equipment the model connects to nothing is refused as a subject, never offered by its signals', () => {
-    // Probe run 19: the agent named the model's unconnected relief valve, whose position always reads open.
-    expect(rejectionOf(() => ask('world.process-plant.display.compose', display(['pressurizerReliefValve'], [trendOf('PT-455')]))))
-      .toContain('subjects.0: pressurizerReliefValve (Pressurizer Relief Valve, PZR relief valve) is connected to no other equipment in the Plant model, so no display can show it; name the equipment it is part of or acts on instead')
+    // Probe run 19 named an unconnected relief valve the model has since dropped; the reactor trip breakers are still unwired.
+    expect(rejectionOf(() => ask('world.process-plant.display.compose', display(['reactorTripBreakerA'], [trendOf('PT-455')]))))
+      .toContain('subjects.0: reactorTripBreakerA (Reactor Trip Breaker A, RTB A) is connected to no other equipment in the Plant model, so no display can show it; name the equipment it is part of or acts on instead')
   })
 
   test('a subject that names nothing comes back with names that do', () => {

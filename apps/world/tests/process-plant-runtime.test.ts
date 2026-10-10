@@ -57,7 +57,7 @@ const compileTestSystem = (definition: {
   graph: definition.graph,
   ...(definition.parameters === undefined ? {} : { parameterOverrides: definition.parameters }),
   ...(definition.initialState === undefined ? {} : { valueOverrides: definition.initialState }),
-  automationForGraph: () => ({ annunciatorSystems: [], rules: [] }),
+  automationForGraph: () => ({ operatingModes: [], annunciatorSystems: [], rules: [] }),
 })
 
 const compiledSystem = () => compileTestSystem({
@@ -248,7 +248,10 @@ describe('process plant runtime', () => {
   // Long deterministic trajectories test correctness, not a five-second CPU budget.
   // Keep every simulated step and assertion; allow shared-runner scheduling overhead.
   test('keeps the reference plant normal under reference I&C during a no-fault run', () => {
-    const system = compiledSystem()
+    // The deployed Plant: the template at its full-power operating point. The
+    // template alone heats its coolant to a mean 342 °C at 16.1 MPa, about
+    // 5 °C below saturation, which the subcooling alarm rightly reports.
+    const system = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant' }))
     const runtime = createProcessPlantRuntime({ system })
     const protection = createProcessPlantProtectionRunner({
       system,
@@ -324,9 +327,9 @@ describe('process plant runtime', () => {
       ['pressurizer-relief-open', [
         'alarm:pzr-relief-flow-high:relief-flow-high',
       ]],
+      // Above P-9 a turbine trip trips the reactor; the generator's output and load alarms apply only while it is on line.
       ['turbine-trip', [
-        'alarm:turbine-load-low:load-low',
-        'alarm:generator-output-low:generator-output-low',
+        'trip:reactor-turbine-trip:turbine-trip-reactor-trip',
       ]],
       ['loss-offsite-power', [
         'alarm:loss-of-offsite-power:loss-of-offsite-power',
@@ -377,9 +380,9 @@ describe('process plant runtime', () => {
       ['pressurizer-relief-open', [
         'alarm:pzr-relief-flow-high:relief-flow-high',
       ]],
+      // Above P-9 a turbine trip trips the reactor; the generator's output and load alarms apply only while it is on line.
       ['turbine-trip', [
-        'alarm:turbine-load-low:load-low',
-        'alarm:generator-output-low:generator-output-low',
+        'trip:reactor-turbine-trip:turbine-trip-reactor-trip',
       ]],
       ['loss-offsite-power', [
         'alarm:loss-of-offsite-power:loss-of-offsite-power',
@@ -1141,13 +1144,14 @@ describe('process plant runtime', () => {
     expect(active.trips).toContain('trip:reactor-low-rcp-flow-trip:low-rcp-flow-trip')
     expect(active.alarms).toEqual(expect.arrayContaining([
       'alarm:main-feedwater-pump-trip:main-feedwater-pump-unavailable',
-      'alarm:turbine-load-low:load-low',
-      'alarm:generator-output-low:generator-output-low',
       'alarm:rcp-a-trip:not-running',
       'alarm:rcp-b-trip:not-running',
       'alarm:rcp-c-trip:not-running',
       'alarm:rcp-d-trip:not-running',
     ]))
+    // The trip ends power operation: the generator's output and load alarms no longer apply.
+    expect(active.alarms).not.toContain('alarm:turbine-load-low:load-low')
+    expect(active.alarms).not.toContain('alarm:generator-output-low:generator-output-low')
 
     expect(runtime.readVariable(valueOf('reactorTripBreakerA.closed'))).toBe(false)
     expect(runtime.readVariable(valueOf('reactorTripBreakerB.closed'))).toBe(false)

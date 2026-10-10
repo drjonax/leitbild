@@ -235,6 +235,10 @@
       {#if snapshot?.runTitle !== undefined}<span class="run" title={`Run: ${snapshot.runTitle}`}>Run: {snapshot.runTitle}</span>{/if}
       {@render notice()}
     {/if}
+    {#if snapshot?.latest?.mode !== undefined}
+      <!-- The operating mode the Plant's I&C declares, read each sample; plain text, as a normal state is. -->
+      <span class="mode" title="Operating mode: the first of the Plant's declared modes that holds">{snapshot.latest.mode === null ? 'No declared mode holds' : snapshot.latest.mode.label}</span>
+    {/if}
     <span class={`chip ${stateChip.tone}`}>{stateChip.text}</span>
     {#if Number.isFinite(now)}<span class="clock">sim {simulationClock(now)}</span>{/if}
   </header>
@@ -329,6 +333,7 @@
   h1 { margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; }
   .unit, .clock { font-size: 11.5px; color: var(--element-neutral-color); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .unit { margin: -2px 0 0; overflow: hidden; text-overflow: ellipsis; }
+  .mode { flex: none; font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 3px; border: 1px solid var(--border-outline-color); color: var(--element-active-color); white-space: nowrap; }
   .chip { font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--border-outline-color); white-space: nowrap; }
   .chip.live { color: var(--element-active-color); }
   .chip.quiet { color: var(--element-neutral-color); }

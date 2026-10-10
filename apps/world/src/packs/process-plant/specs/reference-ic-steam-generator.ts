@@ -2,6 +2,12 @@ import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { alarm, all, annunciator, any, comparison, rule, trip, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 
+// Narrow-range level limits above the 55 % program: a high alarm, and P-14
+// high-high, which isolates main feedwater by tripping its pumps and trips the
+// turbine (and so, above P-9, the reactor) before water reaches the steam lines.
+const levelHighPercent = 75
+const levelHighHighPercent = 82
+
 export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop): ReadonlyArray<ProcessPlantIcRule> => {
   const lower = loop.toLowerCase()
   const sg = `sg${loop}`
@@ -84,6 +90,43 @@ export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop):
       ],
     }),
     rule({
+      id: `sg-${lower}-level-high`,
+      label: `Steam generator ${loop} narrow-range level high`,
+      ruleClass: 'alarm',
+      condition: comparison({ tagId: `SG-${loop}-LVL-NR` }, '>', levelHighPercent),
+      clearCondition: comparison({ tagId: `SG-${loop}-LVL-NR` }, '<', levelHighPercent - 3),
+      clearDelayMs: 1_000,
+      delayMs: 1_000,
+      latch: false,
+      resetWhenClear: true,
+      effects: [alarm({
+        id: 'level-high',
+        title: `Steam generator ${loop} level high`,
+        message: `Steam generator ${loop} narrow-range level is above the reference high-level threshold.`,
+        severity: 'warning',
+        annunciator: sgAlarm,
+      })],
+    }),
+    rule({
+      id: `sg-${lower}-level-high-high-feedwater-isolation`,
+      label: `Steam generator ${loop} high-high level feedwater isolation and turbine trip`,
+      ruleClass: 'protection',
+      condition: comparison({ tagId: `SG-${loop}-LVL-NR` }, '>', levelHighHighPercent),
+      delayMs: 1_000,
+      effects: [
+        trip({
+          id: 'feedwater-isolation',
+          title: `Steam generator ${loop} high-high level`,
+          message: `Steam generator ${loop} high-high level (P-14) trips the main feedwater pumps and the turbine.`,
+          annunciator: sgAction,
+        }),
+        write('trip-main-feedwater-pump-a', { tagId: 'MFW-PUMP-A-RUN' }, false),
+        write('trip-main-feedwater-pump-b', { tagId: 'MFW-PUMP-B-RUN' }, false),
+        write('close-turbine-stop-valve', { tagId: 'TURB-STOP' }, 0),
+        write('reject-turbine-load', { tagId: 'TURB-LOAD' }, 0),
+      ],
+    }),
+    rule({
       id: `sg-${lower}-pressure-high`,
       label: `Steam generator ${loop} pressure high`,
       ruleClass: 'alarm',
@@ -129,8 +172,7 @@ export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop):
       id: `sg-${lower}-feedwater-flow-low`,
       label: `Steam generator ${loop} feedwater flow low`,
       ruleClass: 'alarm',
-      modeLabel: 'power operation',
-      modeCondition: comparison({ path: 'core.powerMw' }, '>', 100),
+      modes: ['powerOperation'],
       condition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '<', 150),
       clearCondition: comparison({ path: `${sg}.feedwaterFlowKgPerS` }, '>', 180),
       clearDelayMs: 2_000,

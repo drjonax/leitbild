@@ -326,7 +326,7 @@ export const compilePwrTransientKernel = (
       safetyInjectionFlowKgPerS: handleFor(table, reactorVessel, 'safetyInjectionFlowKgPerS'),
       tubeLeakFlowKgPerS: handleFor(table, reactorVessel, 'tubeLeakFlowKgPerS'),
       reactorCoolantPumpLoopFlowKgPerS: handlesFor(table, reactorCoolantPumps, 'loopFlowKgPerS'),
-      reactorCoolantPumpRunning: handlesFor(table, reactorCoolantPumps, 'running'),
+      reactorCoolantPumpRunning: handlesFor(table, reactorCoolantPumps, 'runningState'),
       reactorCoolantPumpSpeedFraction: handlesFor(table, reactorCoolantPumps, 'speedFraction'),
       steamGeneratorSecondaryInventoryKg: handlesFor(table, steamGenerators, 'secondaryInventoryKg'),
       steamGeneratorSteamMassKg: handlesFor(table, steamGenerators, 'steamMassKg'),

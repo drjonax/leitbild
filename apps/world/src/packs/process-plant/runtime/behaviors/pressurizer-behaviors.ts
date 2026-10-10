@@ -52,6 +52,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'steamMassBalanceResidualKg',
       'waterTemperatureC',
       'steamTemperatureC',
+      'reliefValveEffectivePositionFraction',
       'reliefFlowKgPerS',
       'demandMw',
     ],
@@ -76,10 +77,10 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const reliefValveFailureActive = context.readBoolean(componentVariablePath(component, 'reliefValveFailureActive'))
       const reliefValveFailedPosition = clamp(context.readNumber(componentVariablePath(component, 'reliefValveFailedPositionFraction')), 0, 1)
       const automaticReliefDemand = clamp((currentPressure - reliefSetpoint) / Math.max(0.1, reliefSetpoint * 0.04), 0, 1)
-      const reliefDemand = reliefValveFailureActive
+      const reliefOpening = reliefValveFailureActive
         ? reliefValveFailedPosition
         : Math.max(reliefValvePosition, automaticReliefDemand)
-      const reliefFlow = reliefCapacity * reliefDemand * clamp(currentPressure / nominalPressure, 0.1, 1.4)
+      const reliefFlow = reliefCapacity * reliefOpening * clamp(currentPressure / nominalPressure, 0.1, 1.4)
 
       const surgeTemperature = averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
         ?? context.readNumber(componentVariablePath(component, 'waterTemperatureC'))
@@ -134,6 +135,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
         optionalParameterNumber(component, 'pressureTimeConstantS', 12),
       )
 
+      context.write(componentVariablePath(component, 'reliefValveEffectivePositionFraction'), reliefOpening)
       context.write(componentVariablePath(component, 'reliefFlowKgPerS'), reliefFlow)
       context.write(componentVariablePath(component, 'waterTemperatureC'), nextWaterTemperature)
       context.write(componentVariablePath(component, 'steamTemperatureC'), nextSteamTemperature)

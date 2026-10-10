@@ -2,6 +2,7 @@ import { primaryLoopIdForPump } from '../../graph/index.ts'
 import { clamp, optionalParameterBoolean, optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
 import type { ComponentInitialValueDefinition } from './model.ts'
 import { reactorInitialThermalState } from '../../reactor-initial-conditions.ts'
+import { nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
 
 export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValueDefinition> = [
   {
@@ -21,14 +22,9 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'boronFeedbackPcm') return 0
       if (localPath === 'effectiveReactivityPcm') return 0
       if (localPath === 'rodInsertionFraction') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1))
-      if (localPath === 'sourceRangeCountRateCps') return Math.min(
-        optionalParameterNumber(component, 'nominalSourceRangeCountRateCps', 100_000),
-        10 + Math.pow(Math.max(initialPowerFraction, 0), 0.35) * optionalParameterNumber(component, 'nominalSourceRangeCountRateCps', 100_000),
-      )
-      if (localPath === 'intermediateRangeCurrentAmps') return Math.min(
-        optionalParameterNumber(component, 'nominalIntermediateRangeCurrentAmps', 1e-5),
-        Math.pow(Math.max(initialPowerFraction, 0), 0.8) * optionalParameterNumber(component, 'nominalIntermediateRangeCurrentAmps', 1e-5),
-      )
+      if (localPath === 'sourceRangeEnergized') return nuclearInstrumentationReading(component, initialFissionPower).sourceRangeEnergized
+      if (localPath === 'sourceRangeCountRateCps') return nuclearInstrumentationReading(component, initialFissionPower).sourceRangeCountRateCps
+      if (localPath === 'intermediateRangeCurrentAmps') return nuclearInstrumentationReading(component, initialFissionPower).intermediateRangeCurrentAmps
       if (localPath === 'coolantInletTemperatureC') return initialCoolantInlet
       if (localPath === 'coolantOutletTemperatureC') return initialCoolantOutlet
       if (localPath === 'averageHotLegFlowKgPerS') return optionalParameterNumber(component, 'nominalPrimaryFlowKgPerS', 0)
@@ -77,6 +73,7 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       const running = optionalParameterBoolean(component, 'initialRunning', true)
       const primaryLoopId = primaryLoopIdForPump(component)
       if (localPath === 'running') return running
+      if (localPath === 'runningState') return running
       if (localPath === 'speedFraction') return 1
       if (localPath === 'speedRpm') return running ? optionalParameterNumber(component, 'nominalSpeedRpm', 3600) : 0
       if (localPath === 'flowKgPerS') return running ? parameterNumber(component, 'nominalFlowKgPerS') : 0

@@ -87,10 +87,12 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
       initialTripped: z.boolean().optional(),
       degradedVoltageTripFraction: z.number().finite().min(0).max(1.2).optional(),
     }).strict(),
-    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' }), aspect('position', undefined, 'closed')] }),
+    // Its contacts are closed while it is commanded closed and not tripped.
+    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' }), aspect('position', { variable: 'closedState', reading: 'closedWhileTrue' }, 'closed')] }),
     variables: [
-      variable({ path: 'closed', label: 'Breaker closed', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'closed', label: 'Breaker close command', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'tripped', label: 'Breaker tripped', kind: 'discrete', discipline: 'control', writable: true, publish: 'alarm', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'closedState', label: 'Breaker closed', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       ...energizedVariables('Breaker outlet'),
     ],
   }),

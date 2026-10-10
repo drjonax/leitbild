@@ -4,7 +4,7 @@ import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import type { ProcessPlantSignalReference } from '../../signals.ts'
 import type { ProcessPlantRuntime } from '../model.ts'
 import { evaluateProcessPlantIcCondition } from './control-protection-conditions.ts'
-import { assertProcessPlantIcRulesValid } from './control-protection-validation.ts'
+import { assertProcessPlantIcOperatingModesValid, assertProcessPlantIcRulesValid } from './control-protection-validation.ts'
 import { applyProcessPlantIcWriteEffect, processPlantIcWriteTargetPath } from './control-protection-effects.ts'
 import { rememberProcessPlantIcLifecycleHistory, updateProcessPlantIcLifecyclePhase } from './control-protection-history.ts'
 import {
@@ -23,6 +23,7 @@ import {
   type ProcessPlantIcFailure,
   type ProcessPlantIcLifecycleHistoryEntry,
   type ProcessPlantIcLifecycleAction,
+  type ProcessPlantIcOperatingMode,
   type ProcessPlantIcRule,
   type ProcessPlantIcSnapshot,
 } from './control-protection-model.ts'
@@ -107,19 +108,31 @@ const assignFirstOut = (
   lifecycle.firstOutElapsedMs = elapsedMs
 }
 
+/**
+ * The Plant's operating mode: the first declared mode whose condition holds;
+ * null where it declares none, or none holds.
+ */
+export const processPlantOperatingMode = (config: {
+  readonly system: CompiledProcessPlant
+  readonly runtime: ProcessPlantRuntime
+  readonly modes: ReadonlyArray<ProcessPlantIcOperatingMode>
+}): ProcessPlantIcOperatingMode | null =>
+  config.modes.find(mode => evaluateProcessPlantIcCondition({ system: config.system, runtime: config.runtime, condition: mode.condition }).matches) ?? null
+
+// A rule qualified by modes acts only while the Plant is in one of them.
+const inRuleModes = (rule: ProcessPlantIcRule, mode: () => string | null): boolean => {
+  if (rule.modes === undefined) return true
+  const current = mode()
+  return current !== null && rule.modes.includes(current)
+}
+
 const evaluateRuleCondition = (config: {
   readonly system: CompiledProcessPlant
   readonly runtime: ProcessPlantRuntime
   readonly rule: ProcessPlantIcRule
+  readonly mode: () => string | null
 }): boolean => {
-  if (config.rule.modeCondition !== undefined) {
-    const modeMatches = evaluateProcessPlantIcCondition({
-      system: config.system,
-      runtime: config.runtime,
-      condition: config.rule.modeCondition,
-    }).matches
-    if (!modeMatches) return false
-  }
+  if (!inRuleModes(config.rule, config.mode)) return false
   return evaluateProcessPlantIcCondition({
     system: config.system,
     runtime: config.runtime,
@@ -127,21 +140,17 @@ const evaluateRuleCondition = (config: {
   }).matches
 }
 
+// An alarm qualified by a mode clears when the Plant leaves the mode: outside
+// it the alarm no longer applies, whatever its own clear condition reads.
 const evaluateAlarmClearCondition = (config: {
   readonly system: CompiledProcessPlant
   readonly runtime: ProcessPlantRuntime
   readonly rule: ProcessPlantIcRule
   readonly setConditionMatches: boolean
+  readonly mode: () => string | null
 }): boolean => {
   if (config.rule.clearCondition === undefined) return !config.setConditionMatches
-  if (config.rule.modeCondition !== undefined) {
-    const modeMatches = evaluateProcessPlantIcCondition({
-      system: config.system,
-      runtime: config.runtime,
-      condition: config.rule.modeCondition,
-    }).matches
-    if (!modeMatches) return false
-  }
+  if (!inRuleModes(config.rule, config.mode)) return true
   return evaluateProcessPlantIcCondition({
     system: config.system,
     runtime: config.runtime,
@@ -156,6 +165,7 @@ export const createProcessPlantProtectionRunner = (config: {
 }): ProcessPlantProtectionRunner => {
   const protection = processPlantIcConfigSchema.parse(config.protection)
   const rules = protection.rules.map(rule => processPlantIcRuleSchema.parse(rule))
+  assertProcessPlantIcOperatingModesValid(config.system.graph, protection.operatingModes)
   assertProcessPlantIcRulesValid(config.system, rules)
   const ruleIds = new Set<string>()
   const effectIds = new Set<string>()
@@ -353,13 +363,16 @@ export const createProcessPlantProtectionRunner = (config: {
       const events: PackRuntimeEvent[] = [
         ...expireShelvedLifecycles({ elapsedMs, simulationRunId, sourceRuntimeId }),
       ]
+      // The operating mode is read once per pass, when a rule first needs it.
+      let current: { readonly id: string | null } | undefined
+      const mode = (): string | null => (current ??= { id: processPlantOperatingMode({ system: config.system, runtime, modes: protection.operatingModes })?.id ?? null }).id
       for (const rule of rules) {
         const state = states.get(rule.id)
         if (!state) throw new Error(`process plant I&C state missing for rule: ${rule.id}`)
         if (!rule.enabled) continue
         let matches = false
         try {
-          matches = evaluateRuleCondition({ system: config.system, runtime, rule })
+          matches = evaluateRuleCondition({ system: config.system, runtime, rule, mode })
         } catch (error) {
           failures.push(processPlantIcFailureFor({ ruleId: rule.id, elapsedMs, error }))
           continue
@@ -380,6 +393,7 @@ export const createProcessPlantProtectionRunner = (config: {
               runtime,
               rule,
               setConditionMatches: matches,
+              mode,
             })
             if (!clearMatches) {
               delete state.clearSinceElapsedMs
@@ -459,7 +473,7 @@ export const createProcessPlantProtectionRunner = (config: {
       failures: [...failures],
       history: [...history],
     }),
-    catalog: (): ProcessPlantIcCatalog => catalogForProcessPlantIcRules(config.system, rules),
+    catalog: (): ProcessPlantIcCatalog => catalogForProcessPlantIcRules(config.system, rules, protection.operatingModes),
     applyLifecycleAction: input => {
       const lifecycle = lifecycles.get(input.id)
       if (!lifecycle) throw new Error(`unknown process plant I&C lifecycle id: ${input.id}`)

@@ -45,10 +45,11 @@ export type StateAspect = z.infer<typeof stateAspectSchema>
 
 /**
  * How a state variable reads as its aspect: running while a speed is above
- * zero, energized or open while true, a position or level as its value, and
- * throughput while a flow is above the no-flow band of its rated flow.
+ * zero, energized or running while true, a position or level as its value,
+ * throughput while a flow is above the no-flow band of its rated flow, and a
+ * switching position (a breaker's contacts) closed while true.
  */
-export const aspectReadingSchema = z.enum(['aboveZero', 'true', 'value', 'flow'])
+export const aspectReadingSchema = z.enum(['aboveZero', 'true', 'value', 'flow', 'closedWhileTrue'])
 export type AspectReading = z.infer<typeof aspectReadingSchema>
 
 /** What equipment does where its kind alone does not say: a valve modulates, isolates, stops reverse flow or relieves. */
@@ -59,11 +60,16 @@ export interface StateAspectDeclaration {
   readonly aspect: StateAspect
   /**
    * The solved variable that is the equipment's state for this aspect. Absent
-   * when the model computes none (the PORV's position), so the aspect reads
-   * "not measured" and is judged by what the model does solve.
+   * when the model computes none (an accumulator's discharge isolation valve
+   * follows its command at once), so the aspect reads "not measured" and is
+   * judged by what the model does solve.
    */
   readonly state?: { readonly variable: LocalVariablePath; readonly reading: AspectReading }
-  /** The writable variable that demands this aspect. It only annotates a disagreement, never the state. */
+  /**
+   * The writable variable that demands this aspect. It only annotates a
+   * disagreement, never the state. A boolean command of a position read
+   * `closedWhileTrue` commands closed while true, as its state reads.
+   */
   readonly command?: LocalVariablePath
 }
 
@@ -154,7 +160,7 @@ export type CompiledEnergyRole =
 
 /** Which quantities and units each reading accepts. */
 export const readingAccepts = (reading: AspectReading, descriptor: { readonly quantity: ProcessQuantity; readonly unit: ProcessUnit }): boolean => {
-  if (reading === 'true') return descriptor.quantity === 'boolean'
+  if (reading === 'true' || reading === 'closedWhileTrue') return descriptor.quantity === 'boolean'
   if (reading === 'flow') return descriptor.quantity === 'flowRate'
   if (reading === 'aboveZero') return descriptor.quantity === 'rotationalSpeed' || descriptor.quantity === 'flowRate' || descriptor.quantity === 'power'
   return descriptor.quantity === 'ratio'

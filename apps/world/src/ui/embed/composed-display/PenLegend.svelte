@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { composedTrendLegendHeight } from '../../../packs/process-plant/displays/composition.ts'
   import { formatQuantity, marginText, nearestThresholdMargin } from '../../../packs/process-plant/displays/display-text.ts'
@@ -25,18 +26,34 @@
   const sampled = (path: string) => latest?.values.find(entry => entry.path === path)
   const windowMs = $derived(rateWindowMs(horizonMs))
 
-  // A name takes what the swatch and column gaps (the CSS below) and room for
-  // a value, a limit state and a readable rate leave of the legend's width,
-  // dropping whole words to fit.
-  const RESERVED = 22 + 4 * 10 + 80 + 220 + 100
-  const BADGE_WIDTH = 64
+  // A name takes what the swatch, the column gaps, the value and limit-state
+  // columns and a readable rate leave of the legend's width, less its badges,
+  // dropping whole words to fit. Value, state and badges are measured as
+  // drawn; the columns only ever widen, so names do not reflow with each
+  // sample. The swatch, gap and rate minimum are the CSS below.
+  const SWATCH = 22
+  const COLUMN_GAP = 10
+  const RATE_MIN = 90
   const measureName = textMeasure(panelFont(12))
+  let legend: HTMLUListElement | undefined = $state()
   let width = $state(0)
-  const named = (name: string, badges: number): string => width === 0 ? name
-    : fitName(name, text => measureName(text) <= Math.max(120, width - RESERVED) - badges * BADGE_WIDTH)
+  let drawn = $state({ value: 0, state: 0, badge: 0 })
+  $effect(() => {
+    void latest
+    if (legend === undefined) return
+    const widest = (selector: string, margin = 0) => Math.max(0, ...[...legend!.querySelectorAll<HTMLElement>(selector)].map(cell => cell.offsetWidth + margin))
+    const before = untrack(() => drawn)
+    // A badge's margin (the CSS below) is part of what it takes from the name.
+    const next = { value: Math.max(before.value, widest('.value')), state: Math.max(before.state, widest('.state')), badge: Math.max(before.badge, widest('.badge', 10)) }
+    if (next.value !== before.value || next.state !== before.state || next.badge !== before.badge) drawn = next
+  })
+  const named = (name: string, badges: number): string => {
+    const room = width - SWATCH - 4 * COLUMN_GAP - drawn.value - drawn.state - RATE_MIN - badges * drawn.badge
+    return width === 0 ? name : fitName(name, text => measureName(text) <= room)
+  }
 </script>
 
-<ul class="legend" style={`height:${composedTrendLegendHeight(pens.length)}px`} bind:clientWidth={width}>
+<ul class="legend" style={`height:${composedTrendLegendHeight(pens.length)}px`} bind:clientWidth={width} bind:this={legend}>
   {#each pens as pen, index (pen.path)}
     {@const entry = sampled(String(pen.path))}
     {@const value = entry?.value}
@@ -65,7 +82,7 @@
 <style>
   .legend {
     list-style: none; margin: 0; padding: 4px 0 0; overflow: hidden;
-    display: grid; grid-template-columns: 22px max-content max-content max-content minmax(0, 1fr);
+    display: grid; grid-template-columns: 22px max-content max-content max-content minmax(90px, 1fr);
     grid-auto-rows: 16px; column-gap: 10px; align-items: center;
   }
   li { display: contents; }

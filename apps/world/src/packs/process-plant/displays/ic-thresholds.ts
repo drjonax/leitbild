@@ -20,7 +20,7 @@ export interface ComposedDisplayThreshold {
   /** Low thresholds act when the value falls; high ones when it rises. */
   readonly direction: 'low' | 'high'
   readonly value: number
-  /** Present when the rule only acts in a qualified mode; drawn dashed. */
+  /** The declared operating modes the rule only acts in; drawn dashed. */
   readonly modeLabel?: string
 }
 
@@ -60,8 +60,9 @@ const labelFor = (rule: ProcessPlantIcRule): string => {
   return rule.label ?? rule.id
 }
 
-const modeLabelFor = (rule: ProcessPlantIcRule): string | undefined =>
-  rule.modeLabel ?? (rule.modeCondition === undefined ? undefined : 'qualified mode')
+// The declared operating modes a rule acts in, as the Plant names them ("Power operation").
+const modeLabelFor = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule): string | undefined =>
+  rule.modes?.map(id => plant.automation.operatingModes.find(mode => mode.id === id)!.label).join(' or ')
 
 const conditionWatches = (
   plant: CompiledProcessPlant,
@@ -86,7 +87,7 @@ export const icThresholdsForSignal = (
       if (resolveProcessPlantSignalPath(plant.graph, condition.signal) !== path) continue
       // Equality rules act on discrete states; they have no position on a value axis.
       if (typeof condition.value !== 'number' || condition.operator === '==' || condition.operator === '!=') continue
-      const modeLabel = modeLabelFor(rule)
+      const modeLabel = modeLabelFor(plant, rule)
       const severity = severityFor(rule)
       thresholds.push({
         ruleId: rule.id,

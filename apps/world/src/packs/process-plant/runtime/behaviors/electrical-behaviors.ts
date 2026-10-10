@@ -151,7 +151,7 @@ const breakerBehavior: ComponentBehaviorDefinition = {
   phase: 'solveElectrical',
   componentKind: 'electricalBreaker',
   reads: ['closed', 'tripped', 'incoming electrical availablePowerMw'],
-  writes: ['energized', 'availablePowerMw', 'voltageFraction', 'tripped'],
+  writes: ['closedState', 'energized', 'availablePowerMw', 'voltageFraction', 'tripped'],
   update: ({ system, component, context }): void => {
     const incoming = incomingElectricalPower(system, component, context)
     const closed = context.readBoolean(componentVariablePath(component, 'closed'))
@@ -159,8 +159,11 @@ const breakerBehavior: ComponentBehaviorDefinition = {
     const degradedTripFraction = optionalParameterNumber(component, 'degradedVoltageTripFraction', 0)
     const degradedTrip = incoming.energized && degradedTripFraction > 0 && incoming.voltageFraction > 0 && incoming.voltageFraction < degradedTripFraction
     const tripped = previousTripped || degradedTrip
-    const conductive = incoming.energized && closed && !tripped
+    // A trip opens the contacts whatever the close command says.
+    const closedState = closed && !tripped
+    const conductive = incoming.energized && closedState
     context.write(componentVariablePath(component, 'tripped'), tripped)
+    context.write(componentVariablePath(component, 'closedState'), closedState)
     context.write(componentVariablePath(component, 'energized'), conductive)
     context.write(componentVariablePath(component, 'availablePowerMw'), conductive ? Math.min(parameterNumber(component, 'nominalPowerMw'), incoming.availablePowerMw) : 0)
     context.write(componentVariablePath(component, 'voltageFraction'), conductive ? incoming.voltageFraction : 0)

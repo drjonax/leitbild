@@ -8,7 +8,7 @@ import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type Mim
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { MimicProfile } from './profiles.ts'
 import { COUNT_WORDS, itemRows, type MimicRow } from './rows.ts'
-import { MIMIC_REACH_LINKS, resolveMimicScope, stubText, plantLoops, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
+import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
 import { openBridgeDevice, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
 // Intent (or a scope World resolved itself) → items with their bindings → a
@@ -201,6 +201,8 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     usePort(graph.links[index]!.fromComponentIndex, String(graph.links[index]!.fromPortName))
     usePort(graph.links[index]!.toComponentIndex, String(graph.links[index]!.toPortName))
   }
+  // Ports drawn pipes reach, before stubs: a hub a lone pipe reaches at one of its alike ports names it.
+  const piped = new Map([...usedPorts].map(([component, ports]) => [component, new Set(ports)]))
   for (const stub of scopeStubs) usePort(stub.component, stub.port)
 
   const drawn = scope.components.filter(index => !notDrawn.has(index))
@@ -266,7 +268,9 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const group = members.get(index) ?? [index]
     const bindings = group.map(member => itemBinding(plant, { kind: 'component', component: member }, aspectFor(presentation), framed))
     // A group's own state is its members' (rows.ts drawnLook); it shows no member's values.
-    const binding: MimicItemBinding = group.length === 1 ? bindings[0]! : {
+    // A header's ports are only where branches join; its stubs name the rest.
+    const reached = group.length === 1 && presentation.element !== 'bar' ? loneReachedPort(graph, component, piped.get(index) ?? new Set(), usedPorts.get(index) ?? new Set()) : null
+    const binding: MimicItemBinding = group.length === 1 ? (reached === null ? bindings[0]! : { ...bindings[0]!, label: `${bindings[0]!.label} · ${reached}` }) : {
       item: bindings[0]!.item,
       label: groupLabel(bindings.map(member => member.label)),
       state: null,

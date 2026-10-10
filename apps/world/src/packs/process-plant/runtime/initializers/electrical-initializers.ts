@@ -32,6 +32,7 @@ export const electricalInitialValueDefinitions: ReadonlyArray<ComponentInitialVa
     initialValueFor: (component, localPath) => {
       if (localPath === 'closed') return optionalParameterBoolean(component, 'initialClosed', true)
       if (localPath === 'tripped') return optionalParameterBoolean(component, 'initialTripped', false)
+      if (localPath === 'closedState') return optionalParameterBoolean(component, 'initialClosed', true) && !optionalParameterBoolean(component, 'initialTripped', false)
       if (localPath === 'energized') return false
       if (localPath === 'availablePowerMw') return 0
       if (localPath === 'voltageFraction') return 0

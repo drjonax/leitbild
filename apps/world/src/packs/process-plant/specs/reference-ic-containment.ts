@@ -46,8 +46,7 @@ export const containmentReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     id: 'containment-pressure-high-reactor-trip',
     label: 'Containment pressure high reactor trip',
     ruleClass: 'protection',
-    modeLabel: 'power operation',
-    modeCondition: comparison({ path: 'core.powerMw' }, '>', 100),
+    modes: ['powerOperation'],
     condition: comparison({ path: 'containment.pressureMPa' }, '>', 0.24),
     delayMs: 1_000,
     effects: [

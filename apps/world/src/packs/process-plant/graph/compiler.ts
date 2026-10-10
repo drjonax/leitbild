@@ -191,6 +191,7 @@ const compileComponentSemantics = (
       const variable = resolve(state.variable)
       if (variable.writable && variable.actuation !== 'boundary') throw new Error(`${context}: ${declaration.aspect} state ${state.variable} is writable, so it would draw a demand as the state`)
       if (!readingAccepts(state.reading, variable)) throw new Error(`${context}: ${declaration.aspect} state ${state.variable} (${variable.quantity}) cannot be read as ${state.reading}`)
+      if (state.reading === 'closedWhileTrue' && declaration.aspect !== 'position') throw new Error(`${context}: only a position reads closed while true, not ${declaration.aspect}`)
     }
     if (declaration.command !== undefined) {
       const command = resolve(declaration.command)

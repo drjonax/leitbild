@@ -17,19 +17,17 @@
     column?: boolean
   } = $props()
 
-  /** The row gap, column gap and a value's padding and bar (the CSS below). */
+  /** The row gap (the CSS below). */
   const ROW_GAP = 4
-  const COLUMN_GAP = 12
-  const VALUE_INSET = 18
-  /** What a demand badge and an alarm chip take from the name's line. */
-  const DEMAND_WIDTH = 52
-  const CHIP_WIDTH = 92
+  // A name fills what its line leaves beside a demand badge and an alarm chip
+  // (flex: 1 1 0, so its box never depends on its text); it is fitted to that
+  // box as measured, dropping whole words.
   const measureName = textMeasure(panelFont(11.5))
-  let width = $state(0)
-  const perRow = $derived(column ? 1 : composedDisplayLayout.readoutsPerRow)
-  const nameRoom = $derived((width - (perRow - 1) * COLUMN_GAP) / perRow - VALUE_INSET)
-  const named = (name: string, demand: boolean, chip: boolean): string => width === 0 ? name
-    : fitName(name, text => measureName(text) <= nameRoom - (demand ? DEMAND_WIDTH : 0) - (chip ? CHIP_WIDTH : 0))
+  const rooms: Record<string, number> = $state({})
+  const named = (path: string, name: string): string => {
+    const room = rooms[path] ?? 0
+    return room === 0 ? name : fitName(name, text => measureName(text) <= room)
+  }
   const sampled = (path: string) => latest?.values.find(entry => entry.path === path)
   const rows = $derived(Math.ceil(panel.pens.length / (column ? 1 : composedDisplayLayout.readoutsPerRow)))
   const size = $derived(column
@@ -37,14 +35,14 @@
     : `height:${rows * composedDisplayLayout.readoutsRow}px;grid-template-columns:repeat(${composedDisplayLayout.readoutsPerRow}, minmax(0, 1fr));`)
 </script>
 
-<ul class="readouts" style={size} bind:clientWidth={width}>
+<ul class="readouts" style={size}>
   {#each panel.pens as pen (pen.path)}
     {@const entry = sampled(String(pen.path))}
     {@const value = entry?.value}
     {@const margin = typeof value === 'number' ? nearestThresholdMargin(value, pen.thresholds) : null}
     {@const inAlarm = activeThreshold(pen.thresholds, activeRuleIds)}
     <li class:primary={pen.role === 'primary'} title={`${pen.label} · ${pen.role}`}>
-      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`}><span class="name">{named(displayName(pen), pen.command, inAlarm !== null)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}</span>
+      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`}><span class="name" bind:clientWidth={rooms[String(pen.path)]}>{named(String(pen.path), displayName(pen))}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}</span>
       {#if typeof value === 'boolean'}
         <!-- A state names its equipment, so a row of alike states (two buses) cannot be confused. -->
         <span class="state" title={pen.described}>{value ? pen.described : `Not ${pen.described.charAt(0).toLowerCase()}${pen.described.slice(1)}`}</span>
@@ -68,10 +66,10 @@
 </ul>
 
 <style>
-  .readouts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px 12px; /* ROW_GAP, COLUMN_GAP */ overflow: hidden; }
+  .readouts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px 12px; /* ROW_GAP */ overflow: hidden; }
   li { display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 2px 8px; border-left: 2px solid var(--border-divider-color); }
   li.primary { border-left-color: var(--element-active-color); }
-  .name { font-size: 11.5px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name { flex: 1 1 0; min-width: 0; font-size: 11.5px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* Normal states read as plain text; colour and weight are kept for alarms. */
   .state { font-size: 13.5px; padding: 6px 0; }
   .head { display: flex; align-items: center; gap: 5px; min-width: 0; }

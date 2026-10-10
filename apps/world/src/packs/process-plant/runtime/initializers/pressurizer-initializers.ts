@@ -30,6 +30,7 @@ export const pressurizerInitialValueDefinitions: ReadonlyArray<ComponentInitialV
       if (localPath === 'reliefValvePositionFraction') return 0
       if (localPath === 'reliefValveFailureActive') return false
       if (localPath === 'reliefValveFailedPositionFraction') return 1
+      if (localPath === 'reliefValveEffectivePositionFraction') return 0
       if (localPath === 'reliefFlowKgPerS') return 0
       return undefined
     },
