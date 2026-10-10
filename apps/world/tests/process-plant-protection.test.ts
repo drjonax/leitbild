@@ -461,8 +461,9 @@ describe('blocking low-pressure safety injection below P-11', () => {
     for (const breaker of ['reactorTripBreakerA', 'reactorTripBreakerB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${breaker}.closed` as VariablePath, value: false })
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
     plantRun.run(30_000)
-    // The operators depressurize through the PORV and block SI as soon as P-11 comes in.
-    expect(plantRun.operate('PORV-456A', 0.15).accepted).toBe(true)
+    // The operators depressurize through the PORV and block SI as soon as P-11 comes in. The pressurizer's
+    // saturated water must flash to cool, so the PORV opens to 40 %: at 15 % it took ten minutes to pass 12 MPa.
+    expect(plantRun.operate('PORV-456A', 0.4).accepted).toBe(true)
     let blockedAt: number | null = null
     for (let second = 0; second < 120 && blockedAt === null; second += 1) {
       plantRun.step()
@@ -490,7 +491,7 @@ describe('blocking low-pressure safety injection below P-11', () => {
     }
     expect(resetAt).not.toBeNull()
     expect(resetAt!).toBeGreaterThanOrEqual(13.3)
-    expect(plantRun.operate('PORV-456A', 0.15).accepted).toBe(true)
+    expect(plantRun.operate('PORV-456A', 0.4).accepted).toBe(true)
     expect(plantRun.secondsUntil(siActuated, 120)).not.toBeNull()
     plantRun.run(5_000)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
