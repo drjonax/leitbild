@@ -228,13 +228,7 @@ impl Declared {
     }
     /// The S1 harness's prepared state, RCPs at rest, its tolerances and ids.
     fn prepared(&self, ledger: &Shared) -> Prepared {
-        let declared = &self.packet.preparation.operating_point;
-        let point = OperatingPoint {
-            pzr_roof_pressure_pa: declared.pzr_roof_pressure_pa,
-            pzr_roof_elevation_m: declared.pzr_roof_elevation_m,
-            pzr_level_m: self.gate(&["pzrTestLevel_m"]),
-            pzr_bottom_elevation_m: declared.pzr_bottom_elevation_m,
-        };
+        let point = OperatingPoint::from(&self.packet.preparation.operating_point);
         let rotors = vec![
             RotorState {
                 support: Support::Supported(SpeedRequest::Nominal),
@@ -249,7 +243,6 @@ impl Declared {
             eos_row_bound: 1e-12,
             tree_face_bound_pa: 1e-6,
             representation_search: 8,
-            pzr_phase_margin_k: self.gate(&["pzrPhaseMargin_K"]),
         };
         let (network, prepared, _) = prepare::prepare(
             &self.packet,
@@ -296,11 +289,7 @@ struct Settle {
 fn settle(declared: &Declared) -> Settle {
     let ledger: Shared = Rc::default();
     let (network, y0, yp0, ids, atol) = declared.prepared(&ledger);
-    let stocks: Vec<usize> = network
-        .cell_layout
-        .iter()
-        .flat_map(|l| [l.mass[0], l.mass[1], l.boron])
-        .collect();
+    let stocks = network.nonnegative_stocks();
     *ledger.borrow_mut() = Ledger::default();
     let system = TimedSystem {
         inner: Integrated::colored(network).expect("colored assembly"),
@@ -620,6 +609,9 @@ fn s1_settling_step_cost() {
                 }
             }
         }
+        if network.pzr.coordinates().contains(&r) {
+            return format!("pzr {}", r - network.pzr.base);
+        }
         if let Some(f) = network.face_layout.iter().find(|f| f.index == r) {
             return format!("face {} phase {}", f.face, f.phase);
         }
@@ -654,32 +646,16 @@ fn s1_settling_step_cost() {
                 "colors_without_dense_rows": Coloring::greedy(&reduced).count()})
         })
         .collect();
-    // The same with every PZR row left out: rows of PZR cells and of faces
-    // touching a PZR cell (the region currently being reworked).
+    // The same with every PZR row left out: the stratified cell's block and
+    // the rows of the face ending at its port.
     let mechanics = &declared.packet.mechanics;
-    let pzr: Vec<bool> = mechanics
-        .regions
-        .iter()
-        .map(|r| r.id.starts_with("PZR."))
-        .collect();
     let mut pzr_rows = vec![false; pattern.rows()];
-    for (i, c) in network.cell_layout.iter().enumerate() {
-        if pzr[i] {
-            for r in [
-                c.base,
-                c.boron,
-                c.mass[0],
-                c.mass[1],
-                c.energy[0],
-                c.energy[1],
-            ] {
-                pzr_rows[r] = true;
-            }
-        }
+    for r in network.pzr.coordinates() {
+        pzr_rows[r] = true;
     }
     for f in &network.face_layout {
         let face = &mechanics.faces[f.face];
-        if pzr[face.from] || pzr[face.to] {
+        if face.from == network.pzr.cell || face.to == network.pzr.cell {
             pzr_rows[f.index] = true;
         }
     }

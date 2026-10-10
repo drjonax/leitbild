@@ -3,13 +3,19 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md#actual-local-pressure-pilot-and-step-work-blocker
 //! Composed coarse local-pressure network residual `F(t, y, y')`.
 //!
-//! Every compiled fluid volume retains liquid and vapor mass/internal energy
-//! and liquid tracer; its rigid-volume EOS row recovers the local pressure.
-//! Each phase path retains one generalized hydraulic impulse `Pi = I*Q`.
-//! Pump rotors retain angular momentum. Topology, volumes, supports, losses
-//! and projections come only from the compiled owner packet; no index or
-//! coefficient of a particular plant is hardcoded here. Signed Newton trials
-//! are evaluated without clipping; physical admission is a separate account.
+//! Two cell kinds. Every regular compiled fluid volume retains liquid and
+//! vapor mass/internal energy and liquid tracer, six coordinates; its
+//! rigid-volume EOS row recovers the local pressure. The one stratified PZR
+//! cell (decision 0014, contract amendment 3) retains seventeen coordinates
+//! in the contract order: algebraic `p_roof, V_g, V_A, V_R, V_b, V_d`, then
+//! differential `M_g, U_g, M_A, U_A, B_A, M_R, U_R, B_R, M_b, M_d, B_d`. Its
+//! rows and its port views belong to the stratified cell owner, reached only
+//! through the integration point below. Each phase path retains one
+//! generalized hydraulic impulse `Pi = I*Q`. Pump rotors retain angular
+//! momentum. Topology, volumes, supports, losses and ports come only from
+//! the compiled owner packet; no index or coefficient of a particular plant
+//! is hardcoded here. Signed Newton trials are evaluated without clipping;
+//! physical admission is a separate account.
 mod account;
 mod evaluate;
 mod jacobian;
@@ -26,8 +32,8 @@ pub use tolerance::ToleranceClasses;
 
 use crate::{
     hydraulics::Section,
-    local_flow::{Cell, Chart, Face, ForceProjection, Phase},
-    pzr_field as pf, rotor,
+    local_flow::{Cell, Chart, Face, Phase},
+    rotor,
     thermal::Scalar,
 };
 use serde_json::{Value, json};
@@ -42,6 +48,7 @@ pub enum Failure {
     Fatal(String),
 }
 
+/// Six coordinates of one regular cell: `p, M_l, U_l, M_g, U_g, B_l`.
 #[derive(Clone, Copy, Debug)]
 pub struct CellLayout {
     /// Phase present in the compiled preparation: 0 liquid, 1 vapor.
@@ -50,6 +57,30 @@ pub struct CellLayout {
     pub boron: usize,
     pub mass: [usize; 2],
     pub energy: [usize; 2],
+}
+/// Coordinates of the stratified PZR cell, in the contract order.
+pub const PZR_COORDINATES: usize = 17;
+/// Offsets within the PZR block: the algebraic roof pressure and volumes
+/// `V_g, V_A, V_R, V_b, V_d`, then the differential masses `M_g, M_A, M_R,
+/// M_b, M_d`, internal energies `U_g, U_A, U_R` and tracers `B_A, B_R, B_d`.
+pub const PZR_PRESSURE: usize = 0;
+pub const PZR_VOLUME: [usize; 5] = [1, 2, 3, 4, 5];
+pub const PZR_ALGEBRAIC: usize = 6;
+pub const PZR_MASS: [usize; 5] = [6, 8, 11, 14, 15];
+pub const PZR_ENERGY: [usize; 3] = [7, 9, 12];
+pub const PZR_TRACER: [usize; 3] = [10, 13, 16];
+/// The stratified PZR cell: its region index, first coordinate (the
+/// algebraic roof pressure) and the one face ending at its surge port.
+#[derive(Clone, Copy, Debug)]
+pub struct PzrLayout {
+    pub cell: usize,
+    pub base: usize,
+    pub port_face: usize,
+}
+impl PzrLayout {
+    pub fn coordinates(&self) -> std::ops::Range<usize> {
+        self.base..self.base + PZR_COORDINATES
+    }
 }
 #[derive(Clone, Copy, Debug)]
 pub struct FaceLayout {
@@ -91,9 +122,12 @@ pub struct Prepared {
 pub struct Network<P: Properties> {
     properties: P,
     faces: Vec<Face>,
-    projections: Vec<Vec<ForceProjection>>,
+    /// Regular cells, then the stratified PZR cell's port view (the last
+    /// evaluation's state the port face reads at its mouth).
     cells: Vec<Cell>,
+    /// Regular cells only, `0..pzr.cell`.
     pub cell_layout: Vec<CellLayout>,
+    pub pzr: PzrLayout,
     pub face_layout: Vec<FaceLayout>,
     volumes: Vec<f64>,
     sections: Vec<Hydraulic>,
@@ -104,23 +138,16 @@ pub struct Network<P: Properties> {
     drive: rotor::Parameters,
     rotor_states: Vec<Option<RotorState>>,
     motor: Vec<Option<rotor::Evaluation>>,
-    field: pf::Model,
-    work: pf::Work,
-    pzr_begin: usize,
-    first_pzr_face: usize,
-    surge_to_pzr_face: usize,
     charts: Vec<[Option<Chart>; 2]>,
     face_drive: Vec<[Scalar; 2]>,
-    velocity: [Vec<[Scalar; 2]>; 2],
+    /// Per cell and phase: transported mass, enthalpy and tracer receipts.
+    /// The PZR entry is the port receipt the stratified cell takes.
     receipts: Vec<[[Scalar; 3]; 2]>,
-    forces: Vec<[Scalar; 2]>,
     rows: Vec<Scalar>,
     scales: Vec<f64>,
     leading_enthalpy: Vec<[Option<f64>; 2]>,
     leading_liquid_concentration: Vec<Option<f64>>,
     pub leading_births: Vec<Value>,
-    pub first_source_failure: Option<Value>,
-    pub last_source_failure: Option<Value>,
     pub first_mechanical_birth: Option<Value>,
     pub counters: Counters,
     shaft_power: Scalar,
@@ -145,23 +172,16 @@ impl<P: Properties> Network<P> {
     /// prepared coordinates exactly as authored (no rebalancing here).
     pub fn new(packet: &packet::Packet, properties: P) -> Result<(Self, Prepared), Failure> {
         let geometry = &packet.mechanics;
+        let cell = &packet.pzr.cell;
         let cells_n = geometry.regions.len();
         let volumes: Vec<f64> = geometry.regions.iter().map(|r| r.volume_m3).collect();
-        let pzr_begin = geometry
-            .regions
-            .iter()
-            .position(|r| r.id.starts_with("PZR."))
-            .ok_or_else(|| bad("packet has no PZR region"))?;
-        if geometry.regions[pzr_begin..]
-            .iter()
-            .any(|r| !r.id.starts_with("PZR."))
-            || cells_n - pzr_begin != pf::REGIONS
-            || packet.pzr.regions.len() != pf::REGIONS
-            || packet.pzr.faces.len() != pf::FACES
-        {
-            return Err(bad("PZR regions must be the contiguous compiled tail"));
+        let pzr = cell.index;
+        if pzr + 1 != cells_n || volumes[pzr] != cell.fluid_volume_m3 {
+            return Err(bad(
+                "the stratified PZR cell must be the last compiled region, with its fluid volume",
+            ));
         }
-        let surge = pzr_begin
+        let surge = pzr
             .checked_sub(1)
             .ok_or_else(|| bad("SURGE must precede the PZR"))?;
         if packet.thermal.water.len() != surge || packet.water_boron_amount_kg_eq.len() < surge {
@@ -181,53 +201,41 @@ impl<P: Properties> Network<P> {
         for f in &faces {
             f.validate(cells_n).map_err(bad)?;
         }
-        let first_pzr_face = faces
-            .iter()
-            .position(|f| f.from >= pzr_begin && f.to >= pzr_begin)
-            .ok_or_else(|| bad("no PZR internal face"))?;
-        if faces.len() - first_pzr_face != pf::FACES
-            || faces[first_pzr_face..]
-                .iter()
-                .zip(&packet.pzr.faces)
-                .any(|(f, p)| f.from - pzr_begin != p.from || f.to - pzr_begin != p.to)
-            || faces[..first_pzr_face]
-                .iter()
-                .any(|f| f.from >= pzr_begin && f.to >= pzr_begin)
-        {
-            return Err(bad("PZR internal faces must match the PZR field order"));
-        }
-        let inflow: Vec<usize> = (0..first_pzr_face)
-            .filter(|j| faces[*j].from < pzr_begin && faces[*j].to >= pzr_begin)
-            .collect();
-        let [surge_to_pzr_face] = inflow[..] else {
-            return Err(bad("exactly one external face must enter the PZR"));
-        };
-        if faces[..first_pzr_face]
-            .iter()
-            .any(|f| f.from >= pzr_begin && f.to < pzr_begin)
-        {
+        if !geometry.force_projection.is_empty() {
             return Err(bad(
-                "an external face may not leave the PZR toward the primary",
+                "no network region owns a nonpressure force; a force projection refuses",
             ));
         }
-        let mut projections = vec![Vec::new(); faces.len()];
-        for p in &geometry.force_projection {
-            projections
-                .get_mut(p.face)
-                .ok_or_else(|| bad("force projection face index"))?
-                .push(ForceProjection {
-                    region: p.region,
-                    coefficient_per_m2: p.coefficient_per_m2,
-                    normal: p.normal,
-                });
+        // One port, whose face ends at the cell. The PZR side contributes its
+        // port view only: no support, segment or other face touches the cell.
+        let [port] = &cell.ports[..] else {
+            return Err(bad("the stratified PZR cell needs exactly one port"));
+        };
+        let touching: Vec<usize> = (0..faces.len())
+            .filter(|j| faces[*j].from == pzr || faces[*j].to == pzr)
+            .collect();
+        if touching != [port.face]
+            || faces[port.face].to != pzr
+            || faces[port.face]
+                .supports
+                .iter()
+                .any(|support| support.region == pzr)
+            || faces[port.face]
+                .pressure_segments
+                .iter()
+                .any(|segment| segment.region == pzr)
+        {
+            return Err(bad(
+                "exactly the port face may enter the PZR, with SURGE supports and segments only",
+            ));
         }
-        let mut cell_layout = Vec::with_capacity(cells_n);
+        let mut cell_layout = Vec::with_capacity(pzr);
         let mut physical = Vec::new();
         let mut scales = Vec::new();
         let mut differential = Vec::new();
-        let mut initial_points = Vec::with_capacity(cells_n);
-        for node in 0..cells_n {
-            let (p, t, mass, u, b, k) = if node < surge {
+        let mut initial_points = Vec::with_capacity(pzr);
+        for node in 0..pzr {
+            let (p, t, mass, u, b) = if node < surge {
                 let v = &packet.thermal.water[node];
                 (
                     v.pressure_pa,
@@ -235,9 +243,8 @@ impl<P: Properties> Network<P> {
                     v.mass_kg,
                     v.energy_j,
                     packet.water_boron_amount_kg_eq[node],
-                    0,
                 )
-            } else if node == surge {
+            } else {
                 let v = &packet.external_ports.surge_stock;
                 (
                     v.pressure_pa,
@@ -245,50 +252,31 @@ impl<P: Properties> Network<P> {
                     v.mass_kg,
                     v.internal_energy_j,
                     v.absorber_tracer_kg_eq,
-                    0,
-                )
-            } else {
-                let v = &packet.pzr.regions[node - pzr_begin];
-                let k = match v.initial_phase.as_str() {
-                    "liquid" => 0,
-                    "vapor" => 1,
-                    _ => return Err(bad("PZR initial phase must be liquid or vapor")),
-                };
-                let energy = if k == 0 {
-                    v.liquid_energy_j
-                } else {
-                    v.vapor_energy_j
-                }
-                .ok_or_else(|| bad("PZR region lacks its prepared phase energy"))?;
-                (
-                    v.common_pressure_pa,
-                    v.water.temperature_k,
-                    v.mass_kg,
-                    energy,
-                    v.absorber_tracer_kg_eq,
-                    k,
                 )
             };
-            initial_points.push(properties.forward(k == 1, p, t).map_err(bad)?);
+            initial_points.push(properties.forward(false, p, t).map_err(bad)?);
             let base = physical.len();
             cell_layout.push(CellLayout {
-                phase: k,
+                phase: 0,
                 base,
                 boron: base + 5,
                 mass: [base + 1, base + 3],
                 energy: [base + 2, base + 4],
             });
-            physical.extend([
-                p,
-                if k == 0 { mass } else { 0. },
-                if k == 0 { u } else { 0. },
-                if k == 1 { mass } else { 0. },
-                if k == 1 { u } else { 0. },
-                b,
-            ]);
+            physical.extend([p, mass, u, 0., 0., b]);
             scales.extend([p, mass, u, mass, u, if b == 0. { mass * 0.001 } else { b }]);
             differential.extend([0., 1., 1., 1., 1., 1.]);
         }
+        let pzr_layout = PzrLayout {
+            cell: pzr,
+            base: physical.len(),
+            port_face: port.face,
+        };
+        let values = stratified_preparation(packet, &properties)?;
+        scales.extend(pzr_scales(&values, cell.fluid_volume_m3)?);
+        physical.extend(values);
+        differential.extend([0.; PZR_ALGEBRAIC]);
+        differential.extend([1.; PZR_COORDINATES - PZR_ALGEBRAIC]);
         let mut cells = vec![
             Cell {
                 pressure: s(0.),
@@ -296,7 +284,7 @@ impl<P: Properties> Network<P> {
             };
             cells_n
         ];
-        for node in 0..cells_n {
+        for node in 0..pzr {
             let l = cell_layout[node];
             let q = initial_points[node];
             cells[node].pressure = s(q.pressure_pa);
@@ -343,8 +331,8 @@ impl<P: Properties> Network<P> {
             h.parameters
                 .validate()
                 .map_err(|e| bad(format!("invalid hydraulic section: {e:?}")))?;
-            if h.region >= pzr_begin {
-                return Err(bad("liquid-carrier sections may not own PZR regions"));
+            if h.region >= pzr {
+                return Err(bad("liquid-carrier sections may not own the PZR cell"));
             }
             let rotor = h.parameters.pump.map(|_| {
                 let index = physical.len();
@@ -363,39 +351,11 @@ impl<P: Properties> Network<P> {
         }
         let mut section_projection = Vec::with_capacity(geometry.section_force_projection.len());
         for p in &geometry.section_force_projection {
-            if p.face >= first_pzr_face || p.section >= sections.len() {
-                return Err(bad("section projections must target non-PZR faces"));
+            if p.face >= faces.len() || p.section >= sections.len() {
+                return Err(bad("section projection face/section index"));
             }
             section_projection.push((p.face, p.section, p.coefficient));
         }
-        let regions: [pf::Region; pf::REGIONS] = std::array::from_fn(|j| {
-            let v = &packet.pzr.regions[j];
-            pf::Region {
-                volume_m3: v.volume_m3,
-                axial_area_m2: v.axial_area_m2,
-                height_m: v.top_m - v.bottom_m,
-                solid_perimeter_m: v.solid_perimeter_m,
-                elevation_m: v.elevation_m,
-            }
-        });
-        let field_faces: [pf::Face; pf::FACES] = std::array::from_fn(|j| {
-            let v = &packet.pzr.faces[j];
-            pf::Face {
-                from: v.from,
-                to: v.to,
-                area_m2: v.area_m2,
-                distance_m: v.distance_m,
-                normal: v.normal,
-            }
-        });
-        let field = pf::Model::new(
-            regions,
-            field_faces,
-            packet.pzr.selection.interfacial_length_m,
-            packet.pzr.selection.solid_roughness_m,
-            1.,
-        )
-        .map_err(bad)?;
         let size = scales.len();
         let y: Vec<f64> = physical.iter().zip(&scales).map(|(v, s)| v / s).collect();
         let face_count = faces.len();
@@ -404,9 +364,9 @@ impl<P: Properties> Network<P> {
             Self {
                 properties,
                 faces,
-                projections,
                 cells,
                 cell_layout,
+                pzr: pzr_layout,
                 face_layout,
                 volumes,
                 sections,
@@ -417,23 +377,14 @@ impl<P: Properties> Network<P> {
                 rotor_index,
                 rotor_inertia: pump.rotor_inertia_kg_m2,
                 drive,
-                field,
-                work: pf::Work::default(),
-                pzr_begin,
-                first_pzr_face,
-                surge_to_pzr_face,
                 charts: vec![[None; 2]; face_count],
                 face_drive: vec![[s(0.); 2]; face_count],
-                velocity: [vec![[s(0.); 2]; cells_n], vec![[s(0.); 2]; cells_n]],
                 receipts: vec![[[s(0.); 3]; 2]; cells_n],
-                forces: vec![[s(0.); 2]; cells_n],
                 rows: vec![s(0.); size],
                 scales,
-                leading_enthalpy: vec![[None; 2]; cells_n],
-                leading_liquid_concentration: vec![None; cells_n],
+                leading_enthalpy: vec![[None; 2]; pzr],
+                leading_liquid_concentration: vec![None; pzr],
                 leading_births: Vec::new(),
-                first_source_failure: None,
-                last_source_failure: None,
                 first_mechanical_birth: None,
                 counters: Counters::default(),
                 shaft_power: s(0.),
@@ -477,8 +428,8 @@ impl<P: Properties> Network<P> {
     pub fn volume(&self, node: usize) -> f64 {
         self.volumes[node]
     }
-    pub fn pzr_begin(&self) -> usize {
-        self.pzr_begin
+    pub fn pzr_cell(&self) -> usize {
+        self.pzr.cell
     }
     pub fn rotor_inertia(&self) -> f64 {
         self.rotor_inertia
@@ -490,9 +441,27 @@ impl<P: Properties> Network<P> {
     pub fn set_wall_budget(&mut self, seconds: f64) {
         self.wall_budget = Some((Instant::now(), seconds));
     }
+    /// Phase `k` mass and energy coordinates of a regular cell.
     pub fn stock_indices(&self, node: usize, k: usize) -> (usize, usize) {
         let l = self.cell_layout[node];
         (l.mass[k], l.energy[k])
+    }
+    /// Every retained mass and tracer coordinate, regular cells and the PZR:
+    /// the stocks an integrator constrains to be nonnegative.
+    pub fn nonnegative_stocks(&self) -> Vec<usize> {
+        let mut stocks: Vec<usize> = self
+            .cell_layout
+            .iter()
+            .flat_map(|l| [l.mass[0], l.mass[1], l.boron])
+            .collect();
+        stocks.extend(
+            PZR_MASS
+                .iter()
+                .chain(&PZR_TRACER)
+                .map(|offset| self.pzr.base + offset),
+        );
+        stocks.sort_unstable();
+        stocks
     }
     fn get(&self, y: &[f64], seed: Option<&[f64]>, index: usize) -> Scalar {
         rec(
@@ -506,11 +475,10 @@ impl<P: Properties> Network<P> {
             seed.map_or(0., |d| d[index]) * cj * self.scales[index],
         )
     }
-    fn saturation_points(&self) -> usize {
-        pf::REGIONS + pf::FACES
-    }
+    /// Exact per-assembly reuse slots of the regular cells. The stratified
+    /// cell's own property calls are sized at its integration point.
     pub fn reuse(&self) -> Reuse<P::Caloric> {
-        Reuse::new(self.cells.len(), self.saturation_points())
+        Reuse::new(self.pzr.cell, 0)
     }
     pub fn drive(&self) -> &rotor::Parameters {
         &self.drive
@@ -566,7 +534,71 @@ impl<P: Properties> Network<P> {
     /// Prepared scope string for receipts: what this network does and omits.
     pub fn scope() -> Value {
         json!(
-            "composed coarse local-pressure network: retained two-phase M/U/B in every compiled volume, local EOS, one generalized impulse per phase path, compiled liquid-carrier sections and finite rotors; primary/SURGE gas drag and interphase exchange are not composed; not a joined nuclear/thermal/SG plant"
+            "composed coarse local-pressure network: retained two-phase M/U/B in every regular volume with local EOS, one stratified PZR cell (decision 0014) reached through its port view, one generalized impulse per phase path, compiled liquid-carrier sections and finite rotors; primary/SURGE gas drag and interphase exchange are not composed; not a joined nuclear/thermal/SG plant"
         )
     }
+}
+
+/// Credited PZR instrument values of the last evaluation: PT1 roof pressure
+/// and the LT level indication (`stratified::taps` on the column).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PzrTaps {
+    pub roof_pressure_pa: f64,
+    pub level_m: f64,
+}
+
+impl<P: Properties> Network<P> {
+    /// The PZR taps of the last evaluation's column.
+    pub fn pzr_taps(&self) -> Result<PzrTaps, Failure> {
+        Err(not_integrated("the PZR taps"))
+    }
+}
+
+/// Integration point of the stratified PZR cell owner (decision 0014,
+/// `network::stratified`). Until that module is merged every use refuses:
+/// no PZR coordinate, scale, row, port view or inventory is guessed here.
+fn not_integrated(what: &str) -> Failure {
+    Failure::Fatal(format!(
+        "stratified PZR cell not integrated: {what} belongs to network::stratified"
+    ))
+}
+
+/// Prepared physical PZR coordinates at the packet's operating point
+/// (`stratified::prepare`), in the contract order.
+// TODO(INTEG C): refuse unless pzr.cell.metastable equals the band compiled
+// into the property artifact (`ld01_water_metastable_band`, PROPS).
+fn stratified_preparation<P: Properties>(
+    _packet: &packet::Packet,
+    _properties: &P,
+) -> Result<[f64; PZR_COORDINATES], Failure> {
+    Err(not_integrated("the prepared PZR coordinates"))
+}
+
+/// Solver scales of the PZR block per class: the prepared roof pressure;
+/// zone and transit volumes by the cell's fluid volume (as the volume rows); each zone's
+/// prepared mass, energy and tracer; transit stocks by the inventory of their
+/// phase (bubbles as vapor, drops and their tracer as the resident layer).
+fn pzr_scales(
+    values: &[f64; PZR_COORDINATES],
+    fluid_volume_m3: f64,
+) -> Result<[f64; PZR_COORDINATES], Failure> {
+    let mut scales = *values;
+    for offset in PZR_VOLUME {
+        scales[offset] = fluid_volume_m3;
+    }
+    let [mg, ma, mr, _, _] = PZR_MASS.map(|offset| values[offset]);
+    for (tracer, mass) in [(PZR_TRACER[0], ma), (PZR_TRACER[1], mr)] {
+        if values[tracer] == 0. {
+            scales[tracer] = mass * 0.001;
+        }
+    }
+    scales[PZR_MASS[3]] = mg;
+    scales[PZR_MASS[4]] = mr;
+    scales[PZR_TRACER[2]] = scales[PZR_TRACER[1]];
+    if scales.iter().any(|v| !v.is_finite() || *v <= 0.) {
+        return Err(bad(format!(
+            "prepared PZR coordinates give a nonpositive scale: {scales:?}"
+        )));
+    }
+    Ok(scales)
 }

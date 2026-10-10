@@ -4,16 +4,19 @@
 //!
 //! A `seed` evaluates the directional derivative `dF/dy*d + cj*dF/dy'*d` in
 //! the same pass as the values. Exact-zero stocks with a nonzero seed follow
-//! the explicitly selected one-sided chart, never an epsilon phase.
+//! the explicitly selected one-sided chart, never an epsilon phase. The
+//! stratified PZR cell enters only through its integration point: its column
+//! gives the port view the port face reads, and its rows take the port
+//! receipts.
 use super::{
-    Failure, Network, Properties,
+    Failure, Network, Properties, not_integrated,
     properties::{self as props, Reuse, Water},
     rec, s, selected_phase,
 };
 use crate::{
     hydraulics,
     local_flow::{self as flow, Cell, Phase},
-    phase, pzr_field as pf, rotor, thermal,
+    phase, rotor, thermal,
 };
 use serde_json::json;
 use std::time::Instant;
@@ -38,7 +41,8 @@ impl<P: Properties> Network<P> {
             };
             let Some(donor) = c.donor else { continue };
             let receiver = if donor == f.from { f.to } else { f.from };
-            if self.cells[receiver].phase[l.phase].is_some() {
+            // The stratified cell takes every port receipt into its zones.
+            if receiver == self.pzr.cell || self.cells[receiver].phase[l.phase].is_some() {
                 continue;
             }
             let mass = c.mass_flow_kg_s.direction.abs();
@@ -92,10 +96,8 @@ impl<P: Properties> Network<P> {
         }
         let started = Instant::now();
         self.counters.evaluations += 1;
-        let n = self.cells.len();
+        let n = self.pzr.cell;
         self.receipts.fill([[s(0.); 3]; 2]);
-        self.velocity[0].fill([s(0.); 2]);
-        self.velocity[1].fill([s(0.); 2]);
         self.shaft_power = s(0.);
         let mut points: Vec<[Point; 2]> = vec![[None; 2]; n];
         for (node, current_point) in points.iter_mut().enumerate() {
@@ -172,6 +174,9 @@ impl<P: Properties> Network<P> {
                 });
             }
         }
+        // The stratified cell's column and the port view its port face reads.
+        self.cells[self.pzr.cell] = self.stratified_port_view(y, seed, reuse.as_deref_mut())?;
+        // Supports are regular cells only (validated at compile time).
         let phase_mass: [Vec<thermal::Scalar>; 2] = std::array::from_fn(|k| {
             (0..n)
                 .map(|node| {
@@ -180,6 +185,7 @@ impl<P: Properties> Network<P> {
                 })
                 .collect()
         });
+        let volumes = &self.volumes[..n];
         let pre_source_mass_rate = vec![s(0.); n];
         self.charts.fill([None; 2]);
         for l in &self.face_layout {
@@ -213,7 +219,7 @@ impl<P: Properties> Network<P> {
                     f,
                     &phase_mass[l.phase],
                     &pre_source_mass_rate,
-                    &self.volumes,
+                    volumes,
                     pi,
                     s(0.),
                     flow::ColdOnset::Unavailable,
@@ -233,206 +239,18 @@ impl<P: Properties> Network<P> {
                 ))
             })?;
             self.charts[l.face][l.phase] = Some(c);
-            flow::add_mean_velocity(
-                &self.projections[l.face],
-                c.volume_flow_m3_s,
-                &mut self.velocity[l.phase],
-            )
-            .map_err(|e| Failure::Fatal(e.into()))?;
-            if l.face < self.first_pzr_face {
-                let flux = [c.mass_flow_kg_s, c.enthalpy_flow_w, c.boron_flow_kg_s];
-                for (k, q) in flux.into_iter().enumerate() {
-                    self.receipts[f.from][l.phase][k] = self.receipts[f.from][l.phase][k] - q;
-                    self.receipts[f.to][l.phase][k] = self.receipts[f.to][l.phase][k] + q;
-                }
+            let flux = [c.mass_flow_kg_s, c.enthalpy_flow_w, c.boron_flow_kg_s];
+            for (k, q) in flux.into_iter().enumerate() {
+                self.receipts[f.from][l.phase][k] = self.receipts[f.from][l.phase][k] - q;
+                self.receipts[f.to][l.phase][k] = self.receipts[f.to][l.phase][k] + q;
             }
         }
-        self.compose_pzr_field(t, y, seed, &points, reuse.as_deref_mut())?;
         self.compose_sections(y, yp, seed, cj, &points)?;
         self.compose_momentum(t, y, yp, seed, cj, &phase_mass)?;
-        self.compose_stocks(y, yp, seed, cj, &points, reuse)?;
+        self.compose_stocks(y, yp, seed, cj, &points, reuse.as_deref_mut())?;
+        self.compose_stratified(y, yp, seed, cj, reuse)?;
         self.counters.evaluation_wall_s += started.elapsed().as_secs_f64();
         Ok(())
-    }
-
-    fn compose_pzr_field(
-        &mut self,
-        t: f64,
-        y: &[f64],
-        seed: Option<&[f64]>,
-        points: &[[Point; 2]],
-        mut reuse: Option<&mut Reuse<P::Caloric>>,
-    ) -> Result<(), Failure> {
-        let begin = self.pzr_begin;
-        let mut phases = [[None; 2]; pf::REGIONS];
-        let pressure: [thermal::Scalar; pf::REGIONS] =
-            std::array::from_fn(|j| self.cells[begin + j].pressure);
-        let mut saturation = [thermal::Saturation::default(); pf::REGIONS];
-        let mut face_saturation = [thermal::Saturation::default(); pf::FACES];
-        for j in 0..pf::REGIONS {
-            let node = begin + j;
-            let l = self.cell_layout[node];
-            for k in 0..2 {
-                let Some((q, dq)) = points[node][k] else {
-                    continue;
-                };
-                let mass = self.get(y, seed, l.mass[k]);
-                if !selected_phase(mass) {
-                    continue;
-                }
-                let boron = if k == 0 {
-                    self.get(y, seed, l.boron)
-                } else {
-                    s(0.)
-                };
-                let volume = if k == l.phase {
-                    if let Some((born_q, born_dq)) = points[node][1 - k] {
-                        s(self.volumes[node])
-                            - self.get(y, seed, l.mass[1 - k])
-                                / rec(born_q.density_kg_m3, born_dq.density_kg_m3)
-                    } else {
-                        s(self.volumes[node])
-                    }
-                } else {
-                    mass / rec(q.density_kg_m3, dq.density_kg_m3)
-                };
-                phases[j][k] = Some(pf::Phase {
-                    mass,
-                    volume,
-                    temperature: rec(q.temperature_k, dq.temperature_k),
-                    water: thermal::WaterPoint {
-                        density: rec(q.density_kg_m3, dq.density_kg_m3),
-                        viscosity: rec(q.viscosity_pa_s, dq.viscosity_pa_s),
-                        conductivity: rec(q.conductivity_w_m_k, dq.conductivity_w_m_k),
-                        cp: rec(q.cp_j_kg_k, dq.cp_j_kg_k),
-                        expansion: rec(q.expansion_per_k, dq.expansion_per_k),
-                        enthalpy: rec(q.enthalpy_j_kg, dq.enthalpy_j_kg),
-                    },
-                    velocity: self.velocity[k][node],
-                    boron_mass: boron,
-                });
-            }
-            saturation[j] = props::saturation(
-                &self.properties,
-                pressure[j],
-                reuse.as_deref_mut().map(|r| (r, j)),
-            )?;
-        }
-        for (j, sat) in face_saturation.iter_mut().enumerate() {
-            let f = &self.faces[self.first_pzr_face + j];
-            if f.pressure_segments.len() != 2 {
-                return Err(Failure::Fatal(
-                    "actual PZR interface requires its two authored centroid segments".into(),
-                ));
-            }
-            let p = flow::pressure_after_segments(f, &self.cells, 1)
-                .map_err(|e| Failure::Fatal(e.into()))?;
-            *sat = props::saturation(
-                &self.properties,
-                p,
-                reuse.as_deref_mut().map(|r| (r, pf::REGIONS + j)),
-            )?;
-        }
-        let currents: [[thermal::Scalar; 2]; pf::FACES] = std::array::from_fn(|j| {
-            std::array::from_fn(|k| {
-                self.charts[self.first_pzr_face + j][k].map_or(s(0.), |c| c.mass_flow_kg_s)
-            })
-        });
-        let mut external = [[pf::Sources::default(); 2]; pf::REGIONS];
-        for (j, row) in external.iter_mut().enumerate() {
-            let node = begin + j;
-            for (k, source) in row.iter_mut().enumerate() {
-                source.mass = self.receipts[node][k][0];
-                source.enthalpy = self.receipts[node][k][1];
-                source.boron = self.receipts[node][k][2];
-            }
-        }
-        let inflow = self.surge_to_pzr_face;
-        if let Some(c) = self.charts[inflow][0] {
-            let node = self.faces[inflow].to;
-            let j = node - begin;
-            let v = if c.mass_flow_kg_s.value >= 0. {
-                [
-                    s(0.),
-                    c.volume_flow_m3_s / s(self.faces[inflow].flow_area_m2),
-                ]
-            } else {
-                self.velocity[0][node]
-            };
-            external[j][0].momentum = [c.mass_flow_kg_s * v[0], c.mass_flow_kg_s * v[1]];
-        }
-        let field_result = self.field.evaluate(
-            pf::Input {
-                pressure: &pressure,
-                saturation: &saturation,
-                face_saturation: &face_saturation,
-                phase: &phases,
-                face_mass_flow: &currents,
-            },
-            &external,
-            &mut self.work,
-        );
-        if let Err(error) = field_result {
-            self.trace_field_failure(t, y, seed, &phases, points, error);
-            return Err(Failure::Recoverable(error.into()));
-        }
-        for j in 0..pf::REGIONS {
-            let node = begin + j;
-            for k in 0..2 {
-                let r = self.work.sources[j][k];
-                self.receipts[node][k] = [r.mass, r.enthalpy, r.boron];
-            }
-        }
-        Ok(())
-    }
-
-    /// Error-only trace of the existing selector, not a second source law.
-    fn trace_field_failure(
-        &mut self,
-        t: f64,
-        y: &[f64],
-        seed: Option<&[f64]>,
-        phases: &[[Option<pf::Phase>; 2]; pf::REGIONS],
-        points: &[[Point; 2]],
-        error: &str,
-    ) {
-        let begin = self.pzr_begin;
-        let pair = |v: thermal::Scalar| [v.value, v.direction];
-        let mut contrasts = Vec::new();
-        for (j, f) in self.faces[self.first_pzr_face..].iter().enumerate() {
-            let from = f.from - begin;
-            let to = f.to - begin;
-            let fraction = |i: usize, k: usize| {
-                phases[i][k].map_or(s(0.), |p| p.volume / s(self.volumes[begin + i]))
-            };
-            let contrast =
-                fraction(from, 0) * fraction(to, 1) - fraction(to, 0) * fraction(from, 1);
-            if contrast.value == 0. && contrast.direction == 0. {
-                continue;
-            }
-            let forward = contrast.value > 0. || (contrast.value == 0. && contrast.direction > 0.);
-            let (li, gi) = if forward { (from, to) } else { (to, from) };
-            if phases[li][0].is_some() && phases[gi][1].is_some() {
-                continue;
-            }
-            let endpoints: Vec<serde_json::Value> = [from, to]
-                .into_iter()
-                .map(|i| {
-                    let node = begin + i;
-                    let states: Vec<serde_json::Value> = (0..2)
-                        .map(|k| {
-                            let (mi, ui) = self.stock_indices(node, k);
-                            json!({"phase":k,"mass_kg":pair(self.get(y,seed,mi)),"energy_j":pair(self.get(y,seed,ui)),"source_volume_m3":phases[i][k].map(|p|pair(p.volume)),"source_present":phases[i][k].is_some(),"property_point_present":points[node][k].is_some(),"leading_enthalpy_j_kg":self.leading_enthalpy[node][k]})
-                        })
-                        .collect();
-                    json!({"region":node,"phase_states":states})
-                })
-                .collect();
-            contrasts.push(json!({"face":self.first_pzr_face+j,"from":f.from,"to":f.to,"contrast":pair(contrast),"liquid_recipient":begin+li,"vapor_recipient":begin+gi,"endpoints":endpoints}));
-        }
-        let trace = json!({"error":error,"time_s":t,"seeded":seed.is_some(),"contrasts":contrasts});
-        self.first_source_failure.get_or_insert(trace.clone());
-        self.last_source_failure = Some(trace);
     }
 
     fn compose_sections(
@@ -543,13 +361,14 @@ impl<P: Properties> Network<P> {
         cj: f64,
         phase_mass: &[Vec<thermal::Scalar>; 2],
     ) -> Result<(), Failure> {
-        let n = self.cells.len();
+        let n = self.pzr.cell;
         let phase_mass_rate: [Vec<thermal::Scalar>; 2] =
             std::array::from_fn(|k| (0..n).map(|node| self.receipts[node][k][0]).collect());
         for li in 0..self.face_layout.len() {
             let l = self.face_layout[li];
             let current = self.charts[l.face][l.phase]
                 .ok_or_else(|| Failure::Fatal("face chart missing after source assembly".into()))?;
+            // Liquid-carrier section drives are the only nonpressure forces.
             let mut force = s(0.);
             if l.phase == 0 {
                 for (face, section, w) in &self.section_projection {
@@ -558,13 +377,6 @@ impl<P: Properties> Network<P> {
                     }
                 }
             }
-            self.forces.fill([s(0.); 2]);
-            for j in 0..pf::REGIONS {
-                self.forces[self.pzr_begin + j] = self.work.sources[j][l.phase].momentum;
-            }
-            force = force
-                + flow::project_nonpressure(&self.projections[l.face], &self.forces)
-                    .map_err(|e| Failure::Fatal(e.into()))?;
             // ProvenRest is the prepared all-zero-current case ONLY. This
             // network is not a generic disappearance/reappearance handler.
             // Cold I' uses assembled physical receipts, not an off-row yp.
@@ -573,7 +385,7 @@ impl<P: Properties> Network<P> {
                 &self.faces[l.face],
                 &phase_mass[l.phase],
                 &phase_mass_rate[l.phase],
-                &self.volumes,
+                &self.volumes[..n],
                 pi,
                 force + current.pressure_gravity_pa,
                 flow::ColdOnset::ProvenRest,
@@ -666,5 +478,30 @@ impl<P: Properties> Network<P> {
             }
         }
         Ok(())
+    }
+
+    /// The stratified cell's column at the current coordinates and its view
+    /// at the port face's mouth: pressure there and the phase drawn there
+    /// (`stratified::column`, `stratified::port_view`).
+    fn stratified_port_view(
+        &mut self,
+        _y: &[f64],
+        _seed: Option<&[f64]>,
+        _reuse: Option<&mut Reuse<P::Caloric>>,
+    ) -> Result<Cell, Failure> {
+        Err(not_integrated("the column and its surge port view"))
+    }
+
+    /// The stratified cell's 15 rows from its coordinates, rates and the port
+    /// receipts `self.receipts[pzr]` (`stratified::residual`).
+    fn compose_stratified(
+        &mut self,
+        _y: &[f64],
+        _yp: &[f64],
+        _seed: Option<&[f64]>,
+        _cj: f64,
+        _reuse: Option<&mut Reuse<P::Caloric>>,
+    ) -> Result<(), Failure> {
+        Err(not_integrated("the PZR rows"))
     }
 }
