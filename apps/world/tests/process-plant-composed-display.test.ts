@@ -359,7 +359,7 @@ describe('composed display panels', () => {
       { kind: 'alarms', scope: 'related' },
     ])))
     expect(message).toContain('but chat views allow 660')
-    expect(message).toContain('(panels.0 trend (4 strips) 382 px, panels.1 readouts 148 px, panels.2 alarms 110 px); it fits with at most 2 trend measurements (strips), or without panels.1 (readouts)')
+    expect(message).toContain('(panels.0 trend (4 strips) 382 px, panels.1 readouts 164 px, panels.2 alarms 110 px); it fits with at most 2 trend measurements (strips), or without panels.1 (readouts)')
     // Evaluation run 7, RCP trip: seven trended signals were rejected alone, then the size; now both at once.
     const both = rejectionOf(() => ask('world.process-plant.display.compose', display([
       { kind: 'trend', horizon: '2m', signals: ['CET-AVG', 'SUB-MARGIN', 'PT-455', 'PZR-LVL', 'SG-A-LVL-NR', 'SG-B-LVL-NR', 'TAVG'].map((ref, index) => ({ ref, role: index === 0 ? 'primary' : 'context' })) },

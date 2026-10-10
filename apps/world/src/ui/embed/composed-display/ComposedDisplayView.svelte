@@ -352,7 +352,8 @@
   .need { color: var(--element-neutral-color); }
   /* Advice is as tall as its content, whatever its frame: the display window sizes the frame to the height it reports. */
   .card:not(.overview) { height: auto; }
-  .banner { margin: 0; height: 22px; padding: 0 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--container-section-color); border-left: 3px solid var(--alert-caution-color); }
+  /* A block, not a flex box: an ellipsis only shortens a block's own text, so a long trip title ends in "…" rather than mid-word. */
+  .banner { margin: 0; height: 22px; line-height: 22px; padding: 0 8px; display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--container-section-color); border-left: 3px solid var(--alert-caution-color); }
   .banner.quiet { background: none; border-left-color: transparent; color: var(--element-neutral-color); padding-left: 0; }
   .banner.trip { border-left-color: var(--alert-alarm-color); font-weight: 600; }
   .status { margin: 8px 0; color: var(--element-neutral-color); }
