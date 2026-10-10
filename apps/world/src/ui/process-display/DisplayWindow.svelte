@@ -37,6 +37,7 @@
     deckEntryPlant,
     mountedDeckEntries,
     newDisplayAnnouncement,
+    observeConversation,
     observeListingsForShown,
     openingAcknowledgement,
     requestedDeckEntry,
@@ -447,16 +448,17 @@
     untrack(() => applyRequest(next))
   })
 
-  // A new conversation list: the shown display remembers whether it is still listed and where.
-  $effect(() => {
+  // A new conversation list: another conversation's displays count as seen, and the shown
+  // display remembers whether it is still listed and where. Before the DOM updates, so
+  // "New" and the announcement never show displays that are not new, even for a moment.
+  $effect.pre(() => {
     const next = listings
     untrack(() => {
+      let nextAcknowledgement = observeConversation(acknowledgement, next)
       const nextShown = observeListingsForShown(shown, next)
       if (nextShown !== shown) shown = nextShown
-      if (nextShown !== null) {
-        const nextAcknowledgement = acknowledgeShown(acknowledgement, next, nextShown.entry)
-        if (nextAcknowledgement !== acknowledgement) acknowledgement = nextAcknowledgement
-      }
+      if (nextShown !== null) nextAcknowledgement = acknowledgeShown(nextAcknowledgement, next, nextShown.entry)
+      if (nextAcknowledgement !== acknowledgement) acknowledgement = nextAcknowledgement
     })
   })
 

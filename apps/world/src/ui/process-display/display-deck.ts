@@ -191,6 +191,8 @@ export const steppedDeckEntry = (deck: ReadonlyArray<DeckEntry>, currentKey: str
 /** Answers' displays the operator has had in view, or that were there when the window opened. */
 export interface DeckAcknowledgement {
   readonly keys: ReadonlySet<string>
+  /** The displays the last list that listed any had: the conversation the window follows; null until a list has listed one. */
+  readonly conversation: ReadonlySet<string> | null
 }
 
 // Enough for many room switches in one window session; the oldest are forgotten first.
@@ -204,7 +206,32 @@ const withKeys = (current: ReadonlySet<string>, added: ReadonlyArray<string>): R
 
 export const openingAcknowledgement = (listings: ReadonlyArray<EmbeddedViewListing>): DeckAcknowledgement => ({
   keys: withKeys(new Set(), listings.map(listing => listing.key)),
+  conversation: listings.length === 0 ? null : new Set(listings.map(listing => listing.key)),
 })
+
+/**
+ * A new list arrived. Only displays added while the same conversation goes
+ * on are new. A list that keeps none of the displays the conversation last
+ * listed is another conversation's (the chat switched rooms, and the Host
+ * empties the list in between): its displays were there before the operator
+ * came to them, so they count as seen. An empty list ends nothing, so the
+ * chat page reloading its room brings back the same conversation.
+ */
+export const observeConversation = (
+  acknowledgement: DeckAcknowledgement,
+  listings: ReadonlyArray<EmbeddedViewListing>,
+): DeckAcknowledgement => {
+  if (listings.length === 0) return acknowledgement
+  const keys = listings.map(listing => listing.key)
+  const previous = acknowledgement.conversation
+  const unchanged = previous !== null && previous.size === keys.length && keys.every(key => previous.has(key))
+  if (unchanged) return acknowledgement
+  const switched = previous !== null && !keys.some(key => previous.has(key))
+  return {
+    keys: switched ? withKeys(acknowledgement.keys, keys) : acknowledgement.keys,
+    conversation: new Set(keys),
+  }
+}
 
 /**
  * The operator has an entry in view. Reaching the newest answer acknowledges
@@ -221,7 +248,7 @@ export const acknowledgeShown = (
     ? listings.map(listing => listing.key)
     : [entry.listing.key]
   const next = withKeys(acknowledgement.keys, keys)
-  return next === acknowledgement.keys ? acknowledgement : { keys: next }
+  return next === acknowledgement.keys ? acknowledgement : { ...acknowledgement, keys: next }
 }
 
 /** Answers listed after the window opened that the operator has not had in view, oldest first. */

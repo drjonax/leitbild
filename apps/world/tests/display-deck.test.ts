@@ -7,6 +7,7 @@ import {
   deckEntryPlant,
   mountedDeckEntries,
   newDisplayAnnouncement,
+  observeConversation,
   observeListingsForShown,
   openingAcknowledgement,
   overviewDeckKey,
@@ -171,9 +172,43 @@ describe('new displays', () => {
 
   test('a list that empties and refills (the chat reloaded) brings nothing new', () => {
     const opening = [listing('one'), listing('two')]
-    const acknowledgement = openingAcknowledgement(opening)
+    let acknowledgement = openingAcknowledgement(opening)
+    acknowledgement = observeConversation(acknowledgement, [])
     expect(unseenListings(acknowledgement, [])).toEqual([])
+    acknowledgement = observeConversation(acknowledgement, opening)
     expect(unseenListings(acknowledgement, opening)).toEqual([])
+    // The same conversation, reloaded with a display added meanwhile: that one is new.
+    const grown = [...opening, listing('three')]
+    acknowledgement = observeConversation(observeConversation(acknowledgement, []), grown)
+    expect(unseenListings(acknowledgement, grown).map(entry => entry.key)).toEqual(['three'])
+  })
+
+  test('after a room switch the new room\'s displays are not new; those added while it goes on are', () => {
+    const room = [listing('one'), listing('two')]
+    let acknowledgement = openingAcknowledgement(room)
+    // The Host empties the list, then the other room's list arrives: no display in common.
+    acknowledgement = observeConversation(acknowledgement, [])
+    const otherRoom = [listing('x', { caption: 'Answer 09:12:00' }), listing('y', { caption: 'Answer 09:14:30' })]
+    acknowledgement = observeConversation(acknowledgement, otherRoom)
+    expect(unseenListings(acknowledgement, otherRoom)).toEqual([])
+    expect(newDisplayAnnouncement(unseenListings(acknowledgement, otherRoom))).toBe('')
+
+    const answered = [...otherRoom, listing('z', { caption: 'Answer 10:01:05' })]
+    acknowledgement = observeConversation(acknowledgement, answered)
+    expect(unseenListings(acknowledgement, answered).map(entry => entry.key)).toEqual(['z'])
+    expect(newDisplayAnnouncement(unseenListings(acknowledgement, answered))).toBe('New display from Answer 10:01:05: Display z')
+
+    // A switch without the empty list in between is a switch too.
+    const third = [listing('p')]
+    acknowledgement = observeConversation(acknowledgement, third)
+    expect(unseenListings(acknowledgement, third)).toEqual([])
+  })
+
+  test('the first display of a conversation that had none when the window opened is new', () => {
+    let acknowledgement = openingAcknowledgement([])
+    const first = [listing('one')]
+    acknowledgement = observeConversation(acknowledgement, first)
+    expect(unseenListings(acknowledgement, first).map(entry => entry.key)).toEqual(['one'])
   })
 })
 
