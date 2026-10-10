@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { Activity, ListTree, X } from 'lucide-svelte'
+  import { Activity, ListTree, LocateFixed, X } from 'lucide-svelte'
+  import { untrack } from 'svelte'
   import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
   import { parseElectricGridObjectData } from '../../packs/electric-grid/model.ts'
+  import { gridAssetItemId, parseGridAssetItemId } from '../../packs/electric-grid/ui/grid-live-layer.ts'
   import { querySimulationRunCapability } from '../simulation-run-client.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import GridAssetBrowser from './GridAssetBrowser.svelte'
@@ -15,9 +17,12 @@
     readonly objects: ReadonlyArray<OperationalObject>
     readonly onClose: () => void
     readonly onFocusMap?: (target: MapTarget) => void
+    /** `<gridId>#<assetId>` selected on the map or in this panel. */
+    readonly selectedItemId?: string | null
+    readonly onSelectItem?: (itemId: string | null) => void
   }
 
-  const { simulationRunId, objects, onClose, onFocusMap = () => undefined }: Props = $props()
+  const { simulationRunId, objects, onClose, onFocusMap = () => undefined, selectedItemId = null, onSelectItem = () => undefined }: Props = $props()
 
   interface GridOverviewSummary {
     readonly gridId: string
@@ -28,10 +33,30 @@
       readonly servedLoadMw: number
       readonly reserveMarginMw: number
       readonly lowestVoltagePu: number
+      readonly statusLabel: string
+      readonly activeAlarmCount: number
     }
+    readonly thresholds: { readonly constrainedBranchLoadingPercent: number }
+    readonly constrainedBranchCount: number
     readonly constrainedBranches: ReadonlyArray<{ readonly id: string; readonly label: string; readonly state: { readonly loadingPercent: number } }>
     readonly generators: ReadonlyArray<{ readonly id: string; readonly label: string; readonly state: { readonly dispatchMw: number } }>
-    readonly affectedLoads: ReadonlyArray<{ readonly id: string; readonly label: string; readonly state: { readonly shedMw: number; readonly serviceState: string } }>
+    readonly affectedLoadCount: number
+    readonly affectedLoads: ReadonlyArray<{ readonly id: string; readonly label: string; readonly state: { readonly unservedMw: number; readonly shedMw: number; readonly serviceState: string } }>
+  }
+
+  interface GridIslandRow {
+    readonly id: string
+    readonly referenceBus: { readonly id: string; readonly label: string }
+    readonly busCount: number
+    readonly energized: boolean
+    readonly frequencyHz: number | null
+    readonly loadMw: number
+    readonly unservedLoadMw: number
+  }
+
+  interface GridIslands {
+    readonly total: number
+    readonly islands: ReadonlyArray<GridIslandRow>
   }
 
   interface PanelFrame {
@@ -58,10 +83,14 @@
   let frame = $state<PanelFrame | null>(null)
   let gesture = $state<PanelGesture | null>(null)
   let summary = $state<GridOverviewSummary | null>(null)
+  let islands = $state<GridIslands | null>(null)
   let queryError = $state<string | null>(null)
   let selectedGridId = $state<string | null>(null)
+  let selectedAssetId = $state<string | null>(null)
   let view = $state<'summary' | 'assets'>('summary')
   let summarySequence = 0
+  // The last selection this panel applied or reported, so its own report does not re-apply.
+  let appliedItemId: string | null = null
 
   const gridItems = $derived(objects.flatMap(object => {
     const data = parseElectricGridObjectData(object)
@@ -73,6 +102,7 @@
   const branches = $derived(summary?.constrainedBranches ?? [])
   const generators = $derived(summary?.generators ?? [])
   const loads = $derived(summary?.affectedLoads ?? [])
+  const deenergizedIslandCount = $derived(islands?.islands.filter(island => !island.energized).length ?? 0)
 
   const frequencyClass = $derived(!system
     ? 'idle'
@@ -228,23 +258,73 @@
     : '')
 
   const chooseGrid = (nextGridId: string): void => {
+    if (selectedGridId === nextGridId) return
     selectedGridId = nextGridId
+    selectedAssetId = null
     summary = null
+    islands = null
     queryError = null
   }
+
+  /** Selects an asset here and on the map; opening it shows its detail in the Assets view. */
+  const selectAsset = (assetId: string | null, open: boolean): void => {
+    selectedAssetId = assetId
+    if (assetId !== null && open) view = 'assets'
+    const itemId = assetId === null || gridId === null ? null : gridAssetItemId(gridId, assetId)
+    appliedItemId = itemId
+    onSelectItem(itemId)
+  }
+
+  /** Highlights an asset on the map and flies to it, staying in the current view. */
+  const locateAsset = async (assetId: string): Promise<void> => {
+    const requestedGridId = gridId
+    if (!requestedGridId) return
+    selectAsset(assetId, false)
+    try {
+      const result = await querySimulationRunCapability<{ readonly asset: { readonly mapTarget?: MapTarget } }>(
+        simulationRunId,
+        'world.electric-grid.asset.get',
+        { gridId: requestedGridId, assetId },
+      )
+      if (result.asset.mapTarget) onFocusMap(result.asset.mapTarget)
+      else queryError = `${assetId} has no map position`
+    } catch (error) {
+      queryError = error instanceof Error ? error.message : String(error)
+    }
+  }
+
+  $effect(() => {
+    const itemId = selectedItemId
+    untrack(() => {
+      if (itemId === appliedItemId) return
+      appliedItemId = itemId
+      if (itemId === null) {
+        selectedAssetId = null
+        return
+      }
+      const item = parseGridAssetItemId(itemId)
+      if (!gridItems.some(candidate => candidate.object.id === item.gridId)) {
+        queryError = `Selected Grid ${item.gridId} is not in this Run`
+        return
+      }
+      chooseGrid(item.gridId)
+      selectedAssetId = item.assetId
+      view = 'assets'
+    })
+  })
 
   const loadSummary = async (): Promise<void> => {
     const requestedGridId = gridId
     if (!requestedGridId) return
     const sequence = ++summarySequence
     try {
-      const result = await querySimulationRunCapability<GridOverviewSummary>(
-        simulationRunId,
-        'world.electric-grid.grid.summary',
-        { gridId: requestedGridId },
-      )
+      const [result, islandResult] = await Promise.all([
+        querySimulationRunCapability<GridOverviewSummary>(simulationRunId, 'world.electric-grid.grid.summary', { gridId: requestedGridId }),
+        querySimulationRunCapability<GridIslands>(simulationRunId, 'world.electric-grid.islands.list', { gridId: requestedGridId, limit: 20 }),
+      ])
       if (sequence !== summarySequence || gridId !== requestedGridId) return
       summary = result
+      islands = islandResult
       queryError = null
     } catch (error) {
       if (sequence === summarySequence && gridId === requestedGridId) {
@@ -351,40 +431,76 @@
           </div>
         </div>
 
+        <div class="alarms" class:problem={system.activeAlarmCount > 0}>
+          <h3>Alarms</h3>
+          {#if system.activeAlarmCount === 0}
+            <p class="empty-state">No active alarms.</p>
+          {:else}
+            <p class="alarm-status">{system.activeAlarmCount} active · {system.statusLabel}</p>
+            <ul>
+              {#if summary && summary.constrainedBranchCount > 0}<li>{summary.constrainedBranchCount} corridors at or above {summary.thresholds.constrainedBranchLoadingPercent}% loading</li>{/if}
+              {#if summary && summary.affectedLoadCount > 0}<li>{summary.affectedLoadCount} loads with unserved demand</li>{/if}
+              {#if deenergizedIslandCount > 0}<li>{deenergizedIslandCount} de-energised islands</li>{/if}
+            </ul>
+          {/if}
+        </div>
+
+        {#snippet assetRow(assetId: string, label: string, value: string, problem: boolean)}
+          <div class="row linked" class:problem>
+            <button type="button" class="row-select" title="Open {label}" onclick={() => selectAsset(assetId, true)}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </button>
+            <button type="button" class="row-locate" title="Locate {label} on the map" aria-label="Locate {label} on the map" onclick={() => void locateAsset(assetId)}><LocateFixed size={12} /></button>
+          </div>
+        {/snippet}
+
         <div class="split">
           <div>
             <h3>Constrained corridors</h3>
-            {#each branches as branch}
-              <div class="row">
-                <span>{branch.label}</span>
-                <strong>{Math.round(branch.state.loadingPercent)}%</strong>
-              </div>
+            {#each branches as branch (branch.id)}
+              {@render assetRow(branch.id, branch.label, `${Math.round(branch.state.loadingPercent)}%`, branch.state.loadingPercent >= 100)}
+            {:else}
+              {#if summary}<p class="empty-state">None at or above {summary.thresholds.constrainedBranchLoadingPercent}% loading.</p>{/if}
             {/each}
           </div>
           <div>
             <h3>Generation stack</h3>
-            {#each generators as generator}
-              <div class="row">
-                <span>{generator.label}</span>
-                <strong>{mw(generator.state.dispatchMw)} MW</strong>
-              </div>
+            {#each generators as generator (generator.id)}
+              {@render assetRow(generator.id, generator.label, `${mw(generator.state.dispatchMw)} MW`, false)}
             {/each}
           </div>
         </div>
 
         <div class="supply">
           <h3>Consumer supply</h3>
-          {#each loads as load}
-            <div class="row" class:problem={load.state.serviceState !== 'normal'}>
-              <span>{load.label}</span>
-              <strong>{Math.round(load.state.shedMw)} MW shed</strong>
-            </div>
+          {#each loads as load (load.id)}
+            {@render assetRow(load.id, load.label, `${mw(load.state.unservedMw)} MW unserved`, true)}
+          {:else}
+            {#if summary}<p class="empty-state">All demand is served.</p>{/if}
           {/each}
         </div>
+
+        {#if islands}
+          <div class="islands">
+            <h3>Islands ({islands.total})</h3>
+            {#each islands.islands as island (island.id)}
+              {@render assetRow(
+                island.referenceBus.id,
+                `${island.referenceBus.label} · ${island.busCount} buses`,
+                island.energized
+                  ? `${island.frequencyHz === null ? '' : `${island.frequencyHz.toFixed(2)} Hz · `}${mw(island.loadMw)} MW`
+                  : 'De-energised',
+                !island.energized || island.unservedLoadMw > 0,
+              )}
+            {/each}
+            {#if islands.total > islands.islands.length}<p class="empty-state">{islands.total - islands.islands.length} smaller islands not shown.</p>{/if}
+          </div>
+        {/if}
       </div>
     {:else if gridId}
       {#key gridId}
-        <GridAssetBrowser {simulationRunId} {gridId} refreshRevision={selectedGridItem?.object.revision ?? 0} {onFocusMap} />
+        <GridAssetBrowser {simulationRunId} {gridId} refreshRevision={selectedGridItem?.object.revision ?? 0} {selectedAssetId} onSelectAsset={assetId => selectAsset(assetId, true)} {onFocusMap} />
       {/key}
     {/if}
     {#if queryError}<p class="query-error">{queryError}</p>{/if}
@@ -601,6 +717,74 @@
 
   .row.problem strong {
     color: #dc2626;
+  }
+
+  .row.linked {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 0;
+  }
+
+  .row-select {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: baseline;
+    min-width: 0;
+    padding: 5px 0;
+    color: inherit;
+    text-align: left;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .row-select:hover span,
+  .row-select:focus-visible span {
+    color: inherit;
+    text-decoration: underline;
+  }
+
+  .row-locate {
+    display: inline-grid;
+    place-items: center;
+    padding: 3px;
+    color: #64748b;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .row-locate:hover,
+  .row-locate:focus-visible {
+    color: inherit;
+    background: rgba(148, 163, 184, 0.16);
+  }
+
+  .alarms,
+  .supply,
+  .islands {
+    margin-bottom: 14px;
+  }
+
+  .alarms ul {
+    margin: 4px 0 0;
+    padding-left: 16px;
+    font-size: 12px;
+  }
+
+  .alarm-status {
+    margin: 0;
+    color: #dc2626;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .empty-state {
+    margin: 4px 0;
+    color: #64748b;
+    font-size: 11px;
   }
 
   .resize-grip {

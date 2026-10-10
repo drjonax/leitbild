@@ -22,6 +22,7 @@
   } from '../../packs/electric-grid/commands/load.ts'
   import { electricGridDestructiveCommandKinds } from '../../packs/electric-grid/commands/index.ts'
   import { invokeSimulationRunCapability, querySimulationRunCapability } from '../simulation-run-client.ts'
+  import { untrack } from 'svelte'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
 
   type AssetKind = 'bus' | 'branch' | 'generator' | 'load' | 'storage'
@@ -49,10 +50,13 @@
     readonly simulationRunId: SimulationRunId
     readonly gridId: string
     readonly refreshRevision: number
+    /** The selected asset; the panel owns it so the map can select and highlight it too. */
+    readonly selectedAssetId: string | null
+    readonly onSelectAsset: (assetId: string | null) => void
     readonly onFocusMap?: (target: MapTarget) => void
   }
 
-  const { simulationRunId, gridId, refreshRevision, onFocusMap = () => undefined }: Props = $props()
+  const { simulationRunId, gridId, refreshRevision, selectedAssetId, onSelectAsset, onFocusMap = () => undefined }: Props = $props()
   const pageSize = 40
   const kindOptions: ReadonlyArray<{ readonly value: AssetKind | 'all'; readonly label: string }> = [
     { value: 'all', label: 'All' },
@@ -68,9 +72,9 @@
   let offset = $state(0)
   let total = $state(0)
   let assets = $state<ReadonlyArray<AssetListItem>>([])
-  let selectedAssetId = $state<string | null>(null)
   let detail = $state<AssetDetail | null>(null)
   let loading = $state(false)
+  let loaded = $state(false)
   let error = $state<string | null>(null)
   let activeOperationId = $state<string | null>(null)
   let commandValue = $state('')
@@ -97,9 +101,10 @@
     }
   }
 
-  const loadAssets = async (): Promise<void> => {
+  /** Background refreshes on a new revision keep the list still; only user-initiated loads show the spinner. */
+  const loadAssets = async (userInitiated: boolean): Promise<void> => {
     const sequence = ++loadSequence
-    loading = true
+    if (userInitiated) loading = true
     try {
       const result = await queryResult('world.electric-grid.assets.search', {
         gridId,
@@ -111,11 +116,7 @@
       if (sequence !== loadSequence) return
       total = result.total
       assets = result.assets
-      if (selectedAssetId && !result.assets.some(asset => asset.id === selectedAssetId)) {
-        selectedAssetId = null
-        detail = null
-      }
-      if (selectedAssetId) await loadDetail(selectedAssetId)
+      loaded = true
       error = null
     } catch (err) {
       if (sequence === loadSequence) error = err instanceof Error ? err.message : String(err)
@@ -125,27 +126,20 @@
   }
 
   const selectAsset = (asset: AssetListItem): void => {
-    selectedAssetId = asset.id
-    detail = null
-    activeOperationId = null
-    pendingConfirmation = null
-    commandStatus = null
-    void loadDetail(asset.id)
+    onSelectAsset(asset.id)
   }
 
   const setKind = (next: AssetKind | 'all'): void => {
     kind = next
     offset = 0
-    selectedAssetId = null
-    detail = null
-    void loadAssets()
+    void loadAssets(true)
   }
 
   const updateSearch = (value: string): void => {
     searchText = value
     offset = 0
     if (searchTimer) clearTimeout(searchTimer)
-    searchTimer = setTimeout(() => void loadAssets(), 220)
+    searchTimer = setTimeout(() => void loadAssets(true), 220)
   }
 
   const numericOperation = (operationId: string): boolean => [
@@ -241,22 +235,85 @@
       if (!response.result.ok) throw new Error(response.result.reason ?? 'Command rejected')
       activeOperationId = null
       commandStatus = 'Accepted'
-      await loadAssets()
+      await Promise.all([loadAssets(false), loadDetail(detail.id)])
     } catch (err) {
       commandStatus = err instanceof Error ? err.message : String(err)
     }
   }
 
-  const displayValue = (value: unknown): string => {
-    if (value === null) return 'null'
-    if (typeof value === 'number') return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(3)
-    if (typeof value === 'string' || typeof value === 'boolean') return String(value)
-    return JSON.stringify(value)
+  type Fields = Readonly<Record<string, unknown>>
+  const valueOf = (fields: Fields | undefined, key: string): unknown => fields?.[key]
+  const formatted = (value: unknown, unit = '', digits = 0): string => {
+    if (typeof value === 'number') return `${value.toLocaleString(undefined, { maximumFractionDigits: digits })}${unit === '' ? '' : ` ${unit}`}`
+    if (typeof value === 'string') return value.replaceAll('_', ' ')
+    if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+    if (Array.isArray(value)) return value.length === 0 ? 'None' : value.join(', ')
+    return value === null ? 'None' : 'Not reported'
+  }
+  const percentOf = (fraction: unknown): unknown => typeof fraction === 'number' ? fraction * 100 : fraction
+
+  /** The fields an operator reads first, per asset kind; the full records stay under Raw data. */
+  const keyFieldsFor = (asset: AssetDetail): ReadonlyArray<{ readonly label: string; readonly value: string }> => {
+    const definition = asset.definition
+    const state = asset.state
+    const field = (label: string, value: string) => ({ label, value })
+    if (asset.kind === 'branch') return [
+      field('Loading', formatted(valueOf(state, 'loadingPercent'), '%', 1)),
+      field('Flow', `${formatted(valueOf(state, 'flowMw'), 'MW')} (positive from ${formatted(valueOf(definition, 'fromBusId'))})`),
+      field('Switching', formatted(valueOf(state, 'state'))),
+      field('Available rating', formatted(percentOf(valueOf(state, 'availability')), '%')),
+      field('Rating', `${formatted(valueOf(definition, 'ratingMw'), 'MW')} · emergency ${formatted(valueOf(definition, 'emergencyRatingMw'), 'MW')}`),
+      field('Voltage', formatted(valueOf(definition, 'nominalKv'), 'kV')),
+      field('From → to', `${formatted(valueOf(definition, 'fromBusId'))} → ${formatted(valueOf(definition, 'toBusId'))}`),
+    ]
+    if (asset.kind === 'generator') return [
+      field('State', formatted(valueOf(state, 'state'))),
+      field('Dispatch', `${formatted(valueOf(state, 'dispatchMw'), 'MW')} → target ${formatted(valueOf(state, 'targetMw'), 'MW')}`),
+      field('Available', `${formatted(valueOf(state, 'availableMw'), 'MW')} of ${formatted(valueOf(definition, 'capacityMw'), 'MW')}`),
+      field('Reserve', formatted(valueOf(state, 'reserveMw'), 'MW')),
+      field('Kind', formatted(valueOf(definition, 'kind'))),
+      field('Bus', formatted(valueOf(definition, 'busId'))),
+    ]
+    if (asset.kind === 'load') return [
+      field('Service', formatted(valueOf(state, 'serviceState'))),
+      field('Served', `${formatted(valueOf(state, 'servedMw'), 'MW', 1)} of ${formatted(valueOf(state, 'demandMw'), 'MW', 1)}`),
+      field('Shed', `${formatted(valueOf(state, 'shedMw'), 'MW', 1)} (manual ${formatted(valueOf(state, 'curtailedMw'), 'MW', 1)}, LFDD ${formatted(valueOf(state, 'lfddShedMw'), 'MW', 1)})`),
+      field('Priority', formatted(valueOf(definition, 'priority'))),
+      field('Controllable', formatted(valueOf(definition, 'controllable'))),
+      field('Bus', formatted(valueOf(definition, 'busId'))),
+    ]
+    if (asset.kind === 'bus') return [
+      field('Voltage', state === undefined ? 'Not solved' : formatted(valueOf(state, 'voltagePu'), 'pu', 3)),
+      field('Frequency', state === undefined ? 'Not solved' : formatted(valueOf(state, 'frequencyHz'), 'Hz', 3)),
+      field('Island', state === undefined ? 'Not solved' : formatted(valueOf(state, 'islandId'))),
+      field('Nominal', formatted(valueOf(definition, 'nominalKv'), 'kV')),
+    ]
+    return [
+      field('State', formatted(valueOf(state, 'state'))),
+      field('Charge', formatted(percentOf(valueOf(state, 'stateOfChargeFraction')), '%')),
+      field('Dispatch', formatted(valueOf(state, 'dispatchMw'), 'MW')),
+      field('Capacity', formatted(valueOf(definition, 'capacityMwh'), 'MWh')),
+    ]
   }
 
   $effect(() => {
     refreshRevision
-    void loadAssets()
+    untrack(() => {
+      void loadAssets(false)
+      // The selection effect loads a newly selected asset; a revision refreshes the one shown.
+      if (detail !== null) void loadDetail(detail.id)
+    })
+  })
+
+  $effect(() => {
+    const assetId = selectedAssetId
+    untrack(() => {
+      activeOperationId = null
+      pendingConfirmation = null
+      commandStatus = null
+      if (detail?.id !== assetId) detail = null
+      if (assetId) void loadDetail(assetId)
+    })
   })
 
   runOnMount(() => {
@@ -272,7 +329,7 @@
       <Search size={14} />
       <input value={searchText} oninput={(event) => updateSearch(event.currentTarget.value)} placeholder="Search assets" />
     </label>
-    <button type="button" class="icon-button" title="Refresh assets" aria-label="Refresh assets" onclick={() => void loadAssets()}>
+    <button type="button" class="icon-button" title="Refresh assets" aria-label="Refresh assets" onclick={() => void loadAssets(true)}>
       <span class:spinning={loading}><RefreshCw size={14} /></span>
     </button>
   </div>
@@ -285,7 +342,7 @@
 
   <div class="browser-body" class:with-detail={detail !== null}>
     <div class="asset-list" aria-label="Grid assets">
-      {#if assets.length === 0 && !loading}<p class="empty">No matching assets.</p>{/if}
+      {#if assets.length === 0 && loaded && !loading}<p class="empty">No matching assets.</p>{/if}
       {#each assets as asset (asset.id)}
         <button type="button" class="asset-row" class:selected={selectedAssetId === asset.id} onclick={() => selectAsset(asset)}>
           <span class="status-dot {asset.status.tone}" title={asset.status.label}></span>
@@ -306,7 +363,7 @@
             <code>{detail.id}</code>
           </div>
           {#if detail.mapTarget}
-            <button type="button" class="icon-button" title="Show on map" aria-label="Show on map" onclick={() => detail?.mapTarget && onFocusMap(detail.mapTarget)}><LocateFixed size={15} /></button>
+            <button type="button" class="icon-button" title="Locate on map" aria-label="Locate on map" onclick={() => detail?.mapTarget && onFocusMap(detail.mapTarget)}><LocateFixed size={15} /></button>
           {/if}
         </div>
         <p class="detail-summary"><span class="status-dot {detail.status.tone}"></span>{detail.status.label} · {detail.summary}</p>
@@ -334,21 +391,14 @@
           {#if commandStatus}<p class="command-status">{commandStatus}</p>{/if}
         {/if}
 
-        <details open>
-          <summary>Live state</summary>
-          <dl>
-            {#each Object.entries(detail.state ?? {}) as [key, value]}
-              <dt>{key.replaceAll('_', ' ')}</dt><dd>{displayValue(value)}</dd>
-            {/each}
-          </dl>
-        </details>
+        <dl class="key-fields">
+          {#each keyFieldsFor(detail) as item}
+            <dt>{item.label}</dt><dd>{item.value}</dd>
+          {/each}
+        </dl>
         <details>
-          <summary>Definition & provenance</summary>
-          <dl>
-            {#each Object.entries(detail.definition) as [key, value]}
-              <dt>{key.replaceAll('_', ' ')}</dt><dd>{displayValue(value)}</dd>
-            {/each}
-          </dl>
+          <summary>Raw data</summary>
+          <pre>{JSON.stringify({ state: detail.state ?? null, definition: detail.definition }, null, 2)}</pre>
         </details>
       </aside>
     {/if}
@@ -357,8 +407,8 @@
   <footer class="pagination">
     <span>{total.toLocaleString()} assets</span>
     <span>Page {pageNumber} of {pageCount}</span>
-    <button type="button" disabled={offset === 0} aria-label="Previous page" onclick={() => { offset = Math.max(0, offset - pageSize); void loadAssets() }}><ChevronLeft size={14} /></button>
-    <button type="button" disabled={offset + pageSize >= total} aria-label="Next page" onclick={() => { offset += pageSize; void loadAssets() }}><ChevronRight size={14} /></button>
+    <button type="button" disabled={offset === 0} aria-label="Previous page" onclick={() => { offset = Math.max(0, offset - pageSize); void loadAssets(true) }}><ChevronLeft size={14} /></button>
+    <button type="button" disabled={offset + pageSize >= total} aria-label="Next page" onclick={() => { offset += pageSize; void loadAssets(true) }}><ChevronRight size={14} /></button>
   </footer>
   {#if error}<p class="error">{error}</p>{/if}
 </div>
@@ -403,6 +453,8 @@
   .confirmation button { padding: 5px 8px; color: inherit; border: 1px solid rgba(148,163,184,.4); border-radius: 999px; background: transparent; cursor: pointer; font-size: 11px; }
   .confirmation button.confirm { color: #fff; border-color: #dc2626; background: #dc2626; }
   details { margin-top: 9px; font-size: 10px; }
+  details pre { max-height: 240px; overflow: auto; margin: 6px 0 0; padding: 6px; border-radius: 4px; background: rgba(148,163,184,.1); font-size: 9px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .key-fields { margin: 10px 0 4px; font-size: 11px; }
   summary { cursor: pointer; font-weight: 650; }
   dl { display: grid; grid-template-columns: minmax(80px,.8fr) minmax(0,1.2fr); gap: 4px 8px; margin: 7px 0; }
   dt { color: #64748b; } dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
