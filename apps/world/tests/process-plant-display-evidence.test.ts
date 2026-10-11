@@ -178,8 +178,11 @@ describe('what World adds to a composed display', () => {
       { kind: 'mimic', to: ['auxFeedwaterPumpMotor', 'auxFeedwaterPumpMotorB'], services: ['electricalPower'], reach: 2 },
       { kind: 'alarms', scope: 'related' },
     ])
-    // Powered is not pumping: the pumps' header flow says whether they deliver water.
-    expect(listed(diesel.evidence)).toEqual([['auxFeedwaterHeader.outletFlowKgPerS', 'flow']])
+    // Powered is not pumping: the pumps' header flow says whether they deliver water. With the pumps coasting down
+    // and the loops on natural circulation, the steam generators have shrunk to low-low level within the minute, so
+    // it is what that actuation, which starts the drawn pumps, delivers.
+    expect(listed(diesel.evidence)).toEqual([['auxFeedwaterHeader.outletFlowKgPerS', 'delivers']])
+    expect(diesel.evidence[0]!.reason).toMatch(/^Steam generator [A-D] low-low level auxiliary feedwater actuation: what it delivers$/)
     expect(offsite.read('auxFeedwaterHeader.outletFlowKgPerS')).toBeGreaterThan(50)
   }, 60_000)
 
