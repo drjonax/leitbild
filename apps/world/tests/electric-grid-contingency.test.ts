@@ -386,8 +386,14 @@ describe('electric grid N-1 screening', () => {
     expect(evaluated.actionBalances).toHaveLength(1)
     expect(evaluated.actionBalances[0].imbalanceMw).toBeGreaterThan(0)
 
+    // Closing the direct line again passes its synchro-check (its ends lie 17° apart) and relieves the corridor.
     const reconnect = await ask(run.grid, 'world.electric-grid.remedial-actions.evaluate', { contingencies: 'all-branches', actions: [{ kind: 'close-branch', assetId: 'branch:g-l' }] })
     expect(reconnect.after.baseCase.overloadedCount).toBe(0)
+    // Opening the B path first puts all of G's export on the A path: measured after that action, the
+    // direct line's ends lie 24.6° apart (DC), beyond the 20° loop-closing limit, so the close is reported as rejected.
+    await expect(ask(run.grid, 'world.electric-grid.remedial-actions.evaluate', {
+      contingencies: 'all-branches', actions: [{ kind: 'open-branch', assetId: 'branch:g-b' }, { kind: 'close-branch', assetId: 'branch:g-l' }],
+    })).rejects.toThrow(/close-branch branch:g-l would be rejected by synchro-check: both ends are in one energised island after the earlier actions and their voltage angles differ by Δθ 2\d\.\d°, above the 20° loop-closing limit/)
     await expect(ask(run.grid, 'world.electric-grid.remedial-actions.evaluate', { contingencies: 'all-branches', actions: [{ kind: 'open-branch', assetId: 'branch:g-l' }] })).rejects.toThrow('already open')
     await expect(ask(run.grid, 'world.electric-grid.remedial-actions.evaluate', {
       contingencies: 'all-branches', actions: [{ kind: 'redispatch', assetId: 'generator:l1', targetMw: 150 }, { kind: 'redispatch', assetId: 'generator:l1', targetMw: 160 }],

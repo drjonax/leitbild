@@ -146,7 +146,7 @@ const actionSchema = z.discriminatedUnion('kind', [
 
 const remedialPayloadSchema = z.object({
   ...screeningInput,
-  actions: z.array(actionSchema).min(1).max(20).describe('Candidate actions in order, each on a different asset, with the rules of dispatch-generator, shed-load, open-branch and close-branch. A redispatched unit holds its set-point; the island\'s other FCR providers balance the difference.'),
+  actions: z.array(actionSchema).min(1).max(20).describe('Candidate actions in order, each on a different asset, with the rules of dispatch-generator, shed-load, open-branch and close-branch. A redispatched unit holds its set-point; the island\'s other FCR providers balance the difference. A close-branch passes close-branch\'s synchro-check, measured after the earlier actions, or the evaluation is rejected with the measured Δf or Δθ.'),
 }).strict()
 
 const remedialResultSchema = z.object({
@@ -163,7 +163,7 @@ const remedialResultSchema = z.object({
 export const gridRemedialActionsEvaluateQuery = defineGridQuery({
   id: 'world.electric-grid.remedial-actions.evaluate',
   title: 'Evaluate remedial actions',
-  description: 'Read-only: applies candidate redispatch, load-shedding and branch open/close actions to a private copy of the solved Grid and returns its base case and N-1 screening before and after them. The post-action base flows are the solved base flows plus the DC change the actions make, screened like the live ones. Nothing is applied; issue the matching commands to act.',
+  description: 'Read-only: applies candidate redispatch, load-shedding and branch open/close actions to a private copy of the solved Grid and returns its base case and N-1 screening before and after them. The post-action base flows are the solved base flows plus the DC change the actions make, screened like the live ones. An action its command would reject rejects the evaluation with that reason; a close-branch the synchro-check would refuse reports the measured frequency (Δf) or voltage-angle (Δθ) difference. Nothing is applied; issue the matching commands to act.',
   searchTerms: ['remedial action', 'corrective action', 'redispatch', 'countertrade', 'N-1', 'what if', 'switching plan', 'congestion relief', 'avhjelpende tiltak', 'omfordeling', 'spesialregulering', 'koblingsplan', 'n-1'],
   input: remedialPayloadSchema,
   output: remedialResultSchema,

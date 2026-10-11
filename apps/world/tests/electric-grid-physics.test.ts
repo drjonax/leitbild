@@ -9,6 +9,7 @@ import { nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definit
 import { compileGridDefinition, gridAutomationPreset } from '../src/packs/electric-grid/definitions.ts'
 import { gridElectricalPortsAt } from '../src/packs/electric-grid/electrical-ports.ts'
 import type { CompiledGridDefinition, GridBranchDefinition, GridGeneratorDefinition, GridLoadDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
+import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
 import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
 import { dispatchGridFromLiveIslands } from '../src/packs/electric-grid/runtime/dispatch.ts'
@@ -470,7 +471,7 @@ describe('reserves dimensioned per synchronous area', () => {
 })
 
 describe('synchro-check on closing a loop', () => {
-  test('closing a branch inside one energised island is limited by the voltage-angle difference across it', () => {
+  test('closing a branch inside one energised island is limited by the voltage-angle difference across it', async () => {
     // Two parallel lines carry 300 MW from hydro units at A to a load at B: a short one (x 0.02 pu)
     // and a long one (x 0.25 pu). With only the long one closed, A–B differ by P·x = 3 pu · 0.25 = 0.75 rad.
     const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.5, 60] as const })
@@ -510,6 +511,17 @@ describe('synchro-check on closing a loop', () => {
     expect(rejected.reason).toContain(`${limit}° loop-closing limit`)
     expect(run.grid.branches.get('short')!.state).toBe('open')
     console.info(`loop closing: ${shortOnlyDegrees.toFixed(2)}° across the long line closes; ${longOnlyDegrees.toFixed(2)}° across the short line is rejected`)
+
+    // A remedial evaluation of the close reports the command's rejection with the measured Δθ; after
+    // shedding most of the load the angle, measured after that action, lets it close.
+    const evaluate = (actions: ReadonlyArray<Readonly<Record<string, unknown>>>) => answerElectricGridQuery({
+      request: { capabilityId: 'world.electric-grid.remedial-actions.evaluate', input: { gridId: 'grid:test', contingencies: 'all-branches', actions } },
+      grids: new Map([[run.grid.definition.gridId, run.grid]]),
+    }) as Promise<{ readonly after: { readonly baseCase: { readonly overloadedCount: number } } }>
+    await expect(evaluate([{ kind: 'close-branch', assetId: 'short' }]))
+      .rejects.toThrow(`close-branch short would be rejected by synchro-check: both ends are in one energised island and their voltage angles differ by Δθ ${longOnlyDegrees.toFixed(1)}°, above the ${limit}° loop-closing limit`)
+    const relieved = await evaluate([{ kind: 'shed-load', assetId: 'load', targetDemandMw: 50, emergency: true }, { kind: 'close-branch', assetId: 'short' }])
+    expect(relieved.after.baseCase.overloadedCount).toBe(0)
   })
 })
 

@@ -255,7 +255,7 @@ describe('electric grid branch commands', () => {
     expect(reasonOf(send(gridOpenBranchCommandKind, { assetId: kvilldalId }))).toContain('branch Grid Asset not found')
   })
 
-  test('synchro-check blocks closing between energised islands apart by more than the frequency limit and reports the measured difference', () => {
+  test('synchro-check blocks closing between energised islands apart by more than the frequency limit and reports the measured difference', async () => {
     const { grid, send, step } = harness()
     const separable = separableBranch(grid, kvilldalBus())
     balanceSeparablePart(grid, separable, () => step(120, 10))
@@ -282,6 +282,13 @@ describe('electric grid branch commands', () => {
     expect(reason).toContain(`differ by ${slipHz.toFixed(3)} Hz`)
     expect(reason).toContain(`${limitHz} Hz limit`)
     expect(grid.branches.get(branch.id)!.state).toBe('open')
+    // Evaluating the close as a remedial action reports the same rejection with the measured Δf.
+    const evaluation = answerElectricGridQuery({
+      request: { capabilityId: 'world.electric-grid.remedial-actions.evaluate', input: { gridId: grid.definition.gridId, contingencies: 'largest-generators', largestGeneratorCount: 1, actions: [{ kind: 'close-branch', assetId: branch.id }] } },
+      grids: new Map([[grid.definition.gridId, grid]]),
+    })
+    await expect(evaluation).rejects.toThrow(`close-branch ${branch.id} would be rejected by synchro-check`)
+    await expect(evaluation).rejects.toThrow(`differ by Δf ${slipHz.toFixed(3)} Hz, above the ${limitHz} Hz limit`)
   })
 
   test('dead-bus closing energises an island without a voltage source', () => {

@@ -70,6 +70,8 @@ export interface ContingencyCase {
   readonly flowsMw: Float64Array
   /** The DC solution's flow per branch (MW); a derived case adds its own DC change to `flowsMw`. */
   readonly dcFlowsMw: Float64Array
+  /** DC bus angles of the case (radians, each AC component's reference bus at 0), as the synchro-check measures them. */
+  readonly anglesRad: Float64Array
   /** The base flow model of each energised island of the live Grid the case derives from. */
   readonly baseFlowModels: ReadonlyArray<IslandBaseFlowModel>
   readonly loadingBase: CaseLoadingBase
@@ -174,6 +176,7 @@ export const liveContingencyCase = (grid: GridRuntimeInstance): ContingencyCase 
     injectionsMw: plan.injectionsMw.slice(),
     flowsMw,
     dcFlowsMw,
+    anglesRad: plan.anglesRad.slice(),
     baseFlowModels,
     loadingBase,
     participation: participationFor(grid, network, bus => energisedPlanIsland[plan.islandIndexOfBus[bus]!] === 1),
@@ -234,7 +237,7 @@ export const switchedContingencyCase = (base: ContingencyCase, changes: CaseChan
   }
   return {
     case: {
-      grid: base.grid, network, closed, islandOfBus: found.islandOfBus, islands, injectionsMw, flowsMw, dcFlowsMw,
+      grid: base.grid, network, closed, islandOfBus: found.islandOfBus, islands, injectionsMw, flowsMw, dcFlowsMw, anglesRad,
       baseFlowModels: base.baseFlowModels, loadingBase, participation, redispatchedMw: changes.redispatchedMw,
     },
     balances,
