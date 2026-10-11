@@ -33,6 +33,18 @@ export const processPlantIcAnnunciatorSchema = z.object({
   firstOutGroup: z.string().min(1).optional(),
   priority: processPlantIcAnnunciatorPrioritySchema.default('medium'),
   role: processPlantIcAnnunciatorRoleSchema.default('symptom'),
+  /**
+   * The first-out group whose actuation brings this alarm in as its
+   * expected consequence (a steam generator's low level as its level
+   * shrinks after a reactor trip): coming in within `withinMs` after that
+   * group's first-out, and not first out itself, displays show it as
+   * expected, de-emphasised but never hidden (ISA-18.2 state-based
+   * handling). Coming in before, with it, or later, it stands out as any.
+   */
+  expectedAfter: z.object({
+    firstOutGroup: z.string().min(1),
+    withinMs: z.number().finite().positive(),
+  }).strict().optional(),
 }).strict()
 export type ProcessPlantIcAnnunciator = z.infer<typeof processPlantIcAnnunciatorSchema>
 
@@ -426,7 +438,10 @@ export const processPlantIcConfigSchema = z.object({
   if (groups.size === 0) return
   for (const [ruleIndex, rule] of config.rules.entries()) {
     for (const [effectIndex, effect] of rule.effects.entries()) {
-      if (effect.type === 'writeSignal' || effect.annunciator?.firstOutGroup === undefined || groups.has(effect.annunciator.firstOutGroup)) continue
+      if (effect.type === 'writeSignal') continue
+      const after = effect.annunciator?.expectedAfter?.firstOutGroup
+      if (after !== undefined && !groups.has(after)) ctx.addIssue({ code: 'custom', path: ['rules', ruleIndex, 'effects', effectIndex, 'annunciator', 'expectedAfter', 'firstOutGroup'], message: `${rule.id} is expected after first-out group ${after}, which is not declared; declared: ${[...groups].join(', ')}` })
+      if (effect.annunciator?.firstOutGroup === undefined || groups.has(effect.annunciator.firstOutGroup)) continue
       ctx.addIssue({ code: 'custom', path: ['rules', ruleIndex, 'effects', effectIndex, 'annunciator', 'firstOutGroup'], message: `${rule.id} names first-out group ${effect.annunciator.firstOutGroup}, which is not declared; declared: ${[...groups].join(', ')}` })
     }
   }

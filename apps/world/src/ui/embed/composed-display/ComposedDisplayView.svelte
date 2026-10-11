@@ -292,7 +292,7 @@
     <div class="panels beside" style={`gap:${layout.overviewColumnGap}px`}>
       <div class="drawing">
         {#each view.display.panels as panel, index (index)}
-          {#if panel.kind === 'mimic'}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} />{/if}
+          {#if panel.kind === 'mimic'}<MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} />{/if}
         {/each}
       </div>
       <div class="column" style={`width:${layout.overviewColumn}px;gap:${layout.panelGap}px`}>
@@ -345,7 +345,7 @@
         {:else if panel.kind === 'evidence'}
           <EvidencePanel {panel} latest={snapshot.latest} {activeRuleIds} />
         {:else if panel.kind === 'mimic'}
-          <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} />
+          <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} annunciation={view.display.annunciation} />
         {:else}
           {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} annunciation={view.display.annunciation} selected={systemFilter} select={selectSystem} />{/if}
           <AlarmsPanel {panel} latest={snapshot.latest} annunciation={view.display.annunciation} only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />

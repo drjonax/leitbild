@@ -24,7 +24,7 @@ import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { createRunHistorian, recordedHistoryOf } from '../src/features/historian/store.ts'
 import { displayAnnunciation } from '../src/packs/process-plant/displays/annunciators.ts'
 import { shorterSignalNames } from '../src/packs/process-plant/displays/signal-names.ts'
-import { actuatedNames, bannerTrip, firstOutFlag } from '../src/ui/embed/composed-display/panel-presenters.ts'
+import { actuatedNames, bannerTrip, expectedAfter, firstOutFlag } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -887,6 +887,27 @@ describe('shorter names for a signal', () => {
 
 describe('what a display\'s banner, actuation line and alarm rows name', () => {
   const annunciation = displayAnnunciation(compiled)
+
+  test('alarms a reactor trip brings in read as expected after it, by what the I&C declares, while the initiator stands out', () => {
+    // HMI review of run 23: after SG B's low-low level tripped the reactor, all four generators were red alike.
+    const idOf = (kind: 'alarm' | 'trip', ruleId: string) => Object.keys(annunciation.tags).find(id => id.startsWith(`${kind}:${ruleId}:`))!
+    const tripB = idOf('trip', 'sg-b-level-low-low-reactor-trip')
+    const afwB = idOf('trip', 'sg-b-level-low-low-afw-actuation')
+    const afwA = idOf('trip', 'sg-a-level-low-low-afw-actuation')
+    const tripA = idOf('trip', 'sg-a-level-low-low-reactor-trip')
+    const levelLowA = idOf('alarm', 'sg-a-level-low')
+    const radiationA = idOf('alarm', 'sg-a-secondary-radiation-high')
+    expect(annunciation.expected[afwA]).toEqual({ after: 'RX TRIP', withinMs: 300_000 })
+    expect(annunciation.expected[radiationA]).toBeUndefined()
+    const at = (id: string, seconds: number, firstOut = false) => ({ id, firstOut, firstActiveElapsedMs: seconds * 1000 })
+    const alarms = [at(levelLowA, 120), at(tripB, 93, true), at(afwB, 93, true), at(afwA, 140), at(tripA, 140), at(radiationA, 150)]
+    const after = (id: string) => expectedAfter(alarms.find(alarm => alarm.id === id)!, alarms, annunciation)
+    // SG B's trip and AFW start came with the reactor trip's first-out: they stand out. SG A's shrink after it is expected.
+    expect([after(tripB), after(afwB), after(afwA), after(tripA), after(levelLowA), after(radiationA)]).toEqual([null, null, 'RX TRIP', 'RX TRIP', 'RX TRIP', null])
+    // Before the trip, or long after it, nothing is expected.
+    expect(expectedAfter(at(levelLowA, 60), alarms, annunciation)).toBeNull()
+    expect(expectedAfter(at(afwA, 93 + 301), alarms, annunciation)).toBeNull()
+  })
 
   test('come from the first-out groups and limits the I&C declares, never from ids or titles', () => {
     // What a rule annunciates, by its alarm row's id.

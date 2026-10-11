@@ -7,7 +7,8 @@
   import type { MimicFrame } from '../../../../packs/process-plant/displays/mimic/bindings.ts'
   import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
-  import { alertTypeOf } from '../panel-presenters.ts'
+  import { alertTypeOf, expectedAfter } from '../panel-presenters.ts'
+  import type { DisplayAnnunciation } from '../../../../packs/process-plant/displays/annunciators.ts'
   import { limitInForce } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import { chevronSegment, pipeSegments, pipeValue, stubEndSegment } from './pipe-segments.ts'
   import { mimicLegend } from './mimic-legend.ts'
@@ -22,10 +23,12 @@
   // A generated display opens what an item stands for; an agent's advice is read-only.
   // Narrowed to an annunciator system, the items its rules frame stand out and
   // the rest dim, except any item with an active alarm of its own.
-  let { mimic, latest, stale, open, highlight = null }: {
+  let { mimic, latest, stale, open, highlight = null, annunciation }: {
     mimic: CompiledMimic
     latest: ComposedDisplaySample | undefined
     stale: boolean
+    /** What the I&C declares of its alarms: which are expected after a first-out group's actuation. */
+    annunciation: DisplayAnnunciation
     open?: ((item: MimicDrawnItem) => void) | undefined
     highlight?: ReadonlySet<string> | null
   } = $props()
@@ -67,18 +70,25 @@
    * text that says what it watches and does: as the trend chip of its signal
    * picks it, among the rules that act in the Plant's current mode (a reactor
    * trip latched at power frames nothing in hot standby; the banner and the
-   * alarm list keep it).
+   * alarm list keep it). An alarm the I&C declares expected after a
+   * first-out it followed (expectedAfter) yields to any other; where every
+   * one framing the item is so (steam generator low-low levels from the
+   * shrink after a reactor trip), the frame is faded, never removed, and
+   * says what they are expected after, while the initiator stands out.
    */
-  const alertOf = (item: MimicDrawnItem): { readonly status: 'alarm' | 'warning' | 'caution'; readonly label: MimicFrame; readonly others: number } | null => {
+  const alertOf = (item: MimicDrawnItem): { readonly status: 'alarm' | 'warning' | 'caution'; readonly label: MimicFrame; readonly others: number; readonly expected: string | null } | null => {
     const inForce = item.binding.frames.filter(frame => latest?.mode === undefined || limitInForce(frame, latest.mode))
     const flaps = new Map(inForce.map(frame => [frame.ruleId, frame]))
     const active = alarms
       .filter(alarm => flaps.has(alarm.ruleId))
-      .sort((left, right) => Number(right.kind === 'trip') - Number(left.kind === 'trip') || severityRank[left.severity] - severityRank[right.severity])
+      .map(alarm => ({ alarm, expected: expectedAfter(alarm, latest?.alarms ?? [], annunciation) }))
+      .sort((left, right) => Number(left.expected !== null) - Number(right.expected !== null)
+        || Number(right.alarm.kind === 'trip') - Number(left.alarm.kind === 'trip') || severityRank[left.alarm.severity] - severityRank[right.alarm.severity])
     const first = active[0]
     if (first === undefined) return null
-    return { status: alertTypeOf(first.severity), label: flaps.get(first.ruleId)!, others: active.length - 1 }
+    return { status: alertTypeOf(first.alarm.severity), label: flaps.get(first.alarm.ruleId)!, others: active.length - 1, expected: first.expected }
   }
+  const expectedGroups = $derived([...new Set(mimic.items.flatMap(item => alertOf(item)?.expected ?? []))])
 
   const dimmed = (item: MimicDrawnItem): boolean => highlight !== null
     && !item.binding.frames.some(frame => highlight.has(frame.ruleId))
@@ -251,12 +261,12 @@
         {#each mimic.items as item (item.id)}
           {@const look = looks.get(item.id)!}
           {@const alert = alertOf(item)}
-          <div class="item" class:dimmed={dimmed(item)}>
+          <div class="item" class:dimmed={dimmed(item)} class:expected={alert !== null && alert.expected !== null}>
           {#if alert !== null && item.frame !== null}
             {@const flap = flapOf(item, alert)}
             {@const below = item.flapLines.length}
             <!-- OpenBridge draws the flap below the framed region; the server reserved it and a device's further flap lines under it. -->
-            <div class="box" style={`left:${item.frame.x}px;top:${item.frame.y}px;width:${item.frame.width}px;height:${item.frame.height - (1 + below) * flapHeight}px`} use:frame={{ ob, alert, flap: flap.flap }}></div>
+            <div class="box frame-box" style={`left:${item.frame.x}px;top:${item.frame.y}px;width:${item.frame.width}px;height:${item.frame.height - (1 + below) * flapHeight}px`} use:frame={{ ob, alert, flap: flap.flap }}></div>
             {#each item.flapLines as part, at (part)}
               {#if flap.parts[part] !== ''}
                 <span class={`flap-line ${alert.status}`} style={`left:${item.frame.x}px;top:${item.frame.y + item.frame.height - (below - at) * flapHeight}px;width:${item.frame.width}px;height:${flapHeight}px;padding-left:${openBridgeDevice.flapLabelInset}px`}>{flap.parts[part]}</span>
@@ -320,6 +330,7 @@
     {/if}
     <span class="key"><span class="abnormal-key">{mimicLegend.command}</span>{mimicLegend.commandMeaning}</span>
     {#if drawsRelief}<span>{mimicLegend.notComputed}</span>{/if}
+    {#each expectedGroups as group (group)}<span class="key"><span class="expected-key"></span>{mimicLegend.expected} {group}</span>{/each}
     <span>{mimicLegend.simulator}</span>
   </p>
 </div>
@@ -336,6 +347,9 @@
   /* Each item's layer spans the drawing, so its parts keep their coordinates; dimming fades a whole item at once. */
   .item { position: absolute; inset: 0; }
   .dimmed { opacity: 0.4; }
+  /* An alarm expected after a first-out it followed: its frame, flap and alarm rows faded, the item itself as drawn. */
+  .item.expected .frame-box, .item.expected .flap-line, .item.expected .alarm-row { opacity: 0.45; }
+  .expected-key { display: inline-block; width: 14px; height: 9px; box-sizing: border-box; border: 2px solid var(--alert-alarm-color); border-radius: 2px; opacity: 0.45; }
   .box { position: absolute; }
   .stack { position: absolute; display: flex; flex-direction: column; align-items: flex-start; }
   .stack.below { align-items: center; }

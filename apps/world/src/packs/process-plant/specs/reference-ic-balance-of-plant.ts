@@ -1,6 +1,7 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, rule, trip, turbineTripWrites, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
+import { expectedAfterReactorTrip } from './reference-ic-first-out-groups.ts'
 import { levelHighHighPercent } from './reference-ic-steam-generator.ts'
 
 const feedwaterAlarm = annunciator({
@@ -169,7 +170,7 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
         id: 'feedwater-isolation',
         title: 'Feedwater isolation on reactor trip, low Tavg',
         message: `The reactor trip breakers are open (P-4) and average coolant temperature is below ${lowTavgFeedwaterIsolationC} °C (564 °F): the main feedwater pumps trip and the feed regulating valves shut until the trip breakers are closed again.`,
-        annunciator: annunciator({ ...feedwaterAction, firstOutGroup: 'feedwater-isolation' }),
+        annunciator: annunciator({ ...feedwaterAction, firstOutGroup: 'feedwater-isolation', expectedAfter: expectedAfterReactorTrip }),
       }),
       ...feedwaterIsolationWrites('feedwater-isolation', loops),
     ],

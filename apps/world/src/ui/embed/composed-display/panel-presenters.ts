@@ -43,6 +43,30 @@ export const sampledGates = (latest: Pick<ComposedDisplaySample, 'values'> | und
   return gateStatesOf(path => values.get(path))
 }
 
+/**
+ * The first-out group an alarm came in as the expected consequence of
+ * ("RX TRIP"), or null: one its annunciator declares expected after that
+ * group's actuation (DisplayAnnunciation.expected), not first out itself,
+ * that came in after the group's first-out and within the declared time of
+ * it. Steam generator low-low levels from the shrink after a reactor trip
+ * read so; the low-low level that tripped the reactor, which came in with
+ * the trip, and anything before it never do (HMI review of run 23: all four
+ * generators red alike, the initiator not set apart). Such an alarm is
+ * shown de-emphasised, never hidden.
+ */
+export const expectedAfter = (
+  alarm: Pick<ComposedDisplayAlarm, 'id' | 'firstOut' | 'firstActiveElapsedMs'>,
+  alarms: ReadonlyArray<Pick<ComposedDisplayAlarm, 'id' | 'firstOut' | 'firstActiveElapsedMs'>>,
+  annunciation: Pick<DisplayAnnunciation, 'expected' | 'groups'>,
+): string | null => {
+  const expected = annunciation.expected[alarm.id]
+  if (expected === undefined || alarm.firstOut || alarm.firstActiveElapsedMs === undefined) return null
+  const trigger = alarms.find(candidate => candidate.firstOut && annunciation.groups[candidate.id] === expected.after && candidate.firstActiveElapsedMs !== undefined)
+  if (trigger === undefined) return null
+  const lag = alarm.firstActiveElapsedMs - trigger.firstActiveElapsedMs!
+  return lag > 0 && lag <= expected.withinMs ? expected.after : null
+}
+
 /** The OpenBridge alert type each severity is drawn as, everywhere an alarm shows: list, tiles and drawing. */
 export const alertTypeOf = (severity: ComposedDisplayAlarm['severity']): 'alarm' | 'warning' | 'caution' =>
   severity === 'critical' ? 'alarm' : severity === 'warning' ? 'warning' : 'caution'

@@ -95,6 +95,13 @@ export interface DisplayAnnunciation {
   readonly groups: Readonly<Record<string, string>>
   /** The groups' names in the order a tile lists them: the reactor trip's first, then as the I&C declares them. */
   readonly groupOrder: ReadonlyArray<string>
+  /**
+   * The alarms and trips a first-out group's actuation brings in as its
+   * expected consequences, as their annunciators declare (expectedAfter),
+   * by id: the group's name, whose first-out they follow ("RX TRIP"), and
+   * how long after it they are expected (panel-presenters.ts expectedAfter).
+   */
+  readonly expected: Readonly<Record<string, { readonly after: string; readonly withinMs: number }>>
 }
 
 /** The single numeric signal a rule acts on (alone, or gated by on/off states), whose limit names it. */
@@ -154,6 +161,11 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
     tags: Object.fromEntries(annunciated.map(entry => [entry.id, tagOf(entry)])),
     groups: Object.fromEntries(annunciated.flatMap(({ id, group }) => group === undefined ? [] : [[id, group.shortLabel]])),
     groupOrder: [...declared.filter(group => group.reactorTrip), ...declared.filter(group => !group.reactorTrip)].map(group => group.shortLabel),
+    expected: Object.fromEntries(annunciated.flatMap(({ id, effect }) => {
+      const expected = effect.annunciator?.expectedAfter
+      const after = expected === undefined ? undefined : declared.find(group => group.id === expected.firstOutGroup)
+      return expected === undefined || after === undefined ? [] : [[id, { after: after.shortLabel, withinMs: expected.withinMs }]]
+    })),
   }
   annunciationByPlant.set(plant, annunciation)
   return annunciation

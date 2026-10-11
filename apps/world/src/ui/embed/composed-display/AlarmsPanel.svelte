@@ -3,7 +3,7 @@
   import type { ComposedAlarmsPanel } from '../../../packs/process-plant/displays/compose.ts'
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from './composed-display-client.ts'
-  import { alarmAge, alertTypeOf, firstOutFlag, visibleAlarms } from './panel-presenters.ts'
+  import { alarmAge, alertTypeOf, expectedAfter, firstOutFlag, visibleAlarms } from './panel-presenters.ts'
 
   // Filling a unit overview's narrow column, the list takes the height left
   // there: each alarm gets its whole title, over two lines where it needs
@@ -30,7 +30,13 @@
   // Every alarm and trip has a tag, from what it annunciates; one the display was not compiled with says only its kind.
   const tagOf = (alarm: ComposedDisplayAlarm): string => annunciation.tags[alarm.id] ?? alarm.kind.toUpperCase()
 
-  const all = $derived(visibleAlarms(latest?.alarms ?? [], panel.scope, panel.ruleIds, annunciation))
+  // An alarm the I&C declares expected after a first-out it followed (expectedAfter) is listed after the
+  // others, faded and saying so ("after RX TRIP"), never left out: the first-out and its initiator lead.
+  const expectedOf = (alarm: ComposedDisplayAlarm): string | null => expectedAfter(alarm, latest?.alarms ?? [], annunciation)
+  const all = $derived.by(() => {
+    const visible = visibleAlarms(latest?.alarms ?? [], panel.scope, panel.ruleIds, annunciation)
+    return [...visible.filter(alarm => expectedOf(alarm) === null), ...visible.filter(alarm => expectedOf(alarm) !== null)]
+  })
   const onlyRules = $derived(only === null ? null : new Set(only.ruleIds))
   const alarms = $derived(onlyRules === null ? all : all.filter(alarm => onlyRules.has(alarm.ruleId)))
   const elsewhere = $derived(onlyRules === null ? [] : all.filter(alarm => !onlyRules.has(alarm.ruleId)))
@@ -57,14 +63,17 @@
       {#each shown as alarm (alarm.id)}
         {@const first = firstOutFlag(alarm, annunciation)}
         {#if fill}
-          <li class={`alert-${alertTypeOf(alarm.severity)} stacked`} class:unacknowledged={!alarm.acknowledged} class:cleared={!alarm.active}>
+          {@const after = expectedOf(alarm)}
+          <li class={`alert-${alertTypeOf(alarm.severity)} stacked`} class:unacknowledged={!alarm.acknowledged} class:cleared={!alarm.active} class:expected={after !== null}>
             <span class="title" title={alarm.title}>{alarm.title}</span>
-            <span class="meta"><span class="kind">{tagOf(alarm)}</span><span class="flags">{#if !alarm.active}<span class="flag">cleared</span>{/if}{#if first !== null}<span class="flag">{first}</span>{/if}{#if !alarm.acknowledged}<span class="flag">unack</span>{/if}<span class="age">{alarmAge(latest.plantElapsedMs, alarm.firstActiveElapsedMs)}</span></span></span>
+            <span class="meta"><span class="kind">{tagOf(alarm)}</span><span class="flags">{#if after !== null}<span class="flag">after {after}</span>{/if}{#if !alarm.active}<span class="flag">cleared</span>{/if}{#if first !== null}<span class="flag">{first}</span>{/if}{#if !alarm.acknowledged}<span class="flag">unack</span>{/if}<span class="age">{alarmAge(latest.plantElapsedMs, alarm.firstActiveElapsedMs)}</span></span></span>
           </li>
         {:else}
-          <li class={`alert-${alertTypeOf(alarm.severity)}`} class:unacknowledged={!alarm.acknowledged} class:cleared={!alarm.active}>
+          {@const after = expectedOf(alarm)}
+          <li class={`alert-${alertTypeOf(alarm.severity)}`} class:unacknowledged={!alarm.acknowledged} class:cleared={!alarm.active} class:expected={after !== null}>
             <span class="kind">{tagOf(alarm)}</span>
             <span class="title" title={alarm.title}>{alarm.title}</span>
+            {#if after !== null}<span class="flag">after {after}</span>{/if}
             {#if !alarm.active}<span class="flag">cleared</span>{/if}
             {#if first !== null}<span class="flag">{first}</span>{/if}
             {#if !alarm.acknowledged}<span class="flag">unack</span>{/if}
@@ -98,6 +107,9 @@
   li.alert-caution, .elsewhere.alert-caution { border-left-color: var(--alert-caution-color); }
   li.unacknowledged .title { font-weight: 600; }
   li.cleared .title { color: var(--element-neutral-color); }
+  /* Expected after a first-out it followed: its alarm colour and text faded, its row still listed. */
+  li.expected { opacity: 0.6; }
+  li.expected .title { font-weight: 400; }
   .elsewhere { margin: 0; padding: 2px 6px; border-left: 4px solid var(--border-divider-color); background: var(--container-section-color); }
   h2.narrowed { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--element-active-color); }
   h2.narrowed span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

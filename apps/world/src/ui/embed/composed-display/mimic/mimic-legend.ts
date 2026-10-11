@@ -11,4 +11,6 @@ export const mimicLegend = {
   commandMeaning: 'command not followed',
   notComputed: 'POS ?: not computed',
   simulator: 'simulator',
+  /** Beside a faded alarm frame: what its alarms are expected after ("expected after RX TRIP"). */
+  expected: 'expected after',
 } as const

@@ -1,6 +1,7 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, turbineTripWrites, vote, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
+import { expectedAfterReactorTrip } from './reference-ic-first-out-groups.ts'
 import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
 
 // A tube leak shows on instruments, never on the fault that makes it: at
@@ -61,6 +62,8 @@ export const steamGeneratorReferenceIcRules = (
     priority: 'urgent',
     role: 'automaticAction',
   })
+  // What the levels' shrink after a reactor trip brings in is expected then (expectedAfterReactorTrip).
+  const sgShrinkAlarm = annunciator({ ...sgAlarm, expectedAfter: expectedAfterReactorTrip })
   // The reactor trip is the reactor protection system's, first out among its trips.
   const reactorTripAction = annunciator({
     system: 'reactorProtection',
@@ -128,7 +131,7 @@ export const steamGeneratorReferenceIcRules = (
         title: `Steam generator ${loop} level low`,
         message: `Steam generator ${loop} narrow-range level is below the reference low-level threshold.`,
         severity: 'warning',
-        annunciator: sgAlarm,
+        annunciator: sgShrinkAlarm,
       })],
     }),
     rule({
@@ -142,7 +145,7 @@ export const steamGeneratorReferenceIcRules = (
           id: 'afw-actuation',
           title: `Steam generator ${loop} low-low level`,
           message: `Steam generator ${loop} low-low level starts the motor-driven auxiliary feedwater pumps, feeding every steam generator.`,
-          annunciator: annunciator({ ...sgAction, firstOutGroup: 'auxiliary-feedwater' }),
+          annunciator: annunciator({ ...sgAction, firstOutGroup: 'auxiliary-feedwater', expectedAfter: expectedAfterReactorTrip }),
         }),
         write('start-motor-afw', { path: 'auxFeedwaterPumpMotor.running' }, true),
         write('start-motor-afw-b', { path: 'auxFeedwaterPumpMotorB.running' }, true),
@@ -161,7 +164,7 @@ export const steamGeneratorReferenceIcRules = (
           id: 'low-low-level-reactor-trip',
           title: `Reactor trip on steam generator ${loop} low-low level`,
           message: `Steam generator ${loop} narrow-range level fell below the ${levelLowLowPercent} % low-low reactor trip setpoint.`,
-          annunciator: reactorTripAction,
+          annunciator: annunciator({ ...reactorTripAction, expectedAfter: expectedAfterReactorTrip }),
         }),
         ...reactorTripBreakerWrites(`sg-${lower}-low-low-level-trip`),
         write(`insert-control-rods-sg-${lower}-low-low-level`, { path: 'core.rodInsertionFraction' }, 1),
@@ -259,7 +262,7 @@ export const steamGeneratorReferenceIcRules = (
         title: `Steam generator ${loop} feedwater low`,
         message: `Steam generator ${loop} feedwater flow is low while level is below the reference operating band.`,
         severity: 'warning',
-        annunciator: sgAlarm,
+        annunciator: sgShrinkAlarm,
       })],
     }),
     rule({
@@ -297,7 +300,7 @@ export const turbineDrivenAuxiliaryFeedwaterReferenceIcRules = (loops: ReadonlyA
         id: 'turbine-afw-start',
         title: 'Turbine-driven AFW start on low-low level',
         message: `Narrow-range level is below ${levelLowLowPercent} % in two steam generators: the turbine-driven auxiliary feedwater pump starts.`,
-        annunciator: annunciator({ system: 'feedwater', equipmentId: 'auxFeedwaterPumpTurbine', group: 'auxiliary-feedwater', firstOutGroup: 'auxiliary-feedwater', priority: 'urgent', role: 'automaticAction' }),
+        annunciator: annunciator({ system: 'feedwater', equipmentId: 'auxFeedwaterPumpTurbine', group: 'auxiliary-feedwater', firstOutGroup: 'auxiliary-feedwater', priority: 'urgent', role: 'automaticAction', expectedAfter: expectedAfterReactorTrip }),
       }),
       write('start-turbine-afw', { path: 'auxFeedwaterPumpTurbine.running' }, true),
     ],
