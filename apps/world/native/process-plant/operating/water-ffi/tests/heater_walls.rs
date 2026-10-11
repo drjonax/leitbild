@@ -27,7 +27,7 @@ const SECTION: &str = r#"{"index":28,"bottom_m":6.5,"top_m":18.5,"fluidVolume_m3
  "ports":[{"id":"PZR.SURGE.MOUTH","kind":"surge","elevation_m":6.5,"face":34,"bore_m":0.3}],
  "taps":[{"id":"PT1","elevation_m":18.5},{"id":"LT.LOW","elevation_m":6.5},{"id":"LT.HIGH","elevation_m":18.5}],
  "heaters":{"bottom_m":6.5,"top_m":9.5,"displacement_m3":0.25132741228718347},
- "stratified":{"withdrawalScale_m":0.30,"admittedPreparationThickness_m":0.30,"inversionExchangeVelocity_m_s":320,"liquidRelaxationTime_s":0.3,"vaporRelaxationTime_s":0.5,"relaxationSensitivity":[0.5,1,2],"bubbleDiameter_m":0.00075,"sprayDropDiameter_m":0.003,"dropDiameterSensitivity_m":[0.0015,0.003,0.006],"resolvabilityFactor":1000},
+ "stratified":{"withdrawalScale_m":0.30,"admittedPreparationThickness_m":0.30,"inversionExchangeVelocity_m_s":320,"liquidRelaxationTime_s":0.3,"vaporRelaxationTime_s":0.5,"relaxationSensitivity":[0.5,1,2],"bubbleDiameter_m":0.00075,"bubbleExchangeSensitivity":[0.5,1,2],"bubbleExchangeDiameterSensitivity_m":0.0005,"sprayDropDiameter_m":0.003,"dropDiameterSensitivity_m":[0.0015,0.003,0.006],"resolvabilityFactor":1000},
  "metastable":{"pressureRange_Pa":[2000000,16000000],"lowerBoundExclusive":true,"liquidSuperheatMax_K":2.0,"vaporSubcoolingMax_K":1.4,"trialMax_K":3.0,"creditedMax_K":0.5,"liquidTemperatureMax_K":623.15,"liquidPressureCeiling_Pa":17000000,"vaporPressureCeiling_Pa":16000000},
  "absorberMassFraction":0.001,"interfacialLength_m":0.003}"#;
 
@@ -126,6 +126,8 @@ fn scales(values: &[f64; st::COORDINATES]) -> [f64; st::COORDINATES] {
     scales[st::BUBBLE_MASS] = 50.;
     scales[st::DROP_MASS] = 30.;
     scales[st::DROP_BORON] = 0.03;
+    scales[st::ADMITTED_BUBBLE_VOLUME] = 0.5;
+    scales[st::ADMITTED_BUBBLE_MASS] = 50.;
     scales
 }
 
@@ -508,7 +510,7 @@ fn heater_walls_directions_match_central_differences() {
         ),
     ];
     let pattern = [
-        0.3, -0.7, 0.2, 0.5, 0., 0., 0.1, -0.2, 0.6, 0.3, -0.5, 0.8, -0.1, 0.4, 0., 0., 0.,
+        0.3, -0.7, 0.2, 0.5, 0., 0., 0., 0.1, -0.2, 0.6, 0.3, -0.5, 0.8, -0.1, 0.4, 0., 0., 0., 0.,
     ];
     let mut worst: f64 = 0.;
     for (level, rods, elements, power) in cases {

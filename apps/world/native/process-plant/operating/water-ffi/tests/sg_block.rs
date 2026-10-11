@@ -9,7 +9,7 @@ mod sg_harness;
 
 use leitbild_operating_plant::{
     joined::block::{Command, Coordinates, Secondary, SecondaryView},
-    sg::{Branch, Secondaries, chart, secondary},
+    sg::{Branch, Secondaries, Valve, chart, secondary},
     sparse,
     thermal::{Scalar, WaterProperties},
 };
@@ -42,7 +42,10 @@ fn lifted<P: leitbild_operating_plant::sg::Properties>(sys: &mut Standalone<P>, 
         y[b + 4] = 0.35;
         y[b + 5] = 0.8;
         sys.secondary
-            .set_branch(k, 1, Branch::Descending, 6.9e6)
+            .set_valve(k, 0, Valve::open(Branch::Ascending), 6.9e6, 0.35)
+            .unwrap();
+        sys.secondary
+            .set_valve(k, 1, Valve::open(Branch::Descending), 6.9e6, 0.8)
             .unwrap();
         for i in 0..sys.segments.len() {
             let m = sys.secondary_len + k * sys.segments.len() + i;
@@ -89,7 +92,8 @@ fn preparation_and_derivations_reproduce_their_owners() {
             .count(),
         4
     );
-    assert_eq!(Secondary::<If97>::root_count(&block), 16);
+    assert_eq!(Secondary::<If97>::root_count(&block), 20);
+    assert_eq!(block.seated(), 4);
     eprintln!(
         "{}",
         json!({"scope":"zero-time derivations, NOT S2 evidence","derived":d,"preparationDefect":block.preparation_defect(),
@@ -322,38 +326,17 @@ fn time_block(
     )
 }
 
-#[test]
-#[ignore = "requires LD01_OPERATING_SG_SECTION and LD01_OPERATING_SG_PROBE"]
-fn cost_per_evaluation() {
-    let (section, probe) = (section(), probe());
-    let stocks = prepared_stocks(&If97, &section, &probe);
-    let props = Counted::default();
-    let mut block = Secondaries::new(&section, &stocks, &props).unwrap();
-    let layout = Secondary::<Counted>::layout(&block).clone();
-    let n = layout.len();
-    let scales = layout.scales.clone();
-    let prepared = Secondary::<Counted>::prepared(&block);
-    let mut y: Vec<f64> = prepared.iter().zip(&scales).map(|(v, s)| v / s).collect();
-    let value_closed = time_block(&mut block, &props, &scales, &y, None, 2000, true);
-    // Open lifts (0.5) on the ascending branch at 6 MPa: the nozzle runs.
-    for i in [4, 5, 10, 11] {
-        y[i] = 0.5;
-    }
-    let value_open = time_block(&mut block, &props, &scales, &y, None, 200, true);
-    let mut seed = vec![0.; n];
-    seed[2] = 1.;
-    seed[8] = 1.;
-    let seeded_open = time_block(&mut block, &props, &scales, &y, Some(&seed), 200, true);
-    for i in [4, 5, 10, 11] {
-        y[i] = 0.;
-    }
-    let seeded_closed = time_block(&mut block, &props, &scales, &y, Some(&seed), 2000, true);
-    // The block's own colored assembly (its pattern alone), relief open: one
-    // value pass then one seeded pass per color at one state.
-    for i in [4, 5, 10, 11] {
-        y[i] = 0.5;
-    }
-    let st = Secondary::<Counted>::structure(&block);
+/// Mean thread CPU (µs) and property calls of the block's own colored
+/// assembly: per repetition one seeded pass per color at a distinct state.
+fn time_jacobian(
+    block: &mut Secondaries,
+    props: &Counted,
+    scales: &[f64],
+    y: &[f64],
+    reps: usize,
+) -> (f64, f64, usize) {
+    let n = scales.len();
+    let st = Secondary::<Counted>::structure(block);
     let pattern = sparse::Pattern::from_rows(n, &st.own).unwrap();
     let coloring = sparse::Coloring::greedy(&pattern);
     let mut values = vec![0.; pattern.nonzeros()];
@@ -370,17 +353,18 @@ fn cost_per_evaluation() {
     ];
     let mut rows = vec![s(0.); n];
     let heat = [s(1.5e9), s(1.5e9)];
-    let reps = 100;
+    let mut y = y.to_vec();
+    let base = [y[2], y[8]];
     props.reset();
     let started = cpu();
     for r in 0..reps {
-        y[2] = 1. + 1e-9 * r as f64;
-        y[8] = 1. + 1e-9 * r as f64;
+        y[2] = base[0] * (1. + 1e-9 * r as f64);
+        y[8] = base[1] * (1. + 1e-9 * r as f64);
         for c in 0..coloring.count() {
             coloring.seed_into(c, &vec![1.; n], &mut seed).unwrap();
-            let x = Coordinates::new(&y, &yp, Some(&seed), 20., &scales).unwrap();
-            Secondary::<Counted>::views(&mut block, &props, x, &mut views).unwrap();
-            Secondary::<Counted>::rows(&mut block, &props, 0., x, &heat, &mut rows).unwrap();
+            let x = Coordinates::new(&y, &yp, Some(&seed), 20., scales).unwrap();
+            Secondary::<Counted>::views(block, props, x, &mut views).unwrap();
+            Secondary::<Counted>::rows(block, props, 0., x, &heat, &mut rows).unwrap();
             let directions: Vec<f64> = rows.iter().map(|r| r.direction).collect();
             sparse::scatter(
                 &pattern,
@@ -393,11 +377,46 @@ fn cost_per_evaluation() {
             .unwrap();
         }
     }
-    let jacobian = (
+    (
         1e6 * (cpu() - started) / reps as f64,
         props.total() as f64 / reps as f64,
-    );
-    // The composed standalone with the tube path of 2 x 4 segments.
+        coloring.count(),
+    )
+}
+
+#[test]
+#[ignore = "requires LD01_OPERATING_SG_SECTION and LD01_OPERATING_SG_PROBE"]
+fn cost_per_evaluation() {
+    let (section, probe) = (section(), probe());
+    let stocks = prepared_stocks(&If97, &section, &probe);
+    let props = Counted::default();
+    let mut block = Secondaries::new(&section, &stocks, &props).unwrap();
+    let layout = Secondary::<Counted>::layout(&block).clone();
+    let n = layout.len();
+    let scales = layout.scales.clone();
+    let prepared = Secondary::<Counted>::prepared(&block);
+    let mut y: Vec<f64> = prepared.iter().zip(&scales).map(|(v, s)| v / s).collect();
+    let mut seed = vec![0.; n];
+    seed[2] = 1.;
+    seed[8] = 1.;
+    // Every valve seated, as prepared: no flow and no nozzle evaluation.
+    assert_eq!(block.seated(), 4);
+    let seated_value = time_block(&mut block, &props, &scales, &y, None, 2000, true);
+    let seated_seeded = time_block(&mut block, &props, &scales, &y, Some(&seed), 2000, true);
+    let seated_jacobian = time_jacobian(&mut block, &props, &scales, &y, 500);
+    // Every valve lifted at 0.5 on the ascending branch: the nozzle runs.
+    for (k, b) in [(0, 0), (1, 6)] {
+        for j in 0..2 {
+            y[b + 4 + j] = 0.5;
+            block
+                .set_valve(k, j, Valve::open(Branch::Ascending), 6e6, 0.5)
+                .unwrap();
+        }
+    }
+    let lifted_value = time_block(&mut block, &props, &scales, &y, None, 200, true);
+    let lifted_seeded = time_block(&mut block, &props, &scales, &y, Some(&seed), 200, true);
+    let lifted_jacobian = time_jacobian(&mut block, &props, &scales, &y, 50);
+    // The composed standalone with the tube path of 2 x 4 segments, seated.
     let (mut sys, ys) = Standalone::new(
         If97,
         &section,
@@ -418,18 +437,22 @@ fn cost_per_evaluation() {
         sys.colored(0., 20., &ys, &ypz, &mut colored).unwrap();
     }
     let composed_jacobian_us = 1e6 * (cpu() - started) / 20.;
+    let cell = |x: (f64, f64)| json!({"us":x.0,"propertyCalls":x.1});
     eprintln!(
         "{}",
         json!({"scope":"cost per evaluation, thread CPU, release build, NOT S2 evidence",
-            "secondaryBlock":{"coordinates":n,"structuralNonzeros":pattern.nonzeros(),"colorsAlone":coloring.count(),
-                "valueReliefClosed":{"us":value_closed.0,"propertyCalls":value_closed.1},
-                "valueReliefOpen":{"us":value_open.0,"propertyCalls":value_open.1},
-                "seededPressureReliefClosed":{"us":seeded_closed.0,"propertyCalls":seeded_closed.1},
-                "seededPressureReliefOpen":{"us":seeded_open.0,"propertyCalls":seeded_open.1},
-                "coloredJacobianReliefOpen":{"us":jacobian.0,"propertyCalls":jacobian.1}},
-            "composedWithTube":{"coordinates":sys.n(),"colors":sys.coloring.count(),"value_us":composed_us,
+            "secondaryBlock":{"coordinates":n,"structuralNonzeros":Secondary::<Counted>::structure(&block).own.iter().map(Vec::len).sum::<usize>(),
+                "colorsAlone":seated_jacobian.2,
+                "seated":{"value":cell(seated_value),"seededPressure":cell(seated_seeded),
+                    "coloredJacobian":cell((seated_jacobian.0,seated_jacobian.1))},
+                "lifted":{"value":cell(lifted_value),"seededPressure":cell(lifted_seeded),
+                    "coloredJacobian":cell((lifted_jacobian.0,lifted_jacobian.1))}},
+            "composedWithTubeSeated":{"coordinates":sys.n(),"colors":sys.coloring.count(),"value_us":composed_us,
                 "coloredJacobian_us":composed_jacobian_us}})
     );
-    assert!(value_closed.0 > 0. && value_open.0 > value_closed.0);
+    // Seated valves make no nozzle call: two saturations per evaluation.
+    assert_eq!(seated_value.1, 2.);
+    assert!(seated_jacobian.1 <= 2. * seated_jacobian.2 as f64);
+    assert!(lifted_value.1 > seated_value.1);
     assert_eq!(secondary::DISARMED, 1.);
 }

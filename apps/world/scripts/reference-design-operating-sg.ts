@@ -32,7 +32,7 @@ const boundariesSchema=z.object({steamDemand_kg_s:z.object({A:positive,B:positiv
 const travelSchema=z.object({sgIsolation_s:positive,turbineStop_s:positive,reheaterIsolation_s:positive,
   admission_s:positive,bypass_s:positive}).strict()
 const reliefSchema=z.object({valvesPerSg:z.number().int().positive(),crackPressure_Pa:positive,fullLiftPressure_Pa:positive,
-  reseatPressure_Pa:positive,liftLag_s:positive,backPressure_Pa:positive,descendingSwitch:z.literal('inletAtFullLift'),
+  reseatPressure_Pa:positive,liftLag_s:positive,seatLagTimeConstants:positive,backPressure_Pa:positive,descendingSwitch:z.literal('inletAtFullLift'),
   rating:z.object({fractionOfNominalFlow:positive.max(1),nominalFlow_kg_s:positive,fluid:z.literal('saturatedVapor'),
     inletPressure_Pa:positive}).strict()}).strict()
   .superRefine((r,c)=>{
@@ -63,7 +63,8 @@ export const parseSgRelief=(admission:string)=>reliefSchema.parse(ownedBlock(adm
 export const parseSgBoundaries=(thermodynamics:string)=>
   boundariesSchema.parse(ownedBlock(thermodynamics,sgOwners.boundaries.heading,sgOwners.boundaries.fence))
 export const parseSteamValveTravel=(admission:string)=>travelSchema.parse(ownedBlock(admission,sgOwners.travel.heading,sgOwners.travel.fence))
-const parseContact=(thermodynamics:string)=>contactSchema.parse(ownedBlock(thermodynamics,sgOwners.contact.heading,sgOwners.contact.fence))
+/** The SG contact law's exchange area and wall constants (`ld01-sg-contact`). */
+export const parseSgContact=(thermodynamics:string)=>contactSchema.parse(ownedBlock(thermodynamics,sgOwners.contact.heading,sgOwners.contact.fence))
 
 /** The guard volumes from the contact coordinate: the crown's first
  * uncovery and the pickup's first coverage. The contact span times its area
@@ -80,8 +81,9 @@ function guards(thermodynamics:string,volume_m3:number){
 
 /** The joined packet's `secondary` section: per SG (the thermal
  * secondaries' A/B order) its volume, constant demand, guard volumes and
- * valves; the relief characteristic and rating; the feed boundary; the STOP
- * travel of the trip ramp. */
+ * valves; the relief characteristic, seat and rating; the feed boundary; the
+ * STOP travel of the trip ramp; and the contact law's exchange area and wall
+ * constants for the joined solids' films. */
 export function compileOperatingSecondary(d:SectionSources){
   const boundaries=parseSgBoundaries(d.thermodynamics),relief=parseSgRelief(d.admission),travel=parseSteamValveTravel(d.admission),
     balance=parseBalanceBasis(d.balance),cycle=parseCycleBasis(d.cycle),g=guards(d.thermodynamics,balance.secondaryVolume_m3),
@@ -93,20 +95,22 @@ export function compileOperatingSecondary(d:SectionSources){
       crownLiquidVolume_m3:g.crown_m3,pickupLiquidVolume_m3:g.pickup_m3,
       reliefs:Array.from({length:relief.valvesPerSg},(_,i)=>({id:`SG.${id}.RELIEF.${i+1}`}))})),
     relief:{crackPressure_Pa:relief.crackPressure_Pa,fullLiftPressure_Pa:relief.fullLiftPressure_Pa,reseatPressure_Pa:relief.reseatPressure_Pa,
-      liftLag_s:relief.liftLag_s,backPressure_Pa:relief.backPressure_Pa,descendingSwitch:relief.descendingSwitch,
+      liftLag_s:relief.liftLag_s,seatLagTimeConstants:relief.seatLagTimeConstants,backPressure_Pa:relief.backPressure_Pa,descendingSwitch:relief.descendingSwitch,
       rating:{massFlow_kg_s:relief.rating.fractionOfNominalFlow*relief.rating.nominalFlow_kg_s,inletPressure_Pa:relief.rating.inletPressure_Pa,
         fluid:relief.rating.fluid}},
     feed:{rule:boundaries.feedRule,pressure_Pa:feedPressure,temperature_K:cycle.feedInlet_C+273.15},
-    steamAdmission:{stopTravel_s:travel.turbineStop_s}}
+    steamAdmission:{stopTravel_s:travel.turbineStop_s},
+    contact:parseSgContact(d.thermodynamics)}
 }
 
 /** Probe inputs of zero-time receipts and isolated probes only: the selected
  * hot preparation, the prepared SG primary cell held with the supplied
- * per-SG flows, and the tube path's constants and segments. */
+ * per-SG flows, and the tube path's diameter and segments; its wall
+ * constants are the section's `contact`. */
 export function compileSgProbe(d:ProbeSources,primaryMassFlow_kg_s:{A:number,B:number}){
   if(![primaryMassFlow_kg_s.A,primaryMassFlow_kg_s.B].every(m=>Number.isFinite(m)&&m>0))throw Error('Positive primary flows required')
   const balance=parseBalanceBasis(d.balance),hot=parseOperatingHotReference(d.hot),thermal=parseOperatingThermal(d.thermal),
-    mechanics=parsePrimaryMechanics(d.mechanics),initialization=parseInitializationBasis(d.initialization),contact=parseContact(d.thermodynamics),
+    mechanics=parsePrimaryMechanics(d.mechanics),initialization=parseInitializationBasis(d.initialization),contact=parseSgContact(d.thermodynamics),
     n=hot.sgMetalSegments,L=mechanics.sgDevelopedLength_m
   return {preparation:{secondaryPressure_Pa:balance.secondaryPressure_MPaAbs*1e6,liquidVolume_m3:balance.secondaryLiquidVolume_m3,
       metalColdTemperature_K:balance.coreInlet_C+273.15},
@@ -114,8 +118,7 @@ export function compileSgProbe(d:ProbeSources,primaryMassFlow_kg_s:{A:number,B:n
     // and the folded channel's flow area (volume over developed length).
     primary:{pressure_Pa:hot.primaryPressure_Pa,temperature_K:balance.coreInlet_C+273.15,
       flowArea_m2:initialization.volumes_m3[7]!/L,massFlow_kg_s:SGS.map(id=>primaryMassFlow_kg_s[id])},
-    tube:{thermalDiameter_m:thermal.sgThermalDiameter_m,emissivity:contact.emissivity,steelConductivity_W_mK:contact.steelConductivity_W_mK,
-      steelDensity_kg_m3:contact.steelDensity_kg_m3,steelCp_J_kgK:contact.steelCp_J_kgK},
+    tube:{thermalDiameter_m:thermal.sgThermalDiameter_m},
     segments:Array.from({length:n},(_,i)=>({developedStart_m:i*L/n,developedEnd_m:(i+1)*L/n,
       exchangeArea_m2:contact.exchangeArea_m2/n,capacity_J_K:balance.wallCapacity_MJ_K*1e6/n}))}
 }

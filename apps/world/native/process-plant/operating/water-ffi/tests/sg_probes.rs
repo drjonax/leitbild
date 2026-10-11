@@ -32,31 +32,46 @@ fn worst(samples: &[Value], key: &str) -> f64 {
         })
         .fold(0., f64::max)
 }
+/// Relief transitions of a run: (t, valve, threshold, kind).
 fn relief_events(events: &[Value]) -> Vec<(f64, String, String, String)> {
-    events
-        .iter()
-        .filter(|e| e["event"] == "root")
-        .flat_map(|e| {
-            let t = e["t_s"].as_f64().unwrap();
-            e["receipt"]["relief"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(move |r| {
-                    (
-                        t,
-                        r["valve"].as_str().unwrap().to_string(),
-                        r["threshold"].as_str().unwrap().to_string(),
-                        format!(
-                            "{}->{}",
-                            r["before"].as_str().unwrap(),
-                            r["after"].as_str().unwrap()
-                        ),
-                    )
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    let mut out = Vec::new();
+    for e in events.iter().filter(|e| e["event"] == "root") {
+        let t = e["t_s"].as_f64().unwrap();
+        for r in e["receipt"]["relief"].as_array().unwrap() {
+            let (b, a) = (&r["before"], &r["after"]);
+            let mut kind = if r["superseded"] == true {
+                "superseded".to_string()
+            } else if b["branch"] != a["branch"] {
+                format!(
+                    "{}->{}",
+                    b["branch"].as_str().unwrap(),
+                    a["branch"].as_str().unwrap()
+                )
+            } else if b["seated"] == true && a["seated"] == false {
+                "unseat".to_string()
+            } else if b["seated"] == false && a["seated"] == true {
+                "seat".to_string()
+            } else {
+                "kink".to_string()
+            };
+            if r["seatedFromLift"].is_number() && kind.contains("->") {
+                kind.push_str("+seat");
+            }
+            let name = |k: &str| r[k].as_str().unwrap().to_string();
+            out.push((t, name("valve"), name("threshold"), kind));
+        }
+    }
+    out
+}
+/// Counts of transitions by threshold and kind, and of restarts.
+fn counts(events: &[Value]) -> Value {
+    let mut by = std::collections::BTreeMap::<String, usize>::new();
+    for e in relief_events(events) {
+        *by.entry(format!("{}:{}", e.2, e.3)).or_default() += 1;
+    }
+    let count = |kind: &str| events.iter().filter(|e| e["event"] == kind).count();
+    json!({"transitionsByThresholdAndKind":by,"rootReturns":count("root"),
+        "exactConsistentRestarts":count("exact consistent restart"),"timeBoundaries":count("time boundary")})
 }
 fn write(name: &str, value: &Value) {
     if let Ok(dir) = std::env::var("LD01_OPERATING_SG_PROBE_OUT") {
@@ -137,12 +152,14 @@ fn settles_at_the_emergent_pressure_then_the_trip_cracks_the_reliefs() {
                 .map(|g| g["p_Pa"].as_f64().unwrap())
         })
         .fold(0., f64::max);
+    // Every valve unseats once at crack after the trip; with the primary held
+    // the pressure settles between crack and full lift, so nothing reseats.
+    assert_eq!(events.len(), 4, "{events:?}");
     assert!(
         events
             .iter()
-            .all(|e| e.2 == "Crack" || e.2 == "FullLift" || e.2 == "Reseat")
+            .all(|e| e.2 == "Crack" && e.3 == "unseat" && e.0 > 60.)
     );
-    assert!(events.iter().any(|e| e.2 == "Crack" && e.0 > 60.));
     // Ledgers: secondary energy and metal each close on their integrated
     // receipts to the integrator's own tolerance scale.
     let energy = worst(&out.samples, "energyLedgerDefect_J");
@@ -151,7 +168,7 @@ fn settles_at_the_emergent_pressure_then_the_trip_cracks_the_reliefs() {
     eprintln!(
         "{}",
         json!({"scope":"NOT-EVIDENCE probe: held SG primary, 0-60 s settle, TRIP at 60 s","settled":summary,
-            "peakPressure_Pa":peak,"reliefEvents":events,"ledgerWorst":{"energy_J":energy,"metal_J":metal,"mass_kg":mass},
+            "peakPressure_Pa":peak,"reliefEvents":events,"eventCounts":counts(&out.events),"ledgerWorst":{"energy_J":energy,"metal_J":metal,"mass_kg":mass},
             "end":{"p_Pa":[last(&out.samples,"p_Pa",0),last(&out.samples,"p_Pa",1)],
                 "lifts":[out.samples.last().unwrap()["sgs"][0]["lifts"].clone(),out.samples.last().unwrap()["sgs"][1]["lifts"].clone()]},
             "counts":out.counts})
@@ -199,15 +216,20 @@ fn the_relief_memory_switches_once_each_way() {
             .push((e.2.clone(), e.3.clone()));
     }
     for (valve, seq) in &per_valve {
-        let switches: Vec<&(String, String)> = seq
+        let kept: Vec<(&str, &str)> = seq
             .iter()
-            .filter(|(_, x)| x != "Ascending->Ascending")
+            .filter(|(_, k)| k != "kink")
+            .map(|(t, k)| (t.as_str(), k.as_str()))
             .collect();
+        // Seated at the start: unseat at crack, switch at full lift, switch
+        // back at reseat, then seat as the lift decays below its seat lift.
         assert_eq!(
-            switches,
+            kept,
             vec![
-                &("FullLift".to_string(), "Ascending->Descending".to_string()),
-                &("Reseat".to_string(), "Descending->Ascending".to_string())
+                ("Crack", "unseat"),
+                ("FullLift", "Ascending->Descending"),
+                ("Reseat", "Descending->Ascending"),
+                ("Seat", "seat")
             ],
             "{valve}: {seq:?}"
         );
@@ -231,10 +253,10 @@ fn the_relief_memory_switches_once_each_way() {
         "{}",
         json!({"scope":"NOT-EVIDENCE probe: declared 3 GW/SG heat for 4 s, then -0.3 GW, TRIP at 0 s","stopped":stopped,
             "end_s":out.samples.last().unwrap()["t_s"],"endLiquid_m3":last(&out.samples,"Vl_m3",0),"peakPressure_Pa":peak,
-            "reliefEvents":events,"endLift":end_lift,"endPressure_Pa":last(&out.samples,"p_Pa",0),
+            "reliefEvents":events,"eventCounts":counts(&out.events),"endLift":end_lift,"endPressure_Pa":last(&out.samples,"p_Pa",0),
             "ledgerWorstEnergy_J":energy,"counts":out.counts})
     );
-    assert!(end_lift < 1e-3);
+    assert_eq!(end_lift, 0.);
     assert!(energy < 1e3, "ledger defect {energy} J");
     assert!(
         stopped.contains("S2 domain exit") && stopped.contains("crown first uncovery"),

@@ -518,6 +518,7 @@ impl CellSystem {
         let mixture = self
             .cell
             .level(s(v(st::ADMITTED_VOLUME)
+                + v(st::ADMITTED_BUBBLE_VOLUME)
                 + v(st::RESIDENT_VOLUME)
                 + v(st::BUBBLE_VOLUME)))
             .value;
@@ -533,10 +534,14 @@ impl CellSystem {
         let mixture = self
             .cell
             .level(s(v(st::ADMITTED_VOLUME)
+                + v(st::ADMITTED_BUBBLE_VOLUME)
                 + v(st::RESIDENT_VOLUME)
                 + v(st::BUBBLE_VOLUME)))
             .value;
-        let boundary = self.cell.level(s(v(st::ADMITTED_VOLUME))).value;
+        let boundary = self
+            .cell
+            .level(s(v(st::ADMITTED_VOLUME) + v(st::ADMITTED_BUBBLE_VOLUME)))
+            .value;
         let top = self.cell.parameters().top_m;
         for (o, root) in out.iter_mut().zip(roots) {
             *o = match root {
@@ -902,7 +907,8 @@ pub fn sample(
         ],
         inventory: [inv.mass_kg.value, inv.energy_j.value, inv.boron_kg.value],
         internal_energy_j: inv.energy_j.value
-            - c.interface_pressure.value * (x.bubble_volume.value + x.drop_volume.value),
+            - c.interface_pressure.value
+                * (x.bubble_volume.value + x.drop_volume.value + x.admitted_bubble_volume.value),
         tolerance: [
             tol(&[
                 st::VAPOR_MASS,
@@ -910,6 +916,7 @@ pub fn sample(
                 st::RESIDENT_MASS,
                 st::BUBBLE_MASS,
                 st::DROP_MASS,
+                st::ADMITTED_BUBBLE_MASS,
             ]),
             tol(&[st::VAPOR_ENERGY, st::ADMITTED_ENERGY, st::RESIDENT_ENERGY]) + metal_tolerance,
             tol(&[st::ADMITTED_BORON, st::RESIDENT_BORON, st::DROP_BORON]),
@@ -959,20 +966,10 @@ pub struct RunSpec {
     pub consistent_passes: usize,
     /// Largest lift defect a travel root may hand `ReliefDevice::stop`.
     pub lift_root_bound: f64,
-    /// Relief windows (request 2, E5): their margin before an event and
-    /// after the lift rests, and the Newton coefficient inside them.
-    pub relief_window: Option<ReliefWindow>,
+    /// Stock IDA's first step after every event restart (request 4, K4).
+    pub event_restart_first_step_s: f64,
     /// The low-level heater cutout chain (gate 5).
     pub cutout: Option<Cutout>,
-}
-
-/// E5's relief windows: from `margin_s` before each located relief event
-/// until `margin_s` after the lift next comes to rest, with the IDA Newton
-/// coefficient `newton_coefficient` inside.
-#[derive(Clone, Copy, Debug)]
-pub struct ReliefWindow {
-    pub margin_s: f64,
-    pub newton_coefficient: f64,
 }
 
 /// The low-level heater cutout of gate 5: the electronic differential level
@@ -1066,12 +1063,12 @@ pub struct Run {
     pub initializations: Vec<Value>,
     pub resolvability: Vec<Value>,
     pub uncredited: Vec<Value>,
-    /// E5 relief windows `[start, end]`, rewinds taken to open them, and
-    /// the cutout chain's record.
-    pub windows: Vec<Value>,
-    pub rewinds: Vec<Value>,
+    /// The cutout chain's record follows the handle counters.
     /// Every integrator handle's own stock counters, in order.
     pub handle_stats: Vec<Value>,
+    /// Smoke diagnostic only: each accepted step's end inside the probed
+    /// window, `[t_n, h, order, steps, inventory_kg, mass_receipt_kg_s, handle]`.
+    pub step_probe: Vec<Value>,
     pub cutout: Option<Value>,
     /// `[t, PT1, collapsed level, mixture level]` every `observation_s`,
     /// from the coordinates alone (no property call).
@@ -1096,7 +1093,7 @@ fn new_handle(
     yp: &[f64],
     spec: &RunSpec,
     stop: f64,
-    tight: bool,
+    first_step: Option<f64>,
 ) -> Result<Ida<Segment>, String> {
     let ids = system.differential();
     let roots = system.roots_active();
@@ -1117,11 +1114,8 @@ fn new_handle(
     )?;
     ida.set_max_order(spec.max_order)?;
     ida.constrain_nonnegative(&spec.nonnegative)?;
-    if tight {
-        let w = spec
-            .relief_window
-            .ok_or("a tightened handle without a declared relief window")?;
-        ida.set_nonlinear_convergence_coefficient(w.newton_coefficient)?;
+    if let Some(h) = first_step {
+        ida.set_init_step(h)?;
     }
     ida.stop_at(stop)?;
     Ok(ida)
@@ -1205,15 +1199,11 @@ fn stop_rules(sample: &Sample, spec: &RunSpec, admitted_atol_kg: f64) -> Option<
 /// A discrete change at a known time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Pending {
-    WindowStart,
-    WindowEnd,
     IsolatorOpen,
 }
 impl Pending {
     fn label(&self) -> &'static str {
         match self {
-            Pending::WindowStart => "relief window start",
-            Pending::WindowEnd => "relief window end",
             Pending::IsolatorOpen => "heater isolator opened",
         }
     }
@@ -1226,22 +1216,6 @@ struct Acquired {
     previous: Option<(f64, f64, f64)>,
     since: Option<f64>,
     cause: Option<f64>,
-}
-
-/// A regular output a relief window may rewind to: the state, the system's
-/// discrete state, the window and pending events, and the record lengths.
-#[derive(Clone)]
-struct Snapshot {
-    t: f64,
-    y: Vec<f64>,
-    yp: Vec<f64>,
-    system: CellSystem,
-    tight: bool,
-    window_open: Option<f64>,
-    pending: Vec<(f64, Pending)>,
-    acquired: Acquired,
-    k: u64,
-    lengths: [usize; 7],
 }
 
 fn finish(
@@ -1297,9 +1271,8 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
         initializations: Vec::new(),
         resolvability: Vec::new(),
         uncredited: Vec::new(),
-        windows: Vec::new(),
-        rewinds: Vec::new(),
         handle_stats: Vec::new(),
+        step_probe: Vec::new(),
         cutout: None,
         observations: Vec::new(),
         end: End::Completed,
@@ -1335,11 +1308,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             .fold(fixed, f64::min)
     };
     let mut pending: Vec<(f64, Pending)> = Vec::new();
-    let mut tight = false;
-    let mut window_open: Option<f64> = None;
     let mut acquired = Acquired::default();
-    let mut history: std::collections::VecDeque<Snapshot> = std::collections::VecDeque::new();
-    let mut rewound_for: Option<f64> = None;
     let mut diagnostic = 0.;
     let mut totals = Totals::default();
     match start(&mut system, t, &mut y, spec) {
@@ -1362,7 +1331,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             return out;
         }
     }
-    let mut ida = match new_handle(system, t, &y, &yp, spec, next_stop(&pending, t), false) {
+    let mut ida = match new_handle(system, t, &y, &yp, spec, next_stop(&pending, t), None) {
         Ok(h) => h,
         Err(e) => {
             finish(
@@ -1526,53 +1495,18 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             return out;
         }
     }
-    let snapshot = |out: &Run,
-                    ida: &Ida<Segment>,
-                    t: f64,
-                    y: &[f64],
-                    yp: &[f64],
-                    tight: bool,
-                    window_open: Option<f64>,
-                    pending: &[(f64, Pending)],
-                    acquired: Acquired,
-                    k: u64| Snapshot {
-        t,
-        y: y.to_vec(),
-        yp: yp.to_vec(),
-        system: ida.system().system.clone(),
-        tight,
-        window_open,
-        pending: pending.to_vec(),
-        acquired,
-        k,
-        lengths: [
-            out.samples.len(),
-            out.relief_events.len(),
-            out.area_crossings.len(),
-            out.structural.len(),
-            out.windows.len(),
-            out.initializations.len(),
-            out.observations.len(),
-        ],
-    };
-    if spec.relief_window.is_some() {
-        history.push_back(snapshot(
-            &out,
-            &ida,
-            t,
-            &y,
-            &yp,
-            tight,
-            window_open,
-            &pending,
-            acquired,
-            1,
-        ));
-    }
     // `k` counts observations; every `ratio`-th is a full sample.
     let mut k: u64 = 1;
     // Handles whose first advance has been taken.
     let mut primed = 0;
+    // Smoke diagnostic: the accepted steps' ends inside `LD01_P2_STEP_PROBE`
+    // ("from_s,to_s"), read after every advance. It only reads the
+    // integrator's current state.
+    let probe: Option<(f64, f64)> = std::env::var("LD01_P2_STEP_PROBE").ok().map(|w| {
+        let v: Vec<f64> = w.split(',').map(|x| x.parse().expect("probe window")).collect();
+        (v[0], v[1])
+    });
+    let mut probed = f64::NEG_INFINITY;
     loop {
         let next_output = k as f64 * spec.observation_s;
         let stop = next_stop(&pending, t);
@@ -1607,6 +1541,21 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             primed = out.handles;
             ida.advance(target, &mut y, &mut yp)
         };
+        if let Some((from, to)) = probe
+            && let Ok(st) = ida.stats()
+        {
+            let mut ya = vec![0.; n];
+            let mut ypa = vec![0.; n];
+            if let Ok(tn) = ida.current_state(&mut ya, &mut ypa)
+                && tn >= from
+                && tn <= to
+                && tn != probed
+                && let Ok(smp) = sample(&ida.system().system, tn, &ya, &ypa, &spec.atol, spec.rtol)
+            {
+                probed = tn;
+                out.step_probe.push(json!([tn, st.last_step, st.last_order, st.steps, smp.inventory[0], smp.receipt[0], out.handles]));
+            }
+        }
         // A pure observation: record it and continue without a sample.
         if let Ok(Advance::Reached(tr)) = advanced
             && (tr - next_output).abs() <= 1e-9 * next_output.max(1.)
@@ -1660,31 +1609,14 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                 if end.is_none() && on_grid {
                     k += 1;
                 }
-                if end.is_none() && regular {
-                    if let Some(open) = acquire(&mut out, &mut acquired, &mut pending, t)
-                        && let Err(e) = ida.stop_at(next_stop(&pending, t))
-                    {
-                        end = Some(End::Failure {
-                            reason: format!("isolator stop at {open} s: {e}"),
-                        });
-                    }
-                    if spec.relief_window.is_some() {
-                        history.push_back(snapshot(
-                            &out,
-                            &ida,
-                            t,
-                            &y,
-                            &yp,
-                            tight,
-                            window_open,
-                            &pending,
-                            acquired,
-                            k,
-                        ));
-                        while history.len() > 6 {
-                            history.pop_front();
-                        }
-                    }
+                if end.is_none()
+                    && regular
+                    && let Some(open) = acquire(&mut out, &mut acquired, &mut pending, t)
+                    && let Err(e) = ida.stop_at(next_stop(&pending, t))
+                {
+                    end = Some(End::Failure {
+                        reason: format!("isolator stop at {open} s: {e}"),
+                    });
                 }
                 if end.is_none() {
                     if t >= spec.duration_s {
@@ -1699,15 +1631,6 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                         let mut next = ida.system().system.clone();
                         for d in &due {
                             match d {
-                                Pending::WindowStart => {
-                                    tight = true;
-                                    window_open = Some(t);
-                                }
-                                Pending::WindowEnd => {
-                                    tight = false;
-                                    out.windows.push(json!([window_open, t]));
-                                    window_open = None;
-                                }
                                 Pending::IsolatorOpen => {
                                     if let Some(m) = next.metal.as_mut() {
                                         m.isolated = true;
@@ -1728,7 +1651,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                     &yp,
                                     spec,
                                     next_stop(&pending, t),
-                                    tight,
+                                    Some(spec.event_restart_first_step_s),
                                 ) {
                                     Ok(h) => {
                                         ida = h;
@@ -1771,95 +1694,6 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                     .find(|(r, _)| *r == Root::Demand)
                     .map(|(_, d)| *d);
                 let travel = fired.iter().any(|(r, _)| *r == Root::Travel);
-                // E5: a relief window opens a margin before the event. Met
-                // outside a window, the run rewinds to the last regular
-                // output at or before that start and re-integrates.
-                if let (Some(w), Some(_)) = (spec.relief_window, demand)
-                    && !tight
-                    && rewound_for.is_none_or(|r| (r - t).abs() > w.margin_s)
-                {
-                    let window_start = (t - w.margin_s).max(0.);
-                    if let Some(snap) = history
-                        .iter()
-                        .rev()
-                        .find(|s| s.t <= window_start + 1e-12)
-                        .cloned()
-                    {
-                        out.rewinds.push(
-                            json!({"event_s":t,"rewind_to_s":snap.t,"window_start_s":window_start}),
-                        );
-                        rewound_for = Some(t);
-                        absorb(&mut out, &mut totals, &ida);
-                        let [
-                            samples,
-                            events,
-                            crossings,
-                            structural,
-                            windows,
-                            _,
-                            observations,
-                        ] = snap.lengths;
-                        out.observations.truncate(observations);
-                        out.samples.truncate(samples);
-                        out.relief_events.truncate(events);
-                        out.area_crossings.truncate(crossings);
-                        out.structural.truncate(structural);
-                        out.windows.truncate(windows);
-                        t = snap.t;
-                        y = snap.y.clone();
-                        k = snap.k;
-                        tight = snap.tight;
-                        window_open = snap.window_open;
-                        pending = snap.pending.clone();
-                        acquired = snap.acquired;
-                        last_accepted = t;
-                        while history.back().is_some_and(|s| s.t > snap.t) {
-                            history.pop_back();
-                        }
-                        if !tight {
-                            if window_start > t {
-                                pending.push((window_start, Pending::WindowStart));
-                            } else {
-                                tight = true;
-                                window_open = Some(t);
-                            }
-                        }
-                        let mut next = snap.system.clone();
-                        next.counters = Counters::default();
-                        let end = match start(&mut next, t, &mut y, spec) {
-                            Ok((rates, pair)) => {
-                                yp = rates;
-                                out.initializations.push(pair);
-                                match new_handle(
-                                    next,
-                                    t,
-                                    &y,
-                                    &yp,
-                                    spec,
-                                    next_stop(&pending, t),
-                                    tight,
-                                ) {
-                                    Ok(h) => {
-                                        ida = h;
-                                        out.handles += 1;
-                                        None
-                                    }
-                                    Err(e) => Some(End::Failure {
-                                        reason: format!("rewind handle at t={t} s: {e}"),
-                                    }),
-                                }
-                            }
-                            Err(e) => Some(End::Failure {
-                                reason: format!("rewind start at t={t} s: {e}"),
-                            }),
-                        };
-                        if let Some(end) = end {
-                            finish(&mut out, end, Some(&ida), &totals, t, &y, &yp);
-                            break;
-                        }
-                        continue;
-                    }
-                }
                 let label = fired
                     .iter()
                     .map(|(r, d)| {
@@ -1986,19 +1820,11 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                         let after = (relief.demand_open, relief.motion);
                         (before, after, relief.device.lift_rate(relief.motion), stop)
                     };
-                    // E5: the window closes a margin after the lift rests;
-                    // a lift moving again keeps it open.
-                    if let Some(w) = spec.relief_window {
-                        pending.retain(|p| p.1 != Pending::WindowEnd);
-                        if matches!(after.1, ReliefMotion::Open | ReliefMotion::Closed) {
-                            pending.push((t + w.margin_s, Pending::WindowEnd));
-                        }
-                    }
                     let mut event = json!({"t":t,"pt1_pa":y[st::ROOF_PRESSURE]*next.scales[st::ROOF_PRESSURE],
                         "demand_root":demand,"travel_root":travel,
                         "before":{"demand_open":before.0,"motion":format!("{:?}",before.1)},
                         "after":{"demand_open":after.0,"motion":format!("{:?}",after.1)},
-                        "lift_located":located,"tight_newton":tight,
+                        "lift_located":located,
                         "stop":stop.map(|r| json!({"motion_before":format!("{:?}",r.motion_before),"motion_after":format!("{:?}",r.motion_after),
                             "lift_before":r.lift_before,"lift_after":r.lift_after,"defect":r.defect})),
                         "lift_rate_per_s":rate});
@@ -2017,7 +1843,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                     &yp,
                                     spec,
                                     next_stop(&pending, t),
-                                    tight,
+                                    Some(spec.event_restart_first_step_s),
                                 ) {
                                     Ok(h) => {
                                         ida = h;
@@ -2062,9 +1888,6 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             }
         };
         if let Some(end) = end {
-            if let Some(open) = window_open {
-                out.windows.push(json!([open, Value::Null]));
-            }
             finish(&mut out, end, Some(&ida), &totals, t, &y, &yp);
             break;
         }
@@ -2305,6 +2128,6 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
         "min_drag_gap_margin":min_gap,"min_admitted_mass_kg":{"value":min_a.0,"at_s":min_a.1},
         "relief_events":run.relief_events,"area_step_crossings":run.area_crossings,"structural_events":run.structural,
         "credited_departure_overruns":run.uncredited,"resolvability_reports":run.resolvability,
-        "relief_windows":run.windows,"window_rewinds":run.rewinds,"handle_stats":run.handle_stats,"cutout":run.cutout,"observations":run.observations.len(),
+        "handle_stats":run.handle_stats,"step_probe":run.step_probe,"cutout":run.cutout,"observations":run.observations.len(),
         "samples":run.samples.len(),"series":series})
 }

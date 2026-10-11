@@ -7,7 +7,7 @@ import {compileOperatingSecondary,compileSgProbe,parseSgBoundaries,parseSgRelief
 
 // Test-only owner texts in the shapes the compiler reads; not plant evidence.
 const fence=(name:string,value:unknown)=>'```'+name+'\n'+JSON.stringify(value)+'\n```'
-const relief={valvesPerSg:2,crackPressure_Pa:6800000,fullLiftPressure_Pa:7000000,reseatPressure_Pa:6600000,liftLag_s:.1,
+const relief={valvesPerSg:2,crackPressure_Pa:6800000,fullLiftPressure_Pa:7000000,reseatPressure_Pa:6600000,liftLag_s:.1,seatLagTimeConstants:10,
   backPressure_Pa:101325,descendingSwitch:'inletAtFullLift',
   rating:{fractionOfNominalFlow:.6,nominalFlow_kg_s:819.818983,fluid:'saturatedVapor',inletPressure_Pa:7000000}} as const
 const travel={sgIsolation_s:2,turbineStop_s:.3,reheaterIsolation_s:.3,admission_s:1,bypass_s:2}
@@ -25,6 +25,7 @@ test('relief, travel and S2 boundaries parse from their owners only, strictly',(
   expect(()=>parseSgRelief(edit('## Turbine trip and reset semantics','## Elsewhere'))).toThrow()
   expect(()=>parseSgRelief(admission()+'\n'+fence('ld01-sg-relief',relief))).toThrow()
   expect(()=>parseSteamValveTravel(edit('"turbineStop_s":0.3','"turbineStop_s":0'))).toThrow()
+  expect(()=>parseSgRelief(edit('"seatLagTimeConstants":10,',''))).toThrow()
   const thermo='## Emergent full-power SG pressure\n\n'+fence('ld01-s2-sg-boundaries',boundaries)+'\n\n## Next\n'
   expect(parseSgBoundaries(thermo)).toEqual(boundaries)
   expect(()=>parseSgBoundaries(thermo.replace('"pickupGas"','"bulkMixture"'))).toThrow()
@@ -39,6 +40,9 @@ test.skipIf(!wiki)('actual secondary and probe sections compile once; corrupted 
     .toEqual([['A',819.9495,71.25,108.75,2],['B',819.9455,71.25,108.75,2]])
   expect(section.feed).toEqual({rule:'inventoryHolding',pressure_Pa:7200000,temperature_K:493.15})
   expect(section.steamAdmission).toEqual({stopTravel_s:.3})
+  expect(section.relief.seatLagTimeConstants).toBe(10)
+  expect(section.contact).toEqual({exchangeArea_m2:5000,emissivity:.3,steelConductivity_W_mK:15,steelDensity_kg_m3:8000,steelCp_J_kgK:500})
+  expect(probe.tube).toEqual({thermalDiameter_m:.02})
   expect(section.relief.rating.massFlow_kg_s).toBeCloseTo(491.8913898,9)
   expect(section.provenance.consumed.map(c=>c.name.split('ld-01/')[1])).toEqual([...sectionPages])
   expect(probe.primary).toEqual({pressure_Pa:15200000,temperature_K:563.15,flowArea_m2:1.25,massFlow_kg_s:[9167.294305,9167.309151]})

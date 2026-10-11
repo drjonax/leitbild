@@ -20,7 +20,7 @@ pub mod operator;
 pub mod packet;
 pub mod solids;
 
-use crate::network::{Network, PZR_ALGEBRAIC, PZR_COORDINATES, Properties, stratified};
+use crate::network::{Network, PZR_COORDINATES, Properties, stratified};
 use block::{Class, Layout};
 
 /// The network's coordinates as a block layout, in its own order and
@@ -76,17 +76,15 @@ pub fn network_layout<P: Properties>(network: &Network<P>) -> Layout {
             );
         }
     }
-    let names = [
-        "p_roof", "V_g", "V_A", "V_R", "V_b", "V_d", "M_g", "U_g", "M_A", "U_A", "B_A", "M_R",
-        "U_R", "B_R", "M_b", "M_d", "B_d",
-    ];
-    for (offset, name) in names.into_iter().enumerate().take(PZR_COORDINATES) {
+    // The stratified cell's coordinates: the network's own labels, and its
+    // algebraic block from the cell owner's identity.
+    let labels = network.labels();
+    for offset in 0..PZR_COORDINATES {
         let i = network.pzr.base + offset;
         let algebraic = stratified::DIFFERENTIAL[offset] == 0.;
-        debug_assert_eq!(algebraic, offset < PZR_ALGEBRAIC);
         set(
             i,
-            format!("{name}[{}]", network.pzr.cell),
+            labels[i].1.clone(),
             if algebraic {
                 Class::PzrAlgebraic
             } else {

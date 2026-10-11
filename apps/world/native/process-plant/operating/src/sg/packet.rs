@@ -20,6 +20,9 @@ pub struct Section {
     pub feed: Feed,
     #[serde(rename = "steamAdmission")]
     pub steam_admission: SteamAdmission,
+    /// The SG contact law's exchange area and wall constants
+    /// (`ld01-sg-contact`), read once for the joined solids' films.
+    pub contact: Contact,
     /// Consumed pages and source hashes; not read by the block.
     pub provenance: Value,
 }
@@ -60,6 +63,10 @@ pub struct Relief {
     pub reseat_pressure_pa: f64,
     #[serde(rename = "liftLag_s")]
     pub lift_lag_s: f64,
+    /// A closing disc seats when its lift falls to `exp(-n)` of full lift,
+    /// `n` of the lag's own time constants (lead decision).
+    #[serde(rename = "seatLagTimeConstants")]
+    pub seat_lag_time_constants: f64,
     #[serde(rename = "backPressure_Pa")]
     pub back_pressure_pa: f64,
     /// F4 (a) with H5: the memory switches when the inlet reaches full lift.
@@ -117,6 +124,21 @@ pub struct SteamAdmission {
     pub stop_travel_s: f64,
 }
 
+/// The SG contact law's exchange area per SG and its wall constants.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Contact {
+    #[serde(rename = "exchangeArea_m2")]
+    pub exchange_area_m2: f64,
+    pub emissivity: f64,
+    #[serde(rename = "steelConductivity_W_mK")]
+    pub steel_conductivity_w_mk: f64,
+    #[serde(rename = "steelDensity_kg_m3")]
+    pub steel_density_kg_m3: f64,
+    #[serde(rename = "steelCp_J_kgK")]
+    pub steel_cp_j_kgk: f64,
+}
+
 /// Inputs of zero-time receipts and isolated probes only, never of the
 /// joined operator: the selected hot preparation, the held SG primary cell
 /// and the tube heat path's geometry and constants. The joined operator takes
@@ -159,18 +181,12 @@ pub struct Primary {
     pub mass_flow_kg_s: Vec<f64>,
 }
 
+/// The tube path's effective thermal diameter (`reference-operating-thermal`).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tube {
     #[serde(rename = "thermalDiameter_m")]
     pub thermal_diameter_m: f64,
-    pub emissivity: f64,
-    #[serde(rename = "steelConductivity_W_mK")]
-    pub steel_conductivity_w_mk: f64,
-    #[serde(rename = "steelDensity_kg_m3")]
-    pub steel_density_kg_m3: f64,
-    #[serde(rename = "steelCp_J_kgK")]
-    pub steel_cp_j_kgk: f64,
 }
 
 /// One developed-length metal segment, the same for every SG.

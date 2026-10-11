@@ -1,18 +1,20 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#stratified-pzr-cell
 //! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#stratified-pzr-closures
+//! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#bulk-bubble-exchange
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#bounded-metastable-admission
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hydraulics.md#stratified-ports-and-unilateral-phase-paths
 //! The stratified PZR cell: one local-pressure cell with three thermal zones.
 //!
 //! A non-equilibrium vapor zone `g` sits above two liquid layers: the admitted
 //! layer `A` at the bottom, which takes insurge, and the resident layer `R`
-//! above it, which carries the free surface. Three saturated, mass-only
-//! transit stocks complete the cell: bubbles `b`, spray drops `d` and drop
-//! boron `B_d`. There are no internal faces and no internal momenta.
+//! above it, which carries the free surface. Saturated, mass-only transit
+//! stocks complete the cell: the bubbles `b` in R's region and `b_A` in A's,
+//! spray drops `d` and drop boron `B_d`. There are no internal faces and no
+//! internal momenta.
 //!
-//! The 17 coordinates follow the lead's contract (amendments 2 and 3). The
-//! algebraic ones are the roof pressure and the five volumes. The
-//! differential ones are the eleven stocks. Given the coordinates, the
+//! The 19 coordinates follow the lead's contract (amendments 2, 3 and 6).
+//! The algebraic ones are the roof pressure and the six volumes. The
+//! differential ones are the twelve stocks. Given the coordinates, the
 //! column is explicit:
 //! - each zone's mean density is `M/V`;
 //! - heights come from the integral of the piecewise free area;
@@ -33,6 +35,14 @@
 //! over the throat pressure, against the receiver's declared backpressure;
 //! it makes property calls only while the lift is nonzero. Heater banks
 //! deliver their rod sources into the zones they wet by level.
+//!
+//! Each bubble stock condenses into the liquid its region holds by the bulk
+//! bubble exchange (request 4, K1): Ranz–Marshall transfer on that liquid's
+//! own state at the bubbles' rise speed, over the area of one effective
+//! maintained diameter, on its subcooling below the stocks' saturation at
+//! `p_s`. A liquid's superheat stays with the flashing relaxation. Zone A's
+//! births feed `b_A`; its survivors rise into `b` across the A–R boundary
+//! over A's region thickness (amendment 6).
 use super::{
     Failure, Properties,
     properties::{self as props, Reuse, Water},
@@ -47,28 +57,32 @@ use serde::Deserialize;
 /// Standard gravity of the network's well-balanced face head.
 const G: f64 = 9.80665;
 
-/// Number of PZR coordinates, in the contract's order.
-pub const COORDINATES: usize = 17;
+/// Number of PZR coordinates, in the contract's order (amendment 6).
+pub const COORDINATES: usize = 19;
 pub const ROOF_PRESSURE: usize = 0;
 pub const VAPOR_VOLUME: usize = 1;
 pub const ADMITTED_VOLUME: usize = 2;
 pub const RESIDENT_VOLUME: usize = 3;
 pub const BUBBLE_VOLUME: usize = 4;
 pub const DROP_VOLUME: usize = 5;
-pub const VAPOR_MASS: usize = 6;
-pub const VAPOR_ENERGY: usize = 7;
-pub const ADMITTED_MASS: usize = 8;
-pub const ADMITTED_ENERGY: usize = 9;
-pub const ADMITTED_BORON: usize = 10;
-pub const RESIDENT_MASS: usize = 11;
-pub const RESIDENT_ENERGY: usize = 12;
-pub const RESIDENT_BORON: usize = 13;
-pub const BUBBLE_MASS: usize = 14;
-pub const DROP_MASS: usize = 15;
-pub const DROP_BORON: usize = 16;
+/// Volume of zone A's bubble stock `b_A`, in A's region.
+pub const ADMITTED_BUBBLE_VOLUME: usize = 6;
+pub const VAPOR_MASS: usize = 7;
+pub const VAPOR_ENERGY: usize = 8;
+pub const ADMITTED_MASS: usize = 9;
+pub const ADMITTED_ENERGY: usize = 10;
+pub const ADMITTED_BORON: usize = 11;
+pub const RESIDENT_MASS: usize = 12;
+pub const RESIDENT_ENERGY: usize = 13;
+pub const RESIDENT_BORON: usize = 14;
+pub const BUBBLE_MASS: usize = 15;
+pub const DROP_MASS: usize = 16;
+pub const DROP_BORON: usize = 17;
+/// Mass of zone A's bubble stock `b_A`.
+pub const ADMITTED_BUBBLE_MASS: usize = 18;
 /// IDA id vector of the cell: 0 algebraic, 1 differential.
 pub const DIFFERENTIAL: [f64; COORDINATES] = [
-    0., 0., 0., 0., 0., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
+    0., 0., 0., 0., 0., 0., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
 ];
 
 fn s(v: f64) -> Scalar {
@@ -188,8 +202,17 @@ pub struct Stratified {
     pub vapor_relaxation_time_s: f64,
     #[serde(rename = "relaxationSensitivity")]
     pub relaxation_sensitivity: [f64; 3],
+    /// `d_b`: drag-equivalent rise diameter, and the bulk bubble exchange's
+    /// diameter too (one diameter for drag and exchange, request 4 K1).
     #[serde(rename = "bubbleDiameter_m")]
     pub bubble_diameter_m: f64,
+    /// Factors on the whole bulk bubble exchange, the nominal 1 among them.
+    #[serde(rename = "bubbleExchangeSensitivity")]
+    pub bubble_exchange_sensitivity: [f64; 3],
+    /// The exchange-only diameter of the sensitivity case whose drag stays
+    /// at the bubble diameter.
+    #[serde(rename = "bubbleExchangeDiameterSensitivity_m")]
+    pub bubble_exchange_diameter_sensitivity_m: f64,
     #[serde(rename = "sprayDropDiameter_m")]
     pub spray_drop_diameter_m: f64,
     #[serde(rename = "dropDiameterSensitivity_m")]
@@ -336,6 +359,10 @@ impl Parameters {
             ("liquidRelaxationTime_s", x.liquid_relaxation_time_s),
             ("vaporRelaxationTime_s", x.vapor_relaxation_time_s),
             ("bubbleDiameter_m", x.bubble_diameter_m),
+            (
+                "bubbleExchangeDiameterSensitivity_m",
+                x.bubble_exchange_diameter_sensitivity_m,
+            ),
             ("sprayDropDiameter_m", x.spray_drop_diameter_m),
             ("resolvabilityFactor", x.resolvability_factor),
         ])?;
@@ -343,6 +370,7 @@ impl Parameters {
             .relaxation_sensitivity
             .iter()
             .chain(&x.drop_diameter_sensitivity_m)
+            .chain(&x.bubble_exchange_sensitivity)
         {
             positive_finite(&[("sensitivity", *v)])?;
         }
@@ -350,8 +378,14 @@ impl Parameters {
             || !x
                 .drop_diameter_sensitivity_m
                 .contains(&x.spray_drop_diameter_m)
+            || !x.bubble_exchange_sensitivity.contains(&1.)
         {
             return Err(fatal("sensitivity lists must contain the nominal values"));
+        }
+        if x.bubble_exchange_diameter_sensitivity_m == x.bubble_diameter_m {
+            return Err(fatal(
+                "the exchange-only diameter sensitivity must differ from bubbleDiameter_m",
+            ));
         }
         let m = &self.metastable;
         positive_finite(&[
@@ -435,6 +469,8 @@ pub struct Case {
     /// Factor applied to both relaxation times.
     pub relaxation_factor: f64,
     pub drop_diameter_m: f64,
+    /// Rise (drag) diameter, and the bulk bubble exchange's diameter unless
+    /// the cell's [`ExchangeCase`] names the exchange-only sensitivity.
     pub bubble_diameter_m: f64,
 }
 impl Case {
@@ -443,6 +479,27 @@ impl Case {
             relaxation_factor: 1.,
             drop_diameter_m: parameters.stratified.spray_drop_diameter_m,
             bubble_diameter_m: parameters.stratified.bubble_diameter_m,
+        }
+    }
+}
+
+/// One run's selection of the bulk bubble exchange's sensitivities (request
+/// 4, K1), taken only from the strict block's own keys.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExchangeCase {
+    /// Factor on the whole exchange: a member of `bubbleExchangeSensitivity`.
+    pub factor: f64,
+    /// `None` exchanges at the case's bubble diameter, one diameter for drag
+    /// and exchange; `Some` is `bubbleExchangeDiameterSensitivity_m`, with
+    /// drag kept at the bubble diameter.
+    pub diameter_m: Option<f64>,
+}
+impl ExchangeCase {
+    /// The selected law: factor 1 at the bubble diameter.
+    pub fn nominal() -> Self {
+        Self {
+            factor: 1.,
+            diameter_m: None,
         }
     }
 }
@@ -528,6 +585,7 @@ pub struct Coordinates {
     pub resident_volume: Scalar,
     pub bubble_volume: Scalar,
     pub drop_volume: Scalar,
+    pub admitted_bubble_volume: Scalar,
     pub vapor_mass: Scalar,
     pub vapor_energy: Scalar,
     pub admitted_mass: Scalar,
@@ -539,6 +597,7 @@ pub struct Coordinates {
     pub bubble_mass: Scalar,
     pub drop_mass: Scalar,
     pub drop_boron: Scalar,
+    pub admitted_bubble_mass: Scalar,
 }
 impl Coordinates {
     pub fn from_slice(v: &[Scalar]) -> Result<Self, Failure> {
@@ -552,6 +611,7 @@ impl Coordinates {
             resident_volume: v[RESIDENT_VOLUME],
             bubble_volume: v[BUBBLE_VOLUME],
             drop_volume: v[DROP_VOLUME],
+            admitted_bubble_volume: v[ADMITTED_BUBBLE_VOLUME],
             vapor_mass: v[VAPOR_MASS],
             vapor_energy: v[VAPOR_ENERGY],
             admitted_mass: v[ADMITTED_MASS],
@@ -563,6 +623,7 @@ impl Coordinates {
             bubble_mass: v[BUBBLE_MASS],
             drop_mass: v[DROP_MASS],
             drop_boron: v[DROP_BORON],
+            admitted_bubble_mass: v[ADMITTED_BUBBLE_MASS],
         })
     }
     /// Constant coordinates (zero directions) from physical values.
@@ -577,6 +638,7 @@ impl Coordinates {
             self.resident_volume,
             self.bubble_volume,
             self.drop_volume,
+            self.admitted_bubble_volume,
             self.vapor_mass,
             self.vapor_energy,
             self.admitted_mass,
@@ -588,6 +650,7 @@ impl Coordinates {
             self.bubble_mass,
             self.drop_mass,
             self.drop_boron,
+            self.admitted_bubble_mass,
         ]
     }
 }
@@ -648,7 +711,8 @@ impl Zone {
             conductivity: f(q.conductivity_w_m_k, d.conductivity_w_m_k),
         }
     }
-    fn water(&self) -> WaterPoint {
+    /// The zone's state as a water point, for the reused transfer laws.
+    pub fn water(&self) -> WaterPoint {
         WaterPoint {
             density: self.density,
             viscosity: self.viscosity,
@@ -694,9 +758,9 @@ pub struct Column {
     pub boundary_pressure: Scalar,
     /// Pressure at `bottom_m`.
     pub bottom_pressure: Scalar,
-    /// `z_AR = z(V_A)`.
+    /// `z_AR = z(V_A + V_bA)`: A's region holds A and its bubbles.
     pub boundary_elevation: Scalar,
-    /// `z_mix = z(V_A + V_R + V_b)`.
+    /// `z_mix = z(V_A + V_bA + V_R + V_b)`.
     pub mixture_elevation: Scalar,
     /// `z(V_A + V_R)`.
     pub collapsed_elevation: Scalar,
@@ -704,11 +768,11 @@ pub struct Column {
     pub vapor_region_density: Scalar,
     /// Mean density of R's region, bubbles included.
     pub resident_region_density: Scalar,
-    /// Mean density of A's region.
+    /// Mean density of A's region, its bubbles included.
     pub admitted_region_density: Scalar,
     /// Volume-centroid elevations of the vapor, A and R regions.
     pub centroid_elevation: [Scalar; 3],
-    /// `δ_A = z_AR − bottom`.
+    /// A's liquid thickness `δ_A = z(V_A) − bottom`, of the withdrawal law.
     pub admitted_thickness: Scalar,
     /// Selective-withdrawal fraction `φ = δ_A²/(δ_A² + h_w²)`.
     pub withdrawal_fraction: Scalar,
@@ -717,9 +781,11 @@ pub struct Column {
     pub bubble_mass: Scalar,
     pub drop_mass: Scalar,
     pub drop_boron: Scalar,
+    pub admitted_bubble_mass: Scalar,
     /// Algebraic transit volume coordinates.
     pub bubble_volume: Scalar,
     pub drop_volume: Scalar,
+    pub admitted_bubble_volume: Scalar,
     /// Free areas at the free surface and at the A/R boundary.
     pub surface_area_m2: f64,
     pub boundary_area_m2: f64,
@@ -750,6 +816,7 @@ impl Column {
             + self.resident.volume
             + self.bubble_volume
             + self.drop_volume
+            + self.admitted_bubble_volume
             - s(volume_m3)
     }
 }
@@ -800,7 +867,8 @@ pub struct HeaterReceipt {
     /// Heat delivered on A's and R's wetted contact, W (signed), each from
     /// the wall law at that zone's own state.
     pub wet_heat_w: [Scalar; 2],
-    /// Wall-born vapor on A's and R's wetted contact, kg/s, into the bubbles.
+    /// Wall-born vapor on A's and R's wetted contact, kg/s, into each zone's
+    /// bubble stock (b_A and b).
     pub wet_vapor_kg_s: [Scalar; 2],
     /// Sensible and radiative heat into the vapor zone on the exposed area, W.
     pub exposed_heat_w: Scalar,
@@ -856,7 +924,8 @@ pub struct WallReceipt {
     pub element: WallElement,
     /// Heat into the wetted liquid of A and of R, W (signed).
     pub wet_heat_w: [Scalar; 2],
-    /// Wall-born vapor from A's and R's contact, kg/s, into the bubbles.
+    /// Wall-born vapor from A's and R's contact, kg/s, into each zone's
+    /// bubble stock (b_A and b).
     pub wet_vapor_kg_s: [Scalar; 2],
     /// Heat into the vapor zone on the dry contact, W (signed).
     pub dry_heat_w: Scalar,
@@ -1017,13 +1086,21 @@ impl ReliefDevice {
 /// Internal transfers of one evaluation, for receipts and diagnostics.
 #[derive(Clone, Copy, Debug)]
 pub struct Flows {
-    /// Flashing of A and R into bubbles, kg/s.
+    /// Flashing of A into b_A and of R into b, kg/s.
     pub admitted_flashing: Scalar,
     pub resident_flashing: Scalar,
     /// Condensation of the vapor zone into drops, kg/s.
     pub vapor_condensation: Scalar,
     pub bubble_rise: Scalar,
     pub bubble: Terminal,
+    /// The bulk bubble exchange: condensation of b into R.
+    pub bubble_exchange: BubbleExchange,
+    /// The bulk bubble exchange of zone A's stock: condensation of b_A into A.
+    pub admitted_bubble_exchange: BubbleExchange,
+    /// Survivors of b_A rising into b across the A–R boundary, kg/s.
+    pub bubble_crossing: Scalar,
+    /// Saturation drift heat of b_A, paid by A, W.
+    pub admitted_transit_drift: Scalar,
     pub drop_fall: Scalar,
     pub drop_boron_fall: Scalar,
     pub drop: Terminal,
@@ -1057,22 +1134,22 @@ pub struct Flows {
 pub struct Balance {
     pub mass_kg_s: Scalar,
     /// Zone energy sources, transit energy carried at `h_g`/`h_f(p_s)` and
-    /// the transit saturation drift its hosts pay.
+    /// the transit saturation drift its hosts pay (b and b_A's included).
     pub energy_w: Scalar,
     pub boron_kg_s: Scalar,
     pub receipt_mass_kg_s: Scalar,
     /// Port enthalpy receipts plus external heat.
     pub receipt_energy_w: Scalar,
     pub receipt_boron_kg_s: Scalar,
-    /// `Σ p_k V_k'` over g, A, R, b and d (transit at `p_s`): the column's
-    /// gravitational work, reported, not a source.
+    /// `Σ p_k V_k'` over g, A, R, b, b_A and d (transit at `p_s`): the
+    /// column's gravitational work, reported, not a source.
     pub volume_work_w: Scalar,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Evaluation {
     /// Scaled rows in coordinate order: the volume row (by fluidVolume_m3),
-    /// the three zone and two transit volume rows, then the stock rows.
+    /// the three zone and three transit volume rows, then the stock rows.
     pub rows: [Scalar; COORDINATES],
     pub column: Column,
     pub flows: Flows,
@@ -1137,6 +1214,8 @@ struct Hydrostatics {
     boundary_elevation: Scalar,
     mixture_elevation: Scalar,
     collapsed_elevation: Scalar,
+    /// `z(V_A)`, the top of A's liquid alone.
+    liquid_boundary_elevation: Scalar,
     vapor_density: Scalar,
     resident_density: Scalar,
     admitted_density: Scalar,
@@ -1174,7 +1253,7 @@ pub fn archimedes_gap() -> [f64; 2] {
 /// balance `(3/4) CdRe(Re) Re = Ar` increases strictly in Re; it is solved
 /// on values by Newton to machine precision and its direction follows from
 /// the implicit function. An `Ar` inside the drag law's gap is refused.
-fn terminal_velocity(
+pub fn terminal_velocity(
     d: f64,
     continuous: WaterPoint,
     dispersed: Scalar,
@@ -1239,6 +1318,76 @@ fn terminal_velocity(
         gap_margin,
         tie,
     })
+}
+
+/// Ranz–Marshall liquid-side coefficient of a sphere of diameter `d` moving
+/// at relative speed `u` through `liquid`: `h_L = (k/d)(2 + 0.6 Re^½ Pr^⅓)`
+/// with `Re = ρ u d/μ` and `Pr = c_p μ/k` of that liquid, the correlation of
+/// the selected dispersed-bubble package. Returns `h_L` and `Re`.
+pub fn ranz_marshall(diameter_m: f64, speed: Scalar, liquid: &WaterPoint) -> (Scalar, Scalar) {
+    let d = s(diameter_m);
+    let reynolds = liquid.density * speed * d / liquid.viscosity;
+    let prandtl = liquid.cp * liquid.viscosity / liquid.conductivity;
+    let nusselt = s(2.) + s(0.6) * pf::pow(reynolds, 0.5) * pf::pow(prandtl, 1. / 3.);
+    (liquid.conductivity / d * nusselt, reynolds)
+}
+
+/// The bulk bubble exchange of one stock with its host liquid in one
+/// evaluation (request 4, K1).
+#[derive(Clone, Copy, Debug)]
+pub struct BubbleExchange {
+    /// `W_x = −Γ_bulk`, the stock condensed into its host liquid, kg/s.
+    pub condensation: Scalar,
+    /// The exchange diameter `d_x`, m.
+    pub diameter_m: f64,
+    /// `A_i = 6 M/(ρ_g,sat d_x)`, m².
+    pub area_m2: Scalar,
+    /// Ranz–Marshall `h_L` on the host's state at the rise speed, W/(m² K).
+    pub liquid_coefficient: Scalar,
+    /// `Re_x = ρ_L u_b d_x/μ_L`.
+    pub reynolds: Scalar,
+    /// `We = ρ_L u_b² d_x/σ`, reported for the domain disclosure.
+    pub weber: Scalar,
+    /// `f_x Q_L`, heat from the host toward the interface, W: zero or
+    /// negative.
+    pub liquid_heat_w: Scalar,
+}
+
+/// The bulk bubble exchange of a bubble stock of mass `bubble_mass` with
+/// its host liquid (request 4, K1). The interface sits at `T_s = Tsat(p_s)`
+/// of `sat`, the stock's own saturation. The stock is saturated vapor by
+/// construction, so the selected structure's vapor side carries no heat and
+/// is not written. The liquid side is Ranz–Marshall on the host's state at
+/// the bubbles' rise speed, over the area `6 M/(ρ_g,sat d_x)` of one
+/// effective maintained diameter, and takes only the host's subcooling
+/// `(T_s − T_L)⁺`: its superheat flashes by relaxation, not into existing
+/// bubbles. `Γ_bulk = f_x Q_L/(h_g,sat − h_f,sat)` evaporates when
+/// positive, so the condensation `W_x = −Γ_bulk` is never negative for a
+/// nonnegative stock, zero without bubbles, and zero when the host is at or
+/// above `T_s`. `diameter_m` is `d_x` and `factor` is `f_x`.
+pub fn bubble_exchange(
+    diameter_m: f64,
+    factor: f64,
+    bubble_mass: Scalar,
+    rise_speed: Scalar,
+    liquid: &Zone,
+    sat: &Saturation,
+) -> BubbleExchange {
+    let d = diameter_m;
+    let area = s(6. / d) * bubble_mass / sat.vapor.density;
+    let (coefficient, reynolds) = ranz_marshall(d, rise_speed, &liquid.water());
+    let liquid_heat =
+        -(s(factor) * area * coefficient * positive_part(sat.temperature - liquid.temperature));
+    let gamma = liquid_heat / (sat.vapor.enthalpy - sat.liquid.enthalpy);
+    BubbleExchange {
+        condensation: -gamma,
+        diameter_m: d,
+        area_m2: area,
+        liquid_coefficient: coefficient,
+        reynolds,
+        weber: liquid.density * rise_speed * rise_speed * s(d) / sat.surface_tension,
+        liquid_heat_w: liquid_heat,
+    }
 }
 
 /// RK4 step of the restriction path in `ln p`.
@@ -1559,6 +1708,7 @@ pub struct Cell {
     parameters: Parameters,
     geometry: Geometry,
     case: Case,
+    exchange: ExchangeCase,
 }
 
 impl Cell {
@@ -1571,7 +1721,8 @@ impl Cell {
     /// The cell for a case drawn from the verification cases' declared
     /// `sensitivityFamilies`. Each family member must also be a case of the
     /// strict block where that block lists one; the bubble diameter is the
-    /// nominal or a member of the declared bubble family.
+    /// nominal or a member of the declared bubble family. The bulk bubble
+    /// exchange is nominal; [`Cell::with_exchange`] selects its sensitivity.
     pub fn for_case(
         parameters: Parameters,
         case: Case,
@@ -1610,13 +1761,40 @@ impl Cell {
             parameters,
             geometry,
             case,
+            exchange: ExchangeCase::nominal(),
         })
+    }
+    /// The same cell with a bulk bubble exchange sensitivity: a factor from
+    /// `bubbleExchangeSensitivity`, and the bubble diameter or the
+    /// exchange-only `bubbleExchangeDiameterSensitivity_m`.
+    pub fn with_exchange(mut self, exchange: ExchangeCase) -> Result<Self, Failure> {
+        let x = &self.parameters.stratified;
+        if !x.bubble_exchange_sensitivity.contains(&exchange.factor)
+            || exchange
+                .diameter_m
+                .is_some_and(|d| d != x.bubble_exchange_diameter_sensitivity_m)
+        {
+            return Err(fatal(format!(
+                "exchange case {exchange:?} is not in the declared sensitivities"
+            )));
+        }
+        self.exchange = exchange;
+        Ok(self)
     }
     pub fn parameters(&self) -> &Parameters {
         &self.parameters
     }
     pub fn case(&self) -> Case {
         self.case
+    }
+    pub fn exchange(&self) -> ExchangeCase {
+        self.exchange
+    }
+    /// The diameter the bulk bubble exchange uses.
+    pub fn exchange_diameter_m(&self) -> f64 {
+        self.exchange
+            .diameter_m
+            .unwrap_or(self.case.bubble_diameter_m)
     }
     /// Free area at an elevation (the band above an exact boundary).
     pub fn free_area(&self, z: f64) -> f64 {
@@ -1634,13 +1812,15 @@ impl Cell {
     fn hydrostatics(&self, x: &Coordinates) -> Result<Hydrostatics, Failure> {
         let geometry = &self.geometry;
         let (bottom, top) = (s(self.parameters.bottom_m), s(self.parameters.top_m));
-        let boundary = geometry.level(x.admitted_volume);
-        let mixture = geometry.level(x.admitted_volume + x.resident_volume + x.bubble_volume);
+        let admitted_region = x.admitted_volume + x.admitted_bubble_volume;
+        let boundary = geometry.level(admitted_region);
+        let mixture = geometry.level(admitted_region + x.resident_volume + x.bubble_volume);
         let collapsed = geometry.level(x.admitted_volume + x.resident_volume);
+        let liquid_boundary = geometry.level(x.admitted_volume);
         let vapor_density = (x.vapor_mass + x.drop_mass) / (x.vapor_volume + x.drop_volume);
         let resident_density =
             (x.resident_mass + x.bubble_mass) / (x.resident_volume + x.bubble_volume);
-        let admitted_density = x.admitted_mass / x.admitted_volume;
+        let admitted_density = (x.admitted_mass + x.admitted_bubble_mass) / admitted_region;
         let centroid = [
             geometry.centroid(mixture, top),
             geometry.centroid(bottom, boundary),
@@ -1659,6 +1839,7 @@ impl Cell {
             boundary,
             mixture,
             collapsed,
+            liquid_boundary,
             interface,
             boundary_pressure,
             bottom_pressure,
@@ -1673,6 +1854,7 @@ impl Cell {
             boundary_elevation: boundary,
             mixture_elevation: mixture,
             collapsed_elevation: collapsed,
+            liquid_boundary_elevation: liquid_boundary,
             vapor_density,
             resident_density,
             admitted_density,
@@ -1741,7 +1923,9 @@ impl Cell {
             h.boundary_pressure,
             reuse.as_mut().map(|(r, k)| (&mut **r, k.boundary)),
         )?;
-        let thickness = h.boundary_elevation - s(self.parameters.bottom_m);
+        // The withdrawal law takes A's liquid thickness: the surge mouth draws
+        // liquid, and the positivity bound needs δ_A proportional to M_A.
+        let thickness = h.liquid_boundary_elevation - s(self.parameters.bottom_m);
         let scale = self.parameters.stratified.withdrawal_scale_m;
         let withdrawal = thickness * thickness / (thickness * thickness + s(scale * scale));
         Ok(Column {
@@ -1768,8 +1952,10 @@ impl Cell {
             bubble_mass: x.bubble_mass,
             drop_mass: x.drop_mass,
             drop_boron: x.drop_boron,
+            admitted_bubble_mass: x.admitted_bubble_mass,
             bubble_volume: x.bubble_volume,
             drop_volume: x.drop_volume,
+            admitted_bubble_volume: x.admitted_bubble_volume,
             surface_area_m2: self.geometry.area(h.mixture_elevation),
             boundary_area_m2: self.geometry.area(h.boundary_elevation),
             top_m: self.parameters.top_m,
@@ -2020,6 +2206,7 @@ impl Cell {
         const AV: usize = 1;
         const RV: usize = 2;
         let mut bubbles = s(0.);
+        let mut admitted_bubbles = s(0.);
         let mut drops = s(0.);
         let mut drop_boron = s(0.);
         let mut spray_condensation = s(0.);
@@ -2159,7 +2346,8 @@ impl Cell {
         };
 
         // Heater banks: wet sources into A and R by wetted length, wall-born
-        // vapor into the bubble stock, exposed heat and condensation with g.
+        // vapor into the bubble stock of the zone it wets (b_A in A, b in R),
+        // exposed heat and condensation with g.
         let absent = |v: Scalar| v.value == 0. && v.direction == 0.;
         for heater in &boundary.heaters {
             let w = self.heater_wetting(&c, heater.bottom_m, heater.top_m)?;
@@ -2176,7 +2364,11 @@ impl Cell {
                 }
                 mass[zone] = mass[zone] - gamma;
                 energy[zone] = energy[zone] + q - gamma * hg;
-                bubbles = bubbles + gamma;
+                if zone == AV {
+                    admitted_bubbles = admitted_bubbles + gamma;
+                } else {
+                    bubbles = bubbles + gamma;
+                }
                 receipt[1] = receipt[1] + q;
             }
             let j = heater.condensate_kg_s;
@@ -2195,8 +2387,8 @@ impl Cell {
         }
 
         // Shell bands and heads: wet heat and wall vapor into the liquid zone
-        // each contacts, the vapor into the bubble stock, dry heat and
-        // condensation with g, the condensate into R.
+        // each contacts, the vapor into that zone's bubble stock, dry heat
+        // and condensation with g, the condensate into R.
         for wall in &boundary.walls {
             let w = self.wall_wetting(&c, wall.element)?;
             for (k, (zone, share)) in [(AV, w.admitted_fraction), (RV, w.resident_fraction)]
@@ -2212,7 +2404,11 @@ impl Cell {
                 }
                 mass[zone] = mass[zone] - gamma;
                 energy[zone] = energy[zone] + q - gamma * hg;
-                bubbles = bubbles + gamma;
+                if zone == AV {
+                    admitted_bubbles = admitted_bubbles + gamma;
+                } else {
+                    bubbles = bubbles + gamma;
+                }
                 receipt[1] = receipt[1] + q;
             }
             let j = wall.condensate_kg_s;
@@ -2241,15 +2437,22 @@ impl Cell {
         energy[AV] = energy[AV] - flash_a * hg;
         mass[RV] = mass[RV] - flash_r;
         energy[RV] = energy[RV] - flash_r * hg;
-        bubbles = bubbles + flash_a + flash_r;
+        admitted_bubbles = admitted_bubbles + flash_a;
+        bubbles = bubbles + flash_r;
         mass[GV] = mass[GV] - condense;
         energy[GV] = energy[GV] - condense * hf;
         drops = drops + condense;
 
-        // Transit: bubbles rise through R's region, drops fall through the
-        // vapor region, both at their terminal velocities.
+        // Transit: bubbles rise through A's region into R's stock and through
+        // R's region into g, drops fall through the vapor region, all at their
+        // terminal velocities. A's region thickness counts b_A's own volume,
+        // so the crossing is at most ρ_g,sat A_free u_b however thin A is.
         let bubble = terminal_velocity(self.case.bubble_diameter_m, sat.liquid, sat.vapor.density)?;
         let drop = terminal_velocity(self.case.drop_diameter_m, sat.vapor, sat.liquid.density)?;
+        let crossing = c.admitted_bubble_mass * bubble.velocity
+            / (c.boundary_elevation - s(self.parameters.bottom_m));
+        admitted_bubbles = admitted_bubbles - crossing;
+        bubbles = bubbles + crossing;
         let rise = c.bubble_mass * bubble.velocity / (c.mixture_elevation - c.boundary_elevation);
         let vapor_height = s(c.top_m) - c.mixture_elevation;
         let fall = c.drop_mass * drop.velocity / vapor_height;
@@ -2257,6 +2460,31 @@ impl Cell {
         bubbles = bubbles - rise;
         mass[GV] = mass[GV] + rise;
         energy[GV] = energy[GV] + rise * hg;
+        // Bulk bubble exchange: each stock condenses into the liquid its
+        // region holds, b into R and b_A into A, carrying h_g,sat per kg like
+        // every bubble transfer.
+        let exchange = bubble_exchange(
+            self.exchange_diameter_m(),
+            self.exchange.factor,
+            c.bubble_mass,
+            bubble.velocity,
+            &r,
+            &sat,
+        );
+        bubbles = bubbles - exchange.condensation;
+        mass[RV] = mass[RV] + exchange.condensation;
+        energy[RV] = energy[RV] + exchange.condensation * hg;
+        let admitted_exchange = bubble_exchange(
+            self.exchange_diameter_m(),
+            self.exchange.factor,
+            c.admitted_bubble_mass,
+            bubble.velocity,
+            &a,
+            &sat,
+        );
+        admitted_bubbles = admitted_bubbles - admitted_exchange.condensation;
+        mass[AV] = mass[AV] + admitted_exchange.condensation;
+        energy[AV] = energy[AV] + admitted_exchange.condensation * hg;
         drops = drops - fall;
         drop_boron = drop_boron - boron_fall;
         mass[RV] = mass[RV] + fall;
@@ -2315,7 +2543,10 @@ impl Cell {
         let vapor_density_rate = (rate.vapor_mass + rate.drop_mass
             - c.vapor_region_density * (rate.vapor_volume + rate.drop_volume))
             / vapor_region_volume;
-        let mixture_rate = (rate.admitted_volume + rate.resident_volume + rate.bubble_volume)
+        let mixture_rate = (rate.admitted_volume
+            + rate.admitted_bubble_volume
+            + rate.resident_volume
+            + rate.bubble_volume)
             / s(c.surface_area_m2);
         let interface_pressure_rate = rate.roof_pressure
             + s(G)
@@ -2333,6 +2564,9 @@ impl Cell {
         ];
         energy[RV] = energy[RV] - transit_drift[0];
         energy[GV] = energy[GV] - transit_drift[1];
+        let admitted_transit_drift =
+            x.admitted_bubble_mass * drift(&sat.vapor) * interface_pressure_rate;
+        energy[AV] = energy[AV] - admitted_transit_drift;
 
         // Zone volume work, paid once with the algebraic volume rates.
         let work = [
@@ -2353,6 +2587,7 @@ impl Cell {
         sources[BUBBLE_MASS] = bubbles;
         sources[DROP_MASS] = drops;
         sources[DROP_BORON] = drop_boron;
+        sources[ADMITTED_BUBBLE_MASS] = admitted_bubbles;
 
         let rates = rate.to_array();
         let mut rows = [s(0.); COORDINATES];
@@ -2367,6 +2602,9 @@ impl Cell {
             (x.bubble_volume - x.bubble_mass / sat.vapor.density) / s(scales[BUBBLE_VOLUME]);
         rows[DROP_VOLUME] =
             (x.drop_volume - x.drop_mass / sat.liquid.density) / s(scales[DROP_VOLUME]);
+        rows[ADMITTED_BUBBLE_VOLUME] = (x.admitted_bubble_volume
+            - x.admitted_bubble_mass / sat.vapor.density)
+            / s(scales[ADMITTED_BUBBLE_VOLUME]);
         for i in VAPOR_MASS..COORDINATES {
             let paid = match i {
                 VAPOR_ENERGY => work[0],
@@ -2381,14 +2619,15 @@ impl Cell {
         }
         let heat_total = heat.vapor + heat.admitted + heat.resident;
         let balance = Balance {
-            mass_kg_s: mass[GV] + mass[AV] + mass[RV] + bubbles + drops,
+            mass_kg_s: mass[GV] + mass[AV] + mass[RV] + bubbles + admitted_bubbles + drops,
             energy_w: energy[GV]
                 + energy[AV]
                 + energy[RV]
-                + bubbles * hg
+                + (bubbles + admitted_bubbles) * hg
                 + drops * hf
                 + transit_drift[0]
-                + transit_drift[1],
+                + transit_drift[1]
+                + admitted_transit_drift,
             boron_kg_s: boron[0] + boron[1] + drop_boron,
             receipt_mass_kg_s: receipt[0],
             receipt_energy_w: receipt[1] + heat_total,
@@ -2396,7 +2635,8 @@ impl Cell {
             volume_work_w: work[0]
                 + work[1]
                 + work[2]
-                + c.interface_pressure * (rate.bubble_volume + rate.drop_volume),
+                + c.interface_pressure
+                    * (rate.bubble_volume + rate.drop_volume + rate.admitted_bubble_volume),
         };
         Ok(Evaluation {
             rows,
@@ -2407,6 +2647,10 @@ impl Cell {
                 vapor_condensation: condense,
                 bubble_rise: rise,
                 bubble,
+                bubble_exchange: exchange,
+                admitted_bubble_exchange: admitted_exchange,
+                bubble_crossing: crossing,
+                admitted_transit_drift,
                 drop_fall: fall,
                 drop_boron_fall: boron_fall,
                 drop,
@@ -2567,11 +2811,13 @@ impl Cell {
             RESIDENT_VOLUME,
             BUBBLE_VOLUME,
             DROP_VOLUME,
+            ADMITTED_BUBBLE_VOLUME,
             ADMITTED_BORON,
             RESIDENT_BORON,
             BUBBLE_MASS,
             DROP_MASS,
             DROP_BORON,
+            ADMITTED_BUBBLE_MASS,
         ] {
             y[i] =
                 coordinate(values[i], scales[i], search).ok_or_else(|| missing("a coordinate"))?;
@@ -2663,11 +2909,16 @@ impl Cell {
     pub fn inventory(&self, x: &Coordinates, column: &Column) -> Inventory {
         let sat = &column.interface_saturation;
         Inventory {
-            mass_kg: x.vapor_mass + x.admitted_mass + x.resident_mass + x.bubble_mass + x.drop_mass,
+            mass_kg: x.vapor_mass
+                + x.admitted_mass
+                + x.resident_mass
+                + x.bubble_mass
+                + x.admitted_bubble_mass
+                + x.drop_mass,
             energy_j: x.vapor_energy
                 + x.admitted_energy
                 + x.resident_energy
-                + x.bubble_mass * sat.vapor.enthalpy
+                + (x.bubble_mass + x.admitted_bubble_mass) * sat.vapor.enthalpy
                 + x.drop_mass * sat.liquid.enthalpy,
             boron_kg: x.admitted_boron + x.resident_boron + x.drop_boron,
         }
