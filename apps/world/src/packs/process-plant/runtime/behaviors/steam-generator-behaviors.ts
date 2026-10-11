@@ -16,7 +16,7 @@ import {
 import { primaryLoopLegReversed } from '../primary-loop-hydraulics.ts'
 import { inventoryBalanceStep } from '../physics.ts'
 import { primarySystemReactorCore } from '../system-topology.ts'
-import { steamGeneratorNarrowRange, steamGeneratorNarrowRangeLevelPercent, steamGeneratorOperatingLevel } from '../../steam-generator-operating-level.ts'
+import { steamGeneratorLevelOnSpanPercent, steamGeneratorNarrowRange, steamGeneratorOperatingLevel, steamGeneratorWideRange } from '../../steam-generator-operating-level.ts'
 import {
   energyBalanceTemperatureStep,
   heatMwFromWaterFlowAndDeltaT,
@@ -176,6 +176,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
     writes: [
       'pressureMPa',
       'levelPercent',
+      'wideRangeLevelPercent',
       'collapsedLevelPercent',
       'voidFraction',
       'swellLevelPercent',
@@ -310,7 +311,10 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       context.write(componentVariablePath(component, 'swellLevelPercent'), swellLevel)
       // The indicated narrow-range level reads the mixture over its span: a
       // sudden fall in steaming collapses the voids and the level shrinks.
-      context.write(levelPath, steamGeneratorNarrowRangeLevelPercent(steamGeneratorNarrowRange(component.parameters as Record<string, unknown>), collapsedLevel + swellLevel))
+      // Below its span it reads 0 %; the wide range, from about the tube sheet,
+      // reads the same mixture on.
+      context.write(levelPath, steamGeneratorLevelOnSpanPercent(steamGeneratorNarrowRange(component.parameters as Record<string, unknown>), collapsedLevel + swellLevel))
+      context.write(componentVariablePath(component, 'wideRangeLevelPercent'), steamGeneratorLevelOnSpanPercent(steamGeneratorWideRange(component.parameters as Record<string, unknown>), collapsedLevel + swellLevel))
       // Steam piling up in a generator with nowhere to go raises its pressure
       // over the whole range its steam mass may take, so the pressure climbs
       // until a dump, relief or safety valve opens rather than levelling off

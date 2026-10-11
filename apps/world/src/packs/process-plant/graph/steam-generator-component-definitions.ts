@@ -40,6 +40,9 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       swellLevelGainPercent: z.number().finite().nonnegative().optional(),
       narrowRangeLowerFraction: normalized.optional(),
       narrowRangeUpperFraction: normalized.optional(),
+      /** The wide range's span, from about the tube sheet to above the separators, as fractions of the full-scale inventory like the narrow range's. */
+      wideRangeLowerFraction: normalized.optional(),
+      wideRangeUpperFraction: normalized.optional(),
       tubeBundleBottomLevelPercent: normalized.optional(),
       tubeBundleTopLevelPercent: normalized.optional(),
       minimumUncoveredTubeHeatTransferFraction: normalized.optional(),
@@ -59,7 +62,9 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       energy: [{ role: 'transfer', from: 'primary', to: 'secondary' }],
     }),
     variables: [
-      variable({ path: 'levelPercent', label: 'Steam generator narrow-range level', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
+      // Each level instrument reads 0 to 100 % of its own span and stays at the end of it when the level leaves it.
+      variable({ path: 'levelPercent', label: 'Steam generator narrow-range level', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: 0, max: 100 } } }),
+      variable({ path: 'wideRangeLevelPercent', label: 'Steam generator wide-range level', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: 0, max: 100 } } }),
       variable({ path: 'pressureMPa', label: 'Steam generator pressure', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
       variable({ path: 'heatTransferMw', label: 'Heat transfer', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'primaryInletTemperatureC', label: 'Primary inlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),

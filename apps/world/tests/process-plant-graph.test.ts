@@ -83,9 +83,10 @@ describe('process plant model composition', () => {
     // was given its Tref program, and again when the PORV was rated at a
     // Westinghouse PORV's 26.5 kg/s of steam at 16.2 MPa, and again when the
     // auxiliary feedwater header was given its pressure balance and each
-    // steam generator its AFW flow signal; PWR Runs checkpointed before then
-    // must be restarted.
-    expect(system.modelDigest).toBe('0b19c66e99fb91f0877afa8292b5e06c667a3dfc95a7e33c3529372b8458625a')
+    // steam generator its AFW flow signal, and again when each steam
+    // generator gained a wide-range level beside its narrow-range one; PWR
+    // Runs checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('8c5b2c645bcf364289c32d693604b595bf335cebfbadda91a95a76c9707d67c9')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
