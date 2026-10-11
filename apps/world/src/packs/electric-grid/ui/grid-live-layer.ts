@@ -169,6 +169,11 @@ const hvdcColor = (palette: LivePalette): ReadonlyArray<unknown> => ['case',
 ]
 
 const majorBranch: ReadonlyArray<unknown> = ['>=', ['get', 'kv'], majorBranchKv]
+// A network equivalent stands for out-of-scope sub-transmission, not a mapped line: thin and dashed.
+const isEquivalent: ReadonlyArray<unknown> = ['==', ['get', 'equivalent'], true]
+const isMappedBranch: ReadonlyArray<unknown> = ['all', isKind('branch'), ['!', isEquivalent]]
+const equivalentDash = [2, 2]
+const equivalentWidth: ReadonlyArray<unknown> = ['interpolate', ['exponential', 1.4], ['zoom'], 4, 0.8, 8, 1.4, 12, 2.4, 16, 4]
 // Dash pattern in line widths: a tripped branch reads as broken; an HVDC cable as a dashed DC link.
 const trippedDash = [1.5, 1.5]
 const hvdcDash = [3, 1.5]
@@ -206,7 +211,7 @@ const layersFor = (appearance: PackMapAppearance): ReadonlyArray<PackLiveMapLaye
     id: 'branch-casing',
     source: 'features',
     type: 'line',
-    filter: isKind('branch'),
+    filter: isMappedBranch,
     layout: line,
     paint: {
       'line-color': ['case', flagState('selected', false), palette.selected, flagState('hover', false), palette.hover, palette.casing],
@@ -218,7 +223,7 @@ const layersFor = (appearance: PackMapAppearance): ReadonlyArray<PackLiveMapLaye
     id: 'branch-line',
     source: 'features',
     type: 'line',
-    filter: isKind('branch'),
+    filter: isMappedBranch,
     layout: line,
     paint: {
       'line-color': branchColor(palette),
@@ -231,7 +236,7 @@ const layersFor = (appearance: PackMapAppearance): ReadonlyArray<PackLiveMapLaye
     id: 'branch-tripped',
     source: 'features',
     type: 'line',
-    filter: isKind('branch'),
+    filter: isMappedBranch,
     layout: { 'line-join': 'round', 'line-cap': 'butt' },
     paint: {
       'line-color': palette.casing,
@@ -239,6 +244,19 @@ const layersFor = (appearance: PackMapAppearance): ReadonlyArray<PackLiveMapLaye
       'line-dasharray': trippedDash,
       'line-opacity': ['case', flagState('tripped', false), 1, 0],
     },
+  }, {
+    id: 'equivalent-line',
+    source: 'features',
+    type: 'line',
+    filter: ['all', isKind('branch'), isEquivalent],
+    layout: { 'line-join': 'round', 'line-cap': 'butt' },
+    paint: {
+      'line-color': ['case', flagState('selected', false), palette.selected, flagState('hover', false), palette.hover, branchColor(palette)],
+      'line-width': equivalentWidth,
+      'line-dasharray': equivalentDash,
+      'line-opacity': 1,
+    },
+    interactive: true,
   }, {
     id: 'hvdc-casing',
     source: 'features',
@@ -647,7 +665,7 @@ const loadGeometry = (rawGeometry: unknown): PackLiveMapGeometry => {
     ...geometry.branches.map((branch, position) => ({
       fid: refs.branchStart + position,
       geometry: { type: 'LineString' as const, coordinates: branch.path },
-      properties: { kind: 'branch', kv: branch.kv },
+      properties: { kind: 'branch', kv: branch.kv, ...(branch.pathSource === 'network-equivalent' ? { equivalent: true } : {}) },
     })),
     ...geometry.buses.map((bus, position) => ({
       fid: refs.busStart + position,

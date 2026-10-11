@@ -185,7 +185,7 @@ describe('Grid live layer: MapLibre layers', () => {
     const group = electricGridPackView.presentation.mapLayerGroups!.find(candidate => candidate.id === gridLiveLayerGroupId)!
     expect(gridLiveMapLayer.layerGroupId).toBe(gridLiveLayerGroupId)
     expect(layerIdsMatching(ids, group.layerIdPattern)).toEqual(ids)
-    expect(specs('light').filter(layer => layer.interactive).map(layer => layer.id)).toEqual(['branch-casing', 'branch-line', 'hvdc-casing', 'hvdc-line', 'buses', 'loads', 'generators'])
+    expect(specs('light').filter(layer => layer.interactive).map(layer => layer.id)).toEqual(['branch-casing', 'branch-line', 'equivalent-line', 'hvdc-casing', 'hvdc-line', 'buses', 'loads', 'generators'])
     expect(electricGridPackView.presentation.liveMapLayers).toEqual([gridLiveMapLayer])
     expect(electricGridPackView.presentation.mapLegends).toContain(gridLiveStateLegend)
   })
@@ -247,7 +247,7 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     const assetCount = norway.model.buses.length + norway.model.branches.length + norway.model.generators.length + loadMarkers + norway.model.hvdcLinks.length
     expect(geometry.features.map(feature => feature.fid)).toEqual(Array.from({ length: assetCount }, (_, fid) => fid))
     for (const feature of geometry.features) {
-      expect(Object.keys(feature.properties).every(key => ['kind', 'kv', 'capacityMw'].includes(key))).toBe(true)
+      expect(Object.keys(feature.properties).every(key => ['kind', 'kv', 'capacityMw', 'equivalent'].includes(key))).toBe(true)
       const selection = geometry.selectionFor(feature.fid)!
       expect(selection.panelId).toBe(gridOverviewPanelId)
       expect(parseGridAssetItemId(selection.itemId).gridId).toBe('grid:norway')
