@@ -225,6 +225,14 @@ describe('process plant discovery', () => {
     for (const capability of processPlantCapabilities) expect(capability.description.length, capability.id).toBeLessThanOrEqual(2048)
   })
 
+  test('capability search terms fit what the Module contract publishes, 128 characters each', () => {
+    // The action catalog's titles and descriptions are search terms; one too long refuses the whole World capability
+    // collection at the HTTP boundary, and with it every capability call.
+    for (const capability of processPlantCapabilities) {
+      for (const term of capability.searchTerms ?? []) expect(term.length, `${capability.id}: ${term}`).toBeLessThanOrEqual(128)
+    }
+  })
+
   test('makes unknown variable identities discoverable caller errors', () => {
     const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:missing-targets' }))
     const runtime = createProcessPlantRuntime({ system: plant })

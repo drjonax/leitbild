@@ -155,7 +155,7 @@ export const processPlantActions: ReadonlyArray<ProcessPlantActionDefinition> = 
   {
     id: 'block-low-pressure-safety-injection',
     title: 'Block low-pressure SI',
-    description: 'Press the block for safety injection on low pressurizer pressure, for a planned cooldown and depressurization. Accepted only below P-11 with the reactor tripped; the block resets when pressure rises above P-11.',
+    description: 'Block safety injection on low pressurizer pressure for a planned cooldown; only below P-11 with the reactor tripped.',
     parameters: [],
     commands: (_values, graph) => {
       const logic = requiredComponent(graph, component => component.kind === 'safetyInjectionBlockLogic', 'safety injection block logic')
