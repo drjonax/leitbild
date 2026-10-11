@@ -117,13 +117,14 @@ describe('the values equipment opened from the overview leads with', () => {
   test('at power the core leads with its power range, the subcooling margin, the RCS leak rate and its outlet temperature, then its nuclear instruments while they measure', () => {
     // The subcooling margin and the RCS leak rate are bound to the reactor coolant system, as the core exit
     // thermocouples are: their alarms are the core's related alarms. The de-energized source range measures
-    // nothing at power: it is left out, and its high-voltage flag is never a value of its own (run 22: "Source-range
-    // detector high voltage on · Reactor Core" as a sentence row).
-    // Tavg's deviation from Tref, which alarms in power operation, follows the power range; the startup rate follows
-    // the instruments. The permissives the core derives (P-6, P-10) are never values of their own.
-    expect(of(['core'])).toEqual(['core.powerRangePercent', 'core.averageTemperatureDeviationC', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC', 'core.intermediateRangeStartupRateDpm'] as never)
+    // nothing at power: in its place the detail says its high voltage is off, as a state (run 22 QA: the source
+    // range's state was on neither core detail).
+    // Tavg's deviation from Tref, which alarms in power operation, follows the power range. The permissives the
+    // core derives (P-6, P-10) are never values of their own.
+    expect(of(['core'])).toEqual(['core.powerRangePercent', 'core.averageTemperatureDeviationC', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.sourceRangeEnergized', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
+    expect(runtime.readVariable('core.sourceRangeEnergized' as never)).toBe(false)
     // With its high voltage on, the source range counts something and ranks as an instrument, before the
-    // intermediate range.
+    // intermediate range; its count rate then says the high voltage is on.
     const counting: PlantNow = { ...atPower, read: path => String(path) === 'core.sourceRangeEnergized' ? true : runtime.readVariable(path) }
     expect(of(['core'], counting).slice(4)).toEqual(['core.coolantOutletTemperatureC', 'core.sourceRangeCountRateCps', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
   })

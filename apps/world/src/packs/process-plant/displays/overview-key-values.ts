@@ -148,13 +148,16 @@ const judged = (plant: CompiledProcessPlant, mode: string | null, acting: boolea
     .filter(rule => rule.enabled && ruleKind(rule) === kind && actsIn(rule, mode) === acting)
     .flatMap(rule => conditionBindings(plant, rule.condition)))
 
+/** Each reading the model marks as measuring nothing now, with the flag that says so. */
+const silencedBy = (plant: CompiledProcessPlant, now: PlantNow): ReadonlyMap<VariablePath, VariablePath> => new Map(plant.graph.components
+  .flatMap(component => component.semantics.meaningfulWhile)
+  .flatMap(qualified => now.read(qualified.flag) === true ? [] : qualified.variables.map(variable => [variable, qualified.flag] as const)))
+
 /**
  * Readings the model marks as measuring nothing now (a source range with its
  * high voltage cut).
  */
-export const notMeaningfulNow = (plant: CompiledProcessPlant, now: PlantNow): ReadonlySet<VariablePath> => new Set(plant.graph.components
-  .flatMap(component => component.semantics.meaningfulWhile)
-  .flatMap(qualified => now.read(qualified.flag) === true ? [] : qualified.variables))
+export const notMeaningfulNow = (plant: CompiledProcessPlant, now: PlantNow): ReadonlySet<VariablePath> => new Set(silencedBy(plant, now).keys())
 
 /**
  * The flags that say whether readings measure anything (a source range's high
@@ -186,13 +189,14 @@ const equipmentOf = (binding: ProcessSignalBinding): ReadonlyArray<string> => [
  * generator); the key values its kind declares; its instruments (signals
  * with a tag); then the signals only rules of other modes judge (a
  * feedwater flow alarm that acts at power, opened at shutdown). A reading the
- * model marks as measuring nothing now (a de-energized source range) is left
- * out, and the flag that says so is never a value of its own: the reading is
- * shown while it measures. An instrument reading the same quantity over a
- * wider span follows the reading it widens. Nor is a permissive (P-10 on the core): the source
- * range's high voltage is the instrument fact, its state the logic's. Each is
- * taken in turn from every item, so
- * parallel equipment is compared value by value.
+ * model marks as measuring nothing now (a de-energized source range) gives
+ * its place to the flag that says so, shown as a state, so the detail says
+ * the instrument is off rather than nothing; while the reading measures, it
+ * is shown and its flag is not. An instrument reading the same quantity over
+ * a wider span follows the reading it widens. A permissive (P-10 on the core)
+ * is never a value of its own: the source range's high voltage is the
+ * instrument fact, its state the logic's. Each is taken in turn from every
+ * item, so parallel equipment is compared value by value.
  */
 export const equipmentKeyValues = (plant: CompiledProcessPlant, components: ReadonlyArray<number>, now: PlantNow): ReadonlyArray<VariablePath> => {
   const graph = plant.graph
@@ -227,6 +231,9 @@ export const equipmentKeyValues = (plant: CompiledProcessPlant, components: Read
     ...inTurn(component => own(component).filter(binding => binding.tagId !== undefined).map(binding => binding.path)),
     ...inTurn(onEquipment(judged(plant, now.mode, false))),
   ])]
-  const out = new Set([...notMeaningfulNow(plant, now), ...meaningFlags(plant)])
-  return ranked.filter(path => !out.has(path)).slice(0, GENERATED_DETAIL_MAX_LEAD_VALUES)
+  // A reading that measures nothing now gives its place to the flag that says so, shown as a state (the source
+  // range's high voltage off above P-6); while it measures, the reading itself says the flag is on.
+  const silenced = new Map([...silencedBy(plant, now)].filter(([, flag]) => readable(flag)))
+  const out = meaningFlags(plant)
+  return [...new Set(ranked.flatMap(path => silenced.has(path) ? [silenced.get(path)!] : out.has(path) ? [] : [path]))].slice(0, GENERATED_DETAIL_MAX_LEAD_VALUES)
 }
