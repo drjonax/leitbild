@@ -1,5 +1,6 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#stratified-pzr-cell
 //! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#stratified-pzr-closures
+//! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#bulk-bubble-exchange
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md#bounded-metastable-admission
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-hydraulics.md#stratified-ports-and-unilateral-phase-paths
 //! The stratified PZR cell: one local-pressure cell with three thermal zones.
@@ -33,6 +34,12 @@
 //! over the throat pressure, against the receiver's declared backpressure;
 //! it makes property calls only while the lift is nonzero. Heater banks
 //! deliver their rod sources into the zones they wet by level.
+//!
+//! The bubble stock condenses into R, the liquid its region holds, by the
+//! bulk bubble exchange (request 4, K1): Ranz–Marshall transfer on R's own
+//! state at the bubbles' rise speed, over the area of one effective
+//! maintained diameter, on R's subcooling below the stock's saturation at
+//! `p_s`. R's superheat stays with the flashing relaxation.
 use super::{
     Failure, Properties,
     properties::{self as props, Reuse, Water},
@@ -188,8 +195,21 @@ pub struct Stratified {
     pub vapor_relaxation_time_s: f64,
     #[serde(rename = "relaxationSensitivity")]
     pub relaxation_sensitivity: [f64; 3],
+    /// `d_b`: drag-equivalent rise diameter, and the bulk bubble exchange's
+    /// diameter too (one diameter for drag and exchange, request 4 K1).
     #[serde(rename = "bubbleDiameter_m")]
     pub bubble_diameter_m: f64,
+    /// `h_V`, the exchange's vapor-side contact, W/(m² K). It multiplies the
+    /// saturated stock's zero departure from its saturation.
+    #[serde(rename = "bubbleVaporCoefficient_W_m2K")]
+    pub bubble_vapor_coefficient_w_m2k: f64,
+    /// Factors on the whole bulk bubble exchange, the nominal 1 among them.
+    #[serde(rename = "bubbleExchangeSensitivity")]
+    pub bubble_exchange_sensitivity: [f64; 3],
+    /// The exchange-only diameter of the sensitivity case whose drag stays
+    /// at the bubble diameter.
+    #[serde(rename = "bubbleExchangeDiameterSensitivity_m")]
+    pub bubble_exchange_diameter_sensitivity_m: f64,
     #[serde(rename = "sprayDropDiameter_m")]
     pub spray_drop_diameter_m: f64,
     #[serde(rename = "dropDiameterSensitivity_m")]
@@ -336,6 +356,14 @@ impl Parameters {
             ("liquidRelaxationTime_s", x.liquid_relaxation_time_s),
             ("vaporRelaxationTime_s", x.vapor_relaxation_time_s),
             ("bubbleDiameter_m", x.bubble_diameter_m),
+            (
+                "bubbleVaporCoefficient_W_m2K",
+                x.bubble_vapor_coefficient_w_m2k,
+            ),
+            (
+                "bubbleExchangeDiameterSensitivity_m",
+                x.bubble_exchange_diameter_sensitivity_m,
+            ),
             ("sprayDropDiameter_m", x.spray_drop_diameter_m),
             ("resolvabilityFactor", x.resolvability_factor),
         ])?;
@@ -343,6 +371,7 @@ impl Parameters {
             .relaxation_sensitivity
             .iter()
             .chain(&x.drop_diameter_sensitivity_m)
+            .chain(&x.bubble_exchange_sensitivity)
         {
             positive_finite(&[("sensitivity", *v)])?;
         }
@@ -350,8 +379,14 @@ impl Parameters {
             || !x
                 .drop_diameter_sensitivity_m
                 .contains(&x.spray_drop_diameter_m)
+            || !x.bubble_exchange_sensitivity.contains(&1.)
         {
             return Err(fatal("sensitivity lists must contain the nominal values"));
+        }
+        if x.bubble_exchange_diameter_sensitivity_m == x.bubble_diameter_m {
+            return Err(fatal(
+                "the exchange-only diameter sensitivity must differ from bubbleDiameter_m",
+            ));
         }
         let m = &self.metastable;
         positive_finite(&[
@@ -435,6 +470,8 @@ pub struct Case {
     /// Factor applied to both relaxation times.
     pub relaxation_factor: f64,
     pub drop_diameter_m: f64,
+    /// Rise (drag) diameter, and the bulk bubble exchange's diameter unless
+    /// the cell's [`ExchangeCase`] names the exchange-only sensitivity.
     pub bubble_diameter_m: f64,
 }
 impl Case {
@@ -443,6 +480,27 @@ impl Case {
             relaxation_factor: 1.,
             drop_diameter_m: parameters.stratified.spray_drop_diameter_m,
             bubble_diameter_m: parameters.stratified.bubble_diameter_m,
+        }
+    }
+}
+
+/// One run's selection of the bulk bubble exchange's sensitivities (request
+/// 4, K1), taken only from the strict block's own keys.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExchangeCase {
+    /// Factor on the whole exchange: a member of `bubbleExchangeSensitivity`.
+    pub factor: f64,
+    /// `None` exchanges at the case's bubble diameter, one diameter for drag
+    /// and exchange; `Some` is `bubbleExchangeDiameterSensitivity_m`, with
+    /// drag kept at the bubble diameter.
+    pub diameter_m: Option<f64>,
+}
+impl ExchangeCase {
+    /// The selected law: factor 1 at the bubble diameter.
+    pub fn nominal() -> Self {
+        Self {
+            factor: 1.,
+            diameter_m: None,
         }
     }
 }
@@ -648,7 +706,8 @@ impl Zone {
             conductivity: f(q.conductivity_w_m_k, d.conductivity_w_m_k),
         }
     }
-    fn water(&self) -> WaterPoint {
+    /// The zone's state as a water point, for the reused transfer laws.
+    pub fn water(&self) -> WaterPoint {
         WaterPoint {
             density: self.density,
             viscosity: self.viscosity,
@@ -1024,6 +1083,8 @@ pub struct Flows {
     pub vapor_condensation: Scalar,
     pub bubble_rise: Scalar,
     pub bubble: Terminal,
+    /// The bulk bubble exchange: condensation of the stock into R.
+    pub bubble_exchange: BubbleExchange,
     pub drop_fall: Scalar,
     pub drop_boron_fall: Scalar,
     pub drop: Terminal,
@@ -1174,7 +1235,7 @@ pub fn archimedes_gap() -> [f64; 2] {
 /// balance `(3/4) CdRe(Re) Re = Ar` increases strictly in Re; it is solved
 /// on values by Newton to machine precision and its direction follows from
 /// the implicit function. An `Ar` inside the drag law's gap is refused.
-fn terminal_velocity(
+pub fn terminal_velocity(
     d: f64,
     continuous: WaterPoint,
     dispersed: Scalar,
@@ -1239,6 +1300,83 @@ fn terminal_velocity(
         gap_margin,
         tie,
     })
+}
+
+/// Ranz–Marshall liquid-side coefficient of a sphere of diameter `d` moving
+/// at relative speed `u` through `liquid`: `h_L = (k/d)(2 + 0.6 Re^½ Pr^⅓)`
+/// with `Re = ρ u d/μ` and `Pr = c_p μ/k` of that liquid, the correlation of
+/// the selected dispersed-bubble package. Returns `h_L` and `Re`.
+pub fn ranz_marshall(diameter_m: f64, speed: Scalar, liquid: &WaterPoint) -> (Scalar, Scalar) {
+    let d = s(diameter_m);
+    let reynolds = liquid.density * speed * d / liquid.viscosity;
+    let prandtl = liquid.cp * liquid.viscosity / liquid.conductivity;
+    let nusselt = s(2.) + s(0.6) * pf::pow(reynolds, 0.5) * pf::pow(prandtl, 1. / 3.);
+    (liquid.conductivity / d * nusselt, reynolds)
+}
+
+/// The bulk bubble exchange of one evaluation (request 4, K1).
+#[derive(Clone, Copy, Debug)]
+pub struct BubbleExchange {
+    /// `W_x = −Γ_bulk`, the bubble stock condensed into R, kg/s.
+    pub condensation: Scalar,
+    /// The exchange diameter `d_x`, m.
+    pub diameter_m: f64,
+    /// `A_i = 6 M_b/(ρ_g,sat d_x)`, m².
+    pub area_m2: Scalar,
+    /// Ranz–Marshall `h_L` on R's state at the rise speed, W/(m² K).
+    pub liquid_coefficient: Scalar,
+    /// `Re_x = ρ_R u_b d_x/μ_R`.
+    pub reynolds: Scalar,
+    /// `We = ρ_R u_b² d_x/σ`, reported for the domain disclosure.
+    pub weber: Scalar,
+    /// `f_x Q_L`, heat from R toward the interface, W: zero or negative.
+    pub liquid_heat_w: Scalar,
+    /// `f_x Q_V`, heat from the stock toward the interface, W: zero, since
+    /// the stock is saturated.
+    pub vapor_heat_w: Scalar,
+}
+
+/// The bulk bubble exchange of the bubble stock `M_b` with liquid R: the
+/// earlier selection's finite two-sided structure (request 4, K1). The
+/// interface sits at `T_s = Tsat(p_s)` of `sat`, the stock's own saturation.
+/// The liquid side is Ranz–Marshall on R's state at the bubbles' rise
+/// speed, over the area `6 M_b/(ρ_g,sat d_x)` of one effective maintained
+/// diameter, and takes only R's subcooling `(T_s − T_R)⁺`: R's superheat
+/// flashes by relaxation, not into existing bubbles. The vapor side
+/// multiplies the saturated stock's departure from `T_s`, which is zero.
+/// `Γ_bulk = f_x (Q_L + Q_V)/(h_g,sat − h_f,sat)` evaporates when positive,
+/// so the condensation `W_x = −Γ_bulk` is never negative for a nonnegative
+/// stock, zero without bubbles, and zero when R is at or above `T_s`.
+/// `diameter_m` is `d_x` and `factor` is `f_x`.
+pub fn bubble_exchange(
+    diameter_m: f64,
+    factor: f64,
+    vapor_coefficient_w_m2k: f64,
+    bubble_mass: Scalar,
+    rise_speed: Scalar,
+    liquid: &Zone,
+    sat: &Saturation,
+) -> BubbleExchange {
+    let d = diameter_m;
+    let factor = s(factor);
+    let area = s(6. / d) * bubble_mass / sat.vapor.density;
+    let (coefficient, reynolds) = ranz_marshall(d, rise_speed, &liquid.water());
+    let interface = sat.temperature;
+    let stock = sat.temperature;
+    let liquid_heat =
+        -(factor * area * coefficient * positive_part(interface - liquid.temperature));
+    let vapor_heat = factor * area * s(vapor_coefficient_w_m2k) * (stock - interface);
+    let gamma = (liquid_heat + vapor_heat) / (sat.vapor.enthalpy - sat.liquid.enthalpy);
+    BubbleExchange {
+        condensation: -gamma,
+        diameter_m: d,
+        area_m2: area,
+        liquid_coefficient: coefficient,
+        reynolds,
+        weber: liquid.density * rise_speed * rise_speed * s(d) / sat.surface_tension,
+        liquid_heat_w: liquid_heat,
+        vapor_heat_w: vapor_heat,
+    }
 }
 
 /// RK4 step of the restriction path in `ln p`.
@@ -1559,6 +1697,7 @@ pub struct Cell {
     parameters: Parameters,
     geometry: Geometry,
     case: Case,
+    exchange: ExchangeCase,
 }
 
 impl Cell {
@@ -1571,7 +1710,8 @@ impl Cell {
     /// The cell for a case drawn from the verification cases' declared
     /// `sensitivityFamilies`. Each family member must also be a case of the
     /// strict block where that block lists one; the bubble diameter is the
-    /// nominal or a member of the declared bubble family.
+    /// nominal or a member of the declared bubble family. The bulk bubble
+    /// exchange is nominal; [`Cell::with_exchange`] selects its sensitivity.
     pub fn for_case(
         parameters: Parameters,
         case: Case,
@@ -1610,13 +1750,40 @@ impl Cell {
             parameters,
             geometry,
             case,
+            exchange: ExchangeCase::nominal(),
         })
+    }
+    /// The same cell with a bulk bubble exchange sensitivity: a factor from
+    /// `bubbleExchangeSensitivity`, and the bubble diameter or the
+    /// exchange-only `bubbleExchangeDiameterSensitivity_m`.
+    pub fn with_exchange(mut self, exchange: ExchangeCase) -> Result<Self, Failure> {
+        let x = &self.parameters.stratified;
+        if !x.bubble_exchange_sensitivity.contains(&exchange.factor)
+            || exchange
+                .diameter_m
+                .is_some_and(|d| d != x.bubble_exchange_diameter_sensitivity_m)
+        {
+            return Err(fatal(format!(
+                "exchange case {exchange:?} is not in the declared sensitivities"
+            )));
+        }
+        self.exchange = exchange;
+        Ok(self)
     }
     pub fn parameters(&self) -> &Parameters {
         &self.parameters
     }
     pub fn case(&self) -> Case {
         self.case
+    }
+    pub fn exchange(&self) -> ExchangeCase {
+        self.exchange
+    }
+    /// The diameter the bulk bubble exchange uses.
+    pub fn exchange_diameter_m(&self) -> f64 {
+        self.exchange
+            .diameter_m
+            .unwrap_or(self.case.bubble_diameter_m)
     }
     /// Free area at an elevation (the band above an exact boundary).
     pub fn free_area(&self, z: f64) -> f64 {
@@ -2257,6 +2424,20 @@ impl Cell {
         bubbles = bubbles - rise;
         mass[GV] = mass[GV] + rise;
         energy[GV] = energy[GV] + rise * hg;
+        // Bulk bubble exchange: the stock condenses into R, the liquid its
+        // region holds, carrying h_g,sat per kg like every bubble transfer.
+        let exchange = bubble_exchange(
+            self.exchange_diameter_m(),
+            self.exchange.factor,
+            x_params.bubble_vapor_coefficient_w_m2k,
+            c.bubble_mass,
+            bubble.velocity,
+            &r,
+            &sat,
+        );
+        bubbles = bubbles - exchange.condensation;
+        mass[RV] = mass[RV] + exchange.condensation;
+        energy[RV] = energy[RV] + exchange.condensation * hg;
         drops = drops - fall;
         drop_boron = drop_boron - boron_fall;
         mass[RV] = mass[RV] + fall;
@@ -2407,6 +2588,7 @@ impl Cell {
                 vapor_condensation: condense,
                 bubble_rise: rise,
                 bubble,
+                bubble_exchange: exchange,
                 drop_fall: fall,
                 drop_boron_fall: boron_fall,
                 drop,
