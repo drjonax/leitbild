@@ -3,8 +3,7 @@ import { generatorIsVoltageForming } from './generator-dynamics.ts'
 import { queueGridSignal } from './grid-signals.ts'
 import type { GridIslandPlan, GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
 import { gridIslandAtBus, refreshGridIslandEnergisation, solvedGridIslands } from './island-lifecycle.ts'
-import { connectedGridLoadMw } from './load-service.ts'
-import { allocateIslandReserves, upwardReserveMw } from './reserve-allocation.ts'
+import { allocateGridIslandReserves } from './island-reserves.ts'
 
 // Restoration: a dead island is energised either by a black-start capable synchronous unit inside it
 // or by dead-bus closing from an energised neighbour (close-branch). Any other unit needs a live
@@ -54,32 +53,12 @@ export const startingUnitMaySynchronise = (grid: GridRuntimeInstance, definition
   return false
 }
 
-/**
- * A black-started island runs detached from any synchronous area: its units are allocated their
- * full droop and headroom as FCR, aFRR and mFRR, as dispatch allocates a detached island, so the
- * unit's governor and AGC carry the load pick-up.
- */
-const allocateBlackStartReserves = (grid: GridRuntimeInstance, structure: GridTopologyIsland): void => {
-  const allocation = allocateIslandReserves({
-    automation: grid.definition.automation,
-    units: structure.generators.map(definition => {
-      const state = grid.generators.get(definition.id)!
-      return { definition, synchronised: state.state === 'online', minimumMw: definition.minimumStableMw, availableMw: state.availableMw, targetMw: state.targetMw }
-    }),
-    area: { islandLoadMw: structure.loads.reduce((sum, load) => sum + connectedGridLoadMw(grid.loads.get(load.id)!), 0), externals: [] },
-  })
-  for (const definition of structure.generators) {
-    const state = grid.generators.get(definition.id)!
-    state.reserves = allocation.allocations.get(definition.id)!
-    state.reserveMw = upwardReserveMw(state.reserves)
-  }
-}
-
 /** Energisation after unit commitment changed: islands energised from dead by a synchronising unit get their reserves allocated. */
 export const energiseGridIslandsAfterCommitment = (grid: GridRuntimeInstance, islands: GridIslandPlan): void => {
   const dead = new Set(islands.islands.filter(island => !island.energized).map(island => island.id))
   refreshGridIslandEnergisation(grid, islands)
   for (const island of islands.islands) {
-    if (island.energized && dead.has(island.id)) allocateBlackStartReserves(grid, islands.plan.islands[island.planIndex]!)
+    // A black-started island runs detached: its units hold their own droop and room as reserve.
+    if (island.energized && dead.has(island.id)) allocateGridIslandReserves(grid, islands.plan.islands[island.planIndex]!)
   }
 }

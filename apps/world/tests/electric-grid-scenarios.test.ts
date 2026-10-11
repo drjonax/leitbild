@@ -87,6 +87,8 @@ interface AssetGetResult {
       readonly state: string
       readonly dispatchMw?: number
       readonly mfrrMw?: number
+      readonly loadingPercent?: number
+      readonly flowModel?: 'ac' | 'dc' | null
     }
   }
 }
@@ -232,17 +234,21 @@ describe('bundled Electric Grid Scenarios', () => {
     } finally { await scenario.close() }
   }, 120_000)
 
-  test('nordland-corridor-security: without a remedial action the trip overloads Helgeland and its protection disconnects load', async () => {
+  // Relays act on the AC flows: after the trip Smibelg – Sjona carries 145 % of its rating (the DC
+  // screening estimates 152 %), above its emergency rating but below the 150 % instantaneous
+  // element, so its thermal element would trip it about ten minutes later (623 s measured).
+  test('nordland-corridor-security: without a remedial action the trip overloads Helgeland above its emergency rating', async () => {
     const scenario = await startScenarioRun('nordland-corridor-security', 'grid:norway')
     try {
       await scenario.advanceTo(660)
       expectTimelineExecuted(scenario, 'nordland-corridor-security')
-      expect((await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: smibelgSjona })).asset.state.state).toBe('tripped')
-      const branchTrips = await trippedCount(scenario, 'branch')
-      const unservedMw = scenario.projection().unservedLoadMw
-      expect(branchTrips).toBeGreaterThanOrEqual(3)
-      expect(unservedMw).toBeGreaterThan(0)
-      console.info(`nordland-corridor-security without action: ${branchTrips} branches tripped, ${unservedMw.toFixed(1)} MW unserved`)
+      const helgeland = (await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: smibelgSjona })).asset.state
+      expect(helgeland.state).toBe('closed')
+      expect(helgeland.flowModel).toBe('ac')
+      expect(helgeland.loadingPercent!).toBeGreaterThan(120)
+      expect(helgeland.loadingPercent!).toBeLessThan(150)
+      expect(scenario.projection().activeAlarmCount).toBeGreaterThan(0)
+      console.info(`nordland-corridor-security without action: Smibelg – Sjona at ${helgeland.loadingPercent!.toFixed(1)} % (AC) 60 s after the trip`)
     } finally { await scenario.close() }
   }, 120_000)
 

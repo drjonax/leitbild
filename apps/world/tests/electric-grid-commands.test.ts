@@ -264,11 +264,12 @@ describe('electric grid branch commands', () => {
     expect(send(gridCloseBranchCommandKind, { assetId: branch.id }).ok).toBe(true)
 
     expect(send(gridOpenBranchCommandKind, { assetId: branch.id }).ok).toBe(true)
-    // Raising one unit's set-point by 5 % of the separated part's load over-frequencies it for minutes:
-    // its own units' FCR and aFRR are small against the step, yet it stays below over-frequency protection.
+    // Raising one unit's set-point by 20 % of the separated part's load over-frequencies it for minutes:
+    // its own units' droop (their reserves follow their room) contains the step only partly, yet it
+    // stays below over-frequency protection.
     const lead = [...separable.part.units].sort((left, right) => grid.generators.get(right.id)!.dispatchMw - grid.generators.get(left.id)!.dispatchMw)[0]!
     const leadState = grid.generators.get(lead.id)!
-    expect(send(gridDispatchGeneratorCommandKind, { assetId: lead.id, targetMw: Math.min(leadState.availableMw, leadState.targetMw + 0.05 * separable.part.loadMw) }).ok).toBe(true)
+    expect(send(gridDispatchGeneratorCommandKind, { assetId: lead.id, targetMw: Math.min(leadState.availableMw, leadState.targetMw + 0.2 * separable.part.loadMw) }).ok).toBe(true)
     step(60)
     const fromHz = grid.busStates.get(branch.fromBusId)!.frequencyHz
     const toHz = grid.busStates.get(branch.toBusId)!.frequencyHz

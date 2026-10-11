@@ -1,6 +1,7 @@
 import { resetIslandGeneratorProtection, type FrequencyAction } from './frequency/island-state.ts'
 import { advanceIslandFrequency, type IslandFrequencyAdvance } from './frequency/island.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from './instance.ts'
+import { allocateGridIslandReserves } from './island-reserves.ts'
 import { gridGeneratorIsSynchronised, islandAssetStates, islandFrequencyInput, type IslandAssetStates } from './island-input.ts'
 
 // Enough recent actions for an operator or Agent to see a cascade; older ones are in the journal.
@@ -104,6 +105,7 @@ export const advanceGridFrequencyControl = (grid: GridRuntimeInstance, islands: 
     if (!island.energized || island.frequency === null) continue
     resetReturnedUnits(grid, island)
     const structure = islands.plan.islands[island.planIndex]!
+    allocateGridIslandReserves(grid, structure)
     const advance = advanceIslandFrequency(grid.definition.automation, island.frequency!, islandFrequencyInput(grid, structure, island.id), seconds)
     recordActions(grid, island.id, advance.actions)
     applyAdvance(grid, island, islandAssetStates(grid, structure), advance)

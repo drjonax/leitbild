@@ -4,7 +4,6 @@ import type { GridGeneratorDefinition } from '../grid-model.ts'
 import type { GridIsland, GridRuntimeInstance, GridTopologyPlan } from './instance.ts'
 import {
   boundaryTieCapacityMw,
-  externalFrequencyEquivalent,
   islandFixedInjectionMw,
   islandLossesMw,
   islandMembers,
@@ -12,7 +11,7 @@ import {
 import { reconcileGridIslands, resetGridIslandFrequencies } from './island-lifecycle.ts'
 import { connectedGridLoadMw } from './load-service.ts'
 import { solveGridNetwork } from './power-flow.ts'
-import { allocateIslandReserves, upwardReserveMw } from './reserve-allocation.ts'
+import { allocateGridIslandReserves } from './island-reserves.ts'
 import { topologyPlanForGrid } from './topology.ts'
 import { generatorMinimumStableMw } from './unit-commitment.ts'
 
@@ -90,25 +89,7 @@ const dispatchIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, islan
   })
   // The island holds at most one synchronous external system (definitions.ts).
   for (const system of externals) grid.externalSystems.get(system.id)!.scheduledImportMw = exchangeMw
-  const allocation = allocateIslandReserves({
-    automation: grid.definition.automation,
-    units: structure.generators.map(definition => {
-      const state = grid.generators.get(definition.id)!
-      return { definition, synchronised: state.state === 'online', minimumMw: generatorMinimumStableMw(definition), availableMw: state.availableMw, targetMw: state.targetMw }
-    }),
-    area: {
-      islandLoadMw: demandMw,
-      externals: externals.map(system => {
-        const equivalent = externalFrequencyEquivalent(grid, system)
-        return { reserves: equivalent.reserves, loadMw: equivalent.loadMw }
-      }),
-    },
-  })
-  for (const definition of structure.generators) {
-    const state = grid.generators.get(definition.id)!
-    state.reserves = allocation.allocations.get(definition.id)!
-    state.reserveMw = upwardReserveMw(state.reserves)
-  }
+  allocateGridIslandReserves(grid, structure)
 }
 
 /**

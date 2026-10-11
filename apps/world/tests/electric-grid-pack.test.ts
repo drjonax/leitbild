@@ -187,7 +187,9 @@ describe('electric grid Pack', () => {
       const after = objectResult(await connection.invokeQuery({ capabilityId: 'world.electric-grid.grid.summary', input: { gridId: 'grid:norway' } }))
       expect(generator.asset).toMatchObject({ state: { state: 'tripped', dispatchMw: 0, targetMw: 0 } })
       expect(branch.asset).toMatchObject({ state: { state: 'closed', availability: 0.6 }, status: { label: 'Derated 60%' } })
-      expect((after.projection as { readonly reserveMarginMw: number }).reserveMarginMw).toBeLessThanOrEqual(beforeReserve)
+      // The other units take over the tripped unit's share of the area requirement (reserves follow
+      // the units' room), so the margin stays at most where it was, up to the summation's round-off.
+      expect((after.projection as { readonly reserveMarginMw: number }).reserveMarginMw).toBeLessThanOrEqual(beforeReserve + 1e-6)
     } finally {
       await connection.close()
     }
