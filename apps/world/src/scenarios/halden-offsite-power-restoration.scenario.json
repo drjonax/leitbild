@@ -1,7 +1,7 @@
 {
   "id": "halden-offsite-power-restoration",
   "title": "Halden loss of offsite power and restoration",
-  "description": "A summer night: Halden's four independently simulated PWR units export about 4.4 GW through their dedicated 420 kV switchyard, tied by three circuits each to Hasle and Tegneby (NO1). Two minutes in, a busbar fault at the switchyard trips the four turbines and opens all six circuits. The switchyard has no voltage-forming source of its own, so its ports de-energise and the Plants lose offsite power. Losing about 4.4 GW at once, three times the Nordic dimensioning incident of 1,450 MW, pulls the frequency below 49 Hz, and under-frequency load shedding disconnects part of Norway's demand. Restore offsite power by closing a circuit from the grid onto the dead switchyard, close the remaining circuits under synchro-check, then bring the grid back: raise hydro output and reconnect the shed load stage by stage. There are no weather-driven faults.",
+  "description": "A summer night: Halden's four independently simulated PWR units export about 4.4 GW through their dedicated 420 kV switchyard, tied by three circuits each to Hasle and Tegneby (NO1). Two minutes in, a busbar fault at the switchyard opens all six circuits. The switchyard has no voltage-forming source of its own, so its ports de-energise, the Plants lose offsite power and each turbine trips on the loss of grid. Losing about 4.4 GW at once, three times the Nordic dimensioning incident of 1,450 MW, pulls the frequency below 49 Hz, and under-frequency load shedding disconnects part of Norway's demand. Restore offsite power by closing a circuit from the grid onto the dead switchyard, close the remaining circuits under synchro-check, then bring the grid back: raise hydro output and reconnect the shed load stage by stage. There are no weather-driven faults.",
   "objectives": [
     "Before the fault, note the export of the four unit bays, the switchyard voltage and the loading of the Hasle and Tegneby circuits and the NO1 corridors (connection-points.list, power-flow.snapshot).",
     "When the switchyard is isolated, confirm that its bays are de-energised (no voltage, no frequency) and that the Plants report loss of offsite power; follow the island frequency, the LFDD stages that operate and the reserves.",
@@ -242,42 +242,6 @@
         "actions": [
           {
             "type": "invoke_capability",
-            "capabilityId": "world.process-plant.action.invoke",
-            "input": {
-              "plantId": "plant:halden-1",
-              "actionId": "turbine-trip",
-              "parameters": {}
-            }
-          },
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.process-plant.action.invoke",
-            "input": {
-              "plantId": "plant:halden-2",
-              "actionId": "turbine-trip",
-              "parameters": {}
-            }
-          },
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.process-plant.action.invoke",
-            "input": {
-              "plantId": "plant:halden-3",
-              "actionId": "turbine-trip",
-              "parameters": {}
-            }
-          },
-          {
-            "type": "invoke_capability",
-            "capabilityId": "world.process-plant.action.invoke",
-            "input": {
-              "plantId": "plant:halden-4",
-              "actionId": "turbine-trip",
-              "parameters": {}
-            }
-          },
-          {
-            "type": "invoke_capability",
             "capabilityId": "world.electric-grid.open-branch",
             "input": {
               "gridId": "grid:halden-four-unit",
@@ -329,7 +293,7 @@
             "guidance": {
               "id": "switchyard-busbar-fault",
               "title": "Halden switchyard isolated",
-              "message": "The four turbines tripped and all six 420 kV circuits are open: the bays are de-energised and the Plants have lost offsite power. Close a Hasle circuit onto the dead switchyard, then the others, and restore the shed load.",
+              "message": "All six 420 kV circuits are open: the bays are de-energised, the Plants have lost offsite power and each turbine tripped on the loss of grid. Close a Hasle circuit onto the dead switchyard, then the others, and restore the shed load.",
               "objectIds": [
                 "grid:halden-four-unit",
                 "plant:halden-1",

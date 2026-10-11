@@ -302,8 +302,8 @@ describe('bundled Electric Grid Scenarios', () => {
         expect(bay.energized).toBe(true)
         expect(bay.energized && bay.voltagePu).toBeGreaterThan(0.9)
         expect(plant).toMatchObject({ energized: true, connected: true })
-        // The tripped units draw station service instead of returning their export at once.
-        expect(plant.activePowerMw).toBeLessThan(100)
+        // Each turbine tripped on the loss of grid and sealed in: the unit imports its house load and never exports.
+        expect(plant.activePowerMw).toBeLessThan(0)
       }
       // Loop closing under synchro-check: each remaining circuit closes within the angle limit.
       for (const circuit of circuits.slice(1)) expect((await scenario.command('world.electric-grid.close-branch', { assetId: circuit })).ok).toBe(true)
@@ -314,8 +314,10 @@ describe('bundled Electric Grid Scenarios', () => {
       for (const { bay, plant } of ports()) {
         expect(bay.energized).toBe(true)
         expect(plant).toMatchObject({ energized: true, connected: true })
+        expect(plant.activePowerMw).toBeLessThan(0)
       }
-      console.info(`halden-offsite-power-restoration: ${exportMw.toFixed(0)} MW export lost; nadir ${nadirHz.toFixed(3)} Hz; LFDD and outage ${lfddMw.toFixed(0)} MW; bays re-energised by dead-bus closing; f(240 s) ${scenario.projection().frequencyHz!.toFixed(3)} Hz`)
+      const houseLoadMw = ports().reduce((sum, { plant }) => sum - plant.activePowerMw, 0)
+      console.info(`halden-offsite-power-restoration: ${exportMw.toFixed(0)} MW export lost; house load ${houseLoadMw.toFixed(0)} MW imported after reclosing; nadir ${nadirHz.toFixed(3)} Hz; LFDD and outage ${lfddMw.toFixed(0)} MW; bays re-energised by dead-bus closing; f(240 s) ${scenario.projection().frequencyHz!.toFixed(3)} Hz`)
     } finally { await scenario.close() }
   }, 180_000)
 
