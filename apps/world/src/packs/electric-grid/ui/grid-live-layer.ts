@@ -562,7 +562,7 @@ export const gridLiveMapLayer: PackLiveMapLayer = {
   imagesFor,
   referenceContext: { datasetIds: [gridNorwayStyle.datasetId], color: gridReferenceContextColor },
   // The Grid Model's sources and licences; NOTICE.md and each asset's provenance give the detail.
-  attribution: 'Grid model: © OpenStreetMap contributors (ODbL) · NVE (NLOD 2.0) · Elhub, Kartverket, ENTSO-E via Energy-Charts (CC BY 4.0)',
+  attribution: 'Grid model: © OpenStreetMap contributors (ODbL) · NVE (NLOD 2.0) · Elhub, Kartverket, SSB, ENTSO-E via Energy-Charts (CC BY 4.0)',
 }
 
 export const gridLiveStateLegend: PackMapLegend = {
