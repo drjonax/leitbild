@@ -178,6 +178,8 @@ int operating_ida_stats(OperatingIDA *o,long *counts,int *orders,double *steps) 
 }
 int operating_ida_max_order(OperatingIDA *o,int order) { return IDASetMaxOrd(o->ida,order); }
 int operating_ida_max_step(OperatingIDA *o,double step) { return IDASetMaxStep(o->ida,step); }
+/* Stock IDASetInitStep: the first step; it persists across IDAReInit. */
+int operating_ida_init_step(OperatingIDA *o,double step) { return IDASetInitStep(o->ida,step); }
 int operating_ida_solution_scaling(OperatingIDA *o,int enabled) {
     return IDASetLinearSolutionScaling(o->ida,enabled?SUNTRUE:SUNFALSE);
 }

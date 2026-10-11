@@ -37,7 +37,7 @@ use leitbild_operating_water::{
     ida::{Advance, Failure, Ida, Initial, System},
 };
 use p2_harness::{
-    CellSystem, Counters, Cutout, End, Flow, Metal, Relief, ReliefWindow, Root, Run, RunSpec,
+    CellSystem, Counters, Cutout, End, Flow, Metal, Relief, Root, Run, RunSpec,
     Table, cpu_s, ledger, run, run_json, thread_cpu_s,
 };
 use serde::Deserialize;
@@ -52,10 +52,6 @@ const HOT_SPINE: &str =
 const SURGE_HISTORY: &str = "world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-surge-history.md";
 const HEATER_EQUIPMENT: &str =
     "world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/heater-equipment.md";
-
-/// IDA's stock Newton convergence coefficient (`EPCON`, sundials-7.5.0
-/// src/ida/ida.c), which E5's `windowNewtonCoefficientFactor` multiplies.
-const IDA_STOCK_NEWTON_COEFFICIENT: f64 = 0.33;
 
 /// The low-level heater cutout's settings, transcribed from their owning
 /// prose because no strict block declares them (reported to the lead):
@@ -226,8 +222,6 @@ struct Entry {
 struct ReliefJudgement {
     #[serde(rename = "pt1ExclusionAroundEvent_s")]
     pt1_exclusion_around_event_s: f64,
-    #[serde(rename = "windowNewtonCoefficientFactor")]
-    window_newton_coefficient_factor: f64,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -241,6 +235,9 @@ struct CaseSet {
     relief_back_pressure_pa: f64,
     tolerance_classes: CaseTolerances,
     relief_judgement: ReliefJudgement,
+    /// Stock IDA's first step after every event restart (request 4, K4).
+    #[serde(rename = "eventRestartFirstStep_s")]
+    event_restart_first_step_s: f64,
     cases: Vec<Entry>,
 }
 
@@ -954,15 +951,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         (entry.segment_refinement == Some(true)).then(|| prepare(ctx, entry, true));
     let rtol = ctx.rtol();
     let factor = ctx.gates.f64(&["referenceToleranceFactor"]);
-    // E5: relief windows where the case arms the relief, with the stock
-    // Newton coefficient times the declared factor; their margin is the
-    // declared ±50 ms around each located event.
     let judgement = &ctx.set.relief_judgement;
-    let relief_window = armed.then_some(ReliefWindow {
-        margin_s: judgement.pt1_exclusion_around_event_s,
-        newton_coefficient: IDA_STOCK_NEWTON_COEFFICIENT
-            * judgement.window_newton_coefficient_factor,
-    });
     // Gate 5's low-level cutout chain.
     let cutout = (entry.low_level_heater_cutout == Some(true)).then(|| {
         let sat = If97
@@ -1026,7 +1015,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             consistent_bound: CONSISTENT_ROW_BOUND,
             consistent_passes: CONSISTENT_PASSES,
             lift_root_bound: ctx.lift_root_bound(),
-            relief_window,
+            event_restart_first_step_s: ctx.set.event_restart_first_step_s,
             cutout,
         };
         let sys = system(ctx, entry, prepared, v);
@@ -1315,7 +1304,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
     json!({"kind":"ld01-p2-case","case":entry.id,"gate":gate,"entry":entry_value(ctx, &entry.id),"smoke_duration_s":smoke,
         "provenance":ctx.provenance,
         "configuration":{"rtol":rtol,"atol":tolerances(ctx, &prepared_nominal.column, &prepared_nominal.scales, rtol, armed),"scales":prepared_nominal.scales,"max_order":ctx.gates.f64(&["maxOrder"]),"refined":{"rtol_factor":factor,"max_order":ctx.gates.f64(&["maxOrder"])},
-            "relief_window":relief_window.map(|w| json!({"margin_s":w.margin_s,"newton_coefficient":w.newton_coefficient,"stock_coefficient":IDA_STOCK_NEWTON_COEFFICIENT})),
+            "event_restart_first_step_s":ctx.set.event_restart_first_step_s,"pt1_exclusion_around_event_s":armed.then_some(judgement.pt1_exclusion_around_event_s),
             "cutout_settings_source":cutout.map(|_| "transcribed from prose (safety LD01.PROT.PZR.LOW_LEVEL, heater isolator, electronic differential level); no strict block declares them"),
             "observation_s":ctx.gates.f64(&["comparison", "observation_s"]),"cutoff_hz":ctx.budgets.f64(&["uncreditedAbove_Hz"]),
             "output_interval_s":ctx.output_s(),"breakpoints":breakpoints(entry),"run_cpu_cap_s":cap,"nonnegative_constraints":["M_b","M_d","B_d"],
@@ -1349,9 +1338,8 @@ fn skipped(label: &str) -> Run {
         initializations: Vec::new(),
         resolvability: Vec::new(),
         uncredited: Vec::new(),
-        windows: Vec::new(),
-        rewinds: Vec::new(),
         handle_stats: Vec::new(),
+        step_probe: Vec::new(),
         cutout: None,
         observations: Vec::new(),
         end: End::SetBound,
