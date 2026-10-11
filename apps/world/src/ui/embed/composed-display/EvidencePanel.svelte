@@ -66,7 +66,7 @@
   const rowText = (row: ComposedEvidenceRow, readings: ReadonlyArray<ItemReading>): string => [
     WORDS[row.kind].toUpperCase(),
     row.name,
-    row.items.map((item, at) => `${item.label} ${readings[at]!.text}${readings[at]!.unit === '' ? '' : ` ${readings[at]!.unit}`}${item.pen.command ? ' demand' : ''}`).join(' · '),
+    row.items.map((item, at) => `${item.label} ${readings[at]!.text}${readings[at]!.unit === '' ? '' : ` ${readings[at]!.unit}`}${item.pen.command ? ' demand' : ''}${item.pen.simulatorOnly ? ' sim' : ''}`).join(' · '),
     row.items.length === 1 ? readings[0]!.state : '',
     row.note ?? '',
   ].filter(part => part !== '').join('  ')
@@ -89,6 +89,7 @@
             <span class="value" class:beyond={reading.beyond} class:offspan={reading.offSpan}>{reading.text}</span>
             {#if reading.unit !== '' && (!unitOnce || at === row.items.length - 1)}<span class="unit">{reading.unit}</span>{/if}
             {#if item.pen.command}<span class="demand">demand</span>{/if}
+            {#if item.pen.simulatorOnly}<span class="demand" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}
             {#if reading.inAlarm !== null && row.items.length > 1}<AlarmChip threshold={reading.inAlarm} compact />{/if}
           </span>
         {/each}
