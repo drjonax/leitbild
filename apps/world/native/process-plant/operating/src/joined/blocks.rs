@@ -10,8 +10,17 @@
 //! poison and history models' exact tangents along unit directions). Every
 //! value is the residual's own at the same state; nothing is held beyond
 //! one assembly and nothing falls back to another assembly.
-use super::nuclear::{Nuclear, RegionWater};
-use crate::{kinetics, network::Failure, poisons, source_feedback as sf, thermal::Scalar};
+use super::{
+    nuclear::{LinearTemplate, Nuclear, RegionWater, Target},
+    operator::Joined,
+};
+use crate::{
+    kinetics,
+    network::{Failure, Properties},
+    poisons, source_feedback as sf,
+    thermal::{Scalar, WaterProperties},
+};
+use std::collections::BTreeSet;
 
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
@@ -402,4 +411,125 @@ pub fn nuclear_partials(
         return Err(trial("nonfinite nuclear partial"));
     }
     Ok(())
+}
+
+/// The joined block Jacobian's structural pattern: per column the rows its
+/// entries may reach in any state, a superset of every entry the block
+/// assembly writes. The nuclear block's part is its exact structure (the
+/// template's rows, feeds and constant consumers, the partials' entries and
+/// their port chains); every other part is the joined operator's own
+/// structural pattern outside the nuclear rows. `partials` fixes the
+/// nuclear structure, which no state changes.
+pub fn joined_pattern<P: Properties + WaterProperties>(
+    joined: &Joined<P>,
+    template: &LinearTemplate,
+    partials: &NuclearPartials,
+) -> Result<Vec<Vec<usize>>, Failure> {
+    let o = joined.offsets();
+    let n = o.end;
+    let nuclear_rows = o.nuclear..o.solids;
+    let base = joined.structural_pattern()?;
+    let mut columns: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
+    for (c, rows) in base.iter().enumerate() {
+        if nuclear_rows.contains(&c) {
+            continue;
+        }
+        columns[c].extend(rows.iter().copied().filter(|r| !nuclear_rows.contains(r)));
+    }
+    let network = &joined.network;
+    let cell_rows = |c: usize| -> std::ops::Range<usize> {
+        if c == network.pzr.cell {
+            return network.pzr.coordinates();
+        }
+        let base = network.cell_layout[c].base;
+        base..base + 6
+    };
+    let solids = joined.solids();
+    let band_rows = |a: usize| -> Vec<usize> {
+        (0..3)
+            .flat_map(|k| {
+                [
+                    o.solids + solids.energy(a, k),
+                    o.solids + solids.surface(a, k),
+                ]
+            })
+            .collect()
+    };
+    let deposition = joined.nuclear().deposition();
+    let fuel_heat = |columns: &mut Vec<BTreeSet<usize>>, a: usize, col: usize| {
+        for r in band_rows(a) {
+            columns[col].insert(r);
+        }
+    };
+    let coolant_heat = |columns: &mut Vec<BTreeSet<usize>>, a: usize, col: usize| {
+        for (cell, _) in &deposition[a] {
+            columns[col].extend(cell_rows(*cell));
+        }
+    };
+    for r in &template.rows {
+        columns[r.row].insert(r.row);
+        for &(feed, _) in &template.terms[r.terms.clone()] {
+            for &(col, _) in &partials.feeds[feed] {
+                columns[col].insert(r.row);
+            }
+        }
+    }
+    for (target, col, _) in &template.consumers {
+        match target {
+            Target::Row(row) => {
+                columns[*col].insert(*row);
+            }
+            Target::FuelHeat(a) => fuel_heat(&mut columns, *a, *col),
+            Target::CoolantHeat(a) => coolant_heat(&mut columns, *a, *col),
+        }
+    }
+    for i in nuclear_rows.clone() {
+        columns[i].insert(i);
+    }
+    for (row, col, _) in &partials.own {
+        columns[*col].insert(*row);
+    }
+    for (a, col, _) in &partials.fuel_w {
+        fuel_heat(&mut columns, *a, *col);
+    }
+    for (a, col, _) in &partials.coolant_w {
+        coolant_heat(&mut columns, *a, *col);
+    }
+    // Port chains into the population rows.
+    for (row, a, _) in &partials.fuel_t {
+        for k in 0..2 {
+            columns[o.solids + solids.energy(*a, k)].insert(*row);
+        }
+    }
+    let source_water = joined.source_water();
+    let rods = joined.rods().map(|b| b.structure());
+    for (row, region, _) in &partials.water {
+        let cell = source_water[*region];
+        for c in cell_rows(cell) {
+            columns[c].insert(*row);
+        }
+        if let Some(st) = &rods {
+            for (moved, own) in &st.volumes {
+                if *moved == cell {
+                    for i in own {
+                        columns[o.rods + i].insert(*row);
+                    }
+                }
+            }
+        }
+    }
+    for (row, cluster, _) in &partials.travel {
+        if let Some(st) = &rods {
+            for i in st.outputs.get(*cluster).into_iter().flatten() {
+                columns[o.rods + i].insert(*row);
+            }
+        }
+    }
+    for (c, rows) in columns.iter_mut().enumerate() {
+        rows.insert(c);
+    }
+    Ok(columns
+        .into_iter()
+        .map(|rows| rows.into_iter().collect())
+        .collect())
 }
