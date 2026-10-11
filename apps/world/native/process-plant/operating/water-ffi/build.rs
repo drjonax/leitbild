@@ -92,5 +92,7 @@ fn main() {
         ] {
             println!("cargo:rustc-link-lib=sundials_{name}");
         }
+        // The glue's direct SparseLu calls stock klu_l_* from the same prefix.
+        println!("cargo:rustc-link-lib=klu");
     }
 }
