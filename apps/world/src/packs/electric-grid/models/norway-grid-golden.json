@@ -5449,39 +5449,6 @@
   ],
   "powerFlowOverloads": [
     {
-      "branchId": "branch:osm-bd52965eaa998df5",
-      "label": "Abildsø - Solbergfoss (2.2 km section from Abildsø to the Lambertseter tee)",
-      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
-      "maxLoading": 1.19,
-      "reason": "Lambertseter 132/47/11 kV takes the population-allocated demand of south-east Oslo and north Nordre Follo (259.5 MW at the winter reference hour). The Follo – Lambertseter 47 kV network equivalent (curation follo-lambertseter-47kv-equivalent) brings 41 MW from Follo; the rest arrives over the 2.2 km Abildsø – tee section of the single-circuit Abildsø – Solbergfoss line, 236 MVA against 203 MVA at 0 °C air. At the reference hour Oslo had −14.9 °C in darkness (ERA5), where the I² interpolation through FNN Table 1 gives about 222 MVA for the rule conductor, still below the flow. The section's conductor is not published, and Elvia's other 47 kV links between Lambertseter, Abildsø and Oslo's 47 kV stations (NVE Nettanlegg4) are not represented. Supply to Oslo south is a real constraint: Statnett is building Liåsen 420/132 kV (OSM: construction, 2027) because Follo and Ulven have little transformation margin left.",
-      "evidence": [
-        {
-          "sourceId": "nve-nettanlegg4",
-          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
-          "ref": "layer 1, Elvia AS 47 kV lines around Lambertseter (59.871, 10.829) and Abildsø (59.889, 10.821)",
-          "note": "47 kV links from Lambertseter north to Abildsø and Oslo's 47 kV stations"
-        },
-        {
-          "sourceId": "era5-open-meteo",
-          "url": "https://archive-api.open-meteo.com/v1/archive",
-          "ref": "59.859 N 10.808 E, 2026-01-12T07:00 UTC",
-          "note": "temperature_2m −14.9 °C, shortwave_radiation 0 W/m²"
-        },
-        {
-          "sourceId": "statnett",
-          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-ost/nettplan-stor-oslo/liasen-transformatorstasjon/liasen-endringssoknad.pdf",
-          "ref": "Liåsen transformatorstasjon – endringssøknad (2020-10-28), p. 8–9",
-          "note": "kun margin på transformering i Follo til ytterliggere ca. 27 MW"
-        },
-        {
-          "sourceId": "openstreetmap",
-          "url": "https://www.openstreetmap.org/way/1340703279",
-          "ref": "way/1340703279",
-          "note": "Liåsen trafostasjon (2027), 420/132 kV, construction"
-        }
-      ]
-    },
-    {
       "branchId": "branch:osm-ee73974c4b9512fd",
       "label": "Flesaker - Mjøndalen (132 kV, 2 circuits)",
       "operatingPointId": "electric-grid.norway.winter-weekday-peak",

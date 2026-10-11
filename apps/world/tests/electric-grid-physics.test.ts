@@ -75,7 +75,8 @@ const lossUnitWith = (grid: GridRuntimeInstance, busId: string, targetMw: number
     .sort((a, b) => b.capacityMw - a.capacityMw)[0]!
   const lostState = grid.generators.get(lost.id)!
   const shiftMw = lostState.targetMw - targetMw
-  const others = units.filter(unit => unit !== lost)
+  // Hydro units carry the difference: wind already runs at all it has.
+  const others = units.filter(unit => unit !== lost && unit.kind === 'hydro')
   const otherTargetMw = others.reduce((sum, unit) => sum + grid.generators.get(unit.id)!.targetMw, 0)
   for (const unit of others) {
     const state = grid.generators.get(unit.id)!
