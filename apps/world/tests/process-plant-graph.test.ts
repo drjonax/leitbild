@@ -68,8 +68,10 @@ describe('process plant model composition', () => {
     // and charging resized to a four-loop plant's, and again when the
     // pressurizer's heaters were split into a control group on unit bus A
     // and a 1.5 MW backup group on diesel-backed safety bus A, through its
-    // own breaker; PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('7220d85e896f5d43429a50b3f44cbc6415a436f8fdf860c97804e254c289c270')
+    // own breaker, and again when the steam generators' narrow-range level
+    // instruments declared the 0 to 100 % span their indication saturates at;
+    // PWR Runs checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('3fba4828a951521a8077a10b5a68feba4726240f66eb7623a81a361a74678a1a')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
@@ -79,6 +81,12 @@ describe('process plant model composition', () => {
     restored.tick(700)
     running.tick(700)
     expect(JSON.stringify(restored.checkpoint())).toBe(JSON.stringify(running.checkpoint()))
+  })
+
+  test('declares the span each steam generator narrow-range level indicates over', () => {
+    const system = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:spans', loopCount: 4 }))
+    const levels = system.graph.signalBindings.filter(binding => /^SG-[A-D]-LVL-NR$/.test(String(binding.tagId)))
+    expect(levels.map(binding => [binding.tagId, binding.limits?.instrumentSpan])).toEqual(['A', 'B', 'C', 'D'].map(loop => [`SG-${loop}-LVL-NR`, { min: 0, max: 100 }]))
   })
 
   test('publishes branded signal references as their truthful JSON wire types', () => {

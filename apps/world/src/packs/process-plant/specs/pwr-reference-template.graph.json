@@ -398,7 +398,13 @@
           "description": "Steam generator A narrow-range level",
           "externalRefs": [
             "secondary.sg.a.level_nr"
-          ]
+          ],
+          "limits": {
+            "instrumentSpan": {
+              "min": 0,
+              "max": 100
+            }
+          }
         },
         {
           "path": "pressureMPa",
@@ -464,7 +470,13 @@
           "description": "Steam generator B narrow-range level",
           "externalRefs": [
             "secondary.sg.b.level_nr"
-          ]
+          ],
+          "limits": {
+            "instrumentSpan": {
+              "min": 0,
+              "max": 100
+            }
+          }
         },
         {
           "path": "pressureMPa",
@@ -530,7 +542,13 @@
           "description": "Steam generator C narrow-range level",
           "externalRefs": [
             "secondary.sg.c.level_nr"
-          ]
+          ],
+          "limits": {
+            "instrumentSpan": {
+              "min": 0,
+              "max": 100
+            }
+          }
         },
         {
           "path": "pressureMPa",
@@ -596,7 +614,13 @@
           "description": "Steam generator D narrow-range level",
           "externalRefs": [
             "secondary.sg.d.level_nr"
-          ]
+          ],
+          "limits": {
+            "instrumentSpan": {
+              "min": 0,
+              "max": 100
+            }
+          }
         },
         {
           "path": "pressureMPa",
@@ -662,7 +686,13 @@
           "description": "Steam generator E narrow-range level",
           "externalRefs": [
             "secondary.sg.e.level_nr"
-          ]
+          ],
+          "limits": {
+            "instrumentSpan": {
+              "min": 0,
+              "max": 100
+            }
+          }
         },
         {
           "path": "pressureMPa",
@@ -728,7 +758,13 @@
           "description": "Steam generator F narrow-range level",
           "externalRefs": [
             "secondary.sg.f.level_nr"
-          ]
+          ],
+          "limits": {
+            "instrumentSpan": {
+              "min": 0,
+              "max": 100
+            }
+          }
         },
         {
           "path": "pressureMPa",

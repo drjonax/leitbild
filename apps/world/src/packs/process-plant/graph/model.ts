@@ -153,6 +153,12 @@ export const processVariableLimitsSchema = z.object({
   normalRange: numericRangeSchema.optional(),
   operatingRange: numericRangeSchema.optional(),
   hardRange: numericRangeSchema.optional(),
+  /**
+   * The span an instrument indicates over: its indication saturates at
+   * either end, so a reading there says only that the measured quantity is
+   * at or beyond that end (a narrow-range level at 0 % may be far below it).
+   */
+  instrumentSpan: numericRangeSchema.optional(),
   alarmLimits: processVariableAlarmLimitSchema.optional(),
 }).strict()
 export type ProcessVariableLimits = z.infer<typeof processVariableLimitsSchema>
