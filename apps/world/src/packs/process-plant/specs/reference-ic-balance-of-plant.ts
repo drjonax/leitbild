@@ -1,6 +1,7 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, reactorTripBreakerOpen, rule, trip, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, rule, trip, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
+import { levelHighHighPercent } from './reference-ic-steam-generator.ts'
 
 const feedwaterAlarm = annunciator({
   system: 'feedwater',
@@ -22,6 +23,26 @@ const feedwaterAction = annunciator({
 // 564 °F isolates main feedwater, so the steam generators are not overfed as
 // their steaming falls to decay heat and the coolant cools to no-load.
 const lowTavgFeedwaterIsolationC = 295.6
+
+// Feedwater isolation shuts the feed regulating valves and holds them shut
+// against their level controllers (feedwaterIsolationWrites). As in the
+// reference logic, P-4 seals the isolation in: it is released only once both
+// reactor trip breakers are closed again and no steam generator stands at
+// P-14 high-high level, the other isolation the model has. The annunciated
+// trip itself latches until an operator resets it, as every trip does.
+const feedwaterIsolationRelease = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlantIcRule => rule({
+  id: 'feedwater-isolation-release',
+  label: 'Feedwater isolation release with the reactor trip breakers closed',
+  ruleClass: 'normalControl',
+  condition: all([
+    comparison({ tagId: 'TRIP-BKR-A-POS' }, '==', true),
+    comparison({ tagId: 'TRIP-BKR-B-POS' }, '==', true),
+    ...loops.map(loop => comparison({ tagId: `SG-${loop}-LVL-NR` }, '<', levelHighHighPercent)),
+  ]),
+  latch: false,
+  resetWhenClear: true,
+  effects: loops.map(loop => write(`release-feed-regulating-valve-${loop.toLowerCase()}`, { path: `feedwaterControlValve${loop}.isolationSignal` }, false)),
+})
 
 const turbineAlarm = annunciator({
   system: 'balanceOfPlant',
@@ -51,22 +72,20 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
     // After a trip from operation: in shutdown the feedwater is not in service.
     modes: ['hotStandby'],
     condition: all([reactorTripBreakerOpen(), comparison({ tagId: 'TAVG' }, '<', lowTavgFeedwaterIsolationC)]),
-    // The model has neither feedwater isolation valves nor a regulating-valve
-    // bypass (the regulating valves follow their level controllers), so the
-    // isolation stops main feedwater by tripping both pumps, as the high-high
-    // level isolation does.
+    // It trips both main feedwater pumps and shuts every feed regulating
+    // valve until the isolation is released (feedwaterIsolationRelease).
     effects: [
       trip({
         id: 'feedwater-isolation',
         title: 'Feedwater isolation on reactor trip, low Tavg',
-        message: `The reactor trip breakers are open (P-4) and average coolant temperature is below ${lowTavgFeedwaterIsolationC} °C (564 °F): main feedwater is isolated.`,
+        message: `The reactor trip breakers are open (P-4) and average coolant temperature is below ${lowTavgFeedwaterIsolationC} °C (564 °F): the main feedwater pumps trip and the feed regulating valves shut until the trip breakers are closed again.`,
         actuates: ['feedwaterIsolation'],
         annunciator: feedwaterAction,
       }),
-      write('trip-main-feedwater-pump-a-on-feedwater-isolation', { tagId: 'MFW-PUMP-A-RUN' }, false),
-      write('trip-main-feedwater-pump-b-on-feedwater-isolation', { tagId: 'MFW-PUMP-B-RUN' }, false),
+      ...feedwaterIsolationWrites('feedwater-isolation', loops),
     ],
   }),
+  feedwaterIsolationRelease(loops),
   rule({
     id: 'main-feedwater-pumps-tripped-afw-start',
     label: 'Auxiliary feedwater start on trip of all main feedwater pumps',

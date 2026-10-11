@@ -1,5 +1,5 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, reactorTripBreakerWrites, rule, trip, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
 
@@ -13,10 +13,11 @@ import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
 const tubeLeakRadiationMSvPerH = 0.03
 
 // Narrow-range level limits above the 55 % program: a high alarm, and P-14
-// high-high, which isolates main feedwater by tripping its pumps and trips the
-// turbine (and so, above P-9, the reactor) before water reaches the steam lines.
+// high-high, which isolates main feedwater (its pumps trip and every feed
+// regulating valve shuts) and trips the turbine (and so, above P-9, the
+// reactor) before water reaches the steam lines.
 const levelHighPercent = 75
-const levelHighHighPercent = 82
+export const levelHighHighPercent = 82
 
 // Low-low narrow-range level in any one steam generator starts auxiliary
 // feedwater and trips the reactor: a generator boiling down at power soon
@@ -35,7 +36,10 @@ const levelLowLowPercent = 20
 // pressure).
 const pressureHighMPa = 8.1
 
-export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop): ReadonlyArray<ProcessPlantIcRule> => {
+export const steamGeneratorReferenceIcRules = (
+  loop: ProcessPlantReferenceLoop,
+  loops: ReadonlyArray<ProcessPlantReferenceLoop>,
+): ReadonlyArray<ProcessPlantIcRule> => {
   const lower = loop.toLowerCase()
   const sg = `sg${loop}`
   const sgAlarm = annunciator({
@@ -189,12 +193,11 @@ export const steamGeneratorReferenceIcRules = (loop: ProcessPlantReferenceLoop):
         trip({
           id: 'feedwater-isolation',
           title: `Steam generator ${loop} high-high level`,
-          message: `Steam generator ${loop} high-high level (P-14) trips the main feedwater pumps and the turbine.`,
+          message: `Steam generator ${loop} high-high level (P-14) isolates main feedwater, tripping its pumps and shutting every feed regulating valve, and trips the turbine.`,
           actuates: ['feedwaterIsolation', 'turbineTrip'],
           annunciator: sgAction,
         }),
-        write('trip-main-feedwater-pump-a', { tagId: 'MFW-PUMP-A-RUN' }, false),
-        write('trip-main-feedwater-pump-b', { tagId: 'MFW-PUMP-B-RUN' }, false),
+        ...feedwaterIsolationWrites('feedwater-isolation', loops),
         write('close-turbine-stop-valve', { tagId: 'TURB-STOP' }, 0),
         write('reject-turbine-load', { tagId: 'TURB-LOAD' }, 0),
       ],

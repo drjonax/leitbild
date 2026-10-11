@@ -155,6 +155,12 @@ const updateValvePositionController = (
   const { component, context } = input
   const controller = valvePositionControllerFor(component)
   if (controller === null) return
+  const positionPath = componentVariablePath(component, 'positionFraction')
+  // Under an isolation signal the controller yields: it demands the valve shut until the signal is released.
+  if (context.readBoolean(componentVariablePath(component, 'isolationSignal'))) {
+    context.write(positionPath, 0)
+    return
+  }
   const measured = context.readNumber(controller.measuredPath)
   const error = deadbandedError(measured - controller.setpoint, controller.deadband)
   const action = controller.direction === 'direct' ? error : -error
@@ -163,7 +169,6 @@ const updateValvePositionController = (
   const target = permitted
     ? clamp(controller.biasPositionFraction + controller.gainPerUnit * action, controller.minPositionFraction, controller.maxPositionFraction)
     : controller.minPositionFraction
-  const positionPath = componentVariablePath(component, 'positionFraction')
   context.write(
     positionPath,
     relaxToward(context.readNumber(positionPath), target, context.dtSeconds, controller.timeConstantS),
@@ -174,10 +179,13 @@ const valveControlBehavior = (componentKind: 'processValve' | 'steamValve'): Com
   id: `${componentKind}-effective-position`,
   phase: 'solveFluidFlowComponents',
   componentKind,
-  reads: ['positionFraction', 'positionFailureActive', 'failedPositionFraction', 'incoming:pressureMPa', 'availablePressureDropMPa', 'autoOpenActive'],
+  reads: ['positionFraction', 'positionFailureActive', 'failedPositionFraction', 'isolationSignal', 'incoming:pressureMPa', 'availablePressureDropMPa', 'autoOpenActive'],
   writes: ['demandPositionFraction', 'effectivePositionFraction', 'autoOpenActive'],
   update: ({ system, component, context }): void => {
-    const manualTarget = clamp(context.readNumber(componentVariablePath(component, 'positionFraction')), 0, 1)
+    // An isolation signal shuts the valve whatever its demand; a failed actuator or a self-acting relief still decides.
+    const manualTarget = context.readBoolean(componentVariablePath(component, 'isolationSignal'))
+      ? 0
+      : clamp(context.readNumber(componentVariablePath(component, 'positionFraction')), 0, 1)
     const failureActive = context.readBoolean(componentVariablePath(component, 'positionFailureActive'))
     const failedPosition = clamp(context.readNumber(componentVariablePath(component, 'failedPositionFraction')), 0, 1)
     const mode = optionalParameterString(component, 'valveMode', 'control', valveModes)
@@ -215,7 +223,7 @@ const valvePositionControllerBehavior = (componentKind: 'processValve' | 'steamV
   id: `${componentKind}-position-controller`,
   phase: 'updateControlLogic',
   componentKind,
-  reads: ['positionFraction', 'controller.measuredPath', 'controller.permissive.path?'],
+  reads: ['positionFraction', 'isolationSignal', 'controller.measuredPath', 'controller.permissive.path?'],
   writes: ['positionFraction'],
   update: updateValvePositionController,
 })
