@@ -1,8 +1,9 @@
 import type { GridCurationCollection } from '../schemas/grid-curation.ts'
+import type { GridInterconnectorTable } from '../schemas/grid-interconnector.ts'
 import { compareText } from '../topology/ids.ts'
 import type { TopologyBranch } from '../topology/result.ts'
 import { curationSourceId } from './curations.ts'
-import { emergencyRule, overheadLineRatings } from './electrical.ts'
+import { ambientRatingRule, emergencyRule, overheadLineRatings, type LineRatings } from './electrical.ts'
 import type { BuildLedger } from './ledger.ts'
 import { v2OsmWayIds, type CuratedTransformerRating, type RatedLine } from './network.ts'
 
@@ -11,7 +12,8 @@ import { v2OsmWayIds, type CuratedTransformerRating, type RatedLine } from './ne
 
 const sortedFeatures = (curations: GridCurationCollection) => [...curations.features].sort((left, right) => compareText(left.id, right.id))
 
-export const withCuratedLineRatings = (lines: ReadonlyArray<RatedLine>, curations: GridCurationCollection, ledger: BuildLedger): ReadonlyArray<RatedLine> => {
+/** reservedIds: lines another source rates (interconnector ties); a curation on one fails. */
+export const withCuratedLineRatings = (lines: ReadonlyArray<RatedLine>, curations: GridCurationCollection, reservedIds: ReadonlySet<string>, ledger: BuildLedger): ReadonlyArray<RatedLine> => {
   const replaced = new Map<string, RatedLine>()
   for (const feature of sortedFeatures(curations)) {
     const properties = feature.properties
@@ -21,7 +23,7 @@ export const withCuratedLineRatings = (lines: ReadonlyArray<RatedLine>, curation
     const matches = lines.filter(line => line.branch.nominalKv === properties.voltageKv && ways.every(way => line.branch.osmWayIds.includes(way)))
     if (matches.length !== 1) throw new Error(`${id}: ${matches.length} ${properties.voltageKv} kV lines carry ${properties.wayOsmIds.join(', ')}; the record must name exactly one`)
     const line = matches[0]!
-    if (replaced.has(line.branch.id)) throw new Error(`${id}: ${line.branch.id} already has a curated rating`)
+    if (replaced.has(line.branch.id) || reservedIds.has(line.branch.id)) throw new Error(`${id}: ${line.branch.id} already has a curated or interconnector rating`)
     if (line.branch.kind !== 'ac_line') throw new Error(`${id}: ${line.branch.id} is a ${line.branch.kind}; set-line-rating rates overhead lines`)
     const ratings = overheadLineRatings(properties.designRatingMva)
     ledger.add({
@@ -46,6 +48,57 @@ export const withCuratedLineRatings = (lines: ReadonlyArray<RatedLine>, curation
     })
   }
   return lines.map(line => replaced.get(line.branch.id) ?? line)
+}
+
+/**
+ * AC ties to a neighbour (a line with a boundary end) take the rating the interconnector table
+ * publishes for their link instead of the conductor rule's. A published-rating (an operator's
+ * per-line capacity, stated at 0 °C where the System Operation Agreement gives a temperature
+ * table) scales to the summer air like an overhead line; a corridor-share, a system limit of
+ * the border, holds in every season. Every in-service AC link must find exactly one tie.
+ */
+export const withInterconnectorRatings = (
+  lines: ReadonlyArray<RatedLine>,
+  table: GridInterconnectorTable,
+  boundaryBusIds: ReadonlySet<string>,
+  sourceId: string,
+  ledger: BuildLedger,
+): { readonly lines: ReadonlyArray<RatedLine>; readonly ratedIds: ReadonlySet<string> } => {
+  const replaced = new Map<string, RatedLine>()
+  for (const link of [...table.links].sort((left, right) => compareText(left.id, right.id))) {
+    if (link.kind !== 'ac' || !link.inService) continue
+    const ways = v2OsmWayIds(link.osmWayIds)
+    const ties = lines.filter(line => (boundaryBusIds.has(line.branch.fromBusId) || boundaryBusIds.has(line.branch.toBusId))
+      && line.branch.osmWayIds.some(way => ways.includes(way)))
+    if (ties.length !== 1) throw new Error(`interconnector ${link.id}: ${ties.length} tie lines carry its ways ${link.osmWayIds.join(', ')}; expected one`)
+    const tie = ties[0]!
+    if (replaced.has(tie.branch.id)) throw new Error(`interconnector ${link.id}: ${tie.branch.id} already rated by another link`)
+    const mw = link.rating.mw
+    const ratings: LineRatings = link.rating.basis === 'published-rating'
+      ? { referenceMw: mw, designMw: Math.round(mw / ambientRatingRule.referenceFactor), summerMw: Math.round(mw * ambientRatingRule.summerFactor / ambientRatingRule.referenceFactor) }
+      : { referenceMw: mw, designMw: mw, summerMw: mw }
+    ledger.add({
+      reason: 'curated-rating-set',
+      elementIds: [tie.branch.id, link.id],
+      mw,
+      detail: `${tie.branch.label}: ${tie.branch.ratingMw} → ${mw} MW, the ${link.rating.basis} of ${link.name} in the interconnector table`,
+    })
+    replaced.set(tie.branch.id, {
+      ratings,
+      branch: {
+        ...tie.branch,
+        ratingMw: ratings.referenceMw,
+        emergencyRatingMw: Math.round(ratings.referenceMw * emergencyRule.factor),
+        provenance: {
+          ...tie.branch.provenance,
+          sources: [...tie.branch.provenance.sources, sourceId],
+          method: 'curated',
+          note: `${tie.branch.provenance.note ?? ''}${tie.branch.provenance.note === undefined ? '' : '; '}rating ${mw} MW: the ${link.rating.basis} of ${link.id} (${link.rating.note})`,
+        },
+      },
+    })
+  }
+  return { lines: lines.map(line => replaced.get(line.branch.id) ?? line), ratedIds: new Set(replaced.keys()) }
 }
 
 export interface CuratedTransformerRatings {

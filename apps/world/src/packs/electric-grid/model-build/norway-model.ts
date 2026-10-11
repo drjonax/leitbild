@@ -11,7 +11,7 @@ import { adaptNodeSidecar } from '../topology/node-sidecar.ts'
 import type { TopologyBranch, TopologyBus, TopologyHvdcLink, TopologySummary } from '../topology/result.ts'
 import { curatedNetwork } from './curated-branches.ts'
 import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from './curations.ts'
-import { curatedTransformerRatings, withCuratedLineRatings } from './curated-ratings.ts'
+import { curatedTransformerRatings, withCuratedLineRatings, withInterconnectorRatings } from './curated-ratings.ts'
 import { electricalRules } from './electrical.ts'
 import { buildGenerators, buildSiteGenerators, registeredHydroUnits, registeredWindUnits } from './generators.ts'
 import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverTurbineRule, runOfRiverUtilisationHours } from './generator-rules.ts'
@@ -142,10 +142,11 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     ledger,
   })
   const buses = [...topologyBuses, ...curated.buses].sort((left, right) => compareText(left.id, right.id))
-  const ratedLines = withCuratedLineRatings([
+  const ties = withInterconnectorRatings([
     ...main.branches.filter(branch => branch.kind !== 'transformer').map(branch => toGridLine(branch, { ofBranch: curationsOfBranch })),
     ...curated.lines,
-  ], curations, ledger)
+  ], inputs.interconnectors.data, new Set(buses.filter(bus => bus.kind === 'boundary').map(bus => bus.id)), ids.interconnectors, ledger)
+  const ratedLines = withCuratedLineRatings(ties.lines, curations, ties.ratedIds, ledger)
   const lines = ratedLines.map(line => line.branch)
   const mainBusIds = new Set([...main.mainBusIds, ...curated.buses.map(bus => bus.id)])
   const stations = createStationIndex(buses, main.buses, mainBusIds, sidecar.outline)
