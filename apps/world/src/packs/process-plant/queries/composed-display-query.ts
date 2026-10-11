@@ -147,7 +147,8 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       },
     }
     const opened = readComposedDisplay(display, opening)
-    // The trend's axis reaches back as far as the Plant has run, up to its horizon.
+    // Elapsed age sizes the trend axis (rounded up, minimum one minute); it
+    // does not establish how much Historian data exists within that axis.
     const historyMs = system.runtime.elapsedMs()
     const drawn = mimics.flatMap(mimic => mimic.items.map(item => ({
       id: mimicItemId(system.plant.graph, item.binding.item),

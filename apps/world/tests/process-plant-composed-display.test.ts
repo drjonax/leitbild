@@ -16,6 +16,7 @@ import { processPlantCapabilities } from '../src/packs/process-plant/capabilitie
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import { formatQuantity, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
 import { composedDisplayStateSchema } from '../src/packs/process-plant/displays/composition.ts'
+import { compileComposedDisplay, composedDisplayShows } from '../src/packs/process-plant/displays/compose.ts'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { createRunHistorian, recordedHistoryOf } from '../src/features/historian/store.ts'
@@ -183,9 +184,20 @@ describe('world.process-plant.display.compose', () => {
     expect(result.margins[0]!.startsWith(content.items[content.lead!.item]!.names[0]!)).toBe(true)
     // A Plant that has not run yet: the axis reaches back the least a trend spans, and says so.
     expect(content.span).toEqual({ shownMs: 60_000, horizonMs: 600_000 })
-    expect(result.shows[0]).toStartWith("Live trend of the last 1 min (the Run's history so far; it widens to 10m as the Run continues)")
+    expect(result.shows[0]).toStartWith('Live trend with a 1 min time axis (widens to 10m as the Run continues); recorded samples may cover less:')
     // The published Capability returns it: its output schema is enforced at the boundary.
     expect(() => processPlantCapabilities.find(capability => capability.id === 'world.process-plant.display.compose')!.output.parse(result)).not.toThrow()
+  })
+
+  test('trend captions distinguish axis geometry from retained sample coverage at every Run age', () => {
+    const result = compileComposedDisplay(plant, composition([{ ref: 'PT-455', role: 'primary' }]), 'compose', recordedSeriesIds)
+    if (!result.ok) throw new Error('Expected valid trend composition')
+    for (const elapsedMs of [0, 3_500, 600_000]) {
+      const caption = composedDisplayShows(result.display, elapsedMs)[0]!
+      expect(caption).toContain(elapsedMs < 60_000 ? '1 min time axis' : '10m time axis')
+      expect(caption).toContain('recorded samples may cover less')
+      expect(caption).not.toContain("Run's history so far")
+    }
   })
 
   test('states each trended signal as its legend will: rate, direction, the limit ahead and the time to it', () => {
