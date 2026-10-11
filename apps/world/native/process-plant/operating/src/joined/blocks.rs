@@ -449,20 +449,13 @@ pub fn joined_pattern<P: Properties + WaterProperties>(
         base..base + 6
     };
     let solids = joined.solids();
-    let band_rows = |a: usize| -> Vec<usize> {
-        (0..3)
-            .flat_map(|k| {
-                [
-                    o.solids + solids.energy(a, k),
-                    o.solids + solids.surface(a, k),
-                ]
-            })
-            .collect()
-    };
     let deposition = joined.nuclear().deposition();
+    // A half's fuel heat is a source of its two fuel energy rows only
+    // (thermal::fuel_heat_rates); the surface and clad rows do not read it.
+    // The assembly refuses any fuel-heat response outside these rows.
     let fuel_heat = |columns: &mut Vec<BTreeSet<usize>>, a: usize, col: usize| {
-        for r in band_rows(a) {
-            columns[col].insert(r);
+        for k in 0..2 {
+            columns[col].insert(o.solids + solids.energy(a, k));
         }
     };
     let coolant_heat = |columns: &mut Vec<BTreeSet<usize>>, a: usize, col: usize| {
