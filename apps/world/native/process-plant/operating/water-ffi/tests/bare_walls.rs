@@ -1,4 +1,4 @@
-//! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#gate-3-pactel-atws-10-outsurge
+//! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#gate-3-pactel-atws-10-outsurge-blocked
 //! The bare shell of a vessel without heads, insulation or rods (the PACTEL
 //! prescription, gate 3): band admission, the coefficient-only exterior, Joule
 //! power deposited in the band steel, and a walls-only liquid contact whose
