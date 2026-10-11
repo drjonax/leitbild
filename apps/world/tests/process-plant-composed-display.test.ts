@@ -21,6 +21,7 @@ import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { createRunHistorian, recordedHistoryOf } from '../src/features/historian/store.ts'
 import { displayAnnunciation } from '../src/packs/process-plant/displays/annunciators.ts'
+import { shorterSignalNames } from '../src/packs/process-plant/displays/signal-names.ts'
 import { actuatedNames, bannerTrip, firstOutFlag } from '../src/ui/embed/composed-display/panel-presenters.ts'
 
 const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:composed-display', loopCount: 4 }))
@@ -743,6 +744,25 @@ describe('a display shows what its question is about', () => {
     const message = rejectionOf(() => ask('world.process-plant.display.compose', display(['auxiliary feedwater'], [trendOf('core.powerMw')])))
     expect(message).toContain('subjects.0: "auxiliary feedwater" names no signal, equipment, service or loop of this Plant')
     expect(message).toContain('auxFeedwater')
+  })
+})
+
+describe('shorter names for a signal', () => {
+  const shorter = (path: string) => {
+    const binding = compiled.graph.signalBindingByPath.get(path as VariablePath)!
+    const component = compiled.graph.components[binding.owner.type === 'component' ? binding.owner.componentIndex : 0]!
+    return shorterSignalNames(compiled.graph, binding, `${binding.label} · ${component.label}`)
+  }
+
+  test('name the equipment by its short name and drop the words its signals share before any that tell them apart', () => {
+    // QA review of run 22: "Process … outlet flow · …Header" and "Process header outlet flow · …Injection Header".
+    expect(shorter('safetyInjectionHeader.outletFlowKgPerS')).toEqual(['Process header outlet flow · SI header', 'Outlet flow · SI header'])
+    expect(shorter('sgB.feedwaterFlowKgPerS')).toEqual(['Feedwater inflow · SG B', 'Inflow · SG B'])
+    // "flow" alone would not tell the outlet from the inlet: it is never offered.
+    expect(shorter('feedwaterHeader.outletFlowKgPerS')).not.toContain('Flow · MFW header')
+    // A tag is never shortened.
+    const tagged = compiled.graph.signalBindingByTagId.get('SG-A-LVL-NR' as never)!
+    expect(shorterSignalNames(compiled.graph, tagged, 'SG-A-LVL-NR')).toEqual([])
   })
 })
 

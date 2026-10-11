@@ -168,6 +168,10 @@ describe('composed display panel presenters', () => {
     // A name without equipment that fits stays whole.
     expect(fitName('Pressurizer relief flow', within(40))).toBe('Pressurizer relief flow')
     expect(fitName('Pressurizer relief flow', within(20))).toBe('Pressurizer … flow')
+    // The forms World derives come first: the equipment by its short name, the words its signals share dropped.
+    const header = ['Process header outlet flow · SI header', 'Outlet flow · SI header']
+    expect(fitName('Process header outlet flow · Safety Injection Header', within(40), header)).toBe('Process header outlet flow · SI header')
+    expect(fitName('Process header outlet flow · Safety Injection Header', within(30), header)).toBe('Outlet flow · SI header')
   })
 
   test('median of parallel signals', () => {

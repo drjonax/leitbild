@@ -3,7 +3,8 @@
   import { composedDisplayLayout, type DisplayEvidenceKind } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
-  import { displayValue, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, limitKindName, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
+  import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
   import { fitLimitStateText, sampledGates } from './panel-presenters.ts'
   import { limitStateText, rateWindowMs, readingStateText, trendReading, type LimitState, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
@@ -33,9 +34,29 @@
   // box as measured, dropping whole words.
   const measureName = textMeasure(panelFont(11.5))
   const rooms: Record<string, number> = $state({})
-  const named = (path: string, name: string): string => {
-    const room = rooms[path] ?? 0
-    return room === 0 ? name : fitName(name, text => measureName(text) <= room)
+  const named = (pen: ComposedDisplayPen): string => {
+    const room = rooms[String(pen.path)] ?? 0
+    return room === 0 ? displayName(pen) : fitName(displayName(pen), text => measureName(text) <= room, pen.shorterNames)
+  }
+  // A tag is never shortened nor cut (QA review of run 22: "SG-A…"): where it
+  // and the alarm chip do not both fit the line, the chip names the limit's
+  // order alone, the margin line under it naming the action. The line's room
+  // is measured as drawn, less its word badges and the gaps between parts
+  // (the CSS below), so the choice never depends on the chip it makes.
+  const heads: Record<string, number> = $state({})
+  const measureBadge = textMeasure(panelFont(9.5))
+  const measureChip = textMeasure(panelFont(10.5, 700))
+  const HEAD_GAP = 5
+  /** A word badge as drawn: upper case, letter-spaced 0.04 em, 4 px padding and a 1 px border each side. */
+  const badgeWidth = (word: string): number => measureBadge(word.toUpperCase()) + word.length * 9.5 * 0.04 + 10
+  /** A chip as AlarmChip draws it: letter-spaced 0.03 em, 5 px padding each side. */
+  const chipWidth = (text: string): number => measureChip(text) + text.length * 10.5 * 0.03 + 10
+  const compactChip = (pen: ComposedDisplayPen, inAlarm: ComposedDisplayThreshold): boolean => {
+    const head = heads[String(pen.path)] ?? 0
+    if (pen.tagId === undefined || head === 0) return false
+    const badges = [...(pen.added === undefined ? [] : [ADDED_WORDS[pen.added.kind]]), ...(pen.command ? ['demand'] : [])]
+    const room = head - badges.reduce((sum, word) => sum + badgeWidth(word) + HEAD_GAP, 0) - chipWidth(limitKindName(inAlarm)) - HEAD_GAP
+    return measureName(pen.tagId) > room
   }
   // A limit state takes its row's width, measured as drawn, and drops whole
   // parts to fit it, the time and mode qualifier first, never cutting a word;
@@ -92,7 +113,7 @@
     {@const inAlarm = reading?.inAlarm ?? null}
     {@const end = typeof value === 'number' ? offScale(value, pen.limits?.instrumentSpan) : null}
     <li class:primary={pen.role === 'primary'} class:added={pen.added !== undefined} title={pen.added === undefined ? `${pen.label} · ${pen.role}` : `${pen.label} · added by World: ${pen.added.reason}`}>
-      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`}>{#if pen.added !== undefined}<span class="why" title={`Added by World from the Plant model: ${pen.added.reason}`}>{ADDED_WORDS[pen.added.kind]}</span>{/if}<span class="name" bind:clientWidth={rooms[String(pen.path)]}>{named(String(pen.path), displayName(pen))}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}</span>
+      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`} bind:clientWidth={heads[String(pen.path)]}>{#if pen.added !== undefined}<span class="why" title={`Added by World from the Plant model: ${pen.added.reason}`}>{ADDED_WORDS[pen.added.kind]}</span>{/if}<span class="name" class:tag={pen.tagId !== undefined} bind:clientWidth={rooms[String(pen.path)]}>{named(pen)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} compact={compactChip(pen, inAlarm)} />{/if}</span>
       {#if typeof value === 'boolean'}
         <!-- A state names its equipment, so a row of alike states (two buses) cannot be confused. -->
         <span class="state" title={pen.described}>{value ? pen.described : `Not ${pen.described.charAt(0).toLowerCase()}${pen.described.slice(1)}`}</span>
@@ -159,6 +180,8 @@
   li { display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 2px 8px; border-left: 2px solid var(--border-divider-color); }
   li.primary { border-left-color: var(--element-active-color); }
   .name { flex: 1 1 0; min-width: 0; font-size: 11.5px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* A tag is whole or not shown at all: never an ellipsis through it. */
+  .name.tag { text-overflow: clip; }
   /* Normal states read as plain text; colour and weight are kept for alarms. */
   .state { font-size: 13.5px; padding: 6px 0; }
   .head { display: flex; align-items: center; gap: 5px; min-width: 0; }

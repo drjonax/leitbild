@@ -48,6 +48,7 @@ import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mi
 import { principalCircuits } from './mimic/principal.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
 import { annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
+import { shorterSignalNames } from './signal-names.ts'
 import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
 import {
@@ -65,6 +66,8 @@ export interface ComposedDisplayPen {
   readonly label: string
   /** What operators call it: the tag, or the label with its equipment ("Feedwater inflow · Steam Generator B"). */
   readonly name: string
+  /** Shorter forms of a name that is not a tag, from longest to shortest, for a room too narrow for it (signal-names.ts). */
+  readonly shorterNames: ReadonlyArray<string>
   /** The label with its equipment, where the label does not name it: what a state reads as ("Electrical bus energized · Safety Bus A"). */
   readonly described: string
   /** One measurement across parallel equipment ("steam-generator.levelPercent|percent"); pens sharing it share an axis. */
@@ -351,6 +354,7 @@ const resolvePens = (
       ...(binding.tagId === undefined ? {} : { tagId: binding.tagId }),
       label: binding.label,
       name: identity.name,
+      shorterNames: shorterSignalNames(system.plant.graph, binding, identity.name),
       described: identity.described,
       measurement: identity.measurement,
       unit: binding.unit,

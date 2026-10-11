@@ -47,9 +47,9 @@
     const next = { value: Math.max(before.value, widest('.value')), state: Math.max(before.state, widest('.state')), badge: Math.max(before.badge, widest('.badge', 10)) }
     if (next.value !== before.value || next.state !== before.state || next.badge !== before.badge) drawn = next
   })
-  const named = (name: string, badges: number): string => {
+  const named = (pen: ComposedDisplayPen, badges: number): string => {
     const room = width - SWATCH - 4 * COLUMN_GAP - drawn.value - drawn.state - RATE_MIN - badges * drawn.badge
-    return width === 0 ? name : fitName(name, text => measureName(text) <= room)
+    return width === 0 ? displayName(pen) : fitName(displayName(pen), text => measureName(text) <= room, pen.shorterNames)
   }
 </script>
 
@@ -64,7 +64,7 @@
     {@const state = reading === null ? '' : readingStateText(reading, pen.unit, pen.resolution)}
     <li>
       {#if live}<span class="swatch live" aria-hidden="true"></span>{:else}<svg class="swatch" width="22" height="8" aria-hidden="true"><line x1="0" x2="22" y1="4" y2="4" style={penStroke(pen.role, index)} /></svg>{/if}
-      <span class="name" title={`${displayName(pen)} · ${pen.label} · ${roleLabel[pen.role]}${pen.command ? ' · operator or automation demand, not a measured state' : ''}${live ? ' · not recorded by this Run: current value only' : liveOnly ? ' · no recorded history in this window' : ''}`}>{#if live}<span class="badge">not recorded</span>{/if}{named(displayName(pen), (live ? 1 : 0) + (pen.command ? 1 : 0))}{#if pen.command}<span class="badge">demand</span>{/if}</span>
+      <span class="name" title={`${displayName(pen)} · ${pen.label} · ${roleLabel[pen.role]}${pen.command ? ' · operator or automation demand, not a measured state' : ''}${live ? ' · not recorded by this Run: current value only' : liveOnly ? ' · no recorded history in this window' : ''}`}>{#if live}<span class="badge">not recorded</span>{/if}{named(pen, (live ? 1 : 0) + (pen.command ? 1 : 0))}{#if pen.command}<span class="badge">demand</span>{/if}</span>
       <span class="value" class:offscale={reading?.offScale != null}>{typeof value === 'number' ? readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan) : typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'}</span>
       <span class="state">
         {#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}
