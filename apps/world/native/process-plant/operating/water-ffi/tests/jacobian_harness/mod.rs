@@ -367,6 +367,47 @@ pub struct Ledger {
     pub direction_zero: Tally,
     pub saturation_value: Tally,
     pub saturation_direction: Tally,
+    /// The owners' current-call boundary (thermal::WaterProperties).
+    pub water_forward: Tally,
+    pub water_saturation: Tally,
+}
+impl Ledger {
+    pub fn snapshot(&self) -> [Tally; 7] {
+        [
+            self.caloric,
+            self.direction_nonzero,
+            self.direction_zero,
+            self.saturation_value,
+            self.saturation_direction,
+            self.water_forward,
+            self.water_saturation,
+        ]
+    }
+    pub const NAMES: [&'static str; 7] = [
+        "network caloric inversion",
+        "network caloric direction (nonzero)",
+        "network caloric direction (zero)",
+        "network saturation value",
+        "network saturation direction",
+        "owner liquid/vapor point",
+        "owner saturation",
+    ];
+    /// Calls and CPU between two snapshots, by kind.
+    pub fn between(before: &[Tally; 7], after: &[Tally; 7]) -> Value {
+        Value::Object(
+            Self::NAMES
+                .iter()
+                .zip(before.iter().zip(after))
+                .filter(|(_, (b, a))| a.calls > b.calls)
+                .map(|(name, (b, a))| {
+                    (
+                        name.to_string(),
+                        json!({"calls": a.calls - b.calls, "ms": 1e3 * (a.cpu - b.cpu)}),
+                    )
+                })
+                .collect(),
+        )
+    }
 }
 pub type Shared = Rc<RefCell<Ledger>>;
 /// The property calls of one production assembly.
@@ -380,7 +421,67 @@ pub struct Calls {
 }
 /// Delegates every query to the maintained IF97 adapter, unchanged, and
 /// times it by kind.
+#[derive(Clone)]
 pub struct Timed(pub Shared);
+impl leitbild_operating_plant::thermal::WaterProperties for Timed {
+    fn liquid(
+        &self,
+        pressure: Scalar,
+        temperature: Scalar,
+    ) -> leitbild_operating_plant::thermal::Result<leitbild_operating_plant::thermal::WaterPoint>
+    {
+        self.time(
+            |l| &mut l.water_forward,
+            || {
+                leitbild_operating_plant::thermal::WaterProperties::liquid(
+                    &If97,
+                    pressure,
+                    temperature,
+                )
+            },
+        )
+    }
+    fn vapor(
+        &self,
+        pressure: Scalar,
+        temperature: Scalar,
+    ) -> leitbild_operating_plant::thermal::Result<leitbild_operating_plant::thermal::WaterPoint>
+    {
+        self.time(
+            |l| &mut l.water_forward,
+            || {
+                leitbild_operating_plant::thermal::WaterProperties::vapor(
+                    &If97,
+                    pressure,
+                    temperature,
+                )
+            },
+        )
+    }
+    fn saturation(
+        &self,
+        pressure: Scalar,
+    ) -> leitbild_operating_plant::thermal::Result<Saturation> {
+        self.time(
+            |l| &mut l.water_saturation,
+            || leitbild_operating_plant::thermal::WaterProperties::saturation(&If97, pressure),
+        )
+    }
+    fn saturated_vapor_density(
+        &self,
+        temperature: Scalar,
+    ) -> leitbild_operating_plant::thermal::Result<Scalar> {
+        self.time(
+            |l| &mut l.water_saturation,
+            || {
+                leitbild_operating_plant::thermal::WaterProperties::saturated_vapor_density(
+                    &If97,
+                    temperature,
+                )
+            },
+        )
+    }
+}
 impl Timed {
     fn time<T>(&self, pick: fn(&mut Ledger) -> &mut Tally, f: impl FnOnce() -> T) -> T {
         let started = cpu();
@@ -794,13 +895,26 @@ pub fn event(
 /// §3 (B)-(C)): a fresh hydrostatic preparation, the settled S1 run's face
 /// volume flows and rotor momenta written by the flowing preparation, then
 /// the fixed-stock surface initializer.
-pub struct JoinedHot {
-    pub joined: leitbild_operating_plant::joined::operator::Joined<If97>,
+pub struct JoinedHot<P: Properties = If97> {
+    pub joined: leitbild_operating_plant::joined::operator::Joined<P>,
     pub y: Vec<f64>,
     pub ids: Vec<f64>,
     pub flowing: Value,
 }
 pub fn joined_hot(declared: &Declared, settled: &[f64], full: bool) -> JoinedHot {
+    joined_hot_with(declared, settled, full, || If97)
+}
+/// [`joined_hot`] over the properties `properties` makes (the network's
+/// and the joined operator's own instances).
+pub fn joined_hot_with<P>(
+    declared: &Declared,
+    settled: &[f64],
+    full: bool,
+    properties: impl Fn() -> P,
+) -> JoinedHot<P>
+where
+    P: Properties + leitbild_operating_plant::thermal::WaterProperties,
+{
     use leitbild_operating_plant::{
         initialization::SurfacePolicy,
         joined::{
@@ -843,7 +957,7 @@ pub fn joined_hot(declared: &Declared, settled: &[f64], full: bool) -> JoinedHot
         representation_search: 8,
     };
     let (mut network, mut prepared, hydrostatic) =
-        prepare::prepare(&declared.packet, If97, &point, &rotors, &settings)
+        prepare::prepare(&declared.packet, properties(), &point, &rotors, &settings)
             .expect("hydrostatic preparation");
     let receipt = prepare::compose_flows(
         &mut network,
@@ -898,7 +1012,7 @@ pub fn joined_hot(declared: &Declared, settled: &[f64], full: bool) -> JoinedHot
         network,
         &declared.packet,
         &joined_packet,
-        If97,
+        properties(),
         secondary,
         rods,
     )
@@ -947,8 +1061,8 @@ pub fn write_receipt(path: &str, receipt: &Value) {
 /// structural pattern, a verified greedy coloring and one exact seeded
 /// joined evaluation per color (the operator's own loop). The reference
 /// matrix of the block assembly; returns (pattern, values, colors, CPU s).
-pub fn joined_colored(
-    joined: &mut leitbild_operating_plant::joined::operator::Joined<If97>,
+pub fn joined_colored<P: Properties + leitbild_operating_plant::thermal::WaterProperties>(
+    joined: &mut leitbild_operating_plant::joined::operator::Joined<P>,
     y: &[f64],
     yp: &[f64],
     cj: f64,

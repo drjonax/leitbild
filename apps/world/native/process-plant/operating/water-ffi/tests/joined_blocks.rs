@@ -466,68 +466,202 @@ fn joined_single_column_probe() {
     }
 }
 
-/// Diagnostic: the block assembly's CPU by class, best of 3 (each class
-/// alone includes the common base evaluation and replay set-up).
+/// Z5 cost of the joined block Jacobian at the hot reference: thread CPU
+/// by column class and by piece, the property calls of each, the value
+/// residual, the colored reference and stock KLU on the block pattern,
+/// in interleaved rounds so that ratios within a round survive machine
+/// load. Each class alone includes the common base (one joined evaluation,
+/// the nuclear partials and the replay's network base pass).
 #[test]
-#[ignore = "diagnostic timing of the block assembly by class"]
+#[ignore = "requires the S1 packet, the wiki gates, maintained IF97 and stock IDA/KLU; zero-time Z5 measurement"]
 fn joined_blocks_profile() {
-    use leitbild_operating_plant::joined::blocks::{Classes, JoinedJacobian, jacobian_blocks};
+    use leitbild_operating_plant::joined::blocks::{
+        Classes, JoinedJacobian, Profile, jacobian_blocks, jacobian_blocks_profiled,
+    };
+    use std::{cell::RefCell, rc::Rc};
     prefer_performance_core();
+    let rounds: usize = std::env::var("LD01_JAC_ROUNDS").map_or(5, |r| r.parse().unwrap());
     let declared = Declared::load();
+    let load_start = load_average();
+    let commit = command("git", &["rev-parse", "HEAD"]);
+    let dirty = !command("git", &["status", "--porcelain"]).is_empty();
     let settled = settle(&declared, &[46.], Assembly::Blocks)
         .outputs
         .pop()
         .unwrap();
-    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, true);
+    let ledger: Shared = Rc::new(RefCell::new(Ledger::default()));
+    let JoinedHot { mut joined, y, .. } =
+        joined_hot_with(&declared, &settled, true, || Timed(ledger.clone()));
     let n = joined.dimension();
+    let o = joined.offsets();
     let zero = vec![0.; n];
+    let cj = 20.;
+    let started = cpu();
     let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let compile_ms = 1e3 * (cpu() - started);
     let mut values = vec![0.; structure.pattern.nonzeros()];
-    let mut out = Vec::new();
-    let value_ms = {
-        let mut best = f64::INFINITY;
+    let configurations: [(&str, Classes); 7] = [
+        ("base only", Classes::NONE),
+        (
+            "network columns",
+            Classes {
+                network: true,
+                ..Classes::NONE
+            },
+        ),
+        (
+            "nuclear columns",
+            Classes {
+                nuclear: true,
+                ..Classes::NONE
+            },
+        ),
+        (
+            "solid columns",
+            Classes {
+                solids: true,
+                ..Classes::NONE
+            },
+        ),
+        (
+            "secondary columns",
+            Classes {
+                secondary: true,
+                ..Classes::NONE
+            },
+        ),
+        (
+            "rod columns",
+            Classes {
+                rods: true,
+                ..Classes::NONE
+            },
+        ),
+        ("all", Classes::ALL),
+    ];
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); configurations.len() + 2];
+    let mut calls = Vec::new();
+    let mut pieces: std::collections::BTreeMap<&str, (u64, f64)> = Default::default();
+    let mut ratios = Vec::new();
+    let mut klu = json!(null);
+    for round in 0..rounds {
+        // The value residual, best of 5 within the round.
+        let mut value = f64::INFINITY;
         for _ in 0..5 {
             let s = cpu();
             joined.evaluate(0., &y, &zero, None, 0., None).unwrap();
-            best = best.min(cpu() - s);
+            value = value.min(cpu() - s);
         }
-        1e3 * best
-    };
-    for (label, network, nuclear, owners) in [
-        ("base", false, false, false),
-        ("network", true, false, false),
-        ("nuclear", false, true, false),
-        ("owners", false, false, true),
-        ("nuclear+owners", false, true, true),
-        ("all", true, true, true),
-    ] {
-        let classes = Classes {
-            network,
-            nuclear,
-            owners,
-        };
-        let mut best = f64::INFINITY;
-        for _ in 0..3 {
+        times[configurations.len()].push(value);
+        let mut this = Vec::new();
+        for (k, (label, classes)) in configurations.iter().enumerate() {
+            let before = ledger.borrow().snapshot();
             let s = cpu();
             jacobian_blocks(
                 &mut joined,
                 &structure,
                 0.,
-                20.,
+                cj,
                 &y,
                 &zero,
                 &mut values,
-                classes,
+                *classes,
             )
             .expect("block assembly");
-            best = best.min(cpu() - s);
+            let spent = cpu() - s;
+            times[k].push(spent);
+            this.push(spent);
+            if round == 0 {
+                let after = ledger.borrow().snapshot();
+                calls.push(
+                    json!({"classes": label, "property_calls": Ledger::between(&before, &after)}),
+                );
+            }
         }
-        out.push(json!({"classes": label, "ms": 1e3 * best}));
+        let mut profile = Profile::new(cpu);
+        jacobian_blocks_profiled(
+            &mut joined,
+            &structure,
+            0.,
+            cj,
+            &y,
+            &zero,
+            &mut values,
+            Classes::ALL,
+            &mut profile,
+        )
+        .expect("profiled block assembly");
+        if round == 0 {
+            for (piece, (c, sec)) in profile.pieces {
+                pieces.insert(piece, (c, sec));
+            }
+        } else {
+            for (piece, (_, sec)) in profile.pieces {
+                let e = pieces.get_mut(piece).unwrap();
+                e.1 = e.1.min(sec);
+            }
+        }
+        // The colored reference once per round.
+        let (reference, colored, _, colored_s) = joined_colored(&mut joined, &y, &zero, cj);
+        times[configurations.len() + 1].push(colored_s);
+        let all = *this.last().unwrap();
+        ratios.push(
+            json!({"round": round, "all_ms": 1e3 * all, "colored_ms": 1e3 * colored_s,
+            "value_residual_ms": 1e3 * value, "colored_over_blocks": colored_s / all,
+            "blocks_over_value_residual": all / value}),
+        );
+        if round == 0 {
+            jacobian_blocks(
+                &mut joined,
+                &structure,
+                0.,
+                cj,
+                &y,
+                &zero,
+                &mut values,
+                Classes::ALL,
+            )
+            .unwrap();
+            let (pointers, rows) = structure.pattern.to_i64().unwrap();
+            let _ = (reference, colored);
+            klu = json!({"colamd": klu_profile(&pointers, &rows, &[values.clone()], 3),
+                "amd": klu_profile_ordered(&pointers, &rows, &[values.clone()], 3, 0)});
+        }
     }
-    println!(
-        "{}",
-        json!({"kind": "joined-blocks-profile-NOT-EVIDENCE", "value_residual_ms": value_ms, "by_class": out})
-    );
+    let summary = |v: &Vec<f64>| {
+        let mut w = v.clone();
+        w.sort_by(f64::total_cmp);
+        json!({"min_ms": 1e3 * w[0], "median_ms": 1e3 * w[w.len() / 2]})
+    };
+    let by_class: Vec<Value> = configurations
+        .iter()
+        .enumerate()
+        .map(|(k, (label, _))| json!({"classes": label, "cpu": summary(&times[k])}))
+        .collect();
+    let receipt = json!({
+        "kind": "s2-z5-joined-block-jacobian-cost-NOT-EVIDENCE",
+        "team": "JAC",
+        "status": "zero-time measurement at the hot reference; S2 is not declared",
+        "clock": "CLOCK_THREAD_CPUTIME_ID, QOS_CLASS_USER_INTERACTIVE",
+        "app_commit": commit, "app_dirty": dirty,
+        "packet": declared.packet_path, "packet_sha256": sha256_file(&declared.packet_path),
+        "load_average_start": load_start,
+        "composition": {"dimension": n, "offsets": o},
+        "cj_per_s": cj, "rounds": rounds,
+        "block_pattern_nonzeros": structure.pattern.nonzeros(), "compile_ms": compile_ms,
+        "value_residual": summary(&times[configurations.len()]),
+        "colored_reference": summary(&times[configurations.len() + 1]),
+        "by_class": by_class,
+        "pieces_of_all_min_over_rounds_ms": pieces.iter().map(|(k, (c, sec))| json!({"piece": k, "calls": c, "ms": 1e3 * sec})).collect::<Vec<_>>(),
+        "property_calls_round_0": calls,
+        "within_round": ratios,
+        "klu_block_pattern": klu,
+        "load_average_end": load_average(),
+    });
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+    if let Ok(path) = std::env::var("LD01_JAC_RECEIPT") {
+        write_receipt(&path, &receipt);
+    }
 }
 
 /// Diagnostic: sizes of the solids' incidence and of the closed scopes the
