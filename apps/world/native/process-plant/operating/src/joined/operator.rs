@@ -696,6 +696,30 @@ impl<P: Properties + WaterProperties> Joined<P> {
         Ok(solved)
     }
 
+    /// The network and a local coupler over the blocks, borrowed disjointly,
+    /// for a block Jacobian's network columns at `(y, y')` and `cj`.
+    pub fn local_parts<'a>(
+        &'a mut self,
+        y: &'a [f64],
+        yp: &'a [f64],
+        cj: f64,
+    ) -> (&'a Network<P>, LocalCoupler<'a, P>) {
+        let endpoints = self.faces.iter().map(|f| (f.from, f.to)).collect();
+        (
+            &self.network,
+            LocalCoupler {
+                blocks: &mut self.blocks,
+                y,
+                yp,
+                cj,
+                endpoints,
+                last: LocalRows::default(),
+                solid_rows: Vec::new(),
+                heat: solids::Heat::default(),
+            },
+        )
+    }
+
     /// The colored stage Jacobian `dF/dy + cj dF/dy'` at `(t, y, y')` into
     /// `values`, in the stored order of the compiled pattern.
     pub fn jacobian(
@@ -1119,16 +1143,7 @@ impl<P: Properties + WaterProperties> Blocks<P> {
             .map_err(trial)?;
         }
         for (i, w) in water.iter_mut().enumerate() {
-            let j = source_water[i];
-            let liquid = fluid.liquid_mass[j];
-            let (q, d) = fluid.points[j][0]
-                .ok_or_else(|| trial(format!("source region {i}'s cell {j} has no liquid")))?;
-            *w = RegionWater {
-                density_kg_m3: (liquid + fluid.vapor_mass[j]) / fluid.current_volumes[j],
-                boron_ppm_eq: s(1e6) * fluid.tracer[j] / liquid,
-                pressure_pa: fluid.cells[j].pressure,
-                temperature_k: Scalar::new(q.temperature_k, d.temperature_k),
-            };
+            *w = region_water(fluid, i, source_water[i])?;
         }
         let xn = view(y, yp, seed, cj, o.nuclear..o.solids, &scales[0].coordinates)?;
         nuclear.rows(
@@ -1194,6 +1209,189 @@ impl<P: Properties + WaterProperties> Blocks<P> {
         }
         self.coupled_wall_s += started.elapsed().as_secs_f64();
         Ok(())
+    }
+}
+
+/// The source feedback's water of region `i` from its owner cell `j`:
+/// `rho = (M_l + M_v)/V(y)`, ppm from the liquid tracer, the local pressure
+/// and the liquid temperature, with their directions.
+fn region_water(fluid: &Fluid<'_>, i: usize, j: usize) -> Result<RegionWater, Failure> {
+    let liquid = fluid.liquid_mass[j];
+    let (q, d) = fluid.points[j][0]
+        .ok_or_else(|| trial(format!("source region {i}'s cell {j} has no liquid")))?;
+    Ok(RegionWater {
+        density_kg_m3: (liquid + fluid.vapor_mass[j]) / fluid.current_volumes[j],
+        boron_ppm_eq: s(1e6) * fluid.tracer[j] / liquid,
+        pressure_pa: fluid.cells[j].pressure,
+        temperature_k: Scalar::new(q.temperature_k, d.temperature_k),
+    })
+}
+
+/// What one local coupling call re-evaluated: global joined rows in solver
+/// scaling, the source feedback's water of the regions whose owner cell is
+/// listed, and the complete metal-to-secondary heat of each SG reached.
+#[derive(Clone, Debug, Default)]
+pub struct LocalRows {
+    pub rows: Vec<(usize, Scalar)>,
+    pub water: Vec<(usize, RegionWater)>,
+    pub secondary_w: Vec<(usize, Scalar)>,
+}
+
+/// The joined blocks' port terms for one network column of a block
+/// Jacobian, on a borrow disjoint from the network ([`Joined::local_parts`]).
+/// It requires a preceding [`Joined::evaluate`] at the same `(t, y, y')`:
+/// temperatures, nuclear heat and SG views are that evaluation's, and the
+/// owners' coordinates are read unseeded, since a network column moves only
+/// the fluid.
+pub struct LocalCoupler<'a, P> {
+    blocks: &'a mut Blocks<P>,
+    y: &'a [f64],
+    yp: &'a [f64],
+    cj: f64,
+    endpoints: Vec<(usize, usize)>,
+    last: LocalRows,
+    solid_rows: Vec<(usize, Scalar)>,
+    heat: solids::Heat,
+}
+
+impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
+    /// The wall cells a column reaches: its listed cells and the endpoints
+    /// of its listed faces, each read by a wall's mass flux.
+    fn wall_cells(&self, cells: &[usize], faces: &[usize]) -> Vec<usize> {
+        let mut wall: Vec<usize> = cells
+            .iter()
+            .copied()
+            .chain(
+                faces
+                    .iter()
+                    .flat_map(|f| [self.endpoints[*f].0, self.endpoints[*f].1]),
+            )
+            .collect();
+        wall.sort_unstable();
+        wall.dedup();
+        wall
+    }
+    fn scope(&self, cells: &[usize], wall: &[usize]) -> solids::Closed {
+        let sol = &self.blocks.solids;
+        let incidence = sol.incidence();
+        sol.close(&solids::SolidScope {
+            bands: sol.halves_wetting(wall),
+            passive: incidence
+                .passive
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, water))| cells.contains(water))
+                .map(|(k, _)| k)
+                .collect(),
+            plenum: Vec::new(),
+            segments: incidence
+                .segments
+                .iter()
+                .enumerate()
+                .filter(|(_, (primary, _))| wall.contains(primary))
+                .map(|(k, _)| k)
+                .collect(),
+        })
+    }
+    /// Re-evaluate only the port terms reading `cells` (whose fluid state
+    /// moved) and `faces` (whose liquid flux moved), closed over incidence,
+    /// adding their receipts into `receipts`. [`LocalCoupler::last`] then
+    /// holds every row they complete, value for value equal to the full
+    /// coupling's.
+    pub fn local(
+        &mut self,
+        cells: &[usize],
+        faces: &[usize],
+        fluid: &Fluid<'_>,
+        receipts: &mut Receipts<'_>,
+    ) -> Result<(), Failure> {
+        let wall = self.wall_cells(cells, faces);
+        let scope = self.scope(cells, &wall);
+        let o = self.blocks.offsets;
+        let Blocks {
+            properties,
+            solids,
+            temperatures,
+            views,
+            heats,
+            scales,
+            source_water,
+            ..
+        } = &mut *self.blocks;
+        solids.wall_water_local(properties, fluid, &wall)?;
+        let x = view(
+            self.y,
+            self.yp,
+            None,
+            self.cj,
+            o.solids..o.secondary,
+            &scales[1].coordinates,
+        )?;
+        solids.rows_local(
+            properties,
+            x,
+            temperatures,
+            &heats.nuclear.fuel_w,
+            fluid,
+            views,
+            &scope,
+            receipts,
+            &mut self.solid_rows,
+            &mut self.heat,
+        )?;
+        self.last.rows.clear();
+        self.last.rows.extend(
+            self.solid_rows
+                .iter()
+                .map(|(i, r)| (o.solids + i, *r / s(scales[1].rows[*i]))),
+        );
+        self.last.secondary_w.clear();
+        self.last.secondary_w.extend(
+            scope
+                .generators
+                .iter()
+                .map(|g| (*g, self.heat.secondary_w[*g])),
+        );
+        self.last.water.clear();
+        for (i, j) in source_water.iter().enumerate() {
+            if cells.contains(j) {
+                self.last.water.push((i, region_water(fluid, i, *j)?));
+            }
+        }
+        Ok(())
+    }
+    pub fn last(&self) -> &LocalRows {
+        &self.last
+    }
+    /// What [`LocalCoupler::local`] would reach, without evaluating: the
+    /// network cells its receipts enter and the global joined rows it
+    /// writes (region water and SG heat are its separate ports).
+    pub fn reach(&self, cells: &[usize], faces: &[usize]) -> (Vec<usize>, Vec<usize>) {
+        let wall = self.wall_cells(cells, faces);
+        let scope = self.scope(cells, &wall);
+        let sol = &self.blocks.solids;
+        let o = self.blocks.offsets;
+        let incidence = sol.incidence();
+        let mut receipt_cells: Vec<usize> = scope
+            .bands
+            .iter()
+            .flat_map(|b| incidence.halves[*b].1.iter().copied())
+            .chain(scope.passive.iter().map(|k| incidence.passive[*k].1))
+            .chain(scope.segments.iter().map(|k| incidence.segments[*k].0))
+            .collect();
+        receipt_cells.sort_unstable();
+        receipt_cells.dedup();
+        let mut rows: Vec<usize> = scope
+            .bands
+            .iter()
+            .flat_map(|b| (0..3).flat_map(move |k| [sol.energy(*b, k), sol.surface(*b, k)]))
+            .chain(scope.helium.iter().map(|h| sol.helium(*h)))
+            .chain(scope.stores.iter().map(|p| sol.passive(*p)))
+            .chain(scope.segments.iter().map(|g| sol.metal(*g)))
+            .map(|i| o.solids + i)
+            .collect();
+        rows.sort_unstable();
+        (receipt_cells, rows)
     }
 }
 
