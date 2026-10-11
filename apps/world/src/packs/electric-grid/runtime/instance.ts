@@ -186,7 +186,7 @@ export interface GridExternalSystemState {
  */
 export type GridHvdcLinkOperatingState = 'deblocked' | 'blocked' | 'tripped'
 
-/** command: trip-hvdc; ac-voltage-loss: a converter terminal's AC bus was de-energised. */
+/** command: trip-hvdc; ac-voltage-loss: a converter terminal's AC bus was de-energised (an unsolved AC load flow is no loss of voltage). */
 export type GridHvdcTripCause = 'command' | 'ac-voltage-loss'
 
 export interface GridHvdcTrip {

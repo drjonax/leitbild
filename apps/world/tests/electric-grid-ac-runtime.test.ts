@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import type { ActorId, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import { gridCloseBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
+import { gridBlockHvdcCommandKind, gridDeblockHvdcCommandKind, gridSetHvdcSetpointCommandKind } from '../src/packs/electric-grid/commands/hvdc.ts'
 import { gridShedLoadCommandKind } from '../src/packs/electric-grid/commands/load.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { nordicFrequencyAutomationRef, norwayGridModelRef, norwaySummerLowOperatingPointRef, norwayWinterPeakOperatingPointRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import { gridElectricalPortsAt } from '../src/packs/electric-grid/electrical-ports.ts'
+import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
 import type { CompiledGridDefinition, GridBusDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { drainGridSignals } from '../src/packs/electric-grid/runtime/grid-signals.ts'
 import { gridAcState } from '../src/packs/electric-grid/runtime/ac-load-flow.ts'
@@ -202,6 +204,55 @@ describe('Grid AC load flow that does not converge', () => {
     expect(grid.busStates.get('bus:l')!.voltagePu!).toBeLessThan(1)
     expect(grid.alarms.records.get(alarm.id)!.active).toBe(false)
     expect(grid.projection.notConvergedIslandCount).toBe(0)
+  })
+})
+
+describe('HVDC converters on an island whose AC load flow does not converge', () => {
+  // The weak-link island with an HVDC link from its load bus to Germany: the island stays
+  // energised while its AC voltage is unsolved, so the converters keep their set-points.
+  const provenance = { sources: ['test:hand-built'], method: 'curated' as const, confidence: 'high' as const, note: 'Unsolved AC island with an HVDC link.' }
+  const model = {
+    ...weakLinkModel,
+    id: 'test-weak-link-hvdc',
+    buses: [...weakLinkModel.buses, weakBus('bus:boundary-DE', 11, 'boundary')],
+    externalSystems: [...weakLinkModel.externalSystems, { id: 'external:DE', label: 'Germany', area: 'DE' as const, synchronous: false, boundaryBusIds: ['bus:boundary-DE'], provenance }],
+    hvdcLinks: [{ id: 'hvdc:weak-de', label: 'Weak–Germany', fromBusId: 'bus:l', toBusId: 'bus:boundary-DE', ratingMw: 200, lossPercent: 2, rampMwPerMinute: 600, osmWayIds: [], provenance }],
+  }
+  const command = (grid: GridRuntimeInstance, kind: string, payload: Readonly<Record<string, unknown>>, seconds: number) => applyGridCommand(grid, {
+    id: `command:${kind}-${seconds}` as CommandId, simulationRunId: 'run:ac-hvdc' as SimulationRunId, actorId: 'actor:ac-hvdc-test' as ActorId,
+    kind, targetObjectIds: [grid.definition.gridId as ObjectId], payload, issuedAt: iso(seconds),
+  })
+
+  test('keep their set-points and raise no HVDC event; only the AC non-convergence alarm marks the island', () => {
+    const grid = createGridRuntimeInstance({ definition: gridDefinitionForModel(model), at: iso(0) })
+    advanceGrid(grid, 0, iso(0))
+    expect(command(grid, gridSetHvdcSetpointCommandKind, { assetId: 'hvdc:weak-de', setpointMw: -60 }, 0).ok).toBe(true)
+    const signals = [...drainGridSignals(grid)]
+    for (let second = 2; second <= 30; second += 2) {
+      advanceGrid(grid, 2, iso(second))
+      signals.push(...drainGridSignals(grid))
+      const island = grid.islandPlan!.islands.find(candidate => candidate.energized)!
+      expect(grid.acOutcomeByIsland.get(island.id)!.converged).toBe(false)
+      expect(grid.busStates.get('bus:l')).toMatchObject({ energized: true, voltagePu: null, voltageModel: 'not-converged' })
+    }
+    // Ramped to its set-point at 600 MW/min, still deblocked: a numerical non-convergence is no loss of AC voltage.
+    expect(grid.hvdcLinks.get('hvdc:weak-de')).toMatchObject({ state: 'deblocked', setpointMw: -60, transferMw: -60, trip: null })
+    expect(signals.filter(signal => signal.type.startsWith('electric-grid.hvdc.') || signal.type === 'electric-grid.protection.tripped')).toEqual([])
+    const active = [...grid.alarms.records.values()].filter(record => record.active)
+    expect(active.some(record => record.condition === 'ac-non-convergence')).toBe(true)
+    expect(active.filter(record => record.scope === 'hvdc')).toEqual([])
+    // Operators act on the converters as on any energised island: block, deblock and a new set-point apply.
+    expect(command(grid, gridBlockHvdcCommandKind, { assetId: 'hvdc:weak-de' }, 30).ok).toBe(true)
+    advanceGrid(grid, 0, iso(30))
+    expect(command(grid, gridDeblockHvdcCommandKind, { assetId: 'hvdc:weak-de' }, 30).ok).toBe(true)
+    expect(command(grid, gridSetHvdcSetpointCommandKind, { assetId: 'hvdc:weak-de', setpointMw: -40 }, 30).ok).toBe(true)
+    advanceGrid(grid, 10, iso(40))
+    expect(grid.projection.notConvergedIslandCount).toBe(1)
+    expect(grid.hvdcLinks.get('hvdc:weak-de')).toMatchObject({ state: 'deblocked', transferMw: -40, trip: null })
+    // The HVDC import still enters the DC balance, which closes exactly.
+    expect(largestIslandInjectionSumMw(grid)).toBeLessThan(1e-6)
+    const listed = answerElectricGridQuery({ request: { capabilityId: 'world.electric-grid.islands.list', input: { gridId: grid.definition.gridId } }, grids: new Map([[grid.definition.gridId, grid]]) }) as { islands: ReadonlyArray<{ hvdcImportMw: number; flowModel: string | null }> }
+    expect(listed.islands[0]).toMatchObject({ hvdcImportMw: 40 * 0.98, flowModel: 'dc' })
   })
 })
 

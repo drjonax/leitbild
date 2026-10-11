@@ -18,7 +18,8 @@ interface ElectricalPortStateBase {
  * stand-in for a guessed, nominal or DC value, and it is only valid while energised (a dead port
  * reports 0). A system reading a network port with voltage null treats it as lost offsite power,
  * exactly like a dead port: it takes no supply and exchanges no power there until a solved voltage
- * returns.
+ * returns. The conservative mapping is the reader's: the network side treats an unsolved voltage
+ * as a numerical state, not a physical event, and trips nothing of its own because of it.
  */
 export interface EnergizedElectricalPortState extends ElectricalPortStateBase {
   readonly energized: true

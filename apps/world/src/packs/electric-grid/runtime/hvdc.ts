@@ -61,7 +61,11 @@ const islandAtBus = (grid: GridRuntimeInstance, busId: string): GridIsland => {
   return islands.islands[islands.plan.islandIndexOfBus[network.busIndexById.get(busId)!]!]!
 }
 
-/** A converter terminal has AC voltage: its bus is energised, or it is the boundary of an asynchronous system. */
+/**
+ * A converter terminal has AC voltage: its bus is energised, or it is an HVDC terminal of an
+ * asynchronous system. Energisation is the physical test: an energised island whose AC load flow
+ * did not converge has AC voltage that the solution failed to compute, not a loss of it.
+ */
 const terminalEnergizedAt = (grid: GridRuntimeInstance, bus: number): boolean => {
   if (gridTablesFor(grid.definition).asynchronousBoundaryBus[bus] === 1) return true
   const islands = grid.islandPlan
@@ -150,7 +154,11 @@ export const tripHvdcLink = (grid: GridRuntimeInstance, link: GridHvdcLinkDefini
 
 /**
  * Ramps each deblocked link's transfer towards its set-point at its ramp limit over `seconds`. A
- * converter whose AC terminal has lost voltage trips first: its transfer drops to 0.
+ * converter whose AC terminal has lost voltage (its island de-energised) trips first: its transfer
+ * drops to 0. On an energised island whose AC voltage is unsolved the converters keep following
+ * their set-points: the non-convergence is numerical, so it trips, blocks or ramps nothing and
+ * raises only the island's AC non-convergence alarm. A Plant reads the same unsolved port
+ * conservatively as lost offsite power (electrical-ports.ts); that is the Plant's mapping.
  */
 export const advanceHvdcLinks = (grid: GridRuntimeInstance, seconds: number): void => {
   const links = grid.definition.index.hvdcLinks
