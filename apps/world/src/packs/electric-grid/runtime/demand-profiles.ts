@@ -1,4 +1,5 @@
-import type { GridDemandDayType } from '../grid-model.ts'
+import type { GridDemandDayType, GridDemandProfileDay } from '../grid-model.ts'
+import { isNorwegianPublicHoliday } from './norwegian-holidays.ts'
 
 const hourMs = 3_600_000
 const dayMs = 86_400_000
@@ -38,21 +39,34 @@ const weekendDay = (localDay: number): boolean => {
   return weekday === 0 || weekday === 6
 }
 
+/** The day type of a local date: a Norwegian public holiday, else a weekend day or a weekday. */
+const dayTypeOfLocalDay = (localDay: number): GridDemandDayType => isNorwegianPublicHoliday(localDay) ? 'holiday' : weekendDay(localDay) ? 'weekend' : 'weekday'
+
 /** The day type of the local date of a local wall-clock time. */
-export const localDayType = (localMs: number): GridDemandDayType => weekendDay(Math.floor(localMs / dayMs)) ? 'weekend' : 'weekday'
+export const localDayType = (localMs: number): GridDemandDayType => dayTypeOfLocalDay(Math.floor(localMs / dayMs))
+
+/**
+ * The profile day a day type follows. Elhub publishes weekday and weekend series only; a public
+ * holiday follows the weekend series, the Saturday–Sunday mean, though its demand is closest to a
+ * Sunday's, which lay 0.5–0.9 % below that mean in Elhub's two profile weeks (daily energy).
+ */
+export const profileDayOf = (dayType: GridDemandDayType): GridDemandProfileDay => dayType === 'weekday' ? 'weekday' : 'weekend'
+
+/** Offset of a local date's profile day in a profile's 48 hour values. */
+const profileDayOffset = (localDay: number): number => dayTypeOfLocalDay(localDay) === 'weekday' ? 0 : 24
 
 /**
  * Writes the factor of each of `count` profiles at local wall-clock time `localMs` into `factors`:
- * the hour values of the local date's day type, linear between h:00 and h+1:00, and from 23:00
- * towards 00:00 of the next date's day type. Exactly the hour's value on the hour.
+ * the hour values of the local date's profile day, linear between h:00 and h+1:00, and from 23:00
+ * towards 00:00 of the next date's profile day. Exactly the hour's value on the hour.
  */
 export const evaluateDemandProfiles = (hours: Float64Array, count: number, localMs: number, factors: Float64Array): void => {
   const localDay = Math.floor(localMs / dayMs)
   const position = (localMs - localDay * dayMs) / hourMs
   const hour = Math.floor(position)
   const fraction = position - hour
-  const offset = (weekendDay(localDay) ? 24 : 0) + hour
-  const nextOffset = hour === 23 ? (weekendDay(localDay + 1) ? 24 : 0) : offset + 1
+  const offset = profileDayOffset(localDay) + hour
+  const nextOffset = hour === 23 ? profileDayOffset(localDay + 1) : offset + 1
   for (let profile = 0; profile < count; profile += 1) {
     const base = profile * demandProfileStride
     const value = hours[base + offset]!

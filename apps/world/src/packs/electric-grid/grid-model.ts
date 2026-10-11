@@ -192,7 +192,10 @@ export interface GridGeneratorDefinition {
 export type GridDemandSeason = 'winter' | 'summer'
 /** Elhub's municipality consumption groups (private = household + cabin, business = tertiary, industry = primary + secondary). */
 export type GridDemandGroup = 'private' | 'business' | 'industry'
-export type GridDemandDayType = 'weekday' | 'weekend'
+/** A local date's day type: Monday to Friday, Saturday and Sunday, or a Norwegian public holiday. */
+export type GridDemandDayType = 'weekday' | 'weekend' | 'holiday'
+/** The day of a demand profile a day type follows: a public holiday follows the weekend profile. */
+export type GridDemandProfileDay = 'weekday' | 'weekend'
 
 /** The measured series a demand profile follows: one price area and Elhub group in one season's week. */
 export interface GridDemandProfileSeries {
@@ -207,7 +210,7 @@ export interface GridDemandProfileSeries {
 
 /**
  * A load's daily demand profile: demand relative to its Operating Point demand at each Europe/Oslo
- * local clock hour h:00 (h = 0..23) of Monday to Friday and of Saturday and Sunday, linear between
+ * local clock hour h:00 (h = 0..23) of Monday to Friday and of Saturday, Sunday and public holidays, linear between
  * hours and into the next day's first hour.
  */
 export interface GridDemandProfileDefinition {

@@ -118,7 +118,7 @@ export const demandProfileDefinitionSchema = z.object({
   id: z.string(),
   label: z.string(),
   weekday: z.array(finite).length(24).readonly().describe('Demand relative to the Operating Point\'s at Europe/Oslo local 00:00 … 23:00 of Monday to Friday; linear between hours.'),
-  weekend: z.array(finite).length(24).readonly().describe('The same for Saturday and Sunday; from 23:00 demand moves towards 00:00 of the next date\'s day type.'),
+  weekend: z.array(finite).length(24).readonly().describe('The same for Saturday, Sunday and Norwegian public holidays; from 23:00 demand moves towards 00:00 of the next date\'s day type.'),
   series: demandProfileSeriesSchema.nullable().describe('The measured Elhub series the profile follows; null for a profile the Model declares outright.'),
   provenance: assetProvenanceSchema,
 }).strict()
@@ -126,7 +126,7 @@ export const demandProfileDefinitionSchema = z.object({
 export const demandSampleSchema = z.object({
   sampleAt: z.string().describe('The one-minute demand sample the loads\' demand was last set at (UTC).'),
   localTime: z.string().describe('Its Europe/Oslo local time, HH:MM.'),
-  dayType: z.enum(['weekday', 'weekend']).describe('Day type of its Europe/Oslo local date: Monday to Friday, or Saturday and Sunday.'),
+  dayType: z.enum(['weekday', 'weekend', 'holiday']).describe('Day type of its Europe/Oslo local date: Monday to Friday, Saturday and Sunday, or a Norwegian public holiday. A holiday follows the weekend profile, Elhub\'s Saturday–Sunday mean; its demand is closest to a Sunday\'s, about 1 % below that mean.'),
 }).strict()
 
 export const storageDefinitionSchema = z.object({

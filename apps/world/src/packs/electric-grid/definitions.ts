@@ -20,7 +20,7 @@ import type {
   GridOperatingPointDefinition,
 } from './grid-model.ts'
 import { compileGridModelV2 } from './models/compile-v2.ts'
-import { localDayType, localHourOfDay, osloLocalMs } from './runtime/demand-profiles.ts'
+import { localDayType, localHourOfDay, osloLocalMs, profileDayOf } from './runtime/demand-profiles.ts'
 import { gridAutomationSchema, type GridAutomation } from './schemas/grid-automation.ts'
 import { validateGridLoadProfiles, type GridLoadProfiles } from './schemas/grid-load-profile.ts'
 import { composeGridModel, validateGridModelAddition } from './schemas/grid-model-addition.ts'
@@ -136,7 +136,7 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     }
     if (profile.series !== null) {
       const localMs = osloLocalMs(Date.parse(profile.series.referenceHour))
-      const value = profile[localDayType(localMs)][localHourOfDay(localMs)]
+      const value = profile[profileDayOf(localDayType(localMs))][localHourOfDay(localMs)]
       if (value !== 1) failModel(model, `${profile.id} is ${value} at its reference hour ${profile.series.referenceHour}, not 1`)
     }
   }

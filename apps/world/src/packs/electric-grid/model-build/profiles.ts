@@ -1,5 +1,7 @@
 import { municipalityLoadGroups, priceAreas, type PriceArea } from '../schemas/grid-ids.ts'
 import type { GridLoadProfiles } from '../schemas/grid-load-profile.ts'
+import { osloLocalMs } from '../runtime/demand-profiles.ts'
+import { isNorwegianPublicHoliday } from '../runtime/norwegian-holidays.ts'
 import { roundTo } from './geo.ts'
 import type { WeekProfileSnapshot } from './inputs.ts'
 
@@ -95,6 +97,9 @@ export const buildLoadProfiles = (config: {
     return value
   }
   const season = (week: WeekProfileSnapshot) => {
+    // A weekday or weekend mean taken over a public holiday would mix in a third day type.
+    const holiday = week.hoursUtc.find(utc => isNorwegianPublicHoliday(Math.floor(osloLocalMs(Date.parse(utc)) / 86_400_000)))
+    if (holiday !== undefined) throw new Error(`Elhub week ${week.week.startDate}: its hour ${holiday} falls on a Norwegian public holiday`)
     const series = composedSeries(week)
     const dayType = (weekend: boolean) => recordOf(priceAreas, area => recordOf(municipalityLoadGroups, group =>
       [...dayProfile(week, series[area][group], weekend, referenceOf(area, group))]))

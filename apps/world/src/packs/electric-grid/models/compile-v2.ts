@@ -11,7 +11,7 @@ import type {
   GridOperatingPointDefinition,
   GridShuntDefinition,
 } from '../grid-model.ts'
-import { localDayType, localHourOfDay, osloLocalMs } from '../runtime/demand-profiles.ts'
+import { localDayType, localHourOfDay, osloLocalMs, profileDayOf } from '../runtime/demand-profiles.ts'
 import { loadDemandGroups, municipalityLoadGroups, priceAreas } from '../schemas/grid-ids.ts'
 import type { GridLoadProfiles } from '../schemas/grid-load-profile.ts'
 import type { GridLoadV2, GridModelV2, GridProvenance } from '../schemas/grid-model.ts'
@@ -77,7 +77,7 @@ const demandProfilesFor = (model: GridModelV2, operatingPoint: GridOperatingPoin
   const week = profiles.seasons[season]
   const localMs = osloLocalMs(Date.parse(referenceHour))
   const hour = localHourOfDay(localMs)
-  const dayType = localDayType(localMs)
+  const dayType = profileDayOf(localDayType(localMs))
   const fail = (message: string): never => { throw new Error(`Operating Point ${operatingPoint.id}: ${message}`) }
   if (!Number.isInteger(hour)) fail(`its reference hour ${referenceHour} is not a whole Europe/Oslo hour`)
   const date = localDate(localMs)

@@ -188,6 +188,53 @@ describe('Electric Grid demand profiles', () => {
     expect(Math.abs(demandAt(grid, '2026-01-16T22:30:00.000Z') - (friday23 + saturday0) / 2)).toBeLessThan(1e-6 * friday23)
   })
 
+  test('takes the weekend profile on Norwegian public holidays and names their day type holiday', () => {
+    const grid = createGridRuntimeInstance({ definition: winter, at: '2026-01-12T07:00:00.000Z' })
+    const reference = { dayType: 'weekday', hour: 8 } as const
+    // New Year's Day, Thursday 2026-01-01 11:00 CET: the hour of Sunday 2026-01-04, not of Friday 2026-01-02.
+    const newYear = demandAt(grid, '2026-01-01T10:00:00.000Z')
+    expect(grid.demandSample.dayType).toBe('holiday')
+    expect(Math.abs(newYear - elhubTotalMw({ point: winterPoint, dayType: 'weekend', hour: 11, reference }))).toBeLessThan(1e-6 * newYear)
+    expect(demandAt(grid, '2026-01-04T10:00:00.000Z')).toBe(newYear)
+    expect(grid.demandSample.dayType).toBe('weekend')
+    expect(newYear).toBeLessThan(0.9 * demandAt(grid, '2026-01-02T10:00:00.000Z'))
+    expect(grid.demandSample.dayType).toBe('weekday')
+    // New Year's Eve 23:30 lies halfway between Wednesday's 23:00 and the holiday's 00:00.
+    const wednesday23 = elhubTotalMw({ point: winterPoint, dayType: 'weekday', hour: 23, reference })
+    const holiday0 = elhubTotalMw({ point: winterPoint, dayType: 'weekend', hour: 0, reference })
+    expect(Math.abs(demandAt(grid, '2025-12-31T22:30:00.000Z') - (wednesday23 + holiday0) / 2)).toBeLessThan(1e-6 * wednesday23)
+    // The moveable holidays of 2026 on weekdays: Maundy Thursday, Good Friday, Easter Monday, Ascension Day, Whit Monday.
+    for (const date of ['2026-04-02', '2026-04-03', '2026-04-06', '2026-05-14', '2026-05-25']) {
+      demandAt(grid, `${date}T10:00:00.000Z`)
+      expect({ date, dayType: grid.demandSample.dayType }).toEqual({ date, dayType: 'holiday' })
+    }
+    // A demand sample on a holiday allocates no Map or Set.
+    const globals = globalThis as { Map: MapConstructor; Set: SetConstructor }
+    const { Map: OriginalMap, Set: OriginalSet } = globals
+    let constructions = 0
+    globals.Map = new Proxy(OriginalMap, { construct: (target, args, newTarget) => { constructions += 1; return Reflect.construct(target, args, newTarget) } })
+    globals.Set = new Proxy(OriginalSet, { construct: (target, args, newTarget) => { constructions += 1; return Reflect.construct(target, args, newTarget) } })
+    try {
+      for (let minute = 0; minute < 60; minute += 1) applyGridDemand(grid, Date.parse('2025-12-31T22:30:00.000Z') + minute * 60_000)
+    } finally {
+      globals.Map = OriginalMap
+      globals.Set = OriginalSet
+    }
+    expect(constructions).toBe(0)
+    expect(grid.demandSample.dayType).toBe('holiday')
+    // asset.get and grid.summary name the day type.
+    const grids = new Map([[winter.gridId, grid]])
+    const load = winter.model.loads[0]!
+    const detail = gridAssetGetQuery.capability.output.parse(answerElectricGridQuery({ request: { capabilityId: gridAssetGetQuery.capability.id, input: { gridId: winter.gridId, assetId: load.id } }, grids })) as {
+      readonly asset: { readonly demandProfile: { readonly sample: { readonly localTime: string; readonly dayType: string } } }
+    }
+    expect(detail.asset.demandProfile.sample).toMatchObject({ localTime: '00:29', dayType: 'holiday' })
+    const summary = gridSummaryQuery.capability.output.parse(answerElectricGridQuery({ request: { capabilityId: gridSummaryQuery.capability.id, input: { gridId: winter.gridId } }, grids })) as {
+      readonly demandProfiles: { readonly sample: { readonly dayType: string } }
+    }
+    expect(summary.demandProfiles.sample.dayType).toBe('holiday')
+  })
+
   test('follows the Europe/Oslo clock across both daylight-saving changes', () => {
     const profile: GridDemandProfileDefinition = winter.model.demandProfiles[0]!
     const hours = Float64Array.from([...profile.weekday, ...profile.weekend])
