@@ -308,7 +308,7 @@ pub use integrated::{Assembly, Discrete, Integrated, Restart, Restarted, discret
 
 mod integrated {
     use super::Report;
-    use crate::ida::{Failure, Ida, System};
+    use crate::ida::{Failure, Ida, KluOrdering, System};
     use leitbild_operating_plant::{
         joined::{
             block::{Command, Transaction},
@@ -504,6 +504,12 @@ mod integrated {
     impl<P: Properties + WaterProperties> System for Integrated<P> {
         fn dimension(&self) -> usize {
             self.joined.dimension()
+        }
+        /// AMD, approved for every joined solve (decision 0013). On the
+        /// joined block pattern, stock KLU refactors in about half COLAMD's
+        /// time, with fewer factor entries (JAC's Z5 cost receipt).
+        fn klu_ordering(&self) -> KluOrdering {
+            KluOrdering::Amd
         }
         fn nonzeros(&self) -> usize {
             self.rows.len()
