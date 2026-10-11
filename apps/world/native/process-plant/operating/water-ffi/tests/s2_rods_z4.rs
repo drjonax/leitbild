@@ -168,7 +168,9 @@ fn fluid(d: &Data) -> Fluid<'_> {
 /// Cluster 0's forces at a held or moving zero-time state with its steady
 /// passage current; all 52 see the same plena in this field.
 fn balance(block: &RodBlock, f: &Fluid<'_>, travel: f64, speed: f64) -> Value {
-    let m = block.passage_current(0, f, travel, speed).unwrap();
+    let m = block
+        .passage_current(0, f, travel, speed)
+        .unwrap_or_else(|e| panic!("travel {travel} speed {speed}: {e:?}"));
     let n = Rods::<()>::clusters(block);
     let scales = &Rods::<()>::layout(block).scales;
     let mut y = vec![0.; 3 * n];
@@ -178,7 +180,12 @@ fn balance(block: &RodBlock, f: &Fluid<'_>, travel: f64, speed: f64) -> Value {
     let yp = vec![0.; 3 * n];
     let x = Coordinates::new(&y, &yp, None, 0., scales).unwrap();
     let fo = block.forces(0, &x, f).unwrap();
-    json!({"travel_m":travel,"speed_m_s":speed,"tip_m":-2.25 + travel,"guideCurrent_kg_s_per_cluster":m,"chi":fo.chi.value,
+    let displaced = f.cells[block.plena()[0]].phase[0].unwrap().density.value
+        * 24.
+        * std::f64::consts::PI
+        * 0.00475_f64.powi(2)
+        * -speed;
+    json!({"travel_m":travel,"speed_m_s":speed,"tip_m":-2.25 + travel,"guideCurrent_kg_s_per_cluster":m,"annulusCurrent_kg_s":fo.annulus_current.value,"displacedBoreWater_kg_s":displaced,"chi":fo.chi.value,
         "pTip_Pa":fo.tip_pressure.value,"pBodyTop_Pa":fo.top_pressure.value,"endFaceForce_N":fo.end_face.value,
         "annulusWallForce_N":fo.wall.value,"spiderBuoyancy_N":fo.spider_buoyancy.value,"spiderDrag_N":fo.spider_drag.value,
         "bodySpiderWeight_N":block.moving_mass() * G,"netUpward_N":fo.net.value,"bodySpiderNetDown_N":-fo.net.value,
@@ -192,7 +199,7 @@ fn terminal(block: &RodBlock, f: &Fluid<'_>, travel: f64) -> Option<f64> {
             .as_f64()
             .unwrap()
     };
-    let (mut lo, mut hi) = (-20., 0.);
+    let (mut lo, mut hi) = (-3., 0.);
     if net(lo) < 0. {
         return None;
     }
@@ -324,23 +331,17 @@ fn z4_zero_time_rod_force_balance() {
     let slope = (net(&minus30[0]) - net(&rows[0])) / 30.;
     let stall_kpa = -release / slope;
 
-    // 3. Zero-time balances at falling speeds with the passage re-solved,
-    // for both spider-drag choices: the stakes of the open selection.
-    let speeds = [-0.5, -1., -1.5, -2.];
+    // 3. Zero-time balances at falling speeds under R1 (envelope-disk drag)
+    // and R2 (displaced bore water through the annulus), each passage
+    // re-solved at that speed, and the dashpot alone without spider drag.
+    let speeds = [-0.1, -0.2, -0.3, -0.4, -0.5, -0.75, -1., -1.5, -2.];
     let moving: Vec<Value> = travels
         .iter()
         .map(|t| {
             json!({"travel_m":t,
-                "envelopeDisk":speeds.iter().map(|v| balance(&disk, &f, *t, *v)).collect::<Vec<_>>(),
-                "omitted":speeds.iter().map(|v| balance(&omitted, &f, *t, *v)).collect::<Vec<_>>(),
-                "terminalSpeed_m_s":{"envelopeDisk":terminal(&disk, &f, *t),"omitted":terminal(&omitted, &f, *t)}})
-        })
-        .collect();
-    let displacement: Vec<Value> = speeds
-        .iter()
-        .map(|v| {
-            let area = 24. * std::f64::consts::PI * 0.00475_f64.powi(2);
-            json!({"speed_m_s":v,"displacedWater_kg_s_per_cluster":area * v.abs() * base.lower.density_kg_m3,"passageCurrent_kg_s_at_release":balance(&disk, &f, 2.8, *v)["guideCurrent_kg_s_per_cluster"]})
+                "r1_envelopeDisk":speeds.iter().map(|v| balance(&disk, &f, *t, *v)).collect::<Vec<_>>(),
+                "spiderDragOmitted":speeds.iter().map(|v| balance(&omitted, &f, *t, *v)).collect::<Vec<_>>(),
+                "netForceVanishes_m_s":{"r1_envelopeDisk":terminal(&disk, &f, *t),"spiderDragOmitted":terminal(&omitted, &f, *t)}})
         })
         .collect();
 
@@ -468,7 +469,8 @@ fn z4_zero_time_rod_force_balance() {
 
     let app = env!("CARGO_MANIFEST_DIR");
     let receipt = json!({
-        "kind":"s2-z4-zero-time-rod-force-balance-operating-block",
+        "kind":"s2-z4-zero-time-rod-force-balance-operating-block-r1-r2",
+        "selections":"R1: envelope-disk spider drag, C from the page's cold broad-drag record; R2: each bore's displaced water leaves through its annulus beside the passage current (lead, 11 October, build-readiness rod block choices)",
         "status":"NOT-EVIDENCE zero-time balance: no S2 state (Z1) exists, no trajectory is run; the field is the retained physical-fuel at-power reference of the first Z4 disposition",
         "date":"2026-10-11",
         "provenance":{"app_commit":git(app,&["rev-parse","HEAD"]),"app_dirty":!git(app,&["status","--porcelain"]).is_empty(),
@@ -486,8 +488,7 @@ fn z4_zero_time_rod_force_balance() {
         "margins":{"release_2p8m_N":release,"minimum_over_2p8_1p25_0p1_N":minimum,"selection":"H7 bodies only"},
         "reconciliation_with_first_z4":reconcile,
         "coreLossShift":{"upperMinus30kPa":minus30,"upperPlus10kPa":plus10,"releaseSlope_N_per_kPa_extraCoreLoss":slope,"stallAt_kPa_extraCoreLoss":stall_kpa},
-        "moving_zero_time":{"note":"zero-time algebraic balances at the listed downward speeds with each passage re-solved at that speed; NOT a drop trajectory or an insertion time","rows":moving},
-        "displacementCurrent":{"note":"F1 (a) carries no displacement current: the displaced bore water leaves through the network's core route; the annulus wall law sees the passage current only","rows":displacement},
+        "moving_zero_time":{"note":"zero-time algebraic balances at the listed downward speeds under R1 and R2, each passage re-solved at that speed (the clear current reverses once the displaced bore water exceeds what the annulus can pass upward); NOT a drop trajectory or an insertion time","rows":moving},
         "hydrostaticPreparation":gap,
         "armature_G3":armature,
         "cost":cost,

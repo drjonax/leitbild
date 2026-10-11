@@ -90,6 +90,29 @@ pub struct WallWater {
     pub mass_flux: Scalar,
 }
 
+/// Elements of one local evaluation, by index: core halves, passive
+/// contacts, plenum contacts and SG segments.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SolidScope {
+    pub bands: Vec<usize>,
+    pub passive: Vec<usize>,
+    pub plenum: Vec<usize>,
+    pub segments: Vec<usize>,
+}
+
+/// A scope closed over incidence ([`Solids::close`]), with the stores and
+/// SGs whose rows and heats it completes; every list is ascending.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Closed {
+    pub bands: Vec<usize>,
+    pub passive: Vec<usize>,
+    pub plenum: Vec<usize>,
+    pub segments: Vec<usize>,
+    pub helium: Vec<usize>,
+    pub stores: Vec<usize>,
+    pub generators: Vec<usize>,
+}
+
 /// Structural incidence of the solids, for the joined sparse pattern.
 #[derive(Clone, Debug, Default)]
 pub struct Incidence {
@@ -182,6 +205,8 @@ pub struct Solids {
     helium_rate: Vec<Scalar>,
     passive_rate: Vec<Scalar>,
     passive_ids: Vec<String>,
+    /// Every element: the full evaluation's scope.
+    all: Closed,
 }
 
 impl Solids {
@@ -422,7 +447,17 @@ impl Solids {
         }
         layout.validate("joined solids")?;
         let wall = vec![None; wall_cells.len()];
+        let all = Closed {
+            bands: (0..bands.len()).collect(),
+            passive: (0..passive.len()).collect(),
+            plenum: (0..plenum.len()).collect(),
+            segments: (0..segments.len()).collect(),
+            helium: (0..helium_nr.len()).collect(),
+            stores: (0..passive_mass.len()).collect(),
+            generators: (0..t.secondaries.len()).collect(),
+        };
         Ok(Self {
+            all,
             layout,
             prepared,
             helium_rate: vec![s(0.); helium_nr.len()],
@@ -487,6 +522,17 @@ impl Solids {
             .position(|p| p == id)
             .map(|p| self.passive(p))
     }
+    /// Every core half whose clad wets one of `cells`.
+    pub fn halves_wetting(&self, cells: &[usize]) -> Vec<usize> {
+        (0..self.bands.len())
+            .filter(|b| {
+                self.bands[*b]
+                    .contacts
+                    .iter()
+                    .any(|c| cells.contains(&c.water))
+            })
+            .collect()
+    }
     pub fn incidence(&self) -> Incidence {
         Incidence {
             halves: self
@@ -546,30 +592,57 @@ impl Solids {
         properties: &P,
         fluid: &Fluid<'_>,
     ) -> Result<(), Failure> {
-        for (k, cell) in self.wall_cells.iter().enumerate() {
-            let Some((q, d)) = fluid.points[*cell][0] else {
-                return Err(trial(format!("wall cell {cell} has no liquid")));
-            };
-            if fluid.points[*cell][1].is_some() {
-                return Err(trial(format!(
-                    "wall cell {cell} holds vapor: primary phase presence needs its transaction (S3)"
-                )));
-            }
-            let pressure = fluid.cells[*cell].pressure;
-            let mut flow = s(0.);
-            for (face, (from, to)) in fluid.endpoints.iter().enumerate() {
-                if from == cell || to == cell {
-                    flow = flow + s(0.5) * fluid.liquid_mass_flow(face);
-                }
-            }
-            self.wall[k] = Some(WallWater {
-                pressure,
-                temperature: Scalar::new(q.temperature_k, d.temperature_k),
-                bulk: point(q, d),
-                saturation: properties.saturation(pressure).map_err(trial)?,
-                mass_flux: flow / s(self.flow_area[*cell]),
-            });
+        for k in 0..self.wall_cells.len() {
+            self.wall_water_at_slot(properties, fluid, k)?;
         }
+        Ok(())
+    }
+
+    /// [`Solids::wall_water`] for the listed network cells only (those that
+    /// are wall cells); every other wall cell keeps its last water.
+    pub fn wall_water_local<P: WaterProperties>(
+        &mut self,
+        properties: &P,
+        fluid: &Fluid<'_>,
+        cells: &[usize],
+    ) -> Result<(), Failure> {
+        for cell in cells {
+            if let Some(k) = self.wall_slot.get(*cell).copied().flatten() {
+                self.wall_water_at_slot(properties, fluid, k)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn wall_water_at_slot<P: WaterProperties>(
+        &mut self,
+        properties: &P,
+        fluid: &Fluid<'_>,
+        k: usize,
+    ) -> Result<(), Failure> {
+        let cell = self.wall_cells[k];
+        let Some((q, d)) = fluid.points[cell][0] else {
+            return Err(trial(format!("wall cell {cell} has no liquid")));
+        };
+        if fluid.points[cell][1].is_some() {
+            return Err(trial(format!(
+                "wall cell {cell} holds vapor: primary phase presence needs its transaction (S3)"
+            )));
+        }
+        let pressure = fluid.cells[cell].pressure;
+        let mut flow = s(0.);
+        for (face, (from, to)) in fluid.endpoints.iter().enumerate() {
+            if *from == cell || *to == cell {
+                flow = flow + s(0.5) * fluid.liquid_mass_flow(face);
+            }
+        }
+        self.wall[k] = Some(WallWater {
+            pressure,
+            temperature: Scalar::new(q.temperature_k, d.temperature_k),
+            bulk: point(q, d),
+            saturation: properties.saturation(pressure).map_err(trial)?,
+            mass_flux: flow / s(self.flow_area[cell]),
+        });
         Ok(())
     }
 
@@ -652,7 +725,8 @@ impl Solids {
     }
 
     /// Every own row (physical units), the heats into the network's water
-    /// (its liquid enthalpy port) and into each SG secondary.
+    /// (its liquid enthalpy port) and into each SG secondary: the scoped
+    /// evaluation over every element, so there is one arithmetic path.
     #[allow(clippy::too_many_arguments)] // One block's stage: its coordinates, temperatures and ports.
     pub fn rows<P: WaterProperties>(
         &mut self,
@@ -666,9 +740,172 @@ impl Solids {
         rows: &mut [Scalar],
         heat: &mut Heat,
     ) -> Result<(), Failure> {
+        if rows.len() != self.layout.len() {
+            return Err(fatal("stage length"));
+        }
+        let all = std::mem::take(&mut self.all);
+        let result = self.evaluate_scope(
+            properties,
+            x,
+            temperatures,
+            fuel_heat_w,
+            fluid,
+            secondary,
+            &all,
+            receipts,
+            &mut |i, r| rows[i] = r,
+            heat,
+        );
+        self.all = all;
+        result?;
+        if rows
+            .iter()
+            .chain(&heat.secondary_w)
+            .any(|v| !(v.value.is_finite() && v.direction.is_finite()))
+        {
+            return Err(trial("nonfinite solid row or heat"));
+        }
+        Ok(())
+    }
+
+    /// The closure of `scope` over incidence, so that every row it writes is
+    /// complete: a helium store with both halves of its assembly and its
+    /// plenum contacts, a passive store with every contact and its plenum
+    /// contact, an SG's secondary heat with all its segments.
+    pub fn close(&self, scope: &SolidScope) -> Closed {
+        use std::collections::BTreeSet;
+        let mut bands: BTreeSet<usize> = scope.bands.iter().copied().collect();
+        let mut passive: BTreeSet<usize> = scope.passive.iter().copied().collect();
+        let mut plenum: BTreeSet<usize> = scope.plenum.iter().copied().collect();
+        let mut segments: BTreeSet<usize> = scope.segments.iter().copied().collect();
+        let mut helium = BTreeSet::new();
+        let mut stores = BTreeSet::new();
+        let mut generators = BTreeSet::new();
+        loop {
+            let before = (bands.len(), passive.len(), plenum.len(), segments.len());
+            helium.extend(bands.iter().map(|b| self.bands[*b].helium));
+            for c in &plenum {
+                helium.insert(self.plenum[*c].helium);
+                stores.insert(self.plenum[*c].solid);
+            }
+            stores.extend(passive.iter().map(|c| self.passive[*c].solid));
+            for (b, band) in self.bands.iter().enumerate() {
+                if helium.contains(&band.helium) {
+                    bands.insert(b);
+                }
+            }
+            for (c, contact) in self.plenum.iter().enumerate() {
+                if helium.contains(&contact.helium) || stores.contains(&contact.solid) {
+                    plenum.insert(c);
+                }
+            }
+            for (c, contact) in self.passive.iter().enumerate() {
+                if stores.contains(&contact.solid) {
+                    passive.insert(c);
+                }
+            }
+            generators.extend(segments.iter().map(|g| self.segments[*g].secondary));
+            for (g, segment) in self.segments.iter().enumerate() {
+                if generators.contains(&segment.secondary) {
+                    segments.insert(g);
+                }
+            }
+            if before == (bands.len(), passive.len(), plenum.len(), segments.len()) {
+                break;
+            }
+        }
+        Closed {
+            bands: bands.into_iter().collect(),
+            passive: passive.into_iter().collect(),
+            plenum: plenum.into_iter().collect(),
+            segments: segments.into_iter().collect(),
+            helium: helium.into_iter().collect(),
+            stores: stores.into_iter().collect(),
+            generators: generators.into_iter().collect(),
+        }
+    }
+
+    /// The rows of a closed scope only, in physical units with own indices,
+    /// and its terms' receipts. Every written row is complete, so its value
+    /// equals [`Solids::rows`] bitwise; receipts hold only the scope's terms.
+    #[allow(clippy::too_many_arguments)] // One block's stage over a scope.
+    pub fn rows_local<P: WaterProperties>(
+        &mut self,
+        properties: &P,
+        x: Coordinates<'_>,
+        temperatures: &Temperatures,
+        fuel_heat_w: &[Scalar],
+        fluid: &Fluid<'_>,
+        secondary: &[SecondaryView],
+        scope: &Closed,
+        receipts: &mut Receipts<'_>,
+        out: &mut Vec<(usize, Scalar)>,
+        heat: &mut Heat,
+    ) -> Result<(), Failure> {
+        out.clear();
+        self.evaluate_scope(
+            properties,
+            x,
+            temperatures,
+            fuel_heat_w,
+            fluid,
+            secondary,
+            scope,
+            receipts,
+            &mut |i, r| out.push((i, r)),
+            heat,
+        )
+    }
+
+    /// Recompute the temperatures of the listed own coordinates only (their
+    /// energies), leaving every other entry of `out` as it was.
+    pub fn temperatures_local(
+        &self,
+        x: Coordinates<'_>,
+        stores: &[usize],
+        out: &mut Temperatures,
+    ) -> Result<(), Failure> {
+        let (h0, p0, m0) = (self.helium0(), self.passive0(), self.metal0());
+        for &i in stores {
+            if i < 3 * self.bands.len() {
+                let (a, k) = (i / 3, i % 3);
+                let b = &self.bands[a];
+                out.fuel[a][k] = if k < 2 {
+                    thermal::fuel_temperature(x.value(i) / s(b.fuel_mass[k])).map_err(trial)?
+                } else {
+                    thermal::clad_temperature(x.value(i) / s(b.clad_mass)).map_err(trial)?
+                };
+            } else if (h0..p0).contains(&i) {
+                out.helium[i - h0] = x.value(i) / s(1.5 * self.helium_nr[i - h0]);
+            } else if (p0..m0).contains(&i) {
+                out.passive[i - p0] =
+                    thermal::clad_temperature(x.value(i) / s(self.passive_mass[i - p0]))
+                        .map_err(trial)?;
+            } else if i >= m0 && i < self.layout.len() {
+                out.metal[i - m0] = x.value(i) / s(self.segments[i - m0].capacity) + s(273.15);
+            } else {
+                return Err(fatal(format!("coordinate {i} has no temperature")));
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)] // One block's stage over a scope.
+    fn evaluate_scope<P: WaterProperties>(
+        &mut self,
+        properties: &P,
+        x: Coordinates<'_>,
+        temperatures: &Temperatures,
+        fuel_heat_w: &[Scalar],
+        fluid: &Fluid<'_>,
+        secondary: &[SecondaryView],
+        scope: &Closed,
+        receipts: &mut Receipts<'_>,
+        write: &mut dyn FnMut(usize, Scalar),
+        heat: &mut Heat,
+    ) -> Result<(), Failure> {
         let a = self.bands.len();
         if x.len() != self.layout.len()
-            || rows.len() != self.layout.len()
             || fuel_heat_w.len() != a
             || secondary.len() != self.secondaries
         {
@@ -681,9 +918,14 @@ impl Solids {
         heat.clad_to_water_w = s(0.);
         heat.passive_to_water_w = s(0.);
         heat.stored_rate_w = s(0.);
-        self.helium_rate.fill(s(0.));
-        self.passive_rate.fill(s(0.));
-        for (i, b) in self.bands.iter().enumerate() {
+        for h in &scope.helium {
+            self.helium_rate[*h] = s(0.);
+        }
+        for p in &scope.stores {
+            self.passive_rate[*p] = s(0.);
+        }
+        for &i in &scope.bands {
+            let b = &self.bands[i];
             let [inner, outer, clad_mean] = temperatures.fuel[i];
             let surface = x.value(self.surface(i, 0));
             let clad_inner = x.value(self.surface(i, 1));
@@ -735,15 +977,16 @@ impl Solids {
             .map_err(trial)?;
             let rates = [q.fuel_inner, q.fuel_outer, q.clad];
             for (k, rate) in rates.into_iter().enumerate() {
-                rows[3 * i + k] = x.rate(3 * i + k) - rate;
+                write(3 * i + k, x.rate(3 * i + k) - rate);
                 heat.stored_rate_w = heat.stored_rate_w + rate;
             }
             for k in 0..3 {
-                rows[self.surface(i, k)] = q.surface_residuals[k];
+                write(self.surface(i, k), q.surface_residuals[k]);
             }
             self.helium_rate[b.helium] = self.helium_rate[b.helium] + q.helium;
         }
-        for c in &self.passive {
+        for &k in &scope.passive {
+            let c = self.passive[k];
             let water_t = fluid.points[c.water][0]
                 .map(|(q, d)| Scalar::new(q.temperature_k, d.temperature_k))
                 .ok_or_else(|| trial(format!("passive contact cell {} has no liquid", c.water)))?;
@@ -759,7 +1002,8 @@ impl Solids {
             heat.passive_to_water_w = heat.passive_to_water_w + q;
             receipts.heat(c.water, q)?;
         }
-        for c in &self.plenum {
+        for &k in &scope.plenum {
+            let c = self.plenum[k];
             let q = thermal::helium_to_plenum(
                 temperatures.helium[c.helium],
                 temperatures.passive[c.solid],
@@ -772,7 +1016,8 @@ impl Solids {
             self.passive_rate[c.solid] = self.passive_rate[c.solid] + q;
         }
         let m0 = self.metal0();
-        for (i, g) in self.segments.iter().enumerate() {
+        for &i in &scope.segments {
+            let g = self.segments[i];
             let water = self.wall_at(g.primary)?;
             let metal_t = temperatures.metal[i];
             let q = thermal::liquid_wall_current(
@@ -820,24 +1065,19 @@ impl Solids {
             heat.secondary_w[g.secondary] = heat.secondary_w[g.secondary] + out;
             let rate = primary_to_metal - out;
             heat.stored_rate_w = heat.stored_rate_w + rate;
-            rows[m0 + i] = x.rate(m0 + i) - rate;
+            write(m0 + i, x.rate(m0 + i) - rate);
         }
         let h0 = self.helium0();
-        for (i, rate) in self.helium_rate.iter().enumerate() {
-            rows[h0 + i] = x.rate(h0 + i) - *rate;
-            heat.stored_rate_w = heat.stored_rate_w + *rate;
+        for &h in &scope.helium {
+            let rate = self.helium_rate[h];
+            write(h0 + h, x.rate(h0 + h) - rate);
+            heat.stored_rate_w = heat.stored_rate_w + rate;
         }
         let p0 = self.passive0();
-        for (i, rate) in self.passive_rate.iter().enumerate() {
-            rows[p0 + i] = x.rate(p0 + i) - *rate;
-            heat.stored_rate_w = heat.stored_rate_w + *rate;
-        }
-        if rows
-            .iter()
-            .chain(&heat.secondary_w)
-            .any(|v| !(v.value.is_finite() && v.direction.is_finite()))
-        {
-            return Err(trial("nonfinite solid row or heat"));
+        for &p in &scope.stores {
+            let rate = self.passive_rate[p];
+            write(p0 + p, x.rate(p0 + p) - rate);
+            heat.stored_rate_w = heat.stored_rate_w + rate;
         }
         Ok(())
     }
