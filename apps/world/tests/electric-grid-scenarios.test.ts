@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ActorId, IsoTimestamp, ObjectId } from '../src/core/model/index.ts'
+import { electricalPortFromObject, type ActorId, type IsoTimestamp, type ObjectId } from '../src/core/model/index.ts'
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
 import { electricGridPackDataSchema, type GridProjection } from '../src/packs/electric-grid/model.ts'
@@ -227,4 +227,60 @@ describe('bundled Electric Grid Scenarios', () => {
       console.info(`nordland-corridor-security without action: ${branchTrips} branches tripped, ${unservedMw.toFixed(1)} MW unserved`)
     } finally { await scenario.close() }
   }, 120_000)
+
+  test('halden-offsite-power-restoration: the busbar fault de-energises the bays and reclosing returns offsite power to the Plants', async () => {
+    const gridId = 'grid:halden-four-unit'
+    const scenario = await startScenarioRun('halden-offsite-power-restoration', gridId)
+    const plants = [1, 2, 3, 4].map(unit => ({ plantId: `plant:halden-${unit}`, bayId: `unit-${unit}-420kv` }))
+    const ports = () => plants.map(({ plantId, bayId }) => ({
+      bay: electricalPortFromObject(scenario.object(gridId), bayId)!.state!,
+      plant: electricalPortFromObject(scenario.object(plantId), 'grid-420kv')!.state!,
+    }))
+    const circuits = ['hasle-1', 'hasle-2', 'hasle-3', 'tegneby-1', 'tegneby-2', 'tegneby-3'].map(name => `branch:curated-halden-pwr-${name}`)
+    try {
+      await scenario.advanceTo(119)
+      for (const { bay, plant } of ports()) {
+        expect(bay).toMatchObject({ energized: true, connected: true })
+        expect(plant).toMatchObject({ energized: true, connected: true })
+        expect(bay.activePowerMw).toBeLessThan(-900)
+      }
+      const exportMw = -ports().reduce((sum, { bay }) => sum + bay.activePowerMw, 0)
+
+      await scenario.advanceTo(180)
+      expectTimelineExecuted(scenario, 'halden-offsite-power-restoration')
+      for (const { bay, plant } of ports()) {
+        expect(bay).toMatchObject({ energized: false, voltagePu: 0, frequencyHz: null })
+        expect(plant).toMatchObject({ connected: false })
+      }
+      const transient = scenario.samples.filter(sample => sample.seconds > 120)
+      const nadirHz = Math.min(...transient.map(sample => sample.projection.frequencyHz!))
+      const lfddMw = Math.max(...transient.map(sample => sample.projection.unservedLoadMw))
+      // About 4.2 GW lost at once: the frequency falls through the LFDD stages, which shed load.
+      expect(nadirHz).toBeLessThan(49)
+      expect(nadirHz).toBeGreaterThan(47.5)
+      expect(lfddMw).toBeGreaterThan(500)
+
+      // Dead-bus closing: one Hasle circuit energises the switchyard from the grid.
+      expect((await scenario.command('world.electric-grid.close-branch', { assetId: circuits[0]! })).ok).toBe(true)
+      await scenario.advanceTo(182)
+      for (const { bay, plant } of ports()) {
+        expect(bay.energized).toBe(true)
+        expect(bay.energized && bay.voltagePu).toBeGreaterThan(0.9)
+        expect(plant).toMatchObject({ energized: true, connected: true })
+        // The tripped units draw station service instead of returning their export at once.
+        expect(plant.activePowerMw).toBeLessThan(100)
+      }
+      // Loop closing under synchro-check: each remaining circuit closes within the angle limit.
+      for (const circuit of circuits.slice(1)) expect((await scenario.command('world.electric-grid.close-branch', { assetId: circuit })).ok).toBe(true)
+      await scenario.advanceTo(240)
+      for (const circuit of circuits) {
+        expect((await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: circuit })).asset.state.state).toBe('closed')
+      }
+      for (const { bay, plant } of ports()) {
+        expect(bay.energized).toBe(true)
+        expect(plant).toMatchObject({ energized: true, connected: true })
+      }
+      console.info(`halden-offsite-power-restoration: ${exportMw.toFixed(0)} MW export lost; nadir ${nadirHz.toFixed(3)} Hz; LFDD and outage ${lfddMw.toFixed(0)} MW; bays re-energised by dead-bus closing; f(240 s) ${scenario.projection().frequencyHz!.toFixed(3)} Hz`)
+    } finally { await scenario.close() }
+  }, 180_000)
 })

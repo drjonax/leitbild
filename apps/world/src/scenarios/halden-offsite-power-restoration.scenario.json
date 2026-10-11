@@ -1,0 +1,348 @@
+{
+  "id": "halden-offsite-power-restoration",
+  "title": "Halden loss of offsite power and restoration",
+  "description": "A summer night: Halden's four independently simulated PWR units export about 4.1 GW through their dedicated 420 kV switchyard, tied by three circuits each to Hasle and Tegneby (NO1). Two minutes in, a busbar fault at the switchyard trips the four turbines and opens all six circuits. The switchyard has no voltage-forming source of its own, so its ports de-energise and the Plants lose offsite power. Losing about 4.1 GW at once, nearly three times the Nordic dimensioning incident of 1,450 MW, pulls the frequency below 49 Hz, and under-frequency load shedding disconnects part of Norway's demand. Restore offsite power by closing a circuit from the grid onto the dead switchyard, close the remaining circuits under synchro-check, then bring the grid back: raise hydro output and reconnect the shed load stage by stage. There are no weather-driven faults.",
+  "objectives": [
+    "Before the fault, note the export of the four unit bays, the switchyard voltage and the loading of the Hasle and Tegneby circuits and the NO1 corridors (connection-points.list, power-flow.snapshot).",
+    "When the switchyard is isolated, confirm that its bays are de-energised (no voltage, no frequency) and that the Plants report loss of offsite power; follow the island frequency, the LFDD stages that operate and the reserves.",
+    "Restore offsite power: close one Hasle circuit onto the dead switchyard (dead-bus closing), check that the bays are energised and the Plants draw station service from the grid, then close the remaining five circuits; synchro-check limits the voltage-angle difference across each loop you close.",
+    "Restore the grid: raise hydro output until the frequency is back within the ±100 mHz standard range, then reconnect the operated LFDD stages one at a time (restore-lfdd-stage) without another under-frequency excursion, and re-arm them (rearm-lfdd-stage)."
+  ],
+  "connections": [
+    {
+      "id": "halden-unit-1-grid",
+      "type": "electrical",
+      "system": {
+        "objectId": "plant:halden-1",
+        "portId": "grid-420kv"
+      },
+      "network": {
+        "objectId": "grid:halden-four-unit",
+        "portId": "unit-1-420kv"
+      }
+    },
+    {
+      "id": "halden-unit-2-grid",
+      "type": "electrical",
+      "system": {
+        "objectId": "plant:halden-2",
+        "portId": "grid-420kv"
+      },
+      "network": {
+        "objectId": "grid:halden-four-unit",
+        "portId": "unit-2-420kv"
+      }
+    },
+    {
+      "id": "halden-unit-3-grid",
+      "type": "electrical",
+      "system": {
+        "objectId": "plant:halden-3",
+        "portId": "grid-420kv"
+      },
+      "network": {
+        "objectId": "grid:halden-four-unit",
+        "portId": "unit-3-420kv"
+      }
+    },
+    {
+      "id": "halden-unit-4-grid",
+      "type": "electrical",
+      "system": {
+        "objectId": "plant:halden-4",
+        "portId": "grid-420kv"
+      },
+      "network": {
+        "objectId": "grid:halden-four-unit",
+        "portId": "unit-4-420kv"
+      }
+    }
+  ],
+  "packs": [
+    {
+      "id": "process-plant",
+      "config": {},
+      "items": [
+        {
+          "type": "plant",
+          "id": "plant:halden-1",
+          "label": "Halden Unit 1",
+          "clusterId": "halden-power-complex",
+          "coolingWater": "Iddefjorden",
+          "location": [
+            11.47,
+            59.087
+          ],
+          "model": {
+            "ref": "process-plant.pwr.reference",
+            "parameters": {
+              "loopCount": 4
+            }
+          },
+          "operatingPoint": {
+            "ref": "process-plant.pwr.full-power"
+          },
+          "automation": {
+            "ref": "process-plant.pwr.standard"
+          }
+        },
+        {
+          "type": "plant",
+          "id": "plant:halden-2",
+          "label": "Halden Unit 2",
+          "clusterId": "halden-power-complex",
+          "coolingWater": "Iddefjorden",
+          "location": [
+            11.477,
+            59.085
+          ],
+          "model": {
+            "ref": "process-plant.pwr.reference",
+            "parameters": {
+              "loopCount": 4
+            }
+          },
+          "operatingPoint": {
+            "ref": "process-plant.pwr.full-power"
+          },
+          "automation": {
+            "ref": "process-plant.pwr.standard"
+          }
+        },
+        {
+          "type": "plant",
+          "id": "plant:halden-3",
+          "label": "Halden Unit 3",
+          "clusterId": "halden-power-complex",
+          "coolingWater": "Iddefjorden",
+          "location": [
+            11.484,
+            59.083
+          ],
+          "model": {
+            "ref": "process-plant.pwr.reference",
+            "parameters": {
+              "loopCount": 4
+            }
+          },
+          "operatingPoint": {
+            "ref": "process-plant.pwr.full-power"
+          },
+          "automation": {
+            "ref": "process-plant.pwr.standard"
+          }
+        },
+        {
+          "type": "plant",
+          "id": "plant:halden-4",
+          "label": "Halden Unit 4",
+          "clusterId": "halden-power-complex",
+          "coolingWater": "Iddefjorden",
+          "location": [
+            11.491,
+            59.081
+          ],
+          "model": {
+            "ref": "process-plant.pwr.reference",
+            "parameters": {
+              "loopCount": 4
+            }
+          },
+          "operatingPoint": {
+            "ref": "process-plant.pwr.full-power"
+          },
+          "automation": {
+            "ref": "process-plant.pwr.standard"
+          }
+        }
+      ],
+      "recording": {
+        "profileId": "operations"
+      }
+    },
+    {
+      "id": "electric-grid",
+      "config": {},
+      "items": [
+        {
+          "type": "grid",
+          "id": "grid:halden-four-unit",
+          "label": "Norway grid · Halden connection",
+          "location": [
+            11.48,
+            59.08
+          ],
+          "model": {
+            "ref": "electric-grid.halden.four-unit"
+          },
+          "operatingPoint": {
+            "ref": "electric-grid.norway.summer-night-low"
+          },
+          "automation": {
+            "ref": "electric-grid.frequency.nordic-2025"
+          }
+        }
+      ],
+      "recording": {
+        "profileId": "operations"
+      }
+    }
+  ],
+  "world": {
+    "startsAt": "2026-07-12T04:00:00.000Z",
+    "environment": {
+      "city": "Halden"
+    }
+  },
+  "view": {
+    "map": {
+      "center": [
+        11.25,
+        59.25
+      ],
+      "zoom": 9
+    }
+  },
+  "timeline": {
+    "cues": [
+      {
+        "id": "offsite-power-briefing",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 0
+        },
+        "title": "Four units exporting through one switchyard",
+        "actions": [
+          {
+            "type": "show_guidance",
+            "guidance": {
+              "id": "offsite-power-briefing",
+              "title": "Four units exporting through one switchyard",
+              "message": "Note the bay exports, the switchyard voltage and the Hasle and Tegneby circuits. A busbar fault isolates the switchyard at two minutes.",
+              "objectIds": [
+                "grid:halden-four-unit",
+                "plant:halden-1",
+                "plant:halden-2",
+                "plant:halden-3",
+                "plant:halden-4"
+              ],
+              "dismissible": true,
+              "tone": "default"
+            }
+          }
+        ]
+      },
+      {
+        "id": "switchyard-busbar-fault",
+        "at": {
+          "kind": "after_scenario_start",
+          "seconds": 120
+        },
+        "title": "Busbar fault isolates the Halden switchyard",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.process-plant.action.invoke",
+            "input": {
+              "plantId": "plant:halden-1",
+              "actionId": "turbine-trip",
+              "parameters": {}
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.process-plant.action.invoke",
+            "input": {
+              "plantId": "plant:halden-2",
+              "actionId": "turbine-trip",
+              "parameters": {}
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.process-plant.action.invoke",
+            "input": {
+              "plantId": "plant:halden-3",
+              "actionId": "turbine-trip",
+              "parameters": {}
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.process-plant.action.invoke",
+            "input": {
+              "plantId": "plant:halden-4",
+              "actionId": "turbine-trip",
+              "parameters": {}
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.open-branch",
+            "input": {
+              "gridId": "grid:halden-four-unit",
+              "assetId": "branch:curated-halden-pwr-hasle-1"
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.open-branch",
+            "input": {
+              "gridId": "grid:halden-four-unit",
+              "assetId": "branch:curated-halden-pwr-hasle-2"
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.open-branch",
+            "input": {
+              "gridId": "grid:halden-four-unit",
+              "assetId": "branch:curated-halden-pwr-hasle-3"
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.open-branch",
+            "input": {
+              "gridId": "grid:halden-four-unit",
+              "assetId": "branch:curated-halden-pwr-tegneby-1"
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.open-branch",
+            "input": {
+              "gridId": "grid:halden-four-unit",
+              "assetId": "branch:curated-halden-pwr-tegneby-2"
+            }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.open-branch",
+            "input": {
+              "gridId": "grid:halden-four-unit",
+              "assetId": "branch:curated-halden-pwr-tegneby-3"
+            }
+          },
+          {
+            "type": "show_guidance",
+            "guidance": {
+              "id": "switchyard-busbar-fault",
+              "title": "Halden switchyard isolated",
+              "message": "The four turbines tripped and all six 420 kV circuits are open: the bays are de-energised and the Plants have lost offsite power. Close a Hasle circuit onto the dead switchyard, then the others, and restore the shed load.",
+              "objectIds": [
+                "grid:halden-four-unit",
+                "plant:halden-1",
+                "plant:halden-2",
+                "plant:halden-3",
+                "plant:halden-4"
+              ],
+              "dismissible": true,
+              "tone": "update"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
