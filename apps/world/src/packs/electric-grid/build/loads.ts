@@ -67,7 +67,24 @@ export interface RegionalSupply {
   readonly routeKm: number
 }
 
-const unknownControl = 'priority and interruptible MW unknown (no public evidence): normal, 0'
+/**
+ * Priority and interruptible demand stay unknown (normal, 0 MW) for every load: no public source
+ * locates a curtailable or critical load of the reference hour at a model load. Checked
+ * 2026-10-11: Statnett's conditional connections (rammeavtale om tilknytning på vilkår) are
+ * published as reserved capacity for new demand, not as connected load; Elvia's presentation of
+ * its 181 MW of conditional agreements ("Tilknytning på vilkår", 2025-11-17) names no stations;
+ * NVE's last count of electric boilers on flexible tariffs is national and from 2011 (1800 MW);
+ * SSB's flexible-consumption series (table 08311) has no 2023 value; smelters' published
+ * curtailment and system-protection arrangements date from 2001–2011 with no current confirmation.
+ */
+export const loadControlRule = {
+  id: 'load-control-unknown',
+  priority: 'normal',
+  interruptibleMw: 0,
+  source: 'no load-specific public evidence of interruptible or critical demand at the reference hour (checked 2026-10-11: Statnett tilknytning på vilkår, Elvia conditional agreements, NVE flexible-tariff boilers, SSB table 08311, smelter curtailment and system-protection reports)',
+} as const
+
+const unknownControl = `priority and interruptible MW unknown (no public evidence, rule ${loadControlRule.id}): ${loadControlRule.priority}, ${loadControlRule.interruptibleMw}`
 
 const listedStations = (site: GridMajorSite, stations: StationIndex): ReadonlyArray<{ readonly station: Station; readonly how: string; readonly kvs: ReadonlyArray<number> }> =>
   ([['serving', site.servingSubstation], ['upstream', site.upstreamSubstation]] as const).flatMap(([role, substation]) => {
@@ -173,8 +190,8 @@ export const buildLoads = (config: {
         location: [site.location[0], site.location[1]],
         referenceDemandMw: roundTo(demandMw, 3),
         powerFactor: loadKindRules[site.kind].powerFactor,
-        priority: 'normal',
-        interruptibleMw: 0,
+        priority: loadControlRule.priority,
+        interruptibleMw: loadControlRule.interruptibleMw,
         municipalityNr: nr,
         priceArea: site.priceArea,
         attachmentKm: roundTo(km, 2),
@@ -242,8 +259,8 @@ export const buildLoads = (config: {
           location: [entry.location[0], entry.location[1]],
           referenceDemandMw: roundTo(demandMw, 3),
           powerFactor: loadKindRules[group].powerFactor,
-          priority: 'normal',
-          interruptibleMw: 0,
+          priority: loadControlRule.priority,
+          interruptibleMw: loadControlRule.interruptibleMw,
           municipalityNr: nr,
           priceArea,
           attachmentKm: roundTo(entry.km, 2),

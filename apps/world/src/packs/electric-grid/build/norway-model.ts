@@ -21,7 +21,7 @@ import type { GridModelAdditionV2 } from '../schemas/grid-model-addition.ts'
 import type { NorwayModelBuildInputs } from './inputs.ts'
 import { buildExternalSystems, buildHvdcLinks, excludedInterconnectors, nordicRemainderState, topologyInterconnectors } from './interconnectors.ts'
 import { createBuildLedger, type BuildLedgerEntry } from './ledger.ts'
-import { buildLoads, loadKindRules, minimumShareMw, municipalAttachmentLimitKm } from './loads.ts'
+import { buildLoads, loadControlRule, loadKindRules, minimumShareMw, municipalAttachmentLimitKm } from './loads.ts'
 import { networkEquivalents } from './network-equivalents.ts'
 import { knownGaps, type KnownGap } from './known-gaps.ts'
 import { allocateByPopulation } from './population-weights.ts'
@@ -45,6 +45,7 @@ export const buildRules = {
   runOfRiverUtilisationHours,
   runOfRiverTurbine: runOfRiverTurbineRule,
   loadAllocation: { minimumShareMw, municipalAttachmentLimitKm },
+  loadControl: loadControlRule,
   dispatch: dispatchRule,
 }
 
