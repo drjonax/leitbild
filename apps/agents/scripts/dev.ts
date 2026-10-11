@@ -52,7 +52,11 @@ const server = spawnChild(
 const ui = spawnChild(
   [
     process.execPath, 'build', 'src/ui/modules/app.ts',
-    '--outfile', 'src/ui/dist/app.js',
+    '--outdir', 'src/ui/dist',
+    '--splitting',
+    '--entry-naming', 'app.js',
+    '--chunk-naming', 'chunk-[hash].js',
+    '--asset-naming', 'asset-[name]-[hash].[ext]',
     '--target', 'browser',
     '--format', 'esm',
     '--minify',

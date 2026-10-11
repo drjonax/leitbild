@@ -48,6 +48,7 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "dompurify": "^3.4.16",
     "marked": "^18.0.11",
+    "mermaid": "^11.17.2",
     "unpdf": "^1.6.2",
     "zod": "^3.25 || ^4.0"
   }

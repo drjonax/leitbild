@@ -23,7 +23,7 @@
   {#if target}
     {@const current = valueAtPath(target, field.path)}
     {@const shown = current ?? fallbackFor?.(field) ?? field.control.defaultValue}
-    <label>{field.label}
+    <label title={field.description}>{field.label}
       {#if field.control.kind === 'select'}
         <select value={String(shown ?? '')} onchange={event => onchange(field,event.currentTarget.value)}>
           {#if shown === undefined}<option value="">Not set</option>{/if}

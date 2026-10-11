@@ -2,6 +2,71 @@ import { describe, expect, test } from 'bun:test'
 import { renderQueued, nextMermaidId } from './api.ts'
 import type { MermaidApi } from './api.ts'
 
+// Isolate loader state and browser globals from the rest of the UI suite.
+const runLoader = async (source: string): Promise<unknown> => {
+  const child = Bun.spawn([process.execPath, '--eval', source], {
+    cwd: import.meta.dir,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  expect(stderr).toBe('')
+  expect(exitCode).toBe(0)
+  return JSON.parse(stdout)
+}
+
+describe('installed Mermaid loader', () => {
+  test('shares one lazy initialization and retains strict rendering after theme changes', async () => {
+    const result = await runLoader(`
+      let dark = false
+      globalThis.document = { documentElement: { classList: { contains: () => dark } } }
+      globalThis.window = { addEventListener: () => {} }
+      globalThis.fetch = async () => { throw new Error('Unexpected external dependency request') }
+      const { default: mermaid } = await import('mermaid')
+      const initialize = mermaid.initialize
+      let initializations = 0
+      mermaid.initialize = config => { initializations++; initialize(config) }
+      const loader = await import('./api.ts')
+      const before = loader.getMermaidApi()
+      const first = loader.ensureMermaid(), second = loader.ensureMermaid()
+      const api = await first
+      const initial = mermaid.mermaidAPI.getConfig()
+      const initialConfig = { securityLevel: initial.securityLevel, theme: initial.theme, startOnLoad: initial.startOnLoad, suppressErrorRendering: initial.suppressErrorRendering }
+      dark = true
+      loader.reinitMermaid()
+      const updated = mermaid.mermaidAPI.getConfig()
+      console.log(JSON.stringify({ before, samePromise: first === second, sameApi: api === mermaid && loader.getMermaidApi() === api, initializations, initialConfig, updatedTheme: updated.theme, updatedSecurity: updated.securityLevel }))
+    `)
+    expect(result).toEqual({
+      before: null,
+      samePromise: true,
+      sameApi: true,
+      initializations: 2,
+      initialConfig: { securityLevel: 'strict', theme: 'neutral', startOnLoad: false, suppressErrorRendering: true },
+      updatedTheme: 'dark',
+      updatedSecurity: 'strict',
+    })
+  }, 30_000)
+
+  test('exposes a failed load to the source-preserving fallback without retrying for every block', async () => {
+    const result = await runLoader(`
+      const { mock } = await import('bun:test')
+      globalThis.document = { documentElement: { classList: { contains: () => false } } }
+      let attempts = 0, warnings = 0
+      console.warn = () => warnings++
+      mock.module('mermaid', () => ({ default: { initialize: () => { attempts++; throw new Error('Initialization failed') }, render: async () => ({ svg: '' }) } }))
+      const loader = await import('./api.ts')
+      const first = await loader.ensureMermaid(), second = await loader.ensureMermaid()
+      console.log(JSON.stringify({ first, second, current: loader.getMermaidApi(), attempts, warnings }))
+    `)
+    expect(result).toEqual({ first: null, second: null, current: null, attempts: 1, warnings: 1 })
+  })
+})
+
 describe('renderQueued', () => {
   test('serializes concurrent renders — no re-entrant overlap', async () => {
     let active = 0
