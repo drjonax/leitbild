@@ -1147,6 +1147,337 @@
     },
     {
       "type": "Feature",
+      "id": "rost-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          12.08,
+          67.5
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/154904137"
+        ],
+        "municipalityNr": "1856",
+        "substationOsmId": "way/154904137",
+        "voltageKv": 132,
+        "routeKm": 81.0,
+        "reason": "Røst is supplied from Værøy over the 24 kV Værøy – Røst sea cable (Lofotkraft, 2009), and Værøy from the Lofoten 22 kV network that Solbjørn 132/22 kV feeds; the mapped distribution route from Røst to Solbjørn is 81.0 km (NVE Nettanlegg4, layers 2–3).",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 3, sea cable 'VÆRØY - RØST' (Lofotkraft AS, 24 kV, 2009)",
+            "note": "(67.518, 12.126) → (67.652, 12.719)"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 2, line 'SUNDSTRØMMEN-SOLBJØRN' (Lofotkraft AS, 22 kV)",
+            "note": "the Værøy and Moskenes 22 kV network reaches Solbjørn"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/154904137",
+            "ref": "way/154904137",
+            "note": "Solbjørn trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "leka-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.7,
+          65.09
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/612087812"
+        ],
+        "municipalityNr": "5052",
+        "substationOsmId": "way/612087812",
+        "voltageKv": 132,
+        "routeKm": 30.2,
+        "reason": "Leka has no ≥132 kV station of its own price area within 60 km (Namsos 420 kV lies 69.9 km away); NVE Nettanlegg4 maps its distribution network and Tensio's 66 kV line from Saltbotn to Årsandøy 132 kV, 30.2 km of mapped route. Which end feeds Leka in normal operation is not published (confidence low); Årsandøy is the only ≥132 kV end of the mapped network. Årsandøy lies in NO4 while Leka's point lies in NO3.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, Tensio TN AS 66 kV lines (64.903, 11.718) → (65.036, 12.185)",
+            "note": "Saltbotn – Årsandøy, 30.9 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/612087812",
+            "ref": "way/612087812",
+            "note": "Årsandøy trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "karasjok-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          25.51,
+          69.47
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/128291126"
+        ],
+        "municipalityNr": "5610",
+        "substationOsmId": "way/128291126",
+        "voltageKv": 132,
+        "routeKm": 70.3,
+        "reason": "Karasjok is supplied from Lakselv 132/66 kV over two 66 kV lines (Luostejok); the Lakselv – Karasjok line 1 is 70.3 km in NVE Nettanlegg4.",
+        "evidence": [
+          {
+            "url": "https://www.barents-nett.no/getfile.php/134733-1600173559/Dokumenter/Nett/Energiutredninger/Kraftsystemutredning%202020.pdf",
+            "ref": "Regional kraftsystemutredning for Finnmark 2020–2039, §4.2.3 (p. 33)",
+            "note": "Fra Lakselv går det to 66 kV ledninger til Karasjok"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, line 'N 66 LAKSELV-KARASJOK LINJE 1' (Luostejok Nett AS)",
+            "note": "70.3 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/128291126",
+            "ref": "way/128291126",
+            "note": "Lakselv trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "kautokeino-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          23.03,
+          69.0
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "relation/8276522"
+        ],
+        "municipalityNr": "5612",
+        "substationOsmId": "relation/8276522",
+        "voltageKv": 132,
+        "routeKm": 94.3,
+        "reason": "Kautokeino is supplied from Sautso over the 94.3 km 66 kV line Sautso – Kautokeino (Vissi); the 66 kV line from Vinnelys is the reserve.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, line 'SAUTSO-KAUTOKEINO' (Vissi AS, 66 kV)",
+            "note": "(69.004, 23.026) → (69.704, 23.813), 94.3 km"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, line 'VINNELYS-KAUTOKEINO' (Vissi AS, 66 kV)",
+            "note": "reserve route"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8276522",
+            "ref": "relation/8276522",
+            "note": "Sautso (Alta kraftverk), the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "loppa-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          22.37,
+          70.23
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "relation/8280181"
+        ],
+        "municipalityNr": "5614",
+        "substationOsmId": "relation/8280181",
+        "voltageKv": 132,
+        "routeKm": 75.5,
+        "reason": "Loppa (Øksfjord) is supplied over the Alut 66 kV chain Kvænangsbotn – Burfjord – Øksfjordbotn – Øksfjord, 75.5 km in NVE Nettanlegg4, from the 132/66 kV transformation at Kvænangsbotn (the model's Kvænangen trafostasjon).",
+        "evidence": [
+          {
+            "url": "https://www.barents-nett.no/getfile.php/134733-1600173559/Dokumenter/Nett/Energiutredninger/Kraftsystemutredning%202020.pdf",
+            "ref": "Regional kraftsystemutredning for Finnmark 2020–2039, §4.3.3 (p. 38)",
+            "note": "66/22 kV stations Kvænangsbotn, Burfjord, Øksfjordbotn and Øksfjord fed by the 66 kV net from Kvænangsbotn"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, Alut AS 66 kV lines (69.719, 22.062) → (70.228, 22.373)",
+            "note": "75.5 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8280181",
+            "ref": "relation/8280181",
+            "note": "Kvænangen trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "nordkapp-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          25.96,
+          71.0
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/586116281"
+        ],
+        "municipalityNr": "5620",
+        "substationOsmId": "way/586116281",
+        "voltageKv": 132,
+        "routeKm": 85.1,
+        "reason": "Nordkapp (Honningsvåg) is supplied from Skaidi over the 66 kV lines Skaidi – Smørfjord, Smørfjord – Repvåg, Repvåg – Vesterpollen and Veidnes – Storbukt (85.1 km mapped; the Magerøysund crossing between Vesterpollen and Veidnes is not mapped); the Lakselv – Smørfjord 66 kV line is open at Lakselv in normal operation.",
+        "evidence": [
+          {
+            "url": "https://www.barents-nett.no/getfile.php/134733-1600173559/Dokumenter/Nett/Energiutredninger/Kraftsystemutredning%202020.pdf",
+            "ref": "Regional kraftsystemutredning for Finnmark 2020–2039, §4.2.5 (p. 34) and §4.3.3 (p. 38)",
+            "note": "Lakselv-Smørfjord spenningssatt fra Smørfjord og utkoplet i Lakselv; Storbukt fed from Smørfjord"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, lines 'N 66 SKAIDI-SMØRFJORD', 'N 66 SMØRFJORD-REPVÅG', 'REPVÅG-VESTERPOLLEN', 'N 66 VEIDNES - STORBUKT'",
+            "note": "17.8 + 38.8 + 13.6 + 14.9 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/586116281",
+            "ref": "way/586116281",
+            "note": "Skaidi trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "gamvik-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          27.85,
+          71.03
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/552672002"
+        ],
+        "municipalityNr": "5626",
+        "substationOsmId": "way/552672002",
+        "voltageKv": 132,
+        "routeKm": 91.2,
+        "reason": "Gamvik (Mehamn) is supplied from Adamselv 132/66/22 kV over the 66 kV line from Adamselv towards Kjøllefjord with its branch to Mehamn, 91.2 km in NVE Nettanlegg4.",
+        "evidence": [
+          {
+            "url": "https://www.barents-nett.no/getfile.php/134733-1600173559/Dokumenter/Nett/Energiutredninger/Kraftsystemutredning%202020.pdf",
+            "ref": "Regional kraftsystemutredning for Finnmark 2020–2039, §4.2.4 (p. 34)",
+            "note": "66 kV ledning fra Adamselv Kraftverk til Kjøllefjord med en avgreining til Mehamn"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, lines 'N 66 ADAMSELV - M584', 'FUTELV - MEHAMN', 'N 66 M584 - MEHAMN'",
+            "note": "72.3 + 4.6 + 14.3 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/552672002",
+            "ref": "way/552672002",
+            "note": "Adamselv trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
       "id": "oyfjellet-marka-duplex",
       "geometry": {
         "type": "Point",
