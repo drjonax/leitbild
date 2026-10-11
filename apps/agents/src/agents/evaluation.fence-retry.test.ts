@@ -312,7 +312,7 @@ describe('evaluation required view (display requests)', () => {
   })
 })
 
-describe('evaluation structured evidence boundary (not prose certification)', () => {
+describe('evaluation answer-display consistency', () => {
   // Run 19 rcp-trip: the answer cited a loop flow its display did not show.
   const fenced = (text: string): string => `${text}\n\n\`\`\`leitbild-view\nview call_0_0/compose\n\`\`\``
   const inconsistent = fenced('Core cooling is not confirmed. All four RCP loops were at about 401 kg/s; CET-AVG is 302.4 °C.')
@@ -343,9 +343,19 @@ describe('evaluation structured evidence boundary (not prose certification)', ()
     return { calls, result }
   }
 
-  test('free prose does not trigger a speculative whole-answer correction call', async () => {
+  test('an answer citing what its display does not show is corrected once, naming each issue', async () => {
     const { calls, result } = await run([inconsistent, corrected])
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(3)
+    const correction = calls[2]!.messages.at(-1)!.content
+    expect(correction).toContain('- It cites 401 kg/s, but the display shows no value in kg/s.')
+    expect(correction).toContain('mark one "(not shown)"')
+    expect(correction).not.toMatch(/\b(?:below|above) the answer\b/)
+    expect(result.decision.response).toEqual({ action: 'respond', content: corrected })
+  })
+
+  test('a second disagreement is posted as it is: one correction per answer', async () => {
+    const { calls, result } = await run([inconsistent, inconsistent])
+    expect(calls).toHaveLength(3)
     expect(result.decision.response).toEqual({ action: 'respond', content: inconsistent })
   })
 
@@ -358,16 +368,31 @@ describe('evaluation structured evidence boundary (not prose certification)', ()
     expect(result.decision.response).toEqual({ action: 'respond', content: answer })
   })
 
-  test('swapped subjects and false current claims remain model quality cases, not certified prose', async () => {
-    for (const answer of [fenced('Hot leg temperature is 290 °C. Cold leg temperature is 300 °C.'), fenced('Steam generator level is currently 99 percent.')]) {
-      const { calls, result } = await run([answer], { viewContent: { ...viewContent, items: [
-        { names: ['Hot leg temperature'], values: [{ value: 300, unit: '°C' }], limits: [], history: false },
-        { names: ['Cold leg temperature'], values: [{ value: 290, unit: '°C' }], limits: [], history: false },
-        { names: ['Steam generator level'], values: [{ value: 55, unit: '%' }], limits: [], history: true },
-      ] } })
-      expect(calls).toHaveLength(2)
-      expect(result.decision.response).toEqual({ action: 'respond', content: answer })
-    }
+  const legsAndLevel = { viewContent: { ...viewContent, items: [
+    { names: ['Hot leg temperature'], values: [{ value: 300, unit: '°C' }], limits: [], history: false },
+    { names: ['Cold leg temperature'], values: [{ value: 290, unit: '°C' }], limits: [], history: false },
+    { names: ['Steam generator level'], values: [{ value: 55, unit: '%' }], limits: [], history: true },
+  ] } }
+
+  test('swapped subjects remain a model quality case: the check compares with what is shown, it does not certify prose', async () => {
+    // Both values are on the display, each beside the other leg's name; the
+    // check does not bind a value to the item a sentence names, so it passes.
+    const answer = fenced('Hot leg temperature is 290 °C. Cold leg temperature is 300 °C.')
+    const { calls, result } = await run([answer], legsAndLevel)
+    expect(calls).toHaveLength(2)
+    expect(result.decision.response).toEqual({ action: 'respond', content: answer })
+  })
+
+  test('a current value the display contradicts is corrected once', async () => {
+    // The display reads the level at 55 % now. 99 % may be an earlier value of
+    // its trend, but the answer states it as the current reading: a false
+    // current claim the operator would read beside the display.
+    const answer = fenced('Steam generator level is currently 99 percent.')
+    const fixed = fenced('Steam generator level is currently 55 percent.')
+    const { calls, result } = await run([answer, fixed], legsAndLevel)
+    expect(calls).toHaveLength(3)
+    expect(calls[2]!.messages.at(-1)!.content).toContain('- It cites 99 percent as current, but the display reads Steam generator level 55 % now.')
+    expect(result.decision.response).toEqual({ action: 'respond', content: fixed })
   })
 
   test('malformed structured display evidence still fails loudly', async () => {
