@@ -402,6 +402,7 @@ const signalBindingFor = (variable: CompiledVariable): ProcessSignalBinding => (
   writable: variable.descriptor.writable,
   ...(variable.descriptor.actuation === undefined ? {} : { actuation: variable.descriptor.actuation }),
   ...(variable.descriptor.measurand === undefined ? {} : { measurand: variable.descriptor.measurand }),
+  ...(variable.descriptor.simulatorOnly === undefined ? {} : { simulatorOnly: variable.descriptor.simulatorOnly }),
   published: variable.published,
   owner: variable.owner,
 })

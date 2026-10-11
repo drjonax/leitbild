@@ -392,6 +392,13 @@ const variableDescriptorBaseSchema = z.object({
   actuation: variableActuationSchema.optional(),
   /** What a ratio measures; every ratio declares one. */
   measurand: ratioMeasurandSchema.optional(),
+  /**
+   * A value the model solves that no instrument in a real plant measures: a
+   * heat balance's deficit, the true flow through a relief valve or a leak, a
+   * bus's spare power. A display marks it as the simulator's, and evidence
+   * prefers a real instrument to it.
+   */
+  simulatorOnly: z.literal(true).optional(),
 })
 export const variableDescriptorSchema = variableDescriptorBaseSchema.superRefine(validateQuantityUnit)
 export type VariableDescriptor = z.infer<typeof variableDescriptorSchema>
@@ -590,6 +597,7 @@ export interface ProcessSignalBinding {
   readonly writable: boolean
   readonly actuation?: VariableActuation
   readonly measurand?: RatioMeasurand
+  readonly simulatorOnly?: true
   readonly published: boolean
   readonly owner:
     | { readonly type: 'component'; readonly componentIndex: number }

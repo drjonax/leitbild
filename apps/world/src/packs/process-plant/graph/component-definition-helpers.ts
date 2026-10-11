@@ -19,11 +19,11 @@ export const headerVariables = (labelPrefix: string): ReadonlyArray<ComponentVar
   variable({ path: 'inventoryKg', label: `${labelPrefix} inventory`, kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg' }),
   variable({ path: 'inletFlowKgPerS', label: `${labelPrefix} inlet flow`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
   variable({ path: 'outletFlowKgPerS', label: `${labelPrefix} outlet flow`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
-  variable({ path: 'flowBalanceResidualKgPerS', label: `${labelPrefix} flow balance residual`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
+  variable({ path: 'flowBalanceResidualKgPerS', label: `${labelPrefix} flow balance residual`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s', simulatorOnly: true }),
   variable({ path: 'mixedTemperatureC', label: `${labelPrefix} mixed temperature`, kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
   variable({ path: 'mixedPressureMPa', label: `${labelPrefix} mixed pressure`, kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
   variable({ path: 'pressureNodeMPa', label: `${labelPrefix} pressure node`, kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
-  variable({ path: 'unmetDemandKgPerS', label: `${labelPrefix} unmet demand`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
+  variable({ path: 'unmetDemandKgPerS', label: `${labelPrefix} unmet demand`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s', simulatorOnly: true }),
 ]
 
 export const valveVariables = (labelPrefix: string): ReadonlyArray<ComponentVariableDescriptor> => [
@@ -42,5 +42,5 @@ export const valveVariables = (labelPrefix: string): ReadonlyArray<ComponentVari
   variable({ path: 'autoOpenActive', label: `${labelPrefix} automatic opening active`, kind: 'discrete', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
   variable({ path: 'inletFlowKgPerS', label: `${labelPrefix} inlet flow`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
   variable({ path: 'outletFlowKgPerS', label: `${labelPrefix} outlet flow`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
-  variable({ path: 'flowBalanceResidualKgPerS', label: `${labelPrefix} flow balance residual`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
+  variable({ path: 'flowBalanceResidualKgPerS', label: `${labelPrefix} flow balance residual`, kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s', simulatorOnly: true }),
 ]

@@ -46,7 +46,7 @@ export const heatExchangerComponentDefinitions: ReadonlyArray<ComponentDefinitio
       variable({ path: 'coolingAvailabilityFraction', label: 'Heat exchanger cooling availability', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', measurand: 'availability', quantity: 'ratio', unit: 'fraction' }),
       variable({ path: 'hotSidePressureDropMPa', label: 'Heat exchanger hot side pressure drop', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'pressureDelta', unit: 'MPa' }),
       variable({ path: 'coldSidePressureDropMPa', label: 'Heat exchanger cold side pressure drop', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'pressureDelta', unit: 'MPa' }),
-      variable({ path: 'heatBalanceResidualMw', label: 'Heat exchanger heat balance residual', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'powerDelta', unit: 'MW' }),
+      variable({ path: 'heatBalanceResidualMw', label: 'Heat exchanger heat balance residual', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'powerDelta', unit: 'MW', simulatorOnly: true }),
     ],
   }),
 ]

@@ -80,6 +80,7 @@ export interface ProcessPlantSignalView {
   readonly quantity: ProcessQuantity
   readonly unit: ProcessUnit
   readonly writable: boolean
+  readonly simulatorOnly?: true
   readonly published: boolean
   readonly owner: ProcessSignalBinding['owner']
 }
@@ -103,6 +104,7 @@ export const processPlantSignalView = (binding: ProcessSignalBinding): ProcessPl
   quantity: binding.quantity,
   unit: binding.unit,
   writable: binding.writable,
+  ...(binding.simulatorOnly === undefined ? {} : { simulatorOnly: binding.simulatorOnly }),
   published: binding.published,
   owner: binding.owner,
 })

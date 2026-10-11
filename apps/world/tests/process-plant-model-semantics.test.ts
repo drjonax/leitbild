@@ -15,6 +15,7 @@ import { component, connect, plantGraph } from '../src/packs/process-plant/graph
 import { fixedSemantics, aspect } from '../src/packs/process-plant/graph/semantics.ts'
 import { variable } from '../src/packs/process-plant/graph/component-definition-helpers.ts'
 import { processLinkFlowFidelityFor } from '../src/packs/process-plant/runtime/links/link-flow-fidelity.ts'
+import { processPlantSignalView } from '../src/packs/process-plant/signals.ts'
 import { guardPlantTests } from './plant-hang-guard.ts'
 
 guardPlantTests()
@@ -40,6 +41,24 @@ describe('model semantics declared per component kind', () => {
     expect(actuation('feedwaterControlValveB.failedPositionFraction')).toBe('faultInjection')
     expect(actuation('offsiteGrid.available')).toBe('boundary')
     expect(actuation('rcs-hot-leg-a.leak.areaFraction')).toBe('faultInjection')
+  })
+
+  test('values no plant instrument measures are marked simulator-only, the instruments are not', () => {
+    const simulatorOnly = (path: string) => graph.signalBindingByPath.get(path as never)!.simulatorOnly === true
+    for (const path of [
+      'core.coreHeatRemovalDeficitMw', 'core.fuelHeatupRateCPerS', 'core.fuelTemperatureC', 'core.reactivityPcm',
+      'safetyBusA.marginMw', 'safetyBusB.availablePowerMw', 'sgA.primaryToSecondaryLeakKgPerS', 'vessel.tubeLeakFlowKgPerS',
+      'pressurizer.reliefFlowKgPerS', 'pressurizer.safetyValveFlowKgPerS', 'pressurizer-relief-to-tank.flowKgPerS', 'rcs-hot-leg-a.leakFlowKgPerS',
+    ]) expect(simulatorOnly(path), path).toBe(true)
+    for (const path of [
+      'pressurizer.pressureMPa', 'pressurizer.levelPercent', 'sgA.levelPercent', 'sgA.wideRangeLevelPercent', 'core.powerRangePercent',
+      'core.coreExitTemperatureC', 'rcsInventoryBalance.leakRateKgPerS', 'safetyBusA.energized', 'pressurizer.reliefValveEffectivePositionFraction',
+    ]) expect(simulatorOnly(path), path).toBe(false)
+    // A writable signal is a command or a fault, never a diagnostic.
+    for (const binding of graph.signalBindings) if (binding.writable) expect(binding.simulatorOnly, binding.path).toBeUndefined()
+    // Signal discovery carries the mark to the agents.
+    expect(processPlantSignalView(graph.signalBindingByPath.get('core.coreHeatRemovalDeficitMw' as never)!).simulatorOnly).toBe(true)
+    expect(processPlantSignalView(graph.signalBindingByPath.get('pressurizer.pressureMPa' as never)!).simulatorOnly).toBeUndefined()
   })
 
   test('equipment state comes from a solved signal, and its command only from a writable one', () => {

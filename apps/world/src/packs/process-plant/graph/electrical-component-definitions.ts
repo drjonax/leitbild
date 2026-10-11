@@ -12,7 +12,7 @@ const energizedVariables = (
   voltageConfig: { readonly kind?: 'state' | 'derived' | 'control'; readonly writable?: boolean } = {},
 ) => [
   variable({ path: 'energized', label: `${labelPrefix} energized`, kind: 'state', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
-  variable({ path: 'availablePowerMw', label: `${labelPrefix} available power`, kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
+  variable({ path: 'availablePowerMw', label: `${labelPrefix} available power`, kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW', simulatorOnly: true }),
   variable({
     path: 'voltageFraction',
     label: `${labelPrefix} voltage`,
@@ -72,7 +72,7 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
     variables: [
       ...energizedVariables('Electrical bus'),
       variable({ path: 'servedLoadMw', label: 'Bus served load', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
-      variable({ path: 'marginMw', label: 'Bus power margin', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'powerDelta', unit: 'MW' }),
+      variable({ path: 'marginMw', label: 'Bus power margin', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'powerDelta', unit: 'MW', simulatorOnly: true }),
       variable({ path: 'degraded', label: 'Bus degraded voltage', kind: 'derived', discipline: 'electrical', writable: false, publish: 'alarm', quantity: 'boolean', unit: 'boolean' }),
     ],
   }),
@@ -187,7 +187,7 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
     variables: [
       variable({ path: 'demandMw', label: 'Load demand', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'servedMw', label: 'Load served', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
-      variable({ path: 'servedFraction', label: 'Load served fraction', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', measurand: 'served', quantity: 'ratio', unit: 'fraction' }),
+      variable({ path: 'servedFraction', label: 'Load served fraction', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', measurand: 'served', quantity: 'ratio', unit: 'fraction', simulatorOnly: true }),
       variable({ path: 'energized', label: 'Load energized', kind: 'state', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
     ],
   }),

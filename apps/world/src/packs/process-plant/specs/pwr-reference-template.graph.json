@@ -4519,6 +4519,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ],
@@ -4546,6 +4547,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         },
         {
@@ -4580,6 +4582,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         },
         {
@@ -4614,6 +4617,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         },
         {
@@ -4712,6 +4716,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -4799,6 +4804,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -4873,6 +4879,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ],
@@ -4964,6 +4971,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5051,6 +5059,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5125,6 +5134,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ],
@@ -5216,6 +5226,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5303,6 +5314,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5377,6 +5389,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ],
@@ -5468,6 +5481,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5555,6 +5569,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5642,6 +5657,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5729,6 +5745,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5816,6 +5833,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5903,6 +5921,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ]
@@ -5977,6 +5996,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ],
@@ -6055,6 +6075,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ],
@@ -6133,6 +6154,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         }
       ],
@@ -9792,6 +9814,7 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
+          "simulatorOnly": true,
           "initialValue": 0
         },
         {
