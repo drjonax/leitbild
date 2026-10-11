@@ -9,15 +9,15 @@
       "title": "NVE Nettanlegg5 (Nettanlegg utbygd) MapServer",
       "publisher": "NVE",
       "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer",
-      "licence": "NLOD 1.0 (Geonorge catalogue record for Nettanlegg utbygd)",
-      "retrievedAt": "2026-10-10"
+      "licence": "NLOD 2.0 (https://data.norge.no/nlod/no/2.0): NVE distributes its map data under NLOD (nve.no/kart/kartdata, linking the current licence); the Geonorge record of Nettanlegg utbygd still links NLOD 1.0, which NLOD 2.0 succeeds",
+      "retrievedAt": "2026-10-11"
     },
     {
       "id": "nve-hydro-api",
       "title": "NVE hydropower plants in operation",
       "publisher": "NVE",
       "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
-      "licence": "NLOD",
+      "licence": "NLOD 2.0 (https://data.norge.no/nlod/no/2.0): NVE licenses the data on api.nve.no under NLOD (nve.no/om-nve/apne-data-og-api-fra-nve)",
       "retrievedAt": "2026-10-10"
     },
     {
@@ -25,7 +25,7 @@
       "title": "NVE wind power plants in operation",
       "publisher": "NVE",
       "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
-      "licence": "NLOD",
+      "licence": "NLOD 2.0 (https://data.norge.no/nlod/no/2.0): NVE licenses the data on api.nve.no under NLOD (nve.no/om-nve/apne-data-og-api-fra-nve)",
       "retrievedAt": "2026-10-10"
     },
     {
@@ -33,7 +33,7 @@
       "title": "Elhub consumption per group, price area and hour",
       "publisher": "Elhub",
       "url": "https://api.elhub.no/energy-data/v0/price-areas?dataset=CONSUMPTION_PER_GROUP_MBA_HOUR&startDate=2026-01-15T00:00:00%2B01:00&endDate=2026-01-15T02:00:00%2B01:00",
-      "licence": "Elhub open energy data; licence statement not located on the API, to be confirmed by the registry-sources lane",
+      "licence": "CC BY 4.0 (Elhub open energy data; registered as cc-by-4.0 in src/reference-data/licences.ts)",
       "retrievedAt": "2026-10-10"
     },
     {
@@ -43,6 +43,14 @@
       "url": "https://www.statnett.no",
       "licence": "cited as public reference only",
       "retrievedAt": "2026-10-10"
+    },
+    {
+      "id": "equinor",
+      "title": "Equinor field and news pages",
+      "publisher": "Equinor ASA",
+      "url": "https://www.equinor.com",
+      "licence": "cited as public reference only",
+      "retrievedAt": "2026-10-11"
     },
     {
       "id": "svk",
@@ -1079,8 +1087,7 @@
       "id": "hemsil-2",
       "name": "Hemsil 2",
       "osmIds": [
-        "relation/12277754",
-        "node/8396776075"
+        "relation/12277754"
       ],
       "evidence": [
         {
@@ -1557,6 +1564,746 @@
           "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
           "ref": "VannKraftverkID 206",
           "note": "NVE hydropower plant \"Kobbelv\" 300 MW, Sørfold"
+        }
+      ]
+    },
+    {
+      "id": "aurland-1-plant",
+      "name": "Aurland I kraftverk",
+      "osmIds": [
+        "way/549710305"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 10",
+          "note": "NVE hydropower plant \"Aurland 1\" 840 MW, Aurland"
+        }
+      ]
+    },
+    {
+      "id": "aurland-2-plant",
+      "name": "Aurland II kraftverk",
+      "osmIds": [
+        "way/549710287"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 11",
+          "note": "NVE hydropower plant \"Aurland 2 H\" 70 MW, Aurland"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 12",
+          "note": "NVE hydropower plant \"Aurland 2 L\" 60 MW, Aurland"
+        }
+      ]
+    },
+    {
+      "id": "baerheim",
+      "name": "Bærheim",
+      "osmIds": [
+        "way/166227080"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BD4E983FE-DEE6-4879-8D99-416DB4EE70A9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D4E983FE-DEE6-4879-8D99-416DB4EE70A9}",
+          "note": "NVE transformer station \"Bærheim\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "stolaheia",
+      "name": "Stølaheia",
+      "osmIds": [
+        "way/33793216"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0E486D1B-4EB4-46FA-AFCE-F00D97CC3535%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0E486D1B-4EB4-46FA-AFCE-F00D97CC3535}",
+          "note": "NVE transformer station \"Stølaheia\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "grannes-transition",
+      "name": "Grannes cable transition (Bærheim – Stølaheia)",
+      "osmIds": [
+        "relation/17099135"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BCE4A3455-FDB3-4B10-AA99-0CCF0B7B270B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{CE4A3455-FDB3-4B10-AA99-0CCF0B7B270B}",
+          "note": "NVE transformer station \"Grannes\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "dale-2-plant",
+      "name": "Dale II kraftverk",
+      "osmIds": [
+        "way/545991409"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 56",
+          "note": "NVE hydropower plant \"Dale II\" 147 MW, Vaksdal"
+        }
+      ]
+    },
+    {
+      "id": "dale-transformer",
+      "name": "Dale trafostasjon (BKK)",
+      "osmIds": [
+        "relation/8834131"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BBE3C7310-E59D-4262-B5C2-2D56AF8DD9E1%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{BE3C7310-E59D-4262-B5C2-2D56AF8DD9E1}",
+          "note": "NVE transformer station \"Dale\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "evanger-plant",
+      "name": "Evanger kraftverk",
+      "osmIds": [
+        "way/545991307"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 77",
+          "note": "NVE hydropower plant \"Evanger\" 330 MW, Voss"
+        }
+      ]
+    },
+    {
+      "id": "harpefoss",
+      "name": "Harpefossen kraftstasjon",
+      "osmIds": [
+        "relation/8196063"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 131",
+          "note": "NVE hydropower plant \"Harpefossen\" 108 MW, Sør-Fron"
+        }
+      ]
+    },
+    {
+      "id": "haugsneset",
+      "name": "Haugsneset likeretter (Johan Sverdrup)",
+      "osmIds": [
+        "relation/12969006"
+      ],
+      "evidence": [
+        {
+          "sourceId": "equinor",
+          "url": "https://www.equinor.com/news/archive/2018-10-09-johan-sverdrup-powered-shore",
+          "ref": "Johan Sverdrup powered from shore (2018-10-09)",
+          "note": "Equinor: the Johan Sverdrup field is powered from shore through the converter at Haugsneset by Kårstø"
+        }
+      ]
+    },
+    {
+      "id": "hemsil-1",
+      "name": "Hemsil 1",
+      "osmIds": [
+        "way/549449182",
+        "node/9197546428"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B79634A17-3678-4BBB-9761-E38DCAE6932E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{79634A17-3678-4BBB-9761-E38DCAE6932E}",
+          "note": "NVE transformer station \"Hemsil 1\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 141",
+          "note": "NVE hydropower plant \"Hemsil 1\" 70 MW, Hemsedal"
+        }
+      ]
+    },
+    {
+      "id": "hemsil-2-transformer",
+      "name": "Hemsil 2 trafostasjon",
+      "osmIds": [
+        "node/8396776075"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0B99E921-F638-43A4-A72D-A430A4623F34%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0B99E921-F638-43A4-A72D-A430A4623F34}",
+          "note": "NVE transformer station \"Hemsil 2\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "hylen-plant",
+      "name": "Hylen kraftverk",
+      "osmIds": [
+        "way/640269833"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 167",
+          "note": "NVE hydropower plant \"Hylen\" 160 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "id": "martin-linge",
+      "name": "Kollsnes Martin Linge trafostasjon",
+      "osmIds": [
+        "way/636875282"
+      ],
+      "evidence": [
+        {
+          "sourceId": "equinor",
+          "url": "https://www.equinor.com/energy/martin-linge",
+          "ref": "Martin Linge (Equinor)",
+          "note": "Equinor: Martin Linge is supplied with power from shore via Kollsnes"
+        }
+      ]
+    },
+    {
+      "id": "kolsvik-plant",
+      "name": "Kolsvik kraftverk",
+      "osmIds": [
+        "way/611698460"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 209",
+          "note": "NVE hydropower plant \"Kolsvik\" 128 MW, Bindal"
+        }
+      ]
+    },
+    {
+      "id": "kvanndal-plant",
+      "name": "Kvanndal kraftverk",
+      "osmIds": [
+        "way/638639770"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 219",
+          "note": "NVE hydropower plant \"Kvanndal\" 40 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "id": "lysebotn-2-plant",
+      "name": "Lysebotn 2 kraftverk",
+      "osmIds": [
+        "way/640600961"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 1899",
+          "note": "NVE hydropower plant \"Lysebotn II\" 370 MW, Sandnes"
+        }
+      ]
+    },
+    {
+      "id": "nea-tya-plant",
+      "name": "Nea & Tya kraftverk",
+      "osmIds": [
+        "way/616457852"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 291",
+          "note": "NVE hydropower plant \"Nea\" 175 MW, Tydal"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 465",
+          "note": "NVE hydropower plant \"Tya\" 32 MW, Tydal"
+        }
+      ]
+    },
+    {
+      "id": "nedre-vinstra",
+      "name": "Nedre Vinstra",
+      "osmIds": [
+        "way/265770276",
+        "way/656092209"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0385D580-886C-4745-8BB7-FF592B2EDA9E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0385D580-886C-4745-8BB7-FF592B2EDA9E}",
+          "note": "NVE transformer station \"Nedre Vinstra\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 302",
+          "note": "NVE hydropower plant \"Nedre Vinstra\" 308 MW, Nord-Fron"
+        }
+      ]
+    },
+    {
+      "id": "nes-plant",
+      "name": "Nes kraftverk (Nesbyen)",
+      "osmIds": [
+        "way/549830929"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 303",
+          "note": "NVE hydropower plant \"Nes\" 250 MW, Nesbyen"
+        }
+      ]
+    },
+    {
+      "id": "novle-plant",
+      "name": "Novle kraftverk",
+      "osmIds": [
+        "way/638616118"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 312",
+          "note": "NVE hydropower plant \"Novle\" 40 MW, Ullensvang"
+        }
+      ]
+    },
+    {
+      "id": "oksla-plant",
+      "name": "Oksla kraftverk",
+      "osmIds": [
+        "way/638183294"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 317",
+          "note": "NVE hydropower plant \"Oksla\" 206 MW, Ullensvang"
+        }
+      ]
+    },
+    {
+      "id": "refsdal-plant",
+      "name": "Refsdal kraftverk and trafostasjon",
+      "osmIds": [
+        "way/1033220637",
+        "relation/13825709"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BD1EFD46E-7F1E-4779-A4ED-A27C80F39E47%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D1EFD46E-7F1E-4779-A4ED-A27C80F39E47}",
+          "note": "NVE transformer station \"Refsdal\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 332",
+          "note": "NVE hydropower plant \"Refsdal\" 90 MW, Vik"
+        }
+      ]
+    },
+    {
+      "id": "rendalen-plant",
+      "name": "Rendalen kraftverk (plant)",
+      "osmIds": [
+        "way/580240204"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 336",
+          "note": "NVE hydropower plant \"Rendalen\" 100.5 MW, Rendalen"
+        }
+      ]
+    },
+    {
+      "id": "roldal",
+      "name": "Røldal",
+      "osmIds": [
+        "relation/8857031"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B18934515-328B-4BF0-B170-B1B0611C84D8%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{18934515-328B-4BF0-B170-B1B0611C84D8}",
+          "note": "NVE transformer station \"Røldal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "asen",
+      "name": "Åsen",
+      "osmIds": [
+        "way/638183341"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B452D6987-003A-4707-B14B-E0D8D55BA24D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{452D6987-003A-4707-B14B-E0D8D55BA24D}",
+          "note": "NVE transformer station \"Åsen\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "saurdal-plant",
+      "name": "Saurdal pumpekraftverk",
+      "osmIds": [
+        "way/640269814"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 362",
+          "note": "NVE hydropower plant \"Saurdal\" 640 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "id": "sima-plant",
+      "name": "Sima kraftverk (plant)",
+      "osmIds": [
+        "way/405308297"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 231",
+          "note": "NVE hydropower plant \"Lang-Sima\" 500 MW, Eidfjord"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 423",
+          "note": "NVE hydropower plant \"Sy-Sima\" 620 MW, Eidfjord"
+        }
+      ]
+    },
+    {
+      "id": "solhom-plant",
+      "name": "Solhom kraftverk",
+      "osmIds": [
+        "way/640796689"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BD5855052-2B63-4469-81C3-12707940F251%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D5855052-2B63-4469-81C3-12707940F251}",
+          "note": "NVE transformer station \"Solhom\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 396",
+          "note": "NVE hydropower plant \"Solhom\" 200 MW, Kvinesdal"
+        }
+      ]
+    },
+    {
+      "id": "steinsland-plant",
+      "name": "Steinsland kraftverk",
+      "osmIds": [
+        "way/549836005"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 400",
+          "note": "NVE hydropower plant \"Steinsland\" 170 MW, Modalen"
+        }
+      ]
+    },
+    {
+      "id": "suldal-plant",
+      "name": "Suldal I & II kraftverk",
+      "osmIds": [
+        "way/430780482"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 408",
+          "note": "NVE hydropower plant \"Suldal I\" 180 MW, Suldal"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 409",
+          "note": "NVE hydropower plant \"Suldal II\" 150 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "id": "tjodan-plant",
+      "name": "Tjodan kraftverk",
+      "osmIds": [
+        "way/640600966"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 442",
+          "note": "NVE hydropower plant \"Tjodan\" 110 MW, Sandnes"
+        }
+      ]
+    },
+    {
+      "id": "tjorhom-plant",
+      "name": "Tjørhom kraftverk",
+      "osmIds": [
+        "way/640857422"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 445",
+          "note": "NVE hydropower plant \"Tjørhom\" 120 MW, Sirdal"
+        }
+      ]
+    },
+    {
+      "id": "tokke-plant",
+      "name": "Tokke kraftverk",
+      "osmIds": [
+        "way/551453826"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 446",
+          "note": "NVE hydropower plant \"Tokke\" 430 MW, Tokke"
+        }
+      ]
+    },
+    {
+      "id": "tonstad-plant",
+      "name": "Tonstad kraftverk",
+      "osmIds": [
+        "way/641020745"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 448",
+          "note": "NVE hydropower plant \"Tonstad\" 960 MW, Sirdal"
+        }
+      ]
+    },
+    {
+      "id": "tunnsjodal-plant",
+      "name": "Tunnsjødal kraftverk",
+      "osmIds": [
+        "way/612346547"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 458",
+          "note": "NVE hydropower plant \"Tunnsjødal\" 176 MW, Namsskogan"
+        }
+      ]
+    },
+    {
+      "id": "blafalli-vik",
+      "name": "Blåfalli Vik kraftverk",
+      "osmIds": [
+        "relation/11512349"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 1334",
+          "note": "NVE hydropower plant \"Blåfalli Vik\" 230 MW, Kvinnherad"
+        }
+      ]
+    },
+    {
+      "id": "kleven",
+      "name": "Kleven",
+      "osmIds": [
+        "relation/8193470"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B6456B319-C152-4D0C-92F3-B30228ADCC32%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6456B319-C152-4D0C-92F3-B30228ADCC32}",
+          "note": "NVE transformer station \"KLEVEN\" (ERAMET NORWAY AS AVD KVINESDAL); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "id": "vemork-transition",
+      "name": "Vemork cable transition",
+      "osmIds": [
+        "way/1157668718"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 493",
+          "note": "NVE hydropower plant \"Vemork\" 204 MW, Tinn"
+        }
+      ]
+    },
+    {
+      "id": "nyhamna-transition",
+      "name": "Nyhamna cable transition (Fræna – Nyhamna)",
+      "osmIds": [
+        "way/506162647"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B24C4CB60-803C-459A-93B9-68C6910C4544%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{24C4CB60-803C-459A-93B9-68C6910C4544}",
+          "note": "NVE transmission line \"Viklandet - Fræna\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "id": "sundsbarm",
+      "name": "Sundsbarm kraftverk switchyard",
+      "osmIds": [
+        "way/551893761"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B446BA439-CA6B-4B89-991B-3B638F7A4C85%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{446BA439-CA6B-4B89-991B-3B638F7A4C85}",
+          "note": "NVE transformer station \"Flatin\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 410",
+          "note": "NVE hydropower plant \"Sundsbarm\" 103 MW, Seljord"
+        }
+      ]
+    },
+    {
+      "id": "aroy",
+      "name": "Årøy kraftverk and cable transition",
+      "osmIds": [
+        "way/624655966",
+        "way/579418351"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 530",
+          "note": "NVE hydropower plant \"Årøy\" 90 MW, Sogndal"
+        }
+      ]
+    },
+    {
+      "id": "vinje-plant",
+      "name": "Vinje kraftverk (plant)",
+      "osmIds": [
+        "way/551408917"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 503",
+          "note": "NVE hydropower plant \"Vinje\" 300 MW, Vinje"
+        }
+      ]
+    },
+    {
+      "id": "oljusjoen",
+      "name": "Øljusjøen",
+      "osmIds": [
+        "way/549449181",
+        "way/549650514"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B83819CE0-6960-46EA-92D7-F00F32FB46E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{83819CE0-6960-46EA-92D7-F00F32FB46E0}",
+          "note": "NVE transformer station \"Øljusjøen\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 512",
+          "note": "NVE hydropower plant \"Øljusjøen\" 50 MW, Lærdal"
+        }
+      ]
+    },
+    {
+      "id": "ovre-vinstra-plant",
+      "name": "Øvre Vinstra kraftverk",
+      "osmIds": [
+        "way/549832208"
+      ],
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 523",
+          "note": "NVE hydropower plant \"Øvre Vinstra\" 140 MW, Nord-Fron"
         }
       ]
     }
@@ -3688,6 +4435,978 @@
           "url": "https://statnett.no/en/our-projects/northern-norway/balsfjord-skaidi/News-archive/extending-the-power-line-to-skaidi",
           "ref": "Extending the power line to Skaidi",
           "note": "Skillemoen – Skaidi is built for 420 kV but operated at 132 kV until demand increases"
+        }
+      ]
+    },
+    {
+      "stationId": "aurland-1-plant",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Aurland I power plant (underground) on its single connection to Aurland 1 transformer station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 10",
+          "note": "NVE hydropower plant \"Aurland 1\" 840 MW, Aurland"
+        }
+      ]
+    },
+    {
+      "stationId": "aurland-2-plant",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Aurland II power plants (II H and II L) on their single connection to Aurland 2 transformer station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 11",
+          "note": "NVE hydropower plant \"Aurland 2 H\" 70 MW, Aurland"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 12",
+          "note": "NVE hydropower plant \"Aurland 2 L\" 60 MW, Aurland"
+        }
+      ]
+    },
+    {
+      "stationId": "baerheim",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Bærheim is fed only from Fagrafjell, over two circuits (L1, L2), and feeds Stølaheia.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BB0851537-7B75-4C40-BE1F-C105950982A5%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{B0851537-7B75-4C40-BE1F-C105950982A5}",
+          "note": "NVE transmission line \"Fagrafjell - Bærheim L1\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B6A11488A-5180-458E-96B5-9E43E3E5B414%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6A11488A-5180-458E-96B5-9E43E3E5B414}",
+          "note": "NVE transmission line \"Fagrafjell - Bærheim L2\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BD4E983FE-DEE6-4879-8D99-416DB4EE70A9%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D4E983FE-DEE6-4879-8D99-416DB4EE70A9}",
+          "note": "NVE transformer station \"Bærheim\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "stationId": "stolaheia",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Stølaheia is fed only from Bærheim (NVE lists four Bærheim – Stølaheia sections).",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B395D272E-39B0-421A-834B-F48F53DCA768%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{395D272E-39B0-421A-834B-F48F53DCA768}",
+          "note": "NVE transmission line \"Bærheim - Stølaheia\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B3B68EA20-9DD1-459F-8AF6-C373C84DBED4%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3B68EA20-9DD1-459F-8AF6-C373C84DBED4}",
+          "note": "NVE transmission line \"Bærheim - Stølaheia\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B584F4E72-EBBC-4F17-88FC-81AE4E2D845E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{584F4E72-EBBC-4F17-88FC-81AE4E2D845E}",
+          "note": "NVE transmission line \"Bærheim - Stølaheia\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9C399BB7-3FF7-460A-9A7C-BA0331AC8A8F%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9C399BB7-3FF7-460A-9A7C-BA0331AC8A8F}",
+          "note": "NVE transmission line \"Bærheim - Stølaheia\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0E486D1B-4EB4-46FA-AFCE-F00D97CC3535%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0E486D1B-4EB4-46FA-AFCE-F00D97CC3535}",
+          "note": "NVE transformer station \"Stølaheia\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "stationId": "grannes-transition",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Statnett cable transition (OSM substation=transition) on Bærheim – Stølaheia at Grannes, radial with Stølaheia.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B395D272E-39B0-421A-834B-F48F53DCA768%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{395D272E-39B0-421A-834B-F48F53DCA768}",
+          "note": "NVE transmission line \"Bærheim - Stølaheia\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9C399BB7-3FF7-460A-9A7C-BA0331AC8A8F%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9C399BB7-3FF7-460A-9A7C-BA0331AC8A8F}",
+          "note": "NVE transmission line \"Bærheim - Stølaheia\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BCE4A3455-FDB3-4B10-AA99-0CCF0B7B270B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{CE4A3455-FDB3-4B10-AA99-0CCF0B7B270B}",
+          "note": "NVE transformer station \"Grannes\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "stationId": "dale-2-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Dale II power plant on its single connection to Dale switching station (NVE: Dale 2 T1 – Dale).",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B15CBFDA0-54E9-42A5-A820-D650CE1B8116%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{15CBFDA0-54E9-42A5-A820-D650CE1B8116}",
+          "note": "NVE transmission line \"Dale 2 T1 - Dale luftledning\" 300 kV (EVINY FORNYBAR AS)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 56",
+          "note": "NVE hydropower plant \"Dale II\" 147 MW, Vaksdal"
+        }
+      ]
+    },
+    {
+      "stationId": "dale-transformer",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Dale transformer station (132/47/22 kV, BKK) on its single 300 kV connection from Dale switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B427F4C38-E8C9-4BF3-AF5E-BC1950C634A6%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{427F4C38-E8C9-4BF3-AF5E-BC1950C634A6}",
+          "note": "NVE transmission line (unnamed) 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BBE3C7310-E59D-4262-B5C2-2D56AF8DD9E1%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{BE3C7310-E59D-4262-B5C2-2D56AF8DD9E1}",
+          "note": "NVE transformer station \"Dale\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "stationId": "evanger-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Evanger power plant on its single connection to Evanger transformer station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 77",
+          "note": "NVE hydropower plant \"Evanger\" 330 MW, Voss"
+        }
+      ]
+    },
+    {
+      "stationId": "harpefoss",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Harpefossen power plant on its single line to Nedre Vinstra.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BD62CAA91-851E-4D26-9163-072D3CFECC99%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D62CAA91-851E-4D26-9163-072D3CFECC99}",
+          "note": "NVE transmission line \"Harpefoss - Nedre Vinstra\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 131",
+          "note": "NVE hydropower plant \"Harpefossen\" 108 MW, Sør-Fron"
+        }
+      ]
+    },
+    {
+      "stationId": "haugsneset",
+      "voltageKv": 300,
+      "reason": "converter-station",
+      "note": "Johan Sverdrup power-from-shore converter at Haugsneset, fed only from Kårstø.",
+      "evidence": [
+        {
+          "sourceId": "equinor",
+          "url": "https://www.equinor.com/news/archive/2018-10-09-johan-sverdrup-powered-shore",
+          "ref": "Johan Sverdrup powered from shore (2018-10-09)",
+          "note": "Equinor: the Johan Sverdrup field is powered from shore through the converter at Haugsneset by Kårstø"
+        }
+      ]
+    },
+    {
+      "stationId": "hemsil-1",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Hemsil 1 (switching station and power plant) is fed only from Hemsil 2 and feeds Øljusjøen and Borgund.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0C472BF3-475C-4A38-9B96-A3D6214E933A%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0C472BF3-475C-4A38-9B96-A3D6214E933A}",
+          "note": "NVE transmission line \"Hemsil 1 - Hemsil 2\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B95E18FB3-EB2E-4115-9674-96FDFEBD2FCC%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{95E18FB3-EB2E-4115-9674-96FDFEBD2FCC}",
+          "note": "NVE transmission line \"Øljusjøen - Hemsil 1\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B79634A17-3678-4BBB-9761-E38DCAE6932E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{79634A17-3678-4BBB-9761-E38DCAE6932E}",
+          "note": "NVE transformer station \"Hemsil 1\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 141",
+          "note": "NVE hydropower plant \"Hemsil 1\" 70 MW, Hemsedal"
+        }
+      ]
+    },
+    {
+      "stationId": "hemsil-2-transformer",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Hemsil 2 transformer station (300/66/22 kV) on its single connection to Hemsil 2 switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0B99E921-F638-43A4-A72D-A430A4623F34%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0B99E921-F638-43A4-A72D-A430A4623F34}",
+          "note": "NVE transformer station \"Hemsil 2\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "stationId": "hylen-plant",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Hylen power plant on its single connection to Hylen switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 167",
+          "note": "NVE hydropower plant \"Hylen\" 160 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "stationId": "martin-linge",
+      "voltageKv": 300,
+      "reason": "offshore-landfall",
+      "note": "Equinor's 300/100 kV station at Kollsnes that powers the Martin Linge platform from shore, on its single connection to Kollsnes.",
+      "evidence": [
+        {
+          "sourceId": "equinor",
+          "url": "https://www.equinor.com/energy/martin-linge",
+          "ref": "Martin Linge (Equinor)",
+          "note": "Equinor: Martin Linge is supplied with power from shore via Kollsnes"
+        }
+      ]
+    },
+    {
+      "stationId": "kolsvik-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Kolsvik power plant on its connection to Kolsvik transformer station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 209",
+          "note": "NVE hydropower plant \"Kolsvik\" 128 MW, Bindal"
+        }
+      ]
+    },
+    {
+      "stationId": "kvanndal-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Kvanndal power plant on its single connection to the Kvanndal switchyard.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 219",
+          "note": "NVE hydropower plant \"Kvanndal\" 40 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "stationId": "leirdola",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Leirdøla is fed only from Sogndal via Nuken (NVE: Sogndal – Nuken, two Nuken – Leirdøla sections) and feeds Fortun and Jostedal.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE05300AC-5D19-43FF-AAC4-AC7893A7D900%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E05300AC-5D19-43FF-AAC4-AC7893A7D900}",
+          "note": "NVE transmission line \"Sogndal - Nuken\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B60A384C2-267B-47A3-A8C3-A8050B69953B%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{60A384C2-267B-47A3-A8C3-A8050B69953B}",
+          "note": "NVE transmission line \"Nuken - Leirdøla\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B6612E313-59A0-4E6D-8B9F-631E154033C2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6612E313-59A0-4E6D-8B9F-631E154033C2}",
+          "note": "NVE transmission line \"Nuken - Leirdøla\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B8910BBDD-A121-4574-A621-741228C040AC%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{8910BBDD-A121-4574-A621-741228C040AC}",
+          "note": "NVE transmission line \"Leirdøla - Fortun\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B590C3CB0-25E7-4609-9945-237144BF44D2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{590C3CB0-25E7-4609-9945-237144BF44D2}",
+          "note": "NVE transformer station \"Leirdøla\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 242",
+          "note": "NVE hydropower plant \"Leirdøla\" 125 MW, Luster"
+        }
+      ]
+    },
+    {
+      "stationId": "lysebotn-2-plant",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Lysebotn II power plant (underground) on its single connection to Lyse.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 1899",
+          "note": "NVE hydropower plant \"Lysebotn II\" 370 MW, Sandnes"
+        }
+      ]
+    },
+    {
+      "stationId": "nea",
+      "voltageKv": 420,
+      "reason": "border-end",
+      "note": "Nea's only Norwegian 420 kV line is Nea – Klæbu; Nea – Järpströmmen continues to SE2.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BCD926573-AE74-4818-B729-8C659FBBA540%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{CD926573-AE74-4818-B729-8C659FBBA540}",
+          "note": "NVE transmission line \"Nea - Klæbu\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B598108DE-4C94-4E2C-9BB1-918B68F38DB2%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{598108DE-4C94-4E2C-9BB1-918B68F38DB2}",
+          "note": "NVE transmission line \"Nea - Järpströmmen\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B3B468FAE-68C8-4033-A36A-97FFFB5A0E8C%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{3B468FAE-68C8-4033-A36A-97FFFB5A0E8C}",
+          "note": "NVE transformer station \"Nea\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "stationId": "nea-tya-plant",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Nea and Tya power plants on their connection to Nea transformer station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 291",
+          "note": "NVE hydropower plant \"Nea\" 175 MW, Tydal"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 465",
+          "note": "NVE hydropower plant \"Tya\" 32 MW, Tydal"
+        }
+      ]
+    },
+    {
+      "stationId": "nedre-vinstra",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Nedre Vinstra power plant and its switchyard, fed only from Fåberg and feeding Harpefossen.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B099CACF5-8FC4-40E1-BE5C-EBDF8904B25C%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{099CACF5-8FC4-40E1-BE5C-EBDF8904B25C}",
+          "note": "NVE transmission line \"Nedre Vinstra - Fåberg\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BD62CAA91-851E-4D26-9163-072D3CFECC99%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D62CAA91-851E-4D26-9163-072D3CFECC99}",
+          "note": "NVE transmission line \"Harpefoss - Nedre Vinstra\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B0385D580-886C-4745-8BB7-FF592B2EDA9E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0385D580-886C-4745-8BB7-FF592B2EDA9E}",
+          "note": "NVE transformer station \"Nedre Vinstra\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 302",
+          "note": "NVE hydropower plant \"Nedre Vinstra\" 308 MW, Nord-Fron"
+        }
+      ]
+    },
+    {
+      "stationId": "nes-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Nes power plant on its connection to Nesbyen.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 303",
+          "note": "NVE hydropower plant \"Nes\" 250 MW, Nesbyen"
+        }
+      ]
+    },
+    {
+      "stationId": "novle-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Novle power plant on its single line to Røldal.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B1B0DB5AE-B28E-4166-9469-7513DBBEB27F%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{1B0DB5AE-B28E-4166-9469-7513DBBEB27F}",
+          "note": "NVE transmission line \"Novle - Røldal\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 312",
+          "note": "NVE hydropower plant \"Novle\" 40 MW, Ullensvang"
+        }
+      ]
+    },
+    {
+      "stationId": "oksla-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Oksla power plant on its cable transition to Åsen.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B288FF8EC-4A75-4ADA-B93E-1CAA0774CE38%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{288FF8EC-4A75-4ADA-B93E-1CAA0774CE38}",
+          "note": "NVE transmission line \"Åsen - Oksla\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 317",
+          "note": "NVE hydropower plant \"Oksla\" 206 MW, Ullensvang"
+        }
+      ]
+    },
+    {
+      "stationId": "refsdal-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Refsdal power plant and Refsdal transformer station (66/22 kV) on one connection to Refsdal switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BD1EFD46E-7F1E-4779-A4ED-A27C80F39E47%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D1EFD46E-7F1E-4779-A4ED-A27C80F39E47}",
+          "note": "NVE transformer station \"Refsdal\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 332",
+          "note": "NVE hydropower plant \"Refsdal\" 90 MW, Vik"
+        }
+      ]
+    },
+    {
+      "stationId": "rendalen-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Rendalen power plant on its connection to Rendalen's 300 kV switchyard.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 336",
+          "note": "NVE hydropower plant \"Rendalen\" 100.5 MW, Rendalen"
+        }
+      ]
+    },
+    {
+      "stationId": "roldal",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Røldal is fed only from Nesflaten and feeds Novle, Åsen and Oksla.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B4EB5F4C5-5C0B-4C11-B79E-A6EF5684077F%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{4EB5F4C5-5C0B-4C11-B79E-A6EF5684077F}",
+          "note": "NVE transmission line \"Røldal - Nesflaten\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B1B0DB5AE-B28E-4166-9469-7513DBBEB27F%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{1B0DB5AE-B28E-4166-9469-7513DBBEB27F}",
+          "note": "NVE transmission line \"Novle - Røldal\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B19CA8B2C-5182-49AC-ABFD-66114BAA50AA%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{19CA8B2C-5182-49AC-ABFD-66114BAA50AA}",
+          "note": "NVE transmission line \"Åsen - Røldal\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B18934515-328B-4BF0-B170-B1B0611C84D8%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{18934515-328B-4BF0-B170-B1B0611C84D8}",
+          "note": "NVE transformer station \"Røldal\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "stationId": "asen",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Åsen is fed only from Røldal and feeds Oksla.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B19CA8B2C-5182-49AC-ABFD-66114BAA50AA%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{19CA8B2C-5182-49AC-ABFD-66114BAA50AA}",
+          "note": "NVE transmission line \"Åsen - Røldal\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B288FF8EC-4A75-4ADA-B93E-1CAA0774CE38%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{288FF8EC-4A75-4ADA-B93E-1CAA0774CE38}",
+          "note": "NVE transmission line \"Åsen - Oksla\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B452D6987-003A-4707-B14B-E0D8D55BA24D%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{452D6987-003A-4707-B14B-E0D8D55BA24D}",
+          "note": "NVE transformer station \"Åsen\" (STATNETT SF); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "stationId": "saurdal-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Saurdal pumped-storage plant at 300 kV behind Saurdal's 420/300 kV transformer; Saurdal's lines are 420 kV.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2D833557-D0EC-4784-9FA0-CFEC2A882DC1%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2D833557-D0EC-4784-9FA0-CFEC2A882DC1}",
+          "note": "NVE transmission line \"Kvilldal - Saurdal\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9B1B2781-B063-4AEF-AEB8-2EFDEFFDC347%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9B1B2781-B063-4AEF-AEB8-2EFDEFFDC347}",
+          "note": "NVE transmission line \"Saurdal - Lyse\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 362",
+          "note": "NVE hydropower plant \"Saurdal\" 640 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "stationId": "saurdal",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Saurdal's 300 kV level serves only its pumped-storage plant; its lines are 420 kV (NVE: Kvilldal – Saurdal, Saurdal – Lyse).",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2D833557-D0EC-4784-9FA0-CFEC2A882DC1%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2D833557-D0EC-4784-9FA0-CFEC2A882DC1}",
+          "note": "NVE transmission line \"Kvilldal - Saurdal\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B9B1B2781-B063-4AEF-AEB8-2EFDEFFDC347%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{9B1B2781-B063-4AEF-AEB8-2EFDEFFDC347}",
+          "note": "NVE transmission line \"Saurdal - Lyse\" 420 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B956F34D5-C317-41AE-8F92-742F62475E73%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{956F34D5-C317-41AE-8F92-742F62475E73}",
+          "note": "NVE transformer station \"Saurdal\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 362",
+          "note": "NVE hydropower plant \"Saurdal\" 640 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "stationId": "sima-plant",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Lang-Sima and Sy-Sima power plants (underground) on their connections to the Sima switchyard.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 231",
+          "note": "NVE hydropower plant \"Lang-Sima\" 500 MW, Eidfjord"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 423",
+          "note": "NVE hydropower plant \"Sy-Sima\" 620 MW, Eidfjord"
+        }
+      ]
+    },
+    {
+      "stationId": "solhom-plant",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Solhom power plant on its single connection to Fjotland.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BD5855052-2B63-4469-81C3-12707940F251%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{D5855052-2B63-4469-81C3-12707940F251}",
+          "note": "NVE transformer station \"Solhom\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 396",
+          "note": "NVE hydropower plant \"Solhom\" 200 MW, Kvinesdal"
+        }
+      ]
+    },
+    {
+      "stationId": "steinsland-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Steinsland power plant on its single connection to Steinsland switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 400",
+          "note": "NVE hydropower plant \"Steinsland\" 170 MW, Modalen"
+        }
+      ]
+    },
+    {
+      "stationId": "suldal-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Suldal I and II power plants on their connections to Nesflaten switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 408",
+          "note": "NVE hydropower plant \"Suldal I\" 180 MW, Suldal"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 409",
+          "note": "NVE hydropower plant \"Suldal II\" 150 MW, Suldal"
+        }
+      ]
+    },
+    {
+      "stationId": "tjodan-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Tjodan power plant on its single connection to Lyse.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 442",
+          "note": "NVE hydropower plant \"Tjodan\" 110 MW, Sandnes"
+        }
+      ]
+    },
+    {
+      "stationId": "tjorhom-plant",
+      "voltageKv": 420,
+      "reason": "radial-plant",
+      "note": "Tjørhom power plant on its single connection to Tjørhom switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 445",
+          "note": "NVE hydropower plant \"Tjørhom\" 120 MW, Sirdal"
+        }
+      ]
+    },
+    {
+      "stationId": "tokke-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Tokke power plant (underground) on its connection to Tokke switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 446",
+          "note": "NVE hydropower plant \"Tokke\" 430 MW, Tokke"
+        }
+      ]
+    },
+    {
+      "stationId": "tonstad-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Tonstad power plant on its cable connection to Tonstad switching station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 448",
+          "note": "NVE hydropower plant \"Tonstad\" 960 MW, Sirdal"
+        }
+      ]
+    },
+    {
+      "stationId": "tunnsjodal-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Tunnsjødal power plant on its connections to Tunnsjødal transformer station.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 458",
+          "note": "NVE hydropower plant \"Tunnsjødal\" 176 MW, Namsskogan"
+        }
+      ]
+    },
+    {
+      "stationId": "blafalli-vik",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Blåfalli Vik power plant on its single line to Blåfalli (NVE: Vik – Blåfalli).",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B7FB19CD3-9E27-4B22-A1D3-8F89DFDBE430%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{7FB19CD3-9E27-4B22-A1D3-8F89DFDBE430}",
+          "note": "NVE transmission line \"Vik - Blåfalli\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 1334",
+          "note": "NVE hydropower plant \"Blåfalli Vik\" 230 MW, Kvinnherad"
+        }
+      ]
+    },
+    {
+      "stationId": "kleven",
+      "voltageKv": 300,
+      "reason": "industrial-customer",
+      "note": "Kleven (Statnett, 300/110 kV, OSM substation=industrial) on its single line from Kvinesdal.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0A882A34-966D-47BA-9994-DC76EF66CC54%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{0A882A34-966D-47BA-9994-DC76EF66CC54}",
+          "note": "NVE transmission line \"Kvinesdal - Kleven\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B6456B319-C152-4D0C-92F3-B30228ADCC32%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{6456B319-C152-4D0C-92F3-B30228ADCC32}",
+          "note": "NVE transformer station \"KLEVEN\" (ERAMET NORWAY AS AVD KVINESDAL); NVE station voltages are not used"
+        }
+      ]
+    },
+    {
+      "stationId": "vemork-transition",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Statkraft cable transition of Vemork power plant beside Vemorktoppen.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 493",
+          "note": "NVE hydropower plant \"Vemork\" 204 MW, Tinn"
+        }
+      ]
+    },
+    {
+      "stationId": "nyhamna-transition",
+      "voltageKv": 420,
+      "reason": "industrial-customer",
+      "note": "Cable transition (OSM substation=transition) on Fræna – Nyhamna, radial with the Nyhamna gas plant.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B24C4CB60-803C-459A-93B9-68C6910C4544%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{24C4CB60-803C-459A-93B9-68C6910C4544}",
+          "note": "NVE transmission line \"Viklandet - Fræna\" 420 kV (STATNETT SF)"
+        }
+      ]
+    },
+    {
+      "stationId": "sundsbarm",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Sundsbarm power plant switchyard on its 0.3 km connection to Flatin, where it joins Tokke – Rød (NVE: Tokke – Flatin, Flatin – Rød).",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE8C86ADB-E065-4EA4-A331-BC7817087A47%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E8C86ADB-E065-4EA4-A331-BC7817087A47}",
+          "note": "NVE transmission line \"Tokke - Flatin\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BE671CF69-3081-4EAA-BC08-7DA7CDBF8973%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{E671CF69-3081-4EAA-BC08-7DA7CDBF8973}",
+          "note": "NVE transmission line \"Flatin - Rød\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B446BA439-CA6B-4B89-991B-3B638F7A4C85%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{446BA439-CA6B-4B89-991B-3B638F7A4C85}",
+          "note": "NVE transformer station \"Flatin\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 410",
+          "note": "NVE hydropower plant \"Sundsbarm\" 103 MW, Seljord"
+        }
+      ]
+    },
+    {
+      "stationId": "aroy",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Årøy power plant and its cable transition (Sognekraft) on its single connection to Årøy – Nuken.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 530",
+          "note": "NVE hydropower plant \"Årøy\" 90 MW, Sogndal"
+        }
+      ]
+    },
+    {
+      "stationId": "vinje-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Vinje power plant on its connections to the Vinje switchyard.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 503",
+          "note": "NVE hydropower plant \"Vinje\" 300 MW, Vinje"
+        }
+      ]
+    },
+    {
+      "stationId": "oljusjoen",
+      "voltageKv": 300,
+      "reason": "radial-supply",
+      "note": "Øljusjøen (switching station and pumped-storage plant) is fed only from Hemsil 1 and feeds Borgund.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B95E18FB3-EB2E-4115-9674-96FDFEBD2FCC%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{95E18FB3-EB2E-4115-9674-96FDFEBD2FCC}",
+          "note": "NVE transmission line \"Øljusjøen - Hemsil 1\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B2899B065-1A54-4347-BE5E-F7847B0CC546%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{2899B065-1A54-4347-BE5E-F7847B0CC546}",
+          "note": "NVE transmission line \"Borgund - Øljusjøen\" 300 kV (STATNETT SF)"
+        },
+        {
+          "sourceId": "nve-nettanlegg5",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7B83819CE0-6960-46EA-92D7-F00F32FB46E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+          "ref": "{83819CE0-6960-46EA-92D7-F00F32FB46E0}",
+          "note": "NVE transformer station \"Øljusjøen\" (STATNETT SF); NVE station voltages are not used"
+        },
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 512",
+          "note": "NVE hydropower plant \"Øljusjøen\" 50 MW, Lærdal"
+        }
+      ]
+    },
+    {
+      "stationId": "ovre-vinstra-plant",
+      "voltageKv": 300,
+      "reason": "radial-plant",
+      "note": "Øvre Vinstra power plant on its connection to the Øvre Vinstra switchyard.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 523",
+          "note": "NVE hydropower plant \"Øvre Vinstra\" 140 MW, Nord-Fron"
         }
       ]
     }
