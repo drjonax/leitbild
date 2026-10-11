@@ -7,6 +7,9 @@ import { openBridgeDevice } from './text-metrics.ts'
 // data beside each other, so a new kind of display is a new profile, not a
 // new drawing path.
 
+/** How much room a framed item's alarm badge reserves (MimicProfile.badges). */
+export type BadgeReservation = 'reserved' | 'fitted'
+
 export interface MimicProfile {
   /** Names the profile in refusals and in the drawing's identity. */
   readonly id: string
@@ -56,14 +59,15 @@ export interface MimicProfile {
    */
   readonly minScale: number
   /**
-   * What a framed item reserves for its alarm badge: `reserved`, room for
-   * its flap's whole text, a second line with its action where the frame is
-   * too narrow for it, and a line counting its other alarms ("+2 alarms"),
-   * so the badge reads alike wherever it is drawn; `fitted`, only each
-   * flap's watched part, the action and count shown where the frame has
-   * room for them (a chat column's four loops have none to spare).
+   * What a framed item reserves for its alarm badge, tried in this order
+   * until the drawing fits: `reserved`, room for its flap's whole text, a
+   * further line with its action where the frame is too narrow for it, and
+   * a line counting its other alarms ("+2 alarms"), so the badge reads alike
+   * wherever it is drawn; `fitted`, only each flap's watched part, the
+   * action and count shown where the frame has room for them (a chat
+   * column's four loops have none to spare).
    */
-  readonly badges: 'reserved' | 'fitted'
+  readonly badges: ReadonlyArray<BadgeReservation>
 }
 
 /** OpenBridge's drawing conventions: its 24 px grid, pipe outline and alarm frame. */
@@ -121,7 +125,7 @@ export const chatMimicProfile: MimicProfile = {
   stubLabels: 'names',
   commands: 'inline',
   minScale: MIMIC_MIN_SCALE,
-  badges: 'fitted',
+  badges: ['reserved', 'fitted'],
 }
 
 /**
@@ -147,7 +151,7 @@ export const overviewMimicProfile: MimicProfile = {
   stubLabels: 'groups',
   commands: 'stacked',
   minScale: 1,
-  badges: 'reserved',
+  badges: ['reserved'],
 }
 
 /**

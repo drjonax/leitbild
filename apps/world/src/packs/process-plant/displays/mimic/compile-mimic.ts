@@ -6,7 +6,7 @@ import { framingRules, itemBinding, linkFlowBinding, linkPowerBinding, type Mimi
 import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutResult, type DiagramNode, type DiagramProfile, type PlacedNode } from './layout/index.ts'
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
-import type { MimicProfile } from './profiles.ts'
+import type { BadgeReservation, MimicProfile } from './profiles.ts'
 import { COUNT_WORDS, flapCount, itemRows, POWER_STATE_WORDS, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
 import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
 import { openBridgeDevice, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
@@ -157,7 +157,7 @@ const flapPlan = (
   vessel: boolean,
   tag: number,
   measure: (style: OpenBridgeTextStyle, text: string, owner: string) => number,
-  badges: MimicProfile['badges'],
+  badges: BadgeReservation,
 ): { readonly width: number; readonly rows: ReadonlyArray<MimicRow>; readonly lines: ReadonlyArray<FlapPart> } => {
   const frames = planned.binding.frames
   if (frames.length === 0) return { width: 0, rows: [], lines: [] }
@@ -194,7 +194,7 @@ interface Planned {
   readonly issues: ReadonlyArray<MimicIssue>
 }
 
-const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): Planned => {
+const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile, badges: BadgeReservation = profile.badges[0]!): Planned => {
   const graph = plant.graph
   const framed = framingRules(plant)
   const issues: MimicIssue[] = []
@@ -241,7 +241,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     // A frame's flap names its most severe active alarm whole, what it watches and what the I&C does there,
     // and the item counts its other alarms ("+2 alarms"): no drawing drops the action or leaves a count
     // unexplained (HMI review of run 23: "LO-LO +2" on a detail, "LO-LO · AFW START +2" on the overview).
-    const flap = flapPlan(unflapped, vessel, tag, measure, profile.badges)
+    const flap = flapPlan(unflapped, vessel, tag, measure, badges)
     const planned = { ...unflapped, rows: [...unflapped.rows, ...flap.rows], flapLines: flap.lines }
     items.set(planned.id, planned)
     for (const row of planned.rows) for (const { style, text } of rowTexts(row)) measure(style, text, planned.binding.label)
@@ -585,23 +585,28 @@ const layoutReasons = (result: Extract<DiagramLayoutResult, { ok: false }>, budg
 
 type Attempted = MimicCompileResult | { readonly ok: false; readonly layout: Extract<DiagramLayoutResult, { ok: false }> }
 
-/** The diagram a scope is drawn from under a profile, before layout: what the engine sees (for verifying a drawing independently). */
+/** The diagram a scope is drawn from under a profile and its roomiest badge reservation, before layout: what the engine sees (for verifying a drawing independently). */
 export const planMimicDiagram = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProfile): { readonly ok: true; readonly graph: DiagramGraph } | { readonly ok: false; readonly issues: ReadonlyArray<MimicIssue> } => {
   const planned = plan(plant, scope, profile)
   return planned.issues.length > 0 ? { ok: false, issues: planned.issues } : { ok: true, graph: planned.graph }
 }
 
 const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, scope: MimicScope, budget: MimicBudget): Attempted => {
-  const planned = plan(plant, scope, budget.profile)
-  if (planned.issues.length > 0) return { ok: false, issues: planned.issues }
-  // A scope of equipment the mimic has no symbol for draws nothing; the engine is never handed an empty diagram.
-  if (planned.graph.nodes.length === 0) {
-    const reasons = scope.components.map(index => presentationFor(plant.graph.components[index]!)).flatMap(presentation => presentation.element === 'not-drawn' ? [presentation.reason] : [])
-    return { ok: false, issues: [{ field: '(mimic)', message: `nothing in this scope has a mimic symbol (${[...new Set(reasons)].join('; ')}); name other equipment or services` }] }
+  // Each badge reservation the profile allows, the roomiest first, until the drawing fits.
+  let attempted: Attempted | undefined
+  for (const badges of budget.profile.badges) {
+    const planned = plan(plant, scope, budget.profile, badges)
+    if (planned.issues.length > 0) return { ok: false, issues: planned.issues }
+    // A scope of equipment the mimic has no symbol for draws nothing; the engine is never handed an empty diagram.
+    if (planned.graph.nodes.length === 0) {
+      const reasons = scope.components.map(index => presentationFor(plant.graph.components[index]!)).flatMap(presentation => presentation.element === 'not-drawn' ? [presentation.reason] : [])
+      return { ok: false, issues: [{ field: '(mimic)', message: `nothing in this scope has a mimic symbol (${[...new Set(reasons)].join('; ')}); name other equipment or services` }] }
+    }
+    const layout = layoutDiagram(planned.graph, profileFor(budget))
+    if (layout.ok) return { ok: true, mimic: assemble(plant, intent, budget.profile, scope, planned, layout) }
+    attempted = { ok: false, layout }
   }
-  const layout = layoutDiagram(planned.graph, profileFor(budget))
-  if (!layout.ok) return { ok: false, layout }
-  return { ok: true, mimic: assemble(plant, intent, budget.profile, scope, planned, layout) }
+  return attempted!
 }
 
 /**

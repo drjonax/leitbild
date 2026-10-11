@@ -162,6 +162,21 @@ const bendsOf = (points: ReadonlyArray<readonly [number, number]>): number =>
     return !((a[0] === b[0] && b[0] === c[0]) || (a[1] === b[1] && b[1] === c[1]))
   }).length
 
+describe('alarm badges in a chat column', () => {
+  const system = plantWithLoops(4)
+
+  test('reserve room for the whole badge and its count where the drawing still fits, else only what each badge watches', () => {
+    // Safety bus A's supply has room: the grid's badge names its action ("V LO-LO · ALM"), never "V LO-LO" alone (HMI review of run 23).
+    const places = (mimic: CompiledMimic) => mimic.items.filter(item => item.flapLines.length > 0 || item.rows.some(row => row.kind === 'alarm')).map(item => item.binding.label)
+    const bus = generated(system, { to: ['safetyBusA'] })
+    expect(places(bus)).toContain('Grid')
+    // All four primary loops have none to spare: they are drawn as before, each badge reserving only what it watches.
+    const loops = generated(system, { services: ['primaryCoolant'] })
+    expect(places(loops)).toEqual([])
+    expect([loops.width, loops.height]).toEqual([747, 490])
+  })
+})
+
 describe('every intent over the reference Plant draws or is refused with a reason', () => {
   const system = plantWithLoops(4)
   const graph = system.plant.graph
