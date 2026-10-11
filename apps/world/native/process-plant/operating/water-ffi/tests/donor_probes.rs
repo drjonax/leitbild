@@ -1859,3 +1859,78 @@ fn the_delta_cj_setter_admits_stocks_range_and_refuses_its_silent_default() {
         stock.linear_setups
     );
 }
+
+/// Diagnosis 7: where between stock's dcj 0.25 and 0.1 the cap cycle stops,
+/// and the quiet and natural-step cost of the dcj values that stop it: the
+/// 4.5 and 5 ms capped seizure at stock's Newton coefficient with dcj 0.2,
+/// 0.15 and 0.125, and the hold and never-capped events of diagnosis 6 with
+/// dcj 0.2, 0.15 and 0.1.
+#[test]
+#[ignore = "diagnostic probe, NOT S1 evidence; requires the actual packet, the wiki, maintained IF97 and stock IDA/KLU"]
+fn donor_delta_cj_threshold_probe() {
+    let cpu0 = cpu_s();
+    let base = base();
+    assert_eq!(base.settle["run5_reproduced"], json!(true));
+    let rtol = num(&base.gates, &["relativeTolerance"]);
+    let dt = num(&base.gates, &["comparison", "observation_s"]);
+    let window = num(&base.gates, &["seizure", "duration_s"]);
+    let post = num(&base.gates, &["recovery", "postWindow_s"]);
+    let hold_s = num(&base.gates, &["hold", "duration_s"]);
+    let from_s = num(&base.gates, &["hold", "measuredFrom_s"]);
+    let colors = colors(&base);
+    let faces: Vec<usize> = ["UPPER->HOUSING.MAIN", "HOUSING.MAIN->HOUSING.NECK"]
+        .iter()
+        .map(|id| base.face_ids.iter().position(|f| f == id).unwrap())
+        .collect();
+    let plan = |window_s: f64, max_step_s: f64, observe_s: Option<f64>, dcj: f64| Plan {
+        rtol,
+        atol: &base.atol,
+        window_s,
+        max_step_s,
+        newton: None,
+        after: After::None,
+        observe_s,
+        dcj: Some(dcj),
+        step_cap: 50_000,
+        cpu_cap_s: 900.,
+    };
+    let mut capped = Vec::new();
+    for cap in [0.0045, 0.005] {
+        for dcj in [0.2, 0.15, 0.125] {
+            let trace = run(&base, Event::Seizure, plan(window, cap, Some(dt), dcj));
+            let report = cycle_report(&base, &trace, &faces);
+            capped.push(json!({"max_step_s":cap,"dcj":dcj,"cost":cost(&trace, colors, window),"h_median":report["h_median"],"core_dp_5_10_s":report["core_dp_5_10_s"],
+                "newton_error_proxy_5_10_s_wrms":report["newton_error_proxy_5_10_s"]["jacobian_donor"]["mean_wrms"]}));
+        }
+    }
+    let mut natural = serde_json::Map::new();
+    for dcj in [0.2, 0.15, 0.1] {
+        let mut cases = serde_json::Map::new();
+        for (case, kind, span) in [
+            ("hold", Event::Hold, hold_s),
+            ("rcp_seizure_never_capped", Event::Seizure, window + post),
+            (
+                "rcp_supply_loss_never_capped",
+                Event::Supply,
+                num(&base.gates, &["supplyLoss", "duration_s"]) + post,
+            ),
+        ] {
+            let trace = run(&base, kind, plan(span, f64::INFINITY, None, dcj));
+            let mut c = cost(&trace, colors, span);
+            if kind == Event::Hold {
+                let measured = trace.steps.iter().filter(|s| s.t > from_s + 1e-12).count();
+                c["steps_per_s_measured_from"] =
+                    json!({"from_s":from_s,"steps_per_s":measured as f64/(span-from_s)});
+            }
+            cases.insert(case.into(), c);
+        }
+        natural.insert(
+            format!("dcj_{dcj}"),
+            json!({"dcj":dcj,"newton_coefficient":STOCK_NEWTON,"cases":cases}),
+        );
+    }
+    let receipt = json!({"kind":"donor-delta-cj-threshold-probe-NOT-EVIDENCE","provenance":provenance(&base),
+        "method":"as donor-delta-cj (capped seizure, stock Newton coefficient, dcj set before the first step) and donor-quiet-cost (never capped, from the settled state), at the listed dcj",
+        "colors":colors,"capped_seizure":capped,"natural":natural,"cpu_s_total":cpu_s()-cpu0,"load_average_end":load_average()});
+    write(&base, "donor-delta-cj-threshold.json", &receipt);
+}
