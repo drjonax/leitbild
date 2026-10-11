@@ -91,6 +91,24 @@ interface AssetGetResult {
   }
 }
 
+interface BusGetResult {
+  readonly asset: { readonly state: { readonly islandId: string; readonly energized: boolean; readonly frequencyHz: number | null } }
+}
+
+interface LoadGetResult {
+  readonly asset: {
+    readonly definition: { readonly busId: string }
+    readonly state: {
+      readonly demandMw: number
+      readonly servedMw: number
+      readonly unservedMw: number
+      readonly lfddShedMw: number
+      readonly outageMw: number
+      readonly manualDemandLimitMw: number | null
+    }
+  }
+}
+
 interface AssetSearchResult {
   readonly total: number
   readonly assets: ReadonlyArray<{ readonly id: string }>
@@ -283,4 +301,136 @@ describe('bundled Electric Grid Scenarios', () => {
       console.info(`halden-offsite-power-restoration: ${exportMw.toFixed(0)} MW export lost; nadir ${nadirHz.toFixed(3)} Hz; LFDD and outage ${lfddMw.toFixed(0)} MW; bays re-energised by dead-bus closing; f(240 s) ${scenario.projection().frequencyHz!.toFixed(3)} Hz`)
     } finally { await scenario.close() }
   }, 180_000)
+
+  test('rogaland-black-start: the separated region goes dark, Lysebotn I black-starts it, blocks stay clear of LFDD and synchro-check gates the resynchronisation', async () => {
+    const scenario = await startScenarioRun('rogaland-black-start', 'grid:norway')
+    const lysebotnBus = 'bus:osm-relation-8886668@132'
+    const lysebotn = 'generator:nve-hydro-257'
+    // Forsand small hydro: a run-of-river aggregate that the model does not mark black-start capable.
+    const follower = 'generator:aggregate-osm-relation-12678808@132-hydro-run-of-river'
+    const fagrafjell = 'branch:transformer-osm-way-830770515-300-132'
+    const lyse = 'branch:transformer-osm-relation-8886202-300-132'
+    const startingBlockBuses = new Set(['bus:osm-relation-12678808@132', 'bus:osm-relation-10876752@132', 'bus:osm-relation-12678806@132', 'bus:osm-way-1191984327@132', 'bus:osm-way-1191984325@132'])
+    const islandPickUpBuses = new Set(['bus:osm-way-50192634@132', 'bus:osm-relation-20603477@132', 'bus:osm-way-288575132@132', 'bus:osm-way-830770515@132'])
+    const bus = async () => (await scenario.query<BusGetResult>('world.electric-grid.asset.get', { assetId: lysebotnBus })).asset.state
+    const load = async (assetId: string) => (await scenario.query<LoadGetResult>('world.electric-grid.asset.get', { assetId })).asset
+    const generatorState = async (assetId: string) => (await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId })).asset.state
+    const ok = async (capabilityId: string, input: Record<string, unknown>) => expect((await scenario.command(capabilityId, input)).ok).toBe(true)
+    // The black-start island is the only energised island off nominal; the main grid is the largest-load island.
+    const islandOffsetHz = async (): Promise<number> => Math.abs((await bus()).frequencyHz! - scenario.projection().frequencyHz!)
+    try {
+      await scenario.advanceTo(59)
+      expect((await bus()).energized).toBe(true)
+
+      await scenario.advanceTo(65)
+      expectTimelineExecuted(scenario, 'rogaland-black-start')
+      const dark = await bus()
+      expect(dark.energized).toBe(false)
+      const regionGenerators = await scenario.query<AssetSearchResult>('world.electric-grid.assets.search', { islandId: dark.islandId, kinds: ['generator'], limit: 50 })
+      const regionTripped = await scenario.query<AssetSearchResult>('world.electric-grid.assets.search', { islandId: dark.islandId, kinds: ['generator'], status: ['tripped'], limit: 50 })
+      expect(regionGenerators.total).toBeGreaterThan(0)
+      expect(regionTripped.total).toBe(regionGenerators.total)
+      const loadIds = (await scenario.query<AssetSearchResult>('world.electric-grid.assets.search', { islandId: dark.islandId, kinds: ['load'], limit: 200 })).assets.map(asset => asset.id)
+      const loads = new Map(await Promise.all(loadIds.map(async id => [id, await load(id)] as const)))
+      const outageMw = [...loads.values()].reduce((sum, entry) => sum + entry.state.outageMw, 0)
+      expect(outageMw).toBeGreaterThan(250)
+      expect([...loads.values()].every(entry => entry.state.lfddShedMw === 0)).toBe(true)
+      expect(scenario.projection().activeIslandCount).toBe(1)
+      expect(Math.abs(scenario.projection().frequencyHz! - 50)).toBeLessThan(0.3)
+
+      // Only a black-start capable unit may start in the dead island.
+      await ok('world.electric-grid.reset-generator-trip', { assetId: follower })
+      const refused = await scenario.command('world.electric-grid.start-generator', { assetId: follower })
+      expect(refused.ok).toBe(false)
+      expect(refused.ok ? '' : refused.reason).toContain('is not black-start capable')
+
+      // Disconnect everything but the Ryfylke starting block, then black-start Lysebotn I onto it.
+      const startingBlock = loadIds.filter(id => startingBlockBuses.has(loads.get(id)!.definition.busId))
+      const shed = loadIds.filter(id => !startingBlockBuses.has(loads.get(id)!.definition.busId))
+      for (const id of shed) await ok('world.electric-grid.shed-load', { assetId: id, targetDemandMw: 0, emergency: true })
+      const startingBlockMw = startingBlock.reduce((sum, id) => sum + loads.get(id)!.state.demandMw, 0)
+      await ok('world.electric-grid.reset-generator-trip', { assetId: lysebotn })
+      await ok('world.electric-grid.start-generator', { assetId: lysebotn })
+      const blackStartAt = 65
+      await scenario.advanceTo(blackStartAt + 330)
+      expect((await generatorState(lysebotn)).state).toBe('online')
+      const energised = await bus()
+      expect(energised.energized).toBe(true)
+      expect(energised.frequencyHz!).toBeGreaterThan(49.5)
+      expect(energised.frequencyHz!).toBeLessThan(50.5)
+      // Once the island is live, a unit without black-start capability may start in it.
+      await ok('world.electric-grid.start-generator', { assetId: follower })
+
+      // Pick up Stavanger and Sandnes demand in blocks of at most 10 MW, the set-point raised with each.
+      const firstPickUpSample = scenario.samples.length
+      let targetMw = Math.round((startingBlockMw + 0.3) * 10) / 10
+      await ok('world.electric-grid.dispatch-generator', { assetId: lysebotn, targetMw })
+      await scenario.advanceTo(blackStartAt + 450)
+      const candidates = shed.filter(id => islandPickUpBuses.has(loads.get(id)!.definition.busId))
+        .sort((left, right) => loads.get(left)!.state.demandMw - loads.get(right)!.state.demandMw)
+      const blocks: string[][] = []
+      for (const id of candidates) {
+        const last = blocks.at(-1)
+        const lastMw = last?.reduce((sum, member) => sum + loads.get(member)!.state.demandMw, 0) ?? Number.POSITIVE_INFINITY
+        if (last && lastMw + loads.get(id)!.state.demandMw <= 10) last.push(id)
+        else blocks.push([id])
+      }
+      // 114 MW: 95 % of Lysebotn I's 120 MW, leaving headroom for its governor.
+      const blockMw = (block: ReadonlyArray<string>): number => block.reduce((sum, id) => sum + loads.get(id)!.state.demandMw, 0)
+      const fitting = blocks.filter((_, index) => targetMw + blocks.slice(0, index + 1).reduce((sum, block) => sum + blockMw(block), 0) <= 114)
+      let elapsed = blackStartAt + 450
+      let offsetBeforeCloseHz = 0
+      for (const [index, block] of fitting.entries()) {
+        targetMw = Math.round((targetMw + blockMw(block)) * 10) / 10
+        await ok('world.electric-grid.dispatch-generator', { assetId: lysebotn, targetMw })
+        for (const id of block) await ok('world.electric-grid.restore-load', { assetId: id })
+        if (index === fitting.length - 1) {
+          // Closing during the last block's frequency dip: synchro-check refuses the transformer.
+          await scenario.advanceTo(elapsed + 3)
+          offsetBeforeCloseHz = await islandOffsetHz()
+          expect(offsetBeforeCloseHz).toBeGreaterThan(0.1)
+          const blocked = await scenario.command('world.electric-grid.close-branch', { assetId: fagrafjell })
+          expect(blocked.ok).toBe(false)
+          expect(blocked.ok ? '' : blocked.reason).toContain('synchro-check')
+        }
+        elapsed += 180
+        await scenario.advanceTo(elapsed)
+      }
+      const pickedUpMw = fitting.reduce((sum, block) => sum + blockMw(block), 0)
+      const largestBlockMw = Math.max(...fitting.map(blockMw))
+      const pickUp = scenario.samples.slice(firstPickUpSample)
+      const lowestHz = Math.min(...pickUp.map(sample => sample.projection.frequencyMinHz!))
+      // Every block stays above the 48.8 Hz first LFDD stage.
+      expect(pickedUpMw).toBeGreaterThan(50)
+      expect(largestBlockMw).toBeLessThanOrEqual(10)
+      expect(lowestHz).toBeGreaterThan(48.8)
+      for (const id of [...startingBlock, ...candidates]) expect((await load(id)).state.lfddShedMw).toBe(0)
+
+      // Watch the frequencies converge; if the island settles short of the limit, trim Lysebotn I up by 1 MW.
+      const waitFrom = elapsed
+      let trimmed = false
+      while (await islandOffsetHz() > 0.08) {
+        expect(elapsed - waitFrom).toBeLessThan(900)
+        if (!trimmed && elapsed - waitFrom >= 300) {
+          trimmed = true
+          await ok('world.electric-grid.dispatch-generator', { assetId: lysebotn, targetMw: Math.round((targetMw + 1) * 10) / 10 })
+        }
+        elapsed += 10
+        await scenario.advanceTo(elapsed)
+      }
+      const offsetAtCloseHz = await islandOffsetHz()
+      const waitedSeconds = elapsed - waitFrom
+      await ok('world.electric-grid.close-branch', { assetId: fagrafjell })
+      await ok('world.electric-grid.close-branch', { assetId: lyse })
+      for (const id of shed) if ((await load(id)).state.manualDemandLimitMw !== null) await ok('world.electric-grid.restore-load', { assetId: id })
+      elapsed += 120
+      await scenario.advanceTo(elapsed)
+      const restored = await Promise.all(loadIds.map(load))
+      expect(restored.every(entry => entry.state.unservedMw < 0.01 && entry.state.lfddShedMw === 0)).toBe(true)
+      expect(scenario.projection().activeIslandCount).toBe(1)
+      expect((await bus()).energized).toBe(true)
+      expect(await trippedCount(scenario, 'branch')).toBe(0)
+      console.info(`rogaland-black-start: ${outageMw.toFixed(0)} MW dark, ${regionTripped.total} units tripped; starting block ${startingBlockMw.toFixed(1)} MW; ${pickedUpMw.toFixed(1)} MW picked up in ${fitting.length} blocks of at most ${largestBlockMw.toFixed(1)} MW with the lowest frequency ${lowestHz.toFixed(3)} Hz; synchro-check refused at ${offsetBeforeCloseHz.toFixed(3)} Hz and closed at ${offsetAtCloseHz.toFixed(3)} Hz after waiting ${waitedSeconds} s${trimmed ? ' with a 1 MW trim' : ''}; ${restored.reduce((sum, entry) => sum + entry.state.servedMw, 0).toFixed(0)} MW served at the end`)
+    } finally { await scenario.close() }
+  }, 300_000)
 })
