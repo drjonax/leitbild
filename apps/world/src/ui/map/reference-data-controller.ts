@@ -1,5 +1,6 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import type { PackMapAppearance, PackReferenceDatasetStyle } from '../../core/packs/reference-style.ts'
+import type { MapErrorClaim } from '../map-runtime/types.ts'
 import { watchReferenceBuilds } from './reference-build-recovery.ts'
 import {
   buildReferenceDatasetLayers,
@@ -65,6 +66,8 @@ export interface ReferenceDatasetControllerConfig {
   readonly logger?: (message: string) => void
   /** A registered dataset's build was superseded and the published one could not be adopted. */
   readonly onBuildRecoveryFailed: (message: string) => void
+  /** The map's error routing, through which the build recovery claims the tiles it answers for. */
+  readonly claimErrors: (claim: MapErrorClaim) => () => void
 }
 
 export interface RegisteredReferenceDataset {
@@ -167,6 +170,7 @@ export const createReferenceDataController = async (
     map: config.map,
     appearance: config.appearance,
     datasets: registered,
+    claimErrors: config.claimErrors,
     readPublished: async () => new Map([...referenceTilesetsOf(await readManifest(capabilitiesUrl, fetchFn))]
       .map(([datasetId, tileset]) => [datasetId, manifestEntryForLayers(tileset)])),
     onAdopted: (datasetId, fromBuildId, toBuildId) => log(`reference-data: ${datasetId} moved from build ${fromBuildId} to ${toBuildId}`),

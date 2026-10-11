@@ -31,6 +31,7 @@ const createRuntime = (
   map: {
     getZoom: () => 8,
   } as unknown as MapLibreMap,
+  claimErrors: () => () => undefined,
   updateLayers: () => undefined,
   reportDiagnosticPhase: report => {
     reports.push(report)

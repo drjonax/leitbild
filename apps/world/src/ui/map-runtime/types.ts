@@ -151,8 +151,13 @@ export interface MapRuntimeDiagnosticsSnapshot {
   readonly performance?: MapPerformanceDiagnosticsSnapshot
 }
 
+/** Takes over a MapLibre `error` event when it returns true; the claimant then reports any failure. */
+export type MapErrorClaim = (event: unknown) => boolean
+
 export interface MapRuntimeHandle {
   readonly map: MapLibreMap
+  /** Lets a component that owns an error's cause handle it before the runtime warns or fails; returns the release. */
+  readonly claimErrors: (claim: MapErrorClaim) => () => void
   readonly updateLayers: (layers: MapRuntimeLayers) => void
   readonly reportDiagnosticPhase: (report: MapRuntimeDiagnosticPhaseReport) => void
   readonly setDiagnosticDetails: (

@@ -19,6 +19,7 @@ import {
   waitForBaseMapReadiness,
 } from './base-map-readiness.ts'
 import { createMapDiagnostics } from './map-diagnostics.ts'
+import { createMapErrorRouter } from './map-error-router.ts'
 import { mapPerformanceDiagnostics } from './map-performance-diagnostics.ts'
 import type {
   MapRuntimeDiagnosticDetail,
@@ -46,32 +47,6 @@ export interface CreateMapRuntimeConfig {
   readonly onError: (error: MapRuntimeError) => void
   readonly onDiagnostics: (snapshot: MapRuntimeDiagnosticsSnapshot) => void
 }
-
-interface MapLibreErrorDetails {
-  readonly message: string
-  readonly sourceId: string | null
-}
-
-const stringFromUnknown = (value: unknown): string | null =>
-  typeof value === 'string' && value.length > 0 ? value : null
-
-const mapLibreErrorDetails = (event: unknown): MapLibreErrorDetails => {
-  const candidate = event as {
-    readonly error?: unknown
-    readonly sourceId?: unknown
-    readonly source?: { readonly id?: unknown }
-  }
-  const error = candidate.error
-  return {
-    message: error instanceof Error
-      ? error.message
-      : stringFromUnknown(error) ?? 'Vector map failed to load',
-    sourceId: stringFromUnknown(candidate.sourceId) ?? stringFromUnknown(candidate.source?.id),
-  }
-}
-
-const isReferenceDatasetError = (details: MapLibreErrorDetails): boolean =>
-  details.sourceId?.startsWith('reference:') === true || details.message.includes('/map/datasets/')
 
 const configureMapLibreWorker = (): string => {
   if (getWorkerUrl() !== maplibreWorkerUrl) {
@@ -255,27 +230,23 @@ export const createMapRuntime = async (
     }
   }
 
-  const warnedReferenceErrors = new Set<string>()
-  current.on('error', (event) => {
-    const details = mapLibreErrorDetails(event)
-    if (isReferenceDatasetError(details)) {
-      const key = `${details.sourceId ?? 'reference'}:${details.message}`
-      if (!warnedReferenceErrors.has(key)) {
-        warnedReferenceErrors.add(key)
-        diagnostics.details('reference', [
-          { label: 'Reference warning', value: details.message },
-        ])
-        emitDiagnostics()
-      }
-      return
-    }
-    reportError({
-      phase: 'runtime',
-      message: details.message,
-      recoverable: false,
-      ...(details.sourceId ? { sourceId: details.sourceId } : {}),
-    })
+  const errorRouter = createMapErrorRouter({
+    onReferenceWarning: (message) => {
+      diagnostics.details('reference', [
+        { label: 'Reference warning', value: message },
+      ])
+      emitDiagnostics()
+    },
+    onRuntimeError: (details) => {
+      reportError({
+        phase: 'runtime',
+        message: details.message,
+        recoverable: false,
+        ...(details.sourceId ? { sourceId: details.sourceId } : {}),
+      })
+    },
   })
+  current.on('error', errorRouter.route)
 
   const canvas = current.getCanvas()
   let contextLossTimer: ReturnType<typeof setTimeout> | null = null
@@ -336,6 +307,7 @@ export const createMapRuntime = async (
 
   return {
     map: current,
+    claimErrors: errorRouter.claim,
     updateLayers: (layers: MapRuntimeLayers) => {
       const activeOverlay = overlay
       if (activeOverlay === null) {
