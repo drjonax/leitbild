@@ -214,11 +214,19 @@ impl Characteristic {
             }
         };
         let mut seated_from_lift = None;
-        let after = match (valve.branch, threshold, direction, valve.seated, valve.closing) {
+        let after = match (
+            valve.branch,
+            threshold,
+            direction,
+            valve.seated,
+            valve.closing,
+        ) {
             // Crack rising opens the target: it unseats or stops a closing.
             (Branch::Ascending, Threshold::Crack, 1, _, _) => Valve::open(Branch::Ascending),
             // Crack falling: the target returns to zero.
-            (Branch::Ascending, Threshold::Crack, -1, false, false) => closes(&mut seated_from_lift),
+            (Branch::Ascending, Threshold::Crack, -1, false, false) => {
+                closes(&mut seated_from_lift)
+            }
             (Branch::Ascending, Threshold::FullLift, 1, _, _) => Valve::open(Branch::Descending),
             (Branch::Descending, Threshold::Reseat, -1, _, _) => closes(&mut seated_from_lift),
             (Branch::Ascending, Threshold::Seat, -1, false, true) => {

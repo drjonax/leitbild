@@ -32,7 +32,10 @@ fn characteristics_open_linearly_and_agree_at_both_switches() {
         (7.2e6, 1., 1.),
     ] {
         assert!((target(&c, Ascending, p) - ascending).abs() < 1e-12, "{p}");
-        assert!((target(&c, Descending, p) - descending).abs() < 1e-12, "{p}");
+        assert!(
+            (target(&c, Descending, p) - descending).abs() < 1e-12,
+            "{p}"
+        );
     }
     assert_eq!(target(&c, Ascending, 7.0e6), target(&c, Descending, 7.0e6));
     assert_eq!(target(&c, Ascending, 6.6e6), target(&c, Descending, 6.6e6));
@@ -101,7 +104,10 @@ fn a_closing_disc_seats_at_its_seat_lift() {
     assert_eq!((x.after, x.seated_from_lift), (SEATED, Some(seat)));
     // Crack rising unseats a seated disc and stops a closing one.
     assert_eq!(c.transition(SEATED, Crack, 1, 0.).unwrap().after, LIFTED_UP);
-    assert_eq!(c.transition(CLOSING, Crack, 1, 1e-3).unwrap().after, LIFTED_UP);
+    assert_eq!(
+        c.transition(CLOSING, Crack, 1, 1e-3).unwrap().after,
+        LIFTED_UP
+    );
     // A target reaching zero with the lift already below the seat lift
     // seats at that crossing, at crack or at reseat.
     let x = c.transition(LIFTED_UP, Crack, -1, 1e-6).unwrap();
@@ -134,7 +140,9 @@ fn dithering_about_either_switch_produces_one_transition() {
             // A lift well above the seat throughout: only pressure roots move.
             let (a, b) = (c.root(*t, w[0], 0.5), c.root(*t, w[1], 0.5));
             if a.signum() != b.signum() {
-                let x = c.transition(v, *t, if b > a { 1 } else { -1 }, 0.5).unwrap();
+                let x = c
+                    .transition(v, *t, if b > a { 1 } else { -1 }, 0.5)
+                    .unwrap();
                 if x.after.branch != v.branch {
                     switches.push((w[1], v.branch, x.after.branch));
                 } else if v.seated && !x.after.seated {

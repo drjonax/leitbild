@@ -328,7 +328,13 @@ fn time_block(
 
 /// Mean thread CPU (µs) and property calls of the block's own colored
 /// assembly: per repetition one seeded pass per color at a distinct state.
-fn time_jacobian(block: &mut Secondaries, props: &Counted, scales: &[f64], y: &[f64], reps: usize) -> (f64, f64, usize) {
+fn time_jacobian(
+    block: &mut Secondaries,
+    props: &Counted,
+    scales: &[f64],
+    y: &[f64],
+    reps: usize,
+) -> (f64, f64, usize) {
     let n = scales.len();
     let st = Secondary::<Counted>::structure(block);
     let pattern = sparse::Pattern::from_rows(n, &st.own).unwrap();
@@ -360,10 +366,22 @@ fn time_jacobian(block: &mut Secondaries, props: &Counted, scales: &[f64], y: &[
             Secondary::<Counted>::views(block, props, x, &mut views).unwrap();
             Secondary::<Counted>::rows(block, props, 0., x, &heat, &mut rows).unwrap();
             let directions: Vec<f64> = rows.iter().map(|r| r.direction).collect();
-            sparse::scatter(&pattern, &coloring, c, &directions, &vec![1.; n], &mut values).unwrap();
+            sparse::scatter(
+                &pattern,
+                &coloring,
+                c,
+                &directions,
+                &vec![1.; n],
+                &mut values,
+            )
+            .unwrap();
         }
     }
-    (1e6 * (cpu() - started) / reps as f64, props.total() as f64 / reps as f64, coloring.count())
+    (
+        1e6 * (cpu() - started) / reps as f64,
+        props.total() as f64 / reps as f64,
+        coloring.count(),
+    )
 }
 
 #[test]
@@ -399,8 +417,14 @@ fn cost_per_evaluation() {
     let lifted_seeded = time_block(&mut block, &props, &scales, &y, Some(&seed), 200, true);
     let lifted_jacobian = time_jacobian(&mut block, &props, &scales, &y, 50);
     // The composed standalone with the tube path of 2 x 4 segments, seated.
-    let (mut sys, ys) =
-        Standalone::new(If97, &section, &stocks, Heat::Tube(held_ports(&If97, &probe)), &probe).unwrap();
+    let (mut sys, ys) = Standalone::new(
+        If97,
+        &section,
+        &stocks,
+        Heat::Tube(held_ports(&If97, &probe)),
+        &probe,
+    )
+    .unwrap();
     let ypz = vec![0.; sys.n()];
     let started = cpu();
     for _ in 0..200 {

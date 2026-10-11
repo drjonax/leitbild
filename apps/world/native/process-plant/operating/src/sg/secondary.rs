@@ -239,10 +239,7 @@ impl Secondaries {
         layout.validate("secondary")?;
         let n = sgs.len();
         Ok(Self {
-            valves: sgs
-                .iter()
-                .map(|g| vec![SEATED; g.valves.len()])
-                .collect(),
+            valves: sgs.iter().map(|g| vec![SEATED; g.valves.len()]).collect(),
             boundary: sgs
                 .iter()
                 .map(|g| Boundary {
@@ -455,7 +452,10 @@ impl Secondaries {
 
     fn root_index(&self, sg: usize, valve: usize, threshold: usize) -> usize {
         let per = THRESHOLDS.len();
-        let before: usize = self.sgs[..sg].iter().map(|g| per * g.valves.len() + 2).sum();
+        let before: usize = self.sgs[..sg]
+            .iter()
+            .map(|g| per * g.valves.len() + 2)
+            .sum();
         before + per * valve + threshold
     }
 }
@@ -556,7 +556,10 @@ impl<P: Properties> Secondary<P> for Secondaries {
                 .zip(&lifted)
                 .any(|(l, on)| *on && (l.value != 0. || l.direction != 0.))
             {
-                let partials = lifts.iter().zip(&lifted).any(|(l, on)| *on && l.value != 0.)
+                let partials = lifts
+                    .iter()
+                    .zip(&lifted)
+                    .any(|(l, on)| *on && l.value != 0.)
                     && (p.direction != 0. || hg.direction != 0.);
                 Some(self.relief_flux(props, k, p, hg, partials)?)
             } else {
@@ -705,8 +708,10 @@ impl<P: Properties> Secondary<P> for Secondaries {
                         // A simultaneous crossing an earlier transition of this
                         // transaction disarmed (a reseat that already seated).
                         if Characteristic::armed(start).contains(&threshold) {
-                            events.push(json!({"valve":g.valves[j],"threshold":threshold,"direction":d,
-                                "superseded":true,"state":current}));
+                            events.push(
+                                json!({"valve":g.valves[j],"threshold":threshold,"direction":d,
+                                "superseded":true,"state":current}),
+                            );
                             continue;
                         }
                         return Err(fatal(format!(
@@ -725,9 +730,11 @@ impl<P: Properties> Secondary<P> for Secondaries {
                         y[g.base + LIFTS + j] = 0.;
                         seats += 1;
                     }
-                    events.push(json!({"valve":g.valves[j],"threshold":threshold,"direction":d,
+                    events.push(
+                        json!({"valve":g.valves[j],"threshold":threshold,"direction":d,
                         "before":x.before,"after":x.after,"pressure_Pa":p,"lift":lift,
-                        "seatedFromLift":x.seated_from_lift}));
+                        "seatedFromLift":x.seated_from_lift}),
+                    );
                 }
             }
             let guard = self.root_index(k, g.valves.len(), 0);
@@ -781,7 +788,9 @@ impl<P: Properties> Secondary<P> for Secondaries {
 fn compile(section: &packet::Section) -> Result<(Vec<SteamGenerator>, Characteristic), Failure> {
     let r = &section.relief;
     if !(r.seat_lag_time_constants.is_finite() && r.seat_lag_time_constants > 0.) {
-        return Err(fatal("SG relief seat needs a positive number of lag time constants"));
+        return Err(fatal(
+            "SG relief seat needs a positive number of lag time constants",
+        ));
     }
     let relief = Characteristic::new(
         r.crack_pressure_pa,

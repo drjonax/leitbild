@@ -845,7 +845,7 @@ pub mod integrate {
             let s = &ida.system().sys;
             let mut times: Vec<f64> = commands.iter().map(|c| c.0).filter(|c| *c > t).collect();
             times.extend(s.schedule_times().into_iter().filter(|c| *c > t));
-            times.extend(s.secondary.ramp_end().filter(|c| *c > t));
+            times.extend(Secondary::<P>::next_time_event(&s.secondary, t));
             let stop = times.into_iter().fold(spec.t_end, f64::min);
             ida.stop_at(stop)?;
             let target = next_output.min(stop);

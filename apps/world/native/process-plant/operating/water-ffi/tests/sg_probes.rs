@@ -42,7 +42,11 @@ fn relief_events(events: &[Value]) -> Vec<(f64, String, String, String)> {
             let mut kind = if r["superseded"] == true {
                 "superseded".to_string()
             } else if b["branch"] != a["branch"] {
-                format!("{}->{}", b["branch"].as_str().unwrap(), a["branch"].as_str().unwrap())
+                format!(
+                    "{}->{}",
+                    b["branch"].as_str().unwrap(),
+                    a["branch"].as_str().unwrap()
+                )
             } else if b["seated"] == true && a["seated"] == false {
                 "unseat".to_string()
             } else if b["seated"] == false && a["seated"] == true {
@@ -151,7 +155,11 @@ fn settles_at_the_emergent_pressure_then_the_trip_cracks_the_reliefs() {
     // Every valve unseats once at crack after the trip; with the primary held
     // the pressure settles between crack and full lift, so nothing reseats.
     assert_eq!(events.len(), 4, "{events:?}");
-    assert!(events.iter().all(|e| e.2 == "Crack" && e.3 == "unseat" && e.0 > 60.));
+    assert!(
+        events
+            .iter()
+            .all(|e| e.2 == "Crack" && e.3 == "unseat" && e.0 > 60.)
+    );
     // Ledgers: secondary energy and metal each close on their integrated
     // receipts to the integrator's own tolerance scale.
     let energy = worst(&out.samples, "energyLedgerDefect_J");
