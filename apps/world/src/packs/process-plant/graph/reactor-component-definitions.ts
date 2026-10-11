@@ -213,8 +213,9 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       permissives: ['aboveP6', 'aboveP10'],
       // Rod control holds the coolant's average temperature, as the vessel the core heats reads it, to Tref.
       programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'vesselThermal', program: 'referenceAverageTemperatureC', deviation: 'averageTemperatureDeviationC' }],
-      // After a reactor trip the power range falls to decay power and the startup rate goes negative.
-      shutdownReadings: ['powerRangePercent', 'intermediateRangeStartupRateDpm'],
+      // After a reactor trip the power range falls to decay power, the startup rate goes negative and the rod
+      // bottom indication reads the rods on the bottom: what E-0 verifies the trip by.
+      shutdownReadings: ['powerRangePercent', 'intermediateRangeStartupRateDpm', 'rodsOnBottom'],
       energy: [{ role: 'source', circuit: 'coolant', rate: 'totalThermalPowerMw' }],
     }),
     variables: [

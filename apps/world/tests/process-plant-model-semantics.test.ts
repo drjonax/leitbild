@@ -203,7 +203,7 @@ describe('model semantics declared per component kind', () => {
     // Rod control holds Tavg, as the vessel the core heats reads it, to Tref; level control the pressurizer's level to its program.
     expect(componentById(graph, 'core').semantics.programs).toEqual([{ reading: 'vessel.meanPrimaryCoolantTemperatureC', program: 'core.referenceAverageTemperatureC', deviation: 'core.averageTemperatureDeviationC' }] as never)
     expect(componentById(graph, 'pressurizer').semantics.programs).toEqual([{ reading: 'pressurizer.levelPercent', program: 'pressurizer.levelProgramPercent', deviation: 'pressurizer.levelDeviationPercent' }] as never)
-    expect(componentById(graph, 'core').semantics.shutdownReadings).toEqual(['core.powerRangePercent', 'core.intermediateRangeStartupRateDpm'] as never)
+    expect(componentById(graph, 'core').semantics.shutdownReadings).toEqual(['core.powerRangePercent', 'core.intermediateRangeStartupRateDpm', 'core.rodsOnBottom'] as never)
     const base = processPlantComponentRegistry.get('reactorCore' as ComponentKind)!
     const compileWith = (semantics: Parameters<typeof fixedSemantics>[0]) => () => compilePlantGraph(assemblePwrReferencePlantGraph({ loopCount: 4 }), new Map([...processPlantComponentRegistry, ['reactorCore' as ComponentKind, { ...base, semantics: fixedSemantics(semantics) }]]))
     expect(compileWith({ programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'vesselThermal', program: 'powerRangePercent' }] }))
@@ -214,7 +214,8 @@ describe('model semantics declared per component kind', () => {
       .toThrow('component core semantics names unknown variable core.meanPrimaryCoolantTemperatureC')
     expect(compileWith({ programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'vesselThermal', program: 'rodInsertionFraction' }] }))
       .toThrow('component core semantics: core.rodInsertionFraction must be a solved reading')
-    expect(compileWith({ shutdownReadings: ['aboveP6'] })).toThrow('component core semantics: shutdown reading aboveP6 must be a solved numeric reading')
+    expect(compileWith({ permissives: ['aboveP6'], shutdownReadings: ['aboveP6'] })).toThrow('component core semantics: shutdown reading aboveP6 must be a solved reading, not a command or a permissive')
+    expect(compileWith({ shutdownReadings: ['rodInsertionFraction'] })).toThrow('component core semantics: shutdown reading rodInsertionFraction must be a solved reading, not a command or a permissive')
   })
 
   test('a writable variable without an actuation is rejected', () => {

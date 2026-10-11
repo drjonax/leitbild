@@ -152,7 +152,9 @@ export interface ComponentSemantics {
   readonly programs: ReadonlyArray<ProgramDeclaration>
   /**
    * Readings that say the equipment has stopped, verified after a reactor
-   * trip: a core's power-range flux and its startup rate.
+   * trip: a core's power-range flux, its startup rate and its rod bottom
+   * indication. A permissive it derives (P-6) says what protection may do,
+   * not that it stopped.
    */
   readonly shutdownReadings: ReadonlyArray<string>
   /** What the equipment does with energy, by port circuit. */

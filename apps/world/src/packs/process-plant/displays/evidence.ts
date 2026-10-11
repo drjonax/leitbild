@@ -61,8 +61,8 @@ const joined = (names: ReadonlyArray<string>): string => names.length < 2 ? name
  *   say whether one is unfed;
  * - trip: on a trend whose window holds a reactor trip, what says the
  *   Plant's energy sources and sinks stopped: their declared shutdown readings
- *   (power range, startup rate) and the states of what the trips that command
- *   them move on or beside them (the turbine stop valve);
+ *   (power range, startup rate, rod bottom) and the states of what the trips
+ *   that command them move on or beside them (the turbine stop valve);
  * - program: for a shown reading the Plant's control holds to a program, the
  *   program and the reading's deviation from it (TREF beside TAVG);
  * - reference: for a primary reading of parallel equipment that is off

@@ -302,7 +302,7 @@ const compileComponentSemantics = (
     programs: [],
     shutdownReadings: semantics.shutdownReadings.map(local => {
       const variable = resolve(local as LocalVariablePath)
-      if (variable.writable || variable.quantity === 'boolean') throw new Error(`${context}: shutdown reading ${local} must be a solved numeric reading`)
+      if (variable.writable || semantics.permissives.includes(local)) throw new Error(`${context}: shutdown reading ${local} must be a solved reading, not a command or a permissive`)
       return variablePathFor(componentId, local as LocalVariablePath)
     }),
     energy: semantics.energy.map((role): CompiledEnergyRole => {
