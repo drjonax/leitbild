@@ -250,7 +250,7 @@ describe('bundled Electric Grid Scenarios', () => {
       expect(afterTrip.unservedLoadMw).toBe(0)
       expect(afterTrip.activeIslandCount).toBe(1)
       expect(await trippedCount(scenario, 'branch')).toBe(0)
-      console.info(`nordland-corridor-security: Svartisen – Rana carries ${Math.abs(corridor.flowMw!).toFixed(0)} MW (AC); its outage overloads ${helgelandOverloads} branches, Smibelg – Sjona to ${helgeland!.loadingPercent} % (DC screening); after opening Smibelg – Sjona it overloads none; after the trip the Svartisen 420/132 kV transformer is at ${transformer.loadingPercent!.toFixed(1)} %, no trips, ${afterTrip.unservedLoadMw} MW unserved`)
+      console.info(`nordland-corridor-security: Svartisen – Rana carries ${Math.abs(corridor.flowMw!).toFixed(0)} MW (AC); its outage overloads ${helgelandOverloads} branches, Smibelg – Sjona to ${helgeland!.loadingPercent} % from ${helgeland!.preContingencyLoadingPercent} % (DC screening); after opening Smibelg – Sjona it overloads none; after the trip the Svartisen 420/132 kV transformer is at ${transformer.loadingPercent!.toFixed(1)} %, no trips, ${afterTrip.unservedLoadMw} MW unserved`)
     } finally { await scenario.close() }
   }, scenarioWatchdogMs)
 
