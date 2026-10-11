@@ -113,7 +113,7 @@ describe('auxiliary feedwater', () => {
     expect(faulted.pressureMPa).toBeLessThan(even.pressureMPa)
   })
 
-  test('started by one generator\'s low-low level, feeds every generator, not that one alone', () => {
+  test('started by one generator\'s low-low level, the motor-driven pumps feed every generator, not that one alone', () => {
     // Feedwater control valve B fails to 35 % at full power; generator B boils down to its low-low level.
     const plantRun = started()
     plantRun.run(5)
@@ -124,16 +124,46 @@ describe('auxiliary feedwater', () => {
       if (plantRun.read('auxFeedwaterPumpMotor.runningState') === 1) afwStartedAt = second
     }
     expect(afwStartedAt).not.toBeNull()
-    plantRun.run(40)
-    const { tag } = plantRun
+    let lowestOtherLevel = 100
+    plantRun.run(120, () => {
+      for (const loop of ['A', 'C', 'D']) lowestOtherLevel = Math.min(lowestOtherLevel, plantRun.tag(`SG-${loop}-LVL-NR`))
+    })
+    const { tag, read } = plantRun
     expect(tag('SG-B-LVL-NR')).toBe(0)
-    const flows = loops.map(loop => tag(`AFW-${loop}-FLOW`))
-    // About a quarter of the pumps' flow each; generator B, at slightly lower pressure, a little more.
-    for (const flow of flows) {
-      expect(flow).toBeGreaterThan(22)
-      expect(flow).toBeLessThan(32)
+    // Only generator B reached low-low level, so the turbine-driven pump, which wants two, stays off: the two
+    // motor-driven pumps, running out along their curves, feed all four lines.
+    expect(lowestOtherLevel).toBeGreaterThan(20)
+    expect(read('auxFeedwaterPumpMotorB.runningState')).toBe(1)
+    expect(read('auxFeedwaterPumpTurbine.runningState')).toBe(0)
+    expect(tag('AFW-FLOW')).toBeGreaterThan(60)
+    expect(tag('AFW-FLOW')).toBeLessThan(75)
+    // About a quarter each; generator B, at slightly lower pressure, a little more.
+    const others = ['A', 'C', 'D'].map(loop => tag(`AFW-${loop}-FLOW`))
+    for (const flow of [...others, tag('AFW-B-FLOW')]) {
+      expect(flow).toBeGreaterThan(14)
+      expect(flow).toBeLessThan(20)
     }
-    expect(tag('AFW-B-FLOW') / tag('AFW-FLOW')).toBeLessThan(0.27)
+    expect(tag('AFW-B-FLOW') / (others.reduce((sum, flow) => sum + flow, 0) / others.length)).toBeLessThan(1.15)
+  })
+
+  test('starts the turbine-driven pump once two generators reach low-low level', () => {
+    const plantRun = started()
+    plantRun.run(5)
+    plantRun.act('loss-main-feedwater')
+    let bothLowAt: number | null = null
+    let turbinePumpAt: number | null = null
+    for (let second = 1; second <= 200 && turbinePumpAt === null; second += 1) {
+      plantRun.run(1)
+      if (bothLowAt === null && loops.filter(loop => plantRun.tag(`SG-${loop}-LVL-NR`) < 20).length >= 2) bothLowAt = second
+      if (plantRun.read('auxFeedwaterPumpTurbine.runningState') === 1) turbinePumpAt = second
+    }
+    // The motor-driven pumps started with the main feedwater pumps' trip; the turbine-driven one waits for the
+    // second generator's low-low level, and its one-second delay.
+    expect(bothLowAt).not.toBeNull()
+    expect(turbinePumpAt).not.toBeNull()
+    expect(turbinePumpAt! - bothLowAt!).toBeGreaterThanOrEqual(1)
+    expect(turbinePumpAt! - bothLowAt!).toBeLessThanOrEqual(3)
+    expect(plantRun.read('auxFeedwaterPumpMotor.runningState')).toBe(1)
   })
 
   test('puts every kilogram it feeds into the generator\'s inventory', () => {

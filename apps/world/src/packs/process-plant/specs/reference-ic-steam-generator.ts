@@ -1,5 +1,5 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, turbineTripWrites, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, turbineTripWrites, vote, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
 
@@ -19,15 +19,18 @@ const tubeLeakRadiationMSvPerH = 0.03
 const levelHighPercent = 75
 export const levelHighHighPercent = 82
 
-// Low-low narrow-range level in any one steam generator starts auxiliary
-// feedwater and trips the reactor: a generator boiling down at power soon
-// uncovers its tubes and the core loses its heat sink. The trip acts while the
-// reactor can be critical (the standard technical specifications' modes 1 and
-// 2); auxiliary feedwater starts in every mode, lined up, as on every other
-// start, to every steam generator, so that one generator's low level does not
-// send all the pumps' flow to it. A real plant votes two of three or four
-// level channels per generator; this model has one channel each, so that one
-// channel trips.
+// Low-low narrow-range level in any one steam generator starts the
+// motor-driven auxiliary feedwater pumps and trips the reactor: a generator
+// boiling down at power soon uncovers its tubes and the core loses its heat
+// sink. The turbine-driven pump starts only on low-low level in two
+// generators, as in a Westinghouse plant: one generator's low level is a
+// feedwater fault the motor-driven pumps cover, two a loss of heat sink. The
+// trip acts while the reactor can be critical (the standard technical
+// specifications' modes 1 and 2); auxiliary feedwater starts in every mode,
+// lined up, as on every other start, to every steam generator, so that one
+// generator's low level does not send all the pumps' flow to it. A real plant
+// votes two of three or four level channels per generator; this model has one
+// channel each, so that one channel trips.
 const levelLowLowPercent = 20
 
 // Steam pressure ladder of the reference main steam system: the steam dumps
@@ -138,12 +141,11 @@ export const steamGeneratorReferenceIcRules = (
         trip({
           id: 'afw-actuation',
           title: `Steam generator ${loop} low-low level`,
-          message: `Steam generator ${loop} low-low level starts auxiliary feedwater to every steam generator.`,
+          message: `Steam generator ${loop} low-low level starts the motor-driven auxiliary feedwater pumps, feeding every steam generator.`,
           annunciator: annunciator({ ...sgAction, firstOutGroup: 'auxiliary-feedwater' }),
         }),
         write('start-motor-afw', { path: 'auxFeedwaterPumpMotor.running' }, true),
         write('start-motor-afw-b', { path: 'auxFeedwaterPumpMotorB.running' }, true),
-        write('start-turbine-afw', { path: 'auxFeedwaterPumpTurbine.running' }, true),
         ...loops.map(fed => write(`open-afw-valve-${fed.toLowerCase()}`, { path: `auxFeedwaterValve${fed}.positionFraction` }, 1)),
       ],
     }),
@@ -281,3 +283,23 @@ export const steamGeneratorReferenceIcRules = (
     }),
   ]
 }
+
+/** The turbine-driven auxiliary feedwater pump's start on low-low level in two of the steam generators. */
+export const turbineDrivenAuxiliaryFeedwaterReferenceIcRules = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ReadonlyArray<ProcessPlantIcRule> => [
+  rule({
+    id: 'sg-level-low-low-turbine-afw-start',
+    label: 'Turbine-driven auxiliary feedwater start on low-low level in two steam generators',
+    ruleClass: 'protection',
+    condition: vote(Math.min(2, loops.length), loops.map(loop => comparison({ tagId: `SG-${loop}-LVL-NR` }, '<', levelLowLowPercent))),
+    delayMs: 1_000,
+    effects: [
+      trip({
+        id: 'turbine-afw-start',
+        title: 'Turbine-driven AFW start on low-low level',
+        message: `Narrow-range level is below ${levelLowLowPercent} % in two steam generators: the turbine-driven auxiliary feedwater pump starts.`,
+        annunciator: annunciator({ system: 'feedwater', equipmentId: 'auxFeedwaterPumpTurbine', group: 'auxiliary-feedwater', firstOutGroup: 'auxiliary-feedwater', priority: 'urgent', role: 'automaticAction' }),
+      }),
+      write('start-turbine-afw', { path: 'auxFeedwaterPumpTurbine.running' }, true),
+    ],
+  }),
+]

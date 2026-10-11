@@ -12,7 +12,7 @@ import { reactorReferenceIcRules } from './reference-ic-reactor.ts'
 import { reactorCoolantPumpReferenceIcRules } from './reference-ic-rcp.ts'
 import { rcsLeakageReferenceIcRules } from './reference-ic-rcs-leakage.ts'
 import { safetyInjectionReferenceIcRules } from './reference-ic-safety-injection.ts'
-import { steamGeneratorReferenceIcRules } from './reference-ic-steam-generator.ts'
+import { steamGeneratorReferenceIcRules, turbineDrivenAuxiliaryFeedwaterReferenceIcRules } from './reference-ic-steam-generator.ts'
 import { subcoolingReferenceIcRules } from './reference-ic-subcooling.ts'
 import { fourLoopReferenceLetters, type ProcessPlantReferenceLoop } from './reference-loop.ts'
 
@@ -28,6 +28,7 @@ export const pressurizedWaterReactorReferenceIcFor = (
     ...subcoolingReferenceIcRules(),
     ...rcsLeakageReferenceIcRules(),
     ...loops.flatMap(loop => steamGeneratorReferenceIcRules(loop, loops)),
+    ...turbineDrivenAuxiliaryFeedwaterReferenceIcRules(loops),
     ...loops.flatMap(loop => reactorCoolantPumpReferenceIcRules(loop)),
     ...loops.flatMap(loop => accumulatorReferenceIcRules(loop)),
     ...safetyInjectionReferenceIcRules(),
