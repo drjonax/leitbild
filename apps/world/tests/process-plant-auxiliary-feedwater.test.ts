@@ -124,15 +124,12 @@ describe('auxiliary feedwater', () => {
       if (plantRun.read('auxFeedwaterPumpMotor.runningState') === 1) afwStartedAt = second
     }
     expect(afwStartedAt).not.toBeNull()
-    let lowestOtherLevel = 100
-    plantRun.run(120, () => {
-      for (const loop of ['A', 'C', 'D']) lowestOtherLevel = Math.min(lowestOtherLevel, plantRun.tag(`SG-${loop}-LVL-NR`))
-    })
+    // Half a minute on, only generator B is at low-low level, so the turbine-driven pump, which wants two, stays off:
+    // the two motor-driven pumps, running out along their curves, feed all four lines.
+    plantRun.run(30)
     const { tag, read } = plantRun
     expect(tag('SG-B-LVL-NR')).toBe(0)
-    // Only generator B reached low-low level, so the turbine-driven pump, which wants two, stays off: the two
-    // motor-driven pumps, running out along their curves, feed all four lines.
-    expect(lowestOtherLevel).toBeGreaterThan(20)
+    for (const loop of ['A', 'C', 'D']) expect(tag(`SG-${loop}-LVL-NR`)).toBeGreaterThan(20)
     expect(read('auxFeedwaterPumpMotorB.runningState')).toBe(1)
     expect(read('auxFeedwaterPumpTurbine.runningState')).toBe(0)
     expect(tag('AFW-FLOW')).toBeGreaterThan(60)
@@ -144,6 +141,20 @@ describe('auxiliary feedwater', () => {
       expect(flow).toBeLessThan(20)
     }
     expect(tag('AFW-B-FLOW') / (others.reduce((sum, flow) => sum + flow, 0) / others.length)).toBeLessThan(1.15)
+    // Feedwater isolation on the trip has shut every feed regulating valve, so the other generators shrink to their
+    // low-low level too, and with two of them there the turbine-driven pump joins: some 28 kg/s into each.
+    let turbinePumpAt: number | null = null
+    for (let second = 1; second <= 120 && turbinePumpAt === null; second += 1) {
+      plantRun.run(1)
+      if (read('auxFeedwaterPumpTurbine.runningState') === 1) turbinePumpAt = second
+    }
+    expect(turbinePumpAt).not.toBeNull()
+    expect(['A', 'C', 'D'].filter(loop => tag(`SG-${loop}-LVL-NR`) < 20).length).toBeGreaterThanOrEqual(2)
+    plantRun.run(30)
+    for (const loop of ['A', 'B', 'C', 'D']) {
+      expect(tag(`AFW-${loop}-FLOW`)).toBeGreaterThan(25)
+      expect(tag(`AFW-${loop}-FLOW`)).toBeLessThan(31)
+    }
   })
 
   test('starts the turbine-driven pump once two generators reach low-low level', () => {

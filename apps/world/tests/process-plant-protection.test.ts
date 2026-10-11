@@ -663,14 +663,17 @@ describe('containment pressure', () => {
     expect(plant.automation.rules.some(rule => rule.id === 'containment-pressure-high-reactor-trip')).toBe(false)
   })
 
-  test('a small break inside containment alarms, then actuates SI on Hi-1 before the pressurizer pressure falls to its SI set point', () => {
+  test('a small break inside containment alarms, actuates SI on low pressurizer pressure, and Hi-1 follows as the containment fills', () => {
+    // With the pressurizer's real 1.8 MW of heaters the pressure falls to its SI set point first, as in the
+    // reference small-break analyses, where low pressurizer pressure is the credited SI signal: 57 s, Hi-1 at 73 s.
     const plantRun = started()
     plantRun.run(5_000)
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-hot-leg-a.leak.areaFraction' as VariablePath, value: 0.005 })
     const at = entered(plantRun, [alarm, hi1, lowPressureSi], 90)
-    expect(at.get(alarm)).toBeLessThan(at.get(hi1)!)
-    expect(at.get(hi1)).toBeLessThan(at.get(lowPressureSi) ?? Number.POSITIVE_INFINITY)
-    expect(plantRun.trip(hi1)!.firstOut).toBe(true)
+    expect(at.get(alarm)).toBeLessThan(at.get(lowPressureSi)!)
+    expect(at.get(lowPressureSi)).toBeLessThan(at.get(hi1)!)
+    expect(plantRun.trip(lowPressureSi)!.firstOut).toBe(true)
+    expect(plantRun.trip(hi1)!.firstOut).toBe(false)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
   }, 120_000)
