@@ -39,7 +39,7 @@ describe('the values a unit overview leads with', () => {
         'vessel.netInventoryFlowKgPerS',
         'pressurizer.pressureMPa',
         'vessel.subcoolingMarginC',
-        'core.coolantOutletTemperatureC',
+        'core.coreExitTemperatureC',
         'turbine.electricMw',
       ] as never)
       // Out of its normal range it takes its place back, before the values the I&C judges for their equipment.
@@ -62,12 +62,12 @@ describe('the values a unit overview leads with', () => {
     // generator's rules act only at power, and the turbine trips that act in every mode have tripped it, so no
     // energy sink is watched: the decay heat leaves through the steam generators. The column leads, as E-0 and
     // ES-0.1 check the critical safety functions, with the heat path: the margin of the coolant the core heats (the
-    // vessel's subcooling margin), the core's outlet temperature, and the auxiliary feed the actuations send into
+    // vessel's subcooling margin), the core-exit temperature, and the auxiliary feed the actuations send into
     // the steam generators. Then safety injection's pressure, which it can still act on, and the key values of
     // equipment the I&C judges; containment pressure, at normal, yields its place.
     expect(overviewKeyValues(plant, tripped)).toEqual([
       'vessel.subcoolingMarginC',
-      'core.coolantOutletTemperatureC',
+      'core.coreExitTemperatureC',
       'auxFeedwaterHeader.outletFlowKgPerS',
       'pressurizer.pressureMPa',
       'pressurizer.levelPercent',
@@ -82,14 +82,14 @@ describe('the values a unit overview leads with', () => {
     // reached the low-low level that starts auxiliary feed; the overview showed no heat sink at all. It reads 0.
     const pumps = after(plant, { actionId: 'trip-reactor-coolant-pumps' }, 60)
     expect(pumps.mode).toBe('hotStandby')
-    expect(overviewKeyValues(plant, pumps).slice(0, 3)).toEqual(['vessel.subcoolingMarginC', 'core.coolantOutletTemperatureC', 'auxFeedwaterHeader.outletFlowKgPerS'] as never)
+    expect(overviewKeyValues(plant, pumps).slice(0, 3)).toEqual(['vessel.subcoolingMarginC', 'core.coreExitTemperatureC', 'auxFeedwaterHeader.outletFlowKgPerS'] as never)
     expect(pumps.read('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBe(0)
     // Run 22 QA: three minutes after the PORV stuck at 35 %, safety injection had started; the subcooling margin,
     // the decisive value in a pressurizer steam-space leak, leads, and the injection follows the heat sink.
     const relief = after(plant, { actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 180)
     expect(overviewKeyValues(plant, relief)).toEqual([
       'vessel.subcoolingMarginC',
-      'core.coolantOutletTemperatureC',
+      'core.coreExitTemperatureC',
       'auxFeedwaterHeader.outletFlowKgPerS',
       'safetyInjectionHeader.outletFlowKgPerS',
       'pressurizer.pressureMPa',
@@ -114,19 +114,20 @@ describe('the values equipment opened from the overview leads with', () => {
     expect(of(['rcpA'])).not.toContain('rcpA.running' as never)
   })
 
-  test('at power the core leads with its power range, the subcooling margin, the RCS leak rate and its outlet temperature, then its nuclear instruments while they measure', () => {
+  test('at power the core leads with its power range, the subcooling margin, the RCS leak rate and its core-exit temperature, then its nuclear instruments while they measure', () => {
     // The subcooling margin and the RCS leak rate are bound to the reactor coolant system, as the core exit
     // thermocouples are: their alarms are the core's related alarms. The de-energized source range measures
     // nothing at power: in its place the detail says its high voltage is off, as a state (run 22 QA: the source
     // range's state was on neither core detail).
     // Tavg's deviation from Tref, which alarms in power operation, follows the power range. The permissives the
-    // core derives (P-6, P-10) are never values of their own.
-    expect(of(['core'])).toEqual(['core.powerRangePercent', 'core.averageTemperatureDeviationC', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.sourceRangeEnergized', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
+    // core derives (P-6, P-10) are never values of their own. The core's outlet is read once, by its core-exit
+    // thermocouples (HMI review of run 23: the model's mixed outlet temperature beside them repeated it).
+    expect(of(['core'])).toEqual(['core.powerRangePercent', 'core.averageTemperatureDeviationC', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coreExitTemperatureC', 'core.sourceRangeEnergized', 'core.intermediateRangeCurrentAmps', 'core.intermediateRangeStartupRateDpm'] as never)
     expect(runtime.readVariable('core.sourceRangeEnergized' as never)).toBe(false)
     // With its high voltage on, the source range counts something and ranks as an instrument, before the
     // intermediate range; its count rate then says the high voltage is on.
     const counting: PlantNow = { ...atPower, read: path => String(path) === 'core.sourceRangeEnergized' ? true : runtime.readVariable(path) }
-    expect(of(['core'], counting).slice(4)).toEqual(['core.coolantOutletTemperatureC', 'core.sourceRangeCountRateCps', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
+    expect(of(['core'], counting).slice(4)).toEqual(['core.coreExitTemperatureC', 'core.sourceRangeCountRateCps', 'core.intermediateRangeCurrentAmps', 'core.intermediateRangeStartupRateDpm'] as never)
   })
 
   test('a signal only rules of other modes judge follows its key values and instruments', () => {

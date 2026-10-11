@@ -196,7 +196,9 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       minimumNaturalCirculationCoolingFraction: normalized.optional(),
     }),
     semantics: fixedSemantics({
-      keyValues: ['coolantOutletTemperatureC'],
+      // The core-exit thermocouples are the instrument an operator reads the core's outlet by; the mixed outlet
+      // temperature beside them is the model's, at the same point (HMI review of run 23: a detail repeated both).
+      keyValues: ['coreExitTemperatureC'],
       // Above P-6 the source range's high voltage is cut and it counts nothing.
       meaningfulWhile: [{ flag: 'sourceRangeEnergized', variables: ['sourceRangeCountRateCps'] }],
       permissives: ['aboveP6', 'aboveP10'],

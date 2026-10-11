@@ -469,11 +469,12 @@ describe('composed display panels', () => {
       ['percent', ['SG-B-LVL-NR', 'SG-A-LVL-NR']],
       ['MPa', ['PT-455']],
     ])
-    expect(trend.live.map(pen => pen.name)).toEqual(['Feedwater inflow · Steam Generator B'])
+    // The whole flow through SG B's feed inlet, which its main and auxiliary feed lines share: named as the total.
+    expect(trend.live.map(pen => pen.name)).toEqual(['Total feedwater inflow · Steam Generator B'])
     // Each strip: labels and plot (the last also the time axis) and a legend row per pen; then the live rows.
     expect(composed.view.height).toBe(140 + (18 + 72 + 4 + 16 * 2) + (18 + 72 + 22 + 4 + 16) + (4 + 16))
     expect(composed.shows[0]).toContain('in 2 stacked strips (one per measurement)')
-    expect(composed.shows[1]).toStartWith('Current values only, not recorded by this Run (no history to describe): Feedwater inflow · Steam Generator B')
+    expect(composed.shows[1]).toStartWith('Current values only, not recorded by this Run (no history to describe): Total feedwater inflow · Steam Generator B')
   })
 
   test('never share an axis between different measurements of one unit', () => {

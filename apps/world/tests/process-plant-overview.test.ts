@@ -217,7 +217,7 @@ describe('the unit overview World generates for a Plant', () => {
     expect(abnormal).toEqual(['feedwaterControlValveB'])
   })
 
-  test('after a trip it leads with the heat path: the subcooling margin, the core\'s outlet temperature and the auxiliary feedwater the actuation delivers', () => {
+  test('after a trip it leads with the heat path: the subcooling margin, the core-exit temperature and the auxiliary feedwater the actuation delivers', () => {
     // Evaluation run 22 (HMI review, 5-second test): in Hot standby after SG B's runback tripped the unit, the
     // overview led with "0 MW · 3600 MW below HI ALM" and the generator's output, and showed no auxiliary feedwater.
     const upset = plant()
@@ -239,10 +239,10 @@ describe('the unit overview World generates for a Plant', () => {
       return readouts.pens.map(pen => pen.tagId ?? String(pen.path))
     }
     // Containment pressure, at atmospheric inside its normal range, yields its place at power as after the trip.
-    expect(leads(atPower)).toEqual(['NIS-PR-AVG', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'SUB-MARGIN', 'core.coolantOutletTemperatureC', 'GEN-MW'])
+    expect(leads(atPower)).toEqual(['NIS-PR-AVG', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'SUB-MARGIN', 'CET-AVG', 'GEN-MW'])
     // No energy sink is watched once the turbine has tripped: the heat path leads (core cooling, then the heat sink
     // the actuation feeds), then the pressure safety injection can still act on and the pressurizer's level.
-    expect(leads(tripped)).toEqual(['SUB-MARGIN', 'core.coolantOutletTemperatureC', 'AFW-FLOW', 'PT-455', 'PZR-LVL', 'RVLS-DYN'])
+    expect(leads(tripped)).toEqual(['SUB-MARGIN', 'CET-AVG', 'AFW-FLOW', 'PT-455', 'PZR-LVL', 'RVLS-DYN'])
     expect(upset.runtime.readVariable('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeGreaterThan(50)
     if (!tripped.ok) return
     // Still the whole column, and it still fits the window.
@@ -295,6 +295,10 @@ describe('equipment opened from the unit overview', () => {
     // auxiliary feed its low-low level starts into it, which the SG B detail of run 22 lacked, and the main feed its
     // high-high level isolates.
     expect(readouts.pens.map(pen => String(pen.path))).toEqual(['sgB.levelPercent', 'sgB.wideRangeLevelPercent', 'sgB.secondaryRadiationMSvPerH', 'sgB.pressureMPa', 'sgB.feedwaterFlowKgPerS', 'aux-feedwater-valve-b-to-sg-b.flowKgPerS', 'feedwater-control-valve-b-to-sg-b.flowKgPerS'])
+    // Its three feed flows are named by what they are of the whole its feed inlet takes (HMI review of run 23:
+    // "Feedwater inflow", AFW-B-FLOW and "Feedwater to steam generator B flow" read alike): the total, and each line
+    // by where it branches from.
+    expect(readouts.pens.slice(4).map(pen => pen.name)).toEqual(['Total feedwater inflow · Steam Generator B', 'AFW-B-FLOW', 'MFW header to SG B flow'])
     expect(readouts.pens[0]!.thresholds.length).toBeGreaterThan(0)
     // Narrowed to its loop: both sides of the steam generator and the shared headers, the other loops beyond as stops, every valve named.
     expect(mimic.mimic.profile).toBe('detail')
@@ -318,12 +322,14 @@ describe('equipment opened from the unit overview', () => {
     expect(mimic.mimic.stubs.map(stub => stub.text)).toContain('from ACC ×4, CHG ×2, RHR iso, SI header')
     expect(result.display.height).toBeLessThanOrEqual(fullHd.height)
     // Opened at power it leads with the power range, Tavg's deviation from Tref, subcooling margin, the RCS leak rate
-    // and outlet temperature, then its instruments, never a permissive: the de-energized source range as its high
-    // voltage's state, the intermediate range and the core exit thermocouples; the startup rate no longer fits.
+    // and the core-exit thermocouples, its outlet once (HMI review of run 23: the model's mixed outlet temperature
+    // beside them repeated it), then its instruments, never a permissive: the de-energized source range as its high
+    // voltage's state, the intermediate range and its startup rate.
     const readouts = result.display.panels.find(panel => panel.kind === 'readouts')!
     if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
-    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(0, 5)).toEqual(['NIS-PR-AVG', 'TAVG-TREF', 'SUB-MARGIN', 'RCS-LEAK-RATE', 'core.coolantOutletTemperatureC'])
-    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-3)).toEqual(['NIS-SR-HV', 'NIS-IR', 'CET-AVG'])
+    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(0, 5)).toEqual(['NIS-PR-AVG', 'TAVG-TREF', 'SUB-MARGIN', 'RCS-LEAK-RATE', 'CET-AVG'])
+    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-3)).toEqual(['NIS-SR-HV', 'NIS-IR', 'NIS-IR-SUR'])
+    expect(readouts.pens.map(pen => String(pen.path))).not.toContain('core.coolantOutletTemperatureC')
     expect(readouts.pens.find(pen => pen.tagId === 'NIS-SR-HV')?.valueKind).toBe('boolean')
   })
 

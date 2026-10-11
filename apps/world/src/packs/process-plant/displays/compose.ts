@@ -11,7 +11,7 @@ import type {
   ProcessVariableLimits,
   VariablePath,
 } from '../graph/index.ts'
-import { linkCarrier, processSignalTagIdSchema, variablePathSchema } from '../graph/index.ts'
+import { linkCarrier, previousLinks, processSignalTagIdSchema, variablePathSchema } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { findProcessPlantSignalBinding } from '../signals.ts'
 import {
@@ -300,18 +300,58 @@ const signalIdentity = (
   system: ProcessPlantRuntimeInstance,
   binding: ProcessSignalBinding,
 ): { readonly name: string; readonly described: string; readonly measurement: string } => {
+  const graph = system.plant.graph
   const variable = String(binding.path).slice(String(binding.path).indexOf('.') + 1)
+  const shared = sharedPortFlow(graph, binding)
   if (binding.owner.type === 'link') {
-    const link = system.plant.graph.links[binding.owner.linkIndex]!
-    return { name: binding.tagId ?? binding.label, described: binding.label, measurement: `link:${link.service ?? link.kind}.${variable}|${binding.unit}` }
+    const link = graph.links[binding.owner.linkIndex]!
+    const named = shared === null ? binding.label : `${shared} flow`
+    return { name: binding.tagId ?? named, described: named, measurement: `link:${link.service ?? link.kind}.${variable}|${binding.unit}` }
   }
-  const component = system.plant.graph.components[binding.owner.componentIndex]!
-  const named = binding.label.toLowerCase().includes(component.label.toLowerCase()) ? binding.label : `${binding.label} · ${component.label}`
+  const component = graph.components[binding.owner.componentIndex]!
+  const label = shared === null ? binding.label : `${shared} ${binding.label.charAt(0).toLowerCase()}${binding.label.slice(1)}`
+  const named = label.toLowerCase().includes(component.label.toLowerCase()) ? label : `${label} · ${component.label}`
   return {
     name: binding.tagId ?? named,
     described: named,
     measurement: `${component.metadata?.equipmentClass ?? component.kind}.${variable}|${binding.unit}`,
   }
+}
+
+const shortLabelOf = (graph: CompiledPlantGraph, component: number): string => graph.components[component]!.metadata?.presentation?.shortLabel ?? graph.components[component]!.label
+
+/**
+ * Where several pipes join at a port through which the model declares the
+ * whole flow (a steam generator's feedwater inlet, fed by main and auxiliary
+ * feed), each flow is named by what it is of that whole: the port's flow is
+ * the total ("Total"), and each pipe's is named by where it comes from, the
+ * equipment its line branches from through the valves in series on it, and
+ * where it goes ("MFW header to SG B"). Null for any other flow.
+ */
+const sharedPortFlow = (graph: CompiledPlantGraph, binding: ProcessSignalBinding): string | null => {
+  if (binding.quantity !== 'flowRate') return null
+  if (binding.owner.type === 'component') {
+    const component = graph.components[binding.owner.componentIndex]!
+    const port = component.semantics.portFlows.find(flow => flow.path === binding.path)?.port
+    const joining = port === undefined ? [] : [...(graph.incomingLinksByComponent[component.index] ?? []), ...(graph.outgoingLinksByComponent[component.index] ?? [])]
+      .map(index => graph.links[index]!).filter(link => (link.toComponentIndex === component.index && link.toPortName === port) || (link.fromComponentIndex === component.index && link.fromPortName === port))
+    return joining.length > 1 ? 'Total' : null
+  }
+  const link = graph.links[binding.owner.linkIndex]!
+  const into = graph.components[link.toComponentIndex]!
+  const declared = into.semantics.portFlows.some(flow => flow.port === link.toPortName)
+  const others = (graph.incomingLinksByComponent[into.index] ?? []).filter(index => index !== link.index && graph.links[index]!.toPortName === link.toPortName)
+  if (!declared || others.length === 0) return null
+  // Upstream through what only passes the flow on (one line in, one out), to where the line branches.
+  const carriers = new Set([linkCarrier(link)])
+  let source = link
+  for (let step = 0; step < MIMIC_REACH_LINKS; step += 1) {
+    const before = previousLinks(graph, source, carriers)
+    const out = (graph.outgoingLinksByComponent[source.fromComponentIndex] ?? []).filter(index => carriers.has(linkCarrier(graph.links[index]!)))
+    if (before.length !== 1 || out.length !== 1) break
+    source = before[0]!
+  }
+  return `${shortLabelOf(graph, source.fromComponentIndex)} to ${shortLabelOf(graph, into.index)}`
 }
 
 const resolvePens = (
