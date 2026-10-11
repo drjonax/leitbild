@@ -65,7 +65,7 @@ const scenarios: ReadonlyArray<Scenario> = [
     prompt: 'On Unit 2, what does motor-driven auxiliary feedwater pump A take its water and power from, and where does its flow go?' },
   { id: 'single-state', advanceMinutes: 1, expect: 'none', mimic: 'avoid', requested: 'display', prompt: 'Is main feedwater pump A on Unit 2 running?' },
   { id: 'power-stable', advanceMinutes: 1, expect: 'display', mimic: 'avoid',
-    prompt: 'Is reactor power on Unit 2 stable over the last few minutes?', keySignals: ['core.powerMw', 'NIS-PR', 'GEN-MW'] },
+    prompt: 'Is reactor power on Unit 2 stable over the last few minutes?', keySignals: ['NIS-PR-AVG', 'core.powerRangePercent', 'core.powerMw', 'GEN-MW'] },
   { id: 'compare-sg-levels', advanceMinutes: 1, expect: 'display', keyPanel: 'comparison', mimic: 'avoid',
     prompt: 'Compare the four steam generator levels on Unit 2.', keySignals: ['SG-A-LVL-NR', 'SG-B-LVL-NR'] },
   { id: 'show-tavg', advanceMinutes: 1, expect: 'display', mimic: 'avoid',
