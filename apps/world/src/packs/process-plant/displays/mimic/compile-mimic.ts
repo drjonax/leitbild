@@ -8,7 +8,7 @@ import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type Mim
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { BadgeReservation, MimicProfile } from './profiles.ts'
 import { COUNT_WORDS, flapCount, itemRows, POWER_STATE_WORDS, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
-import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
+import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withLeavesStubbed, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
 import { openBridgeDevice, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
 // Intent (or a scope World resolved itself) → items with their bindings → a
@@ -618,7 +618,9 @@ const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, s
  * at the port they join, else as asked; so a line-up shows a source that
  * feeds what it ends at wherever there is room (evaluation run 23: safety
  * injection to loop C without accumulator C). The auxiliary feed beside the
- * main feed to all four steam generators draws legibly neither way.
+ * main feed to all four steam generators draws legibly neither way. Where
+ * the drawing as asked is still too much to read, its leaves are named on a
+ * stub instead (withLeavesStubbed).
  */
 const compileWithin = (plant: CompiledProcessPlant, intent: MimicIntent, budget: MimicBudget): Attempted => {
   const resolved = resolveMimicScope(plant.graph, intent)
@@ -629,7 +631,13 @@ const compileWithin = (plant: CompiledProcessPlant, intent: MimicIntent, budget:
     const supplied = compileScope(plant, intent, scope, budget)
     if (supplied.ok) return supplied
   }
-  return compileScope(plant, intent, resolved.scope, budget)
+  const asked = compileScope(plant, intent, resolved.scope, budget)
+  if (asked.ok || 'issues' in asked) return asked
+  // Too much to read at a glance: leaves that carry nothing further are named on a stub instead (evaluation run 24: both safety buses with their sequenced loads).
+  const leaner = withLeavesStubbed(plant.graph, resolved.scope)
+  if (leaner === null) return asked
+  const stubbed = compileScope(plant, intent, leaner, budget)
+  return stubbed.ok ? stubbed : asked
 }
 
 // Narrower intents that draw part of the same question; each is compiled, and only those that fit are offered.

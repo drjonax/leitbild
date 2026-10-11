@@ -421,6 +421,41 @@ export const withParallelSupplies = (graph: CompiledPlantGraph, scope: MimicScop
 }
 
 /**
+ * A drawing with its leaves stopped where they join: equipment whose one link
+ * of the drawn services brings it flow from drawn equipment (in a drawing of
+ * electrical power, the pumps and loads a bus feeds) becomes part of a stub
+ * on what feeds it ("to AFW pump, CHG pump, CS pump A and 6 more"), unless
+ * the intent names it. Null where there are none. What compose tries when the drawing as asked
+ * does not stay legible: the leaves carry nothing further, so naming them
+ * loses no path.
+ */
+export const withLeavesStubbed = (graph: CompiledPlantGraph, scope: MimicScope): MimicScope | null => {
+  const named = new Set(scope.names.map(entry => entry.component))
+  const carriers = new Set(scope.carriers)
+  // Links of the drawn services only: in a drawing of electrical power a pump is a load, whatever it pumps.
+  const linksOf = (component: number): ReadonlyArray<number> => [...(graph.incomingLinksByComponent[component] ?? []), ...(graph.outgoingLinksByComponent[component] ?? [])]
+    .filter(index => carriers.has(linkCarrier(graph.links[index]!)))
+  const drawnLinks = new Set(scope.links)
+  const leaves = scope.components.filter(component => {
+    if (named.has(component)) return false
+    const links = linksOf(component)
+    if (links.length !== 1 || !drawnLinks.has(links[0]!)) return false
+    // Only what the drawn flow ends in: a source (a diesel) is where the flow comes from and stays drawn.
+    const link = graph.links[links[0]!]!
+    return link.toComponentIndex === component && scope.components.includes(link.fromComponentIndex)
+  })
+  if (leaves.length === 0) return null
+  const removed = new Set(leaves)
+  const leafLinks = new Set(leaves.flatMap(linksOf))
+  const parents = sorted([...leafLinks].map(index => graph.links[index]!).map(link => removed.has(link.fromComponentIndex) ? link.toComponentIndex : link.fromComponentIndex))
+  const components = scope.components.filter(component => !removed.has(component))
+  const links = scope.links.filter(index => !leafLinks.has(index))
+  const parentSet = new Set(parents)
+  const stops = drawingStops(graph, parents, new Set(links), carriers, () => false)
+  return { ...scope, components, links, stubs: [...scope.stubs.filter(stub => !parentSet.has(stub.component)), ...stops] }
+}
+
+/**
  * The services items carry, the ones they do their work in first: those on a
  * port circuit their energy role names (a core's coolant), then by how many
  * of their links each takes. What a drawing narrowed to one service starts

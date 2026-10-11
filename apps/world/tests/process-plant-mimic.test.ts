@@ -140,6 +140,14 @@ describe('generated equipment mimics', () => {
     expect(compileMimic(system.plant, { around: ['containment'], reach: 1 }, { profile: chatMimicProfile, maxWidth: MIMIC_MAX_WIDTH, maxHeight: 628 }).ok).toBe(true)
   })
 
+  test('around a safety bus, loads that carry nothing further are named on a stub so the drawing stays legible', () => {
+    // Evaluation run 24: the sequenced loads made this drawing ten shared symbols, and it was refused twice.
+    const mimic = generated(system, { around: ['safetyBusA'], services: ['electricalPower'], reach: 1 })
+    // The supply stays drawn: the bus, its diesel and breakers; the pumps and loads it feeds are named where the drawing stops.
+    expect(mimic.items.map(item => item.binding.label)).toEqual(expect.arrayContaining(['Bus A', 'EDG A', 'EDG BKR A', 'Offsite BKR A']))
+    expect(mimic.stubs.some(stub => /^to .*CCW A/.test(stub.text))).toBe(true)
+  })
+
   test('names that do not resolve come back with suggestions', () => {
     const result = compileMimic(system.plant, { to: ['steam gen B'], services: ['feedwater'] }, roomy)
     expect(result.ok).toBe(false)
