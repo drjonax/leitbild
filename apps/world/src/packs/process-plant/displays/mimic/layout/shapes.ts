@@ -64,13 +64,14 @@ const textBox = (orientation: Orientation, box: AxisBox, side: TextSide, width: 
   return face === '+c' ? { f0, f1, c0: box.c1 + gap, c1: box.c1 + gap + alongC } : { f0, f1, c0: box.c0 - gap - alongC, c1: box.c0 - gap }
 }
 
-/** The alarm frame around the button box, its flap below, widened (centred) for a wide flap label. */
+/** The alarm frame around the button box, its flap's lines below, widened (centred) for a wide flap label. */
 const frameBox = (orientation: Orientation, button: AxisBox, node: ModelNode, profile: DiagramProfile): AxisBox => {
   const m = profile.frameMargin
   const grown = { f0: button.f0 - m, f1: button.f1 + m, c0: button.c0 - m, c1: button.c1 + m }
+  const flap = profile.flapHeight * node.flapLines
   const flapped = orientation === 'leftToRight'
-    ? { ...grown, c1: grown.c1 + profile.flapHeight }
-    : { ...grown, f0: grown.f0 - profile.flapHeight }
+    ? { ...grown, c1: grown.c1 + flap }
+    : { ...grown, f0: grown.f0 - flap }
   const wanted = node.flapWidth > 0 ? node.flapWidth + profile.flapLabelPadding : 0
   if (orientation === 'leftToRight') {
     if (wanted <= flapped.f1 - flapped.f0) return flapped

@@ -16,7 +16,7 @@ import type { CompiledMimic } from '../src/packs/process-plant/displays/mimic/mi
 import { principalCircuits } from '../src/packs/process-plant/displays/mimic/principal.ts'
 import { overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { overviewKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
-import { drawnLook, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
+import { drawnLook, flapPlaces, flapTexts, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { openBridgeDevice, readoutBlockWidth, textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
@@ -201,6 +201,30 @@ describe('the unit overview of the principal circuits', () => {
     // Between the auxiliary feed pump and its header, which no principal equipment touches.
     const elsewhere = withValveIn(plant, 'motor-afw-pump-to-header', 'auxFeedwaterValveA')
     expect(overview(elsewhere, budgetFor(4)).hash).toBe(reference.hash)
+  })
+
+  test('a framed item names its worst alarm whole, its action never dropped, and spells out how many others are active', () => {
+    // HMI review of run 23: "LO-LO · AFW START +2" on the overview, "LO-LO +2" on the core detail, "+2" unexplained.
+    const mimic = overview(plantOf(4), budgetFor(4))
+    const item = (label: string) => mimic.items.find(candidate => candidate.binding.label === label)!
+    const fits = (frameWidth: number) => (text: string) => textWidth('alertLabel', text) + openBridgeDevice.flapLabelInset <= frameWidth
+    const textsOf = (label: string, ruleId: string, others: number) => {
+      const drawn = item(label)
+      return flapTexts(drawn.binding.frames.find(frame => frame.ruleId === ruleId)!, others, fits(drawn.frame!.width), flapPlaces(drawn))
+    }
+    // A steam generator keeps rows of its stack beside its body for the action, should its frame be narrower than its
+    // whole flap (its stack set below it), and for the count; here the frame is wide enough for the whole flap.
+    expect(flapPlaces(item('SG A'))).toEqual(['action', 'count'])
+    expect(textsOf('SG A', 'sg-a-level-low-low-afw-actuation', 2)).toEqual({ flap: 'LO-LO · AFW START', parts: { action: '', count: '+2 alarms' } })
+    expect(textsOf('SG A', 'sg-a-level-low-low-afw-actuation', 1).parts.count).toBe('+1 alarm')
+    // The core's frame is narrower than its whole flap: what it watches, then the action on the row under it.
+    expect(flapPlaces(item('Core'))).toEqual(['action', 'count'])
+    expect(textsOf('Core', 'reactor-high-power-trip', 0)).toEqual({ flap: 'PWR HI-HI', parts: { action: 'RX TRIP', count: '' } })
+    // A pump has no room beside its symbol: it counts on its flap's next line.
+    expect(item('RCP A').flapLines).toEqual(['count'])
+    expect(textsOf('RCP A', 'rcp-a-trip', 1)).toEqual({ flap: 'NOT RUN', parts: { action: '', count: '+1 alarm' } })
+    // Without a place of its own, the count follows the flap where it fits there, as in a chat column.
+    expect(flapTexts({ flap: 'LO · ALM', watches: 'LO', action: 'ALM' }, 2, () => true, []).flap).toBe('LO · ALM +2 alarms')
   })
 
   test('valves on the circuits are markers, and say something only when abnormal or between shut and open', () => {

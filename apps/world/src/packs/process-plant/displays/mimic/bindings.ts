@@ -74,12 +74,22 @@ export interface MimicItemBinding {
   readonly limits: ReadonlyArray<{ readonly value: number; readonly kind: 'alarm' | 'trip'; readonly name: string }>
   /**
    * Rules that frame it, each with the flap text that says what it watches
-   * and does ("LO-LO · AFW START"), the same shortened to what it watches
-   * ("LO-LO"), for which its frame reserves room, and the declared modes it
-   * alone acts in: outside them it frames nothing, as its limit is drawn not
-   * in force on a trend.
+   * and does ("LO-LO · AFW START"), its two parts (`watches`, and `action`
+   * where it names one), and the declared modes it alone acts in: outside
+   * them it frames nothing, as its limit is drawn not in force on a trend.
    */
-  readonly frames: ReadonlyArray<{ readonly ruleId: string; readonly flap: string; readonly flapShort: string; readonly modeIds?: ReadonlyArray<string> }>
+  readonly frames: ReadonlyArray<MimicFrame>
+}
+
+/** A rule framing an item, and its flap text (MimicItemBinding.frames). */
+export interface MimicFrame {
+  readonly ruleId: string
+  readonly flap: string
+  /** What it watches: "LO-LO", "P LO & F LO", "NOT RUN". */
+  readonly watches: string
+  /** What the I&C does there, where the flap names it: "AFW START", "ALM". */
+  readonly action?: string
+  readonly modeIds?: ReadonlyArray<string>
 }
 
 export interface MimicFlowBinding {
@@ -198,12 +208,11 @@ const gatedLeaf = (condition: ProcessPlantIcCondition): Extract<ProcessPlantIcCo
 /**
  * What a framing rule watches and does, for its flap, in the words its
  * signals' trend chips use: "LO-LO · AFW START" on the level the symbol draws,
- * "P LO-LO · SI" on another of its signals, "CMD STOP" on a command; and the
- * same shortened to what it watches ("LO-LO"), where its frame is too narrow
- * for the whole. A limit names what the I&C does at it (ALM, or the declared
- * action), so an AFW start never reads as a trip; an on/off state names itself.
+ * "P LO-3 · SI" on another of its signals, "CMD STOP" on a command. A limit
+ * names what the I&C does at it (ALM, or the declared action), so an AFW
+ * start never reads as a trip; an on/off state names itself.
  */
-export const flapText = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule, drawnState: VariablePath | undefined): { readonly flap: string; readonly flapShort: string } => {
+export const flapText = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule, drawnState: VariablePath | undefined): Pick<MimicFrame, 'flap' | 'watches' | 'action'> => {
   const graph = plant.graph
   const gated = gatedLeaf(rule.condition)
   const watched = gated === null ? leaves(rule.condition) : [gated]
@@ -225,7 +234,9 @@ export const flapText = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule, 
   }))]
   // Conditions that must all hold read "&", alternatives "or".
   const watches = names.join(rule.condition.type === 'any' ? ' or ' : ' & ')
-  return { flap: limited || icRuleKind(rule) === 'trip' ? `${watches} · ${actionOf(plant, rule)}` : watches, flapShort: watches }
+  if (!limited && icRuleKind(rule) !== 'trip') return { flap: watches, watches }
+  const action = actionOf(plant, rule)
+  return { flap: `${watches} · ${action}`, watches, action }
 }
 
 /**

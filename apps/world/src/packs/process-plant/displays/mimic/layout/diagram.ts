@@ -73,6 +73,11 @@ export interface DiagramNode {
   readonly frameable: boolean
   /** The widest flap label the node can show, in px, measured by the caller. Frameable nodes only. */
   readonly flapWidth?: number
+  /**
+   * How many lines its flap may take, one under another (1 where absent): a
+   * second counts the node's other active alarms. Frameable nodes only.
+   */
+  readonly flapLines?: number
 }
 
 export interface DiagramEdge {
@@ -103,7 +108,7 @@ export interface DiagramProfile {
   readonly textClearance: number
   /** The alarm frame hugs the button box (symbol plus text stack) at this margin. */
   readonly frameMargin: number
-  /** The flap sits below the frame and adds this much height. */
+  /** The flap sits below the frame and adds this much height for each of its lines. */
   readonly flapHeight: number
   /** The frame is as wide as the flap label plus this padding when that exceeds the button box. */
   readonly flapLabelPadding: number
@@ -162,8 +167,8 @@ export interface PlacedNode {
   readonly text: { readonly x: number; readonly y: number; readonly width: number; readonly height: number; readonly side: Face; readonly lines: number } | null
   /**
    * The room reserved for the alarm frame of a frameable node, flap included:
-   * the button box grown by `frameMargin`, the flap below it, and as wide as
-   * the flap needs, centred on the button box. Null when not frameable.
+   * the button box grown by `frameMargin`, the flap's lines below it, and as
+   * wide as the flap needs, centred on the button box. Null when not frameable.
    */
   readonly frame: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } | null
 }

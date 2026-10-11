@@ -30,6 +30,8 @@ export interface ModelNode {
   readonly frameable: boolean
   /** Widest flap label; 0 when the node has none. */
   readonly flapWidth: number
+  /** Lines the flap takes. */
+  readonly flapLines: number
 }
 
 export interface ModelEdge {
@@ -105,6 +107,7 @@ export const buildModel = (graph: DiagramGraph): Model => {
     for (const line of node.text.lines) if (!isSize(line.width) || !(line.height > 0) || !Number.isFinite(line.height)) issues.push(`node ${node.id} has a text line of invalid size`)
     if (!isSize(node.portInset)) issues.push(`node ${node.id} has an invalid port inset`)
     if (node.flapWidth !== undefined && (!node.frameable || !isSize(node.flapWidth))) issues.push(`node ${node.id} has a flap width but is not frameable, or the width is invalid`)
+    if (node.flapLines !== undefined && (!node.frameable || !Number.isInteger(node.flapLines) || node.flapLines < 1)) issues.push(`node ${node.id} has flap lines but is not frameable, or the count is not a whole number of lines`)
     const portIds = new Set<string>()
     const portRanks = new Set<string>()
     for (const port of node.ports) {
@@ -186,6 +189,7 @@ export const buildModel = (graph: DiagramGraph): Model => {
     portInset: node.portInset,
     frameable: node.frameable,
     flapWidth: node.flapWidth ?? 0,
+    flapLines: node.flapLines ?? 1,
   }))
   const edges: ModelEdge[] = resolved.map((entry, index) => ({
     index,

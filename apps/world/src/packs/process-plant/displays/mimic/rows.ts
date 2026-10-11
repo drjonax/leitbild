@@ -1,4 +1,4 @@
-import type { MimicFlowBinding, MimicItemBinding } from './bindings.ts'
+import type { MimicFlowBinding, MimicFrame, MimicItemBinding } from './bindings.ts'
 import { flowLook, itemLook, powerLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
 import type { MimicPipeState } from './mimic-model.ts'
 import type { MimicPresentation } from './presentation.ts'
@@ -44,6 +44,14 @@ export type MimicRow =
    * (`whole`).
    */
   | { readonly kind: 'marker'; readonly part: 'word' | 'command' | 'value' | 'whole'; readonly texts: ReadonlyArray<string>; readonly required: true }
+  /**
+   * Under a framed vessel's values: the action of the alarm its flap names,
+   * where the frame is too narrow for the whole flap ("RX TRIP" under "PWR
+   * HI-HI"), or how many other alarms of its own are active ("+2 alarms").
+   * Empty while there is nothing to say; a device says the same on its
+   * flap's further lines (MimicDrawnItem.flapLines).
+   */
+  | { readonly kind: 'alarm'; readonly part: FlapPart; readonly texts: ReadonlyArray<string>; readonly required: true }
   /** Grouped parallel equipment: how many members are in the state the group is drawn by ("RUN 1/2"), or, with none in it, how many are in the other ("STOP 2/2"). */
   | { readonly kind: 'count'; readonly members: ReadonlyArray<MimicItemBinding>; readonly word: string; readonly texts: ReadonlyArray<string>; readonly required: true }
 
@@ -188,6 +196,8 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
     return fraction >= 0.05 && fraction <= 0.95 ? format(fraction, 'fraction') : ''
   }
   if (row.kind === 'mismatch') return look.mismatch ?? ''
+  // What a framed item says of its alarms depends on the alarms, not the sample: the drawing writes it (flapTexts).
+  if (row.kind === 'alarm') return ''
   if (row.kind === 'commandValue') return look.mismatch === null ? '' : look.mismatch.slice('CMD '.length)
   if (row.kind === 'throughput') return look.state.kind === 'passing' ? 'PASSING' : look.state.kind === 'notPassing' ? 'NO FLOW' : '?'
   if (row.texts.includes('POS ?')) return 'POS ?'
@@ -228,6 +238,37 @@ export const valueRowReading = (row: Extract<MimicRow, { kind: 'value' }>, index
     ? { path: row.path, value, end, span: row.span, wider: false }
     : { path: row.wider.path, value: wider, end: offScale(wider, row.wider.span), span: row.wider.span, wider: true }
 }
+
+/** What a framed item says of its alarms besides its flap: the flap's action where the frame is too narrow for it whole, and the count of the others. */
+export type FlapPart = 'action' | 'count'
+
+/** The other active alarms on a framed item, spelled out under its flap: "+1 alarm", "+2 alarms". */
+export const flapCount = (others: number): string => `+${others} alarm${others === 1 ? '' : 's'}`
+
+/**
+ * What a framed item shows of its most severe active alarm (`frame`) and
+ * the others: the whole flap where the frame is wide enough for it
+ * (`fits`), else what it watches, with the action on the line the item
+ * reserves for it (`places`); and how many others, on the line it reserves
+ * for them, else after the flap where that fits. Each part's text is empty
+ * where it has nothing to say.
+ */
+export const flapTexts = (
+  frame: Pick<MimicFrame, 'flap' | 'watches' | 'action'>,
+  others: number,
+  fits: (text: string) => boolean,
+  places: ReadonlyArray<FlapPart>,
+): { readonly flap: string; readonly parts: Readonly<Record<FlapPart, string>> } => {
+  const whole = fits(frame.flap) || frame.action === undefined
+  const head = whole ? frame.flap : frame.watches
+  const count = others === 0 ? '' : flapCount(others)
+  const counted = count !== '' && !places.includes('count') && fits(`${head} ${count}`) ? `${head} ${count}` : head
+  return { flap: counted, parts: { action: whole || !places.includes('action') ? '' : frame.action!, count: places.includes('count') ? count : '' } }
+}
+
+/** Where an item says its flap's action and its count of other alarms: a device's flap lines, a vessel's alarm rows. */
+export const flapPlaces = (item: { readonly flapLines: ReadonlyArray<FlapPart>; readonly rows: ReadonlyArray<MimicRow> }): ReadonlyArray<FlapPart> =>
+  [...item.flapLines, ...item.rows.flatMap(row => (row.kind === 'alarm' ? [row.part] : []))]
 
 /** Whether a member's look is in the state its group counts by. */
 const counts = (look: ItemLook, word: string): boolean =>

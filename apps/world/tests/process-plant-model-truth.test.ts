@@ -249,8 +249,8 @@ describe('breakers', () => {
 describe('offsite power alarms', () => {
   test('each names one cause: a grid with no voltage is lost, a sagging grid degraded', () => {
     const flap = (ruleId: string) => flapText(plant, plant.automation.rules.find(rule => rule.id === ruleId)!, undefined)
-    expect(flap('loss-of-offsite-power')).toEqual({ flap: 'V LO-LO · ALM', flapShort: 'V LO-LO' })
-    expect(flap('offsite-grid-degraded-voltage')).toEqual({ flap: 'V LO · ALM', flapShort: 'V LO' })
+    expect(flap('loss-of-offsite-power')).toEqual({ flap: 'V LO-LO · ALM', watches: 'V LO-LO', action: 'ALM' })
+    expect(flap('offsite-grid-degraded-voltage')).toEqual({ flap: 'V LO · ALM', watches: 'V LO', action: 'ALM' })
     const plantRun = started()
     plantRun.run(2_000)
     plantRun.act('loss-offsite-power')

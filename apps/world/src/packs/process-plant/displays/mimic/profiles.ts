@@ -55,6 +55,15 @@ export interface MimicProfile {
    * scrolls; the drawing itself only ever loses optional rows to fit.
    */
   readonly minScale: number
+  /**
+   * What a framed item reserves for its alarm badge: `reserved`, room for
+   * its flap's whole text, a second line with its action where the frame is
+   * too narrow for it, and a line counting its other alarms ("+2 alarms"),
+   * so the badge reads alike wherever it is drawn; `fitted`, only each
+   * flap's watched part, the action and count shown where the frame has
+   * room for them (a chat column's four loops have none to spare).
+   */
+  readonly badges: 'reserved' | 'fitted'
 }
 
 /** OpenBridge's drawing conventions: its 24 px grid, pipe outline and alarm frame. */
@@ -112,6 +121,7 @@ export const chatMimicProfile: MimicProfile = {
   stubLabels: 'names',
   commands: 'inline',
   minScale: MIMIC_MIN_SCALE,
+  badges: 'fitted',
 }
 
 /**
@@ -137,6 +147,7 @@ export const overviewMimicProfile: MimicProfile = {
   stubLabels: 'groups',
   commands: 'stacked',
   minScale: 1,
+  badges: 'reserved',
 }
 
 /**

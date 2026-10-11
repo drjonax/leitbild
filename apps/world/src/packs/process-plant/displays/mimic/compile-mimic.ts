@@ -7,7 +7,7 @@ import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutR
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { MimicProfile } from './profiles.ts'
-import { COUNT_WORDS, itemRows, WIDER_RANGE, type MimicRow } from './rows.ts'
+import { COUNT_WORDS, flapCount, itemRows, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
 import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
 import { openBridgeDevice, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
@@ -43,6 +43,8 @@ interface PlannedItem {
   readonly binding: MimicItemBinding
   readonly presentation: MimicPresentation
   readonly rows: ReadonlyArray<MimicRow>
+  /** A device's flap lines under OpenBridge's own (MimicDrawnItem.flapLines). */
+  readonly flapLines: ReadonlyArray<FlapPart>
   readonly marker: boolean
   readonly role: DiagramNode['role']
   readonly rank: string
@@ -78,6 +80,8 @@ const rowWords = (row: MimicRow): ReadonlyArray<string> =>
 // Vessels use our stack of readout blocks (one decimal); devices OpenBridge's
 // readout stack at the profile's size: small (11.5 px) or regular (16 px).
 const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['readoutSize']): { readonly width: number; readonly height: number } => {
+  // A vessel's alarm rows are written like its tag.
+  if (row.kind === 'alarm') return { width: Math.max(...row.texts.map(text => textWidth('tag', text))), height: openBridgeDevice.tagLine }
   if (!device || readoutSize === 'regular') {
     const digits = device ? 0 : 1
     if (row.kind === 'value') return { width: valueRowSize(row, valueRowWidth(row.unit, digits), fraction => valueRowWidth(row.unit, fraction)), height: openBridgeDevice.row }
@@ -90,7 +94,8 @@ const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['read
 }
 
 const rowTexts = (row: MimicRow): ReadonlyArray<{ readonly style: OpenBridgeTextStyle; readonly text: string }> =>
-  row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }, ...(row.wider === undefined ? [] : [{ style: 'unit' as const, text: WIDER_RANGE }])]
+  row.kind === 'alarm' ? row.texts.map(text => ({ style: 'tag' as const, text }))
+    : row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }, ...(row.wider === undefined ? [] : [{ style: 'unit' as const, text: WIDER_RANGE }])]
     : rowWords(row).map(text => ({ style: 'stateRow' as const, text }))
 
 const isDevice = (presentation: MimicPresentation): boolean => presentation.element === 'device'
@@ -132,6 +137,49 @@ export const groupLabel = (labels: ReadonlyArray<string>): string => {
   while (split.every(words => words.length > shared + 1 && words[shared] === split[0]![shared])) shared += 1
   return shared === 0 ? labels.join('/') : `${split[0]!.slice(0, shared).join(' ')} ${split.map(words => words.slice(shared).join(' ')).join('/')}`
 }
+
+/**
+ * How a framed item's flap is reserved: its width, and where it says the
+ * flap's action when that does not fit whole and how many other alarms are
+ * active. A vessel says both on rows of its stack, in the room beside its
+ * body, so its flap takes no more width than what it watches wherever its
+ * stack may go (the reactor core's "PWR HI-HI", then "RX TRIP"). A device,
+ * with no such room, says them on lines under its flap; its frame widens
+ * for its whole flap by up to a grid step beyond its symbol and stack, and
+ * only a flap wider still puts its action on a line of its own.
+ */
+const flapPlan = (
+  planned: Pick<PlannedItem, 'binding' | 'presentation' | 'rows' | 'role'>,
+  vessel: boolean,
+  tag: number,
+  measure: (style: OpenBridgeTextStyle, text: string, owner: string) => number,
+  badges: MimicProfile['badges'],
+): { readonly width: number; readonly rows: ReadonlyArray<MimicRow>; readonly lines: ReadonlyArray<FlapPart> } => {
+  const frames = planned.binding.frames
+  if (frames.length === 0) return { width: 0, rows: [], lines: [] }
+  const owner = planned.binding.label
+  const label = (text: string): number => measure('alertLabel', text, owner) + openBridgeDevice.flapLabelInset
+  // A chat column reserves no more than each flap's watched part: its flap carries the action and count where they fit (flapTexts).
+  if (badges === 'fitted') return { width: Math.max(...frames.map(frame => label(frame.watches))) - openBridgeDevice.flapLabelInset, rows: [], lines: [] }
+  const stack = Math.max(tag, ...planned.rows.map(row => rowSize(row, isDevice(planned.presentation), 'regular').width))
+  const symbol = 2 * OPENBRIDGE_GRID
+  // A vessel's frame is as narrow as its stack set below it; a device's as wide as its stack beside its symbol.
+  const button = (vessel ? Math.max(symbol, stack) : symbol + stack) + 2 * FRAME_MARGIN
+  const whole = Math.max(...frames.map(frame => label(frame.flap)))
+  const wraps = whole > button + (vessel ? 0 : OPENBRIDGE_GRID)
+  const parts: ReadonlyArray<FlapPart> = [...(wraps ? ['action' as const] : []), ...(frames.length > 1 ? ['count' as const] : [])]
+  const texts = (part: FlapPart): ReadonlyArray<string> => part === 'action'
+    ? [...new Set(frames.flatMap(frame => (frame.action === undefined ? [] : [frame.action])))]
+    : frames.slice(1).map((_, index) => flapCount(index + 1))
+  const flapWidth = Math.max(...(wraps ? frames.map(frame => label(frame.watches)) : [whole]), ...(vessel ? [] : parts.flatMap(texts).map(label))) - openBridgeDevice.flapLabelInset
+  return vessel
+    ? { width: flapWidth, rows: parts.map(part => ({ kind: 'alarm' as const, part, texts: texts(part), required: true as const })), lines: [] }
+    : { width: flapWidth, rows: [], lines: parts }
+}
+
+// OpenBridge's grid and the margin its frame keeps around a button (profiles.ts).
+const OPENBRIDGE_GRID = 24
+const FRAME_MARGIN = 1
 
 interface Planned {
   readonly graph: DiagramGraph
@@ -182,14 +230,17 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     return textWidth(style, text)
   }
 
-  const addItem = (planned: PlannedItem, ports: DiagramNode['ports']): void => {
+  const addItem = (unflapped: Omit<PlannedItem, 'flapLines'>, ports: DiagramNode['ports']): void => {
+    const presentation = unflapped.presentation
+    const vessel = isVessel(presentation) || unflapped.role === 'hub'
+    const tag = measure('tag', unflapped.binding.label, unflapped.binding.label)
+    // A frame's flap names its most severe active alarm whole, what it watches and what the I&C does there,
+    // and the item counts its other alarms ("+2 alarms"): no drawing drops the action or leaves a count
+    // unexplained (HMI review of run 23: "LO-LO +2" on a detail, "LO-LO · AFW START +2" on the overview).
+    const flap = flapPlan(unflapped, vessel, tag, measure, profile.badges)
+    const planned = { ...unflapped, rows: [...unflapped.rows, ...flap.rows], flapLines: flap.lines }
     items.set(planned.id, planned)
-    const presentation = planned.presentation
-    const vessel = isVessel(presentation) || planned.role === 'hub'
     for (const row of planned.rows) for (const { style, text } of rowTexts(row)) measure(style, text, planned.binding.label)
-    // A frame reserves room for each flap shortened to what it watches; the whole flap shows where that room allows (openbridge-mimic.ts flapLabel).
-    const flaps = planned.binding.frames.map(frame => measure('alertLabel', frame.flapShort, planned.binding.label))
-    const tag = measure('tag', planned.binding.label, planned.binding.label)
     nodes.push({
       id: planned.id,
       rank: planned.rank,
@@ -207,7 +258,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
         ],
       },
       frameable: planned.binding.frames.length > 0,
-      ...(flaps.length === 0 ? {} : { flapWidth: Math.max(...flaps) }),
+      ...(planned.binding.frames.length === 0 ? {} : { flapWidth: flap.width, flapLines: 1 + flap.lines.length }),
     })
   }
 
@@ -435,6 +486,7 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       frame: node.frame,
       // A stack's first line is the tag; the rows that fit follow it.
       rows: item.rows.slice(0, Math.max(0, (node.text?.lines ?? 1) - 1)),
+      flapLines: item.flapLines,
       marker: item.marker,
       components: item.components.map(component => String(graph.components[component]!.id)),
     }

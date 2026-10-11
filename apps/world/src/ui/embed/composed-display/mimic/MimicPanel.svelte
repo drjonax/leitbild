@@ -3,14 +3,15 @@
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-  import { drawnLook, itemTreatment, pipeStatesLook, rowText, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import { drawnLook, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, rowText, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import type { MimicFrame } from '../../../../packs/process-plant/displays/mimic/bindings.ts'
   import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
   import { alertTypeOf } from '../panel-presenters.ts'
   import { limitInForce } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import { chevronSegment, pipeSegments, pipeValue, stubEndSegment } from './pipe-segments.ts'
   import { mimicLegend } from './mimic-legend.ts'
-  import { openBridgeDevice } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
+  import { openBridgeDevice, textWidth } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
   import type * as OpenBridgeMimic from './openbridge-mimic.ts'
   import { embeddedDisplayFrame } from '../../view-host.ts'
 
@@ -68,7 +69,7 @@
    * trip latched at power frames nothing in hot standby; the banner and the
    * alarm list keep it).
    */
-  const alertOf = (item: MimicDrawnItem): { readonly status: 'alarm' | 'warning' | 'caution'; readonly label: { readonly flap: string; readonly flapShort: string }; readonly others: number } | null => {
+  const alertOf = (item: MimicDrawnItem): { readonly status: 'alarm' | 'warning' | 'caution'; readonly label: MimicFrame; readonly others: number } | null => {
     const inForce = item.binding.frames.filter(frame => latest?.mode === undefined || limitInForce(frame, latest.mode))
     const flaps = new Map(inForce.map(frame => [frame.ruleId, frame]))
     const active = alarms
@@ -189,12 +190,18 @@
     return { update: apply, destroy: () => element.remove() }
   }
 
-  const frame = (host: HTMLElement, params: { ob: Ob; alert: NonNullable<ReturnType<typeof alertOf>>; width: number }) => {
+  // The flap names the most severe active alarm whole, what it watches and what the I&C does there ("LO-LO · AFW
+  // START"), where its frame is wide enough, else what it watches with the action on its next line; the item
+  // counts its other alarms ("+2 alarms"), a vessel in its stack, a device on its flap's next line. So one item
+  // reads alike on every display that draws it. The alarms panel lists every one.
+  const flapOf = (item: MimicDrawnItem, alert: NonNullable<ReturnType<typeof alertOf>>) =>
+    flapTexts(alert.label, alert.others, text => item.frame !== null && textWidth('alertLabel', text) + openBridgeDevice.flapLabelInset <= item.frame.width, flapPlaces(item))
+  const frame = (host: HTMLElement, params: { ob: Ob; alert: NonNullable<ReturnType<typeof alertOf>>; flap: string }) => {
     const element = params.ob.createAlertFrame()
     element.style.width = '100%'
     element.style.height = '100%'
     host.append(element)
-    const apply = (next: typeof params) => next.ob.updateAlertFrame(element, next.alert.status, next.ob.flapLabel(next.alert.label, next.alert.others, next.width))
+    const apply = (next: typeof params) => next.ob.updateAlertFrame(element, next.alert.status, next.flap)
     apply(params)
     return { update: apply, destroy: () => element.remove() }
   }
@@ -246,8 +253,15 @@
           {@const alert = alertOf(item)}
           <div class="item" class:dimmed={dimmed(item)}>
           {#if alert !== null && item.frame !== null}
-            <!-- OpenBridge draws the flap below the framed region; the server reserved both. -->
-            <div class="box" style={`left:${item.frame.x}px;top:${item.frame.y}px;width:${item.frame.width}px;height:${item.frame.height - flapHeight}px`} use:frame={{ ob, alert, width: item.frame.width }}></div>
+            {@const flap = flapOf(item, alert)}
+            {@const below = item.flapLines.length}
+            <!-- OpenBridge draws the flap below the framed region; the server reserved it and a device's further flap lines under it. -->
+            <div class="box" style={`left:${item.frame.x}px;top:${item.frame.y}px;width:${item.frame.width}px;height:${item.frame.height - (1 + below) * flapHeight}px`} use:frame={{ ob, alert, flap: flap.flap }}></div>
+            {#each item.flapLines as part, at (part)}
+              {#if flap.parts[part] !== ''}
+                <span class={`flap-line ${alert.status}`} style={`left:${item.frame.x}px;top:${item.frame.y + item.frame.height - (below - at) * flapHeight}px;width:${item.frame.width}px;height:${flapHeight}px;padding-left:${openBridgeDevice.flapLabelInset}px`}>{flap.parts[part]}</span>
+              {/if}
+            {/each}
           {:else if itemTreatment(look, alert !== null) === 'abnormal'}
             <!-- Not following its command: abnormal, outlined in OpenBridge's enhanced colour, never an alarm colour. -->
             <div class="abnormal" style={abnormalBox(item)}></div>
@@ -262,7 +276,10 @@
               <div class="stack" class:below={item.text.side === 'bottom'} style={`left:${item.text.x}px;top:${item.text.y}px;width:${item.text.width}px`}>
                 <span class="tag">{item.binding.label}</span>
                 {#each item.rows as row, at (at)}
-                  {#if row.kind === 'value'}
+                  {#if row.kind === 'alarm'}
+                    <!-- What the flap's alarm does where the flap is too narrow for it whole, and how many others are active. -->
+                    <span class={`alarm-row ${alert?.status ?? ''}`}>{alert === null ? '' : flapOf(item, alert).parts[row.part]}</span>
+                  {:else if row.kind === 'value'}
                     {@const reading = valueRowReading(row, index)}
                     <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
                   {:else}
@@ -334,6 +351,16 @@
   .target { position: absolute; padding: 0; border: none; border-radius: 4px; background: none; cursor: pointer; pointer-events: auto; }
   .target:hover { outline: 1px solid var(--border-outline-color); outline-offset: 2px; }
   .target:focus-visible { outline: 2px solid var(--border-focus-color); outline-offset: 2px; }
+  /* A device's further flap lines, in the flap's colours: its action where the flap is too narrow for it whole, and the count of its other alarms. */
+  .flap-line { position: absolute; box-sizing: border-box; display: flex; align-items: center; border-radius: 0 0 4px 4px; font: 370 12px/16px "Noto Sans", system-ui, sans-serif; }
+  .flap-line.alarm { background: var(--alert-alarm-color); color: var(--on-alarm-active-color); }
+  .flap-line.warning { background: var(--alert-warning-color); color: var(--on-warning-active-color); }
+  .flap-line.caution { background: var(--alert-caution-color); color: var(--on-caution-active-color); }
+  /* A vessel's alarm rows, written like its tag in its alarm's colour. */
+  .alarm-row { min-height: 16px; font: 370 12px/16px "Noto Sans", system-ui, sans-serif; }
+  .alarm-row.alarm { color: var(--alert-alarm-color); }
+  .alarm-row.warning { color: var(--alert-warning-color); }
+  .alarm-row.caution { color: var(--alert-caution-color); }
   .abnormal { position: absolute; box-sizing: border-box; border: 2px solid var(--element-neutral-enhanced-color); border-radius: 4px; }
   .abnormal-key { padding: 0 3px; border: 2px solid var(--element-neutral-enhanced-color); border-radius: 3px; line-height: 10px; }
   .stale-tag { padding: 0 4px; border: 1px solid var(--element-neutral-color); border-radius: 2px; color: var(--element-active-color); font-weight: 700; line-height: 12px; }

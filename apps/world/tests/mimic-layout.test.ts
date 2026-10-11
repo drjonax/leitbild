@@ -274,6 +274,10 @@ describe('diagram layout engine', () => {
     expect(frame.y + frame.height).toBe(button.bottom + 1 + 21)
     expect(frame.y).toBe(button.top - 1)
     expect(frame.width).toBeGreaterThanOrEqual(52 + 28)
+    // A flap of two lines (its alarm's action or a count of the others under it) reserves both.
+    const graph = chain()
+    const twoLines = accepted({ ...graph, nodes: graph.nodes.map(entry => entry.id === 'pump' ? { ...entry, flapLines: 2 } : entry) }).nodes.find(n => n.id === 'pump')!
+    expect(twoLines.frame!.y + twoLines.frame!.height).toBe(button.bottom + 1 + 2 * 21)
   })
 
   test('a drawing too wide with text right of its symbols fits with text below them', () => {

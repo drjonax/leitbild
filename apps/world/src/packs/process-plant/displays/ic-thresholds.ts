@@ -336,15 +336,17 @@ const limitsOn = (
   })
 }
 
-// A Plant's rules never change once compiled, so each signal's thresholds are read once.
-const thresholdsByPlant = new WeakMap<CompiledProcessPlant, Map<VariablePath, ComposedDisplayIcThresholds>>()
+// A Plant's rules never change once compiled, so each signal's thresholds are
+// read once per I&C config: a Plant assembled again around the same config
+// (one more valve on a line no rule watches) reads them as it did.
+const thresholdsByConfig = new WeakMap<CompiledProcessPlant['automation'], Map<VariablePath, ComposedDisplayIcThresholds>>()
 
 export const icThresholdsForSignal = (
   plant: CompiledProcessPlant,
   path: VariablePath,
 ): ComposedDisplayIcThresholds => {
-  const known = thresholdsByPlant.get(plant) ?? new Map<VariablePath, ComposedDisplayIcThresholds>()
-  thresholdsByPlant.set(plant, known)
+  const known = thresholdsByConfig.get(plant.automation) ?? new Map<VariablePath, ComposedDisplayIcThresholds>()
+  thresholdsByConfig.set(plant.automation, known)
   const cached = known.get(path)
   if (cached !== undefined) return cached
   const read = readIcThresholds(plant, path)

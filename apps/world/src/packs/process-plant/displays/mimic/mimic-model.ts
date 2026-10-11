@@ -3,7 +3,7 @@ import type { MimicFlowBinding, MimicItemBinding } from './bindings.ts'
 import type { DiagramZone, Face, PlacedNode } from './layout/index.ts'
 import { DIAGRAM_ENGINE_VERSION } from './layout/index.ts'
 import type { MimicPresentation } from './presentation.ts'
-import type { MimicRow } from './rows.ts'
+import type { FlapPart, MimicRow } from './rows.ts'
 import type { MimicIntent } from './scope.ts'
 
 // A generated equipment mimic: World resolves the agent's intent to part of
@@ -13,7 +13,7 @@ import type { MimicIntent } from './scope.ts'
 // restyle it.
 
 /** Changes whenever the same intent on the same model could draw differently. */
-export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-2`
+export const MIMIC_LAYOUT_VERSION = `diagram-${DIAGRAM_ENGINE_VERSION}/openbridge-2.0.0/mimic-3`
 
 /**
  * A mimic may be up to 800 px wide (owner decision): OpenBridge's full-size
@@ -34,6 +34,13 @@ export interface MimicDrawnItem {
   readonly orientation: 'horizontal' | 'vertical'
   readonly text: PlacedNode['text']
   readonly frame: PlacedNode['frame']
+  /**
+   * A device's flap lines under the one OpenBridge draws, each the height
+   * of a flap: the flap's action where the frame is too narrow for it
+   * whole, and the count of its other active alarms. A vessel says the same
+   * in its stack's alarm rows.
+   */
+  readonly flapLines: ReadonlyArray<FlapPart>
   /** The rows of its text stack that fit, below its label. */
   readonly rows: ReadonlyArray<MimicRow>
   /**
