@@ -118,6 +118,9 @@ export const formatQuantity = (value: number, unit: string, resolution: number |
   return `${formatValue(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))}${label === '' ? '' : ` ${label}`}`
 }
 
+/** The decimals a number written as declared carries, as a limit's label or a span's end writes it: 14.8 → 1, 20 → 0. */
+export const writtenDecimals = (value: number): number => (String(Number(value.toPrecision(12))).split('.')[1] ?? '').length
+
 /** Where a reading sits at an end of the span its instrument declares: its indication says only that the quantity is there or beyond. */
 export const offScale = (value: number, span: NumericSpan | undefined): 'below' | 'above' | null =>
   span === undefined ? null : value <= span.min ? 'below' : value >= span.max ? 'above' : null
@@ -136,6 +139,14 @@ export const readingValueText = (value: number, unit: string, resolution: number
   }
   if (logarithmicSpan(span)) return scientificText(displayValue(value, unit))
   return formatValue(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))
+}
+
+/** How many decimals a reading's value cell writes it with (readingValueText); null where it writes powers of ten. */
+export const readingDecimals = (value: number, unit: string, resolution: number | null, span: NumericSpan | undefined): number | null => {
+  const end = offScale(value, span)
+  if (end !== null) return writtenDecimals(displayValue(end === 'below' ? span!.min : span!.max, unit))
+  if (logarithmicSpan(span)) return null
+  return valueDigits(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))
 }
 
 /** A reading as its value cell shows it: "<0 %" at the bottom of its span, ">100 %" at the top, else the value. */

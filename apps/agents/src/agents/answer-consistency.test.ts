@@ -300,3 +300,53 @@ describe('answers whose times agree with the display', () => {
     ]) expect(answerViewIssues(answer + FENCE, levels).filter(issue => issue.startsWith('It gives'))).toEqual([])
   })
 })
+
+describe('answers that cite more finely than their display writes, or name another lead', () => {
+  // A value as World now publishes it: with the decimals the display writes it with.
+  const written = (names: ReadonlyArray<string>, value: number, unit: string, decimals: number, limits: ReadonlyArray<number> = []): Item =>
+    ({ names: [...names], values: [{ value, unit, decimals }], limits: limits.map(limit => ({ value: limit, unit, decimals: String(limit).split('.')[1]?.length ?? 0 })), history: true })
+  const afwHeader = written(['AFW-FLOW', 'auxFeedwaterHeader.outletFlowKgPerS', 'Process header outlet flow'], 107.33, 'kg/s', 0)
+
+  test('run 23: flows quoted to more digits than the display shows them', () => {
+    // turbine-trip: the display writes 107 kg/s.
+    expect(answerViewIssues('AFW actuation and reactor trip have annunciated; AFW-FLOW reads 107.33 kg/s, but level recovery is not yet confirmed.' + FENCE, view([afwHeader]))).toEqual([
+      'It cites 107.33 kg/s, more precisely than the display shows it (107 kg/s): cite it as the display does.',
+    ])
+    // show-feed-lineup: a drawn header's flow, written in whole kg/s.
+    const header: Item = { names: ['Main Feedwater Header', 'mainFeedwaterHeader', 'Process header outlet flow'], values: [{ value: 1512.45, unit: 'kg/s', decimals: 0 }], limits: [], history: false, state: 'flowing' }
+    expect(answerViewIssues('At sim 10:01:00, the displayed header outlet flow is 1512.45 kg/s.' + FENCE, view([header]))).toEqual([
+      'It cites 1512.45 kg/s, more precisely than the display shows it (1512 kg/s): cite it as the display does.',
+    ])
+  })
+
+  test('a value as written, a coarser one, one in another unit and a margin worked out between two all pass', () => {
+    const level = written(['SG-A-LVL-NR', 'sgA.levelPercent', 'Steam generator narrow-range level'], 17.9348, '%', 1, [20])
+    expect(answerViewIssues('SG-A-LVL-NR reads 17.9 %, 2.1 percentage points below LO-LO 20 %; AFW-FLOW is about 107 kg/s.' + FENCE, view([level, afwHeader]))).toEqual([])
+    const pressure = written(['PT-455', 'pressurizer.pressureKPa', 'Pressurizer pressure'], 15_455.7, 'kPa', 0)
+    expect(answerViewIssues('Pressurizer pressure is 15.46 MPa.' + FENCE, view([pressure]))).toEqual([])
+    expect(answerViewIssues('Pressurizer pressure is 15.4557 MPa.' + FENCE, view([pressure]))).toEqual([
+      'It cites 15.4557 MPa, more precisely than the display shows it (15456 kPa): cite it as the display does.',
+    ])
+  })
+
+  test('rcp-trip: a lead the answer names that is not the one the display leads with', () => {
+    const answer = '**Core cooling is not yet confirmed to be holding.** On the paused Unit 2 Run at sim 10:01:00, the display leads with pressurizer pressure at 13.8 MPa, past **LO 14.8 MPa · ALM**. Core-exit temperature is 297 °C and rising, while RCS subcooling margin is 38.3 °C and falling.' + FENCE
+    const items = [
+      written(['CET-AVG', 'core.coreExitTemperatureC', 'Core-exit temperature'], 297.092, '°C', 0),
+      written(['SUB-MARGIN', 'vessel.subcoolingMarginC', 'RCS subcooling margin'], 38.2522, '°C', 1, [0, 16.7]),
+      written(['PT-455', 'pressurizer.pressureMPa', 'Pressurizer pressure'], 13.7652, 'MPa', 1, [14.8]),
+    ]
+    expect(answerViewIssues(answer, view(items, { lead: { item: 0, reason: 'CET-AVG: 297 °C, rising 5.74 °C/min' } }))).toEqual([
+      'It says the display leads with pressurizer pressure at 13.8 MPa, but it leads with CET-AVG: 297 °C, rising 5.74 °C/min: name that.',
+    ])
+    // As served in run 23 the display led with PT-455, as the answer said.
+    expect(answerViewIssues(answer, view(items, { lead: { item: 2, reason: 'PT-455: 13.8 MPa, past LO 14.8 MPa · ALM' } }))).toEqual([])
+    // A claim that names no item is left alone (the lead is still missing).
+    expect(answerViewIssues('The display leads with that trend; SG B leads the display too.' + FENCE, view(items, { lead: { item: 0, reason: 'CET-AVG: 297 °C' } }))).toEqual([
+      'It leaves out what the display leads with: CET-AVG: 297 °C.',
+    ])
+    expect(answerViewIssues('Core-exit temperature leads the display at 297 °C.' + FENCE, view(items, { lead: { item: 1, reason: 'SUB-MARGIN: 38.3 °C' } }))).toEqual([
+      'It says the display leads with Core-exit temperature, but it leads with SUB-MARGIN: 38.3 °C: name that.',
+    ])
+  })
+})

@@ -37,7 +37,7 @@ import {
 } from '../displays/compose.ts'
 import { displayEvidence } from '../displays/evidence.ts'
 import { requirePlant } from './common.ts'
-import { simulationClock } from '../displays/display-text.ts'
+import { displayValue, simulationClock, valueDigits, writtenDecimals } from '../displays/display-text.ts'
 import { indexSample, itemLook } from '../displays/mimic/evaluate.ts'
 import { valueRowReading } from '../displays/mimic/rows.ts'
 import { mimicItemId } from '../displays/mimic/bindings.ts'
@@ -177,7 +177,10 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
         const reading = valueRowReading(row, now)
         if (reading === null) return []
         const label = system.runtime.readVariableSnapshot(reading.path as VariablePath).label
-        return shownQuantity(reading.value, row.unit).map(quantity => ({ quantity, label }))
+        // Written as its readout block writes it: the wider instrument in whole units, a reading off its span as the span's end.
+        const decimals = reading.end !== null ? writtenDecimals(displayValue(reading.end === 'below' ? reading.span!.min : reading.span!.max, row.unit))
+          : reading.wider ? 0 : valueDigits(displayValue(reading.value, row.unit))
+        return shownQuantity(reading.value, row.unit, decimals).map(quantity => ({ quantity, label }))
       }),
     })))
     return {

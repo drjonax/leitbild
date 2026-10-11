@@ -40,7 +40,7 @@ import {
   type ComposedPanelSize,
   type DisplayEvidence,
 } from './composition.ts'
-import { displayValue, isPast, marginLimitName, nearestThresholdMargin, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
+import { displayValue, isPast, marginLimitName, nearestThresholdMargin, readingDecimals, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
 import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
@@ -1363,8 +1363,9 @@ export const composedDisplayMargins = (reading: ComposedDisplayReading): Readonl
   reading.readings.map(entry => entry.text)
 
 /** A native value as the view shows it, to six digits, or nothing for a state. */
-export const shownQuantity = (value: number, unit: string): EmbeddedViewContent['items'][number]['values'] =>
-  unitLabel(unit) === '' ? [] : [{ value: Number(displayValue(value, unit).toPrecision(6)), unit: unitLabel(unit) }]
+/** A value as the view shows it, in its display unit, with the decimals it is written with where it is written as a number. */
+export const shownQuantity = (value: number, unit: string, decimals: number | null): EmbeddedViewContent['items'][number]['values'] =>
+  unitLabel(unit) === '' ? [] : [{ value: Number(displayValue(value, unit).toPrecision(6)), unit: unitLabel(unit), ...(decimals === null ? {} : { decimals }) }]
 
 const penNames = (pen: ComposedDisplayPen): Array<string> =>
   [...new Set([pen.name, ...(pen.tagId === undefined ? [] : [pen.tagId]), String(pen.path), pen.label, pen.described])]
@@ -1409,8 +1410,8 @@ export const composedDisplayContent = (
     const value = now.read(pen.path)
     return {
       names: penNames(pen),
-      values: typeof value === 'number' ? shownQuantity(shownReading(value, pen.resolution), pen.unit) : [],
-      limits: pen.thresholds.flatMap(threshold => shownQuantity(threshold.value, pen.unit)),
+      values: typeof value === 'number' ? shownQuantity(shownReading(value, pen.resolution), pen.unit, readingDecimals(shownReading(value, pen.resolution), pen.unit, pen.resolution, pen.limits?.instrumentSpan)) : [],
+      limits: pen.thresholds.flatMap(threshold => shownQuantity(threshold.value, pen.unit, writtenDecimals(displayValue(threshold.value, pen.unit)))),
       history: trended.has(pen.path),
       ...travelContent(readings.find(entry => entry.pen.path === pen.path)),
     }

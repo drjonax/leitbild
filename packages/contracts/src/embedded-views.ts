@@ -50,6 +50,8 @@ export type EmbeddedViewEnvelope = z.infer<typeof embeddedViewEnvelopeSchema>
 const viewQuantitySchema = z.object({
   value: z.number().finite(),
   unit: z.string().min(1).max(16),
+  /** How many decimals the view writes it with; absent where it writes it otherwise (in powers of ten). */
+  decimals: z.number().int().min(0).max(12).optional(),
 }).strict()
 export const embeddedViewContentSchema = z.object({
   items: z.array(z.object({

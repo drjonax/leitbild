@@ -284,6 +284,54 @@ const leadIssues = (prose: string, view: EmbeddedViewContent): ReadonlyArray<str
   return [`It leaves out what the display leads with: ${view.lead.reason}.`]
 }
 
+// What an answer says the display leads with: "the display leads with
+// pressurizer pressure at 13.8 MPa", "SG-A level leads the display". The
+// claim runs to the end of its clause.
+const LEADS_WITH = /\b(?:display|view|overview|it)\s+(?:now\s+)?(?:leads|is leading|opens)\s+with\s+(.+)$/i
+const LEADS_THE = /^(.+?)\s+leads\s+the\s+(?:display|view|overview)\b/i
+
+/**
+ * A lead the answer names that is not the display's: the items its claim
+ * names best, none of them the item the display leads with (its first
+ * margin). A claim that names no item ("that power trend", "the line-up"),
+ * or a display without a lead, is left alone.
+ */
+const leadClaimIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent): ReadonlyArray<string> => {
+  if (view.lead === null) return []
+  const lead = view.items[view.lead.item]!
+  return sentences.flatMap(sentence => sentence.split(/[,;:(]|\s[—–]\s|\s-\s/).flatMap(clause => {
+    const claim = (LEADS_WITH.exec(clause)?.[1] ?? LEADS_THE.exec(clause.trim())?.[1])?.trim()
+    if (claim === undefined) return []
+    const named = itemsNamed(claim, view.items)
+    return named.length === 0 || named.includes(lead) ? [] : [`It says the display leads with ${claim}, but it leads with ${view.lead!.reason}: name that.`]
+  }))
+}
+
+// --- Precision ----------------------------------------------------------------
+
+const decimalsOf = (written: string): number => written.match(/\.(\d+)/)?.[1]?.length ?? 0
+
+/**
+ * A value cited more finely than the display writes it ("107.33 kg/s" beside
+ * a display reading 107 kg/s, evaluation run 23): read as each value it may
+ * be, at the decimals the display writes that one with, in the cited unit.
+ * Left alone where it may also be a value the display writes no decimals
+ * for, such as a margin worked out between two of them.
+ */
+const precisionIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent): ReadonlyArray<string> => {
+  const written = view.items.flatMap(item => [...item.values, ...item.limits])
+  const derived = shownQuantities(view).flatMap(item => item.quantities.filter(quantity => !written.some(shown => shown.value === quantity.value && canonicalUnit(shown.unit) === quantity.unit)))
+  return sentences.flatMap(sentence => NOT_SHOWN.test(sentence) ? [] : quantitiesIn(sentence).flatMap(cited => {
+    if (cited.unit === '%' && derivedPercent(sentence, cited.index)) return []
+    const shown = written.filter(quantity => reads(cited, quantity))
+    if (shown.length === 0 || shown.some(quantity => quantity.decimals === undefined) || derived.some(quantity => reads(cited, quantity))) return []
+    const step = 10 ** -decimalsOf(cited.text)
+    const finest = shown.reduce((best, quantity) => quantity.decimals! > best.decimals! ? quantity : best)
+    if (shown.some(quantity => step >= inUnit({ value: 10 ** -quantity.decimals!, unit: quantity.unit }, cited.unit)! * (1 - 1e-9))) return []
+    return [`It cites ${cited.text}, more precisely than the display shows it (${finest.value.toFixed(finest.decimals)} ${finest.unit}): cite it as the display does.`]
+  }))
+}
+
 // --- Direction and the limit ahead -------------------------------------------
 
 type Item = EmbeddedViewContent['items'][number]
@@ -550,17 +598,22 @@ const projectionIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewCo
 
 /**
  * Where an answer and the display it presents disagree: quantities and
- * "watch" items the display does not show (unless the answer says so), a time
- * window longer than the display's axis, the display's lead left out, a
- * direction the display shows otherwise, a limit other than the one the
- * display names ahead, and a time to a limit the display does not project.
+ * "watch" items the display does not show (unless the answer says so), a
+ * value cited more finely than the display writes it, a time window longer
+ * than the display's axis, the display's lead left out or another named as
+ * its lead, a direction the display shows otherwise, a limit other than the
+ * one the display names ahead, and a time to a limit the display does not
+ * project.
  */
 export const answerViewIssues = (answer: string, view: EmbeddedViewContent): ReadonlyArray<string> => {
   const prose = stripMarkdown(answer)
   const sentences = sentencesOf(prose)
+  const claimed = leadClaimIssues(sentences, view)
   return [...new Set([
-    ...leadIssues(prose, view),
+    // An answer that names another lead is told the display's lead once.
+    ...(claimed.length > 0 ? claimed : leadIssues(prose, view)),
     ...quantityIssues(sentences, view),
+    ...precisionIssues(sentences, view),
     ...watchIssues(sentences, view),
     ...spanIssues(prose, view),
     ...directionIssues(sentences, view),

@@ -189,9 +189,9 @@ describe('world.process-plant.display.compose', () => {
     const level = content.items.find(item => item.names.includes('SG-B-LVL-NR'))!
     expect(level.names).toEqual(expect.arrayContaining(['sgB.levelPercent', 'Steam generator narrow-range level']))
     expect(level.history).toBe(true)
-    // Its current value and the LO TRIP 20 % and LO ALM 30 % lines, as the display shows them.
-    expect(level.values).toEqual([{ value: 55, unit: '%' }])
-    expect(level.limits).toEqual(expect.arrayContaining([{ value: 20, unit: '%' }, { value: 30, unit: '%' }]))
+    // Its current value and the LO TRIP 20 % and LO ALM 30 % lines, as the display shows them, with the decimals it writes them with ("55.0 %").
+    expect(level.values).toEqual([{ value: 55, unit: '%', decimals: 1 }])
+    expect(level.limits).toEqual(expect.arrayContaining([{ value: 20, unit: '%', decimals: 0 }, { value: 30, unit: '%', decimals: 0 }]))
     expect(content.items.at(-1)!.names[0]).toContain('Active alarms and trips')
     // The display leads with the first margin.
     expect(content.lead!.reason).toBe(result.margins[0]!)
