@@ -1,44 +1,70 @@
 import type { ProcessSignalBinding, VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
-import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
-import { resolveProcessPlantSignalBinding } from '../signals.ts'
+import type { ProcessPlantIcRule } from '../runtime/index.ts'
+import { processPlantOperatingMode } from '../runtime/index.ts'
+import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { COMPOSED_READOUTS_MAX_SIGNALS } from './composition.ts'
-import { icTripWatchedPaths } from './ic-thresholds.ts'
+import { actionFlows, actionFlowsInto, actsIn, armed, automaticActions, conditionBindings } from './actuations.ts'
+import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 
 const readableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolean => {
   const binding = plant.graph.signalBindingByPath.get(path)
   return binding !== undefined && !binding.writable && binding.published
 }
 
-// The few values a unit overview leads with, chosen by what the Plant
-// declares rather than by name: each signal a trip rule judges on equipment
-// outside the loops (a reactor's power, a pressurizer's pressure, a
-// containment's pressure; per-loop values stay on their loop's symbols), then
-// the first key value of each energy source and sink (a core's outlet
-// temperature, a generator's output), which keep their places however many
-// signals the trips judge. Unpublished signals are left out; so are writable
-// ones, which would show a demand, the states symbols draw (a turbine stop
-// valve's position, a breaker's contacts), and on-off states (a protection
-// block), which are no value to lead with.
-export const overviewKeyValues = (plant: CompiledProcessPlant): ReadonlyArray<VariablePath> => {
+/**
+ * The values a unit overview leads with, chosen by what the Plant declares
+ * for the mode it is in rather than by name, so a tripped unit leads with its
+ * heat sink and inventory, not with a power it no longer makes:
+ * - each value a trip rule acting in the mode judges, while that trip can
+ *   still act (a reactor trip whose breakers are open guards nothing more);
+ * - what the automatic actions acting in the mode deliver (the auxiliary
+ *   feedwater and safety injection their pumps send through a header);
+ * - the key values of the equipment rules acting in the mode judge (a
+ *   pressurizer's level, a vessel's subcooling margin), in rule order;
+ * - and, keeping their places however many values come before them, the
+ *   first key value of each energy source and sink a rule acting in the mode
+ *   watches (a core's outlet temperature; a generator's output only while its
+ *   rules act).
+ * Per-loop values stay on their loop's symbols. Unpublished signals are left
+ * out; so are writable ones, which would show a demand, on-off states, and
+ * the states symbols draw as a position, a run or an energized state (a
+ * turbine stop valve's position, a breaker's contacts).
+ */
+export const overviewKeyValues = (plant: CompiledProcessPlant, now: PlantNow): ReadonlyArray<VariablePath> => {
   const graph = plant.graph
   const ownerOf = (path: VariablePath) => {
     const binding = graph.signalBindingByPath.get(path)
     return binding?.owner.type === 'component' ? graph.components[binding.owner.componentIndex] : undefined
   }
   const readable = readableIn(plant)
-  const drawn = new Set(graph.components.flatMap(component => [...component.semantics.aspects, ...component.semantics.embedded.flatMap(device => device.aspects)])
-    .flatMap(aspect => aspect.state === undefined ? [] : [aspect.state.path]))
-  const tripWatched = icTripWatchedPaths(plant).filter(path => {
+  const drawnStates = new Set(graph.components.flatMap(component => [...component.semantics.aspects, ...component.semantics.embedded.flatMap(device => device.aspects)])
+    .flatMap(aspect => aspect.state === undefined || aspect.aspect === 'level' || aspect.aspect === 'throughput' ? [] : [aspect.state.path]))
+  const leadable = (path: VariablePath): boolean => {
     const owner = ownerOf(path)
-    return owner !== undefined && owner.metadata?.loopId === undefined && !drawn.has(path) && graph.signalBindingByPath.get(path)?.quantity !== 'boolean'
+    return owner !== undefined && owner.metadata?.loopId === undefined && !drawnStates.has(path)
+      && graph.signalBindingByPath.get(path)?.quantity !== 'boolean' && readable(path)
+  }
+  const inForce = plant.automation.rules.filter(rule => rule.enabled && actsIn(rule, now.mode))
+  const actions = automaticActions(plant)
+  const canAct = (rule: ProcessPlantIcRule): boolean => {
+    const action = actions.get(rule.id)
+    return action === undefined || armed(action, now.read)
+  }
+  const guarding = inForce.filter(rule => ruleKind(rule) === 'trip' && canAct(rule)).flatMap(rule => conditionBindings(plant, rule.condition).map(binding => binding.path))
+  const delivered = inForce.flatMap(rule => {
+    const action = actions.get(rule.id)
+    return action === undefined ? [] : actionFlows(plant, action, MIMIC_REACH_LINKS).filter(flow => flow.effect === 'starts').map(flow => flow.path)
   })
-  const energyEnds = graph.components
-    .filter(component => component.semantics.energy.some(role => role.role === 'source' || role.role === 'sink'))
-    .flatMap(component => component.semantics.keyValues.slice(0, 1))
-  const ends = [...new Set(energyEnds)].filter(readable)
-  const judged = [...new Set(tripWatched)].filter(readable).filter(path => !ends.includes(path))
-  return [...judged.slice(0, Math.max(0, COMPOSED_READOUTS_MAX_SIGNALS - ends.length)), ...ends].slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
+  const judgedEquipment = [...new Set(inForce.filter(rule => ruleKind(rule) !== null)
+    .flatMap(rule => conditionBindings(plant, rule.condition).flatMap(binding => binding.owner.type === 'component' ? [binding.owner.componentIndex] : [])))]
+  const keyed = judgedEquipment.flatMap(component => graph.components[component]!.semantics.keyValues)
+  const watched = new Set(judgedEquipment)
+  const ends = [...new Set(graph.components
+    .filter(component => watched.has(component.index) && component.semantics.energy.some(role => role.role === 'source' || role.role === 'sink'))
+    .flatMap(component => component.semantics.keyValues.slice(0, 1)))].filter(readable)
+  const leads = [...new Set([...guarding, ...delivered, ...keyed])].filter(path => leadable(path) && !ends.includes(path))
+  return [...leads.slice(0, Math.max(0, COMPOSED_READOUTS_MAX_SIGNALS - ends.length)), ...ends].slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
 }
 
 /**
@@ -51,19 +77,19 @@ export interface PlantNow {
   readonly read: (path: VariablePath) => unknown
 }
 
+/** The Plant's declared operating mode and live values now. */
+export const plantNowOf = (system: ProcessPlantRuntimeInstance): PlantNow => {
+  const modes = system.plant.automation.operatingModes
+  return {
+    mode: modes.length === 0 ? null : processPlantOperatingMode({ system: system.plant, runtime: system.runtime, modes })?.id ?? null,
+    read: path => system.runtime.readVariableSnapshot(path).value,
+  }
+}
+
 const ruleKind = (rule: ProcessPlantIcRule): 'trip' | 'alarm' | null =>
   rule.effects.some(effect => effect.type === 'trip.enter') ? 'trip'
     : rule.effects.some(effect => effect.type === 'alarm.enter') ? 'alarm'
       : null
-
-const conditionBindings = (plant: CompiledProcessPlant, condition: ProcessPlantIcCondition): ReadonlyArray<ProcessSignalBinding> =>
-  condition.type === 'comparison' ? [resolveProcessPlantSignalBinding(plant.graph, condition.signal)]
-    : condition.type === 'not' ? conditionBindings(plant, condition.condition)
-      : condition.conditions.flatMap(child => conditionBindings(plant, child))
-
-// As the I&C runs: a rule declared for some modes acts only while the Plant is in one of them.
-const actsIn = (rule: ProcessPlantIcRule, mode: string | null): boolean =>
-  rule.modes === undefined || (mode !== null && rule.modes.includes(mode))
 
 /** The signals alarm and trip rules judge, trips first, each kind in rule order: those that act in the mode, or only in others. */
 const judged = (plant: CompiledProcessPlant, mode: string | null, acting: boolean): ReadonlyArray<ProcessSignalBinding> => (['trip', 'alarm'] as const)

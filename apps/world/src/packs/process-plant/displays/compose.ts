@@ -13,7 +13,6 @@ import type {
 } from '../graph/index.ts'
 import { linkCarrier, processSignalTagIdSchema, variablePathSchema } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
-import { processPlantOperatingMode } from '../runtime/index.ts'
 import { findProcessPlantSignalBinding } from '../signals.ts'
 import {
   COMPOSED_DISPLAY_MAX_HEIGHT_PX,
@@ -46,7 +45,7 @@ import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } 
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
 import { principalCircuits } from './mimic/principal.ts'
-import { equipmentKeyValues, leadValuesKey, overviewKeyValues, type PlantNow } from './overview-key-values.ts'
+import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
 import { annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
 import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
@@ -229,14 +228,8 @@ const suggestionsFor = (ref: string, graph: CompiledPlantGraph): ReadonlyArray<s
     .map(({ binding }) => `${binding.tagId ?? binding.path} (${binding.label}, ${binding.unit})`)
 }
 
-/** The Plant's declared operating mode and live values now: what a detail's lead values are chosen by. */
-const plantNow = (system: ProcessPlantRuntimeInstance): PlantNow => {
-  const modes = system.plant.automation.operatingModes
-  return {
-    mode: modes.length === 0 ? null : processPlantOperatingMode({ system: system.plant, runtime: system.runtime, modes })?.id ?? null,
-    read: path => system.runtime.readVariableSnapshot(path).value,
-  }
-}
+/** The Plant's declared operating mode and live values now: what lead values are chosen by. */
+const plantNow = plantNowOf
 
 /**
  * What equipment opened now leads with besides itself (the Plant's mode, and
@@ -244,6 +237,13 @@ const plantNow = (system: ProcessPlantRuntimeInstance): PlantNow => {
  * the same values, so a cached detail is reused only while it still holds.
  */
 export const detailLeadKey = (system: ProcessPlantRuntimeInstance): string => leadValuesKey(system.plant, plantNow(system))
+
+/**
+ * What a unit overview leads with now: it follows the Plant's mode and what
+ * its protection can still do, so a cached overview is reused only while
+ * these hold.
+ */
+export const overviewLeadKey = (system: ProcessPlantRuntimeInstance): string => overviewKeyValues(system.plant, plantNow(system)).join(',')
 
 const resolveRef = (system: ProcessPlantRuntimeInstance, ref: string): ProcessSignalBinding | undefined => {
   const tag = processSignalTagIdSchema.safeParse(ref)
@@ -964,15 +964,16 @@ const leadValues = (
 }
 
 /**
- * The unit overview World generates for a Plant: its lead values (protection
- * and energy, overview-key-values.ts), its principal circuits drawn by the
+ * The unit overview World generates for a Plant: its lead values for the
+ * mode it is in (protection, delivery and energy, overview-key-values.ts),
+ * its principal circuits drawn by the
  * overview profile (principal.ts), and the whole Plant's active alarms. Every
  * part comes from the model; nothing names equipment. It is drawn for the
  * view it is shown in (fitGenerated).
  */
 export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, recordedSeriesIds: ReadonlySet<string>, view: OverviewView | null): ComposedDisplayCompileResult => {
   const issues: ComposedDisplayIssue[] = []
-  const readouts = leadValues(system, overviewKeyValues(system.plant), recordedSeriesIds, issues)
+  const readouts = leadValues(system, overviewKeyValues(system.plant, plantNow(system)), recordedSeriesIds, issues)
   const circuits = principalCircuits(system.plant.graph)
   if (!circuits.ok) return { ok: false, issues: [{ path: 'overview', message: circuits.reason }] }
   if (issues.length > 0) return { ok: false, issues }

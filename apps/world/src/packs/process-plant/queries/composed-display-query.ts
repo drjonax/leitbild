@@ -20,6 +20,7 @@ import {
   compileComposedDisplay,
   compileDetailDisplay,
   detailLeadKey,
+  overviewLeadKey,
   compileOverviewDisplay,
   type CompiledComposedDisplay,
   type OverviewView,
@@ -215,7 +216,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     return result.display
   }
   const overviewOrRejected = (system: ProcessPlantRuntimeInstance, view: OverviewView | null) =>
-    generatedOrRejected(system, 'overview', view, () => compileOverviewDisplay(system, recordedSeriesIds, view), `Process Plant ${system.plant.id} has no unit overview`)
+    generatedOrRejected(system, `overview|${overviewLeadKey(system)}`, view, () => compileOverviewDisplay(system, recordedSeriesIds, view), `Process Plant ${system.plant.id} has no unit overview`)
 
   if (config.request.capabilityId === 'world.process-plant.display.overview') {
     const payload = displayOverviewQuerySchema.parse(config.request.input)

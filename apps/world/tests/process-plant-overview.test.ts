@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { IsoTimestamp, ObjectId } from '../src/core/model/index.ts'
+import type { IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import {
   answerProcessPlantQuery,
@@ -232,6 +232,35 @@ describe('the unit overview World generates for a Plant', () => {
     const abnormal = panel.mimic.items.filter(item => itemTreatment(drawnLook(item.binding, item.rows, index), false) === 'abnormal').map(item => item.components.join(','))
     expect(abnormal).toEqual(['feedwaterControlValveB'])
   })
+
+  test('after a trip it leads with the heat sink: the auxiliary feedwater the actuation delivers, the subcooling margin and the pressurizer level', () => {
+    // Evaluation run 22 (HMI review, 5-second test): in Hot standby after SG B's runback tripped the unit, the
+    // overview led with "0 MW · 3600 MW below HI ALM" and the generator's output, and showed no auxiliary feedwater.
+    const upset = plant()
+    const step = () => {
+      upset.runtime.tick(1_000)
+      upset.protection!.evaluate({ runtime: upset.runtime, elapsedMs: upset.runtime.elapsedMs(), simulationRunId: 'run-overview' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+    }
+    step()
+    const atPower = compileOverviewDisplay(upset, new Set(), fullHd)
+    for (const command of commandsForProcessPlantAction({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 }, graph: upset.plant.graph })) {
+      upset.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    for (let second = 0; second < 180; second += 1) step()
+    const tripped = compileOverviewDisplay(upset, new Set(), fullHd)
+    const leads = (result: typeof tripped) => {
+      if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))
+      const readouts = result.display.panels.find(panel => panel.kind === 'readouts')!
+      if (readouts.kind !== 'readouts') throw new Error('expected the lead values')
+      return readouts.pens.map(pen => pen.tagId ?? String(pen.path))
+    }
+    expect(leads(atPower)).toEqual(['core.powerMw', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'CTMT-PR', 'core.coolantOutletTemperatureC', 'GEN-MW'])
+    expect(leads(tripped)).toEqual(['PT-455', 'AFW-FLOW', 'safetyInjectionHeader.outletFlowKgPerS', 'PZR-LVL', 'SUB-MARGIN', 'core.coolantOutletTemperatureC'])
+    expect(upset.runtime.readVariable('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeCloseTo(95, 0)
+    if (!tripped.ok) return
+    // Still the whole column, and it still fits the window.
+    expect(tripped.display.height).toBeLessThanOrEqual(fullHd.height)
+  }, 60_000)
 
   test('an overview state for another Plant is refused', () => {
     expect(() => ask('world.process-plant.display.view', { plantId: system.plant.id, state: JSON.stringify({ overview: { plantId: 'plant:other' } }) }))

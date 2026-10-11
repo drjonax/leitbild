@@ -325,8 +325,3 @@ export const icAlarmRuleIdsForPaths = (
     .filter(rule => conditionBindings(plant, rule.condition).some(binding => watched.has(String(binding.path))))
     .map(rule => rule.id)
 }
-
-/** Every signal a trip rule judges, in rule order: what the Plant's protection treats as decisive. */
-export const icTripWatchedPaths = (plant: CompiledProcessPlant): ReadonlyArray<VariablePath> => [...new Set(plant.automation.rules
-  .filter(rule => rule.enabled && icRuleKind(rule) === 'trip')
-  .flatMap(rule => conditionBindings(plant, rule.condition).map(binding => binding.path)))]

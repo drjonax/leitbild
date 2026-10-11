@@ -1,15 +1,36 @@
 import { describe, expect, test } from 'bun:test'
-import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
+import { commandsForProcessPlantAction, compileProcessPlant, createPwrReferencePlantDefinition, type CompiledProcessPlant } from '../src/packs/process-plant/index.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, type PlantNow } from '../src/packs/process-plant/displays/overview-key-values.ts'
 import { annunciatorSystems } from '../src/packs/process-plant/displays/annunciators.ts'
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, processPlantOperatingMode } from '../src/packs/process-plant/runtime/index.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 
 describe('the values a unit overview leads with', () => {
-  test('come from what protection trips on outside the loops, then the energy source and sink', () => {
+  // The reference Plant after a fault, its protection evaluated each second as a Run does.
+  const after = (plant: CompiledProcessPlant, fault: { readonly actionId: string; readonly parameters?: Record<string, unknown> } | null, seconds: number): PlantNow => {
+    const run = createProcessPlantRuntime({ system: plant })
+    const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
+    const step = () => {
+      run.tick(1_000)
+      protection.evaluate({ runtime: run, elapsedMs: run.elapsedMs(), simulationRunId: 'run-key-values' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+    }
+    step()
+    for (const command of fault === null ? [] : commandsForProcessPlantAction({ actionId: fault.actionId, parameters: fault.parameters ?? {}, graph: plant.graph })) {
+      run.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    for (let second = 0; second < seconds; second += 1) step()
+    return {
+      mode: processPlantOperatingMode({ system: plant, runtime: run, modes: plant.automation.operatingModes })?.id ?? null,
+      read: path => run.readVariable(path),
+    }
+  }
+
+  test('at power: what protection trips on outside the loops, then the energy source and sink', () => {
     for (const loopCount of [4, 6]) {
       const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: `plant:key-values-${loopCount}`, loopCount }))
-      const paths = overviewKeyValues(plant)
+      const atPower = after(plant, null, 0)
+      expect(atPower.mode).toBe('powerOperation')
+      const paths = overviewKeyValues(plant, atPower)
       expect(paths).toEqual([
         'core.powerMw',
         'vessel.netInventoryFlowKgPerS',
@@ -22,6 +43,27 @@ describe('the values a unit overview leads with', () => {
       for (const path of paths) expect(plant.graph.components[plant.graph.componentIndexById.get(String(path).split('.')[0] as never)!]!.metadata?.loopId).toBeUndefined()
     }
   })
+
+  test('after a trip: the heat sink and inventory, not a power the unit no longer makes', () => {
+    // Evaluation run 22: three minutes after SG B's feed valve ran back to 35 %, the unit had tripped on SG B
+    // low-low level into Hot standby, and its overview still led with "0 MW" fission power and the generator.
+    const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:key-values-trip', loopCount: 4 }))
+    const tripped = after(plant, { actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, 180)
+    expect(tripped.mode).toBe('hotStandby')
+    // The reactor trips have done all they can (breakers open, rods in), so fission power no longer leads; the
+    // generator's rules act only at power, so its output leaves the energy ends. Safety injection can still act
+    // on pressurizer pressure; auxiliary feedwater and safety injection deliver through their headers; the
+    // pressurizer's level and the vessel's subcooling margin are the key values of equipment the I&C judges.
+    expect(overviewKeyValues(plant, tripped)).toEqual([
+      'pressurizer.pressureMPa',
+      'auxFeedwaterHeader.outletFlowKgPerS',
+      'safetyInjectionHeader.outletFlowKgPerS',
+      'pressurizer.levelPercent',
+      'vessel.subcoolingMarginC',
+      'core.coolantOutletTemperatureC',
+    ] as never)
+    expect(tripped.read('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeGreaterThan(50)
+  }, 30_000)
 })
 
 describe('the values equipment opened from the overview leads with', () => {

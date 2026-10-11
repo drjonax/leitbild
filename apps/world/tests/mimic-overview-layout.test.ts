@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   compilePlantGraph,
   compileProcessPlant,
+  createProcessPlantRuntime,
   createPwrReferencePlantDefinition,
   processPlantComponentRegistry,
   type CompiledProcessPlant,
@@ -34,8 +35,10 @@ const plantOf = (loops: number): CompiledProcessPlant => plants.get(loops)!
  * alarms (compose.ts); for six what the engine reaches today at full text
  * (see the fit ladder test for less).
  */
-// The process display window as measured on production in a Full HD browser.
-const fullHdColumn = overviewDrawingRoom({ width: 1896, height: 972 }, 'column', { readouts: overviewKeyValues(plantOf(4)).length, annunciators: 9, tileWidth: 134 })!
+// The process display window as measured on production in a Full HD browser, beside the lead values at power.
+const atPower = createProcessPlantRuntime({ system: plantOf(4) })
+const leadValues = overviewKeyValues(plantOf(4), { mode: 'powerOperation', read: path => atPower.readVariable(path) }).length
+const fullHdColumn = overviewDrawingRoom({ width: 1896, height: 972 }, 'column', { readouts: leadValues, annunciators: 9, tileWidth: 134 })!
 const ROOM: Readonly<Record<number, Omit<MimicBudget, 'profile'>>> = { 2: fullHdColumn, 4: fullHdColumn, 6: { maxWidth: 2160, maxHeight: 1080 } }
 const budgetFor = (loops: number): MimicBudget => ({ profile: overviewMimicProfile, ...ROOM[loops]! })
 

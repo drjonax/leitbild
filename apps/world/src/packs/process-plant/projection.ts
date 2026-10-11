@@ -3,7 +3,7 @@ import { processPlantElectricalPortsAt } from './electrical-ports.ts'
 import type { PackObjectStatusTone } from '../../core/packs/protocol.ts'
 import type { VariablePath } from './graph/index.ts'
 import { formatQuantity } from './displays/display-text.ts'
-import { overviewKeyValues } from './displays/overview-key-values.ts'
+import { overviewKeyValues, plantNowOf } from './displays/overview-key-values.ts'
 import {
   emptyProcessPlantProjection,
   processPlantField,
@@ -34,10 +34,11 @@ const formatRuntimePerformance = (plant: ProcessPlantRuntimeInstance): string =>
   return `RT x${sample.realtimeFactor.toFixed(0)} (${sample.wallMs.toFixed(1)} ms)`
 }
 
-// A Plant's panel leads with what its unit overview leads with: the values
-// its protection trips on and the key values of its energy source and sink
-// (overview-key-values.ts). Its summary states the energy its sources put in
-// and its sinks take out. Nothing is picked per model.
+// A Plant's panel leads with what its unit overview leads with in the mode
+// it is in: what its protection can still trip on, what its automatic actions
+// deliver, the key values of the equipment its rules judge, and of its energy
+// source and sink (overview-key-values.ts). Its summary states the energy its
+// sources put in and its sinks take out. Nothing is picked per model.
 interface RailFieldPlan {
   readonly path: VariablePath
   readonly handle: ProcessPlantVariableHandle
@@ -49,17 +50,20 @@ interface RailPlan {
   readonly headline: ReadonlyArray<RailFieldPlan>
 }
 
-const railPlanCache = new WeakMap<ProcessPlantRuntimeInstance, RailPlan>()
+// Re-planned only when what the overview leads with changes (a trip, a mode).
+const railPlanCache = new WeakMap<ProcessPlantRuntimeInstance, { readonly key: string; readonly plan: RailPlan }>()
 
 const railPlanFor = (plant: ProcessPlantRuntimeInstance): RailPlan => {
+  const leads = overviewKeyValues(plant.plant, plantNowOf(plant))
+  const key = leads.join(',')
   const existing = railPlanCache.get(plant)
-  if (existing) return existing
+  if (existing?.key === key) return existing.plan
   const planOf = (path: VariablePath): RailFieldPlan => ({ path, handle: plant.runtime.resolveVariableHandle(path) })
   // The energy the Plant takes in and gives out, as its sources' and sinks' declared rates.
   const ends = plant.plant.graph.components
     .flatMap(component => component.semantics.energy.flatMap(role => (role.role === 'transfer' ? [] : [role.rate])))
-  const plan = { fields: overviewKeyValues(plant.plant).map(planOf), headline: ends.map(planOf) }
-  railPlanCache.set(plant, plan)
+  const plan = { fields: leads.map(planOf), headline: ends.map(planOf) }
+  railPlanCache.set(plant, { key, plan })
   return plan
 }
 
