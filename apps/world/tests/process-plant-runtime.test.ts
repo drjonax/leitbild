@@ -2227,9 +2227,12 @@ describe('process plant runtime', () => {
       components: [
         component('grid', 'electricalGridSource', 'Grid', { nominalPowerMw: 20, initialAvailable: true }),
         component('gridBreaker', 'electricalBreaker', 'Grid Breaker', { nominalPowerMw: 20, initialClosed: true }),
-        component('bus', 'electricalBus', 'Bus', { nominalPowerMw: 20 }),
+        component('bus', 'electricalBus', 'Bus', { nominalPowerMw: 20, nominalVoltageKv: 6.6 }),
         component('load', 'electricalLoad', 'Load', { nominalLoadMw: 4 }),
-        component('diesel', 'dieselGenerator', 'Diesel', { nominalPowerMw: 8, startDelayS: 2, initialAvailable: true }),
+        component('diesel', 'dieselGenerator', 'Diesel', {
+          nominalPowerMw: 8, nominalVoltageKv: 6.6, nominalFrequencyHz: 50, startDelayS: 2, initialAvailable: true,
+          loadResponse: { frequencyDipPerRatedLoad: 0.15, voltageDipPerRatedLoad: 0.4, recoveryTimeConstantS: 0.8 },
+        }),
         component('dieselBreaker', 'electricalBreaker', 'Diesel Breaker', { nominalPowerMw: 8, initialClosed: true }),
       ],
       connections: [

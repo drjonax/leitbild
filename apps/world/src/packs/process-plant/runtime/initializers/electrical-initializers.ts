@@ -21,6 +21,7 @@ export const electricalInitialValueDefinitions: ReadonlyArray<ComponentInitialVa
       if (localPath === 'energized') return optionalParameterBoolean(component, 'initialEnergized', false)
       if (localPath === 'availablePowerMw') return optionalParameterBoolean(component, 'initialEnergized', false) ? parameterNumber(component, 'nominalPowerMw') : 0
       if (localPath === 'voltageFraction') return optionalParameterBoolean(component, 'initialEnergized', false) ? 1 : 0
+      if (localPath === 'voltageKv') return optionalParameterBoolean(component, 'initialEnergized', false) ? parameterNumber(component, 'nominalVoltageKv') : 0
       if (localPath === 'servedLoadMw') return 0
       if (localPath === 'marginMw') return optionalParameterBoolean(component, 'initialEnergized', false) ? parameterNumber(component, 'nominalPowerMw') : 0
       if (localPath === 'degraded') return false
@@ -60,6 +61,21 @@ export const electricalInitialValueDefinitions: ReadonlyArray<ComponentInitialVa
       if (localPath === 'energized') return running
       if (localPath === 'availablePowerMw') return running ? parameterNumber(component, 'nominalPowerMw') : 0
       if (localPath === 'voltageFraction') return running ? 1 : 0
+      if (localPath === 'terminalVoltageKv') return running ? parameterNumber(component, 'nominalVoltageKv') : 0
+      if (localPath === 'frequencyHz') return running ? parameterNumber(component, 'nominalFrequencyHz') : 0
+      if (localPath === 'outputKw') return 0
+      if (localPath === 'frequencyDeviationPercent') return 0
+      if (localPath === 'voltageDeviationPercent') return 0
+      return undefined
+    },
+  },
+  {
+    // A sequencer starts idle on a bus not lost.
+    componentKind: 'loadSequencer',
+    initialValueFor: (_component, localPath) => {
+      if (localPath === 'step') return 0
+      if (localPath === 'armed') return false
+      if (localPath === 'elapsedS') return 0
       return undefined
     },
   },
@@ -87,7 +103,8 @@ export const electricalInitialValueDefinitions: ReadonlyArray<ComponentInitialVa
   {
     componentKind: 'electricalLoad',
     initialValueFor: (component, localPath) => {
-      if (localPath === 'demandMw') return parameterNumber(component, 'nominalLoadMw')
+      if (localPath === 'connected') return optionalParameterBoolean(component, 'initialConnected', true)
+      if (localPath === 'demandMw') return optionalParameterBoolean(component, 'initialConnected', true) ? parameterNumber(component, 'nominalLoadMw') : 0
       if (localPath === 'servedMw') return 0
       if (localPath === 'servedFraction') return 0
       if (localPath === 'energized') return false

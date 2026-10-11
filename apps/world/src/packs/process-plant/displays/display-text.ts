@@ -14,6 +14,8 @@ const unitLabels: Readonly<Record<string, string>> = {
   Pa: 'kPa',
   amps: 'A',
   volts_dc: 'V DC',
+  // A count reads as a bare number: a load sequencer at step 3.
+  count: '',
   m3: 'm³',
   boolean: '',
 }

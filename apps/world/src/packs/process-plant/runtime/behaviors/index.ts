@@ -7,7 +7,7 @@ import { accumulatorBehaviorDefinitions } from './accumulator-behaviors.ts'
 import { balanceOfPlantBehaviorDefinitions } from './balance-of-plant-behaviors.ts'
 import { boundaryBehaviorDefinitions } from './boundary-behaviors.ts'
 import { containmentBehaviorDefinitions } from './containment-behaviors.ts'
-import { electricalBehaviorDefinitions, electricalInitialReconciliationDefinitions } from './electrical-behaviors.ts'
+import { electricalBehaviorDefinitions, electricalInitialReconciliationDefinitions, electricalStateBehaviorDefinitions } from './electrical-behaviors.ts'
 import { heatExchangerBehaviorDefinitions } from './heat-exchanger-behaviors.ts'
 import { instrumentationBehaviorDefinitions, instrumentationInitialReconciliationDefinitions } from './instrumentation-behaviors.ts'
 import { junctionBehaviorDefinitions, junctionInitialReconciliationDefinitions } from './junction-behaviors.ts'
@@ -25,6 +25,7 @@ const behaviorDefinitionsByFamily: ReadonlyArray<ComponentBehaviorDefinition> = 
   ...accumulatorBehaviorDefinitions,
   ...junctionBehaviorDefinitions,
   ...electricalBehaviorDefinitions,
+  ...electricalStateBehaviorDefinitions,
   ...pumpBehaviorDefinitions,
   ...steamGeneratorBehaviorDefinitions,
   ...pressurizerBehaviorDefinitions,
@@ -74,6 +75,8 @@ export const componentBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefini
   behaviorDefinitionById('processHeader-mixing-diagnostics'),
   behaviorDefinitionById('steamHeader-mixing-diagnostics'),
   behaviorDefinitionById('electrical-load-service'),
+  behaviorDefinitionById('diesel-generator-load-response'),
+  behaviorDefinitionById('load-sequencer-steps'),
   behaviorDefinitionById('delta-t-protection-channel'),
   behaviorDefinitionById('rcs-inventory-balance'),
   behaviorDefinitionById('safety-injection-block-logic'),
@@ -115,6 +118,7 @@ export const processPlantComponentBehaviorSourcePathByKind: ReadonlyMap<Componen
   ['battery' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/electrical-behaviors.ts'],
   ['inverter' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/electrical-behaviors.ts'],
   ['electricalLoad' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/electrical-behaviors.ts'],
+  ['loadSequencer' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/electrical-behaviors.ts'],
   ['centrifugalPump' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/pump-behaviors.ts'],
   ['steamGenerator' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/steam-generator-behaviors.ts'],
   ['pressurizer' as ComponentKind, 'src/packs/process-plant/runtime/behaviors/pressurizer-behaviors.ts'],

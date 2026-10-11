@@ -80,12 +80,12 @@ describe('mimic scope from the agent\'s intent', () => {
 
   test('around an item draws what feeds it and where its outflow goes, in every service it carries', () => {
     const scope = drawn(graph, { around: ['auxFeedwaterPumpMotor'], reach: 1 })
-    // Its suction tank, its discharge header and its bus; the bus's other loads are a stop, not drawn. They are six
-    // with the PORV block valve's motor and the pressurizer's backup heater breaker, so the stop names three and
-    // counts the rest.
+    // Its suction tank, its discharge header and its bus; the bus's other loads are a stop, not drawn. They are ten
+    // with the PORV block valve's motor, the pressurizer's backup heater breaker, the load centres and the
+    // component cooling water, service water and fan cooler loads, so the stop names three and counts the rest.
     expect(scope.labels).toEqual(['AFW header', 'AFW tank', 'Bus A', 'MD AFW A'])
     expect(scope.carriers).toEqual(['auxFeedwater', 'electricalPower'])
-    expect(scope.stubs.map(stub => `${label(graph, stub.component)}: ${stubText(graph, stub)}`)).toContain('Bus A: to CHG A, CS A, HHSI A and 3 more')
+    expect(scope.stubs.map(stub => `${label(graph, stub.component)}: ${stubText(graph, stub)}`)).toContain('Bus A: to CCW A, CFC A, CHG A and 7 more')
     // Narrowed to its loop, a steam generator draws both sides and stops at the shared headers.
     expect(drawn(graph, { around: ['SG B'], loops: ['B'], reach: 1 }).labels).toEqual(['AFW valve B', 'ARV B', 'ATM', 'Core', 'FCV B', 'MSIV B', 'RCP B', 'SG B'])
     expect(drawn(graph, { around: ['steam generators'], services: ['mainSteam'], reach: 1 }).labels).toEqual(['ARV A', 'ARV B', 'ARV C', 'ARV D', 'ATM', 'MSIV A', 'MSIV B', 'MSIV C', 'MSIV D', 'SG A', 'SG B', 'SG C', 'SG D'])

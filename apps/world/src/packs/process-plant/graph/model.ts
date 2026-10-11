@@ -166,6 +166,7 @@ export type ProcessVariableLimits = z.infer<typeof processVariableLimitsSchema>
 export const processQuantitySchema = z.enum([
   'boolean',
   'concentration',
+  'count',
   'countRate',
   'electricalCurrent',
   'energy',
@@ -197,6 +198,7 @@ export type ProcessQuantity = z.infer<typeof processQuantitySchema>
 export const processUnitSchema = z.enum([
   'boolean',
   'amps',
+  'count',
   'cps',
   'degC',
   'DPM',
@@ -206,6 +208,8 @@ export const processUnitSchema = z.enum([
   'kg',
   'kJ/kg',
   'kg/s',
+  'kV',
+  'kW',
   'MJ',
   'MPa',
   'mSv/h',
@@ -224,6 +228,8 @@ export type ProcessUnit = z.infer<typeof processUnitSchema>
 const allowedUnitsByQuantity: Readonly<Record<ProcessQuantity, ReadonlySet<ProcessUnit>>> = {
   boolean: new Set(['boolean']),
   concentration: new Set(['ppm']),
+  // A number of steps or items, as a load sequencer's step.
+  count: new Set(['count']),
   countRate: new Set(['cps']),
   electricalCurrent: new Set(['amps']),
   energy: new Set(['MJ']),
@@ -235,7 +241,8 @@ const allowedUnitsByQuantity: Readonly<Record<ProcessQuantity, ReadonlySet<Proce
   mass: new Set(['kg']),
   massDelta: new Set(['kg']),
   // A power-range nuclear instrument reads percent of rated thermal power.
-  power: new Set(['MW', 'percent']),
+  // A diesel generator's wattmeter reads kilowatts.
+  power: new Set(['MW', 'kW', 'percent']),
   powerDelta: new Set(['MW']),
   pressure: new Set(['MPa', 'Pa']),
   pressureDelta: new Set(['MPa', 'Pa']),
@@ -249,7 +256,8 @@ const allowedUnitsByQuantity: Readonly<Record<ProcessQuantity, ReadonlySet<Proce
   temperatureDelta: new Set(['degC']),
   temperatureRate: new Set(['degC/s']),
   time: new Set(['s']),
-  voltage: new Set(['volts_dc']),
+  // AC buses and generators read kilovolts, the station batteries volts DC.
+  voltage: new Set(['kV', 'volts_dc']),
   volume: new Set(['m3']),
 }
 

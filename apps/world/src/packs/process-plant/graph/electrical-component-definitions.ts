@@ -1,10 +1,37 @@
 import { z } from 'zod'
-import type { ComponentDefinition, ComponentKind } from './model.ts'
+import { idSchema } from '../../../core/model/index.ts'
+import type { CompiledComponent, ComponentDefinition, ComponentKind } from './model.ts'
 import { defineComponent, normalized, variable } from './component-definition-helpers.ts'
 import { aspect, fixedSemantics } from './semantics.ts'
 
 const positivePower = z.number().finite().positive()
 const nonnegativePower = z.number().finite().nonnegative()
+const positive = z.number().finite().positive()
+const nonnegative = z.number().finite().nonnegative()
+
+/**
+ * How a diesel answers a block of load picked up at once: its frequency and
+ * voltage dip by these fractions of rated per its rated load in the block,
+ * and its governor and voltage regulator restore them with the time constant.
+ */
+const dieselLoadResponseSchema = z.object({
+  frequencyDipPerRatedLoad: nonnegative,
+  voltageDipPerRatedLoad: nonnegative,
+  recoveryTimeConstantS: positive,
+}).strict()
+
+export type DieselLoadResponse = z.infer<typeof dieselLoadResponseSchema>
+
+const loadResponseByComponent = new WeakMap<CompiledComponent, DieselLoadResponse>()
+
+/** A diesel generator's load response, as its parameters declare it. */
+export const dieselLoadResponse = (component: CompiledComponent): DieselLoadResponse => {
+  const cached = loadResponseByComponent.get(component)
+  if (cached !== undefined) return cached
+  const parsed = dieselLoadResponseSchema.parse((component.parameters as Readonly<Record<string, unknown>>).loadResponse)
+  loadResponseByComponent.set(component, parsed)
+  return parsed
+}
 
 // A boundary source (the offsite grid) sets its own energized state and voltage: they are written from outside the Plant.
 const energizedVariables = (
@@ -62,15 +89,19 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
     },
     parametersSchema: z.object({
       nominalPowerMw: positivePower,
+      /** The voltage its voltmeter reads where its voltage fraction is 1. */
+      nominalVoltageKv: positive,
       initialEnergized: z.boolean().optional(),
       degradedVoltageFraction: z.number().finite().min(0).max(1.2).optional(),
     }).strict(),
-    // Its voltage, as a fraction of nominal, is what an operator reads on it
-    // first. The model solves no machine speed, so a bus has no frequency of
-    // its own to show.
-    semantics: fixedSemantics({ keyValues: ['voltageFraction'], aspects: [aspect('energized', { variable: 'energized', reading: 'true' })] }),
+    // Its voltage, in kilovolts as its voltmeter reads it, is what an
+    // operator reads on it first; its undervoltage relays read the same
+    // voltage as a fraction of nominal. Its frequency is its supply's: the
+    // grid's, or its diesel's (the diesel generator's frequency).
+    semantics: fixedSemantics({ keyValues: ['voltageKv'], aspects: [aspect('energized', { variable: 'energized', reading: 'true' })] }),
     variables: [
       ...energizedVariables('Electrical bus'),
+      variable({ path: 'voltageKv', label: 'Bus voltage', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'voltage', unit: 'kV' }),
       variable({ path: 'servedLoadMw', label: 'Bus served load', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'marginMw', label: 'Bus power margin', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'powerDelta', unit: 'MW', simulatorOnly: true }),
       variable({ path: 'degraded', label: 'Bus degraded voltage', kind: 'derived', discipline: 'electrical', writable: false, publish: 'alarm', quantity: 'boolean', unit: 'boolean' }),
@@ -123,19 +154,63 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
       outlet: { kind: 'electricalAc', direction: 'out' },
       startSignal: { kind: 'logicSignal', direction: 'in' },
     },
+    // A standby diesel comes up to rated speed and voltage in its start time,
+    // its frequency and voltage building with its speed: the standard
+    // technical specifications ask for rated voltage and frequency within
+    // 10 s of a start signal (NUREG-1431, SR 3.8.1.7). Each block of load
+    // its load sequencer closes onto it dips its frequency and voltage, which
+    // its governor and voltage regulator restore: Regulatory Guide 1.9
+    // (Rev. 4) holds the dips above 95 % of rated frequency and 75 % of rated
+    // voltage and asks for recovery to within 2 % and 10 % of rated in 60 %
+    // of the load-sequence interval. Its load is what the bus its closed
+    // breaker feeds serves, shared with any other live supply of that bus.
     parametersSchema: z.object({
       nominalPowerMw: positivePower,
+      /** Rated terminal voltage, which its voltage regulator holds. */
+      nominalVoltageKv: positive,
+      /** Rated frequency, which its governor holds. */
+      nominalFrequencyHz: positive,
       startDelayS: z.number().finite().nonnegative().optional(),
       initialRunning: z.boolean().optional(),
       initialAvailable: z.boolean().optional(),
+      loadResponse: dieselLoadResponseSchema,
     }).strict(),
-    semantics: fixedSemantics({ aspects: [aspect('running', { variable: 'running', reading: 'true' }, 'startCommand'), aspect('energized', { variable: 'energized', reading: 'true' })] }),
+    semantics: fixedSemantics({ keyValues: ['outputKw'], aspects: [aspect('running', { variable: 'running', reading: 'true' }, 'startCommand'), aspect('energized', { variable: 'energized', reading: 'true' })] }),
     variables: [
       variable({ path: 'startCommand', label: 'Diesel start command', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'available', label: 'Diesel available', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'faultInjection', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'running', label: 'Diesel running', kind: 'state', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'startElapsedS', label: 'Diesel start elapsed time', kind: 'state', discipline: 'control', writable: false, publish: 'internal', quantity: 'time', unit: 's' }),
       ...energizedVariables('Diesel generator'),
+      variable({ path: 'outputKw', label: 'Diesel generator load', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'kW' }),
+      variable({ path: 'terminalVoltageKv', label: 'Diesel generator voltage', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'voltage', unit: 'kV' }),
+      variable({ path: 'frequencyHz', label: 'Diesel generator frequency', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'frequency', unit: 'Hz' }),
+      // The dips a block of load leaves in its frequency and voltage, in percent of rated, until they are restored.
+      variable({ path: 'frequencyDeviationPercent', label: 'Diesel generator frequency deviation', kind: 'state', discipline: 'control', writable: false, publish: 'internal', measurand: 'speed', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: -50, max: 50 } } }),
+      variable({ path: 'voltageDeviationPercent', label: 'Diesel generator voltage deviation', kind: 'state', discipline: 'control', writable: false, publish: 'internal', measurand: 'voltage', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: -50, max: 50 } } }),
+    ],
+  }),
+  defineComponent({
+    kind: 'loadSequencer' as ComponentKind,
+    label: 'Load Sequencer',
+    // A safety bus's load sequencer. Once its bus comes back after a loss of
+    // power it steps through its load blocks, one each step interval: step 1
+    // as the bus is re-energized, step 2 an interval later, on to its last
+    // step, where it stays until the bus is lost again. Step 0 is a bus not
+    // lost since the Run began, or lost and still dead. The I&C closes each
+    // block's loads at its step; the sequencer only counts.
+    ports: {},
+    parametersSchema: z.object({
+      /** The bus it sequences. */
+      bus: idSchema,
+      stepIntervalS: positive,
+      stepCount: z.number().int().positive(),
+    }).strict(),
+    semantics: fixedSemantics({ keyValues: ['step'] }),
+    variables: [
+      variable({ path: 'step', label: 'Load sequencer step', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'count', unit: 'count' }),
+      variable({ path: 'armed', label: 'Load sequencer armed by a loss of bus power', kind: 'state', discipline: 'control', writable: false, publish: 'internal', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'elapsedS', label: 'Time since the sequenced bus came back', kind: 'state', discipline: 'control', writable: false, publish: 'internal', quantity: 'time', unit: 's' }),
     ],
   }),
   defineComponent({
@@ -179,12 +254,16 @@ export const electricalComponentDefinitions: ReadonlyArray<ComponentDefinition> 
     ports: {
       power: { kind: 'electricalAc', direction: 'in' },
     },
+    // A load on its own feeder breaker: it draws its load only while the
+    // breaker is closed, as a load sequencer sheds and recloses it.
     parametersSchema: z.object({
       nominalLoadMw: nonnegativePower,
       essential: z.boolean().optional(),
+      initialConnected: z.boolean().optional(),
     }).strict(),
-    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' })] }),
+    semantics: fixedSemantics({ aspects: [aspect('energized', { variable: 'energized', reading: 'true' }, 'connected')] }),
     variables: [
+      variable({ path: 'connected', label: 'Load feeder breaker close command', kind: 'discrete', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'demandMw', label: 'Load demand', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'servedMw', label: 'Load served', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'servedFraction', label: 'Load served fraction', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', measurand: 'served', quantity: 'ratio', unit: 'fraction', simulatorOnly: true }),

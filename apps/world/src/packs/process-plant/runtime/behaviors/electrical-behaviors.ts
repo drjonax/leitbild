@@ -1,4 +1,5 @@
 import type { CompiledComponent } from '../../graph/index.ts'
+import { dieselLoadResponse } from '../../graph/electrical-component-definitions.ts'
 import {
   componentVariablePath,
   type ComponentBehaviorDefinition,
@@ -103,7 +104,7 @@ const outgoingLoadDemand = (
     const target = system.graph.components[link.toComponentIndex]
     if (!target) continue
     if (target.kind === 'electricalLoad') {
-      demand += parameterNumber(target, 'nominalLoadMw')
+      if (context.readBoolean(componentVariablePath(target, 'connected'))) demand += parameterNumber(target, 'nominalLoadMw')
       continue
     }
     // A closed breaker passes on what is drawn beyond it, so a bus carries the loads it feeds through their own
@@ -156,7 +157,7 @@ const busBehavior: ComponentBehaviorDefinition = {
   phase: 'solveElectrical',
   componentKind: 'electricalBus',
   reads: ['incoming electrical availablePowerMw', 'outgoing electrical demandMw'],
-  writes: ['energized', 'availablePowerMw', 'voltageFraction', 'servedLoadMw', 'marginMw', 'degraded'],
+  writes: ['energized', 'availablePowerMw', 'voltageFraction', 'voltageKv', 'servedLoadMw', 'marginMw', 'degraded'],
   update: ({ system, component, context }): void => {
     const incoming = incomingElectricalPower(system, component, context)
     const capacity = parameterNumber(component, 'nominalPowerMw')
@@ -166,6 +167,7 @@ const busBehavior: ComponentBehaviorDefinition = {
     context.write(componentVariablePath(component, 'energized'), availablePower > 0 && incoming.voltageFraction >= 0.7)
     context.write(componentVariablePath(component, 'availablePowerMw'), availablePower)
     context.write(componentVariablePath(component, 'voltageFraction'), availablePower > 0 ? incoming.voltageFraction : 0)
+    context.write(componentVariablePath(component, 'voltageKv'), availablePower > 0 ? incoming.voltageFraction * parameterNumber(component, 'nominalVoltageKv') : 0)
     context.write(componentVariablePath(component, 'servedLoadMw'), servedLoad)
     context.write(componentVariablePath(component, 'marginMw'), availablePower - servedLoad)
     context.write(componentVariablePath(component, 'degraded'), availablePower > 0 && incoming.voltageFraction > 0 && incoming.voltageFraction < degradedThreshold)
@@ -211,12 +213,16 @@ const transformerBehavior: ComponentBehaviorDefinition = {
   },
 }
 
+// While a diesel starts, its frequency and voltage build with its speed, which
+// reaches rated in its start time; running, they stand at rated less what a
+// block of load has dipped them by and its governor and regulator have not
+// yet restored. It puts power out only once running.
 const dieselGeneratorBehavior: ComponentBehaviorDefinition = {
   id: 'diesel-generator-start-and-power',
   phase: 'solveElectrical',
   componentKind: 'dieselGenerator',
-  reads: ['startCommand', 'available', 'running', 'startElapsedS'],
-  writes: ['running', 'startElapsedS', 'energized', 'availablePowerMw', 'voltageFraction'],
+  reads: ['startCommand', 'available', 'running', 'startElapsedS', 'frequencyDeviationPercent', 'voltageDeviationPercent'],
+  writes: ['running', 'startElapsedS', 'energized', 'availablePowerMw', 'voltageFraction', 'terminalVoltageKv', 'frequencyHz'],
   update: ({ component, context }): void => {
     const startCommand = context.readBoolean(componentVariablePath(component, 'startCommand'))
     const available = context.readBoolean(componentVariablePath(component, 'available'))
@@ -225,11 +231,107 @@ const dieselGeneratorBehavior: ComponentBehaviorDefinition = {
       ? Math.min(startDelay, context.readNumber(componentVariablePath(component, 'startElapsedS')) + context.dtSeconds)
       : 0
     const running = available && startCommand && elapsed >= startDelay
+    const speedFraction = running ? 1 : startCommand && available ? elapsed / startDelay : 0
+    const frequencyFraction = running ? 1 + context.readNumber(componentVariablePath(component, 'frequencyDeviationPercent')) / 100 : speedFraction
+    const voltageFraction = running ? 1 + context.readNumber(componentVariablePath(component, 'voltageDeviationPercent')) / 100 : speedFraction
     context.write(componentVariablePath(component, 'startElapsedS'), elapsed)
     context.write(componentVariablePath(component, 'running'), running)
     context.write(componentVariablePath(component, 'energized'), running)
     context.write(componentVariablePath(component, 'availablePowerMw'), running ? parameterNumber(component, 'nominalPowerMw') : 0)
-    context.write(componentVariablePath(component, 'voltageFraction'), running ? 1 : 0)
+    context.write(componentVariablePath(component, 'voltageFraction'), voltageFraction)
+    context.write(componentVariablePath(component, 'terminalVoltageKv'), voltageFraction * parameterNumber(component, 'nominalVoltageKv'))
+    context.write(componentVariablePath(component, 'frequencyHz'), frequencyFraction * parameterNumber(component, 'nominalFrequencyHz'))
+  },
+}
+
+/**
+ * The load a supply carries: what each bus its closed breakers feed serves,
+ * shared among the live supplies feeding that bus, so a diesel run in
+ * parallel with offsite power for a test splits the bus with the grid.
+ */
+const carriedLoadMw = (system: CompiledProcessPlant, component: CompiledComponent, context: ProcessPlantBehaviorContext): number => {
+  let load = 0
+  for (const linkIndex of system.graph.outgoingLinksByComponent[component.index] ?? []) {
+    const link = system.graph.links[linkIndex]
+    if (!link || link.kind !== 'electricalPower') continue
+    const target = system.graph.components[link.toComponentIndex]
+    if (!target) continue
+    if (target.kind === 'electricalBreaker') {
+      if (context.readBoolean(componentVariablePath(target, 'closedState'))) load += carriedLoadMw(system, target, context)
+      continue
+    }
+    if (target.kind !== 'electricalBus') continue
+    const liveSupplies = (system.graph.incomingLinksByComponent[target.index] ?? []).filter(index => {
+      const supply = system.graph.links[index]
+      const source = supply === undefined ? undefined : system.graph.components[supply.fromComponentIndex]
+      return supply?.kind === 'electricalPower' && source !== undefined && sourcePowerForComponent(source, context).energized
+    }).length
+    load += context.readNumber(componentVariablePath(target, 'servedLoadMw')) / Math.max(1, liveSupplies)
+  }
+  return load
+}
+
+// A block of load picked up at once dips the diesel's frequency and voltage
+// in proportion to the block's share of its rating; its governor and voltage
+// regulator then restore both. Solved once the buses have been, so it reads
+// the load the tick's breakers put on it; the dip shows from the next tick.
+const dieselLoadResponseBehavior: ComponentBehaviorDefinition = {
+  id: 'diesel-generator-load-response',
+  phase: 'updateComponentState',
+  componentKind: 'dieselGenerator',
+  reads: ['running', 'outputKw', 'frequencyDeviationPercent', 'voltageDeviationPercent', 'fed breakers closedState', 'fed buses servedLoadMw'],
+  writes: ['outputKw', 'frequencyDeviationPercent', 'voltageDeviationPercent'],
+  update: ({ system, component, context }): void => {
+    const running = context.readBoolean(componentVariablePath(component, 'running'))
+    const loadMw = running ? carriedLoadMw(system, component, context) : 0
+    const response = dieselLoadResponse(component)
+    const blockFraction = (loadMw - context.readNumber(componentVariablePath(component, 'outputKw')) / 1_000) / parameterNumber(component, 'nominalPowerMw')
+    const restored = Math.exp(-context.dtSeconds / response.recoveryTimeConstantS)
+    const deviation = (path: string, dipPerRatedLoad: number): number => running
+      ? clamp(context.readNumber(componentVariablePath(component, path)) * restored - 100 * dipPerRatedLoad * blockFraction, -50, 50)
+      : 0
+    context.write(componentVariablePath(component, 'frequencyDeviationPercent'), deviation('frequencyDeviationPercent', response.frequencyDipPerRatedLoad))
+    context.write(componentVariablePath(component, 'voltageDeviationPercent'), deviation('voltageDeviationPercent', response.voltageDipPerRatedLoad))
+    context.write(componentVariablePath(component, 'outputKw'), loadMw * 1_000)
+  },
+}
+
+const sequencedBusByComponent = new WeakMap<CompiledComponent, CompiledComponent>()
+
+const sequencedBus = (system: CompiledProcessPlant, sequencer: CompiledComponent): CompiledComponent => {
+  const cached = sequencedBusByComponent.get(sequencer)
+  if (cached !== undefined) return cached
+  const busId = (sequencer.parameters as Readonly<Record<string, unknown>>).bus
+  const index = system.graph.componentIndexById.get(busId as never)
+  const bus = index === undefined ? undefined : system.graph.components[index]
+  if (bus?.kind !== 'electricalBus') throw new Error(`load sequencer ${sequencer.id} sequences ${String(busId)}, which is no electrical bus of the Plant`)
+  sequencedBusByComponent.set(sequencer, bus)
+  return bus
+}
+
+// A load sequencer arms as its bus dies and, once the bus is live again,
+// steps through its blocks: step 1 at once, one more each step interval, up
+// to its last step, where it stays until the bus is lost again. Solved once
+// the buses have been, so it reads the tick's bus.
+const loadSequencerBehavior: ComponentBehaviorDefinition = {
+  id: 'load-sequencer-steps',
+  phase: 'updateComponentState',
+  componentKind: 'loadSequencer',
+  reads: ['sequenced bus energized', 'armed', 'elapsedS'],
+  writes: ['armed', 'elapsedS', 'step'],
+  update: ({ system, component, context }): void => {
+    const live = context.readBoolean(componentVariablePath(sequencedBus(system, component), 'energized'))
+    if (!live) {
+      context.write(componentVariablePath(component, 'armed'), true)
+      context.write(componentVariablePath(component, 'elapsedS'), 0)
+      context.write(componentVariablePath(component, 'step'), 0)
+      return
+    }
+    if (!context.readBoolean(componentVariablePath(component, 'armed'))) return
+    const elapsed = context.readNumber(componentVariablePath(component, 'elapsedS'))
+    const step = Math.min(parameterNumber(component, 'stepCount'), 1 + Math.floor(elapsed / parameterNumber(component, 'stepIntervalS')))
+    context.write(componentVariablePath(component, 'step'), step)
+    context.write(componentVariablePath(component, 'elapsedS'), elapsed + context.dtSeconds)
   },
 }
 
@@ -274,17 +376,19 @@ const loadBehavior: ComponentBehaviorDefinition = {
   id: 'electrical-load-service',
   phase: 'solveElectrical',
   componentKind: 'electricalLoad',
-  reads: ['incoming electrical availablePowerMw'],
+  reads: ['connected', 'incoming electrical availablePowerMw'],
   writes: ['demandMw', 'servedMw', 'servedFraction', 'energized'],
   update: ({ system, component, context }): void => {
-    const demand = parameterNumber(component, 'nominalLoadMw')
+    // A load whose feeder breaker is open draws nothing and is dead.
+    const connected = context.readBoolean(componentVariablePath(component, 'connected'))
+    const demand = connected ? parameterNumber(component, 'nominalLoadMw') : 0
     const incoming = incomingElectricalPower(system, component, context)
-    const usable = incoming.energized && incoming.voltageFraction >= 0.7
+    const usable = connected && incoming.energized && incoming.voltageFraction >= 0.7
     const served = usable ? Math.min(demand, incoming.availablePowerMw) : 0
     context.write(componentVariablePath(component, 'demandMw'), demand)
     context.write(componentVariablePath(component, 'servedMw'), served)
     context.write(componentVariablePath(component, 'servedFraction'), demand <= 0 ? 1 : clamp(served / demand, 0, 1))
-    context.write(componentVariablePath(component, 'energized'), served > 0 || demand <= 0)
+    context.write(componentVariablePath(component, 'energized'), connected && (served > 0 || demand <= 0))
   },
 }
 
@@ -303,3 +407,10 @@ export const electricalInitialReconciliationDefinitions: ReadonlyArray<Component
   id: `${behavior.id}-initial-state`, componentKind: behavior.componentKind,
   reads: behavior.reads, writes: behavior.writes, reconcile: behavior.update,
 }))
+
+// Solved after the electrical phase and not at the initial reconciliation: a
+// sequencer read before its bus is solved would arm on a bus that is live.
+export const electricalStateBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
+  dieselLoadResponseBehavior,
+  loadSequencerBehavior,
+]

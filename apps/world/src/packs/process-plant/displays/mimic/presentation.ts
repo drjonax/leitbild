@@ -73,6 +73,7 @@ const byKind: Readonly<Record<string, MimicPresentation | ((component: CompiledC
   rcsInventoryBalance: { element: 'not-drawn', reason: 'an instrument channel moves no fluid; it is read through the values it computes' },
   atmosphereBoundary: { element: 'not-drawn', reason: 'the atmosphere is where a release leaves the Plant; it is named where each discharge pipe ends' },
   safetyInjectionBlockLogic: { element: 'not-drawn', reason: 'protection logic moves no fluid; it is read through its permissive and block states' },
+  loadSequencer: { element: 'not-drawn', reason: 'a load sequencer carries no power; it is read through its step' },
 }
 
 /** Kinds the table covers, for the completeness test against the component registry. */

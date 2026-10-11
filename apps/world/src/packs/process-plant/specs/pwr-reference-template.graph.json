@@ -3466,6 +3466,7 @@
       "label": "Safety Bus A",
       "parameters": {
         "nominalPowerMw": 15,
+        "nominalVoltageKv": 6.6,
         "degradedVoltageFraction": 0.9
       },
       "variables": [
@@ -3486,10 +3487,16 @@
           "description": "Safety bus A electrical power margin"
         },
         {
-          "path": "voltageFraction",
+          "path": "voltageKv",
           "tagId": "BUS-A-VOLTAGE",
           "equipmentId": "safetyBusA",
-          "description": "Safety bus A voltage fraction"
+          "description": "Safety bus A voltage, 6.6 kV nominal",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 8
+            }
+          }
         },
         {
           "path": "degraded",
@@ -3510,6 +3517,7 @@
       "label": "Safety Bus B",
       "parameters": {
         "nominalPowerMw": 15,
+        "nominalVoltageKv": 6.6,
         "degradedVoltageFraction": 0.9
       },
       "variables": [
@@ -3530,10 +3538,16 @@
           "description": "Safety bus B electrical power margin"
         },
         {
-          "path": "voltageFraction",
+          "path": "voltageKv",
           "tagId": "BUS-B-VOLTAGE",
           "equipmentId": "safetyBusB",
-          "description": "Safety bus B voltage fraction"
+          "description": "Safety bus B voltage, 6.6 kV nominal",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 8
+            }
+          }
         },
         {
           "path": "degraded",
@@ -3694,6 +3708,7 @@
       "label": "Unit Bus A",
       "parameters": {
         "nominalPowerMw": 60,
+        "nominalVoltageKv": 6.6,
         "degradedVoltageFraction": 0.9
       },
       "variables": [
@@ -3704,10 +3719,16 @@
           "description": "Unit bus A energized status"
         },
         {
-          "path": "voltageFraction",
+          "path": "voltageKv",
           "tagId": "UNIT-BUS-A-VOLTAGE",
           "equipmentId": "unitBusA",
-          "description": "Unit bus A voltage fraction"
+          "description": "Unit bus A voltage, 6.6 kV nominal",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 8
+            }
+          }
         }
       ],
       "metadata": {
@@ -3722,6 +3743,7 @@
       "label": "Unit Bus B",
       "parameters": {
         "nominalPowerMw": 60,
+        "nominalVoltageKv": 6.6,
         "degradedVoltageFraction": 0.9
       },
       "variables": [
@@ -3732,10 +3754,16 @@
           "description": "Unit bus B energized status"
         },
         {
-          "path": "voltageFraction",
+          "path": "voltageKv",
           "tagId": "UNIT-BUS-B-VOLTAGE",
           "equipmentId": "unitBusB",
-          "description": "Unit bus B voltage fraction"
+          "description": "Unit bus B voltage, 6.6 kV nominal",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 8
+            }
+          }
         }
       ],
       "metadata": {
@@ -3750,9 +3778,16 @@
       "label": "Emergency Diesel Generator A",
       "parameters": {
         "nominalPowerMw": 7,
+        "nominalVoltageKv": 6.6,
+        "nominalFrequencyHz": 50,
         "startDelayS": 10,
         "initialAvailable": true,
-        "initialRunning": false
+        "initialRunning": false,
+        "loadResponse": {
+          "frequencyDipPerRatedLoad": 0.15,
+          "voltageDipPerRatedLoad": 0.4,
+          "recoveryTimeConstantS": 0.8
+        }
       },
       "variables": [
         {
@@ -3770,6 +3805,42 @@
             "DG-A",
             "electrical.dg.a.status"
           ]
+        },
+        {
+          "path": "outputKw",
+          "tagId": "EDG-A-KW",
+          "equipmentId": "dieselGeneratorA",
+          "description": "Emergency diesel generator A load, kW, 7,000 kW rated",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 8000
+            }
+          }
+        },
+        {
+          "path": "terminalVoltageKv",
+          "tagId": "EDG-A-V",
+          "equipmentId": "dieselGeneratorA",
+          "description": "Emergency diesel generator A terminal voltage, 6.6 kV rated",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 8
+            }
+          }
+        },
+        {
+          "path": "frequencyHz",
+          "tagId": "EDG-A-HZ",
+          "equipmentId": "dieselGeneratorA",
+          "description": "Emergency diesel generator A frequency, 50 Hz rated",
+          "limits": {
+            "instrumentSpan": {
+              "min": 45,
+              "max": 55
+            }
+          }
         }
       ],
       "metadata": {
@@ -3784,9 +3855,16 @@
       "label": "Emergency Diesel Generator B",
       "parameters": {
         "nominalPowerMw": 7,
+        "nominalVoltageKv": 6.6,
+        "nominalFrequencyHz": 50,
         "startDelayS": 10,
         "initialAvailable": true,
-        "initialRunning": false
+        "initialRunning": false,
+        "loadResponse": {
+          "frequencyDipPerRatedLoad": 0.15,
+          "voltageDipPerRatedLoad": 0.4,
+          "recoveryTimeConstantS": 0.8
+        }
       },
       "variables": [
         {
@@ -3804,6 +3882,42 @@
             "DG-B",
             "electrical.dg.b.status"
           ]
+        },
+        {
+          "path": "outputKw",
+          "tagId": "EDG-B-KW",
+          "equipmentId": "dieselGeneratorB",
+          "description": "Emergency diesel generator B load, kW, 7,000 kW rated",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 8000
+            }
+          }
+        },
+        {
+          "path": "terminalVoltageKv",
+          "tagId": "EDG-B-V",
+          "equipmentId": "dieselGeneratorB",
+          "description": "Emergency diesel generator B terminal voltage, 6.6 kV rated",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 8
+            }
+          }
+        },
+        {
+          "path": "frequencyHz",
+          "tagId": "EDG-B-HZ",
+          "equipmentId": "dieselGeneratorB",
+          "description": "Emergency diesel generator B frequency, 50 Hz rated",
+          "limits": {
+            "instrumentSpan": {
+              "min": 45,
+              "max": 55
+            }
+          }
         }
       ],
       "metadata": {
@@ -3981,6 +4095,276 @@
       "metadata": {
         "presentation": {
           "shortLabel": "Controls B"
+        }
+      }
+    },
+    {
+      "id": "loadSequencerA",
+      "kind": "loadSequencer",
+      "label": "Load Sequencer A",
+      "parameters": {
+        "bus": "safetyBusA",
+        "stepIntervalS": 5,
+        "stepCount": 6
+      },
+      "variables": [
+        {
+          "path": "step",
+          "tagId": "SEQ-A-STEP",
+          "equipmentId": "loadSequencerA",
+          "description": "Load sequencer A step: 0 until safety bus A is lost, 1 as it comes back on its diesel, one more every 5 s to its last, 6",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 6
+            }
+          }
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "SEQ A"
+        }
+      }
+    },
+    {
+      "id": "loadCentresA",
+      "kind": "electricalLoad",
+      "label": "Safety Train A Load Centres",
+      "parameters": {
+        "nominalLoadMw": 1.2,
+        "essential": true
+      },
+      "variables": [
+        {
+          "path": "energized",
+          "tagId": "LC-A-ENERGIZED",
+          "equipmentId": "loadCentresA",
+          "description": "Safety train A low-voltage load centres energized: battery chargers, valve motors and ventilation, never shed"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "LC A"
+        }
+      }
+    },
+    {
+      "id": "componentCoolingWaterPumpA",
+      "kind": "electricalLoad",
+      "label": "Component Cooling Water Pump A",
+      "parameters": {
+        "nominalLoadMw": 0.6,
+        "essential": true
+      },
+      "variables": [
+        {
+          "path": "connected",
+          "tagId": "BRK-CCW-A-CLOSED",
+          "equipmentId": "componentCoolingWaterPumpA",
+          "description": "Component Cooling Water Pump A feeder breaker close command; shed as safety bus A dies, closed again by its load sequencer step"
+        },
+        {
+          "path": "energized",
+          "tagId": "CCW-A-ENERGIZED",
+          "equipmentId": "componentCoolingWaterPumpA",
+          "description": "Component Cooling Water Pump A motor energized from safety bus A; an electrical load only, with no process model"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "CCW A"
+        }
+      }
+    },
+    {
+      "id": "serviceWaterPumpA",
+      "kind": "electricalLoad",
+      "label": "Service Water Pump A",
+      "parameters": {
+        "nominalLoadMw": 0.75,
+        "essential": true
+      },
+      "variables": [
+        {
+          "path": "connected",
+          "tagId": "BRK-SW-A-CLOSED",
+          "equipmentId": "serviceWaterPumpA",
+          "description": "Service Water Pump A feeder breaker close command; shed as safety bus A dies, closed again by its load sequencer step"
+        },
+        {
+          "path": "energized",
+          "tagId": "SW-A-ENERGIZED",
+          "equipmentId": "serviceWaterPumpA",
+          "description": "Service Water Pump A motor energized from safety bus A; an electrical load only, with no process model"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "SW A"
+        }
+      }
+    },
+    {
+      "id": "containmentFanCoolersA",
+      "kind": "electricalLoad",
+      "label": "Containment Fan Coolers A",
+      "parameters": {
+        "nominalLoadMw": 0.3,
+        "essential": true
+      },
+      "variables": [
+        {
+          "path": "connected",
+          "tagId": "BRK-CFC-A-CLOSED",
+          "equipmentId": "containmentFanCoolersA",
+          "description": "Containment Fan Coolers A feeder breaker close command; shed as safety bus A dies, closed again by its load sequencer step"
+        },
+        {
+          "path": "energized",
+          "tagId": "CFC-A-ENERGIZED",
+          "equipmentId": "containmentFanCoolersA",
+          "description": "Containment Fan Coolers A motor energized from safety bus A; an electrical load only, with no process model"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "CFC A"
+        }
+      }
+    },
+    {
+      "id": "loadSequencerB",
+      "kind": "loadSequencer",
+      "label": "Load Sequencer B",
+      "parameters": {
+        "bus": "safetyBusB",
+        "stepIntervalS": 5,
+        "stepCount": 5
+      },
+      "variables": [
+        {
+          "path": "step",
+          "tagId": "SEQ-B-STEP",
+          "equipmentId": "loadSequencerB",
+          "description": "Load sequencer B step: 0 until safety bus B is lost, 1 as it comes back on its diesel, one more every 5 s to its last, 5",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 5
+            }
+          }
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "SEQ B"
+        }
+      }
+    },
+    {
+      "id": "loadCentresB",
+      "kind": "electricalLoad",
+      "label": "Safety Train B Load Centres",
+      "parameters": {
+        "nominalLoadMw": 1.2,
+        "essential": true
+      },
+      "variables": [
+        {
+          "path": "energized",
+          "tagId": "LC-B-ENERGIZED",
+          "equipmentId": "loadCentresB",
+          "description": "Safety train B low-voltage load centres energized: battery chargers, valve motors and ventilation, never shed"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "LC B"
+        }
+      }
+    },
+    {
+      "id": "componentCoolingWaterPumpB",
+      "kind": "electricalLoad",
+      "label": "Component Cooling Water Pump B",
+      "parameters": {
+        "nominalLoadMw": 0.6,
+        "essential": true
+      },
+      "variables": [
+        {
+          "path": "connected",
+          "tagId": "BRK-CCW-B-CLOSED",
+          "equipmentId": "componentCoolingWaterPumpB",
+          "description": "Component Cooling Water Pump B feeder breaker close command; shed as safety bus B dies, closed again by its load sequencer step"
+        },
+        {
+          "path": "energized",
+          "tagId": "CCW-B-ENERGIZED",
+          "equipmentId": "componentCoolingWaterPumpB",
+          "description": "Component Cooling Water Pump B motor energized from safety bus B; an electrical load only, with no process model"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "CCW B"
+        }
+      }
+    },
+    {
+      "id": "serviceWaterPumpB",
+      "kind": "electricalLoad",
+      "label": "Service Water Pump B",
+      "parameters": {
+        "nominalLoadMw": 0.75,
+        "essential": true
+      },
+      "variables": [
+        {
+          "path": "connected",
+          "tagId": "BRK-SW-B-CLOSED",
+          "equipmentId": "serviceWaterPumpB",
+          "description": "Service Water Pump B feeder breaker close command; shed as safety bus B dies, closed again by its load sequencer step"
+        },
+        {
+          "path": "energized",
+          "tagId": "SW-B-ENERGIZED",
+          "equipmentId": "serviceWaterPumpB",
+          "description": "Service Water Pump B motor energized from safety bus B; an electrical load only, with no process model"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "SW B"
+        }
+      }
+    },
+    {
+      "id": "containmentFanCoolersB",
+      "kind": "electricalLoad",
+      "label": "Containment Fan Coolers B",
+      "parameters": {
+        "nominalLoadMw": 0.3,
+        "essential": true
+      },
+      "variables": [
+        {
+          "path": "connected",
+          "tagId": "BRK-CFC-B-CLOSED",
+          "equipmentId": "containmentFanCoolersB",
+          "description": "Containment Fan Coolers B feeder breaker close command; shed as safety bus B dies, closed again by its load sequencer step"
+        },
+        {
+          "path": "energized",
+          "tagId": "CFC-B-ENERGIZED",
+          "equipmentId": "containmentFanCoolersB",
+          "description": "Containment Fan Coolers B motor energized from safety bus B; an electrical load only, with no process model"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "CFC B"
         }
       }
     },
@@ -11349,6 +11733,54 @@
       "from": "pressurizerBackupHeaterBreakerA.outlet",
       "to": "pressurizer.backupHeaterPower",
       "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-a-to-load-centres-a",
+      "from": "safetyBusA.outlet",
+      "to": "loadCentresA.power",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-a-to-ccw-pump-a",
+      "from": "safetyBusA.outlet",
+      "to": "componentCoolingWaterPumpA.power",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-a-to-sw-pump-a",
+      "from": "safetyBusA.outlet",
+      "to": "serviceWaterPumpA.power",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-a-to-fan-coolers-a",
+      "from": "safetyBusA.outlet",
+      "to": "containmentFanCoolersA.power",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-b-to-load-centres-b",
+      "from": "safetyBusB.outlet",
+      "to": "loadCentresB.power",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-b-to-ccw-pump-b",
+      "from": "safetyBusB.outlet",
+      "to": "componentCoolingWaterPumpB.power",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-b-to-sw-pump-b",
+      "from": "safetyBusB.outlet",
+      "to": "serviceWaterPumpB.power",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-b-to-fan-coolers-b",
+      "from": "safetyBusB.outlet",
+      "to": "containmentFanCoolersB.power",
+      "connectionKind": "electricalPower"
     }
   ],
   "publishedVariables": [
@@ -11923,17 +12355,13 @@
     "offsiteGrid.voltageFraction",
     "unitAuxTransformer.availablePowerMw",
     "safetyBusA.energized",
-    "safetyBusA.voltageFraction",
     "safetyBusA.degraded",
     "safetyBusA.marginMw",
     "safetyBusB.energized",
-    "safetyBusB.voltageFraction",
     "safetyBusB.degraded",
     "safetyBusB.marginMw",
     "unitBusA.energized",
-    "unitBusA.voltageFraction",
     "unitBusB.energized",
-    "unitBusB.voltageFraction",
     "dieselGeneratorA.running",
     "dieselGeneratorA.availablePowerMw",
     "dieselGeneratorB.running",
@@ -12136,6 +12564,34 @@
     "safetyInjectionBlockLogic.blocked",
     "safetyInjectionBlockLogic.belowP11",
     "core.rodInsertedFraction",
-    "core.rodsOnBottom"
+    "core.rodsOnBottom",
+    "safetyBusA.voltageKv",
+    "safetyBusA.servedLoadMw",
+    "unitBusA.voltageKv",
+    "dieselGeneratorA.outputKw",
+    "dieselGeneratorA.terminalVoltageKv",
+    "dieselGeneratorA.frequencyHz",
+    "loadSequencerA.step",
+    "loadCentresA.energized",
+    "componentCoolingWaterPumpA.connected",
+    "componentCoolingWaterPumpA.energized",
+    "serviceWaterPumpA.connected",
+    "serviceWaterPumpA.energized",
+    "containmentFanCoolersA.connected",
+    "containmentFanCoolersA.energized",
+    "safetyBusB.voltageKv",
+    "safetyBusB.servedLoadMw",
+    "unitBusB.voltageKv",
+    "dieselGeneratorB.outputKw",
+    "dieselGeneratorB.terminalVoltageKv",
+    "dieselGeneratorB.frequencyHz",
+    "loadSequencerB.step",
+    "loadCentresB.energized",
+    "componentCoolingWaterPumpB.connected",
+    "componentCoolingWaterPumpB.energized",
+    "serviceWaterPumpB.connected",
+    "serviceWaterPumpB.energized",
+    "containmentFanCoolersB.connected",
+    "containmentFanCoolersB.energized"
   ]
 }

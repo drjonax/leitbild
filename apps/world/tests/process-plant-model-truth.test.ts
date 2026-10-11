@@ -213,17 +213,18 @@ describe('breakers', () => {
       return itemRowTexts(item.binding, item.presentation, item.rows, sample, formatQuantity)
     }
     expect(drawing.mimic.items.find(item => item.binding.label === 'EDG A')!.binding.state).toMatchObject({ aspect: 'running', state: { path: 'dieselGeneratorA.running' }, command: 'dieselGeneratorA.startCommand' })
-    expect(rowsOf('Bus A')).toEqual(['100 %'])
+    // The bus reads its voltmeter, in kilovolts.
+    expect(rowsOf('Bus A')).toEqual(['6.60 kV'])
     expect(rowsOf('EDG A')).toEqual(['STOP'])
     plantRun.act('loss-offsite-power')
     plantRun.run(5_000)
     // Started on the dead bus and not yet up to speed: its start command shows beside it.
     expect(rowsOf('EDG A')).toEqual(['CMD RUN'])
-    expect(rowsOf('Bus A')).toEqual(['0 %'])
-    plantRun.run(20_000)
-    // Running, the symbol shows it and says RUN, as a pump's does.
+    expect(rowsOf('Bus A')).toEqual(['0 kV'])
+    plantRun.run(45_000)
+    // Running, its load sequence done, the symbol shows it and says RUN, as a pump's does.
     expect(rowsOf('EDG A')).toEqual(['RUN'])
-    expect(rowsOf('Bus A')).toEqual(['100 %'])
+    expect(rowsOf('Bus A')).toEqual(['6.60 kV'])
   })
 
   test('a reactor trip opens both reactor trip breakers, read from their position feedback', () => {
@@ -365,9 +366,58 @@ describe('emergency diesel ratings', () => {
     const plantRun = started()
     onDieselWithTrainALoads(plantRun, plant)
     for (const tagId of trainASafetyPumps) expect(plantRun.tag(`${tagId}-RUNNING`), tagId).toBe(true)
-    expect(Number(plantRun.read('safetyBusA.servedLoadMw'))).toBeGreaterThan(1)
-    expect(Number(plantRun.tag('BUS-A-MARGIN'))).toBeGreaterThan(3)
+    // Besides every safety pump of its train it carries the loads its sequencer closed back: the load centres, the
+    // component cooling water and service water pumps, the fan coolers and, on train A, the backup heaters: some 6 MW
+    // of its 7.
+    expect(Number(plantRun.read('safetyBusA.servedLoadMw'))).toBeGreaterThan(5)
+    expect(Number(plantRun.tag('BUS-A-MARGIN'))).toBeGreaterThan(0.5)
     expect(plantRun.activeIds().filter(id => id.includes('overload'))).toEqual([])
+  })
+
+  test('after a loss of offsite power both sequencers load their diesels alike, a block every 5 s, within Regulatory Guide 1.9', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    for (const train of ['A', 'B']) {
+      expect(plantRun.tag(`SEQ-${train}-STEP`), train).toBe(0)
+      expect(Number(plantRun.read(`safetyBus${train}.servedLoadMw`)), train).toBeCloseTo(2.85, 2)
+      expect(Number(plantRun.tag(`BUS-${train}-VOLTAGE`)), train).toBeCloseTo(6.6, 6)
+    }
+    plantRun.act('loss-offsite-power')
+    const steps: Record<string, Array<{ readonly second: number; readonly step: number; readonly kw: number }>> = { A: [], B: [] }
+    const lowest = { hz: Number.POSITIVE_INFINITY, kv: Number.POSITIVE_INFINITY }
+    const afwStart: Record<string, number> = {}
+    for (let second = 1; second <= 60; second += 1) {
+      plantRun.run(1_000)
+      for (const train of ['A', 'B']) {
+        const step = Number(plantRun.tag(`SEQ-${train}-STEP`))
+        if (step !== (steps[train]!.at(-1)?.step ?? 0)) steps[train]!.push({ second, step, kw: Number(plantRun.tag(`EDG-${train}-KW`)) })
+        if (plantRun.tag(`AFW-PUMP-${train}-RUNNING`) === true) afwStart[train] ??= second
+        if (plantRun.tag(`BRK-EDG-${train}-POS`) === true) {
+          lowest.hz = Math.min(lowest.hz, Number(plantRun.tag(`EDG-${train}-HZ`)))
+          lowest.kv = Math.min(lowest.kv, Number(plantRun.tag(`EDG-${train}-V`)))
+        }
+      }
+    }
+    for (const train of ['A', 'B']) {
+      const seen = steps[train]!
+      // Step 1 as the diesel picks the dead bus up, then one more every 5 s, to train A's sixth and train B's fifth.
+      expect(seen.map(entry => entry.step), train).toEqual(train === 'A' ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5])
+      for (let index = 1; index < seen.length; index += 1) expect(seen[index]!.second - seen[index - 1]!.second, train).toBe(5)
+      // The motor-driven auxiliary feedwater pump starts on step 2.
+      expect(afwStart[train], train).toBe(seen[1]!.second + 1)
+      // The loads it ends with are the same on both trains but the backup heaters: some 3 to 5 MW of the 7 MW rating.
+      expect(Number(plantRun.tag(`EDG-${train}-KW`)), train).toBeGreaterThan(3_000)
+      expect(Number(plantRun.tag(`EDG-${train}-KW`)), train).toBeLessThan(5_000)
+      for (const tagId of [`CCW-${train}-ENERGIZED`, `SW-${train}-ENERGIZED`, `CFC-${train}-ENERGIZED`, `LC-${train}-ENERGIZED`]) expect(plantRun.tag(tagId), tagId).toBe(true)
+      // Recovered from the last block: rated frequency and voltage.
+      expect(Number(plantRun.tag(`EDG-${train}-HZ`)), train).toBeCloseTo(50, 1)
+      expect(Number(plantRun.tag(`EDG-${train}-V`)), train).toBeCloseTo(6.6, 2)
+    }
+    expect(Number(plantRun.tag('EDG-A-KW')) - Number(plantRun.tag('EDG-B-KW'))).toBeCloseTo(1_400, -2)
+    // No block dipped the frequency below 95 % of rated or the voltage below 90 %, where the degraded-voltage relays would act.
+    expect(lowest.hz).toBeGreaterThan(47.5)
+    expect(lowest.kv).toBeGreaterThan(0.9 * 6.6)
+    expect(plantRun.activeIds().filter(id => id.includes('degraded') && !id.includes('offsite-grid'))).toEqual([])
   })
 
   test('a diesel loaded to its rating annunciates overload', () => {

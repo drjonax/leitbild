@@ -1,10 +1,77 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, comparison, rule, trip, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, comparison, rule, trip, write, type SignalRef } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 
 /** Undervoltage relay set points, as fractions of nominal voltage (the offsite power alarms below). */
 const degradedVoltageFraction = 0.9
 const lossOfVoltageFraction = 0.7
+
+// Each safety train's load sequencer (the loadSequencer component counts its
+// steps, 5 s apart) closes the bus's loads back onto its diesel in timed
+// blocks, so the diesel picks them up a block at a time rather than all at
+// once and recovers its frequency and voltage between them. Westinghouse
+// plants step at about 5 s, and the standard technical specifications hold
+// each interval to within 10 % of its design (NUREG-1431, SR 3.8.1.18). The
+// reference plant's blocks are the same on both trains, but for the backup
+// heaters, which hang on train A only:
+//   step 1 (0 s, the diesel breaker closes): the low-voltage load centres,
+//     never shed (battery chargers, valve motors, ventilation), and the
+//     charging pump that was running, its run command standing;
+//   step 2 (5 s): the motor-driven auxiliary feedwater pump, as a loss of
+//     offsite power demands;
+//   step 3 (10 s): the component cooling water pump;
+//   step 4 (15 s): the service water pump;
+//   step 5 (20 s): the containment fan coolers;
+//   step 6 (25 s, train A): the pressurizer backup heaters, whose pressure
+//     control then decides whether they heat.
+// Some 3 to 5 MW in all on each 7 MW diesel. As the bus dies its
+// undervoltage relays open the sequenced loads' feeder breakers, so none
+// returns before its step. The safety injection and RHR pumps start on a safety
+// injection signal, not on this sequence; the component cooling water,
+// service water and fan cooler loads have no process model, only their
+// electrical load.
+interface SequencedLoad {
+  readonly step: number
+  readonly id: string
+  readonly label: string
+  /** What the step closes or starts. */
+  readonly signal: SignalRef
+  /** Whether the bus's undervoltage relays shed it: a breaker the step recloses. A standby pump the step starts is not shed. */
+  readonly shed: boolean
+}
+
+const sequencedLoads = (train: 'A' | 'B'): ReadonlyArray<SequencedLoad> => [
+  { step: 2, id: 'afw', label: 'auxiliary feedwater', signal: { tagId: `AFW-PUMP-${train}` }, shed: false },
+  { step: 3, id: 'component-cooling-water', label: 'component cooling water pump', signal: { tagId: `BRK-CCW-${train}-CLOSED` }, shed: true },
+  { step: 4, id: 'service-water', label: 'service water pump', signal: { tagId: `BRK-SW-${train}-CLOSED` }, shed: true },
+  { step: 5, id: 'containment-fan-coolers', label: 'containment fan coolers', signal: { tagId: `BRK-CFC-${train}-CLOSED` }, shed: true },
+  ...(train === 'A' ? [{ step: 6, id: 'pressurizer-heaters', label: 'pressurizer backup heater', signal: { tagId: 'BRK-PZR-HTR-A-CLOSED' }, shed: true }] : []),
+]
+
+const loadSequencerRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRule> => {
+  const lower = train.toLowerCase()
+  const loads = sequencedLoads(train)
+  return [
+    rule({
+      id: `safety-bus-${lower}-load-shed`,
+      label: `Safety bus ${train} load shed on dead bus`,
+      ruleClass: 'normalControl',
+      condition: comparison({ tagId: `BUS-${train}-ENERGIZED` }, '==', false),
+      latch: false,
+      resetWhenClear: true,
+      effects: loads.filter(load => load.shed).map(load => write(`shed-${load.id}-${lower}`, load.signal, false)),
+    }),
+    ...loads.map(load => rule({
+      id: `diesel-generator-${lower}-sequencer-${load.id}`,
+      label: `Diesel generator ${train} load sequencer ${load.label} step`,
+      ruleClass: 'normalControl',
+      condition: comparison({ tagId: `SEQ-${train}-STEP` }, '>=', load.step),
+      latch: false,
+      resetWhenClear: true,
+      effects: [write(`sequence-${load.id}-${lower}`, load.signal, true)],
+    })),
+  ]
+}
 
 const electricalAlarm = annunciator({
   system: 'electrical',
@@ -51,23 +118,7 @@ const dieselGeneratorRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRul
         write(`open-diesel-breaker-${lower}`, { tagId: `BRK-EDG-${train}-CLOSED` }, false),
       ],
     }),
-    // The load sequencer: the bus's loads that were running come back as the
-    // breaker closes (the in-service charging pump among them); once the
-    // diesel has recovered from that block, the motor-driven auxiliary
-    // feedwater pump starts, as a loss of offsite power demands. The safety
-    // injection and RHR pumps start on a safety injection signal instead.
-    rule({
-      id: `diesel-generator-${lower}-sequencer-afw`,
-      label: `Diesel generator ${train} load sequencer auxiliary feedwater step`,
-      ruleClass: 'normalControl',
-      condition: comparison({ tagId: `BRK-EDG-${train}-POS` }, '==', true),
-      delayMs: 5_000,
-      latch: false,
-      resetWhenClear: true,
-      effects: [
-        write(`start-motor-afw-${lower}`, { tagId: `AFW-PUMP-${train}` }, true),
-      ],
-    }),
+    ...loadSequencerRules(train),
     // On its diesel alone, the bus can carry no more than the diesel's rating:
     // a bus margin of 0 MW means the diesel is loaded to its limit.
     rule({
@@ -105,37 +156,6 @@ const dieselGeneratorRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRul
 // generators at their no-load pressure, about 27 kg/s each, enough for decay
 // heat; operators throttle from there.
 const afwLineUpPositionFraction = 1
-
-// The pressurizer's backup heaters hang on safety bus A through their own
-// breaker, so the diesel carries them when offsite power is lost. Their
-// breaker opens when the bus goes dead, as its undervoltage relay sheds it, so
-// the 1.4 MW group does not come back in the block of loads that return as the
-// diesel picks the bus up; the sequencer's last step closes it once the
-// diesel has taken that block and the motor-driven AFW pump, and the pressure
-// control's command decides whether they heat.
-const backupHeaterSequencerStepMs = 20_000
-
-const pressurizerBackupHeaterBreakerRules = (): ReadonlyArray<ProcessPlantIcRule> => [
-  rule({
-    id: 'pressurizer-backup-heaters-a-load-shed',
-    label: 'Pressurizer backup heater breaker A load shed on dead bus',
-    ruleClass: 'normalControl',
-    condition: comparison({ tagId: 'BUS-A-ENERGIZED' }, '==', false),
-    latch: false,
-    resetWhenClear: true,
-    effects: [write('shed-pressurizer-backup-heaters-a', { tagId: 'BRK-PZR-HTR-A-CLOSED' }, false)],
-  }),
-  rule({
-    id: 'diesel-generator-a-sequencer-pressurizer-heaters',
-    label: 'Diesel generator A load sequencer pressurizer backup heater step',
-    ruleClass: 'normalControl',
-    condition: comparison({ tagId: 'BRK-EDG-A-POS' }, '==', true),
-    delayMs: backupHeaterSequencerStepMs,
-    latch: false,
-    resetWhenClear: true,
-    effects: [write('load-pressurizer-backup-heaters-a', { tagId: 'BRK-PZR-HTR-A-CLOSED' }, true)],
-  }),
-]
 
 const lossOfOffsitePowerAuxiliaryFeedwater = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlantIcRule => rule({
   id: 'loss-of-offsite-power-afw-actuation',
@@ -270,7 +290,6 @@ export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantRefe
     ],
   }),
   lossOfOffsitePowerAuxiliaryFeedwater(loops),
-  ...pressurizerBackupHeaterBreakerRules(),
   // Two undervoltage relays watch the offsite supply, as at a reference
   // plant: the degraded-voltage relay at 90 % of nominal and the
   // loss-of-voltage relay at 70 %, the level below which a bus counts dead.
