@@ -323,25 +323,82 @@ describe('createRuntimeHub', () => {
     } finally { release(); await connection.close() }
   })
 
-  test('observer and reconciliation failures remain visible until their own operation recovers', async () => {
+  test('observer failure quarantines stale state until reconnect, including peer reads', async () => {
     let failObserve = true
-    let failReconcile = true
-    const adapter = withConnection(createStubAdapter('failure.runtime', 'failure', 'world.failure.command'), base => ({
+    let observed = testObject('failure')
+    let peerConfig: PackRuntimeConnectionConfig | undefined
+    let reconciliations = 0
+    const adapter = withConnection(createStubAdapter('failure.runtime', 'failure', 'world.failure.command', { queryKind: 'world.failure.query' }), base => ({
       ...base,
-      observeCommittedEvents: async () => { if (failObserve) throw new Error('observer failed') },
-      afterCommittedEvents: async () => { if (failReconcile) throw new Error('reconciliation failed') },
+      observeCommittedEvents: async events => {
+        if (failObserve) throw new Error('observer failed')
+        for (const event of events) if (event.type === 'object.upserted' && event.object.id === observed.id) observed = event.object
+      },
+      afterCommittedEvents: async () => { reconciliations++ },
+    }))
+    const peer = withConnection(createStubAdapter('peer.runtime', 'peer', 'world.peer.command'), (base, config) => { peerConfig = config; return base })
+    const errors = spyOn(console, 'error').mockImplementation(() => undefined)
+    const connection = await createRuntimeHub([adapter, peer]).connect(connectionConfig([adapter.id, peer.id]))
+    try {
+      await connection.observeCommittedEvents([committedUpsert(testObject('failure', 2), 1)])
+      failObserve = false
+      await connection.observeCommittedEvents([committedUpsert(testObject('peer'), 2)])
+      expect(observed.revision).toBe(1)
+      expect(reconciliations).toBe(0)
+      expect(connection.health?.()[0]).toMatchObject({ state: 'failed', failureCount: 1, lastFailure: { operation: 'observe-committed-events' } })
+      expect(peerConfig?.isObjectProviderAvailable?.(observed.id)).toBe(false)
+      await expect(connection.invokeQuery({ capabilityId: 'world.failure.query', input: {} })).rejects.toThrow('missed committed state')
+      await expect(peerConfig!.queries!.invoke({ capabilityId: 'world.failure.query', input: {} })).rejects.toThrow('missed committed state')
+      await expect(connection.sendCommand(command('world.failure.command'))).rejects.toThrow('missed committed state')
+      await expect(connection.setClock({ currentTime: '2026-01-01T00:00:00Z' as IsoTimestamp, updatedAt: '2026-01-01T00:00:00Z' as IsoTimestamp, paused: true })).rejects.toThrow('missed committed state')
+      expect(connection.health?.()[0]?.state).toBe('failed')
+    } finally { errors.mockRestore(); await connection.close() }
+  })
+
+  test('reconciliation failure cannot be cleared by later observations or clock success', async () => {
+    let attempts = 0
+    const adapter = withConnection(createStubAdapter('failure.runtime', 'failure', 'world.failure.command'), base => ({
+      ...base, afterCommittedEvents: async () => { attempts++; throw new Error('reconciliation failed') },
     }))
     const errors = spyOn(console, 'error').mockImplementation(() => undefined)
     const connection = await createRuntimeHub([adapter]).connect(connectionConfig([adapter.id]))
     try {
+      await connection.observeCommittedEvents([committedUpsert(testObject('failure', 2), 1)])
       await connection.observeCommittedEvents([])
-      expect(connection.health?.()[0]).toMatchObject({ state: 'degraded', failureCount: 2, lastFailure: { operation: 'after-committed-events' } })
-      failReconcile = false
-      await connection.observeCommittedEvents([])
-      expect(connection.health?.()[0]).toMatchObject({ state: 'degraded', failureCount: 3, lastFailure: { operation: 'observe-committed-events' } })
-      failObserve = false
-      await connection.observeCommittedEvents([])
-      expect(connection.health?.()[0]).toMatchObject({ state: 'ready', failureCount: 3 })
+      expect(attempts).toBe(1)
+      expect(connection.health?.()[0]).toMatchObject({ state: 'failed', lastFailure: { operation: 'after-committed-events' } })
+      await expect(connection.checkpoint!()).rejects.toThrow('missed committed state')
+    } finally { errors.mockRestore(); await connection.close() }
+  })
+
+  test('validates every owned mutation target in order without blocking cross-Pack signals', async () => {
+    const adapter = createStubAdapter('owner.runtime', 'owner', 'world.owner.command')
+    const connection = await createRuntimeHub([adapter]).connect(connectionConfig([adapter.id]))
+    const received: PackRuntimeEmission[] = []
+    connection.subscribe(emission => received.push(emission))
+    const foreign = testObject('foreign')
+    const own = testObject('owner')
+    const at = '2026-01-01T00:00:00Z' as IsoTimestamp
+    const base = { at, provenance: { source: 'simulator' as const }, history: 'snapshot-only' as const }
+    const emit = (events: PackRuntimeEmission['events']) => adapter.emit({ type: 'event.emission', runtimeId: adapter.id, emittedAt: at, events })
+    const errors = spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await connection.observeCommittedEvents([committedUpsert(foreign, 1)])
+      emit([{ ...base, type: 'object.deleted', objectId: foreign.id }])
+      emit([{ ...base, type: 'telemetry.sampled', objectId: foreign.id, telemetry: { signals: {} } }])
+      emit([{ ...base, type: 'object.upserted', object: { ...own, id: foreign.id } }])
+      emit([{ ...base, type: 'object.deleted', objectId: own.id }])
+      expect(received).toHaveLength(0)
+      expect(connection.health?.()[0]).toMatchObject({ state: 'degraded', failureCount: 4, lastFailure: { operation: 'emission' } })
+      emit([{ ...base, type: 'object.upserted', object: own }, { ...base, type: 'telemetry.sampled', objectId: own.id, telemetry: { signals: {} } }, { ...base, type: 'object.deleted', objectId: own.id }])
+      expect(received).toHaveLength(1)
+      emit([{ ...base, type: 'telemetry.sampled', objectId: own.id, telemetry: { signals: {} } }])
+      expect(received).toHaveLength(2)
+      emit([{ ...base, type: 'interaction.signal', signal: {
+        id: 'signal:test' as import('../src/core/model/index.ts').SignalId, simulationRunId: 'run-test' as SimulationRunId,
+        at, type: 'test', source: { kind: 'object', id: own.id }, targets: [{ kind: 'object', id: foreign.id }], payload: {},
+      } }])
+      expect(received).toHaveLength(3)
     } finally { errors.mockRestore(); await connection.close() }
   })
 

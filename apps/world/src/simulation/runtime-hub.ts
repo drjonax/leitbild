@@ -74,13 +74,23 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
       const activeRuntimeIds = new Set(config.scenario.runtimeIds)
       const activeAdapters = adapters.filter(adapter => activeRuntimeIds.has(adapter.id))
       const committedObjects = new Map((config.initialObjects ?? config.scenario.initialObjects).map(object => [object.id, object]))
+      const pendingUpserts = new Map<string, OperationalObject>()
       const providerAvailable = new Map<string, () => boolean>()
+      // An observation may have partially applied. Retrying a later batch cannot
+      // prove catch-up; reconnect from canonical state before serving this Pack.
+      const unavailableObservers = new Set<string>()
+      const assertAvailable = (runtimeId: string): void => {
+        if (unavailableObservers.has(runtimeId)) throw Object.assign(
+          new Error(`Pack Runtime ${runtimeId} missed committed state; recover the Simulation Run state before using it`),
+          { code: 'runtime_observer_unavailable' },
+        )
+      }
       assertUniqueRoutes(activeAdapters, adapter => capabilityIds(adapter.capabilities, 'command'), 'command')
       assertUniqueRoutes(activeAdapters, adapter => adapter.realtimeInputTypes ?? [], 'realtime input')
       assertUniqueRoutes(activeAdapters, adapter => capabilityIds(adapter.capabilities, 'query'), 'query')
       const readers = new Map<
         string,
-        { connection: PackRuntimeConnection; capability: PackRuntimeAdapter['capabilities'][number] }
+        { runtimeId: string; connection: PackRuntimeConnection; capability: PackRuntimeAdapter['capabilities'][number] }
       >()
       const availableQueries = new Set(
         activeAdapters.flatMap((adapter) => capabilityIds(adapter.capabilities, 'query')),
@@ -90,6 +100,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
         invoke: async (query: PackRuntimeQuery): Promise<unknown> => {
           const reader = readers.get(query.capabilityId)
           if (!reader) throw new Error('Active query provider is not ready: ' + query.capabilityId)
+          assertAvailable(reader.runtimeId)
           const input = reader.capability.input.parse(query.input)
           return reader.capability.output.parse(await reader.connection.invokeQuery({ ...query, input }))
         },
@@ -141,10 +152,10 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
       const unsubscribes: Array<() => void> = []
       try {
       for (const { adapter, connection } of connections) providerAvailable.set(adapter.packId,
-        () => !connection.health?.().some(health => health.state === 'failed'))
+        () => !unavailableObservers.has(adapter.id) && !connection.health?.().some(health => health.state === 'failed'))
       for (const target of connections)
         for (const capability of target.adapter.capabilities) {
-          if (capability.kind === 'query') readers.set(capability.id, { connection: target.connection, capability })
+          if (capability.kind === 'query') readers.set(capability.id, { runtimeId: target.adapter.id, connection: target.connection, capability })
         }
       const healthByRuntime = new Map<string, PackRuntimeHealth>(connections.map(({ adapter }) => [adapter.id, {
         runtimeId: adapter.id,
@@ -159,20 +170,24 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
         failedOperations.get(runtimeId)?.delete(operation)
         healthByRuntime.set(runtimeId, {
           ...current,
-          state: failedOperations.get(runtimeId)?.size ? 'degraded' : 'ready',
+          state: unavailableObservers.has(runtimeId) ? 'failed' : failedOperations.get(runtimeId)?.size ? 'degraded' : 'ready',
           lastSuccessfulInteractionAt: nowIso(),
         })
       }
       const markFailure = (runtimeId: string, operation: string, error: unknown): void => {
         const current = healthByRuntime.get(runtimeId)
         if (!current) return
+        // Guard rejections are consequences of the same missed observation,
+        // not a replacement cause. Keep the recovery requirement stable while
+        // another Pack finishes reconciling this batch.
+        if (unavailableObservers.has(runtimeId) && current.state === 'failed') return
         const operations = failedOperations.get(runtimeId) ?? new Set<string>()
         operations.add(operation)
         failedOperations.set(runtimeId, operations)
         const at = nowIso()
         healthByRuntime.set(runtimeId, {
           ...current,
-          state: 'degraded',
+          state: unavailableObservers.has(runtimeId) ? 'failed' : 'degraded',
           failureCount: current.failureCount + 1,
           lastFailure: {
             at,
@@ -198,20 +213,36 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
         capabilityIds(target.adapter.capabilities, 'query').map(route => [route, target] as const)))
       const handlers = new Set<PackRuntimeEventHandler>()
       for (const { adapter, connection } of connections) unsubscribes.push(connection.subscribe((emission: PackRuntimeEmission) => {
-        if (emission.runtimeId !== adapter.id) {
-          console.error(`dropped Pack Runtime emission from ${adapter.id}: claimed runtime ${emission.runtimeId}`)
+        try {
+          assertAvailable(adapter.id)
+          if (emission.runtimeId !== adapter.id) throw new Error(`claimed runtime ${emission.runtimeId}`)
+          const candidates = new Map<string, string | undefined>()
+          for (const event of emission.events) {
+            // Cross-Pack interactions are validated by the Run's interaction path.
+            if (event.type === 'interaction.signal') continue
+            const id = event.type === 'object.upserted' ? event.object.id : event.objectId
+            const owner = candidates.has(id) ? candidates.get(id) : committedObjects.get(id)?.packId ?? pendingUpserts.get(id)?.packId
+            if (owner !== undefined && owner !== adapter.packId) throw new Error(`object ${id} belongs to Pack ${owner}`)
+            if (event.type === 'object.upserted') {
+              if (event.object.packId !== adapter.packId) throw new Error(`object ${id} claims Pack ${event.object.packId}`)
+              candidates.set(id, adapter.packId)
+            } else {
+              if (owner === undefined) throw new Error(`unknown object target ${id}`)
+              if (event.type === 'object.deleted') candidates.set(id, undefined)
+            }
+          }
+        } catch (error) {
+          markFailure(adapter.id, 'emission', error)
+          console.error(`dropped Pack Runtime emission from ${adapter.id}:`, error)
           return
         }
-        const foreignObject = emission.events.find(event => event.type === 'object.upserted' && event.object.packId !== adapter.packId)
-        if (foreignObject?.type === 'object.upserted') {
-          console.error(`dropped Pack Runtime emission from ${adapter.id}: object ${foreignObject.object.id} belongs to Pack ${foreignObject.object.packId}`)
-          return
-        }
+        for (const event of emission.events) if (event.type === 'object.upserted') pendingUpserts.set(event.object.id, event.object)
         markHealthy(adapter.id, 'emission')
         for (const handler of handlers) handler(emission)
       }))
 
       const getSnapshot = async (): Promise<PackRuntimeSnapshot> => {
+        for (const { adapter } of connections) assertAvailable(adapter.id)
         const results = await Promise.allSettled(connections.map(({ connection }) => connection.getSnapshot()))
         results.forEach((result, index) => {
           if (result.status === 'rejected') markFailure(connections[index]!.adapter.id, 'get-snapshot', result.reason)
@@ -246,6 +277,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
           }
         }
         try {
+          assertAvailable(target.adapter.id)
           const result = await target.connection.sendCommand(command)
           markHealthy(target.adapter.id, command.kind)
           return result
@@ -260,6 +292,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
         if (!target) throw new Error(`no pack runtime accepts realtime input type: ${input.type}`)
         if (!target.connection.receiveRealtimeInput) throw new Error(`pack runtime cannot receive realtime input type: ${input.type}`)
         try {
+          assertAvailable(target.adapter.id)
           await target.connection.receiveRealtimeInput(input)
           markHealthy(target.adapter.id, input.type)
         } catch (error) {
@@ -279,6 +312,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
           throw new Error(`no active Pack Runtime declares query Capability: ${query.capabilityId}`)
         }
         try {
+          assertAvailable(target.adapter.id)
           const result = await target.connection.invokeQuery(query)
           markHealthy(target.adapter.id, query.capabilityId)
           return result
@@ -305,30 +339,39 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
         },
         observeCommittedEvents: async (events: ReadonlyArray<SimulationRunEvent>): Promise<void> => {
           for (const event of events) {
-            if (event.type === 'object.upserted') committedObjects.set(event.object.id, event.object)
+            if (event.type === 'object.upserted') {
+              committedObjects.set(event.object.id, event.object)
+              if (pendingUpserts.get(event.object.id) === event.object) pendingUpserts.delete(event.object.id)
+            }
             if (event.type === 'object.deleted') committedObjects.delete(event.objectId)
           }
-          const observations = await Promise.allSettled(connections.map(({ connection }) => connection.observeCommittedEvents(events)))
+          const observers = connections.filter(({ adapter }) => !unavailableObservers.has(adapter.id))
+          const observations = await Promise.allSettled(observers.map(async ({ connection }) => await connection.observeCommittedEvents(events)))
           observations.forEach((result, index) => {
             if (result.status === 'rejected') {
-              markFailure(connections[index]!.adapter.id, 'observe-committed-events', result.reason)
-              console.error(`pack runtime ${connections[index]!.adapter.id} failed to observe committed events:`, result.reason)
+              unavailableObservers.add(observers[index]!.adapter.id)
+              markFailure(observers[index]!.adapter.id, 'observe-committed-events', result.reason)
+              console.error(`pack runtime ${observers[index]!.adapter.id} failed to observe committed events:`, result.reason)
             } else {
-              markHealthy(connections[index]!.adapter.id, 'observe-committed-events')
+              markHealthy(observers[index]!.adapter.id, 'observe-committed-events')
             }
           })
-          const reconciliations = await Promise.allSettled(connections.map(({ connection }) => connection.afterCommittedEvents?.(events)))
+          const reconcilers = observers.filter(({ adapter }) => !unavailableObservers.has(adapter.id))
+          const reconciliations = await Promise.allSettled(reconcilers.map(async ({ connection }) => await connection.afterCommittedEvents?.(events)))
           reconciliations.forEach((result, index) => {
             if (result.status === 'rejected') {
-              markFailure(connections[index]!.adapter.id, 'after-committed-events', result.reason)
-              console.error(`pack runtime ${connections[index]!.adapter.id} failed to reconcile committed events:`, result.reason)
-            } else markHealthy(connections[index]!.adapter.id, 'after-committed-events')
+              unavailableObservers.add(reconcilers[index]!.adapter.id)
+              markFailure(reconcilers[index]!.adapter.id, 'after-committed-events', result.reason)
+              console.error(`pack runtime ${reconcilers[index]!.adapter.id} failed to reconcile committed events:`, result.reason)
+            } else markHealthy(reconcilers[index]!.adapter.id, 'after-committed-events')
           })
         },
         validateClock: async (clock): Promise<void> => {
+          for (const { adapter } of connections) assertAvailable(adapter.id)
           await Promise.all(connections.map(({ connection }) => connection.validateClock?.(clock)))
         },
         setClock: async (clock): Promise<void> => {
+          for (const { adapter } of connections) assertAvailable(adapter.id)
           await Promise.all(connections.map(({ connection }) => connection.validateClock?.(clock)))
           const results = await Promise.allSettled(connections.map(({ connection }) => connection.setClock(clock)))
           results.forEach((result, index) => {
@@ -339,6 +382,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
           if (failures.length > 0) throw new AggregateError(failures.map(failure => failure.reason), 'one or more Pack Runtimes rejected the simulation clock')
         },
         advanceTo: async (clock): Promise<void> => {
+          for (const { adapter } of connections) assertAvailable(adapter.id)
           const simulated = connections.filter(({ adapter }) => adapter.clock === 'simulation')
           const unsupported = simulated.filter(({ connection }) => connection.advanceTo === undefined)
           if (unsupported.length > 0) throw new Error(`Pack Runtimes do not support exact advancement: ${unsupported.map(({ adapter }) => adapter.id).join(', ')}`)
@@ -359,6 +403,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
           }
         },
         checkpoint: async (): Promise<void> => {
+          for (const { adapter } of connections) assertAvailable(adapter.id)
           const simulated = connections.filter(({ adapter }) => adapter.clock === 'simulation')
           const unsupported = simulated.filter(({ connection }) => connection.checkpoint === undefined)
           if (unsupported.length > 0) throw new Error(`Pack Runtimes do not support checkpoints: ${unsupported.map(({ adapter }) => adapter.id).join(', ')}`)
@@ -371,7 +416,7 @@ export const createRuntimeHub = (adapters: ReadonlyArray<PackRuntimeAdapter>): P
                 .find((target) => target.adapter.id === health.runtimeId)
                 ?.connection.health?.()
                 .find((entry) => entry.runtimeId === health.runtimeId)
-              return local && local.state !== 'ready' ? local : health
+              return health.state === 'failed' ? health : local && local.state !== 'ready' ? local : health
             })
             .sort((left, right) => left.runtimeId.localeCompare(right.runtimeId)),
         close: async (): Promise<void> => {
