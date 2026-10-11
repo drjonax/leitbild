@@ -819,6 +819,18 @@ impl Solids {
             )));
         }
         let pressure = fluid.cells[cell].pressure;
+        // Saturation reads the pressure alone: an undirected pressure equal
+        // to the slot's undirected one gives the same tuple bit for bit.
+        let saturation = match self.wall[k] {
+            Some(w)
+                if pressure.direction == 0.
+                    && w.pressure.direction == 0.
+                    && w.pressure.value.to_bits() == pressure.value.to_bits() =>
+            {
+                w.saturation
+            }
+            _ => properties.saturation(pressure).map_err(trial)?,
+        };
         let mut flow = s(0.);
         for (face, (from, to)) in fluid.endpoints.iter().enumerate() {
             if *from == cell || *to == cell {
@@ -829,7 +841,7 @@ impl Solids {
             pressure,
             temperature: Scalar::new(q.temperature_k, d.temperature_k),
             bulk: point(q, d),
-            saturation: properties.saturation(pressure).map_err(trial)?,
+            saturation,
             mass_flux: flow / s(self.flow_area[cell]),
         });
         Ok(())
