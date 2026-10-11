@@ -610,6 +610,8 @@ impl ConsistentSystem for CellSystem {
 pub struct Segment {
     pub system: CellSystem,
     pub roots: Vec<Root>,
+    /// Start of this handle's segment.
+    pub started_s: f64,
 }
 impl System for Segment {
     fn dimension(&self) -> usize {
@@ -1068,6 +1070,8 @@ pub struct Run {
     /// the cutout chain's record.
     pub windows: Vec<Value>,
     pub rewinds: Vec<Value>,
+    /// Every integrator handle's own stock counters, in order.
+    pub handle_stats: Vec<Value>,
     pub cutout: Option<Value>,
     /// `[t, PT1, collapsed level, mixture level]` every `observation_s`,
     /// from the coordinates alone (no property call).
@@ -1097,7 +1101,11 @@ fn new_handle(
     let ids = system.differential();
     let roots = system.roots_active();
     let mut ida = Ida::new(
-        Segment { system, roots },
+        Segment {
+            system,
+            roots,
+            started_s: t,
+        },
         Initial {
             time: t,
             y,
@@ -1259,6 +1267,8 @@ fn finish(
 fn absorb(out: &mut Run, totals: &mut Totals, ida: &Ida<Segment>) {
     if let Ok(s) = ida.stats() {
         totals.add(&s);
+        out.handle_stats.push(json!({"from_s":ida.system().started_s,"steps":s.steps,"jacobians":s.jacobians,"residuals":s.residuals,
+            "error_test_failures":s.error_failures,"convergence_failures":s.convergence_failures,"nonlinear_iterations":s.nonlinear_iterations,"last_step_s":s.last_step,"last_order":s.last_order}));
     }
     let c = &ida.system().system.counters;
     out.counters.residuals += c.residuals;
@@ -1289,6 +1299,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
         uncredited: Vec::new(),
         windows: Vec::new(),
         rewinds: Vec::new(),
+        handle_stats: Vec::new(),
         cutout: None,
         observations: Vec::new(),
         end: End::Completed,
@@ -1560,11 +1571,42 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     }
     // `k` counts observations; every `ratio`-th is a full sample.
     let mut k: u64 = 1;
+    // Handles whose first advance has been taken.
+    let mut primed = 0;
     loop {
         let next_output = k as f64 * spec.observation_s;
         let stop = next_stop(&pending, t);
         let target = next_output.min(stop).min(spec.duration_s);
-        let advanced = ida.advance(target, &mut y, &mut yp);
+        // Stock IDA's first step is 0.001 of the distance to its first
+        // target. A handle's first target is therefore the next regular
+        // output (or stop), with the observation as the stop boundary, so the
+        // comparison's 2 ms observation grid does not set the first step.
+        let horizon = ((k.div_ceil(ratio) * ratio) as f64 * spec.observation_s)
+            .min(stop)
+            .min(spec.duration_s);
+        let advanced = if primed < out.handles && horizon > target {
+            primed = out.handles;
+            let first = ida
+                .stop_at(target)
+                .and_then(|()| ida.advance(horizon, &mut y, &mut yp));
+            match first {
+                Ok(a) => {
+                    let now = match a {
+                        Advance::Reached(tr) => tr,
+                        Advance::Root { time, .. } => time,
+                    };
+                    if stop > now {
+                        ida.stop_at(stop).map(|()| a)
+                    } else {
+                        Ok(a)
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            primed = out.handles;
+            ida.advance(target, &mut y, &mut yp)
+        };
         // A pure observation: record it and continue without a sample.
         if let Ok(Advance::Reached(tr)) = advanced
             && (tr - next_output).abs() <= 1e-9 * next_output.max(1.)
@@ -2263,6 +2305,6 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
         "min_drag_gap_margin":min_gap,"min_admitted_mass_kg":{"value":min_a.0,"at_s":min_a.1},
         "relief_events":run.relief_events,"area_step_crossings":run.area_crossings,"structural_events":run.structural,
         "credited_departure_overruns":run.uncredited,"resolvability_reports":run.resolvability,
-        "relief_windows":run.windows,"window_rewinds":run.rewinds,"cutout":run.cutout,"observations":run.observations.len(),
+        "relief_windows":run.windows,"window_rewinds":run.rewinds,"handle_stats":run.handle_stats,"cutout":run.cutout,"observations":run.observations.len(),
         "samples":run.samples.len(),"series":series})
 }

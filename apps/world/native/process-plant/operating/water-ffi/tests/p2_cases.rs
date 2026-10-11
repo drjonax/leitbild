@@ -965,7 +965,11 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             span_m: p.tap(st::LT_HIGH).unwrap() - p.tap(st::LT_LOW).unwrap(),
         }
     });
-    let stride = ((duration / ctx.output_s()) / 300.).ceil() as usize;
+    // Receipt series stride; a smoke run may ask for every sample.
+    let stride = match (smoke, std::env::var("LD01_P2_SMOKE_STRIDE")) {
+        (Some(_), Ok(s)) => s.parse::<usize>().expect("LD01_P2_SMOKE_STRIDE"),
+        _ => ((duration / ctx.output_s()) / 300.).ceil() as usize,
+    };
     let mut runs: Vec<(String, Variant, bool, Run)> = Vec::new();
     let mut declared_runs = variants(ctx, entry);
     if smoke.is_some() {
@@ -1331,6 +1335,7 @@ fn skipped(label: &str) -> Run {
         uncredited: Vec::new(),
         windows: Vec::new(),
         rewinds: Vec::new(),
+        handle_stats: Vec::new(),
         cutout: None,
         observations: Vec::new(),
         end: End::SetBound,
