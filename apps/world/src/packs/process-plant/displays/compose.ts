@@ -1210,7 +1210,17 @@ interface PenReading {
   readonly legend: boolean
   readonly text: string
   /** Its order in what the display leads with; null where it names no limit. */
-  readonly rank: { readonly order: number; readonly by: number } | null
+  readonly rank: ReadingRank | null
+}
+
+/**
+ * Where a reading stands in what a display leads with: order 0, heading for a
+ * limit (by minutes to it); 1, past a trip limit; 2, past an alarm limit; 3,
+ * nearest (by its margin relative to the limit).
+ */
+export interface ReadingRank {
+  readonly order: 0 | 1 | 2 | 3
+  readonly by: number
 }
 
 /**
@@ -1231,12 +1241,15 @@ const historyForReading = (now: ComposedDisplayNow, seriesId: string, windowStar
  * (trend-reading.ts), worded as its panel words it. Recorded history is read
  * only for signals drawn over time, and only what their reading needs.
  */
-const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ReadonlyArray<PenReading> => shownPens(display).flatMap(pen => {
+const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ReadonlyArray<PenReading> =>
+  shownPens(display).flatMap(pen => penReading(pen, penView(display, pen), now))
+
+/** One value read as a panel of the given view reads it on opening; none where it is not a number or says nothing. */
+const penReading = (pen: ComposedDisplayPen, view: PenView, now: ComposedDisplayNow): ReadonlyArray<PenReading> => {
   const read = now.read(pen.path)
   if (typeof read !== 'number') return []
   // As the view shows it: below its resolution a reading is 0, and so is every point its rate is read from.
   const value = shownReading(read, pen.resolution)
-  const view = penView(display, pen)
   const overTime = view.kind === 'legend' || view.kind === 'comparison' ? view : null
   const windowStart = overTime === null ? now.simulationMs : now.simulationMs - overTime.horizonMs
   const windowMs = rateWindowMs(overTime?.horizonMs ?? COMPARISON_HISTORY_MS)
@@ -1268,7 +1281,33 @@ const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow):
     text: [`${pen.name}: ${readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan)}`, travel, chip, state].filter(part => part !== '').join(', '),
     rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode)),
   }]
-})
+}
+
+/**
+ * Values a display does not show, in the order it would lead with them were
+ * they compared over time beside its own (penRank): the shortest time to a
+ * limit from the Run's history first, then past a trip limit, past an alarm
+ * limit, and the nearest; those naming no limit keep their order after them.
+ * Each says whether it is off normal as its reading words it: past a limit,
+ * or heading for one, with a time to it or approaching without one.
+ */
+export const rankedAsRead = (
+  system: ProcessPlantRuntimeInstance,
+  paths: ReadonlyArray<VariablePath>,
+  now: ComposedDisplayNow,
+  recordedSeriesIds: ReadonlySet<string>,
+): ReadonlyArray<{ readonly path: VariablePath; readonly rank: ReadingRank | null; readonly offNormal: boolean }> => {
+  const issues: ComposedDisplayIssue[] = []
+  const pens = resolvePens(system, paths.map(path => ({ ref: path, role: 'context' as const })), 'ranked', { numericOnly: false, panelName: 'ranked', recordedSeriesIds }, issues) ?? []
+  const read = new Map(pens.flatMap(pen => penReading(pen, { kind: 'comparison', horizonMs: COMPARISON_HISTORY_MS }, now).map(entry => [entry.pen.path, entry] as const)))
+  const offNormal = (entry: PenReading | undefined): boolean => entry !== undefined && entry.rank !== null
+    && (entry.rank.order <= 2 || (entry.reading.limit?.kind === 'margin' && entry.reading.limit.eta !== ''))
+  return paths.map((path, index) => ({ path, index, rank: read.get(path)?.rank ?? null, offNormal: offNormal(read.get(path)) }))
+    .sort((left, right) => left.rank === null || right.rank === null
+      ? Number(left.rank === null) - Number(right.rank === null) || left.index - right.index
+      : left.rank.order - right.rank.order || left.rank.by - right.rank.by || left.index - right.index)
+    .map(({ path, rank, offNormal: off }) => ({ path, rank, offNormal: off }))
+}
 
 // The shortest projected time to a limit first; then past a trip limit, past
 // an alarm limit, and nearest relative to the limit it names: the first is

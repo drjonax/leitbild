@@ -221,10 +221,18 @@ describe('world.process-plant.display.compose', () => {
     }, simulationTime, { read: query => { reads.push(query); return recorded.read(query) } }) as { margins: ReadonlyArray<string>; viewContent: unknown }
     historian.close()
     // Per trended signal two bounded reads: what its reading weighs (the last 90 s), and the newest sample before that in the trend's window.
-    expect(reads.map(read => [read.seriesId, read.from, read.to, read.limit])).toEqual([seriesId, recordingSeriesIdFor(compiled.id, level)].flatMap(id => [
+    const trended = [seriesId, recordingSeriesIdFor(compiled.id, level)]
+    expect(reads.slice(0, 4).map(read => [read.seriesId, read.from, read.to, read.limit])).toEqual(trended.flatMap(id => [
       [id, '2026-10-08T20:58:30.000Z', simulationTime, 4_000],
       [id, '2026-10-08T20:50:00.000Z', '2026-10-08T20:58:29.999Z', 1],
     ]))
+    // World then reads, as bounded, the values the unit watches beyond its overview that it may add as off normal.
+    for (const read of reads.slice(4)) {
+      expect(trended).not.toContain(read.seriesId)
+      expect([read.from, read.to, read.limit]).toEqual(read.limit === 1
+        ? ['2026-10-08T20:50:00.000Z', '2026-10-08T20:58:29.999Z', 1]
+        : ['2026-10-08T20:58:30.000Z', simulationTime, 4_000])
+    }
     const margin = now - 14.8
     // The rate as the legend words it (1 MPa/min reads 1.000 just below one).
     const resolution = 16.35 * 0.001

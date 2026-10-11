@@ -150,7 +150,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       return { value: snapshot.value, quality: processPlantSignalQuality(snapshot).status }
     }
     // What the Plant's model says bears on the question besides what the agent chose, read as the agent's panels open.
-    const completed = withEvidence(system, chosen, displayEvidence(system, chosen, readComposedDisplay(chosen, opening), sample), recordedSeriesIds)
+    const completed = withEvidence(system, chosen, displayEvidence(system, chosen, readComposedDisplay(chosen, opening), sample, recordedSeriesIds), recordedSeriesIds)
     if (!completed.ok) throw new Error(`evidence World adds must resolve: ${completed.issues.map(issue => issue.message).join('; ')}`)
     const display = completed.display
     const mimics = display.panels.flatMap(panel => panel.kind === 'mimic' ? [panel.mimic] : [])

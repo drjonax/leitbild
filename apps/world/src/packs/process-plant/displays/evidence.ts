@@ -1,13 +1,15 @@
 import type { ProcessSignalBinding, VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { actionEquipment, actionFlows, actionFlowsInto, actsIn, automaticActions, conditionBindings, feeds, throughputDownstream } from './actuations.ts'
-import { composedPanelPens, type CompiledComposedDisplay, type ComposedDisplayPen, type ComposedDisplayReading } from './compose.ts'
+import { composedPanelPens, rankedAsRead, type CompiledComposedDisplay, type ComposedDisplayPen, type ComposedDisplayReading } from './compose.ts'
 import { COMPOSED_EVIDENCE_MAX, type DisplayEvidence, type DisplayEvidenceKind } from './composition.ts'
 import { isPast } from './display-text.ts'
+import { icThresholdsForSignal } from './ic-thresholds.ts'
 import { itemBinding, type MimicItem } from './mimic/bindings.ts'
 import { itemLook, type SampleIndex } from './mimic/evaluate.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
-import { overviewKeyValues, plantNowOf } from './overview-key-values.ts'
+import { overviewCandidates, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
+import { limitsInForce } from './trend-reading.ts'
 
 // The evidence a composed display carries besides what the agent chose: what
 // the Plant's model says bears on the question now, added by World and
@@ -44,9 +46,12 @@ const shortLabel = (system: ProcessPlantRuntimeInstance, component: number): str
  *   one loop, the same reading on the healthiest other loop (the fewest
  *   active alarms, then nearest the others' median); shown on some loops,
  *   the rest;
- * - mode: what the unit overview leads with in this mode, in an annunciator
- *   system the question's primary values alarm in (the subcooling margin
- *   beside a falling pressurizer pressure after a trip);
+ * - mode: what the unit watches in this mode (what its overview leads with,
+ *   and what it would lead with given room), in an annunciator system the
+ *   question's primary values alarm in (the subcooling margin beside a
+ *   falling pressurizer pressure after a trip): what the overview leads
+ *   with, and of the rest what the display would lead with as off normal,
+ *   heading for a limit or past one, most telling first;
  * - flow: along a drawn line-up, the header flow each drawn header carries
  *   and each drawn pump feeds.
  * Equipment a drawing shows says its own command and state, so it is never a
@@ -57,6 +62,7 @@ export const displayEvidence = (
   display: CompiledComposedDisplay,
   { now, readings }: ComposedDisplayReading,
   sample: EvidenceSample,
+  recordedSeriesIds: ReadonlySet<string>,
 ): ReadonlyArray<DisplayEvidence> => {
   const plant = system.plant
   const graph = plant.graph
@@ -170,8 +176,20 @@ export const displayEvidence = (
     .flatMap(rule => rule.effects.flatMap(effect => effect.type === 'alarm.enter' && effect.annunciator?.system !== undefined ? [effect.annunciator.system] : []))
   const asked = new Set(primary.flatMap(pen => systemsOf(pen.path)))
   const modeLabel = now.mode === undefined || now.mode === null ? 'this mode' : now.mode.label
-  for (const path of overviewKeyValues(plant, plantNowOf(system))) {
-    if (systemsOf(path).some(name => asked.has(name))) add(path, 'mode', `what the unit leads with in ${modeLabel}`)
+  const plantNow = plantNowOf(system)
+  const leads = new Set(overviewKeyValues(plant, plantNow))
+  const { leads: candidates, ends } = overviewCandidates(plant, plantNow)
+  // Ranked as the display ranks what it leads with, so where the slots run short the most telling are kept: the
+  // shortest time to a limit from the Run's history, past a trip limit, past an alarm limit, the nearest. What the
+  // overview leads with is added; a value it has no room for only off normal (heading for a limit, or past one):
+  // containment pressure standing at normal 7 kPa below its alarm is not, a subcooling margin falling towards its
+  // alarm is. Only a value with a limit in force can be off normal, so only those and the leads are read.
+  const limited = (path: VariablePath): boolean => limitsInForce(icThresholdsForSignal(plant, path).thresholds, now.mode).length > 0
+  const watched = [...candidates, ...ends].filter(path => systemsOf(path).some(name => asked.has(name)) && readable(path) && !shown.has(String(path))
+    && (leads.has(path) || limited(path)))
+  for (const { path, offNormal } of rankedAsRead(system, watched, now, recordedSeriesIds)) {
+    if (leads.has(path)) add(path, 'mode', `what the unit leads with in ${modeLabel}`)
+    else if (offNormal) add(path, 'mode', `what the unit watches in ${modeLabel}`)
   }
 
   // Flow: along a drawn line-up.

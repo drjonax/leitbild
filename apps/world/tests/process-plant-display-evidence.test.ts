@@ -124,24 +124,26 @@ describe('what World adds to a composed display', () => {
     expect(content.items.some(item => item.names.includes('MFW-B-CV-POS'))).toBe(true)
   }, 60_000)
 
-  test('PORV open: the safety injection it set off fills a free place of the agent\'s readouts', () => {
+  test('PORV open: the safety injection it set off and the subcooling margin fill the free places of the agent\'s readouts', () => {
     // Run 22: pressure 10.7 MPa falling with the PORV stuck at 35 %; the display showed no subcooling margin. The
-    // overview in Hot standby now leads with containment pressure, which SI, steam line isolation and spray guard
-    // through Modes 3 and 4, so the subcooling margin is no longer among its six leads and is not added.
+    // overview in Hot standby leads with containment pressure, which SI, steam line isolation and spray guard through
+    // Modes 3 and 4, and has no room for the subcooling margin; the unit still watches it, and falling towards its
+    // alarm it is off normal, so it is added. Containment pressure, at normal, is not.
     const { compose, read } = situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 2)
     const { evidence, display, result } = compose('Pressurizer depressurization', ['PT-455', 'PORV-456A', 'PZR-LVL'], [
       { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('PZR-LVL')] },
       { kind: 'readouts', signals: [signal('pressurizer.reliefFlowKgPerS'), signal('PORV-456A-POS'), signal('PORV-456A'), signal('MOV-8000A-POS')] },
       { kind: 'alarms', scope: 'related' },
     ])
-    expect(listed(evidence)).toEqual([['safetyInjectionHeader.outletFlowKgPerS', 'delivers']])
+    expect(listed(evidence)).toEqual([['safetyInjectionHeader.outletFlowKgPerS', 'delivers'], ['vessel.subcoolingMarginC', 'mode']])
     expect(read('safetyInjectionHeader.outletFlowKgPerS')).toBeGreaterThan(30)
+    expect(evidence[1]!.reason).toBe('what the unit watches in Hot standby')
     // The four readouts left two places in their second row: no panel and no height are added.
     expect(display.panels.map(panel => panel.kind)).toEqual(['trend', 'readouts', 'alarms'])
     const readouts = display.panels[1]!
     if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
     expect(readouts.added).toBeUndefined()
-    expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, null, 'delivers'])
+    expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, null, 'delivers', 'mode'])
     expect(result.view.height).toBe(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
   }, 60_000)
 

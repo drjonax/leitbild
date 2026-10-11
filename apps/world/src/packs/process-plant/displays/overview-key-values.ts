@@ -35,6 +35,16 @@ const readableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolea
  * turbine stop valve's position, a breaker's contacts).
  */
 export const overviewKeyValues = (plant: CompiledProcessPlant, now: PlantNow): ReadonlyArray<VariablePath> => {
+  const { leads, ends } = overviewCandidates(plant, now)
+  return [...leads.slice(0, Math.max(0, COMPOSED_READOUTS_MAX_SIGNALS - ends.length)), ...ends].slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
+}
+
+/**
+ * Every value the unit watches in the mode, in the order the overview leads
+ * with them (overviewKeyValues): the leads, of which as many as there is room
+ * for beside the energy ends, and the ends.
+ */
+export const overviewCandidates = (plant: CompiledProcessPlant, now: PlantNow): { readonly leads: ReadonlyArray<VariablePath>; readonly ends: ReadonlyArray<VariablePath> } => {
   const graph = plant.graph
   const ownerOf = (path: VariablePath) => {
     const binding = graph.signalBindingByPath.get(path)
@@ -69,7 +79,7 @@ export const overviewKeyValues = (plant: CompiledProcessPlant, now: PlantNow): R
     .filter(component => watched.has(component.index) && component.semantics.energy.some(role => role.role === 'source' || role.role === 'sink'))
     .flatMap(component => component.semantics.keyValues.slice(0, 1)))].filter(readable)
   const leads = [...new Set([...guarding, ...delivered, ...keyed])].filter(path => leadable(path) && !ends.includes(path))
-  return [...leads.slice(0, Math.max(0, COMPOSED_READOUTS_MAX_SIGNALS - ends.length)), ...ends].slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
+  return { leads, ends }
 }
 
 /**
