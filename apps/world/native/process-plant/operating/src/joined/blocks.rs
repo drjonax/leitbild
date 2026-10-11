@@ -13,6 +13,7 @@
 use super::{
     nuclear::{LinearTemplate, Nuclear, RegionWater, Target},
     operator::{Joined, LocalCoupler, LocalRows, OwnerRows},
+    solids::FUEL_HEAT_SPLIT,
 };
 use crate::{
     kinetics,
@@ -451,8 +452,8 @@ pub fn joined_pattern<P: Properties + WaterProperties>(
     let solids = joined.solids();
     let deposition = joined.nuclear().deposition();
     // A half's fuel heat is a source of its two fuel energy rows only
-    // (thermal::fuel_heat_rates); the surface and clad rows do not read it.
-    // The assembly refuses any fuel-heat response outside these rows.
+    // (solids::FUEL_HEAT_SPLIT); the surface, helium and clad rows do not
+    // read it.
     let fuel_heat = |columns: &mut Vec<BTreeSet<usize>>, a: usize, col: usize| {
         for k in 0..2 {
             columns[col].insert(o.solids + solids.energy(a, k));
@@ -937,6 +938,14 @@ fn assemble<P: Properties + WaterProperties>(
     } else {
         BTreeSet::new()
     };
+    // Each half's two fuel energy rows: its fuel heat enters them alone,
+    // through the solids' constant split.
+    let fuel_rows: Vec<[usize; 2]> = {
+        let solids = joined.solids();
+        (0..solids.halves())
+            .map(|a| [0, 1].map(|k| o.solids + solids.energy(a, k)))
+            .collect()
+    };
     let (network, mut coupler) = joined.local_parts(t, y, yp, cj);
     let regular = network.pzr.cell;
     let held = Held::new(network.properties());
@@ -1055,17 +1064,20 @@ fn assemble<P: Properties + WaterProperties>(
             }
         }
         clock.book("nuclear columns: coolant heat replays", started, 0.);
-        // Fuel heat: each half's solid rows per W, through the solids' split.
+        // Fuel heat: a half's fuel energy rows are `rate - split_k fuel_w`
+        // in physical units over their row scales (solids::FUEL_HEAT_SPLIT).
         let started = clock.now();
         for (a, columns) in &fuel_heat {
-            coupler.fuel_heat_column(*a, &replay.fluid(), &mut owner)?;
+            let rows = fuel_rows
+                .get(*a)
+                .ok_or_else(|| fatal(format!("fuel heat of half {a} outside the solids")))?;
             for (col, w) in columns {
-                for (row, v) in &owner.rows {
-                    sink.add(*row, *col, w * v.direction)?;
+                for (row, split) in rows.iter().zip(FUEL_HEAT_SPLIT) {
+                    sink.add(*row, *col, -split * w / ports.rs[*row])?;
                 }
             }
         }
-        clock.book("nuclear columns: fuel heat columns", started, 0.);
+        clock.book("nuclear columns: fuel heat", started, 0.);
     }
     let zero = [[Scalar::constant(0.); 3]; 2];
     let mut buffer = vec![zero; regular];
