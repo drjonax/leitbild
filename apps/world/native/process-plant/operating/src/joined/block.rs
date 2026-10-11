@@ -232,6 +232,10 @@ pub enum Command {
     /// trip through its named cause and the holding circuit opens after the
     /// declared delay (H6). Each owner applies its own part.
     TurbineTrip,
+    /// The manual reactor-trip interrupt: the holding circuit opens at the
+    /// command's time, with no turbine trip (G7's contrary case). The steam
+    /// demand stays at its constant A/B values as a declared boundary.
+    ManualReactorTrip,
 }
 
 /// Structural dependencies of one block, in its own indices, for the joined
@@ -377,4 +381,8 @@ pub trait Rods<P> {
     /// The earliest declared time event strictly after `t` (for example the
     /// holding circuit's opening after its declared delay), or `None`.
     fn next_time_event(&self, t: f64) -> Option<f64>;
+    /// Startup only: solve the owner's algebraic coordinates at the composed
+    /// fluid state (the guide passages' steady currents), after which
+    /// `prepared()` holds them. No differential coordinate changes.
+    fn prepare(&mut self, properties: &P, fluid: &Fluid<'_>) -> Result<Transaction, Failure>;
 }
