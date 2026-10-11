@@ -28,8 +28,14 @@ export interface GridBranchProtectionState {
 export interface GridProtectionState {
   /** Elapsed time of the last relay sample; null before the first. */
   lastSampleElapsedMs: number | null
-  /** Thermal states start at their steady state for the flows of the Grid's first solve. */
+  /** Thermal states start at their steady state for the flows of the Grid's first solve after its starting dispatch. */
   thermalInitialised: boolean
+  /**
+   * A fresh Grid whose connected systems have not reported yet: its starting dispatch is still to
+   * come, so relays neither initialise nor sample (they would act on flows without the systems'
+   * power). The adapter clears it once it has dispatched the Grid; it is never persisted.
+   */
+  startingDispatchPending: boolean
   /** Generators whose trip has been recorded as a protection event, with what tripped them; a reset removes them. */
   readonly recordedGeneratorTrips: Map<string, GridGeneratorTripRecord>
 }
@@ -49,5 +55,6 @@ export const createGridProtectionState = (restored?: {
 }): GridProtectionState => ({
   lastSampleElapsedMs: restored?.lastSampleElapsedMs ?? null,
   thermalInitialised: restored?.thermalInitialised ?? false,
+  startingDispatchPending: false,
   recordedGeneratorTrips: new Map((restored?.recordedGeneratorTrips ?? []).map(item => [item.generatorId, { element: item.element, elementId: item.elementId }])),
 })

@@ -58,12 +58,13 @@ export const createGridNetworkSampler = (grid: GridRuntimeInstance, startMs: num
       solveGridNetwork(grid, islands, (epochMs - lastSolveMs) / 1_000)
       lastSolveMs = epochMs
       let current = islands
-      if (!grid.protection.thermalInitialised) {
+      const armed = !grid.protection.startingDispatchPending
+      if (armed && !grid.protection.thermalInitialised) {
         initialiseBranchThermalStates(grid)
         grid.protection.thermalInitialised = true
       }
       const instant = sampleInstant(elapsedMs)
-      if (settings.enabled && instant !== null) {
+      if (settings.enabled && armed && instant !== null) {
         const last = grid.protection.lastSampleElapsedMs
         grid.protection.lastSampleElapsedMs = instant
         let trips = sampleBranchRelays(grid, settings, instant, last === null ? settings.sampleIntervalSeconds : (instant - last) / 1_000)

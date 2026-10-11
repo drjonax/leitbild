@@ -111,12 +111,15 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       const definition = compileGridDefinition(item.definition)
       const restored = restoredGridRuntimeStateFor(runtimeState, item.object.id, definition.definitionDigest)
       if (restored !== undefined) initiallyBalancedGridIds.add(item.object.id)
-      grids.set(item.object.id, createGridRuntimeInstance({
+      const grid = createGridRuntimeInstance({
         definition,
         at: initialAt,
         connections: networkConnectionsFor(config.scenario.connections, item.object.id),
         ...(restored === undefined ? {} : { restored }),
-      }))
+      })
+      // A fresh Grid with connected systems is dispatched once they report; its relays wait for that.
+      if (restored === undefined && grid.externalConnections.size > 0) grid.protection.startingDispatchPending = true
+      grids.set(item.object.id, grid)
     }
     for (const grid of grids.values()) advanceGrid(grid, 0, initialAt)
     const objectsById = new Map<ObjectId, OperationalObject>(projectedInitialGridObjects({ objects: initialObjects, grids, at: initialAt }).map(object => [object.id, object]))
@@ -233,6 +236,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
           observedStartupConnections.has(`${grid.definition.gridId}\u0000${connection.definition.network.portId}`))
         if (!allObserved) continue
         dispatchGridFromLiveIslands(grid, Date.parse(currentSimulationTime()))
+        grid.protection.startingDispatchPending = false
         initiallyBalancedGridIds.add(grid.definition.gridId)
       }
     }
