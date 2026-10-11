@@ -10,7 +10,8 @@
 //! and seizure, each in a capped event window against the 2.5 ms-capped and
 //! rtol/100 references (request 2, E0-E3, with request 3's cap-cycle floor,
 //! H2), then restarted at the window's end by the exact consistent start and
-//! continued 10 s at stock settings, its recovery judged on cost (H1).
+//! continued 10 s at stock settings, its recovery judged on cost (H1) beside
+//! a never-capped reference run, R0, that is reported and judges nothing.
 //! Credited outputs are observed every 0.002 s through one stock IDA root
 //! function, which changes no step, and are compared after the contract's
 //! zero-phase low-pass. A decisive failure stops dependent runs and is
@@ -621,6 +622,19 @@ impl Counts {
             linear_setups: s.linear_setups,
         }
     }
+    /// The counts after `earlier` in the same history (R0's past its
+    /// window's end).
+    fn since(self, earlier: Self) -> Self {
+        Self {
+            steps: self.steps - earlier.steps,
+            residuals: self.residuals - earlier.residuals,
+            jacobians: self.jacobians - earlier.jacobians,
+            nonlinear_iterations: self.nonlinear_iterations - earlier.nonlinear_iterations,
+            error_failures: self.error_failures - earlier.error_failures,
+            convergence_failures: self.convergence_failures - earlier.convergence_failures,
+            linear_setups: self.linear_setups - earlier.linear_setups,
+        }
+    }
     /// The counts of one run over two histories: these, then `later`'s
     /// after a restart (stock restarts its counters at IDAReInit).
     fn plus(self, later: Self) -> Self {
@@ -652,6 +666,18 @@ struct Continuation {
     duration_s: f64,
     step_cap: i64,
 }
+/// A run's stock counters (from its start) and step at one of its outputs,
+/// which stock reaches by interpolation, with no forced stop: the step that
+/// straddles the output counts before it.
+#[derive(Clone, Copy, Debug, Default)]
+struct Mark {
+    t: f64,
+    counts: Counts,
+    last_step_s: f64,
+    last_order: i32,
+    /// The step stock will attempt next.
+    current_step_s: f64,
+}
 struct Spec<'a> {
     rtol: f64,
     atol: &'a [f64],
@@ -671,6 +697,9 @@ struct Spec<'a> {
     newton_coefficient: Option<f64>,
     observation: Option<Observation>,
     continuation: Option<Continuation>,
+    /// An output time at which the run's counts and step are recorded
+    /// ([`Mark`]) without a forced stop: R0's window end.
+    mark_s: Option<f64>,
 }
 /// A run's declared integration from the gates: contract order and output
 /// interval, the work bound as CPU cap and the phantom-momentum guard;
@@ -690,6 +719,7 @@ fn spec<'a>(gates: &Gates, duration_s: f64, rtol: f64, atol: &'a [f64], step_cap
         newton_coefficient: None,
         observation: None,
         continuation: None,
+        mark_s: None,
     }
 }
 /// The same spec, observed on `probe` every `interval_s` over its window.
@@ -726,8 +756,11 @@ struct Run {
     initial_pair: Option<ConsistentPair>,
     /// H1's restart at the window's forced stop, when the run continued.
     restart_pair: Option<ConsistentPair>,
+    /// The counts and step at the spec's mark, when it was reached.
+    mark: Option<Mark>,
     failure: Option<String>,
     rtol: f64,
+    max_order: usize,
     max_step_s: f64,
     newton_coefficient: Option<f64>,
     duration_s: f64,
@@ -858,10 +891,21 @@ fn advance_run(
         newton_coefficient,
         observation,
         continuation,
+        mark_s,
     } = spec;
     let started = cpu_s();
     let mut y = y0.to_vec();
     let weights = error_weights(y0, rtol, atol);
+    let end_s = duration_s + continuation.as_ref().map_or(0., |c| c.duration_s);
+    // The mark's index on the output grid k * output_s.
+    let mark_output = mark_s.map(|m| {
+        assert!(
+            whole(m, output_s) && m < end_s,
+            "a mark at {m} s must be an output before the run's end"
+        );
+        (m / output_s).round() as usize
+    });
+    let mut mark = None;
     let (mut yp, initial_pair, mut failure) = match consistent_start(
         &mut network,
         0.,
@@ -878,7 +922,6 @@ fn advance_run(
             Some(format!("consistent-rate solve: {e:?}")),
         ),
     };
-    let end_s = duration_s + continuation.as_ref().map_or(0., |c| c.duration_s);
     let (mut probe, mut clock) = match observation {
         Some(o) => (
             Some(o.probe),
@@ -957,6 +1000,16 @@ fn advance_run(
                 s.last_step = stats.last_step;
                 if in_window && clock.is_some() {
                     fine.push(s.credited());
+                }
+                if mark_output == Some(k) {
+                    let here = Counts::of(&stats);
+                    mark = Some(Mark {
+                        t,
+                        counts: window.map_or(here, |w| w.plus(here)),
+                        last_step_s: stats.last_step,
+                        last_order: stats.last_order,
+                        current_step_s: stats.current_step,
+                    });
                 }
                 let (cap, phase) = if in_window {
                     (step_cap, "run")
@@ -1060,8 +1113,10 @@ fn advance_run(
         jacobian_wall_s: network.counters.jacobian_wall_s,
         initial_pair,
         restart_pair,
+        mark,
         failure,
         rtol,
+        max_order,
         max_step_s,
         newton_coefficient,
         duration_s,
@@ -1098,7 +1153,7 @@ fn run_json(run: &Run) -> Value {
         .fold(0., f64::max);
     let continued = run.end_s > run.duration_s;
     let continuation = continued.then(|| json!({"from_s":run.duration_s,"restart":DECLARED_RESTART,"max_step_s":null,"newton_coefficient":STOCK_NEWTON_COEFFICIENT}));
-    json!({"configuration":{"rtol":run.rtol,"max_step_s":run.max_step_s.is_finite().then_some(run.max_step_s),"newton_coefficient":run.newton_coefficient.unwrap_or(STOCK_NEWTON_COEFFICIENT),"window_s":run.duration_s,"end_s":run.end_s,"continuation":continuation},
+    json!({"configuration":{"rtol":run.rtol,"max_step_s":run.max_step_s.is_finite().then_some(run.max_step_s),"newton_coefficient":run.newton_coefficient.unwrap_or(STOCK_NEWTON_COEFFICIENT),"max_order":run.max_order,"window_s":run.duration_s,"end_s":run.end_s,"continuation":continuation},
         "initial_pair":run.initial_pair,"restart_pair":run.restart_pair,"pzr":pzr,
         "steps":run.total.steps,"residuals":run.total.residuals,"jacobians":run.total.jacobians,"error_failures":run.total.error_failures,"convergence_failures":run.total.convergence_failures,
         "counts":run.total.json(),"window_counts":run.window.map(Counts::json),"continuation_counts":run.continuation.map(Counts::json),
@@ -1492,6 +1547,45 @@ fn recovery(gates: &Gates, run: &Run, window_s: f64, post_window_s: f64) -> (Val
     )
 }
 
+/// The diagnostic beside H1's cost gate, never a gate: H1 bounds the
+/// window's and continuation's cost together, so a continuation that never
+/// left the cap's rate could still pass it. R0, the never-capped run from
+/// the same event start in one history, shows what the plant asks for over
+/// the same interval: its steps, error-test and Newton convergence failures
+/// over the window and over [window, window + post], its step at the
+/// window's end, and the event run's continuation steps over R0's where both
+/// covered that interval. R0's window counts are read at its window-end
+/// output ([`Mark`]). Reaching R0's run cap is reported, not failed.
+fn natural_reference(
+    run: &Run,
+    r0: &Run,
+    window_s: f64,
+    post_window_s: f64,
+    run_cap_steps: i64,
+) -> Value {
+    let span = window_s + post_window_s;
+    let reached = |r: &Run| r.samples.last().map_or(0., |s| s.t);
+    let covered = |r: &Run| reached(r) >= span;
+    let window = r0.mark.map(|m| m.counts);
+    let interval = window.map(|w| r0.total.since(w));
+    let counts = |c: Counts| json!({"steps":c.steps,"error_failures":c.error_failures,"convergence_failures":c.convergence_failures});
+    let ratio = run
+        .continuation
+        .zip(interval)
+        .filter(|_| covered(run) && covered(r0))
+        .map(|(c, i)| c.steps as f64 / i.steps as f64);
+    let rate = interval
+        .filter(|_| covered(r0))
+        .map(|i| i.steps as f64 / post_window_s);
+    json!({"diagnostic":"never a gate: the never-capped run R0 from the same event start, one IDA history to window + post_window_s with no forced stop or restart at the window's end; its window counts are read at the window-end output, which stock reaches by interpolation, so the step straddling the window's end counts in R0's window",
+        "configuration":{"rtol":r0.rtol,"atol_factor":1.,"max_step_s":r0.max_step_s.is_finite().then_some(r0.max_step_s),"newton_coefficient":r0.newton_coefficient.unwrap_or(STOCK_NEWTON_COEFFICIENT),"max_order":r0.max_order,"run_cap_steps":run_cap_steps},
+        "window":window.map(counts),"interval":interval.map(counts),"interval_s":[window_s, span],"interval_steps_per_s":rate,
+        "marked_at_s":r0.mark.map(|m| m.t),"step_at_window_end_s":r0.mark.map(|m| m.last_step_s),"order_at_window_end":r0.mark.map(|m| m.last_order),"next_step_at_window_end_s":r0.mark.map(|m| m.current_step_s),
+        "continuation_over_r0_steps":ratio,"continuation_steps":run.continuation.map(|c| c.steps),
+        "reached_s":reached(r0),"covered":covered(r0),"run_cap_reached":r0.total.steps > run_cap_steps,"failure":r0.failure,
+        "cpu_s":r0.cpu_s,"solver_cpu_s":r0.solver_cpu_s,"run":run_json(r0)})
+}
+
 /// One declared event from its event-changed state: the window run (E2:
 /// 20 ms cap, tightened Newton coefficient), restarted at the window's end
 /// by the exact consistent start and continued at stock settings through
@@ -1499,6 +1593,9 @@ fn recovery(gates: &Gates, run: &Run, window_s: f64, post_window_s: f64) -> (Val
 /// BDF2 at the second refinement's tolerances with no cap and stock's
 /// coefficient (E3). Over the window, credited outputs must agree with both
 /// within the contract, and the cap-cycle check holds above its floor (H2).
+/// R0, the never-capped run over the window and the recovery interval, is
+/// reported beside the recovery gate ([`natural_reference`]) and judges
+/// nothing; the returned runs are the gated three.
 fn event_case(
     event: &dyn Fn() -> (Network<If97>, Vec<f64>, Vec<f64>),
     taps: &Taps,
@@ -1541,6 +1638,16 @@ fn event_case(
     let (network, y, ids) = event();
     let s = spec(gates, window_s, rtol * f, &second, i64::MAX);
     let r2 = advance_run(network, taps, &y, &ids, observed(s, event().0, dt), &never);
+    // R0, diagnostic only: never capped, contract tolerances, stock's
+    // coefficient and order cap, one history over the window and the
+    // recovery interval, its window counts marked at the window's end, and
+    // capped at the recovery's run cap.
+    let span = window_s + post_window_s;
+    let r0_cap = gates.cap_steps(span);
+    let (network, y, ids) = event();
+    let mut s = spec(gates, span, rtol, atol, r0_cap);
+    s.mark_s = Some(window_s);
+    let r0 = advance_run(network, taps, &y, &ids, s, &never);
     let vs_r1 = compare(&run, &r1, window_s, dt, output, cutoff);
     let vs_r2 = compare(&run, &r2, window_s, dt, output, cutoff);
     let r1_vs_r2 = compare(&r1, &r2, window_s, dt, output, cutoff);
@@ -1559,8 +1666,9 @@ fn event_case(
     let window_steps = run.window.map(|c| c.steps);
     let projected = window_steps.map(|n| n as f64 * gates.projected_full_unit_step_s / window_s);
     let budget_pass = projected.is_some_and(|p| p <= ew.budget_cpu_s_per_s);
-    // H1: the window and its continuation on cost.
-    let (recovery, recovery_pass) = recovery(gates, &run, window_s, post_window_s);
+    // H1: the window and its continuation on cost, with R0 beside it.
+    let (mut recovery, recovery_pass) = recovery(gates, &run, window_s, post_window_s);
+    recovery["natural_reference"] = natural_reference(&run, &r0, window_s, post_window_s, r0_cap);
     let pass = run.failure.is_none()
         && r1.failure.is_none()
         && r2.failure.is_none()
@@ -1694,7 +1802,7 @@ fn s1_hydraulics_admission() {
         .expect("packet hash");
     let dt = gates.comparison.observation_s;
     let cutoff = budgets.uncredited_above_hz;
-    let mut receipt = json!({"kind":"s1-hydraulics-admission","declaration":"S1 re-declared under owner decision request 2 (E0-E3) and amended under owner decision request 3 (H1 recovery restart and cost gate, replacing E4; H2 cap-cycle floor) before run 5","packet":packet_path,"packet_sha256":packet_sha256,"app_commit":git(&["rev-parse","HEAD"]),"app_worktree_dirty":!git(&["status","--porcelain"]).is_empty(),"wiki":wiki,"wiki_commit":git(&["-C",wiki.as_str(),"rev-parse","HEAD"]),"wiki_worktree_dirty":!git(&["-C",wiki.as_str(),"status","--porcelain"]).is_empty(),"gates":format!("{gates:?}"),"budgets":format!("{budgets:?}"),"load_average_start":load_start,
+    let mut receipt = json!({"kind":"s1-hydraulics-admission","declaration":"S1 re-declared under owner decision request 2 (E0-E3) and amended under owner decision request 3 (H1 recovery restart and cost gate, replacing E4, with H1a's convergence-failure allowance and the never-capped R0 reported beside it; H2 cap-cycle floor) before run 5","packet":packet_path,"packet_sha256":packet_sha256,"app_commit":git(&["rev-parse","HEAD"]),"app_worktree_dirty":!git(&["status","--porcelain"]).is_empty(),"wiki":wiki,"wiki_commit":git(&["-C",wiki.as_str(),"rev-parse","HEAD"]),"wiki_worktree_dirty":!git(&["-C",wiki.as_str(),"status","--porcelain"]).is_empty(),"gates":format!("{gates:?}"),"budgets":format!("{budgets:?}"),"load_average_start":load_start,
         "observation":{"interval_s":dt,"method":"one stock IDA root function g = t - next per observation time inside each output interval, located on IDA's own interpolant; the same history continues, so no step, order, Newton iteration or Jacobian changes; observed states are evaluated on a probe network configured as the run's"},
         "comparison":{"filter":DECLARED_FILTER,"cutoff_hz":cutoff,"design":"two bilinear biquads prewarped at the cutoff (Q = 1/(2 cos(pi/8)) and 1/(2 cos(3 pi/8))), forward then backward (|H|^2, -6 dB at the cutoff), each pass started in steady state over odd reflection padding","padding_s":padding_s(cutoff),
             "metrics":{"pzr_roof_bias_pa":"mean |filtered difference| over every observation of the compared interval","pzr_roof_sample_noise_pa":"population standard deviation of the filtered roof error's change between successive output-interval samples","pzr_level_m, core_dp_pa, loop_flow_kg_s":"max |filtered difference| over every observation (both loops for flow)"}}});
@@ -2077,7 +2185,8 @@ fn s1_hydraulics_admission() {
     ok &= seize_pass;
     cases.insert("rcp_seizure".into(), seize);
 
-    // 5. Joint cost check and conservation identity across every run.
+    // 5. Joint cost check and conservation identity across every gated run
+    // (each event's R0 reports its own in its natural reference).
     let joint = quiet_rate.map(|r| r * gates.projected_full_unit_step_s);
     let joint_pass = joint.is_some_and(|j| j <= gates.integrator_budget_cpu_s_per_s);
     ok &= joint_pass;
@@ -2233,6 +2342,32 @@ fn s1_harness_smoke() {
         case["recovery"]["steps"].as_i64(),
         Some(window.steps + continued.steps)
     );
+    // R0 beside the gate: one never-capped history over the window and the
+    // recovery interval, marked at the window's end; its two intervals add
+    // to its total, and its CPU is stated.
+    let natural = &case["recovery"]["natural_reference"];
+    assert_eq!(natural["reached_s"].as_f64(), Some(1.), "{natural}");
+    assert_eq!(natural["covered"], json!(true), "{natural}");
+    assert_eq!(natural["failure"], Value::Null, "{natural}");
+    let steps = |part: &str| natural[part]["steps"].as_i64().unwrap();
+    assert_eq!(
+        steps("window") + steps("interval"),
+        natural["run"]["steps"].as_i64().unwrap()
+    );
+    assert!(
+        natural["step_at_window_end_s"]
+            .as_f64()
+            .is_some_and(|h| h > 0.),
+        "{natural}"
+    );
+    assert!(
+        natural["continuation_over_r0_steps"]
+            .as_f64()
+            .is_some_and(|r| r.is_finite() && r > 0.),
+        "{natural}"
+    );
+    assert!(natural["cpu_s"].as_f64().is_some_and(|c| c > 0.));
+    assert_eq!(natural["run"]["observations"], json!(0));
     // H2: every cap-cycle output reports its floor, judgement and excess
     // spectrum.
     for name in CAP_CYCLE_OUTPUTS {
@@ -3001,18 +3136,24 @@ fn the_excess_spectrum_recovers_a_tone_within_one_bin() {
     );
 }
 
-/// The amended `ld01-s1-gates` values (owner decision request 3) as a unit
-/// fixture, NOT their owner: the harness reads the wiki's block.
-const GATES_FIXTURE: &str = r#"{"relativeTolerance":1e-05,"stockScaledAbsolute":1e-08,"tracerScaledAbsolute":1e-08,"rotorScaledAbsolute":1e-08,"volumeFlowAbsolute_m3_s":0.001,"maxOrder":2,"referenceToleranceFactor":0.1,"outputInterval_s":0.1,"projectedFullUnitStep_s":0.008,"integratorBudget_cpu_s_per_s":0.35,"totalCpu_s":1200,"runCapFactor":2,"settling":{"maxSimulated_s":120,"maxCpu_s":300,"window_s":5,"rotorSpeedRelative":0.0001,"loopFlowRelativeChange":0.0005},"hold":{"duration_s":60,"measuredFrom_s":10,"maxStepsPerSecond":40,"maxResidualsPerStep":1.5},"supplyLoss":{"rotor":0,"duration_s":30},"seizure":{"rotor":0,"duration_s":10},"spectrum":{"fastModeHz":50,"lightDamping":0.001,"maxExcitationRatio":30},"blockedPathMaxVolumeFlow_m3_s":0.01,"eventWindow":{"maxStep_s":0.02,"newtonCoefficientFactor":0.1,"budget_cpu_s_per_s":0.5,"maxWindow_s":60,"fullUnitStepExit_s":0.01},"eventReference":{"maxStep_s":0.0025,"secondRefinementToleranceFactor":0.01,"capCycleUncreditedRmsRatioMax":2.0,"capCycleFloorBudgetFraction":0.1},"comparison":{"filter":"zero-phase 4th-order Butterworth","observation_s":0.002},"recovery":{"postWindow_s":10,"restart":"exact consistent start","maxConvergenceFailures":0}}"#;
+/// The amended `ld01-s1-gates` values (owner decision request 3, with its
+/// follow-up H1a) as a unit fixture, NOT their owner: the harness reads the
+/// wiki's block.
+const GATES_FIXTURE: &str = r#"{"relativeTolerance":1e-05,"stockScaledAbsolute":1e-08,"tracerScaledAbsolute":1e-08,"rotorScaledAbsolute":1e-08,"volumeFlowAbsolute_m3_s":0.001,"maxOrder":2,"referenceToleranceFactor":0.1,"outputInterval_s":0.1,"projectedFullUnitStep_s":0.008,"integratorBudget_cpu_s_per_s":0.35,"totalCpu_s":1200,"runCapFactor":2,"settling":{"maxSimulated_s":120,"maxCpu_s":300,"window_s":5,"rotorSpeedRelative":0.0001,"loopFlowRelativeChange":0.0005},"hold":{"duration_s":60,"measuredFrom_s":10,"maxStepsPerSecond":40,"maxResidualsPerStep":1.5},"supplyLoss":{"rotor":0,"duration_s":30},"seizure":{"rotor":0,"duration_s":10},"spectrum":{"fastModeHz":50,"lightDamping":0.001,"maxExcitationRatio":30},"blockedPathMaxVolumeFlow_m3_s":0.01,"eventWindow":{"maxStep_s":0.02,"newtonCoefficientFactor":0.1,"budget_cpu_s_per_s":0.5,"maxWindow_s":60,"fullUnitStepExit_s":0.01},"eventReference":{"maxStep_s":0.0025,"secondRefinementToleranceFactor":0.01,"capCycleUncreditedRmsRatioMax":2.0,"capCycleFloorBudgetFraction":0.1},"comparison":{"filter":"zero-phase 4th-order Butterworth","observation_s":0.002},"recovery":{"postWindow_s":10,"restart":"exact consistent start","maxConvergenceFailures":2}}"#;
+/// The fixture with one text replaced; the replaced text must occur.
+fn gates_fixture_with(from: &str, to: &str) -> String {
+    assert!(GATES_FIXTURE.contains(from), "the fixture has no {from}");
+    GATES_FIXTURE.replace(from, to)
+}
 
 #[test]
 fn recovery_is_judged_on_the_window_and_continuation_cost() {
     let gates: Gates = serde_json::from_str(GATES_FIXTURE).expect("fixture gates");
     gates.check(&budgets());
     // The withdrawn E4 rate factor is refused, not ignored.
-    let withdrawn = GATES_FIXTURE.replace(
-        r#""maxConvergenceFailures":0"#,
-        r#""maxConvergenceFailures":0,"maxStepRateFactor":2.0"#,
+    let withdrawn = gates_fixture_with(
+        r#""postWindow_s":10,"#,
+        r#""postWindow_s":10,"maxStepRateFactor":2.0,"#,
     );
     assert!(serde_json::from_str::<Gates>(&withdrawn).is_err());
     // E2's window gates stay: 625 and 1,875 steps, capped at 1,250 and
@@ -3053,9 +3194,24 @@ fn recovery_is_judged_on_the_window_and_continuation_cost() {
     assert_eq!(report["steps_per_s"].as_f64(), Some(65.5));
     let (report, pass) = recovery(&gates, &continued(20., 595, 656, 0, None), 10., 10.);
     assert!(!pass, "{report}");
-    // One Newton convergence failure in the continuation fails it.
-    let (report, pass) = recovery(&gates, &continued(20., 595, 100, 1, None), 10., 10.);
-    assert!(!pass, "{report}");
+    // The block's maxConvergenceFailures is the only threshold: at H1a's 2,
+    // two Newton convergence failures in the continuation pass and three
+    // fail; at H1's first-approved 0, one fails.
+    for (newton, expected) in [(2, true), (3, false)] {
+        let (report, pass) = recovery(&gates, &continued(20., 595, 100, newton, None), 10., 10.);
+        assert_eq!(pass, expected, "{report}");
+        assert_eq!(report["max_convergence_failures"], json!(2));
+    }
+    let none: Gates = serde_json::from_str(&gates_fixture_with(
+        r#""maxConvergenceFailures":2"#,
+        r#""maxConvergenceFailures":0"#,
+    ))
+    .expect("fixture gates at 0");
+    for (newton, expected) in [(0, true), (1, false)] {
+        let (report, pass) = recovery(&none, &continued(20., 595, 100, newton, None), 10., 10.);
+        assert_eq!(pass, expected, "{report}");
+        assert_eq!(report["max_convergence_failures"], json!(0));
+    }
     // Supply loss (30 s + 10 s): 1,508 window steps leave 992.
     let (report, pass) = recovery(&gates, &continued(40., 1508, 992, 0, None), 30., 10.);
     assert!(pass, "{report}");
@@ -3081,6 +3237,97 @@ fn recovery_is_judged_on_the_window_and_continuation_cost() {
     };
     let (report, pass) = recovery(&gates, &refused, 30., 10.);
     assert!(!pass && report["steps"].is_null(), "{report}");
+}
+
+#[test]
+fn the_natural_reference_reports_r0_beside_the_continuation_and_judges_nothing() {
+    let counts = |steps, error_failures, convergence_failures| Counts {
+        steps,
+        error_failures,
+        convergence_failures,
+        ..Counts::default()
+    };
+    let r0 = |reached: f64, at_window: Counts, total: Counts| Run {
+        samples: vec![Sample {
+            t: reached,
+            ..Sample::default()
+        }],
+        mark: Some(Mark {
+            t: 10.,
+            counts: at_window,
+            last_step_s: 0.06,
+            last_order: 2,
+            current_step_s: 0.07,
+        }),
+        total,
+        rtol: 1e-5,
+        max_step_s: f64::INFINITY,
+        max_order: 2,
+        cpu_s: 1.5,
+        ..Run::default()
+    };
+    let run = Run {
+        samples: vec![Sample {
+            t: 20.,
+            ..Sample::default()
+        }],
+        window: Some(counts(595, 1, 0)),
+        continuation: Some(counts(120, 3, 0)),
+        ..Run::default()
+    };
+    // R0 took 300 steps over the 10 s window and 150 over [10, 20] s: the
+    // continuation's 120 are 0.8 of R0's over the same interval.
+    let report = natural_reference(
+        &run,
+        &r0(20., counts(300, 2, 0), counts(450, 5, 1)),
+        10.,
+        10.,
+        2500,
+    );
+    assert_eq!(
+        report["window"],
+        json!({"steps":300,"error_failures":2,"convergence_failures":0})
+    );
+    assert_eq!(
+        report["interval"],
+        json!({"steps":150,"error_failures":3,"convergence_failures":1})
+    );
+    assert_eq!(report["continuation_over_r0_steps"].as_f64(), Some(0.8));
+    assert_eq!(report["interval_steps_per_s"].as_f64(), Some(15.));
+    assert_eq!(report["step_at_window_end_s"].as_f64(), Some(0.06));
+    assert_eq!(report["cpu_s"].as_f64(), Some(1.5));
+    let configuration = &report["configuration"];
+    assert_eq!(
+        (
+            &configuration["max_step_s"],
+            &configuration["newton_coefficient"]
+        ),
+        (&Value::Null, &json!(STOCK_NEWTON_COEFFICIENT))
+    );
+    assert_eq!(
+        (&report["covered"], &report["run_cap_reached"]),
+        (&json!(true), &json!(false))
+    );
+    // An R0 that stopped at its cap short of the interval's end is reported
+    // with its counts so far and no ratio; it is never a failure of the
+    // event, since the report carries no verdict.
+    let short = natural_reference(
+        &run,
+        &r0(16.8, counts(300, 2, 0), counts(2501, 9, 0)),
+        10.,
+        10.,
+        2500,
+    );
+    assert!(
+        short["continuation_over_r0_steps"].is_null() && short["interval_steps_per_s"].is_null(),
+        "{short}"
+    );
+    assert_eq!(
+        (&short["covered"], &short["run_cap_reached"]),
+        (&json!(false), &json!(true))
+    );
+    assert_eq!(short["interval"]["steps"], json!(2201));
+    assert!(short.get("pass").is_none());
 }
 
 /// y0' = -y0 (differential) and 0 = y1 + y1^3 - y0 (algebraic, nonlinear),
