@@ -10,8 +10,15 @@ interface ElectricalPortStateBase {
 }
 
 /**
- * A live port: positive finite frequency (Hz) and voltage (pu). The voltage is null while the
- * network side has no solved voltage there (its AC load flow did not converge); it is never guessed.
+ * A live port: it is energised and has a positive finite frequency (Hz).
+ *
+ * voltagePu is the solved voltage magnitude at the port (pu of its nominal kV), or null when the
+ * port is energised but the network voltage there is unsolved: the network's AC load flow of the
+ * port's island did not converge, so no steady-state voltage exists to report. Null is never a
+ * stand-in for a guessed, nominal or DC value, and it is only valid while energised (a dead port
+ * reports 0). A system reading a network port with voltage null treats it as lost offsite power,
+ * exactly like a dead port: it takes no supply and exchanges no power there until a solved voltage
+ * returns.
  */
 export interface EnergizedElectricalPortState extends ElectricalPortStateBase {
   readonly energized: true
@@ -65,6 +72,7 @@ export const electricalPortStateSchema = z.discriminatedUnion('energized', [
   z.object({
     ...electricalPortStateBaseShape,
     energized: z.literal(true),
+    // null: energised, network voltage unsolved (see EnergizedElectricalPortState).
     voltagePu: z.number().finite().positive().nullable(),
     frequencyHz: z.number().finite().positive(),
   }).strict(),
