@@ -1,5 +1,5 @@
 import type { ProcessSignalBinding, VariablePath } from '../graph/index.ts'
-import { linkCarrier, nextLinks } from '../graph/index.ts'
+import { downstreamLinks, linkCarrier, nextLinks } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
@@ -63,7 +63,7 @@ export const conditionBindings = (plant: CompiledProcessPlant, condition: Proces
  * equipment downstream that declares one (the header a pump discharges
  * into), within the reach a mimic follows.
  */
-const throughputDownstream = (plant: CompiledProcessPlant, component: number, reach: number): ReadonlyArray<VariablePath> => {
+export const throughputDownstream = (plant: CompiledProcessPlant, component: number, reach: number): ReadonlyArray<VariablePath> => {
   const graph = plant.graph
   const outgoing = (graph.outgoingLinksByComponent[component] ?? []).map(index => graph.links[index]!).filter(link => link.kind === 'fluidFlow')
   const carriers = new Set(outgoing.map(linkCarrier))
@@ -77,6 +77,13 @@ const throughputDownstream = (plant: CompiledProcessPlant, component: number, re
     for (const link of frontier) seen.add(link.index)
   }
   return []
+}
+
+/** Whether what a component sends out reaches another within `reach` links downstream, along the services it delivers. */
+export const feeds = (plant: CompiledProcessPlant, source: number, target: number, reach: number): boolean => {
+  const graph = plant.graph
+  const carriers = new Set((graph.outgoingLinksByComponent[source] ?? []).map(index => graph.links[index]!).filter(link => link.kind === 'fluidFlow').map(linkCarrier))
+  return [...downstreamLinks(graph, [source], carriers, reach)].some(index => graph.links[index]!.toComponentIndex === target)
 }
 
 /** Whether a command starts a pump (or other running equipment) or stops it; null for any other command. */
@@ -101,10 +108,20 @@ export const actionFlows = (plant: CompiledProcessPlant, action: AutomaticAction
   return [...flows].map(([path, effect]) => ({ path, effect }))
 }
 
-/** The flows an action's commanded equipment sends straight into a component: the lines from them into it (auxiliary feed into one steam generator). */
+/**
+ * The equipment an action runs or moves: the components whose declared run
+ * or position command it writes (pumps it starts, valves it opens or shuts),
+ * not other commands it writes (rod insertion).
+ */
+export const actionEquipment = (plant: CompiledProcessPlant, action: AutomaticAction): ReadonlyArray<number> => [...new Set(action.writes
+  .filter(write => plant.graph.components[write.component]!.semantics.aspects
+    .some(aspect => (aspect.aspect === 'running' || aspect.aspect === 'position') && aspect.command === write.binding.path))
+  .map(write => write.component))]
+
+/** The flows the equipment an action runs or moves sends straight into a component: the lines from it into the component (auxiliary feed into one steam generator). */
 export const actionFlowsInto = (plant: CompiledProcessPlant, action: AutomaticAction, component: number): ReadonlyArray<VariablePath> => {
   const graph = plant.graph
-  const commanded = new Set(action.writes.map(write => write.component))
+  const commanded = new Set(actionEquipment(plant, action))
   return [...new Set((graph.incomingLinksByComponent[component] ?? [])
     .map(index => graph.links[index]!)
     .filter(link => link.kind === 'fluidFlow' && commanded.has(link.fromComponentIndex))

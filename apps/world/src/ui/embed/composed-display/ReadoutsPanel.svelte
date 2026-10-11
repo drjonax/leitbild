@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ComposedReadoutsPanel } from '../../../packs/process-plant/displays/compose.ts'
-  import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
+  import { composedDisplayLayout, type DisplayEvidenceKind } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
   import { displayValue, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
@@ -55,6 +55,8 @@
   // Past a limit, or off its instrument's span, the line reads as a caution.
   const beyond = (reading: TrendReading): boolean => reading.offScale !== null || reading.limit?.kind === 'past'
   const sampled = (path: string) => latest?.values.find(entry => entry.path === path)
+  // What World added to an agent's display says why on its own row, in a word (the tooltip has the reason).
+  const ADDED_WORDS: Readonly<Record<DisplayEvidenceKind, string>> = { cause: 'cause', delivers: 'delivers', isolates: 'isolates', reference: 'reference', mode: 'mode lead', flow: 'flow' }
   const sparklineMs = $derived(column && history !== undefined ? panel.sparklineMs : undefined)
   // Each value as the row reads it: in the column, which way its sparkline's
   // history goes over the sparkline's rate window, so its margin names the
@@ -88,8 +90,8 @@
     {@const reading = typeof value === 'number' ? readingOf(pen, value) : null}
     {@const inAlarm = reading?.inAlarm ?? null}
     {@const end = typeof value === 'number' ? offScale(value, pen.limits?.instrumentSpan) : null}
-    <li class:primary={pen.role === 'primary'} title={`${pen.label} · ${pen.role}`}>
-      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`}><span class="name" bind:clientWidth={rooms[String(pen.path)]}>{named(String(pen.path), displayName(pen))}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}</span>
+    <li class:primary={pen.role === 'primary'} class:added={pen.added !== undefined} title={pen.added === undefined ? `${pen.label} · ${pen.role}` : `${pen.label} · added by World: ${pen.added.reason}`}>
+      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`}>{#if pen.added !== undefined}<span class="why" title={`Added by World from the Plant model: ${pen.added.reason}`}>{ADDED_WORDS[pen.added.kind]}</span>{/if}<span class="name" bind:clientWidth={rooms[String(pen.path)]}>{named(String(pen.path), displayName(pen))}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}</span>
       {#if typeof value === 'boolean'}
         <!-- A state names its equipment, so a row of alike states (two buses) cannot be confused. -->
         <span class="state" title={pen.described}>{value ? pen.described : `Not ${pen.described.charAt(0).toLowerCase()}${pen.described.slice(1)}`}</span>
@@ -130,7 +132,13 @@
 </ul>
 {/snippet}
 
-{#if column}
+{#if panel.added}
+  <!-- The line over values World added to an agent's display (composedDisplayLayout.evidenceCaption). -->
+  <section aria-label="Added by World">
+    <h2 style={`height:${composedDisplayLayout.evidenceCaption}px`}><span>Added from the Plant model</span></h2>
+    {@render values()}
+  </section>
+{:else if column}
   <!-- The title line (composedDisplayLayout.overviewReadoutsTitle) labels the sparklines' window once, over them. -->
   <section aria-label="Lead values">
     <h2 style={`height:${composedDisplayLayout.overviewReadoutsTitle}px`}>
@@ -154,6 +162,9 @@
   .state { font-size: 13.5px; padding: 6px 0; }
   .head { display: flex; align-items: center; gap: 5px; min-width: 0; }
   .demand { flex: none; padding: 0 4px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+  /* Added by World: a dashed rule and a dashed word, never an alarm colour. */
+  li.added { border-left-style: dashed; }
+  .why { flex: none; padding: 0 4px; border: 1px dashed var(--border-outline-color); border-radius: 3px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--element-neutral-color); }
   .margin { font-size: 11px; color: var(--element-neutral-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .margin.beyond { color: var(--alert-caution-color); font-weight: 600; }
   .reading { display: flex; align-items: center; gap: 8px; min-width: 0; }

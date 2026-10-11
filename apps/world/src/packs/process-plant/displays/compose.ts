@@ -38,6 +38,7 @@ import {
   type ComposedDisplaySignalRole,
   type ComposedPanelShape,
   type ComposedPanelSize,
+  type DisplayEvidence,
 } from './composition.ts'
 import { displayValue, isPast, nearestThresholdMargin, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
 import { appendPoint, COMPARISON_HISTORY_MS, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
@@ -85,6 +86,8 @@ export interface ComposedDisplayPen {
   readonly resolution: number | null
   readonly thresholds: ReadonlyArray<ComposedDisplayThreshold>
   readonly combinedRules: ReadonlyArray<ComposedDisplayCombinedRule>
+  /** Added by World to an agent's display (evidence.ts): why, labelled on the readout. */
+  readonly added?: Pick<DisplayEvidence, 'kind' | 'reason'>
 }
 
 /**
@@ -129,6 +132,8 @@ export interface ComposedComparisonPanel {
 export interface ComposedReadoutsPanel {
   readonly kind: 'readouts'
   readonly pens: ReadonlyArray<ComposedDisplayPen>
+  /** Every value in it was added by World (evidence.ts): a line over them says so. */
+  readonly added?: true
   /**
    * A generated display's lead values: the time the sparkline beside each
    * recorded one spans, in the column beside the drawing. Advice readouts
@@ -434,7 +439,7 @@ const compilePanel = (
 const panelShape = (panel: UnsizedPanel): ComposedPanelShape => {
   if (panel.kind === 'trend') return { kind: 'trend', strips: panel.strips.map(strip => strip.pens.length), live: panel.live.length }
   if (panel.kind === 'comparison') return { kind: 'comparison', rows: panel.pens.length }
-  if (panel.kind === 'readouts') return { kind: 'readouts', values: panel.pens.length }
+  if (panel.kind === 'readouts') return { kind: 'readouts', values: panel.pens.length, ...(panel.added === true ? { added: true } : {}) }
   if (panel.kind === 'mimic') return { kind: 'mimic', height: panel.mimic.height }
   return { kind: 'alarms' }
 }
@@ -778,6 +783,52 @@ export const compileComposedDisplay = (
   }
 }
 
+/**
+ * An agent's display with what World adds to it (evidence.ts), each value
+ * labelled as added: first in the free places of the last row of the agent's
+ * readouts, then in one panel of its own over the alarms, under a line that
+ * says so. It never makes a display taller than a chat view allows: trends
+ * shrink first, then the least telling values are left out. A value that no
+ * longer resolves (a display re-opened on a changed model) is refused as any
+ * other signal is.
+ */
+export const withEvidence = (
+  system: ProcessPlantRuntimeInstance,
+  display: CompiledComposedDisplay,
+  evidence: ReadonlyArray<DisplayEvidence>,
+  recordedSeriesIds: ReadonlySet<string>,
+): { readonly ok: true; readonly display: CompiledComposedDisplay; readonly evidence: ReadonlyArray<DisplayEvidence> } | { readonly ok: false; readonly issues: ReadonlyArray<ComposedDisplayIssue> } => {
+  if (evidence.length === 0) return { ok: true, display, evidence }
+  const issues: ComposedDisplayIssue[] = []
+  const resolved = resolvePens(system, evidence.map(entry => ({ ref: entry.path, role: 'context' as const })), 'evidence', { numericOnly: false, panelName: 'evidence', recordedSeriesIds }, issues)
+  if (resolved === undefined) return { ok: false, issues }
+  const pens = resolved.map((pen, index): ComposedDisplayPen => ({ ...pen, added: { kind: evidence[index]!.kind, reason: evidence[index]!.reason } }))
+  const perRow = composedDisplayLayout.readoutsPerRow
+  const readouts = display.panels.findIndex(panel => panel.kind === 'readouts')
+  const free = readouts === -1 ? 0 : (perRow - (composedPanelPens(display.panels[readouts]!).length % perRow)) % perRow
+  const joined = pens.slice(0, free)
+  const own = display.panels.map((panel, index) => index === readouts && panel.kind === 'readouts' && joined.length > 0 ? { ...panel, pens: [...panel.pens, ...joined] } : panel)
+  const alarms = own.findIndex(panel => panel.kind === 'alarms')
+  const at = alarms === -1 ? own.length : alarms
+  const kept = (panels: ReadonlyArray<CompiledComposedPanel>, count: number) => {
+    const fit = fitComposedDisplay(panels.map(panelShape))
+    if (fit.height > composedDisplayMaxHeight(panels)) return null
+    const sized = panels.map((panel, index): CompiledComposedPanel => {
+      if (panel.kind !== 'trend') return panel
+      const size = fit.panels[index]
+      if (size?.kind !== 'trend') throw new Error('fitted panels follow the compiled panels')
+      return { ...panel, plot: size.plot }
+    })
+    return { ok: true as const, display: { ...display, height: fit.height, panels: sized }, evidence: evidence.slice(0, count) }
+  }
+  for (let count = pens.length; count > joined.length; count -= 1) {
+    const added: ComposedReadoutsPanel = { kind: 'readouts', pens: pens.slice(joined.length, count), added: true }
+    const fitted = kept([...own.slice(0, at), added, ...own.slice(at)], count)
+    if (fitted !== null) return fitted
+  }
+  return kept(own, joined.length) ?? { ok: true, display, evidence: [] }
+}
+
 /** The view a unit overview is shown in: its window's inner size in CSS px. */
 export interface OverviewView {
   readonly width: number
@@ -1098,8 +1149,11 @@ export const composedDisplayShows = (display: CompiledComposedDisplay, historyMs
   }
   if (panel.kind === 'comparison') return [`Live side-by-side comparison with the median: ${panel.pens.map(signalName).join('; ')}`, ...panel.thresholds.map(threshold => thresholdText(threshold, panel.unit))]
   if (panel.kind === 'readouts') {
+    const chosen = panel.pens.filter(pen => pen.added === undefined)
+    const added = panel.pens.flatMap(pen => pen.added === undefined ? [] : [`${signalName(pen)}, ${pen.added.kind}: ${pen.added.reason}`])
     return [
-      `Live readouts with margin to the nearest I&C alarm or trip threshold: ${panel.pens.map(signalName).join('; ')}`,
+      ...(chosen.length === 0 ? [] : [`Live readouts with margin to the nearest I&C alarm or trip threshold: ${chosen.map(signalName).join('; ')}`]),
+      ...(added.length === 0 ? [] : [`World added these readouts, each labelled as added, for what the Plant model says bears on the question now; cite them as shown: ${added.join('; ')}`]),
       ...(panel.sparklineMs === undefined ? [] : [sparklinesShow(panel.pens, panel.sparklineMs)]),
     ]
   }

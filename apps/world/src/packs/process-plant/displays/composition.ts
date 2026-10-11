@@ -131,6 +131,27 @@ export const composedDisplayCompositionSchema = z.object({
 }).strict()
 export type ComposedDisplayComposition = z.infer<typeof composedDisplayCompositionSchema>
 
+/**
+ * Why World added a value to an agent's display (evidence.ts): the state
+ * and command of equipment in the question's path that do not agree; what an
+ * automatic action delivers or isolates; the same reading on a healthy or
+ * left-out loop; what the unit leads with in its mode; the flow along a
+ * drawn line-up.
+ */
+export const displayEvidenceKindSchema = z.enum(['cause', 'delivers', 'isolates', 'reference', 'mode', 'flow'])
+export type DisplayEvidenceKind = z.infer<typeof displayEvidenceKindSchema>
+
+/** The most values World adds to one display: two readout rows. */
+export const COMPOSED_EVIDENCE_MAX = 6
+
+export const displayEvidenceSchema = z.object({
+  path: text(1, 160),
+  kind: displayEvidenceKindSchema,
+  /** Why it is shown, in plant terms ("FCV B does not follow its demand (CMD 100 %)"). */
+  reason: text(1, 200),
+}).strict()
+export type DisplayEvidence = z.infer<typeof displayEvidenceSchema>
+
 // Opaque to embedders. The issue time and model digest let a later view say
 // when the advice was given and whether the Plant model has changed since.
 export const composedDisplayStateSchema = z.object({
@@ -139,6 +160,8 @@ export const composedDisplayStateSchema = z.object({
   modelDigest: z.string().regex(/^[0-9a-f]{64}$/),
   /** Each mimic panel's drawing as the advice saw it, so a later view can say the drawing changed. */
   drawings: z.array(z.string().min(1).max(160)).max(COMPOSED_DISPLAY_MAX_PANELS).optional(),
+  /** What World added to the agent's panels as it composed (evidence.ts), so a later view shows what the answer saw. */
+  evidence: z.array(displayEvidenceSchema).min(1).max(COMPOSED_EVIDENCE_MAX).optional(),
 }).strict().superRefine((state, ctx) => {
   const mimics = state.composition.panels.filter(panel => panel.kind === 'mimic').length
   if ((state.drawings?.length ?? 0) !== mimics) ctx.addIssue({ code: 'custom', path: ['drawings'], message: `a display with ${mimics} mimic panels stores ${mimics} drawing hashes` })
@@ -201,6 +224,8 @@ export const composedDisplayLayout = {
   readoutsPerRow: 3,
   /** A row of readouts: name, readout (44 px as OpenBridge draws it small) and margin lines, 78 px, and the gap under it. */
   readoutsRow: 82,
+  /** Over the values World adds to an agent's display: the line that says so. */
+  evidenceCaption: 16,
   /** Title row plus four alarm rows; more are summarised as a count. */
   alarms: 110,
   alarmRows: 4,
@@ -252,7 +277,8 @@ export type ComposedPanelShape =
   /** Pens per strip, top to bottom, and live-only rows under the strips. */
   | { readonly kind: 'trend'; readonly strips: ReadonlyArray<number>; readonly live: number }
   | { readonly kind: 'comparison'; readonly rows: number }
-  | { readonly kind: 'readouts'; readonly values: number }
+  /** `added`: values World adds, under a line that says so. */
+  | { readonly kind: 'readouts'; readonly values: number; readonly added?: boolean }
   | { readonly kind: 'alarms' }
   /** A mimic has the height its generated drawing takes. */
   | { readonly kind: 'mimic'; readonly height: number }
@@ -283,7 +309,7 @@ export const composedPanelHeight = (panel: ComposedPanelSize): number => {
     return panel.strips.reduce((sum, pens, index) => sum + charts[index]! + composedTrendLegendHeight(pens), 0) + live
   }
   if (panel.kind === 'comparison') return layout.comparisonHeader + layout.comparisonRow * panel.rows + layout.comparisonCaption
-  if (panel.kind === 'readouts') return layout.readoutsRow * Math.ceil(panel.values / layout.readoutsPerRow)
+  if (panel.kind === 'readouts') return (panel.added === true ? layout.evidenceCaption : 0) + layout.readoutsRow * Math.ceil(panel.values / layout.readoutsPerRow)
   if (panel.kind === 'mimic') return panel.height + layout.mimicLegend
   return layout.alarms
 }

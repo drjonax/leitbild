@@ -33,7 +33,9 @@ import {
   composedDisplayWarnings,
   formatComposedDisplayIssues,
   formatComposedViewIssues,
+  withEvidence,
 } from '../displays/compose.ts'
+import { displayEvidence } from '../displays/evidence.ts'
 import { requirePlant } from './common.ts'
 import { simulationClock } from '../displays/display-text.ts'
 import { indexSample, itemLook } from '../displays/mimic/evaluate.ts'
@@ -121,22 +123,13 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
   if (config.request.capabilityId === 'world.process-plant.display.compose') {
     const plantId = idSchema.parse((config.request.input as { plantId?: unknown } | null)?.plantId)
     const system = requirePlant(config.plants, plantId)
-    const display = compiledOrRejected(system, config.request.input, 'compose', recordedSeriesIds)
-    const mimics = display.panels.flatMap(panel => panel.kind === 'mimic' ? [panel.mimic] : [])
-    const state = composedDisplayStateSchema.parse({
-      composition: composedDisplayCompositionSchema.parse(config.request.input),
-      issuedAt: simulationTime,
-      modelDigest: display.modelDigest,
-      ...(mimics.length === 0 ? {} : { drawings: mimics.map(mimic => mimic.hash) }),
-    })
-    const now = indexSample(mimics.flatMap(mimic => mimic.paths).map(path => {
-      const snapshot = system.runtime.readVariableSnapshot(path)
-      return { path, value: snapshot.value, quality: processPlantSignalQuality(snapshot).status }
-    }))
+    const chosen = compiledOrRejected(system, config.request.input, 'compose', recordedSeriesIds)
     const read = (path: VariablePath) => system.runtime.readVariableSnapshot(path).value
     // The display opens on the history the Run recorded, as the operator's
-    // view reads it: one bounded read per signal it draws over time.
+    // view reads it: one bounded read per signal it draws over time, kept
+    // for the second reading once World's evidence is added.
     const recordedHistory = config.recordedHistory
+    const histories = new Map<string, ReturnType<typeof trendPoints>>()
     const opening = {
       read,
       simulationMs: Date.parse(simulationTime),
@@ -144,9 +137,31 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       activeRuleIds: new Set((annunciated(system) ?? []).filter(lifecycle => lifecycle.active).map(lifecycle => lifecycle.ruleId)),
       history: (seriesId: string, window: { readonly from: number; readonly to: number }, limit: number) => {
         if (recordedHistory === undefined) throw new Error(`${config.request.capabilityId} requires the history recorded by the answering runtime`)
-        return trendPoints(recordedHistory.read({ seriesId, from: new Date(window.from).toISOString() as IsoTimestamp, to: new Date(window.to).toISOString() as IsoTimestamp, limit }))
+        const key = `${seriesId}|${window.from}|${window.to}|${limit}`
+        const known = histories.get(key)
+        if (known !== undefined) return known
+        const points = trendPoints(recordedHistory.read({ seriesId, from: new Date(window.from).toISOString() as IsoTimestamp, to: new Date(window.to).toISOString() as IsoTimestamp, limit }))
+        histories.set(key, points)
+        return points
       },
     }
+    const sample = (path: VariablePath) => {
+      const snapshot = system.runtime.readVariableSnapshot(path)
+      return { value: snapshot.value, quality: processPlantSignalQuality(snapshot).status }
+    }
+    // What the Plant's model says bears on the question besides what the agent chose, read as the agent's panels open.
+    const completed = withEvidence(system, chosen, displayEvidence(system, chosen, readComposedDisplay(chosen, opening), sample), recordedSeriesIds)
+    if (!completed.ok) throw new Error(`evidence World adds must resolve: ${completed.issues.map(issue => issue.message).join('; ')}`)
+    const display = completed.display
+    const mimics = display.panels.flatMap(panel => panel.kind === 'mimic' ? [panel.mimic] : [])
+    const state = composedDisplayStateSchema.parse({
+      composition: composedDisplayCompositionSchema.parse(config.request.input),
+      issuedAt: simulationTime,
+      modelDigest: display.modelDigest,
+      ...(mimics.length === 0 ? {} : { drawings: mimics.map(mimic => mimic.hash) }),
+      ...(completed.evidence.length === 0 ? {} : { evidence: completed.evidence }),
+    })
+    const now = indexSample(mimics.flatMap(mimic => mimic.paths).map(path => ({ path, ...sample(path) })))
     const opened = readComposedDisplay(display, opening)
     // The trend's axis reaches back as far as the Plant has run, up to its horizon.
     const historyMs = system.runtime.elapsedMs()
@@ -264,7 +279,10 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       const display = generatedOrRejected(system, `detail:${components.join(',')}|${detailLeadKey(system)}`, payload.size, () => compileDetailDisplay(system, recordedSeriesIds, components, payload.size!), null)
       return { kind: 'detail', plantId: display.plantId, plantLabel: plantLabelOf(display.plantId), simulationTime, display }
     }
-    const display = compiledOrRejected(system, state.composition, 'view', recordedSeriesIds)
+    const compiled = compiledOrRejected(system, state.composition, 'view', recordedSeriesIds)
+    const completed = withEvidence(system, compiled, state.evidence ?? [], recordedSeriesIds)
+    if (!completed.ok) return rejectCapabilityInput(formatComposedViewIssues(completed.issues))
+    const display = completed.display
     return {
       kind: 'advice',
       plantId: display.plantId,
