@@ -4,7 +4,7 @@ import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { processPlantOperatingMode } from '../runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { COMPOSED_READOUTS_MAX_SIGNALS, GENERATED_DETAIL_MAX_LEAD_VALUES } from './composition.ts'
-import { actionFlows, actionFlowsInto, actsIn, armed, automaticActions, conditionBindings } from './actuations.ts'
+import { actionFlows, actionFlowsInto, actsIn, armed, automaticActions, conditionBindings, feedsTransferIntake } from './actuations.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 
 const readableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolean => {
@@ -15,36 +15,55 @@ const readableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolea
 /**
  * The values a unit overview leads with, chosen by what the Plant declares
  * for the mode it is in rather than by name, so a tripped unit leads with its
- * heat sink and inventory, not with a power it no longer makes:
+ * heat sink and inventory, not with a power it no longer makes. The ends of
+ * the energy path keep their places however many values come before them:
+ * - while a rule acting in the mode watches an energy sink (at power), the
+ *   first key value of each energy source and sink a rule acting in the mode
+ *   watches (a core's outlet temperature, a generator's output), last;
+ * - while none does (a tripped or shut-down unit, whose heat leaves only
+ *   through the transfers into its other circuits), first, as the critical
+ *   safety functions are checked after a trip: the first key value of what
+ *   each source heats in contact (the vessel's subcooling margin), the
+ *   source's own (its outlet temperature), and what the automatic actions
+ *   acting in the mode send into the side of a transfer that takes the heat
+ *   (the auxiliary feed into the steam generators), started or not, so a unit
+ *   whose feed has not yet started reads its heat sink at 0.
+ * The leads, in as many places as the ends leave:
  * - each value a trip rule acting in the mode judges, while that trip can
  *   still act (a reactor trip whose breakers are open guards nothing more);
  * - what the automatic actions acting in the mode deliver once they have
  *   started it (the auxiliary feedwater and safety injection their pumps send
  *   through a header); one yet to act shows by the value that sets it off;
  * - the key values of the equipment rules acting in the mode judge (a
- *   pressurizer's level, a vessel's subcooling margin), in rule order;
- * - and, keeping their places however many values come before them, the
- *   first key value of each energy source and sink a rule acting in the mode
- *   watches (a core's outlet temperature; a generator's output only while its
- *   rules act).
- * A trip that has done all it can watches nothing more: a turbine already
- * tripped keeps no generator output among the leads.
+ *   pressurizer's pressure and level), in rule order.
+ * A lead that reads inside the normal range its signal declares yields its
+ * place to the next (containment pressure at atmospheric, every actuation on
+ * it armed and far off): the one change of order the Plant's values make
+ * within a mode. A trip that has done all it can watches nothing more: a
+ * turbine already tripped keeps no generator output among the leads.
  * Per-loop values stay on their loop's symbols. Unpublished signals are left
  * out; so are writable ones, which would show a demand, on-off states, and
  * the states symbols draw as a position, a run or an energized state (a
  * turbine stop valve's position, a breaker's contacts).
  */
 export const overviewKeyValues = (plant: CompiledProcessPlant, now: PlantNow): ReadonlyArray<VariablePath> => {
-  const { leads, ends } = overviewCandidates(plant, now)
-  return [...leads.slice(0, Math.max(0, COMPOSED_READOUTS_MAX_SIGNALS - ends.length)), ...ends].slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
+  const { leads, ends, endsFirst } = overviewCandidates(plant, now)
+  const normal = (path: VariablePath): boolean => {
+    const range = plant.graph.signalBindingByPath.get(path)?.limits?.normalRange
+    const value = now.read(path)
+    return range !== undefined && typeof value === 'number' && value >= range.min && value <= range.max
+  }
+  const shown = [...leads.filter(path => !normal(path)), ...leads.filter(normal)].slice(0, Math.max(0, COMPOSED_READOUTS_MAX_SIGNALS - ends.length))
+  return (endsFirst ? [...ends, ...shown] : [...shown, ...ends]).slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
 }
 
 /**
  * Every value the unit watches in the mode, in the order the overview leads
  * with them (overviewKeyValues): the leads, of which as many as there is room
- * for beside the energy ends, and the ends.
+ * for beside the energy ends, and the ends, which come first where no energy
+ * sink is watched.
  */
-export const overviewCandidates = (plant: CompiledProcessPlant, now: PlantNow): { readonly leads: ReadonlyArray<VariablePath>; readonly ends: ReadonlyArray<VariablePath> } => {
+export const overviewCandidates = (plant: CompiledProcessPlant, now: PlantNow): { readonly leads: ReadonlyArray<VariablePath>; readonly ends: ReadonlyArray<VariablePath>; readonly endsFirst: boolean } => {
   const graph = plant.graph
   const ownerOf = (path: VariablePath) => {
     const binding = graph.signalBindingByPath.get(path)
@@ -75,12 +94,29 @@ export const overviewCandidates = (plant: CompiledProcessPlant, now: PlantNow): 
     .flatMap(rule => conditionBindings(plant, rule.condition).flatMap(binding => binding.owner.type === 'component' ? [binding.owner.componentIndex] : [])))]
   const keyed = judgedEquipment.flatMap(component => graph.components[component]!.semantics.keyValues)
   const watched = new Set(judgedEquipment)
-  const ends = [...new Set(graph.components
-    .filter(component => watched.has(component.index) && component.semantics.energy.some(role => role.role === 'source' || role.role === 'sink'))
-    .flatMap(component => component.semantics.keyValues.slice(0, 1)))].filter(readable)
+  const watchedAs = (role: 'source' | 'sink') => graph.components.filter(component => watched.has(component.index) && component.semantics.energy.some(energy => energy.role === role))
+  const sources = watchedAs('source')
+  const sinks = watchedAs('sink')
+  const first = (component: number): ReadonlyArray<VariablePath> => graph.components[component]!.semantics.keyValues.slice(0, 1)
+  const ends = sinks.length > 0
+    ? [...new Set(graph.components.filter(component => sources.includes(component) || sinks.includes(component)).flatMap(component => first(component.index)))].filter(readable)
+    : [...new Set([
+      ...sources.flatMap(source => heatedInContact(plant, source.index).flatMap(first)),
+      ...sources.flatMap(source => first(source.index)),
+      ...inForce.flatMap(rule => {
+        const action = actions.get(rule.id)
+        return action === undefined ? [] : actionFlows(plant, action, MIMIC_REACH_LINKS)
+          .filter(flow => flow.effect === 'starts' && feedsTransferIntake(plant, flow.path, MIMIC_REACH_LINKS)).map(flow => flow.path)
+      }),
+    ])].filter(readable)
   const leads = [...new Set([...guarding, ...delivered, ...keyed])].filter(path => leadable(path) && !ends.includes(path))
-  return { leads, ends }
+  return { leads, ends, endsFirst: sinks.length === 0 }
 }
+
+/** The equipment a component heats through a thermal contact (a reactor core its vessel's coolant). */
+const heatedInContact = (plant: CompiledProcessPlant, component: number): ReadonlyArray<number> =>
+  (plant.graph.outgoingLinksByComponent[component] ?? []).map(index => plant.graph.links[index]!)
+    .filter(link => link.kind === 'thermalContact').map(link => link.toComponentIndex)
 
 /**
  * What the Plant is doing as a display is opened, which a detail's lead

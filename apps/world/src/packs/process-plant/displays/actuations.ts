@@ -80,6 +80,26 @@ export const throughputDownstream = (plant: CompiledProcessPlant, component: num
   return []
 }
 
+/**
+ * Whether a flow through equipment reaches, within `reach` links downstream,
+ * the side of a transfer that takes the heat (the auxiliary feed through its
+ * header into a steam generator's secondary): what keeps a heat sink, as
+ * opposed to flow into the circuit that gives the heat (safety injection into
+ * the cold legs).
+ */
+export const feedsTransferIntake = (plant: CompiledProcessPlant, flow: VariablePath, reach: number): boolean => {
+  const graph = plant.graph
+  const owner = graph.signalBindingByPath.get(flow)?.owner
+  if (owner?.type !== 'component') return false
+  const carriers = new Set((graph.outgoingLinksByComponent[owner.componentIndex] ?? []).map(index => graph.links[index]!).filter(link => link.kind === 'fluidFlow').map(linkCarrier))
+  return [...downstreamLinks(graph, [owner.componentIndex], carriers, reach)].some(index => {
+    const link = graph.links[index]!
+    const target = graph.components[link.toComponentIndex]!
+    const circuit = target.ports[String(link.toPortName)]?.circuit
+    return circuit !== undefined && target.semantics.energy.some(role => role.role === 'transfer' && role.to === circuit)
+  })
+}
+
 /** Whether what a component sends out reaches another within `reach` links downstream, along the services it delivers. */
 export const feeds = (plant: CompiledProcessPlant, source: number, target: number, reach: number): boolean => {
   const graph = plant.graph

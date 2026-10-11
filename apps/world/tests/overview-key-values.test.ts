@@ -31,42 +31,72 @@ describe('the values a unit overview leads with', () => {
       const atPower = after(plant, null, 0)
       expect(atPower.mode).toBe('powerOperation')
       const paths = overviewKeyValues(plant, atPower)
-      // The power the reactor protection trips on is the power range's, in percent of rated power.
+      // The power the reactor protection trips on is the power range's, in percent of rated power. Containment
+      // pressure, which safety injection guards, stands at atmospheric inside its declared normal range, so it yields
+      // its place to the next value the I&C judges: the vessel's subcooling margin.
       expect(paths).toEqual([
         'core.powerRangePercent',
         'vessel.netInventoryFlowKgPerS',
         'pressurizer.pressureMPa',
-        'containment.pressureMPa',
+        'vessel.subcoolingMarginC',
         'core.coolantOutletTemperatureC',
         'turbine.electricMw',
       ] as never)
+      // Out of its normal range it takes its place back, before the values the I&C judges for their equipment.
+      expect(overviewKeyValues(plant, { ...atPower, read: path => String(path) === 'containment.pressureMPa' ? 0.109 : atPower.read(path) }).slice(0, 4))
+        .toEqual(['core.powerRangePercent', 'vessel.netInventoryFlowKgPerS', 'pressurizer.pressureMPa', 'containment.pressureMPa'] as never)
       // A steam generator's low-low level trips the auxiliary feed, but per-loop values stay on their loop.
       for (const path of paths) expect(plant.graph.components[plant.graph.componentIndexById.get(String(path).split('.')[0] as never)!]!.metadata?.loopId).toBeUndefined()
     }
   })
 
-  test('after a trip: the heat sink and inventory, not a power the unit no longer makes', () => {
+  test('after a trip: the heat path first, core cooling and heat sink, then inventory, not a power the unit no longer makes', () => {
     // Evaluation run 22: three minutes after SG B's feed valve ran back to 35 %, the unit had tripped on SG B
     // low-low level into Hot standby, and its overview still led with "0 MW" fission power and the generator.
+    // Run 22 QA: after a trip it led with pressurizer and containment pressure, containment at normal, and had no
+    // room for the subcooling margin.
     const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:key-values-trip', loopCount: 4 }))
     const tripped = after(plant, { actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, 180)
     expect(tripped.mode).toBe('hotStandby')
     // The reactor trips have done all they can (breakers open, rods in), so fission power no longer leads; the
-    // generator's rules act only at power, and the turbine trips that act in every mode have tripped it, so its
-    // output leaves the energy ends. Safety injection can still act on pressurizer pressure, and safety injection,
-    // steam line isolation and spray on containment pressure; the auxiliary feedwater the actuation started is
-    // delivered through its header, while safety injection, yet to act, delivers nothing to lead with; the
-    // pressurizer's level and the vessel's subcooling margin are the key values of equipment the I&C judges.
+    // generator's rules act only at power, and the turbine trips that act in every mode have tripped it, so no
+    // energy sink is watched: the decay heat leaves through the steam generators. The column leads, as E-0 and
+    // ES-0.1 check the critical safety functions, with the heat path: the margin of the coolant the core heats (the
+    // vessel's subcooling margin), the core's outlet temperature, and the auxiliary feed the actuations send into
+    // the steam generators. Then safety injection's pressure, which it can still act on, and the key values of
+    // equipment the I&C judges; containment pressure, at normal, yields its place.
     expect(overviewKeyValues(plant, tripped)).toEqual([
-      'pressurizer.pressureMPa',
-      'containment.pressureMPa',
-      'auxFeedwaterHeader.outletFlowKgPerS',
-      'pressurizer.levelPercent',
       'vessel.subcoolingMarginC',
       'core.coolantOutletTemperatureC',
+      'auxFeedwaterHeader.outletFlowKgPerS',
+      'pressurizer.pressureMPa',
+      'pressurizer.levelPercent',
+      'vessel.collapsedLiquidLevelPercent',
     ] as never)
     expect(tripped.read('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeGreaterThan(50)
   }, 30_000)
+
+  test('after a trip the heat sink leads before the feed has started, and the injection safety injection delivers once it has', () => {
+    const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:key-values-pumps', loopCount: 4 }))
+    // Run 22 QA: a minute after every reactor coolant pump tripped, feedwater was isolated and no steam generator had
+    // reached the low-low level that starts auxiliary feed; the overview showed no heat sink at all. It reads 0.
+    const pumps = after(plant, { actionId: 'trip-reactor-coolant-pumps' }, 60)
+    expect(pumps.mode).toBe('hotStandby')
+    expect(overviewKeyValues(plant, pumps).slice(0, 3)).toEqual(['vessel.subcoolingMarginC', 'core.coolantOutletTemperatureC', 'auxFeedwaterHeader.outletFlowKgPerS'] as never)
+    expect(pumps.read('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBe(0)
+    // Run 22 QA: three minutes after the PORV stuck at 35 %, safety injection had started; the subcooling margin,
+    // the decisive value in a pressurizer steam-space leak, leads, and the injection follows the heat sink.
+    const relief = after(plant, { actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 180)
+    expect(overviewKeyValues(plant, relief)).toEqual([
+      'vessel.subcoolingMarginC',
+      'core.coolantOutletTemperatureC',
+      'auxFeedwaterHeader.outletFlowKgPerS',
+      'safetyInjectionHeader.outletFlowKgPerS',
+      'pressurizer.pressureMPa',
+      'pressurizer.levelPercent',
+    ] as never)
+    expect(relief.read('safetyInjectionHeader.outletFlowKgPerS' as never)).toBeGreaterThan(30)
+  }, 60_000)
 })
 
 describe('the values equipment opened from the overview leads with', () => {

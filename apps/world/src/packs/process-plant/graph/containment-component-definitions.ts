@@ -34,7 +34,8 @@ export const containmentComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'steamMassKg', label: 'Containment steam mass', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg' }),
       variable({ path: 'sumpInventoryKg', label: 'Containment sump inventory', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg' }),
       variable({ path: 'sumpLevelPercent', label: 'Containment sump level', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
-      variable({ path: 'pressureMPa', label: 'Containment pressure', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
+      // A dry containment stands about atmospheric (0.101 MPa) in operation: from 4 kPa below it to 6 kPa above.
+      variable({ path: 'pressureMPa', label: 'Containment pressure', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa', limits: { normalRange: { min: 0.097, max: 0.107 } } }),
       variable({ path: 'temperatureC', label: 'Containment temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'humidityFraction', label: 'Containment humidity', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', measurand: 'humidity', quantity: 'ratio', unit: 'fraction' }),
       variable({ path: 'incomingMassKgPerS', label: 'Containment incoming mass', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),

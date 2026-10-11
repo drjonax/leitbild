@@ -250,7 +250,8 @@ describe('world.process-plant.display.compose', () => {
     expect([levelItem.trend, levelItem.timeToLimitMs]).toEqual([undefined, undefined])
     // Without history the same pressure reads as before: the nearest limit, no direction.
     const unrecorded = ask('world.process-plant.display.compose', composition([{ ref: 'PT-455', role: 'primary' }])) as { margins: ReadonlyArray<string>; viewContent: unknown }
-    expect(unrecorded.margins).toEqual([`PT-455: ${formatQuantity(now, 'MPa', resolution)}, ${formatQuantity(16 - now, 'MPa', resolution)} below HI 16 MPa · ALM`])
+    // World adds what the unit leads with at power in the same annunciator system: the subcooling margin.
+    expect(unrecorded.margins).toEqual([`PT-455: ${formatQuantity(now, 'MPa', resolution)}, ${formatQuantity(16 - now, 'MPa', resolution)} below HI 16 MPa · ALM`, expect.stringMatching(/^SUB-MARGIN: /)])
     expect(embeddedViewContentSchema.parse(unrecorded.viewContent).items[0]!.trend).toBeUndefined()
   })
 
@@ -260,7 +261,8 @@ describe('world.process-plant.display.compose', () => {
       ...composition([{ ref: 'PT-455', role: 'primary' }]),
       panels: [{ kind: 'readouts', signals: [{ ref: 'PT-455', role: 'primary' }, { ref: 'core.totalThermalPowerMw', role: 'context' }] }],
     }) as { margins: ReadonlyArray<string> }
-    expect(result.margins).toEqual([`PT-455: ${formatQuantity(pressure, 'MPa', 0.01635)}, ${formatQuantity(16 - pressure, 'MPa', 0.01635)} below HI 16 MPa · ALM`])
+    // The thermal power has no limit to state; the subcooling margin is what World adds (what the unit leads with at power).
+    expect(result.margins).toEqual([`PT-455: ${formatQuantity(pressure, 'MPa', 0.01635)}, ${formatQuantity(16 - pressure, 'MPa', 0.01635)} below HI 16 MPa · ALM`, expect.stringMatching(/^SUB-MARGIN: /)])
   })
 
   test('a recorded signal needs the Run\'s history to be composed', () => {
@@ -591,7 +593,7 @@ describe('composed display panels', () => {
     const pressurizer = composeView([
       { kind: 'trend', horizon: '2m', signals: [{ ref: 'PT-455', role: 'primary' }] },
       { kind: 'alarms', scope: 'related' },
-    ]).view.display.panels[1] as { ruleIds: string[] }
+    ]).view.display.panels.find(panel => panel.kind === 'alarms') as { ruleIds: string[] }
     expect(pressurizer.ruleIds.some(ruleId => ruleId.includes('relief'))).toBe(true)
   })
 })

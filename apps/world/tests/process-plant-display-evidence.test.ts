@@ -141,10 +141,9 @@ describe('what World adds to a composed display', () => {
   const relief = once(() => situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 3))
 
   test('PORV open: the safety injection it set off and the subcooling margin fill the free places of the agent\'s readouts', () => {
-    // Run 22: pressure 10.7 MPa falling with the PORV stuck at 35 %; the display showed no subcooling margin. The
-    // overview in Hot standby leads with containment pressure, which SI, steam line isolation and spray guard through
-    // Modes 3 and 4, and has no room for the subcooling margin; the unit still watches it, and falling towards its
-    // alarm it is off normal, so it is added. Containment pressure, at normal, is not.
+    // Run 22: pressure 10.7 MPa falling with the PORV stuck at 35 %; the display showed no subcooling margin. After
+    // the trip the overview leads with it (core cooling, the first critical safety function it checks), so it is
+    // added; containment pressure, at normal, is no lead.
     const { compose, read } = relief()
     const { evidence, display, result } = compose('Pressurizer depressurization', ['PT-455', 'PORV-456A', 'PZR-LVL'], [
       { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('PZR-LVL')] },
@@ -153,7 +152,7 @@ describe('what World adds to a composed display', () => {
     ])
     expect(listed(evidence)).toEqual([['safetyInjectionHeader.outletFlowKgPerS', 'delivers'], ['vessel.subcoolingMarginC', 'mode']])
     expect(read('safetyInjectionHeader.outletFlowKgPerS')).toBeGreaterThan(30)
-    expect(evidence[1]!.reason).toBe('what the unit watches in Hot standby')
+    expect(evidence[1]!.reason).toBe('what the unit leads with in Hot standby')
     // The four readouts left two places in their second row: no panel and no height are added.
     expect(display.panels.map(panel => panel.kind)).toEqual(['trend', 'readouts', 'alarms'])
     const readouts = display.panels[1]!

@@ -214,7 +214,7 @@ describe('the unit overview World generates for a Plant', () => {
     expect(abnormal).toEqual(['feedwaterControlValveB'])
   })
 
-  test('after a trip it leads with the heat sink: the auxiliary feedwater the actuation delivers, the subcooling margin and the pressurizer level', () => {
+  test('after a trip it leads with the heat path: the subcooling margin, the core\'s outlet temperature and the auxiliary feedwater the actuation delivers', () => {
     // Evaluation run 22 (HMI review, 5-second test): in Hot standby after SG B's runback tripped the unit, the
     // overview led with "0 MW · 3600 MW below HI ALM" and the generator's output, and showed no auxiliary feedwater.
     const upset = plant()
@@ -235,10 +235,11 @@ describe('the unit overview World generates for a Plant', () => {
       if (readouts.kind !== 'readouts') throw new Error('expected the lead values')
       return readouts.pens.map(pen => pen.tagId ?? String(pen.path))
     }
-    expect(leads(atPower)).toEqual(['NIS-PR-AVG', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'CTMT-PR', 'core.coolantOutletTemperatureC', 'GEN-MW'])
-    // Safety injection and containment's actuations can still act on pressurizer and containment pressure; the
-    // auxiliary feedwater the actuation started is delivered; safety injection, yet to act, delivers nothing to lead with.
-    expect(leads(tripped)).toEqual(['PT-455', 'CTMT-PR', 'AFW-FLOW', 'PZR-LVL', 'SUB-MARGIN', 'core.coolantOutletTemperatureC'])
+    // Containment pressure, at atmospheric inside its normal range, yields its place at power as after the trip.
+    expect(leads(atPower)).toEqual(['NIS-PR-AVG', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'SUB-MARGIN', 'core.coolantOutletTemperatureC', 'GEN-MW'])
+    // No energy sink is watched once the turbine has tripped: the heat path leads (core cooling, then the heat sink
+    // the actuation feeds), then the pressure safety injection can still act on and the pressurizer's level.
+    expect(leads(tripped)).toEqual(['SUB-MARGIN', 'core.coolantOutletTemperatureC', 'AFW-FLOW', 'PT-455', 'PZR-LVL', 'RVLS-DYN'])
     expect(upset.runtime.readVariable('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeGreaterThan(50)
     if (!tripped.ok) return
     // Still the whole column, and it still fits the window.
