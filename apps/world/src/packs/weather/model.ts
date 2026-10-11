@@ -73,12 +73,16 @@ const geometry = {
 }
 export const weatherKeyframeSchema = z
   .object({
-    atSeconds: z.number().finite().min(0).max(31_536_000),
+    atSeconds: z.number().finite().min(0).max(31_536_000).describe(
+      'Endpoint time in simulation seconds after area creation, not when the change starts. Values interpolate from the preceding endpoint (the initial area at 0 seconds). To start worsening after 120 seconds, add an unchanged frame {atSeconds:120}, then a changed endpoint at a later time. Updating an existing area preserves its creation-time origin.',
+    ),
     center: position.optional(),
     semiMajorAxisM: radius.optional(),
     semiMinorAxisM: radius.optional(),
     rotationDeg: z.number().finite().min(0).max(360).optional(),
-    atmosphere: weatherAtmospherePatchSchema.default({}),
+    atmosphere: weatherAtmospherePatchSchema.default({}).describe(
+      'Atmospheric values at this endpoint. Omitted quantities retain their preceding endpoint values. Every animated quantity needs an explicit initial value in the area atmosphere. Numeric values interpolate; wind direction uses the shortest arc. Precipitation intensity interpolates, with precipitation type switching halfway when both endpoints have different non-none types.',
+    ),
   })
   .strict()
 const identity = { pack: z.literal('weather'), id: objectIdSchema, label: z.string().trim().min(1).max(160) }
@@ -91,7 +95,9 @@ export const weatherAreaSchema = z
     priority: z.number().int().min(-1000).max(1000).default(0),
     falloff: z.enum(['linear', 'uniform']).default('linear'),
     atmosphere: weatherAtmospherePatchSchema.default({}),
-    keyframes: z.array(weatherKeyframeSchema).max(128).default([]),
+    keyframes: z.array(weatherKeyframeSchema).max(128).default([]).describe(
+      'Ordered endpoint states, not timed step changes. Geometry and atmosphere interpolate from the initial area at 0 seconds to the first endpoint, then between endpoints; the final state holds afterwards. Omitted fields inherit the preceding endpoint. An empty frame {atSeconds:120} holds the initial state until 120 seconds before interpolation to a later changed frame.',
+    ),
   })
   .strict()
   .superRefine((area, ctx) => {

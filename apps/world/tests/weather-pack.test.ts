@@ -10,6 +10,7 @@ import {
   type SimulationRunId,
 } from '../src/core/model/index.ts'
 import { scenarioAuthoringCatalogFor } from '../src/core/scenarios/authoring.ts'
+import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import {
   hexCellAtPoint,
   hexCellBoundary,
@@ -37,6 +38,7 @@ import { formatWeatherQuantity } from '../src/packs/weather/quantities.ts'
 import { answerWeatherQuery,weatherQueryCapabilities } from '../src/packs/weather/query.ts'
 import { createWeatherObject } from '../src/packs/weather/scenario.ts'
 import { createLocalWeatherPackRuntimeAdapter } from '../src/packs/weather/sim/adapter.ts'
+import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import { testRuntimeConnectionConfig } from './helpers.ts'
 
 const at = '2026-01-01T00:00:00.000Z' as IsoTimestamp
@@ -57,7 +59,7 @@ const area = (extra: Record<string, unknown> = {}) =>
     ...extra,
   })
 const object = (extra: Record<string, unknown> = {}) => createWeatherObject(area(extra), at, settings, at)
-const fieldWith = (objects = [object()]) => {
+const fieldWith = (objects: ReadonlyArray<OperationalObject> = [object()]) => {
   const field = createWeatherField(settings, at)
   setWeatherObjects(field, objects)
   return field
@@ -143,6 +145,59 @@ describe('authoritative Weather field', () => {
     const sample = weatherSampleSchema.parse(sampleWeather(field, edgePoint))
     expect(sample.state.atmosphere.precipitation.type).toBe('rain')
     expect(sample.state.atmosphere.precipitation.intensityMmPerHour).toBeCloseTo(10)
+  })
+  test('an unchanged endpoint holds initial weather until the authored escalation starts', async () => {
+    const definition = area({
+      atmosphere: { windSpeedMps: 5, precipitation: { type: 'none', intensityMmPerHour: 0 } },
+      keyframes: [
+        { atSeconds: 120 },
+        { atSeconds: 300, atmosphere: { windSpeedMps: 17, precipitation: { type: 'rain', intensityMmPerHour: 30 } } },
+      ],
+    })
+    if (definition.type !== 'weather_area') throw Error()
+    const { pack: _pack, ...authoredItem } = definition
+    const compiled = await compileScenarioDefinition({
+      id: 'weather-escalation', title: 'Weather escalation',
+      packs: [{ id: 'weather', items: [authoredItem] }],
+      world: { startsAt: at }, view: { map: { center: point.coordinates, zoom: 11 } },
+    }, [weatherPack], { routing: createDirectRoutingAdapter() })
+    const field = fieldWith(compiled.initialObjects)
+    for (const seconds of [0, 60, 119.999, 120]) {
+      advanceWeather(field, later(seconds))
+      expect(sampleWeather(field, point).state.atmosphere).toMatchObject(definition.atmosphere)
+    }
+    advanceWeather(field, later(150))
+    expect(sampleWeather(field, point).state.atmosphere).toMatchObject({
+      windSpeedMps: 7,
+      precipitation: { type: 'rain', intensityMmPerHour: 5 },
+    })
+    advanceWeather(field, later(210))
+    expect(sampleWeather(field, point).state.atmosphere).toMatchObject({
+      windSpeedMps: 11,
+      precipitation: { type: 'rain', intensityMmPerHour: 15 },
+    })
+    for (const seconds of [300, 600]) {
+      advanceWeather(field, later(seconds))
+      expect(sampleWeather(field, point).state.atmosphere).toMatchObject({
+        windSpeedMps: 17,
+        precipitation: { type: 'rain', intensityMmPerHour: 30 },
+      })
+    }
+  })
+  test('sparse endpoints inherit preceding values and later changes interpolate only from that endpoint', () => {
+    const definition = area({
+      atmosphere: { windSpeedMps: 5, airTemperatureC: 8 },
+      keyframes: [
+        { atSeconds: 120, atmosphere: { windSpeedMps: 17 } },
+        { atSeconds: 300, atmosphere: { airTemperatureC: -4 } },
+      ],
+    })
+    if (definition.type !== 'weather_area') throw Error()
+    const entry = { objectId: definition.id, label: definition.label, area: definition, startsAt: at }
+    expect(frameAt(entry, later(60)).atmosphere).toEqual({ windSpeedMps: 11, airTemperatureC: 8 })
+    expect(frameAt(entry, later(120)).atmosphere).toEqual({ windSpeedMps: 17, airTemperatureC: 8 })
+    expect(frameAt(entry, later(210)).atmosphere).toEqual({ windSpeedMps: 17, airTemperatureC: 2 })
+    expect(frameAt(entry, later(300)).atmosphere).toEqual({ windSpeedMps: 17, airTemperatureC: -4 })
   })
   test('zero-time observations never repeatedly blend ground state', () => {
     const field = fieldWith()
@@ -265,6 +320,27 @@ describe('authoritative Weather field', () => {
 })
 
 describe('Weather runtime controls and lifecycle', () => {
+  test('updating keyframes preserves the area creation-time origin', async () => {
+    const connection = await connect([object({
+      atmosphere: { windSpeedMps: 5 },
+      keyframes: [{ atSeconds: 120 }, { atSeconds: 300, atmosphere: { windSpeedMps: 17 } }],
+    })])
+    try {
+      await connection.setClock({ currentTime: later(150), updatedAt: nowIso(), paused: true })
+      const sample = () => connection.invokeQuery({ capabilityId: 'world.weather.sample-at-point', input: { point } })
+      expect(weatherSampleSchema.parse(await sample()).state.atmosphere.windSpeedMps).toBe(7)
+      const current = (await connection.getSnapshot()).objects.find(item => item.id === 'weather:rain')!
+      const data = weatherPackDataSchema.parse(current.packData)
+      const result = await connection.sendCommand(envelope('world.weather.update', {
+        expectedRevision: current.revision,
+        item: { ...data.definition, keyframes: [{ atSeconds: 120 }, { atSeconds: 300, atmosphere: { windSpeedMps: 29 } }] },
+      }))
+      expect(result.ok).toBe(true)
+      expect(weatherSampleSchema.parse(await sample()).state.atmosphere.windSpeedMps).toBe(9)
+      const updated = (await connection.getSnapshot()).objects.find(item => item.id === current.id)!
+      expect(weatherPackDataSchema.parse(updated.packData).startsAt).toBe(at)
+    } finally { await connection.close() }
+  })
   test('paused create and update immediately refresh probes at simulation time', async () => {
     const probe = createWeatherObject(
       weatherItemSchema.parse({
