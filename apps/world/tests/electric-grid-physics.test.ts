@@ -12,11 +12,10 @@ import { dispatchGridFromLiveIslands } from '../src/packs/electric-grid/runtime/
 import { generatorKineticEnergyMws } from '../src/packs/electric-grid/runtime/generator-dynamics.ts'
 import { setHvdcSetpoint } from '../src/packs/electric-grid/runtime/hvdc.ts'
 import { createGridRuntimeInstance, type GridIsland, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
-import { compiledGridNetworkFor } from '../src/packs/electric-grid/runtime/network/compiled-network.ts'
-import { findGridIslands } from '../src/packs/electric-grid/runtime/network/islands.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { gridAutomationSchema } from '../src/packs/electric-grid/schemas/grid-automation.ts'
-import { gridDefinitionForModel } from './fixtures/synthetic-grid.ts'
+import { balanceSeparablePart, separableBranch } from './fixtures/grid-split.ts'
+import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './fixtures/synthetic-grid.ts'
 import { scenarios } from './fixtures/scenarios.ts'
 
 const start = Date.parse('2026-01-15T10:00:00.000Z')
@@ -26,7 +25,7 @@ const nordic = gridAutomationPreset(nordicFrequencyAutomationRef)
 const definitionFor = (modelRef: string): CompiledGridDefinition => compileGridDefinition(gridDefinitionSchema.parse({
   id: modelRef === 'electric-grid.halden.four-unit' ? 'grid:halden-four-unit' : 'grid:norway',
   model: { ref: modelRef },
-  operatingPoint: { ref: 'electric-grid.norway.normal' },
+  operatingPoint: { ref: 'electric-grid.norway.winter-weekday-peak' },
   automation: { ref: 'electric-grid.frequency.nordic-2025' },
 }))
 
@@ -68,11 +67,17 @@ const largestIslandInjectionSumMw = (grid: GridRuntimeInstance): number => {
   return Math.max(0, ...[...sums.values()].map(Math.abs))
 }
 
-/** The largest generator of the bus's island; its set-point is moved to `targetMw` and the others carry the difference pro rata. */
+/**
+ * The largest online generator of the bus's island that can run at `targetMw` (between its minimum
+ * stable generation and its availability); its set-point is moved there and the others carry the
+ * difference pro rata.
+ */
 const lossUnitWith = (grid: GridRuntimeInstance, busId: string, targetMw: number): GridGeneratorDefinition => {
   const islandId = grid.busStates.get(busId)!.islandId
   const units = grid.definition.model.generators.filter(generator => grid.busStates.get(generator.busId)!.islandId === islandId && grid.generators.get(generator.id)!.state === 'online')
-  const lost = [...units].sort((a, b) => b.capacityMw - a.capacityMw)[0]!
+  const lost = [...units]
+    .filter(unit => unit.minimumStableMw <= targetMw && grid.generators.get(unit.id)!.availableMw >= targetMw)
+    .sort((a, b) => b.capacityMw - a.capacityMw)[0]!
   const lostState = grid.generators.get(lost.id)!
   const shiftMw = lostState.targetMw - targetMw
   const others = units.filter(unit => unit !== lost)
@@ -209,8 +214,10 @@ describe('electric grid physics invariants', () => {
   test('a split child inherits its parent frequency and frequency-control state exactly', () => {
     const run = runningGrid(definitionFor('electric-grid.norway.transmission'))
     const { model } = run.grid.definition
-    const network = compiledGridNetworkFor(model)
     const mainBus = model.loads[0]!.busId
+    const separable = separableBranch(run.grid, mainBus)
+    balanceSeparablePart(run.grid, separable, () => { for (let step = 0; step < 12; step += 1) run.advance(10) })
+    const split: GridBranchDefinition = separable.branch
     const lost = lossUnitWith(run.grid, mainBus, 267)
     for (let step = 0; step < 30; step += 1) run.advance(10)
     tripUnit(run.grid, lost.id)
@@ -219,30 +226,6 @@ describe('electric grid physics invariants', () => {
     const parent = islandOfBus(run.grid, mainBus)
     const parentHz = parent.frequency!.frequencyHz!
     expect(Math.abs(parentHz - 50)).toBeGreaterThan(0.01)
-    // A branch whose opening leaves generation and load on both sides.
-    const closed = Uint8Array.from(model.branches, branch => run.grid.branches.get(branch.id)!.state === 'closed' ? 1 : 0)
-    const parentBuses = new Set(model.buses.filter(bus => run.grid.busStates.get(bus.id)!.islandId === parent.id).map(bus => bus.id))
-    const sides = (branchIndex: number) => {
-      const flags = closed.slice()
-      flags[branchIndex] = 0
-      const found = findGridIslands(network, flags)
-      const parts = new Map<number, { generators: number; loads: number }>()
-      for (const busId of parentBuses) {
-        const part = found.islandOfBus[network.busIndexById.get(busId)!]!
-        const entry = parts.get(part) ?? { generators: 0, loads: 0 }
-        entry.generators += run.grid.definition.index.generatorsByBus.get(busId)?.filter(generator => run.grid.generators.get(generator.id)!.state === 'online').length ?? 0
-        entry.loads += run.grid.definition.index.loadsByBus.get(busId)?.length ?? 0
-        parts.set(part, entry)
-      }
-      return [...parts.values()]
-    }
-    const splitIndex = model.branches.findIndex((branch, index) => closed[index] === 1 && parentBuses.has(branch.fromBusId)
-      && (() => {
-        const parts = sides(index)
-        return parts.length === 2 && parts.every(part => part.generators > 0 && part.loads > 0)
-      })())
-    expect(splitIndex).toBeGreaterThanOrEqual(0)
-    const split: GridBranchDefinition = model.branches[splitIndex]!
     const unitStatesBefore = structuredClone(parent.frequency!.units)
     run.grid.branches.get(split.id)!.state = 'open'
     run.advance(0)
@@ -262,7 +245,8 @@ describe('electric grid physics invariants', () => {
     const kineticEnergyMws = (island: GridIsland): number => Object.keys(island.frequency!.units).reduce((sum, unitId) => {
       const definition = run.grid.definition.index.assetById.get(unitId)!.definition as GridGeneratorDefinition
       return sum + (run.grid.generators.get(unitId)!.state === 'online' ? generatorKineticEnergyMws(definition) : 0)
-    }, 0)
+    }, 0) + Object.keys(island.frequency!.externals).reduce((sum, systemId) =>
+      sum + run.grid.definition.index.externalSystems.find(system => system.id === systemId)!.inertiaGws! * 1_000, 0)
     const weights = separated.map(kineticEnergyMws)
     const expectedHz = (separated[0]!.frequency!.frequencyHz! * weights[0]! + separated[1]!.frequency!.frequencyHz! * weights[1]!) / (weights[0]! + weights[1]!)
     run.grid.branches.get(split.id)!.state = 'closed'
@@ -276,26 +260,19 @@ describe('electric grid physics invariants', () => {
 
   test('LFDD stages latch, shed the lowest priority first, and reconnect only by command', () => {
     const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 132, location: [10 + index * 0.1, 60] as const })
-    const line = (id: string, fromBusId: string, toBusId: string): GridBranchDefinition => ({
-      id, label: id, kind: 'ac_line', fromBusId, toBusId, nominalKv: 132, ratingMw: 600, emergencyRatingMw: 600,
-      reactancePu: 0.05, resistancePu: 0.005, weatherExposure: 'low',
-    })
-    const hydro = (id: string, busId: string, capacityMw: number): GridGeneratorDefinition => ({
-      id, label: id, kind: 'hydro', busId, location: [10, 60], capacityMw, availableMw: capacityMw, reserveMw: 0, rampRateMwPerMinute: capacityMw, inertiaSeconds: 3,
-    })
-    const load = (id: string, demandMw: number, priority: GridLoadDefinition['priority']): GridLoadDefinition => ({
-      id, label: id, kind: 'industry', busId: 'bus:b', location: [10.1, 60], demandMw, criticalMw: 0, reactiveDemandMvar: 0, priority, controllable: false,
-    })
-    const model: GridModelDefinition = {
-      id: 'lfdd-island', title: 'LFDD test island', description: 'Two buses: hydro units on one, loads of three priorities on the other.', nominalFrequencyHz: 50,
-      fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
-      sourceBuild: { id: 'physics-test', generatedAt: '2026-10-10T00:00:00.000Z' }, sourceIds: [],
+    const line = (id: string, fromBusId: string, toBusId: string): GridBranchDefinition =>
+      testLine({ id, fromBusId, toBusId, nominalKv: 132, ratingMw: 600, reactancePu: 0.05, resistancePu: 0.005 })
+    const hydro = (id: string, busId: string, capacityMw: number): GridGeneratorDefinition =>
+      syntheticHydroUnit({ id, label: id, busId, location: [10, 60], capacityMw, rampRateMwPerMinute: capacityMw })
+    const load = (id: string, demandMw: number, priority: GridLoadDefinition['priority']): GridLoadDefinition =>
+      testLoad({ id, busId: 'bus:b', location: [10.1, 60], demandMw, priority })
+    const model: GridModelDefinition = handBuiltModel({
+      id: 'lfdd-island', title: 'LFDD test island', description: 'Two buses: hydro units on one, loads of three priorities on the other.',
       buses: [bus('bus:a', 0), bus('bus:b', 1)],
       branches: [line('a-b', 'bus:a', 'bus:b')],
       generators: [hydro('big', 'bus:a', 250), ...Array.from({ length: 8 }, (_, index) => hydro(`small-${index}`, 'bus:a', 50))],
       loads: [load('low', 100, 'low'), load('normal', 200, 'normal'), load('critical', 100, 'critical')],
-      storage: [], connectionPoints: [],
-    }
+    })
     const definition = { ...gridDefinitionForModel(model), gridId: 'grid:test' }
     const run = runningGrid(definition)
     run.advance(10)
@@ -333,28 +310,22 @@ describe('electric grid physics invariants', () => {
 describe('HVDC links', () => {
   test('ramp to their set-point and move power between islands as an injection pair with converter losses', () => {
     const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.1, 60] as const })
-    const hydro = (id: string, busId: string): GridGeneratorDefinition => ({
-      id, label: id, kind: 'hydro', busId, location: [10, 60], capacityMw: 600, availableMw: 600, reserveMw: 0, rampRateMwPerMinute: 600, inertiaSeconds: 3,
-    })
-    const load = (id: string, busId: string): GridLoadDefinition => ({
-      id, label: id, kind: 'industry', busId, location: [10, 60], demandMw: 400, criticalMw: 0, reactiveDemandMvar: 0, priority: 'normal', controllable: false,
-    })
+    const hydro = (id: string, busId: string): GridGeneratorDefinition =>
+      syntheticHydroUnit({ id, label: id, busId, location: [10, 60], capacityMw: 600, rampRateMwPerMinute: 600 })
+    const load = (id: string, busId: string): GridLoadDefinition => testLoad({ id, busId, demandMw: 400 })
     const provenance = { sources: ['test:hand-built'], method: 'curated' as const, confidence: 'high' as const, note: 'Physics test model.' }
-    const model: GridModelDefinition = {
-      id: 'hvdc-pair', title: 'HVDC pair', description: 'Two AC islands joined only by an HVDC link, and a link to an asynchronous neighbour.', nominalFrequencyHz: 50,
-      fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
-      sourceBuild: { id: 'physics-test', generatedAt: '2026-10-10T00:00:00.000Z' }, sourceIds: [],
+    const model: GridModelDefinition = handBuiltModel({
+      id: 'hvdc-pair', title: 'HVDC pair', description: 'Two AC islands joined only by an HVDC link, and a link to an asynchronous neighbour.',
       buses: [bus('bus:west', 0), bus('bus:east', 1), bus('bus:boundary-DE', 2)],
       branches: [],
       generators: [hydro('west-unit', 'bus:west'), ...Array.from({ length: 3 }, (_, index) => hydro(`east-unit-${index}`, 'bus:east'))],
       loads: [load('west-load', 'bus:west'), load('east-load', 'bus:east')],
-      storage: [], connectionPoints: [],
       externalSystems: [{ id: 'external:DE', label: 'Germany', area: 'DE', synchronous: false, boundaryBusIds: ['bus:boundary-DE'], provenance }],
       hvdcLinks: [
         { id: 'hvdc:west-east', label: 'West–East', fromBusId: 'bus:west', toBusId: 'bus:east', ratingMw: 700, lossPercent: 2, rampMwPerMinute: 60, osmWayIds: [], provenance },
         { id: 'hvdc:east-de', label: 'East–Germany', fromBusId: 'bus:east', toBusId: 'bus:boundary-DE', ratingMw: 1_400, lossPercent: 3, rampMwPerMinute: 600, osmWayIds: [], provenance },
       ],
-    }
+    })
     const run = runningGrid({ ...gridDefinitionForModel(model), gridId: 'grid:test' })
     expect(() => setHvdcSetpoint(run.grid, 'hvdc:west-east', 800)).toThrow(/outside its ±700 MW rating/)
     setHvdcSetpoint(run.grid, 'hvdc:west-east', -100)
@@ -390,23 +361,17 @@ describe('synchro-check on closing a loop', () => {
     // Two parallel lines carry 300 MW from hydro units at A to a load at B: a short one (x 0.02 pu)
     // and a long one (x 0.25 pu). With only the long one closed, A–B differ by P·x = 3 pu · 0.25 = 0.75 rad.
     const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.5, 60] as const })
-    const line = (id: string, reactancePu: number): GridBranchDefinition => ({
-      id, label: id, kind: 'ac_line', fromBusId: 'bus:a', toBusId: 'bus:b', nominalKv: 420, ratingMw: 2_000, emergencyRatingMw: 2_000,
-      reactancePu, resistancePu: 0, weatherExposure: 'low',
-    })
-    const model: GridModelDefinition = {
-      id: 'loop-closing', title: 'Loop-closing test', description: 'Hydro units at A feed a load at B over a short and a long line.', nominalFrequencyHz: 50,
-      fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
-      sourceBuild: { id: 'physics-test', generatedAt: '2026-10-10T00:00:00.000Z' }, sourceIds: [],
+    const line = (id: string, reactancePu: number): GridBranchDefinition =>
+      testLine({ id, fromBusId: 'bus:a', toBusId: 'bus:b', nominalKv: 420, ratingMw: 2_000, reactancePu, resistancePu: 0 })
+    const model: GridModelDefinition = handBuiltModel({
+      id: 'loop-closing', title: 'Loop-closing test', description: 'Hydro units at A feed a load at B over a short and a long line.',
       buses: [bus('bus:a', 0), bus('bus:b', 1)],
       branches: [line('short', 0.02), line('long', 0.25)],
-      generators: Array.from({ length: 4 }, (_, index) => ({
-        id: `hydro-${index}`, label: `Hydro ${index}`, kind: 'hydro' as const, busId: 'bus:a', location: [10, 60] as const,
-        capacityMw: 150, availableMw: 150, reserveMw: 0, rampRateMwPerMinute: 150, inertiaSeconds: 3,
+      generators: Array.from({ length: 4 }, (_, index) => syntheticHydroUnit({
+        id: `hydro-${index}`, label: `Hydro ${index}`, busId: 'bus:a', location: [10, 60], capacityMw: 150, rampRateMwPerMinute: 150,
       })),
-      loads: [{ id: 'load', label: 'Load', kind: 'industry', busId: 'bus:b', location: [10.5, 60], demandMw: 300, criticalMw: 0, reactiveDemandMvar: 0, priority: 'normal', controllable: false }],
-      storage: [], connectionPoints: [],
-    }
+      loads: [testLoad({ id: 'load', busId: 'bus:b', location: [10.5, 60], demandMw: 300 })],
+    })
     const run = runningGrid({ ...gridDefinitionForModel(model), gridId: 'grid:test' })
     run.advance(10)
     const send = (kind: string, assetId: string) => {
@@ -447,10 +412,18 @@ describe('Halden coupling to the Nordic synchronous area', () => {
     run.advance(0)
     return run
   }
-  const switchyard = 'bus:halden-pwr-switchyard-420'
-  const tieIds = ['branch:tie-hasle-borgvik', 'branch:tie-halden-skogssater']
+  const switchyard = 'bus:curated-halden-pwr-switchyard@420'
+  const se3Boundary = 'bus:boundary-SE3@420'
+  /** Flow over each real 420 kV SE3 tie (Hasle–Borgvik, Halden–Skogssäter) towards Sweden (MW). */
+  const se3TieExports = (grid: GridRuntimeInstance) => grid.definition.index.branchesByBus.get(se3Boundary)!.map(branch => ({
+    label: branch.label,
+    exportMw: (branch.toBusId === se3Boundary ? 1 : -1) * grid.branches.get(branch.id)!.flowMw,
+    lossesMw: grid.branches.get(branch.id)!.lossesMw,
+  }))
+  const nordicImportMw = (grid: GridRuntimeInstance): number => grid.definition.index.externalSystems
+    .filter(system => system.synchronous).reduce((sum, system) => sum + grid.externalSystems.get(system.id)!.importMw, 0)
 
-  test('Halden at 4×1,100 MW exports over the SE3 ties at 50.0 ± 0.1 Hz', () => {
+  test('Halden at 4×1,100 MW holds 50.0 ± 0.1 Hz with the Nordic exchange at its schedule', () => {
     const run = halden()
     let lowestHz = Number.POSITIVE_INFINITY
     let highestHz = 0
@@ -460,22 +433,20 @@ describe('Halden coupling to the Nordic synchronous area', () => {
       lowestHz = Math.min(lowestHz, island.minimumHz!)
       highestHz = Math.max(highestHz, island.maximumHz!)
     }
-    const nordicRemainder = run.grid.externalSystems.get('external:nordic-remainder')!
-    // Ties run from the Norwegian stations to the SE3 boundary: positive flow exports.
-    const tieFlows = tieIds.map(id => run.grid.branches.get(id)!.flowMw)
-    console.info(`Halden 4×1,100 MW, 1 h: f ${lowestHz.toFixed(4)}–${highestHz.toFixed(4)} Hz; export ${(-nordicRemainder.importMw).toFixed(1)} MW `
-      + `(scheduled ${(-nordicRemainder.scheduledImportMw).toFixed(1)} MW) over Hasle–Borgvik ${tieFlows[0]!.toFixed(1)} MW and Halden–Skogssäter ${tieFlows[1]!.toFixed(1)} MW; `
-      + `island losses ${run.grid.projection.islands.find(island => island.id === islandOfBus(run.grid, switchyard).id)!.lossesMw} MW`)
+    const ties = se3TieExports(run.grid)
+    const island = run.grid.projection.islands.find(candidate => candidate.id === islandOfBus(run.grid, switchyard).id)!
+    console.info(`Halden 4×1,100 MW, 1 h: f ${lowestHz.toFixed(4)}–${highestHz.toFixed(4)} Hz; Nordic import ${nordicImportMw(run.grid).toFixed(1)} MW; `
+      + `SE3 ties ${ties.map(tie => `${tie.label} ${tie.exportMw.toFixed(1)} MW`).join(', ')}; island losses ${island.lossesMw} MW of ${island.servedLoadMw} MW served`)
     expect(lowestHz).toBeGreaterThan(49.9)
     expect(highestHz).toBeLessThan(50.1)
-    expect(nordicRemainder.importMw).toBeLessThan(0)
-    expect(tieFlows.every(flow => flow > 0)).toBe(true)
-    // The ties carry exactly what leaves the boundary bus: the equivalent's export plus its share of the tie losses.
-    const boundary = run.grid.busStates.get('bus:boundary-SE3')!
-    expect(tieFlows[0]! + tieFlows[1]!).toBeCloseTo(-boundary.netInjectionMw, 6)
-    // The boundary bus carries half of each tie's losses as load, taken from the previous solve.
-    const tieLossesMw = tieIds.reduce((sum, id) => sum + run.grid.branches.get(id)!.lossesMw, 0)
-    expect(boundary.netInjectionMw).toBeCloseTo(nordicRemainder.importMw - tieLossesMw / 2, 2)
+    // The units' surplus displaces Norwegian hydro: the exchange stays at its 0 MW schedule within the
+    // FCR-N and aFRR the Nordic equivalent activates for the area.
+    const nordic = run.grid.definition.index.externalSystems.filter(system => system.synchronous)
+    const responseMw = nordic.reduce((sum, system) => sum + system.fcrNMwPerHz! * 0.1 + system.afrrUpMw!, 0)
+    expect(Math.abs(nordicImportMw(run.grid))).toBeLessThan(responseMw)
+    // The ties carry exactly what leaves the boundary bus, less half their losses, which it carries as load.
+    const boundary = run.grid.busStates.get(se3Boundary)!
+    expect(ties.reduce((sum, tie) => sum + tie.exportMw, 0)).toBeCloseTo(-boundary.netInjectionMw, 6)
   }, 120_000)
 
   test('a Halden unit trip keeps the nadir at or above 49.0 Hz without load shedding', () => {

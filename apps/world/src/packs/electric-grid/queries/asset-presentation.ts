@@ -21,7 +21,7 @@ import {
 import { gridResetBranchProtectionCommandKind } from '../commands/protection.ts'
 import type { GridAssetDefinition, GridGeneratorDefinition, GridLoadDefinition } from '../grid-model.ts'
 import type { GridAssetSnapshot, GridBranchState, GridGeneratorState, GridLoadState, GridRuntimeInstance } from '../runtime/instance.ts'
-import { generatorMinimumStableMw, generatorStartupSeconds } from '../runtime/unit-commitment.ts'
+import { generatorMinimumStableMw } from '../runtime/unit-commitment.ts'
 import { assetKindSchema } from './common.ts'
 
 const mapTargetSchema = z.discriminatedUnion('kind', [
@@ -62,13 +62,12 @@ const generatorOperationIds = (definition: GridGeneratorDefinition, state: GridG
   if (state.state === 'starting') return [gridStopGeneratorCommandKind, gridTripGeneratorCommandKind, gridSetGeneratorAvailabilityCommandKind]
   if (state.state === 'stopping') return [gridTripGeneratorCommandKind, gridSetGeneratorAvailabilityCommandKind]
   if (state.state === 'tripped') return [gridResetGeneratorTripCommandKind, gridSetGeneratorAvailabilityCommandKind]
-  const startable = generatorStartupSeconds(definition) !== null
-    && state.availableMw > 0 && state.availableMw >= generatorMinimumStableMw(definition)
+  const startable = state.availableMw > 0 && state.availableMw >= generatorMinimumStableMw(definition)
   return [...(startable ? [gridStartGeneratorCommandKind] : []), gridSetGeneratorAvailabilityCommandKind]
 }
 
 const loadOperationIds = (definition: GridLoadDefinition, state: GridLoadState): ReadonlyArray<string> => {
-  if (!definition.controllable) return []
+  if (definition.priority === 'critical') return []
   return [
     gridShedLoadCommandKind,
     ...(state.manualDemandLimitMw === null ? [] : [gridRestoreLoadCommandKind]),

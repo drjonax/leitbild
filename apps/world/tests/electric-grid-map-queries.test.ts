@@ -3,7 +3,7 @@ import type { ActorId, CommandEnvelope, CommandId, IsoTimestamp, ObjectId, Simul
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, norwayWinterPeakOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
@@ -23,7 +23,7 @@ const stateId = 'world.electric-grid.map.state'
 const norway = compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: norwayGridModelRef },
-  operatingPoint: { ref: norwayNormalOperatingPointRef },
+  operatingPoint: { ref: norwayWinterPeakOperatingPointRef },
   automation: { ref: nordicFrequencyAutomationRef },
 }))
 
@@ -84,7 +84,7 @@ describe('Grid map query Capabilities', () => {
     expect(JSON.stringify({ state: runtimeStateForElectricGrids(new Map([[grid.definition.gridId, grid]])), tick: grid.tick, projection: grid.projection })).toBe(before)
   })
 
-  test('geometry lists every asset in model order and draws each v1 branch bus to bus, explicitly', () => {
+  test('geometry lists every asset in model order and draws each branch along its mapped route', () => {
     const grid = runningGrid()
     const geometry = ask<GridMapGeometryResult>(grid, geometryId)
     const model = norway.model
@@ -92,14 +92,31 @@ describe('Grid map query Capabilities', () => {
     expect(geometry.branches.map(branch => branch.id)).toEqual(model.branches.map(branch => branch.id))
     expect(geometry.generators.map(generator => generator.id)).toEqual(model.generators.map(generator => generator.id))
     expect(geometry.loads.map(load => load.id)).toEqual(model.loads.map(load => load.id))
-    expect(geometry.simplificationMeters).toBeNull()
+    expect(geometry.simplificationMeters).toBeGreaterThan(0)
     for (const branch of geometry.branches) {
-      expect(branch.pathSource).toBe('bus-to-bus')
-      expect(branch.path).toEqual([geometry.buses[branch.fromBus]!.location, geometry.buses[branch.toBus]!.location])
+      expect(branch.pathSource).toBe('artifact')
+      expect(branch.path.length).toBeGreaterThanOrEqual(2)
       expect(geometry.buses[branch.fromBus]!.id).toBe(model.branches.find(candidate => candidate.id === branch.id)!.fromBusId)
     }
     expect(ask<GridMapGeometryResult>(grid, geometryId).geometryDigest).toBe(geometry.geometryDigest)
     expect(ask<GridMapStateResult>(grid, stateId).geometryDigest).toBe(geometry.geometryDigest)
+  })
+
+  test('a Model Addition draws its base along the base\'s routes and its own branches bus to bus, explicitly', () => {
+    const halden = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: norwayWinterPeakOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
+    }))
+    const grid = createGridRuntimeInstance({ definition: halden, at })
+    advanceGrid(grid, 0, at)
+    const geometry = ask<GridMapGeometryResult>(grid, geometryId)
+    const baseBranchCount = norway.model.branches.length
+    expect(geometry.branches.slice(0, baseBranchCount).every(branch => branch.pathSource === 'artifact')).toBe(true)
+    const added = geometry.branches.slice(baseBranchCount)
+    expect(added.map(branch => branch.id)).toEqual(halden.model.branches.slice(baseBranchCount).map(branch => branch.id))
+    for (const branch of added) {
+      expect(branch.pathSource).toBe('bus-to-bus')
+      expect(branch.path).toEqual([geometry.buses[branch.fromBus]!.location, geometry.buses[branch.toBus]!.location])
+    }
   })
 
   test('state arrays align with the geometry and follow commands', () => {
@@ -130,7 +147,7 @@ describe('Grid map query Capabilities', () => {
     const geometry = ask<GridMapGeometryResult>(grid, geometryId)
     // A bus without generation whose every branch opens becomes a dead island of its own.
     const generatorBuses = new Set(norway.model.generators.map(generator => generator.busId))
-    const busIndex = geometry.buses.findIndex((bus, position) => !generatorBuses.has(bus.id)
+    const busIndex = geometry.buses.findIndex((bus, position) => !generatorBuses.has(bus.id) && !bus.id.startsWith('bus:boundary-')
       && geometry.branches.some(branch => branch.fromBus === position || branch.toBus === position))
     for (const branch of geometry.branches) {
       if (branch.fromBus === busIndex || branch.toBus === busIndex) command(grid, gridOpenBranchCommandKind, { assetId: branch.id })
@@ -146,8 +163,10 @@ describe('Grid map query Capabilities', () => {
     const grid = runningGrid()
     const geometryBytes = JSON.stringify(ask(grid, geometryId)).length
     const stateBytes = JSON.stringify(ask(grid, stateId)).length
-    expect(geometryBytes).toBeLessThanOrEqual(150_000)
-    expect(stateBytes).toBeLessThanOrEqual(8_000)
+    // Norway v2: about 1,100 buses, 1,340 mapped branches, 850 generators and 1,320 loads. Geometry is
+    // fetched once per digest (964 KB, 232 KB gzip, measured); state every revision (45 KB, 8 KB gzip).
+    expect(geometryBytes).toBeLessThanOrEqual(1_200_000)
+    expect(stateBytes).toBeLessThanOrEqual(60_000)
     // Budget 2 ms: the Pack answer plus the Host's output validation and serialisation.
     expect(medianMs(() => JSON.stringify(ask(grid, stateId)), 60)).toBeLessThan(2)
   })
@@ -157,7 +176,7 @@ describe('Grid map query Capabilities', () => {
     expect(definition.model.branches.length).toBe(3_500)
     const grid = createGridRuntimeInstance({ definition, at })
     advanceGrid(grid, 0, at)
-    const geometryFor = createGridMapGeometry({ artifactFileFor: () => null, readArtifact: file => { throw new Error(`no artifact ${file}`) } })
+    const geometryFor = createGridMapGeometry({ artifactFor: () => null, readArtifact: file => { throw new Error(`no artifact ${file}`) } })
     const stateQuery = createGridMapStateQuery(geometryFor)
     const grids = new Map([[grid.definition.gridId, grid]])
     const answer = () => JSON.stringify(stateQuery.capability.output.parse(structuredClone(stateQuery.answer({ gridId: grid.definition.gridId }, grids))))
@@ -210,7 +229,7 @@ describe('Grid geometry artifact', () => {
     advanceGrid(grid, 0, at)
     const files: string[] = []
     const geometryFor = createGridMapGeometry({
-      artifactFileFor: candidate => `${candidate.id}.geometry.json`,
+      artifactFor: candidate => ({ file: `${candidate.id}.geometry.json`, modelId: candidate.id, branchCount: candidate.branches.length }),
       readArtifact: file => { files.push(file); return artifactFor(model) },
     })
     const query = createGridMapGeometryQuery(geometryFor)
@@ -219,7 +238,7 @@ describe('Grid geometry artifact', () => {
     expect(files).toEqual(['electric-grid.test.v2.geometry.json'])
     expect(result.simplificationMeters).toBe(50)
     expect(result.branches.map(branch => [branch.pathSource, branch.path.length])).toEqual([['artifact', 3], ['artifact', 3]])
-    const busToBus = createGridMapGeometry({ artifactFileFor: () => null, readArtifact: () => '' })(model)
+    const busToBus = createGridMapGeometry({ artifactFor: () => null, readArtifact: () => '' })(model)
     expect(busToBus.geometryDigest).not.toBe(geometryFor(model).geometryDigest)
     expect(busToBus.modelDigest).toBe(geometryFor(model).modelDigest)
   })

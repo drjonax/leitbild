@@ -1,0 +1,59 @@
+{
+ "schemaVersion": 2,
+ "id": "electric-grid.test.v2-fixture-peak",
+ "title": "Fixture peak",
+ "description": "Fixture peak hour.",
+ "compatibleModelRefs": [
+  "electric-grid.test.v2-fixture",
+  "electric-grid.test.fixture-addition",
+  "electric-grid.test.broken-reference",
+  "electric-grid.test.broken-syntax",
+  "electric-grid.test.chained",
+  "electric-grid.test.fixture-addition-drift"
+ ],
+ "loadScale": 1,
+ "generatorStates": [
+  {
+   "assetId": "generator:nve-hydro-123",
+   "state": "online",
+   "availableMw": 300,
+   "targetMw": 0
+  },
+  {
+   "assetId": "generator:nve-wind-45",
+   "state": "online",
+   "availableMw": 100,
+   "targetMw": 0
+  },
+  {
+   "assetId": "generator:aggregate-osm-way-60495669@132-hydro-run-of-river",
+   "state": "online",
+   "availableMw": 40,
+   "targetMw": 0
+  }
+ ],
+ "hvdcSchedules": [
+  {
+   "assetId": "hvdc:test-link",
+   "timeZone": "Europe/Oslo",
+   "points": [
+    {
+     "localTime": "00:00",
+     "transferMw": 0
+    }
+   ]
+  }
+ ],
+ "externalExchangeSchedules": [
+  {
+   "assetId": "external:nordic-remainder",
+   "timeZone": "Europe/Oslo",
+   "points": [
+    {
+     "localTime": "00:00",
+     "exportMw": 0
+    }
+   ]
+  }
+ ]
+}

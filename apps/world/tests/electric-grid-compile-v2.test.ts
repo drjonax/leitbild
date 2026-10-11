@@ -21,17 +21,32 @@ describe('Grid Model v2 → runtime model', () => {
     const { model, operatingPoint } = compileGridModelV2(fixture, fixturePoint)
     expect(model.buses.map(bus => bus.id)).toEqual(fixture.buses.map(bus => bus.id))
     expect(model.branches.map(branch => branch.kind)).toEqual(fixture.branches.map(branch => branch.kind))
+    const source = (id: string) => fixture.generators.find(generator => generator.id === id)!
     const hydro = model.generators.find(generator => generator.id === 'generator:nve-hydro-123')!
-    expect(hydro).toMatchObject({ kind: 'hydro', availableMw: 280, reserveMw: 80, rampRateMwPerMinute: 60, inertiaSeconds: 3.5 })
-    expect(model.generators.find(generator => generator.id === 'generator:nve-wind-45')).toMatchObject({ kind: 'wind', availableMw: 30, reserveMw: 0 })
-    // Not in the Operating Point: available at capacity.
-    expect(model.generators.find(generator => generator.kind === 'hydro' && generator.id.startsWith('generator:aggregate'))?.availableMw).toBe(40)
+    expect(hydro).toMatchObject({ kind: 'hydro', availableMw: 280, initialState: 'online', rampRateMwPerMinute: 60, inertiaSeconds: 3.5 })
+    // Machine data is carried as the Model states it.
+    for (const field of ['ratedMva', 'powerFactor', 'voltageSetpointPu', 'minimumStableMw', 'blackStartCapable', 'synchronous'] as const) {
+      expect(hydro[field]).toBe(source(hydro.id)[field])
+    }
+    expect(model.generators.find(generator => generator.id === 'generator:nve-wind-45')).toMatchObject({ kind: 'wind', availableMw: 30, initialState: 'offline', synchronous: false, inertiaSeconds: 0 })
+    // Not in the Operating Point: online and available at capacity.
+    expect(model.generators.find(generator => generator.kind === 'hydro' && generator.id.startsWith('generator:aggregate'))).toMatchObject({ availableMw: 40, initialState: 'online' })
     const oslo = model.loads.find(load => load.id === 'load:0301-private-osm-way-60495669')!
     expect(oslo.kind).toBe('residential')
-    expect(oslo.demandMw).toBeCloseTo(800 * 1.1 * 0.5, 9)
-    expect(oslo.reactiveDemandMvar).toBeCloseTo(800 * 1.1 * 0.5 * Math.tan(Math.acos(0.98)), 9)
-    expect(model.loads.find(load => load.id === 'load:site-test-smelter')).toMatchObject({ kind: 'industry', demandMw: 250 * 1.1, controllable: true, criticalMw: 0 })
-    expect(operatingPoint).toMatchObject({ loadScale: 1, generationAvailabilityScale: 1, storageStateOfCharge: 0 })
+    // The price-area scale is in the load's demand; the Operating Point's load scale is applied by the runtime.
+    expect(oslo.demandMw).toBeCloseTo(800 * 0.5, 9)
+    expect(oslo.powerFactor).toBe(0.98)
+    expect(model.loads.find(load => load.id === 'load:site-test-smelter')).toMatchObject({ kind: 'industry', demandMw: 250, criticalMw: 0 })
+    expect(operatingPoint).toMatchObject({ loadScale: 1.1, generationAvailabilityScale: 1, storageStateOfCharge: null })
+    expect(operatingPoint.hvdcSetpoints).toEqual(fixture.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: 0 })))
+    // Branch electrical data and shunts are carried for the AC load flow.
+    model.branches.forEach((branch, position) => {
+      const original = fixture.branches[position]!
+      expect(branch).toMatchObject({ circuits: original.circuits, emergencyDurationSeconds: original.emergencyDurationSeconds, chargingSusceptancePu: original.chargingSusceptancePu })
+      expect(branch.tapRatio).toBe(original.tapRatio)
+    })
+    expect(model.shunts).toEqual(fixture.shunts)
+    expect(model.sBaseMva).toBe(fixture.sBaseMva)
     expect(model.hvdcLinks).toEqual(fixture.hvdcLinks)
     expect(model.sourceBuild).toEqual({ id: fixture.sourceBuild.id, generatedAt: '2026-10-10T00:00:00Z' })
   })
@@ -47,15 +62,21 @@ describe('Grid Model v2 → runtime model', () => {
       expect(parts.reduce((sum, part) => sum + part[field]!, 0)).toBeCloseTo(nordic[field]!, 6)
     }
     expect(model.externalSystems.filter(system => !system.synchronous).map(system => system.id).sort()).toEqual(['external:DE', 'external:DK1', 'external:GB', 'external:NL'])
-    const demandMw = model.loads.reduce((sum, load) => sum + load.demandMw, 0)
-    expect(demandMw).toBeCloseTo(generated.loads.reduce((sum, load) => sum + load.referenceDemandMw, 0), 6)
+    const demandMw = model.loads.reduce((sum, load) => sum + load.demandMw, 0) * winter.loadScale
+    expect(demandMw).toBeCloseTo(generated.loads.reduce((sum, load) => sum + load.referenceDemandMw, 0) * winter.loadScale, 6)
     // The runtime loader accepts the mapped model.
     const index = compileGridModelIndex(model)
     expect(index.busById.size).toBe(generated.buses.length)
     expect(index.diagnostics.assetCount).toBeGreaterThan(generated.buses.length + generated.branches.length)
   })
 
-  test('refuses an Operating Point for another model', () => {
+  test('refuses an Operating Point for another model, and schedules and branch states the runtime does not follow', () => {
     expect(() => compileGridModelV2(fixture, { ...fixturePoint, compatibleModelRefs: ['electric-grid.other'] })).toThrow('is not compatible')
+    const link = fixture.hvdcLinks[0]!
+    const twoPoints = { assetId: link.id, timeZone: 'Europe/Oslo' as const, points: [{ localTime: '00:00', transferMw: 0 }, { localTime: '12:00', transferMw: 100 }] }
+    expect(() => compileGridModelV2(fixture, { ...fixturePoint, hvdcSchedules: [twoPoints] })).toThrow(`the schedule of ${link.id} has 2 points`)
+    const constant = compileGridModelV2(fixture, { ...fixturePoint, hvdcSchedules: [{ ...twoPoints, points: [{ localTime: '00:00', transferMw: 100 }] }] })
+    expect(constant.operatingPoint.hvdcSetpoints.find(entry => entry.linkId === link.id)?.setpointMw).toBe(100)
+    expect(() => compileGridModelV2(fixture, { ...fixturePoint, branchStates: [{ assetId: fixture.branches[0]!.id, state: 'open' }] })).toThrow('does not apply initial branch states')
   })
 })

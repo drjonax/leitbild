@@ -307,6 +307,12 @@ const requireRestored = <T extends { readonly id: string }>(items: ReadonlyArray
   return byId
 }
 
+const requiredValue = (values: ReadonlyMap<string, number>, id: string, subject: string): number => {
+  const value = values.get(id)
+  if (value === undefined) throw new Error(`the Operating Point gives ${id} no ${subject}`)
+  return value
+}
+
 export const createGridRuntimeInstance = (config: {
   readonly definition: CompiledGridDefinition
   readonly at: string
@@ -340,9 +346,12 @@ export const createGridRuntimeInstance = (config: {
     const stored = restoredGenerators?.get(generator.id)
     const availableMw = stored?.availableMw ?? Math.min(generator.capacityMw, generator.availableMw * operatingPoint.generationAvailabilityScale)
     if (availableMw > generator.capacityMw) throw new Error(`stored generator ${generator.id} availability exceeds its capacity`)
+    if (!stored && generator.initialState === 'online' && availableMw < generator.minimumStableMw) {
+      throw new Error(`generator ${generator.id} starts online with ${availableMw} MW available, below its minimum stable generation of ${generator.minimumStableMw} MW`)
+    }
     const reserves = stored?.reserves ?? noReserves
     return [generator.id, {
-      state: stored?.state ?? 'online',
+      state: stored?.state ?? generator.initialState,
       availableMw,
       dispatchMw: 0,
       // A fresh Grid is dispatched from its live islands before the first advance.
@@ -378,6 +387,7 @@ export const createGridRuntimeInstance = (config: {
   }))
   const storage = new Map(model.storage.map(item => {
     const fraction = restoredStorage?.get(item.id)?.stateOfChargeFraction ?? operatingPoint.storageStateOfCharge
+    if (fraction === null) throw new Error(`storage ${item.id} has no initial state of charge: Operating Point ${operatingPoint.id} gives none`)
     if (!(fraction >= 0 && fraction <= 1)) throw new Error(`storage ${item.id} state of charge must lie within 0..1`)
     return [item.id, {
       stateOfChargeFraction: fraction,
@@ -387,8 +397,10 @@ export const createGridRuntimeInstance = (config: {
       state: 'unavailable',
     } satisfies GridStorageState]
   }))
+  const scheduledExports = new Map(operatingPoint.externalExchanges.map(exchange => [exchange.systemId, exchange.scheduledExportMw]))
   const externalSystems = new Map(index.externalSystems.map(system => [system.id, {
-    scheduledImportMw: restoredExternals?.get(system.id)?.scheduledImportMw ?? 0,
+    // An asynchronous system exchanges only through HVDC links; a synchronous one starts at its scheduled exchange.
+    scheduledImportMw: restoredExternals?.get(system.id)?.scheduledImportMw ?? (system.synchronous ? -requiredValue(scheduledExports, system.id, 'scheduled exchange') : 0),
     importMw: 0,
     fcrMw: 0,
     afrrMw: 0,
@@ -396,9 +408,12 @@ export const createGridRuntimeInstance = (config: {
     islandId: null,
     energized: false,
   } satisfies GridExternalSystemState]))
+  const hvdcSetpoints = new Map(operatingPoint.hvdcSetpoints.map(entry => [entry.linkId, entry.setpointMw]))
   const hvdcLinks = new Map(index.hvdcLinks.map(link => {
     const stored = restoredHvdc?.get(link.id)
-    return [link.id, { setpointMw: stored?.setpointMw ?? 0, transferMw: stored?.transferMw ?? 0, lossesMw: 0 } satisfies GridHvdcLinkState]
+    // A fresh Grid starts with each link transferring its Operating Point set-point.
+    const setpointMw = stored?.setpointMw ?? requiredValue(hvdcSetpoints, link.id, 'HVDC set-point')
+    return [link.id, { setpointMw, transferMw: stored?.transferMw ?? setpointMw, lossesMw: 0 } satisfies GridHvdcLinkState]
   }))
   const pointsById = new Map(model.connectionPoints.map(point => [point.id, point]))
   const externalConnections = new Map((config.connections ?? []).flatMap(connection => {

@@ -1,7 +1,7 @@
 {
   "id": "halden-power-complex",
   "title": "Halden four-unit power complex",
-  "description": "Four independently simulated PWR units supply a dedicated 420 kV switchyard in the Norwegian transmission grid. The units' combined output of about 4.3 GW exceeds the demand of the connected Norwegian island, so the dispatch exports the surplus to Sweden over the two real 420 kV ties Hasle–Borgvik and Halden–Skogssäter into a synchronous equivalent of the rest of the Nordic area, which shares the island's frequency, inertia and reserves. Plant output and station-service demand participate directly in grid balance, flow and frequency; the DC grid model does not compute voltage. If the switchyard loses every path to a voltage-forming source, its ports de-energise and the Plants lose offsite power. Local weather evolves from rain through freezing conditions to clearing, with recorded ground probes. Weather is observable context; it does not yet change Plant or Grid physics.",
+  "description": "Four independently simulated PWR units supply a dedicated 420 kV switchyard tied by three circuits each to Hasle and Tegneby in the Norwegian transmission grid (NO1). Their combined output of about 4.3 GW displaces Norwegian hydro in the dispatch, which keeps the exchange with the rest of the Nordic synchronous area at the winter Operating Point's schedule of 0 MW. That area is a synchronous equivalent sharing the island's frequency, inertia and reserves, reached over the real interconnectors: towards SE3 the 420 kV ties Hasle–Borgvik and Halden–Skogssäter next to the switchyard, and further ties to SE1, SE2 and Finland; each tie carries its share of the equivalent's response in proportion to its rating. Plant output and station-service demand participate directly in grid balance, flow and frequency; the DC grid model does not compute voltage. If the switchyard loses every path to a voltage-forming source, its ports de-energise and the Plants lose offsite power. Local weather evolves from rain through freezing conditions to clearing, with recorded ground probes. Weather is observable context; it does not yet change Plant or Grid physics.",
   "objectives": [
     "Operate four independent PWR units while monitoring their combined effect on the transmission grid and the export to Sweden.",
     "Assess the starting balance, the tie loading and the reserves before changing dispatch or tripping a unit; this source-derived network is not a calibrated four-unit operating baseline.",
@@ -177,7 +177,7 @@
             "ref": "electric-grid.halden.four-unit"
           },
           "operatingPoint": {
-            "ref": "electric-grid.norway.normal"
+            "ref": "electric-grid.norway.winter-weekday-peak"
           },
           "automation": {
             "ref": "electric-grid.frequency.nordic-2025"

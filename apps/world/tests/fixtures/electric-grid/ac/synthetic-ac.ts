@@ -62,7 +62,7 @@ export const syntheticAcCase = (model: GridModelDefinition, loadScale: number, s
   for (const load of model.loads) {
     const bus = index(load.busId)
     activeInjectionMw[bus] = activeInjectionMw[bus]! - load.demandMw * loadScale
-    reactiveInjectionMvar[bus] = reactiveInjectionMvar[bus]! - load.reactiveDemandMvar * loadScale
+    reactiveInjectionMvar[bus] = reactiveInjectionMvar[bus]! - load.demandMw * Math.tan(Math.acos(load.powerFactor)) * loadScale
   }
   for (const generator of model.generators) {
     const bus = index(generator.busId)

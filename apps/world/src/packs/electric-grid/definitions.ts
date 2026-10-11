@@ -18,19 +18,23 @@ import type {
   GridModelDefinition,
   GridOperatingPointDefinition,
 } from './grid-model.ts'
-import { addGridModelAssets, parseGridModelAddition } from './model-additions.ts'
+import { compileGridModelV2 } from './models/compile-v2.ts'
 import { gridAutomationSchema, type GridAutomation } from './schemas/grid-automation.ts'
-import { buildNorwayTransmissionModelV1 } from './models/norway-transmission-v1.ts'
+import { composeGridModel, validateGridModelAddition } from './schemas/grid-model-addition.ts'
+import { validateGridModel, type GridModelV2 } from './schemas/grid-model.ts'
 import {
-  gridOperatingPointPerAssetFields,
   gridOperatingPointStateIssues,
+  gridOperatingPointTargetsForModel,
+  validateGridOperatingPoint,
   type GridOperatingPointTargets,
+  type GridOperatingPointV2,
 } from './schemas/grid-operating-point.ts'
 
 // The Grid definition loader. Only the runtime connect path and scenario expansion import it,
-// dynamically, so World startup neither reads model data nor compiles a model. Each model is
-// read, validated, indexed and digested once per id on first use; a malformed model or
-// addition fails that use with an error naming its file and JSON path.
+// dynamically, so World startup neither reads model data nor compiles a model. Each Grid Model
+// v2 (composed for an addition) and Operating Point is read and validated once on first use;
+// each Model × Operating Point × overrides is mapped, indexed and digested once. Malformed data
+// fails that use with an error naming its file and JSON path.
 
 const failModel = (model: GridModelDefinition, message: string): never => {
   throw new Error(`Grid Model ${model.id}: ${message}`)
@@ -53,6 +57,7 @@ const readonlyGroups = <T>(map: Map<string, T[]>): ReadonlyMap<string, ReadonlyA
 
 export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridModelIndex => {
   requireFinite(model, model.nominalFrequencyHz, 'nominal frequency', 1)
+  requireFinite(model, model.sBaseMva, 'sBaseMva', Number.MIN_VALUE)
   if (model.buses.length === 0) failModel(model, 'must contain at least one bus')
   const assets: GridAssetIndexEntry[] = []
   const assetById = new Map<string, GridAssetIndexEntry>()
@@ -68,6 +73,7 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
   const generatorsByBus = new Map<string, typeof model.generators[number][]>()
   const loadsByBus = new Map<string, typeof model.loads[number][]>()
   const storageByBus = new Map<string, typeof model.storage[number][]>()
+  const shuntsByBus = new Map<string, typeof model.shunts[number][]>()
   for (const bus of model.buses) {
     requireFinite(model, bus.nominalKv, `${bus.id} nominalKv`, 0.001)
     requireFinite(model, bus.location[0], `${bus.id} longitude`)
@@ -85,8 +91,13 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     requireFinite(model, branch.nominalKv, `${branch.id} nominalKv`, 0.001)
     requireFinite(model, branch.ratingMw, `${branch.id} ratingMw`, 0.001)
     requireFinite(model, branch.emergencyRatingMw, `${branch.id} emergencyRatingMw`, branch.ratingMw)
+    requireFinite(model, branch.emergencyDurationSeconds, `${branch.id} emergencyDurationSeconds`, Number.MIN_VALUE)
     requireFinite(model, branch.reactancePu, `${branch.id} reactancePu`, 0.000001)
     requireFinite(model, branch.resistancePu, `${branch.id} resistancePu`, 0)
+    requireFinite(model, branch.chargingSusceptancePu, `${branch.id} chargingSusceptancePu`, 0)
+    if (!Number.isInteger(branch.circuits) || branch.circuits < 1) failModel(model, `${branch.id} circuits must be a positive integer`)
+    if ((branch.kind === 'transformer') !== (branch.tapRatio !== undefined)) failModel(model, `${branch.id}: a transformer and only a transformer has a tap ratio`)
+    if (branch.tapRatio !== undefined) requireFinite(model, branch.tapRatio, `${branch.id} tapRatio`, Number.MIN_VALUE)
     addGrouped(branchesByBus, branch.fromBusId, branch)
     addGrouped(branchesByBus, branch.toBusId, branch)
     register({ id: branch.id, label: branch.label, kind: 'branch', definition: branch })
@@ -95,14 +106,19 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     requireBus(generator.busId, generator.id)
     requireFinite(model, generator.capacityMw, `${generator.id} capacityMw`, 0.001)
     requireFinite(model, generator.availableMw, `${generator.id} availableMw`, 0)
-    requireFinite(model, generator.reserveMw, `${generator.id} reserveMw`, 0)
+    requireFinite(model, generator.ratedMva, `${generator.id} ratedMva`, generator.capacityMw)
+    requireFinite(model, generator.powerFactor, `${generator.id} powerFactor`, Number.MIN_VALUE)
+    if (generator.powerFactor > 1) failModel(model, `${generator.id} powerFactor must not exceed 1`)
+    requireFinite(model, generator.voltageSetpointPu, `${generator.id} voltageSetpointPu`, Number.MIN_VALUE)
+    requireFinite(model, generator.minimumStableMw, `${generator.id} minimumStableMw`, 0)
+    if (generator.minimumStableMw > generator.capacityMw) failModel(model, `${generator.id} minimumStableMw exceeds capacityMw`)
     requireFinite(model, generator.rampRateMwPerMinute, `${generator.id} rampRateMwPerMinute`, 0)
     requireFinite(model, generator.inertiaSeconds, `${generator.id} inertiaSeconds`, 0)
+    if (!generator.synchronous && generator.inertiaSeconds !== 0) failModel(model, `${generator.id} is converter-connected and has no synchronous inertia`)
     requireFinite(model, generator.location[0], `${generator.id} longitude`)
     requireFinite(model, generator.location[1], `${generator.id} latitude`)
     if (Math.abs(generator.location[0]) > 180 || Math.abs(generator.location[1]) > 90) failModel(model, `${generator.id} has an invalid location`)
     if (generator.availableMw > generator.capacityMw) failModel(model, `${generator.id} availableMw exceeds capacityMw`)
-    if (generator.reserveMw > generator.availableMw) failModel(model, `${generator.id} reserveMw exceeds availableMw`)
     addGrouped(generatorsByBus, generator.busId, generator)
     register({ id: generator.id, label: generator.label, kind: 'generator', definition: generator })
   }
@@ -110,7 +126,9 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     requireBus(load.busId, load.id)
     requireFinite(model, load.demandMw, `${load.id} demandMw`, 0)
     requireFinite(model, load.criticalMw, `${load.id} criticalMw`, 0)
-    requireFinite(model, load.reactiveDemandMvar, `${load.id} reactiveDemandMvar`, 0)
+    requireFinite(model, load.powerFactor, `${load.id} powerFactor`, Number.MIN_VALUE)
+    if (load.powerFactor > 1) failModel(model, `${load.id} powerFactor must not exceed 1`)
+    requireFinite(model, load.interruptibleMw, `${load.id} interruptibleMw`, 0)
     requireFinite(model, load.location[0], `${load.id} longitude`)
     requireFinite(model, load.location[1], `${load.id} latitude`)
     if (Math.abs(load.location[0]) > 180 || Math.abs(load.location[1]) > 90) failModel(model, `${load.id} has an invalid location`)
@@ -129,6 +147,14 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     addGrouped(storageByBus, item.busId, item)
     register({ id: item.id, label: item.label, kind: 'storage', definition: item })
   }
+  const shuntIds = new Set<string>()
+  for (const shunt of model.shunts) {
+    if (shuntIds.has(shunt.id) || assetById.has(shunt.id)) failModel(model, `duplicate shunt id ${shunt.id}`)
+    shuntIds.add(shunt.id)
+    requireBus(shunt.busId, shunt.id)
+    requireFinite(model, shunt.mvarAtNominalVoltage, `${shunt.id} mvarAtNominalVoltage`)
+    addGrouped(shuntsByBus, shunt.busId, shunt)
+  }
   const connectionPointIds = new Set<string>()
   for (const point of model.connectionPoints) {
     if (connectionPointIds.has(point.id)) failModel(model, `duplicate connection point id ${point.id}`)
@@ -138,8 +164,8 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     requireFinite(model, point.maximumExportMw, `${point.id} maximumExportMw`, 0)
     requireFinite(model, point.maximumImportMw, `${point.id} maximumImportMw`, 0)
   }
-  const externalSystems = model.externalSystems ?? []
-  const hvdcLinks = model.hvdcLinks ?? []
+  const externalSystems = model.externalSystems
+  const hvdcLinks = model.hvdcLinks
   const synchronousExternalByBus = new Map<string, GridExternalSystemDefinition>()
   const asynchronousBoundaryBusIds = new Set<string>()
   const boundaryOwner = new Map<string, string>()
@@ -213,6 +239,7 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     generatorsByBus: readonlyGroups(generatorsByBus),
     loadsByBus: readonlyGroups(loadsByBus),
     storageByBus: readonlyGroups(storageByBus),
+    shuntsByBus: readonlyGroups(shuntsByBus),
     staticComponentByBus,
     externalSystems,
     hvdcLinks,
@@ -241,30 +268,17 @@ export const gridModelFileReader = (directory: URL): GridModelFileReader => file
 interface CompiledModelEntry {
   readonly model: GridModelDefinition
   readonly index: CompiledGridModelIndex
-  readonly targets: GridOperatingPointTargets
+  readonly operatingPoint: GridOperatingPointDefinition
   readonly digest: string
 }
 
-/** What Operating Point overrides may address in a v1 model. */
-const operatingPointTargetsFor = (model: GridModelDefinition): GridOperatingPointTargets => ({
-  generators: new Map(model.generators.map(generator => [generator.id, { capacityMw: generator.capacityMw }])),
-  branches: new Set(model.branches.map(branch => branch.id)),
-  // The base v1 model carries HVDC as AC branches and gives loads no price area; this runtime does
-  // not yet apply Operating Point overrides to the external systems or HVDC links an addition adds.
-  hvdcLinks: new Map(),
-  externalSystems: new Map(),
-  loadPriceAreas: new Set(),
-})
-
 const overridesPath = ['operatingPoint', 'overrides'] as const
 
-/** Overrides the current runtime cannot apply yet are rejected, never silently ignored. */
-const unappliedOverrideFields = (overrides: GridOperatingPointOverrides): ReadonlyArray<string> => [
-  ...gridOperatingPointPerAssetFields.filter(field => overrides[field] !== undefined && overrides[field].length > 0),
-  ...(overrides.priceAreaDemandScale !== undefined && Object.keys(overrides.priceAreaDemandScale).length > 0 ? ['priceAreaDemandScale'] : []),
-]
+/** Per-asset override fields the runtime cannot apply yet; overrides of them are rejected, never silently ignored. */
+const unappliedOverrideFields = (overrides: GridOperatingPointOverrides): ReadonlyArray<string> =>
+  overrides.branchStates !== undefined && overrides.branchStates.length > 0 ? ['branchStates'] : []
 
-/** Validates overrides against the compiled model; issue paths are relative to the Grid definition. */
+/** Validates overrides against the selected v2 model; issue paths are relative to the Grid definition. */
 const resolveOverrides = (definition: GridDefinition, targets: GridOperatingPointTargets): GridOperatingPointOverrides => {
   const overrides = gridOperatingPointOverridesSchema.parse(definition.operatingPoint.overrides ?? {})
   const issues = gridOperatingPointStateIssues(overrides, targets)
@@ -282,8 +296,34 @@ const resolveOverrides = (definition: GridDefinition, targets: GridOperatingPoin
   return overrides
 }
 
+/** An override entry replaces the Operating Point's entry for the same asset; other entries stay. */
+const mergedByAsset = <Entry extends { readonly assetId: string }>(base: ReadonlyArray<Entry> | undefined, overrides: ReadonlyArray<Entry> | undefined): Entry[] | undefined => {
+  if (overrides === undefined || overrides.length === 0) return base === undefined ? undefined : [...base]
+  const replaced = new Map(overrides.map(entry => [entry.assetId, entry]))
+  const kept = (base ?? []).map(entry => replaced.get(entry.assetId) ?? entry)
+  const present = new Set(kept.map(entry => entry.assetId))
+  return [...kept, ...overrides.filter(entry => !present.has(entry.assetId))]
+}
+
+/** The Operating Point with a Scenario's overrides applied: scalars and per-area scales replace, per-asset entries replace by asset id. */
+export const operatingPointWithOverrides = (operatingPoint: GridOperatingPointV2, overrides: GridOperatingPointOverrides): GridOperatingPointV2 => {
+  const priceAreaDemandScale = overrides.priceAreaDemandScale === undefined
+    ? operatingPoint.priceAreaDemandScale
+    : { ...operatingPoint.priceAreaDemandScale, ...overrides.priceAreaDemandScale }
+  const merged = {
+    ...operatingPoint,
+    loadScale: overrides.loadScale ?? operatingPoint.loadScale,
+    ...(priceAreaDemandScale === undefined ? {} : { priceAreaDemandScale }),
+    generatorStates: mergedByAsset(operatingPoint.generatorStates, overrides.generatorStates),
+    branchStates: mergedByAsset(operatingPoint.branchStates, overrides.branchStates),
+    hvdcSchedules: mergedByAsset(operatingPoint.hvdcSchedules, overrides.hvdcSchedules),
+    externalExchangeSchedules: mergedByAsset(operatingPoint.externalExchangeSchedules, overrides.externalExchangeSchedules),
+  }
+  return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== undefined)) as GridOperatingPointV2
+}
+
 export interface GridDefinitionCompiler {
-  readonly compileModel: (ref: string) => CompiledModelEntry
+  readonly compileModel: (ref: string) => GridModelV2
   readonly compileAutomation: (ref: string) => GridAutomation
   readonly compile: (definition: GridDefinition) => CompiledGridDefinition
 }
@@ -335,6 +375,8 @@ export const createGridDefinitionCompiler = (config: {
   const modelEntry = catalogEntriesById(config.catalog.models, 'Grid Model')
   const operatingPointEntry = catalogEntriesById(config.catalog.operatingPoints, 'Grid Operating Point')
   const automationEntry = catalogEntriesById(config.catalog.automations, 'Grid Automation')
+  const models = new Map<string, GridModelV2>()
+  const operatingPoints = new Map<string, GridOperatingPointV2>()
   const compiledModels = new Map<string, CompiledModelEntry>()
   const automations = new Map<string, GridAutomation>()
 
@@ -347,61 +389,86 @@ export const createGridDefinitionCompiler = (config: {
     return preset
   }
 
-  const loadModel = (entry: GridModelCatalogEntry): GridModelDefinition => {
-    if (entry.source.kind === 'norway-source-data-v1') return buildNorwayTransmissionModelV1(entry)
+  const loadModel = (entry: GridModelCatalogEntry): GridModelV2 => {
+    if (entry.source.kind === 'grid-model') {
+      const { file } = entry.source
+      const model = validateGridModel(config.readModelFile(file), file)
+      if (model.id !== entry.id) throw new Error(`${file}: $.id ${model.id} must be the catalog id ${entry.id}`)
+      return model
+    }
     const { baseModelRef, file } = entry.source
-    if (modelEntry(baseModelRef).source.kind !== 'norway-source-data-v1') {
+    if (modelEntry(baseModelRef).source.kind !== 'grid-model') {
       throw new Error(`Grid Model ${entry.id}: base ${baseModelRef} is itself a Model Addition; additions compose onto a base Grid Model only`)
     }
-    const addition = parseGridModelAddition(config.readModelFile(file), file)
+    const addition = validateGridModelAddition(config.readModelFile(file), file)
     if (addition.id !== entry.id) throw new Error(`${file}: $.id ${addition.id} must be the catalog id ${entry.id}`)
     if (addition.baseModelRef !== baseModelRef) throw new Error(`${file}: $.baseModelRef ${addition.baseModelRef} must be the catalog base ${baseModelRef}`)
-    return addGridModelAssets(compileModel(baseModelRef).model, addition, file)
+    return composeGridModel({ addition, base: { kind: 'model', model: compileModel(baseModelRef) }, source: file })
   }
 
-  const compileModel = (ref: string): CompiledModelEntry => {
-    const cached = compiledModels.get(ref)
+  /** The validated Grid Model v2 of a catalog model, composed when it is an addition; read once per id. */
+  const compileModel = (ref: string): GridModelV2 => {
+    const cached = models.get(ref)
     if (cached !== undefined) return cached
-    const entry = modelEntry(ref)
-    const model = loadModel(entry)
-    requireCatalogMatch(entry, model)
-    const compiled = { model, index: compileGridModelIndex(model), targets: operatingPointTargetsFor(model), digest: sha256(JSON.stringify(model)) }
-    compiledModels.set(ref, compiled)
-    return compiled
+    const model = loadModel(modelEntry(ref))
+    models.set(ref, model)
+    return model
+  }
+
+  const loadOperatingPoint = (ref: string, modelRef: string, model: GridModelV2): GridOperatingPointV2 => {
+    const key = `${ref}\u0000${modelRef}`
+    const cached = operatingPoints.get(key)
+    if (cached !== undefined) return cached
+    const entry = operatingPointEntry(ref)
+    const { file } = entry.source
+    const operatingPoint = validateGridOperatingPoint(config.readModelFile(file), file, gridOperatingPointTargetsForModel(model))
+    if (operatingPoint.id !== entry.id) throw new Error(`${file}: $.id ${operatingPoint.id} must be the catalog id ${entry.id}`)
+    if (operatingPoint.title !== entry.title) throw new Error(`${file}: $.title ${JSON.stringify(operatingPoint.title)} does not match the catalog entry ${JSON.stringify(entry.title)}`)
+    for (const compatible of entry.compatibleModelRefs) {
+      if (!operatingPoint.compatibleModelRefs.includes(compatible)) throw new Error(`${file}: $.compatibleModelRefs lacks ${compatible}, which the catalog entry lists`)
+    }
+    operatingPoints.set(key, operatingPoint)
+    return operatingPoint
   }
 
   const compile = (definition: GridDefinition): CompiledGridDefinition => {
-    const compiledModel = compileModel(definition.model.ref)
-    const operatingPoint = operatingPointEntry(definition.operatingPoint.ref)
+    const catalogModel = modelEntry(definition.model.ref)
+    const operatingPointCatalogEntry = operatingPointEntry(definition.operatingPoint.ref)
     const automationCatalogEntry = automationEntry(definition.automation.ref)
-    const automation = compileAutomation(definition.automation.ref)
-    if (automation.swing.nominalFrequencyHz !== compiledModel.model.nominalFrequencyHz) {
-      throw new Error(`Grid Automation ${automation.id} is for ${automation.swing.nominalFrequencyHz} Hz, Model ${compiledModel.model.id} for ${compiledModel.model.nominalFrequencyHz} Hz`)
-    }
-    if (!operatingPoint.compatibleModelRefs.includes(definition.model.ref)) {
+    if (!operatingPointCatalogEntry.compatibleModelRefs.includes(definition.model.ref)) {
       throw new Error(`Grid Operating Point ${definition.operatingPoint.ref} is not compatible with Model ${definition.model.ref}`)
     }
     if (!automationCatalogEntry.compatibleModelRefs.includes(definition.model.ref)) {
       throw new Error(`Grid Automation ${definition.automation.ref} is not compatible with Model ${definition.model.ref}`)
     }
-    const overrides = resolveOverrides(definition, compiledModel.targets)
-    const resolvedOperatingPoint: GridOperatingPointDefinition = {
-      id: operatingPoint.id,
-      title: operatingPoint.title,
-      loadScale: overrides.loadScale ?? operatingPoint.values.loadScale,
-      generationAvailabilityScale: overrides.generationAvailabilityScale ?? operatingPoint.values.generationAvailabilityScale,
-      storageStateOfCharge: overrides.storageStateOfCharge ?? operatingPoint.values.storageStateOfCharge,
+    const v2 = compileModel(definition.model.ref)
+    const overrides = resolveOverrides(definition, gridOperatingPointTargetsForModel(v2))
+    const automation = compileAutomation(definition.automation.ref)
+    if (automation.swing.nominalFrequencyHz !== v2.nominalFrequencyHz) {
+      throw new Error(`Grid Automation ${automation.id} is for ${automation.swing.nominalFrequencyHz} Hz, Model ${v2.id} for ${v2.nominalFrequencyHz} Hz`)
+    }
+    const key = [definition.model.ref, definition.operatingPoint.ref, JSON.stringify(overrides)].join('\u0000')
+    let compiled = compiledModels.get(key)
+    if (compiled === undefined) {
+      const operatingPoint = operatingPointWithOverrides(loadOperatingPoint(definition.operatingPoint.ref, definition.model.ref, v2), overrides)
+      const runtime = compileGridModelV2(v2, operatingPoint, {
+        generationAvailabilityScale: overrides.generationAvailabilityScale,
+        storageStateOfCharge: overrides.storageStateOfCharge,
+      })
+      requireCatalogMatch(catalogModel, runtime.model)
+      compiled = { model: runtime.model, index: compileGridModelIndex(runtime.model), operatingPoint: runtime.operatingPoint, digest: sha256(JSON.stringify(runtime.model)) }
+      compiledModels.set(key, compiled)
     }
     const definitionDigest = createHash('sha256')
-      .update(compiledModel.digest)
-      .update(JSON.stringify(resolvedOperatingPoint))
+      .update(compiled.digest)
+      .update(JSON.stringify(compiled.operatingPoint))
       .update(JSON.stringify(automation))
       .digest('hex')
     return {
       gridId: definition.id,
-      model: compiledModel.model,
-      index: compiledModel.index,
-      operatingPoint: resolvedOperatingPoint,
+      model: compiled.model,
+      index: compiled.index,
+      operatingPoint: compiled.operatingPoint,
       automation,
       definitionDigest,
     }
@@ -423,3 +490,6 @@ export const compileGridDefinition = (definition: GridDefinition): CompiledGridD
 
 /** A built-in frequency-control Automation by catalog id, read and validated on first use. */
 export const gridAutomationPreset = (ref: string): GridAutomation => builtinCompiler.compileAutomation(ref)
+
+/** A built-in Grid Model v2 by catalog id (composed when it is an addition), read and validated on first use. */
+export const gridModelV2 = (ref: string): GridModelV2 => builtinCompiler.compileModel(ref)

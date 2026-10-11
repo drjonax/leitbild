@@ -18,28 +18,39 @@ const gridModulesLoadedBy = async (entry: string): Promise<ReadonlyArray<string>
   return (JSON.parse(stdout.trim().split('\n').at(-1)!) as string[]).map(key => key.slice(key.indexOf('/packs/electric-grid/') + '/packs/electric-grid/'.length))
 }
 
-const norway = electricGridDefinitionCatalog.models.find(model => model.source.kind === 'norway-source-data-v1')!
+const fixtureFidelity = electricGridDefinitionCatalog.models[0]!.fidelity
+const fixtureBase: GridModelCatalogEntry = {
+  id: 'electric-grid.test.v2-fixture',
+  title: 'Grid Model v2 test fixture',
+  description: 'Hand-written miniature model exercising every Grid Model v2 asset kind and cross-field rule.',
+  nominalFrequencyHz: 50,
+  fidelity: fixtureFidelity,
+  source: { kind: 'grid-model', file: '../grid-model-v2.fixture.json', geometryFile: 'none.geometry.json' },
+  assetCounts: { bus: 7, branch: 5, generator: 3, load: 2, storage: 0, connectionPoint: 1 },
+  connectionPoints: [{ id: 'test-plant-unit-1', label: 'Test plant unit 1 bay', busId: 'bus:curated-test-plant-switchyard@420', nominalKv: 420, maximumExportMw: 100, maximumImportMw: 1100 }],
+}
 const fixtureAddition = (overrides: Partial<GridModelCatalogEntry> & Pick<GridModelCatalogEntry, 'id'> & { readonly file: string; readonly baseModelRef?: string }): GridModelCatalogEntry => ({
   title: 'Fixture addition',
   description: 'One curated switchyard tied to Hasle 420 kV.',
-  nominalFrequencyHz: norway.nominalFrequencyHz,
-  fidelity: norway.fidelity,
-  assetCounts: { ...norway.assetCounts, bus: norway.assetCounts.bus + 1, branch: norway.assetCounts.branch + 1, connectionPoint: 1 },
-  connectionPoints: [{ id: 'fixture-unit-420kv', label: 'Fixture unit bay', busId: 'bus:fixture-switchyard-420', nominalKv: 420, maximumExportMw: 50, maximumImportMw: 900 }],
+  nominalFrequencyHz: fixtureBase.nominalFrequencyHz,
+  fidelity: fixtureBase.fidelity,
+  assetCounts: { ...fixtureBase.assetCounts, bus: fixtureBase.assetCounts.bus + 1, branch: fixtureBase.assetCounts.branch + 1, connectionPoint: 2 },
+  connectionPoints: [...fixtureBase.connectionPoints, { id: 'fixture-unit-420kv', label: 'Fixture unit bay', busId: 'bus:curated-fixture-switchyard@420', nominalKv: 420, maximumExportMw: 50, maximumImportMw: 900 }],
   ...overrides,
-  source: { kind: 'addition-v1', baseModelRef: overrides.baseModelRef ?? norway.id, file: overrides.file },
+  source: { kind: 'grid-model-addition', baseModelRef: overrides.baseModelRef ?? fixtureBase.id, file: overrides.file },
 })
 const fixtureModels = [
-  norway,
-  fixtureAddition({ id: 'electric-grid.test.fixture-addition', file: 'addition-valid.grid-model.json' }),
-  fixtureAddition({ id: 'electric-grid.test.broken-reference', file: 'addition-broken-reference.grid-model.json' }),
-  fixtureAddition({ id: 'electric-grid.test.broken-syntax', file: 'addition-broken-syntax.grid-model.json' }),
-  fixtureAddition({ id: 'electric-grid.test.chained', file: 'addition-valid.grid-model.json', baseModelRef: 'electric-grid.test.fixture-addition' }),
-  fixtureAddition({ id: 'electric-grid.test.fixture-addition-drift', file: 'addition-valid.grid-model.json', title: 'Drifted title' }),
+  fixtureBase,
+  fixtureAddition({ id: 'electric-grid.test.fixture-addition', file: 'addition-valid.grid-model-addition.json' }),
+  fixtureAddition({ id: 'electric-grid.test.broken-reference', file: 'addition-broken-reference.grid-model-addition.json' }),
+  fixtureAddition({ id: 'electric-grid.test.broken-syntax', file: 'addition-broken-syntax.grid-model-addition.json' }),
+  fixtureAddition({ id: 'electric-grid.test.chained', file: 'addition-valid.grid-model-addition.json', baseModelRef: 'electric-grid.test.fixture-addition' }),
+  fixtureAddition({ id: 'electric-grid.test.fixture-addition-drift', file: 'addition-valid.grid-model-addition.json', title: 'Drifted title' }),
 ]
+const fixturePeak = 'electric-grid.test.v2-fixture-peak'
 const fixtureCatalog = (models: ReadonlyArray<GridModelCatalogEntry>): GridDefinitionCatalog => ({
   models,
-  operatingPoints: electricGridDefinitionCatalog.operatingPoints.map(point => ({ ...point, compatibleModelRefs: models.map(model => model.id) })),
+  operatingPoints: [{ id: fixturePeak, title: 'Fixture peak', description: 'Fixture peak hour.', compatibleModelRefs: models.map(model => model.id), source: { kind: 'operating-point', file: 'v2-fixture-peak.operating-point.json' } }],
   automations: electricGridDefinitionCatalog.automations.map(automation => ({ ...automation, compatibleModelRefs: models.map(model => model.id) })),
 })
 const fixtureCompiler = () => {
@@ -48,10 +59,10 @@ const fixtureCompiler = () => {
   const compiler = createGridDefinitionCompiler({ catalog: fixtureCatalog(fixtureModels), readModelFile: file => { reads.push(file); return read(file) }, readAutomationFile: gridAutomationFileReader })
   return { compiler, reads }
 }
-const definitionFor = (modelRef: string) => ({
+const definitionFor = (modelRef: string, operatingPointRef = fixturePeak) => ({
   id: 'grid:catalog-test',
   model: { ref: modelRef },
-  operatingPoint: { ref: 'electric-grid.norway.normal' },
+  operatingPoint: { ref: operatingPointRef },
   automation: { ref: 'electric-grid.frequency.nordic-2025' },
 })
 
@@ -60,12 +71,12 @@ describe('Electric Grid definition catalog', () => {
     const loaded = await gridModulesLoadedBy('./src/app-assembly.ts')
     expect(loaded).toContain('definition-refs.ts')
     expect(loaded).toContain('pack.ts')
-    expect(loaded.filter(module => module === 'definitions.ts' || module === 'model-additions.ts' || module.startsWith('models/'))).toEqual([])
+    expect(loaded.filter(module => module === 'definitions.ts' || module.startsWith('models/'))).toEqual([])
   })
 
   test('describes every built-in model with the metadata its loaded data has', () => {
     for (const entry of electricGridDefinitionCatalog.models) {
-      const compiled = compileGridDefinition(definitionFor(entry.id))
+      const compiled = compileGridDefinition(definitionFor(entry.id, electricGridDefinitionCatalog.operatingPoints[0]!.id))
       expect(compiled.model.title).toBe(entry.title)
       expect(compiled.model.connectionPoints).toEqual([...entry.connectionPoints])
       expect(compiled.index.diagnostics.assetCount).toBe(entry.assetCounts.bus + entry.assetCounts.branch + entry.assetCounts.generator + entry.assetCounts.load + entry.assetCounts.storage)
@@ -79,18 +90,18 @@ describe('Electric Grid definition catalog', () => {
     expect(reads).toEqual([])
     const first = compiler.compile(definitionFor('electric-grid.test.fixture-addition'))
     const second = compiler.compile({ ...definitionFor('electric-grid.test.fixture-addition'), id: 'grid:second' })
-    expect(reads).toEqual(['addition-valid.grid-model.json'])
+    expect(reads).toEqual(['addition-valid.grid-model-addition.json', '../grid-model-v2.fixture.json', 'v2-fixture-peak.operating-point.json'])
     expect(second.model).toBe(first.model)
-    expect(first.model.connectionPoints.map(point => point.id)).toEqual(['fixture-unit-420kv'])
+    expect(first.model.connectionPoints.map(point => point.id)).toEqual(['test-plant-unit-1', 'fixture-unit-420kv'])
     expect(second.definitionDigest).toBe(first.definitionDigest)
   })
 
   test('fails the load, not the import, for a malformed addition, naming its file and JSON path', () => {
     const { compiler } = fixtureCompiler()
     expect(() => compiler.compile(definitionFor('electric-grid.test.broken-reference')))
-      .toThrow(/addition-broken-reference\.grid-model\.json: invalid Grid Model Addition\n {2}\$\.branches\[0\]\.toBusId: unknown bus NO-RENAMED-BUS-420/)
-    expect(() => compiler.compile(definitionFor('electric-grid.test.broken-syntax'))).toThrow(/addition-broken-syntax\.grid-model\.json: invalid JSON/)
-    expect(compiler.compile(definitionFor('electric-grid.norway.transmission')).model.id).toBe('electric-grid.norway.transmission')
+      .toThrow(/addition-broken-reference\.grid-model-addition\.json: invalid Grid Model Addition v2\n {2}\$\.branches\[0\]\.toBusId: /)
+    expect(() => compiler.compile(definitionFor('electric-grid.test.broken-syntax'))).toThrow(/addition-broken-syntax\.grid-model-addition\.json: invalid JSON/)
+    expect(compiler.compile(definitionFor(fixtureBase.id)).model.id).toBe(fixtureBase.id)
   })
 
   test('validates per-asset Operating Point overrides but refuses to drop the ones the runtime cannot apply', () => {
@@ -102,6 +113,11 @@ describe('Electric Grid definition catalog', () => {
     expect(() => compiler.compile(withOverrides({ branchStates: [{ assetId: 'branch:curated-fixture-missing', state: 'open' }] })))
       .toThrow('unknown branch branch:curated-fixture-missing')
     expect(compiler.compile(withOverrides({ branchStates: [], loadScale: 0.9 })).operatingPoint.loadScale).toBe(0.9)
+    // A generator state override replaces the Operating Point's entry for that unit only.
+    const offline = compiler.compile(withOverrides({ generatorStates: [{ assetId: 'generator:nve-hydro-123', state: 'offline', availableMw: 100 }] }))
+    expect(offline.model.generators.find(generator => generator.id === 'generator:nve-hydro-123')).toMatchObject({ initialState: 'offline', availableMw: 100 })
+    expect(offline.model.generators.filter(generator => generator.initialState === 'online')).toHaveLength(2)
+    expect(offline.definitionDigest).not.toBe(compiler.compile(definition).definitionDigest)
   })
 
   test('keeps additions one level and the catalog in step with the data', () => {
@@ -109,12 +125,12 @@ describe('Electric Grid definition catalog', () => {
     expect(() => compiler.compile(definitionFor('electric-grid.test.chained'))).toThrow('base electric-grid.test.fixture-addition is itself a Model Addition')
     expect(() => compiler.compile(definitionFor('electric-grid.test.fixture-addition-drift'))).toThrow('$.id electric-grid.test.fixture-addition must be the catalog id')
     const drifted = createGridDefinitionCompiler({
-      catalog: fixtureCatalog([norway, fixtureAddition({ id: 'electric-grid.test.fixture-addition', file: 'addition-valid.grid-model.json', title: 'Drifted title' })]),
+      catalog: fixtureCatalog([fixtureBase, fixtureAddition({ id: 'electric-grid.test.fixture-addition', file: 'addition-valid.grid-model-addition.json', title: 'Drifted title' })]),
       readModelFile: gridModelFileReader(new URL('./fixtures/electric-grid/', import.meta.url)),
       readAutomationFile: gridAutomationFileReader,
     })
     expect(() => drifted.compile(definitionFor('electric-grid.test.fixture-addition'))).toThrow('catalog title "Drifted title" does not describe the loaded model')
-    expect(() => createGridDefinitionCompiler({ catalog: fixtureCatalog([norway, norway]), readModelFile: () => null, readAutomationFile: () => null })).toThrow('duplicate Grid Model in the Grid catalog')
+    expect(() => createGridDefinitionCompiler({ catalog: fixtureCatalog([fixtureBase, fixtureBase]), readModelFile: () => null, readAutomationFile: () => null })).toThrow('duplicate Grid Model in the Grid catalog')
     expect(() => compiler.compile(definitionFor('electric-grid.test.missing'))).toThrow('unknown Grid Model: electric-grid.test.missing')
   })
 })

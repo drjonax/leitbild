@@ -1,8 +1,4 @@
-import type {
-  GridConnectionPointDefinition,
-  GridModelFidelity,
-  GridOperatingPointDefinition,
-} from './grid-model.ts'
+import type { GridConnectionPointDefinition, GridModelFidelity } from './grid-model.ts'
 
 // The one Electric Grid Definition catalog. Authoring, scenario expansion, recording estimates
 // and the catalog query read it without loading or compiling a model: it does no filesystem
@@ -10,7 +6,8 @@ import type {
 
 export const norwayGridModelRef = 'electric-grid.norway.transmission'
 export const haldenFourUnitGridModelRef = 'electric-grid.halden.four-unit'
-export const norwayNormalOperatingPointRef = 'electric-grid.norway.normal'
+export const norwayWinterPeakOperatingPointRef = 'electric-grid.norway.winter-weekday-peak'
+export const norwaySummerLowOperatingPointRef = 'electric-grid.norway.summer-night-low'
 /** Nordic synchronous-area frequency control: the default Automation. */
 export const nordicFrequencyAutomationRef = 'electric-grid.frequency.nordic-2025'
 export const manualBalancingTrainingAutomationRef = 'electric-grid.frequency.manual-balancing-training'
@@ -25,10 +22,13 @@ export interface GridModelAssetCounts {
   readonly connectionPoint: number
 }
 
-/** Where the loader finds a model's data. Additions name a file in models/ and one base model. */
+/**
+ * Where the loader finds a model's data, all in models/: a Grid Model v2 file with its geometry
+ * artifact, or a Model Addition v2 file composed onto one base Grid Model.
+ */
 export type GridModelSource =
-  | { readonly kind: 'norway-source-data-v1' }
-  | { readonly kind: 'addition-v1'; readonly baseModelRef: string; readonly file: string }
+  | { readonly kind: 'grid-model'; readonly file: string; readonly geometryFile: string }
+  | { readonly kind: 'grid-model-addition'; readonly baseModelRef: string; readonly file: string }
 
 export interface GridModelCatalogEntry {
   readonly id: string
@@ -41,12 +41,13 @@ export interface GridModelCatalogEntry {
   readonly connectionPoints: ReadonlyArray<GridConnectionPointDefinition>
 }
 
+/** An Operating Point v2 file in models/; its id and title must match the entry (the loader checks). */
 export interface GridOperatingPointCatalogEntry {
   readonly id: string
   readonly title: string
   readonly description: string
   readonly compatibleModelRefs: ReadonlyArray<string>
-  readonly values: Omit<GridOperatingPointDefinition, 'id' | 'title'>
+  readonly source: { readonly kind: 'operating-point'; readonly file: string }
 }
 
 /** Where the loader finds an Automation: a frequency-control preset file in automations/. */
@@ -73,63 +74,72 @@ const transmissionFidelity: GridModelFidelity = {
   powerFlow: 'dc',
   voltage: 'not-modelled',
   frequency: 'island-swing',
-  recommendedMaximumBusCount: 1_000,
+  recommendedMaximumBusCount: 10_000,
 }
 
 const haldenUnitBay = (unit: number): GridConnectionPointDefinition => ({
   id: `unit-${unit}-420kv`,
   label: `Halden unit ${unit} 420 kV bay`,
-  busId: 'bus:halden-pwr-switchyard-420',
+  busId: 'bus:curated-halden-pwr-switchyard@420',
   nominalKv: 420,
   maximumExportMw: 100,
   maximumImportMw: 1100,
 })
 
+const norwayModels = [norwayGridModelRef, haldenFourUnitGridModelRef]
+
 export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
+  // Titles, descriptions, asset counts and connection points must match the model files (the loader checks).
   models: [{
     id: norwayGridModelRef,
     title: 'Norway transmission grid',
-    description: 'Source-derived Norwegian transmission topology with major generation and aggregate demand zones.',
+    description: 'Source-derived ≥132 kV Norwegian transmission network: OpenStreetMap topology (osm:pbf-power:no@2026-10-08), NVE hydropower and wind registries, Elhub metered demand at 2026-01-12T08:00:00+01:00 Europe/Oslo, curated interconnectors and major sites. Electrical values are inferred by documented rules (see the ledger).',
     nominalFrequencyHz: 50,
     fidelity: transmissionFidelity,
-    source: { kind: 'norway-source-data-v1' },
-    assetCounts: { bus: 255, branch: 300, generator: 70, load: 22, storage: 1, connectionPoint: 0 },
+    source: { kind: 'grid-model', file: 'norway-transmission.grid-model.json', geometryFile: 'norway-transmission.geometry.json' },
+    assetCounts: { bus: 1074, branch: 1336, generator: 849, load: 1319, storage: 0, connectionPoint: 0 },
     connectionPoints: [],
   }, {
     id: haldenFourUnitGridModelRef,
     title: 'Halden four-unit transmission connection',
-    description: 'Norway transmission topology with a dedicated 420 kV Halden switchyard and four independently connectable unit bays, coupled through the two real 420 kV ties Hasle–Borgvik and Halden–Skogssäter to a synchronous equivalent of the rest of the Nordic area behind SE3.',
+    description: 'Norway transmission grid with a dedicated 420 kV Halden switchyard, three circuits each to Hasle and Tegneby, and four independently connectable unit bays.',
     nominalFrequencyHz: 50,
     fidelity: transmissionFidelity,
-    source: { kind: 'addition-v1', baseModelRef: norwayGridModelRef, file: 'halden.grid-model.json' },
-    assetCounts: { bus: 257, branch: 308, generator: 70, load: 22, storage: 1, connectionPoint: 4 },
+    source: { kind: 'grid-model-addition', baseModelRef: norwayGridModelRef, file: 'halden-four-unit.grid-model-addition.json' },
+    assetCounts: { bus: 1075, branch: 1342, generator: 849, load: 1319, storage: 0, connectionPoint: 4 },
     connectionPoints: [1, 2, 3, 4].map(haldenUnitBay),
   }],
   operatingPoints: [{
-    id: norwayNormalOperatingPointRef,
-    title: 'Normal winter weekday',
-    description: 'Winter weekday demand, available generation, and initial storage charge.',
-    compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
-    values: { loadScale: 1.03, generationAvailabilityScale: 1, storageStateOfCharge: 0.58 },
+    id: norwayWinterPeakOperatingPointRef,
+    title: 'Winter weekday peak',
+    description: 'Elhub-metered demand of the winter weekday reference hour with registry-based unit commitment and the Nordic remainder at winter-peak inertia.',
+    compatibleModelRefs: norwayModels,
+    source: { kind: 'operating-point', file: 'norway-winter-weekday-peak.operating-point.json' },
+  }, {
+    id: norwaySummerLowOperatingPointRef,
+    title: 'Summer night low',
+    description: 'Elhub-metered demand of the summer night low hour with registry-based unit commitment and the Nordic remainder at summer-low inertia.',
+    compatibleModelRefs: norwayModels,
+    source: { kind: 'operating-point', file: 'norway-summer-night-low.operating-point.json' },
   }],
   // Frequency-control presets; titles and descriptions must match the preset files (the loader checks).
   automations: [{
     id: nordicFrequencyAutomationRef,
     title: 'Nordic frequency control 2025',
     description: 'Nordic synchronous-area frequency control: FCR-N, FCR-D, aFRR and mFRR with synchronous-area volumes, NC ER LFDD from 48.8 Hz to 48.0 Hz, and NC RfG generator frequency protection.',
-    compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
+    compatibleModelRefs: norwayModels,
     source: { kind: 'frequency-preset', file: 'nordic-2025.json' },
   }, {
     id: manualBalancingTrainingAutomationRef,
     title: 'Manual balancing training',
     description: 'Nordic FCR-N and FCR-D contain frequency, but no aFRR or mFRR restores it: an operator or Agent must re-dispatch units to bring frequency back to 50 Hz. FCR volumes scale with the island.',
-    compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
+    compatibleModelRefs: norwayModels,
     source: { kind: 'frequency-preset', file: 'manual-balancing-training.json' },
   }, {
     id: islandedOperationAutomationRef,
     title: 'Islanded operation',
     description: "An island separated from the Nordic synchronous area: Nordic FCR, LFDD and protection settings with reserves dimensioned from the island's own demand and largest unit, island aFRR able to replace the largest unit, and Nordic FFR from storage.",
-    compatibleModelRefs: [norwayGridModelRef, haldenFourUnitGridModelRef],
+    compatibleModelRefs: norwayModels,
     source: { kind: 'frequency-preset', file: 'islanded-operation.json' },
   }],
 }

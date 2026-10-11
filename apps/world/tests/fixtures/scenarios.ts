@@ -1219,7 +1219,7 @@ const fixtures = [
               "ref": "electric-grid.norway.transmission"
             },
             "operatingPoint": {
-              "ref": "electric-grid.norway.normal"
+              "ref": "electric-grid.norway.winter-weekday-peak"
             },
             "automation": {
               "ref": "electric-grid.frequency.nordic-2025"

@@ -279,7 +279,7 @@
       field('Served', `${formatted(valueOf(state, 'servedMw'), 'MW', 1)} of ${formatted(valueOf(state, 'demandMw'), 'MW', 1)}`),
       field('Shed', `${formatted(valueOf(state, 'shedMw'), 'MW', 1)} (manual ${formatted(valueOf(state, 'curtailedMw'), 'MW', 1)}, LFDD ${formatted(valueOf(state, 'lfddShedMw'), 'MW', 1)})`),
       field('Priority', formatted(valueOf(definition, 'priority'))),
-      field('Controllable', formatted(valueOf(definition, 'controllable'))),
+      field('Interruptible', formatted(valueOf(definition, 'interruptibleMw'), 'MW', 1)),
       field('Bus', formatted(valueOf(definition, 'busId'))),
     ]
     if (asset.kind === 'bus') return [

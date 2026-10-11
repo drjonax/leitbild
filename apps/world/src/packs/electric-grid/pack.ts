@@ -4,7 +4,7 @@ import {
   electricGridDefinitionCatalog,
   gridModelCatalogEntry,
   norwayGridModelRef,
-  norwayNormalOperatingPointRef,
+  norwayWinterPeakOperatingPointRef,
   nordicFrequencyAutomationRef,
 } from './definition-refs.ts'
 import { electricGridRecordingProfiles, gridRecordingSeriesCount } from './recording.ts'
@@ -24,10 +24,7 @@ export const electricGridPack: WorldPack = {
       idPrefix: 'grid',
       defaultItem: {
         model: { ref: norwayGridModelRef },
-        operatingPoint: {
-          ref: norwayNormalOperatingPointRef,
-          overrides: { loadScale: 1.03, generationAvailabilityScale: 1, storageStateOfCharge: 0.58 },
-        },
+        operatingPoint: { ref: norwayWinterPeakOperatingPointRef },
         automation: { ref: nordicFrequencyAutomationRef },
       },
       placement: { kind: 'point', path: ['location'] },
@@ -46,9 +43,6 @@ export const electricGridPack: WorldPack = {
       }, {
         path: ['operatingPoint', 'overrides', 'generationAvailabilityScale'], label: 'Generation availability scale',
         control: { kind: 'number', min: 0, step: 0.01 },
-      }, {
-        path: ['operatingPoint', 'overrides', 'storageStateOfCharge'], label: 'Initial storage charge',
-        control: { kind: 'number', min: 0, max: 1, step: 0.01 },
       }],
     }],
   },

@@ -1,5 +1,5 @@
 import type { GridBranchDefinition } from '../../grid-model.ts'
-import { gridSystemBaseMva, type CompiledGridNetwork } from './compiled-network.ts'
+import type { CompiledGridNetwork } from './compiled-network.ts'
 import { minimumDegreeOrdering, type SymmetricPattern } from './ordering.ts'
 import {
   factorSparseCholesky,
@@ -185,11 +185,11 @@ export const solveGridIslandInto = (
 }
 
 /** DC flow from the from-bus to the to-bus in MW: (θ_from − θ_to)·S_base / x, angles in radians. */
-export const gridBranchFlowMw = (anglesRad: ReadonlyMap<string, number>, branch: GridBranchDefinition): number => {
+export const gridBranchFlowMw = (anglesRad: ReadonlyMap<string, number>, branch: GridBranchDefinition, sBaseMva: number): number => {
   const from = anglesRad.get(branch.fromBusId)
   const to = anglesRad.get(branch.toBusId)
   if (from === undefined || to === undefined) throw new Error(`branch ${branch.id} has no solved angle at ${from === undefined ? branch.fromBusId : branch.toBusId}`)
-  return (from - to) * gridSystemBaseMva / branch.reactancePu
+  return (from - to) * sBaseMva / branch.reactancePu
 }
 
 /** Indexed DC flows in MW for every branch; open branches carry 0. */

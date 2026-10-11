@@ -25,7 +25,7 @@ export const gridMapGeometryResultSchema = z.object({
     fromBus: index.describe('Index into buses.'),
     toBus: index.describe('Index into buses.'),
     ratingMw: finite,
-    pathSource: z.enum(['artifact', 'bus-to-bus']).describe('artifact: the mapped route from the geometry artifact; bus-to-bus: a straight segment between the bus locations, because the model has no geometry artifact.'),
+    pathSource: z.enum(['artifact', 'bus-to-bus']).describe('artifact: the mapped route from the geometry artifact; bus-to-bus: a straight segment between the bus locations, because no mapped route exists for the branch (a model without an artifact, or a branch a Model Addition adds).'),
     path: z.array(lonLat).min(2).describe('[lon, lat] from fromBus to toBus.'),
   }).strict()),
   generators: z.array(z.object({

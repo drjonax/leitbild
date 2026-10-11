@@ -1,0 +1,71 @@
+{
+ "schemaVersion": 2,
+ "id": "electric-grid.test.broken-reference",
+ "title": "Fixture addition",
+ "description": "One curated switchyard tied to Hasle 420 kV.",
+ "baseModelRef": "electric-grid.test.v2-fixture",
+ "sourceInputs": [],
+ "buses": [
+  {
+   "id": "bus:curated-fixture-switchyard@420",
+   "label": "Fixture switchyard",
+   "kind": "plant-terminal",
+   "nominalKv": 420,
+   "location": [
+    11.3,
+    59.2
+   ],
+   "priceArea": "NO1",
+   "provenance": {
+    "sources": [
+     "leitbild:test-curation@2026-10-10"
+    ],
+    "method": "curated",
+    "confidence": "low",
+    "note": "Fixture switchyard of the catalog tests."
+   }
+  }
+ ],
+ "branches": [
+  {
+   "id": "branch:curated-fixture-hasle",
+   "label": "Fixture – Hasle",
+   "kind": "ac_line",
+   "fromBusId": "bus:curated-fixture-switchyard@420",
+   "toBusId": "bus:osm-way-999999@420",
+   "nominalKv": 420,
+   "lengthKm": 10,
+   "circuits": 1,
+   "ratingMw": 1850,
+   "emergencyRatingMw": 2183,
+   "emergencyDurationSeconds": 900,
+   "reactancePu": 0.0017,
+   "resistancePu": 0.00014,
+   "chargingSusceptancePu": 0.07,
+   "osmWayIds": [],
+   "provenance": {
+    "sources": [
+     "leitbild:test-curation@2026-10-10"
+    ],
+    "method": "curated",
+    "confidence": "low",
+    "note": "Fixture switchyard of the catalog tests."
+   }
+  }
+ ],
+ "hvdcLinks": [],
+ "externalSystems": [],
+ "generators": [],
+ "loads": [],
+ "shunts": [],
+ "connectionPoints": [
+  {
+   "id": "fixture-unit-420kv",
+   "label": "Fixture unit bay",
+   "busId": "bus:curated-fixture-switchyard@420",
+   "nominalKv": 420,
+   "maximumExportMw": 50,
+   "maximumImportMw": 900
+  }
+ ]
+}

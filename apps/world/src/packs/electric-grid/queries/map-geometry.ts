@@ -20,9 +20,20 @@ export interface GridMapGeometry {
   readonly payload: Omit<GridMapGeometryWire, 'gridId'>
 }
 
-/** Where map geometry comes from: the artifact file of a model (null when it has none) and its reader. */
+/**
+ * A geometry artifact and what it draws: the paths of the first `branchCount` branches of the
+ * model it names (a Model Addition appends its branches after its base's, so the base's artifact
+ * covers exactly the base's branches).
+ */
+export interface GridMapArtifactSource {
+  readonly file: string
+  readonly modelId: string
+  readonly branchCount: number
+}
+
+/** Where map geometry comes from: the artifact of a model (null when it has none) and its reader. */
 export interface GridMapGeometrySources {
-  readonly artifactFileFor: (model: GridModelDefinition) => string | null
+  readonly artifactFor: (model: GridModelDefinition) => GridMapArtifactSource | null
   readonly readArtifact: (file: string) => string
 }
 
@@ -87,14 +98,16 @@ const coverageIssues = (
 }
 
 /**
- * Loads a model's geometry artifact. It must name the model and its source build and hold
- * exactly one correctly oriented path per branch and HVDC link; anything else is an error
- * naming the file and JSON path.
+ * Loads a model's geometry artifact. It must name the model (or, for a Model Addition, its base)
+ * and the source build and hold exactly one correctly oriented path per covered branch and per
+ * HVDC link; anything else is an error naming the file and JSON path.
  */
 export const loadGridGeometryArtifact = (config: {
   readonly file: string
   readonly text: string
   readonly model: GridModelDefinition
+  /** The model id the artifact names and the leading branches it covers; the whole model when absent. */
+  readonly coverage?: { readonly modelId: string; readonly branchCount: number }
   readonly hvdcLinks: ReadonlyArray<GridMapLinkEndpoints>
 }): GridArtifactPaths => {
   let json: unknown
@@ -105,11 +118,12 @@ export const loadGridGeometryArtifact = (config: {
   }
   const artifact = validateGridGeometryArtifact(json, config.file)
   const model = config.model
+  const coverage = config.coverage ?? { modelId: model.id, branchCount: model.branches.length }
   const busLocation = new Map(model.buses.map(bus => [bus.id, bus.location]))
   const issues: GridDataIssue[] = [
-    ...(artifact.modelId === model.id ? [] : [{ path: ['modelId'], message: `must be the model id ${model.id}` }]),
+    ...(artifact.modelId === coverage.modelId ? [] : [{ path: ['modelId'], message: `must be the model id ${coverage.modelId}` }]),
     ...(artifact.sourceBuildId === model.sourceBuild.id ? [] : [{ path: ['sourceBuildId'], message: `must be the model's source build ${model.sourceBuild.id}` }]),
-    ...coverageIssues('branches', artifact.branches, model.branches.map(branch => ({
+    ...coverageIssues('branches', artifact.branches, model.branches.slice(0, coverage.branchCount).map(branch => ({
       id: branch.id,
       from: busLocation.get(branch.fromBusId)!,
       to: busLocation.get(branch.toBusId)!,
@@ -143,8 +157,8 @@ const buildGridMapGeometry = (model: GridModelDefinition, artifact: GridArtifact
       branches: model.branches.map(branch => {
         const fromBus = busIndex.get(branch.fromBusId)!
         const toBus = busIndex.get(branch.toBusId)!
-        // With an artifact every branch has a path (the loader checks coverage); without one, none has.
-        const path = artifact === null ? null : artifact.branchPaths.get(branch.id)!
+        // With an artifact every branch it covers has a path (the loader checks coverage); the others draw bus to bus.
+        const path = artifact?.branchPaths.get(branch.id) ?? null
         return {
           id: branch.id,
           label: branch.label,
@@ -183,29 +197,34 @@ export const createGridMapGeometry = (sources: GridMapGeometrySources): ((model:
   return model => {
     const cached = cache.get(model)
     if (cached !== undefined) return cached
-    const file = sources.artifactFileFor(model)
-    // The runtime model carries HVDC as hvdc_link branches, so no separate links need paths yet.
-    const artifact = file === null ? null : loadGridGeometryArtifact({ file, text: sources.readArtifact(file), model, hvdcLinks: [] })
+    const source = sources.artifactFor(model)
+    const busLocation = new Map(model.buses.map(bus => [bus.id, bus.location]))
+    const artifact = source === null ? null : loadGridGeometryArtifact({
+      file: source.file,
+      text: sources.readArtifact(source.file),
+      model,
+      coverage: { modelId: source.modelId, branchCount: source.branchCount },
+      hvdcLinks: model.hvdcLinks.map(link => ({ id: link.id, from: busLocation.get(link.fromBusId)!, to: busLocation.get(link.toBusId)! })),
+    })
     const geometry = buildGridMapGeometry(model, artifact)
     cache.set(model, geometry)
     return geometry
   }
 }
 
-/** Grid Model v1 predates geometry artifacts: its branches draw bus to bus, which the payload states per branch. */
-const catalogArtifactFile = (model: GridModelDefinition): string | null => {
-  const source = gridModelCatalogEntry(model.id).source
-  switch (source.kind) {
-    case 'norway-source-data-v1':
-    case 'addition-v1':
-      return null
-  }
+/** A catalog model draws with its geometry artifact; an addition with its base's, its own branches bus to bus. */
+const catalogArtifact = (model: GridModelDefinition): GridMapArtifactSource => {
+  const entry = gridModelCatalogEntry(model.id)
+  if (entry.source.kind === 'grid-model') return { file: entry.source.geometryFile, modelId: entry.id, branchCount: entry.assetCounts.branch }
+  const base = gridModelCatalogEntry(entry.source.baseModelRef)
+  if (base.source.kind !== 'grid-model') throw new Error(`Grid Model ${entry.id}: base ${base.id} is itself a Model Addition`)
+  return { file: base.source.geometryFile, modelId: base.id, branchCount: base.assetCounts.branch }
 }
 
 const modelsDirectory = new URL('../models/', import.meta.url)
 
 export const gridMapGeometryFor = createGridMapGeometry({
-  artifactFileFor: catalogArtifactFile,
+  artifactFor: catalogArtifact,
   readArtifact: file => readFileSync(fileURLToPath(new URL(file, modelsDirectory)), 'utf8'),
 })
 

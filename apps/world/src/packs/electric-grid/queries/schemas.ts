@@ -27,7 +27,7 @@ const assetProvenanceSchema = z.object({
   method: z.enum(['mapped', 'registry', 'measured', 'inferred', 'curated']),
   confidence: z.enum(['high', 'medium', 'low']),
   note: z.string().optional(),
-}).strict().describe('Where the asset\'s values come from and how they were obtained, for assets a Model Addition adds with evidence.')
+}).strict().describe('Where the asset\'s values come from and how they were obtained.')
 
 export const busDefinitionSchema = z.object({
   id: z.string(),
@@ -41,15 +41,19 @@ export const busDefinitionSchema = z.object({
 export const branchDefinitionSchema = z.object({
   id: z.string(),
   label: z.string(),
-  kind: z.enum(['ac_line', 'cable', 'transformer', 'hvdc_link', 'switch']),
+  kind: z.enum(['ac_line', 'cable', 'transformer']),
   fromBusId: z.string(),
   toBusId: z.string(),
-  nominalKv: finite,
-  ratingMw: finite,
-  emergencyRatingMw: finite,
-  reactancePu: finite,
-  resistancePu: finite,
-  weatherExposure: z.enum(['low', 'medium', 'high']),
+  nominalKv: finite.describe('Nominal voltage; the high side of a transformer (kV).'),
+  lengthKm: finite.optional().describe('Route length of a line or cable (km).'),
+  circuits: z.number().int().positive().describe('Parallel circuits; ratings and impedances are for all of them together.'),
+  ratingMw: finite.describe('Continuous rating (MW).'),
+  emergencyRatingMw: finite.describe('Emergency rating (MW), allowed for emergencyDurationSeconds.'),
+  emergencyDurationSeconds: finite,
+  reactancePu: finite.describe('Series reactance, per unit on the Model base power.'),
+  resistancePu: finite.describe('Series resistance, per unit on the Model base power.'),
+  chargingSusceptancePu: finite.describe('Total line charging susceptance, per unit on the Model base power.'),
+  tapRatio: finite.optional().describe('Off-nominal turns ratio of a transformer at its from end.'),
   ...sourceFields,
   provenance: assetProvenanceSchema.optional(),
 }).strict()
@@ -57,18 +61,24 @@ export const branchDefinitionSchema = z.object({
 export const generatorDefinitionSchema = z.object({
   id: z.string(),
   label: z.string(),
-  kind: z.enum(['hydro', 'wind', 'solar', 'thermal', 'nuclear', 'battery', 'import']),
+  kind: z.enum(['hydro', 'wind', 'solar', 'thermal', 'nuclear']),
   busId: z.string(),
   location,
   capacityMw: finite,
-  availableMw: finite,
-  reserveMw: finite,
+  ratedMva: finite,
+  powerFactor: finite.describe('Rated power factor; the reactive limit is ratedMva·√(1 − powerFactor²).'),
+  voltageSetpointPu: finite.describe('Bus voltage the unit holds while it controls voltage (pu).'),
+  inertiaSeconds: finite.describe('Inertia constant H on ratedMva (s); 0 for converter-connected units.'),
+  synchronous: z.boolean(),
+  minimumStableMw: finite,
+  blackStartCapable: z.boolean(),
   rampRateMwPerMinute: finite,
-  inertiaSeconds: finite,
+  availableMw: finite.describe('Availability at the Operating Point (MW).'),
+  initialState: z.enum(['online', 'offline', 'tripped']).describe('Lifecycle state at the Operating Point.'),
   annualProductionGwh: finite.optional(),
-  operator: z.string().optional(),
   priceArea: z.string().optional(),
   ...sourceFields,
+  provenance: assetProvenanceSchema.optional(),
 }).strict()
 
 export const loadDefinitionSchema = z.object({
@@ -77,12 +87,13 @@ export const loadDefinitionSchema = z.object({
   kind: z.enum(['residential', 'commercial', 'hospital', 'airport', 'industry', 'data_center', 'ev_charging', 'process_plant']),
   busId: z.string(),
   location,
-  demandMw: finite,
-  criticalMw: finite,
-  reactiveDemandMvar: finite,
+  demandMw: finite.describe('Demand at the Operating Point before its load scale (MW).'),
+  criticalMw: finite.describe('Demand no shedding disconnects (MW).'),
+  powerFactor: finite.describe('Reactive demand is P·tan(acos powerFactor), lagging.'),
   priority: z.enum(['critical', 'high', 'normal', 'low']),
-  controllable: z.boolean(),
+  interruptibleMw: finite.describe('Contractually or technically curtailable demand (MW); 0 when unknown.'),
   ...sourceFields,
+  provenance: assetProvenanceSchema.optional(),
 }).strict()
 
 export const storageDefinitionSchema = z.object({

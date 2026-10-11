@@ -1,8 +1,8 @@
 import type { GridAutomation } from './schemas/grid-automation.ts'
 
 export type GridAssetKind = 'bus' | 'branch' | 'generator' | 'load' | 'storage'
-export type GridBranchKind = 'ac_line' | 'cable' | 'transformer' | 'hvdc_link' | 'switch'
-export type GridGenerationKind = 'hydro' | 'wind' | 'solar' | 'thermal' | 'nuclear' | 'battery' | 'import'
+export type GridBranchKind = 'ac_line' | 'cable' | 'transformer'
+export type GridGenerationKind = 'hydro' | 'wind' | 'solar' | 'thermal' | 'nuclear'
 export type GridLoadKind = 'residential' | 'commercial' | 'hospital' | 'airport' | 'industry' | 'data_center' | 'ev_charging' | 'process_plant'
 export type GridAssetLocation = readonly [number, number]
 
@@ -25,6 +25,7 @@ export interface GridModelFidelity {
 
 export interface GridModelSourceBuild {
   readonly id: string
+  /** Newest input snapshot of the build; the build records no wall-clock time. */
   readonly generatedAt: string
 }
 
@@ -38,23 +39,42 @@ export interface GridBusDefinition {
   readonly provenance?: GridAssetProvenance | undefined
 }
 
+/** A π-model branch; impedances are per unit on the Model's sBaseMva for all circuits in parallel. */
 export interface GridBranchDefinition {
   readonly id: string
   readonly label: string
   readonly kind: GridBranchKind
   readonly fromBusId: string
   readonly toBusId: string
+  /** Transformer: high-side kV. */
   readonly nominalKv: number
+  /** Lines and cables only. */
+  readonly lengthKm?: number | undefined
+  readonly circuits: number
+  /** Continuous rating of all circuits together. */
   readonly ratingMw: number
   readonly emergencyRatingMw: number
-  /** How long the branch may carry its emergency rating; absent in v1 Models, where the Automation's branch protection gives it. */
-  readonly emergencyDurationSeconds?: number | undefined
+  /** How long the emergency rating may be carried. */
+  readonly emergencyDurationSeconds: number
   readonly reactancePu: number
   readonly resistancePu: number
-  readonly weatherExposure: 'low' | 'medium' | 'high'
+  /** Total line charging B of the branch, split equally between its ends. */
+  readonly chargingSusceptancePu: number
+  /** Off-nominal turns ratio at the from end; present for transformers only. */
+  readonly tapRatio?: number | undefined
   readonly sourceId?: string
   readonly sourceFeatureId?: string
   readonly provenance?: GridAssetProvenance | undefined
+}
+
+/** A fixed or switchable bus shunt; its reactive power scales with the square of the bus voltage. */
+export interface GridShuntDefinition {
+  readonly id: string
+  readonly busId: string
+  /** At 1 pu: negative for a reactor (absorbs), positive for a capacitor. */
+  readonly mvarAtNominalVoltage: number
+  readonly switchable: boolean
+  readonly provenance: GridAssetProvenance
 }
 
 export type GridExternalArea = 'SE1' | 'SE2' | 'SE3' | 'SE4' | 'FI' | 'DK1' | 'NL' | 'DE' | 'GB'
@@ -99,6 +119,9 @@ export interface GridHvdcLinkDefinition {
   readonly provenance: GridAssetProvenance
 }
 
+/** Lifecycle state a generator starts in, from the Operating Point. */
+export type GridGeneratorInitialState = 'online' | 'offline' | 'tripped'
+
 export interface GridGeneratorDefinition {
   readonly id: string
   readonly label: string
@@ -106,15 +129,26 @@ export interface GridGeneratorDefinition {
   readonly busId: string
   readonly location: GridAssetLocation
   readonly capacityMw: number
-  readonly availableMw: number
-  readonly reserveMw: number
-  readonly rampRateMwPerMinute: number
+  readonly ratedMva: number
+  /** Rated power factor: the reactive limit is ratedMva·√(1 − powerFactor²). */
+  readonly powerFactor: number
+  /** Bus voltage the unit holds while it controls voltage. */
+  readonly voltageSetpointPu: number
+  /** H on ratedMva; 0 for converter-connected units. */
   readonly inertiaSeconds: number
+  /** Synchronous machines hold island voltage and frequency; converter-connected units follow them. */
+  readonly synchronous: boolean
+  readonly minimumStableMw: number
+  readonly blackStartCapable: boolean
+  readonly rampRateMwPerMinute: number
+  /** Availability at the Operating Point. */
+  readonly availableMw: number
+  readonly initialState: GridGeneratorInitialState
   readonly annualProductionGwh?: number
-  readonly operator?: string
   readonly priceArea?: string
   readonly sourceId?: string
   readonly sourceFeatureId?: string
+  readonly provenance?: GridAssetProvenance | undefined
 }
 
 export interface GridLoadDefinition {
@@ -123,13 +157,18 @@ export interface GridLoadDefinition {
   readonly kind: GridLoadKind
   readonly busId: string
   readonly location: GridAssetLocation
+  /** Demand at the Operating Point before its load scale (MW). */
   readonly demandMw: number
+  /** Demand that neither manual nor automatic shedding disconnects. */
   readonly criticalMw: number
-  readonly reactiveDemandMvar: number
+  /** Reactive demand is P·tan(acos powerFactor), lagging. */
+  readonly powerFactor: number
   readonly priority: 'critical' | 'high' | 'normal' | 'low'
-  readonly controllable: boolean
+  /** Contractually or technically curtailable demand; 0 when unknown (the provenance says so). */
+  readonly interruptibleMw: number
   readonly sourceId?: string
   readonly sourceFeatureId?: string
+  readonly provenance?: GridAssetProvenance | undefined
 }
 
 export interface GridStorageDefinition {
@@ -160,26 +199,36 @@ export interface GridModelDefinition {
   readonly title: string
   readonly description: string
   readonly nominalFrequencyHz: number
+  /** Base power of the per-unit impedances. */
+  readonly sBaseMva: number
   readonly fidelity: GridModelFidelity
   readonly sourceBuild: GridModelSourceBuild
   readonly sourceIds: ReadonlyArray<string>
   readonly buses: ReadonlyArray<GridBusDefinition>
   readonly branches: ReadonlyArray<GridBranchDefinition>
+  readonly shunts: ReadonlyArray<GridShuntDefinition>
   readonly generators: ReadonlyArray<GridGeneratorDefinition>
   readonly loads: ReadonlyArray<GridLoadDefinition>
   readonly storage: ReadonlyArray<GridStorageDefinition>
   readonly connectionPoints: ReadonlyArray<GridConnectionPointDefinition>
-  /** Absent means the Model has none. */
-  readonly externalSystems?: ReadonlyArray<GridExternalSystemDefinition>
-  readonly hvdcLinks?: ReadonlyArray<GridHvdcLinkDefinition>
+  readonly externalSystems: ReadonlyArray<GridExternalSystemDefinition>
+  readonly hvdcLinks: ReadonlyArray<GridHvdcLinkDefinition>
 }
 
+/** The Operating Point values the runtime applies when a Grid starts; generator states and availability are in the Model's generators. */
 export interface GridOperatingPointDefinition {
   readonly id: string
   readonly title: string
+  /** Multiplies every load's demandMw. */
   readonly loadScale: number
+  /** Multiplies every generator's availableMw (1 leaves it as the Operating Point sets it). */
   readonly generationAvailabilityScale: number
-  readonly storageStateOfCharge: number
+  /** Initial charge of every storage asset; null when the Operating Point gives none (a Model with storage then fails to start). */
+  readonly storageStateOfCharge: number | null
+  /** Initial HVDC set-points (MW, positive from the link's fromBusId), one per link. */
+  readonly hvdcSetpoints: ReadonlyArray<{ readonly linkId: string; readonly setpointMw: number }>
+  /** Scheduled export of each synchronous external system's exchange (MW, positive from Norway), one per system. */
+  readonly externalExchanges: ReadonlyArray<{ readonly systemId: string; readonly scheduledExportMw: number }>
 }
 
 export type GridAssetDefinition = GridBusDefinition | GridBranchDefinition | GridGeneratorDefinition | GridLoadDefinition | GridStorageDefinition
@@ -205,6 +254,7 @@ export interface CompiledGridModelIndex {
   readonly generatorsByBus: ReadonlyMap<string, ReadonlyArray<GridGeneratorDefinition>>
   readonly loadsByBus: ReadonlyMap<string, ReadonlyArray<GridLoadDefinition>>
   readonly storageByBus: ReadonlyMap<string, ReadonlyArray<GridStorageDefinition>>
+  readonly shuntsByBus: ReadonlyMap<string, ReadonlyArray<GridShuntDefinition>>
   readonly staticComponentByBus: ReadonlyMap<string, string>
   /** The Model's external systems and HVDC links, empty when it declares none. */
   readonly externalSystems: ReadonlyArray<GridExternalSystemDefinition>

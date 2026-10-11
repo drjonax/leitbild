@@ -7,7 +7,7 @@ import type { PackMapTheme } from '../src/core/packs/reference-style.ts'
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, norwayWinterPeakOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
@@ -170,7 +170,7 @@ describe('Grid live layer: reference context', () => {
 const norway = compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: norwayGridModelRef },
-  operatingPoint: { ref: norwayNormalOperatingPointRef },
+  operatingPoint: { ref: norwayWinterPeakOperatingPointRef },
   automation: { ref: nordicFrequencyAutomationRef },
 }))
 
@@ -226,7 +226,7 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     })
     const branchCard = state.hoverCard(0)!
     expect(branchCard.title).toBe(norway.model.branches[0]!.label)
-    expect(branchCard.fields.find(field => field.key === 'path')!.value).toBe('Straight line between its buses (no mapped route)')
+    expect(branchCard.fields.find(field => field.key === 'path')!.value).toBe('Mapped route')
   })
 
   test('follow switching and trips, and label the most loaded closed branches', () => {

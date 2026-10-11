@@ -228,7 +228,7 @@ describe('electrical Pack connection', () => {
 
       const switchyard = await connection.invokeQuery({
         capabilityId: 'world.electric-grid.asset.get',
-        input: { gridId: 'grid:halden-four-unit', assetId: 'bus:halden-pwr-switchyard-420' },
+        input: { gridId: 'grid:halden-four-unit', assetId: 'bus:curated-halden-pwr-switchyard@420' },
       })
       expect(switchyard).toMatchObject({
         asset: {

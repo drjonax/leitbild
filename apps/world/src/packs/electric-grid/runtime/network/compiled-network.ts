@@ -1,13 +1,7 @@
 import type { GridModelDefinition } from '../../grid-model.ts'
 
-/**
- * System base power in MVA for the model's per-unit branch reactances. 100 MVA is the
- * conventional transmission study base (IEEE test systems, ENTSO-E/Nordic planning
- * models), so a DC solve θ = B⁻¹·P/S_base yields bus angles in radians.
- */
-export const gridSystemBaseMva = 100
-
 export interface CompiledGridNetwork {
+  /** The Model's base power of its per-unit impedances, so a DC solve θ = B⁻¹·P/S_base yields angles in radians. */
   readonly sBaseMva: number
   readonly busCount: number
   readonly branchCount: number
@@ -23,7 +17,7 @@ export interface CompiledGridNetwork {
   readonly busIdSortRank: Int32Array
 }
 
-type GridNetworkModel = Pick<GridModelDefinition, 'id' | 'buses' | 'branches'>
+type GridNetworkModel = Pick<GridModelDefinition, 'id' | 'sBaseMva' | 'buses' | 'branches'>
 
 export const compileGridNetwork = (model: GridNetworkModel): CompiledGridNetwork => {
   const busIds = model.buses.map(bus => bus.id)
@@ -50,7 +44,7 @@ export const compileGridNetwork = (model: GridNetworkModel): CompiledGridNetwork
     .sort((a, b) => (busIds[a]! < busIds[b]! ? -1 : busIds[a]! > busIds[b]! ? 1 : 0))
     .forEach((busIndex, rank) => { busIdSortRank[busIndex] = rank })
   return {
-    sBaseMva: gridSystemBaseMva,
+    sBaseMva: model.sBaseMva,
     busCount: busIds.length,
     branchCount,
     busIds,

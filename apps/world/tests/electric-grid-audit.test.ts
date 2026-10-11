@@ -8,12 +8,7 @@ import { auditGridTopology } from '../src/packs/electric-grid/audit/grid-audit.t
 import { bridgesAndArticulationPoints, createMultigraph, maximumCircuitFlow } from '../src/packs/electric-grid/audit/graph-metrics.ts'
 import { measureNveCoverage } from '../src/packs/electric-grid/audit/nve-coverage.ts'
 import { createReferenceGeometry } from '../src/packs/electric-grid/audit/reference-geometry.ts'
-import { auditGraphFromGridModelV1 } from '../src/packs/electric-grid/audit/v1-adapter.ts'
 import { auditGraphFromGridModelV2, type GridModelV2AuditInput } from '../src/packs/electric-grid/audit/v2-adapter.ts'
-import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
-import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
-import { norwayGridSourceData } from '../src/packs/electric-grid/models/norway-source-data.generated.ts'
 import { gridCurationCollectionSchema, type GridCurationCollection } from '../src/packs/electric-grid/schemas/grid-curation.ts'
 import { gridGoldenSchema, type GridGolden } from '../src/packs/electric-grid/schemas/grid-golden.ts'
 import {
@@ -411,51 +406,6 @@ describe('golden and curation schemas', () => {
 })
 
 describe('model adapters', () => {
-  const v1Model = (): GridModelDefinition => ({
-    id: 'v1-fixture', title: 'v1', description: 'v1', nominalFrequencyHz: 50,
-    fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 10 },
-    sourceBuild: { id: 'b', generatedAt: '2026-01-01T00:00:00Z' }, sourceIds: [],
-    buses: [
-      { id: 'NO-A', label: 'A', nominalKv: 420, location: [10, 60], sourceId: 'osm:pbf-power:NO', sourceFeatureId: 'way/1' },
-      { id: 'NO-B', label: 'B', nominalKv: 420, location: [10.5, 60], sourceId: 'osm:pbf-power:NO', sourceFeatureId: 'relation/2' },
-      { id: 'bus:plant', label: 'Plant', nominalKv: 420, location: [10.2, 60.2], sourceId: 'leitbild:engineering', sourceFeatureId: 'plant' },
-    ],
-    branches: [
-      { id: 'br:ab', label: 'A – B', kind: 'ac_line', fromBusId: 'NO-A', toBusId: 'NO-B', nominalKv: 420, ratingMw: 1, emergencyRatingMw: 1, reactancePu: 0.1, resistancePu: 0, weatherExposure: 'low', sourceId: 'osm:pbf-power:NO', sourceFeatureId: 'merged/line/ab' },
-      { id: 'br:hvdc', label: 'Link', kind: 'hvdc_link', fromBusId: 'NO-A', toBusId: 'bus:plant', nominalKv: 525, ratingMw: 700, emergencyRatingMw: 700, reactancePu: 0.1, resistancePu: 0, weatherExposure: 'low' },
-    ],
-    generators: [{ id: 'gen', label: 'Gen', kind: 'hydro', busId: 'NO-B', location: [10.5, 60.1], capacityMw: 10, availableMw: 10, reserveMw: 0, rampRateMwPerMinute: 1, inertiaSeconds: 3, priceArea: 'NO1' }],
-    loads: [{ id: 'load', label: 'Load', kind: 'industry', busId: 'NO-A', location: [10, 60], demandMw: 5, criticalMw: 0, reactiveDemandMvar: 0, priority: 'normal', controllable: false }],
-    storage: [], connectionPoints: [],
-  })
-  const reference = createReferenceGeometry([
-    { geometry: { type: 'Polygon', coordinates: [[[9.99, 59.99], [10.01, 59.99], [10.01, 60.01], [9.99, 59.99]]] }, properties: { externalId: 'way/1' } },
-    { geometry: { type: 'Point', coordinates: [10.5, 60] }, properties: { externalId: 'relation/2' } },
-    { geometry: { type: 'LineString', coordinates: [[10.5, 60], [10.25, 60.01], [10, 60]] }, properties: { externalId: 'merged/line/ab', tags: { 'leitbild:merged_source_ids': 'way/10;way/11' } } },
-  ])
-
-  test('map a v1 model with reference geometry and source lengths', () => {
-    const graph = auditGraphFromGridModelV1({
-      model: v1Model(), reference,
-      sourceData: { ...norwayGridSourceData, branches: [{ externalId: 'merged/line/ab', name: 'A – B', category: 'line', fromExternalId: 'way/1', toExternalId: 'relation/2', nominalKv: 420, lengthKm: 28.5, sourceId: 'osm:pbf-power:NO' }] },
-    })
-    expect(graph.busPerVoltageLevel).toBe(false)
-    expect(graph.buses.map(bus => bus.substationId)).toEqual(['way/1', 'relation/2', undefined])
-    expect(graph.buses[0]!.footprint?.kind).toBe('polygon')
-    expect(graph.branches).toHaveLength(1)
-    expect(graph.branches[0]).toMatchObject({ osmWayIds: ['way/10', 'way/11'], lengthKm: 28.5, circuits: 1, ends: { from: [10, 60], to: [10.5, 60] } })
-    expect(graph.hvdcLinks.map(link => link.id)).toEqual(['br:hvdc'])
-    expect(graph.generators[0]!.attachmentKm).toBeCloseTo(11.1, 1)
-    expect(graph.loads[0]!.family).toBe('site')
-  })
-
-  test('refuse v1 assets the audit cannot classify', () => {
-    const model = v1Model()
-    expect(() => auditGraphFromGridModelV1({ model: { ...model, generators: [{ ...model.generators[0]!, kind: 'battery' }] } })).toThrow('is not a generation family')
-    expect(() => auditGraphFromGridModelV1({ model: { ...model, branches: [{ ...model.branches[0]!, kind: 'switch' }] } })).toThrow('unsupported kind switch')
-    expect(() => auditGraphFromGridModelV1({ model: { ...model, buses: [{ ...model.buses[0]!, sourceFeatureId: 'merged/x' }, ...model.buses.slice(1)] } })).toThrow('has no OSM feature id')
-  })
-
   const v2Model = (): GridModelV2AuditInput => ({
     id: 'v2-fixture', referenceHour: '2026-01-15T00:00:00+01:00',
     buses: [
@@ -576,28 +526,5 @@ describe('repository golden list and curations', () => {
     }).toEqual({ stations: 130, substations: 37, corridors: 25, interconnectors: 14, radial: 77, curations: 31 })
     const entries = [...golden.stations, ...golden.substations, ...golden.corridors, ...golden.excludedCorridors, ...golden.interconnectors, ...golden.radialAllowList]
     expect(entries.every(entry => entry.evidence.length > 0 && entry.evidence.every(item => item.url.startsWith('https://')))).toBe(true)
-  })
-
-  // Baseline of today's v1 model (audit B, 2026-10-10), kept until the runtime switches to the
-  // generated v2 model (electric-grid-model-golden.test.ts); it pins the measured v1 gaps.
-  test("today's v1 Norway model reproduces the measured gap baseline", async () => {
-    const golden = gridGoldenSchema.parse(await load('norway-grid-golden.json'))
-    const curations = gridCurationCollectionSchema.parse(await load('norway-grid-curations.geojson'))
-    const model = compileGridDefinition({
-      id: 'grid:audit', model: { ref: norwayGridModelRef }, operatingPoint: { ref: norwayNormalOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
-    }).model
-    const report = auditGridTopology(auditGraphFromGridModelV1({ model, sourceData: norwayGridSourceData }), golden, { asOf: '2026-10-10', curations })
-    expect(report.verdict).toBe('fail')
-    expect(check(report, 'components').metrics.componentSizes).toEqual([99, 78, 46, 14, 3, 2, 2, 2, 2, 2, 2, 2, 1])
-    expect(check(report, 'voltage-mismatch').metrics.mismatchedLines).toBe(62)
-    expect(check(report, 'off-terminal-ends').status).toBe('not-measurable')
-    expect(check(report, 'golden-interconnectors').metrics).toEqual({ total: 14, present: 0 })
-    expect(check(report, 'golden-substations').metrics).toEqual({ total: 37, present: 34, inMainComponent: 19, degreeMet: 20 })
-    const corridorFailures = messages(report, 'golden-corridors')
-    for (const corridor of ['Kvinesdal – Lista 1 and 2', 'Sylling – Hamang 1 and 2', 'Vinnelys – Guolasjokka 1 and 2', 'Skillemoen – Kvænangen 1 and 2']) {
-      expect(corridorFailures).toContain(`${corridor} `)
-    }
-    // Balsfjord – Skillemoen became Balsfjord – Vinnelys – Skillemoen; v1 has no Vinnelys station.
-    expect(check(report, 'golden-corridors').metrics).toEqual({ total: 25, connected: 11, circuitsMet: 8 })
   })
 })

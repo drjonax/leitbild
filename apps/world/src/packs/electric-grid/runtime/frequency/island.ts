@@ -431,7 +431,21 @@ export const advanceIslandFrequency = (
     rocofHzPerSecond = step.rocofHzPerSecond
     elapsedSeconds = t1
     if (!(frequencyHz > nominalHz * 0.9 && frequencyHz < nominalHz * 1.1)) {
-      throw new Error(`island ${input.islandId} frequency ${frequencyHz.toFixed(3)} Hz left the swing model's validity range at ${t1.toFixed(1)} s`)
+      // Beyond ±10 % within one sub-step, past every relay threshold: each synchronised unit's fastest
+      // under- or over-frequency element operates and the island collapses.
+      const cause = frequencyHz <= nominalHz * 0.9 ? 'under-frequency' as const : 'over-frequency' as const
+      const elements = cause === 'under-frequency' ? automation.generatorProtection.underFrequency : automation.generatorProtection.overFrequency
+      const element = [...elements].sort((a, b) => a.delaySeconds - b.delaySeconds)[0]!
+      for (const unit of active) {
+        const current = unitStates.get(unit.id)!
+        Object.assign(current, outOfService(current))
+        current.protection = { ...current.protection, trip: { atSeconds: t1, elementId: element.id, cause } }
+        actions.push({ kind: 'generator-trip', unitId: unit.id, atSeconds: t1, elementId: element.id, cause })
+      }
+      units = units.map(unit => ({ ...unit, synchronised: false }))
+      collapsed = true
+      actions.push({ kind: 'island-collapsed', atSeconds: t1, cause: `${cause}-beyond-model-range` })
+      break
     }
     if (extremes) {
       if (frequencyHz < extremes.minimumHz) {

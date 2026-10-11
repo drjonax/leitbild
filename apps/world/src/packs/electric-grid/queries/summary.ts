@@ -50,9 +50,11 @@ const summaryResultSchema = z.object({
   operatingPoint: z.object({
     id: z.string(),
     title: z.string(),
-    loadScale: finite,
-    generationAvailabilityScale: finite,
-    storageStateOfCharge: finite,
+    loadScale: finite.describe('Multiplies every load\'s demand.'),
+    generationAvailabilityScale: finite.describe('Multiplies every generator\'s availability.'),
+    storageStateOfCharge: finite.nullable().describe('Initial charge of every storage asset; null when the Operating Point gives none.'),
+    hvdcSetpoints: z.array(z.object({ linkId: z.string(), setpointMw: finite }).strict()).describe('Initial HVDC set-points (MW, positive from the link\'s fromBusId).'),
+    externalExchanges: z.array(z.object({ systemId: z.string(), scheduledExportMw: finite }).strict()).describe('Scheduled export to each synchronous external system (MW).'),
   }).strict(),
   automation: z.object({
     id: z.string(),
@@ -151,7 +153,11 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
       sourceBuild: { ...model.sourceBuild },
       fidelity: { ...model.fidelity },
     },
-    operatingPoint: { ...grid.definition.operatingPoint },
+    operatingPoint: {
+      ...grid.definition.operatingPoint,
+      hvdcSetpoints: grid.definition.operatingPoint.hvdcSetpoints.map(entry => ({ ...entry })),
+      externalExchanges: grid.definition.operatingPoint.externalExchanges.map(entry => ({ ...entry })),
+    },
     automation: automationSummary(grid),
     projection: grid.projection,
     assetCounts: {

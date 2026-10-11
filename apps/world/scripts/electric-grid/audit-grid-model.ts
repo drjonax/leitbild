@@ -1,9 +1,10 @@
-// Audits a Grid Model against the reviewed golden list and curations, prints the report, and exits
-// non-zero unless every check passes. --model names a v1 catalog model; --model-file reads a
-// generated Grid Model v2 JSON file (validated by schemas/grid-model.ts).
+// Audits a Grid Model v2 against the reviewed golden list and curations, prints the report, and exits
+// non-zero unless every check passes. --model names a catalog model (composed when it is a Model
+// Addition); --model-file reads a generated Grid Model v2 JSON file. The default is the catalog's
+// Norway transmission model.
 //
 //   bun run scripts/electric-grid/audit-grid-model.ts [--model <ref> | --model-file <v2 .grid-model.json>] [--sidecar <grid-norway.features.geojson>]
-//     [--ledger <v2 .ledger.json>: station members for footprints; required with --model-file and --sidecar]
+//     [--ledger <v2 .ledger.json>: station members for footprints; required with --sidecar]
 //     [--nve <Nettanlegg5 transmission layer .geojson>]... [--as-of YYYY-MM-DD] [--json <report.json>]
 //     [--golden <file>] [--curations <file>] [--show <failures per check>]
 //
@@ -13,16 +14,14 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { z } from 'zod'
-import { compileGridDefinition } from '../../src/packs/electric-grid/definitions.ts'
+import { gridModelV2 } from '../../src/packs/electric-grid/definitions.ts'
 import { electricGridDefinitionCatalog, norwayGridModelRef } from '../../src/packs/electric-grid/definition-refs.ts'
-import { norwayGridSourceData } from '../../src/packs/electric-grid/models/norway-source-data.generated.ts'
 import { gridGoldenSchema } from '../../src/packs/electric-grid/schemas/grid-golden.ts'
 import { gridCurationCollectionSchema } from '../../src/packs/electric-grid/schemas/grid-curation.ts'
 import { nveLinesFromGeoJson, referenceGeometryFromSidecar } from '../../src/packs/electric-grid/audit/audit-inputs.ts'
 import { auditGridTopology } from '../../src/packs/electric-grid/audit/grid-audit.ts'
 import type { GridAuditReport } from '../../src/packs/electric-grid/audit/audit-report.ts'
 import type { NveLine } from '../../src/packs/electric-grid/audit/nve-coverage.ts'
-import { auditGraphFromGridModelV1 } from '../../src/packs/electric-grid/audit/v1-adapter.ts'
 import { auditGraphFromGridModelV2, type StationTerminals } from '../../src/packs/electric-grid/audit/v2-adapter.ts'
 import { validateGridModel } from '../../src/packs/electric-grid/schemas/grid-model.ts'
 
@@ -35,19 +34,11 @@ const usage = (message: string): never => {
   process.exit(2)
 }
 
-// The audit reads only the model; any compatible Operating Point and Automation complete the Definition.
-const compileModel = (modelRef: string) => {
-  const catalog = electricGridDefinitionCatalog
-  const compatible = (entry: { readonly compatibleModelRefs: ReadonlyArray<string> }): boolean => entry.compatibleModelRefs.includes(modelRef)
-  const operatingPoint = catalog.operatingPoints.find(compatible)
-  const automation = catalog.automations.find(compatible)
-  if (!operatingPoint || !automation) return usage(`unknown Grid Model ${modelRef}; known: ${catalog.models.map(model => model.id).join(', ')}`)
-  return compileGridDefinition({
-    id: 'grid:audit',
-    model: { ref: modelRef },
-    operatingPoint: { ref: operatingPoint.id },
-    automation: { ref: automation.id },
-  }).model
+const catalogModel = (modelRef: string) => {
+  if (!electricGridDefinitionCatalog.models.some(model => model.id === modelRef)) {
+    return usage(`unknown Grid Model ${modelRef}; known: ${electricGridDefinitionCatalog.models.map(model => model.id).join(', ')}`)
+  }
+  return gridModelV2(modelRef)
 }
 
 const printReport = (report: GridAuditReport, show: number, asOfSource: string): void => {
@@ -71,7 +62,7 @@ const ledgerStationsSchema = z.object({
 
 // The build audits footprints of the stations the topology unified; the CLI reads them from the build ledger.
 const stationTerminalsOf = async (ledger: string | undefined, withSidecar: boolean): Promise<StationTerminals> => {
-  if (ledger === undefined) return withSidecar ? usage('--ledger is required with --model-file and --sidecar (station footprints)') : {}
+  if (ledger === undefined) return withSidecar ? usage('--ledger is required with --sidecar (station footprints)') : {}
   return ledgerStationsSchema.parse(await readJson(ledger)).stationTerminals
 }
 
@@ -107,13 +98,8 @@ const main = async (): Promise<void> => {
   }
   if (values.model !== undefined && values['model-file'] !== undefined) usage('give either --model or --model-file, not both')
   const modelFile = values['model-file']
-  const graph = modelFile === undefined
-    ? auditGraphFromGridModelV1({
-        model: compileModel(values.model ?? norwayGridModelRef),
-        sourceData: norwayGridSourceData,
-        ...(reference === undefined ? {} : { reference }),
-      })
-    : auditGraphFromGridModelV2(validateGridModel(await readJson(modelFile), modelFile), reference, await stationTerminalsOf(values.ledger, reference !== undefined))
+  const model = modelFile === undefined ? catalogModel(values.model ?? norwayGridModelRef) : validateGridModel(await readJson(modelFile), modelFile)
+  const graph = auditGraphFromGridModelV2(model, reference, await stationTerminalsOf(values.ledger, reference !== undefined))
   const report = auditGridTopology(graph, golden, { asOf, curations, ...(nveLines === undefined ? {} : { nveLines }) })
   printReport(report, show, asOfSource)
   if (values.json !== undefined) {

@@ -4,7 +4,7 @@ import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { CompiledGridDefinition, GridBranchDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
-import { compileGridNetwork, gridSystemBaseMva } from '../src/packs/electric-grid/runtime/network/compiled-network.ts'
+import { compileGridNetwork } from '../src/packs/electric-grid/runtime/network/compiled-network.ts'
 import { createGridIslandSystem, gridBranchFlowMw, gridBranchFlowsMwInto } from '../src/packs/electric-grid/runtime/network/dc-power-flow.ts'
 import { findGridIslands } from '../src/packs/electric-grid/runtime/network/islands.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
@@ -15,18 +15,21 @@ import { gridDefinitionForModel, syntheticGridDefinition } from './fixtures/synt
 const at = '2026-01-01T10:00:00.000Z' as IsoTimestamp
 
 const line = (id: string, fromBusId: string, toBusId: string, reactancePu: number): GridBranchDefinition => ({
-  id, label: id, kind: 'ac_line', fromBusId, toBusId, nominalKv: 420, ratingMw: 2_000, emergencyRatingMw: 2_400,
-  reactancePu, resistancePu: 0.001, weatherExposure: 'low',
+  id, label: id, kind: 'ac_line', fromBusId, toBusId, nominalKv: 420, lengthKm: 50, circuits: 1, ratingMw: 2_000, emergencyRatingMw: 2_400,
+  emergencyDurationSeconds: 900, reactancePu, resistancePu: 0.001, chargingSusceptancePu: 0,
 })
 
+/** System base of the hand-built and synthetic models: the conventional 100 MVA transmission study base. */
+const sBaseMva = 100
+
 const handModel = (id: string, busIds: ReadonlyArray<string>, branches: ReadonlyArray<GridBranchDefinition>): GridModelDefinition => ({
-  id, title: id, description: 'Hand-built network test model', nominalFrequencyHz: 50,
+  id, title: id, description: 'Hand-built network test model', nominalFrequencyHz: 50, sBaseMva,
   fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
   sourceBuild: { id: 'network-test', generatedAt: '2026-10-10T00:00:00.000Z' },
   sourceIds: [],
   buses: busIds.map((busId, index) => ({ id: busId, label: busId, nominalKv: 420, location: [10 + index * 0.1, 60] as const })),
   branches,
-  generators: [], loads: [], storage: [], connectionPoints: [],
+  shunts: [], generators: [], loads: [], storage: [], connectionPoints: [], externalSystems: [], hvdcLinks: [],
 })
 
 const gridFor = (definition: CompiledGridDefinition): GridRuntimeInstance => createGridRuntimeInstance({ definition, at })
@@ -34,7 +37,7 @@ const gridFor = (definition: CompiledGridDefinition): GridRuntimeInstance => cre
 const norwayDefinition = (): CompiledGridDefinition => compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: 'electric-grid.norway.transmission' },
-  operatingPoint: { ref: 'electric-grid.norway.normal' },
+  operatingPoint: { ref: 'electric-grid.norway.winter-weekday-peak' },
   automation: { ref: 'electric-grid.frequency.nordic-2025' },
 }))
 
@@ -146,12 +149,12 @@ describe('electric-grid sparse network core', () => {
     expect(angles.get('bus:c')).toBe(0)
     expect(Math.abs(angles.get('bus:a')! + 0.06)).toBeLessThan(1e-15)
     expect(Math.abs(angles.get('bus:b')! - 0.02)).toBeLessThan(1e-15)
-    const flows = model.branches.map(branch => gridBranchFlowMw(angles, branch))
+    const flows = model.branches.map(branch => gridBranchFlowMw(angles, branch, sBaseMva))
     expect(maximumDifference(flows, [60, -40, -10])).toBeLessThan(1e-9)
     expect(plan.referenceMismatchMw[0]).toBeCloseTo(0, 12)
     // An unbalanced island: the reference bus absorbs the whole mismatch and the flows do not change.
     const unbalanced = new Map([['bus:c', 0], ['bus:a', -100], ['bus:b', 50]])
-    const unbalancedFlows = model.branches.map(branch => gridBranchFlowMw(solveGridAngles(plan, unbalanced), branch))
+    const unbalancedFlows = model.branches.map(branch => gridBranchFlowMw(solveGridAngles(plan, unbalanced), branch, sBaseMva))
     expect(maximumDifference(unbalancedFlows, [60, -40, -10])).toBeLessThan(1e-9)
     expect(plan.referenceMismatchMw[0]).toBeCloseTo(-50, 12)
   })
@@ -169,14 +172,14 @@ describe('electric-grid sparse network core', () => {
     // 1/(10 + 10/3) pu: θ_b = -0.075 rad; the c side is two equal 0.05 pu circuits (40 pu).
     expect(Math.abs(angles.get('bus:b')! + 0.075)).toBeLessThan(1e-15)
     expect(Math.abs(angles.get('bus:c')! + 0.1)).toBeLessThan(1e-15)
-    const flows = model.branches.map(branch => gridBranchFlowMw(angles, branch))
+    const flows = model.branches.map(branch => gridBranchFlowMw(angles, branch, sBaseMva))
     expect(maximumDifference(flows, [75, 25, 50, -50])).toBeLessThan(1e-9)
     const indexed = new Float64Array(model.branches.length)
     gridBranchFlowsMwInto(plan.network, plan.closedBranches, plan.anglesRad, indexed)
     expect(maximumDifference([...indexed], flows)).toBeLessThan(1e-12)
   })
 
-  test('matches the previous dense solver on the Norway model to 1e-9 MW with bus angles in radians, before and after switching', () => {
+  test('matches the previous dense solver on the Norway model to 1e-11 of the largest flow with bus angles in radians, before and after switching', () => {
     const definition = norwayDefinition()
     const grid = gridFor(definition)
     const check = (): void => {
@@ -184,14 +187,17 @@ describe('electric-grid sparse network core', () => {
       const injections = injectionsOf(grid)
       const dense = denseReferenceFlowsMw(definition.model, isClosed(grid), injections)
       const runtimeFlows = definition.model.branches.map(branch => grid.branches.get(branch.id)!.flowMw)
-      expect(maximumDifference(runtimeFlows, dense)).toBeLessThan(1e-9)
+      // Round-off of two factorisations of a 1,000-bus matrix: relative to the largest flow.
+      const tolerance = 1e-11 * Math.max(...dense.map(Math.abs))
+      expect(maximumDifference(runtimeFlows, dense)).toBeLessThan(tolerance)
       const plan = topologyPlanForGrid(grid)
       const angles = solveGridAngles(plan, injections)
-      const radianFlows = definition.model.branches.map(branch => isClosed(grid)(branch) ? gridBranchFlowMw(angles, branch) : 0)
-      expect(maximumDifference(radianFlows, dense)).toBeLessThan(1e-9)
+      const radianFlows = definition.model.branches.map(branch => isClosed(grid)(branch) ? gridBranchFlowMw(angles, branch, sBaseMva) : 0)
+      expect(maximumDifference(radianFlows, dense)).toBeLessThan(tolerance)
       const denseAngles = denseReferenceAngles(definition.model, isClosed(grid), injections)
+      const angleTolerance = 1e-10 * Math.max(...[...denseAngles.values()].map(value => Math.abs(value / sBaseMva)))
       for (const [busId, angle] of angles) {
-        expect(Math.abs(angle - denseAngles.get(busId)! / gridSystemBaseMva)).toBeLessThan(1e-12)
+        expect(Math.abs(angle - denseAngles.get(busId)! / sBaseMva)).toBeLessThan(angleTolerance)
         expect(Math.abs(grid.busStates.get(busId)!.angleRad - angle)).toBeLessThan(1e-15)
       }
     }
@@ -227,7 +233,7 @@ describe('electric-grid sparse network core', () => {
     const injections = new Map([['bus:d', 120], ['bus:e', 0], ['bus:f', -20], ['bus:a', -30], ['bus:b', -50], ['bus:c', 0]])
     const whole = topologyPlanForGrid(grid)
     expect(whole.islands.map(island => island.id)).toEqual(['island:bus:a'])
-    const bridgeFlow = gridBranchFlowMw(solveGridAngles(whole, injections), model.branches[6]!)
+    const bridgeFlow = gridBranchFlowMw(solveGridAngles(whole, injections), model.branches[6]!, sBaseMva)
     expect(bridgeFlow).toBeCloseTo(80, 9)
 
     grid.branches.get('bridge')!.state = 'open'

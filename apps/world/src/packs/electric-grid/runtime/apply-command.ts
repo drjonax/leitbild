@@ -62,11 +62,12 @@ const branchFor = (grid: GridRuntimeInstance, assetId: string): { readonly defin
   return { definition: entry.definition, state }
 }
 
-const controllableLoadFor = (grid: GridRuntimeInstance, assetId: string): { readonly definition: GridLoadDefinition; readonly state: GridLoadState } => {
+/** Manual shedding may limit any load down to its critical demand; a load that is critical in full cannot be shed. */
+const sheddableLoadFor = (grid: GridRuntimeInstance, assetId: string): { readonly definition: GridLoadDefinition; readonly state: GridLoadState } => {
   const entry = grid.definition.index.assetById.get(assetId)
   const state = grid.loads.get(assetId)
   if (entry?.kind !== 'load' || !state) throw new Error(`load Grid Asset not found: ${assetId}`)
-  if (!entry.definition.controllable) throw new Error(`load Grid Asset ${assetId} is not controllable in its Grid Model`)
+  if (entry.definition.priority === 'critical') throw new Error(`load Grid Asset ${assetId} is critical in full; manual shedding never disconnects it`)
   return { definition: entry.definition, state }
 }
 
@@ -122,7 +123,6 @@ const generatorHandlers = {
     if (state.state === 'tripped') throw new Error(`generator ${payload.assetId} is tripped; reset its trip with reset-generator-trip before starting it`)
     if (state.state !== 'offline') throw new Error(`generator ${payload.assetId} is already ${state.state}; only an offline unit can be started`)
     const startupSeconds = generatorStartupSeconds(definition)
-    if (startupSeconds === null) throw new Error(`generator ${payload.assetId} is a ${definition.kind} equivalent, not a unit that can be started`)
     const minimumStableMw = generatorMinimumStableMw(definition)
     if (state.availableMw <= 0 || state.availableMw < minimumStableMw) {
       throw new Error(`generator ${payload.assetId} has ${mw(state.availableMw)} available, below what it needs to run (minimum stable generation ${mw(minimumStableMw)})`)
@@ -181,7 +181,7 @@ const branchHandlers = {
 const loadHandlers = {
   [gridShedLoadCommandKind]: (grid, rawPayload) => {
     const payload = gridShedLoadPayloadSchema.parse(rawPayload)
-    const { definition, state } = controllableLoadFor(grid, payload.assetId)
+    const { definition, state } = sheddableLoadFor(grid, payload.assetId)
     if (payload.targetDemandMw < definition.criticalMw) {
       throw new Error(`target demand ${mw(payload.targetDemandMw)} is below the critical demand ${mw(definition.criticalMw)} of ${payload.assetId}, which cannot be shed`)
     }
@@ -193,13 +193,13 @@ const loadHandlers = {
   },
   [gridRestoreLoadCommandKind]: (grid, rawPayload) => {
     const payload = gridRestoreLoadPayloadSchema.parse(rawPayload)
-    const { state } = controllableLoadFor(grid, payload.assetId)
+    const { state } = sheddableLoadFor(grid, payload.assetId)
     if (state.manualDemandLimitMw === null) throw new Error(`load ${payload.assetId} is not shed manually; there is nothing to restore`)
     state.manualDemandLimitMw = null
   },
   [gridSetEvChargingDemandCommandKind]: (grid, rawPayload) => {
     const payload = gridSetEvChargingDemandPayloadSchema.parse(rawPayload)
-    const { definition, state } = controllableLoadFor(grid, payload.assetId)
+    const { definition, state } = sheddableLoadFor(grid, payload.assetId)
     if (definition.kind !== 'ev_charging') throw new Error(`load ${payload.assetId} is ${definition.kind}, not EV charging`)
     const maximumMw = evChargingMaximumMw(grid, definition)
     if (payload.demandMw > maximumMw) throw new Error(`EV charging demand ${mw(payload.demandMw)} exceeds the modelled demand ${mw(maximumMw)} of ${payload.assetId}`)

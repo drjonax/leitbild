@@ -1,54 +1,20 @@
 import type {
   GridBranchDefinition,
   GridBusDefinition,
-  GridConnectionPointDefinition,
+  GridExternalSystemDefinition,
   GridGenerationKind,
   GridGeneratorDefinition,
   GridLoadDefinition,
   GridLoadKind,
   GridModelDefinition,
   GridOperatingPointDefinition,
+  GridShuntDefinition,
 } from '../grid-model.ts'
 import type { GridLoadV2, GridModelV2, GridProvenance } from '../schemas/grid-model.ts'
 import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
 
-// Grid Model v2 (+ one Operating Point) → the runtime's Model definition. Pure: no file access.
-// The runtime types predate v2 and drop the AC fields (charging, taps, shunts, power factors,
-// minimum stable output); they are listed for the runtime lane in the MB1 report.
-
-/** External systems and HVDC links as the solver-integration runtime (lane IS1) declares them. */
-export interface RuntimeExternalSystem {
-  readonly id: string
-  readonly label: string
-  readonly area: 'SE1' | 'SE2' | 'SE3' | 'SE4' | 'FI' | 'DK1' | 'NL' | 'DE' | 'GB' | 'nordic-remainder'
-  readonly synchronous: boolean
-  readonly boundaryBusIds: ReadonlyArray<string>
-  readonly inertiaGws?: number
-  readonly loadMw?: number
-  readonly fcrNMwPerHz?: number
-  readonly fcrDUpMw?: number
-  readonly fcrDDownMw?: number
-  readonly afrrUpMw?: number
-  readonly afrrDownMw?: number
-  readonly provenance: GridProvenance
-}
-
-export interface RuntimeHvdcLink {
-  readonly id: string
-  readonly label: string
-  readonly fromBusId: string
-  readonly toBusId: string
-  readonly ratingMw: number
-  readonly lossPercent: number
-  readonly rampMwPerMinute: number
-  readonly osmWayIds: ReadonlyArray<string>
-  readonly provenance: GridProvenance
-}
-
-export type RuntimeGridModel = GridModelDefinition & {
-  readonly externalSystems: ReadonlyArray<RuntimeExternalSystem>
-  readonly hvdcLinks: ReadonlyArray<RuntimeHvdcLink>
-}
+// Grid Model v2 and one Operating Point (with any Scenario overrides already applied) → the
+// runtime's Model and Operating Point definitions. Pure: no file access.
 
 /** Bus count the runtime's sparse solver handles within its budget (lane N1: 10,000 buses rebuilt in 21 ms). */
 const recommendedMaximumBusCount = 10_000
@@ -72,21 +38,13 @@ const loadKinds: Readonly<Record<GridLoadV2['kind'], GridLoadKind>> = {
   'data-center': 'data_center',
 }
 
-// The runtime still requires a weather exposure class; weather coupling is not built (plan
-// decision 5). Classes follow the v1 rule: buried cables low, overhead lines by length.
-const weatherExposure = (branch: GridModelV2['branches'][number]): GridBranchDefinition['weatherExposure'] => {
-  if (branch.kind !== 'ac_line') return 'low'
-  const km = branch.lengthKm!
-  return km >= 60 ? 'high' : km >= 20 ? 'medium' : 'low'
-}
-
 /**
  * The runtime gives a synchronous external system exactly one boundary bus (one frequency per
  * system). The v2 Nordic remainder meets Norway at one boundary bus per area and voltage, so it
  * becomes one runtime system per boundary bus, its inertia, load and reserves shared in proportion
  * to the continuous rating of the AC ties ending there.
  */
-const splitSynchronous = (model: GridModelV2, system: GridModelV2['externalSystems'][number]): ReadonlyArray<RuntimeExternalSystem> => {
+const splitSynchronous = (model: GridModelV2, system: GridModelV2['externalSystems'][number]): ReadonlyArray<GridExternalSystemDefinition> => {
   const tieMw = (busId: string): number => model.branches
     .filter(branch => branch.fromBusId === busId || branch.toBusId === busId)
     .reduce((sum, branch) => sum + branch.ratingMw, 0)
@@ -120,13 +78,34 @@ const splitSynchronous = (model: GridModelV2, system: GridModelV2['externalSyste
   })
 }
 
+/**
+ * The runtime holds a set-point until a command changes it; it does not follow a time-of-day
+ * schedule. A schedule with one point is that constant set-point; any other is refused, never
+ * reduced to one of its points.
+ */
+const constantSchedule = <Point>(operatingPoint: GridOperatingPointV2, assetId: string, points: ReadonlyArray<Point>): Point => {
+  if (points.length !== 1) {
+    throw new Error(`Operating Point ${operatingPoint.id}: the schedule of ${assetId} has ${points.length} points; the Grid runtime holds constant set-points and does not follow time-of-day schedules`)
+  }
+  return points[0]!
+}
+
 export interface CompiledV2 {
-  readonly model: RuntimeGridModel
+  readonly model: GridModelDefinition
   readonly operatingPoint: GridOperatingPointDefinition
 }
 
-export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOperatingPointV2): CompiledV2 => {
+/** Scenario-level scales the v2 Operating Point does not carry; absent scales leave values as the Operating Point sets them. */
+export interface RuntimeScales {
+  readonly generationAvailabilityScale?: number | undefined
+  readonly storageStateOfCharge?: number | undefined
+}
+
+export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOperatingPointV2, scales: RuntimeScales = {}): CompiledV2 => {
   if (!operatingPoint.compatibleModelRefs.includes(model.id)) throw new Error(`Operating Point ${operatingPoint.id} is not compatible with ${model.id}`)
+  if ((operatingPoint.branchStates ?? []).length > 0) {
+    throw new Error(`Operating Point ${operatingPoint.id}: the Grid runtime does not apply initial branch states yet; every branch starts closed`)
+  }
   const states = new Map((operatingPoint.generatorStates ?? []).map(state => [state.assetId, state]))
   const areaScale = operatingPoint.priceAreaDemandScale ?? {}
   const firstSource = (provenance: GridProvenance): string => provenance.sources[0]!
@@ -146,18 +125,21 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
     fromBusId: branch.fromBusId,
     toBusId: branch.toBusId,
     nominalKv: branch.nominalKv,
+    ...(branch.lengthKm === undefined ? {} : { lengthKm: branch.lengthKm }),
+    circuits: branch.circuits,
     ratingMw: branch.ratingMw,
     emergencyRatingMw: branch.emergencyRatingMw,
+    emergencyDurationSeconds: branch.emergencyDurationSeconds,
     reactancePu: branch.reactancePu,
     resistancePu: branch.resistancePu,
-    weatherExposure: weatherExposure(branch),
+    chargingSusceptancePu: branch.chargingSusceptancePu,
+    ...(branch.tapRatio === undefined ? {} : { tapRatio: branch.tapRatio }),
     sourceId: firstSource(branch.provenance),
     provenance: branch.provenance,
   }))
+  const shunts: GridShuntDefinition[] = model.shunts.map(shunt => ({ ...shunt }))
   const generators: GridGeneratorDefinition[] = model.generators.map(generator => {
     const state = states.get(generator.id)
-    const availableMw = state?.availableMw ?? generator.capacityMw
-    const targetMw = state?.state === 'online' ? state.targetMw ?? 0 : 0
     return {
       id: generator.id,
       label: generator.label,
@@ -165,18 +147,25 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       busId: generator.busId,
       location: generator.location,
       capacityMw: generator.capacityMw,
-      availableMw,
-      // Headroom the Operating Point leaves above the dispatch target.
-      reserveMw: state?.state === 'online' ? Math.max(0, availableMw - targetMw) : 0,
-      rampRateMwPerMinute: generator.rampMwPerMinute,
+      ratedMva: generator.ratedMva,
+      powerFactor: generator.powerFactor,
+      voltageSetpointPu: generator.voltageSetpointPu,
       inertiaSeconds: generator.inertiaSeconds,
+      synchronous: generator.synchronous,
+      minimumStableMw: generator.minimumStableMw,
+      blackStartCapable: generator.blackStartCapable,
+      rampRateMwPerMinute: generator.rampMwPerMinute,
+      // An asset the Operating Point does not list starts as the runtime initialises it: online at capacity.
+      availableMw: state?.availableMw ?? generator.capacityMw,
+      initialState: state?.state ?? 'online',
       ...(generator.annualProductionGwh === undefined ? {} : { annualProductionGwh: generator.annualProductionGwh }),
       priceArea: generator.priceArea,
       sourceId: firstSource(generator.provenance),
+      provenance: generator.provenance,
     }
   })
   const loads: GridLoadDefinition[] = model.loads.map(load => {
-    const demandMw = load.referenceDemandMw * operatingPoint.loadScale * (areaScale[load.priceArea] ?? 1)
+    const demandMw = load.referenceDemandMw * (areaScale[load.priceArea] ?? 1)
     return {
       id: load.id,
       label: load.label,
@@ -184,44 +173,55 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       busId: load.busId,
       location: load.location,
       demandMw,
+      // A critical load is protected whole: LFDD and manual shedding never disconnect it.
       criticalMw: load.priority === 'critical' ? demandMw : 0,
-      reactiveDemandMvar: demandMw * Math.tan(Math.acos(load.powerFactor)),
+      powerFactor: load.powerFactor,
       priority: load.priority,
-      controllable: load.interruptibleMw > 0,
+      interruptibleMw: load.interruptibleMw,
       sourceId: firstSource(load.provenance),
+      provenance: load.provenance,
     }
   })
-  const connectionPoints: GridConnectionPointDefinition[] = model.connectionPoints.map(point => ({ ...point }))
   const newestInput = [...model.sourceBuild.inputs].map(input => input.snapshotAt).sort().at(-1)!
+  const exchanges = new Map((operatingPoint.externalExchangeSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).exportMw]))
+  const hvdcSchedules = new Map((operatingPoint.hvdcSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).transferMw]))
+  const externalSystems = model.externalSystems.flatMap((system): ReadonlyArray<GridExternalSystemDefinition> => system.synchronous
+    ? splitSynchronous(model, system)
+    : [{ id: system.id, label: system.label, area: system.area, synchronous: false, boundaryBusIds: system.boundaryBusIds, provenance: system.provenance }])
   return {
     model: {
       id: model.id,
       title: model.title,
       description: model.description,
       nominalFrequencyHz: model.nominalFrequencyHz,
+      sBaseMva: model.sBaseMva,
       fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount },
       // v2 records no wall-clock build time; the runtime's generatedAt carries the newest input snapshot.
       sourceBuild: { id: model.sourceBuild.id, generatedAt: newestInput },
       sourceIds: model.sourceBuild.inputs.map(input => input.sourceId),
       buses,
       branches,
+      shunts,
       generators,
       loads,
       storage: [],
-      connectionPoints,
-      externalSystems: model.externalSystems.flatMap(system => system.synchronous
-        ? splitSynchronous(model, system)
-        : [{ id: system.id, label: system.label, area: system.area, synchronous: false, boundaryBusIds: system.boundaryBusIds, provenance: system.provenance }]),
+      connectionPoints: model.connectionPoints.map(point => ({ ...point })),
+      externalSystems,
       hvdcLinks: model.hvdcLinks.map(link => ({ ...link })),
     },
     operatingPoint: {
       id: operatingPoint.id,
       title: operatingPoint.title,
-      // loadScale and the price-area scales are already in each load's demandMw.
-      loadScale: 1,
-      generationAvailabilityScale: 1,
-      // No storage in the v2 model.
-      storageStateOfCharge: 0,
+      loadScale: operatingPoint.loadScale,
+      generationAvailabilityScale: scales.generationAvailabilityScale ?? 1,
+      storageStateOfCharge: scales.storageStateOfCharge ?? null,
+      hvdcSetpoints: model.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: hvdcSchedules.get(link.id) ?? 0 })),
+      // A split synchronous system carries its share of the system's scheduled exchange, by tie rating.
+      externalExchanges: externalSystems.filter(system => system.synchronous).map(system => {
+        const parent = model.externalSystems.find(candidate => candidate.synchronous && (candidate.id === system.id || system.id.startsWith(`${candidate.id}@`)))!
+        const share = system.inertiaGws! / parent.inertiaGws!
+        return { systemId: system.id, scheduledExportMw: (exchanges.get(parent.id) ?? 0) * share }
+      }),
     },
   }
 }

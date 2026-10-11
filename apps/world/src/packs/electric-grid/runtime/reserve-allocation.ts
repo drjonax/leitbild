@@ -2,7 +2,7 @@ import type { GridGeneratorDefinition } from '../grid-model.ts'
 import type { GridAutomation, ReserveRequirement } from '../schemas/grid-automation.ts'
 import { reserveRequirementMw, type ReserveProduct } from './frequency/governors.ts'
 import type { ExternalReserveAllocation, FrequencyReserveAllocation } from './frequency/types.ts'
-import { droopFcrCapabilityMw, dynamicsForGenerator } from './generator-dynamics.ts'
+import { droopFcrCapabilityMw, governorForGenerator } from './generator-dynamics.ts'
 
 /** Upward reserve allocated to a unit across products (MW). */
 export const upwardReserveMw = (reserves: FrequencyReserveAllocation): number =>
@@ -74,7 +74,7 @@ export const allocateIslandReserves = (config: {
       const governor = product === 'fcrN' ? capability.fcrNMw : product === 'fcrDUp' ? capability.fcrDUpMw : product === 'fcrDDown' ? capability.fcrDDownMw : Number.POSITIVE_INFINITY
       return Math.min(room, governor)
     }
-    const candidates = synchronised.filter(unit => eligible.includes(dynamicsForGenerator(unit.definition).governorClass))
+    const candidates = synchronised.filter(unit => eligible.includes(governorForGenerator(unit.definition).governorClass))
     const totalOffer = candidates.reduce((sum, unit) => sum + offer(unit), 0)
     const share = totalOffer <= unitRequirementMw ? 1 : unitRequirementMw / totalOffer
     let allocatedMw = 0

@@ -13,6 +13,45 @@ import type {
   GridModelDefinition,
 } from '../../src/packs/electric-grid/grid-model.ts'
 
+/** A hand-built test Model: the given assets on a 100 MVA base with nothing else. */
+export const handBuiltModel = (model: Pick<GridModelDefinition, 'id' | 'title' | 'description' | 'buses' | 'branches' | 'generators' | 'loads'> & Partial<GridModelDefinition>): GridModelDefinition => ({
+  nominalFrequencyHz: 50,
+  sBaseMva: 100,
+  fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
+  sourceBuild: { id: 'hand-built-test', generatedAt: '2026-10-10T00:00:00.000Z' },
+  sourceIds: [],
+  shunts: [],
+  storage: [],
+  connectionPoints: [],
+  externalSystems: [],
+  hvdcLinks: [],
+  ...model,
+})
+
+/** A test line without charging; parameters for all circuits together. */
+export const testLine = (branch: Pick<GridBranchDefinition, 'id' | 'fromBusId' | 'toBusId' | 'nominalKv' | 'ratingMw' | 'reactancePu' | 'resistancePu'> & Partial<GridBranchDefinition>): GridBranchDefinition => ({
+  label: branch.id,
+  kind: 'ac_line',
+  lengthKm: 50,
+  circuits: 1,
+  emergencyRatingMw: branch.ratingMw,
+  emergencyDurationSeconds: 900,
+  chargingSusceptancePu: 0,
+  ...branch,
+})
+
+/** A test load at unity power factor, not critical and with nothing interruptible. */
+export const testLoad = (load: Pick<GridLoadDefinition, 'id' | 'busId' | 'demandMw'> & Partial<GridLoadDefinition>): GridLoadDefinition => ({
+  label: load.id,
+  kind: 'industry',
+  location: [10, 60],
+  criticalMw: 0,
+  powerFactor: 1,
+  priority: 'normal',
+  interruptibleMw: 0,
+  ...load,
+})
+
 const linearCongruential = (seed: number): (() => number) => {
   let state = seed >>> 0
   return () => {
@@ -22,6 +61,25 @@ const linearCongruential = (seed: number): (() => number) => {
 }
 
 const branchesPerBus = 1.4
+
+/**
+ * A synchronous hydro unit with Grid Model v2 machine data: H 3 s on rated MVA at power factor 0.9
+ * (Kundur Table 3.2 midpoint; NVF 2025 cos φ), 10 % minimum stable output, a 22 %/min ramp.
+ */
+export const syntheticHydroUnit = (unit: Pick<GridGeneratorDefinition, 'id' | 'label' | 'busId' | 'location' | 'capacityMw'> & Partial<GridGeneratorDefinition>): GridGeneratorDefinition => ({
+  kind: 'hydro',
+  ratedMva: unit.capacityMw / 0.9,
+  powerFactor: 0.9,
+  voltageSetpointPu: 1,
+  inertiaSeconds: 3,
+  synchronous: true,
+  minimumStableMw: unit.capacityMw * 0.1,
+  blackStartCapable: false,
+  rampRateMwPerMinute: unit.capacityMw * 0.22,
+  availableMw: unit.capacityMw,
+  initialState: 'online',
+  ...unit,
+})
 const voltageClassesKv = [132, 300, 420] as const
 
 const branchFor = (index: number, from: GridBusDefinition, to: GridBusDefinition): GridBranchDefinition => {
@@ -40,9 +98,13 @@ const branchFor = (index: number, from: GridBusDefinition, to: GridBusDefinition
     nominalKv: kv,
     ratingMw: kv >= 400 ? 1800 : kv >= 300 ? 900 : 200,
     emergencyRatingMw: kv >= 400 ? 2100 : kv >= 300 ? 1050 : 240,
+    lengthKm,
+    circuits: 1,
+    emergencyDurationSeconds: 900,
     reactancePu: Math.max(1e-4, ohmPerKm * lengthKm * 100 / kv ** 2),
     resistancePu: Math.max(1e-5, resistanceOhmPerKm * lengthKm * 100 / kv ** 2),
-    weatherExposure: 'low',
+    // Typical overhead-line charging, µS/km per voltage class, as B = µS·kV²/100 MVA.
+    chargingSusceptancePu: (kv >= 400 ? 4 : kv >= 300 ? 3.8 : 2.8) * 1e-6 * lengthKm * kv ** 2 / 100,
   }
 }
 
@@ -119,15 +181,13 @@ export const syntheticGridModel = (busCount: number, seed = 7): GridModelDefinit
   const loads: GridLoadDefinition[] = []
   for (let index = 0; index < busCount; index += 1) {
     if (index % 4 === 0) {
-      generators.push({
-        id: `G${index}`, label: `Generator ${index}`, kind: 'hydro', busId: `B${index}`, location: points[index]!,
-        capacityMw: 400, availableMw: 380, reserveMw: 80, rampRateMwPerMinute: 88, inertiaSeconds: 5.2,
-      })
+      generators.push(syntheticHydroUnit({ id: `G${index}`, label: `Generator ${index}`, busId: `B${index}`, location: points[index]!, capacityMw: 400, availableMw: 380 }))
     }
     if (index % 5 === 1) {
       loads.push({
         id: `D${index}`, label: `Load ${index}`, kind: 'residential', busId: `B${index}`, location: points[index]!,
-        demandMw: 160, criticalMw: 30, reactiveDemandMvar: 40, priority: 'normal', controllable: false,
+        // Q/P = 0.25 (40 Mvar at 160 MW): cos φ = 1/√1.0625.
+        demandMw: 160, criticalMw: 30, powerFactor: 1 / Math.sqrt(1.0625), priority: 'normal', interruptibleMw: 0,
       })
     }
   }
@@ -136,15 +196,19 @@ export const syntheticGridModel = (busCount: number, seed = 7): GridModelDefinit
     title: `Synthetic ${busCount}-bus grid`,
     description: 'Deterministic synthetic grid for network performance tests',
     nominalFrequencyHz: 50,
+    sBaseMva: 100,
     fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
     sourceBuild: { id: 'synthetic', generatedAt: '2026-10-10T00:00:00.000Z' },
     sourceIds: [],
     buses,
     branches,
+    shunts: [],
     generators,
     loads,
     storage: [],
     connectionPoints: [],
+    externalSystems: [],
+    hvdcLinks: [],
   }
 }
 
@@ -153,7 +217,11 @@ export const gridDefinitionForModel = (model: GridModelDefinition): CompiledGrid
   gridId: `grid:${model.id}`,
   model,
   index: compileGridModelIndex(model),
-  operatingPoint: { id: 'synthetic', title: 'Synthetic', loadScale: 1, generationAvailabilityScale: 1, storageStateOfCharge: 0.5 },
+  operatingPoint: {
+    id: 'synthetic', title: 'Synthetic', loadScale: 1, generationAvailabilityScale: 1, storageStateOfCharge: 0.5,
+    hvdcSetpoints: model.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: 0 })),
+    externalExchanges: model.externalSystems.filter(system => system.synchronous).map(system => ({ systemId: system.id, scheduledExportMw: 0 })),
+  },
   automation: gridAutomationPreset(nordicFrequencyAutomationRef),
   definitionDigest: '0'.repeat(64),
 })

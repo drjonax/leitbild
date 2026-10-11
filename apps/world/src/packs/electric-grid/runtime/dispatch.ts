@@ -25,12 +25,21 @@ const boundaryTransferLimitMw = (grid: GridRuntimeInstance, boundaryBusId: strin
     return sum + (state.state === 'closed' ? branch.ratingMw * state.availability : 0)
   }, 0)
 
+
+/** Import the Operating Point schedules from a synchronous external system (MW; negative exports). */
+const scheduledImportMw = (grid: GridRuntimeInstance, systemId: string): number => {
+  const exchange = grid.definition.operatingPoint.externalExchanges.find(entry => entry.systemId === systemId)
+  if (exchange === undefined) throw new Error(`Grid ${grid.definition.gridId} Operating Point has no scheduled exchange for ${systemId}`)
+  return -exchange.scheduledExportMw
+}
+
 /**
  * Dispatch of one energised island: its online units share the island's residual demand
- * (connected demand + losses − connected-system and HVDC injections) between their minimum stable
- * generation and their availability, in proportion to that range. A synchronous external system
- * takes what the units cannot: the surplus below their minimum as export, the deficit above their
- * capacity as import, within the transfer capability of its ties. An island without one whose
+ * (connected demand + losses − connected-system and HVDC injections − the scheduled exchange with
+ * its synchronous external systems) between their minimum stable generation and their
+ * availability, in proportion to that range. A synchronous external system takes what the units
+ * cannot: the surplus below their minimum as export, the deficit above their capacity as import,
+ * within the transfer capability of its ties. An island without one whose
  * units' minimum exceeds the residual takes units offline, smallest first, until it fits (an
  * island with no demand runs none). Anything else is an explicit error, never a silent cap.
  */
@@ -53,7 +62,8 @@ const dispatchIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, islan
   const units = online()
   const floorMw = minimumMw(units)
   const availableMw = units.reduce((sum, definition) => sum + grid.generators.get(definition.id)!.availableMw, 0)
-  const unitsMw = Math.min(Math.max(residualMw, floorMw), availableMw)
+  const preferredImportMw = externals.reduce((sum, system) => sum + scheduledImportMw(grid, system.id), 0)
+  const unitsMw = Math.min(Math.max(residualMw - preferredImportMw, floorMw), availableMw)
   const exchangeMw = residualMw - unitsMw
   if (exchangeMw !== 0 && (externals.length === 0 || Math.abs(exchangeMw) > limitMw)) {
     const need = exchangeMw > 0
@@ -62,10 +72,12 @@ const dispatchIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, islan
     throw new Error(`Grid ${grid.definition.gridId} dispatch is infeasible: island ${island.id} ${need}${externals.length === 0 ? '' : ` and its ties to ${externals.map(system => system.id).join(', ')} carry at most ${limitMw.toFixed(0)} MW`}`)
   }
   const rangeMw = availableMw - floorMw
+  const share = rangeMw > 0 ? (unitsMw - floorMw) / rangeMw : 0
   for (const definition of units) {
     const state = grid.generators.get(definition.id)!
     const unitMinimumMw = generatorMinimumStableMw(definition)
-    state.targetMw = unitMinimumMw + (rangeMw > 0 ? (unitsMw - floorMw) * (state.availableMw - unitMinimumMw) / rangeMw : 0)
+    // The same share of every unit's range; at a share of 1 the floating-point sum may exceed availability by an ulp.
+    state.targetMw = Math.min(state.availableMw, unitMinimumMw + share * (state.availableMw - unitMinimumMw))
   }
   for (const system of externals) {
     grid.externalSystems.get(system.id)!.scheduledImportMw = limitMw > 0 ? exchangeMw * boundaryTransferLimitMw(grid, system.boundaryBusIds[0]!) / limitMw : 0

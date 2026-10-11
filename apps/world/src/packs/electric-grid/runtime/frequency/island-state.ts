@@ -48,7 +48,7 @@ export type FrequencyAction =
   | ({ readonly kind: 'lfdd-stage-operated' } & LfddOperation)
   | { readonly kind: 'mfrr-activated'; readonly atSeconds: number; readonly requestedMw: number; readonly activatedMw: number; readonly shortfallMw: number }
   | { readonly kind: 'storage-state-changed'; readonly storageId: string; readonly atSeconds: number; readonly from: StorageOperatingState; readonly to: StorageOperatingState }
-  | { readonly kind: 'island-collapsed'; readonly atSeconds: number; readonly cause: 'no-synchronous-inertia' }
+  | { readonly kind: 'island-collapsed'; readonly atSeconds: number; readonly cause: 'no-synchronous-inertia' | 'under-frequency-beyond-model-range' | 'over-frequency-beyond-model-range' }
 
 export const createUnitFrequencyState = (automation: GridAutomation, scheduledMw: number): UnitFrequencyState => ({
   scheduledMw,

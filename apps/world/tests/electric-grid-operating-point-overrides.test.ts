@@ -13,7 +13,7 @@ const gridItem = (overrides: unknown): PackScenarioItemSpec => ({
   label: 'Override test grid',
   location: [10.75, 59.91],
   model: { ref: 'electric-grid.norway.transmission' },
-  operatingPoint: { ref: 'electric-grid.norway.normal', overrides },
+  operatingPoint: { ref: 'electric-grid.norway.winter-weekday-peak', overrides },
   automation: { ref: 'electric-grid.frequency.nordic-2025' },
 }) as PackScenarioItemSpec
 const context = { at: '2026-01-15T16:00:00.000Z' as IsoTimestamp } as PackScenarioExpansionContext
@@ -29,7 +29,7 @@ const issuesOf = async (overrides: unknown): Promise<ReadonlyArray<{ readonly pa
 }
 
 const model = compileGridDefinition({
-  id: 'grid:ids', model: { ref: 'electric-grid.norway.transmission' }, operatingPoint: { ref: 'electric-grid.norway.normal' }, automation: { ref: 'electric-grid.frequency.nordic-2025' },
+  id: 'grid:ids', model: { ref: 'electric-grid.norway.transmission' }, operatingPoint: { ref: 'electric-grid.norway.winter-weekday-peak' }, automation: { ref: 'electric-grid.frequency.nordic-2025' },
 }).model
 
 describe('Grid Scenario Operating Point overrides', () => {
@@ -40,20 +40,31 @@ describe('Grid Scenario Operating Point overrides', () => {
 
   test('rejects addresses the selected model does not have, per field', async () => {
     const issues = await issuesOf({
-      hvdcSchedules: [{ assetId: 'hvdc:nordlink', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', transferMw: 500 }] }],
-      externalExchangeSchedules: [{ assetId: 'external:nordic-remainder', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', exportMw: 100 }] }],
-      priceAreaDemandScale: { NO1: 1.1 },
+      hvdcSchedules: [{ assetId: 'hvdc:no-such-link', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', transferMw: 500 }] }],
+      externalExchangeSchedules: [
+        { assetId: 'external:SE1', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', exportMw: 100 }] },
+        { assetId: 'external:DE', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', exportMw: 100 }] },
+      ],
     })
-    expect(issues.map(issue => issue.path)).toEqual([
-      ['operatingPoint', 'overrides', 'priceAreaDemandScale', 'NO1'],
-      ['operatingPoint', 'overrides', 'hvdcSchedules', 0, 'assetId'],
-      ['operatingPoint', 'overrides', 'externalExchangeSchedules', 0, 'assetId'],
+    expect(issues.map(issue => [issue.path, issue.message])).toEqual([
+      [['operatingPoint', 'overrides', 'hvdcSchedules', 0, 'assetId'], 'unknown HVDC link hvdc:no-such-link'],
+      [['operatingPoint', 'overrides', 'externalExchangeSchedules', 0, 'assetId'], 'unknown external system external:SE1'],
+      [['operatingPoint', 'overrides', 'externalExchangeSchedules', 1, 'assetId'], 'external:DE is reached only through HVDC; schedule its links instead'],
     ])
   })
 
+  test('applies a constant HVDC schedule as the link\'s initial set-point', async () => {
+    const definition = compileGridDefinition({
+      id: 'grid:hvdc', model: { ref: 'electric-grid.norway.transmission' }, automation: { ref: 'electric-grid.frequency.nordic-2025' },
+      operatingPoint: { ref: 'electric-grid.norway.winter-weekday-peak', overrides: { hvdcSchedules: [{ assetId: 'hvdc:nordlink', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', transferMw: 500 }] }] } },
+    })
+    expect(definition.operatingPoint.hvdcSetpoints.find(entry => entry.linkId === 'hvdc:nordlink')?.setpointMw).toBe(500)
+  })
+
   test('accepts only stable asset ids, so name-derived v1 ids cannot be addressed', async () => {
-    const generator = model.generators[0]!
-    const issues = await issuesOf({ generatorStates: [{ assetId: generator.id, state: 'offline' }] })
+    // A Grid Model v1 generator id, derived from the plant name.
+    const issues = await issuesOf({ generatorStates: [{ assetId: 'NO-KVILLDAL-HYDRO', state: 'offline' }] })
+    expect(model.generators.every(generator => generator.id.startsWith('generator:'))).toBe(true)
     expect(issues.map(issue => [issue.path, issue.message])).toEqual([[['operatingPoint', 'overrides', 'generatorStates', 0, 'assetId'], 'must be a generator id']])
   })
 
