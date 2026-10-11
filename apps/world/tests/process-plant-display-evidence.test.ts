@@ -175,8 +175,9 @@ describe('what World adds to a composed display', () => {
 
   test('PORV open after the trip, as run 22 composed it: the subcooling margin a critical safety function judges keeps the last row, before the relief tank only alarms judge', () => {
     // Run 22's composition three minutes in: its readouts leave the added rows room for four. The relief tank's
-    // level and pressure head for their alarms sooner than the subcooling margin, but core cooling is judged by the
-    // margin, the decisive value of a pressurizer steam-space leak, so it takes the last row.
+    // level and pressure head for their alarms sooner than the subcooling margin, and the safety injection signal
+    // has isolated main feedwater, but core cooling is judged by the margin, the decisive value of a pressurizer
+    // steam-space leak, so it takes the last row.
     const { compose, read } = situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 3)
     const { evidence, display, result } = compose('Unit 2 pressurizer depressurization', ['PT-455', 'PORV-456A', 'PZR-LVL'], [
       { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('pressurizer.reliefFlowKgPerS'), signal('PZR-LVL', 'counter-evidence')] },
@@ -186,6 +187,7 @@ describe('what World adds to a composed display', () => {
     expect(rowsOf(display).map(row => row.kind)).toEqual(['delivers', 'trip', 'program', 'mode'])
     expect(rowsOf(display).at(-1)).toEqual({ kind: 'mode', name: '', items: ['SUB-MARGIN'] })
     expect(listed(evidence).map(([path]) => path)).not.toContain('pressurizerReliefTank.levelPercent')
+    expect(listed(evidence).map(([, kind]) => kind)).not.toContain('isolates')
     expect(Number(read('pressurizerReliefTank.levelPercent'))).toBeGreaterThan(75)
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
   }, PLANT_HANG_GUARD_MS)

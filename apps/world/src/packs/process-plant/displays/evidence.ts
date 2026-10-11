@@ -77,7 +77,8 @@ const joined = (names: ReadonlyArray<string>): string => names.length < 2 ? name
  *   falling pressurizer pressure after a trip): what the overview leads
  *   with, and of the rest what the display would lead with as off normal,
  *   heading for a limit or past one, most telling first, the values a
- *   critical safety function judges before those only an alarm judges;
+ *   critical safety function judges before those only an alarm judges, and
+ *   before what the actions isolate;
  * - flow: along a drawn line-up, the header flow each drawn header carries,
  *   and to each destination, and each drawn pump feeds.
  * Equipment a drawing shows says its own command and state, so it is never a
@@ -450,7 +451,11 @@ export const displayEvidence = (
     }
   }
 
-  const ordered = [...added.values()].sort((left, right) => PRIORITY.indexOf(left.kind) - PRIORITY.indexOf(right.kind))
+  // What the unit watches that a critical safety function judges ranks before what an action isolates: with the PORV
+  // stuck open, the subcooling margin before the main feedwater safety injection isolated.
+  const rank = (entry: DisplayEvidence): number =>
+    entry.kind === 'mode' && judged.has(entry.path as VariablePath) ? PRIORITY.indexOf('isolates') - 0.5 : PRIORITY.indexOf(entry.kind)
+  const ordered = [...added.values()].sort((left, right) => rank(left) - rank(right))
   return firstRows(ordered, COMPOSED_EVIDENCE_MAX_ROWS, COMPOSED_EVIDENCE_MAX)
 }
 
@@ -460,6 +465,8 @@ export const displayEvidence = (
  * span, what the automatic actions deliver, whether the trip acted, the
  * program a reading is held to, the healthy or left-out loops to compare,
  * what the actions isolate, what the unit leads with, the line-up's flows.
+ * What the unit watches that a critical safety function judges comes before
+ * what the actions isolate (displayEvidence).
  */
 const PRIORITY: ReadonlyArray<DisplayEvidenceKind> = ['cause', 'isolation', 'wider', 'delivers', 'trip', 'program', 'reference', 'isolates', 'mode', 'flow']
 
