@@ -14,7 +14,7 @@
 //! nested surface solve. Water state, saturation and wall mass flux come
 //! from the network's own evaluation; every heat has one donor and one
 //! recipient, and the water receives its heat through the network's single
-//! liquid enthalpy port. The same thermal laws as `hot_spine` apply.
+//! liquid enthalpy port. The thermal laws are the retired hot spine's.
 use super::{
     block::{Class, Coordinates, Fluid, Layout, Receipts, SecondaryView},
     packet::Packet,

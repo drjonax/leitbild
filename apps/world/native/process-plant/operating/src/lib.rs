@@ -7,7 +7,6 @@
 
 pub mod capture;
 pub mod heat_history;
-pub mod hot_spine;
 pub mod hydraulics;
 pub mod initialization;
 pub mod joined;
@@ -24,5 +23,4 @@ pub mod rotor;
 pub mod sg;
 pub mod source_feedback;
 pub mod sparse;
-pub mod surge;
 pub mod thermal;
