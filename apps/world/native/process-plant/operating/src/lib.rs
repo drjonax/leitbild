@@ -10,6 +10,7 @@ pub mod heat_history;
 pub mod hot_spine;
 pub mod hydraulics;
 pub mod initialization;
+pub mod joined;
 pub mod kinetics;
 pub mod local_flow;
 pub mod network;
