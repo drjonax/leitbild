@@ -35,8 +35,7 @@
 
 import { createWorkspaceRuntimeRegistry } from './core/workspaces/runtime-registry.ts'
 import { DEFAULTS } from './core/types/constants.ts'
-import { registerAllMCPServers } from './integrations/mcp/client.ts'
-import { existsSync } from 'node:fs'
+import { loadMCPConfig, registerAllMCPServers } from './integrations/mcp/client.ts'
 import { resolve } from 'node:path'
 import { loadExternalTools } from './tools/loader.ts'
 import { loadSkills } from './skills/loader.ts'
@@ -104,14 +103,14 @@ export const bootstrap = async (): Promise<void> => {
   // definitions directly into deployment.sharedToolRegistry so every per-Workspace
   // overlay can resolve them; the underlying connection is deployment. Also kept
   // on deployment.mcpTools as a list for any consumer that needs the raw set.
-  const mcpConfigPath = `${import.meta.dir}/../mcp-servers.json`
+  const mcpConfig = await loadMCPConfig(process.env.LEITBILD_MCP_CONFIG)
   let mcpDisconnect = async (): Promise<void> => {}
-  if (existsSync(mcpConfigPath)) {
+  if (Object.keys(mcpConfig.mcpServers ?? {}).length > 0) {
     const tempRegistry = createToolRegistry()
-    const result = await registerAllMCPServers(tempRegistry, await Bun.file(mcpConfigPath).json())
+    const result = await registerAllMCPServers(tempRegistry, mcpConfig)
     deployment.mcpTools.push(...tempRegistry.list())
     for (const tool of tempRegistry.list()) {
-      try { deployment.sharedToolRegistry.register(tool) } catch { /* duplicate ignored */ }
+      deployment.sharedToolRegistry.register(tool)
     }
     mcpDisconnect = result.disconnect
   }
