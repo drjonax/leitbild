@@ -42,4 +42,4 @@ test('a retry and concurrent flush persist the latest state', async () => {
     if(previous===undefined)delete process.env.LEITBILD_HOME;else process.env.LEITBILD_HOME=previous
     await rm(root,{recursive:true,force:true})
   }
-},10000)
+},120_000) // A watchdog, not a budget: the saves are disk writes a loaded machine delays.

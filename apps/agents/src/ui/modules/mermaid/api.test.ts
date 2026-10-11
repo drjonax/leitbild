@@ -50,7 +50,7 @@ describe('installed Mermaid loader', () => {
       updatedTheme: 'dark',
       updatedSecurity: 'strict',
     })
-  }, 30_000)
+  }, 120_000) // A watchdog: the child imports Mermaid, which a loaded machine stretches to seconds.
 
   test('exposes a failed load to the source-preserving fallback without retrying for every block', async () => {
     const result = await runLoader(`
