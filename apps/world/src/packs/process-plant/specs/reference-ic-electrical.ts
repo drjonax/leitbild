@@ -2,6 +2,10 @@ import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { alarm, all, annunciator, comparison, rule, trip, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 
+/** Undervoltage relay set points, as fractions of nominal voltage (the offsite power alarms below). */
+const degradedVoltageFraction = 0.9
+const lossOfVoltageFraction = 0.7
+
 const electricalAlarm = annunciator({
   system: 'electrical',
   group: 'electrical-power',
@@ -196,7 +200,8 @@ export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantRefe
     condition: comparison({ tagId: 'BUS-A-DEGRADED' }, '==', true),
     clearCondition: comparison({ tagId: 'BUS-A-DEGRADED' }, '==', false),
     clearDelayMs: 2_000,
-    delayMs: 3_000,
+    // At the degraded-voltage relay's pickup, as the offsite power alarms below explain.
+    delayMs: 0,
     latch: false,
     resetWhenClear: true,
     effects: [
@@ -250,7 +255,8 @@ export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantRefe
     condition: comparison({ tagId: 'BUS-B-DEGRADED' }, '==', true),
     clearCondition: comparison({ tagId: 'BUS-B-DEGRADED' }, '==', false),
     clearDelayMs: 2_000,
-    delayMs: 3_000,
+    // At the degraded-voltage relay's pickup, as the offsite power alarms below explain.
+    delayMs: 0,
     latch: false,
     resetWhenClear: true,
     effects: [
@@ -265,15 +271,21 @@ export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantRefe
   }),
   lossOfOffsitePowerAuxiliaryFeedwater(loops),
   ...pressurizerBackupHeaterBreakerRules(),
-  // One cause per alarm: offsite power is lost when the grid gives no
-  // voltage, whether it is disconnected or dead; a sagging grid is the
-  // degraded-voltage alarm's.
+  // Two undervoltage relays watch the offsite supply, as at a reference
+  // plant: the degraded-voltage relay at 90 % of nominal and the
+  // loss-of-voltage relay at 70 %, the level below which a bus counts dead.
+  // The degraded-voltage alarm comes in as its relay picks up; the relay's
+  // time delay (about 10 s) belongs to the separation from offsite power the
+  // model does not have, so the alarm does not wait for it. The
+  // loss-of-voltage relay declares offsite power lost after about 1 s. A grid
+  // that sags passes 90 % first and alarms degraded first; one that is lost
+  // passes both in a moment, and the degraded alarm still comes first.
   rule({
     id: 'loss-of-offsite-power',
     label: 'Loss of offsite power',
     ruleClass: 'alarm',
-    condition: comparison({ tagId: 'GRID-VOLTAGE' }, '<=', 0),
-    clearCondition: comparison({ tagId: 'GRID-VOLTAGE' }, '>', 0),
+    condition: comparison({ tagId: 'GRID-VOLTAGE' }, '<', lossOfVoltageFraction),
+    clearCondition: comparison({ tagId: 'GRID-VOLTAGE' }, '>=', lossOfVoltageFraction + 0.05),
     clearDelayMs: 2_000,
     delayMs: 1_000,
     latch: false,
@@ -281,7 +293,7 @@ export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantRefe
     effects: [alarm({
       id: 'loss-of-offsite-power',
       title: 'Loss of offsite power',
-      message: 'The offsite grid gives no voltage.',
+      message: `The offsite grid voltage is below ${lossOfVoltageFraction * 100} % of nominal, the loss-of-voltage relays' set point: offsite power is lost.`,
       severity: 'critical',
       annunciator: annunciator({ ...electricalAlarm, equipmentId: 'offsiteGrid', role: 'cause' }),
     })],
@@ -290,16 +302,16 @@ export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantRefe
     id: 'offsite-grid-degraded-voltage',
     label: 'Offsite grid degraded voltage',
     ruleClass: 'alarm',
-    condition: comparison({ tagId: 'GRID-VOLTAGE' }, '<', 0.9),
-    clearCondition: comparison({ tagId: 'GRID-VOLTAGE' }, '>=', 0.92),
+    condition: comparison({ tagId: 'GRID-VOLTAGE' }, '<', degradedVoltageFraction),
+    clearCondition: comparison({ tagId: 'GRID-VOLTAGE' }, '>=', degradedVoltageFraction + 0.02),
     clearDelayMs: 2_000,
-    delayMs: 3_000,
+    delayMs: 0,
     latch: false,
     resetWhenClear: true,
     effects: [alarm({
       id: 'offsite-grid-degraded-voltage',
       title: 'Offsite grid degraded voltage',
-      message: 'The offsite grid voltage is below the reference degraded-voltage threshold.',
+      message: `The offsite grid voltage is below ${degradedVoltageFraction * 100} % of nominal, the degraded-voltage relays' set point.`,
       severity: 'warning',
       annunciator: annunciator({ ...electricalAlarm, equipmentId: 'offsiteGrid', role: 'cause' }),
     })],

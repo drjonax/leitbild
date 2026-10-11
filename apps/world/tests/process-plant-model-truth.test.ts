@@ -252,6 +252,39 @@ describe('offsite power alarms', () => {
     plantRun.run(5_000)
     expect(plantRun.activeIds()).toContain('alarm:loss-of-offsite-power:loss-of-offsite-power')
   })
+
+  const degraded = 'alarm:offsite-grid-degraded-voltage:offsite-grid-degraded-voltage'
+  const lost = 'alarm:loss-of-offsite-power:loss-of-offsite-power'
+  const firstSeconds = (plantRun: ReturnType<typeof started>, seconds: number, at: Map<string, number> = new Map()) => {
+    for (let second = 1; second <= seconds; second += 1) {
+      plantRun.run(1_000)
+      for (const id of plantRun.activeIds()) if (!at.has(id)) at.set(id, second)
+    }
+    return at
+  }
+
+  test('on a loss of offsite power the degraded-voltage relay alarms before the loss-of-voltage relay', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    plantRun.act('loss-offsite-power')
+    const at = firstSeconds(plantRun, 5)
+    expect(at.get(degraded)).toBe(1)
+    expect(at.get(lost)).toBe(2)
+    expect(at.get('alarm:safety-bus-a-loss-alarm:safety-bus-a-loss')).toBe(2)
+  })
+
+  test('a sagging grid alarms degraded below 90 % and lost below 70 %, in that order', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    const sagTo = (fraction: number) => plantRun.runtime.writeCommand({ type: 'setVariable', path: 'offsiteGrid.voltageFraction' as VariablePath, value: fraction })
+    sagTo(0.85)
+    const at = firstSeconds(plantRun, 10)
+    expect(at.has(degraded)).toBe(true)
+    expect(at.has(lost)).toBe(false)
+    sagTo(0.6)
+    firstSeconds(plantRun, 5, at)
+    expect(at.get(lost)).toBeGreaterThan(at.get(degraded)!)
+  })
 })
 
 describe('auxiliary feedwater on a loss of offsite power', () => {
