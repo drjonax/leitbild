@@ -245,8 +245,13 @@ describe('the unit overview of the principal circuits', () => {
     if (count.kind !== 'count') throw new Error('no count')
     const [first, second] = count.members.map(member => member.state!.state!.path)
     const sample = (a: boolean, b: boolean) => indexSample([{ path: first!, value: a, quality: 'good' }, { path: second!, value: b, quality: 'good' }])
-    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, true)), sample(true, true), String)).toBe('2/2 RUN')
-    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, false)), sample(true, false), String)).toBe('1/2 RUN')
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, true)), sample(true, true), String)).toBe('RUN 2/2')
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, false)), sample(true, false), String)).toBe('RUN 1/2')
+    // With none running the row says they are stopped, as a single pump's row does (QA review of run 22: "0/2 RUN").
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(false, false)), sample(false, false), String)).toBe('STOP 2/2')
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, indexSample([{ path: first!, value: false, quality: 'good' }])), indexSample([{ path: first!, value: false, quality: 'good' }]), String)).toBe('STOP 1/2 ?')
+    // The drawing reserves room for every text the row can show.
+    expect(count.texts).toEqual(['RUN 2/2', 'RUN 2/2 ?', 'STOP 2/2', 'STOP 2/2 ?'])
     expect(drawnLook(pumps.binding, pumps.rows, sample(true, false)).state.kind).toBe('running')
     expect(drawnLook(pumps.binding, pumps.rows, sample(false, false)).state.kind).toBe('stopped')
     expect(drawnLook(pumps.binding, pumps.rows, indexSample([])).state.kind).toBe('unknown')

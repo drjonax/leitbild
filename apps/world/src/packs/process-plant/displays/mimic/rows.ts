@@ -31,7 +31,7 @@ export type MimicRow =
    * (`whole`).
    */
   | { readonly kind: 'marker'; readonly part: 'word' | 'command' | 'value' | 'whole'; readonly texts: ReadonlyArray<string>; readonly required: true }
-  /** Grouped parallel equipment: how many members are in the state the group is drawn by ("1/2 RUN"). */
+  /** Grouped parallel equipment: how many members are in the state the group is drawn by ("RUN 1/2"), or, with none in it, how many are in the other ("STOP 2/2"). */
   | { readonly kind: 'count'; readonly members: ReadonlyArray<MimicItemBinding>; readonly word: string; readonly texts: ReadonlyArray<string>; readonly required: true }
 
 const POSITION_COMMANDS = ['CMD SHUT', 'CMD OPEN', 'CMD 100 %', 'CMD 10 %']
@@ -48,11 +48,15 @@ const WIDEST_OPENING = '95 %'
 
 /** The word a group counts its members by, per state aspect; aspects without one are not grouped. */
 export const COUNT_WORDS: Readonly<Partial<Record<string, string>>> = { running: 'RUN', energized: 'LIVE', position: 'OPEN' }
+/** The state word for a member not in the counted state, as a single item's row says it (RUN and STOP, OPEN and SHUT). */
+const OTHER_WORDS: Readonly<Record<string, string>> = { RUN: 'STOP', LIVE: 'DEAD', OPEN: 'SHUT', CLOSED: 'OPEN' }
 
 /** Whether an item's position is a breaker's contacts, closed while its state reads true. */
 const switching = (binding: MimicItemBinding): boolean => binding.state?.state?.reading === 'closedWhileTrue'
 
-const countTexts = (members: number, word: string): ReadonlyArray<string> => [`${members}/${members} ${word}`, `${members}/${members} ${word} ?`]
+// The state word leads, as on a single item, so "0/2 RUN" never reads as running (QA review of run 22).
+const countTexts = (members: number, word: string): ReadonlyArray<string> =>
+  [word, OTHER_WORDS[word]!].flatMap(state => [`${state} ${members}/${members}`, `${state} ${members}/${members} ?`])
 
 /**
  * The rows beside an item. A valve drawn as a marker has the one or two short
@@ -142,10 +146,12 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
     return row.part === 'word' && look.mismatch !== null && opening === '' ? settled : opening
   }
   if (row.kind === 'count') {
+    // RUN 1/2 while any member runs; STOP 2/2 while none does, counting those known stopped.
     const looks = row.members.map(member => itemLook(member, index))
     const counted = looks.filter(member => counts(member, row.word)).length
-    const unknown = looks.some(member => member.state.kind === 'unknown')
-    return `${counted}/${row.members.length} ${row.word}${unknown ? ' ?' : ''}`
+    const unknown = looks.filter(member => member.state.kind === 'unknown').length
+    const known = counted > 0 ? `${row.word} ${counted}` : `${OTHER_WORDS[row.word]!} ${looks.length - unknown}`
+    return `${known}/${row.members.length}${unknown > 0 ? ' ?' : ''}`
   }
   if (row.kind === 'value') {
     const entry = index.get(row.path)

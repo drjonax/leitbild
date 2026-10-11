@@ -28,7 +28,7 @@ export interface MimicProfile {
   /**
    * Identical parallel equipment (same kind, same neighbours on both sides,
    * same ports): one symbol each, or one symbol for all of them that counts
-   * how many are running ("1/2 RUN").
+   * how many are running ("RUN 1/2").
    */
   readonly parallel: 'each' | 'grouped'
   /**
