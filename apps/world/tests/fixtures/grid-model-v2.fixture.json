@@ -5,7 +5,7 @@
   "description": "Hand-written miniature model exercising every Grid Model v2 asset kind and cross-field rule.",
   "nominalFrequencyHz": 50,
   "sBaseMva": 100,
-  "fidelity": { "powerFlow": "dc", "frequency": "island-swing", "voltage": "not-modelled" },
+  "fidelity": { "powerFlow": "ac-fdlf-or-dc", "voltage": "ac-fdlf", "frequency": "island-swing" },
   "referenceHour": "2026-01-15T17:00:00+01:00",
   "sourceBuild": {
     "id": "build:test-fixture-0001",

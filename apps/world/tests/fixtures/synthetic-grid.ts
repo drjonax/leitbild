@@ -17,7 +17,7 @@ import type {
 export const handBuiltModel = (model: Pick<GridModelDefinition, 'id' | 'title' | 'description' | 'buses' | 'branches' | 'generators' | 'loads'> & Partial<GridModelDefinition>): GridModelDefinition => ({
   nominalFrequencyHz: 50,
   sBaseMva: 100,
-  fidelity: { powerFlow: 'dc', voltage: 'ac-fdlf', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
+  fidelity: { powerFlow: 'ac-fdlf-or-dc', voltage: 'ac-fdlf', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
   sourceBuild: { id: 'hand-built-test', generatedAt: '2026-10-10T00:00:00.000Z' },
   sourceIds: [],
   shunts: [],
@@ -198,7 +198,7 @@ export const syntheticGridModel = (busCount: number, seed = 7): GridModelDefinit
     description: 'Deterministic synthetic grid for network performance tests',
     nominalFrequencyHz: 50,
     sBaseMva: 100,
-    fidelity: { powerFlow: 'dc', voltage: 'ac-fdlf', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
+    fidelity: { powerFlow: 'ac-fdlf-or-dc', voltage: 'ac-fdlf', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
     sourceBuild: { id: 'synthetic', generatedAt: '2026-10-10T00:00:00.000Z' },
     sourceIds: [],
     buses,

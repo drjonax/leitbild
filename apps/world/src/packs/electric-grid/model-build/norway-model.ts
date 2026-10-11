@@ -234,7 +234,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     description: `Source-derived ≥132 kV Norwegian transmission network: OpenStreetMap topology (${ids.osm}), NVE hydropower and wind registries, Elhub metered demand at ${winterHour.priceAreas.startTime} Europe/Oslo, curated interconnectors and major sites. Electrical values are inferred by documented rules (see the ledger).`,
     nominalFrequencyHz: 50 as const,
     sBaseMva: electricalRules.sBaseMva,
-    fidelity: { powerFlow: 'dc' as const, frequency: 'island-swing' as const, voltage: 'not-modelled' as const },
+    fidelity: { powerFlow: 'ac-fdlf-or-dc' as const, voltage: 'ac-fdlf' as const, frequency: 'island-swing' as const },
     referenceHour: winterHour.priceAreas.startTime,
     sourceBuild: { id: buildId, inputs: sources.inputs },
     buses,

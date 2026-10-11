@@ -15,8 +15,11 @@ export interface GridAssetProvenance {
 }
 
 export interface GridModelFidelity {
-  /** Active power flows and every island's balance from the DC solve. */
-  readonly powerFlow: 'dc'
+  /**
+   * Branch flows of each energised island from its fast-decoupled AC load flow where that converges,
+   * else from the DC solve that also balances every island.
+   */
+  readonly powerFlow: 'ac-fdlf-or-dc'
   /**
    * Bus voltages, reactive power and branch losses from a fast-decoupled AC load flow of every
    * energised island after each DC solve; an island whose load flow does not converge publishes no voltage.

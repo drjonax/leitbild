@@ -71,7 +71,7 @@ export interface GridDefinitionCatalog {
 }
 
 const transmissionFidelity: GridModelFidelity = {
-  powerFlow: 'dc',
+  powerFlow: 'ac-fdlf-or-dc',
   voltage: 'ac-fdlf',
   frequency: 'island-swing',
   recommendedMaximumBusCount: 10_000,

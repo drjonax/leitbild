@@ -319,7 +319,12 @@ export const gridModelSchema = z.object({
   description: text,
   nominalFrequencyHz: z.literal(50),
   sBaseMva: positive,
-  fidelity: z.object({ powerFlow: z.literal('dc'), frequency: z.literal('island-swing'), voltage: z.literal('not-modelled') }).strict(),
+  /**
+   * What the runtime solves: active flows by a fast-decoupled AC load flow of each energised island
+   * where it converges and by the DC solve otherwise ('ac-fdlf-or-dc'), voltages by the same AC
+   * load flow ('ac-fdlf'), frequency by one swing equation per synchronous island.
+   */
+  fidelity: z.object({ powerFlow: z.literal('ac-fdlf-or-dc'), voltage: z.literal('ac-fdlf'), frequency: z.literal('island-swing') }).strict(),
   referenceHour: isoHour,
   sourceBuild: z.object({
     /** Deterministic from the inputs; never wall-clock. */
