@@ -2,16 +2,18 @@
   import type { AnnunciatorSystem, DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
-  import { alertTypeOf, annunciatorStates } from './panel-presenters.ts'
+  import { alertTypeOf, annunciatorStates, tileActions } from './panel-presenters.ts'
+  import { panelFont, textMeasure } from './text-measure.ts'
   import './openbridge.ts'
 
   // One tile per annunciator system the Plant declares, always in the place
   // the model gives it, so an operator reads the panel by where it is lit. A
   // quiet tile is grey. A lit one is barred and counted in its worst
   // severity's colour, a filled badge while any is unacknowledged and flat
-  // once all are; TRIP and 1st say in words what colour alone cannot. This
-  // display cannot acknowledge, so nothing flashes. A tile filters the alarm
-  // list to its system.
+  // once all are; beside it, what its alarms do in the words chips and the
+  // banner use ("RX TRIP 1st", "SI", "AFW START"), as many as its width
+  // holds. This display cannot acknowledge, so nothing flashes. A tile
+  // filters the alarm list to its system.
   let { systems, tileWidth, latest, annunciation, selected, select }: {
     systems: ReadonlyArray<AnnunciatorSystem>
     /** What first out means per rule: a tile says 1st only for a group of more than one rule. */
@@ -28,7 +30,13 @@
 
   const described = (state: (typeof states)[number]): string => state.active === 0
     ? `${state.name}: no active alarm`
-    : `${state.name}: ${state.active} active${state.unacknowledged > 0 ? `, ${state.unacknowledged} unacknowledged` : ''}${state.trip ? ', trip' : ''}${state.firstOut ? ', first out' : ''}`
+    : `${state.name}: ${state.active} active${state.unacknowledged > 0 ? `, ${state.unacknowledged} unacknowledged` : ''}${state.actions.map(action => `, ${action.name}${action.firstOut ? ' first out' : ''}`).join('')}${state.firstOut && !state.actions.some(action => action.firstOut) ? ', first out' : ''}`
+  // The counts row's room at the tile's least width: its inset, the badge (two digits) and the gap after it (the CSS below).
+  const measureTag = textMeasure(panelFont(10.5, 700))
+  const BADGE = 26
+  const GAP = 6
+  const actionsText = (state: (typeof states)[number]): string =>
+    tileActions(state.actions, text => measureTag(text) <= tileWidth - layout.annunciatorTile.inset - BADGE - GAP)
 </script>
 
 <div class="tiles" role="group" aria-label="Alarms by system" style={`grid-template-columns:repeat(auto-fill,minmax(${tileWidth}px,1fr));gap:${layout.annunciatorGap}px`}>
@@ -47,8 +55,8 @@
       <span class="counts">
         {#if type !== null}
           <obc-badge type={type} number={state.active} size="regular" variant={state.unacknowledged > 0 ? 'default' : 'flat'}></obc-badge>
-          {#if state.trip}<span class="tag">TRIP</span>{/if}
-          {#if state.firstOut}<span class="tag">1st</span>{/if}
+          {@const actions = actionsText(state)}
+          {#if actions !== ''}<span class="tag">{actions}</span>{:else if state.firstOut}<span class="tag">1st</span>{/if}
         {/if}
       </span>
     </button>
@@ -68,5 +76,5 @@
   .tile:not(.alert-alarm):not(.alert-warning):not(.alert-caution) .label { color: var(--element-inactive-color, var(--element-neutral-color)); }
   .tile[class*='alert-'] .label { color: var(--element-active-color); }
   .counts { display: flex; align-items: center; gap: 6px; height: 16px; }
-  .tag { font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; color: var(--element-active-color); }
+  .tag { font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; color: var(--element-active-color); white-space: nowrap; }
 </style>

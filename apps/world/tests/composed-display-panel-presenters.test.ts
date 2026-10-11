@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
 import { idleText, limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
-import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates } from '../src/ui/embed/composed-display/panel-presenters.ts'
+import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates, tileActions } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { activeThreshold, gatesHold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { formatQuantity, formatValue, limitKindName, marginText, marginTextForms, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
 import { modesShortText, orderLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
@@ -221,7 +221,6 @@ describe('composed display panel presenters', () => {
         { name: 'FWI', ids: ['trip:fwi:fwi'] },
       ],
       firstOutGroups: { 'trip:sg-a-rx-trip:reactor-trip': 'RX TRIP', 'trip:sg-b-rx-trip:reactor-trip': 'RX TRIP', 'trip:otdt:reactor-trip': 'RX TRIP', 'trip:si:reactor-trip': 'RX TRIP' },
-      tags: {},
     }
     expect(bannerTrip(alarms, annunciation)?.title).toBe('Reactor trip on steam generator B low-low level')
     expect(actuatedNames(alarms, annunciation)).toEqual(['AFW START', 'FWI'])
@@ -329,7 +328,7 @@ describe('annunciator tiles', () => {
     id: `${ruleId}:a`, ruleId, kind: 'alarm', title: ruleId, severity, active: true, acknowledged: true, firstOut: false, ...extra,
   })
 
-  test('each declared system counts its own active alarms, says how severe the worst is, and whether any trip or is unacknowledged', () => {
+  test('each declared system counts its own active alarms, says how severe the worst is, and whether any is unacknowledged', () => {
     const systems = [{ id: 'steamGenerators', name: 'Steam generators', ruleIds: ['sg-a-low', 'sg-b-low'] }, { id: 'electrical', name: 'Electrical', ruleIds: ['bus-a-dead'] }, { id: 'containment', name: 'Containment', ruleIds: ['ctmt-high'] }]
     const states = annunciatorStates(systems, [
       alarm('sg-a-low', 'warning'),
@@ -338,13 +337,50 @@ describe('annunciator tiles', () => {
       alarm('not-annunciated', 'critical'),
       // Cleared but unacknowledged: listed, not counted as active.
       alarm('ctmt-high', 'critical', { active: false, acknowledged: false }),
-    ], { firstOutGroups: { 'bus-a-dead:a': 'BUS DEAD', 'bus-b-dead:a': 'BUS DEAD' } })
+    ], { firstOutGroups: { 'bus-a-dead:a': 'BUS DEAD', 'bus-b-dead:a': 'BUS DEAD' }, groups: { 'bus-a-dead:a': 'BUS DEAD', 'bus-b-dead:a': 'BUS DEAD' }, groupOrder: ['RX TRIP', 'BUS DEAD'] })
     expect(states).toEqual([
-      { id: 'steamGenerators', name: 'Steam generators', active: 2, unacknowledged: 1, severity: 'critical', trip: false, firstOut: false },
-      { id: 'electrical', name: 'Electrical', active: 1, unacknowledged: 0, severity: 'notice', trip: true, firstOut: true },
+      { id: 'steamGenerators', name: 'Steam generators', active: 2, unacknowledged: 1, severity: 'critical', actions: [], firstOut: false },
+      { id: 'electrical', name: 'Electrical', active: 1, unacknowledged: 0, severity: 'notice', actions: [{ name: 'BUS DEAD', firstOut: true }], firstOut: true },
       // A quiet system keeps its place.
-      { id: 'containment', name: 'Containment', active: 0, unacknowledged: 0, severity: null, trip: false, firstOut: false },
+      { id: 'containment', name: 'Containment', active: 0, unacknowledged: 0, severity: null, actions: [], firstOut: false },
     ])
+  })
+
+  test('a tile names what its alarms do as chips and the banner do, never TRIP for an actuation', () => {
+    // QA review of run 22, PORV open at 3 min: the Safety injection, Steam generators and Feedwater tiles read "TRIP 1st".
+    const trip = (ruleId: string, effect: string, firstOut: boolean): ComposedDisplayAlarm =>
+      ({ id: `trip:${ruleId}:${effect}`, ruleId, kind: 'trip', title: ruleId, severity: 'critical', active: true, acknowledged: false, firstOut })
+    const annunciation = {
+      firstOutGroups: { 'trip:otdt:reactor-trip': 'RX TRIP', 'trip:si:reactor-trip': 'RX TRIP', 'trip:si:safety-injection': 'SI', 'trip:si-ctmt:safety-injection': 'SI', 'trip:sg-a-afw:afw': 'AFW START', 'trip:sg-b-afw:afw': 'AFW START' },
+      groups: { 'trip:otdt:reactor-trip': 'RX TRIP', 'trip:si:reactor-trip': 'RX TRIP', 'trip:si:safety-injection': 'SI', 'trip:si-ctmt:safety-injection': 'SI', 'trip:sg-a-afw:afw': 'AFW START', 'trip:sg-b-afw:afw': 'AFW START', 'trip:fwi:fwi': 'FWI' },
+      groupOrder: ['RX TRIP', 'SI', 'AFW START', 'FWI'],
+    }
+    const systems = [
+      { id: 'reactorProtection', name: 'Reactor protection', ruleIds: ['otdt'] },
+      { id: 'safetyInjection', name: 'Safety injection', ruleIds: ['si', 'si-ctmt'] },
+      { id: 'steamGenerators', name: 'Steam generators', ruleIds: ['sg-a-afw', 'sg-b-afw', 'fwi'] },
+    ]
+    const states = annunciatorStates(systems, [
+      trip('otdt', 'reactor-trip', true),
+      trip('si', 'safety-injection', true),
+      trip('si', 'reactor-trip', false),
+      trip('sg-a-afw', 'afw', true),
+      trip('sg-b-afw', 'afw', false),
+      trip('fwi', 'fwi', true),
+    ], annunciation)
+    expect(states.map(state => state.actions)).toEqual([
+      [{ name: 'RX TRIP', firstOut: true }],
+      // Safety injection trips the reactor too: the reactor trip is named first, but its first-out lies elsewhere.
+      [{ name: 'RX TRIP', firstOut: false }, { name: 'SI', firstOut: true }],
+      // FWI is a group of one: being first among one says nothing.
+      [{ name: 'AFW START', firstOut: true }, { name: 'FWI', firstOut: false }],
+    ])
+    // As many whole as the tile's width holds, the rest counted; never cut.
+    const room = (characters: number) => (text: string) => text.length <= characters
+    expect(tileActions(states[1]!.actions, room(20))).toBe('RX TRIP · SI 1st')
+    expect(tileActions(states[1]!.actions, room(12))).toBe('RX TRIP +1')
+    expect(tileActions(states[2]!.actions, room(6))).toBe('1st')
+    expect(tileActions([], room(20))).toBe('')
   })
 })
 

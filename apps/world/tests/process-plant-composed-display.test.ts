@@ -767,17 +767,25 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
     // Every actuation is named by its declared group.
     expect(annunciation.actuations.find(actuation => of(actuation.ids, 'sg-b-level-low-low-afw-actuation').length > 0)?.name).toBe('AFW START')
     expect(annunciation.actuations.map(actuation => actuation.name)).toEqual(expect.arrayContaining(['AFW START', 'SI', 'FWI', 'TURB TRIP', 'MSI', 'CS']))
-    // Alarm rows are tagged as chips, badges and trend lines name their limits.
+    // Alarm rows are tagged as chips, badges and trend lines name their limits, by what each row annunciates:
+    // the reactor trip safety injection causes is a reactor trip (QA review of run 22 read it "LO-LO · SI").
+    const tagsOf = (ruleId: string) => Object.entries(annunciation.tags).filter(([id]) => id.split(':')[1] === ruleId).map(([, tag]) => tag)
     expect([
-      annunciation.tags['sg-b-level-low-low-reactor-trip'],
-      annunciation.tags['safety-injection-low-pzr-pressure'],
-      annunciation.tags['pzr-pressure-low'],
-      annunciation.tags['reactor-overtemperature-delta-t-trip'],
-      annunciation.tags['loss-of-offsite-power'],
-      annunciation.tags['safety-bus-a-loss-alarm'],
-    ]).toEqual(['LO-LO · RX TRIP', 'LO-LO · SI', 'LO · ALM', 'RX TRIP', 'LO-LO · ALM', 'ALM'])
-    const annunciated = compiled.automation.rules.filter(rule => rule.enabled && rule.effects.some(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter'))
-    expect(annunciated.every(rule => annunciation.tags[rule.id] !== undefined)).toBe(true)
+      tagsOf('sg-b-level-low-low-reactor-trip'),
+      tagsOf('safety-injection-low-pzr-pressure'),
+      tagsOf('pzr-pressure-low'),
+      tagsOf('reactor-overtemperature-delta-t-trip'),
+      tagsOf('loss-of-offsite-power'),
+      tagsOf('safety-bus-a-loss-alarm'),
+    ]).toEqual([['LO-LO · RX TRIP'], ['LO-LO · SI', 'LO-LO · RX TRIP'], ['LO · ALM'], ['RX TRIP'], ['LO-LO · ALM'], ['ALM']])
+    expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('LO-LO · RX TRIP')
+    expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:safety-injection']).toBe('LO-LO · SI')
+    // Every alarm and trip has a tag, and every one naming a group its group's short label for the tiles.
+    const annunciated = compiled.automation.rules.filter(rule => rule.enabled).flatMap(rule => rule.effects.flatMap(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter' ? [{ rule, effect }] : []))
+    expect(annunciated.every(({ rule, effect }) => annunciation.tags[`${effect.type === 'alarm.enter' ? 'alarm' : 'trip'}:${rule.id}:${effect.id}`] !== undefined)).toBe(true)
+    expect(Object.keys(annunciation.tags)).toHaveLength(annunciated.length)
+    expect(annunciation.groups['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('RX TRIP')
+    expect(annunciation.groupOrder[0]).toBe('RX TRIP')
     // First out is flagged only within a group of more than one: the reactor trip, and SI on low pressurizer
     // pressure or on containment pressure Hi-1.
     expect(of(Object.keys(annunciation.firstOutGroups), 'reactor-overtemperature-delta-t-trip').map(id => annunciation.firstOutGroups[id])).toEqual(['RX TRIP'])

@@ -27,8 +27,8 @@
   let height = $state<number>(composedDisplayLayout.alarms)
   // At its least height (composedDisplayLayout.alarms) the column's list holds two alarms.
   const rows = $derived(fill ? Math.max(2, Math.floor((height - TITLE) / STACKED_PITCH)) : composedDisplayLayout.alarmRows)
-  // Every alarm and trip rule has a tag; an alarm of a rule the display was not compiled with says only its kind.
-  const tagOf = (alarm: ComposedDisplayAlarm): string => annunciation.tags[alarm.ruleId] ?? alarm.kind.toUpperCase()
+  // Every alarm and trip has a tag, from what it annunciates; one the display was not compiled with says only its kind.
+  const tagOf = (alarm: ComposedDisplayAlarm): string => annunciation.tags[alarm.id] ?? alarm.kind.toUpperCase()
 
   const all = $derived(visibleAlarms(latest?.alarms ?? [], panel.scope, panel.ruleIds, annunciation))
   const onlyRules = $derived(only === null ? null : new Set(only.ruleIds))

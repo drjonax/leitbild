@@ -116,7 +116,15 @@ export interface AnnunciatorState {
   readonly unacknowledged: number
   /** The most severe active alarm's severity; null while the system is quiet. */
   readonly severity: ComposedDisplayAlarm['severity'] | null
-  readonly trip: boolean
+  /**
+   * What its active alarms and trips do, by their first-out groups' short
+   * labels ("RX TRIP", "SI", "AFW START"), the reactor trip first, then as
+   * the I&C declares them; each first out where this system holds its
+   * group's first-out. Never "TRIP" for an actuation that is not the
+   * reactor trip (QA review of run 22: SI, AFW START and FWI tiles read
+   * "TRIP 1st").
+   */
+  readonly actions: ReadonlyArray<{ readonly name: string; readonly firstOut: boolean }>
   readonly firstOut: boolean
 }
 
@@ -124,18 +132,37 @@ export interface AnnunciatorState {
 export const annunciatorStates = (
   systems: ReadonlyArray<{ readonly id: string; readonly name: string; readonly ruleIds: ReadonlyArray<string> }>,
   alarms: ReadonlyArray<ComposedDisplayAlarm>,
-  annunciation: Pick<DisplayAnnunciation, 'firstOutGroups'>,
+  annunciation: Pick<DisplayAnnunciation, 'firstOutGroups' | 'groups' | 'groupOrder'>,
 ): ReadonlyArray<AnnunciatorState> => systems.map(system => {
   const rules = new Set(system.ruleIds)
   const active = alarms.filter(alarm => alarm.active && rules.has(alarm.ruleId))
   const worst = [...active].sort((left, right) => severityRank[left.severity] - severityRank[right.severity])[0]
+  const named = [...new Set(active.flatMap(alarm => annunciation.groups[alarm.id] ?? []))]
+    .sort((left, right) => annunciation.groupOrder.indexOf(left) - annunciation.groupOrder.indexOf(right))
   return {
     id: system.id,
     name: system.name,
     active: active.length,
     unacknowledged: active.filter(alarm => !alarm.acknowledged).length,
     severity: worst?.severity ?? null,
-    trip: active.some(alarm => alarm.kind === 'trip'),
+    actions: named.map(name => ({ name, firstOut: active.some(alarm => annunciation.groups[alarm.id] === name && firstOutFlag(alarm, annunciation) !== null) })),
     firstOut: active.some(alarm => firstOutFlag(alarm, annunciation) !== null),
   }
 })
+
+/**
+ * The actions a tile names in the room its counts leave: as many whole as
+ * fit ("RX TRIP 1st · SI"), the rest counted ("+1"); where not even the first
+ * fits, only whether the system holds a first-out ("1st"). Never cut.
+ */
+export const tileActions = (
+  actions: AnnunciatorState['actions'],
+  fits: (text: string) => boolean,
+): string => {
+  const named = actions.map(action => `${action.name}${action.firstOut ? ' 1st' : ''}`)
+  for (let shown = named.length; shown > 0; shown -= 1) {
+    const text = `${named.slice(0, shown).join(' · ')}${shown < named.length ? ` +${named.length - shown}` : ''}`
+    if (fits(text)) return text
+  }
+  return actions.some(action => action.firstOut) ? '1st' : ''
+}

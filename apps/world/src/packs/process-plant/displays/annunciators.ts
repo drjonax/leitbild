@@ -4,8 +4,8 @@ import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/ind
 import { processPlantIcLifecycleIdFor } from '../runtime/index.ts'
 import { resolveProcessPlantSignalPath } from '../signals.ts'
 import { composedDisplayLayout } from './composition.ts'
-import { limitKindName } from './display-text.ts'
-import { actionOf, icRuleKind, icThresholdsForSignal } from './ic-thresholds.ts'
+import { limitOrderName } from './display-text.ts'
+import { icRuleKind, icThresholdsForSignal, UNDECLARED_ACTION } from './ic-thresholds.ts'
 import { textWidth, unmeasurable } from './mimic/text-metrics.ts'
 
 // The Plant's annunciator systems as its I&C config declares them, in their
@@ -60,8 +60,9 @@ export const annunciatorSystems = (plant: CompiledProcessPlant, tileWidth: numbe
  * trips the reactor besides its own actuation annunciates both, its own trip
  * in its actuation's group ("SI") and the reactor trip in the reactor trip's
  * group, so the reactor trip's first-out can be the one safety injection
- * caused while SI is still listed as actuated. Each is keyed by the id of
- * the alarm or trip it annunciates (an alarm row's id).
+ * caused while SI is still listed as actuated, and its row is tagged as a
+ * reactor trip. Each is keyed by the id of the alarm or trip it annunciates
+ * (an alarm row's id).
  */
 export interface DisplayAnnunciation {
   /** What the reactor trip's group is called ("RX TRIP"), and the trips annunciated in it; null where the Plant declares none. */
@@ -78,8 +79,22 @@ export interface DisplayAnnunciation {
    * (evaluation run 22 tagged SI "first out" 14 s after the reactor tripped).
    */
   readonly firstOutGroups: Readonly<Record<string, string>>
-  /** Each alarm and trip rule's tag in an alarm row, by rule id: its limit as a chip names it, or with none, what it does. */
+  /**
+   * Each alarm's and trip's tag in an alarm row, by its id: its limit's order
+   * and what it annunciates does ("LO-LO · RX TRIP"), or with no limit, what
+   * it does. What it does is its own group's, not its rule's: the reactor
+   * trip safety injection causes reads "LO-LO · RX TRIP" beside SI's own
+   * "LO-LO · SI" (QA review of run 22).
+   */
   readonly tags: Readonly<Record<string, string>>
+  /**
+   * The first-out group each alarm or trip names, by its id, as chips and
+   * the banner name what it does ("SI", "AFW START"): what an annunciator
+   * tile says its system's active alarms do.
+   */
+  readonly groups: Readonly<Record<string, string>>
+  /** The groups' names in the order a tile lists them: the reactor trip's first, then as the I&C declares them. */
+  readonly groupOrder: ReadonlyArray<string>
 }
 
 /** The single numeric signal a rule acts on (alone, or gated by on/off states), whose limit names it. */
@@ -104,6 +119,7 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
   // Every alarm and trip the rules annunciate, with the group it names.
   const annunciated = rules.flatMap(rule => rule.effects.flatMap(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter' ? [{
     id: processPlantIcLifecycleIdFor(effect.type === 'alarm.enter' ? 'alarm' : 'trip', rule.id, effect.id),
+    rule,
     effect,
     group: effect.annunciator?.firstOutGroup === undefined ? undefined : plant.automation.firstOutGroups.find(group => group.id === effect.annunciator!.firstOutGroup),
   }] : []))
@@ -117,17 +133,27 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
   const members = new Map<string, number>()
   for (const { group } of annunciated) if (group !== undefined) members.set(group.id, (members.get(group.id) ?? 0) + 1)
   const thresholdsOf = new Map<VariablePath, ReturnType<typeof icThresholdsForSignal>['thresholds']>()
-  const tagOf = (rule: ProcessPlantIcRule): string => {
+  const orderOf = (rule: ProcessPlantIcRule): string | null => {
     const path = limitedPath(plant, rule)
     if (path !== null && !thresholdsOf.has(path)) thresholdsOf.set(path, icThresholdsForSignal(plant, path).thresholds)
     const threshold = path === null ? undefined : thresholdsOf.get(path)!.find(candidate => candidate.ruleId === rule.id)
-    return threshold === undefined ? actionOf(plant, rule) : limitKindName(threshold)
+    return threshold === undefined ? null : limitOrderName(threshold)
   }
+  // What an annunciated alarm or trip does, as a threshold's action names it (ic-thresholds.ts actionOf), from its own group.
+  const actionOfEntry = ({ effect, group }: (typeof annunciated)[number]): string =>
+    effect.type === 'alarm.enter' ? 'ALM' : group?.shortLabel ?? UNDECLARED_ACTION
+  const tagOf = (entry: (typeof annunciated)[number]): string => {
+    const order = orderOf(entry.rule)
+    return order === null ? actionOfEntry(entry) : `${order} · ${actionOfEntry(entry)}`
+  }
+  const declared = plant.automation.firstOutGroups
   const annunciation: DisplayAnnunciation = {
     reactorTrip: reactorTrips.length === 0 ? null : { name: reactorTrips[0]!.group!.shortLabel, ids: reactorTrips.map(entry => entry.id) },
     actuations: [...actuations.entries()].map(([name, ids]) => ({ name, ids })),
     firstOutGroups: Object.fromEntries(annunciated.flatMap(({ id, group }) => group !== undefined && (members.get(group.id) ?? 0) > 1 ? [[id, group.shortLabel]] : [])),
-    tags: Object.fromEntries(rules.map(rule => [rule.id, tagOf(rule)])),
+    tags: Object.fromEntries(annunciated.map(entry => [entry.id, tagOf(entry)])),
+    groups: Object.fromEntries(annunciated.flatMap(({ id, group }) => group === undefined ? [] : [[id, group.shortLabel]])),
+    groupOrder: [...declared.filter(group => group.reactorTrip), ...declared.filter(group => !group.reactorTrip)].map(group => group.shortLabel),
   }
   annunciationByPlant.set(plant, annunciation)
   return annunciation
