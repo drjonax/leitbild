@@ -285,7 +285,9 @@ describe('world.process-plant.display.compose', () => {
 
   test('suggests signals by the words of a guessed name, tagged instruments first', () => {
     const suggestions = (ref: string): string => rejectionOf(() => ask('world.process-plant.display.compose', composition([{ ref, role: 'primary' }]))).split('Did you mean: ')[1] ?? ''
-    expect(suggestions('FW-A-FLOW')).toContain('sgA.feedwaterFlowKgPerS (Feedwater inflow, kg/s)')
+    // The tagged auxiliary feedwater flow to steam generator A first, then main feedwater's lines to it.
+    expect(suggestions('FW-A-FLOW')).toStartWith('AFW-A-FLOW (Auxiliary feedwater to steam generator A flow, kg/s)')
+    expect(suggestions('FW-A-FLOW')).toContain('feedwater-header-to-control-valve-a.flowKgPerS (Feedwater header branch A flow, kg/s)')
     expect(suggestions('PZR-PRESS')).toStartWith('PT-455 (Pressurizer pressure, MPa)')
     expect(suggestions('dieselGenA.running')).toStartWith('EDG-A-RUN (Diesel running, boolean)')
     expect(suggestions('SG1-LVL')).toStartWith('SG-A-LVL-NR (Steam generator narrow-range level, percent)')

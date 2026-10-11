@@ -8,10 +8,13 @@ import {
 import { clamp, optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 
+/** What reading a supply's state takes: link behaviors read it as component behaviors do. */
+export type ElectricalReadContext = Pick<ProcessPlantBehaviorContext, 'has' | 'readNumber' | 'readBoolean'>
+
 /** The power a component puts out, as its own solved state reads: a breaker only while its contacts are closed. */
 export const sourcePowerForComponent = (
   source: CompiledComponent,
-  context: ProcessPlantBehaviorContext,
+  context: ElectricalReadContext,
 ): { readonly energized: boolean; readonly availablePowerMw: number; readonly voltageFraction: number } => {
   if (source.kind === 'turbineLoadSink') {
     const electricPath = componentVariablePath(source, 'electricMw')
@@ -37,7 +40,7 @@ export const sourcePowerForComponent = (
 export const incomingElectricalPower = (
   system: CompiledProcessPlant,
   component: CompiledComponent,
-  context: ProcessPlantBehaviorContext,
+  context: ElectricalReadContext,
   port?: string,
 ): { readonly energized: boolean; readonly availablePowerMw: number; readonly voltageFraction: number } => {
   let availablePowerMw = 0
@@ -80,7 +83,7 @@ const hasIncomingElectricalPowerPort = (
 export const componentHasElectricalPower = (
   system: CompiledProcessPlant,
   component: CompiledComponent,
-  context: ProcessPlantBehaviorContext,
+  context: ElectricalReadContext,
   port?: string,
 ): boolean => {
   if (!hasIncomingElectricalPowerPort(system, component, port)) return true

@@ -31,10 +31,12 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       coastdownTimeConstantS: z.number().finite().positive().optional(),
       loopResistanceCoefficient: z.number().finite().nonnegative().optional(),
       /**
-       * For a reactor coolant pump: the head it develops at rated speed with no
-       * flow. Its head falls along a parabola from it to the nominal head at
-       * the loop's rated flow; standing still, held by its anti-reverse
-       * device, the impeller resists flow by their difference at rated flow.
+       * The head it develops at rated speed with no flow. Its head falls along
+       * a parabola from it through its nominal head at its nominal flow, which
+       * speed scales by the affinity laws. A reactor coolant pump standing
+       * still, held by its anti-reverse device, resists flow by their
+       * difference at rated flow; on a pressure-balanced header, the header's
+       * pressure sets where on the curve a pump runs.
        */
       shutoffHeadPa: z.number().finite().positive().optional(),
       /**

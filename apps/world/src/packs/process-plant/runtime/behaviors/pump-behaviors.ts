@@ -10,6 +10,7 @@ import { approach, clamp, optionalParameterNumber, parameterNumber, relaxToward,
 import { primaryCircuitHydraulics, primaryLoopPumpHeadPa, primaryLoopSignedFlowKgPerS, solvePrimaryLoopFlows, type PrimaryCircuitHydraulics } from '../primary-loop-hydraulics.ts'
 import { primarySystemPressurizer } from '../system-topology.ts'
 import { componentHasElectricalPower } from './electrical-behaviors.ts'
+import { headerPressureBalance, pressureBalancedHeaderFedBy } from './junction/header-pressure-balance.ts'
 
 type PumpBehaviorInput = Parameters<ComponentBehaviorDefinition['update']>[0]
 
@@ -26,6 +27,15 @@ const reactorCoolantDeliveryFraction = ({ system, component, context }: PumpBeha
 }
 
 const maxSpeedFraction = 1.2
+
+// A running pump discharging into a pressure-balanced header delivers what
+// its curve gives at the pressure the header settles at: it comes up to that
+// flow as it starts, and runs back to it at once as branches shut. Null for
+// any other pump.
+const balancedHeaderFlow = ({ system, component, context }: Pick<PumpBehaviorInput, 'system' | 'component' | 'context'>, running: boolean): number | null => {
+  const header = running ? pressureBalancedHeaderFedBy(system, component) : null
+  return header === null ? null : headerPressureBalance(system, header, context).pumpFlowKgPerS.get(component.index) ?? 0
+}
 
 // A pump whose flow a controller sets runs at the speed that delivers it,
 // and shows that speed as its own; any other runs at its commanded speed.
@@ -79,7 +89,7 @@ export const pumpBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition>
     id: 'centrifugal-pump-flow',
     phase: 'solveFluidFlowComponents',
     componentKind: 'centrifugalPump',
-    reads: ['running', 'speedFraction', 'speedRpm', 'flow demand?', 'incoming electrical energized?', 'pressurizer.pressureMPa?'],
+    reads: ['running', 'speedFraction', 'speedRpm', 'flow demand?', 'incoming electrical energized?', 'pressurizer.pressureMPa?', 'pressure-balanced header branches?'],
     writes: ['runningState', 'flowKgPerS', 'speedRpm', 'demandMw', 'speedFraction'],
     update: (input): void => {
       const { system, component, context } = input
@@ -88,14 +98,15 @@ export const pumpBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition>
       const speed = pumpSpeedFraction(component, context)
       context.write(componentVariablePath(component, 'runningState'), running)
       context.write(componentVariablePath(component, 'speedRpm'), pumpRotorSpeedRpm(component, context, running, speed))
-      const targetFlow = running ? parameterNumber(component, 'nominalFlowKgPerS') * speed * reactorCoolantDeliveryFraction(input, speed) : 0
+      const balancedFlow = balancedHeaderFlow(input, running)
+      const targetFlow = running ? balancedFlow ?? parameterNumber(component, 'nominalFlowKgPerS') * speed * reactorCoolantDeliveryFraction(input, speed) : 0
       const currentFlow = context.readNumber(componentVariablePath(component, 'flowKgPerS'))
       const timeConstant = optionalParameterNumber(component, 'flowTimeConstantS', 0)
       const maxRamp = optionalParameterNumber(component, 'maxFlowRampKgPerS2', Number.POSITIVE_INFINITY)
       const relaxedFlow = timeConstant > 0
         ? relaxToward(currentFlow, targetFlow, context.dtSeconds, timeConstant)
         : targetFlow
-      const flow = approach(currentFlow, relaxedFlow, maxRamp * context.dtSeconds)
+      const flow = Math.min(approach(currentFlow, relaxedFlow, maxRamp * context.dtSeconds), balancedFlow ?? Number.POSITIVE_INFINITY)
       context.write(componentVariablePath(component, 'flowKgPerS'), flow)
       const head = running ? parameterNumber(component, 'nominalHeadPa') * speed * speed : 0
       const density = optionalParameterNumber(component, 'fluidDensityKgPerM3', 800)
@@ -143,7 +154,7 @@ export const pumpInitialReconciliationDefinitions: ReadonlyArray<ComponentInitia
       const nominalFlow = parameterNumber(component, 'nominalFlowKgPerS')
       const nominalHead = parameterNumber(component, 'nominalHeadPa')
       const developedHead = running ? nominalHead * speed * speed : 0
-      const componentFlow = running ? nominalFlow * speed : 0
+      const componentFlow = running ? balancedHeaderFlow({ system, component, context }, running) ?? nominalFlow * speed : 0
       context.write(componentVariablePath(component, 'flowKgPerS'), componentFlow)
       context.write(componentVariablePath(component, 'speedRpm'), running ? speed * nominalSpeedRpm(component) : 0)
       context.write(componentVariablePath(component, 'demandMw'), running

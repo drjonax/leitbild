@@ -9,6 +9,7 @@ import {
 } from '../../component-link-helpers.ts'
 import { optionalParameterNumber, relaxToward } from '../../component-helpers.ts'
 import { inventoryBalanceStep } from '../../physics.ts'
+import { headerPressureBalance, isPressureBalancedHeader } from './header-pressure-balance.ts'
 
 const weightedAverageLinkValue = (
   links: ReadonlyArray<CompiledProcessLink>,
@@ -54,12 +55,15 @@ const updateHeaderDiagnostics = (
   const incomingMixedPressure = weightedAverageLinkValue(incomingLinks, 'pressureMPa', context)
     ?? weightedAverageLinkValue(outgoingLinks, 'pressureMPa', context)
     ?? optionalParameterNumber(component, 'initialPressureMPa', 1)
-  const mixedPressure = relaxToward(
-    previousPressure,
-    incomingMixedPressure,
-    context.dtSeconds,
-    optionalParameterNumber(component, 'pressureTimeConstantS', 1),
-  )
+  // A pressure-balanced header stands at once at the pressure its pumps and branches settle at.
+  const mixedPressure = isPressureBalancedHeader(component)
+    ? headerPressureBalance(system, component, context).pressureMPa
+    : relaxToward(
+      previousPressure,
+      incomingMixedPressure,
+      context.dtSeconds,
+      optionalParameterNumber(component, 'pressureTimeConstantS', 1),
+    )
   const density = optionalParameterNumber(component, 'nominalDensityKgPerM3', component.kind === 'steamHeader' ? 35 : 950)
   const maxInventory = optionalParameterNumber(component, 'headerVolumeM3', 1) * density * 1.25
   const inventory = inventoryBalanceStep({
@@ -84,7 +88,7 @@ const headerDiagnosticsBehavior = (componentKind: 'processHeader' | 'steamHeader
   id: `${componentKind}-mixing-diagnostics`,
   phase: 'updateComponentState',
   componentKind,
-  reads: ['incoming:flowKgPerS', 'incoming:temperatureC', 'incoming:pressureMPa', 'outgoing:flowKgPerS', 'mixedTemperatureC', 'pressureNodeMPa', 'inventoryKg'],
+  reads: ['incoming:flowKgPerS', 'incoming:temperatureC', 'incoming:pressureMPa', 'outgoing:flowKgPerS', 'mixedTemperatureC', 'pressureNodeMPa', 'inventoryKg', 'pressure-balanced header branches?'],
   writes: ['inventoryKg', 'inletFlowKgPerS', 'outletFlowKgPerS', 'flowBalanceResidualKgPerS', 'mixedTemperatureC', 'mixedPressureMPa', 'pressureNodeMPa', 'unmetDemandKgPerS'],
   update: updateHeaderDiagnostics,
 })

@@ -1533,8 +1533,9 @@
       "kind": "centrifugalPump",
       "label": "Motor-Driven Auxiliary Feedwater Pump",
       "parameters": {
-        "nominalFlowKgPerS": 30,
+        "nominalFlowKgPerS": 27.6,
         "nominalHeadPa": 9000000,
+        "shutoffHeadPa": 11000000,
         "nominalSpeedRpm": 4500,
         "initialRunning": false,
         "flowTimeConstantS": 4,
@@ -1568,8 +1569,9 @@
       "kind": "centrifugalPump",
       "label": "Motor-Driven Auxiliary Feedwater Pump B",
       "parameters": {
-        "nominalFlowKgPerS": 30,
+        "nominalFlowKgPerS": 27.6,
         "nominalHeadPa": 9000000,
+        "shutoffHeadPa": 11000000,
         "flowTimeConstantS": 6,
         "maxFlowRampKgPerS2": 45,
         "initialRunning": false
@@ -1602,8 +1604,9 @@
       "kind": "centrifugalPump",
       "label": "Turbine-Driven Auxiliary Feedwater Pump",
       "parameters": {
-        "nominalFlowKgPerS": 60,
+        "nominalFlowKgPerS": 55.2,
         "nominalHeadPa": 9000000,
+        "shutoffHeadPa": 11000000,
         "initialRunning": false,
         "flowTimeConstantS": 4,
         "maxFlowRampKgPerS2": 90
@@ -1644,7 +1647,9 @@
       "id": "auxFeedwaterHeader",
       "kind": "processHeader",
       "label": "Auxiliary Feedwater Header",
-      "parameters": {},
+      "parameters": {
+        "distributionMode": "pressureBalance"
+      },
       "variables": [
         {
           "path": "outletFlowKgPerS",
@@ -1667,7 +1672,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve A",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1697,7 +1703,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve B",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1727,7 +1734,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve C",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1757,7 +1765,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve D",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1787,7 +1796,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve E",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1817,7 +1827,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve F",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -8101,7 +8112,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-A-FLOW",
+          "equipmentId": "aux-feedwater-valve-a-to-sg-a",
+          "description": "Auxiliary feedwater flow to steam generator A"
         },
         {
           "path": "temperatureC",
@@ -8169,7 +8183,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-B-FLOW",
+          "equipmentId": "aux-feedwater-valve-b-to-sg-b",
+          "description": "Auxiliary feedwater flow to steam generator B"
         },
         {
           "path": "temperatureC",
@@ -8237,7 +8254,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-C-FLOW",
+          "equipmentId": "aux-feedwater-valve-c-to-sg-c",
+          "description": "Auxiliary feedwater flow to steam generator C"
         },
         {
           "path": "temperatureC",
@@ -8373,7 +8393,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-D-FLOW",
+          "equipmentId": "aux-feedwater-valve-d-to-sg-d",
+          "description": "Auxiliary feedwater flow to steam generator D"
         },
         {
           "path": "temperatureC",
@@ -8407,7 +8430,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-E-FLOW",
+          "equipmentId": "aux-feedwater-valve-e-to-sg-e",
+          "description": "Auxiliary feedwater flow to steam generator E"
         },
         {
           "path": "temperatureC",
@@ -8441,7 +8467,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-F-FLOW",
+          "equipmentId": "aux-feedwater-valve-f-to-sg-f",
+          "description": "Auxiliary feedwater flow to steam generator F"
         },
         {
           "path": "temperatureC",

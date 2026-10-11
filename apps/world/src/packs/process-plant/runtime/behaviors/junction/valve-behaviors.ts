@@ -8,6 +8,7 @@ import {
   sumProcessLinkValue,
 } from '../../component-link-helpers.ts'
 import { clamp, optionalParameterNumber, optionalParameterString, relaxToward } from '../../component-helpers.ts'
+import { balancedBranchPressures } from './header-pressure-balance.ts'
 
 type ValveMode = 'control' | 'isolation' | 'check' | 'relief' | 'safety' | 'throttle' | 'bypass'
 type ValvePositionControllerDirection = 'direct' | 'reverse'
@@ -129,8 +130,12 @@ const updateValveFlowDiagnostics = (
   const matchingOutgoing = fluidLinksForService(outgoingLinks, service)
   const inletFlow = sumProcessLinkValue(matchingIncoming, 'flowKgPerS', context)
   const outletFlow = sumProcessLinkValue(matchingOutgoing, 'flowKgPerS', context)
-  const upstreamPressure = maxLinkValue(matchingIncoming, 'pressureMPa', context) ?? optionalParameterNumber(component, 'initialPressureMPa', component.kind === 'steamValve' ? 6.9 : 1)
-  const downstreamPressure = minLinkValue(matchingOutgoing, 'pressureMPa', context) ?? upstreamPressure
+  // A valve on a pressure-balanced header's branch drops the header's pressure to its vessel's.
+  const balanced = balancedBranchPressures(system, component, context)
+  const upstreamPressure = balanced?.upstreamMPa
+    ?? maxLinkValue(matchingIncoming, 'pressureMPa', context)
+    ?? optionalParameterNumber(component, 'initialPressureMPa', component.kind === 'steamValve' ? 6.9 : 1)
+  const downstreamPressure = balanced?.downstreamMPa ?? minLinkValue(matchingOutgoing, 'pressureMPa', context) ?? upstreamPressure
   const pressureDrop = Math.max(0, upstreamPressure - downstreamPressure)
   const effectivePosition = clamp(context.readNumber(componentVariablePath(component, 'effectivePositionFraction')), 0, 1)
   const cv = optionalParameterNumber(component, 'cvKgPerSPerSqrtMPa', Number.POSITIVE_INFINITY)
@@ -232,7 +237,7 @@ const valveDiagnosticsBehavior = (componentKind: 'processValve' | 'steamValve'):
   id: `${componentKind}-flow-diagnostics`,
   phase: 'updateComponentState',
   componentKind,
-  reads: ['incoming:flowKgPerS', 'outgoing:flowKgPerS', 'incoming:pressureMPa', 'outgoing:pressureMPa', 'effectivePositionFraction'],
+  reads: ['incoming:flowKgPerS', 'outgoing:flowKgPerS', 'incoming:pressureMPa', 'outgoing:pressureMPa', 'effectivePositionFraction', 'pressure-balanced header branch?'],
   writes: ['inletFlowKgPerS', 'outletFlowKgPerS', 'flowBalanceResidualKgPerS', 'availablePressureDropMPa', 'capacityLimitedFlowKgPerS', 'reverseFlowKgPerS', 'leakageFlowKgPerS'],
   update: updateValveFlowDiagnostics,
 })

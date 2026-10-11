@@ -100,9 +100,10 @@ const dieselGeneratorRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRul
 // auxiliary feedwater pump starts at once and auxiliary feedwater is lined up
 // to every steam generator; the motor-driven pumps follow on the sequencer.
 // Each line opens fully, as on low-low level: the pumps are rated like a
-// 4-loop PWR's (two motor-driven of 30 kg/s, one turbine-driven of 60 kg/s),
-// so all three together feed some 120 kg/s, about 30 kg/s per steam
-// generator, enough for decay heat; operators throttle from there.
+// 4-loop PWR's (two motor-driven of 440 gpm, 27.6 kg/s, one turbine-driven of
+// 880 gpm, 55.2 kg/s), so all three together feed some 110 kg/s into
+// generators at their no-load pressure, about 27 kg/s each, enough for decay
+// heat; operators throttle from there.
 const afwLineUpPositionFraction = 1
 
 // The pressurizer's backup heaters hang on safety bus A through their own
