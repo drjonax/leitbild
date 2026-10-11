@@ -324,6 +324,12 @@ describe('composed display panel presenters', () => {
     expect(readingText(0, 'percent', 0.1, { min: 0, max: 100 })).toBe('<0 %')
     expect(readingText(100, 'percent', 0.1, { min: 0, max: 100 })).toBe('>100 %')
     expect(readingText(0, 'percent', 0.1, undefined)).toBe('0 %')
+    // QA review of run 22: a startup rate pegged at its span's end read "<-0.500 DPM"; the end is written as declared.
+    expect(readingText(-0.5, 'DPM', 0.0055, { min: -0.5, max: 5 })).toBe('< −0.5 DPM')
+    // A reading over decades in powers of ten, never "0.0000022 A".
+    const decades = { min: 1e-11, max: 1e-3 }
+    expect(readingText(2.2e-6, 'amps', readingResolution({ instrumentSpan: decades }, []), decades)).toBe('2.2×10⁻⁶ A')
+    expect(readingText(1e-11, 'amps', null, decades)).toBe('<1.0×10⁻¹¹ A')
   })
 })
 

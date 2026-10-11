@@ -3,7 +3,7 @@
   import { composedDisplayLayout, type DisplayEvidenceKind } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
-  import { displayValue, limitKindName, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, limitKindName, logarithmicSpan, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
   import { fitLimitStateText, sampledGates } from './panel-presenters.ts'
   import { limitStateText, rateWindowMs, readingStateText, trendReading, type LimitState, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
@@ -112,6 +112,7 @@
     {@const reading = typeof value === 'number' ? readingOf(pen, value) : null}
     {@const inAlarm = reading?.inAlarm ?? null}
     {@const end = typeof value === 'number' ? offScale(value, pen.limits?.instrumentSpan) : null}
+    {@const asText = end !== null || logarithmicSpan(pen.limits?.instrumentSpan)}
     <li class:primary={pen.role === 'primary'} class:added={pen.added !== undefined} title={pen.added === undefined ? `${pen.label} · ${pen.role}` : `${pen.label} · added by World: ${pen.added.reason}`}>
       <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`} bind:clientWidth={heads[String(pen.path)]}>{#if pen.added !== undefined}<span class="why" title={`Added by World from the Plant model: ${pen.added.reason}`}>{ADDED_WORDS[pen.added.kind]}</span>{/if}<span class="name" class:tag={pen.tagId !== undefined} bind:clientWidth={rooms[String(pen.path)]}>{named(pen)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} compact={compactChip(pen, inAlarm)} />{/if}</span>
       {#if typeof value === 'boolean'}
@@ -119,10 +120,10 @@
         <span class="state" title={pen.described}>{value ? pen.described : `Not ${pen.described.charAt(0).toLowerCase()}${pen.described.slice(1)}`}</span>
       {:else}
         <span class="reading">
-          <!-- At an end of its instrument's span the reading says only that the quantity is there or beyond: "<0", in low-integrity style. -->
+          <!-- At an end of its instrument's span the reading says only that the quantity is there or beyond: "<0", in low-integrity style. A reading over decades is written in powers of ten. -->
           <obc-readout
-            value={typeof value !== 'number' ? null : end === null ? displayValue(value, pen.unit) : readingValueText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan)}
-            valueType={end === null ? 'number' : 'text'}
+            value={typeof value !== 'number' ? null : asText ? readingValueText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan) : displayValue(value, pen.unit)}
+            valueType={asText ? 'text' : 'number'}
             dataQuality={end === null ? undefined : 'low-integrity'}
             off={typeof value !== 'number'}
             offText="—"

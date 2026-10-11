@@ -38,12 +38,31 @@ export const readingResolution = (
 ): number | null => {
   const values = thresholds.map(threshold => threshold.value)
   const span = limits?.instrumentSpan ?? limits?.hardRange ?? (values.length === 0 ? undefined : { min: Math.min(0, ...values), max: Math.max(0, ...values) })
-  if (span === undefined || (span.min > 0 && span.max / span.min >= LOGARITHMIC_DECADES_RATIO)) return null
+  if (span === undefined || logarithmicSpan(span)) return null
   const width = span.max - span.min
   return width > 0 ? width * RESOLUTION_FRACTION : null
 }
 
 const LOGARITHMIC_DECADES_RATIO = 1_000
+
+/** Whether a span is read over decades: a positive lower end three or more decades below its top, as an intermediate-range current's. */
+export const logarithmicSpan = (span: NumericSpan | undefined): boolean =>
+  span !== undefined && span.min > 0 && span.max / span.min >= LOGARITHMIC_DECADES_RATIO
+
+const SUPERSCRIPTS: Readonly<Record<string, string>> = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' }
+
+/** A value read over decades, to two significant digits and its power of ten: "2.2×10⁻⁶" (QA review: "0.0000022 A"). */
+export const scientificText = (value: number): string => {
+  if (value === 0) return '0'
+  const [mantissa, exponent] = value.toExponential(1).split('e') as [string, string]
+  return `${mantissa.replace('-', '−')}×10${[...String(Number(exponent))].map(character => SUPERSCRIPTS[character] ?? character).join('')}`
+}
+
+/** A span's end as declared, never padded to a resolution, with a true minus: "−0.5". */
+const boundText = (bound: number, unit: string, span: NumericSpan): string => {
+  const shown = displayValue(bound, unit)
+  return logarithmicSpan(span) ? scientificText(shown) : String(shown).replace('-', '−')
+}
 
 interface NumericSpan {
   readonly min: number
@@ -90,10 +109,20 @@ export const formatQuantity = (value: number, unit: string, resolution: number |
 export const offScale = (value: number, span: NumericSpan | undefined): 'below' | 'above' | null =>
   span === undefined ? null : value <= span.min ? 'below' : value >= span.max ? 'above' : null
 
-/** A reading's number as its value cell shows it, in display units without the unit: "<0" at the bottom of its span, ">100" at the top. */
+/**
+ * A reading's number as its value cell shows it, in display units without
+ * the unit: "<0" at the bottom of its span and ">100" at the top, the span's
+ * end as declared ("< −0.5", a space keeping the two signs apart); a reading
+ * over decades in powers of ten ("2.2×10⁻⁶").
+ */
 export const readingValueText = (value: number, unit: string, resolution: number | null, span: NumericSpan | undefined): string => {
   const end = offScale(value, span)
-  return `${end === 'below' ? '<' : end === 'above' ? '>' : ''}${formatValue(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))}`
+  if (end !== null) {
+    const bound = boundText(end === 'below' ? span!.min : span!.max, unit, span!)
+    return `${end === 'below' ? '<' : '>'}${bound.startsWith('−') ? ' ' : ''}${bound}`
+  }
+  if (logarithmicSpan(span)) return scientificText(displayValue(value, unit))
+  return formatValue(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))
 }
 
 /** A reading as its value cell shows it: "<0 %" at the bottom of its span, ">100 %" at the top, else the value. */
