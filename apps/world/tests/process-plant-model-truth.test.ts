@@ -645,8 +645,9 @@ describe('a turbine trip', () => {
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
     expect(plantRun.tag('TRIP-BKR-B-POS')).toBe(false)
     expect(Number(plantRun.read('core.powerMw'))).toBeLessThan(500)
-    // The reactor trip it causes does not trip the reactor again, and no other trip comes in.
-    expect(plantRun.protection.snapshot().trips.filter(lifecycle => lifecycle.active).map(lifecycle => lifecycle.id)).toEqual(['trip:reactor-turbine-trip:turbine-trip-reactor-trip'])
+    // The reactor trip it causes does not trip the reactor again; its open trip breakers (P-4) annunciate the turbine
+    // trip they demand, and no other trip comes in.
+    expect(plantRun.protection.snapshot().trips.filter(lifecycle => lifecycle.active).map(lifecycle => lifecycle.id)).toEqual(['trip:reactor-turbine-trip:turbine-trip-reactor-trip', 'trip:reactor-trip-turbine-trip:reactor-trip-turbine-trip'])
     expect(plantRun.activeIds().filter(id => id.includes('generator-output-low') || id.includes('turbine-load-low'))).toEqual([])
   })
 
