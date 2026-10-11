@@ -1,14 +1,22 @@
 import type { GridContingencyScreenResult, GridRemedialActionInput, GridRemedialEvaluationResult } from '../queries/contingency.ts'
 
 // Operator presentation of world.electric-grid.contingency.screen and remedial-actions.evaluate:
-// the worst outages with their violations, where the base flows come from, the basis each
-// loading is judged on, and a before/after comparison of candidate remedial actions.
+// the worst outages with what each took out (one circuit of a multi-circuit branch, or all of
+// them), their violations, where the base flows come from, the basis each loading is judged on,
+// and a before/after comparison of candidate remedial actions.
 
 type ScreenedBranch = NonNullable<GridContingencyScreenResult['results'][number]['worstBranch']>
+type ScreenedContingency = GridContingencyScreenResult['results'][number]['contingency']
 type Summary = GridRemedialEvaluationResult['before']
+export type GridBranchOutage = GridContingencyScreenResult['branchOutage']
 
-/** The panel's screening: every closed branch, judged against the emergency rating, the worst first. */
-export const gridDefaultScreening = { contingencies: 'all-branches', ratingBasis: 'emergency', limit: 15 } as const
+/** The panel's screening: one circuit of every closed branch (N-1), judged against the emergency rating, the worst first. */
+export const gridDefaultScreening = { contingencies: 'all-branches', branchOutage: 'circuit', ratingBasis: 'emergency', limit: 15 } as const
+
+export const gridBranchOutageOptions: ReadonlyArray<{ readonly value: GridBranchOutage; readonly label: string }> = [
+  { value: 'circuit', label: 'One circuit (N-1)' },
+  { value: 'branch', label: 'All circuits of a branch (N-k)' },
+]
 
 export interface GridScreenedBranchRow {
   readonly assetId: string
@@ -23,6 +31,8 @@ export interface GridContingencyRow {
   readonly assetId: string
   readonly label: string
   readonly kind: 'branch' | 'generator'
+  /** What the outage took out: a unit, a branch, one of its circuits, or all of them (exceptional). */
+  readonly outageText: string
   readonly lostText: string
   readonly severity: 'violation' | 'unserved' | 'islanding' | 'secure'
   readonly outcome: string
@@ -54,10 +64,18 @@ const outcomeOf = (result: GridContingencyScreenResult['results'][number]): stri
   return parts.length === 0 ? 'Secure' : parts.join(' · ')
 }
 
+export const gridOutageText = (contingency: ScreenedContingency): string => {
+  if (contingency.kind === 'generator') return 'unit outage'
+  if (contingency.circuits === 1) return 'branch outage'
+  if (contingency.circuitsLost < contingency.circuits) return `${contingency.circuitsLost} of ${contingency.circuits} circuits`
+  return `all ${contingency.circuits} circuits · exceptional (N-${contingency.circuitsLost})`
+}
+
 export const gridContingencyRows = (result: Pick<GridContingencyScreenResult, 'results'>): ReadonlyArray<GridContingencyRow> => result.results.map(entry => ({
   assetId: entry.contingency.assetId,
   label: entry.contingency.label,
   kind: entry.contingency.kind,
+  outageText: gridOutageText(entry.contingency),
   lostText: `${entry.contingency.kind === 'branch' ? 'carried' : 'produced'} ${mw(Math.abs(entry.contingency.lostMw))}`,
   severity: entry.violationCount > 0 ? 'violation' : entry.unservedLoadMw > 0 ? 'unserved' : entry.islanding ? 'islanding' : 'secure',
   outcome: outcomeOf(entry),

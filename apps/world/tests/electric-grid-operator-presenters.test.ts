@@ -20,7 +20,9 @@ import {
   gridCandidateAction,
   gridCandidateActionText,
   gridContingencyRows,
+  gridDefaultScreening,
   gridFlowModelSummary,
+  gridOutageText,
   gridRemedialComparison,
 } from '../src/packs/electric-grid/ui/operator-contingency.ts'
 import { corridorDefinition, corridorModel, steppedGrid, type SteppedGrid } from './fixtures/grid-corridor.ts'
@@ -101,6 +103,9 @@ describe('Grid operator N-1 presenter', () => {
     const screening = await ask<GridContingencyScreenResult>(run, 'world.electric-grid.contingency.screen', { contingencies: 'all-branches', ratingBasis: 'emergency' })
     const rows = gridContingencyRows(screening)
     expect(rows.map(row => row.assetId)).toEqual(screening.results.map(result => result.contingency.assetId))
+    // The corridor's branches are single-circuit: each is lost whole.
+    expect(new Set(rows.map(row => row.outageText))).toEqual(new Set(['branch outage']))
+    expect(screening.branchOutage).toBe(gridDefaultScreening.branchOutage)
     const violating = rows.find(row => row.severity === 'violation')!
     expect(violating.outcome).toMatch(/^\d+ overloaded branch(es)?/)
     expect(violating.worst!.basis).toBe('MVA (AC base)')
@@ -118,6 +123,14 @@ describe('Grid operator N-1 presenter', () => {
     expect(comparison.map(row => row.label)).toEqual(['Base-case overloads', 'Base-case worst loading', 'Contingencies with overloads', 'Overloads over all contingencies', 'Islanding contingencies'])
     expect(comparison[0]).toMatchObject({ before: '2', after: '0', improved: true })
     expect(comparison[1]!.improved).toBe(true)
+  })
+
+  test('an outage names what it took out: a unit, a branch, one of its circuits, or all of them as an exceptional case', () => {
+    const branch = { assetId: 'branch:x', kind: 'branch', label: 'X', lostMw: 100 } as const
+    expect(gridOutageText({ assetId: 'generator:g1', kind: 'generator', label: 'G1', lostMw: 100, category: 'ordinary' })).toBe('unit outage')
+    expect(gridOutageText({ ...branch, circuits: 1, circuitsLost: 1, category: 'ordinary' })).toBe('branch outage')
+    expect(gridOutageText({ ...branch, circuits: 3, circuitsLost: 1, category: 'ordinary' })).toBe('1 of 3 circuits')
+    expect(gridOutageText({ ...branch, circuits: 2, circuitsLost: 2, category: 'exceptional' })).toBe('all 2 circuits · exceptional (N-2)')
   })
 
   test('candidate actions need a fitting selected asset and a value where the command takes one', () => {

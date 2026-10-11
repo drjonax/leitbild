@@ -4,6 +4,7 @@
   import type { SimulationRunId } from '../../core/model/index.ts'
   import type { GridContingencyScreenResult, GridRemedialEvaluationResult } from '../../packs/electric-grid/queries/contingency.ts'
   import {
+    gridBranchOutageOptions,
     gridCandidateAction,
     gridCandidateActionText,
     gridCandidateKinds,
@@ -11,6 +12,7 @@
     gridDefaultScreening,
     gridFlowModelSummary,
     gridRemedialComparison,
+    type GridBranchOutage,
     type GridCandidateAction,
     type GridCandidateKind,
   } from '../../packs/electric-grid/ui/operator-contingency.ts'
@@ -29,6 +31,7 @@
   const { simulationRunId, gridId, revision, selectedAssetId, onLocate }: Props = $props()
 
   let ratingBasis = $state<'normal' | 'emergency'>(gridDefaultScreening.ratingBasis)
+  let branchOutage = $state<GridBranchOutage>(gridDefaultScreening.branchOutage)
   let screening = $state<GridContingencyScreenResult | null>(null)
   let screenedRevision = $state<number | null>(null)
   let screeningError = $state<string | null>(null)
@@ -49,7 +52,7 @@
   const afterRows = $derived(evaluation === null ? [] : gridContingencyRows(evaluation))
   const comparison = $derived(evaluation === null ? [] : gridRemedialComparison(evaluation))
   const candidateSpec = $derived(gridCandidateKinds.find(spec => spec.kind === candidateKind)!)
-  const request = $derived({ gridId, contingencies: gridDefaultScreening.contingencies, ratingBasis, limit: gridDefaultScreening.limit })
+  const request = $derived({ gridId, contingencies: gridDefaultScreening.contingencies, branchOutage, ratingBasis, limit: gridDefaultScreening.limit })
 
   const message = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
@@ -138,12 +141,17 @@
         <option value="normal">Continuous rating</option>
       </select>
     </label>
+    <label>Branch outage
+      <select bind:value={branchOutage}>
+        {#each gridBranchOutageOptions as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
+      </select>
+    </label>
     <button type="button" class="primary" disabled={running} onclick={() => void screen()}><Play size={12} />{running ? 'Screening…' : 'Screen all branch outages'}</button>
   </section>
 
   {#if screening}
     <p class="basis">
-      {screening.screenedCount.toLocaleString('en-GB')} outages screened against the {screening.ratingBasis} rating at revision {screening.revision}{screenedRevision !== null && screenedRevision !== revision ? ' (the Grid has moved on; screen again for the current state)' : ''}.
+      {screening.screenedCount.toLocaleString('en-GB')} outages screened against the {screening.ratingBasis} rating, {screening.branchOutage === 'circuit' ? 'one circuit of each multi-circuit branch' : 'every circuit of each branch at once'}, at revision {screening.revision}{screenedRevision !== null && screenedRevision !== revision ? ' (the Grid has moved on; screen again for the current state)' : ''}.
       {gridFlowModelSummary(screening)}
     </p>
     <div class="summary">
@@ -159,7 +167,7 @@
           <div class="result-head">
             <button type="button" class="expand" onclick={() => { expanded = expanded === row.assetId ? null : row.assetId }} aria-expanded={expanded === row.assetId}>
               <strong>{row.label}</strong>
-              <small>{row.kind} outage · {row.lostText} · {row.outcome}</small>
+              <small>{row.outageText} · {row.lostText} · {row.outcome}</small>
             </button>
             <button type="button" class="locate" title="Locate the outage on the map" aria-label="Locate {row.label} on the map" onclick={() => onLocate(row.assetId)}><LocateFixed size={12} /></button>
           </div>
@@ -237,7 +245,7 @@
       <ul class="results">
         {#each afterRows.slice(0, 5) as row (row.assetId)}
           <li class={row.severity}>
-            <div class="result-head"><span><strong>{row.label}</strong> <small>{row.outcome}</small></span></div>
+            <div class="result-head"><span><strong>{row.label}</strong> <small>{row.outageText} · {row.outcome}</small></span></div>
             {#if row.worst}<div class="worst"><span>Worst: {row.worst.label}</span><strong class:bad={row.worst.overloaded}>{row.worst.loadingText}</strong><small>{row.worst.basis}</small></div>{/if}
           </li>
         {/each}
