@@ -758,8 +758,10 @@ struct Started {
     joined: leitbild_operating_plant::joined::operator::Joined<If97>,
     y: Vec<f64>,
     yp: Vec<f64>,
-    /// Differential identity, absolute tolerances and relative tolerance.
+    /// Differential identity (joined, then the network's own), absolute
+    /// tolerances and relative tolerance.
     ids: Vec<f64>,
+    network_ids: Vec<f64>,
     atol: Vec<f64>,
     rtol: f64,
     /// A receipt of the preparation.
@@ -854,6 +856,7 @@ fn started_full_composition() -> Started {
         y,
         yp,
         ids,
+        network_ids,
         atol,
         rtol: classes.relative,
         receipt,
@@ -920,6 +923,120 @@ fn observe(
     })
 }
 
+#[test]
+#[ignore = "NOT-EVIDENCE zero-time check: requires the joined packet, the wiki, IF97 and stock IDA/KLU"]
+fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exactly() {
+    use leitbild_operating_plant::joined::block::Command;
+    use leitbild_operating_water::{
+        ida::{Ida, Initial},
+        joined::{Discrete, Integrated, Restart, discrete_restart},
+    };
+    let Started {
+        mut joined,
+        y,
+        yp,
+        ids,
+        network_ids,
+        atol,
+        rtol,
+        ..
+    } = started_full_composition();
+    let algebraic = |ids: &[f64]| ids.iter().filter(|v| **v == 0.).count();
+    let held = algebraic(&ids);
+    let mut y = y;
+    // The manual turbine TRIP at t = 0: the holding circuit opens after its
+    // declared delay and the STOP ramp ends after its travel.
+    let trip = joined.command(0., &mut y, Command::TurbineTrip).unwrap();
+    assert_eq!(
+        trip.len(),
+        2,
+        "both owners take the command; nothing is due at once"
+    );
+    let open = joined.next_time_event(0.).expect("the holding opening");
+    let rods = joined.rods().unwrap();
+    assert_eq!(rods.next_time_event(0.), Some(open));
+    assert!(joined.secondary().unwrap().next_time_event(0.).unwrap() > open);
+    let restart = Restart {
+        newton_coefficient: NEWTON_COEFFICIENT,
+        delta_cj_lsetup: DELTA_CJ_LSETUP,
+        first_step_s: FIRST_STEP_S,
+        start_bound: 1e-12,
+        start_passes: 2,
+        bound_placement: 1e-12,
+    };
+    let mut ida = Ida::new(
+        Integrated::with_blocks(joined, 0., &y).unwrap(),
+        Initial {
+            time: 0.,
+            y: &y,
+            yp: &yp,
+            differential: &ids,
+            absolute_tolerance: &atol,
+            relative_tolerance: rtol,
+        },
+    )
+    .unwrap();
+    restart.configure(&mut ida).unwrap();
+    // The stop at the opening, without stepping: the release root t - open
+    // is exactly zero there, so only the time event can release.
+    let restarted = discrete_restart(
+        &mut ida,
+        open,
+        Discrete::TimeEvent,
+        &mut y,
+        &network_ids,
+        &atol,
+        rtol,
+        &restart,
+    )
+    .unwrap();
+    let (done, yp_open, report) = (&restarted.transactions, &restarted.yp, &restarted.report);
+    assert!(
+        restarted.placements.is_empty(),
+        "{:?}",
+        restarted.placements
+    );
+    assert_eq!(done.len(), 1, "the rod owner's opening only: {done:?}");
+    let releases = done[0].receipt["rods"].as_array().unwrap();
+    let clusters = ida.system().joined.rods().unwrap().clusters();
+    assert_eq!(releases.len(), clusters, "every held cluster releases");
+    assert!(releases.iter().all(|r| r["event"] == "grip release"));
+    let ids_open = ida.system().joined.differential(&network_ids);
+    assert_eq!(
+        algebraic(&ids_open),
+        held - clusters,
+        "each released cluster's speed becomes differential"
+    );
+    assert!(report.residual.value <= 1e-12 && report.constraint_rate.value <= 1e-12);
+    assert!(yp_open.iter().all(|v| v.is_finite()));
+    // Transacted once: nothing more is due at the opening.
+    assert!(
+        ida.system_mut()
+            .joined
+            .time_events(open, &mut y)
+            .unwrap()
+            .is_empty()
+    );
+    let end = ida
+        .system()
+        .joined
+        .next_time_event(open)
+        .expect("the ramp end");
+    let ramp = ida.system_mut().joined.time_events(end, &mut y).unwrap();
+    assert_eq!(ramp.len(), 1);
+    assert_eq!(ramp[0].receipt["stateChanged"], json!(false));
+    let receipt = json!({
+        "kind": "s2-holding-opening-time-event",
+        "status": "NOT-EVIDENCE zero-time check; no trajectory",
+        "opening_s": open, "ramp_end_s": end, "released_clusters": clusters,
+        "algebraic_before": held, "algebraic_after": algebraic(&ids_open),
+        "start": {"residual": report.residual.value, "constraint_rate": report.constraint_rate.value,
+            "projection_passes": report.projection_passes, "rate_passes": report.rate_passes},
+        "configuration": {"newtonCoefficient": NEWTON_COEFFICIENT, "deltaCjLSetup": DELTA_CJ_LSETUP, "firstStep_s": FIRST_STEP_S},
+    });
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+}
+
 /// S2's Newton configuration (claude/ld01-wiki c968921, "Configuration
 /// superseded the same day"): stock's own 0.33 Newton coefficient and an
 /// iteration-matrix refresh when cj changes by 10% (IDASetDeltaCjLSetup).
@@ -946,6 +1063,7 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
         atol,
         rtol,
         receipt: preparation,
+        ..
     } = started_full_composition();
     let preparation_cpu_s = z1::cpu_s() - started;
     // Declared NOT-EVIDENCE caps and criteria: the S2 memo's draft settling
@@ -962,7 +1080,15 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
         std::fs::File::create(p).unwrap()
     });
     let nonnegative = joined.network.nonnegative_stocks();
-    let system = Integrated::new(joined).expect("integrable joined system");
+    // JAC's block assembly by default (checked against the colored matrix
+    // entry by entry); `LD01_SETTLING_ASSEMBLY=colored` runs the reference.
+    let assembly = std::env::var("LD01_SETTLING_ASSEMBLY").unwrap_or_else(|_| "blocks".into());
+    let system = match assembly.as_str() {
+        "blocks" => Integrated::with_blocks(joined, 0., &y0),
+        "colored" => Integrated::new(joined),
+        other => panic!("LD01_SETTLING_ASSEMBLY {other}: blocks or colored"),
+    }
+    .expect("integrable joined system");
     let mut ida = Ida::new(
         system,
         Initial {
@@ -1061,6 +1187,14 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
                     s["cpu_s"] = json!(z1::cpu_s() - started);
                     let c = ida.system().joined.counters;
                     s["joined_counters"] = json!(c);
+                    eprintln!(
+                        "settling t = {t} s: P = {:.6e} W, steps {}, residuals {}, Jacobians {}, CPU {:.1} s",
+                        s["released_w"].as_f64().unwrap_or(f64::NAN),
+                        s["ida"]["steps"],
+                        s["ida"]["residuals"],
+                        s["ida"]["jacobians"],
+                        s["cpu_s"].as_f64().unwrap_or(f64::NAN)
+                    );
                     push(&mut samples, s, &log);
                     next_output += 1.;
                     if let Some(v) = settled(&samples) {
@@ -1101,13 +1235,15 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
         .map_or(t, |i| i.max(t));
     let receipt = json!({
         "kind": "s2-settling-probe",
-        "predecessor": "settling-probe-1-log.jsonl (ac0f7106) was stopped before its first 1 s output: its 0.01 Newton coefficient was superseded the same day",
-        "status": "NOT-EVIDENCE probe; S2 is not declared. Cost is the BASELINE on the colored joined Jacobian, not the S2 cost path (lead, 11 October). PZR boundary closed: shell metal and relief pending (G6), heaters at zero (G6)",
+        "predecessors": ["settling-probe-1-log.jsonl (ac0f7106) was stopped before its first 1 s output: its 0.01 Newton coefficient was superseded the same day",
+            "settling-probe-2-log.jsonl (1590dae0, colored Jacobian) was stopped before its first 1 s output when the block Jacobian landed; its packet lacked R3's passageBlendSpeed"],
+        "status": "NOT-EVIDENCE probe; S2 is not declared. PZR boundary closed: shell metal and relief pending (G6), heaters at zero (G6)",
         "preparation": preparation,
         "configuration": {"maxOrder": 2, "relativeTolerance": rtol, "absoluteTolerance": "the S1 classes' scaled floor for every new class (G12)",
             "newtonCoefficient": NEWTON_COEFFICIENT, "deltaCjLSetup": DELTA_CJ_LSETUP, "newtonSource": "claude/ld01-wiki c968921 (supersedes a66ee83's 0.01): stock coefficient 0.33 with IDASetDeltaCjLSetup 0.1 at every IDA start and restart",
             "firstStep_s": FIRST_STEP_S, "firstStepSource": "G13 (request 4 K4) at every restart; also at the start", "maxStep_s": null,
-            "advanceChunk_s": ADVANCE_CHUNK_S, "advanceChunk": "IDA_NORMAL output targets only; no step is shortened"},
+            "advanceChunk_s": ADVANCE_CHUNK_S, "advanceChunk": "IDA_NORMAL output targets only; no step is shortened",
+            "jacobian": if assembly == "blocks" { "JAC's block assembly (claude/ld01-jac 54f6d7b4), checked against the colored matrix to 5.8e-15 column-relative" } else { "colored joined assembly (reference)" }},
         "criteria": {"source": "S2 memo §7 draft settling block (not declared)", "window_s": window_s, "corePowerRelative": 1e-4, "cellTemperature_K": 0.01, "pzrRoofPressure_Pa": 1000, "sgPressure_Pa": 1000, "cap_s": cap_s, "probe_cpu_cap_s": cpu_cap_s},
         "verdict": verdict,
         "failure": failure,
