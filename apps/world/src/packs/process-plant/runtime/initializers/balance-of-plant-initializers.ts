@@ -22,6 +22,7 @@ export const balanceOfPlantInitialValueDefinitions: ReadonlyArray<ComponentIniti
     initialValueFor: (component, localPath) => {
       const initialLoadFraction = parameterNumber(component, 'initialLoadFraction')
       if (localPath === 'electricMw') return parameterNumber(component, 'nominalElectricMw') * initialLoadFraction
+      if (localPath === 'outputBreakerClosed') return initialLoadFraction > 0
       if (localPath === 'loadFraction') return initialLoadFraction
       if (localPath === 'steamFlowKgPerS') return parameterNumber(component, 'nominalSteamFlowKgPerS') * initialLoadFraction
       if (localPath === 'steamDemandKgPerS') return parameterNumber(component, 'nominalSteamFlowKgPerS') * initialLoadFraction

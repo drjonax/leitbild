@@ -223,12 +223,13 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       annunciator: feedwaterAlarm,
     })],
   }),
-  // Loss of load: the grid boundary dead while the generator carries load.
-  // A full load rejection is beyond what the steam dumps and the rods take
-  // together (about 50 %), so, as at the reference plant, generator
-  // protection opens the output breaker and the turbine trips at once; above
-  // P-9 the turbine trip trips the reactor. The
-  // trip seals in as every turbine trip does: the stop valve stays shut and
+  // Loss of load: the grid boundary dead while the generator's output
+  // breaker is closed on it. A full load rejection is beyond what the steam
+  // dumps and the rods take together (about 50 %), so, as at the reference
+  // plant, generator protection opens the output breaker and the turbine
+  // trips at once; above P-9 the turbine trip trips the reactor. Both are
+  // on/off states, so no display draws a limit on the generator's output.
+  // The trip seals in as every turbine trip does: the stop valve stays shut and
   // the load rejected until operators reopen and load it again, so a grid
   // that comes back finds the unit importing its house load, not exporting.
   rule({
@@ -237,13 +238,13 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
     ruleClass: 'protection',
     condition: all([
       comparison({ tagId: 'GRID-AVAIL' }, '==', false),
-      comparison({ tagId: 'GEN-MW' }, '>', 0),
+      comparison({ path: 'turbine.outputBreakerClosed' }, '==', true),
     ]),
     effects: [
       trip({
         id: 'loss-of-load-turbine-trip',
         title: 'Turbine trip on loss of load',
-        message: 'The grid boundary is dead while the generator carries load: its output breaker opens and the turbine trips.',
+        message: 'The grid boundary is dead while the generator\'s output breaker is closed on it: the breaker opens and the turbine trips.',
         annunciator: annunciator({ ...turbineAlarm, firstOutGroup: 'turbine-trip', priority: 'urgent', role: 'automaticAction' }),
       }),
       ...turbineTripWrites('loss-of-load'),

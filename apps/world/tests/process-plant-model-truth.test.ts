@@ -967,6 +967,18 @@ describe('a loss of load', () => {
     expect(port(plantRun)).toMatchObject({ connected: false, activePowerMw: 0 })
   })
 
+  test('judges the generator by its output breaker, so no display draws a limit on its output', () => {
+    // Loss of load is a dead boundary with the breaker closed on it: two on/off states, no set point on GEN-MW.
+    const output = graph.signalBindingByTagId.get('GEN-MW' as never)!.path
+    expect(icThresholdsForSignal(plant, output).thresholds.map(threshold => threshold.ruleId)).toEqual(['generator-output-low'])
+    const plantRun = started()
+    plantRun.run(5_000)
+    expect(plantRun.runtime.readVariable('turbine.outputBreakerClosed' as VariablePath)).toBe(true)
+    gridBoundary(plantRun, false)
+    plantRun.run(2_000)
+    expect(plantRun.runtime.readVariable('turbine.outputBreakerClosed' as VariablePath)).toBe(false)
+  })
+
   test('sealed in, the unit imports its house load when the grid comes back, and never exports', () => {
     const plantRun = started()
     plantRun.run(5_000)

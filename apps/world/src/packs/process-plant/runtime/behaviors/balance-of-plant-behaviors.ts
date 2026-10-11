@@ -38,7 +38,7 @@ export const balanceOfPlantBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
     phase: 'solveElectrical',
     componentKind: 'turbineLoadSink',
     reads: ['loadFraction', 'steamFlowKgPerS', 'incoming:flowKgPerS', 'incoming:pressureMPa'],
-    writes: ['electricMw', 'steamFlowKgPerS', 'steamDemandKgPerS', 'steamAvailabilityFraction', 'exhaustTemperatureC'],
+    writes: ['electricMw', 'outputBreakerClosed', 'steamFlowKgPerS', 'steamDemandKgPerS', 'steamAvailabilityFraction', 'exhaustTemperatureC'],
     update: ({ system, component, context }): void => {
       const inletSteamFlow = averageIncomingLinkValue(system, component, 'flowKgPerS', context) ?? 0
       const averageSteamPressure = averageIncomingLinkValue(system, component, 'pressureMPa', context)
@@ -60,6 +60,7 @@ export const balanceOfPlantBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       context.write(componentVariablePath(component, 'steamFlowKgPerS'), inletSteamFlow)
       context.write(componentVariablePath(component, 'exhaustTemperatureC'), relaxToward(context.readNumber(componentVariablePath(component, 'exhaustTemperatureC')), exhaustTarget, context.dtSeconds, optionalParameterNumber(component, 'electricalTimeConstantS', 5)))
       // With its load rejected the generator's output breaker is open: it carries nothing at once.
+      context.write(componentVariablePath(component, 'outputBreakerClosed'), load > 0)
       context.write(
         componentVariablePath(component, 'electricMw'),
         load === 0 ? 0 : relaxToward(current, target, context.dtSeconds, optionalParameterNumber(component, 'electricalTimeConstantS', 5)),
