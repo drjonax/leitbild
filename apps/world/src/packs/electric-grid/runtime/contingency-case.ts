@@ -1,4 +1,4 @@
-import { gridIslandFlowModel } from './ac-load-flow.ts'
+import { gridAcState, gridIslandFlowModel } from './ac-load-flow.ts'
 import { balanceToleranceMw, rebalancePart, type CaseParticipation, type PartBalance } from './contingency-balance.ts'
 import { generatorIsVoltageForming, generatorKineticEnergyMws } from './generator-dynamics.ts'
 import type { GridRuntimeInstance, GridTopologyPlan } from './instance.ts'
@@ -70,8 +70,16 @@ export interface ContingencyCase {
   readonly flowsMw: Float64Array
   /** The DC solution's flow per branch (MW); a derived case adds its own DC change to `flowsMw`. */
   readonly dcFlowsMw: Float64Array
-  /** DC bus angles of the case (radians, each AC component's reference bus at 0), as the synchro-check measures them. */
+  /** DC bus angles of the case (radians, each AC component's reference bus at 0). */
   readonly anglesRad: Float64Array
+  /**
+   * The bus angles a loop-closing synchro-check reads (radians, relative within each AC component),
+   * as the close-branch command reads them: on the live Grid's case the AC load-flow angles of each
+   * island whose AC load flow converged (`loopAngleFromAc` 1 at its buses) and the DC angles
+   * elsewhere; on a case derived by remedial changes its own DC angles, since it has no AC solution.
+   */
+  readonly loopAnglesRad: Float64Array
+  readonly loopAngleFromAc: Uint8Array
   /** The base flow model of each energised island of the live Grid the case derives from. */
   readonly baseFlowModels: ReadonlyArray<IslandBaseFlowModel>
   readonly loadingBase: CaseLoadingBase
@@ -169,6 +177,19 @@ export const liveContingencyCase = (grid: GridRuntimeInstance): ContingencyCase 
     loadingBase.fromReactiveMvar[index] = state.reactiveFromMvar
     loadingBase.toReactiveMvar[index] = state.reactiveToMvar
   })
+  const loopAnglesRad = plan.anglesRad.slice()
+  const loopAngleFromAc = new Uint8Array(network.busCount)
+  const acAnglesRad = gridAcState(grid)?.angleRad
+  for (const island of islands.islands) {
+    if (modelOfPlanIsland[island.planIndex] !== 'ac') continue
+    if (acAnglesRad === undefined) throw new Error(`Grid ${grid.definition.gridId} island ${island.id} has converged with no AC state`)
+    const buses = plan.islands[island.planIndex]!.busIndices
+    for (let position = 0; position < buses.length; position += 1) {
+      const bus = buses[position]!
+      loopAnglesRad[bus] = acAnglesRad[bus]!
+      loopAngleFromAc[bus] = 1
+    }
+  }
   return {
     grid,
     network,
@@ -179,6 +200,8 @@ export const liveContingencyCase = (grid: GridRuntimeInstance): ContingencyCase 
     flowsMw,
     dcFlowsMw,
     anglesRad: plan.anglesRad.slice(),
+    loopAnglesRad,
+    loopAngleFromAc,
     baseFlowModels,
     loadingBase,
     participation: participationFor(grid, network, bus => energisedPlanIslandOf(plan.islandIndexOfBus[bus]!)),
@@ -240,7 +263,7 @@ export const switchedContingencyCase = (base: ContingencyCase, changes: CaseChan
   return {
     case: {
       grid: base.grid, network, closed, islandOfBus: found.islandOfBus, islands, injectionsMw, flowsMw, dcFlowsMw, anglesRad,
-      baseFlowModels: base.baseFlowModels, loadingBase, participation, redispatchedMw: changes.redispatchedMw,
+      loopAnglesRad: anglesRad, loopAngleFromAc: new Uint8Array(network.busCount), baseFlowModels: base.baseFlowModels, loadingBase, participation, redispatchedMw: changes.redispatchedMw,
     },
     balances,
   }

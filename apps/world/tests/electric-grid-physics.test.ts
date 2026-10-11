@@ -11,6 +11,7 @@ import { gridElectricalPortsAt } from '../src/packs/electric-grid/electrical-por
 import type { CompiledGridDefinition, GridBranchDefinition, GridBusDefinition, GridGeneratorDefinition, GridLoadDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
 import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
+import { gridAcState } from '../src/packs/electric-grid/runtime/ac-load-flow.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
 import { dispatchGridFromLiveIslands } from '../src/packs/electric-grid/runtime/dispatch.ts'
 import { generatorKineticEnergyMws } from '../src/packs/electric-grid/runtime/generator-dynamics.ts'
@@ -483,10 +484,11 @@ describe('reserves dimensioned per synchronous area', () => {
 })
 
 describe('synchro-check on closing a loop', () => {
-  test('closing a branch inside one energised island is limited by the voltage-angle difference across it', async () => {
-    // Two parallel lines carry 300 MW from hydro units at A to a load at B: a short one (x 0.02 pu)
-    // and a long one (x 0.25 pu). With only the long one closed, A–B differ by P·x = 3 pu · 0.25 = 0.75 rad.
-    const bus = (id: string, index: number, kind: GridBusDefinition['kind'] = 'substation'): GridBusDefinition => ({ id, label: id, kind, nominalKv: 420, location: [10 + index * 0.5, 60] as const })
+  // Hydro units at A feed a load at B over two parallel lines: a short one (x 0.02 pu) and a long
+  // one (x 0.25 pu). With only the long one closed, A–B differ by P·x in DC; the AC load flow,
+  // where it converges, has them further apart as B's voltage sags.
+  const loopRun = (loadMw: number) => {
+    const bus = (id: string, index: number): GridBusDefinition => ({ id, label: id, kind: 'substation', nominalKv: 420, location: [10 + index * 0.5, 60] as const })
     const line = (id: string, reactancePu: number): GridBranchDefinition =>
       testLine({ id, fromBusId: 'bus:a', toBusId: 'bus:b', nominalKv: 420, ratingMw: 2_000, reactancePu, resistancePu: 0 })
     const model: GridModelDefinition = handBuiltModel({
@@ -496,7 +498,7 @@ describe('synchro-check on closing a loop', () => {
       generators: Array.from({ length: 4 }, (_, index) => syntheticHydroUnit({
         id: `hydro-${index}`, label: `Hydro ${index}`, busId: 'bus:a', location: [10, 60], capacityMw: 150, rampRateMwPerMinute: 150,
       })),
-      loads: [testLoad({ id: 'load', busId: 'bus:b', location: [10.5, 60], demandMw: 300 })],
+      loads: [testLoad({ id: 'load', busId: 'bus:b', location: [10.5, 60], demandMw: loadMw })],
     })
     const run = runningGrid({ ...gridDefinitionForModel(model), gridId: 'grid:test' })
     run.advance(10)
@@ -505,35 +507,60 @@ describe('synchro-check on closing a loop', () => {
       if (result.ok) run.advance(0)
       return result
     }
-    const angleDegrees = (): number =>
-      Math.abs(run.grid.busStates.get('bus:a')!.angleRad - run.grid.busStates.get('bus:b')!.angleRad) * 180 / Math.PI
-    const limit = run.grid.definition.automation.synchroCheck.maximumAngleDifferenceDegrees
-
-    expect(send(gridOpenBranchCommandKind, 'long').ok).toBe(true)
-    const shortOnlyDegrees = angleDegrees()
-    expect(shortOnlyDegrees).toBeLessThan(limit)
-    expect(send(gridCloseBranchCommandKind, 'long')).toEqual({ ok: true })
-
-    expect(send(gridOpenBranchCommandKind, 'short').ok).toBe(true)
-    const longOnlyDegrees = angleDegrees()
-    expect(longOnlyDegrees).toBeGreaterThan(limit)
-    const rejected = send(gridCloseBranchCommandKind, 'short')
-    if (rejected.ok) throw new Error('closing the short line across a wide angle must be rejected')
-    expect(rejected.reason).toContain(`voltage angles differ by ${longOnlyDegrees.toFixed(1)}°`)
-    expect(rejected.reason).toContain(`${limit}° loop-closing limit`)
-    expect(run.grid.branches.get('short')!.state).toBe('open')
-    console.info(`loop closing: ${shortOnlyDegrees.toFixed(2)}° across the long line closes; ${longOnlyDegrees.toFixed(2)}° across the short line is rejected`)
-
-    // A remedial evaluation of the close reports the command's rejection with the measured Δθ; after
-    // shedding most of the load the angle, measured after that action, lets it close.
+    const acDegrees = (): number => {
+      const angles = gridAcState(run.grid)!.angleRad
+      return Math.abs(angles[0]! - angles[1]!) * 180 / Math.PI
+    }
+    const dcDegrees = (): number => Math.abs(run.grid.busStates.get('bus:a')!.angleRad - run.grid.busStates.get('bus:b')!.angleRad) * 180 / Math.PI
     const evaluate = (actions: ReadonlyArray<Readonly<Record<string, unknown>>>) => answerElectricGridQuery({
       request: { capabilityId: 'world.electric-grid.remedial-actions.evaluate', input: { gridId: 'grid:test', contingencies: 'all-branches', actions } },
       grids: new Map([[run.grid.definition.gridId, run.grid]]),
     }) as Promise<{ readonly after: { readonly baseCase: { readonly overloadedCount: number } } }>
+    const converged = (): boolean => run.grid.acOutcomeByIsland.get(run.grid.islandPlan!.islands[0]!.id)!.converged
+    return { run, send, acDegrees, dcDegrees, evaluate, converged, limit: run.grid.definition.automation.synchroCheck.maximumAngleDifferenceDegrees }
+  }
+
+  test('reads the angle from the AC load flow where the island converged, and names that basis', async () => {
+    // 130 MW over the long line: 20.7° apart in AC, above the 20° limit, though 18.9° in DC.
+    const { send, acDegrees, dcDegrees, evaluate, converged, limit } = loopRun(130)
+    expect(send(gridOpenBranchCommandKind, 'long').ok).toBe(true)
+    const shortOnlyDegrees = acDegrees()
+    expect(shortOnlyDegrees).toBeLessThan(limit)
+    expect(send(gridCloseBranchCommandKind, 'long')).toEqual({ ok: true })
+
+    expect(send(gridOpenBranchCommandKind, 'short').ok).toBe(true)
+    expect(converged()).toBe(true)
+    const longOnlyDegrees = acDegrees()
+    expect(longOnlyDegrees).toBeGreaterThan(limit)
+    expect(dcDegrees()).toBeLessThan(limit)
+    const rejected = send(gridCloseBranchCommandKind, 'short')
+    if (rejected.ok) throw new Error('closing the short line across a wide AC angle must be rejected')
+    expect(rejected.reason).toContain(`voltage angles differ by Δθ ${longOnlyDegrees.toFixed(1)}° (AC load flow), above the ${limit}° loop-closing limit`)
+    console.info(`loop closing (converged): ${shortOnlyDegrees.toFixed(2)}° across the long line closes; ${longOnlyDegrees.toFixed(2)}° AC (${dcDegrees().toFixed(2)}° DC) across the short line is rejected`)
+    // A remedial evaluation of the close reads the same AC angle.
     await expect(evaluate([{ kind: 'close-branch', assetId: 'short' }]))
-      .rejects.toThrow(`close-branch short would be rejected by synchro-check: both ends are in one energised island and their voltage angles differ by Δθ ${longOnlyDegrees.toFixed(1)}°, above the ${limit}° loop-closing limit`)
+      .rejects.toThrow(`close-branch short would be rejected by synchro-check: both ends are in one energised island and their voltage angles differ by Δθ ${longOnlyDegrees.toFixed(1)}° (AC load flow), above the ${limit}° loop-closing limit`)
+  })
+
+  test('reads the angle from the DC solution where the island did not converge, and names that basis', async () => {
+    // 300 MW is beyond the long line's AC transfer limit (about V²/2x = 200 MW): no AC solution, 43.7° in DC.
+    const { run, send, dcDegrees, evaluate, converged, limit } = loopRun(300)
+    expect(send(gridOpenBranchCommandKind, 'short').ok).toBe(true)
+    expect(converged()).toBe(false)
+    const longOnlyDegrees = dcDegrees()
+    expect(longOnlyDegrees).toBeGreaterThan(limit)
+    const rejected = send(gridCloseBranchCommandKind, 'short')
+    if (rejected.ok) throw new Error('closing the short line across a wide DC angle must be rejected')
+    expect(rejected.reason).toContain(`voltage angles differ by Δθ ${longOnlyDegrees.toFixed(1)}° (DC solution: the island's AC load flow did not converge), above the ${limit}° loop-closing limit`)
+    expect(run.grid.branches.get('short')!.state).toBe('open')
+    console.info(`loop closing (not converged): ${longOnlyDegrees.toFixed(2)}° DC across the short line is rejected`)
+    await expect(evaluate([{ kind: 'close-branch', assetId: 'short' }]))
+      .rejects.toThrow(`close-branch short would be rejected by synchro-check: both ends are in one energised island and their voltage angles differ by Δθ ${longOnlyDegrees.toFixed(1)}° (DC solution: the island's AC load flow did not converge), above the ${limit}° loop-closing limit`)
+    // After shedding most of the load the angle, measured on the case's DC solution after that action, lets it close.
     const relieved = await evaluate([{ kind: 'shed-load', assetId: 'load', targetDemandMw: 50, emergency: true }, { kind: 'close-branch', assetId: 'short' }])
     expect(relieved.after.baseCase.overloadedCount).toBe(0)
+    await expect(evaluate([{ kind: 'shed-load', assetId: 'load', targetDemandMw: 200, emergency: true }, { kind: 'close-branch', assetId: 'short' }]))
+      .rejects.toThrow(/after the earlier actions and their voltage angles differ by Δθ 28\.6° \(DC solution of the case after the earlier actions\)/)
   })
 })
 

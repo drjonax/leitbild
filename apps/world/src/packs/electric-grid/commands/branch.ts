@@ -26,7 +26,7 @@ export const gridBranchCommandCapabilities: ReadonlyArray<SimulationCapability> 
   gridCommandCapability({
     id: gridCloseBranchCommandKind,
     title: 'Close branch',
-    description: 'Closes an open branch, keeping its derate. The Automation\'s synchro-check applies: between two energised islands their frequencies may differ by at most synchroCheck.maximumFrequencyDifferenceHz; inside one energised island (closing a loop) the end voltage angles may differ by at most synchroCheck.maximumAngleDifferenceDegrees; closing onto a de-energised island is allowed. A rejection states the measured difference.',
+    description: 'Closes an open branch, keeping its derate. The Automation\'s synchro-check applies: between two energised islands their frequencies may differ by at most synchroCheck.maximumFrequencyDifferenceHz; inside one energised island (closing a loop) the end voltage angles may differ by at most synchroCheck.maximumAngleDifferenceDegrees, read from the island\'s AC load flow where it converged and from its DC solution where it did not; closing onto a de-energised island is allowed. A rejection states the measured difference and, for an angle, its basis.',
     payloadSchema: gridCloseBranchPayloadSchema,
     risk: 'write',
     searchTerms: [...branchTerms, 'close', 'reconnect', 'switching', 'breaker', 'synchro-check', 'synchronise', 'resynchronisation', 'innkobling', 'effektbryter', 'synkronisering', 'parallellkobling', 'gjenoppretting'],

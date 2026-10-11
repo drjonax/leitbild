@@ -3,6 +3,7 @@ import type { CaseParticipation } from './contingency-balance.ts'
 import { caseGeneratorOutputMw, switchedContingencyCase, type ContingencyCase, type CaseChanges } from './contingency-case.ts'
 import { gridIslandAtBus, gridIslandFrequencyHz, solvedGridIslands } from './island-lifecycle.ts'
 import { manualShedRejection } from './load-shedding.ts'
+import { loopAngleText, type GridLoopAngleBasis } from './synchro-check.ts'
 import { generatorMinimumStableMw } from './unit-commitment.ts'
 
 /** A candidate remedial action, evaluated on a private case; the Agent applies the real one by command. */
@@ -30,8 +31,10 @@ const synchronouslyCoupled = (current: ContingencyCase, fromComponent: number, t
 
 /**
  * The synchro-check of close-branch with the Automation's limits, as the command applies it, on the
- * case the earlier actions make: ends in one AC component (closing a loop) by their DC voltage
- * angles; ends in two components coupled through a synchronous external equivalent close freely;
+ * case the earlier actions make: ends in one AC component (closing a loop) by their voltage angles,
+ * from the live island's AC load flow where it converged and the DC solution where it did not, or
+ * from the DC solution of the case after earlier actions (the reason names the basis); ends in two
+ * components coupled through a synchronous external equivalent close freely;
  * ends in two islands by the measured frequencies of the live islands they lie in (a split the
  * earlier actions make leaves both parts at one frequency). Returns why the command would be
  * rejected, with the measured difference, or null.
@@ -45,9 +48,10 @@ const synchroCheckRejection = (current: ContingencyCase, branch: GridBranchDefin
   const toComponent = current.islandOfBus[toBus]!
   const rejected = `close-branch ${branch.id} would be rejected by synchro-check`
   if (fromComponent === toComponent) {
-    const angleDegrees = Math.abs(current.anglesRad[fromBus]! - current.anglesRad[toBus]!) * degreesPerRadian
+    const angleDegrees = Math.abs(current.loopAnglesRad[fromBus]! - current.loopAnglesRad[toBus]!) * degreesPerRadian
     if (angleDegrees <= limits.maximumAngleDifferenceDegrees) return null
-    return `${rejected}: both ends are in one energised island${afterActions ? ' after the earlier actions' : ''} and their voltage angles differ by Δθ ${angleDegrees.toFixed(1)}°, `
+    const basis: GridLoopAngleBasis = afterActions ? 'dc-after-actions' : current.loopAngleFromAc[fromBus] === 1 ? 'ac' : 'dc'
+    return `${rejected}: both ends are in one energised island${afterActions ? ' after the earlier actions' : ''} and their voltage angles differ by ${loopAngleText(angleDegrees, basis)}, `
       + `above the ${limits.maximumAngleDifferenceDegrees}° loop-closing limit; redispatch to reduce the angle before closing`
   }
   if (synchronouslyCoupled(current, fromComponent, toComponent)) return null

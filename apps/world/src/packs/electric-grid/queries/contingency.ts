@@ -146,7 +146,7 @@ const actionSchema = z.discriminatedUnion('kind', [
 
 const remedialPayloadSchema = z.object({
   ...screeningInput,
-  actions: z.array(actionSchema).min(1).max(20).describe('Candidate actions in order, each on a different asset, with the rules of dispatch-generator, shed-load, open-branch and close-branch. A redispatched unit holds its set-point; the island\'s other FCR providers balance the difference. A close-branch passes close-branch\'s synchro-check, measured after the earlier actions, or the evaluation is rejected with the measured Δf or Δθ.'),
+  actions: z.array(actionSchema).min(1).max(20).describe('Candidate actions in order, each on a different asset, with the rules of dispatch-generator, shed-load, open-branch and close-branch. A redispatched unit holds its set-point; the island\'s other FCR providers balance the difference. A close-branch passes close-branch\'s synchro-check, measured after the earlier actions, or the evaluation is rejected with the measured Δf or Δθ. Δθ comes from the island\'s AC load flow where it converged, from its DC solution where it did not, and from the DC solution of the case once earlier actions changed it; the reason names the basis.'),
 }).strict()
 
 const remedialResultSchema = z.object({
