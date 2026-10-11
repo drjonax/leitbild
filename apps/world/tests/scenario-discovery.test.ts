@@ -10,9 +10,13 @@ describe('bundled scenario discovery', () => {
       'halden-dispatch',
       'halden-power-complex',
       'halden-weather-response',
+      'nordic-frequency-event',
       'norway-situation-monitor',
     ])
     expect(builtinScenarioDefinitions.find(source => source.id === 'halden-power-complex')?.packs.map(pack => pack.id)).toEqual(['process-plant', 'electric-grid', 'weather'])
+    for (const id of ['nordic-frequency-event']) {
+      expect(builtinScenarioDefinitions.find(source => source.id === id)?.packs.map(pack => pack.id)).toEqual(['electric-grid'])
+    }
     for (const id of ['norway-situation-monitor']) {
       expect(builtinScenarioDefinitions.find(source => source.id === id)?.packs.map(pack => pack.id)).toEqual(['situation-monitor'])
     }
