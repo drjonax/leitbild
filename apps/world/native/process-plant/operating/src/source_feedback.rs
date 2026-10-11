@@ -94,6 +94,35 @@ pub struct RegionFeedback {
     pub reactivity: Scalar,
     pub external_source_per_s: Scalar,
 }
+/// One region's reactivity split into the terms [`Model::evaluate`] sums,
+/// values only: the base, the rods, the water density, the boron, and per
+/// supporting material the Doppler, fissile-production and capture-opacity
+/// (non-poison, xenon and samarium) terms summed over the region's supports.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct ReactivityTerms {
+    pub base: f64,
+    pub rods: f64,
+    pub water_density: f64,
+    pub boron: f64,
+    pub doppler: f64,
+    pub fissile: f64,
+    pub nonpoison_capture: f64,
+    pub xenon: f64,
+    pub samarium: f64,
+}
+impl ReactivityTerms {
+    pub fn total(&self) -> f64 {
+        self.base
+            + self.rods
+            + self.water_density
+            + self.boron
+            + self.doppler
+            + self.fissile
+            + self.nonpoison_capture
+            + self.xenon
+            + self.samarium
+    }
+}
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PoisonCapture {
     pub xenon: Scalar,
@@ -504,6 +533,76 @@ impl Model {
                 .any(|v| !finite(v.xenon) || !finite(v.samarium))
         {
             return Err(Error::NonfiniteResult);
+        }
+        Ok(())
+    }
+    /// [`Model::evaluate`]'s region reactivities split into their terms, at
+    /// the values of `c` (directions ignored), for a reactivity
+    /// decomposition. Each term is the same formula `evaluate` composes, so
+    /// a region's [`ReactivityTerms::total`] equals its reactivity to
+    /// roundoff of the summation order.
+    pub fn reactivity_terms(
+        &self,
+        c: Conditions<'_>,
+        out: &mut [ReactivityTerms],
+    ) -> Result<(), Error> {
+        let p = self.parameters;
+        if out.len() != self.regions.len() {
+            return Err(Error::Length("reactivity terms"));
+        }
+        for (i, region) in self.regions.iter().enumerate() {
+            let rod: f64 = region
+                .rod_weights
+                .iter()
+                .zip(c.achieved_rod_travel_m)
+                .map(|(w, travel)| {
+                    *w / (region.z1_m - region.z0_m)
+                        * overlap(
+                            region.z0_m,
+                            region.z1_m,
+                            s(p.inserted_active_bottom_m + travel.value),
+                            p.rod_active_length_m,
+                        )
+                        .value
+                })
+                .sum();
+            let density = c.water_density_kg_m3[i].value / region.reference_density_kg_m3;
+            out[i] = ReactivityTerms {
+                base: region.rho_base,
+                rods: -p.rod_worth * (rod - region.reference_rod_overlap),
+                water_density: p.water_worth * (density - 1.),
+                boron: p.boron_per_ppm_eq
+                    * (c.boron_ppm_eq[i].value * density - region.reference_boron_ppm_eq),
+                ..ReactivityTerms::default()
+            };
+        }
+        for e in &self.supports {
+            let (i, a) = (e.region, e.material);
+            let material = self.materials[a];
+            let g = e.production_reference_per_s * c.fissile_atoms[a].value
+                / material.reference_fissile_atoms;
+            let h = e.exposure_per_population_s_m2;
+            let fuel = c.fuel_temperature_k[a].value;
+            if !(fuel.is_finite() && fuel > 0.) {
+                return Err(Error::InvalidMetadata(
+                    "unavailable square-root fuel temperature",
+                ));
+            }
+            let t = &mut out[i];
+            t.doppler += p.doppler_per_sqrt_k
+                * e.fuel_importance
+                * (fuel.sqrt() - material.reference_fuel_temperature_k.sqrt());
+            t.fissile +=
+                p.generation_time_s * (p.nu_effective - 1.) * (g - e.production_reference_per_s);
+            t.nonpoison_capture -= p.generation_time_s * h * c.capture_loss_change_m2[a].value;
+            t.xenon -= p.generation_time_s
+                * h
+                * p.sigma_xe_m2
+                * (c.xenon_atoms[a].value - material.reference_xenon_atoms);
+            t.samarium -= p.generation_time_s
+                * h
+                * p.sigma_sm_m2
+                * (c.samarium_atoms[a].value - material.reference_samarium_atoms);
         }
         Ok(())
     }

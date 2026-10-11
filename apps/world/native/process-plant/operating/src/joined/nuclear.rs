@@ -188,6 +188,24 @@ pub struct Nuclear {
     work: Work,
 }
 
+/// The source feedback's inputs of one evaluation, values only.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct FeedbackInputs {
+    pub neutrons: Vec<f64>,
+    /// Per carrier: [mean(sqrt(T_node))]^2.
+    pub fuel_temperature_k: Vec<f64>,
+    /// Per region.
+    pub water_density_kg_m3: Vec<f64>,
+    pub boron_ppm_eq: Vec<f64>,
+    pub pressure_pa: Vec<f64>,
+    pub moderator_temperature_k: Vec<f64>,
+    /// Per carrier.
+    pub fissile_atoms: Vec<f64>,
+    pub xenon_atoms: Vec<f64>,
+    pub samarium_atoms: Vec<f64>,
+    pub capture_loss_change_m2: Vec<f64>,
+}
+
 #[derive(Default)]
 struct Work {
     feedback: Option<sf::Output>,
@@ -895,5 +913,23 @@ impl Nuclear {
     /// fissions, exposures, rod overlap), for receipts and Z3.
     pub fn feedback_output(&self) -> Option<&sf::Output> {
         self.work.feedback.as_ref()
+    }
+    /// The source feedback's inputs of the last evaluation, values only, for
+    /// a reactivity decomposition ([`sf::Model::reactivity_terms`]).
+    pub fn feedback_inputs(&self) -> FeedbackInputs {
+        let v = |x: &[Scalar]| x.iter().map(|s| s.value).collect();
+        let w = &self.work;
+        FeedbackInputs {
+            neutrons: v(&w.neutrons),
+            fuel_temperature_k: v(&w.fuel_t),
+            water_density_kg_m3: v(&w.density),
+            boron_ppm_eq: v(&w.boron),
+            pressure_pa: v(&w.pressure),
+            moderator_temperature_k: v(&w.moderator),
+            fissile_atoms: v(&w.fissile),
+            xenon_atoms: v(&w.xenon),
+            samarium_atoms: v(&w.samarium),
+            capture_loss_change_m2: v(&w.opacity),
+        }
     }
 }
