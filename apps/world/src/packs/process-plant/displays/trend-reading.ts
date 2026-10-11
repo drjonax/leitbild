@@ -370,8 +370,9 @@ export const activeThreshold = <T extends ComposedDisplayThreshold>(
 
 /**
  * What a legend row says of a signal's limits, read in the direction the
- * value moves: the nearest limit in force ahead of it, with the time to it,
- * where it would reach it within half an hour (slower, it reads as steady);
+ * value moves: the nearest limit in force ahead of it, with the time to it
+ * (where its tendency projects none and a limit behind is nearer, it reads
+ * as steady);
  * past one it is moving back across, with the time to it; past the
  * outermost on the side it has gone (moving on or steady); no limit in force
  * that way; no I&C limit at all; or none acting in the current mode. A value
@@ -453,11 +454,14 @@ export const trendReading = (config: {
     if (ahead !== null && isPast(ahead)) {
       return { ...reading, limit: { kind: 'past', margin: ahead, back: { travel: heading, eta: timeToThresholdText(value, rate, ahead.threshold, projectable, true, change), minutes: projectedMinutes(value, rate, ahead.threshold, projectable, true) } } }
     }
-    // A value creeping toward a limit it would not reach in half an hour reads as a steady one: by the nearest
-    // limit in force either way (HMI review of run 23: "51.1 pp below HI 75 %" on a pressurizer level 6.9 pp
-    // above its LO 17 % alarm).
+    // A value creeping toward a limit, one it would not reach in half an hour or one farther than a quarter of
+    // its scale, reads as a steady one where a limit behind it is nearer: by the nearest limit in force either
+    // way (HMI review of run 23: "51.1 pp below HI 75 %" on a pressurizer level 6.9 pp above its LO 17 %
+    // alarm). Nearer the limit ahead, it is named however near the one behind is.
     const minutes = ahead === null || end !== null ? null : minutesToThreshold(value, rate, ahead.threshold)
-    const creeping = ahead !== null && end === null && (minutes === null || minutes > PROJECTION_MAX_MINUTES)
+    const far = ahead !== null && (minutes === null || minutes > PROJECTION_MAX_MINUTES || Math.abs(ahead.margin) > nearReach(resolution))
+    const nearer = ahead === null ? null : coincidentMargin(nearestThresholdMargin(value, inForce)!, inForce)
+    const creeping = ahead !== null && end === null && far && nearer !== null && !isPast(nearer) && nearer.threshold.value !== ahead.threshold.value
     if (ahead !== null && !creeping) {
       return { ...reading, limit: { kind: 'margin', margin: ahead, eta: timeToThresholdText(value, rate, ahead.threshold, projectable, false, change), minutes: projectedMinutes(value, rate, ahead.threshold, projectable) } }
     }
@@ -473,11 +477,13 @@ export const trendReading = (config: {
   // Going nowhere, a value is near a limit only within a quarter of the scale
   // it reads over: farther, a margin says nothing an operator acts on (a
   // tripped core at 0 MW is no "3600 MW below HI ALM").
-  const reach = resolution === null ? Number.POSITIVE_INFINITY : resolution / RESOLUTION_FRACTION * NEAR_FRACTION
-  return { ...reading, limit: margin.margin <= reach ? { kind: 'margin', margin, eta: '', minutes: null } : null }
+  return { ...reading, limit: margin.margin <= nearReach(resolution) ? { kind: 'margin', margin, eta: '', minutes: null } : null }
 }
 
 const NEAR_FRACTION = 0.25
+
+/** How near a limit must be for a margin to it to say something: a quarter of the scale the value reads over (unbounded where it declares none). */
+const nearReach = (resolution: number | null): number => resolution === null ? Number.POSITIVE_INFINITY : resolution / RESOLUTION_FRACTION * NEAR_FRACTION
 
 /**
  * A legend row's limit state in its words: "0.66 MPa above LO 14.8 MPa · ALM

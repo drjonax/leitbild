@@ -50,7 +50,7 @@ describe('how a trend reads now', () => {
     expect(limitStateText(read(slow, slow.at(-1)!.v).limit!, 'MPa')).toBe('0.658 MPa above LO 14.8 MPa · ALM · approaching, not projected')
   })
 
-  test('a value creeping toward a limit it would not reach in half an hour names the nearest limit in force', () => {
+  test('a value creeping toward a far limit names the nearest limit in force', () => {
     // HMI review of run 23: pressurizer level 23.9 % rising slowly read "51.1 pp below HI 75 %", its LO 17 % alarm 6.9 pp away.
     const pzrLimits: ReadonlyArray<ComposedDisplayThreshold> = [
       { ruleId: 'pzr-level-low', label: 'Pressurizer level low', kind: 'alarm', severity: 'warning', operator: '<', direction: 'low', value: 17, order: 1, action: 'ALM' },
@@ -60,9 +60,12 @@ describe('how a trend reads now', () => {
     const reading = read(creeping, creeping.at(-1)!.v, { unit: 'percent', thresholds: pzrLimits, resolution: 0.1, span: { min: 0, max: 100 } })
     expect(reading.travel).toBe('rising')
     expect(limitStateText(reading.limit!, 'percent', 0.1)).toBe('6.9 percentage points above LO 17 % · ALM')
-    // Fast enough to reach the high alarm within half an hour, it names that limit ahead.
+    // So does one rising fast enough to reach the high alarm in half an hour while it is farther than a quarter of the scale away.
     const rising = seconds(120, second => 19.9 + second / 30)
-    expect(limitStateText(read(rising, rising.at(-1)!.v, { unit: 'percent', thresholds: pzrLimits, resolution: 0.1, span: { min: 0, max: 100 } }).limit!, 'percent', 0.1)).toStartWith('51.1 percentage points below HI 75 % · ALM')
+    expect(limitStateText(read(rising, rising.at(-1)!.v, { unit: 'percent', thresholds: pzrLimits, resolution: 0.1, span: { min: 0, max: 100 } }).limit!, 'percent', 0.1)).toBe('6.9 percentage points above LO 17 % · ALM')
+    // Within a quarter of the scale of the limit ahead, it names that limit, though the one behind is nearer.
+    const nearing = seconds(120, second => 53 + second / 60)
+    expect(limitStateText(read(nearing, nearing.at(-1)!.v, { unit: 'percent', thresholds: [...pzrLimits, { ...pzrLimits[0]!, ruleId: 'near-low', value: 50 }], resolution: 0.1, span: { min: 0, max: 100 } }).limit!, 'percent', 0.1)).toStartWith('20.0 percentage points below HI 75 % · ALM')
   })
 
   test('a margin is stated at the resolution its reading is shown in', () => {
@@ -282,8 +285,9 @@ describe('a time to a limit only from an established trend (QA review cases)', (
       const subcooling = read('SUB-MARGIN', 60, horizonMs, hotStandby)
       expect(subcooling.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 16.7 } }, eta: 'reversing', minutes: null })
       expect(subcooling.text).toBe('21.6 °C above LO 16.7 °C · ALM · reversing')
+      // The pressurizer level, rising toward its HI 75 % alarm some 48 pp away, reads by its LO 17 % alarm 9.5 pp behind (HMI review of run 23).
       const level = read('PZR-LVL', 60, horizonMs, hotStandby)
-      expect(level.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 75 } }, minutes: null })
+      expect(level.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 17 } }, minutes: null })
     }
     // Never a time while it bends over toward its bottom, and the model never reaches the limit.
     for (const at of [90, 120, 180, 240]) expect(read('SUB-MARGIN', at, 120_000, hotStandby).reading.limit).toMatchObject({ minutes: null })
