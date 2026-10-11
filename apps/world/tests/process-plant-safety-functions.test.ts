@@ -5,6 +5,9 @@ import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance 
 import { evaluateSafetyFunctions, type SafetyFunctionEvaluation } from '../src/packs/process-plant/safety-functions.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:safety-functions', loopCount: 4 }))
 
@@ -69,7 +72,7 @@ describe('critical safety function status trees', () => {
     expect(heatSink.expected[0]).toContain('shrink')
     expect(statuses.get('subcriticality')).toMatchObject({ status: 'green' })
     expect(statuses.get('rcs-inventory')!.checks).toEqual([])
-  }, 90_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('with every coolant pump stopped core cooling is green on CET and subcooling, with the natural-circulation checks and the CET rise expected', () => {
     // Run 23: the answer escalated on a core-exit temperature rising as natural circulation formed.
@@ -79,13 +82,13 @@ describe('critical safety function status trees', () => {
     expect(coreCooling.checks[1]!.comparisons).toHaveLength(4)
     expect(coreCooling.checks[1]!.comparisons.every(comparison => comparison.combines === 'difference')).toBe(true)
     expect(coreCooling.expected[0]).toContain('rises 10–20 °C above the cold legs')
-  }, 90_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('a tube leak at power keeps inventory green while the check says charging is at its maximum: the trip and SI decision', () => {
     const inventory = judged(after({ actionId: 'steam-generator-tube-leak-a', parameters: { leakPercent: 1.2 } }, 160)).get('rcs-inventory')!
     expect(inventory.status).toBe('green')
     expect(inventory.checks).toMatchObject([{ met: 'no', notMet: expect.stringContaining('trip the reactor and actuate SI') }])
-  }, 90_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('a reactor that does not trip on demand reads subcriticality red; an unpublished signal leaves its branch unknown', () => {
     const runtime = after(null, 2)

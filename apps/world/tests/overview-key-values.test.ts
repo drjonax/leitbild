@@ -4,6 +4,9 @@ import { equipmentKeyValues, leadValuesKey, overviewKeyValues, type PlantNow } f
 import { annunciatorSystems } from '../src/packs/process-plant/displays/annunciators.ts'
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, processPlantOperatingMode } from '../src/packs/process-plant/runtime/index.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 describe('the values a unit overview leads with', () => {
   // The reference Plant after a fault, its protection evaluated each second as a Run does.
@@ -74,7 +77,7 @@ describe('the values a unit overview leads with', () => {
       'vessel.collapsedLiquidLevelPercent',
     ] as never)
     expect(tripped.read('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeGreaterThan(50)
-  }, 30_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('after a trip the heat sink leads before the feed has started, and the injection safety injection delivers once it has', () => {
     const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:key-values-pumps', loopCount: 4 }))
@@ -96,7 +99,7 @@ describe('the values a unit overview leads with', () => {
       'pressurizer.levelPercent',
     ] as never)
     expect(relief.read('safetyInjectionHeader.outletFlowKgPerS' as never)).toBeGreaterThan(30)
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 })
 
 describe('the values equipment opened from the overview leads with', () => {
