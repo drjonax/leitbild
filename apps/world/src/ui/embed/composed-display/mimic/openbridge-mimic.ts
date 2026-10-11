@@ -44,12 +44,14 @@ import { openBridgeDevice, textWidth } from '../../../../packs/process-plant/dis
 /**
  * The flap names the most severe active alarm, with what the I&C does there
  * ("LO-LO · AFW START") and a count of the others (" +2"), as far as the
- * reserved frame has room: first the count goes, then the action, never
- * what it watches, for which the frame always has room. The alarms panel
- * lists every one.
+ * reserved frame has room: first the action goes, which its chip and alarm
+ * row name too, then the count, never what it watches, for which the frame
+ * always has room. So one item counts its alarms alike on every display
+ * that draws it (QA review of run 22: "+2" on the overview, none on the
+ * core detail). The alarms panel lists every one.
  */
 export const flapLabel = (label: { readonly flap: string; readonly flapShort: string }, others: number, frameWidth: number): string => {
-  const forms = [...(others === 0 ? [] : [`${label.flap} +${others}`]), label.flap, ...(others === 0 ? [] : [`${label.flapShort} +${others}`])]
+  const forms = others === 0 ? [label.flap] : [`${label.flap} +${others}`, `${label.flapShort} +${others}`]
   return forms.find(form => textWidth('alertLabel', form) + openBridgeDevice.flapLabelInset <= frameWidth) ?? label.flapShort
 }
 
