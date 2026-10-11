@@ -56,11 +56,12 @@ fn rhs_entries(template: &LinearTemplate, p: &NuclearPartials) -> BTreeMap<(usiz
 #[ignore = "requires the S1 packet, the wiki gates, maintained IF97 and stock IDA/KLU"]
 fn nuclear_partials_against_seeded_rows() {
     let declared = Declared::load();
+    let full = false;
     let settled = settle(&declared, &[46.], Assembly::Blocks)
         .outputs
         .pop()
         .unwrap();
-    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled);
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, full);
     let n = joined.dimension();
     let zero = vec![0.; n];
     joined.evaluate(0., &y, &zero, None, 0., None).unwrap();

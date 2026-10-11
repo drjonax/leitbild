@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 #[ignore = "requires the S1 packet, the wiki gates, maintained IF97 and stock IDA/KLU; zero-time measurement"]
 fn joined_colored_reference_and_klu() {
     prefer_performance_core();
+    let full = std::env::var("LD01_JAC_PREPARED_PORTS").is_err();
     let declared = Declared::load();
     let load_start = load_average();
     let commit = command("git", &["rev-parse", "HEAD"]);
@@ -28,7 +29,7 @@ fn joined_colored_reference_and_klu() {
         y,
         flowing,
         ..
-    } = joined_hot(&declared, &settled);
+    } = joined_hot(&declared, &settled, full);
     let n = joined.dimension();
     let zero = vec![0.; n];
     let started = cpu();
@@ -113,7 +114,7 @@ fn joined_colored_reference_and_klu() {
     let receipt = json!({
         "kind": "s2-z5-joined-colored-reference-NOT-EVIDENCE",
         "team": "JAC",
-        "status": "zero-time measurement at the hot reference; S2 is not declared; the SG secondary and rod ports hold the packet's prepared views and travel",
+        "status": if full { "zero-time measurement at the hot reference; S2 is not declared; the SG secondary and rod owners composed from the joined packet's sections" } else { "zero-time measurement at the hot reference; S2 is not declared; the SG secondary and rod ports hold the packet's prepared views and travel" },
         "clock": "CLOCK_THREAD_CPUTIME_ID, QOS_CLASS_USER_INTERACTIVE",
         "app_commit": commit, "app_dirty": dirty,
         "packet": declared.packet_path, "packet_sha256": sha256_file(&declared.packet_path),

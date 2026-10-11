@@ -363,6 +363,8 @@ fn packet() -> Packet {
                     vapor_relaxation_time_s: 0.5,
                     relaxation_sensitivity: [0.5, 1., 2.],
                     bubble_diameter_m: 0.00075,
+                    bubble_exchange_sensitivity: [0.5, 1., 2.],
+                    bubble_exchange_diameter_sensitivity_m: 0.0005,
                     spray_drop_diameter_m: 0.003,
                     drop_diameter_sensitivity_m: [0.0015, 0.003, 0.006],
                     resolvability_factor: 1000.,

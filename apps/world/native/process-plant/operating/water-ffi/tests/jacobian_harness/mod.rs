@@ -800,7 +800,7 @@ pub struct JoinedHot {
     pub ids: Vec<f64>,
     pub flowing: Value,
 }
-pub fn joined_hot(declared: &Declared, settled: &[f64]) -> JoinedHot {
+pub fn joined_hot(declared: &Declared, settled: &[f64], full: bool) -> JoinedHot {
     use leitbild_operating_plant::{
         initialization::SurfacePolicy,
         joined::{
@@ -808,6 +808,8 @@ pub fn joined_hot(declared: &Declared, settled: &[f64]) -> JoinedHot {
             operator::{Joined, RodPort, SecondaryPort},
             packet,
         },
+        rods::{RodBlock, Section as RodSection},
+        sg::{packet::Section as SecondarySection, secondary::Secondaries},
         thermal::WaterProperties,
     };
     // The settled S1 run's face volume flows and rotor momenta.
@@ -855,36 +857,59 @@ pub fn joined_hot(declared: &Declared, settled: &[f64]) -> JoinedHot {
     .expect("flowing preparation");
     let bytes = std::fs::read(&declared.packet_path).expect("packet");
     let joined_packet: packet::Packet = serde_json::from_slice(&bytes).expect("joined packet");
-    let views = joined_packet
-        .thermal
-        .secondaries
-        .iter()
-        .map(|c| {
-            let p = Scalar::constant(c.pressure_pa);
-            let t = WaterProperties::saturation(&If97, p).unwrap().temperature;
-            SecondaryView {
-                pressure: p,
-                saturation_temperature: Scalar::constant(t.value),
-                liquid_volume: Scalar::constant(c.liquid_volume_m3),
-                steam_present: c.liquid_volume_m3 < c.volume_m3,
-            }
-        })
-        .collect();
-    let travel = joined_packet
-        .feedback_reference
-        .achieved_rod_travel_m
-        .clone();
+    let (secondary, rods) = if full {
+        // The owners from the joined packet's sections (S2-JOIN's full Z1).
+        let raw: Value = serde_json::from_slice(&bytes).expect("packet json");
+        let section: SecondarySection =
+            serde_json::from_value(raw["secondary"].clone()).expect("secondary section");
+        let rods: RodSection = serde_json::from_value(raw["rods"].clone()).expect("rods section");
+        (
+            SecondaryPort::Owner(Box::new(
+                Secondaries::new(&section, &joined_packet.thermal.secondaries, &If97)
+                    .expect("SG secondary owner"),
+            )),
+            RodPort::Owner(Box::new(
+                RodBlock::from_packet(&rods, &declared.packet).expect("rod owner"),
+            )),
+        )
+    } else {
+        let views = joined_packet
+            .thermal
+            .secondaries
+            .iter()
+            .map(|c| {
+                let p = Scalar::constant(c.pressure_pa);
+                let t = WaterProperties::saturation(&If97, p).unwrap().temperature;
+                SecondaryView {
+                    pressure: p,
+                    saturation_temperature: Scalar::constant(t.value),
+                    liquid_volume: Scalar::constant(c.liquid_volume_m3),
+                    steam_present: c.liquid_volume_m3 < c.volume_m3,
+                }
+            })
+            .collect();
+        let travel = joined_packet
+            .feedback_reference
+            .achieved_rod_travel_m
+            .clone();
+        (SecondaryPort::Prepared(views), RodPort::Prepared(travel))
+    };
     let mut joined = Joined::new(
         network,
         &declared.packet,
         &joined_packet,
         If97,
-        SecondaryPort::Prepared(views),
-        RodPort::Prepared(travel),
+        secondary,
+        rods,
     )
     .expect("joined operator");
     let mut y = joined.prepared(&prepared.y).expect("joined preparation");
     let ids = joined.differential(&prepared.differential);
+    if full {
+        joined
+            .prepare_owners(0., &mut y)
+            .expect("owner preparation");
+    }
     joined
         .initialize_surfaces(
             0.,
