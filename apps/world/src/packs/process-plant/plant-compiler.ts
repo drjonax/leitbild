@@ -12,7 +12,7 @@ import {
 import { processPlantComponentRegistry } from './graph/index.ts'
 import { assertProcessPlantVariableValueValid } from './runtime/variable-validation.ts'
 import { processPlantIcConfigSchema, type ProcessPlantProtectionConfig } from './runtime/ic/control-protection-model.ts'
-import { assertProcessPlantIcAnnunciatorEquipmentValid, assertProcessPlantIcOperatingModesValid } from './runtime/ic/control-protection-validation.ts'
+import { assertProcessPlantIcAnnunciatorEquipmentValid, assertProcessPlantIcOperatingModesValid, assertProcessPlantIcSafetyFunctionsValid } from './runtime/ic/control-protection-validation.ts'
 import type { ProcessPlantDefinition } from './config.ts'
 import {
   resolveProcessPlantAutomation,
@@ -162,10 +162,11 @@ export const compileResolvedProcessPlant = (
   definition.validateGraph?.(compiledGraph)
   const initialState = parseInitialState(definition.valueOverrides as Record<string, unknown> | undefined)
   assertInitialStateTargetsDeclaredVariables(compiledGraph, initialState)
-  // Validated once here, so every reader sees declared operating modes, annunciator systems and their references whole.
+  // Validated once here, so every reader sees declared operating modes, annunciator systems, safety functions and their references whole.
   const automation = processPlantIcConfigSchema.parse(definition.automationForGraph(compiledGraph))
   assertProcessPlantIcOperatingModesValid(compiledGraph, automation.operatingModes)
   assertProcessPlantIcAnnunciatorEquipmentValid(compiledGraph, automation.rules)
+  assertProcessPlantIcSafetyFunctionsValid(compiledGraph, automation.safetyFunctions)
   return {
     id: definition.id,
     modelRef: definition.modelRef,

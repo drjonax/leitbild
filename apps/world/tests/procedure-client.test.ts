@@ -48,7 +48,7 @@ describe('procedure client', () => {
     expect(calls).toBe(1)
   })
 
-  test('uses a non-process provider and cannot display unqualified CSF labels as green', async () => {
+  test('uses a non-process provider and shows a CSF colour only by declared criteria', async () => {
     const queries: string[] = []
     const independent: PackProcedureContribution = {
       scopeIdForObject: object => String(object.id),
@@ -62,19 +62,31 @@ describe('procedure client', () => {
       expect(JSON.parse(String(init?.body)).input.resource).toBe('example:one')
       if (url.includes('references.validate')) return Response.json({ kind: 'query', result: { tags: [{ id: 'T', status: 'resolved', warnings: [] }] } })
       if (url.includes('observations.read')) return Response.json({ kind: 'query', result: { signals: [{ signal: { unit: 'degC', label: 'Temperature' }, variable: { value: 21 } }] } })
+      const level = { question: 'Level above 10 %', basis: 'Tree', answer: 'no', comparisons: [
+        { reads: [{ signal: 'L', path: 'tank.levelPercent', label: 'Level', value: 0, unit: 'percent' }], operator: '>', threshold: 10, unit: 'percent', answer: 'no' },
+        { reads: [{ signal: 'F1', path: 'a.flow', label: 'Flow', value: 20, unit: 'kg/s' }, { signal: 'F2', path: 'b.flow', label: 'Flow', value: 10, unit: 'kg/s' }], combines: 'total', measured: 30, operator: '>=', threshold: 27.8, unit: 'kg/s', answer: 'yes' },
+      ] }
       return Response.json({ kind: 'query', result: { assessments: [
-        { id: 'unqualified', title: 'Unqualified', status: 'satisfied', signalsRead: [], simTimeMs: 10 },
-        { id: 'observation', title: 'Observation', status: 'challenged', basis: { qualification: 'observation-only' }, signalsRead: [] },
-        { id: 'qualified', title: 'Qualified', status: 'satisfied', basis: { qualification: 'qualified-criterion' }, signalsRead: [] },
+        { id: 'unqualified', title: 'Unqualified', status: 'green', path: [], simTimeMs: 10 },
+        { id: 'observation', title: 'Observation', status: 'red', procedure: 'FR-X.1', qualification: 'observation-only', path: [] },
+        { id: 'reference', title: 'Reference', status: 'yellow', procedure: 'FR-H.5', meaning: 'Level below span.', qualification: 'reference-model-criteria', path: [level, level] },
+        { id: 'qualified', title: 'Qualified', status: 'green', qualification: 'qualified-criterion', path: [] },
       ] } })
     }) as typeof fetch
     const id = 'run-test' as SimulationRunId
     expect((await validateProcedureTags(id, 'example:one', [{ id: 'T' }], independent)).get('T')?.status).toBe('resolved')
     expect((await readProcedureTagValue(id, 'example:one', { id: 'T' }, independent)).formatted).toBe('21 degC')
-    const results = await evaluateProcedureCsfs(id, 'example:one', ['unqualified', 'observation', 'qualified'], independent)
-    expect(results.get('unqualified')).toMatchObject({ status: 'unknown', qualification: 'not-established', simTimeMs: 10 })
-    expect(results.get('observation')?.status).toBe('unknown')
-    expect(results.get('qualified')?.status).toBe('satisfied')
+    const results = await evaluateProcedureCsfs(id, 'example:one', ['unqualified', 'observation', 'reference', 'qualified'], independent)
+    expect(results.get('unqualified')).toMatchObject({ status: 'unknown', qualification: 'not-established', simTimeMs: 10, reason: 'Assessment criterion qualification is not established.' })
+    expect(results.get('observation')).toMatchObject({ status: 'unknown' })
+    expect(results.get('observation')?.procedure).toBeUndefined()
+    // A colour judged by the provider's declared criteria shows, with each comparison of its path once.
+    expect(results.get('reference')).toMatchObject({ status: 'yellow', procedure: 'FR-H.5', reason: 'Level below span.', qualification: 'reference-model-criteria', signalCount: 2 })
+    expect(results.get('reference')?.signals).toEqual([
+      { id: 'L > 10', label: 'Level', path: 'tank.levelPercent', formatted: '0 percent', operator: '>', expected: 10, matches: false },
+      { id: 'F1|F2 >= 27.8', label: 'Total of F1, F2', formatted: '30 kg/s', operator: '>=', expected: 27.8, matches: true },
+    ])
+    expect(results.get('qualified')?.status).toBe('green')
     expect(queries.every(url => !url.includes('process-plant'))).toBe(true)
   })
 

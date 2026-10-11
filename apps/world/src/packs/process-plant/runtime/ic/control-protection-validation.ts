@@ -1,9 +1,17 @@
 import type { CompiledPlantGraph } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
-import { resolveProcessPlantSignalBinding } from '../../signals.ts'
+import { findProcessPlantSignalBinding, resolveProcessPlantSignalBinding } from '../../signals.ts'
 import type { ProcessPlantSignalReference } from '../../signals.ts'
 import { assertProcessPlantVariableValueValid } from '../variable-validation.ts'
-import type { ProcessPlantIcCondition, ProcessPlantIcEffect, ProcessPlantIcOperatingMode, ProcessPlantIcRule } from './control-protection-model.ts'
+import type {
+  ProcessPlantIcCondition,
+  ProcessPlantIcEffect,
+  ProcessPlantIcOperatingMode,
+  ProcessPlantIcRule,
+  ProcessPlantIcSafetyFunction,
+  ProcessPlantIcSafetyFunctionCondition,
+  ProcessPlantIcStatusTreeNode,
+} from './control-protection-model.ts'
 
 /** `owner` names what holds the condition in messages: "rule pzr-high", "operating mode power-operation". */
 const assertConditionSignalsValid = (
@@ -38,6 +46,54 @@ export const assertProcessPlantIcOperatingModesValid = (
   modes: ReadonlyArray<ProcessPlantIcOperatingMode>,
 ): void => {
   for (const mode of modes) assertConditionSignalsValid(graph, `operating mode ${mode.id}`, mode.condition)
+}
+
+/**
+ * Each critical safety function compares the signals it reads by their type:
+ * a total or difference of numbers, an on/off state only for (in)equality. A
+ * signal the Plant does not publish is left to its evaluation, which reads
+ * the branch as unknown.
+ */
+export const assertProcessPlantIcSafetyFunctionsValid = (
+  graph: CompiledPlantGraph,
+  safetyFunctions: ReadonlyArray<ProcessPlantIcSafetyFunction>,
+): void => {
+  const numeric = (owner: string, reference: ProcessPlantSignalReference): void => {
+    const binding = findProcessPlantSignalBinding(graph, reference)
+    if (binding !== undefined && binding.quantity === 'boolean') throw new Error(`process plant I&C ${owner} adds or subtracts on/off signal ${binding.path}`)
+  }
+  const check = (owner: string, condition: ProcessPlantIcSafetyFunctionCondition): void => {
+    if (condition.type === 'all' || condition.type === 'any') {
+      for (const child of condition.conditions) check(owner, child)
+      return
+    }
+    if (condition.type === 'total') {
+      for (const signal of condition.signals) numeric(owner, signal)
+      return
+    }
+    if (condition.type === 'difference') {
+      numeric(owner, condition.signal)
+      numeric(owner, condition.minus)
+      return
+    }
+    if (findProcessPlantSignalBinding(graph, condition.signal) !== undefined) assertConditionSignalsValid(graph, owner, condition)
+  }
+  const nodes = (owner: string, node: ProcessPlantIcStatusTreeNode): void => {
+    if (!('question' in node)) return
+    check(owner, node.condition)
+    nodes(owner, node.yes)
+    nodes(owner, node.no)
+  }
+  for (const safetyFunction of safetyFunctions) {
+    const owner = `safety function ${safetyFunction.id}`
+    if (safetyFunction.monitored !== undefined) check(owner, safetyFunction.monitored.when)
+    nodes(owner, safetyFunction.tree)
+    for (const item of safetyFunction.checks) {
+      if (item.when !== undefined) check(owner, item.when)
+      check(owner, item.condition)
+    }
+    for (const expectation of safetyFunction.expectations) check(owner, expectation.when)
+  }
 }
 
 const variableFor = (

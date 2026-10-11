@@ -71,11 +71,13 @@ describe('read-only procedure condition evidence', () => {
     expect(capability.output.parse(result)).toMatchObject({ targetObjectId: compiled.id, status: 'satisfied' })
   })
 
-  test('generic CSF observations never invent an automatic adequacy conclusion, and heat-sink discovers the actual loops', () => {
-    const rows = evaluateProcessPlantAssessments(plant, ['subcriticality', 'core-cooling', 'heat-sink', 'rcs-integrity', 'containment', 'rcs-inventory'])
-    expect(rows.every(row => row.status === 'unknown')).toBe(true)
-    expect(rows.every(row => String(row.reason).includes('No qualified automatic CSF criterion'))).toBe(true)
-    expect(rows.find(row => row.id === 'heat-sink')?.signalsRead).toHaveLength(4)
+  test('critical safety functions are judged by declared reference-model trees that read the actual loops, never as qualified criteria', () => {
+    const rows = evaluateProcessPlantAssessments(plant, undefined)
+    expect(rows.map(row => row.id)).toEqual(['subcriticality', 'core-cooling', 'heat-sink', 'rcs-integrity', 'containment', 'rcs-inventory'])
+    expect(rows.every(row => row.qualification === 'reference-model-criteria' && row.automaticCsfQualified === false)).toBe(true)
+    // The two-loop Plant's heat sink reads its two steam generators' levels, not four.
+    const heatSink = rows.find(row => row.id === 'heat-sink') as { path: ReadonlyArray<{ comparisons: ReadonlyArray<unknown> }> }
+    expect(heatSink.path[0]!.comparisons).toHaveLength(2)
     expect(rows.every(row => row.modelDigest === compiled.modelDigest)).toBe(true)
   })
 
@@ -89,7 +91,7 @@ describe('read-only procedure condition evidence', () => {
       if (String(path) === 'core.effectiveReactivityPcm') throw new Error('Acquisition failed')
       return runtime.readVariableSnapshot(path)
     } } }
-    expect(evaluateProcessPlantAssessments(failed, ['subcriticality'])[0]).toMatchObject({ status: 'unknown', unavailableSignals: [{ path: 'core.effectiveReactivityPcm', reason: 'Acquisition failed' }] })
+    expect(evaluateProcessPlantAssessments(failed, ['core-cooling'])[0]).toMatchObject({ status: 'green' })
     const reactivity: ProcessPlantProcedureCondition = { type: 'comparison', signal: processPlantSignalReferenceSchema.parse({ path: 'core.effectiveReactivityPcm' }), operator: '<', value: 0, unit: 'pcm' }
     const frame = evaluate({ type: 'all', conditions: [reactivity, power(1e9)] }, failed)
     expect(frame).toMatchObject({ status: 'challenged', evidence: [{ status: 'unknown', rangeValidity: 'unavailable', reason: 'Acquisition failed' }, { status: 'challenged', variable: { unit: 'MW' } }] })

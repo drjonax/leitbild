@@ -67,7 +67,7 @@ const compileTestSystem = (definition: {
     ? { parameterOverrides: pwrFullPowerParameters(definition.graph, definition.parameters ?? {}) }
     : definition.parameters === undefined ? {} : { parameterOverrides: definition.parameters }),
   ...(definition.initialState === undefined ? {} : { valueOverrides: definition.initialState }),
-  automationForGraph: () => ({ operatingModes: [], annunciatorSystems: [], firstOutGroups: [], rules: [] }),
+  automationForGraph: () => ({ operatingModes: [], annunciatorSystems: [], firstOutGroups: [], safetyFunctions: [], rules: [] }),
 })
 
 const compiledSystem = () => compileTestSystem({

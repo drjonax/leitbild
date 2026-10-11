@@ -1147,12 +1147,12 @@
               {#if evaluation}
                 <strong>
                   {evaluation.label}:
-                  <span class="procedure-csf-status-text {evaluation.status}">{evaluation.status}</span>
+                  <span class="procedure-csf-status-text {evaluation.status}">{evaluation.status.replace('-', ' ')}{evaluation.procedure === undefined ? '' : ` · ${evaluation.procedure}`}</span>
                 </strong>
                 {#if evaluation.reason}
                   <p>{evaluation.reason}</p>
                 {/if}
-                <small>Engineering observations: {evaluation.signalCount} signal{evaluation.signalCount === 1 ? '' : 's'}. Criterion: {evaluation.qualification.replaceAll('-', ' ')}.</small>
+                <small>Status tree path: {evaluation.signalCount} comparison{evaluation.signalCount === 1 ? '' : 's'}. Criterion: {evaluation.qualification.replaceAll('-', ' ')}, not a qualified plant procedure.</small>
                 {#if evaluation.simTimeMs !== undefined}<small>Simulation time: {(evaluation.simTimeMs / 1000).toFixed(1)} s.</small>{/if}
                 {#if csfReadAt}<small>Snapshot received: {csfReadAt}. Refreshes while this window is open.</small>{/if}
                 {#if evaluation.modelRef}<small>Model: {evaluation.modelRef}{evaluation.modelDigest ? ` (${evaluation.modelDigest})` : ''}.</small>{/if}

@@ -4,6 +4,7 @@ import { accumulatorReferenceIcRules } from './reference-ic-accumulator.ts'
 import { referenceAnnunciatorSystems } from './reference-ic-annunciators.ts'
 import { referenceFirstOutGroups } from './reference-ic-first-out-groups.ts'
 import { referenceOperatingModes } from './reference-ic-modes.ts'
+import { referenceSafetyFunctions } from './reference-ic-safety-functions.ts'
 import { balanceOfPlantReferenceIcRules } from './reference-ic-balance-of-plant.ts'
 import { containmentReferenceIcRules } from './reference-ic-containment.ts'
 import { electricalReferenceIcRules } from './reference-ic-electrical.ts'
@@ -22,6 +23,7 @@ export const pressurizedWaterReactorReferenceIcFor = (
   operatingModes: [...referenceOperatingModes],
   annunciatorSystems: [...referenceAnnunciatorSystems],
   firstOutGroups: [...referenceFirstOutGroups],
+  safetyFunctions: [...referenceSafetyFunctions(loops)],
   rules: [
     ...reactorReferenceIcRules(loops),
     ...pressurizerReferenceIcRules(),

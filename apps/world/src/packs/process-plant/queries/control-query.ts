@@ -22,7 +22,8 @@ export const conditionsEvaluateQuerySchema = z.object({
 
 export const assessmentsEvaluateQuerySchema = z.object({
   plantId: idSchema,
-  assessmentIds: z.array(z.string().min(1)).min(1),
+  /** The critical safety functions to judge, by id; every one the Plant declares when absent. */
+  assessmentIds: z.array(z.string().min(1)).min(1).optional(),
 }).strict()
 
 export const processPlantControlQueryKinds = [

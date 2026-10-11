@@ -2983,17 +2983,26 @@ body.rail-resizing {
   color: #64748b;
 }
 
-.procedure-csf-status-text.satisfied,
+.procedure-csf-status-text.green,
 .procedure-csf-signal.satisfied b {
   color: #15803d;
 }
 
-.procedure-csf-status-text.challenged,
+.procedure-csf-status-text.yellow {
+  color: #a16207;
+}
+
+.procedure-csf-status-text.orange {
+  color: #c2410c;
+}
+
+.procedure-csf-status-text.red,
 .procedure-csf-signal.challenged b {
   color: #b42318;
 }
 
 .procedure-csf-status-text.unknown,
+.procedure-csf-status-text.not-monitored,
 .procedure-csf-signal.unknown b {
   color: #64748b;
 }
@@ -3024,13 +3033,25 @@ body.rail-resizing {
   font-size: 12px;
 }
 
-.procedure-csf.satisfied {
+.procedure-csf.green {
   border-color: #bbf7d0;
   color: #166534;
   background: #f0fdf4;
 }
 
-.procedure-csf.challenged {
+.procedure-csf.yellow {
+  border-color: #fde68a;
+  color: #854d0e;
+  background: #fefce8;
+}
+
+.procedure-csf.orange {
+  border-color: #fed7aa;
+  color: #9a3412;
+  background: #fff7ed;
+}
+
+.procedure-csf.red {
   border-color: #fecaca;
   color: #991b1b;
   background: #fff1f2;

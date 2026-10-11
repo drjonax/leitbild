@@ -76,10 +76,21 @@ export interface ProcedureCsfSignalRead {
   readonly matches?: boolean
 }
 
+/** A status tree's colour, unknown where a reading it needs is not available, or not judged in the Plant's state. */
+export type ProcedureCsfStatus = 'green' | 'yellow' | 'orange' | 'red' | 'unknown' | 'not-monitored'
+const procedureCsfStatuses: ReadonlyArray<ProcedureCsfStatus> = ['green', 'yellow', 'orange', 'red', 'unknown', 'not-monitored']
+
+// The criteria a provider may judge a colour by: its own reference-model
+// status trees, or a qualified plant criterion. A row naming neither is shown
+// unknown, whatever colour it reports.
+const judgedCriteria = new Set(['reference-model-criteria', 'qualified-criterion'])
+
 export interface ProcedureCsfEvaluation {
   readonly id: string
   readonly label: string
-  readonly status: 'satisfied' | 'challenged' | 'unknown'
+  readonly status: ProcedureCsfStatus
+  /** The function restoration procedure the colour sends operators to. */
+  readonly procedure?: string
   readonly reason?: string
   readonly signalCount: number
   readonly signals: ReadonlyArray<ProcedureCsfSignalRead>
@@ -365,25 +376,26 @@ export const readProcedureTagValue = async (
   }
 }
 
-const parseProcedureCsfSignalRead = (value: unknown): ProcedureCsfSignalRead => {
-  const row = assertRecord(value, 'procedure CSF signal read row is malformed')
-  const signal = assertRecord(row.signal, 'procedure CSF signal read row requires signal')
-  const variable = assertRecord(row.variable, 'procedure CSF signal read row requires variable')
-  const comparison = optionalRecord(row.comparison)
-  const tagId = stringOrUndefined(signal.tagId)
-  const label = stringOrUndefined(signal.label) ?? tagId ?? stringOrUndefined(variable.path) ?? 'signal'
-  const path = stringOrUndefined(signal.path) ?? stringOrUndefined(variable.path)
-  const unit = stringOrUndefined(signal.unit) ?? stringOrUndefined(variable.unit)
-  const formatted = formatSignalValue(variable.value, unit)
-  const operator = stringOrUndefined(comparison?.operator)
+// One comparison a status tree made: the reading (or the total or difference
+// of several) against its threshold, and whether it held.
+const parseProcedureCsfComparison = (value: unknown): ProcedureCsfSignalRead => {
+  const row = assertRecord(value, 'procedure CSF comparison is malformed')
+  const reads = assertArray(row.reads, 'procedure CSF comparison requires reads').map(read => assertRecord(read, 'procedure CSF reading is malformed'))
+  const names = reads.map(read => assertString(read.signal, 'procedure CSF reading requires signal'))
+  const combines = row.combines === 'total' || row.combines === 'difference' ? row.combines : undefined
+  const unit = stringOrUndefined(row.unit)
+  const measured = combines === undefined ? reads[0]?.value : row.measured
+  const label = combines === 'total' ? `Total of ${names.join(', ')}` : combines === 'difference' ? names.join(' − ') : stringOrUndefined(reads[0]?.label) ?? names[0] ?? 'signal'
+  const operator = assertString(row.operator, 'procedure CSF comparison requires operator')
+  const path = combines === undefined ? stringOrUndefined(reads[0]?.path) : undefined
   return {
-    id: tagId ?? path ?? label,
+    id: `${names.join('|')} ${operator} ${String(row.threshold)}`,
     label,
     ...(path === undefined ? {} : { path }),
-    formatted,
-    ...(operator === undefined ? {} : { operator }),
-    ...(comparison !== null && 'value' in comparison ? { expected: comparison.value } : {}),
-    ...(typeof comparison?.matches === 'boolean' ? { matches: comparison.matches } : {}),
+    formatted: measured === undefined ? 'unavailable' : formatSignalValue(typeof measured === 'number' ? formattedNumber(measured, 3) : measured, unit),
+    operator,
+    expected: row.threshold,
+    ...(row.answer === 'yes' ? { matches: true } : row.answer === 'no' ? { matches: false } : {}),
   }
 }
 
@@ -404,17 +416,21 @@ export const evaluateProcedureCsfs = async (
     const row = assertRecord(item, 'procedure CSF row is malformed')
     const id = assertString(row.id, 'procedure CSF row requires id')
     const label = assertString(row.title, 'procedure CSF row requires title')
-    const status = assertString(row.status, 'procedure CSF row requires status')
-    if (status !== 'satisfied' && status !== 'challenged' && status !== 'unknown') throw new Error(`procedure CSF row has unsupported status: ${status}`)
-    const signalsRead = assertArray(row.signalsRead, 'procedure CSF row requires signalsRead')
-    const signals = signalsRead.map(parseProcedureCsfSignalRead)
-    const qualification = stringOrUndefined(optionalRecord(row.basis)?.qualification) ?? 'not-established'
-    const qualified = qualification === 'qualified-criterion'
+    const status = assertString(row.status, 'procedure CSF row requires status') as ProcedureCsfStatus
+    if (!procedureCsfStatuses.includes(status)) throw new Error(`procedure CSF row has unsupported status: ${status}`)
+    const steps = assertArray(row.path, 'procedure CSF row requires its path').map(step => assertRecord(step, 'procedure CSF path step is malformed'))
+    const compared = steps.flatMap(step => assertArray(step.comparisons, 'procedure CSF path step requires comparisons').map(parseProcedureCsfComparison))
+    const signals = [...new Map(compared.map(signal => [signal.id, signal])).values()]
+    const qualification = stringOrUndefined(row.qualification) ?? 'not-established'
+    const judged = judgedCriteria.has(qualification)
+    const coloured = status !== 'unknown' && status !== 'not-monitored'
+    const procedure = judged && coloured ? stringOrUndefined(row.procedure) : undefined
     return [id, {
       id,
       label,
-      status: qualified && (status === 'satisfied' || status === 'challenged') ? status : 'unknown',
-      ...(!qualified && status !== 'unknown' ? { reason: 'Assessment criterion qualification is not established.' } : typeof row.reason === 'string' ? { reason: row.reason } : {}),
+      status: judged || !coloured ? status : 'unknown',
+      ...(procedure === undefined ? {} : { procedure }),
+      ...(!judged && coloured ? { reason: 'Assessment criterion qualification is not established.' } : typeof row.meaning === 'string' ? { reason: row.meaning } : {}),
       signalCount: signals.length,
       signals,
       qualification,

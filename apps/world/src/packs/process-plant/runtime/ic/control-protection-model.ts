@@ -229,12 +229,160 @@ export const processPlantIcOperatingModeSchema = z.object({
 }).strict()
 export type ProcessPlantIcOperatingMode = z.infer<typeof processPlantIcOperatingModeSchema>
 
+/**
+ * What a branch of a critical safety function status tree compares: one
+ * signal against a value in its native unit; the total of several (the feed
+ * flow into every steam generator); one signal less another (a cold leg
+ * against its steam generator's saturation temperature); or all or any of
+ * these. A signal the Plant does not publish leaves the branch unknown: the
+ * tree never stands in a value for it.
+ */
+export type ProcessPlantIcSafetyFunctionCondition =
+  | {
+      readonly type: 'comparison'
+      readonly signal: ProcessPlantSignalReference
+      readonly operator: ProcessPlantIcComparisonOperator
+      readonly value: number | boolean
+    }
+  | {
+      readonly type: 'total'
+      readonly signals: ReadonlyArray<ProcessPlantSignalReference>
+      readonly operator: ProcessPlantIcComparisonOperator
+      readonly value: number
+    }
+  | {
+      readonly type: 'difference'
+      readonly signal: ProcessPlantSignalReference
+      readonly minus: ProcessPlantSignalReference
+      readonly operator: ProcessPlantIcComparisonOperator
+      readonly value: number
+    }
+  | {
+      readonly type: 'all'
+      readonly conditions: ReadonlyArray<ProcessPlantIcSafetyFunctionCondition>
+    }
+  | {
+      readonly type: 'any'
+      readonly conditions: ReadonlyArray<ProcessPlantIcSafetyFunctionCondition>
+    }
+
+export const processPlantIcSafetyFunctionConditionSchema: z.ZodType<ProcessPlantIcSafetyFunctionCondition> = z.lazy(() => z.union([
+  z.object({
+    type: z.literal('comparison'),
+    signal: processPlantSignalReferenceSchema,
+    operator: processPlantIcComparisonOperatorSchema,
+    value: z.union([z.number().finite(), z.boolean()]),
+  }).strict(),
+  z.object({
+    type: z.literal('total'),
+    signals: z.array(processPlantSignalReferenceSchema).min(2),
+    operator: processPlantIcComparisonOperatorSchema,
+    value: z.number().finite(),
+  }).strict(),
+  z.object({
+    type: z.literal('difference'),
+    signal: processPlantSignalReferenceSchema,
+    minus: processPlantSignalReferenceSchema,
+    operator: processPlantIcComparisonOperatorSchema,
+    value: z.number().finite(),
+  }).strict(),
+  z.object({
+    type: z.literal('all'),
+    conditions: z.array(processPlantIcSafetyFunctionConditionSchema).min(1),
+  }).strict(),
+  z.object({
+    type: z.literal('any'),
+    conditions: z.array(processPlantIcSafetyFunctionConditionSchema).min(1),
+  }).strict(),
+]) as unknown as z.ZodType<ProcessPlantIcSafetyFunctionCondition>)
+
+export const processPlantIcSafetyFunctionColourSchema = z.enum(['green', 'yellow', 'orange', 'red'])
+export type ProcessPlantIcSafetyFunctionColour = z.infer<typeof processPlantIcSafetyFunctionColourSchema>
+
+/**
+ * A status tree: a question that branches on a condition, yes or no, each
+ * branch to a further question or to the function's status: its colour, the
+ * function restoration procedure that colour sends operators to, and what it
+ * means. Each question cites the criterion it follows (`basis`).
+ */
+export type ProcessPlantIcStatusTreeNode =
+  | {
+      readonly question: string
+      readonly basis: string
+      readonly condition: ProcessPlantIcSafetyFunctionCondition
+      readonly yes: ProcessPlantIcStatusTreeNode
+      readonly no: ProcessPlantIcStatusTreeNode
+    }
+  | {
+      readonly status: ProcessPlantIcSafetyFunctionColour
+      readonly procedure?: string
+      readonly meaning: string
+    }
+
+export const processPlantIcStatusTreeNodeSchema: z.ZodType<ProcessPlantIcStatusTreeNode> = z.lazy(() => z.union([
+  z.object({
+    question: z.string().min(1),
+    basis: z.string().min(1),
+    condition: processPlantIcSafetyFunctionConditionSchema,
+    yes: processPlantIcStatusTreeNodeSchema,
+    no: processPlantIcStatusTreeNodeSchema,
+  }).strict(),
+  z.object({
+    status: processPlantIcSafetyFunctionColourSchema,
+    procedure: z.string().min(1).optional(),
+    meaning: z.string().min(1),
+  }).strict(),
+]) as unknown as z.ZodType<ProcessPlantIcStatusTreeNode>)
+
+/**
+ * A critical safety function the Plant's I&C judges by a status tree
+ * ("Heat sink"), declared once, as operators name it and as a display's chip
+ * does where room is short ("HEAT SINK"). A function judged only in some
+ * states (subcriticality, once a reactor trip is demanded) says when, and
+ * what it reads otherwise. Checks are further criteria the procedures judge
+ * beside the tree's colour (natural circulation with no coolant pump
+ * running), each where it applies; expectations are the trends the tree
+ * treats as expected in a state, so they are not read as a challenge.
+ */
+export const processPlantIcSafetyFunctionSchema = z.object({
+  id: idSchema,
+  label: z.string().min(1),
+  shortLabel: z.string().min(1),
+  /** The status tree it follows, cited. */
+  basis: z.string().min(1),
+  monitored: z.object({
+    when: processPlantIcSafetyFunctionConditionSchema,
+    otherwise: z.string().min(1),
+  }).strict().optional(),
+  tree: processPlantIcStatusTreeNodeSchema,
+  checks: z.array(z.object({
+    label: z.string().min(1),
+    basis: z.string().min(1),
+    when: processPlantIcSafetyFunctionConditionSchema.optional(),
+    condition: processPlantIcSafetyFunctionConditionSchema,
+    /** What it means while the check is not met. */
+    notMet: z.string().min(1),
+  }).strict()).default([]),
+  expectations: z.array(z.object({
+    when: processPlantIcSafetyFunctionConditionSchema,
+    text: z.string().min(1),
+  }).strict()).default([]),
+}).strict()
+export type ProcessPlantIcSafetyFunction = z.infer<typeof processPlantIcSafetyFunctionSchema>
+
 export const processPlantIcConfigSchema = z.object({
   operatingModes: z.array(processPlantIcOperatingModeSchema).default([]),
   annunciatorSystems: z.array(processPlantIcAnnunciatorSystemSchema).default([]),
   firstOutGroups: z.array(processPlantIcFirstOutGroupSchema).default([]),
+  /** The critical safety functions, in the order displays show them. */
+  safetyFunctions: z.array(processPlantIcSafetyFunctionSchema).default([]),
   rules: z.array(processPlantIcRuleSchema).default([]),
 }).strict().superRefine((config, ctx) => {
+  const functions = new Set<string>()
+  for (const [index, safetyFunction] of config.safetyFunctions.entries()) {
+    if (functions.has(safetyFunction.id)) ctx.addIssue({ code: 'custom', path: ['safetyFunctions', index, 'id'], message: `safety function ${safetyFunction.id} is declared twice` })
+    functions.add(safetyFunction.id)
+  }
   // A rule names declared modes only, each once.
   const modes = new Set<string>()
   for (const [index, mode] of config.operatingModes.entries()) {
