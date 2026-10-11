@@ -22,6 +22,7 @@ import type { NorwayModelBuildInputs } from './inputs.ts'
 import { buildExternalSystems, buildHvdcLinks, excludedInterconnectors, topologyInterconnectors } from './interconnectors.ts'
 import { createBuildLedger, type BuildLedgerEntry } from './ledger.ts'
 import { buildLoads, loadKindRules, minimumShareMw, municipalAttachmentLimitKm } from './loads.ts'
+import { knownGaps, type KnownGap } from './known-gaps.ts'
 import { allocateByPopulation } from './population-weights.ts'
 import { inferShunts, mainNetwork, toGridBus, toGridLine, toGridTransformer } from './network.ts'
 import { buildOperatingPoints, dispatchRule } from './operating-points.ts'
@@ -56,6 +57,8 @@ export interface GridModelLedger {
   readonly excludedInterconnectors: ReadonlyArray<{ readonly id: string; readonly reason: string }>
   /** Per station bus of several OSM features or absorbed tee vertices: what its audit footprint covers. */
   readonly stationTerminals: Readonly<Record<string, { readonly featureIds: ReadonlyArray<string>; readonly junctionPoints: ReadonlyArray<readonly [number, number]> }>>
+  /** Equipment in service the model cannot represent yet (known-gaps.ts). */
+  readonly knownGaps: ReadonlyArray<KnownGap>
   readonly summary: { readonly topology: TopologySummary; readonly build: Readonly<Record<string, number>>; readonly geometryUnresolved: ReadonlyArray<string> }
   readonly build: ReadonlyArray<BuildLedgerEntry>
   /** Element ids of the filtering reasons, per reason. */
@@ -288,6 +291,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
       rules: buildRules,
       excludedInterconnectors: excludedInterconnectors(inputs.interconnectors.data),
       stationTerminals: stationTerminalsOf(main.buses),
+      knownGaps: knownGaps(model),
       summary: { topology: topology.summary, build: counts, geometryUnresolved: geometry.unresolved },
       build: buildEntries,
       topologyFiltered: Object.fromEntries([...filteringReasons].sort().map(reason => [reason,
