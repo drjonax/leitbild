@@ -45,6 +45,9 @@ jobs:
               echo "$commit $profile: $(tail -1 "$out/linux-$commit-$profile.log")"
             done
           done
+      - name: The fixed guard at this branch, release (CI's own job runs debug)
+        working-directory: apps/world/native/process-plant/operating
+        run: cargo test --locked --release --test heater_shared_thermal_digest -- --nocapture
       - name: Probe the libm functions the laws call
         run: |
           probe="$(mktemp -d)"
