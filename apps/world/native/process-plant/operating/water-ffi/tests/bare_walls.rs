@@ -202,10 +202,10 @@ fn bare_bands_contact_as_with_rods_and_their_joule_power_enters_the_steel() {
             &If97,
         )
         .unwrap();
-    for k in 0..5 {
-        assert_eq!(heated.walls[k].joule_w.value, joule[k]);
+    for (k, &power) in joule.iter().enumerate() {
+        assert_eq!(heated.walls[k].joule_w.value, power);
         let d = heated.walls[k].metal_rate.value - alone.walls[k].metal_rate.value;
-        assert!((d - joule[k]).abs() <= 1e-9 * (1. + alone.walls[k].metal_rate.value.abs()));
+        assert!((d - power).abs() <= 1e-9 * (1. + alone.walls[k].metal_rate.value.abs()));
     }
     assert!(
         w.rates_with(
