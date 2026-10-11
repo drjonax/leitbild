@@ -90,6 +90,11 @@ pub struct WallWater {
     pub mass_flux: Scalar,
 }
 
+/// Wall water a local refresh replaced: (slot, previous water).
+#[must_use = "restore the replaced wall water after the local call"]
+#[derive(Debug)]
+pub struct ReplacedWall(Vec<(usize, Option<WallWater>)>);
+
 /// Elements of one local evaluation, by index: core halves, passive
 /// contacts, plenum contacts and SG segments.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -599,19 +604,34 @@ impl Solids {
     }
 
     /// [`Solids::wall_water`] for the listed network cells only (those that
-    /// are wall cells); every other wall cell keeps its last water.
+    /// are wall cells); every other wall cell keeps its last water. It
+    /// returns the replaced water, which [`Solids::restore_wall_water`] puts
+    /// back so a local call leaves no seeded water behind; on a refusal it
+    /// restores it itself.
     pub fn wall_water_local<P: WaterProperties>(
         &mut self,
         properties: &P,
         fluid: &Fluid<'_>,
         cells: &[usize],
-    ) -> Result<(), Failure> {
+    ) -> Result<ReplacedWall, Failure> {
+        let mut replaced = ReplacedWall(Vec::with_capacity(cells.len()));
         for cell in cells {
             if let Some(k) = self.wall_slot.get(*cell).copied().flatten() {
-                self.wall_water_at_slot(properties, fluid, k)?;
+                replaced.0.push((k, self.wall[k]));
+                if let Err(e) = self.wall_water_at_slot(properties, fluid, k) {
+                    self.restore_wall_water(replaced);
+                    return Err(e);
+                }
             }
         }
-        Ok(())
+        Ok(replaced)
+    }
+
+    /// Put back the wall water a [`Solids::wall_water_local`] call replaced.
+    pub fn restore_wall_water(&mut self, replaced: ReplacedWall) {
+        for (k, w) in replaced.0.into_iter().rev() {
+            self.wall[k] = w;
+        }
     }
 
     fn wall_water_at_slot<P: WaterProperties>(

@@ -128,6 +128,21 @@ struct Blocks<P> {
     /// A root evaluation collects the rod owner's roots on the same fluid
     /// state ([`Joined::roots`]).
     rod_roots: Option<Vec<f64>>,
+    /// The rod owner's network reads and receipt cells, for local coupling.
+    rod_reads: Option<RodReads>,
+    /// Per SG: the secondary owner's own coordinates its view reads.
+    secondary_outputs: Vec<Vec<usize>>,
+}
+
+/// Network cells and faces any rod row or receipt reads, and the cells its
+/// receipts enter (from the owner's [`Structure`](super::block::Structure)).
+#[derive(Clone, Debug)]
+struct RodReads {
+    cells: Vec<bool>,
+    faces: Vec<bool>,
+    receipt_cells: Vec<usize>,
+    /// Cells whose volume the rods move.
+    volume_cells: Vec<usize>,
 }
 
 pub struct Joined<P: Properties> {
@@ -252,10 +267,47 @@ impl<P: Properties + WaterProperties> Joined<P> {
                 RodPort::Prepared(_) => Scales::default(),
             },
         ];
+        let rod_reads = match &rods {
+            RodPort::Owner(b) => {
+                let st = b.structure();
+                let mut reads = RodReads {
+                    cells: vec![false; cells],
+                    faces: vec![false; faces.len()],
+                    receipt_cells: st.receipts.iter().map(|r| r.0).collect(),
+                    volume_cells: st.volumes.iter().map(|v| v.0).collect(),
+                };
+                for c in st
+                    .cells
+                    .iter()
+                    .flatten()
+                    .chain(st.receipts.iter().flat_map(|r| &r.2))
+                {
+                    *reads.cells.get_mut(*c).ok_or_else(|| {
+                        fatal("rod structure reads a cell outside the regular cells")
+                    })? = true;
+                }
+                for f in st.faces.iter().flatten() {
+                    *reads
+                        .faces
+                        .get_mut(*f)
+                        .ok_or_else(|| fatal("rod structure reads an unknown face"))? = true;
+                }
+                reads.receipt_cells.sort_unstable();
+                reads.receipt_cells.dedup();
+                Some(reads)
+            }
+            RodPort::Prepared(_) => None,
+        };
+        let secondary_outputs = match &secondary {
+            SecondaryPort::Owner(b) => b.structure().outputs,
+            SecondaryPort::Prepared(_) => Vec::new(),
+        };
         let blocks = Blocks {
             scales,
             prepare: None,
             rod_roots: None,
+            rod_reads,
+            secondary_outputs,
             nuclear_rows: vec![s(0.); nuclear.layout().len()],
             solid_rows: vec![s(0.); solids.layout().len()],
             secondary_rows: vec![s(0.); secondary_len],
@@ -697,18 +749,29 @@ impl<P: Properties + WaterProperties> Joined<P> {
     }
 
     /// The network and a local coupler over the blocks, borrowed disjointly,
-    /// for a block Jacobian's network columns at `(y, y')` and `cj`.
+    /// for a block Jacobian's network columns at `(t, y, y')` and `cj`.
     pub fn local_parts<'a>(
         &'a mut self,
+        t: f64,
         y: &'a [f64],
         yp: &'a [f64],
         cj: f64,
     ) -> (&'a Network<P>, LocalCoupler<'a, P>) {
         let endpoints = self.faces.iter().map(|f| (f.from, f.to)).collect();
+        let rod_rows = vec![s(0.); self.blocks.rod_rows.len()];
+        let scratch = Scratch {
+            seed: vec![0.; self.blocks.offsets.end],
+            secondary_rows: vec![s(0.); self.blocks.secondary_rows.len()],
+            sink: vec![[[s(0.); 3]; 2]; self.blocks.compiled_volumes.len()],
+            ..Scratch::default()
+        };
         (
             &self.network,
             LocalCoupler {
                 blocks: &mut self.blocks,
+                t,
+                rod_rows,
+                scratch,
                 y,
                 yp,
                 cj,
@@ -1227,6 +1290,44 @@ fn region_water(fluid: &Fluid<'_>, i: usize, j: usize) -> Result<RegionWater, Fa
     })
 }
 
+/// What one owner column of a block Jacobian moved, all with their
+/// directions for a unit seed on the column: global joined rows in solver
+/// scaling (solids, secondary and rods), the feedback fuel temperature per
+/// carrier, travel per cluster, moving cell volumes and the complete
+/// metal-to-secondary heat per SG reached.
+#[derive(Clone, Debug, Default)]
+pub struct OwnerRows {
+    pub rows: Vec<(usize, Scalar)>,
+    pub fuel_t: Vec<(usize, Scalar)>,
+    pub travel: Vec<(usize, Scalar)>,
+    pub volumes: Vec<(usize, CellVolume)>,
+    pub secondary_w: Vec<(usize, Scalar)>,
+}
+impl OwnerRows {
+    fn clear(&mut self) {
+        self.rows.clear();
+        self.fuel_t.clear();
+        self.travel.clear();
+        self.volumes.clear();
+        self.secondary_w.clear();
+    }
+}
+
+/// Reused buffers of the owner columns.
+#[derive(Default)]
+struct Scratch {
+    /// Global unit seed, zero outside the current column.
+    seed: Vec<f64>,
+    temperatures: solids::Temperatures,
+    views: Vec<SecondaryView>,
+    heat_w: Vec<Scalar>,
+    secondary_rows: Vec<Scalar>,
+    travel: Vec<Scalar>,
+    volumes: Vec<CellVolume>,
+    /// Receipts of a port whose receipts must stay without direction.
+    sink: Vec<[[Scalar; 3]; 2]>,
+}
+
 /// What one local coupling call re-evaluated: global joined rows in solver
 /// scaling, the source feedback's water of the regions whose owner cell is
 /// listed, and the complete metal-to-secondary heat of each SG reached.
@@ -1239,12 +1340,15 @@ pub struct LocalRows {
 
 /// The joined blocks' port terms for one network column of a block
 /// Jacobian, on a borrow disjoint from the network ([`Joined::local_parts`]).
-/// It requires a preceding [`Joined::evaluate`] at the same `(t, y, y')`:
-/// temperatures, nuclear heat and SG views are that evaluation's, and the
-/// owners' coordinates are read unseeded, since a network column moves only
-/// the fluid.
+/// It requires a preceding unseeded [`Joined::evaluate`] at the same
+/// `(t, y, y')`: temperatures, nuclear heat, SG views and every wall water
+/// outside the column are that evaluation's, and the owners' coordinates
+/// are read unseeded, since a network column moves only the fluid.
 pub struct LocalCoupler<'a, P> {
     blocks: &'a mut Blocks<P>,
+    t: f64,
+    rod_rows: Vec<Scalar>,
+    scratch: Scratch,
     y: &'a [f64],
     yp: &'a [f64],
     cj: f64,
@@ -1293,11 +1397,21 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
                 .collect(),
         })
     }
+    /// Whether the rod owner reads any of `cells` or `faces`.
+    fn rods_reached(&self, cells: &[usize], faces: &[usize]) -> bool {
+        self.blocks
+            .rod_reads
+            .as_ref()
+            .is_some_and(|r| cells.iter().any(|c| r.cells[*c]) || faces.iter().any(|f| r.faces[*f]))
+    }
     /// Re-evaluate only the port terms reading `cells` (whose fluid state
     /// moved) and `faces` (whose liquid flux moved), closed over incidence,
     /// adding their receipts into `receipts`. [`LocalCoupler::last`] then
     /// holds every row they complete, value for value equal to the full
-    /// coupling's.
+    /// coupling's. The column's wall water is refreshed for the call and
+    /// put back after it, so every other column reads the base water. The
+    /// rod owner, when it reads a listed cell or face, is evaluated whole:
+    /// its rows and guide receipts.
     pub fn local(
         &mut self,
         cells: &[usize],
@@ -1318,27 +1432,31 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             source_water,
             ..
         } = &mut *self.blocks;
-        solids.wall_water_local(properties, fluid, &wall)?;
-        let x = view(
+        let replaced = solids.wall_water_local(properties, fluid, &wall)?;
+        let solved = view(
             self.y,
             self.yp,
             None,
             self.cj,
             o.solids..o.secondary,
             &scales[1].coordinates,
-        )?;
-        solids.rows_local(
-            properties,
-            x,
-            temperatures,
-            &heats.nuclear.fuel_w,
-            fluid,
-            views,
-            &scope,
-            receipts,
-            &mut self.solid_rows,
-            &mut self.heat,
-        )?;
+        )
+        .and_then(|x| {
+            solids.rows_local(
+                properties,
+                x,
+                temperatures,
+                &heats.nuclear.fuel_w,
+                fluid,
+                views,
+                &scope,
+                receipts,
+                &mut self.solid_rows,
+                &mut self.heat,
+            )
+        });
+        solids.restore_wall_water(replaced);
+        solved?;
         self.last.rows.clear();
         self.last.rows.extend(
             self.solid_rows
@@ -1358,6 +1476,33 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
                 self.last.water.push((i, region_water(fluid, i, *j)?));
             }
         }
+        if self.rods_reached(cells, faces) {
+            let Blocks {
+                properties,
+                rods,
+                scales,
+                ..
+            } = &mut *self.blocks;
+            let RodPort::Owner(b) = rods else {
+                return Err(fatal("rod reads without a rod owner"));
+            };
+            let x = view(
+                self.y,
+                self.yp,
+                None,
+                self.cj,
+                o.rods..o.end,
+                &scales[3].coordinates,
+            )?;
+            b.rows(properties, self.t, x, fluid, receipts, &mut self.rod_rows)?;
+            self.last.rows.extend(
+                self.rod_rows
+                    .iter()
+                    .zip(&scales[3].rows)
+                    .enumerate()
+                    .map(|(i, (r, row_scale))| (o.rods + i, *r / s(*row_scale))),
+            );
+        }
         Ok(())
     }
     pub fn last(&self) -> &LocalRows {
@@ -1372,15 +1517,24 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
         let sol = &self.blocks.solids;
         let o = self.blocks.offsets;
         let incidence = sol.incidence();
+        let rods = self.rods_reached(cells, faces);
+        let rod_receipts = self
+            .blocks
+            .rod_reads
+            .iter()
+            .filter(|_| rods)
+            .flat_map(|r| r.receipt_cells.iter().copied());
         let mut receipt_cells: Vec<usize> = scope
             .bands
             .iter()
             .flat_map(|b| incidence.halves[*b].1.iter().copied())
             .chain(scope.passive.iter().map(|k| incidence.passive[*k].1))
             .chain(scope.segments.iter().map(|k| incidence.segments[*k].0))
+            .chain(rod_receipts)
             .collect();
         receipt_cells.sort_unstable();
         receipt_cells.dedup();
+        let rod_rows = if rods { o.rods..o.end } else { 0..0 };
         let mut rows: Vec<usize> = scope
             .bands
             .iter()
@@ -1389,9 +1543,401 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             .chain(scope.stores.iter().map(|p| sol.passive(*p)))
             .chain(scope.segments.iter().map(|g| sol.metal(*g)))
             .map(|i| o.solids + i)
+            .chain(rod_rows)
             .collect();
         rows.sort_unstable();
         (receipt_cells, rows)
+    }
+
+    /// One solid, secondary or rod column (global index): every owner term
+    /// that reads it, with a unit seed on it at the base state and the fluid
+    /// unseeded, adding the owners' receipt directions into `receipts`.
+    /// - Solids: the closed scope of the elements reading the column, with
+    ///   the seeded store's temperature; the feedback fuel temperature of a
+    ///   fuel energy; the heat of every SG reached.
+    /// - Secondary: the seeded views of the SGs reading the column, their
+    ///   segments' metal rows, then the secondary rows with the seeded own
+    ///   coordinates and the seeded heat. The heat's path is therefore
+    ///   already in `rows`, and `secondary_w` stays empty: chaining it again
+    ///   through [`LocalCoupler::secondary_heat_column`] would count it twice.
+    /// - Rods: travel, moving volumes, every rod row and the guide receipts.
+    pub fn owner_column(
+        &mut self,
+        column: usize,
+        fluid: &Fluid<'_>,
+        receipts: &mut Receipts<'_>,
+        out: &mut OwnerRows,
+    ) -> Result<(), Failure> {
+        let o = self.blocks.offsets;
+        out.clear();
+        if !(o.solids..o.end).contains(&column) {
+            return Err(fatal(format!(
+                "owner column {column} outside the solid, secondary and rod coordinates"
+            )));
+        }
+        self.scratch.seed[column] = 1.;
+        let result = if column < o.secondary {
+            self.solid_column(column - o.solids, fluid, receipts, out)
+        } else if column < o.rods {
+            self.secondary_column(column - o.secondary, fluid, receipts, out)
+        } else {
+            self.rod_column(fluid, receipts, out)
+        };
+        self.scratch.seed[column] = 0.;
+        result
+    }
+
+    /// The solids' rows reading local solid coordinate `i`.
+    fn solid_column(
+        &mut self,
+        i: usize,
+        fluid: &Fluid<'_>,
+        receipts: &mut Receipts<'_>,
+        out: &mut OwnerRows,
+    ) -> Result<(), Failure> {
+        let o = self.blocks.offsets;
+        let Blocks {
+            properties,
+            solids,
+            temperatures,
+            views,
+            heats,
+            scales,
+            ..
+        } = &mut *self.blocks;
+        let incidence = solids.incidence();
+        let halves = solids.halves();
+        let energies = 3 * halves;
+        let mut scope = solids::SolidScope::default();
+        let mut store = None;
+        if i < 2 * energies {
+            // A half's energy or surface: that half alone reads it.
+            let a = if i < energies {
+                i / 3
+            } else {
+                (i - energies) / 3
+            };
+            scope.bands.push(a);
+            if i < energies {
+                store = Some(i);
+            }
+        } else if (solids.helium(0)..solids.passive(0)).contains(&i) {
+            let h = i - solids.helium(0);
+            scope.bands = (0..halves)
+                .filter(|b| incidence.halves[*b].0 == h)
+                .collect();
+            scope.plenum = (0..incidence.plenum.len())
+                .filter(|c| incidence.plenum[*c].0 == h)
+                .collect();
+            store = Some(i);
+        } else if (solids.passive(0)..solids.metal(0)).contains(&i) {
+            let p = i - solids.passive(0);
+            scope.passive = (0..incidence.passive.len())
+                .filter(|c| incidence.passive[*c].0 == p)
+                .collect();
+            scope.plenum = (0..incidence.plenum.len())
+                .filter(|c| incidence.plenum[*c].1 == p)
+                .collect();
+            store = Some(i);
+        } else {
+            scope.segments.push(i - solids.metal(0));
+            store = Some(i);
+        }
+        let closed = solids.close(&scope);
+        let x = view(
+            self.y,
+            self.yp,
+            Some(&self.scratch.seed),
+            self.cj,
+            o.solids..o.secondary,
+            &scales[1].coordinates,
+        )?;
+        let seeded = &mut self.scratch.temperatures;
+        seeded.clone_from(temperatures);
+        if let Some(k) = store {
+            solids.temperatures_local(x, &[k], seeded)?;
+        }
+        solids.rows_local(
+            properties,
+            x,
+            seeded,
+            &heats.nuclear.fuel_w,
+            fluid,
+            views,
+            &closed,
+            receipts,
+            &mut self.solid_rows,
+            &mut self.heat,
+        )?;
+        out.rows.extend(
+            self.solid_rows
+                .iter()
+                .map(|(r, v)| (o.solids + r, *v / s(scales[1].rows[*r]))),
+        );
+        if i < energies && i % 3 < 2 {
+            let a = i / 3;
+            out.fuel_t.push((
+                a,
+                thermal::fuel_feedback_temperature(seeded.fuel[a][0], seeded.fuel[a][1])
+                    .map_err(trial)?,
+            ));
+        }
+        out.secondary_w.extend(
+            closed
+                .generators
+                .iter()
+                .map(|g| (*g, self.heat.secondary_w[*g])),
+        );
+        Ok(())
+    }
+
+    /// The SG views, metal rows and secondary rows reading local secondary
+    /// coordinate `j`.
+    fn secondary_column(
+        &mut self,
+        j: usize,
+        fluid: &Fluid<'_>,
+        receipts: &mut Receipts<'_>,
+        out: &mut OwnerRows,
+    ) -> Result<(), Failure> {
+        let o = self.blocks.offsets;
+        let t = self.t;
+        let Blocks {
+            properties,
+            solids,
+            secondary,
+            temperatures,
+            views,
+            heats,
+            scales,
+            secondary_outputs,
+            ..
+        } = &mut *self.blocks;
+        let SecondaryPort::Owner(b) = secondary else {
+            return Err(fatal("a secondary column without a secondary owner"));
+        };
+        let x = view(
+            self.y,
+            self.yp,
+            Some(&self.scratch.seed),
+            self.cj,
+            o.secondary..o.rods,
+            &scales[2].coordinates,
+        )?;
+        let seeded = &mut self.scratch.views;
+        seeded.clone_from(views);
+        b.views(properties, x, seeded)?;
+        let generators: Vec<usize> = (0..secondary_outputs.len())
+            .filter(|k| secondary_outputs[*k].contains(&j))
+            .collect();
+        let heat_w = &mut self.scratch.heat_w;
+        heat_w.clone_from(&heats.solids.secondary_w);
+        if !generators.is_empty() {
+            let incidence = solids.incidence();
+            let closed = solids.close(&solids::SolidScope {
+                segments: (0..incidence.segments.len())
+                    .filter(|g| generators.contains(&incidence.segments[*g].1))
+                    .collect(),
+                ..solids::SolidScope::default()
+            });
+            let xs = view(
+                self.y,
+                self.yp,
+                None,
+                self.cj,
+                o.solids..o.secondary,
+                &scales[1].coordinates,
+            )?;
+            solids.rows_local(
+                properties,
+                xs,
+                temperatures,
+                &heats.nuclear.fuel_w,
+                fluid,
+                seeded,
+                &closed,
+                receipts,
+                &mut self.solid_rows,
+                &mut self.heat,
+            )?;
+            out.rows.extend(
+                self.solid_rows
+                    .iter()
+                    .map(|(r, v)| (o.solids + r, *v / s(scales[1].rows[*r]))),
+            );
+            for g in &closed.generators {
+                heat_w[*g] = self.heat.secondary_w[*g];
+            }
+        }
+        let rows = &mut self.scratch.secondary_rows;
+        b.rows(properties, t, x, heat_w, rows)?;
+        out.rows.extend(
+            rows.iter()
+                .zip(&scales[2].rows)
+                .enumerate()
+                .map(|(i, (r, row_scale))| (o.secondary + i, *r / s(*row_scale))),
+        );
+        Ok(())
+    }
+
+    /// Travel, moving volumes, rod rows and guide receipts for the seeded
+    /// rod coordinate.
+    fn rod_column(
+        &mut self,
+        fluid: &Fluid<'_>,
+        receipts: &mut Receipts<'_>,
+        out: &mut OwnerRows,
+    ) -> Result<(), Failure> {
+        let o = self.blocks.offsets;
+        let Blocks {
+            properties,
+            rods,
+            scales,
+            compiled_volumes,
+            rod_reads,
+            ..
+        } = &mut *self.blocks;
+        let RodPort::Owner(b) = rods else {
+            return Err(fatal("a rod column without a rod owner"));
+        };
+        let x = view(
+            self.y,
+            self.yp,
+            Some(&self.scratch.seed),
+            self.cj,
+            o.rods..o.end,
+            &scales[3].coordinates,
+        )?;
+        let travel = &mut self.scratch.travel;
+        travel.resize(b.clusters(), s(0.));
+        b.travel(x, travel)?;
+        out.travel.extend(travel.iter().copied().enumerate());
+        let volumes = &mut self.scratch.volumes;
+        volumes.resize(
+            compiled_volumes.len(),
+            CellVolume {
+                volume_m3: s(0.),
+                rate_m3_s: s(0.),
+            },
+        );
+        b.volumes(x, compiled_volumes, volumes)?;
+        let moved = rod_reads.as_ref().map_or(&[][..], |r| &r.volume_cells[..]);
+        out.volumes.extend(moved.iter().map(|c| (*c, volumes[*c])));
+        b.rows(properties, self.t, x, fluid, receipts, &mut self.rod_rows)?;
+        out.rows.extend(
+            self.rod_rows
+                .iter()
+                .zip(&scales[3].rows)
+                .enumerate()
+                .map(|(i, (r, row_scale))| (o.rods + i, *r / s(*row_scale))),
+        );
+        Ok(())
+    }
+
+    /// The owner rows' response to a unit direction (W) in carrier `a`'s
+    /// fuel heat, the nuclear block's `fuel_w` port: that half's rows through
+    /// the solids' own split, every coordinate and the fluid unseeded. The
+    /// fuel heat enters no receipt; a receipt direction is refused.
+    pub fn fuel_heat_column(
+        &mut self,
+        a: usize,
+        fluid: &Fluid<'_>,
+        out: &mut OwnerRows,
+    ) -> Result<(), Failure> {
+        let o = self.blocks.offsets;
+        out.clear();
+        let Blocks {
+            properties,
+            solids,
+            temperatures,
+            views,
+            heats,
+            scales,
+            ..
+        } = &mut *self.blocks;
+        if a >= solids.halves() {
+            return Err(fatal(format!("fuel heat carrier {a} outside the halves")));
+        }
+        let closed = solids.close(&solids::SolidScope {
+            bands: vec![a],
+            ..solids::SolidScope::default()
+        });
+        let x = view(
+            self.y,
+            self.yp,
+            None,
+            self.cj,
+            o.solids..o.secondary,
+            &scales[1].coordinates,
+        )?;
+        let fuel_w = &mut self.scratch.heat_w;
+        fuel_w.clone_from(&heats.nuclear.fuel_w);
+        fuel_w[a] = Scalar::new(fuel_w[a].value, 1.);
+        let sink = &mut self.scratch.sink;
+        sink.fill([[s(0.); 3]; 2]);
+        solids.rows_local(
+            properties,
+            x,
+            temperatures,
+            fuel_w,
+            fluid,
+            views,
+            &closed,
+            &mut Receipts::new(sink),
+            &mut self.solid_rows,
+            &mut self.heat,
+        )?;
+        if sink.iter().flatten().flatten().any(|r| r.direction != 0.) {
+            return Err(fatal(
+                "fuel heat reaches a network receipt: fuel_heat_column needs a receipt port",
+            ));
+        }
+        out.rows.extend(
+            self.solid_rows
+                .iter()
+                .map(|(r, v)| (o.solids + r, *v / s(scales[1].rows[*r]))),
+        );
+        Ok(())
+    }
+
+    /// The secondary rows' response to a unit direction (W) in SG `g`'s
+    /// metal-to-secondary heat, every coordinate unseeded.
+    pub fn secondary_heat_column(&mut self, g: usize, out: &mut OwnerRows) -> Result<(), Failure> {
+        let o = self.blocks.offsets;
+        out.clear();
+        let Blocks {
+            properties,
+            secondary,
+            heats,
+            scales,
+            ..
+        } = &mut *self.blocks;
+        let SecondaryPort::Owner(b) = secondary else {
+            return Err(fatal("a secondary heat column without a secondary owner"));
+        };
+        let heat_w = &mut self.scratch.heat_w;
+        heat_w.clone_from(&heats.solids.secondary_w);
+        let Some(h) = heat_w.get_mut(g) else {
+            return Err(fatal(format!("secondary heat column {g} outside the SGs")));
+        };
+        *h = Scalar::new(h.value, 1.);
+        let x = view(
+            self.y,
+            self.yp,
+            None,
+            self.cj,
+            o.secondary..o.rods,
+            &scales[2].coordinates,
+        )?;
+        let rows = &mut self.scratch.secondary_rows;
+        b.rows(properties, self.t, x, heat_w, rows)?;
+        out.rows.extend(
+            rows.iter()
+                .zip(&scales[2].rows)
+                .enumerate()
+                .map(|(i, (r, row_scale))| (o.secondary + i, *r / s(*row_scale))),
+        );
+        Ok(())
     }
 }
 
