@@ -716,6 +716,31 @@ fn trip_release_seat_and_the_stuck_cluster_follow_the_modes() {
 }
 
 #[test]
+fn the_holding_opening_releases_every_held_cluster_once_as_a_time_event() {
+    let water = z4_field(0.);
+    let mut b = block(SpiderDrag::Omitted);
+    let mut physical = held(&mut b, &water, 2.8);
+    b.set_failed_release(5);
+    assert!(Rods::<()>::time_event(&mut b, &(), 1.7, &mut physical).unwrap().is_none());
+    Rods::<()>::command(&mut b, 1.5, Command::TurbineTrip).unwrap();
+    let open = Rods::<()>::next_time_event(&b, 1.5).unwrap();
+    assert!(Rods::<()>::time_event(&mut b, &(), 1.6, &mut physical).unwrap().is_none());
+    let before = physical.clone();
+    let tx = Rods::<()>::time_event(&mut b, &(), open, &mut physical)
+        .unwrap()
+        .expect("the opening is due");
+    assert!(tx.deposits.is_empty());
+    assert_eq!(physical, before, "a release moves no coordinate");
+    for c in 0..52 {
+        let expected = if c == 5 { Mode::Held } else { Mode::Free };
+        assert_eq!(b.modes()[c], expected, "cluster {c}");
+    }
+    // Transacted once: a second call at the same instant has nothing due.
+    assert!(Rods::<()>::time_event(&mut b, &(), open, &mut physical).unwrap().is_none());
+    assert_eq!(Rods::<()>::next_time_event(&b, open), None);
+}
+
+#[test]
 fn a_free_body_refuses_a_pending_spider_drag_selection() {
     let water = z4_field(0.);
     let mut b = block(SpiderDrag::Pending);
