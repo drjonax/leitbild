@@ -168,6 +168,14 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     offshoreCurationOfSite,
     priceAreaOf,
     lineCapacityMw: busId => lineCapacity.get(busId) ?? 0,
+    regionalSupplies: new Map(curations.features.flatMap(feature => feature.properties.kind === 'attach-load-via-regional-grid'
+      ? [[feature.properties.municipalityNr, {
+          curationId: curationSourceId(feature),
+          substationOsmId: feature.properties.substationOsmId,
+          voltageKv: feature.properties.voltageKv,
+          routeKm: feature.properties.routeKm,
+        }] as const]
+      : [])),
     ledger,
   })
   const generators = [...registeredGenerators, ...buildSiteGenerators({

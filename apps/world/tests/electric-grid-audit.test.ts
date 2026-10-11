@@ -198,6 +198,26 @@ describe('inventory checks', () => {
     expect(failedAssets(audit({ graph: far('generator:nve-hydro-8', ['fixture-regional-route']), curations }), 'attachment-distance')).toEqual(['generator:nve-hydro-8', 'bus:c@420'])
   })
 
+  test('accept a municipal load beyond its limit only on a curated regional supply naming its municipality', () => {
+    const input = fixtureCurationsInput()
+    const supply = {
+      type: 'Feature', id: 'fixture-regional-supply', geometry: { type: 'Point', coordinates: fixtureLocations.d },
+      properties: {
+        kind: 'attach-load-via-regional-grid', licence: 'osm-odbl-1.0', author: 'test', reviewedAt: '2026-10-10',
+        targetOsmIds: ['way/4'], municipalityNr: '5612', substationOsmId: 'way/4', voltageKv: 420, routeKm: 104,
+        reason: 'regional supply', evidence: [{ url: 'https://example.org/route', ref: 'route' }], expiresWhen: [{ kind: 'review-by', date: '2027-10-10' }],
+      },
+    }
+    const curations = gridCurationCollectionSchema.parse({ ...input, features: [...input.features, supply] })
+    const far = (id: string) => editGraph(base => ({
+      loads: base.loads.map(item => item.family === 'distributed' ? { ...item, id, attachmentKm: 70, curationIds: ['fixture-regional-supply'] } : item),
+    }))
+    const explained = audit({ graph: far('load:5612-private-osm-way-4'), curations })
+    expect(check(explained, 'attachment-distance')).toMatchObject({ status: 'pass', metrics: { curatedRegionalSupplies: 1 } })
+    expect(explained.curations.find(status => status.id === 'fixture-regional-supply')?.status).toBe('applied')
+    expect(failedAssets(audit({ graph: far('load:5614-private-osm-way-4'), curations }), 'attachment-distance')).toEqual(['load:5614-private-osm-way-4', 'bus:a@132'])
+  })
+
   test('compare capacity per kind and price area and flag generation without a price area', () => {
     const graph = editGraph(base => ({
       generators: base.generators.map(item => item.id === 'generator:c' ? { ...item, capacityMw: 400 } : item.id === 'generator:e' ? { id: item.id, label: item.label, kind: item.kind, family: item.family, busId: item.busId, capacityMw: item.capacityMw, attachmentKm: item.attachmentKm, curationIds: [] } : item),

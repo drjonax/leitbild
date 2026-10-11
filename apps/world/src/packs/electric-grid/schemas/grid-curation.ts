@@ -89,6 +89,17 @@ const propertiesSchema = z.discriminatedUnion('kind', [
     viaOsmIds: z.array(osmId),
     networkKm: z.number().finite().positive(),
   }).strict(),
+  /**
+   * A municipality beyond the load attachment limit of every ≥132 kV station, supplied through
+   * the regional or distribution grid: its loads attach at the station that route reaches.
+   * routeKm counts the mapped part of the route (NVE Nettanlegg5 or OSM); the reason names any
+   * unmapped distribution leg.
+   */
+  z.object({
+    kind: z.literal('attach-load-via-regional-grid'), ...common,
+    municipalityNr: z.string().regex(/^\d{4}$/), substationOsmId: osmId, voltageKv: kv,
+    routeKm: z.number().finite().nonnegative(),
+  }).strict(),
 ])
 
 const featureSchema = z.object({
@@ -116,6 +127,7 @@ const allowedExpiry: Record<CurationFeature['properties']['kind'], {
   'add-interconnector-ways': { required: ['review-by'], allowed: ['review-by'] },
   'offshore-load': { required: ['review-by'], allowed: ['review-by'] },
   'attach-via-regional-grid': { required: ['review-by'], allowed: ['review-by'] },
+  'attach-load-via-regional-grid': { required: ['review-by'], allowed: ['review-by'] },
 }
 
 const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray<string> => {
@@ -129,6 +141,7 @@ const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray
     case 'add-interconnector-ways': return properties.osmWayIds
     case 'offshore-load': return []
     case 'attach-via-regional-grid': return [properties.substationOsmId]
+    case 'attach-load-via-regional-grid': return [properties.substationOsmId]
   }
 }
 

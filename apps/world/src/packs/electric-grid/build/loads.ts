@@ -53,6 +53,17 @@ const municipalShareMw = 100
 /** Maximum distance from a site to the station that serves it, km (golden list site attachment limit). */
 const siteSearchKm = 15
 
+/** Distributed loads farther than this from their station need a reviewed regional route, km (golden list distributed load limit). */
+export const municipalAttachmentLimitKm = 60
+
+/** A reviewed attach-load-via-regional-grid curation: the station a municipality's supply route reaches. */
+export interface RegionalSupply {
+  readonly curationId: string
+  readonly substationOsmId: string
+  readonly voltageKv: number
+  readonly routeKm: number
+}
+
 const unknownControl = 'priority and interruptible MW unknown (no public evidence): normal, 0'
 
 const listedStations = (site: GridMajorSite, stations: StationIndex): ReadonlyArray<{ readonly station: Station; readonly how: string; readonly kvs: ReadonlyArray<number> }> =>
@@ -91,6 +102,7 @@ export const buildLoads = (config: {
   readonly offshoreCurationOfSite: ReadonlyMap<string, string>
   readonly priceAreaOf: (location: readonly [number, number]) => PriceArea
   readonly lineCapacityMw: (busId: string) => number
+  readonly regionalSupplies: ReadonlyMap<string, RegionalSupply>
   readonly ledger: BuildLedger
 }): ReadonlyArray<GridLoadV2> => {
   const { hour, stations, sourceIds, ledger } = config
@@ -106,6 +118,7 @@ export const buildLoads = (config: {
   }
   const loads: GridLoadV2[] = []
   const seenSites = new Set<string>()
+  const seenSupplies = new Set<string>()
   for (const municipality of [...hour.municipalities.municipalities].sort((left, right) => compareText(left.municipalityNumber, right.municipalityNumber))) {
     const nr = municipality.municipalityNumber
     const place = placeOf.get(nr)
@@ -186,12 +199,23 @@ export const buildLoads = (config: {
       .sort((left, right) => left.km - right.km || compareText(left.station.stationId, right.station.stationId))
     const nearest = stations.nearest(place.point, eligible)
     if (nearest === undefined) throw new Error(`municipality ${nr}: no ≥132 kV substation in ${priceArea}`)
-    const served = inside.length > 0 && shares > 1 ? inside.slice(0, shares).map(entry => entry.station) : [nearest.station]
-    const how = served.length > 1
-      ? `split equally over the ${served.length} ≥132 kV substations in ${priceArea} inside the municipality's bounding box nearest its point`
-      : `at the nearest ≥132 kV substation in ${priceArea} to the municipality point`
+    const supply = config.regionalSupplies.get(nr)
+    if (supply !== undefined) {
+      seenSupplies.add(nr)
+      if (nearest.km <= municipalAttachmentLimitKm) throw new Error(`${supply.curationId}: ${municipality.name} lies ${roundTo(nearest.km, 1)} km from ${nearest.station.label}, within ${municipalAttachmentLimitKm} km; the regional-route curation is no longer needed`)
+    }
+    const routed = supply === undefined ? undefined : stations.byFeatureId(supply.substationOsmId)
+    if (supply !== undefined && routed === undefined) throw new Error(`${supply.curationId}: ${supply.substationOsmId} is not a ≥132 kV station of the main island`)
+    const routedBus = supply === undefined ? undefined : routed!.buses.find(candidate => candidate.nominalKv === supply.voltageKv)
+    if (supply !== undefined && routedBus === undefined) throw new Error(`${supply.curationId}: ${routed!.label} has no ${supply.voltageKv} kV bus`)
+    const served = routed !== undefined ? [routed] : inside.length > 0 && shares > 1 ? inside.slice(0, shares).map(entry => entry.station) : [nearest.station]
+    const how = supply !== undefined
+      ? `at ${routed!.label}, where its regional supply route (${supply.routeKm} km mapped) reaches the ≥132 kV grid, by ${supply.curationId}`
+      : served.length > 1
+        ? `split equally over the ${served.length} ≥132 kV substations in ${priceArea} inside the municipality's bounding box nearest its point`
+        : `at the nearest ≥132 kV substation in ${priceArea} to the municipality point`
     for (const station of served) {
-      const bus = lowestLevel(station)
+      const bus = routedBus ?? lowestLevel(station)
       const km = haversineKm(place.point, bus.location)
       for (const group of municipalityGroups) {
         const demandMw = remainder[group] / served.length
@@ -210,8 +234,8 @@ export const buildLoads = (config: {
           priceArea,
           attachmentKm: roundTo(km, 2),
           provenance: {
-            sources: [sourceIds.elhub, sourceIds.municipalities, sourceIds.biddingZones, sourceIds.osm],
-            method: 'measured',
+            sources: [sourceIds.elhub, sourceIds.municipalities, sourceIds.biddingZones, sourceIds.osm, ...(supply === undefined ? [] : [supply.curationId])],
+            method: supply === undefined ? 'measured' : 'curated',
             confidence: 'medium',
             note: `Elhub ${group} demand${group === 'industry' && sites.length > 0 ? ' less listed sites' : ''}, ${how}; ${unknownControl}`,
           },
@@ -220,6 +244,8 @@ export const buildLoads = (config: {
     }
     ledger.add({ reason: 'municipality-load-attached', elementIds: [`elhub-municipality:${nr}`, ...served.map(station => station.stationId)], mw: totalMw, distanceKm: nearest.km, detail: `${municipality.name} → ${served.length} substation${served.length === 1 ? '' : 's'}` })
   }
+  const unknownSupplies = [...config.regionalSupplies.keys()].filter(nr => !seenSupplies.has(nr))
+  if (unknownSupplies.length > 0) throw new Error(`regional-supply curations name municipalities without located Elhub demand: ${unknownSupplies.join(', ')}`)
   const unused = config.sites.sites.filter(site => !seenSites.has(site.id))
   if (unused.length > 0) throw new Error(`major sites without Elhub municipality data: ${unused.map(site => site.id).join(', ')}`)
   return loads.sort((left, right) => compareText(left.id, right.id))

@@ -6,6 +6,8 @@ import type { BuildLedger } from './ledger.ts'
 //   assert-in-service, add-interconnector-ways → the topology compiler (before matching);
 //   exclude-feature, offshore-load             → their target features leave the topology input;
 //   add-line, add-terminal                     → curated branches after compilation (curated-branches.ts);
+//   attach-via-regional-grid                   → a registered plant's bus (generators.ts);
+//   attach-load-via-regional-grid              → a municipality's load bus (loads.ts);
 //   assert-radial, boundary                    → the audit only.
 
 export const curationSourceId = (feature: GridCuration): string => `curation:${feature.id}`

@@ -17,7 +17,11 @@ export const attachmentCheck = (context: AuditContext): AuditCheck => {
   // A reviewed attach-via-regional-grid curation explains a plant connected through the regional grid.
   const regionalRoutes = new Set(context.curations.features.flatMap(feature =>
     feature.properties.kind === 'attach-via-regional-grid' ? [`${feature.id}|${feature.properties.generatorId}`] : []))
+  const regionalSupplies = new Set(context.curations.features.flatMap(feature =>
+    feature.properties.kind === 'attach-load-via-regional-grid' ? [`${feature.id}|${feature.properties.municipalityNr}`] : []))
+  const municipalityOf = (loadId: string): string | undefined => /^load:(\d{4})-/.exec(loadId)?.[1]
   let curatedBeyondLimit = 0
+  let curatedLoadsBeyondLimit = 0
   for (const generator of context.graph.generators) {
     const limit = limits.generator[generator.family]
     if (generator.attachmentKm <= limit) continue
@@ -30,6 +34,11 @@ export const attachmentCheck = (context: AuditContext): AuditCheck => {
   for (const load of context.graph.loads) {
     const limit = limits.load[load.family]
     if (load.attachmentKm <= limit) continue
+    const municipality = municipalityOf(load.id)
+    if (municipality !== undefined && load.curationIds.some(id => regionalSupplies.has(`${id}|${municipality}`))) {
+      curatedLoadsBeyondLimit += 1
+      continue
+    }
     failures.push({ message: `load ${load.label} (${load.family}, ${round(load.demandMw)} MW) is ${load.attachmentKm.toFixed(1)} km from its bus (max ${limit} km)`, assetIds: [load.id, load.busId] })
   }
   const maximum = (values: ReadonlyArray<number>): number => values.reduce((best, value) => Math.max(best, value), 0)
@@ -37,11 +46,12 @@ export const attachmentCheck = (context: AuditContext): AuditCheck => {
     id: 'attachment-distance',
     title: 'Generator and load attachment distance by kind',
     status: checkStatus(failures.length > thresholds.maxAttachmentViolations, undefined),
-    summary: `${failures.length} assets attached beyond their kind limit (max ${thresholds.maxAttachmentViolations}); ${curatedBeyondLimit} generators beyond it on a curated regional route`,
+    summary: `${failures.length} assets attached beyond their kind limit (max ${thresholds.maxAttachmentViolations}); ${curatedBeyondLimit} generators and ${curatedLoadsBeyondLimit} loads beyond it on a curated regional route`,
     metrics: {
       violations: failures.length,
       generatorViolations: failures.filter(failure => failure.assetIds[0]!.startsWith('generator:')).length,
       curatedRegionalRoutes: curatedBeyondLimit,
+      curatedRegionalSupplies: curatedLoadsBeyondLimit,
       maximumGeneratorKm: maximum(context.graph.generators.map(generator => generator.attachmentKm)),
       maximumLoadKm: maximum(context.graph.loads.map(load => load.attachmentKm)),
     },
