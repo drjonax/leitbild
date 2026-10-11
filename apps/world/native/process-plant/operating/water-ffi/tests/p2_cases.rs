@@ -1061,7 +1061,13 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             liquid_reference_kg_m3: sat.liquid.density.value,
             vapor_reference_kg_m3: sat.vapor.density.value,
             gravity_m_s2: ctx.gravity_m_s2,
-            span_m: p.tap(st::LT_HIGH).unwrap() - p.tap(st::LT_LOW).unwrap(),
+            span_m: {
+                let (low, high) = p
+                    .level_taps()
+                    .unwrap()
+                    .expect("gate 5's cutout needs the cell's LT taps");
+                high - low
+            },
         }
     });
     // Receipt series stride; a smoke run may ask for every sample.

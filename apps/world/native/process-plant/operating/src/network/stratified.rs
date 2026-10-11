@@ -336,9 +336,10 @@ impl Parameters {
                 return Err(fatal(format!("tap {} is declared twice", t.id)));
             }
         }
-        for id in [PT1, LT_LOW, LT_HIGH] {
-            self.tap(id)?;
-        }
+        // Each instance declares its tap set: PT1 always, the LT pair or no
+        // LT tap at all.
+        self.tap(PT1)?;
+        self.level_taps()?;
         let h = &self.heaters;
         if !(inside(h.bottom_m) && inside(h.top_m) && h.bottom_m <= h.top_m)
             || !(h.displacement_m3.is_finite() && h.displacement_m3 >= 0.)
@@ -412,11 +413,12 @@ impl Parameters {
             if upper && p.elevation_m != self.top_m {
                 return Err(fatal(format!("upper port {} must sit at top_m", p.id)));
             }
-            if (p.kind == PortKind::Relief) != p.relief.is_some()
-                || (p.kind == PortKind::Surge && p.face.is_none())
-            {
+            // A surge port may name no face: a standalone vessel's port is
+            // the end of its own line. The network composition refuses a
+            // surge port without its face.
+            if (p.kind == PortKind::Relief) != p.relief.is_some() {
                 return Err(fatal(format!(
-                    "port {}: a relief port declares its device and no other port does; the surge port names its face",
+                    "port {}: a relief port declares its device and no other port does",
                     p.id
                 )));
             }
@@ -440,6 +442,17 @@ impl Parameters {
             return Err(fatal("admitted preparation thickness exceeds the vessel"));
         }
         Ok(())
+    }
+
+    /// The LT pair's elevations `(LT.LOW, LT.HIGH)` when the instance
+    /// declares it; one of the two without the other refuses.
+    pub fn level_taps(&self) -> Result<Option<(f64, f64)>, Failure> {
+        let declared = |id: &str| self.taps.iter().any(|t| t.id == id);
+        match (declared(LT_LOW), declared(LT_HIGH)) {
+            (true, true) => Ok(Some((self.tap(LT_LOW)?, self.tap(LT_HIGH)?))),
+            (false, false) => Ok(None),
+            _ => Err(fatal("the LT taps are declared as a pair or not at all")),
+        }
     }
 
     /// Elevation of a declared tap.
@@ -1182,14 +1195,21 @@ pub struct Departure {
     pub credited: bool,
 }
 
+/// The LT pair's pressures, for an instance that declares it.
+#[derive(Clone, Copy, Debug)]
+pub struct LevelTaps {
+    pub low_pa: Scalar,
+    pub high_pa: Scalar,
+    /// `p(LT.LOW) − p(LT.HIGH)`.
+    pub difference_pa: Scalar,
+}
+
 /// Instrument taps and state reports. Never a clamp.
 #[derive(Clone, Copy, Debug)]
 pub struct Taps {
     pub pt1_pa: Scalar,
-    pub level_low_pa: Scalar,
-    pub level_high_pa: Scalar,
-    /// `p(LT.LOW) − p(LT.HIGH)`.
-    pub level_difference_pa: Scalar,
+    /// None for an instance without the LT pair.
+    pub level: Option<LevelTaps>,
     /// Above `bottom_m`.
     pub collapsed_level_m: Scalar,
     pub mixture_level_m: Scalar,
@@ -2848,12 +2868,19 @@ impl Cell {
         Ok(y)
     }
 
-    /// PT1, the LT pressure difference, levels and signed departures of
-    /// every zone at its own state pressure (3 value-only saturation calls).
+    /// PT1, the LT pressure difference where declared, levels and signed
+    /// departures of every zone at its own state pressure (3 value-only
+    /// saturation calls).
     pub fn taps<P: Properties>(&self, properties: &P, column: &Column) -> Result<Taps, Failure> {
         let p = &self.parameters;
-        let low = column.pressure_at(p.tap(LT_LOW)?);
-        let high = column.pressure_at(p.tap(LT_HIGH)?);
+        let level = p.level_taps()?.map(|(low, high)| {
+            let (low, high) = (column.pressure_at(low), column.pressure_at(high));
+            LevelTaps {
+                low_pa: low,
+                high_pa: high,
+                difference_pa: low - high,
+            }
+        });
         let band = &p.metastable;
         let departure = |zone: &Zone, vapor: bool| -> Result<Departure, Failure> {
             let pressure = zone.pressure.value;
@@ -2892,9 +2919,7 @@ impl Cell {
         };
         Ok(Taps {
             pt1_pa: column.pressure_at(p.tap(PT1)?),
-            level_low_pa: low,
-            level_high_pa: high,
-            level_difference_pa: low - high,
+            level,
             collapsed_level_m: column.collapsed_elevation - s(p.bottom_m),
             mixture_level_m: column.mixture_elevation - s(p.bottom_m),
             departures: [

@@ -244,13 +244,14 @@ fn prepared_saturated_column_is_an_exact_rest_state() {
     // Hydrostatic consistency of the column and taps.
     let taps = p.cell.taps(&If97, c).unwrap();
     assert_eq!(taps.pt1_pa.value, x.roof_pressure.value);
-    assert_eq!(taps.level_low_pa.value, c.bottom_pressure.value);
+    let level = taps.level.expect("the LD-01 cell declares the LT pair");
+    assert_eq!(level.low_pa.value, c.bottom_pressure.value);
     let weight = G
         * (x.admitted_mass.value * (c.boundary_elevation.value - 6.5) / x.admitted_volume.value
             + x.resident_mass.value * (12.5 - c.boundary_elevation.value)
                 / x.resident_volume.value
             + x.vapor_mass.value * 6. / x.vapor_volume.value);
-    assert!((taps.level_difference_pa.value - weight).abs() < 1e-8 * weight);
+    assert!((level.difference_pa.value - weight).abs() < 1e-8 * weight);
     assert!((taps.collapsed_level_m.value - 6.).abs() < 1e-12);
     // The surge port sees p_bottom and the φ = 1/2 A/R liquid mixture.
     let port = p.cell.port_view(c, 0).unwrap();

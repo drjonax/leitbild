@@ -597,7 +597,10 @@ impl CellSystem {
         let x = Coordinates::from_slice(&xv).map_err(|f| text(&f))?;
         let column = self.cell.column(&If97, &x, None).map_err(|f| text(&f))?;
         let taps = self.cell.taps(&If97, &column).map_err(|f| text(&f))?;
-        Ok(c.level(taps.level_difference_pa.value))
+        let level = taps
+            .level
+            .ok_or("gate 5's cutout reads the LT pair, which this cell does not declare")?;
+        Ok(c.level(level.difference_pa.value))
     }
     pub fn root_values(&self, y: &[f64], roots: &[Root], out: &mut [f64]) -> Result<(), String> {
         let v = |i: usize| y[i] * self.scales[i];
@@ -1001,7 +1004,11 @@ pub fn sample(
         pt1_pa: taps.pt1_pa.value,
         interface_pa: c.interface_pressure.value,
         bottom_pa: c.bottom_pressure.value,
-        lt_dp_pa: taps.level_difference_pa.value,
+        lt_dp_pa: taps
+            .level
+            .ok_or("the LD-01 sample reads the LT pair, which this cell does not declare")?
+            .difference_pa
+            .value,
         mixture_level_m: taps.mixture_level_m.value,
         collapsed_level_m: taps.collapsed_level_m.value,
         boundary_elevation_m: c.boundary_elevation.value,
