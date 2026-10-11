@@ -223,7 +223,7 @@ impl<P: leitbild_operating_plant::sg::Properties> Standalone<P> {
         let mut y: Vec<f64> = prepared.iter().zip(&scales).map(|(v, s)| v / s).collect();
         let (tube, segments): (Option<Tube>, Vec<Segment>) = match heat {
             Heat::Tube(_) => (
-                Some(Tube::new(&probe.tube)?),
+                Some(Tube::new(&section.contact, probe.tube.thermal_diameter_m)?),
                 probe.segments.iter().map(Segment::from).collect(),
             ),
             Heat::Schedule(_) => (None, Vec::new()),
@@ -628,7 +628,7 @@ pub mod integrate {
     use leitbild_operating_plant::{
         joined::block::{Command, Coordinates, Secondary},
         network::{self, Failure as NetFailure},
-        sg::{Branch, Properties},
+        sg::{Properties, Valve},
     };
     use leitbild_operating_water::ida::{Advance, Failure, Ida, Initial, System};
     use serde_json::{Value, json};
@@ -763,7 +763,7 @@ pub mod integrate {
             };
             sgs.push(json!({"id":g.id,"p_Pa":v(g.base + 2),"Vl_m3":v(g.base + 3),"M_kg":v(g.base),"U_J":v(g.base + 1),
                 "Tsat_K":sys.observed.views[k].1,"lifts":(0..g.valves.len()).map(|j| v(g.base + 4 + j)).collect::<Vec<_>>(),
-                "branches":(0..g.valves.len()).map(|j| sys.secondary.branch(k, j)).collect::<Vec<Branch>>(),
+                "valves":(0..g.valves.len()).map(|j| sys.secondary.valve(k, j)).collect::<Vec<Valve>>(),
                 "steam_kg_s":b.steam_kg_s.value,"relief_kg_s":b.relief_kg_s.iter().map(|m| m.value).collect::<Vec<_>>(),
                 "feed_kg_s":b.feed_kg_s.value,"heat_W":b.heat_w.value,"primary_W":sys.observed.primary_w[k],
                 "metal_K":sys.observed.metal_k[k],"massDefect_kg":(v(g.base) - y0[g.base] * sys.scales[g.base]) - v(lm),
@@ -845,7 +845,7 @@ pub mod integrate {
             let s = &ida.system().sys;
             let mut times: Vec<f64> = commands.iter().map(|c| c.0).filter(|c| *c > t).collect();
             times.extend(s.schedule_times().into_iter().filter(|c| *c > t));
-            times.extend(s.secondary.ramp_end().filter(|c| *c > t));
+            times.extend(Secondary::<P>::next_time_event(&s.secondary, t));
             let stop = times.into_iter().fold(spec.t_end, f64::min);
             ida.stop_at(stop)?;
             let target = next_output.min(stop);
@@ -889,7 +889,13 @@ pub mod integrate {
                         &directions,
                         &mut phys,
                     ) {
-                        Ok(tx) => events.push(json!({"t_s":t,"event":"root","receipt":tx.receipt})),
+                        Ok(tx) => {
+                            // A transaction may set own coordinates (a seat).
+                            for (i, v) in phys.iter().enumerate() {
+                                y[i] = v / sys.scales[i];
+                            }
+                            events.push(json!({"t_s":t,"event":"root","receipt":tx.receipt}))
+                        }
                         Err(e) => {
                             stopped = Some(format!("{e:?}"));
                             samples.push(

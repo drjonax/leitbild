@@ -20,16 +20,19 @@
 //! (F3 (a)), so the mass row reads `M' = 0` exactly. No fixed heat removal,
 //! imposed SG pressure or temperature, `Q/h_fg` mass source or clipped `V_l`.
 //!
-//! Roots: each valve's crack, full-lift and reseat thresholds, armed only on
-//! the branch that owns them and otherwise a constant +1 (a disarmed root
-//! never crosses), so the root count never changes; then the crown's first
+//! Roots: each valve's crack, full-lift, reseat and seat thresholds, armed
+//! only by the valve state that owns them and otherwise a constant +1 (a
+//! disarmed root never crosses), so the root count never changes. A closing
+//! disc seats at its declared seat lift: the transaction sets the lift to
+//! exactly zero and the seated valve has neither flow nor nozzle evaluation
+//! until crack reopens it. Then the crown's first
 //! uncovery and the pickup's first coverage. A guard crossing is an S2 domain
 //! exit, refused fatally and never clipped. A Newton trial beyond the pickup
 //! edge evaluates the gas-only pickup as a declared trial extension, so the
 //! crossing step can be taken and located; it is never admitted.
 use super::{
     packet,
-    relief::{Branch, Characteristic, Threshold, Transition},
+    relief::{Characteristic, Threshold, Transition, Valve},
 };
 use crate::{
     joined::{
@@ -56,7 +59,14 @@ pub const PRESSURE: usize = 2;
 pub const LIQUID_VOLUME: usize = 3;
 pub const LIFTS: usize = 4;
 /// Thresholds of every valve, in root order.
-pub const THRESHOLDS: [Threshold; 3] = [Threshold::Crack, Threshold::FullLift, Threshold::Reseat];
+pub const THRESHOLDS: [Threshold; 4] = [
+    Threshold::Crack,
+    Threshold::FullLift,
+    Threshold::Reseat,
+    Threshold::Seat,
+];
+/// A prepared valve: seated on the ascending branch.
+pub const SEATED: Valve = Valve::SEATED;
 /// Value of a root its branch does not arm: it never crosses zero.
 pub const DISARMED: f64 = 1.;
 
@@ -130,7 +140,7 @@ pub struct Secondaries {
     derived: Derived,
     layout: Layout,
     prepared: Vec<f64>,
-    branches: Vec<Vec<Branch>>,
+    valves: Vec<Vec<Valve>>,
     trip_s: Option<f64>,
     /// Largest relative chart defect of the supplied preparation.
     preparation_defect: f64,
@@ -181,7 +191,7 @@ impl Secondaries {
                 && positive(x.pressure_pa)
                 && x.liquid_volume_m3 > g.crown_liquid_volume_m3
                 && x.liquid_volume_m3 < g.pickup_liquid_volume_m3
-                && relief.admits(Branch::Ascending, x.pressure_pa))
+                && relief.admits(SEATED, x.pressure_pa, 0.))
             {
                 return Err(fatal(format!(
                     "SG.{} preparation is not a two-phase start inside the guards below full lift",
@@ -229,10 +239,7 @@ impl Secondaries {
         layout.validate("secondary")?;
         let n = sgs.len();
         Ok(Self {
-            branches: sgs
-                .iter()
-                .map(|g| vec![Branch::Ascending; g.valves.len()])
-                .collect(),
+            valves: sgs.iter().map(|g| vec![SEATED; g.valves.len()]).collect(),
             boundary: sgs
                 .iter()
                 .map(|g| Boundary {
@@ -305,26 +312,31 @@ impl Secondaries {
     pub fn preparation_defect(&self) -> f64 {
         self.preparation_defect
     }
-    pub fn branch(&self, sg: usize, valve: usize) -> Branch {
-        self.branches[sg][valve]
+    pub fn valve(&self, sg: usize, valve: usize) -> Valve {
+        self.valves[sg][valve]
     }
-    /// Declare one valve's memory for a supplied start; it must agree with
-    /// the rule at that pressure (Pa).
-    pub fn set_branch(
+    /// Declare one valve's state for a supplied start; it must agree with
+    /// the rule at that pressure (Pa) and lift.
+    pub fn set_valve(
         &mut self,
         sg: usize,
         valve: usize,
-        branch: Branch,
+        state: Valve,
         p_pa: f64,
+        lift: f64,
     ) -> Result<(), Failure> {
-        if !self.relief.admits(branch, p_pa) {
+        if !self.relief.admits(state, p_pa, lift) {
             return Err(fatal(format!(
-                "SG.{} relief {valve}: the {branch:?} memory contradicts the rule at {p_pa} Pa",
+                "SG.{} relief {valve}: {state:?} contradicts the rule at {p_pa} Pa, lift {lift}",
                 self.sgs[sg].id
             )));
         }
-        self.branches[sg][valve] = branch;
+        self.valves[sg][valve] = state;
         Ok(())
+    }
+    /// Valves whose disc is seated.
+    pub fn seated(&self) -> usize {
+        self.valves.iter().flatten().filter(|v| v.seated).count()
     }
     /// The latched manual turbine TRIP time, if any.
     pub fn trip_time(&self) -> Option<f64> {
@@ -361,7 +373,7 @@ impl Secondaries {
             let lifts = &y[b + LIFTS..b + LIFTS + g.valves.len()];
             if !(positive(m) && vl > g.crown_liquid_volume_m3 && vl < g.pickup_liquid_volume_m3)
                 || lifts.iter().any(|l| !(l.is_finite() && *l >= 0.))
-                || (0..g.valves.len()).any(|j| !self.relief.admits(self.branches[k][j], p))
+                || (0..g.valves.len()).any(|j| !self.relief.admits(self.valves[k][j], p, lifts[j]))
             {
                 return Err(fatal(format!(
                     "SG.{} accepted state refused: M {m} kg, p {p} Pa, V_l {vl} m³, lifts {lifts:?}",
@@ -439,8 +451,12 @@ impl Secondaries {
     }
 
     fn root_index(&self, sg: usize, valve: usize, threshold: usize) -> usize {
-        let before: usize = self.sgs[..sg].iter().map(|g| 3 * g.valves.len() + 2).sum();
-        before + 3 * valve + threshold
+        let per = THRESHOLDS.len();
+        let before: usize = self.sgs[..sg]
+            .iter()
+            .map(|g| per * g.valves.len() + 2)
+            .sum();
+        before + per * valve + threshold
     }
 }
 
@@ -533,8 +549,17 @@ impl<P: Properties> Secondary<P> for Secondaries {
             let lifts: Vec<Scalar> = (0..g.valves.len())
                 .map(|j| x.value(b + LIFTS + j))
                 .collect();
-            let flux = if lifts.iter().any(|l| l.value != 0. || l.direction != 0.) {
-                let partials = lifts.iter().any(|l| l.value != 0.)
+            // A seated disc has no flow: its lift enters nothing but its row.
+            let lifted: Vec<bool> = self.valves[k].iter().map(|v| !v.seated).collect();
+            let flux = if lifts
+                .iter()
+                .zip(&lifted)
+                .any(|(l, on)| *on && (l.value != 0. || l.direction != 0.))
+            {
+                let partials = lifts
+                    .iter()
+                    .zip(&lifted)
+                    .any(|(l, on)| *on && l.value != 0.)
                     && (p.direction != 0. || hg.direction != 0.);
                 Some(self.relief_flux(props, k, p, hg, partials)?)
             } else {
@@ -543,13 +568,16 @@ impl<P: Properties> Secondary<P> for Secondaries {
             let mut relief = s(0.);
             let report = &mut self.boundary[k];
             for (j, lift) in lifts.iter().enumerate() {
-                let m = flux.map_or(s(0.), |f| *lift * s(self.derived.relief_area_m2) * f);
+                let valve = self.valves[k][j];
+                let m = match flux {
+                    Some(f) if !valve.seated => *lift * s(self.derived.relief_area_m2) * f,
+                    _ => s(0.),
+                };
                 relief = relief + m;
                 report.relief_kg_s[j] = m;
-                let branch = self.branches[k][j];
-                report.targets[j] = self.relief.target(branch, p);
+                report.targets[j] = self.relief.target(valve.branch, p);
                 rows[b + LIFTS + j] =
-                    x.rate(b + LIFTS + j) - self.relief.lift_rate(branch, p, *lift);
+                    x.rate(b + LIFTS + j) - self.relief.lift_rate(valve, p, *lift);
             }
             // F3 (a): the feed is exactly the withdrawn gas; x - x is exact.
             let withdrawn = steam + relief;
@@ -611,7 +639,10 @@ impl<P: Properties> Secondary<P> for Secondaries {
     }
 
     fn root_count(&self) -> usize {
-        self.sgs.iter().map(|g| 3 * g.valves.len() + 2).sum()
+        self.sgs
+            .iter()
+            .map(|g| THRESHOLDS.len() * g.valves.len() + 2)
+            .sum()
     }
 
     fn roots(
@@ -629,10 +660,11 @@ impl<P: Properties> Secondary<P> for Secondaries {
             let p = x.value(g.base + PRESSURE).value;
             let vl = x.value(g.base + LIQUID_VOLUME).value;
             for j in 0..g.valves.len() {
-                let armed = Characteristic::armed(self.branches[k][j]);
+                let armed = Characteristic::armed(self.valves[k][j]);
+                let lift = x.value(g.base + LIFTS + j).value;
                 for threshold in THRESHOLDS {
                     out[i] = if armed.contains(&threshold) {
-                        self.relief.root(threshold, p)
+                        self.relief.root(threshold, p, lift)
                     } else {
                         DISARMED
                     };
@@ -660,28 +692,49 @@ impl<P: Properties> Secondary<P> for Secondaries {
             return Err(fatal("secondary transaction layout"));
         }
         let mut events = Vec::new();
+        let mut seats = 0;
         for k in 0..self.sgs.len() {
             let g = self.sgs[k].clone();
             let p = y[g.base + PRESSURE];
             for j in 0..g.valves.len() {
+                let start = self.valves[k][j];
                 for (m, threshold) in THRESHOLDS.into_iter().enumerate() {
                     let d = directions[self.root_index(k, j, m)];
                     if d == 0 {
                         continue;
                     }
-                    if !Characteristic::armed(self.branches[k][j]).contains(&threshold) {
+                    let current = self.valves[k][j];
+                    if !Characteristic::armed(current).contains(&threshold) {
+                        // A simultaneous crossing an earlier transition of this
+                        // transaction disarmed (a reseat that already seated).
+                        if Characteristic::armed(start).contains(&threshold) {
+                            events.push(
+                                json!({"valve":g.valves[j],"threshold":threshold,"direction":d,
+                                "superseded":true,"state":current}),
+                            );
+                            continue;
+                        }
                         return Err(fatal(format!(
                             "{} {threshold:?} root crossed while disarmed",
                             g.valves[j]
                         )));
                     }
+                    let lift = y[g.base + LIFTS + j];
                     let x: Transition = self
                         .relief
-                        .transition(self.branches[k][j], threshold, d)
+                        .transition(current, threshold, d, lift)
                         .map_err(fatal)?;
-                    self.branches[k][j] = x.after;
-                    events.push(json!({"valve":g.valves[j],"threshold":threshold,"direction":d,
-                        "before":x.before,"after":x.after,"pressure_Pa":p,"lift":y[g.base + LIFTS + j]}));
+                    self.valves[k][j] = x.after;
+                    if x.seated_from_lift.is_some() {
+                        // The disc rests on its seat: exactly zero lift.
+                        y[g.base + LIFTS + j] = 0.;
+                        seats += 1;
+                    }
+                    events.push(
+                        json!({"valve":g.valves[j],"threshold":threshold,"direction":d,
+                        "before":x.before,"after":x.after,"pressure_Pa":p,"lift":lift,
+                        "seatedFromLift":x.seated_from_lift}),
+                    );
                 }
             }
             let guard = self.root_index(k, g.valves.len(), 0);
@@ -697,7 +750,8 @@ impl<P: Properties> Secondary<P> for Secondaries {
         }
         Ok(Transaction {
             deposits: Vec::new(),
-            receipt: json!({"owner":"secondary","t_s":t,"relief":events,"stateChanged":false}),
+            receipt: json!({"owner":"secondary","t_s":t,"relief":events,"seats":seats,
+                "stateChanged":seats > 0}),
         })
     }
 
@@ -733,11 +787,17 @@ impl<P: Properties> Secondary<P> for Secondaries {
 /// Validate the section's shapes and selections.
 fn compile(section: &packet::Section) -> Result<(Vec<SteamGenerator>, Characteristic), Failure> {
     let r = &section.relief;
+    if !(r.seat_lag_time_constants.is_finite() && r.seat_lag_time_constants > 0.) {
+        return Err(fatal(
+            "SG relief seat needs a positive number of lag time constants",
+        ));
+    }
     let relief = Characteristic::new(
         r.crack_pressure_pa,
         r.full_lift_pressure_pa,
         r.reseat_pressure_pa,
         r.lift_lag_s,
+        (-r.seat_lag_time_constants).exp(),
     )
     .map_err(fatal)?;
     if !(positive(r.back_pressure_pa) && r.back_pressure_pa < r.reseat_pressure_pa)
@@ -753,6 +813,19 @@ fn compile(section: &packet::Section) -> Result<(Vec<SteamGenerator>, Characteri
         || !positive(section.steam_admission.stop_travel_s)
     {
         return Err(fatal("SG feed boundary or steam admission travel"));
+    }
+    let c = &section.contact;
+    if ![
+        c.exchange_area_m2,
+        c.steel_conductivity_w_mk,
+        c.steel_density_kg_m3,
+        c.steel_cp_j_kgk,
+    ]
+    .into_iter()
+    .all(positive)
+        || !(c.emissivity > 0. && c.emissivity <= 1.)
+    {
+        return Err(fatal("SG contact exchange area or wall constants"));
     }
     if section.steam_generators.is_empty() {
         return Err(fatal("no steam generator"));

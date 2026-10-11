@@ -9,7 +9,7 @@
 //! boundaries are the recorded selections: the constant A/B steam demand
 //! through the pickup gas (F2 (a)) with its STOP ramp at the turbine trip
 //! (G2), the inventory-holding feed (F3 (a)) and two spring reliefs per SG
-//! with the full-lift branch switch (F4 (a), H5).
+//! with the full-lift branch switch (F4 (a), H5) and the disc seat.
 //!
 //! [`secondary`] implements the joined `Secondary` block; [`relief`] is the
 //! valve characteristic; [`tube`] is the tube heat path as a tested function
@@ -19,6 +19,6 @@ pub mod relief;
 pub mod secondary;
 pub mod tube;
 
-pub use relief::{Branch, Characteristic, Threshold, Transition};
+pub use relief::{Branch, Characteristic, Threshold, Transition, Valve};
 pub use secondary::{Boundary, Derived, Properties, Secondaries, SteamGenerator, chart};
 pub use tube::{PrimaryPort, Segment, Stationary, Tube};
