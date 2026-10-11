@@ -201,6 +201,17 @@ unsafe extern "C" {
 
 /// KLU timings of one CSC structure over recorded matrices, best of `repeat`.
 pub fn klu_profile(pointers: &[i64], rows: &[i64], matrices: &[Vec<f64>], repeat: usize) -> Value {
+    klu_profile_ordered(pointers, rows, matrices, repeat, 1)
+}
+/// [`klu_profile`] with an explicit KLU ordering: 0 AMD, 1 COLAMD (SUNDIALS'
+/// default). A diagnostic of the stock factorization, not a solver change.
+pub fn klu_profile_ordered(
+    pointers: &[i64],
+    rows: &[i64],
+    matrices: &[Vec<f64>],
+    repeat: usize,
+    ordering: i32,
+) -> Value {
     let n = pointers.len() as i64 - 1;
     let (mut ap, mut ai) = (pointers.to_vec(), rows.to_vec());
     // SAFETY: KluCommon is a plain C struct that klu_l_defaults fills
@@ -211,7 +222,7 @@ pub fn klu_profile(pointers: &[i64], rows: &[i64], matrices: &[Vec<f64>], repeat
         let mut common: KluCommon = std::mem::zeroed();
         assert_eq!(klu_l_defaults(&mut common), 1, "klu_l_defaults");
         // SUNLinSol_KLU: SUNKLU_ORDERING_DEFAULT = 1 (COLAMD), else defaults.
-        common.ordering = 1;
+        common.ordering = ordering;
         let mut analyze = f64::INFINITY;
         let mut symbolic: *mut KluSymbolic = std::ptr::null_mut();
         for _ in 0..repeat {
@@ -315,7 +326,7 @@ pub fn klu_profile(pointers: &[i64], rows: &[i64], matrices: &[Vec<f64>], repeat
             .map(|f| f["lnz"].as_f64().unwrap() + f["unz"].as_f64().unwrap())
             .collect();
         json!({
-            "settings": "klu_l_defaults, ordering 1 (COLAMD), as SUNLinSol_KLU (SUNDIALS 7.5.0)",
+            "settings": format!("klu_l_defaults, ordering {ordering} (1 = COLAMD as SUNLinSol_KLU in SUNDIALS 7.5.0, 0 = AMD)"),
             "matrices": matrices.len(),
             "symbolic": symbolic_json,
             "analyze_ms": 1e3 * analyze,
@@ -775,6 +786,122 @@ pub fn event(
         relative_tolerance: rtol,
         stats,
         cpu_s,
+    }
+}
+
+/// The joined operator at the hot reference with the packet's prepared SG
+/// views and rod travel as zero-time ports (S2-JOIN's Z1 composition, memo
+/// §3 (B)-(C)): a fresh hydrostatic preparation, the settled S1 run's face
+/// volume flows and rotor momenta written by the flowing preparation, then
+/// the fixed-stock surface initializer.
+pub struct JoinedHot {
+    pub joined: leitbild_operating_plant::joined::operator::Joined<If97>,
+    pub y: Vec<f64>,
+    pub ids: Vec<f64>,
+    pub flowing: Value,
+}
+pub fn joined_hot(declared: &Declared, settled: &[f64]) -> JoinedHot {
+    use leitbild_operating_plant::{
+        initialization::SurfacePolicy,
+        joined::{
+            block::SecondaryView,
+            operator::{Joined, RodPort, SecondaryPort},
+            packet,
+        },
+        thermal::WaterProperties,
+    };
+    // The settled S1 run's face volume flows and rotor momenta.
+    let (mut probe, ..) = declared.prepared(If97);
+    let zero = vec![0.; settled.len()];
+    probe
+        .evaluate(0., settled, &zero, None, 0., None)
+        .expect("settled residual");
+    let flows: Vec<f64> = (0..probe.face_count())
+        .map(|f| probe.chart(f, 0).map_or(0., |c| c.volume_flow_m3_s.value))
+        .collect();
+    let momenta: Vec<f64> = probe
+        .rotor_index
+        .iter()
+        .map(|i| settled[*i] * probe.scales()[*i])
+        .collect();
+    let point = OperatingPoint::from(&declared.packet.preparation.operating_point);
+    let rotors = vec![
+        RotorState {
+            support: Support::Supported(SpeedRequest::Nominal),
+            shaft: Shaft::Free,
+        };
+        4
+    ];
+    let settings = Settings {
+        pressure_tolerance_pa: 1e-6,
+        max_passes: 50,
+        level_match_m: 1e-9,
+        eos_row_bound: 1e-12,
+        tree_face_bound_pa: 1e-6,
+        representation_search: 8,
+    };
+    let (mut network, mut prepared, hydrostatic) =
+        prepare::prepare(&declared.packet, If97, &point, &rotors, &settings)
+            .expect("hydrostatic preparation");
+    let receipt = prepare::compose_flows(
+        &mut network,
+        &declared.packet,
+        &mut prepared.y,
+        hydrostatic.port_pressure_pa,
+        &flows,
+        &momenta,
+        &settings,
+    )
+    .expect("flowing preparation");
+    let bytes = std::fs::read(&declared.packet_path).expect("packet");
+    let joined_packet: packet::Packet = serde_json::from_slice(&bytes).expect("joined packet");
+    let views = joined_packet
+        .thermal
+        .secondaries
+        .iter()
+        .map(|c| {
+            let p = Scalar::constant(c.pressure_pa);
+            let t = WaterProperties::saturation(&If97, p).unwrap().temperature;
+            SecondaryView {
+                pressure: p,
+                saturation_temperature: Scalar::constant(t.value),
+                liquid_volume: Scalar::constant(c.liquid_volume_m3),
+                steam_present: c.liquid_volume_m3 < c.volume_m3,
+            }
+        })
+        .collect();
+    let travel = joined_packet
+        .feedback_reference
+        .achieved_rod_travel_m
+        .clone();
+    let mut joined = Joined::new(
+        network,
+        &declared.packet,
+        &joined_packet,
+        If97,
+        SecondaryPort::Prepared(views),
+        RodPort::Prepared(travel),
+    )
+    .expect("joined operator");
+    let mut y = joined.prepared(&prepared.y).expect("joined preparation");
+    let ids = joined.differential(&prepared.differential);
+    joined
+        .initialize_surfaces(
+            0.,
+            &mut y,
+            SurfacePolicy {
+                maximum_residual_w: 1e-3,
+                maximum_correction_k: 1e-6,
+                maximum_iterations: 16,
+                maximum_backtracks: 12,
+            },
+        )
+        .expect("surface initialization");
+    JoinedHot {
+        joined,
+        y,
+        ids,
+        flowing: serde_json::to_value(&receipt).unwrap(),
     }
 }
 
