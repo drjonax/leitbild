@@ -3,6 +3,7 @@
 //! delegation, the S1 prepared state and a recorded stock-IDA settling run.
 //! Measurement support only; nothing here is a production path.
 #![allow(dead_code)] // Each test crate uses its own subset.
+pub mod recombine;
 use leitbild_operating_plant::{
     network::{
         BandReport, MetastableBand, Network, Properties, RotorState, ToleranceClasses, Water,
@@ -888,6 +889,92 @@ pub fn event(
         stats,
         cpu_s,
     }
+}
+
+/// [`event`] on the block assembly through [`recombine::Recombined`] with
+/// `policy`: the restart ramp of the cj-linear refresh measurement. Returns
+/// the outputs, IDA's statistics, the wrapper's counts and the CPU.
+pub fn event_recombined(
+    declared: &Declared,
+    settled: &[f64],
+    event: Event,
+    duration: f64,
+    interval: f64,
+    policy: recombine::Policy,
+) -> (Vec<Vec<f64>>, Stats, recombine::Counts, f64, Value) {
+    let (mut network, _, _, ids, atol) = declared.prepared(If97);
+    let stocks = network.nonnegative_stocks();
+    let rtol = declared.gate(&["relativeTolerance"]);
+    let mut y = settled.to_vec();
+    let ids = match event {
+        Event::Seizure => {
+            let rotor = declared.gate(&["seizure", "rotor"]) as usize;
+            network.seize(rotor, &mut y).expect("seizure");
+            network.differential(&ids)
+        }
+        Event::SupplyLoss => {
+            let rotor = declared.gate(&["supplyLoss", "rotor"]) as usize;
+            network.set_rotor_state(
+                rotor,
+                RotorState {
+                    support: Support::Unsupported,
+                    shaft: Shaft::Free,
+                },
+            );
+            ids
+        }
+    };
+    let weights: Vec<f64> = y
+        .iter()
+        .zip(&atol)
+        .map(|(v, a)| 1. / (rtol * v.abs() + a))
+        .collect();
+    let (yp, _) = consistent_start(&mut network, 0., &mut y, &ids, &weights, 1e-12, 2)
+        .expect("exact consistent start");
+    let counts = Rc::new(RefCell::new(recombine::Counts::default()));
+    let system = recombine::Recombined::new(
+        Integrated::blocks(network).expect("block assembly"),
+        policy,
+        counts.clone(),
+    );
+    let mut ida = Ida::new(
+        system,
+        Initial {
+            time: 0.,
+            y: &y,
+            yp: &yp,
+            differential: &ids,
+            absolute_tolerance: &atol,
+            relative_tolerance: rtol,
+        },
+    )
+    .expect("stock IDA construction");
+    ida.set_max_order(declared.gate(&["maxOrder"]) as usize)
+        .expect("max order");
+    ida.constrain_nonnegative(&stocks).expect("nonnegative");
+    ida.stop_at(duration).expect("stop");
+    let (mut y, mut yp) = (y.clone(), yp.clone());
+    let started = cpu();
+    let mut marks = Vec::new();
+    let mut returned = Vec::new();
+    let steps = (duration / interval).round() as usize;
+    for k in 1..=steps {
+        let t = duration * k as f64 / steps as f64;
+        ida.advance(t, &mut y, &mut yp).expect("advance");
+        let stats = ida.stats().expect("stats");
+        let c = *counts.borrow();
+        marks.push(
+            json!({"t": t, "steps": stats.steps, "jacobian_calls": stats.jacobians,
+            "full": c.full, "recombined": c.recombined,
+            "convergence_failures": stats.convergence_failures,
+            "error_failures": stats.error_failures}),
+        );
+        returned.push(y.clone());
+    }
+    let cpu_s = cpu() - started;
+    let stats = ida.stats().expect("stats");
+    let c = *counts.borrow();
+    (returned, stats, c, cpu_s, json!(marks))
 }
 
 /// The joined operator at the hot reference with the packet's prepared SG
