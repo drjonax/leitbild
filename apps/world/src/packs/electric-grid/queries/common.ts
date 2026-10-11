@@ -15,7 +15,7 @@ export interface ElectricGridQuery {
   readonly answer: (rawInput: unknown, grids: GridRuntimes) => unknown
 }
 
-export const assetKindSchema = z.enum(['bus', 'branch', 'generator', 'load', 'storage'])
+export const assetKindSchema = z.enum(['bus', 'branch', 'generator', 'load', 'storage', 'hvdc'])
 export const gridPayloadSchema = z.object({ gridId: z.string().min(1) }).strict()
 
 export const defineGridQuery = <Input extends z.ZodType>(config: {

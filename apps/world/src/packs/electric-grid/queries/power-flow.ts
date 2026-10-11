@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import type { GridBranchDefinition } from '../grid-model.ts'
+import type { GridBranchDefinition, GridHvdcLinkDefinition } from '../grid-model.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
 import { defineGridQuery, gridBusIslandId, gridFor, requireGridIsland } from './common.ts'
-import { branchDefinitionSchema, branchSwitchingStateSchema } from './schemas.ts'
+import { branchDefinitionSchema, branchSwitchingStateSchema, hvdcLinkDefinitionSchema, hvdcLinkOperatingStateSchema } from './schemas.ts'
 
 const finite = z.number().finite()
 
@@ -30,6 +30,18 @@ const powerFlowRowSchema = z.object({
   definition: branchDefinitionSchema.optional(),
 }).strict()
 
+const hvdcRowSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  state: hvdcLinkOperatingStateSchema,
+  ratingMw: finite,
+  setpointMw: finite.describe('Transfer set-point (MW), positive from fromBusId: positive exports from Norway.'),
+  transferMw: finite.describe('Power sent at the sending converter to 0.1 MW, signed like the set-point; it ramps towards it.'),
+  lossesMw: finite.describe('Converter and cable losses to 0.1 MW.'),
+  loadingPercent: finite.describe('|transferMw| over ratingMw, to 0.1 %.'),
+  definition: hvdcLinkDefinitionSchema.optional(),
+}).strict()
+
 const tenths = (value: number): number => Math.round(value * 10) / 10
 
 const powerFlowResultSchema = z.object({
@@ -39,6 +51,7 @@ const powerFlowResultSchema = z.object({
   limit: z.number().int().positive(),
   sort: z.enum(['model', 'loading']),
   branches: z.array(powerFlowRowSchema),
+  hvdcLinks: z.array(hvdcRowSchema).describe('Every HVDC link matching the loading and island filters (a converter in the island), not paged, in the same order.'),
 }).strict()
 
 const rowFor = (grid: GridRuntimeInstance, definition: GridBranchDefinition, includeDefinition: boolean): z.infer<typeof powerFlowRowSchema> => {
@@ -56,11 +69,26 @@ const rowFor = (grid: GridRuntimeInstance, definition: GridBranchDefinition, inc
   }
 }
 
+const hvdcRowFor = (grid: GridRuntimeInstance, definition: GridHvdcLinkDefinition, includeDefinition: boolean): z.infer<typeof hvdcRowSchema> => {
+  const state = grid.hvdcLinks.get(definition.id)!
+  return {
+    id: definition.id,
+    label: definition.label,
+    state: state.state,
+    ratingMw: definition.ratingMw,
+    setpointMw: state.setpointMw,
+    transferMw: tenths(state.transferMw),
+    lossesMw: tenths(state.lossesMw),
+    loadingPercent: tenths(Math.abs(state.transferMw) / definition.ratingMw * 100),
+    ...(includeDefinition ? { definition } : {}),
+  }
+}
+
 export const gridPowerFlowQuery = defineGridQuery({
   id: 'world.electric-grid.power-flow.snapshot',
   title: 'Get power-flow snapshot',
-  description: 'Returns a bounded page of compact branch rows: rating, closed/open/tripped, derate, flow (0.1 MW, positive from fromBusId to toBusId) and loading (0.1 % of the derated rating), optionally filtered by minimum loading and island and sorted by loading. Endpoints and electrical parameters come with includeDefinition.',
-  searchTerms: ['power flow', 'branch flow', 'loading', 'overload', 'congestion', 'corridor', 'constraint', 'kraftflyt', 'belastning', 'overlast', 'flaskehals', 'snitt', 'linje'],
+  description: 'Returns a bounded page of compact branch rows: rating, closed/open/tripped, derate, flow (0.1 MW, positive from fromBusId to toBusId) and loading (0.1 % of the derated rating), optionally filtered by minimum loading and island and sorted by loading. Every HVDC link follows in its own rows: deblocked/blocked/tripped, set-point and transfer (positive exports from Norway), losses and loading. Endpoints and electrical parameters come with includeDefinition.',
+  searchTerms: ['power flow', 'branch flow', 'loading', 'overload', 'congestion', 'corridor', 'constraint', 'HVDC', 'interconnector', 'kraftflyt', 'belastning', 'overlast', 'flaskehals', 'snitt', 'linje', 'utenlandsforbindelse'],
   input: powerFlowPayloadSchema,
   output: powerFlowResultSchema,
   answer: (payload, grids) => {
@@ -72,6 +100,11 @@ export const gridPowerFlowQuery = defineGridQuery({
     const ordered = payload.sort === 'loading'
       ? [...matched].sort((left, right) => grid.branches.get(right.id)!.loadingPercent - grid.branches.get(left.id)!.loadingPercent)
       : matched
+    const hvdcLoadingPercent = (definition: GridHvdcLinkDefinition): number => Math.abs(grid.hvdcLinks.get(definition.id)!.transferMw) / definition.ratingMw * 100
+    const hvdcMatched = grid.definition.index.hvdcLinks.filter(definition =>
+      (payload.minLoadingPercent === undefined || hvdcLoadingPercent(definition) >= payload.minLoadingPercent)
+      && (islandId === undefined || gridBusIslandId(grid, definition.fromBusId) === islandId || gridBusIslandId(grid, definition.toBusId) === islandId))
+    const hvdcOrdered = payload.sort === 'loading' ? [...hvdcMatched].sort((left, right) => hvdcLoadingPercent(right) - hvdcLoadingPercent(left)) : hvdcMatched
     return {
       gridId: payload.gridId,
       total: ordered.length,
@@ -79,6 +112,7 @@ export const gridPowerFlowQuery = defineGridQuery({
       limit: payload.limit,
       sort: payload.sort,
       branches: ordered.slice(payload.offset, payload.offset + payload.limit).map(definition => rowFor(grid, definition, payload.includeDefinition)),
+      hvdcLinks: hvdcOrdered.map(definition => hvdcRowFor(grid, definition, payload.includeDefinition)),
     }
   },
 })

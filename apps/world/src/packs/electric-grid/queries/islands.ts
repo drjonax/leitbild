@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { hvdcInjectionAtBusesMw } from '../runtime/hvdc.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from '../runtime/instance.ts'
 import { islandFixedInjectionMw, islandMembers } from '../runtime/island-input.ts'
 import { gridIslandFrequencyHz, solvedGridIslands } from '../runtime/island-lifecycle.ts'
@@ -26,6 +27,7 @@ export const gridIslandSchema = z.object({
   generationMw: finite.describe('Generator output in the island (MW).'),
   storageMw: finite.describe('Net storage output, positive when discharging (MW).'),
   externalExchangeMw: finite.describe('Net power into the island from external systems, HVDC links and Plant connections, positive into the island (MW); 0 while de-energised.'),
+  hvdcImportMw: finite.describe('Net power the island\'s HVDC converters deliver into it (MW; part of externalExchangeMw), negative while they export; 0 while de-energised.'),
   loadMw: finite.describe('Demand of the island loads (MW).'),
   servedLoadMw: finite,
   unservedLoadMw: finite,
@@ -65,6 +67,7 @@ const islandView = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: 
     generationMw: generators.reduce((sum, generator) => sum + generator.dispatchMw, 0),
     storageMw: structure.storage.reduce((sum, item) => sum + grid.storage.get(item.id)!.dispatchMw, 0),
     externalExchangeMw,
+    hvdcImportMw: island.energized ? hvdcInjectionAtBusesMw(grid, structure.busSet) : 0,
     loadMw,
     servedLoadMw,
     unservedLoadMw: loads.reduce((sum, load) => sum + load.unservedMw, 0),

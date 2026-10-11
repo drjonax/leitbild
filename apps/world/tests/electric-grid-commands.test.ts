@@ -469,7 +469,8 @@ describe('electric grid query Capabilities', () => {
     for (const compiled of [definition, halden]) {
       const grid = createGridRuntimeInstance({ definition: compiled, at: isoAt(0) })
       advanceGrid(grid, 0, isoAt(0))
-      for (const asset of compiled.index.assets) expect(() => query(grid, 'world.electric-grid.asset.get', { assetId: asset.id })).not.toThrow()
+      for (const asset of [...compiled.index.assets, ...compiled.index.hvdcLinks]) expect(() => query(grid, 'world.electric-grid.asset.get', { assetId: asset.id })).not.toThrow()
+      expect(compiled.index.hvdcLinks.length).toBeGreaterThan(0)
       for (const id of ['world.electric-grid.catalog.list', 'world.electric-grid.grid.summary', 'world.electric-grid.islands.list', 'world.electric-grid.connection-points.list']) {
         expect(() => query(grid, id)).not.toThrow()
       }

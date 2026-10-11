@@ -11,6 +11,7 @@ import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { nordicFrequencyAutomationRef, norwayGridModelRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { CompiledGridDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
+import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
 import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { islandKineticEnergyMws } from '../src/packs/electric-grid/runtime/island-input.ts'
@@ -81,6 +82,14 @@ const largestKclResidualMw = (grid: GridRuntimeInstance): number => {
   return Math.max(...[...residuals.values()].map(Math.abs))
 }
 
+const queryCapability = (id: string) => electricGridQueryCapabilities.find(capability => capability.id === id)!
+/** Answers a query the way the Host does: the Pack answer, then the published output schema. */
+const query = (grid: GridRuntimeInstance, capabilityId: string, input: Readonly<Record<string, unknown>> = {}) =>
+  queryCapability(capabilityId).output.parse(answerElectricGridQuery({
+    request: { capabilityId, input: { gridId: grid.definition.gridId, ...input } },
+    grids: new Map([[grid.definition.gridId, grid]]),
+  })) as Record<string, any>
+
 describe('HVDC set-point', () => {
   test('ramps the transfer at the link\'s rate to the set-point; an import arrives less the converter losses', () => {
     const run = steppedGrid(definitionWith())
@@ -94,6 +103,9 @@ describe('HVDC set-point', () => {
     run.advanceTo(600_000, [1_000])
     expect(linkOf(run).transferMw).toBe(-600)
     expect(linkOf(run).lossesMw).toBeCloseTo(18.6, 9)
+    const island = (query(run.grid, 'world.electric-grid.islands.list').islands as ReadonlyArray<{ id: string; hvdcImportMw: number }>)
+      .find(candidate => candidate.id === run.grid.busStates.get('bus:south')!.islandId)!
+    expect(island.hvdcImportMw).toBeCloseTo(600 * (1 - 0.031), 9)
     expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
   })
 
@@ -191,6 +203,7 @@ describe('HVDC converter trips', () => {
     expect(run.grid.alarms.records.get(gridAlarmId('hvdc', westLinkId, 'tripped'))!.message).toContain('tripped on loss of AC voltage while sending -200 MW')
     expect(run.command(gridResetHvdcTripCommandKind, { assetId: westLinkId }).ok).toBe(true)
     expect(reasonOf(run.command(gridDeblockHvdcCommandKind, { assetId: westLinkId }))).toBe('HVDC link hvdc:test-west cannot deblock: its converter terminal bus:west (bus:west) has no AC voltage')
+    expect(query(run.grid, 'world.electric-grid.asset.get', { assetId: westLinkId }).asset.applicableOperationIds).toEqual([])
     expect(run.command(gridCloseBranchCommandKind, { assetId: 'west-line' }).ok).toBe(true)
     expect(run.command(gridDeblockHvdcCommandKind, { assetId: westLinkId }).ok).toBe(true)
     expect(linkOf(run, westLinkId)).toMatchObject({ state: 'deblocked', transferMw: 0 })
@@ -238,6 +251,43 @@ describe('island balance through an HVDC import step', () => {
       // at about 9.7 pu more flow: about 9 MW), less load self-regulation at the lower frequency.
       expect(Math.abs(pickUpMw - 969)).toBeLessThan(15)
     }
+  })
+})
+
+describe('HVDC links in the Grid queries', () => {
+  test('asset.get, assets.search, power-flow.snapshot and islands.list carry HVDC state and operations', () => {
+    const run = steppedGrid(definitionWith({ [nordlinkId]: -600 }))
+    run.advanceTo(10_000)
+    const detail = query(run.grid, 'world.electric-grid.asset.get', { assetId: nordlinkId }).asset
+    expect(detail).toMatchObject({
+      id: nordlinkId,
+      kind: 'hvdc',
+      subkind: 'hvdc_link',
+      status: { tone: 'ready', label: 'Deblocked' },
+      summary: '-600 / -600 MW set-point · ±1,400 MW',
+      applicableOperationIds: [gridSetHvdcSetpointCommandKind, gridBlockHvdcCommandKind, gridTripHvdcCommandKind],
+      mapTarget: { kind: 'bounds', bounds: [[7, 59], [9, 59]] },
+      definition: { fromBusId: 'bus:south', toBusId: 'bus:boundary-DE', ratingMw: 1_400, lossPercent: 3.1, rampMwPerMinute: 60 },
+      state: { state: 'deblocked', setpointMw: -600, transferMw: -600, lossesMw: expect.closeTo(18.6, 9), trip: null },
+    })
+    expect(query(run.grid, 'world.electric-grid.assets.search', { kinds: ['hvdc'] }).assets.map((asset: { id: string }) => asset.id)).toEqual([nordlinkId, westLinkId])
+    expect(query(run.grid, 'world.electric-grid.assets.search', { text: 'nordlink' }).assets.map((asset: { id: string }) => asset.id)).toEqual([nordlinkId])
+
+    const rows = query(run.grid, 'world.electric-grid.power-flow.snapshot').hvdcLinks
+    expect(rows).toEqual([
+      { id: nordlinkId, label: 'Test NordLink', state: 'deblocked', ratingMw: 1_400, setpointMw: -600, transferMw: -600, lossesMw: 18.6, loadingPercent: 42.9 },
+      { id: westLinkId, label: 'Test west link', state: 'deblocked', ratingMw: 700, setpointMw: 0, transferMw: 0, lossesMw: 0, loadingPercent: 0 },
+    ])
+    expect(query(run.grid, 'world.electric-grid.power-flow.snapshot', { minLoadingPercent: 10 }).hvdcLinks.map((row: { id: string }) => row.id)).toEqual([nordlinkId])
+
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: -700 }).ok).toBe(true)
+    expect(query(run.grid, 'world.electric-grid.asset.get', { assetId: nordlinkId }).asset.status).toEqual({ tone: 'working', label: 'Ramping to -700 MW' })
+    expect(run.command(gridBlockHvdcCommandKind, { assetId: westLinkId }).ok).toBe(true)
+    expect(query(run.grid, 'world.electric-grid.asset.get', { assetId: westLinkId }).asset).toMatchObject({ status: { tone: 'idle', label: 'Blocked' }, applicableOperationIds: [gridDeblockHvdcCommandKind] })
+    expect(query(run.grid, 'world.electric-grid.assets.search', { status: ['blocked'] }).assets.map((asset: { id: string }) => asset.id)).toEqual([westLinkId])
+    expect(run.command(gridTripHvdcCommandKind, { assetId: nordlinkId }).ok).toBe(true)
+    expect(query(run.grid, 'world.electric-grid.asset.get', { assetId: nordlinkId }).asset).toMatchObject({ status: { tone: 'error', label: 'Tripped (command)' }, applicableOperationIds: [gridResetHvdcTripCommandKind] })
+    expect(query(run.grid, 'world.electric-grid.assets.search', { kinds: ['hvdc'], status: ['tripped'] }).total).toBe(1)
   })
 })
 

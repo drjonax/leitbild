@@ -14,13 +14,21 @@ import {
   gridTripGeneratorCommandKind,
 } from '../commands/generator.ts'
 import {
+  gridBlockHvdcCommandKind,
+  gridDeblockHvdcCommandKind,
+  gridResetHvdcTripCommandKind,
+  gridSetHvdcSetpointCommandKind,
+  gridTripHvdcCommandKind,
+} from '../commands/hvdc.ts'
+import {
   gridRestoreLoadCommandKind,
   gridSetEvChargingDemandCommandKind,
   gridShedLoadCommandKind,
 } from '../commands/load.ts'
 import { gridResetBranchProtectionCommandKind } from '../commands/protection.ts'
-import type { GridAssetDefinition, GridGeneratorDefinition, GridLoadDefinition } from '../grid-model.ts'
-import type { GridAssetSnapshot, GridBranchState, GridGeneratorState, GridLoadState, GridRuntimeInstance } from '../runtime/instance.ts'
+import type { GridAssetDefinition, GridGeneratorDefinition, GridHvdcLinkDefinition, GridLoadDefinition } from '../grid-model.ts'
+import { unpoweredHvdcTerminal } from '../runtime/hvdc.ts'
+import type { GridAssetSnapshot, GridBranchState, GridGeneratorState, GridHvdcLinkState, GridLoadState, GridRuntimeInstance } from '../runtime/instance.ts'
 import { generatorMinimumStableMw } from '../runtime/unit-commitment.ts'
 import { assetKindSchema } from './common.ts'
 
@@ -40,7 +48,7 @@ export const assetListItemSchema = z.object({
   mapTarget: mapTargetSchema.optional(),
 }).strict()
 
-const mapTargetFor = (grid: GridRuntimeInstance, definition: GridAssetDefinition): z.infer<typeof mapTargetSchema> | undefined => {
+const mapTargetFor = (grid: GridRuntimeInstance, definition: GridAssetDefinition | GridHvdcLinkDefinition): z.infer<typeof mapTargetSchema> | undefined => {
   if ('location' in definition) return { kind: 'point', center: [definition.location[0], definition.location[1]] }
   if ('fromBusId' in definition) {
     const from = grid.definition.index.busById.get(definition.fromBusId)?.location
@@ -79,6 +87,12 @@ const branchOperationIds = (state: GridBranchState): ReadonlyArray<string> => [
   state.state === 'closed' ? gridOpenBranchCommandKind : state.state === 'open' ? gridCloseBranchCommandKind : gridResetBranchProtectionCommandKind,
   ...(state.availability < 1 ? [gridDerateBranchCommandKind, gridClearDerateCommandKind] : [gridDerateBranchCommandKind]),
 ]
+
+const hvdcOperationIds = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition, state: GridHvdcLinkState): ReadonlyArray<string> => {
+  if (state.state === 'deblocked') return [gridSetHvdcSetpointCommandKind, gridBlockHvdcCommandKind, gridTripHvdcCommandKind]
+  if (state.state === 'tripped') return [gridResetHvdcTripCommandKind]
+  return unpoweredHvdcTerminal(grid, link) === null ? [gridDeblockHvdcCommandKind] : []
+}
 
 const applicableOperationIdsFor = (grid: GridRuntimeInstance, asset: GridAssetSnapshot): ReadonlyArray<string> => {
   const entry = grid.definition.index.assetById.get(asset.id)!
@@ -158,6 +172,29 @@ export const assetPresentationFor = (grid: GridRuntimeInstance, asset: GridAsset
     status: { tone, label: statusLabel },
     summary,
     applicableOperationIds: [...applicableOperationIdsFor(grid, asset)],
+    ...(mapTarget === undefined ? {} : { mapTarget }),
+  }
+}
+
+/** An HVDC link: the Model keeps it apart from its AC assets, so it has its own presentation. */
+export const hvdcPresentationFor = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition): z.infer<typeof assetListItemSchema> => {
+  const state = grid.hvdcLinks.get(link.id)!
+  const ramping = state.transferMw !== state.setpointMw
+  const megawatts = (value: number): string => Math.round(value).toLocaleString()
+  const mapTarget = mapTargetFor(grid, link)
+  return {
+    id: link.id,
+    label: link.label,
+    kind: 'hvdc',
+    subkind: 'hvdc_link',
+    status: {
+      tone: state.state === 'tripped' ? 'error' : state.state === 'blocked' ? 'idle' : ramping ? 'working' : 'ready',
+      label: state.state === 'tripped'
+        ? `Tripped (${state.trip!.cause})`
+        : state.state === 'blocked' ? 'Blocked' : ramping ? `Ramping to ${megawatts(state.setpointMw)} MW` : 'Deblocked',
+    },
+    summary: `${megawatts(state.transferMw)} / ${megawatts(state.setpointMw)} MW set-point · ±${megawatts(link.ratingMw)} MW`,
+    applicableOperationIds: [...hvdcOperationIds(grid, link, state)],
     ...(mapTarget === undefined ? {} : { mapTarget }),
   }
 }

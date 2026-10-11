@@ -3,6 +3,7 @@ import type {
   GridBranchDefinition,
   GridBusDefinition,
   GridGeneratorDefinition,
+  GridHvdcLinkDefinition,
   GridLoadDefinition,
   GridStorageDefinition,
 } from '../grid-model.ts'
@@ -11,6 +12,7 @@ import type {
   GridBranchState,
   GridBusState,
   GridGeneratorState,
+  GridHvdcLinkState,
   GridLoadState,
   GridStorageState,
 } from '../runtime/instance.ts'
@@ -107,6 +109,18 @@ export const storageDefinitionSchema = z.object({
   ...sourceFields,
 }).strict()
 
+export const hvdcLinkDefinitionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  fromBusId: z.string().describe('AC bus of the Norwegian converter; a positive transfer leaves it.'),
+  toBusId: z.string().describe('Boundary bus of the external system, or another Norwegian converter bus.'),
+  ratingMw: finite.describe('Transfer limit either way (MW).'),
+  lossPercent: finite.describe('Converter and cable losses in percent of the sent power.'),
+  rampMwPerMinute: finite.describe('Rate at which the transfer follows a set-point change (MW/min).'),
+  osmWayIds: z.array(z.string()).readonly(),
+  provenance: assetProvenanceSchema,
+}).strict()
+
 const islandFrequencyHz = finite.nullable().describe('Frequency of the island holding the asset; null while it is de-energised (Hz).')
 
 export const busStateSchema = z.object({
@@ -198,6 +212,21 @@ export const storageStateSchema = z.object({
   state: z.enum(['idle', 'charging', 'discharging', 'unavailable']),
 }).strict()
 
+export const hvdcLinkOperatingStateSchema = z.enum(['deblocked', 'blocked', 'tripped'])
+  .describe('deblocked: the transfer follows the set-point; blocked: stopped at 0 MW by block-hvdc or after a trip reset, until deblock-hvdc; tripped: stopped by its converter protection or trip-hvdc, until reset-hvdc-trip.')
+
+export const hvdcLinkStateSchema = z.object({
+  state: hvdcLinkOperatingStateSchema,
+  setpointMw: finite.describe('Transfer set-point (MW), positive from fromBusId to toBusId: positive exports from Norway.'),
+  transferMw: finite.describe('Power sent at the sending converter (MW, signed like the set-point); it ramps towards the set-point at rampMwPerMinute.'),
+  lossesMw: finite.describe('Converter and cable losses (MW); the receiving converter delivers |transferMw| − lossesMw.'),
+  trip: z.object({
+    cause: z.enum(['command', 'ac-voltage-loss']).describe('command: trip-hvdc; ac-voltage-loss: a converter terminal\'s AC bus was de-energised.'),
+    atElapsedMs: finite,
+    transferMw: finite.describe('Transfer when the link tripped (MW).'),
+  }).strict().nullable().describe('The trip of a tripped link; null otherwise.'),
+}).strict()
+
 type Accepts<Schema extends z.ZodType, Value extends z.input<Schema>> = Value
 export type WireSchemasAcceptRuntimeValues = [
   Accepts<typeof busDefinitionSchema, GridBusDefinition>,
@@ -210,4 +239,6 @@ export type WireSchemasAcceptRuntimeValues = [
   Accepts<typeof generatorStateSchema, GridGeneratorState>,
   Accepts<typeof loadStateSchema, GridLoadState>,
   Accepts<typeof storageStateSchema, GridStorageState>,
+  Accepts<typeof hvdcLinkDefinitionSchema, GridHvdcLinkDefinition>,
+  Accepts<typeof hvdcLinkStateSchema, GridHvdcLinkState>,
 ]
