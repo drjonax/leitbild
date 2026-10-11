@@ -9,6 +9,7 @@ import type { BuildLedger } from './ledger.ts'
 //   attach-via-regional-grid                   → a registered plant's bus (generators.ts);
 //   attach-load-via-regional-grid              → a municipality's load bus (loads.ts);
 //   add-shunt-device                           → the shunt of its bus (network.ts);
+//   set-line-rating, set-transformer-rating    → a branch's rating (curated-ratings.ts);
 //   assert-radial, boundary                    → the audit only.
 
 export const curationSourceId = (feature: GridCuration): string => `curation:${feature.id}`

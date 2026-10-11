@@ -111,6 +111,23 @@ const propertiesSchema = z.discriminatedUnion('kind', [
     mvarAtNominalVoltage: z.number().finite().refine(value => value !== 0, 'must not be 0'),
     switchable: z.boolean(),
   }).strict().refine(properties => (properties.device === 'shunt-reactor') === (properties.mvarAtNominalVoltage < 0), 'a shunt reactor absorbs (negative MVAr), a capacitor bank supplies (positive)'),
+  /**
+   * A line whose conductors a published document gives (NVE concession, operator): the one model
+   * line carrying every listed way takes this rating, all circuits, at the 35 °C design air of the
+   * overhead rules; the ambient rule rates it at the model's and the summer air like any overhead
+   * line. Its impedance stays rule-based.
+   */
+  z.object({
+    kind: z.literal('set-line-rating'), ...common,
+    wayOsmIds: z.array(wayId).min(1), voltageKv: kv,
+    designRatingMva: z.number().finite().positive(),
+  }).strict(),
+  /** A transformer whose rating a published document gives: the station's highKv/lowKv transformer takes it, with the transformer rule's impedance on that rating. */
+  z.object({
+    kind: z.literal('set-transformer-rating'), ...common,
+    substationOsmId: osmId, highKv: kv, lowKv: kv,
+    ratingMva: z.number().finite().positive(),
+  }).strict().refine(properties => properties.highKv > properties.lowKv, 'highKv must exceed lowKv'),
 ])
 
 const featureSchema = z.object({
@@ -140,6 +157,8 @@ const allowedExpiry: Record<CurationFeature['properties']['kind'], {
   'attach-via-regional-grid': { required: ['review-by'], allowed: ['review-by'] },
   'attach-load-via-regional-grid': { required: ['review-by'], allowed: ['review-by'] },
   'add-shunt-device': { required: ['review-by'], allowed: ['review-by'] },
+  'set-line-rating': { required: ['review-by'], allowed: ['review-by'] },
+  'set-transformer-rating': { required: ['review-by'], allowed: ['review-by'] },
 }
 
 const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray<string> => {
@@ -155,6 +174,8 @@ const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray
     case 'attach-via-regional-grid': return [properties.substationOsmId]
     case 'attach-load-via-regional-grid': return [properties.substationOsmId]
     case 'add-shunt-device': return [properties.substationOsmId]
+    case 'set-line-rating': return properties.wayOsmIds
+    case 'set-transformer-rating': return [properties.substationOsmId]
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from '../src/packs/electric-grid/build/curations.ts'
-import { cableRules, lineParameters, overheadRules, reactanceFloorPu, transformerParameters } from '../src/packs/electric-grid/build/electrical.ts'
+import { ambientRatingRule, cableRules, lineParameters, overheadRules, reactanceFloorPu, transformerParameters } from '../src/packs/electric-grid/build/electrical.ts'
 import { simplifyPath, type LonLat } from '../src/packs/electric-grid/build/geo.ts'
 import { jsonLines } from '../src/packs/electric-grid/build/json-lines.ts'
 import { createBuildLedger } from '../src/packs/electric-grid/build/ledger.ts'
@@ -20,11 +20,24 @@ describe('model build: electrical rules', () => {
     expect(line.reactancePu).toBeCloseTo(0.30 * 100 * 100 / 420 ** 2 / 2, 12)
     expect(line.resistancePu).toBeCloseTo(0.025 * 100 * 100 / 420 ** 2 / 2, 12)
     expect(line.chargingSusceptancePu).toBeCloseTo(4.0e-6 * 100 * 420 ** 2 / 100 * 2, 12)
-    expect(line.ratingMw).toBe(2 * overheadRules[420].ratingMvaPerCircuit)
+    // Overhead ratings at 0 °C air (874/634 of the 35 °C design rating), and at 20 °C for summer (749/634).
+    expect(line.ratings).toEqual({
+      referenceMw: 2 * Math.round(overheadRules[420].ratingMvaPerCircuit * ambientRatingRule.referenceFactor),
+      designMw: 2 * overheadRules[420].ratingMvaPerCircuit,
+      summerMw: 2 * Math.round(overheadRules[420].ratingMvaPerCircuit * ambientRatingRule.summerFactor),
+    })
+    expect(ambientRatingRule.referenceFactor).toBeCloseTo(874 / 634, 3)
+    expect(ambientRatingRule.summerFactor).toBeCloseTo(749 / 634, 4)
+    expect(line.ratingMw).toBe(line.ratings.referenceMw)
     expect(line.emergencyRatingMw).toBe(Math.round(line.ratingMw * 1.2))
     const mixed = lineParameters({ nominalKv: 132, lengthKm: 10, cableLengthKm: 4, circuits: 1 })
     expect(mixed.reactancePu).toBeCloseTo((0.40 * 6 + 0.13 * 4) * 100 / 132 ** 2, 12)
-    expect(mixed.ratingMw).toBe(Math.min(overheadRules[132].ratingMvaPerCircuit, cableRules[132].ratingMvaPerCircuit))
+    // The 132 kV cable (250 MVA) limits the corridor at 0 °C air; at the design and summer air the overhead part does.
+    expect(mixed.ratings).toEqual({
+      referenceMw: Math.min(Math.round(overheadRules[132].ratingMvaPerCircuit * ambientRatingRule.referenceFactor), cableRules[132].ratingMvaPerCircuit),
+      designMw: Math.min(overheadRules[132].ratingMvaPerCircuit, cableRules[132].ratingMvaPerCircuit),
+      summerMw: Math.min(Math.round(overheadRules[132].ratingMvaPerCircuit * ambientRatingRule.summerFactor), cableRules[132].ratingMvaPerCircuit),
+    })
     expect(lineParameters({ nominalKv: 420, lengthKm: 0.05, cableLengthKm: 0, circuits: 1 }).reactancePu).toBe(reactanceFloorPu)
     expect(() => lineParameters({ nominalKv: 66, lengthKm: 1, cableLengthKm: 0, circuits: 1 })).toThrow('no electrical rule for 66 kV')
   })

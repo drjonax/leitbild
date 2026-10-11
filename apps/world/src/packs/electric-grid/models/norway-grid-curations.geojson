@@ -1144,6 +1144,108 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "oyfjellet-marka-duplex",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          13.27,
+          65.83
+        ]
+      },
+      "properties": {
+        "kind": "set-line-rating",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/935180688",
+          "way/935180689",
+          "way/935180690",
+          "way/935180691",
+          "way/935180693",
+          "way/1013098334"
+        ],
+        "wayOsmIds": [
+          "way/935180688",
+          "way/935180689",
+          "way/935180690",
+          "way/935180691",
+          "way/935180693",
+          "way/1013098334"
+        ],
+        "voltageKv": 132,
+        "designRatingMva": 294,
+        "reason": "NVE's concession for the Øyfjellet grid connection requires the 132 kV Kleivan – Marka line to carry at least as much as duplex FeAl 185 (293-AL1/48 per sub-conductor, larger than the rule's 243-AL1/39) and its cable sections at least TSLF 2×3×1 1600 mm²; OSM tags the overhead ways wires=double and the cable ways cables=6. The line is rated as two rule conductors per phase, 2 × 147 MVA at 35 °C design air, a lower bound.",
+        "evidence": [
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/201707386/3009313",
+            "ref": "NVE 201707386-82 (2019-12-18), p. 2",
+            "note": "minimum strømføringsevne tilsvarende 3x2FeAl 185; jordkabler … TSLF 2x3x1 1600 mm2"
+          },
+          {
+            "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/systemansvaret/fosweb/beregning-av-termisk-grenselast-pa-kraftledninger-statnett-sf.pdf",
+            "ref": "Statnett SDOK-39-30 rev 6.0, revision log",
+            "note": "293-AL1/48-ST1A is FeAl 185 (26/7)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/935180689",
+            "ref": "way/935180689",
+            "note": "overhead way tagged wires=double"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ertsmyra-transformer-300mva",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          6.753007,
+          58.670772
+        ]
+      },
+      "properties": {
+        "kind": "set-transformer-rating",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "relation/8890888"
+        ],
+        "substationOsmId": "relation/8890888",
+        "highKv": 300,
+        "lowKv": 132,
+        "ratingMva": 300,
+        "reason": "Ertsmyra has one 300 MVA transformer for Tonstad and Buheii wind farms, Rusdal hydro and the regional grid (NVE); NVE describes it as 420/132 kV, OSM maps the station at 300 kV, and the model keeps the mapped voltage.",
+        "evidence": [
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/200903265/2489649",
+            "ref": "NVE 200903265-224 (2018-08-27), p. 1",
+            "note": "Ertsmyra transformatorstasjon (132/420 MVA) med kapasitet på 300 MVA"
+          },
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/200903265/652473",
+            "ref": "Tonstad Vindpark AS, konsesjonssøknad (2012-12-10), p. 3",
+            "note": "En 420/132 kV transformator, med ytelse 300 MVA"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
     }
   ]
 }

@@ -1,13 +1,13 @@
 import type { PriceArea } from '../schemas/grid-ids.ts'
 import type { GridCuration, GridCurationCollection } from '../schemas/grid-curation.ts'
-import type { GridBranchV2, GridBusV2 } from '../schemas/grid-model.ts'
+import type { GridBusV2 } from '../schemas/grid-model.ts'
 import { polylineKm } from '../topology/geometry.ts'
 import { compareText, stationToken } from '../topology/ids.ts'
 import type { TopologyLedgerEntry } from '../topology/ledger.ts'
 import { lineParameters } from './electrical.ts'
 import { roundSignificant, roundTo, type LonLat } from './geo.ts'
 import type { BuildLedger } from './ledger.ts'
-import { v2OsmWayIds } from './network.ts'
+import { v2OsmWayIds, type RatedLine } from './network.ts'
 import { corridorPath } from './paths.ts'
 import type { SidecarFeatures } from './sidecar-features.ts'
 import { curationSourceId } from './curations.ts'
@@ -17,7 +17,7 @@ import { curationSourceId } from './curations.ts'
 
 export interface CuratedNetwork {
   readonly buses: ReadonlyArray<GridBusV2>
-  readonly branches: ReadonlyArray<GridBranchV2>
+  readonly lines: ReadonlyArray<RatedLine>
   readonly paths: ReadonlyMap<string, ReadonlyArray<LonLat>>
 }
 
@@ -36,7 +36,7 @@ export const curatedNetwork = (config: {
 }): CuratedNetwork => {
   const busById = new Map(config.buses.map(bus => [bus.id, bus]))
   const addedBuses: GridBusV2[] = []
-  const branches: GridBranchV2[] = []
+  const lines: RatedLine[] = []
   const paths = new Map<string, ReadonlyArray<LonLat>>()
   const fail = (feature: GridCuration, message: string): never => { throw new Error(`${curationSourceId(feature)}: ${message}`) }
 
@@ -69,7 +69,7 @@ export const curatedNetwork = (config: {
     const parameters = lineParameters({ nominalKv: kv, lengthKm, cableLengthKm: cable ? lengthKm : 0, circuits })
     const [fromBus, toBus] = [from, to].sort((left, right) => compareText(left.id, right.id)) as [GridBusV2, GridBusV2]
     const id = `branch:curated-${slugOf(feature)}`
-    branches.push({
+    lines.push({ ratings: parameters.ratings, branch: {
       id,
       label: `${fromBus.label.replace(/ \d+ kV$/, '')} – ${toBus.label.replace(/ \d+ kV$/, '')}`,
       kind: cable ? 'cable' : 'ac_line',
@@ -91,7 +91,7 @@ export const curatedNetwork = (config: {
         confidence: 'medium',
         note: `${feature.properties.reason} Electrical values by rules ${parameters.ruleIds.join(', ')}.`,
       },
-    })
+    } })
     paths.set(id, fromBus.id === from.id ? path : [...path].reverse())
     config.ledger.add({ reason: 'curated-branch-added', elementIds: [id, curationSourceId(feature), ...wayIds], detail: `${feature.properties.kind}: ${from.label} – ${to.label}, ${roundTo(lengthKm, 2)} km` })
   }
@@ -115,5 +115,5 @@ export const curatedNetwork = (config: {
       branch(feature, remote, terminal, properties.voltageKv, path, wayIds, 1, false)
     }
   }
-  return { buses: addedBuses, branches, paths }
+  return { buses: addedBuses, lines, paths }
 }

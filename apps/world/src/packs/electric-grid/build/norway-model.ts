@@ -11,6 +11,7 @@ import { adaptNodeSidecar } from '../topology/node-sidecar.ts'
 import type { TopologyBranch, TopologyBus, TopologyHvdcLink, TopologySummary } from '../topology/result.ts'
 import { curatedNetwork } from './curated-branches.ts'
 import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from './curations.ts'
+import { curatedTransformerRatings, withCuratedLineRatings } from './curated-ratings.ts'
 import { electricalRules } from './electrical.ts'
 import { buildGenerators, buildSiteGenerators, registeredHydroUnits, registeredWindUnits } from './generators.ts'
 import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverUtilisationHours } from './generator-rules.ts'
@@ -135,10 +136,11 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     ledger,
   })
   const buses = [...topologyBuses, ...curated.buses].sort((left, right) => compareText(left.id, right.id))
-  const lines = [
+  const ratedLines = withCuratedLineRatings([
     ...main.branches.filter(branch => branch.kind !== 'transformer').map(branch => toGridLine(branch, { ofBranch: curationsOfBranch })),
-    ...curated.branches,
-  ]
+    ...curated.lines,
+  ], curations, ledger)
+  const lines = ratedLines.map(line => line.branch)
   const mainBusIds = new Set([...main.mainBusIds, ...curated.buses.map(bus => bus.id)])
   const stations = createStationIndex(buses, main.buses, mainBusIds, sidecar.outline)
   const registeredGenerators = buildGenerators({
@@ -160,7 +162,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   })
   const winterHour = inputs.referenceHours.data.referenceHours.winterPeak
   const lineCapacity = new Map<string, number>()
-  for (const line of lines) for (const busId of [line.fromBusId, line.toBusId]) lineCapacity.set(busId, (lineCapacity.get(busId) ?? 0) + line.ratingMw)
+  for (const line of ratedLines) for (const busId of [line.branch.fromBusId, line.branch.toBusId]) lineCapacity.set(busId, (lineCapacity.get(busId) ?? 0) + line.ratings.designMw)
   const population = allocateByPopulation({
     squares: inputs.population.data.cells,
     municipalities: inputs.municipalities.data.municipalities.flatMap(place => {
@@ -210,7 +212,9 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     generationMw: sumByBus(generators.map(generator => ({ busId: generator.busId, mw: generator.capacityMw }))),
     loadMw: sumByBus(loads.map(load => ({ busId: load.busId, mw: load.referenceDemandMw }))),
   }
-  const transformers = main.branches.filter(branch => branch.kind === 'transformer').map(branch => toGridTransformer(branch, lines, injections))
+  const transformerRatings = curatedTransformerRatings(curations, featureId => stationOfFeature.get(featureId))
+  const transformers = main.branches.filter(branch => branch.kind === 'transformer').map(branch => toGridTransformer(branch, ratedLines, injections, transformerRatings.of(branch)))
+  transformerRatings.assertAllApplied()
   const branches: GridBranchV2[] = [...lines, ...transformers].sort((left, right) => compareText(left.id, right.id))
 
   const rulesDigest = sha256Hex(JSON.stringify(buildRules))
@@ -254,6 +258,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     summerStartUtc: summerHour.priceAreas.startUtc,
     winterStartUtc: winterHour.priceAreas.startUtc,
     dispatch: inputs.referenceDispatch.data.hours,
+    summerLineRatingMw: new Map(ratedLines.map(line => [line.branch.id, line.ratings.summerMw])),
   })
   const halden = buildHaldenAddition(model, priceAreaOf)
   for (const target of [gridOperatingPointTargetsForModel(model), gridOperatingPointTargetsForModel(halden.composed)]) {

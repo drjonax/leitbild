@@ -19,6 +19,7 @@ const reasonDispositions = {
   'site-without-station': 'dropped',
   'site-generator-attached': 'curated',
   'curated-branch-added': 'curated',
+  'curated-rating-set': 'curated',
 } as const
 
 export type BuildLedgerReason = keyof typeof reasonDispositions

@@ -2,7 +2,7 @@ import type { GridBranchV2, GridBusV2, GridProvenance, GridShuntV2 } from '../sc
 import type { PriceArea } from '../schemas/grid-ids.ts'
 import { compareText } from '../topology/ids.ts'
 import type { TopologyBranch, TopologyBus, TopologyProvenance, TopologyResult } from '../topology/result.ts'
-import { lineParameters, sBaseMva, shuntRule, transformerParameters, transformerRule } from './electrical.ts'
+import { lineParameters, sBaseMva, shuntRule, transformerParameters, transformerRule, type LineRatings } from './electrical.ts'
 import { roundSignificant, roundTo } from './geo.ts'
 import type { BuildLedger } from './ledger.ts'
 
@@ -114,7 +114,13 @@ export interface BranchCurationLookup {
   readonly ofBranch: (branch: TopologyBranch) => ReadonlyArray<string>
 }
 
-export const toGridLine = (branch: TopologyBranch, curations: BranchCurationLookup): GridBranchV2 => {
+/** A model line with its ratings at the three airs the build uses. */
+export interface RatedLine {
+  readonly branch: GridBranchV2
+  readonly ratings: LineRatings
+}
+
+export const toGridLine = (branch: TopologyBranch, curations: BranchCurationLookup): RatedLine => {
   if (branch.kind === 'transformer' || branch.lengthKm === null || branch.cableLengthKm === null) throw new Error(`${branch.id} is not a line or cable`)
   const parameters = lineParameters({ nominalKv: branch.nominalKv, lengthKm: branch.lengthKm, cableLengthKm: branch.cableLengthKm, circuits: branch.circuits })
   const curationIds = curations.ofBranch(branch)
@@ -122,7 +128,7 @@ export const toGridLine = (branch: TopologyBranch, curations: BranchCurationLook
     ...(branch.provenance.note === null ? [] : [branch.provenance.note]),
     `electrical rules ${parameters.ruleIds.join(', ')}`,
   ]
-  return {
+  return { ratings: parameters.ratings, branch: {
     id: branch.id,
     label: branch.label,
     kind: branch.kind,
@@ -144,7 +150,7 @@ export const toGridLine = (branch: TopologyBranch, curations: BranchCurationLook
       confidence: capConfidence(branch.provenance.confidence, 'medium'),
       note: notes.join('; '),
     },
-  }
+  } }
 }
 
 export interface BusInjections {
@@ -152,12 +158,19 @@ export interface BusInjections {
   readonly loadMw: (busId: string) => number
 }
 
+/** A transformer rating a set-transformer-rating curation gives. */
+export interface CuratedTransformerRating {
+  readonly curationId: string
+  readonly ratingMva: number
+  readonly reason: string
+}
+
 /** Transformers sized to the line capacity they join (see transformerRule), after injections are known. */
-export const toGridTransformer = (branch: TopologyBranch, lines: ReadonlyArray<GridBranchV2>, injections: BusInjections): GridBranchV2 => {
+export const toGridTransformer = (branch: TopologyBranch, lines: ReadonlyArray<RatedLine>, injections: BusInjections, curated: CuratedTransformerRating | undefined): GridBranchV2 => {
   if (branch.kind !== 'transformer' || branch.lowKv === null) throw new Error(`${branch.id} is not a transformer`)
   const lineCapacity = (busId: string): number => lines
-    .filter(line => line.fromBusId === busId || line.toBusId === busId)
-    .reduce((sum, line) => sum + line.ratingMw, 0)
+    .filter(line => line.branch.fromBusId === busId || line.branch.toBusId === busId)
+    .reduce((sum, line) => sum + line.ratings.designMw, 0)
   // The topology writes transformers high side first.
   const highBus = branch.fromBusId
   const lowBus = branch.toBusId
@@ -166,11 +179,14 @@ export const toGridTransformer = (branch: TopologyBranch, lines: ReadonlyArray<G
   const throughMva = Math.min(lineCapacity(highBus), lineCapacity(lowBus) + localMw)
   const inferredMva = Math.max(throughMva, transformerRule.injectionMargin * localMw, transformerRule.stepMva)
   const mapped = branch.ratingMva !== null
-  const ratingMva = mapped ? branch.ratingMva! : Math.ceil(inferredMva / transformerRule.stepMva) * transformerRule.stepMva
+  if (mapped && curated !== undefined) throw new Error(`${curated.curationId}: ${branch.id} already has its nameplate mapped in OSM; the curation can go`)
+  const ratingMva = curated?.ratingMva ?? (mapped ? branch.ratingMva! : Math.ceil(inferredMva / transformerRule.stepMva) * transformerRule.stepMva)
   const parameters = transformerParameters(ratingMva, branch.circuits)
   const notes = [
     ...(branch.provenance.note === null ? [] : [branch.provenance.note]),
-    mapped ? `nameplate ${ratingMva} MVA mapped in OSM; impedance by rule ${transformerRule.id}` : `rating and impedance inferred by rule ${transformerRule.id}`,
+    curated !== undefined
+      ? `rating ${ratingMva} MVA by ${curated.curationId}: ${curated.reason}; impedance by rule ${transformerRule.id}`
+      : mapped ? `nameplate ${ratingMva} MVA mapped in OSM; impedance by rule ${transformerRule.id}` : `rating and impedance inferred by rule ${transformerRule.id}`,
   ]
   return {
     id: branch.id,
@@ -189,9 +205,9 @@ export const toGridTransformer = (branch: TopologyBranch, lines: ReadonlyArray<G
     tapRatio: 1,
     osmWayIds: [],
     provenance: {
-      sources: [...branch.provenance.sources],
-      method: 'inferred',
-      confidence: mapped ? 'medium' : 'low',
+      sources: [...branch.provenance.sources, ...(curated === undefined ? [] : [curated.curationId])],
+      method: curated === undefined ? 'inferred' : 'curated',
+      confidence: mapped || curated !== undefined ? 'medium' : 'low',
       note: notes.join('; '),
     },
   }
