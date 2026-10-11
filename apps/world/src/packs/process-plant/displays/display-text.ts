@@ -26,22 +26,35 @@ export const displayValue = (value: number, unit: string): number =>
 
 /**
  * The finest step a signal's reading is shown in, in its native unit: a
- * thousandth of what the model declares it reads over (its instrument span,
- * else its hard range, else the reach of its I&C limits from zero). Null
- * where it declares none of them, or a span read over decades (a positive
- * lower end three or more decades below its top, as an intermediate-range
- * current's): such a reading is shown as it is, to its magnitude.
+ * thousandth of what the model declares it reads over: its instrument span,
+ * else its hard range, else the reach from zero of its I&C limits and of
+ * what it reads at the Plant's declared operating point (`nominal`). Where
+ * no span is declared, never finer than a tenth of the step its limits are
+ * set in, so a deviation with limits at ±1.7 °C reads no "0.004 °C" (QA
+ * review of run 22). Null where it declares none of them, or a span read
+ * over decades (a positive lower end three or more decades below its top,
+ * as an intermediate-range current's): such a reading is shown as it is.
  */
 export const readingResolution = (
   limits: { readonly instrumentSpan?: NumericSpan | undefined; readonly hardRange?: NumericSpan | undefined } | undefined,
   thresholds: ReadonlyArray<{ readonly value: number }>,
+  nominal?: number,
 ): number | null => {
+  const declared = limits?.instrumentSpan ?? limits?.hardRange
+  if (declared !== undefined) return logarithmicSpan(declared) || declared.max <= declared.min ? null : (declared.max - declared.min) * RESOLUTION_FRACTION
   const values = thresholds.map(threshold => threshold.value)
-  const span = limits?.instrumentSpan ?? limits?.hardRange ?? (values.length === 0 ? undefined : { min: Math.min(0, ...values), max: Math.max(0, ...values) })
-  if (span === undefined || logarithmicSpan(span)) return null
-  const width = span.max - span.min
-  return width > 0 ? width * RESOLUTION_FRACTION : null
+  const reach = [...values, ...(nominal === undefined ? [] : [nominal])]
+  const width = reach.length === 0 ? 0 : Math.max(0, ...reach) - Math.min(0, ...reach)
+  if (width <= 0) return null
+  return Math.max(width * RESOLUTION_FRACTION, values.length === 0 ? 0 : limitStep(values) / 10)
 }
+
+/** The finest step limits are set in: 0.1 for 1.7 and 20.5, 1 for 75, 0.01 for 0.11. */
+const limitStep = (values: ReadonlyArray<number>): number =>
+  Math.min(...values.map(value => {
+    const decimals = (Number(value.toPrecision(12)).toString().split('.')[1] ?? '').length
+    return 10 ** -decimals
+  }))
 
 const LOGARITHMIC_DECADES_RATIO = 1_000
 

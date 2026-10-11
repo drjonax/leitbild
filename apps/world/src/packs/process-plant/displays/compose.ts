@@ -48,6 +48,7 @@ import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mi
 import { principalCircuits } from './mimic/principal.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
 import { annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
+import { operatingPointValue } from './operating-point.ts'
 import { shorterSignalNames } from './signal-names.ts'
 import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
@@ -364,7 +365,7 @@ const resolvePens = (
       recorded: options.recordedSeriesIds.has(seriesId),
       command: binding.writable,
       ...(binding.limits === undefined ? {} : { limits: binding.limits }),
-      resolution: readingResolution(binding.limits, thresholds),
+      resolution: readingResolution(binding.limits, thresholds, operatingPointValue(system.plant, binding.path)),
       thresholds,
       combinedRules,
     })

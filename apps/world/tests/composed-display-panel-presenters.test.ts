@@ -302,13 +302,24 @@ describe('composed display panel presenters', () => {
   })
 
   test('a reading is shown to a resolution of a thousandth of what the model declares it reads over', () => {
-    // An instrument span first, then a hard range, then the reach of its I&C limits from zero.
+    // An instrument span first, then a hard range, then the reach from zero of its I&C limits and its operating point.
     expect(readingResolution({ instrumentSpan: { min: 0, max: 100 }, hardRange: { min: -10, max: 200 } }, [])).toBeCloseTo(0.1, 12)
     expect(readingResolution({ hardRange: { min: 0, max: 4500 } }, [])).toBeCloseTo(4.5, 12)
-    // GEN-MW, with its 450 MW low alarm; RCS-LEAK-RATE, with its 0.063 kg/s high alarm.
+    // GEN-MW, with its 450 MW low alarm.
     expect(readingResolution(undefined, [{ value: 450 }])).toBeCloseTo(0.45, 12)
-    expect(readingResolution(undefined, [{ value: 0.063 }])).toBeCloseTo(0.000063, 12)
     expect(readingResolution(undefined, [])).toBeNull()
+    // Without a span, never finer than a tenth of the step its limits are set in: RCS-LEAK-RATE's 0.063 kg/s high
+    // alarm gives 0.0001 kg/s; TAVG-TREF's ±1.7 °C alarms 0.01 °C, where the QA review of run 22 read "0.004 °C".
+    expect(readingResolution(undefined, [{ value: 0.063 }])).toBeCloseTo(0.0001, 12)
+    const deviation = readingResolution(undefined, [{ value: -1.7 }, { value: 1.7 }])!
+    expect(deviation).toBeCloseTo(0.01, 12)
+    expect(formatQuantity(shownReading(0.004, deviation), 'degC', deviation)).toBe('0 °C')
+    // A steam flow with no limit and no span reads over what it carries at the operating point: its tail after a trip reads 0.
+    const steam = readingResolution(undefined, [], 378.1)!
+    expect(steam).toBeCloseTo(0.3781, 12)
+    expect(formatQuantity(shownReading(0.001, steam), 'kg/s', steam)).toBe('0 kg/s')
+    // A declared span is never coarsened: a level read over 0–100 % keeps its 0.1 % with limits at whole percent.
+    expect(readingResolution({ instrumentSpan: { min: 0, max: 100 } }, [{ value: 20 }, { value: 75 }], 55)).toBeCloseTo(0.1, 12)
     // Evaluation run 22: a tripped generator read 0.0000098 MW, and no leak −0.000000000003 kg/s.
     expect(formatQuantity(shownReading(0.0000098, 0.45), 'MW', 0.45)).toBe('0 MW')
     expect(formatQuantity(shownReading(-3e-12, 0.000063), 'kg/s', 0.000063)).toBe('0 kg/s')
