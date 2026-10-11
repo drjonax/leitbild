@@ -90,6 +90,13 @@ pub struct WallWater {
     pub mass_flux: Scalar,
 }
 
+/// The split of a half's fuel deposition between its two equal-area and
+/// equal-mass radial fuel nodes, inner then outer (heat-and-history.md:
+/// each node receives half of the carrier's fuel deposition). It enters
+/// only the two fuel energy rows, as `-split * fuel_w`; nothing else in the
+/// solids reads the fuel heat.
+pub const FUEL_HEAT_SPLIT: [f64; 2] = [0.5, 0.5];
+
 /// Wall water a local refresh replaced: (slot, previous water).
 #[must_use = "restore the replaced wall water after the local call"]
 #[derive(Debug)]
@@ -1204,7 +1211,7 @@ impl Solids {
                     clad_mean,
                     clad_outer,
                 },
-                [fuel_heat_w[i] * s(0.5); 2],
+                FUEL_HEAT_SPLIT.map(|f| fuel_heat_w[i] * s(f)),
                 wall,
             )
             .map_err(trial)?;
