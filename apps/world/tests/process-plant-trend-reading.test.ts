@@ -254,13 +254,13 @@ describe('how a trend reads now', () => {
 
 // The QA review's cases on the four-loop reference plant, driven as its probe
 // drove them: the fault at the Run's start, then 1 s ticks with protection.
-const qaCase = (actionId: string, seconds: number, tags: ReadonlyArray<string>) => {
+const qaCase = (actionId: string, seconds: number, tags: ReadonlyArray<string>, parameters: Readonly<Record<string, unknown>> = {}) => {
   const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:trend-reading-qa', loopCount: 4 }))
   const runtime = createProcessPlantRuntime({ system: compiled })
   const protection = createProcessPlantProtectionRunner({ system: compiled, protection: compiled.automation })
   const bindings = tags.map(tag => compiled.graph.signalBindingByTagId.get(tag as never)!)
   const trace = new Map(bindings.map(binding => [binding, [{ t: 0, v: runtime.readVariable(binding.path) as number }]]))
-  for (const command of commandsForProcessPlantAction({ actionId, parameters: {}, graph: compiled.graph })) runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+  for (const command of commandsForProcessPlantAction({ actionId, parameters, graph: compiled.graph })) runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
   for (let second = 1; second <= seconds; second += 1) {
     runtime.tick(1000)
     protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-trend-reading-qa' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
@@ -284,7 +284,7 @@ describe('a time to a limit only from an established trend (QA review cases)', (
     for (const horizonMs of [120_000, 600_000]) {
       const subcooling = read('SUB-MARGIN', 60, horizonMs, hotStandby)
       expect(subcooling.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 16.7 } }, eta: 'reversing', minutes: null })
-      expect(subcooling.text).toBe('21.6 °C above LO 16.7 °C · ALM · reversing')
+      expect(subcooling.text).toBe('21.5 °C above LO 16.7 °C · ALM · reversing')
       // The pressurizer level, rising toward its HI 75 % alarm some 48 pp away, reads by its LO 17 % alarm 9.5 pp behind (HMI review of run 23).
       const level = read('PZR-LVL', 60, horizonMs, hotStandby)
       expect(level.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 17 } }, minutes: null })
@@ -294,15 +294,16 @@ describe('a time to a limit only from an established trend (QA review cases)', (
     expect(Math.min(...read('SUB-MARGIN', 300, 120_000, hotStandby).trace.filter(point => point.t >= 60_000).map(point => point.v))).toBeGreaterThan(32)
   })
 
-  test('fifty seconds after main feedwater is lost, the steam generator level is projected to its low-low limit, which it reaches', () => {
-    const read = qaCase('loss-main-feedwater', 80, ['SG-A-LVL-NR'])
-    for (const horizonMs of [120_000, 600_000]) {
-      const level = read('SG-A-LVL-NR', 50, horizonMs, powerOperation)
-      expect(level.text).toBe('8.7 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈15 s')
-      expect((level.reading.limit as Extract<LimitState, { kind: 'margin' }>).minutes! * 60).toBeCloseTo(14.7, 0)
-    }
-    // It does, 15 s later.
-    const crossed = read('SG-A-LVL-NR', 80, 120_000, powerOperation).trace.find(point => point.v < 20)!
-    expect(crossed.t / 1000).toBe(65)
+  test('forty seconds after a feed regulating valve failed part-open, the steam generator level is projected to its low-low limit, which it reaches', () => {
+    // A loss of all main feedwater takes the narrow range, a quarter of the wide range, to its low-low limit within
+    // about 24 s, before half a minute of trend can found a time to it. Feed regulating valve B failed at 70 % lets
+    // generator B boil down more slowly: the trend is established before the level gets there.
+    const read = qaCase('steam-generator-b-feedwater-runback', 90, ['SG-B-LVL-NR'], { positionPercent: 70 })
+    // The two-minute trend projects it; the ten-minute trend's longer window has not yet the history to.
+    expect(read('SG-B-LVL-NR', 40, 120_000, powerOperation).text).toBe('9.9 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈16 s')
+    expect(read('SG-B-LVL-NR', 40, 600_000, powerOperation).reading.limit).toMatchObject({ minutes: null })
+    // It does, 16 s later.
+    const crossed = read('SG-B-LVL-NR', 90, 120_000, powerOperation).trace.find(point => point.v < 20)!
+    expect(crossed.t / 1000).toBe(56)
   })
 })

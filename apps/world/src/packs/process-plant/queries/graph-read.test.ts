@@ -50,6 +50,8 @@ describe('Plant graph read', () => {
     expect(result.components.find(component => component.id === 'safetyBusA')).toEqual({ id: 'safetyBusA', kind: 'electricalBus', label: 'Safety Bus A', shortLabel: 'Bus A' })
     // Where the read stops is stated, with what comes next: never a silent cut.
     expect(result.continues).toEqual([
+      // The condensate storage tank also takes the hotwell's reject.
+      { componentId: 'auxFeedwaterTank', direction: 'upstream', links: 1, next: ['hotwellRejectValve'] },
       { componentId: 'safetyBusA', direction: 'upstream', links: 2, next: ['dieselBreakerA', 'offsiteBreakerA'] },
       { componentId: 'auxFeedwaterHeader', direction: 'downstream', links: 4, next: ['auxFeedwaterValveA', 'auxFeedwaterValveB', 'auxFeedwaterValveC', 'auxFeedwaterValveD'] },
     ])

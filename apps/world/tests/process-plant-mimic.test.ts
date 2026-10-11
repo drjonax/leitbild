@@ -212,7 +212,7 @@ describe('every intent over the reference Plant draws or is refused with a reaso
 
   test('is the diesel feeding the motor-driven AFW pump: the pump with its suction and its supply', () => {
     const mimic = generated(system, { to: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater', 'electricalPower'] })
-    expect(mimic.items.map(item => item.binding.label)).toEqual(expect.arrayContaining(['MD AFW A', 'AFW tank', 'Bus A', 'EDG A', 'EDG BKR A']))
+    expect(mimic.items.map(item => item.binding.label)).toEqual(expect.arrayContaining(['MD AFW A', 'CST', 'Bus A', 'EDG A', 'EDG BKR A']))
     for (const pipe of mimic.pipes) expect(bendsOf(pipe.points)).toBeLessThanOrEqual(3)
     for (const to of ['mainFeedwaterPumpA', 'safetyInjectionPumpA']) {
       const services = to === 'mainFeedwaterPumpA' ? ['electricalPower', 'feedwater'] : ['electricalPower', 'safetyInjection']

@@ -82,8 +82,10 @@ describe('the values a unit overview leads with', () => {
   test('after a trip the heat sink leads before the feed has started, and the injection safety injection delivers once it has', () => {
     const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:key-values-pumps', loopCount: 4 }))
     // Run 22 QA: a minute after every reactor coolant pump tripped, feedwater was isolated and no steam generator had
-    // reached the low-low level that starts auxiliary feed; the overview showed no heat sink at all. It reads 0.
-    const pumps = after(plant, { actionId: 'trip-reactor-coolant-pumps' }, 60)
+    // reached the low-low level that starts auxiliary feed; the overview showed no heat sink at all. The generators
+    // now shrink to their low-low level some ten seconds after the trip; five seconds in, the feed has not started,
+    // and the heat sink reads 0.
+    const pumps = after(plant, { actionId: 'trip-reactor-coolant-pumps' }, 5)
     expect(pumps.mode).toBe('hotStandby')
     expect(overviewKeyValues(plant, pumps).slice(0, 3)).toEqual(['vessel.subcoolingMarginC', 'core.coreExitTemperatureC', 'auxFeedwaterHeader.outletFlowKgPerS'] as never)
     expect(pumps.read('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBe(0)

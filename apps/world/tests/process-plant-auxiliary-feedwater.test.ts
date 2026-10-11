@@ -132,14 +132,15 @@ describe('auxiliary feedwater', () => {
       if (plantRun.read('auxFeedwaterPumpMotor.runningState') === 1) afwStartedAt = second
     }
     expect(afwStartedAt).not.toBeNull()
-    // Half a minute on, only generator B is at low-low level, so the turbine-driven pump, which wants two, stays off:
-    // the two motor-driven pumps, running out along their curves, feed all four lines.
-    plantRun.run(30)
+    // As they start, only generator B is at low-low level, so the turbine-driven pump, which wants two, stays off.
     const { tag, read } = plantRun
-    expect(tag('SG-B-LVL-NR')).toBe(0)
+    expect(tag('SG-B-LVL-NR')).toBeLessThan(20)
     for (const loop of ['A', 'C', 'D']) expect(tag(`SG-${loop}-LVL-NR`)).toBeGreaterThan(20)
+    // Ten seconds on, the two motor-driven pumps, running out along their curves, feed all four lines; the
+    // turbine-driven pump, started as the trip shrinks a second generator below its low-low level, is still running up.
+    plantRun.run(10)
     expect(read('auxFeedwaterPumpMotorB.runningState')).toBe(1)
-    expect(read('auxFeedwaterPumpTurbine.runningState')).toBe(0)
+    expect(read('auxFeedwaterPumpTurbine.flowKgPerS')).toBe(0)
     expect(tag('AFW-FLOW')).toBeGreaterThan(60)
     expect(tag('AFW-FLOW')).toBeLessThan(75)
     // About a quarter each; generator B, at slightly lower pressure, a little more.

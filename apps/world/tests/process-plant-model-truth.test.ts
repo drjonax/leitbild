@@ -335,15 +335,18 @@ describe('auxiliary feedwater on a loss of offsite power', () => {
     expect(Number(plantRun.read('aux-feedwater-valve-a-to-sg-a.flowKgPerS'))).toBeGreaterThan(5)
   })
 
-  test('a turbine trip with offsite power available does not start it', () => {
+  test('a turbine trip with offsite power available does not start it: the generators\' low-low level does', () => {
     const plantRun = started()
     plantRun.run(2_000)
     plantRun.act('turbine-trip')
     plantRun.run(30_000)
     expect(plantRun.tag('UNIT-BUS-A-ENERGIZED')).toBe(true)
     expect(plantRun.tag('RCP-A-RUNNING')).toBe(true)
-    expect(plantRun.tag('AFW-PUMP-A-RUNNING')).toBe(false)
     expect(plantRun.activeIds()).not.toContain('trip:loss-of-offsite-power-afw-actuation:afw-actuation')
+    // The trip from full power shrinks the generators below their 20 % low-low level, which starts the
+    // motor-driven pumps on offsite power at once.
+    expect(plantRun.activeIds()).toContain('trip:sg-a-level-low-low-afw-actuation:afw-actuation')
+    expect(plantRun.tag('AFW-PUMP-A-RUNNING')).toBe(true)
   })
 })
 
@@ -623,8 +626,8 @@ describe('alarms that apply only in power operation', () => {
   test('clear after a reactor trip, though their own clear condition still reads abnormal', () => {
     const plantRun = started()
     plantRun.act('steam-generator-b-feedwater-runback')
-    // Long enough for the flow alarm, short of the low-low level trip the runback leads to.
-    plantRun.run(40_000)
+    // Long enough for the flow alarm, short of the low-low level trip the runback leads to about 28 s in.
+    plantRun.run(15_000)
     const feedLow = 'alarm:sg-b-feedwater-flow-low:feedwater-flow-low'
     expect(plantRun.activeIds()).toContain(feedLow)
 
@@ -846,9 +849,11 @@ describe('steam generator low-low level', () => {
     plantRun.run(5_000)
     plantRun.act('loss-main-feedwater')
     const tripped = runToReactorTrip(plantRun)
-    // The trip comes in as the level crosses the 20 % set point, not later on another limit.
+    // The trip comes in as the level crosses the 20 % set point, not later on another limit: the narrow range,
+    // a quarter of the wide range, falls about 6 % a second, so it reads a few percent below the set point by the
+    // end of the trip's one-second delay.
     expect(tripped.level).toBeLessThan(20)
-    expect(tripped.level).toBeGreaterThan(18)
+    expect(tripped.level).toBeGreaterThan(10)
     // The narrow range sits above the tube bundle: at the trip the tubes are still covered.
     expect(tripped.tubeCoverage).toBe(1)
     plantRun.run(30_000)
@@ -980,12 +985,20 @@ describe('signal labels', () => {
 describe('the condenser hotwell', () => {
   const hotwellLow = 'alarm:condenser-hotwell-level-low:hotwell-level-low'
 
-  test('alarms below 35 %, as the condensate pumps draw it down after a trip', () => {
+  test('alarms below 35 %, as the condensate pumps draw a low hotwell down after a trip', () => {
     const level = resolveProcessPlantSignalBinding(graph, { path: 'condenser.condensateLevelPercent' as never }).path
     expect(icThresholdsForSignal(plant, level).thresholds.map(threshold => [threshold.value, threshold.kind, threshold.direction])).toEqual([[35, 'alarm', 'low']])
-    const plantRun = started()
+    // From its 55 % normal level a trip draws the hotwell down to about 43 % while the feedwater tank's level control
+    // valve shuts the condensate off; from 42 % the same draw-down passes the alarm.
+    const low = compileProcessPlant(createPwrReferencePlantDefinition({
+      id: 'plant:model-truth-hotwell',
+      loopCount: 4,
+      valueOverrides: { 'condenser.condensateInventoryKg': 0.42 * 250_000, 'condenser.condensateLevelPercent': 42 },
+    }))
+    const plantRun = started(low)
     plantRun.run(5_000)
-    expect(Number(plantRun.read('condenser.condensateLevelPercent'))).toBeCloseTo(55, 0)
+    expect(Number(plantRun.read('condenser.condensateLevelPercent'))).toBeCloseTo(42, 0)
+    expect(plantRun.activeIds()).not.toContain(hotwellLow)
     plantRun.act('turbine-trip')
     let alarmedAt: number | null = null
     for (let second = 1; second <= 120 && alarmedAt === null; second += 1) {

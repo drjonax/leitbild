@@ -36,7 +36,7 @@ describe('mimic scope from the agent\'s intent', () => {
   })
 
   test('names resolve from ids, the tags the agent already has, labels or short labels', () => {
-    const scope = drawn(graph, { from: ['FW tank', 'AFW tank'], to: ['SG-B-LVL-NR'] })
+    const scope = drawn(graph, { from: ['FW tank', 'CST'], to: ['SG-B-LVL-NR'] })
     expect(scope.names.map(name => name.via)).toEqual(['label', 'label', 'tag'])
     expect(scope.labels).toContain('AFW valve B')
     // A label as an operator writes it: any case, spaces or hyphens.
@@ -70,7 +70,7 @@ describe('mimic scope from the agent\'s intent', () => {
   test('a one-ended intent reaches three links, draws the source just beyond, and stubs the rest', () => {
     const scope = drawn(graph, { to: ['sgB'], services: ['feedwater', 'auxFeedwater'] })
     // The tanks are one step past the reach and feed nothing else: drawn, not stubbed at every pump.
-    expect(scope.labels).toEqual(['AFW header', 'AFW tank', 'AFW valve B', 'FCV B', 'FW tank', 'MD AFW A', 'MD AFW B', 'MFW A', 'MFW B', 'MFW header', 'SG B', 'TD AFW'])
+    expect(scope.labels).toEqual(['AFW header', 'AFW valve B', 'CST', 'FCV B', 'FW tank', 'MD AFW A', 'MD AFW B', 'MFW A', 'MFW B', 'MFW header', 'SG B', 'TD AFW'])
     // A header's outlets to the other loops stop the drawing once.
     expect(scope.stubs.map(stub => `${label(graph, stub.component)}: ${stubText(graph, stub)}`)).toEqual([
       'MFW header: to FCV A, FCV C, FCV D',
@@ -83,7 +83,7 @@ describe('mimic scope from the agent\'s intent', () => {
     // Its suction tank, its discharge header and its bus; the bus's other loads are a stop, not drawn. They are ten
     // with the PORV block valve's motor, the pressurizer's backup heater breaker, the load centres and the
     // component cooling water, service water and fan cooler loads, so the stop names three and counts the rest.
-    expect(scope.labels).toEqual(['AFW header', 'AFW tank', 'Bus A', 'MD AFW A'])
+    expect(scope.labels).toEqual(['AFW header', 'Bus A', 'CST', 'MD AFW A'])
     expect(scope.carriers).toEqual(['auxFeedwater', 'electricalPower'])
     expect(scope.stubs.map(stub => `${label(graph, stub.component)}: ${stubText(graph, stub)}`)).toContain('Bus A: to CCW A, CFC A, CHG A and 7 more')
     // Narrowed to its loop, a steam generator draws both sides and stops at the shared headers.
