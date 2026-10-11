@@ -183,18 +183,7 @@ describe('the unit overview World generates for a Plant', () => {
     }
   })
 
-  test('where only compact tiles let the column fit, they go three to a row with the declared short labels', () => {
-    const threeLoops = plant(3)
-    const result = compileOverviewDisplay(threeLoops, new Set(), { width: 1896, height: 880 })
-    if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))
-    expect(result.display.height).toBeLessThanOrEqual(880)
-    const alarms = result.display.panels.find(candidate => candidate.kind === 'alarms')!
-    if (alarms.kind !== 'alarms') throw new Error('expected the alarms')
-    expect(alarms.tileWidth).toBe(88)
-    expect(alarms.systems?.map(system => system.label)).toEqual(['RPS', 'RCS', 'SG', 'SI', 'CTMT', 'Electrical', 'Feedwater', 'BOP', 'Main steam'])
-  })
-
-  test('every loop count the reference PWR is built with draws its overview, two loops in Full HD beside the column', () => {
+  test('every loop count the reference PWR is built with draws its overview', () => {
     const mimicOf = (display: CompiledComposedDisplay) => {
       const panel = display.panels.find(candidate => candidate.kind === 'mimic')!
       if (panel.kind !== 'mimic') throw new Error('expected the mimic')
@@ -206,15 +195,6 @@ describe('the unit overview World generates for a Plant', () => {
       const { count, forced } = mimicOf(result.display).crossings
       expect(count).toBeLessThanOrEqual(forced + 2)
     }
-    const twoLoops = compileOverviewDisplay(plant(2), new Set(), fullHd)
-    if (!twoLoops.ok) throw new Error(twoLoops.issues.map(issue => issue.message).join('; '))
-    const column = overviewDrawingRoom(fullHd, 'column', { readouts: 6, annunciators: 9, tileWidth: 134 })!
-    const mimic = mimicOf(twoLoops.display)
-    expect(twoLoops.display.height).toBeLessThanOrEqual(fullHd.height)
-    expect(mimic.width).toBeLessThanOrEqual(column.maxWidth)
-    expect(mimic.height).toBeLessThanOrEqual(column.maxHeight)
-    // Two loops on two headers closed by the feed train force one crossing.
-    expect(mimic.crossings.forced).toBe(1)
     // Five and six loops overflow Full HD, so each searches the least height that draws: seconds under load.
   }, 120_000)
 

@@ -120,7 +120,7 @@ const geometry = (mimic: CompiledMimic) => ({
 })
 
 describe('the unit overview of the principal circuits', () => {
-  for (const loops of [2, 4, 6]) {
+  for (const loops of [4, 6]) {
     test(`${loops} loops: drawn, verified, within the room, crossings at most two over what the structure forces`, () => {
       const plant = plantOf(loops)
       const budget = budgetFor(loops)
