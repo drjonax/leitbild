@@ -385,11 +385,15 @@ pub struct PathKinematics {
 /// chart, NOT a Cartesian derivative of Pi/I. A caller-proven rest onset has
 /// zero selected Q direction; its impulse equation still retains Pi'. No
 /// mass/inertia floor, phase seed, universal Q=0 or higher-order limit is made.
-pub fn phase_path_kinematics(
+///
+/// A cell volume is a fixed `f64` or a current moving-boundary `Scalar`
+/// whose direction enters `I`. The supplied mass rate must then be the
+/// density-rate numerator `M' - M V'/V`; for a fixed volume it is `M'`.
+pub fn phase_path_kinematics<V: Copy + Into<Scalar>>(
     face: &Face,
     cell_phase_mass: &[Scalar],
     cell_phase_mass_rate: &[Scalar],
-    cell_volumes: &[f64],
+    cell_volumes: &[V],
     impulse_pa_s: Scalar,
     total_force_pa: Scalar,
     onset: ColdOnset,
@@ -406,9 +410,10 @@ pub fn phase_path_kinematics(
     let mut has_nonzero_mass = false;
     for support in &face.supports {
         let i = support.region;
-        let v = *cell_volumes.get(i).ok_or("local phase support index")?;
-        if !v.is_finite()
-            || v <= 0.
+        let v: Scalar = (*cell_volumes.get(i).ok_or("local phase support index")?).into();
+        if !v.value.is_finite()
+            || !v.direction.is_finite()
+            || v.value <= 0.
             || !support.inverse_area_length_per_m.is_finite()
             || support.inverse_area_length_per_m <= 0.
         {
@@ -417,7 +422,7 @@ pub fn phase_path_kinematics(
         finite(cell_phase_mass[i])?;
         finite(cell_phase_mass_rate[i])?;
         has_nonzero_mass |= cell_phase_mass[i].value != 0.;
-        let weight = s(support.inverse_area_length_per_m / v);
+        let weight = s(support.inverse_area_length_per_m) / v;
         inertia = inertia + cell_phase_mass[i] * weight;
         inertia_rate = inertia_rate + cell_phase_mass_rate[i] * weight;
     }

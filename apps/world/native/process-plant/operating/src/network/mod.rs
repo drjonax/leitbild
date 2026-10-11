@@ -183,6 +183,11 @@ pub struct Network<P: Properties> {
     pzr_evaluation: Option<stratified::Evaluation>,
     pub face_layout: Vec<FaceLayout>,
     volumes: Vec<f64>,
+    /// Regular cells' free volume and its rate in the last evaluation: the
+    /// compiled volume and `None` for a fixed cell, the moving body's
+    /// [`CellVolume`] for a moving one ([`Network::evaluate_joined`]).
+    cell_volume: Vec<Scalar>,
+    cell_volume_rate: Vec<Option<Scalar>>,
     sections: Vec<Hydraulic>,
     section_projection: Vec<(usize, usize, f64)>,
     section_drive: Vec<Scalar>,
@@ -457,6 +462,8 @@ impl<P: Properties> Network<P> {
                 pzr_column: None,
                 pzr_evaluation: None,
                 face_layout,
+                cell_volume: volumes[..pzr].iter().map(|v| s(*v)).collect(),
+                cell_volume_rate: vec![None; pzr],
                 volumes,
                 sections,
                 section_projection,
@@ -520,6 +527,11 @@ impl<P: Properties> Network<P> {
     }
     pub fn volume(&self, node: usize) -> f64 {
         self.volumes[node]
+    }
+    /// A regular cell's free volume in the last evaluation: its compiled
+    /// volume, or the moving boundary's current one.
+    pub fn current_volume(&self, node: usize) -> Scalar {
+        self.cell_volume[node]
     }
     pub fn pzr_cell(&self) -> usize {
         self.pzr.cell

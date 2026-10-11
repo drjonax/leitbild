@@ -239,6 +239,36 @@ pub fn current_rates(
     mass_rate: [Scalar; 2],
     enthalpy_rate: [Scalar; 2],
 ) -> Result<ScalarPhaseRates, Error> {
+    phase_rates(pressure, phases, mass_rate, enthalpy_rate, None)
+}
+
+/// The same local elimination for a cell whose free volume moves: the phase
+/// volume rates sum to the boundary's actual rate `volume_rate` (with its
+/// direction) instead of zero. Each phase still pays `-p V_k'` once, so the
+/// cell's fluid receives the boundary work `-p V'` exactly once.
+pub fn current_rates_with_boundary(
+    pressure: Scalar,
+    phases: [Option<ScalarRatePhase>; 2],
+    mass_rate: [Scalar; 2],
+    enthalpy_rate: [Scalar; 2],
+    volume_rate: Scalar,
+) -> Result<ScalarPhaseRates, Error> {
+    phase_rates(
+        pressure,
+        phases,
+        mass_rate,
+        enthalpy_rate,
+        Some(volume_rate),
+    )
+}
+
+fn phase_rates(
+    pressure: Scalar,
+    phases: [Option<ScalarRatePhase>; 2],
+    mass_rate: [Scalar; 2],
+    enthalpy_rate: [Scalar; 2],
+    boundary: Option<Scalar>,
+) -> Result<ScalarPhaseRates, Error> {
     let check = |values: &[Scalar]| -> Result<(), Error> {
         for x in values {
             finite(&[x.value, x.direction])?;
@@ -248,6 +278,9 @@ pub fn current_rates(
     check(&[pressure])?;
     check(&mass_rate)?;
     check(&enthalpy_rate)?;
+    if let Some(rate) = boundary {
+        check(&[rate])?;
+    }
     if pressure.value <= 0. {
         return Err(Error::InvalidInput("positive physical property pressure"));
     }
@@ -295,7 +328,10 @@ pub fn current_rates(
     if total_compliance.value == 0. {
         return Err(Error::SingularChart);
     }
-    let pressure_rate = -(expansion[0] + expansion[1]) / total_compliance;
+    let pressure_rate = match boundary {
+        None => -(expansion[0] + expansion[1]) / total_compliance,
+        Some(rate) => (rate - (expansion[0] + expansion[1])) / total_compliance,
+    };
     let volume_rate = std::array::from_fn(|i| expansion[i] + compliance[i] * pressure_rate);
     let energy_rate = std::array::from_fn(|i| enthalpy_rate[i] - pressure * volume_rate[i]);
     check(&[pressure_rate])?;
