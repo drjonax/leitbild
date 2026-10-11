@@ -337,6 +337,15 @@ impl<P: Properties + WaterProperties> Joined<P> {
     pub fn travel(&self) -> &[Scalar] {
         &self.blocks.travel
     }
+    /// The source feedback's water conditions of the last evaluation, per
+    /// region: exactly the port values the nuclear rows read.
+    pub fn region_water(&self) -> &[RegionWater] {
+        &self.blocks.water
+    }
+    /// Each carrier's feedback fuel temperature of the last evaluation.
+    pub fn fuel_feedback_temperatures(&self) -> &[Scalar] {
+        &self.blocks.fuel_t
+    }
     pub fn views(&self) -> &[SecondaryView] {
         &self.blocks.views
     }
