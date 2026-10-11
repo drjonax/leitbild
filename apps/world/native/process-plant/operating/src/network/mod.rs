@@ -198,6 +198,10 @@ pub struct Network<P: Properties> {
     scales: Vec<f64>,
     leading_enthalpy: Vec<[Option<f64>; 2]>,
     leading_liquid_concentration: Vec<Option<f64>>,
+    /// What the readers of each regular cell's phase points need. The
+    /// network's own rows read the thermodynamic fields and viscosity; a
+    /// coupled owner reading a cell's points (wall water) may need more.
+    cell_need: Vec<properties::Need>,
     pub leading_births: Vec<Value>,
     pub first_mechanical_birth: Option<Value>,
     pub counters: Counters,
@@ -463,6 +467,7 @@ impl<P: Properties> Network<P> {
                 scales,
                 leading_enthalpy: vec![[None; 2]; pzr],
                 leading_liquid_concentration: vec![None; pzr],
+                cell_need: vec![properties::Need::Complete; pzr],
                 leading_births: Vec::new(),
                 first_mechanical_birth: None,
                 counters: Counters::default(),
@@ -509,6 +514,16 @@ impl<P: Properties> Network<P> {
     }
     pub fn pzr_cell(&self) -> usize {
         self.pzr.cell
+    }
+    /// Declare what every reader of a regular cell's phase points needs
+    /// (default [`properties::Need::Complete`]). A caller whose only readers
+    /// are the network's own rows declares [`properties::Need::Thermodynamic`];
+    /// conductivity is then not evaluated (NaN in the points).
+    pub fn set_cell_need(&mut self, cell: usize, need: properties::Need) {
+        self.cell_need[cell] = need;
+    }
+    pub fn cell_need(&self, cell: usize) -> properties::Need {
+        self.cell_need[cell]
     }
     pub fn rotor_inertia(&self) -> f64 {
         self.rotor_inertia
