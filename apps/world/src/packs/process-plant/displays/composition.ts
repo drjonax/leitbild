@@ -178,6 +178,14 @@ export type OverviewDisplayState = z.infer<typeof overviewDisplayStateSchema>
 export const PROCESS_DISPLAY_DETAIL_MAX_COMPONENTS = 8
 
 /**
+ * The most values equipment opened from an overview leads with: its column
+ * has no annunciator tiles, so it holds more than an overview's six in a Full
+ * HD window (the core's nuclear instruments and exit thermocouples beside its
+ * power and margins).
+ */
+export const GENERATED_DETAIL_MAX_LEAD_VALUES = 8
+
+/**
  * Equipment opened from a generated display: World draws what feeds it and
  * where its outflow goes, its lead values and its alarms. Like the overview,
  * it holds no advice.

@@ -81,16 +81,16 @@ describe('the values equipment opened from the overview leads with', () => {
     expect(of(['rcpA'])).not.toContain('rcpA.running' as never)
   })
 
-  test('at power the core leads with its power, the subcooling margin, the RCS leak rate and its outlet temperature, and ranks the de-energized source range after every live reading', () => {
+  test('at power the core leads with its power, the subcooling margin, the RCS leak rate and its outlet temperature, then its nuclear instruments while they measure', () => {
     // The subcooling margin and the RCS leak rate are bound to the reactor coolant system, as the core exit
-    // thermocouples are: their alarms are the core's related alarms. The core exit thermocouples read their own
-    // variable beside the mixed outlet temperature, an instrument after the intermediate range, so the de-energized
-    // source range, last, no longer fits the six.
+    // thermocouples are: their alarms are the core's related alarms. The de-energized source range measures
+    // nothing at power: it is left out, and its high-voltage flag is never a value of its own (run 22: "Source-range
+    // detector high voltage on · Reactor Core" as a sentence row).
     expect(of(['core'])).toEqual(['core.powerMw', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
-    // With its high voltage on, the source range counts something and ranks as an instrument, ahead of the
-    // intermediate range, which no longer fits.
+    // With its high voltage on, the source range counts something and ranks as an instrument, before the
+    // intermediate range.
     const counting: PlantNow = { ...atPower, read: path => String(path) === 'core.sourceRangeEnergized' ? true : runtime.readVariable(path) }
-    expect(of(['core'], counting).slice(3)).toEqual(['core.coolantOutletTemperatureC', 'core.sourceRangeEnergized', 'core.sourceRangeCountRateCps'] as never)
+    expect(of(['core'], counting).slice(3)).toEqual(['core.coolantOutletTemperatureC', 'core.sourceRangeCountRateCps', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
   })
 
   test('a signal only rules of other modes judge follows its key values and instruments', () => {
@@ -108,7 +108,14 @@ describe('the values equipment opened from the overview leads with', () => {
   })
 
   test('parallel equipment is compared value by value', () => {
-    expect(of(['sgA', 'sgB'])).toEqual(['sgA.levelPercent', 'sgB.levelPercent', 'sgA.secondaryRadiationMSvPerH', 'sgB.secondaryRadiationMSvPerH', 'sgA.pressureMPa', 'sgB.pressureMPa'] as never)
+    expect(of(['sgA', 'sgB'])).toEqual(['sgA.levelPercent', 'sgB.levelPercent', 'sgA.secondaryRadiationMSvPerH', 'sgB.secondaryRadiationMSvPerH', 'sgA.pressureMPa', 'sgB.pressureMPa', 'sgA.feedwaterFlowKgPerS', 'sgB.feedwaterFlowKgPerS'] as never)
+  })
+
+  test('a steam generator leads with the auxiliary feed its low-low level sends into it, in every mode the actuation acts in', () => {
+    // The low-low level actuation starts the pumps and opens this steam generator's valve: the line from that valve
+    // into it is what the actuation delivers here. Run 22's SG B detail showed neither it nor the pumps.
+    expect(of(['sgB'])).toEqual(['sgB.levelPercent', 'sgB.secondaryRadiationMSvPerH', 'sgB.pressureMPa', 'sgB.feedwaterFlowKgPerS', 'aux-feedwater-valve-b-to-sg-b.flowKgPerS'] as never)
+    expect(of(['sgB'], { ...atPower, mode: 'hotStandby' })).toContain('aux-feedwater-valve-b-to-sg-b.flowKgPerS' as never)
   })
 
   test('a detail reflects the mode it was opened in: a trip changes the mode, and so what it leads with', () => {
@@ -116,7 +123,7 @@ describe('the values equipment opened from the overview leads with', () => {
       mode: processPlantOperatingMode({ system, runtime: run, modes: system.automation.operatingModes })?.id ?? null,
       read: path => run.readVariable(path),
     })
-    expect(leadValuesKey(plant, now(plant, runtime))).toBe('powerOperation|core.sourceRangeCountRateCps,core.sourceRangeEnergized')
+    expect(leadValuesKey(plant, now(plant, runtime))).toBe('powerOperation|core.sourceRangeCountRateCps')
     const tripped = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:equipment-values-trip', valueOverrides: { 'pressurizer.pressureMPa': 10 } }))
     const run = createProcessPlantRuntime({ system: tripped })
     const protection = createProcessPlantProtectionRunner({ system: tripped, protection: tripped.automation })

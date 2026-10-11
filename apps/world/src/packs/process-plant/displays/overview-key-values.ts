@@ -3,7 +3,7 @@ import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { processPlantOperatingMode } from '../runtime/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
-import { COMPOSED_READOUTS_MAX_SIGNALS } from './composition.ts'
+import { COMPOSED_READOUTS_MAX_SIGNALS, GENERATED_DETAIL_MAX_LEAD_VALUES } from './composition.ts'
 import { actionFlows, actionFlowsInto, actsIn, armed, automaticActions, conditionBindings } from './actuations.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 
@@ -99,12 +99,15 @@ const judged = (plant: CompiledProcessPlant, mode: string | null, acting: boolea
 
 /**
  * Readings the model marks as measuring nothing now (a source range with its
- * high voltage cut), with the flags that say so: neither is what equipment
- * leads with while it is out.
+ * high voltage cut).
  */
 export const notMeaningfulNow = (plant: CompiledProcessPlant, now: PlantNow): ReadonlySet<VariablePath> => new Set(plant.graph.components
   .flatMap(component => component.semantics.meaningfulWhile)
-  .flatMap(qualified => now.read(qualified.flag) === true ? [] : [qualified.flag, ...qualified.variables]))
+  .flatMap(qualified => now.read(qualified.flag) === true ? [] : qualified.variables))
+
+/** The flags that say whether readings measure anything (a source range's high voltage): they qualify readings, they are none. */
+const meaningFlags = (plant: CompiledProcessPlant): ReadonlySet<VariablePath> => new Set(plant.graph.components
+  .flatMap(component => component.semantics.meaningfulWhile.map(qualified => qualified.flag)))
 
 /** What a detail's lead values depend on besides its equipment: the same key draws the same values. */
 export const leadValuesKey = (plant: CompiledProcessPlant, now: PlantNow): string =>
@@ -122,12 +125,16 @@ const equipmentOf = (binding: ProcessSignalBinding): ReadonlyArray<string> => [
 /**
  * The values a detail of some equipment leads with, for the Plant as it is
  * when the detail is opened: the signals of its equipment that alarm and
- * trip rules acting in the current mode judge (trips first), then the key
- * values its kind declares, then its instruments (signals with a tag), then
- * the signals only rules of other modes judge (a feedwater flow alarm that
- * acts at power, opened at shutdown). Readings the model marks as measuring
- * nothing now (a de-energized source range) come last. Each is taken in turn
- * from every item, so parallel equipment is compared value by value.
+ * trip rules acting in the current mode judge (trips first); what automatic
+ * actions acting in the mode on those signals send into it (the auxiliary
+ * feedwater a steam generator's low-low level starts, into that steam
+ * generator); the key values its kind declares; its instruments (signals
+ * with a tag); then the signals only rules of other modes judge (a
+ * feedwater flow alarm that acts at power, opened at shutdown). A reading the
+ * model marks as measuring nothing now (a de-energized source range) is left
+ * out, and the flag that says so is never a value of its own: the reading is
+ * shown while it measures. Each is taken in turn from every item, so
+ * parallel equipment is compared value by value.
  */
 export const equipmentKeyValues = (plant: CompiledProcessPlant, components: ReadonlyArray<number>, now: PlantNow): ReadonlyArray<VariablePath> => {
   const graph = plant.graph
@@ -144,12 +151,20 @@ export const equipmentKeyValues = (plant: CompiledProcessPlant, components: Read
     const lists = components.map(component => listOf(component).filter(readable))
     return Array.from({ length: Math.max(0, ...lists.map(list => list.length)) }, (_, rank) => lists.flatMap(list => list.slice(rank, rank + 1))).flat()
   }
+  const actions = [...automaticActions(plant).values()].filter(action => actsIn(action.rule, now.mode))
+  const sentInto = (component: number): ReadonlyArray<VariablePath> => {
+    const keys = equipment(component)
+    return actions
+      .filter(action => conditionBindings(plant, action.rule.condition).some(binding => equipmentOf(binding).some(key => keys.has(key))))
+      .flatMap(action => actionFlowsInto(plant, action, component))
+  }
   const ranked = [...new Set([
     ...inTurn(onEquipment(judged(plant, now.mode, true))),
+    ...inTurn(sentInto),
     ...inTurn(component => graph.components[component]!.semantics.keyValues),
     ...inTurn(component => own(component).filter(binding => binding.tagId !== undefined).map(binding => binding.path)),
     ...inTurn(onEquipment(judged(plant, now.mode, false))),
   ])]
-  const out = notMeaningfulNow(plant, now)
-  return [...ranked.filter(path => !out.has(path)), ...ranked.filter(path => out.has(path))].slice(0, COMPOSED_READOUTS_MAX_SIGNALS)
+  const out = new Set([...notMeaningfulNow(plant, now), ...meaningFlags(plant)])
+  return ranked.filter(path => !out.has(path)).slice(0, GENERATED_DETAIL_MAX_LEAD_VALUES)
 }

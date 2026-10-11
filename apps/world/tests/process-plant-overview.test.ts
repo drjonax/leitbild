@@ -305,8 +305,9 @@ describe('equipment opened from the unit overview', () => {
     expect(result.display.panels.map(panel => panel.kind)).toEqual(['readouts', 'mimic', 'alarms'])
     const [readouts, mimic, alarms] = result.display.panels
     if (readouts?.kind !== 'readouts' || mimic?.kind !== 'mimic' || alarms?.kind !== 'alarms') throw new Error('expected readouts, a mimic and alarms')
-    // Its own signals lead, the ones its I&C rules judge first.
-    expect(readouts.pens.every(pen => String(pen.path).startsWith('sgB.'))).toBe(true)
+    // Its own signals lead, the ones its I&C rules judge first; then the auxiliary feed its low-low level starts
+    // into it, which the SG B detail of run 22 lacked.
+    expect(readouts.pens.map(pen => String(pen.path))).toEqual(['sgB.levelPercent', 'sgB.secondaryRadiationMSvPerH', 'sgB.pressureMPa', 'sgB.feedwaterFlowKgPerS', 'aux-feedwater-valve-b-to-sg-b.flowKgPerS'])
     expect(readouts.pens[0]!.thresholds.length).toBeGreaterThan(0)
     // Narrowed to its loop: both sides of the steam generator and the shared headers, the other loops beyond as stops, every valve named.
     expect(mimic.mimic.profile).toBe('detail')
