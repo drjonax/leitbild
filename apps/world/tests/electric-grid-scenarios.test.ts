@@ -159,9 +159,9 @@ describe('bundled Electric Grid Scenarios', () => {
       expect(before.unservedLoadMw).toBe(0)
       expect(await trippedCount(scenario, 'branch')).toBe(0)
       const lostMw = (await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: kvilldal })).asset.state.dispatchMw!
-      expect(lostMw).toBeGreaterThan(400)
+      expect(lostMw).toBeGreaterThan(900)
 
-      await scenario.advanceTo(tripSeconds + 15 * 60)
+      await scenario.advanceTo(tripSeconds + 18 * 60)
       expectTimelineExecuted(scenario, 'nordic-frequency-event')
       expect((await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: kvilldal })).asset.state.state).toBe('tripped')
       const after = scenario.samples.filter(sample => sample.seconds > tripSeconds)
@@ -172,22 +172,24 @@ describe('bundled Electric Grid Scenarios', () => {
       const standardRangeFrom = after.find(sample => after.every(later => later.seconds < sample.seconds || Math.abs(later.projection.frequencyHz! - 50) < 0.1))!.seconds - tripSeconds
       const finalHz = scenario.projection().frequencyHz!
       // FCR-D arrests the fall well above the 48.8 Hz first LFDD stage and the 49.0 Hz FCR-D design limit.
-      expect(nadirHz).toBeGreaterThan(49.55)
-      expect(nadirHz).toBeLessThan(49.85)
+      expect(nadirHz).toBeGreaterThan(49.45)
+      expect(nadirHz).toBeLessThan(49.8)
       expect(nadirAfterSeconds).toBeGreaterThanOrEqual(3)
       expect(nadirAfterSeconds).toBeLessThanOrEqual(20)
       expect(maximumRocof).toBeGreaterThan(0.02)
       expect(maximumRocof).toBeLessThan(0.2)
       expect(after.every(sample => sample.projection.unservedLoadMw === 0)).toBe(true)
       expect(await trippedCount(scenario, 'generator')).toBe(1)
-      // aFRR returns the frequency to the ±100 mHz standard range within five minutes; mFRR closes the rest.
-      expect(standardRangeFrom).toBeLessThanOrEqual(5 * 60)
+      expect(await trippedCount(scenario, 'branch')).toBe(0)
+      // mFRR, once activated, brings the frequency into the ±100 mHz standard range within fifteen
+      // minutes and to 50 Hz within eighteen.
+      expect(standardRangeFrom).toBeLessThanOrEqual(15 * 60)
       expect(Math.abs(finalHz - 50)).toBeLessThan(0.02)
       const largest = await scenario.query<AssetSearchResult>('world.electric-grid.assets.search', { kinds: ['generator'], status: ['online'], sort: 'dispatch', limit: 10 })
       const activatedMfrrMw = (await Promise.all(largest.assets.map(async asset =>
         (await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: asset.id })).asset.state.mfrrMw!))).reduce((sum, value) => sum + value, 0)
       expect(activatedMfrrMw).toBeGreaterThan(0)
-      console.info(`nordic-frequency-event: Kvilldal ${lostMw.toFixed(0)} MW lost; nadir ${nadirHz.toFixed(3)} Hz ${nadirAfterSeconds} s after the trip, |RoCoF| ≤ ${maximumRocof.toFixed(3)} Hz/s; within ±100 mHz from ${standardRangeFrom} s; f(15 min) ${finalHz.toFixed(4)} Hz; mFRR on the ten largest units ${activatedMfrrMw.toFixed(0)} MW`)
+      console.info(`nordic-frequency-event: Kvilldal ${lostMw.toFixed(0)} MW lost; nadir ${nadirHz.toFixed(3)} Hz ${nadirAfterSeconds} s after the trip, |RoCoF| ≤ ${maximumRocof.toFixed(3)} Hz/s; within ±100 mHz from ${standardRangeFrom} s; f(18 min) ${finalHz.toFixed(4)} Hz; mFRR on the ten largest units ${activatedMfrrMw.toFixed(0)} MW`)
     } finally { await scenario.close() }
   }, 120_000)
 

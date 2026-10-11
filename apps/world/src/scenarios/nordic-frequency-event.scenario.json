@@ -1,11 +1,11 @@
 {
   "id": "nordic-frequency-event",
   "title": "Nordic frequency event · Kvilldal trip",
-  "description": "A low-inertia summer night at the Elhub low-demand hour (2026-07-12 06:00): Norway serves about 11 GW, exports about 1.9 GW net over its interconnectors, and the rest of the Nordic synchronous area runs at summer-low kinetic energy. Two minutes in, Kvilldal (Suldal, NO2), Norway's largest hydropower station, trips while generating about 500 MW. The rest of the Nordic area takes part as a synchronous equivalent with its own inertia and reserves behind the real ties to Sweden and Finland. Inertia limits the rate of fall, FCR-N and FCR-D arrest it well above the 48.8 Hz first stage of under-frequency load shedding, and aFRR and then mFRR bring the frequency back to 50 Hz. Bus voltages come from an AC load flow of the energised island. Nothing else changes the grid: there are no weather-driven faults.",
+  "description": "A winter weekday morning at the Elhub reference peak hour (2026-01-12 08:00): Norway serves about 24 GW and exports about 2.2 GW net over its interconnectors, and the rest of the Nordic synchronous area runs at winter-peak kinetic energy. A few 132 kV lines already run above their ratings and hold overload alarms. Two minutes in, Kvilldal (Suldal, NO2), Norway's largest hydropower station, trips while generating about 1,080 MW. The rest of the Nordic area takes part as a synchronous equivalent with its own inertia and reserves behind the real ties to Sweden and Finland. Inertia limits the rate of fall, FCR-N and FCR-D arrest it well above the 48.8 Hz first stage of under-frequency load shedding, and aFRR and then mFRR bring the frequency back to 50 Hz within about twenty minutes. Branch flows and bus voltages come from an AC load flow of the energised island. Nothing else changes the grid: there are no weather-driven faults.",
   "objectives": [
     "Before the trip, read the island frequency, the dispatch of the largest units and the allocated FCR-N, FCR-D, aFRR and mFRR volumes (grid.summary, islands.list).",
     "When Kvilldal trips, follow the nadir, the rate of change of frequency and the FCR-D activation that arrests the fall; confirm that no under-frequency load-shedding stage operates and no other unit trips.",
-    "Follow the restoration: aFRR returns the frequency to the ±100 mHz standard range within minutes, and mFRR, activated once aFRR has been used persistently, brings it back to 50 Hz and releases the activated FCR.",
+    "Follow the restoration: FCR holds the frequency below 50 Hz after the arrest, aFRR starts to restore it, and mFRR, activated once aFRR has been used persistently, brings it back into the ±100 mHz standard range and to 50 Hz and releases the activated FCR.",
     "Assess what is left for a second incident: compare the activated FCR, aFRR and mFRR of the largest units (asset.get) with their allocated volumes, and propose the re-dispatch or unit starts that would restore the reserves before the next trip."
   ],
   "packs": [
@@ -19,7 +19,7 @@
           "label": "Norway transmission grid",
           "location": [15.5, 64.7],
           "model": { "ref": "electric-grid.norway.transmission" },
-          "operatingPoint": { "ref": "electric-grid.norway.summer-night-low" },
+          "operatingPoint": { "ref": "electric-grid.norway.winter-weekday-peak" },
           "automation": { "ref": "electric-grid.frequency.nordic-2025" }
         }
       ],
@@ -27,7 +27,7 @@
     }
   ],
   "world": {
-    "startsAt": "2026-07-12T04:00:00.000Z",
+    "startsAt": "2026-01-12T07:00:00.000Z",
     "environment": {}
   },
   "view": {
@@ -38,13 +38,13 @@
       {
         "id": "frequency-event-briefing",
         "at": { "kind": "after_scenario_start", "seconds": 0 },
-        "title": "Low-inertia summer night",
+        "title": "Winter peak before a unit trip",
         "actions": [
           {
             "type": "show_guidance",
             "guidance": {
               "id": "frequency-event-briefing",
-              "title": "Low-inertia summer night",
+              "title": "Winter peak before a unit trip",
               "message": "Read the starting frequency, the largest units and the allocated reserves in the Grid summary. Kvilldal, Norway's largest hydropower station, trips at two minutes.",
               "objectIds": ["grid:norway"],
               "dismissible": true,
@@ -68,7 +68,7 @@
             "guidance": {
               "id": "kvilldal-trip",
               "title": "Kvilldal tripped",
-              "message": "Follow the nadir and FCR-D, then aFRR and mFRR as they restore 50 Hz over the next fifteen minutes. Check which reserves remain for a second incident.",
+              "message": "Follow the nadir and FCR-D, then aFRR and mFRR as they restore 50 Hz over the next twenty minutes. Check which reserves remain for a second incident.",
               "objectIds": ["grid:norway"],
               "dismissible": true,
               "tone": "update"
