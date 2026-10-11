@@ -113,13 +113,14 @@ export const fixtureGoldenInput = () => ({
     maxAttachmentKm: { generator: { hydro: 30, wind: 30, solar: 30, thermal: 30, nuclear: 30 }, load: { distributed: 60, site: 15 } },
     maxAttachmentViolations: 0, generationTolerance: { hydro: 0.03, wind: 0.05 }, maxUnassignedGenerationMw: 0, loadTolerance: 0.05,
     nveCoverage: { minKv: 300, bufferKm: 0.3, maxUncoveredShare: 0.03 }, maxCuratedShare300kv: 0.02,
+    minBusVoltagePu: 0.9, maxBusVoltagePu: 1.1,
   },
   thresholdNotes: Object.fromEntries([
     'maxComponents', 'minLargestComponentBusShare300kv', 'minLargestComponentBusShare132kv', 'minLargestComponentLoadShare',
     'maxUnexplainedBridges300kv', 'maxUnexplainedArticulationPoints300kv', 'maxUnexplainedDegreeOne300kv', 'voltageClassTolerance',
     'maxVoltageMismatches', 'maxParallelDuplicates', 'maxOffTerminalEnds', 'terminalPolygonBufferKm', 'terminalPointRadiusKm',
     'maxAttachmentKm', 'maxAttachmentViolations', 'generationTolerance', 'maxUnassignedGenerationMw', 'loadTolerance', 'nveCoverage',
-    'maxCuratedShare300kv',
+    'maxCuratedShare300kv', 'minBusVoltagePu', 'maxBusVoltagePu',
   ].map(key => [key, thresholdNote])),
   references: {
     generation: { sourceIds: ['fixture'], note: 'fixture totals', capacityMwByFamily: { hydro: { ...zeroAreas, NO1: 800 }, wind: { ...zeroAreas, NO1: 100 } } },
@@ -153,6 +154,7 @@ export const fixtureGoldenInput = () => ({
   radialAllowList: [
     { stationId: 'p', voltageKv: 300, reason: 'radial-plant', note: 'P is a radial plant', evidence },
   ],
+  powerFlowOverloads: [],
 })
 
 export const fixtureGolden = (): GridGolden => gridGoldenSchema.parse(fixtureGoldenInput())

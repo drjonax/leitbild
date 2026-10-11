@@ -96,6 +96,23 @@ const radialAllowanceSchema = z.object({
 
 const perArea = z.record(gridPriceAreaSchema, z.number().finite().nonnegative())
 
+/**
+ * A branch the AC load flow of an Operating Point loads above its continuous rating for a reason
+ * the model cannot remove with evidence; the power-flow gate test accepts it up to maxLoading
+ * (flow / continuous rating at the Operating Point's availability) and fails once it no longer
+ * overloads. aboveEmergency marks an entry beyond the emergency rating as well: a known model
+ * limitation the reason names, which the gate reports and accepts only while it stays above it.
+ */
+const powerFlowOverloadSchema = z.object({
+  branchId: z.string().regex(/^branch:/),
+  label: text,
+  operatingPointId: text,
+  maxLoading: z.number().finite().min(1),
+  aboveEmergency: z.boolean(),
+  reason: text,
+  evidence: z.array(evidenceSchema).min(1),
+}).strict()
+
 const thresholdsSchema = z.object({
   maxComponents: z.number().int().positive(),
   minLargestComponentBusShare300kv: share,
@@ -120,6 +137,9 @@ const thresholdsSchema = z.object({
   loadTolerance: share,
   nveCoverage: z.object({ minKv: kv, bufferKm: km, maxUncoveredShare: share }).strict(),
   maxCuratedShare300kv: share,
+  /** AC load flow gate (tests/electric-grid-model-power-flow.test.ts): admissible bus voltage band, pu. */
+  minBusVoltagePu: z.number().finite().positive(),
+  maxBusVoltagePu: z.number().finite().positive(),
 }).strict()
 
 export const gridGoldenSchema = z.object({
@@ -150,6 +170,7 @@ export const gridGoldenSchema = z.object({
   excludedCorridors: z.array(excludedCorridorSchema),
   interconnectors: z.array(interconnectorSchema),
   radialAllowList: z.array(radialAllowanceSchema),
+  powerFlowOverloads: z.array(powerFlowOverloadSchema),
 }).strict().superRefine((golden, context) => {
   const issue = (path: ReadonlyArray<string | number>, message: string): void => {
     context.addIssue({ code: 'custom', path: [...path], message })
@@ -210,6 +231,14 @@ export const gridGoldenSchema = z.object({
     checkStation(['radialAllowList', index, 'stationId'], entry.stationId)
     checkEvidence(['radialAllowList', index], entry.evidence)
   })
+  const overloads = new Set<string>()
+  golden.powerFlowOverloads.forEach((entry, index) => {
+    const key = `${entry.operatingPointId}|${entry.branchId}`
+    if (overloads.has(key)) issue(['powerFlowOverloads', index], `${entry.branchId} is listed twice for ${entry.operatingPointId}`)
+    overloads.add(key)
+    checkEvidence(['powerFlowOverloads', index], entry.evidence)
+  })
+  if (golden.thresholds.minBusVoltagePu >= golden.thresholds.maxBusVoltagePu) issue(['thresholds', 'minBusVoltagePu'], 'must be below maxBusVoltagePu')
   for (const sourceId of golden.references.generation.sourceIds) {
     if (!sourceIds.has(sourceId)) issue(['references', 'generation', 'sourceIds'], `unknown source ${sourceId}`)
   }

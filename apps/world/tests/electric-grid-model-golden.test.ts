@@ -69,11 +69,13 @@ describe('generated Norway companions', () => {
       const json = await load(name)
       for (const target of [model, halden]) {
         const point = validateGridOperatingPoint(json, name, gridOperatingPointTargetsForModel(target))
-        // Initial dispatch balances the scaled demand.
+        // Initial dispatch balances the scaled demand plus the scheduled HVDC and Nordic export.
         const scale = point.priceAreaDemandScale ?? {}
         const demandMw = model.loads.reduce((sum, entry) => sum + entry.referenceDemandMw * point.loadScale * (scale[entry.priceArea] ?? 1), 0)
+        const exportMw = (point.hvdcSchedules ?? []).reduce((sum, entry) => sum + entry.points[0]!.transferMw, 0)
+          + (point.externalExchangeSchedules ?? []).reduce((sum, entry) => sum + entry.points[0]!.exportMw, 0)
         const generationMw = (point.generatorStates ?? []).reduce((sum, entry) => sum + (entry.targetMw ?? 0), 0)
-        expect(Math.abs(generationMw - demandMw)).toBeLessThan(1)
+        expect(Math.abs(generationMw - demandMw - exportMw)).toBeLessThan(1)
       }
     }
   })

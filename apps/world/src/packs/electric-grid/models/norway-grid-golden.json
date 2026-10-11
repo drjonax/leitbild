@@ -75,6 +75,38 @@
       "url": "https://www.openstreetmap.org",
       "licence": "ODbL 1.0",
       "retrievedAt": "2026-10-10"
+    },
+    {
+      "id": "nve-nettanlegg4",
+      "title": "NVE Nettanlegg4 MapServer (regional and distribution grid)",
+      "publisher": "NVE",
+      "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+      "licence": "NLOD 2.0 (https://data.norge.no/nlod/no/2.0): NVE distributes its map data under NLOD (nve.no/kart/kartdata)",
+      "retrievedAt": "2026-10-11"
+    },
+    {
+      "id": "nve-case-documents",
+      "title": "NVE published concession case documents",
+      "publisher": "NVE",
+      "url": "https://webfileservice.nve.no",
+      "licence": "cited as public reference only",
+      "retrievedAt": "2026-10-11"
+    },
+    {
+      "id": "vde-fnn",
+      "title": "VDE FNN Hinweis: Hinweise zur Umsetzung des witterungsabhängigen Freileitungsbetriebs (WAFB 1.0, August 2021)",
+      "publisher": "VDE FNN",
+      "url": "https://www.vde.com/resource/blob/2326494/b8df0df841617c90e10d31f83112a0ee/vde-fnn-hinweis-hinweise-zur-umsetzung-des-witterngsabhaengigen-freileitungsbetriebs-data.pdf",
+      "licence": "cited as public reference only",
+      "retrievedAt": "2026-10-11"
+    },
+    {
+      "id": "era5-open-meteo",
+      "title": "ERA5 reanalysis hourly 2 m temperature and shortwave radiation via the Open-Meteo archive API",
+      "publisher": "Copernicus Climate Change Service (ECMWF); Open-Meteo",
+      "url": "https://archive-api.open-meteo.com/v1/archive",
+      "licence": "CC BY 4.0 (Open-Meteo data; contains modified Copernicus Climate Change Service information)",
+      "retrievedAt": "2026-10-11"
     }
   ],
   "thresholds": {
@@ -116,7 +148,9 @@
       "bufferKm": 0.3,
       "maxUncoveredShare": 0.03
     },
-    "maxCuratedShare300kv": 0.02
+    "maxCuratedShare300kv": 0.02,
+    "minBusVoltagePu": 0.9,
+    "maxBusVoltagePu": 1.1
   },
   "thresholdNotes": {
     "maxComponents": "count; a nationwide ≥132 kV Norwegian AC model is one synchronous island once boundary buses are excluded (plan target).",
@@ -138,7 +172,9 @@
     "maxUnassignedGenerationMw": "MW of generation without a price area.",
     "loadTolerance": "fraction per price area against the Elhub reference hour (audit B §4 P8 acceptance ±5 %).",
     "nveCoverage": "kV floor, km buffer and uncovered fraction; 300 m buffer and 97.4 % measured OSM agreement on the 2026-05-28 sidecar (audit B B-26), uncovered remainder being lines newer than the sidecar.",
-    "maxCuratedShare300kv": "fraction of ≥300 kV line length that is curated (audit B §4 P4 acceptance 2 %)."
+    "maxCuratedShare300kv": "fraction of ≥300 kV line length that is curated (audit B §4 P4 acceptance 2 %).",
+    "minBusVoltagePu": "pu; lowest admissible steady-state bus voltage in the AC load flow of each committed Operating Point (power-flow gate, tests/electric-grid-model-power-flow.test.ts; band 0.90–1.10 pu set by the grid overhaul brief)",
+    "maxBusVoltagePu": "pu; highest admissible steady-state bus voltage in the same power-flow gate"
   },
   "references": {
     "generation": {
@@ -5407,6 +5443,170 @@
           "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
           "ref": "VannKraftverkID 523",
           "note": "NVE hydropower plant \"Øvre Vinstra\" 140 MW, Nord-Fron"
+        }
+      ]
+    }
+  ],
+  "powerFlowOverloads": [
+    {
+      "branchId": "branch:osm-bd52965eaa998df5",
+      "label": "Abildsø - Solbergfoss (2.2 km section from Abildsø to the Lambertseter tee)",
+      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+      "maxLoading": 1.4,
+      "aboveEmergency": true,
+      "reason": "Lambertseter 132/47/11 kV takes the population-allocated demand of south-east Oslo and north Nordre Follo (259.5 MW at the winter reference hour) through the one 132 kV cable OSM maps into it, a tee off the single-circuit Abildsø – Solbergfoss line; Abildsø, fed by the Abildsø – Ulven and Abildsø – Jordal cables, passes it on over the 2.2 km Abildsø – tee section. In the real grid Lambertseter, Abildsø and Statnett's Follo 420/47 kV station share this area through Elvia's 47 kV network (NVE Nettanlegg4 maps the 47 kV chain Follo – Myrvoll – Tårnlia – Prinsdal – Klemetsrud – Lambertseter), which a ≥132 kV model does not hold, so the model concentrates the area on Lambertseter's feed. Supply to Oslo south is a real constraint: Statnett is building Liåsen 420/132 kV (OSM: construction, 2027) to relieve it. The overload stays until the 47 kV mesh or Liåsen is modelled.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg4",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+          "ref": "layer 5, Elvia 47 kV transformer stations Lambertseter, Klemetsrud, Prinsdal, Tårnlia, Myrvoll; Statnett Follo 420 kV",
+          "note": "layer 1 Elvia 47 kV lines join them from Follo (59.729, 10.783) to Lambertseter (59.871, 10.828)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/583462285",
+          "ref": "way/583462285",
+          "note": "the one 132 kV cable into Lambertseter trafostasjon (relation/8244314)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/1340703279",
+          "ref": "way/1340703279",
+          "note": "Liåsen trafostasjon (2027), 420/132 kV, construction"
+        }
+      ]
+    },
+    {
+      "branchId": "branch:osm-40eec78844afc57c",
+      "label": "Lambertseter tee – Lambertseter trafostasjon 132 kV cable",
+      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+      "maxLoading": 1.06,
+      "aboveEmergency": false,
+      "reason": "Lambertseter 132/47/11 kV takes the population-allocated demand of south-east Oslo and north Nordre Follo (259.5 MW at the winter reference hour) through the one 132 kV cable OSM maps into it, a tee off the single-circuit Abildsø – Solbergfoss line; Abildsø, fed by the Abildsø – Ulven and Abildsø – Jordal cables, passes it on over the 2.2 km Abildsø – tee section. In the real grid Lambertseter, Abildsø and Statnett's Follo 420/47 kV station share this area through Elvia's 47 kV network (NVE Nettanlegg4 maps the 47 kV chain Follo – Myrvoll – Tårnlia – Prinsdal – Klemetsrud – Lambertseter), which a ≥132 kV model does not hold, so the model concentrates the area on Lambertseter's feed. Supply to Oslo south is a real constraint: Statnett is building Liåsen 420/132 kV (OSM: construction, 2027) to relieve it. The overload stays until the 47 kV mesh or Liåsen is modelled.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg4",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+          "ref": "layer 5, Elvia 47 kV transformer stations Lambertseter, Klemetsrud, Prinsdal, Tårnlia, Myrvoll; Statnett Follo 420 kV",
+          "note": "layer 1 Elvia 47 kV lines join them from Follo (59.729, 10.783) to Lambertseter (59.871, 10.828)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/583462285",
+          "ref": "way/583462285",
+          "note": "the one 132 kV cable into Lambertseter trafostasjon (relation/8244314)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/1340703279",
+          "ref": "way/1340703279",
+          "note": "Liåsen trafostasjon (2027), 420/132 kV, construction"
+        }
+      ]
+    },
+    {
+      "branchId": "branch:osm-9ba5aa26de53d706",
+      "label": "Abildsø - Ulven 132 kV cable",
+      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+      "maxLoading": 1.03,
+      "aboveEmergency": false,
+      "reason": "Lambertseter 132/47/11 kV takes the population-allocated demand of south-east Oslo and north Nordre Follo (259.5 MW at the winter reference hour) through the one 132 kV cable OSM maps into it, a tee off the single-circuit Abildsø – Solbergfoss line; Abildsø, fed by the Abildsø – Ulven and Abildsø – Jordal cables, passes it on over the 2.2 km Abildsø – tee section. In the real grid Lambertseter, Abildsø and Statnett's Follo 420/47 kV station share this area through Elvia's 47 kV network (NVE Nettanlegg4 maps the 47 kV chain Follo – Myrvoll – Tårnlia – Prinsdal – Klemetsrud – Lambertseter), which a ≥132 kV model does not hold, so the model concentrates the area on Lambertseter's feed. Supply to Oslo south is a real constraint: Statnett is building Liåsen 420/132 kV (OSM: construction, 2027) to relieve it. The overload stays until the 47 kV mesh or Liåsen is modelled.",
+      "evidence": [
+        {
+          "sourceId": "nve-nettanlegg4",
+          "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+          "ref": "layer 5, Elvia 47 kV transformer stations Lambertseter, Klemetsrud, Prinsdal, Tårnlia, Myrvoll; Statnett Follo 420 kV",
+          "note": "layer 1 Elvia 47 kV lines join them from Follo (59.729, 10.783) to Lambertseter (59.871, 10.828)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/583462285",
+          "ref": "way/583462285",
+          "note": "the one 132 kV cable into Lambertseter trafostasjon (relation/8244314)"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/1340703279",
+          "ref": "way/1340703279",
+          "note": "Liåsen trafostasjon (2027), 420/132 kV, construction"
+        }
+      ]
+    },
+    {
+      "branchId": "branch:osm-ee73974c4b9512fd",
+      "label": "Flesaker - Mjøndalen (132 kV, 2 circuits)",
+      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+      "maxLoading": 1.08,
+      "aboveEmergency": false,
+      "reason": "Flesaker feeds Drammen from the west at 432 MVA against the model's 406 MVA rating at 0 °C air (ambient rule). At the reference hour Drammen had −11.5 °C in darkness (ERA5); with I² linear in air temperature through FNN Table 1 (20 °C 749 A, −10 °C 930 A for 243-AL1/39 under 900 W/m² sun) the two circuits carry about 436 MVA at −11.5 °C, so the line is within its thermal limit at the hour the Operating Point represents. The conductor of this 1966 line is not published.",
+      "evidence": [
+        {
+          "sourceId": "era5-open-meteo",
+          "url": "https://archive-api.open-meteo.com/v1/archive",
+          "ref": "59.719 N 10.138 E, 2026-01-12T07:00 UTC",
+          "note": "temperature_2m −11.5 °C, shortwave_radiation 0 W/m²"
+        },
+        {
+          "sourceId": "vde-fnn",
+          "url": "https://www.vde.com/resource/blob/2326494/b8df0df841617c90e10d31f83112a0ee/vde-fnn-hinweis-hinweise-zur-umsetzung-des-witterngsabhaengigen-freileitungsbetriebs-data.pdf",
+          "ref": "Tabelle 1 (p. 13)",
+          "note": "243-AL1/39-ST1A at 80 °C, 0.6 m/s, Cigre TB 601: 749 A at 20 °C, 930 A at −10 °C"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/164654100",
+          "ref": "way/164654100",
+          "note": "Flesaker - Mjøndalen, circuits=2, start_date=1966, Glitre Nett"
+        }
+      ]
+    },
+    {
+      "branchId": "branch:osm-f32a8c4ff97e6ea6",
+      "label": "Heifjellet – Middagseidklumpen 132 kV cable (Øyfjellet wind farm)",
+      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+      "maxLoading": 1.08,
+      "aboveEmergency": false,
+      "reason": "NVE registers Øyfjellet's 400 MW at one point and the model connects the farm at Heifjellet, so this internal cable carries the whole 262 MW winter output. The concession places one 140 MVA 132/33 kV transformer at Heifjellet and two at Middagseidklumpen, so in the farm the cable between them carries only Heifjellet's part; the cable rule rates it 250 MVA where the concession requires at least TSLF 1×3×1 1600 mm².",
+      "evidence": [
+        {
+          "sourceId": "nve-wind-api",
+          "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+          "ref": "AnleggsNr 10269",
+          "note": "Øyfjellet, 400 MW"
+        },
+        {
+          "sourceId": "nve-case-documents",
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/201707386/2775823",
+          "ref": "MTA Øyfjellet vindkraftverk (2019-05-06), table of the anleggskonsesjon NVE 201104174-149 (2018-10-11)",
+          "note": "To transformatorstasjoner, ved Middagseidklumpen og Heifjellet, med to og en 140 MVA 132/33 kV transformatorer"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/1080268517",
+          "ref": "way/1080268517",
+          "note": "132 kV cable, cables=3"
+        }
+      ]
+    },
+    {
+      "branchId": "branch:osm-160c2daebc44076b",
+      "label": "Tonstad koblingsstasjon – Tonstad kraftverk 300 kV cable",
+      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+      "maxLoading": 1.03,
+      "aboveEmergency": false,
+      "reason": "OSM maps the 0.24 km connection between the underground Tonstad power station (960 MW, five units) and its switchyard as one 300 kV cable without a circuit count, which the cable rule rates 834 MVA; at the winter reference hour the station runs at the common storage loading (815 MW), 840 MVA with its reactive output. The station exports its full capacity through several cable systems in reality; their number is not mapped.",
+      "evidence": [
+        {
+          "sourceId": "nve-hydro-api",
+          "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+          "ref": "VannKraftverkID 448",
+          "note": "Tonstad, 960 MW"
+        },
+        {
+          "sourceId": "openstreetmap",
+          "url": "https://www.openstreetmap.org/way/902286655",
+          "ref": "way/902286655",
+          "note": "power=cable, voltage=300000, no circuits or cables tag"
         }
       ]
     }
