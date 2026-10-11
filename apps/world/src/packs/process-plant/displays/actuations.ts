@@ -3,6 +3,7 @@ import { downstreamLinks, linkCarrier, nextLinks } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding } from '../signals.ts'
+import { linkFlowBinding } from './mimic/bindings.ts'
 
 // What the Plant's protection sets going, read from its declared I&C rules:
 // a trip that writes equipment commands is an automatic action (auxiliary
@@ -125,5 +126,5 @@ export const actionFlowsInto = (plant: CompiledProcessPlant, action: AutomaticAc
   return [...new Set((graph.incomingLinksByComponent[component] ?? [])
     .map(index => graph.links[index]!)
     .filter(link => link.kind === 'fluidFlow' && commanded.has(link.fromComponentIndex))
-    .flatMap(link => link.variables.filter(variable => String(variable.path).endsWith('.flowKgPerS')).map(variable => variable.path)))]
+    .map(link => linkFlowBinding(graph, link.index).flowPath))]
 }
