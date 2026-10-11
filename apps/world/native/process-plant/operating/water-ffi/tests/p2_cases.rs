@@ -495,6 +495,8 @@ fn scales(p: &Parameters, values: &[f64; st::COORDINATES], relief: bool) -> Vec<
     sc[st::DROP_VOLUME] = p.fluid_volume_m3;
     sc[st::BUBBLE_MASS] = values[st::VAPOR_MASS];
     sc[st::DROP_MASS] = values[st::RESIDENT_MASS];
+    sc[st::ADMITTED_BUBBLE_VOLUME] = p.fluid_volume_m3;
+    sc[st::ADMITTED_BUBBLE_MASS] = values[st::VAPOR_MASS];
     for (tracer, host) in [
         (st::ADMITTED_BORON, st::ADMITTED_MASS),
         (st::RESIDENT_BORON, st::RESIDENT_MASS),
@@ -1085,7 +1087,12 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             output_s: ctx.output_s(),
             observation_s: ctx.gates.f64(&["comparison", "observation_s"]),
             breakpoints: breakpoints(entry),
-            nonnegative: vec![st::BUBBLE_MASS, st::DROP_MASS, st::DROP_BORON],
+            nonnegative: vec![
+                st::BUBBLE_MASS,
+                st::DROP_MASS,
+                st::DROP_BORON,
+                st::ADMITTED_BUBBLE_MASS,
+            ],
             cpu_cap_s: cap,
             set_deadline_cpu_s: deadline,
             credited,

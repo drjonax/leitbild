@@ -568,6 +568,7 @@ impl CellSystem {
         let mixture = self
             .cell
             .level(s(v(st::ADMITTED_VOLUME)
+                + v(st::ADMITTED_BUBBLE_VOLUME)
                 + v(st::RESIDENT_VOLUME)
                 + v(st::BUBBLE_VOLUME)))
             .value;
@@ -594,10 +595,14 @@ impl CellSystem {
         let mixture = self
             .cell
             .level(s(v(st::ADMITTED_VOLUME)
+                + v(st::ADMITTED_BUBBLE_VOLUME)
                 + v(st::RESIDENT_VOLUME)
                 + v(st::BUBBLE_VOLUME)))
             .value;
-        let boundary = self.cell.level(s(v(st::ADMITTED_VOLUME))).value;
+        let boundary = self
+            .cell
+            .level(s(v(st::ADMITTED_VOLUME) + v(st::ADMITTED_BUBBLE_VOLUME)))
+            .value;
         let top = self.cell.parameters().top_m;
         for (o, root) in out.iter_mut().zip(roots) {
             *o = match root {
@@ -1023,7 +1028,8 @@ pub fn sample(
         inventory: [inv.mass_kg.value, inv.energy_j.value, inv.boron_kg.value],
         ledger_q: [0.; LEDGER],
         internal_energy_j: inv.energy_j.value
-            - c.interface_pressure.value * (x.bubble_volume.value + x.drop_volume.value),
+            - c.interface_pressure.value
+                * (x.bubble_volume.value + x.drop_volume.value + x.admitted_bubble_volume.value),
         tolerance: [
             tol(&[
                 st::VAPOR_MASS,
@@ -1031,6 +1037,7 @@ pub fn sample(
                 st::RESIDENT_MASS,
                 st::BUBBLE_MASS,
                 st::DROP_MASS,
+                st::ADMITTED_BUBBLE_MASS,
             ]),
             tol(&[st::VAPOR_ENERGY, st::ADMITTED_ENERGY, st::RESIDENT_ENERGY]) + metal_tolerance,
             tol(&[st::ADMITTED_BORON, st::RESIDENT_BORON, st::DROP_BORON]),

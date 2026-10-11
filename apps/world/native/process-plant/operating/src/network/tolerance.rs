@@ -87,7 +87,7 @@ impl<P: Properties> Network<P> {
     }
 
     /// The PZR block: zone and transit volumes (scaled by the cell volume)
-    /// and the eleven stocks take the stock and tracer classes; the roof
+    /// and the twelve stocks take the stock and tracer classes; the roof
     /// pressure takes `relative / (kappa_eff * scale)` with the cell's
     /// effective isentropic compressibility `kappa_eff = sum(V_k kappa_s,k)/V`
     /// from the stratified column at `y`.
@@ -113,7 +113,10 @@ impl<P: Properties> Network<P> {
             &stratified::Coordinates::values(&values),
             None,
         )?;
-        if column.bubble_volume.value != 0. || column.drop_volume.value != 0. {
+        if column.bubble_volume.value != 0.
+            || column.drop_volume.value != 0.
+            || column.admitted_bubble_volume.value != 0.
+        {
             return Err(Failure::Fatal(
                 "the roof-pressure weight is declared at a transit-free state".into(),
             ));
