@@ -113,6 +113,29 @@ describe('auxiliary feedwater', () => {
     expect(faulted.pressureMPa).toBeLessThan(even.pressureMPa)
   })
 
+  test('started by one generator\'s low-low level, feeds every generator, not that one alone', () => {
+    // Feedwater control valve B fails to 35 % at full power; generator B boils down to its low-low level.
+    const plantRun = started()
+    plantRun.run(5)
+    plantRun.act('steam-generator-b-feedwater-runback', { positionPercent: 35 })
+    let afwStartedAt: number | null = null
+    for (let second = 1; second <= 200 && afwStartedAt === null; second += 1) {
+      plantRun.run(1)
+      if (plantRun.read('auxFeedwaterPumpMotor.runningState') === 1) afwStartedAt = second
+    }
+    expect(afwStartedAt).not.toBeNull()
+    plantRun.run(40)
+    const { tag } = plantRun
+    expect(tag('SG-B-LVL-NR')).toBe(0)
+    const flows = loops.map(loop => tag(`AFW-${loop}-FLOW`))
+    // About a quarter of the pumps' flow each; generator B, at slightly lower pressure, a little more.
+    for (const flow of flows) {
+      expect(flow).toBeGreaterThan(22)
+      expect(flow).toBeLessThan(32)
+    }
+    expect(tag('AFW-B-FLOW') / tag('AFW-FLOW')).toBeLessThan(0.27)
+  })
+
   test('puts every kilogram it feeds into the generator\'s inventory', () => {
     const plantRun = started()
     plantRun.run(5)

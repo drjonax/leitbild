@@ -23,9 +23,11 @@ export const levelHighHighPercent = 82
 // feedwater and trips the reactor: a generator boiling down at power soon
 // uncovers its tubes and the core loses its heat sink. The trip acts while the
 // reactor can be critical (the standard technical specifications' modes 1 and
-// 2); auxiliary feedwater starts in every mode. A real plant votes two of three
-// or four level channels per generator; this model has one channel each, so
-// that one channel trips.
+// 2); auxiliary feedwater starts in every mode, lined up, as on every other
+// start, to every steam generator, so that one generator's low level does not
+// send all the pumps' flow to it. A real plant votes two of three or four
+// level channels per generator; this model has one channel each, so that one
+// channel trips.
 const levelLowLowPercent = 20
 
 // Steam pressure ladder of the reference main steam system: the steam dumps
@@ -136,13 +138,13 @@ export const steamGeneratorReferenceIcRules = (
         trip({
           id: 'afw-actuation',
           title: `Steam generator ${loop} low-low level`,
-          message: `Steam generator ${loop} low-low level actuates the reference auxiliary feedwater response.`,
+          message: `Steam generator ${loop} low-low level starts auxiliary feedwater to every steam generator.`,
           annunciator: annunciator({ ...sgAction, firstOutGroup: 'auxiliary-feedwater' }),
         }),
         write('start-motor-afw', { path: 'auxFeedwaterPumpMotor.running' }, true),
         write('start-motor-afw-b', { path: 'auxFeedwaterPumpMotorB.running' }, true),
         write('start-turbine-afw', { path: 'auxFeedwaterPumpTurbine.running' }, true),
-        write(`open-afw-valve-${lower}`, { path: `auxFeedwaterValve${loop}.positionFraction` }, 1),
+        ...loops.map(fed => write(`open-afw-valve-${fed.toLowerCase()}`, { path: `auxFeedwaterValve${fed}.positionFraction` }, 1)),
       ],
     }),
     rule({
