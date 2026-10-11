@@ -9,10 +9,13 @@ interface ElectricalPortStateBase {
   readonly observedAt: IsoTimestamp
 }
 
-/** A live port: positive finite voltage (pu) and frequency (Hz). */
+/**
+ * A live port: positive finite frequency (Hz) and voltage (pu). The voltage is null while the
+ * network side has no solved voltage there (its AC load flow did not converge); it is never guessed.
+ */
 export interface EnergizedElectricalPortState extends ElectricalPortStateBase {
   readonly energized: true
-  readonly voltagePu: number
+  readonly voltagePu: number | null
   readonly frequencyHz: number
 }
 
@@ -62,7 +65,7 @@ export const electricalPortStateSchema = z.discriminatedUnion('energized', [
   z.object({
     ...electricalPortStateBaseShape,
     energized: z.literal(true),
-    voltagePu: z.number().finite().positive(),
+    voltagePu: z.number().finite().positive().nullable(),
     frequencyHz: z.number().finite().positive(),
   }).strict(),
   z.object({

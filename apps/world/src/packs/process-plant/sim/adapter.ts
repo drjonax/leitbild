@@ -111,9 +111,12 @@ const emitRuntimeFailure = (config: {
   }])
 }
 
-/** The Grid boundary state a Plant reads: a live port has voltage and frequency, a dead one has neither. */
+/**
+ * The Grid boundary state a Plant reads: a live port has frequency and a voltage, unless the Grid's
+ * AC load flow did not converge there (null); a dead one has neither.
+ */
 type NetworkPortState =
-  | { readonly connected: boolean; readonly energized: true; readonly voltagePu: number; readonly frequencyHz: number }
+  | { readonly connected: boolean; readonly energized: true; readonly voltagePu: number | null; readonly frequencyHz: number }
   | { readonly connected: boolean; readonly energized: false; readonly voltagePu: 0; readonly frequencyHz: null }
 
 export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter => ({
@@ -148,8 +151,9 @@ export const createLocalProcessPlantPackRuntimeAdapter = (): PackRuntimeAdapter 
         .find(candidate => candidate.port.id === connection.system.portId)
       if (!boundary) throw new Error(`process plant electrical boundary disappeared: ${connection.system.objectId}:${connection.system.portId}`)
       // A dead Grid boundary has no frequency: it makes offsite power unavailable at voltage 0, and no
-      // frequency is written into the Plant.
-      const live = state.connected && state.energized ? state : null
+      // frequency is written into the Plant. A live boundary without a solved voltage is a network
+      // that cannot hold its voltage there (no AC steady state): the Plant treats it as lost offsite power too.
+      const live = state.connected && state.energized && state.voltagePu !== null ? { voltagePu: state.voltagePu, frequencyHz: state.frequencyHz } : null
       plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'available'), value: live !== null })
       plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'voltageFraction'), value: live === null ? 0 : live.voltagePu })
       if (live !== null) plant.runtime.writeCommand({ type: 'setVariable', path: componentVariablePath(boundary.component, 'frequencyHz'), value: live.frequencyHz })
