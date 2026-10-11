@@ -55,17 +55,39 @@ export const rateWindowMs = (horizonMs: number): number =>
   Math.min(30_000, Math.max(RATE_MIN_SPAN_MS, Math.round(horizonMs / 16 / 5_000) * 5_000))
 
 /** Least-squares slope over the window, per minute; null unless the data spans most of it. */
-export const ratePerMinute = (points: ReadonlyArray<TrendPoint>, windowMs: number): number | null => {
+export const ratePerMinute = (points: ReadonlyArray<TrendPoint>, windowMs: number): number | null =>
+  rateOver(points, windowMs, Math.max(RATE_MIN_SPAN_MS, windowMs * 0.75))
+
+/** Least-squares slope, per minute, of the points within the window; null unless they span at least `minSpanMs`. */
+const rateOver = (points: ReadonlyArray<TrendPoint>, windowMs: number, minSpanMs: number): number | null => {
   const last = points.at(-1)
   if (last === undefined) return null
   const recent = points.filter(point => point.t >= last.t - windowMs)
-  if (recent.length < 2 || last.t - recent[0]!.t < Math.max(RATE_MIN_SPAN_MS, windowMs * 0.75)) return null
+  if (recent.length < 2 || last.t - recent[0]!.t < minSpanMs) return null
   const meanT = recent.reduce((sum, point) => sum + point.t, 0) / recent.length
   const meanV = recent.reduce((sum, point) => sum + point.v, 0) / recent.length
   const covariance = recent.reduce((sum, point) => sum + (point.t - meanT) * (point.v - meanV), 0)
   const variance = recent.reduce((sum, point) => sum + (point.t - meanT) ** 2, 0)
   return variance === 0 ? null : (covariance / variance) * 60_000
 }
+
+/**
+ * The longer window a stated rate is checked against: three of its windows,
+ * a minute at least. The QA review's subcooling after the pumps tripped
+ * had risen for half a minute and turned down for ten seconds; only over a
+ * minute does its turn show.
+ */
+export const longWindowMs = (windowMs: number): number => Math.max(3 * windowMs, LONG_MIN_WINDOW_MS)
+
+const LONG_MIN_WINDOW_MS = 60_000
+
+/**
+ * The rate over the longer window, as far as the history reaches into it:
+ * half again the stated window at least, half a minute at least, so a young
+ * Run's first minute (feedwater lost at its start) still has one.
+ */
+const longRate = (points: ReadonlyArray<TrendPoint>, windowMs: number): number | null =>
+  rateOver(points, longWindowMs(windowMs), Math.max(PROJECTION_BASIS_MS, windowMs * 1.5))
 
 // A change below 0.1 % of the value a minute reads as steady, and so does one
 // of less than a resolution step a minute: noise the display does not show.
@@ -88,31 +110,33 @@ const CHANGE_MIN_DISTINCT_VALUES = 5
 
 /**
  * How the rate the legend states compares with what the curve does at its
- * end and did before: slowing or reversing where the last third of the
- * window (10 s at least) moves at less than half the window's rate or the
- * other way, so a curve that has just flattened is never read by its steeper
- * slope (evaluation run 22: "≈5 s to LO TRIP" from a 30-s rate over a trace
- * already flat); else as the rate over the window, half a minute at least,
- * compares with three such windows.
+ * end and did over the longer window (longWindowMs): reversing where either
+ * goes the other way; slowing where the last third of the window (10 s at
+ * least) moves slower than the window, or the window slower than the longer
+ * one, by a tenth or more, so a curve that has just flattened or is bending
+ * over is never read by its steeper slope (evaluation run 22: "≈5 s to LO
+ * TRIP" from a 30-s rate over a trace already flat; the QA review's "≈4 min"
+ * to a subcooling limit the margin never reaches); accelerating where the
+ * window moves more than half again as fast as the longer one. Null for a
+ * rate that holds, or is steady.
  */
 export const rateChange = (points: ReadonlyArray<TrendPoint>, windowMs: number, value: number, resolution: number | null = null): RateChange | null => {
   const window = Math.max(windowMs, CHANGE_MIN_WINDOW_MS)
   const last = points.at(-1)
   if (last === undefined || new Set(points.filter(point => point.t >= last.t - window).map(point => point.v)).size < CHANGE_MIN_DISTINCT_VALUES) return null
   const stated = ratePerMinute(points, windowMs)
+  if (stated === null || isSteady(stated, value, resolution)) return null
   const end = ratePerMinute(points, Math.max(RATE_MIN_SPAN_MS, windowMs / 3))
-  if (stated !== null && end !== null && !isSteady(stated, value, resolution)) {
-    if (!isSteady(end, value, resolution) && Math.sign(end) !== Math.sign(stated)) return 'reversing'
-    if (Math.abs(end) < Math.abs(stated) * 0.5) return 'slowing'
-  }
-  const recent = ratePerMinute(points, window)
-  const longer = ratePerMinute(points, window * 3)
-  if (recent === null || longer === null || isSteady(longer, value, resolution)) return null
-  if (!isSteady(recent, value, resolution) && Math.sign(recent) !== Math.sign(longer)) return 'reversing'
-  if (Math.abs(recent) < Math.abs(longer) * 0.5) return 'slowing'
-  if (Math.abs(recent) > Math.abs(longer) * 1.5) return 'accelerating'
+  const long = longRate(points, windowMs)
+  const against = (other: number | null): boolean => other !== null && !isSteady(other, value, resolution) && Math.sign(other) !== Math.sign(stated)
+  if (against(end) || against(long)) return 'reversing'
+  if ((end !== null && Math.abs(end) < Math.abs(stated) * HOLDING) || (long !== null && Math.abs(stated) < Math.abs(long) * HOLDING)) return 'slowing'
+  if (long !== null && Math.abs(stated) > Math.abs(long) * 1.5) return 'accelerating'
   return null
 }
+
+// A rate holds while a shorter window reads at least nine tenths of a longer one's.
+const HOLDING = 0.9
 
 export const windowText = (windowMs: number): string => `${Math.round(windowMs / 1000)} s`
 
@@ -148,22 +172,32 @@ export const travelText = (rate: number | null, value: number, unit: string, cha
 }
 
 // A time to a limit is projected only from a tendency with a basis: half a
-// minute of change the display can show, all of it one way, and not slowing.
-// A curve bending over (pressure settling while a PORV stays stuck open) would
-// otherwise be extrapolated straight to a limit it may never reach.
+// minute of change the display can show, all of it one way, established over
+// the longer window and not slowing. A curve bending over (pressure settling
+// while a PORV stays stuck open) or turning (subcooling after the pumps
+// tripped) would otherwise be extrapolated straight to a limit it never
+// reaches.
 const PROJECTION_BASIS_MS = 30_000
+// An established rate is within this factor of the longer window's: a faster
+// one has only just set in, and says little about the minutes ahead.
+const ESTABLISHED_FACTOR = 2
 
 /**
  * Whether the latest tendency supports projecting a time to a limit: the
- * points reach back half a minute, the value moved through several values the
- * display can tell apart in it, each step the way the rate goes, and the rate
- * is neither slowing nor reversing (rateChange, as the legend says it).
+ * points reach back half a minute; the value moved through several values
+ * the display can tell apart in it, each step the way the rate goes; the rate
+ * over the longer window goes the same way, and the stated rate is between
+ * nine tenths of it and twice it; and the rate is neither slowing nor
+ * reversing (rateChange, as the legend says it). Every display reads it
+ * alike, over the window its horizon gives (rateWindowMs).
  */
 export const projectionBasis = (points: ReadonlyArray<TrendPoint>, windowMs: number, unit: string, resolution: number | null = null): boolean => {
   const last = points.at(-1)
   if (last === undefined || points[0]!.t > last.t - PROJECTION_BASIS_MS) return false
   const rate = ratePerMinute(points, windowMs)
   if (rate === null || isSteady(rate, last.v, resolution)) return false
+  const long = longRate(points, windowMs)
+  if (long === null || Math.sign(long) !== Math.sign(rate) || Math.abs(rate) < Math.abs(long) * HOLDING || Math.abs(rate) > Math.abs(long) * ESTABLISHED_FACTOR) return false
   const change = rateChange(points, windowMs, last.v, resolution)
   if (change === 'slowing' || change === 'reversing') return false
   const recent = points.filter(point => point.t >= last.t - PROJECTION_BASIS_MS)
@@ -179,7 +213,8 @@ export const projectionBasis = (points: ReadonlyArray<TrendPoint>, windowMs: num
 
 /**
  * How far back a reading over this window looks: every point it weighs lies
- * this close to the latest (the change qualifier's three windows); of older
+ * this close to the latest (the longer window, within three windows of half
+ * a minute at least); of older
  * points it asks only whether there is one (projectionBasis). So the points
  * within it and the newest one before it read exactly as the whole history.
  */
@@ -212,15 +247,19 @@ export const NOT_PROJECTED = 'approaching, not projected'
 
 /**
  * "≈45 s" or "≈4 min" to the threshold at the current rate; where the
- * tendency gives no basis for a time (projectionBasis), "approaching, not
- * projected" instead; empty when not approaching it within half an hour.
+ * tendency gives no basis for a time (projectionBasis), why: "slowing" or
+ * "reversing" as the rate's change says it, else "approaching, not
+ * projected"; empty when not approaching it within half an hour.
  */
-export const timeToThresholdText = (value: number, rate: number | null, threshold: ComposedDisplayThreshold, projectable: boolean, back = false): string => {
+export const timeToThresholdText = (value: number, rate: number | null, threshold: ComposedDisplayThreshold, projectable: boolean, back = false, change: RateChange | null = null): string => {
   const minutes = minutesToThreshold(value, rate, threshold, back)
   if (minutes === null || minutes > PROJECTION_MAX_MINUTES) return ''
-  if (!projectable) return NOT_PROJECTED
+  if (!projectable) return change === 'slowing' || change === 'reversing' ? change : NOT_PROJECTED
   return minutes < 2 ? `≈${Math.max(1, Math.round(minutes * 60))} s` : `≈${Math.round(minutes)} min`
 }
+
+/** Whether a limit state's time text is a projected time ("≈45 s"), not the reason none is projected. */
+const isProjectedTime = (eta: string): boolean => eta.startsWith('≈')
 
 /**
  * The limit a moving value heads for: of the limits in force, the nearest
@@ -330,7 +369,7 @@ export type LimitState =
   | {
     readonly kind: 'margin'
     readonly margin: ThresholdMargin
-    /** "≈45 s", "approaching, not projected", or empty where the row shows no time. */
+    /** "≈45 s"; "slowing", "reversing" or "approaching, not projected" where no time is projected; empty where the row shows no time. */
     readonly eta: string
     /** Minutes to the limit where the row shows a projected time. */
     readonly minutes: number | null
@@ -383,10 +422,11 @@ export const trendReading = (config: {
   const rate = points === null || end !== null ? null : ratePerMinute(points, windowMs)
   const travel = travelOf(rate, value, resolution)
   const inForce = limitsInForce(thresholds, mode, gates).filter(threshold => threshold.kind !== 'control')
+  const change = rate === null || points === null ? null : rateChange(points, windowMs, value, resolution)
   const reading = {
     rate,
     travel,
-    change: rate === null || points === null ? null : rateChange(points, windowMs, value, resolution),
+    change,
     inAlarm: activeThreshold(thresholds, activeRuleIds, mode, gates),
     offScale: end,
   }
@@ -398,10 +438,10 @@ export const trendReading = (config: {
     const projectable = points !== null && projectionBasis(points, windowMs, unit, resolution)
     const ahead = limitAhead(value, heading, inForce)
     if (ahead !== null && isPast(ahead)) {
-      return { ...reading, limit: { kind: 'past', margin: ahead, back: { travel: heading, eta: timeToThresholdText(value, rate, ahead.threshold, projectable, true), minutes: projectedMinutes(value, rate, ahead.threshold, projectable, true) } } }
+      return { ...reading, limit: { kind: 'past', margin: ahead, back: { travel: heading, eta: timeToThresholdText(value, rate, ahead.threshold, projectable, true, change), minutes: projectedMinutes(value, rate, ahead.threshold, projectable, true) } } }
     }
     if (ahead !== null) {
-      return { ...reading, limit: { kind: 'margin', margin: ahead, eta: timeToThresholdText(value, rate, ahead.threshold, projectable), minutes: projectedMinutes(value, rate, ahead.threshold, projectable) } }
+      return { ...reading, limit: { kind: 'margin', margin: ahead, eta: timeToThresholdText(value, rate, ahead.threshold, projectable, false, change), minutes: projectedMinutes(value, rate, ahead.threshold, projectable) } }
     }
     const behind = outermostPassed(value, inForce)
     return { ...reading, limit: behind !== null ? { kind: 'past', margin: behind, back: null } : { kind: 'clear', direction: heading === 'falling' ? 'low' : 'high' } }
@@ -432,11 +472,23 @@ export const limitStateText = (state: LimitState, unit: string, resolution: numb
     const back = state.back
     if (back === null) return marginText(state.margin, unit, resolution)
     const across = `back ${state.margin.threshold.direction === 'low' ? 'above' : 'below'} it`
-    return `${marginText(state.margin, unit, resolution)} · ${back.travel}, ${back.eta === NOT_PROJECTED ? 'not projected' : `${across} in ${back.eta === '' ? 'over 30 min' : back.eta}`}`
+    const when = back.eta === NOT_PROJECTED ? 'not projected' : back.eta === '' || isProjectedTime(back.eta) ? `${across} in ${back.eta === '' ? 'over 30 min' : back.eta}` : back.eta
+    return `${marginText(state.margin, unit, resolution)} · ${back.travel}, ${when}`
   }
   if (state.kind === 'clear') return `no ${state.direction === 'low' ? 'LO' : 'HI'} limit in force`
   if (state.kind === 'unlimited') return 'no I&C limit'
   return `no limit acts ${state.mode === null ? 'now' : `in ${state.mode.label}`}`
+}
+
+/**
+ * The change a rate is qualified by beside its limit state: none where the
+ * state already gives it as the reason it projects no time ("21.6 °C above
+ * LO 16.7 °C · ALM · reversing"), so a row never says it twice.
+ */
+export const changeBesideState = (reading: Pick<TrendReading, 'change' | 'limit'>): RateChange | null => {
+  const limit = reading.limit
+  const eta = limit?.kind === 'margin' ? limit.eta : limit?.kind === 'past' ? limit.back?.eta : undefined
+  return eta === reading.change ? null : reading.change
 }
 
 /** A reading's state in words: off scale first, then its limit state; empty where it says nothing. */

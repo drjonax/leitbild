@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test'
+import type { SimulationRunId } from '../src/core/model/index.ts'
 import type { ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
-import { marginLimitName, marginTextForms } from '../src/packs/process-plant/displays/display-text.ts'
-import { activeThreshold, limitStateText, projectedMinutes, rateChange, rateText, rateWindowMs, readingLookBackMs, readingStateText, travelOf, travelText, trendPoints, trendReading, type LimitState, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { marginLimitName, marginTextForms, readingResolution, shownReading } from '../src/packs/process-plant/displays/display-text.ts'
+import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
+import { commandsForProcessPlantAction, compileProcessPlant, createProcessPlantProtectionRunner, createProcessPlantRuntime, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
+import { activeThreshold, changeBesideState, limitStateText, projectedMinutes, rateChange, rateText, rateWindowMs, readingLookBackMs, readingStateText, travelOf, travelText, trendPoints, trendReading, type LimitState, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
 
 // Pressurizer pressure limits as the reference PWR's I&C draws them.
 const pressureLimits: ReadonlyArray<ComposedDisplayThreshold> = [
@@ -62,13 +65,16 @@ describe('how a trend reads now', () => {
     expect(limitStateText(reading.limit!, 'MPa')).toBe('0.542 MPa below HI 16 MPa · ALM')
   })
 
-  test('a tendency without a basis for a time says so in the display\'s words', () => {
+  test('a tendency without a basis for a time says why in the display\'s words', () => {
     // Bending over: falling fast, then slowing.
     const bending = seconds(120, second => 14.9 + 0.9 * Math.exp(-second / 40))
     const reading = read(bending, bending.at(-1)!.v)
     expect(reading.travel).toBe('falling')
     expect(reading.change).toBe('slowing')
-    expect(reading.limit).toMatchObject({ kind: 'margin', eta: 'approaching, not projected', minutes: null })
+    expect(reading.limit).toMatchObject({ kind: 'margin', eta: 'slowing', minutes: null })
+    expect(limitStateText(reading.limit!, 'MPa')).toMatch(/^0\.[0-9]+ MPa above LO 14\.8 MPa · ALM · slowing$/)
+    // The legend's rate does not say it twice beside its limit state; without one it does.
+    expect(changeBesideState(reading)).toBeNull()
     expect(travelText(reading.rate, bending.at(-1)!.v, 'MPa', reading.change)).toMatch(/^falling [0-9.]+ MPa\/min, slowing$/)
   })
 
@@ -80,7 +86,7 @@ describe('how a trend reads now', () => {
     expect(reading.travel).toBe('falling')
     expect(reading.rate! < -10).toBe(true)
     expect(reading.change).toBe('slowing')
-    expect(reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 20 } }, eta: 'approaching, not projected', minutes: null })
+    expect(reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 20 } }, eta: 'slowing', minutes: null })
     expect(rateText(reading.rate, 21.7, 'percent', { windowMs: rateWindowMs(600_000), change: reading.change, resolution: 0.1 })).toMatch(/^▼ −[0-9.]+ %\/min · 30 s · slowing$/)
     // The same fall still going on at its end is projected.
     const going = seconds(60, second => 42.7 - second * 0.35)
@@ -219,5 +225,59 @@ describe('how a trend reads now', () => {
         expect(read(bounded(points, windowMs), value, { windowMs })).toEqual(read(points, value, { windowMs }))
       }
     }
+  })
+})
+
+// The QA review's cases on the four-loop reference plant, driven as its probe
+// drove them: the fault at the Run's start, then 1 s ticks with protection.
+const qaCase = (actionId: string, seconds: number, tags: ReadonlyArray<string>) => {
+  const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:trend-reading-qa', loopCount: 4 }))
+  const runtime = createProcessPlantRuntime({ system: compiled })
+  const protection = createProcessPlantProtectionRunner({ system: compiled, protection: compiled.automation })
+  const bindings = tags.map(tag => compiled.graph.signalBindingByTagId.get(tag as never)!)
+  const trace = new Map(bindings.map(binding => [binding, [{ t: 0, v: runtime.readVariable(binding.path) as number }]]))
+  for (const command of commandsForProcessPlantAction({ actionId, parameters: {}, graph: compiled.graph })) runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+  for (let second = 1; second <= seconds; second += 1) {
+    runtime.tick(1000)
+    protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-trend-reading-qa' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+    for (const binding of bindings) trace.get(binding)!.push({ t: second * 1000, v: runtime.readVariable(binding.path) as number })
+  }
+  // A reading at a second, over a horizon's window, as every display reads it.
+  return (tag: string, at: number, horizonMs: number, mode: { readonly id: string; readonly label: string }) => {
+    const binding = bindings.find(candidate => candidate.tagId === tag)!
+    const thresholds = icThresholdsForSignal(compiled, binding.path).thresholds
+    const resolution = readingResolution(binding.limits, thresholds)
+    const points = trace.get(binding)!.slice(0, at + 1).map(point => ({ t: point.t, v: shownReading(point.v, resolution) }))
+    const reading = trendReading({ value: points.at(-1)!.v, points, windowMs: rateWindowMs(horizonMs), unit: binding.unit, thresholds, mode, gates: () => undefined, activeRuleIds: new Set(), resolution, ...(binding.limits?.instrumentSpan === undefined ? {} : { span: binding.limits.instrumentSpan }) })
+    return { reading, text: readingStateText(reading, binding.unit, resolution), trace: trace.get(binding)! }
+  }
+}
+
+describe('a time to a limit only from an established trend (QA review cases)', () => {
+  test('a minute after every RCP tripped, subcooling and pressurizer level are turning: no time on any display', () => {
+    // QA: the 2-minute trend said "≈4 min" and the overview "≈6 min" to LO 16.7 °C; subcooling bottoms near 32.8 °C.
+    const read = qaCase('trip-reactor-coolant-pumps', 300, ['SUB-MARGIN', 'PZR-LVL'])
+    for (const horizonMs of [120_000, 600_000]) {
+      const subcooling = read('SUB-MARGIN', 60, horizonMs, hotStandby)
+      expect(subcooling.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 16.7 } }, eta: 'reversing', minutes: null })
+      expect(subcooling.text).toBe('21.6 °C above LO 16.7 °C · ALM · reversing')
+      const level = read('PZR-LVL', 60, horizonMs, hotStandby)
+      expect(level.reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { value: 75 } }, minutes: null })
+    }
+    // Never a time while it bends over toward its bottom, and the model never reaches the limit.
+    for (const at of [90, 120, 180, 240]) expect(read('SUB-MARGIN', at, 120_000, hotStandby).reading.limit).toMatchObject({ minutes: null })
+    expect(Math.min(...read('SUB-MARGIN', 300, 120_000, hotStandby).trace.filter(point => point.t >= 60_000).map(point => point.v))).toBeGreaterThan(32)
+  })
+
+  test('fifty seconds after main feedwater is lost, the steam generator level is projected to its low-low limit, which it reaches', () => {
+    const read = qaCase('loss-main-feedwater', 80, ['SG-A-LVL-NR'])
+    for (const horizonMs of [120_000, 600_000]) {
+      const level = read('SG-A-LVL-NR', 50, horizonMs, powerOperation)
+      expect(level.text).toBe('8.7 % above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈15 s')
+      expect((level.reading.limit as Extract<LimitState, { kind: 'margin' }>).minutes! * 60).toBeCloseTo(14.7, 0)
+    }
+    // It does, 15 s later.
+    const crossed = read('SG-A-LVL-NR', 80, 120_000, powerOperation).trace.find(point => point.v < 20)!
+    expect(crossed.t / 1000).toBe(65)
   })
 })

@@ -7,7 +7,7 @@
   import { sampledGates } from './panel-presenters.ts'
   import { displayName, fitName, penStroke, roleLabel } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
-  import { rateText, rateWindowMs, readingStateText, trendReading, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import { changeBesideState, rateText, rateWindowMs, readingStateText, trendReading, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import AlarmChip from './AlarmChip.svelte'
 
   // One row per pen, columns aligned: what it is, its value, how close it is
@@ -71,7 +71,7 @@
         {#if state !== ''}<span class:beyond={reading?.offScale != null || reading?.limit?.kind === 'past'}>{state}</span>{/if}
         {#if entry?.quality === 'outside-hard-range'}<span class="beyond">outside range</span>{/if}
       </span>
-      <span class="rate">{typeof value === 'number' && reading !== null && !live ? (reading.offScale === null ? rateText(reading.rate, value, pen.unit, { windowMs, change: reading.change, resolution: pen.resolution }) : 'off scale: no rate') : ''}{liveOnly && !live ? ' · live only' : ''}</span>
+      <span class="rate">{typeof value === 'number' && reading !== null && !live ? (reading.offScale === null ? rateText(reading.rate, value, pen.unit, { windowMs, change: changeBesideState(reading), resolution: pen.resolution }) : 'off scale: no rate') : ''}{liveOnly && !live ? ' · live only' : ''}</span>
     </li>
   {/each}
 </ul>

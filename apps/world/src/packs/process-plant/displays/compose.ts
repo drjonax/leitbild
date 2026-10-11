@@ -41,7 +41,7 @@ import {
   type DisplayEvidence,
 } from './composition.ts'
 import { displayValue, isPast, marginLimitName, nearestThresholdMargin, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
-import { appendPoint, COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
+import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
@@ -1269,7 +1269,8 @@ const penReading = (pen: ComposedDisplayPen, view: PenView, now: ComposedDisplay
   // A legend words every state of its limits; a readout and a comparison show only a margin to one, or the one it is past, in words or as lines.
   const worded = view.kind === 'legend' || view.kind === 'live' || reading.limit?.kind === 'margin' || reading.limit?.kind === 'past'
   const state = readingStateText({ offScale: reading.offScale, limit: worded ? reading.limit : null }, pen.unit, pen.resolution)
-  const travel = travelText(reading.rate, value, pen.unit, reading.change, pen.resolution, overTime === null ? undefined : windowMs)
+  // A change the limit state already gives as its reason for no time ("· reversing") is not said twice.
+  const travel = travelText(reading.rate, value, pen.unit, worded ? changeBesideState(reading) : reading.change, pen.resolution, overTime === null ? undefined : windowMs)
   if (state === '' && travel === '') return []
   // The alarm chip beside the value names the active limit, where the words do not say it is past one.
   const saysPast = worded && reading.limit?.kind === 'past'
