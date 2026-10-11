@@ -24,8 +24,8 @@ const alarmSchema = z.object({
   id: z.string().describe('Stable alarm id <scope>:<asset key>:<condition>, the asset key being the asset id without its own scope prefix (hvdc:nordlink:tripped); the same condition on the same asset always has this id.'),
   scope: z.enum(['island', 'branch', 'generator', 'hvdc']),
   assetId: z.string().describe('Island id or Grid Asset id.'),
-  assetLabel: z.string().describe('The asset\'s label; for an island, its reference bus\'s.'),
-  mapAssetId: z.string().nullable().describe('Grid Asset that locates the alarm on the map (world.electric-grid.asset.get): the asset itself, or an island\'s reference bus; null for an island that no longer exists.'),
+  assetLabel: z.string().describe('The asset\'s label; for an island, Island at <its anchor bus\'s label>, the bus world.electric-grid.islands.list names it after.'),
+  mapAssetId: z.string().nullable().describe('Grid Asset that locates the alarm on the map (world.electric-grid.asset.get): the asset itself, or an island\'s anchor bus; null for an island that no longer exists.'),
   condition: z.string(),
   priority,
   title: z.string(),
@@ -64,14 +64,14 @@ const matchesState = (record: GridAlarmRecord, states: ReadonlySet<z.infer<typeo
   return (states.has('active') && record.active) || (states.has('unacknowledged') && !record.acknowledged) || (states.has('cleared') && !record.active)
 }
 
-/** What an alarm names and where the map shows it: an island by its current reference bus. */
+/** What an alarm names and where the map shows it: an island by its current anchor bus, as islands.list names it. */
 const alarmAsset = (grid: GridRuntimeInstance, record: GridAlarmRecord): { readonly assetLabel: string; readonly mapAssetId: string | null } => {
   const { index } = grid.definition
   if (record.scope === 'island') {
     const islands = solvedGridIslands(grid)
     const island = islands.islands.find(candidate => candidate.id === record.assetId)
     if (island === undefined) return { assetLabel: `Island ${record.assetId} (no longer present)`, mapAssetId: null }
-    const busId = islands.plan.islands[island.planIndex]!.referenceBusId
+    const busId = islands.plan.islands[island.planIndex]!.anchorBusId
     return { assetLabel: `Island at ${index.busById.get(busId)!.label}`, mapAssetId: busId }
   }
   const label = record.scope === 'hvdc'
