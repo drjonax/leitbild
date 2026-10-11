@@ -521,7 +521,7 @@ describe('synchro-check on closing a loop', () => {
   }
 
   test('reads the angle from the AC load flow where the island converged, and names that basis', async () => {
-    // 130 MW over the long line: 20.7° apart in AC, above the 20° limit, though 18.9° in DC.
+    // 130 MW over the long line: 20.3° apart in AC, above the 20° limit, though 18.6° in DC.
     const { send, acDegrees, dcDegrees, evaluate, converged, limit } = loopRun(130)
     expect(send(gridOpenBranchCommandKind, 'long').ok).toBe(true)
     const shortOnlyDegrees = acDegrees()
