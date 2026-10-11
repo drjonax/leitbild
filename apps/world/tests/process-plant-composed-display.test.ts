@@ -74,6 +74,8 @@ describe('I&C thresholds for composed displays', () => {
     const pressure = compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path
     const { thresholds } = icThresholdsForSignal(compiled, pressure)
     expect(thresholds.map(threshold => [threshold.value, threshold.kind, threshold.modeLabel ?? null])).toEqual([
+      // Safety injection on low pressure, drawn though a block below P-11 can hold it off: a gate on an on/off state.
+      [12.7, 'trip', 'Power operation or Startup or Hot standby'],
       [13.8, 'trip', 'Power operation'],
       [14.8, 'alarm', null],
       [15.35, 'control', null],
@@ -89,8 +91,9 @@ describe('I&C thresholds for composed displays', () => {
     const names = (tagId: string, unit: string) => icThresholdsForSignal(compiled, compiled.graph.signalBindingByTagId.get(tagId as never)!.path).thresholds
       .filter(threshold => threshold.kind !== 'control').map(threshold => thresholdName(threshold, unit))
     expect(names('SUB-MARGIN', 'degC')).toEqual(['LO-LO ALM 0 °C', 'LO ALM 16.7 °C'])
-    // Safety injection on low pressure is no line of its own: a block below P-11 can hold it off.
-    expect(names('PT-455', 'MPa')).toEqual(['LO TRIP 13.8 MPa', 'LO ALM 14.8 MPa', 'HI ALM 16 MPa', 'HI TRIP 16.18 MPa', 'HI-HI TRIP 16.35 MPa'])
+    // Safety injection actuates below the low-pressure reactor trip, unless blocked below P-11: the low-low
+    // pressurizer pressure SI signal.
+    expect(names('PT-455', 'MPa')).toEqual(['LO-LO TRIP 12.7 MPa', 'LO TRIP 13.8 MPa', 'LO ALM 14.8 MPa', 'HI ALM 16 MPa', 'HI TRIP 16.18 MPa', 'HI-HI TRIP 16.35 MPa'])
     // Low-low level starts auxiliary feedwater and trips the reactor at the one set point: two trips, neither further.
     expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO TRIP 20 %', 'LO TRIP 20 %', 'LO ALM 30 %', 'HI ALM 75 %', 'HI TRIP 82 %'])
   })
@@ -581,7 +584,7 @@ describe('world.process-plant.display.view and sample', () => {
     const strip = view.display.panels[0]!.strips[0]!
     expect(strip.unit).toBe('MPa')
     expect(strip.pens[0]!.seriesId).toStartWith('series:')
-    expect(strip.pens[0]!.thresholds.length).toBe(8)
+    expect(strip.pens[0]!.thresholds.length).toBe(9)
   })
 
   test('view keeps rendering displays that later authoring rules would reject', () => {
