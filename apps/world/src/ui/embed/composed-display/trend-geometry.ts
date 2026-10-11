@@ -25,16 +25,44 @@ const MIN_SPAN_FRACTION = 0.04
 // so solver noise around zero (a leak rate of ±3e-12 kg/s) is never magnified
 // into a curve.
 const MIN_SPAN_STEPS = 20
+// ... and at least this share of the span its instrument indicates over (or
+// its hard range), so a steady reading sits mid-strip on a scale an operator
+// reads it against: a flat 35 % valve position on a 10 % scale, not a 1 % one
+// (HMI review of run 23).
+const MIN_SPAN_OF_INSTRUMENT = 0.1
 
-/** Fixed display scale: padded, never zero-height, never narrower than 4 % of the value, one unit or twenty resolution steps. */
-export const paddedDomain = (raw: ValueDomain, resolution: number | null = null): ValueDomain => {
-  const span = raw.max - raw.min
+/**
+ * Fixed display scale over the values, never zero-height, never narrower
+ * than 4 % of the value, one unit, twenty resolution steps or a tenth of the
+ * instrument's span (`span`); a narrower range is widened about its middle,
+ * kept inside the span. The limits drawn on it (`limits`) widen it to reach
+ * them; a scale that reaches past the values is padded.
+ */
+export const paddedDomain = (
+  raw: ValueDomain,
+  resolution: number | null = null,
+  options: { readonly span?: ValueDomain | undefined; readonly limits?: ReadonlyArray<number> } = {},
+): ValueDomain => {
+  const width = raw.max - raw.min
   const magnitude = Math.max(Math.abs(raw.max), Math.abs(raw.min))
-  const minimum = Math.max(magnitude >= 1 ? Math.max(magnitude * MIN_SPAN_FRACTION, 1) : magnitude * MIN_SPAN_FRACTION, (resolution ?? 0) * MIN_SPAN_STEPS)
+  const span = options.span !== undefined && options.span.max > options.span.min ? options.span : undefined
+  const minimum = Math.max(
+    magnitude >= 1 ? Math.max(magnitude * MIN_SPAN_FRACTION, 1) : magnitude * MIN_SPAN_FRACTION,
+    (resolution ?? 0) * MIN_SPAN_STEPS,
+    span === undefined ? 0 : (span.max - span.min) * MIN_SPAN_OF_INSTRUMENT,
+  )
   const middle = (raw.max + raw.min) / 2
-  const padded = span < minimum
-    ? { min: middle - minimum / 2, max: middle + minimum / 2 }
-    : { min: raw.min - span * PAD_FRACTION, max: raw.max + span * PAD_FRACTION }
+  // Widened about the values' middle, then shifted back inside the instrument's span where it would leave it (a level at 0 %).
+  const widened = width >= minimum ? raw : { min: middle - minimum / 2, max: middle + minimum / 2 }
+  const shift = span === undefined || span.max - span.min < minimum ? 0
+    : widened.min < span.min ? span.min - widened.min : widened.max > span.max ? span.max - widened.max : 0
+  const core = width >= minimum ? raw : { min: widened.min + shift, max: widened.max + shift }
+  const limits = options.limits ?? []
+  const reach = { min: Math.min(core.min, ...limits), max: Math.max(core.max, ...limits) }
+  const reachWidth = reach.max - reach.min
+  const padded = width < minimum && reach.min === core.min && reach.max === core.max
+    ? core
+    : { min: reach.min - reachWidth * PAD_FRACTION, max: reach.max + reachWidth * PAD_FRACTION }
   // Values so near zero that their share underflows (a decayed power of
   // 1e-320 MW) would give a scale of no height and every point NaN: such a
   // scale spans one unit around them instead.
@@ -137,3 +165,51 @@ export const stepPath = (
   return commands.join(' ')
 }
 
+
+/**
+ * Pens whose traces lie on one another over the window, at most a pixel and
+ * a half apart wherever either changes: drawn as one line, they would read
+ * as one signal (HMI review of run 23: four steam generator levels at 55 %
+ * drawn as one). Groups of two or more, in the pens' order.
+ */
+export const coincidentPens = <K>(
+  pens: ReadonlyArray<{ readonly key: K; readonly points: ReadonlyArray<TrendPoint> }>,
+  y: (v: number) => number,
+  window: { readonly start: number; readonly end: number },
+): ReadonlyArray<ReadonlyArray<K>> => {
+  const at = (points: ReadonlyArray<TrendPoint>, t: number): number | null => {
+    let value: number | null = null
+    for (const point of points) {
+      if (point.t > t) break
+      value = point.t >= t - HOLD_GAP_MS ? point.v : null
+    }
+    return value
+  }
+  const times = (points: ReadonlyArray<TrendPoint>) => points.filter(point => point.t >= window.start && point.t <= window.end).map(point => point.t)
+  const together = (left: ReadonlyArray<TrendPoint>, right: ReadonlyArray<TrendPoint>): boolean => {
+    const checked = [...new Set([...times(left), ...times(right), window.end])]
+    return times(left).length > 0 && times(right).length > 0 && checked.every(t => {
+      const [a, b] = [at(left, t), at(right, t)]
+      return (a === null) === (b === null) && (a === null || Math.abs(y(a) - y(b!)) <= COINCIDENT_PX)
+    })
+  }
+  const groups: Array<Array<{ readonly key: K; readonly points: ReadonlyArray<TrendPoint> }>> = []
+  for (const pen of pens) {
+    const group = groups.find(members => together(members[0]!.points, pen.points))
+    if (group === undefined) groups.push([pen])
+    else group.push(pen)
+  }
+  return groups.filter(group => group.length > 1).map(group => group.map(pen => pen.key))
+}
+
+const COINCIDENT_PX = 1.5
+
+/**
+ * How a note names coinciding traces by what tells them apart: a run of
+ * consecutive letters or numbers as a range ("A–D"), else each ("A, C").
+ */
+export const runText = (parts: ReadonlyArray<string>): string => {
+  const codes = parts.map(part => (/^[A-Z]$/.test(part) ? part.charCodeAt(0) : /^\d+$/.test(part) ? Number(part) : Number.NaN))
+  const consecutive = parts.length > 2 && codes.every((code, index) => Number.isFinite(code) && (index === 0 || code === codes[index - 1]! + 1))
+  return consecutive ? `${parts[0]}–${parts.at(-1)}` : parts.join(', ')
+}

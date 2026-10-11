@@ -1,17 +1,19 @@
 <script lang="ts">
   import type { ComposedTrendStrip, ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
-  import { displayValue, formatQuantity, limitOrderName, offScale, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, formatQuantity, limitOrderName, logarithmicSpan, offScale, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import {
+    coincidentPens,
     limitInScale,
     paddedDomain,
     rawDomain,
+    runText,
     stepPath,
     tickLabels,
     timeTicks,
     valueTicks,
     type ValueDomain,
   } from './trend-geometry.ts'
-  import { limitLabelParts, limitLabelRanks, limitLines, limitSeverity, stackLabels, type LabelSlot, type LimitLabelPart } from './limit-labels.ts'
+  import { distinguishingNames, limitLabelParts, limitLabelRanks, limitLines, limitSeverity, stackLabels, type LabelSlot, type LimitLabelPart } from './limit-labels.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { HOLD_GAP_MS, rateWindowMs, trendReading, type GateStates, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import { penStroke } from './pen-style.ts'
@@ -85,14 +87,13 @@
   const drawnLines = $derived(lines.filter(line => limitInScale(line.value, range)))
   const controlThresholds = $derived(strip.thresholds.filter(threshold => threshold.kind === 'control'))
 
-  // Fixed scale: the grow-only range seen since the view opened plus the drawn
-  // thresholds. Control set points never widen it.
+  // Fixed scale: the grow-only range seen since the view opened, never
+  // narrower than a tenth of the span its instrument reads over (or its hard
+  // range), widened to the drawn thresholds. Control set points never widen it.
+  const span = $derived(strip.pens.map(pen => pen.limits?.instrumentSpan ?? pen.limits?.hardRange).find(value => value !== undefined))
   const domain = $derived.by((): ValueDomain | null => {
-    const raw = rawDomain([
-      ...(range === null ? [] : [range.min, range.max]),
-      ...drawnLines.map(line => line.value),
-    ])
-    return raw === null ? null : paddedDomain(raw, resolution)
+    const raw = range ?? rawDomain(drawnLines.map(line => line.value))
+    return raw === null ? null : paddedDomain(raw, resolution, { span: logarithmicSpan(span) ? undefined : span, limits: drawnLines.map(line => line.value) })
   })
 
   // A line's label: its order and value, then what the limits there do,
@@ -238,21 +239,36 @@
   }))
 
   // Where the window starts before any recorded value, say why instead of
-  // leaving an unexplained blank; a sliver too narrow for words stays unlabelled.
+  // leaving an unexplained blank, inside the hatch: the longest wording that
+  // fits it with a margin each side, else none (the hatch's tooltip keeps
+  // it). Centred over a narrow hatch, the note ran into the axis labels
+  // ("5$before the Run started…": HMI review of run 23).
   const firstSampleAt = $derived(Math.min(...strip.pens.map(pen => series.get(String(pen.path))?.[0]?.t ?? Number.POSITIVE_INFINITY)))
   const gapEnd = $derived(Number.isFinite(firstSampleAt) ? Math.min(firstSampleAt, now) : now)
   const showGap = $derived(gapEnd - windowStart > windowMs * 0.05)
-  const gapWide = $derived(x(gapEnd) - pad.left > 150)
   const RUN_START_TOLERANCE_MS = 5_000
-  const gapText = $derived(runStartedAt !== null && runStartedAt > windowStart && Math.abs(gapEnd - runStartedAt) <= RUN_START_TOLERANCE_MS
-    ? `before the Run started (sim ${simulationClock(runStartedAt)})`
-    : 'no recorded data')
-
+  const GAP_INSET = 6
+  const measureGap = textMeasure(panelFont(11))
+  const runStart = $derived(runStartedAt !== null && runStartedAt > windowStart && Math.abs(gapEnd - runStartedAt) <= RUN_START_TOLERANCE_MS)
+  const gapText = $derived(runStart ? `before the Run started (sim ${simulationClock(runStartedAt!)})` : 'no recorded data')
+  const gapLabel = $derived((runStart ? [gapText, 'before the Run started', 'before the Run'] : [gapText])
+    .find(text => measureGap(text) <= x(gapEnd) - pad.left - 2 * GAP_INSET) ?? null)
   // The advice marker's label is hidden when the advice was given just now:
   // the notice line already says so, and the label would sit on the data.
   const adviceVisible = $derived(issuedAt !== null && issuedAt >= windowStart)
   const adviceRecent = $derived(issuedAt !== null && now - issuedAt < windowMs * 0.04)
   const adviceNearLeft = $derived(issuedAt !== null && x(issuedAt) - pad.left < 56)
+
+  // Traces drawn on one another are named where they end, by what tells
+  // their pens apart, so four alike levels never read as one: "A–D coincide".
+  const coincident = $derived.by(() => {
+    if (domain === null) return []
+    const names = distinguishingNames(strip.pens.map(pen => pen.name))
+    return coincidentPens(strip.pens.map((pen, index) => ({ key: index, points: shownPoints(pen) })), y, { start: windowStart, end: now }).map(group => {
+      const last = shownPoints(strip.pens[group[0]!]!).at(-1)
+      return { key: group.join(','), y: last === undefined ? null : y(last.v), text: `${runText(group.map(index => names[index]!))} coincide` }
+    }).filter(note => note.y !== null)
+  })
 
   const summary = $derived(strip.pens.map(pen => {
     const latest = shownPoints(pen).at(-1)
@@ -275,8 +291,8 @@
       </defs>
       {#if showGap}
         <rect x={pad.left} y={pad.top} width={Math.max(0, x(gapEnd) - pad.left)} height={plotHeight} fill={`url(#${patternId})`}><title>{gapText}</title></rect>
-        {#if gapWide}
-          <text class="gap-label" x={pad.left + (x(gapEnd) - pad.left) / 2} y={pad.top + plotHeight / 2} text-anchor="middle" dominant-baseline="middle">{gapText}</text>
+        {#if gapLabel !== null}
+          <text class="gap-label" x={pad.left + (x(gapEnd) - pad.left) / 2} y={pad.top + plotHeight / 2} text-anchor="middle" dominant-baseline="middle">{gapLabel}</text>
         {/if}
       {/if}
       {#each ticks as tick, index (tick)}
@@ -331,6 +347,10 @@
           style={penStroke(pen.role, index)}
         />
       {/each}
+      {#each coincident as note (note.key)}
+        <!-- Over the traces' end, below it where the line runs along the top of the plot. -->
+        <text class="coincide" x={pad.left + plotWidth - 4} y={note.y! - 5 < pad.top + 8 ? note.y! + 12 : note.y! - 5} text-anchor="end">{note.text}</text>
+      {/each}
     </svg>
   {/if}
 </div>
@@ -364,4 +384,5 @@
   .advice-label { fill: var(--element-neutral-color); font-size: 10.5px; }
   .now { stroke: var(--border-outline-color); }
   .pen { fill: none; stroke-linejoin: round; }
+  .coincide { fill: var(--element-neutral-color); font-size: 10px; paint-order: stroke; stroke: var(--container-background-color); stroke-width: 3px; }
 </style>

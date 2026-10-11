@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import { formatValue } from '../src/packs/process-plant/displays/display-text.ts'
 import { appendPoint, HOLD_GAP_MS } from '../src/packs/process-plant/displays/trend-reading.ts'
 import {
+  coincidentPens,
   paddedDomain,
   rawDomain,
+  runText,
   stepPath,
   tickLabels,
   timeTicks,
@@ -25,6 +27,30 @@ describe('composed display trend geometry', () => {
     // Near zero a scale still spans one unit: a 5.3 °C subcooling margin is not magnified to 0.2 °C.
     const margin = paddedDomain({ min: 5.3, max: 5.36 })
     expect(Number((margin.max - margin.min).toFixed(2))).toBe(1)
+  })
+
+  test('never spans less than a tenth of the instrument\'s span, about the values, inside the span (HMI review of run 23)', () => {
+    // A PORV held at 35 % read on a 1 % scale; on its 0–100 % span it spans 10 %, centred.
+    const porv = paddedDomain({ min: 0.35, max: 0.35 }, null, { span: { min: 0, max: 1 } })
+    expect([porv.min, porv.max].map(value => Number(value.toFixed(6)))).toEqual([0.3, 0.4])
+    // Power steady at 100 % with its alarm and trip drawn above: no longer on the axis floor.
+    const power = paddedDomain({ min: 100, max: 100 }, null, { span: { min: 0, max: 120 }, limits: [105.9, 110.3] })
+    expect((100 - power.min) / (power.max - power.min)).toBeGreaterThan(0.3)
+    expect(power.max).toBeGreaterThan(110.3)
+    // A level at the bottom of its span is kept inside it, not centred on 0 %.
+    expect(paddedDomain({ min: 0, max: 0 }, null, { span: { min: 0, max: 100 } })).toEqual({ min: 0, max: 10 })
+    // A range wider than a tenth of the span is padded as before.
+    expect(paddedDomain({ min: 20, max: 70 }, null, { span: { min: 0, max: 100 } })).toEqual({ min: 16, max: 74 })
+  })
+
+  test('finds traces drawn on one another, and names them by a range', () => {
+    const flat = (v: number) => [{ t: 0, v }, { t: 30_000, v }, { t: 60_000, v }]
+    const y = (v: number) => 100 - v
+    const pens = [{ key: 'A', points: flat(55) }, { key: 'B', points: flat(55.01) }, { key: 'C', points: flat(55) }, { key: 'D', points: flat(55) }, { key: 'E', points: flat(40) }]
+    expect(coincidentPens(pens, y, { start: 0, end: 60_000 })).toEqual([['A', 'B', 'C', 'D']])
+    // Apart at any change, they do not coincide.
+    expect(coincidentPens([{ key: 'A', points: flat(55) }, { key: 'B', points: [{ t: 0, v: 55 }, { t: 30_000, v: 50 }] }], y, { start: 0, end: 60_000 })).toEqual([])
+    expect([runText(['A', 'B', 'C', 'D']), runText(['A', 'C']), runText(['A', 'B'])]).toEqual(['A–D', 'A, C', 'A, B'])
   })
 
   test('spans a young Run\'s history, rounded up to 30 s, until it reaches the horizon', () => {

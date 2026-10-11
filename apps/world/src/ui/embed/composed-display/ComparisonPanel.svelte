@@ -2,7 +2,7 @@
   import type { ComposedComparisonPanel } from '../../../packs/process-plant/displays/compose.ts'
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
-  import { displayValue, formatValue, limitKindName, limitOrderName, readingText, shownReading, thresholdFullName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, formatValue, limitKindName, limitOrderName, logarithmicSpan, readingText, shownReading, thresholdFullName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import { median, sampledGates } from './panel-presenters.ts'
   import { COMPARISON_HISTORY_MS, ratePerMinute, rateText, rateWindowMs, trendReading, windowText, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import { limitLabelParts, limitLabelRanks, limitLines, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
@@ -46,12 +46,11 @@
 
   // Position on a fixed, grow-only scale, shown as a pointer: bar lengths from a
   // non-zero origin would exaggerate differences (HMI review).
+  const span = $derived(panel.pens.map(pen => pen.limits?.instrumentSpan ?? pen.limits?.hardRange).find(value => value !== undefined))
   const domain = $derived.by((): ValueDomain | null => {
-    const raw = rawDomain([
-      ...(range === null ? [] : [range.min, range.max]),
-      ...panel.thresholds.filter(threshold => threshold.kind !== 'control').map(threshold => threshold.value),
-    ])
-    return raw === null ? null : paddedDomain(raw, resolution)
+    const limits = panel.thresholds.filter(threshold => threshold.kind !== 'control').map(threshold => threshold.value)
+    const raw = range ?? rawDomain(limits)
+    return raw === null ? null : paddedDomain(raw, resolution, { span: logarithmicSpan(span) ? undefined : span, limits })
   })
   const x = (value: number): number => domain === null ? scaleStart : scaleStart + ((value - domain.min) / (domain.max - domain.min)) * scaleWidth
   const row = composedDisplayLayout.comparisonRow
