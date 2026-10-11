@@ -1,3 +1,4 @@
+import type { CompiledComponent } from '../../graph/index.ts'
 import { componentVariablePath, type ComponentBehaviorDefinition } from '../behavior-contract.ts'
 import {
   approach,
@@ -34,6 +35,10 @@ const primaryCoolantHeatMw = (flowKgPerS: number, fromTemperatureC: number, toTe
   fromTemperatureC <= toTemperatureC
     ? 0
     : flowKgPerS * (liquidEnthalpyKjPerKg(fromTemperatureC, pressureMPa) - liquidEnthalpyKjPerKg(toTemperatureC, pressureMPa)) / 1_000
+
+/** The steam a generator's dome keeps however hard it is drawn on: its steam mass never falls below this. */
+export const steamGeneratorMinimumSteamMassKg = (component: CompiledComponent): number =>
+  optionalParameterNumber(component, 'nominalSteamMassKg', 12_000) * 0.15
 
 export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
@@ -233,7 +238,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
         inflowKgPerS: boilingRate,
         outflowKgPerS: mainSteamOutflow,
         dtSeconds: context.dtSeconds,
-        minInventory: nominalSteamMass * 0.15,
+        minInventory: steamGeneratorMinimumSteamMassKg(component),
         maxInventory: nominalSteamMass * 2.5,
       })
       const nextSteamMass = steamMassTarget

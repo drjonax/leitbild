@@ -314,3 +314,33 @@ describe('pressurizer level control', () => {
     expect(read('pressurizer.reliefFlowKgPerS')).toBe(0)
   }, 60_000)
 })
+
+describe('after a loss of offsite power', () => {
+  test('the steam generator relief valves hold their pressure part open, passing what their opening and the pressure drive', () => {
+    const plantRun = started()
+    plantRun.run(30)
+    const { read } = plantRun
+    for (const command of commandsForProcessPlantAction({ actionId: 'loss-offsite-power', parameters: {}, graph: plant.graph })) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    plantRun.run(20)
+    for (const diesel of ['dieselGeneratorA', 'dieselGeneratorB']) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: `${diesel}.startCommand` as VariablePath, value: true })
+    }
+    plantRun.run(880)
+    // Natural circulation carries the decay heat to the generators; their
+    // relief valves, set at 7.86 MPa, open only as far as it takes to pass
+    // the steam they raise ...
+    const pressure = read('sgA.pressureMPa')
+    const opening = read('steamGeneratorReliefValveA.effectivePositionFraction')
+    const reliefFlow = read('sg-a-steam-to-relief-valve-a.flowKgPerS')
+    expect(pressure).toBeGreaterThan(7.86)
+    expect(pressure).toBeLessThan(8)
+    expect(opening).toBeGreaterThan(0.05)
+    expect(opening).toBeLessThan(0.5)
+    expect(Math.abs(reliefFlow - read('sgA.steamFlowKgPerS'))).toBeLessThan(0.3 * read('sgA.steamFlowKgPerS'))
+    // ... and what passes is what the opening and the pressure drive through
+    // a valve rated 21 kg/s per square-root MPa.
+    expect(reliefFlow).toBeCloseTo(21 * opening * Math.sqrt(pressure - 0.101325), 0)
+  }, 60_000)
+})

@@ -1,5 +1,5 @@
 import { primaryLoopPumpForLink } from '../../graph/index.ts'
-import type { CompiledProcessLink } from '../../graph/index.ts'
+import type { CompiledComponent, CompiledProcessLink } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { componentVariablePath } from '../behavior-contract.ts'
 import type { LinkBehaviorReadContext } from './link-flow-helpers.ts'
@@ -11,8 +11,14 @@ import {
 } from './link-flow-helpers.ts'
 import { topologyAwareMainSteamDemandForSourceLink, topologyAwareMainSteamReleaseAvailabilityForSourceLink } from './main-steam-demand.ts'
 import { processPlantServices, serviceUsesDownstreamDemand } from '../service-profiles.ts'
-import { optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
+import { clamp, optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
+import { steamGeneratorMinimumSteamMassKg } from '../behaviors/steam-generator-behaviors.ts'
 import { primarySystemPressurizer, primarySystemReactorVessel } from '../system-topology.ts'
+
+const atmosphericPressureMPa = 0.101325
+
+const isReliefValve = (component: CompiledComponent | undefined): component is CompiledComponent =>
+  component?.kind === 'steamValve' && (component.parameters as Readonly<Record<string, unknown>>).valveMode === 'relief'
 
 export interface ProcessLinkFlowSource {
   readonly flowKgPerS: number
@@ -129,6 +135,23 @@ export const processLinkFlowSourceFor = (config: {
       flowKgPerS: context.readNumber(componentVariablePath(fromComponent, 'primaryLeakFlowKgPerS')),
       alreadyIncludesPathAvailability: false,
       alreadyIncludesTargetValveDemand: false,
+      bypassTargetPumpLimit: false,
+    }
+  }
+  if (fromComponent.kind === 'steamGenerator' && link.service === processPlantServices.mainSteam && isReliefValve(toComponent)) {
+    // A generator's atmospheric relief valve passes what its opening and the
+    // generator's pressure drive through it. While the generator's dome holds
+    // stored steam it can pass more than the generator boils, so the pressure
+    // falls until the valve's controller closes it down to the boil-off; its
+    // stored steam spent, it passes no more than the generator boils.
+    const pressure = context.readNumber(componentVariablePath(fromComponent, 'pressureMPa'))
+    const opening = clamp(context.readNumber(componentVariablePath(toComponent, 'effectivePositionFraction')), 0, 1)
+    const valveFlow = parameterNumber(toComponent, 'cvKgPerSPerSqrtMPa') * opening * Math.sqrt(Math.max(0, pressure - atmosphericPressureMPa))
+    const stored = context.readNumber(componentVariablePath(fromComponent, 'steamMassKg')) > steamGeneratorMinimumSteamMassKg(fromComponent)
+    return {
+      flowKgPerS: stored ? valveFlow : Math.min(valveFlow, context.readNumber(componentVariablePath(fromComponent, 'steamFlowKgPerS'))),
+      alreadyIncludesPathAvailability: true,
+      alreadyIncludesTargetValveDemand: true,
       bypassTargetPumpLimit: false,
     }
   }
