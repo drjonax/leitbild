@@ -241,7 +241,9 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       'fuelMidTemperatureC',
       'fuelUpperTemperatureC',
       'decayHeatMw',
+      'pumpHeatMw',
       'incoming:flowKgPerS',
+      'steamGenerator.heatTransferMw',
       'reactorVessel.boronConcentrationPpm',
       'reactorVessel.loopVoidFraction',
     ],
@@ -324,9 +326,16 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       const minimumCooling = optionalParameterNumber(component, 'minimumNaturalCirculationCoolingFraction', 0.08)
       context.write(componentVariablePath(component, 'averageHotLegFlowKgPerS'), primaryFlow)
       const coolingMargin = clamp(primaryFlow / Math.max(1, nominalPrimaryFlow), minimumCooling, 1.2)
-      const creditedCooling = clamp(coolingMargin, 0, 1)
-      const heatRemovalDeficit = Math.max(0, totalThermalPower * (1 - creditedCooling))
       const thermalFraction = clamp(totalThermalPower / ratedPower, 0, 1.25)
+      // The core is cooled while its flow carries its heat within the rise
+      // it was rated for; the flow that needs falls with the power, so the
+      // natural circulation of a few percent cools a tripped core in full.
+      const flowFraction = Math.max(0, primaryFlow) / Math.max(1, nominalPrimaryFlow)
+      const creditedCooling = thermalFraction <= 0 ? 1 : clamp(flowFraction / thermalFraction, 0, 1)
+      // What of the heat the coolant takes from the core and the pumps the
+      // steam generators do not take out heats the coolant.
+      const heatRemovalDeficit = Math.max(0, totalThermalPower + context.readNumber(componentVariablePath(component, 'pumpHeatMw'))
+        - sumComponentValueByKind(system, 'steamGenerator', 'heatTransferMw', context))
       const fuelRise = optionalParameterNumber(component, 'fuelTemperatureRiseAtRatedPowerC', 140)
         * thermalFraction
         / Math.sqrt(Math.max(0.05, coolingMargin))
