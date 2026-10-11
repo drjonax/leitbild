@@ -65,7 +65,8 @@ unsafe extern "C" {
         temperature_k: f64,
         output: *mut WaterPoint,
     ) -> i32;
-    fn ld01_water_complete(caloric: *const WaterPoint, output: *mut WaterPoint) -> i32;
+    fn ld01_water_complete(caloric: *const WaterPoint, fields: i32, output: *mut WaterPoint)
+    -> i32;
     fn ld01_water_direction(
         branch: i32,
         pressure_pa: f64,
@@ -147,16 +148,31 @@ fn caloric_state(
     }
 }
 
+/// Fields the native completion adds to a caloric state, by bit (the
+/// bridge's `FIELD_*`): cv, compressibility, viscosity, conductivity and the
+/// saturation slope.
+const FIELD_CV: i32 = 1;
+const FIELD_KAPPA: i32 = 2;
+const FIELD_MU: i32 = 4;
+const FIELD_K: i32 = 8;
+const FIELD_SLOPE: i32 = 16;
+const FIELDS_ALL: i32 = FIELD_CV | FIELD_KAPPA | FIELD_MU | FIELD_K | FIELD_SLOPE;
+
 /// `point(branch, p, T)` from `caloric_state(branch, p, T)`'s own output,
 /// without evaluating its caloric fields again: the native boundary adds
 /// cv, compressibility, transport and the saturation slope to the held
 /// state. Only a state this boundary's `caloric_state` returned is passed.
 fn complete(caloric: &WaterPoint) -> Result<WaterPoint, Error> {
+    complete_fields(caloric, FIELDS_ALL)
+}
+
+/// The same completion restricted to `fields`; unrequested fields are NaN.
+fn complete_fields(caloric: &WaterPoint, fields: i32) -> Result<WaterPoint, Error> {
     let mut output = WaterPoint::default();
     // SAFETY: `caloric` is a live shared C-layout tuple that C only reads
     // during the call; `output` is a unique live stack allocation written
     // completely on success. Nothing is retained; C catches every exception.
-    let status = unsafe { ld01_water_complete(caloric, &mut output) };
+    let status = unsafe { ld01_water_complete(caloric, fields, &mut output) };
     match status {
         0 => Ok(output),
         1 => Err(Error::Domain),
