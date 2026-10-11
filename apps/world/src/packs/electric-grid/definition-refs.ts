@@ -1,4 +1,4 @@
-import type { GridConnectionPointDefinition, GridModelFidelity } from './grid-model.ts'
+import type { GridConnectionPointDefinition, GridDemandSeason, GridModelFidelity } from './grid-model.ts'
 
 // The one Electric Grid Definition catalog. Authoring, scenario expansion, recording estimates
 // and the catalog query read it without loading or compiling a model: it does no filesystem
@@ -8,6 +8,7 @@ export const norwayGridModelRef = 'electric-grid.norway.transmission'
 export const haldenFourUnitGridModelRef = 'electric-grid.halden.four-unit'
 export const norwayWinterPeakOperatingPointRef = 'electric-grid.norway.winter-weekday-peak'
 export const norwaySummerLowOperatingPointRef = 'electric-grid.norway.summer-night-low'
+export const norwayLoadProfilesRef = 'electric-grid.norway.load-profiles'
 /** Nordic synchronous-area frequency control: the default Automation. */
 export const nordicFrequencyAutomationRef = 'electric-grid.frequency.nordic-2025'
 export const manualBalancingTrainingAutomationRef = 'electric-grid.frequency.manual-balancing-training'
@@ -37,8 +38,31 @@ export interface GridModelCatalogEntry {
   readonly nominalFrequencyHz: number
   readonly fidelity: GridModelFidelity
   readonly source: GridModelSource
+  /**
+   * The Grid Load Profiles its loads follow over the day: built for the base Grid Model, whose
+   * reference hour they share. An addition's loads are Grid Model v2 loads of the same kinds and
+   * price areas and follow the same profiles.
+   */
+  readonly loadProfilesRef: string
   readonly assetCounts: GridModelAssetCounts
   readonly connectionPoints: ReadonlyArray<GridConnectionPointDefinition>
+}
+
+/** A Grid Load Profiles file in models/, built for one base Grid Model; its id and modelId must match the entry (the loader checks). */
+export interface GridLoadProfilesCatalogEntry {
+  readonly id: string
+  readonly modelRef: string
+  readonly source: { readonly kind: 'load-profiles'; readonly file: string }
+}
+
+/**
+ * The measured hour whose demand an Operating Point sets, and the profile season its loads follow
+ * from there. Operating Point v2 does not carry them yet; the catalog declares them.
+ */
+export interface GridOperatingPointDemandHour {
+  readonly season: GridDemandSeason
+  /** A whole Europe/Oslo hour in the season's profile week, ISO 8601 with its offset. */
+  readonly referenceHour: string
 }
 
 /** An Operating Point v2 file in models/; its id and title must match the entry (the loader checks). */
@@ -47,6 +71,7 @@ export interface GridOperatingPointCatalogEntry {
   readonly title: string
   readonly description: string
   readonly compatibleModelRefs: ReadonlyArray<string>
+  readonly demand: GridOperatingPointDemandHour
   readonly source: { readonly kind: 'operating-point'; readonly file: string }
 }
 
@@ -66,6 +91,7 @@ export interface GridAutomationCatalogEntry {
 
 export interface GridDefinitionCatalog {
   readonly models: ReadonlyArray<GridModelCatalogEntry>
+  readonly loadProfiles: ReadonlyArray<GridLoadProfilesCatalogEntry>
   readonly operatingPoints: ReadonlyArray<GridOperatingPointCatalogEntry>
   readonly automations: ReadonlyArray<GridAutomationCatalogEntry>
 }
@@ -97,6 +123,7 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     nominalFrequencyHz: 50,
     fidelity: transmissionFidelity,
     source: { kind: 'grid-model', file: 'norway-transmission.grid-model.json', geometryFile: 'norway-transmission.geometry.json' },
+    loadProfilesRef: norwayLoadProfilesRef,
     assetCounts: { bus: 1000, branch: 1244, generator: 851, load: 3142, storage: 0, connectionPoint: 0 },
     connectionPoints: [],
   }, {
@@ -106,20 +133,30 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     nominalFrequencyHz: 50,
     fidelity: transmissionFidelity,
     source: { kind: 'grid-model-addition', baseModelRef: norwayGridModelRef, file: 'halden-four-unit.grid-model-addition.json' },
+    loadProfilesRef: norwayLoadProfilesRef,
     assetCounts: { bus: 1001, branch: 1250, generator: 851, load: 3142, storage: 0, connectionPoint: 4 },
     connectionPoints: [1, 2, 3, 4].map(haldenUnitBay),
+  }],
+  loadProfiles: [{
+    id: norwayLoadProfilesRef,
+    modelRef: norwayGridModelRef,
+    source: { kind: 'load-profiles', file: 'norway-load-profiles.json' },
   }],
   operatingPoints: [{
     id: norwayWinterPeakOperatingPointRef,
     title: 'Winter weekday peak',
     description: 'Elhub-metered demand of the winter weekday reference hour with registry-based unit commitment and the Nordic remainder at winter-peak inertia.',
     compatibleModelRefs: norwayModels,
+    // The Model's reference hour, a Monday (norway-winter-weekday-peak.operating-point.json description).
+    demand: { season: 'winter', referenceHour: '2026-01-12T08:00:00+01:00' },
     source: { kind: 'operating-point', file: 'norway-winter-weekday-peak.operating-point.json' },
   }, {
     id: norwaySummerLowOperatingPointRef,
     title: 'Summer night low',
     description: 'Elhub-metered demand of the summer night low hour with registry-based unit commitment and the Nordic remainder at summer-low inertia.',
     compatibleModelRefs: norwayModels,
+    // Elhub's summer low hour, a Sunday (norway-summer-night-low.operating-point.json description).
+    demand: { season: 'summer', referenceHour: '2026-07-12T06:00:00+02:00' },
     source: { kind: 'operating-point', file: 'norway-summer-night-low.operating-point.json' },
   }],
   // Frequency-control presets; titles and descriptions must match the preset files (the loader checks).

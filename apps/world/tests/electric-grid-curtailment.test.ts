@@ -4,9 +4,9 @@ import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.
 import { createGridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { parseElectricGridRuntimeState, restoredGridRuntimeStateFor, runtimeStateForElectricGrids } from '../src/packs/electric-grid/sim/runtime-state.ts'
 import { isoAt, steppedGrid, type SteppedGrid } from './fixtures/grid-corridor.ts'
-import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './fixtures/synthetic-grid.ts'
+import { declaredDailyProfile, flatDemandProfile, gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './fixtures/synthetic-grid.ts'
 
-/** One island: a hydro station and loads of every priority, some with interruptible demand. */
+/** One island: a hydro station and loads of every priority, some with interruptible demand; the chargers draw their EV schedule flat, the rest follow a declared daily profile. */
 const curtailmentModel: GridModelDefinition = handBuiltModel({
   id: 'test-curtailment',
   title: 'Test curtailment',
@@ -22,7 +22,8 @@ const curtailmentModel: GridModelDefinition = handBuiltModel({
     testLoad({ id: 'load:town', busId: 'bus:b', location: [10.1, 60], demandMw: 100, priority: 'low' }),
     testLoad({ id: 'load:hospital', busId: 'bus:b', location: [10.1, 60], demandMw: 40, priority: 'critical', criticalMw: 40 }),
     testLoad({ id: 'load:chargers', kind: 'ev_charging', busId: 'bus:b', location: [10.1, 60], demandMw: 60, priority: 'normal', interruptibleMw: 40, criticalMw: 10 }),
-  ],
+  ].map(load => load.kind === 'ev_charging' ? load : { ...load, demandProfileId: declaredDailyProfile.id }),
+  demandProfiles: [flatDemandProfile, declaredDailyProfile],
 })
 
 const curtailment = (): SteppedGrid => {

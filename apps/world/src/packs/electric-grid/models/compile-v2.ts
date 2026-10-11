@@ -1,6 +1,9 @@
 import type {
   GridBranchDefinition,
   GridBusDefinition,
+  GridDemandGroup,
+  GridDemandProfileDefinition,
+  GridDemandSeason,
   GridExternalSystemDefinition,
   GridGenerationKind,
   GridGeneratorDefinition,
@@ -10,6 +13,9 @@ import type {
   GridOperatingPointDefinition,
   GridShuntDefinition,
 } from '../grid-model.ts'
+import { localDayType, localHourOfDay, osloLocalMs } from '../runtime/demand-profiles.ts'
+import { municipalityLoadGroups, priceAreas } from '../schemas/grid-ids.ts'
+import type { GridLoadProfiles } from '../schemas/grid-load-profile.ts'
 import type { GridLoadV2, GridModelV2, GridProvenance } from '../schemas/grid-model.ts'
 import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
 
@@ -38,6 +44,72 @@ const loadKinds: Readonly<Record<GridLoadV2['kind'], GridLoadKind>> = {
   'data-center': 'data_center',
 }
 
+// Elhub meters each municipality group as itself, and the major sites inside their municipality's
+// industry group (norway-load-profiles.json siteLoads; model-build/loads.ts takes each site's
+// demand out of that group).
+const demandGroups: Readonly<Record<GridLoadV2['kind'], GridDemandGroup>> = {
+  private: 'private',
+  business: 'business',
+  industry: 'industry',
+  'industry-site': 'industry',
+  'petroleum-site': 'industry',
+  'data-center': 'industry',
+}
+
+/** The measured season and hour of an Operating Point's demand: its loads follow that season's Elhub profiles, exactly 1 at its hour. */
+export interface GridOperatingPointDemand {
+  readonly profiles: GridLoadProfiles
+  readonly season: GridDemandSeason
+  /** The whole Europe/Oslo hour whose demand the Operating Point sets, ISO 8601 with its offset. */
+  readonly referenceHour: string
+}
+
+const profileKey = (load: GridLoadV2): string => `${load.priceArea}\u0000${demandGroups[load.kind]}`
+
+const localDate = (localMs: number): string => new Date(Math.floor(localMs / 86_400_000) * 86_400_000).toISOString().slice(0, 10)
+
+/**
+ * One profile per price area and Elhub group the loads use: the season's mean weekday and weekend
+ * day, each hour divided by the Operating Point hour's value of the same series, so the profile is
+ * 1 at that hour and the Operating Point's demand holds there.
+ */
+const demandProfilesFor = (model: GridModelV2, operatingPoint: GridOperatingPointV2, demand: GridOperatingPointDemand): ReadonlyMap<string, GridDemandProfileDefinition> => {
+  const { profiles, season, referenceHour } = demand
+  const week = profiles.seasons[season]
+  const localMs = osloLocalMs(Date.parse(referenceHour))
+  const hour = localHourOfDay(localMs)
+  const dayType = localDayType(localMs)
+  const fail = (message: string): never => { throw new Error(`Operating Point ${operatingPoint.id}: ${message}`) }
+  if (!Number.isInteger(hour)) fail(`its reference hour ${referenceHour} is not a whole Europe/Oslo hour`)
+  const date = localDate(localMs)
+  if (date < week.week.startDate || date >= week.week.endDate) fail(`its reference hour ${referenceHour} lies outside the ${season} profile week ${week.week.startDate}–${week.week.endDate} of ${profiles.id}`)
+  const sources = [profiles.id, ...new Set(profiles.sources.map(source => source.sourceId))]
+  const used = new Set(model.loads.map(load => profileKey(load)))
+  const byKey = new Map<string, GridDemandProfileDefinition>()
+  // In price-area, then group order.
+  for (const area of priceAreas) {
+    for (const group of municipalityLoadGroups) {
+      if (!used.has(`${area}\u0000${group}`)) continue
+      const reference = week[dayType][area][group][hour]!
+      if (!(reference > 0)) fail(`${profiles.id} has no ${season} ${dayType} ${area} ${group} demand at ${hour}:00, the Operating Point's hour`)
+      byKey.set(`${area}\u0000${group}`, {
+        id: `demand-profile:${season}-${area.toLowerCase()}-${group}`,
+        label: `Elhub ${area} ${group}, ${season} week ${week.week.startDate}`,
+        weekday: week.weekday[area][group].map(value => value / reference),
+        weekend: week.weekend[area][group].map(value => value / reference),
+        series: { profileSetId: profiles.id, season, priceArea: area, group, referenceHour },
+        provenance: {
+          sources,
+          method: 'measured',
+          confidence: 'medium',
+          note: `Elhub ${area} ${group} (${profiles.groupComposition[group].join(' + ')}) over ${week.week.startDate}–${week.week.endDate}: ${profiles.normalisation}; divided by its ${dayType} ${String(hour).padStart(2, '0')}:00 value so the profile is 1 at the Operating Point's hour ${referenceHour}.${group === 'industry' ? ` ${profiles.siteLoads}.` : ''}`,
+        },
+      })
+    }
+  }
+  return byKey
+}
+
 /**
  * The runtime holds a set-point until a command changes it; it does not follow a time-of-day
  * schedule. A schedule with one point is that constant set-point; any other is refused, never
@@ -61,8 +133,9 @@ export interface RuntimeScales {
   readonly storageStateOfCharge?: number | undefined
 }
 
-export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOperatingPointV2, scales: RuntimeScales = {}): CompiledV2 => {
+export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOperatingPointV2, demand: GridOperatingPointDemand, scales: RuntimeScales = {}): CompiledV2 => {
   if (!operatingPoint.compatibleModelRefs.includes(model.id)) throw new Error(`Operating Point ${operatingPoint.id} is not compatible with ${model.id}`)
+  const demandProfiles = demandProfilesFor(model, operatingPoint, demand)
   const states = new Map((operatingPoint.generatorStates ?? []).map(state => [state.assetId, state]))
   const areaScale = operatingPoint.priceAreaDemandScale ?? {}
   const firstSource = (provenance: GridProvenance): string => provenance.sources[0]!
@@ -134,6 +207,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       busId: load.busId,
       location: load.location,
       demandMw,
+      demandProfileId: demandProfiles.get(profileKey(load))!.id,
       // A critical load is protected whole: LFDD and manual shedding never disconnect it.
       criticalMw: load.priority === 'critical' ? demandMw : 0,
       powerFactor: load.powerFactor,
@@ -193,6 +267,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       shunts,
       generators,
       loads,
+      demandProfiles: [...demandProfiles.values()],
       storage: [],
       connectionPoints: model.connectionPoints.map(point => ({ ...point })),
       externalSystems,

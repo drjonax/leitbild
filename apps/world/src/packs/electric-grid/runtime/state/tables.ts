@@ -1,4 +1,5 @@
-import type { CompiledGridModelIndex, GridLoadDefinition, GridModelDefinition } from '../../grid-model.ts'
+import type { CompiledGridModelIndex, GridModelDefinition } from '../../grid-model.ts'
+import { demandProfileStride } from '../demand-profiles.ts'
 import { generatorIsVoltageForming, generatorKineticEnergyMws } from '../generator-dynamics.ts'
 import { compiledGridNetworkFor, type CompiledGridNetwork } from '../network/compiled-network.ts'
 
@@ -51,9 +52,10 @@ export interface GridTables {
   readonly branchRatingMw: Float64Array
   /** Reactive demand per MW served of each load: tan(acos(power factor)). */
   readonly loadReactivePerMw: Float64Array
-  /** The distinct load kinds of the Model, and each load's position among them (its daily profile). */
-  readonly loadKinds: ReadonlyArray<GridLoadDefinition['kind']>
-  readonly loadKind: Uint8Array
+  /** Each load's demand profile: its position in the Model's demandProfiles. */
+  readonly loadDemandProfile: Int32Array
+  /** Hour values of the Model's demand profiles: profile p's weekday hours 0..23 from p·48, then its weekend hours. */
+  readonly demandProfileHours: Float64Array
 }
 
 const indexById = (items: ReadonlyArray<{ readonly id: string }>): ReadonlyMap<string, number> =>
@@ -96,7 +98,12 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
       else asynchronousBoundaryBus[busOf(busId)] = 1
     }
   })
-  const loadKinds = [...new Set(model.loads.map(load => load.kind))]
+  const demandProfileIndexById = indexById(model.demandProfiles)
+  const demandProfileHours = new Float64Array(model.demandProfiles.length * demandProfileStride)
+  model.demandProfiles.forEach((profile, position) => {
+    demandProfileHours.set(profile.weekday, position * demandProfileStride)
+    demandProfileHours.set(profile.weekend, position * demandProfileStride + 24)
+  })
   const boundaryStart = new Int32Array(index.externalSystems.length + 1)
   index.externalSystems.forEach((system, position) => { boundaryStart[position + 1] = boundaryStart[position]! + system.boundaryBusIds.length })
   const boundaryItems = Int32Array.from(index.externalSystems.flatMap(system => system.boundaryBusIds), busOf)
@@ -130,8 +137,8 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
     branchFromTap: Float64Array.from(model.branches, branch => branch.kind === 'transformer' ? branch.tapRatio! : 1),
     branchRatingMw: Float64Array.from(model.branches, branch => branch.ratingMw),
     loadReactivePerMw: Float64Array.from(model.loads, load => Math.tan(Math.acos(load.powerFactor))),
-    loadKinds,
-    loadKind: Uint8Array.from(model.loads, load => loadKinds.indexOf(load.kind)),
+    loadDemandProfile: Int32Array.from(model.loads, load => demandProfileIndexById.get(load.demandProfileId)!),
+    demandProfileHours,
   }
 }
 

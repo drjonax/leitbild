@@ -18,8 +18,10 @@ import type {
   GridModelDefinition,
   GridOperatingPointDefinition,
 } from './grid-model.ts'
-import { compileGridModelV2 } from './models/compile-v2.ts'
+import { compileGridModelV2, type GridOperatingPointDemand } from './models/compile-v2.ts'
+import { localDayType, localHourOfDay, osloLocalMs } from './runtime/demand-profiles.ts'
 import { gridAutomationSchema, type GridAutomation } from './schemas/grid-automation.ts'
+import { validateGridLoadProfiles, type GridLoadProfiles } from './schemas/grid-load-profile.ts'
 import { composeGridModel, validateGridModelAddition } from './schemas/grid-model-addition.ts'
 import { validateGridModel, type GridModelV2 } from './schemas/grid-model.ts'
 import {
@@ -122,8 +124,24 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     addGrouped(generatorsByBus, generator.busId, generator)
     register({ id: generator.id, label: generator.label, kind: 'generator', definition: generator })
   }
+  // A profile has 24 non-negative hour values per day type; a measured one is exactly 1 at its reference hour.
+  const demandProfileIds = new Set<string>()
+  for (const profile of model.demandProfiles) {
+    if (demandProfileIds.has(profile.id)) failModel(model, `duplicate demand profile id ${profile.id}`)
+    demandProfileIds.add(profile.id)
+    for (const dayType of ['weekday', 'weekend'] as const) {
+      if (profile[dayType].length !== 24) failModel(model, `${profile.id} ${dayType} must give 24 hour values, not ${profile[dayType].length}`)
+      profile[dayType].forEach((value, hour) => requireFinite(model, value, `${profile.id} ${dayType} ${hour}:00`, 0))
+    }
+    if (profile.series !== null) {
+      const localMs = osloLocalMs(Date.parse(profile.series.referenceHour))
+      const value = profile[localDayType(localMs)][localHourOfDay(localMs)]
+      if (value !== 1) failModel(model, `${profile.id} is ${value} at its reference hour ${profile.series.referenceHour}, not 1`)
+    }
+  }
   for (const load of model.loads) {
     requireBus(load.busId, load.id)
+    if (!demandProfileIds.has(load.demandProfileId)) failModel(model, `${load.id} follows unknown demand profile ${load.demandProfileId}`)
     requireFinite(model, load.demandMw, `${load.id} demandMw`, 0)
     requireFinite(model, load.criticalMw, `${load.id} criticalMw`, 0)
     requireFinite(model, load.powerFactor, `${load.id} powerFactor`, Number.MIN_VALUE)
@@ -343,6 +361,8 @@ export const operatingPointWithOverrides = (operatingPoint: GridOperatingPointV2
 export interface GridDefinitionCompiler {
   readonly compileModel: (ref: string) => GridModelV2
   readonly compileAutomation: (ref: string) => GridAutomation
+  /** The measured profiles and hour an Operating Point's demand follows on a Model. */
+  readonly operatingPointDemand: (operatingPointRef: string, modelRef: string) => GridOperatingPointDemand
   readonly compile: (definition: GridDefinition) => CompiledGridDefinition
 }
 
@@ -393,7 +413,9 @@ export const createGridDefinitionCompiler = (config: {
   const modelEntry = catalogEntriesById(config.catalog.models, 'Grid Model')
   const operatingPointEntry = catalogEntriesById(config.catalog.operatingPoints, 'Grid Operating Point')
   const automationEntry = catalogEntriesById(config.catalog.automations, 'Grid Automation')
+  const loadProfilesEntry = catalogEntriesById(config.catalog.loadProfiles, 'Grid Load Profiles')
   const models = new Map<string, GridModelV2>()
+  const profileSets = new Map<string, GridLoadProfiles>()
   const operatingPoints = new Map<string, GridOperatingPointV2>()
   const compiledModels = new Map<string, CompiledModelEntry>()
   const automations = new Map<string, GridAutomation>()
@@ -433,6 +455,30 @@ export const createGridDefinitionCompiler = (config: {
     return model
   }
 
+  /** The Load Profiles of a catalog model: built for its base Grid Model and at its reference hour; read once per id. */
+  const loadProfilesFor = (entry: GridModelCatalogEntry, model: GridModelV2): GridLoadProfiles => {
+    const profilesEntry = loadProfilesEntry(entry.loadProfilesRef)
+    const { file } = profilesEntry.source
+    const baseRef = entry.source.kind === 'grid-model' ? entry.id : entry.source.baseModelRef
+    if (profilesEntry.modelRef !== baseRef) throw new Error(`Grid Model ${entry.id}: its Load Profiles ${profilesEntry.id} are built for ${profilesEntry.modelRef}, not for ${baseRef}`)
+    let profiles = profileSets.get(profilesEntry.id)
+    if (profiles === undefined) {
+      profiles = validateGridLoadProfiles(config.readModelFile(file), file)
+      if (profiles.id !== profilesEntry.id) throw new Error(`${file}: $.id ${profiles.id} must be the catalog id ${profilesEntry.id}`)
+      if (profiles.modelId !== profilesEntry.modelRef) throw new Error(`${file}: $.modelId ${profiles.modelId} must be the catalog model ${profilesEntry.modelRef}`)
+      profileSets.set(profilesEntry.id, profiles)
+    }
+    if (Date.parse(profiles.referenceHour) !== Date.parse(model.referenceHour)) {
+      throw new Error(`${file}: $.referenceHour ${profiles.referenceHour} is not the reference hour ${model.referenceHour} of Grid Model ${entry.id}`)
+    }
+    return profiles
+  }
+
+  const operatingPointDemand = (operatingPointRef: string, modelRef: string): GridOperatingPointDemand => {
+    const { demand } = operatingPointEntry(operatingPointRef)
+    return { profiles: loadProfilesFor(modelEntry(modelRef), compileModel(modelRef)), season: demand.season, referenceHour: demand.referenceHour }
+  }
+
   const loadOperatingPoint = (ref: string, modelRef: string, model: GridModelV2): GridOperatingPointV2 => {
     const key = `${ref}\u0000${modelRef}`
     const cached = operatingPoints.get(key)
@@ -469,7 +515,7 @@ export const createGridDefinitionCompiler = (config: {
     let compiled = compiledModels.get(key)
     if (compiled === undefined) {
       const operatingPoint = operatingPointWithOverrides(loadOperatingPoint(definition.operatingPoint.ref, definition.model.ref, v2), overrides)
-      const runtime = compileGridModelV2(v2, operatingPoint, {
+      const runtime = compileGridModelV2(v2, operatingPoint, operatingPointDemand(definition.operatingPoint.ref, definition.model.ref), {
         generationAvailabilityScale: overrides.generationAvailabilityScale,
         storageStateOfCharge: overrides.storageStateOfCharge,
       })
@@ -492,7 +538,7 @@ export const createGridDefinitionCompiler = (config: {
     }
   }
 
-  return { compileModel, compileAutomation, compile }
+  return { compileModel, compileAutomation, operatingPointDemand, compile }
 }
 
 /** Reads the built-in frequency-control presets in automations/. */
@@ -511,3 +557,7 @@ export const gridAutomationPreset = (ref: string): GridAutomation => builtinComp
 
 /** A built-in Grid Model v2 by catalog id (composed when it is an addition), read and validated on first use. */
 export const gridModelV2 = (ref: string): GridModelV2 => builtinCompiler.compileModel(ref)
+
+/** The measured profiles and hour a built-in Operating Point's demand follows on a built-in Model. */
+export const gridOperatingPointDemand = (operatingPointRef: string, modelRef: string): GridOperatingPointDemand =>
+  builtinCompiler.operatingPointDemand(operatingPointRef, modelRef)

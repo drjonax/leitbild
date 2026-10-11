@@ -3,10 +3,14 @@ import { gridProjectionSchema } from '../model.ts'
 import { processContingencyPoolStatus } from '../runtime/contingency-pool.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
 import type { GridOperatingPointDefinition } from '../grid-model.ts'
+import { gridDemandSampleClock } from '../runtime/demand.ts'
+import { gridTablesFor } from '../runtime/state/tables.ts'
 import { modelDiagnosticsSchema, modelFidelitySchema } from './catalog.ts'
 import { defineGridQuery, gridFor, gridPayloadSchema } from './common.ts'
 import {
   branchDefinitionSchema,
+  demandProfileSeriesSchema,
+  demandSampleSchema,
   generatorDefinitionSchema,
   generatorLifecycleStateSchema,
   loadDefinitionSchema,
@@ -89,6 +93,18 @@ const summaryResultSchema = z.object({
     }).strict(),
   }).strict().describe('The Grid Automation preset in force, summarised.'),
   projection: gridProjectionSchema,
+  demandProfiles: z.object({
+    sample: demandSampleSchema,
+    profiles: z.array(z.object({
+      id: z.string(),
+      label: z.string(),
+      series: demandProfileSeriesSchema.nullable(),
+      sources: z.array(z.string()).describe('Sources of the profile values.'),
+      factor: finite.describe('Factor at the demand sample.'),
+      loadCount: count,
+      demandMw: finite.describe('Demand of its loads at the demand sample, before shedding (MW).'),
+    }).strict()),
+  }).strict().describe('The daily profiles demand follows: for the Norway Models each price area\'s Elhub municipality group (private, business, industry) over the Operating Point season\'s measured week, 1 at the Operating Point\'s hour. asset.get gives a load\'s profile with its hour values.'),
   assetCounts: z.object({ bus: count, branch: count, generator: count, load: count, storage: count }).strict(),
   diagnostics: z.object({
     model: modelDiagnosticsSchema,
@@ -153,6 +169,29 @@ const summaryResultSchema = z.object({
   }).strict()).describe(`Loads with the most unserved demand, at most ${affectedLoadRowLimit}; empty when all demand is served.`),
 }).strict()
 
+const demandProfilesSummary = (grid: GridRuntimeInstance) => {
+  const profiles = grid.definition.model.demandProfiles
+  const loadProfile = gridTablesFor(grid.definition).loadDemandProfile
+  const loadCount = new Array<number>(profiles.length).fill(0)
+  const demandMw = new Array<number>(profiles.length).fill(0)
+  loadProfile.forEach((profile, load) => {
+    loadCount[profile]! += 1
+    demandMw[profile]! += grid.arrays.loads.demandMw[load]!
+  })
+  return {
+    sample: gridDemandSampleClock(grid.demandSample),
+    profiles: profiles.map((profile, index) => ({
+      id: profile.id,
+      label: profile.label,
+      series: profile.series === null ? null : { ...profile.series },
+      sources: [...profile.provenance.sources],
+      factor: grid.demandSample.factors[index]!,
+      loadCount: loadCount[index]!,
+      demandMw: demandMw[index]!,
+    })),
+  }
+}
+
 const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSchema> => {
   const model = grid.definition.model
   const constrained = model.branches
@@ -180,6 +219,7 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
     operatingPoint: operatingPointSummary(grid.definition.operatingPoint),
     automation: automationSummary(grid),
     projection: grid.projection,
+    demandProfiles: demandProfilesSummary(grid),
     assetCounts: {
       bus: model.buses.length,
       branch: model.branches.length,

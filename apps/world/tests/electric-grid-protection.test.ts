@@ -30,7 +30,7 @@ const protectionOf = (definition: CompiledGridDefinition): EnabledBranchProtecti
   return settings
 }
 
-/** The most loaded branch below 60 % of its rating (its conductor is cool) whose outage keeps its island connected. */
+/** The most loaded overhead line below 60 % of its rating (its conductor is cool) whose outage keeps its island connected. */
 const meshedBranchUnderLoad = (run: ReturnType<typeof steppedGrid>): string => {
   const { model } = run.grid.definition
   const network = compiledGridNetworkFor(model)
@@ -38,7 +38,7 @@ const meshedBranchUnderLoad = (run: ReturnType<typeof steppedGrid>): string => {
   const baseCount = findGridIslands(network, closed).count
   const loading = (id: string, ratingMw: number): number => Math.abs(run.grid.branches.get(id)!.flowMw) / ratingMw
   return [...model.branches]
-    .filter(branch => loading(branch.id, branch.ratingMw) < 0.6)
+    .filter(branch => branch.kind === 'ac_line' && loading(branch.id, branch.ratingMw) < 0.6)
     .sort((a, b) => loading(b.id, b.ratingMw) - loading(a.id, a.ratingMw))
     .find(branch => {
       const without = closed.slice()

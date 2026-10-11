@@ -161,6 +161,7 @@ export const loadStateViews = (loadIds: ReadonlyArray<string>, arrays: GridLoadA
       get() { return arrays.manualShedEmergency[this[viewIndex]] === 1 },
       set(value: boolean) { arrays.manualShedEmergency[this[viewIndex]] = value ? 1 : 0 },
     },
+    profileFactor: readOnly(index => arrays.profileFactor[index]),
     demandMw: numberField(arrays.demandMw),
     curtailedMw: numberField(arrays.curtailedMw),
     lfddShedMw: numberField(arrays.lfddShedMw),

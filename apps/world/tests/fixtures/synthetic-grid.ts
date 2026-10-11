@@ -8,13 +8,40 @@ import type {
   CompiledGridDefinition,
   GridBranchDefinition,
   GridBusDefinition,
+  GridDemandProfileDefinition,
   GridGeneratorDefinition,
   GridLoadDefinition,
   GridModelDefinition,
 } from '../../src/packs/electric-grid/grid-model.ts'
 
-/** A hand-built test Model: the given assets on a 100 MVA base with nothing else. */
+const fixtureProvenance = (note: string): GridDemandProfileDefinition['provenance'] => ({ sources: ['test:hand-built'], method: 'curated', confidence: 'high', note })
+
+/** Constant demand over the day and week: a test sees only the demand it sets. */
+export const flatDemandProfile: GridDemandProfileDefinition = {
+  id: 'demand-profile:flat',
+  label: 'Flat (test fixture)',
+  weekday: Array.from({ length: 24 }, () => 1),
+  weekend: Array.from({ length: 24 }, () => 1),
+  series: null,
+  provenance: fixtureProvenance('Test fixture: constant demand.'),
+}
+
+/**
+ * A declared day with a night trough, a morning rise and an evening peak, weekends 10 % lower:
+ * demand moves at every demand sample, as measured profiles move it (values: test fixture).
+ */
+export const declaredDailyProfile: GridDemandProfileDefinition = {
+  id: 'demand-profile:declared-daily',
+  label: 'Declared daily shape (test fixture)',
+  weekday: [0.86, 0.84, 0.83, 0.82, 0.82, 0.84, 0.9, 0.97, 1, 1, 0.99, 0.98, 0.97, 0.96, 0.96, 0.97, 1, 1.02, 1.01, 0.99, 0.97, 0.95, 0.92, 0.89],
+  weekend: [0.79, 0.77, 0.76, 0.75, 0.74, 0.74, 0.76, 0.8, 0.85, 0.89, 0.9, 0.9, 0.89, 0.88, 0.88, 0.89, 0.91, 0.93, 0.92, 0.9, 0.88, 0.86, 0.83, 0.81],
+  series: null,
+  provenance: fixtureProvenance('Test fixture: a declared daily shape, not measured.'),
+}
+
+/** A hand-built test Model: the given assets on a 100 MVA base with nothing else; its loads are flat unless they name another profile. */
 export const handBuiltModel = (model: Pick<GridModelDefinition, 'id' | 'title' | 'description' | 'buses' | 'branches' | 'generators' | 'loads'> & Partial<GridModelDefinition>): GridModelDefinition => ({
+  demandProfiles: [flatDemandProfile],
   nominalFrequencyHz: 50,
   sBaseMva: 100,
   fidelity: { powerFlow: 'ac-fdlf-or-dc', voltage: 'ac-fdlf', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
@@ -40,9 +67,10 @@ export const testLine = (branch: Pick<GridBranchDefinition, 'id' | 'fromBusId' |
   ...branch,
 })
 
-/** A test load at unity power factor, not critical and with nothing interruptible. */
+/** A test load at unity power factor and flat demand, not critical and with nothing interruptible. */
 export const testLoad = (load: Pick<GridLoadDefinition, 'id' | 'busId' | 'demandMw'> & Partial<GridLoadDefinition>): GridLoadDefinition => ({
   label: load.id,
+  demandProfileId: flatDemandProfile.id,
   kind: 'industry',
   location: [10, 60],
   criticalMw: 0,
@@ -195,7 +223,7 @@ export const syntheticGridModel = (busCount: number, seed = 7): GridModelDefinit
       loads.push({
         id: `D${index}`, label: `Load ${index}`, kind: 'residential', busId: `B${index}`, location: points[index]!,
         // Q/P = 0.25 (40 Mvar at 160 MW): cos φ = 1/√1.0625.
-        demandMw: 160, criticalMw: 30, powerFactor: 1 / Math.sqrt(1.0625), priority: 'normal', interruptibleMw: 0,
+        demandMw: 160, demandProfileId: declaredDailyProfile.id, criticalMw: 30, powerFactor: 1 / Math.sqrt(1.0625), priority: 'normal', interruptibleMw: 0,
       })
     }
   }
@@ -213,6 +241,7 @@ export const syntheticGridModel = (busCount: number, seed = 7): GridModelDefinit
     shunts: [],
     generators,
     loads,
+    demandProfiles: [declaredDailyProfile],
     storage: [],
     connectionPoints: [],
     externalSystems: [],

@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import type { IsoTimestamp } from '../src/core/model/index.ts'
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
-import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
+import { norwayGridModelRef, nordicFrequencyAutomationRef, norwayWinterPeakOperatingPointRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { compileGridDefinition, gridOperatingPointDemand } from '../src/packs/electric-grid/definitions.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
 import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
 import { rebalancePart, type RemovedParticipant } from '../src/packs/electric-grid/runtime/contingency-balance.ts'
@@ -243,7 +243,7 @@ describe('electric grid N-1 screening', () => {
     const directory = join(import.meta.dir, '../src/packs/electric-grid/models')
     const generated = validateGridModel(JSON.parse(await readFile(join(directory, 'norway-transmission.grid-model.json'), 'utf8')), 'v2')
     const winter = validateGridOperatingPoint(JSON.parse(await readFile(join(directory, 'norway-winter-weekday-peak.operating-point.json'), 'utf8')), 'winter', gridOperatingPointTargetsForModel(generated))
-    const v2 = gridDefinitionForModel(compileGridModelV2(generated, winter).model)
+    const v2 = gridDefinitionForModel(compileGridModelV2(generated, winter, gridOperatingPointDemand(norwayWinterPeakOperatingPointRef, norwayGridModelRef)).model)
     const v2At = '2026-01-15T07:00:00.000Z' as IsoTimestamp
     const v2Grid = createGridRuntimeInstance({ definition: v2, at: v2At })
     advanceGrid(v2Grid, 0, v2At)

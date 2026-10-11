@@ -46,7 +46,12 @@ const catalogResultSchema = z.object({
       maximumImportMw: z.number().nonnegative(),
     }).strict()),
   }).strict()),
-  operatingPoints: z.array(compatibleDefinitionSchema),
+  operatingPoints: z.array(compatibleDefinitionSchema.extend({
+    demand: z.object({
+      season: z.enum(['winter', 'summer']).describe('The season whose measured Elhub load profiles the loads follow over the day.'),
+      referenceHour: z.string().describe('The measured hour whose demand the Operating Point sets; each profile is 1 there.'),
+    }).strict(),
+  }).strict()),
   automations: z.array(compatibleDefinitionSchema),
   operatingPointOverridesSchema: z.record(z.string(), z.unknown()).describe('JSON Schema of the accepted Operating Point overrides.'),
   grids: z.array(z.object({
@@ -89,7 +94,7 @@ export const gridCatalogQuery = defineGridQuery({
       assetCounts: model.assetCounts,
       connectionPoints: model.connectionPoints,
     })),
-    operatingPoints: electricGridDefinitionCatalog.operatingPoints.map(compatibleDefinition),
+    operatingPoints: electricGridDefinitionCatalog.operatingPoints.map(entry => ({ ...compatibleDefinition(entry), demand: { ...entry.demand } })),
     automations: electricGridDefinitionCatalog.automations.map(compatibleDefinition),
     operatingPointOverridesSchema: z.toJSONSchema(gridOperatingPointOverridesSchema),
     grids: [...grids.values()].map(grid => ({

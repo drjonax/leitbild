@@ -309,8 +309,8 @@ describe('electric grid physics invariants', () => {
     expect(islandOfBus(run.grid, 'bus:b').frequency!.lfdd.stages[operated[0]!]!.status).toBe('disarmed')
     expect(listedStages().find(stage => stage.id === operated[0])).toMatchObject({ status: 'disarmed', disconnectedMw: 0 })
     run.advance(60)
-    // Demand moves with the daily profile meanwhile, so the comparison holds to 0.1 MW.
-    expect(shed('low') + shed('normal')).toBeCloseTo(shedBeforeMw - stageShedMw, 1)
+    // The fixture's demand is flat, so restoring the stage reconnects exactly its share.
+    expect(shed('low') + shed('normal')).toBeCloseTo(shedBeforeMw - stageShedMw, 6)
     expect(applyGridCommand(run.grid, command(gridRestoreLfddStageCommandKind, { islandId: island.id, stageId: operated[0] })).ok).toBe(false)
     expect(applyGridCommand(run.grid, command(gridRearmLfddStageCommandKind, { islandId: island.id, stageId: operated[0] }))).toEqual({ ok: true })
     expect(islandOfBus(run.grid, 'bus:b').frequency!.lfdd.stages[operated[0]!]!.status).toBe('armed')

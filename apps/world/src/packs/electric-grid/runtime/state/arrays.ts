@@ -115,6 +115,8 @@ export interface GridLoadArrays {
   readonly modelledDemandMw: Float64Array
   readonly manualDemandLimitMw: Float64Array
   readonly manualShedEmergency: Uint8Array
+  /** Daily profile factor at the demand sample. */
+  readonly profileFactor: Float64Array
   readonly demandMw: Float64Array
   readonly curtailedMw: Float64Array
   readonly lfddShedMw: Float64Array
@@ -184,6 +186,7 @@ export const createGridLoadArrays = (count: number): GridLoadArrays => ({
   modelledDemandMw: floats(count),
   manualDemandLimitMw: floats(count, Number.NaN),
   manualShedEmergency: new Uint8Array(count),
+  profileFactor: floats(count, Number.NaN),
   demandMw: floats(count),
   curtailedMw: floats(count),
   lfddShedMw: floats(count),

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type {
   GridBranchDefinition,
   GridBusDefinition,
+  GridDemandProfileDefinition,
   GridGeneratorDefinition,
   GridHvdcLinkDefinition,
   GridLoadDefinition,
@@ -94,12 +95,37 @@ export const loadDefinitionSchema = z.object({
   busId: z.string(),
   location,
   demandMw: finite.describe('Demand at the Operating Point before its load scale (MW).'),
+  demandProfileId: z.string().describe('The Model demand profile the load follows over the day; asset.get gives its series and hour values.'),
   criticalMw: finite.describe('Demand no shedding disconnects (MW).'),
   powerFactor: finite.describe('Reactive demand is P·tan(acos powerFactor), lagging.'),
   priority: z.enum(['critical', 'high', 'normal', 'low']),
   interruptibleMw: finite.describe('Contractually or technically curtailable demand (MW); 0 when unknown.'),
   ...sourceFields,
   provenance: assetProvenanceSchema.optional(),
+}).strict()
+
+export const demandProfileSeriesSchema = z.object({
+  profileSetId: z.string().describe('The Grid Load Profiles set the values come from.'),
+  season: z.enum(['winter', 'summer']).describe('The profile week the Operating Point\'s season selects.'),
+  priceArea: z.string(),
+  group: z.enum(['private', 'business', 'industry'])
+    .describe('Elhub municipality group: private = household + cabin, business = tertiary, industry = primary + secondary. Major sites follow their price area\'s industry group.'),
+  referenceHour: z.string().describe('The Operating Point\'s hour, at which the profile is exactly 1.'),
+}).strict()
+
+export const demandProfileDefinitionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  weekday: z.array(finite).length(24).readonly().describe('Demand relative to the Operating Point\'s at Europe/Oslo local 00:00 … 23:00 of Monday to Friday; linear between hours.'),
+  weekend: z.array(finite).length(24).readonly().describe('The same for Saturday and Sunday; from 23:00 demand moves towards 00:00 of the next date\'s day type.'),
+  series: demandProfileSeriesSchema.nullable().describe('The measured Elhub series the profile follows; null for a profile the Model declares outright.'),
+  provenance: assetProvenanceSchema,
+}).strict()
+
+export const demandSampleSchema = z.object({
+  sampleAt: z.string().describe('The one-minute demand sample the loads\' demand was last set at (UTC).'),
+  localTime: z.string().describe('Its Europe/Oslo local time, HH:MM.'),
+  dayType: z.enum(['weekday', 'weekend']).describe('Day type of its Europe/Oslo local date: Monday to Friday, or Saturday and Sunday.'),
 }).strict()
 
 export const storageDefinitionSchema = z.object({
@@ -210,6 +236,7 @@ export const loadStateSchema = z.object({
   modelledDemandMw: finite.describe('Demand before the daily profile as the Model and Operating Point set it (MW).'),
   manualDemandLimitMw: finite.nullable().describe('Manual shedding limit from shed-load (MW); null when not shed manually.'),
   manualShedEmergency: z.boolean().describe('The manual limit was set as emergency shedding, beyond the interruptible demand.'),
+  profileFactor: finite.describe('The demand profile\'s factor at the demand sample: demandMw = max(criticalMw, nominalDemandMw × profileFactor).'),
   demandMw: finite.describe('Profiled demand before any shedding (MW).'),
   servedMw: finite.describe('Demand served: demand less curtailment, LFDD shedding and outage, at the island\'s load self-regulation (MW).'),
   curtailedMw: finite.describe('Demand shed manually (MW).'),
@@ -252,6 +279,7 @@ export type WireSchemasAcceptRuntimeValues = [
   Accepts<typeof branchDefinitionSchema, GridBranchDefinition>,
   Accepts<typeof generatorDefinitionSchema, GridGeneratorDefinition>,
   Accepts<typeof loadDefinitionSchema, GridLoadDefinition>,
+  Accepts<typeof demandProfileDefinitionSchema, GridDemandProfileDefinition>,
   Accepts<typeof storageDefinitionSchema, GridStorageDefinition>,
   Accepts<typeof busStateSchema, GridBusState>,
   Accepts<typeof hvdcTerminalStateSchema, GridHvdcTerminalState>,

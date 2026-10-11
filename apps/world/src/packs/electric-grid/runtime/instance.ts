@@ -14,6 +14,7 @@ import type { IslandFrequencyWorkspace } from './frequency/workspace.ts'
 import type { FrequencyReserveAllocation } from './frequency/types.ts'
 import type { GridIslandAcOutcome } from './ac-load-flow.ts'
 import type { GeneratorTripCause } from './frequency/generator-protection.ts'
+import { applyGridDemand, gridDemandSampleAt, type GridDemandSample } from './demand.ts'
 import { dispatchGridFromLiveIslands } from './dispatch.ts'
 import { noReserves } from './frequency/governors.ts'
 import { upwardReserveMw } from './reserve-allocation.ts'
@@ -135,6 +136,8 @@ export interface GridLoadState {
   manualDemandLimitMw: number | null
   /** The limit was set as emergency shedding, beyond the load's interruptible demand. */
   manualShedEmergency: boolean
+  /** Daily profile factor at the demand sample: demandMw = max(criticalMw, nominalDemandMw × profileFactor). */
+  readonly profileFactor: number
   /** Demand this tick, profiled, before any shedding. */
   demandMw: number
   /** Demand disconnected by the manual shedding limit. */
@@ -351,6 +354,8 @@ export interface GridRuntimeInstance {
   readonly branches: Map<string, GridBranchState>
   readonly generators: Map<string, GridGeneratorState>
   readonly loads: Map<string, GridLoadState>
+  /** The demand sample the loads' demand was last set at. */
+  readonly demandSample: GridDemandSample
   readonly storage: Map<string, GridStorageState>
   readonly externalConnections: Map<string, GridExternalConnectionState>
   readonly externalSystems: Map<string, GridExternalSystemState>
@@ -564,6 +569,7 @@ export const createGridRuntimeInstance = (config: {
     branches: branchStateViews(model.branches.map(branch => branch.id), branchArrays),
     generators: generatorStateViews(model.generators.map(generator => generator.id), generatorArrays),
     loads: loadStateViews(model.loads.map(load => load.id), loadArrays),
+    demandSample: gridDemandSampleAt(definition, Date.parse(config.at)),
     storage,
     externalConnections,
     externalSystems,
@@ -593,8 +599,10 @@ export const createGridRuntimeInstance = (config: {
     },
     projection: initialGridProjection(config.at, model.nominalFrequencyHz, restored?.tick ?? 0),
   }
-  // A fresh Grid starts dispatched from its live islands; a restored one keeps its stored set-points.
+  // A fresh Grid starts dispatched from its live islands; a restored one keeps its stored set-points
+  // and takes the demand sample of its restart.
   if (!restored) dispatchGridFromLiveIslands(grid, Date.parse(config.at))
+  else applyGridDemand(grid, Date.parse(config.at))
   return grid
 }
 
