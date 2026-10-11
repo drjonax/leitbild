@@ -39,7 +39,10 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       sprayInlet: { kind: 'hydraulicThermal', direction: 'in', circuit: 'coolant' },
       reliefOutlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'coolant' },
       safetyOutlet: { kind: 'hydraulicThermal', direction: 'out', circuit: 'coolant' },
+      // The heaters come in two groups on separate supplies: the control group on a non-safety bus, and a backup
+      // group on a diesel-backed safety bus, so some heat holds the pressure when offsite power is lost.
       heaterPower: { kind: 'electricalAc', direction: 'in', demand: 'demandMw' },
+      backupHeaterPower: { kind: 'electricalAc', direction: 'in', demand: 'backupHeaterDemandMw' },
       // The PORV block valve's motor has its own supply, apart from the heaters': the valve must close on a stuck-open
       // PORV after a loss of offsite power, when the heaters' bus is dead and only the diesel-backed buses are live.
       blockValvePower: { kind: 'electricalAc', direction: 'in' },
@@ -66,6 +69,8 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       safetyValveBlowdownFraction: z.number().finite().positive().max(0.2),
       /** Level below which the heaters are cut off, so that none runs uncovered: 17 % in a Westinghouse plant. */
       heaterCutoffLevelPercent: z.number().finite().min(0).max(100),
+      /** Heat of the backup heater group, all on or all off, from its diesel-backed supply. */
+      backupHeaterCapacityMw: z.number().finite().positive(),
       /**
        * Level control: the level the program sets for the loops' mean
        * temperature, rising in a straight line from its no-load to its
@@ -130,6 +135,8 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'heaterPowerMw', label: 'Pressurizer heater power', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'power', unit: 'MW', limits: { hardRange: { min: 0, max: 30 } } }),
       variable({ path: 'levelProgramPercent', label: 'Pressurizer level program', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
       variable({ path: 'chargingFlowDemandKgPerS', label: 'Charging flow demanded by pressurizer level control', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
+      variable({ path: 'backupHeatersOn', label: 'Pressurizer backup heaters on', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'backupHeaterDemandMw', label: 'Pressurizer backup heater electrical demand', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'heatersCutOff', label: 'Pressurizer heaters cut off on low level', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'demandMw', label: 'Pressurizer electrical demand', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'sprayFlowKgPerS', label: 'Pressurizer spray flow', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'flowRate', unit: 'kg/s', limits: { hardRange: { min: 0, max: 250 } } }),

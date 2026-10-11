@@ -224,6 +224,7 @@
         "safetyValveAccumulationFraction": 0.03,
         "safetyValveBlowdownFraction": 0.05,
         "heaterCutoffLevelPercent": 17,
+        "backupHeaterCapacityMw": 1.5,
         "levelControl": {
           "noLoadAverageTemperatureC": 291.7,
           "noLoadLevelPercent": 25,
@@ -252,6 +253,18 @@
           "tagId": "PZR-HTR",
           "equipmentId": "pressurizer",
           "description": "Pressurizer heater power demand"
+        },
+        {
+          "path": "backupHeatersOn",
+          "tagId": "PZR-HTR-BU",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer backup heater group on command; the group is fed from safety bus A through its own breaker"
+        },
+        {
+          "path": "backupHeaterDemandMw",
+          "tagId": "PZR-HTR-BU-MW",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer backup heater group power drawn from safety bus A"
         },
         {
           "path": "levelProgramPercent",
@@ -3460,6 +3473,34 @@
       "metadata": {
         "presentation": {
           "shortLabel": "Unit BKR B"
+        }
+      }
+    },
+    {
+      "id": "pressurizerBackupHeaterBreakerA",
+      "kind": "electricalBreaker",
+      "label": "Pressurizer Backup Heater Breaker A",
+      "parameters": {
+        "nominalPowerMw": 2,
+        "initialClosed": true
+      },
+      "variables": [
+        {
+          "path": "closed",
+          "tagId": "BRK-PZR-HTR-A-CLOSED",
+          "equipmentId": "pressurizerBackupHeaterBreakerA",
+          "description": "Pressurizer backup heater group A breaker close command"
+        },
+        {
+          "path": "closedState",
+          "tagId": "BRK-PZR-HTR-A-POS",
+          "equipmentId": "pressurizerBackupHeaterBreakerA",
+          "description": "Pressurizer backup heater group A breaker position feedback, closed while true"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "PZR HTR BKR A"
         }
       }
     },
@@ -11071,6 +11112,18 @@
       "from": "safetyBusA.outlet",
       "to": "pressurizer.blockValvePower",
       "connectionKind": "electricalPower"
+    },
+    {
+      "id": "safety-bus-a-to-pressurizer-backup-heater-breaker-a",
+      "from": "safetyBusA.outlet",
+      "to": "pressurizerBackupHeaterBreakerA.inlet",
+      "connectionKind": "electricalPower"
+    },
+    {
+      "id": "pressurizer-backup-heater-breaker-a-to-pressurizer",
+      "from": "pressurizerBackupHeaterBreakerA.outlet",
+      "to": "pressurizer.backupHeaterPower",
+      "connectionKind": "electricalPower"
     }
   ],
   "publishedVariables": [
@@ -11109,6 +11162,8 @@
     "pressurizer.waterTemperatureC",
     "pressurizer.steamTemperatureC",
     "pressurizer.heaterPowerMw",
+    "pressurizer.backupHeatersOn",
+    "pressurizer.backupHeaterDemandMw",
     "pressurizer.sprayFlowKgPerS",
     "pressurizer.reliefValvePositionFraction",
     "pressurizer.reliefValveEffectivePositionFraction",

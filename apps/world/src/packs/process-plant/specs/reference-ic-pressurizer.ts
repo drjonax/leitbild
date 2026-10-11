@@ -178,6 +178,7 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
       threshold: 15.35,
       effects: [
         write('energize-heaters', { tagId: 'PZR-HTR' }, 12),
+        write('energize-backup-heaters', { tagId: 'PZR-HTR-BU' }, true),
         write('stop-spray', { tagId: 'PZR-SPRAY' }, 0),
       ],
     },
@@ -185,6 +186,7 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
       threshold: 15.65,
       effects: [
         write('deenergize-heaters', { tagId: 'PZR-HTR' }, 0),
+        write('deenergize-backup-heaters', { tagId: 'PZR-HTR-BU' }, false),
         write('start-spray', { tagId: 'PZR-SPRAY' }, 120),
       ],
     },
@@ -193,6 +195,7 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
       max: 15.6,
       effects: [
         write('deenergize-heaters-normal', { tagId: 'PZR-HTR' }, 0),
+        write('deenergize-backup-heaters-normal', { tagId: 'PZR-HTR-BU' }, false),
         write('stop-spray-normal', { tagId: 'PZR-SPRAY' }, 0),
       ],
     },

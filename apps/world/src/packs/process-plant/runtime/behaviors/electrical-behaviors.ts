@@ -103,6 +103,12 @@ const outgoingLoadDemand = (
       demand += parameterNumber(target, 'nominalLoadMw')
       continue
     }
+    // A closed breaker passes on what is drawn beyond it, so a bus carries the loads it feeds through their own
+    // breakers (a pressurizer's backup heaters); an open one carries none.
+    if (target.kind === 'electricalBreaker') {
+      if (context.readBoolean(componentVariablePath(target, 'closedState'))) demand += outgoingLoadDemand(system, target, context)
+      continue
+    }
     // What the target draws through the port this line feeds: a pressurizer's heater load is its heater bus's, not the
     // bus that feeds its block valve's motor.
     const drawn = target.ports[String(link.toPortName)]?.demand

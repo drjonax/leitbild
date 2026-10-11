@@ -58,15 +58,18 @@ describe('process plant model composition', () => {
     // valves and relief header, again when low-pressure SI became blockable
     // below P-11, again when the steam-line N-16 monitors were made to read
     // in proportion to fission power, and again when the core's fission
-    // power was given a 0 to 4,500 MW hard range, and on 2026-10-11, approved
-    // by the owner as a model-truth change, when reactor coolant breaks were
-    // made to discharge at their critical flow, the coolant's moderator void
-    // to feed back on reactivity and the pressurizer's compressed water to be
-    // tracked, and again when the pressurizer was given its level control
-    // (a Tavg level program and charging set to hold it) and its 17 % low-level
-    // cutoff of heaters and letdown, with letdown and charging resized to a
-    // four-loop plant's; PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('2fb91172d26213e885cff84c0c6781c10edbabc9b1fe8a0c034b3ea152ce9c2a')
+    // power was given a 0 to 4,500 MW hard range, and on 2026-10-11,
+    // approved by the owner as a model-truth change, when reactor coolant
+    // breaks were made to discharge at their critical flow, the coolant's
+    // moderator void to feed back on reactivity and the pressurizer's
+    // compressed water to be tracked, and again when the pressurizer was
+    // given its level control (a Tavg level program and charging set to hold
+    // it) and its 17 % low-level cutoff of heaters and letdown, with letdown
+    // and charging resized to a four-loop plant's, and again when the
+    // pressurizer's heaters were split into a control group on unit bus A
+    // and a 1.5 MW backup group on diesel-backed safety bus A, through its
+    // own breaker; PWR Runs checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('7220d85e896f5d43429a50b3f44cbc6415a436f8fdf860c97804e254c289c270')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

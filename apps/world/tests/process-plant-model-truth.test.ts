@@ -343,6 +343,48 @@ describe('emergency diesel ratings', () => {
   })
 })
 
+describe('pressurizer backup heaters', () => {
+  test('are off at steady power, the control group holding the pressure', () => {
+    const plantRun = started()
+    plantRun.run(30_000)
+    expect(plantRun.tag('PZR-HTR-BU')).toBe(false)
+    expect(Number(plantRun.tag('PZR-HTR-BU-MW'))).toBe(0)
+    expect(plantRun.tag('BRK-PZR-HTR-A-POS')).toBe(true)
+  })
+
+  test('after a loss of offsite power come back on the diesel\'s sequencer and hold the pressure off safety injection', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    plantRun.act('loss-offsite-power')
+    const firstTrue: Record<string, number> = {}
+    let sheddedAt: number | null = null
+    let lowest = Infinity
+    let peakLoad = 0
+    for (let second = 1; second <= 1_800; second += 1) {
+      plantRun.run(1_000)
+      if (sheddedAt === null && plantRun.tag('BRK-PZR-HTR-A-POS') === false) sheddedAt = second
+      for (const tagId of ['BRK-EDG-A-POS', 'BRK-PZR-HTR-A-POS']) {
+        if (sheddedAt !== null && plantRun.tag(tagId) === true) firstTrue[tagId] ??= second
+      }
+      if (second > 60) lowest = Math.min(lowest, Number(plantRun.tag('PT-455')))
+      peakLoad = Math.max(peakLoad, Number(plantRun.read('safetyBusA.servedLoadMw')))
+    }
+    // Shed with the dead bus, the group returns at the sequencer's step 20 s after the diesel's breaker closes.
+    expect(sheddedAt).not.toBeNull()
+    expect(firstTrue['BRK-PZR-HTR-A-POS']! - firstTrue['BRK-EDG-A-POS']!).toBeGreaterThanOrEqual(20)
+    // The control group's unit bus stays dead; the backup group heats from the diesel, which carries it with room to spare.
+    expect(plantRun.tag('UNIT-BUS-A-ENERGIZED')).toBe(false)
+    expect(Number(plantRun.read('pressurizer.demandMw'))).toBe(0)
+    expect(peakLoad).toBeGreaterThan(1.5)
+    expect(peakLoad).toBeLessThan(7)
+    expect(plantRun.activeIds()).not.toContain('alarm:diesel-generator-a-overload:overload')
+    // Half an hour on natural circulation, the pressure has held well clear of the 12.7 MPa SI set point and recovered.
+    expect(lowest).toBeGreaterThan(13.5)
+    expect(Number(plantRun.tag('PT-455'))).toBeGreaterThan(15)
+    expect(plantRun.activeIds()).not.toContain('trip:safety-injection-low-pzr-pressure:safety-injection')
+  }, 120_000) // A half-hour trajectory: the long-trajectory watchdog.
+})
+
 describe('pumps', () => {
   const pumps = graph.components.filter(component => component.kind === 'centrifugalPump').map(component => String(component.id))
 

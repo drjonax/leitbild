@@ -101,6 +101,37 @@ const dieselGeneratorRules = (train: 'A' | 'B'): ReadonlyArray<ProcessPlantIcRul
 // generator, enough for decay heat; operators throttle from there.
 const afwLineUpPositionFraction = 1
 
+// The pressurizer's backup heaters hang on safety bus A through their own
+// breaker, so the diesel carries them when offsite power is lost. Their
+// breaker opens when the bus goes dead, as its undervoltage relay sheds it, so
+// the 1.5 MW group does not come back in the block of loads that return as the
+// diesel picks the bus up; the sequencer's last step closes it once the
+// diesel has taken that block and the motor-driven AFW pump, and the pressure
+// control's command decides whether they heat.
+const backupHeaterSequencerStepMs = 20_000
+
+const pressurizerBackupHeaterBreakerRules = (): ReadonlyArray<ProcessPlantIcRule> => [
+  rule({
+    id: 'pressurizer-backup-heaters-a-load-shed',
+    label: 'Pressurizer backup heater breaker A load shed on dead bus',
+    ruleClass: 'normalControl',
+    condition: comparison({ tagId: 'BUS-A-ENERGIZED' }, '==', false),
+    latch: false,
+    resetWhenClear: true,
+    effects: [write('shed-pressurizer-backup-heaters-a', { tagId: 'BRK-PZR-HTR-A-CLOSED' }, false)],
+  }),
+  rule({
+    id: 'diesel-generator-a-sequencer-pressurizer-heaters',
+    label: 'Diesel generator A load sequencer pressurizer backup heater step',
+    ruleClass: 'normalControl',
+    condition: comparison({ tagId: 'BRK-EDG-A-POS' }, '==', true),
+    delayMs: backupHeaterSequencerStepMs,
+    latch: false,
+    resetWhenClear: true,
+    effects: [write('load-pressurizer-backup-heaters-a', { tagId: 'BRK-PZR-HTR-A-CLOSED' }, true)],
+  }),
+]
+
 const lossOfOffsitePowerAuxiliaryFeedwater = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlantIcRule => rule({
   id: 'loss-of-offsite-power-afw-actuation',
   label: 'Loss of offsite power auxiliary feedwater actuation',
@@ -232,6 +263,7 @@ export const electricalReferenceIcRules = (loops: ReadonlyArray<ProcessPlantRefe
     ],
   }),
   lossOfOffsitePowerAuxiliaryFeedwater(loops),
+  ...pressurizerBackupHeaterBreakerRules(),
   // One cause per alarm: offsite power is lost when the grid gives no
   // voltage, whether it is disconnected or dead; a sagging grid is the
   // degraded-voltage alarm's.

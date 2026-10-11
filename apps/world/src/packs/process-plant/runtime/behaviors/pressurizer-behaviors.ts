@@ -139,6 +139,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'steamMassKg',
       'waterTemperatureC',
       'heaterPowerMw',
+      'backupHeatersOn',
       'incoming electrical energized?',
       'sprayFlowKgPerS',
       'reliefValvePositionFraction',
@@ -174,6 +175,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'safetyValveFlowKgPerS',
       'compressedWaterVolumeM3',
       'heatersCutOff',
+      'backupHeaterDemandMw',
       'levelProgramPercent',
       'chargingFlowDemandKgPerS',
       'demandMw',
@@ -193,11 +195,19 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       // Below the low-level cutoff the heaters' breakers open, whatever their
       // command, so that none runs uncovered.
       const heatersCutOff = context.readNumber(componentVariablePath(component, 'levelPercent')) < parameterNumber(component, 'heaterCutoffLevelPercent')
-      const heaterPower = !heatersCutOff && componentHasElectricalPower(system, component, context, 'heaterPower')
+      const controlHeaterPower = !heatersCutOff && componentHasElectricalPower(system, component, context, 'heaterPower')
         ? clamp(context.readNumber(componentVariablePath(component, 'heaterPowerMw')), 0, 50)
         : 0
+      // The backup group heats while commanded on and its own supply is live, whatever the control group's bus does.
+      const backupHeaterPower = !heatersCutOff
+        && context.readBoolean(componentVariablePath(component, 'backupHeatersOn'))
+        && componentHasElectricalPower(system, component, context, 'backupHeaterPower')
+        ? parameterNumber(component, 'backupHeaterCapacityMw')
+        : 0
+      const heaterPower = controlHeaterPower + backupHeaterPower
       context.write(componentVariablePath(component, 'heatersCutOff'), heatersCutOff)
-      context.write(componentVariablePath(component, 'demandMw'), heaterPower)
+      context.write(componentVariablePath(component, 'demandMw'), controlHeaterPower)
+      context.write(componentVariablePath(component, 'backupHeaterDemandMw'), backupHeaterPower)
       const sprayFlow = pressurizerSprayFlowKgPerS(component, context)
       const reliefValvePosition = clamp(context.readNumber(componentVariablePath(component, 'reliefValvePositionFraction')), 0, 1)
       const reliefValveFailureActive = context.readBoolean(componentVariablePath(component, 'reliefValveFailureActive'))

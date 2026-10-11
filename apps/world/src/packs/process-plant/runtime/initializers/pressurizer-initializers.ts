@@ -34,6 +34,8 @@ export const pressurizerInitialValueDefinitions: ReadonlyArray<ComponentInitialV
       if (localPath === 'chargingFlowDemandKgPerS') return pressurizerLevelControl(component).nominalChargingFlowKgPerS
       if (localPath === 'heatersCutOff') return nominalLevelFraction * 100 < parameterNumber(component, 'heaterCutoffLevelPercent')
       if (localPath === 'demandMw') return 0
+      if (localPath === 'backupHeatersOn') return false
+      if (localPath === 'backupHeaterDemandMw') return 0
       if (localPath === 'sprayFlowKgPerS') return 0
       if (localPath === 'reliefValvePositionFraction') return 0
       if (localPath === 'reliefValveFailureActive') return false
