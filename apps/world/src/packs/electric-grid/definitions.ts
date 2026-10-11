@@ -193,9 +193,26 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
       for (const field of ['fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw'] as const) {
         requireFinite(model, system[field] ?? Number.NaN, `${system.id} ${field}`, 0)
       }
+      // Every boundary bus belongs to exactly one participating area; the shares sum to 1.
+      const participation = system.areaParticipation
+      if (participation === undefined || participation.length === 0) failModel(model, `${system.id} is synchronous and needs its area participation`)
+      const areaOfBus = new Map<string, string>()
+      let shareSum = 0
+      for (const entry of participation!) {
+        requireFinite(model, entry.share, `${system.id} participation of ${entry.area}`, Number.MIN_VALUE)
+        shareSum += entry.share
+        if (entry.boundaryBusIds.length === 0) failModel(model, `${system.id} participation of ${entry.area} has no boundary bus`)
+        for (const busId of entry.boundaryBusIds) {
+          if (!system.boundaryBusIds.includes(busId)) failModel(model, `${system.id} participation of ${entry.area} names ${busId}, not one of its boundary buses`)
+          if (areaOfBus.has(busId)) failModel(model, `${system.id}: boundary bus ${busId} lies in both ${areaOfBus.get(busId)} and ${entry.area}`)
+          areaOfBus.set(busId, entry.area)
+        }
+      }
+      for (const busId of system.boundaryBusIds) if (!areaOfBus.has(busId)) failModel(model, `${system.id}: boundary bus ${busId} lies in no participating area`)
+      if (!(Math.abs(shareSum - 1) <= 1e-9)) failModel(model, `${system.id} area participation sums to ${shareSum}, not 1`)
       for (const busId of system.boundaryBusIds) synchronousExternalByBus.set(busId, system)
     } else {
-      for (const field of ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw'] as const) {
+      for (const field of ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw', 'areaParticipation'] as const) {
         if (system[field] !== undefined) failModel(model, `${system.id} is asynchronous and cannot carry ${field}`)
       }
       for (const busId of system.boundaryBusIds) {

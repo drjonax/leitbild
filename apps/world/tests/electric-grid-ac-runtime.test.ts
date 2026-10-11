@@ -144,6 +144,7 @@ const weakLinkModel = handBuiltModel({
   connectionPoints: [{ id: 'weak-bay', label: 'Weak bay', busId: 'bus:l', nominalKv: 300, maximumExportMw: 100, maximumImportMw: 100 }],
   externalSystems: [{
     id: 'external:nordic-remainder', label: 'Nordic remainder', area: 'nordic-remainder', synchronous: true, boundaryBusIds: ['bus:boundary-SE3@300'],
+    areaParticipation: [{ area: 'SE3', share: 1, boundaryBusIds: ['bus:boundary-SE3@300'] }],
     inertiaGws: 171, loadMw: 43_100, fcrNMwPerHz: 3_720, fcrDUpMw: 899, fcrDDownMw: 868, afrrUpMw: 138, afrrDownMw: 138,
     provenance: { sources: ['test'], method: 'curated', confidence: 'low' },
   }],

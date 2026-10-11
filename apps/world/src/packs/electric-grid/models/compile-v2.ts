@@ -148,11 +148,23 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
   // The Operating Point sets a synchronous equivalent's inertia and load for its season and hour;
   // the reserve volumes stay as the Model sets them.
   const externalStates = new Map((operatingPoint.externalSystemStates ?? []).map(state => [state.assetId, state]))
+  const externalAreaOfBus = new Map(model.buses.flatMap(bus => bus.externalArea === undefined ? [] : [[bus.id, bus.externalArea] as const]))
   const externalSystems = model.externalSystems.map((system): GridExternalSystemDefinition => {
     const state = externalStates.get(system.id)
-    if (state === undefined) return { ...system }
+    const { areaParticipation, ...values } = system
+    const mapped: GridExternalSystemDefinition = {
+      ...values,
+      ...(areaParticipation === undefined ? {} : {
+        areaParticipation: areaParticipation.map(entry => ({
+          area: entry.area,
+          share: entry.share,
+          boundaryBusIds: system.boundaryBusIds.filter(busId => externalAreaOfBus.get(busId) === entry.area),
+        })),
+      }),
+    }
+    if (state === undefined) return mapped
     return {
-      ...system,
+      ...mapped,
       inertiaGws: state.inertiaGws,
       loadMw: state.loadMw,
       provenance: {

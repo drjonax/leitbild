@@ -76,6 +76,32 @@ export const islandAssetStates = (grid: GridRuntimeInstance, island: GridTopolog
   return states
 }
 
+/**
+ * How a synchronous external system's exchange with one Norwegian AC component is shared among
+ * the given boundary buses of that component: by area participation (renormalised over the areas
+ * present), then within an area by the derated rating of each bus's closed ties.
+ */
+export const externalBoundaryShares = (grid: GridRuntimeInstance, system: GridExternalSystemDefinition, boundaryBusIds: ReadonlyArray<string>): ReadonlyArray<number> => {
+  const participation = system.areaParticipation
+  if (participation === undefined) throw new Error(`${system.id} has no area participation to share its exchange`)
+  const entryOf = (busId: string) => {
+    const entry = participation.find(candidate => candidate.boundaryBusIds.includes(busId))
+    if (entry === undefined) throw new Error(`${system.id}: boundary bus ${busId} lies in no participating area`)
+    return entry
+  }
+  const entries = boundaryBusIds.map(entryOf)
+  const capacities = boundaryBusIds.map(busId => boundaryTieCapacityMw(grid, busId))
+  const presentAreas = [...new Set(entries)]
+  const presentShare = presentAreas.reduce((sum, entry) => sum + entry.share, 0)
+  return boundaryBusIds.map((busId, index) => {
+    const entry = entries[index]!
+    let areaCapacityMw = 0
+    entries.forEach((candidate, position) => { if (candidate === entry) areaCapacityMw += capacities[position]! })
+    if (!(areaCapacityMw > 0)) throw new Error(`${system.id}: the ties of ${entry.area} at ${busId} carry no rating`)
+    return entry.share / presentShare * capacities[index]! / areaCapacityMw
+  })
+}
+
 /** Rating of the closed AC ties at a boundary bus, derated by their availability (MW). */
 export const boundaryTieCapacityMw = (grid: GridRuntimeInstance, boundaryBusId: string): number =>
   (grid.definition.index.branchesByBus.get(boundaryBusId) ?? []).reduce((sum, branch) => {

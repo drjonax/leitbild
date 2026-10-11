@@ -179,11 +179,22 @@ export const gridExternalSystemSchema = z.object({
   fcrDDownMw: nonNegative.optional(),
   afrrUpMw: nonNegative.optional(),
   afrrDownMw: nonNegative.optional(),
+  /**
+   * Required when synchronous: the share of the system's exchange with Norway (its schedule and its
+   * frequency response) that enters at each external area's boundary buses. One entry per area of
+   * its boundary buses, shares summing to 1.
+   */
+  areaParticipation: z.array(z.object({ area: externalAreaSchema, share: positive }).strict()).min(1).optional(),
   provenance: gridProvenanceSchema,
 }).strict().superRefine((system, context) => {
   if (system.id !== `external:${system.area}`) fail(context, ['id'], `must be external:${system.area}`)
   requireUnique(context, system.boundaryBusIds, 'boundaryBusIds')
-  const synchronousFields = ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw'] as const
+  const synchronousFields = ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw', 'areaParticipation'] as const
+  if (system.areaParticipation !== undefined) {
+    requireUnique(context, system.areaParticipation.map(entry => entry.area), 'areaParticipation')
+    const total = system.areaParticipation.reduce((sum, entry) => sum + entry.share, 0)
+    if (!(Math.abs(total - 1) <= 1e-9)) fail(context, ['areaParticipation'], `shares must sum to 1, got ${total}`)
+  }
   if (system.synchronous) {
     if (system.area !== 'nordic-remainder' && !nordicSynchronousExternalAreas.has(system.area)) fail(context, ['synchronous'], `${system.area} is not synchronous with the Nordic system`)
     for (const field of synchronousFields) {

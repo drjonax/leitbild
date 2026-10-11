@@ -5,7 +5,7 @@ import { hvdcTerminalInjectionsMw } from './hvdc.ts'
 import type { GridBranchDefinition, GridExternalSystemDefinition } from '../grid-model.ts'
 import type { GridBusState, GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import {
-  boundaryTieCapacityMw,
+  externalBoundaryShares,
   externalKineticEnergyMws,
   gridGeneratorIsSynchronised,
   islandAssetStates,
@@ -154,12 +154,8 @@ const closeComponentsThroughBoundaries = (
     if (boundaries.length === 0) continue
     let othersMw = 0
     for (const bus of component.busIndices) othersMw += injections[bus]!
-    const capacities = boundaries.map(busId => boundaryTieCapacityMw(grid, busId))
-    const totalCapacityMw = capacities.reduce((sum, capacity) => sum + capacity, 0)
-    boundaries.forEach((busId, position) => {
-      const share = totalCapacityMw > 0 ? capacities[position]! / totalCapacityMw : position === 0 ? 1 : 0
-      addAt(injections, network.busIndexById.get(busId)!, -othersMw * share)
-    })
+    const shares = externalBoundaryShares(grid, system, boundaries)
+    boundaries.forEach((busId, position) => addAt(injections, network.busIndexById.get(busId)!, -othersMw * shares[position]!))
     closingMw -= othersMw
   }
   return closingMw

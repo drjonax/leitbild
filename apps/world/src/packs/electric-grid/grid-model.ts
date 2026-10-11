@@ -104,6 +104,12 @@ export interface GridExternalSystemDefinition {
   readonly fcrDDownMw?: number | undefined
   readonly afrrUpMw?: number | undefined
   readonly afrrDownMw?: number | undefined
+  /**
+   * Required when synchronous: the share of the system's exchange with Norway (schedule and
+   * response) entering at each of its areas, and that area's boundary buses. Within an area the
+   * buses share by the rating of their closed ties.
+   */
+  readonly areaParticipation?: ReadonlyArray<{ readonly area: GridExternalArea; readonly share: number; readonly boundaryBusIds: ReadonlyArray<string> }> | undefined
   readonly provenance: GridAssetProvenance
 }
 

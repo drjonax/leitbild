@@ -393,7 +393,9 @@ describe('a synchronous external equivalent with several boundary buses', () => 
       externalSystems: [{
         id: 'external:nordic-remainder', label: 'Nordic remainder', area: 'nordic-remainder', synchronous: true,
         boundaryBusIds: ['bus:boundary-SE2@420', 'bus:boundary-SE3@420'],
-        inertiaGws: 171, loadMw: 43_100, fcrNMwPerHz: 3_720, fcrDUpMw: 899, fcrDDownMw: 868, afrrUpMw: 138, afrrDownMw: 138, provenance,
+        inertiaGws: 171, loadMw: 43_100, fcrNMwPerHz: 3_720, fcrDUpMw: 899, fcrDDownMw: 868, afrrUpMw: 138, afrrDownMw: 138,
+        areaParticipation: [{ area: 'SE2', share: 0.2, boundaryBusIds: ['bus:boundary-SE2@420'] }, { area: 'SE3', share: 0.8, boundaryBusIds: ['bus:boundary-SE3@420'] }],
+        provenance,
       }],
     })
     const run = runningGrid({ ...gridDefinitionForModel(model), gridId: 'grid:test' })
@@ -449,6 +451,7 @@ describe('reserves dimensioned per synchronous area', () => {
       loads: [testLoad({ id: 'load', busId: 'bus:a', demandMw: 1_000 })],
       ...(withEquivalent ? { externalSystems: [{
         id: 'external:nordic-remainder', label: 'Nordic remainder', area: 'nordic-remainder' as const, synchronous: true, boundaryBusIds: ['bus:boundary-SE3@420'],
+        areaParticipation: [{ area: 'SE3' as const, share: 1, boundaryBusIds: ['bus:boundary-SE3@420'] }],
         inertiaGws: 171, loadMw: 43_100, fcrNMwPerHz: 3_720, fcrDUpMw: 899, fcrDDownMw: 868, afrrUpMw: 138, afrrDownMw: 138, provenance,
       }] } : {}),
     })
@@ -544,6 +547,13 @@ describe('Halden coupling to the Nordic synchronous area', () => {
     exportMw: (branch.toBusId === se3Boundary ? 1 : -1) * grid.branches.get(branch.id)!.flowMw,
     lossesMw: grid.branches.get(branch.id)!.lossesMw,
   }))
+  /** Export towards each Nordic area over all its ties (MW), from the flows at the Norwegian ends. */
+  const exportByArea = (grid: GridRuntimeInstance): ReadonlyMap<string, number> => {
+    const nordic = grid.definition.index.externalSystems.find(system => system.synchronous)!
+    return new Map(nordic.areaParticipation!.map(entry => [entry.area, entry.boundaryBusIds.reduce((sum, busId) =>
+      sum + grid.definition.index.branchesByBus.get(busId)!.reduce((ties, branch) =>
+        ties + (branch.toBusId === busId ? 1 : -1) * grid.branches.get(branch.id)!.flowMw, 0), 0)]))
+  }
   const nordicImportMw = (grid: GridRuntimeInstance): number => grid.definition.index.externalSystems
     .filter(system => system.synchronous).reduce((sum, system) => sum + grid.externalSystems.get(system.id)!.importMw, 0)
 
@@ -569,6 +579,13 @@ describe('Halden coupling to the Nordic synchronous area', () => {
     const responseMw = nordic.reduce((sum, system) => sum + system.fcrNMwPerHz! * 0.1 + system.afrrUpMw!, 0)
     const scheduledExportMw = run.grid.definition.operatingPoint.externalExchanges.reduce((sum, exchange) => sum + exchange.scheduledExportMw, 0)
     expect(Math.abs(nordicImportMw(run.grid) + scheduledExportMw)).toBeLessThan(responseMw)
+    // The exchange enters the Nordic area by its area participation: almost all of it over the SE3
+    // ties next to Halden, little over the northern ties and the Finnmark tie to Finland.
+    const byArea = exportByArea(run.grid)
+    const exportMw = [...byArea.values()].reduce((sum, value) => sum + value, 0)
+    console.info(`Halden 4×1,100 MW, export by area: ${[...byArea].map(([area, value]) => `${area} ${value.toFixed(1)} MW`).join(', ')}`)
+    expect(byArea.get('SE3')! / exportMw).toBeGreaterThan(0.8)
+    expect(Math.abs(byArea.get('FI')!) / exportMw).toBeLessThan(0.03)
     // The ties carry exactly what leaves the boundary bus, less half their losses, which it carries as load.
     const boundary = run.grid.busStates.get(se3Boundary)!
     expect(ties.reduce((sum, tie) => sum + tie.exportMw, 0)).toBeCloseTo(-boundary.netInjectionMw, 6)

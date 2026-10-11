@@ -75,6 +75,18 @@ export const gridModelReferenceIssues = (model: Model): ReadonlyArray<GridDataIs
       fail(path, `${busId} lies in ${bus.externalArea}, outside ${system.area}`)
     }
   }))
+  model.externalSystems.forEach((system, index) => {
+    if (system.areaParticipation === undefined) return
+    const boundaryAreas = new Set(system.boundaryBusIds.flatMap(busId => {
+      const area = model.buses.find(bus => bus.id === busId)?.externalArea
+      return area === undefined ? [] : [area]
+    }))
+    const listed = new Set(system.areaParticipation.map(entry => entry.area))
+    for (const area of boundaryAreas) if (!listed.has(area)) fail(['externalSystems', index, 'areaParticipation'], `has no share for ${area}, an area of its boundary buses`)
+    system.areaParticipation.forEach((entry, entryIndex) => {
+      if (!boundaryAreas.has(entry.area)) fail(['externalSystems', index, 'areaParticipation', entryIndex, 'area'], `${entry.area} has no boundary bus of ${system.id}`)
+    })
+  })
   model.buses.forEach((bus, index) => {
     if (bus.kind === 'boundary' && !externalByBoundaryBus.has(bus.id)) fail(['buses', index, 'id'], 'a boundary bus must belong to exactly one external system')
   })

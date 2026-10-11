@@ -1290,6 +1290,145 @@
         }
       },
       "loadDampingPercentPerHz": 1,
+      "boundaryParticipation": {
+        "method": "Each remainder area's share of the remainder's kinetic energy (Fingrid maps; Finland's two dots summed; the shares of each hour normalised to the remainder, then the hours averaged) passes towards Norway along its route: at an area with Norwegian borders it splits between those borders and its onward AC border in proportion to their capacities (the mean of both directions: borderCapacities for the Norwegian borders, remainderBorders inside the remainder); an area without a Norwegian border passes all of it on. SE4 and eastern Denmark reach Norway through SE3, Finland through its 100 MW NO4 border and the 1,900 MW Aurora-strengthened SE1 border, SE1 and SE2 through their Norwegian borders and southwards. The shares are where the remainder's response enters Norway, not physical flows: a network equivalent of Sweden and Finland would give location-dependent sharing.",
+        "kineticEnergyHours": [
+          {
+            "hour": "2020-12-31 17–18 CET",
+            "nordicGws": 256,
+            "areaPercent": {
+              "SE1": 6.1,
+              "SE2": 11.6,
+              "SE3": 27.0,
+              "SE4": 0.5,
+              "FI": 15.8,
+              "DK2": 6.1
+            },
+            "evidence": [
+              {
+                "url": "https://www.fingrid.fi/contentassets/33e309d8bafb4e88a156f7beb5daffe9/imagejcjw.png",
+                "supports": "Per-area share of the Nordic 256 GWs: SE1 6.1 %, SE2 11.6 %, SE3 27.0 %, SE4 0.5 %, Finland 14.8 % + 1.0 % (two dots), DK2 6.1 %; Norway NO4 6.6 % and southern Norway 26.5 %"
+              },
+              {
+                "url": "https://www.fingrid.fi/en/electricity-market-information/InertiaofNordicpowersystem/",
+                "supports": "Fingrid's per-area kinetic-energy maps of the Nordic power system"
+              }
+            ]
+          },
+          {
+            "hour": "2021-06-13 14–15 CEST",
+            "nordicGws": 110,
+            "areaPercent": {
+              "SE1": 4.5,
+              "SE2": 10.1,
+              "SE3": 35.3,
+              "SE4": 0.7,
+              "FI": 21.3,
+              "DK2": 5.2
+            },
+            "evidence": [
+              {
+                "url": "https://www.fingrid.fi/contentassets/33e309d8bafb4e88a156f7beb5daffe9/image06rx.png",
+                "supports": "Per-area share of the Nordic 110 GWs: SE1 4.5 %, SE2 10.1 %, SE3 35.3 %, SE4 0.7 %, Finland 20.4 % + 0.9 % (two dots), DK2 5.2 %; Norway NO4 7.4 % and southern Norway 15.6 %"
+              }
+            ]
+          }
+        ],
+        "routes": [
+          {
+            "area": "DK2",
+            "norwegianBorders": [],
+            "onward": {
+              "area": "SE4",
+              "border": null
+            }
+          },
+          {
+            "area": "FI",
+            "norwegianBorders": [
+              "NO4-FI"
+            ],
+            "onward": {
+              "area": "SE1",
+              "border": "FI-SE1"
+            }
+          },
+          {
+            "area": "SE1",
+            "norwegianBorders": [
+              "NO4-SE1"
+            ],
+            "onward": {
+              "area": "SE2",
+              "border": "SE1-SE2"
+            }
+          },
+          {
+            "area": "SE2",
+            "norwegianBorders": [
+              "NO3-SE2",
+              "NO4-SE2"
+            ],
+            "onward": {
+              "area": "SE3",
+              "border": "SE2-SE3"
+            }
+          },
+          {
+            "area": "SE3",
+            "norwegianBorders": [
+              "NO1-SE3"
+            ],
+            "onward": null
+          },
+          {
+            "area": "SE4",
+            "norwegianBorders": [],
+            "onward": {
+              "area": "SE3",
+              "border": null
+            }
+          }
+        ],
+        "remainderBorders": [
+          {
+            "border": "FI-SE1",
+            "forwardMw": 1900,
+            "backwardMw": 1900,
+            "basis": "Fingrid's maximum cross-border capacity between Finland and northern Sweden after the Aurora Line (commissioned 2025-11-13).",
+            "evidence": [
+              {
+                "url": "https://www.fingrid.fi/en/news/news/2025/aurora-line-power-transmission-connection-to-be-commissioned-on-november-13/",
+                "supports": "a maximum of 1,900 megawatts in both import and export directions (2025-10-29)"
+              }
+            ]
+          },
+          {
+            "border": "SE1-SE2",
+            "forwardMw": 3300,
+            "backwardMw": 3300,
+            "basis": "Maximum NTC (structural reference value) on the Nordic max-NTC map valid from 2024-01-01.",
+            "evidence": [
+              {
+                "url": "https://www.nordpoolgroup.com/49378f/globalassets/download-center/tso/max-ntc.pdf",
+                "supports": "SE1→SE2 3300 MW, SE2→SE1 3300 MW"
+              }
+            ]
+          },
+          {
+            "border": "SE2-SE3",
+            "forwardMw": 7300,
+            "backwardMw": 7300,
+            "basis": "Maximum NTC (structural reference value) on the Nordic max-NTC map valid from 2024-01-01.",
+            "evidence": [
+              {
+                "url": "https://www.nordpoolgroup.com/49378f/globalassets/download-center/tso/max-ntc.pdf",
+                "supports": "SE2→SE3 7300 MW, SE3→SE2 7300 MW"
+              }
+            ]
+          }
+        ]
+      },
       "evidence": [
         {
           "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/tiedotteet/2025---requirements-for-minimum-inertia-in-the-nordic-power-system.pdf",
@@ -1363,6 +1502,7 @@
       ],
       "cases": null,
       "loadDampingPercentPerHz": null,
+      "boundaryParticipation": null,
       "evidence": [
         {
           "url": "https://www.hitachienergy.com/news-and-events/customer-stories/skagerrak",
@@ -1388,6 +1528,7 @@
       ],
       "cases": null,
       "loadDampingPercentPerHz": null,
+      "boundaryParticipation": null,
       "evidence": [
         {
           "url": "https://www.hitachienergy.com/news-and-events/customer-stories/norned",
@@ -1413,6 +1554,7 @@
       ],
       "cases": null,
       "loadDampingPercentPerHz": null,
+      "boundaryParticipation": null,
       "evidence": [
         {
           "url": "https://cse.cigre.org/cse-n024/connecting-two-synchronous-areas-with-an-hvdc-link-the-nordlink-interconnector",
@@ -1438,6 +1580,7 @@
       ],
       "cases": null,
       "loadDampingPercentPerHz": null,
+      "boundaryParticipation": null,
       "evidence": [
         {
           "url": "https://www.hitachienergy.com/about-us/case-studies/nsl-link",

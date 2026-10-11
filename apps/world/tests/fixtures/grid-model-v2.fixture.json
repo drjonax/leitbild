@@ -102,6 +102,7 @@
     {
       "id": "external:nordic-remainder", "label": "Nordic remainder", "area": "nordic-remainder", "synchronous": true,
       "boundaryBusIds": ["bus:boundary-SE3@400"], "inertiaGws": 120, "loadMw": 30000, "fcrNMwPerHz": 6000, "fcrDUpMw": 1450, "fcrDDownMw": 1400, "afrrUpMw": 200, "afrrDownMw": 200,
+      "areaParticipation": [{ "area": "SE3", "share": 1 }],
       "provenance": { "sources": ["leitbild:test-curation@2026-10-10"], "method": "curated", "confidence": "low", "note": "Fixture equivalent." }
     },
     {

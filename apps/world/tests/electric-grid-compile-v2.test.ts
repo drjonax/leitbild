@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { compileGridModelIndex } from '../src/packs/electric-grid/definitions.ts'
+import { nordicAreaParticipation } from '../src/packs/electric-grid/build/interconnectors.ts'
+import { interconnectorTableSchema } from '../src/packs/electric-grid/schemas/grid-interconnector.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
 import { validateGridModel } from '../src/packs/electric-grid/schemas/grid-model.ts'
 import { gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
@@ -59,6 +61,16 @@ describe('Grid Model v2 → runtime model', () => {
     const synchronous = model.externalSystems.filter(system => system.synchronous)
     expect(synchronous.map(system => [system.id, system.boundaryBusIds])).toEqual([[nordic.id, nordic.boundaryBusIds]])
     expect(nordic.boundaryBusIds.length).toBeGreaterThan(1)
+    // The exchange enters by area as the build derives it from the interconnector table: the
+    // remainder's kinetic energy routed towards Norway mostly reaches the SE3 border.
+    const table = interconnectorTableSchema.parse(JSON.parse(await readFile(join(import.meta.dir, '../src/packs/electric-grid/models/norway-interconnectors.json'), 'utf8')))
+    expect(nordic.areaParticipation).toEqual(nordicAreaParticipation(table).map(entry => ({ ...entry })))
+    const share = new Map(nordic.areaParticipation!.map(entry => [entry.area, entry.share]))
+    expect(share.get('SE3')!).toBeGreaterThan(0.85)
+    expect(share.get('FI')!).toBeLessThan(0.02)
+    const mapped = synchronous[0]!.areaParticipation!
+    expect(mapped.find(entry => entry.area === 'SE3')!.boundaryBusIds).toEqual(['bus:boundary-SE3@132', 'bus:boundary-SE3@420'])
+    expect(mapped.flatMap(entry => entry.boundaryBusIds).sort()).toEqual([...nordic.boundaryBusIds].sort())
     expect(model.externalSystems.filter(system => !system.synchronous).map(system => system.id).sort()).toEqual(['external:DE', 'external:DK1', 'external:GB', 'external:NL'])
     const demandMw = model.loads.reduce((sum, load) => sum + load.demandMw, 0) * winter.loadScale
     expect(demandMw).toBeCloseTo(generated.loads.reduce((sum, load) => sum + load.referenceDemandMw, 0) * winter.loadScale, 6)

@@ -118,6 +118,47 @@ const synchronousCaseSchema = z.strictObject({
   derivation: z.string().min(1),
 })
 
+/** The bidding zones of the Nordic remainder (the Nordic synchronous area without Norway). */
+export const remainderAreaSchema = z.enum(['SE1', 'SE2', 'SE3', 'SE4', 'FI', 'DK2'])
+export type RemainderArea = z.infer<typeof remainderAreaSchema>
+
+/** Share of the Nordic kinetic energy in each remainder area at one published map hour, %. */
+const kineticEnergyHourSchema = z.strictObject({
+  hour: z.string().min(1),
+  nordicGws: z.number().positive(),
+  areaPercent: z.strictObject({
+    SE1: z.number().nonnegative(), SE2: z.number().nonnegative(), SE3: z.number().nonnegative(),
+    SE4: z.number().nonnegative(), FI: z.number().nonnegative(), DK2: z.number().nonnegative(),
+  }),
+  evidence: z.array(curatedEvidenceSchema).min(1),
+})
+
+/** An AC bidding-zone border inside the remainder, capacity in each direction (MW). */
+const remainderBorderSchema = z.strictObject({
+  border: z.string().regex(/^(SE[1-4]|FI|DK2)-(SE[1-4]|FI|DK2)$/),
+  forwardMw: z.number().positive(),
+  backwardMw: z.number().positive(),
+  basis: z.string().min(1),
+  evidence: z.array(curatedEvidenceSchema).min(1),
+})
+
+/**
+ * How the remainder's response reaches Norway's borders: each area's share of the remainder's
+ * kinetic energy passes towards Norway along its route, split between the area's own Norwegian
+ * borders (borderCapacities) and its onward AC border in proportion to their mean capacities.
+ */
+const boundaryParticipationSchema = z.strictObject({
+  method: z.string().min(1),
+  kineticEnergyHours: z.array(kineticEnergyHourSchema).min(1),
+  routes: z.array(z.strictObject({
+    area: remainderAreaSchema,
+    norwegianBorders: z.array(z.string().regex(/^NO[1-5]-(SE1|SE2|SE3|FI)$/)),
+    // The next area towards Norway; its border capacity is needed only beside Norwegian borders.
+    onward: z.strictObject({ area: remainderAreaSchema, border: z.string().regex(/^(SE[1-4]|FI|DK2)-(SE[1-4]|FI|DK2)$/).nullable() }).nullable(),
+  })).length(6),
+  remainderBorders: z.array(remainderBorderSchema),
+})
+
 export const externalSystemSchema = z.strictObject({
   id: z.string().regex(/^external:[a-z0-9-]+$/),
   label: z.string().min(1),
@@ -127,11 +168,13 @@ export const externalSystemSchema = z.strictObject({
   cases: z.strictObject({ winterPeak: synchronousCaseSchema, summerLow: synchronousCaseSchema }).nullable(),
   // Load self-regulation, % of load per Hz.
   loadDampingPercentPerHz: z.number().positive().nullable(),
+  boundaryParticipation: boundaryParticipationSchema.nullable(),
   evidence: z.array(curatedEvidenceSchema).min(1),
   provenance: curatedProvenanceSchema,
 }).refine(
-  system => system.synchronous === (system.cases !== null) && system.synchronous === (system.loadDampingPercentPerHz !== null),
-  { message: 'synchronous external systems need cases and load damping; HVDC-only areas have neither' },
+  system => system.synchronous === (system.cases !== null) && system.synchronous === (system.loadDampingPercentPerHz !== null)
+    && system.synchronous === (system.boundaryParticipation !== null),
+  { message: 'synchronous external systems need cases, load damping and boundary participation; HVDC-only areas have none' },
 )
 
 export const interconnectorTableSchema = z.strictObject({

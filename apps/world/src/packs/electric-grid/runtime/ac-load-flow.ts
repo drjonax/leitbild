@@ -1,7 +1,7 @@
 import type { GridExternalSystemDefinition, GridModelDefinition } from '../grid-model.ts'
 import { generatorKineticEnergyMws } from './generator-dynamics.ts'
 import type { GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
-import { boundaryTieCapacityMw, externalKineticEnergyMws, gridGeneratorIsSynchronised, islandAssetStates, islandMembers } from './island-input.ts'
+import { externalBoundaryShares, externalKineticEnergyMws, gridGeneratorIsSynchronised, islandAssetStates, islandMembers } from './island-input.ts'
 import { createAcNetwork, type AcNetwork } from './network/ac-network.ts'
 import type { GridIslandSystem } from './network/dc-power-flow.ts'
 import {
@@ -155,18 +155,21 @@ const specifyIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island
 
 const specifyExternal = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island: GridTopologyIsland, system: GridExternalSystemDefinition, acWork: GridAcWork): void => {
   const { specification, participation } = acWork
-  const boundaries = system.boundaryBusIds.filter(busId => island.busSet.has(busId))
-  const capacities = boundaries.map(busId => boundaryTieCapacityMw(grid, busId))
-  const totalCapacityMw = capacities.reduce((sum, capacity) => sum + capacity, 0)
-  boundaries.forEach((busId, position) => {
-    const bus = plan.network.busIndexById.get(busId)!
-    specification.voltageControlled[bus] = 1
-    specification.voltageSetpointPu[bus] = externalVoltageSetpointPu
-    specification.reactiveMinimumMvar[bus] = Number.NEGATIVE_INFINITY
-    specification.reactiveMaximumMvar[bus] = Number.POSITIVE_INFINITY
-    // The equivalent shares the AC slack by its kinetic energy, spread over its ties as it closes the DC balance.
-    participation[bus] = participation[bus]! + externalKineticEnergyMws(system) * (totalCapacityMw > 0 ? capacities[position]! / totalCapacityMw : 1 / boundaries.length)
-  })
+  // The equivalent shares each component's AC slack by its kinetic energy, spread over that
+  // component's boundary buses as it closes the DC balance there (externalBoundaryShares).
+  for (const componentIndex of island.componentIndices) {
+    const boundaries = system.boundaryBusIds.filter(busId => plan.componentIndexOfBus[plan.network.busIndexById.get(busId)!] === componentIndex)
+    if (boundaries.length === 0) continue
+    const shares = externalBoundaryShares(grid, system, boundaries)
+    boundaries.forEach((busId, position) => {
+      const bus = plan.network.busIndexById.get(busId)!
+      specification.voltageControlled[bus] = 1
+      specification.voltageSetpointPu[bus] = externalVoltageSetpointPu
+      specification.reactiveMinimumMvar[bus] = Number.NEGATIVE_INFINITY
+      specification.reactiveMaximumMvar[bus] = Number.POSITIVE_INFINITY
+      participation[bus] = participation[bus]! + externalKineticEnergyMws(system) * shares[position]!
+    })
+  }
 }
 
 /** A warm start needs a finite previous solution at every bus of the component. */

@@ -48,6 +48,17 @@ describe('Grid Model v2 schema', () => {
     expect(rejection(variant(model => { model.connectionPoints[0].nominalKv = 132 }))).toContain('$.connectionPoints[0].nominalKv')
   })
 
+  test('shares a synchronous system\'s exchange by area: one share per boundary area, summing to 1', () => {
+    expect(rejection(variant(model => { delete model.externalSystems[0].areaParticipation })))
+      .toContain('$.externalSystems[0].areaParticipation: required for a synchronous external system')
+    expect(rejection(variant(model => { model.externalSystems[0].areaParticipation = [{ area: 'SE3', share: 0.9 }] })))
+      .toContain('$.externalSystems[0].areaParticipation: shares must sum to 1, got 0.9')
+    expect(rejection(variant(model => { model.externalSystems[0].areaParticipation = [{ area: 'SE3', share: 0.5 }, { area: 'FI', share: 0.5 }] })))
+      .toContain('$.externalSystems[0].areaParticipation[1].area: FI has no boundary bus of external:nordic-remainder')
+    expect(rejection(variant(model => { model.externalSystems[1].areaParticipation = [{ area: 'DE', share: 1 }] })))
+      .toContain('$.externalSystems[1].areaParticipation: only a synchronous external system shares frequency with Norway')
+  })
+
   test('requires unique ids across all asset collections', () => {
     expect(rejection(variant(model => { model.generators[1].id = model.generators[0].id })))
       .toContain('$.generators[1].id: duplicates the id at generators[0]')
