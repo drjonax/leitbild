@@ -345,6 +345,12 @@ describe('bundled Electric Grid Scenarios', () => {
     try {
       await scenario.advanceTo(59)
       expect((await bus()).energized).toBe(true)
+      // The evening start is balanced from the first second: the summer night's unit commitment with
+      // the evening's extra demand shared over the online units' headroom.
+      expect(scenario.samples.every(sample => Math.abs(sample.projection.frequencyHz! - 50) < 0.001)).toBe(true)
+      const transformerFlowMw = async (assetId: string) => Math.abs((await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId })).asset.state.flowMw!)
+      const importMw = await transformerFlowMw(fagrafjell) + await transformerFlowMw(lyse)
+      expect(importMw).toBeGreaterThan(120)
 
       await scenario.advanceTo(65)
       expectTimelineExecuted(scenario, 'rogaland-black-start')
@@ -454,7 +460,7 @@ describe('bundled Electric Grid Scenarios', () => {
       expect(scenario.projection().activeIslandCount).toBe(1)
       expect((await bus()).energized).toBe(true)
       expect(await trippedCount(scenario, 'branch')).toBe(0)
-      console.info(`rogaland-black-start: ${outageMw.toFixed(0)} MW dark, ${regionTripped.total} units tripped; starting block ${startingBlockMw.toFixed(1)} MW; ${pickedUpMw.toFixed(1)} MW picked up in ${fitting.length} blocks of at most ${largestBlockMw.toFixed(1)} MW with the lowest frequency ${lowestHz.toFixed(3)} Hz; synchro-check refused at ${offsetBeforeCloseHz.toFixed(3)} Hz and closed at ${offsetAtCloseHz.toFixed(3)} Hz after waiting ${waitedSeconds} s${trimmed ? ' with a 1 MW trim' : ''}; ${restored.reduce((sum, entry) => sum + entry.state.servedMw, 0).toFixed(0)} MW served at the end`)
+      console.info(`rogaland-black-start: ${importMw.toFixed(0)} MW imported before the trip; ${outageMw.toFixed(0)} MW dark, ${regionTripped.total} units tripped; starting block ${startingBlockMw.toFixed(1)} MW; ${pickedUpMw.toFixed(1)} MW picked up in ${fitting.length} blocks of at most ${largestBlockMw.toFixed(1)} MW with the lowest frequency ${lowestHz.toFixed(3)} Hz; synchro-check refused at ${offsetBeforeCloseHz.toFixed(3)} Hz and closed at ${offsetAtCloseHz.toFixed(3)} Hz after waiting ${waitedSeconds} s${trimmed ? ' with a 1 MW trim' : ''}; ${restored.reduce((sum, entry) => sum + entry.state.servedMw, 0).toFixed(0)} MW served at the end`)
     } finally { await scenario.close() }
   }, scenarioWatchdogMs)
 })
