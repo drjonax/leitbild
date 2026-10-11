@@ -180,7 +180,8 @@ describe('composed display panel presenters', () => {
       { id: 'c', ruleId: 'other', kind: 'alarm', title: 'Other', severity: 'critical', active: true, acknowledged: false, firstOut: false },
       { id: 'd', ruleId: 'sg-b-feedwater-low', kind: 'alarm', title: 'SG B feed low', severity: 'warning', active: true, acknowledged: false, firstOut: false, firstActiveElapsedMs: 50_000 },
     ]
-    const groups = { firstOutGroups: { 'sg-b-level-low-low': 'RX TRIP', 'sg-c-level-low-low': 'RX TRIP' } }
+    // First-out groups name what an alarm row annunciates, by its id.
+    const groups = { firstOutGroups: { b: 'RX TRIP', 'sg-c-level-low-low': 'RX TRIP' } }
     expect(visibleAlarms(alarms, 'related', ['sg-b-level-low', 'sg-b-level-low-low', 'sg-b-feedwater-low'], groups).map(alarm => alarm.id)).toEqual(['b', 'd', 'a'])
     const plant: ReadonlyArray<ComposedDisplayAlarm> = [
       { id: 'cleared', ruleId: 'r1', kind: 'alarm', title: 'Cleared', severity: 'critical', active: false, acknowledged: false, firstOut: false, firstActiveElapsedMs: 1_000 },
@@ -192,33 +193,51 @@ describe('composed display panel presenters', () => {
     // First out of a group of one says nothing: it is not read first.
     const flagged = alarms.map(alarm => alarm.id === 'a' ? { ...alarm, firstOut: true } : alarm)
     expect(visibleAlarms(flagged, 'plant', [], { firstOutGroups: {} }).map(alarm => alarm.id)).toEqual(['b', 'c', 'd', 'a'])
-    expect(visibleAlarms(flagged, 'plant', [], { firstOutGroups: { 'sg-b-level-low': 'SG LO' } }).map(alarm => alarm.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(visibleAlarms(flagged, 'plant', [], { firstOutGroups: { a: 'SG LO' } }).map(alarm => alarm.id)).toEqual(['a', 'b', 'c', 'd'])
   })
 
   test('the banner leads with the reactor trip\'s first-out, and lists the other actuations apart from it', () => {
     // Evaluation run 22, loss of main feedwater: the AFW start came in first; the reactor tripped on SG B low-low level.
-    const trip = (id: string, ruleId: string, at: number, firstOut: boolean): ComposedDisplayAlarm =>
-      ({ id, ruleId, kind: 'trip', title: id, severity: 'critical', active: true, acknowledged: false, firstOut, firstActiveElapsedMs: at })
+    // An alarm row's id is the trip it annunciates, of its rule.
+    const trip = (title: string, ruleId: string, effectId: string, at: number, firstOut: boolean): ComposedDisplayAlarm =>
+      ({ id: `trip:${ruleId}:${effectId}`, ruleId, kind: 'trip', title, severity: 'critical', active: true, acknowledged: false, firstOut, firstActiveElapsedMs: at })
     const alarms = [
-      trip('Steam generator B low-low level', 'sg-b-afw', 60_000, false),
-      trip('Auxiliary feedwater start on main feedwater pump trip', 'mfw-afw', 3_000, false),
-      trip('Reactor trip on steam generator B low-low level', 'sg-b-rx-trip', 61_000, true),
-      trip('Feedwater isolation on reactor trip, low Tavg', 'fwi', 75_000, false),
-      { ...trip('Safety injection actuated', 'si', 90_000, true), active: false },
+      trip('Steam generator B low-low level', 'sg-b-afw', 'afw', 60_000, false),
+      trip('Auxiliary feedwater start on main feedwater pump trip', 'mfw-afw', 'afw', 3_000, false),
+      trip('Reactor trip on steam generator B low-low level', 'sg-b-rx-trip', 'reactor-trip', 61_000, true),
+      trip('Feedwater isolation on reactor trip, low Tavg', 'fwi', 'fwi', 75_000, false),
+      { ...trip('Safety injection actuated', 'si', 'safety-injection', 90_000, true), active: false },
+      { ...trip('Reactor trip on safety injection, low pressurizer pressure', 'si', 'reactor-trip', 90_000, false), active: false },
     ]
+    // Safety injection annunciates its own trip in SI's group and the reactor trip it causes in the reactor trip's.
     const annunciation = {
-      reactorTrip: { name: 'RX TRIP', ruleIds: ['sg-a-rx-trip', 'sg-b-rx-trip', 'otdt'] },
-      actuations: [{ name: 'AFW', ruleIds: ['sg-a-afw', 'sg-b-afw', 'mfw-afw'] }, { name: 'SI', ruleIds: ['si'] }, { name: 'FWI', ruleIds: ['fwi'] }],
-      firstOutGroups: { 'sg-a-rx-trip': 'RX TRIP', 'sg-b-rx-trip': 'RX TRIP', otdt: 'RX TRIP' },
+      reactorTrip: { name: 'RX TRIP', ids: ['trip:sg-a-rx-trip:reactor-trip', 'trip:sg-b-rx-trip:reactor-trip', 'trip:otdt:reactor-trip', 'trip:si:reactor-trip'] },
+      actuations: [
+        { name: 'AFW START', ids: ['trip:sg-a-afw:afw', 'trip:sg-b-afw:afw', 'trip:mfw-afw:afw'] },
+        { name: 'SI', ids: ['trip:si:safety-injection'] },
+        { name: 'FWI', ids: ['trip:fwi:fwi'] },
+      ],
+      firstOutGroups: { 'trip:sg-a-rx-trip:reactor-trip': 'RX TRIP', 'trip:sg-b-rx-trip:reactor-trip': 'RX TRIP', 'trip:otdt:reactor-trip': 'RX TRIP', 'trip:si:reactor-trip': 'RX TRIP' },
       tags: {},
     }
     expect(bannerTrip(alarms, annunciation)?.title).toBe('Reactor trip on steam generator B low-low level')
-    expect(actuatedNames(alarms, annunciation)).toEqual(['AFW', 'FWI'])
+    expect(actuatedNames(alarms, annunciation)).toEqual(['AFW START', 'FWI'])
     // Without a reactor trip, nothing leads the banner; the actuations still show.
     expect(bannerTrip(alarms.filter(alarm => alarm.ruleId !== 'sg-b-rx-trip'), annunciation)).toBeUndefined()
-    // First out names its group, and only where the group has more than one rule.
+    // First out names its group, and only where the group has more than one member.
     expect(firstOutFlag(alarms[2]!, annunciation)).toBe('1st RX TRIP')
-    expect(firstOutFlag({ ruleId: 'si', firstOut: true }, annunciation)).toBeNull()
+    expect(firstOutFlag({ id: 'trip:si:safety-injection', firstOut: true }, annunciation)).toBeNull()
+    // A pressurizer that falls to its SI set point first: the reactor trip safety injection causes leads the banner
+    // as the reactor trip's first-out, and SI is listed as actuated beside it.
+    const depressurized = [
+      trip('Safety injection actuated', 'si', 'safety-injection', 40_000, true),
+      trip('Reactor trip on safety injection, low pressurizer pressure', 'si', 'reactor-trip', 40_000, true),
+      trip('Reactor trip on overtemperature delta-T', 'otdt', 'reactor-trip', 41_000, false),
+    ]
+    const banner = bannerTrip(depressurized, annunciation)!
+    expect(banner.title).toBe('Reactor trip on safety injection, low pressurizer pressure')
+    expect(firstOutFlag(banner, annunciation)).toBe('1st RX TRIP')
+    expect(actuatedNames(depressurized, annunciation)).toEqual(['SI'])
   })
 
   test('alarm age in Plant time', () => {
@@ -316,7 +335,7 @@ describe('annunciator tiles', () => {
       alarm('not-annunciated', 'critical'),
       // Cleared but unacknowledged: listed, not counted as active.
       alarm('ctmt-high', 'critical', { active: false, acknowledged: false }),
-    ], { firstOutGroups: { 'bus-a-dead': 'BUS DEAD', 'bus-b-dead': 'BUS DEAD' } })
+    ], { firstOutGroups: { 'bus-a-dead:a': 'BUS DEAD', 'bus-b-dead:a': 'BUS DEAD' } })
     expect(states).toEqual([
       { id: 'steamGenerators', name: 'Steam generators', active: 2, unacknowledged: 1, severity: 'critical', trip: false, firstOut: false },
       { id: 'electrical', name: 'Electrical', active: 1, unacknowledged: 0, severity: 'notice', trip: true, firstOut: true },

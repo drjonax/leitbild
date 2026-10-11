@@ -1,10 +1,11 @@
 import type { VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
+import { processPlantIcLifecycleIdFor } from '../runtime/index.ts'
 import { resolveProcessPlantSignalPath } from '../signals.ts'
 import { composedDisplayLayout } from './composition.ts'
 import { limitKindName } from './display-text.ts'
-import { actionOf, firstOutGroupOf, icRuleKind, icThresholdsForSignal } from './ic-thresholds.ts'
+import { actionOf, icRuleKind, icThresholdsForSignal } from './ic-thresholds.ts'
 import { textWidth, unmeasurable } from './mimic/text-metrics.ts'
 
 // The Plant's annunciator systems as its I&C config declares them, in their
@@ -54,20 +55,27 @@ export const annunciatorSystems = (plant: CompiledProcessPlant, tileWidth: numbe
  * its group, and each alarm row is tagged as its limit is named on a chip, a
  * badge and a trend line ("LO-LO · RX TRIP"). Nothing is read from a rule's
  * id or title.
+ *
+ * Groups belong to what a rule annunciates, not to the rule: a rule that
+ * trips the reactor besides its own actuation annunciates both, its own trip
+ * in its actuation's group ("SI") and the reactor trip in the reactor trip's
+ * group, so the reactor trip's first-out can be the one safety injection
+ * caused while SI is still listed as actuated. Each is keyed by the id of
+ * the alarm or trip it annunciates (an alarm row's id).
  */
 export interface DisplayAnnunciation {
-  /** What the reactor trip's group is called ("RX TRIP"), and the rules in it; null where the Plant declares none. */
-  readonly reactorTrip: { readonly name: string; readonly ruleIds: ReadonlyArray<string> } | null
+  /** What the reactor trip's group is called ("RX TRIP"), and the trips annunciated in it; null where the Plant declares none. */
+  readonly reactorTrip: { readonly name: string; readonly ids: ReadonlyArray<string> } | null
   /**
    * The automatic actuations other than the reactor trip (trips annunciated
    * as automatic actions), by what the display calls them: their group's
-   * short label, or the trip's own title where its rule names no group.
+   * short label, or the trip's own title where it names no group.
    */
-  readonly actuations: ReadonlyArray<{ readonly name: string; readonly ruleIds: ReadonlyArray<string> }>
+  readonly actuations: ReadonlyArray<{ readonly name: string; readonly ids: ReadonlyArray<string> }>
   /**
-   * The group a rule's first-out flag names, by rule id: only groups of more
-   * than one rule, as being first among one says nothing (evaluation run 22
-   * tagged SI "first out" 14 s after the reactor tripped).
+   * The group an alarm's or trip's first-out flag names, by its id: only
+   * groups of more than one, as being first among one says nothing
+   * (evaluation run 22 tagged SI "first out" 14 s after the reactor tripped).
    */
   readonly firstOutGroups: Readonly<Record<string, string>>
   /** Each alarm and trip rule's tag in an alarm row, by rule id: its limit as a chip names it, or with none, what it does. */
@@ -93,19 +101,21 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
   const known = annunciationByPlant.get(plant)
   if (known !== undefined) return known
   const rules = plant.automation.rules.filter(rule => rule.enabled && icRuleKind(rule) !== 'control')
-  const groupOf = new Map(rules.map(rule => [rule.id, firstOutGroupOf(plant, rule)]))
-  const reactorTripRules = rules.filter(rule => groupOf.get(rule.id)?.reactorTrip === true)
-  const automatic = (rule: ProcessPlantIcRule): boolean => rule.effects.some(effect => effect.type === 'trip.enter' && effect.annunciator?.role === 'automaticAction')
+  // Every alarm and trip the rules annunciate, with the group it names.
+  const annunciated = rules.flatMap(rule => rule.effects.flatMap(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter' ? [{
+    id: processPlantIcLifecycleIdFor(effect.type === 'alarm.enter' ? 'alarm' : 'trip', rule.id, effect.id),
+    effect,
+    group: effect.annunciator?.firstOutGroup === undefined ? undefined : plant.automation.firstOutGroups.find(group => group.id === effect.annunciator!.firstOutGroup),
+  }] : []))
+  const reactorTrips = annunciated.filter(entry => entry.group?.reactorTrip === true)
   const actuations = new Map<string, string[]>()
-  for (const rule of rules) {
-    if (!automatic(rule) || groupOf.get(rule.id)?.reactorTrip === true) continue
-    const group = groupOf.get(rule.id)
-    const title = rule.effects.find(effect => effect.type === 'trip.enter')!
-    const name = group?.shortLabel ?? (title.type === 'trip.enter' ? title.title : rule.id)
-    actuations.set(name, [...(actuations.get(name) ?? []), rule.id])
+  for (const { id, effect, group } of annunciated) {
+    if (effect.type !== 'trip.enter' || effect.annunciator?.role !== 'automaticAction' || group?.reactorTrip === true) continue
+    const name = group?.shortLabel ?? effect.title
+    actuations.set(name, [...(actuations.get(name) ?? []), id])
   }
   const members = new Map<string, number>()
-  for (const group of groupOf.values()) if (group !== undefined) members.set(group.id, (members.get(group.id) ?? 0) + 1)
+  for (const { group } of annunciated) if (group !== undefined) members.set(group.id, (members.get(group.id) ?? 0) + 1)
   const thresholdsOf = new Map<VariablePath, ReturnType<typeof icThresholdsForSignal>['thresholds']>()
   const tagOf = (rule: ProcessPlantIcRule): string => {
     const path = limitedPath(plant, rule)
@@ -114,12 +124,9 @@ export const displayAnnunciation = (plant: CompiledProcessPlant): DisplayAnnunci
     return threshold === undefined ? actionOf(plant, rule) : limitKindName(threshold)
   }
   const annunciation: DisplayAnnunciation = {
-    reactorTrip: reactorTripRules.length === 0 ? null : { name: groupOf.get(reactorTripRules[0]!.id)!.shortLabel, ruleIds: reactorTripRules.map(rule => rule.id) },
-    actuations: [...actuations.entries()].map(([name, ruleIds]) => ({ name, ruleIds })),
-    firstOutGroups: Object.fromEntries(rules.flatMap(rule => {
-      const group = groupOf.get(rule.id)
-      return group !== undefined && (members.get(group.id) ?? 0) > 1 ? [[rule.id, group.shortLabel]] : []
-    })),
+    reactorTrip: reactorTrips.length === 0 ? null : { name: reactorTrips[0]!.group!.shortLabel, ids: reactorTrips.map(entry => entry.id) },
+    actuations: [...actuations.entries()].map(([name, ids]) => ({ name, ids })),
+    firstOutGroups: Object.fromEntries(annunciated.flatMap(({ id, group }) => group !== undefined && (members.get(group.id) ?? 0) > 1 ? [[id, group.shortLabel]] : [])),
     tags: Object.fromEntries(rules.map(rule => [rule.id, tagOf(rule)])),
   }
   annunciationByPlant.set(plant, annunciation)

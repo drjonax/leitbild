@@ -163,7 +163,7 @@ describe('world.process-plant.display.compose', () => {
       { ref: 'SG-B-LVL-NR', tagId: 'SG-B-LVL-NR', path: 'sgB.levelPercent', label: 'Steam generator narrow-range level', name: 'SG-B-LVL-NR', unit: 'percent' },
       { ref: 'SG-A-LVL-NR', tagId: 'SG-A-LVL-NR', path: 'sgA.levelPercent', label: 'Steam generator narrow-range level', name: 'SG-A-LVL-NR', unit: 'percent' },
     ])
-    expect(result.shows.join('\n')).toContain('"LO-LO 20 % · ACTUATION" automatic action line: Steam generator B low-low level · Steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR')
+    expect(result.shows.join('\n')).toContain('"LO-LO 20 % · AFW START" automatic action line: Steam generator B low-low level · Steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR')
     expect((result as unknown as { simulationClock: string }).simulationClock).toBe('21:00:00')
     const margins = (result as unknown as { margins: ReadonlyArray<string> }).margins
     expect(margins).toHaveLength(2)
@@ -738,14 +738,23 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
   const annunciation = displayAnnunciation(compiled)
 
   test('come from the first-out groups and limits the I&C declares, never from ids or titles', () => {
+    // What a rule annunciates, by its alarm row's id.
+    const of = (ids: ReadonlyArray<string>, ruleId: string) => ids.filter(id => id.split(':')[1] === ruleId)
+    const reactorTrips = annunciation.reactorTrip?.ids ?? []
     expect(annunciation.reactorTrip?.name).toBe('RX TRIP')
-    expect(annunciation.reactorTrip?.ruleIds).toEqual(expect.arrayContaining(['sg-b-level-low-low-reactor-trip', 'reactor-overtemperature-delta-t-trip']))
-    // The AFW start and SI are actuations, never the reactor trip.
-    expect(annunciation.reactorTrip?.ruleIds).not.toContain('sg-b-level-low-low-afw-actuation')
-    expect(annunciation.reactorTrip?.ruleIds).not.toContain('safety-injection-low-pzr-pressure')
-    expect(annunciation.actuations.find(actuation => actuation.name === 'SI')?.ruleIds).toEqual(['safety-injection-low-pzr-pressure'])
-    // An actuation whose rule names no group yet is listed by its trip's own title.
-    expect(annunciation.actuations.find(actuation => actuation.ruleIds.includes('sg-b-level-low-low-afw-actuation'))?.name).toBe('Steam generator B low-low level')
+    expect(of(reactorTrips, 'sg-b-level-low-low-reactor-trip')).toHaveLength(1)
+    expect(of(reactorTrips, 'reactor-overtemperature-delta-t-trip')).toHaveLength(1)
+    // The AFW start is an actuation, never the reactor trip. Safety injection annunciates both: its own trip as SI,
+    // and the reactor trip it causes in the reactor trip's group, so that trip can be the banner's first-out.
+    expect(of(reactorTrips, 'sg-b-level-low-low-afw-actuation')).toEqual([])
+    expect(of(reactorTrips, 'safety-injection-low-pzr-pressure')).toEqual(['trip:safety-injection-low-pzr-pressure:reactor-trip'])
+    expect(annunciation.actuations.find(actuation => actuation.name === 'SI')?.ids).toEqual([
+      'trip:safety-injection-low-pzr-pressure:safety-injection',
+      'trip:safety-injection-containment-pressure-high-1:safety-injection',
+    ])
+    // Every actuation is named by its declared group.
+    expect(annunciation.actuations.find(actuation => of(actuation.ids, 'sg-b-level-low-low-afw-actuation').length > 0)?.name).toBe('AFW START')
+    expect(annunciation.actuations.map(actuation => actuation.name)).toEqual(expect.arrayContaining(['AFW START', 'SI', 'FWI', 'TURB TRIP', 'MSI', 'CS']))
     // Alarm rows are tagged as chips, badges and trend lines name their limits.
     expect([
       annunciation.tags['sg-b-level-low-low-reactor-trip'],
@@ -757,9 +766,11 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
     ]).toEqual(['LO-LO · RX TRIP', 'LO-LO · SI', 'LO · ALM', 'RX TRIP', 'LO-LO · ALM', 'ALM'])
     const annunciated = compiled.automation.rules.filter(rule => rule.enabled && rule.effects.some(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter'))
     expect(annunciated.every(rule => annunciation.tags[rule.id] !== undefined)).toBe(true)
-    // First out is flagged only within a group of more than one rule: never for SI, alone in its group.
-    expect(annunciation.firstOutGroups['reactor-overtemperature-delta-t-trip']).toBe('RX TRIP')
-    expect(annunciation.firstOutGroups['safety-injection-low-pzr-pressure']).toBeUndefined()
+    // First out is flagged only within a group of more than one: the reactor trip, and SI on low pressurizer
+    // pressure or on containment pressure Hi-1.
+    expect(of(Object.keys(annunciation.firstOutGroups), 'reactor-overtemperature-delta-t-trip').map(id => annunciation.firstOutGroups[id])).toEqual(['RX TRIP'])
+    expect(annunciation.firstOutGroups['trip:safety-injection-low-pzr-pressure:safety-injection']).toBe('SI')
+    expect(annunciation.firstOutGroups['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('RX TRIP')
   })
 
   test('a loss of main feedwater leads with the reactor trip\'s first-out, the actuations apart from it', () => {
@@ -787,8 +798,9 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
     expect(banner.ruleId).toMatch(/^sg-[a-d]-level-low-low-reactor-trip$/)
     expect(banner.firstOut).toBe(true)
     expect(firstOutFlag(banner, annunciation)).toBe('1st RX TRIP')
+    // The actuations are listed by their declared groups, never as the reactor trip.
     const actuated = actuatedNames(alarms, annunciation)
-    expect(actuated).toContain('Auxiliary feedwater start on main feedwater pump trip')
-    expect(actuated.some(name => name.includes('Reactor trip'))).toBe(false)
+    expect(actuated).toEqual(expect.arrayContaining(['AFW START', 'FWI']))
+    expect(actuated).not.toContain('RX TRIP')
   })
 })

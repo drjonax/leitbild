@@ -43,31 +43,32 @@ export const alertTypeOf = (severity: ComposedDisplayAlarm['severity']): 'alarm'
 
 /**
  * The first-out flag an alarm row carries, scoped to its group: "1st RX
- * TRIP". Null where it is not first out, or its group has no other rule to
- * be first among (displayAnnunciation).
+ * TRIP". Null where it is not first out, or its group has no other alarm or
+ * trip to be first among (displayAnnunciation).
  */
-export const firstOutFlag = (alarm: Pick<ComposedDisplayAlarm, 'firstOut' | 'ruleId'>, annunciation: Pick<DisplayAnnunciation, 'firstOutGroups'>): string | null => {
-  const group = annunciation.firstOutGroups[alarm.ruleId]
+export const firstOutFlag = (alarm: Pick<ComposedDisplayAlarm, 'firstOut' | 'id'>, annunciation: Pick<DisplayAnnunciation, 'firstOutGroups'>): string | null => {
+  const group = annunciation.firstOutGroups[alarm.id]
   return alarm.firstOut && group !== undefined ? `1st ${group}` : null
 }
 
 /**
  * The reactor trip the banner leads with: the active first-out of the
- * reactor trip's group, else its earliest active member. Never another
- * actuation, which the actuation line lists (evaluation run 22's banner read
- * "TRIP · Auxiliary feedwater start" beside the reactor trip's first-out).
+ * reactor trip's group, else its earliest active member; the reactor trip
+ * safety injection caused is one of them. Never another actuation, which the
+ * actuation line lists (evaluation run 22's banner read "TRIP · Auxiliary
+ * feedwater start" beside the reactor trip's first-out).
  */
 export const bannerTrip = (alarms: ReadonlyArray<ComposedDisplayAlarm>, annunciation: Pick<DisplayAnnunciation, 'reactorTrip'>): ComposedDisplayAlarm | undefined => {
-  const group = new Set(annunciation.reactorTrip?.ruleIds ?? [])
-  const tripped = alarms.filter(alarm => alarm.active && group.has(alarm.ruleId))
+  const group = new Set(annunciation.reactorTrip?.ids ?? [])
+  const tripped = alarms.filter(alarm => alarm.active && group.has(alarm.id))
     .sort((left, right) => Number(right.firstOut) - Number(left.firstOut) || (left.firstActiveElapsedMs ?? 0) - (right.firstActiveElapsedMs ?? 0))
   return tripped[0]
 }
 
 /** The automatic actuations other than the reactor trip that are active now, by name, in the order the I&C declares them: "AFW · SI · FWI". */
 export const actuatedNames = (alarms: ReadonlyArray<ComposedDisplayAlarm>, annunciation: Pick<DisplayAnnunciation, 'actuations'>): ReadonlyArray<string> => {
-  const active = new Set(alarms.filter(alarm => alarm.active).map(alarm => alarm.ruleId))
-  return annunciation.actuations.filter(actuation => actuation.ruleIds.some(ruleId => active.has(ruleId))).map(actuation => actuation.name)
+  const active = new Set(alarms.filter(alarm => alarm.active).map(alarm => alarm.id))
+  return annunciation.actuations.filter(actuation => actuation.ids.some(id => active.has(id))).map(actuation => actuation.name)
 }
 
 /**

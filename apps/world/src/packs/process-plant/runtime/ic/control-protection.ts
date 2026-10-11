@@ -41,6 +41,7 @@ import {
 export * from './control-protection-model.ts'
 export * from './control-protection-conditions.ts'
 export { assertProcessPlantIcRulesValid } from './control-protection-validation.ts'
+export { processPlantIcLifecycleIdFor } from './control-protection-lifecycle.ts'
 export type {
   ProcessPlantIcCatalog,
   ProcessPlantIcRuleCatalogEntry,

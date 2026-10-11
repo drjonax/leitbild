@@ -83,7 +83,12 @@ const labelFor = (rule: ProcessPlantIcRule): string => {
   return rule.label ?? rule.id
 }
 
-/** The first-out group a rule's trip annunciates in, as the I&C config declares it; undefined where it names none. */
+/**
+ * The first-out group of what a rule does itself, as the I&C config declares
+ * it: the group its first annunciated alarm or trip names, so safety
+ * injection, which trips the reactor too, is named SI; undefined where it
+ * names none.
+ */
 export const firstOutGroupOf = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule): ProcessPlantIcFirstOutGroup | undefined => {
   for (const effect of rule.effects) {
     if (effect.type === 'writeSignal' || effect.annunciator?.firstOutGroup === undefined) continue
