@@ -538,6 +538,9 @@ enum Refresh {
     /// a recombined setup stock counts the matrix as current, so a Newton
     /// failure never reaches its own fresh retry.
     CjLinearBounded,
+    /// As `CjLinearBounded`, and also assembling when the stored pair is
+    /// older than this many seconds of simulated time (JAC's age cap).
+    CjLinearAged(f64),
 }
 /// The last assembly's `A = dF/dy`, `B = dF/dy'`, structure and state.
 struct Stored {
@@ -615,9 +618,16 @@ impl<S: System> System for Recorder<S> {
             Refresh::Fresh => false,
             Refresh::CjLinear => !retry || identical,
             Refresh::CjLinearBounded => (!retry && !after_failure) || identical,
+            Refresh::CjLinearAged(age) => {
+                let young = self.stored.as_ref().is_some_and(|s| time - s.t <= age);
+                (!retry && !after_failure && young) || identical
+            }
         };
         match (self.refresh, &self.stored) {
-            (Refresh::CjLinear | Refresh::CjLinearBounded, Some(stored)) if recombine => {
+            (
+                Refresh::CjLinear | Refresh::CjLinearBounded | Refresh::CjLinearAged(_),
+                Some(stored),
+            ) if recombine => {
                 for ((d, a), b) in data.iter_mut().zip(&stored.a).zip(&stored.b) {
                     *d = a + cj * b;
                 }
@@ -627,7 +637,7 @@ impl<S: System> System for Recorder<S> {
                 self.counts.identical_state += i64::from(identical);
                 Ok(())
             }
-            (Refresh::CjLinear | Refresh::CjLinearBounded, _) => {
+            (Refresh::CjLinear | Refresh::CjLinearBounded | Refresh::CjLinearAged(_), _) => {
                 // A, then A + B, by the same colored assembly at cj 0 and 1.
                 self.inner.jacobian(time, 0., y, yp, data, rows, pointers)?;
                 let a = data.to_vec();
@@ -2418,4 +2428,123 @@ fn donor_cj_linear_probe() {
         "method":"JAC's cj-linear refresh emulated in the probe's IDA wrapper, no kernel change: a fresh setup assembles A = M(cj=0) and A + B = M(cj=1) by the network's colored assembly (two passes here; one assembly in production) and keeps them with the structure and state; a setup called right after an attempt's first residual (stock's first-step or cj-ratio trigger) recombines M = A + cj B from the stored pair with no evaluation; a setup after further residual calls at the same trial time (stock's Newton-failure retry, jbad) and the first setup after a (re)initialization assemble fresh. dcj 0.1 and stock's Newton coefficient everywhere except the H1 window's own tightened coefficient; the fresh policy assembles every setup as stock does. identical-state counts compare the setup's (t, y, y') bitwise with the stored assembly's (cj_linear) or the previous setup's (any policy)",
         "colors":colors,"dcj":0.1,"capped_seizure":capped,"established_cycle":established,"restart_ramps":ramps,"natural":natural,"cpu_s_total":cpu_s()-cpu0,"load_average_end":load_average()});
     write(&base, "donor-cj-linear.json", &receipt);
+}
+
+/// JAC's age cap on the bounded cj-linear refresh: assemble also when the
+/// stored pair is older than 1 s or 0.25 s, beside fresh and the bounded
+/// rule, at dcj 0.1: the never-capped seizure (where the bounded rule still
+/// had more failures than fresh), the H1 seizure ramp against R1, the 4.5
+/// and 5 ms capped seizure, and the hold.
+#[test]
+#[ignore = "diagnostic probe, NOT S1 evidence; requires the actual packet, the wiki, maintained IF97 and stock IDA/KLU"]
+fn donor_cj_linear_age_probe() {
+    let cpu0 = cpu_s();
+    let base = base();
+    assert_eq!(base.settle["run5_reproduced"], json!(true));
+    let rtol = num(&base.gates, &["relativeTolerance"]);
+    let dt = num(&base.gates, &["comparison", "observation_s"]);
+    let cutoff = num(&base.budgets, &["uncreditedAbove_Hz"]);
+    let window = num(&base.gates, &["seizure", "duration_s"]);
+    let post = num(&base.gates, &["recovery", "postWindow_s"]);
+    let hold_s = num(&base.gates, &["hold", "duration_s"]);
+    let cap_window = num(&base.gates, &["eventWindow", "maxStep_s"]);
+    let r1_cap = num(&base.gates, &["eventReference", "maxStep_s"]);
+    let tight = STOCK_NEWTON * num(&base.gates, &["eventWindow", "newtonCoefficientFactor"]);
+    let colors = colors(&base);
+    let dcj = Some(0.1);
+    let policies = [
+        ("fresh", Refresh::Fresh),
+        ("cj_linear_bounded", Refresh::CjLinearBounded),
+        ("cj_linear_bounded_age_1s", Refresh::CjLinearAged(1.)),
+        ("cj_linear_bounded_age_0.25s", Refresh::CjLinearAged(0.25)),
+    ];
+    let plan = |w: f64,
+                cap: f64,
+                newton: Option<f64>,
+                after: After,
+                observe: Option<f64>,
+                refresh: Refresh| Plan {
+        rtol,
+        atol: &base.atol,
+        window_s: w,
+        max_step_s: cap,
+        newton,
+        after,
+        observe_s: observe,
+        dcj,
+        refresh,
+        step_cap: 50_000,
+        cpu_cap_s: 900.,
+    };
+    let summary = |t: &Trace, span: f64| json!({"cost":cost(t, colors, span),"refresh":refresh_json(&t.refresh)});
+    let r1 = run(
+        &base,
+        Event::Seizure,
+        plan(
+            window,
+            r1_cap,
+            Some(tight),
+            After::None,
+            Some(dt),
+            Refresh::Fresh,
+        ),
+    );
+    let mut out = serde_json::Map::new();
+    for (name, refresh) in policies {
+        let natural = run(
+            &base,
+            Event::Seizure,
+            plan(
+                window + post,
+                f64::INFINITY,
+                None,
+                After::None,
+                None,
+                refresh,
+            ),
+        );
+        let ramp = run(
+            &base,
+            Event::Seizure,
+            plan(
+                window,
+                cap_window,
+                Some(tight),
+                After::Restart(post),
+                Some(dt),
+                refresh,
+            ),
+        );
+        let hold = run(
+            &base,
+            Event::Hold,
+            plan(hold_s, f64::INFINITY, None, After::None, None, refresh),
+        );
+        let mut capped = serde_json::Map::new();
+        for cap in [0.0045, 0.005] {
+            let t = run(
+                &base,
+                Event::Seizure,
+                plan(window, cap, None, After::None, Some(dt), refresh),
+            );
+            let x: Vec<f64> = fine_between(&t, 5., window)
+                .iter()
+                .map(|c| c.core_dp_pa)
+                .collect();
+            capped.insert(format!("hmax_{}ms", cap * 1e3), json!({"core_dp_above_band_rms_5_10_s_pa":high_pass_rms(&x, dt, cutoff),"run":summary(&t, window)}));
+        }
+        let cont = |i: usize| match i {
+            0 => ramp.total_steps - ramp.window_counts.map_or(0, |c| c[0]),
+            3 => ramp.total_error_failures - ramp.window_counts.map_or(0, |c| c[3]),
+            _ => ramp.total_convergence_failures - ramp.window_counts.map_or(0, |c| c[4]),
+        };
+        out.insert(name.into(), json!({"seizure_never_capped":summary(&natural, window + post),
+            "h1_seizure_ramp":{"run":summary(&ramp, window + post),"continuation":{"steps":cont(0),"error_failures":cont(3),"convergence_failures":cont(4)},
+                "window_versus_r1":compare(&base, &ramp, &r1, window)},
+            "hold":summary(&hold, hold_s),"capped_seizure":capped}));
+    }
+    let receipt = json!({"kind":"donor-cj-linear-age-probe-NOT-EVIDENCE","provenance":provenance(&base),
+        "method":"as donor-cj-linear, adding JAC's age cap to the bounded rule: a setup also assembles when the stored pair's time is more than the given simulated seconds before the setup's",
+        "colors":colors,"dcj":0.1,"r1_steps":r1.total_steps,"policies":out,"cpu_s_total":cpu_s()-cpu0,"load_average_end":load_average()});
+    write(&base, "donor-cj-linear-age.json", &receipt);
 }
