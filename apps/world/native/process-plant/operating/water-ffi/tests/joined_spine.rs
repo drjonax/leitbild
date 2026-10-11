@@ -752,3 +752,371 @@ fn z1_probe(full: bool) {
     println!("{}", serde_json::to_string(&receipt).unwrap());
     write_receipt(&receipt);
 }
+
+/// The full composition at the hot reference, consistently started.
+struct Started {
+    joined: leitbild_operating_plant::joined::operator::Joined<If97>,
+    y: Vec<f64>,
+    yp: Vec<f64>,
+    /// Differential identity, absolute tolerances and relative tolerance.
+    ids: Vec<f64>,
+    atol: Vec<f64>,
+    rtol: f64,
+    /// A receipt of the preparation.
+    receipt: Value,
+}
+
+/// The full composition at the hot reference, consistently started: memo
+/// §3 (A)-(D).
+fn started_full_composition() -> Started {
+    use leitbild_operating_plant::{
+        initialization::SurfacePolicy,
+        joined::operator::{Joined, RodPort, SecondaryPort},
+        rods::{RodBlock, Section as RodSection},
+        sg::{packet::Section as SecondarySection, secondary::Secondaries},
+    };
+    let (path, bytes) = packet_bytes();
+    let network_packet: NetworkPacket = serde_json::from_slice(&bytes).expect("network packet");
+    let joined_packet: packet::Packet = serde_json::from_slice(&bytes).expect("joined packet");
+    let raw: Value = serde_json::from_slice(&bytes).expect("packet json");
+    let gates = z1::s1_gates();
+    let (flows, momenta, s1) = z1::s1_settled_flows(&network_packet, &gates);
+    let (network, y_network, network_ids, flowing) =
+        z1::composed(&network_packet, &flows, &momenta);
+    let section: SecondarySection =
+        serde_json::from_value(raw["secondary"].clone()).expect("secondary section");
+    let rods: RodSection = serde_json::from_value(raw["rods"].clone()).expect("rods section");
+    let mut joined = Joined::new(
+        network,
+        &network_packet,
+        &joined_packet,
+        If97,
+        SecondaryPort::Owner(Box::new(
+            Secondaries::new(&section, &joined_packet.thermal.secondaries, &If97)
+                .expect("SG secondary owner"),
+        )),
+        RodPort::Owner(Box::new(
+            RodBlock::from_packet(&rods, &network_packet).expect("rod owner"),
+        )),
+    )
+    .expect("joined operator");
+    let mut y = joined.prepared(&y_network).unwrap();
+    let ids = joined.differential(&network_ids);
+    let owners = joined
+        .prepare_owners(0., &mut y)
+        .expect("owner preparation");
+    let surfaces = joined
+        .initialize_surfaces(
+            0.,
+            &mut y,
+            SurfacePolicy {
+                maximum_residual_w: 1e-3,
+                maximum_correction_k: 1e-6,
+                maximum_iterations: 16,
+                maximum_backtracks: 12,
+            },
+        )
+        .expect("surfaces");
+    let classes = z1::classes(&gates);
+    let n_net = joined.offsets().nuclear;
+    let mut atol = joined
+        .network
+        .absolute_tolerances(&y[..n_net], classes)
+        .unwrap();
+    atol.resize(y.len(), classes.stock_scaled);
+    let weights: Vec<f64> = y
+        .iter()
+        .zip(&atol)
+        .map(|(v, a)| 1. / (classes.relative * v.abs() + a))
+        .collect();
+    let (yp, start) = leitbild_operating_water::joined::consistent_start(
+        &mut joined,
+        0.,
+        &mut y,
+        &ids,
+        &weights,
+        1e-12,
+        3,
+    )
+    .expect("exact consistent start");
+    let receipt = json!({
+        "packet": path, "packet_sha256": sha256(&bytes), "provenance": provenance(),
+        "s1_settling": s1, "flowing_preparation_max_cycle_drive_pa": flowing["max_cycle_drive_pa"],
+        "owners_prepared": owners.iter().map(|t| t.receipt.clone()).collect::<Vec<_>>(),
+        "surfaces_worst_residual_w": surfaces.iter().map(|s| s.residual_w.iter().fold(0., |a: f64, r| a.max(r.abs()))).fold(0., f64::max),
+        "start": {"residual": [start.residual.value, start.residual.row], "constraint_rate": [start.constraint_rate.value, start.constraint_rate.row],
+            "correction_wrms": start.correction_wrms, "projection_passes": start.projection_passes, "rate_passes": start.rate_passes},
+        "dimension": y.len(), "algebraic": ids.iter().filter(|v| **v == 0.).count(),
+        "tolerances": {"relative": classes.relative, "network": "S1's tolerance classes (ld01-s1-gates)", "new_classes_scaled_absolute": classes.stock_scaled, "basis": "G12"},
+    });
+    Started {
+        joined,
+        y,
+        yp,
+        ids,
+        atol,
+        rtol: classes.relative,
+        receipt,
+    }
+}
+
+/// One observation of the joined state at an accepted output.
+fn observe(
+    joined: &mut leitbild_operating_plant::joined::operator::Joined<If97>,
+    t: f64,
+    y: &[f64],
+    yp: &[f64],
+) -> Value {
+    joined
+        .evaluate(t, y, yp, None, 0., None)
+        .expect("observed state");
+    let heats = joined.heats();
+    let temps = joined.temperatures();
+    let net = &joined.network;
+    let layouts = joined.layouts();
+    let mut k = 0;
+    let mut sg = Vec::new();
+    for (owner, layout) in &layouts {
+        for (i, label) in layout.labels.iter().enumerate() {
+            if *owner == "secondary" && (label.ends_with(".p_s") || label.ends_with(".V_l")) {
+                sg.push(json!({"coordinate": label, "value": y[k] * layout.scales[i]}));
+            }
+            k += 1;
+        }
+    }
+    let taps = net.pzr_taps().ok();
+    let fuel_max = temps.fuel.iter().map(|f| f[0].value).fold(0., f64::max);
+    let clad_max = temps.fuel.iter().map(|f| f[2].value).fold(0., f64::max);
+    let metal: Vec<f64> = temps.metal.iter().map(|m| m.value).collect();
+    let liquid_t: Vec<f64> = (0..net.cell_layout.len())
+        .map(|c| {
+            let l = net.cell_layout[c];
+            let p = y[l.base] * net.scales()[l.base];
+            let m = y[l.mass[0]] * net.scales()[l.mass[0]];
+            let u = y[l.energy[0]] * net.scales()[l.energy[0]];
+            use leitbild_operating_plant::network::Properties;
+            let q = net.properties().caloric(false, p, u / m, false).unwrap();
+            net.properties().values(&q).temperature_k
+        })
+        .collect();
+    let loop_kg_s =
+        [22usize, 30].map(|f| net.chart(f, 0).map_or(f64::NAN, |c| c.mass_flow_kg_s.value));
+    let return_drive = [22usize, 29].map(|f| net.face_drive(f, 0).value);
+    json!({
+        "t_s": t,
+        "released_w": heats.nuclear.released_w.value,
+        "fuel_w": heats.nuclear.fuel_w.iter().map(|x| x.value).sum::<f64>(),
+        "clad_to_water_w": heats.solids.clad_to_water_w.value,
+        "primary_to_sg_metal_w": heats.solids.primary_to_metal_w.iter().map(|x| x.value).sum::<f64>(),
+        "sg_metal_to_secondary_w": heats.solids.secondary_w.iter().map(|x| x.value).collect::<Vec<_>>(),
+        "sg": sg,
+        "sg_metal_k": metal,
+        "fuel_inner_max_k": fuel_max, "clad_mean_max_k": clad_max,
+        "liquid_t_k": liquid_t,
+        "pzr_pt1_pa": taps.map(|t| t.pt1_pa.value), "pzr_collapsed_level_m": taps.map(|t| t.collapsed_level_m.value),
+        "loop_kg_s": loop_kg_s,
+        "return_face_drive_pa": return_drive,
+        "reactivity_max_abs": joined.nuclear().feedback_output().map(|o| o.regions.iter().map(|r| r.reactivity.value.abs()).fold(0., f64::max)),
+    })
+}
+
+/// S2's Newton convergence coefficient (E2b resolved, a66ee83).
+const NEWTON_COEFFICIENT: f64 = 0.01;
+/// G13: the first step at every restart (s).
+const FIRST_STEP_S: f64 = 1e-4;
+/// Output target spacing of one stock IDA call (s).
+const ADVANCE_CHUNK_S: f64 = 0.01;
+
+#[test]
+#[ignore = "NOT-EVIDENCE settling probe: requires the joined packet, the wiki, IF97 and stock IDA/KLU"]
+fn settling_probe_toward_a_consistent_100_percent_state() {
+    use leitbild_operating_water::{
+        ida::{Advance, Ida, Initial},
+        joined::Integrated,
+    };
+    let started = z1::cpu_s();
+    let Started {
+        joined,
+        y: y0,
+        yp: yp0,
+        ids,
+        atol,
+        rtol,
+        receipt: preparation,
+    } = started_full_composition();
+    let preparation_cpu_s = z1::cpu_s() - started;
+    // Declared NOT-EVIDENCE caps and criteria: the S2 memo's draft settling
+    // block (s2-design-memo §7), not a declared S2 gate.
+    let cap_s: f64 = std::env::var("LD01_SETTLING_CAP_S").map_or(600., |v| v.parse().unwrap());
+    let cpu_cap_s: f64 =
+        std::env::var("LD01_SETTLING_CPU_CAP_S").map_or(2400., |v| v.parse().unwrap());
+    let window_s = 20.;
+    let log = std::env::var_os("LD01_SETTLING_LOG").map(|p| {
+        assert!(
+            !std::path::Path::new(&p).exists(),
+            "logs are never overwritten"
+        );
+        std::fs::File::create(p).unwrap()
+    });
+    let nonnegative = joined.network.nonnegative_stocks();
+    let system = Integrated::new(joined).expect("integrable joined system");
+    let mut ida = Ida::new(
+        system,
+        Initial {
+            time: 0.,
+            y: &y0,
+            yp: &yp0,
+            differential: &ids,
+            absolute_tolerance: &atol,
+            relative_tolerance: rtol,
+        },
+    )
+    .expect("stock IDA");
+    ida.set_max_order(2).unwrap();
+    ida.constrain_nonnegative(&nonnegative).unwrap();
+    // S2's numerical configuration at every start and restart, set
+    // explicitly because stock IDAReInit retains both: the 0.01 Newton
+    // coefficient (E2b, claude/ld01-wiki a66ee83) and G13's 1e-4 s first
+    // step, applied here at the start as well so the start does not depend
+    // on the output grid.
+    ida.set_nonlinear_convergence_coefficient(NEWTON_COEFFICIENT)
+        .unwrap();
+    ida.set_init_step(FIRST_STEP_S).unwrap();
+    ida.stop_at(cap_s).unwrap();
+    let (mut y, mut yp) = (y0.clone(), yp0.clone());
+    let mut t = 0.;
+    let mut samples: Vec<Value> = Vec::new();
+    let mut events = Vec::new();
+    let mut counts = (0i64, 0i64, 0i64, 0i64, 0i64, 0i64);
+    let push = |samples: &mut Vec<Value>, s: Value, log: &Option<std::fs::File>| {
+        if let Some(mut f) = log.as_ref() {
+            use std::io::Write;
+            writeln!(f, "{}", serde_json::to_string(&s).unwrap()).unwrap();
+        }
+        samples.push(s);
+    };
+    let s0 = observe(&mut ida.system_mut().joined, 0., &y, &yp);
+    push(&mut samples, s0, &log);
+    let settled = |samples: &[Value]| -> Option<Value> {
+        let last = samples.last()?;
+        let t = last["t_s"].as_f64()?;
+        let earlier = samples
+            .iter()
+            .rev()
+            .find(|s| s["t_s"].as_f64().unwrap() <= t - window_s)?;
+        let rel = |k: &str| (last[k].as_f64()? / earlier[k].as_f64()? - 1.).abs().into();
+        let power: Option<f64> = rel("released_w");
+        let cell_dt = last["liquid_t_k"]
+            .as_array()?
+            .iter()
+            .zip(earlier["liquid_t_k"].as_array()?)
+            .map(|(a, b)| (a.as_f64().unwrap() - b.as_f64().unwrap()).abs())
+            .fold(0., f64::max);
+        let pt1 = (last["pzr_pt1_pa"].as_f64()? - earlier["pzr_pt1_pa"].as_f64()?).abs();
+        let ps = last["sg"]
+            .as_array()?
+            .iter()
+            .zip(earlier["sg"].as_array()?)
+            .filter(|(a, _)| a["coordinate"].as_str().unwrap().ends_with(".p_s"))
+            .map(|(a, b)| (a["value"].as_f64().unwrap() - b["value"].as_f64().unwrap()).abs())
+            .fold(0., f64::max);
+        let power = power?;
+        let ok = power < 1e-4 && cell_dt < 0.01 && pt1 < 1000. && ps < 1000.;
+        ok.then(|| json!({"window_s": window_s, "power_relative": power, "cell_temperature_k": cell_dt, "pzr_pt1_pa": pt1, "sg_pressure_pa": ps}))
+    };
+    let mut verdict = Value::Null;
+    let mut failure = None;
+    let mut next_output = 1.;
+    while t < cap_s {
+        if z1::cpu_s() - started > cpu_cap_s {
+            failure = Some(format!("probe CPU cap {cpu_cap_s} s reached at t = {t} s"));
+            break;
+        }
+        let event = ida.system().joined.next_time_event(t);
+        if let Some(e) = event {
+            // Settling declares none; stop exactly at it, never step past.
+            ida.stop_at(e.min(cap_s)).unwrap();
+        }
+        // Stock IDA_NORMAL steps past an output target and interpolates, so
+        // the chunk changes no step; it only keeps each call within stock's
+        // per-call step limit.
+        let target = event
+            .map_or(next_output, |e| e.min(next_output))
+            .min(cap_s)
+            .min(t + ADVANCE_CHUNK_S);
+        match ida.advance(target, &mut y, &mut yp) {
+            Ok(Advance::Reached(time)) => {
+                t = time;
+                if (t - next_output).abs() < 1e-9 || t >= cap_s {
+                    let s = observe(&mut ida.system_mut().joined, t, &y, &yp);
+                    let mut s = s;
+                    let st = ida.stats().unwrap();
+                    s["ida"] = json!({"steps": counts.0 + st.steps, "residuals": counts.1 + st.residuals, "jacobians": counts.2 + st.jacobians,
+                        "nonlinear_iterations": counts.3 + st.nonlinear_iterations, "error_failures": counts.4 + st.error_failures,
+                        "convergence_failures": counts.5 + st.convergence_failures, "last_step_s": st.last_step, "last_order": st.last_order});
+                    s["cpu_s"] = json!(z1::cpu_s() - started);
+                    let c = ida.system().joined.counters;
+                    s["joined_counters"] = json!(c);
+                    push(&mut samples, s, &log);
+                    next_output += 1.;
+                    if let Some(v) = settled(&samples) {
+                        verdict = json!({"settled_at_s": t, "criteria": v});
+                        break;
+                    }
+                }
+                if event.is_some_and(|e| (e - t).abs() < 1e-12) {
+                    failure = Some(format!(
+                        "an owner time event at {t} s; settling declares none"
+                    ));
+                    break;
+                }
+            }
+            Ok(Advance::Root { time, directions }) => {
+                events.push(json!({"t_s": time, "roots": directions}));
+                failure = Some(format!(
+                    "a root at {time} s during settling: {directions:?} (settling declares no event)"
+                ));
+                t = time;
+                break;
+            }
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        }
+    }
+    let st = ida.stats().ok();
+    let internal_s = st.as_ref().map(|s| s.internal_time);
+    counts.0 += st.as_ref().map_or(0, |s| s.steps);
+    counts.1 += st.as_ref().map_or(0, |s| s.residuals);
+    counts.2 += st.as_ref().map_or(0, |s| s.jacobians);
+    let total = z1::cpu_s() - started;
+    let c = ida.system().joined.counters;
+    let simulated = internal_s
+        .filter(|_| failure.is_some())
+        .map_or(t, |i| i.max(t));
+    let receipt = json!({
+        "kind": "s2-settling-probe",
+        "status": "NOT-EVIDENCE probe; S2 is not declared. Cost is the BASELINE on the colored joined Jacobian, not the S2 cost path (lead, 11 October). PZR boundary closed: shell metal and relief pending (G6), heaters at zero (G6)",
+        "preparation": preparation,
+        "configuration": {"maxOrder": 2, "relativeTolerance": rtol, "absoluteTolerance": "the S1 classes' scaled floor for every new class (G12)",
+            "newtonCoefficient": NEWTON_COEFFICIENT, "newtonCoefficientSource": "E2b resolved, claude/ld01-wiki a66ee83: at every IDA start and restart",
+            "firstStep_s": FIRST_STEP_S, "firstStepSource": "G13 (request 4 K4) at every restart; also at the start", "maxStep_s": null,
+            "advanceChunk_s": ADVANCE_CHUNK_S, "advanceChunk": "IDA_NORMAL output targets only; no step is shortened"},
+        "criteria": {"source": "S2 memo §7 draft settling block (not declared)", "window_s": window_s, "corePowerRelative": 1e-4, "cellTemperature_K": 0.01, "pzrRoofPressure_Pa": 1000, "sgPressure_Pa": 1000, "cap_s": cap_s, "probe_cpu_cap_s": cpu_cap_s},
+        "verdict": verdict,
+        "failure": failure,
+        "events": events,
+        "simulated_s": simulated,
+        "cost": {"total_cpu_s": total, "preparation_cpu_s": preparation_cpu_s,
+            "steps": counts.0, "residuals": counts.1, "jacobians": counts.2,
+            "cpu_s_per_step": (total - preparation_cpu_s) / counts.0.max(1) as f64,
+            "cpu_s_per_simulated_s": (total - preparation_cpu_s) / simulated.max(1e-9),
+            "residual_wall_s_per_call": c.residual_wall_s / c.residuals.max(1) as f64,
+            "jacobian_wall_s_per_call": c.jacobian_wall_s / c.jacobians.max(1) as f64,
+            "load_average": String::from_utf8_lossy(&std::process::Command::new("sysctl").args(["-n","vm.loadavg"]).output().unwrap().stdout).trim().to_string()},
+        "samples": samples,
+    });
+    write_receipt(&receipt);
+    println!("{}", serde_json::to_string(&json!({"verdict": receipt["verdict"], "failure": receipt["failure"], "simulated_s": simulated, "cost": receipt["cost"]})).unwrap());
+}
