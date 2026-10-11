@@ -22,7 +22,10 @@ export const allocateGridIslandReserves = (grid: GridRuntimeInstance, structure:
   const generators = grid.arrays.generators
   const loads = grid.arrays.loads
   let islandLoadMw = 0
-  for (const load of structure.loadIndices) islandLoadMw += connectedGridLoadMw(loads, load)
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
+    islandLoadMw += connectedGridLoadMw(loads, load)
+  }
   const externalSystems = grid.definition.index.externalSystems
   // The allocation is a pure function of these inputs: when none changed since the island's last
   // allocation, the units keep it (most advances: set-points move only by command or dispatch).
@@ -46,13 +49,15 @@ export const allocateGridIslandReserves = (grid: GridRuntimeInstance, structure:
     }
     position += 1
   }
-  for (const generator of structure.generatorIndices) {
+  for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+    const generator = structure.generatorIndices[generatorPosition]!
     record(generators.lifecycle[generator] === generatorOnline ? 1 : 0)
     record(generators.availableMw[generator]!)
     record(generators.targetMw[generator]!)
   }
   record(islandLoadMw)
-  for (const system of structure.externalIndices) {
+  for (let systemPosition = 0; systemPosition < structure.externalIndices.length; systemPosition += 1) {
+    const system = structure.externalIndices[systemPosition]!
     const reserves = externalReserveVolumes(grid, externalSystems[system]!)
     for (let field = 0; field < reserves.length; field += 1) record(reserves[field]!)
   }
@@ -77,7 +82,8 @@ export const allocateGridIslandReserves = (grid: GridRuntimeInstance, structure:
       }),
     },
   })
-  for (const generator of structure.generatorIndices) {
+  for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+    const generator = structure.generatorIndices[generatorPosition]!
     const reserves = allocation.allocations.get(grid.definition.model.generators[generator]!.id)!
     writeReserves(generators, generator, reserves)
     generators.reserveMw[generator] = upwardReserveMw(reserves)

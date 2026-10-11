@@ -38,22 +38,40 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
   const generators = grid.arrays.generators
   const loads = grid.arrays.loads
   let unitsMw = 0
-  for (const generator of structure.generatorIndices) unitsMw += generators.dispatchMw[generator]!
+  for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+    const generator = structure.generatorIndices[generatorPosition]!
+    unitsMw += generators.dispatchMw[generator]!
+  }
   let storageMw = 0
-  for (const item of structure.storageIndices) storageMw += grid.arrays.storage[item]!.dispatchMw
+  for (let itemPosition = 0; itemPosition < structure.storageIndices.length; itemPosition += 1) {
+    const item = structure.storageIndices[itemPosition]!
+    storageMw += grid.arrays.storage[item]!.dispatchMw
+  }
   const generationMw = unitsMw + storageMw
   let externalImportMw = 0
-  if (island.energized) for (const system of structure.externalIndices) externalImportMw += grid.arrays.externalSystems[system]!.importMw
+  for (let systemPosition = 0; systemPosition < structure.externalIndices.length; systemPosition += 1) {
+    externalImportMw += grid.arrays.externalSystems[structure.externalIndices[systemPosition]!]!.importMw
+  }
   const importMw = island.energized ? externalImportMw + islandFixedInjectionMw(grid, structure) : 0
   let loadMw = 0
-  for (const load of structure.loadIndices) loadMw += loads.demandMw[load]!
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
+    loadMw += loads.demandMw[load]!
+  }
   let servedLoadMw = 0
-  for (const load of structure.loadIndices) servedLoadMw += loads.servedMw[load]!
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
+    servedLoadMw += loads.servedMw[load]!
+  }
   let lossesMw = 0
-  for (const bus of structure.busIndices) lossesMw += grid.lossLoadByBusMw[bus]!
+  for (let busPosition = 0; busPosition < structure.busIndices.length; busPosition += 1) {
+    const bus = structure.busIndices[busPosition]!
+    lossesMw += grid.lossLoadByBusMw[bus]!
+  }
   const reserves = { fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrUpMw: 0, afrrDownMw: 0, mfrrUpMw: 0, mfrrDownMw: 0 }
   if (island.energized) {
-    for (const generator of structure.generatorIndices) {
+    for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+      const generator = structure.generatorIndices[generatorPosition]!
       if (!generatorSynchronisedAt(generators, generator)) continue
       reserves.fcrNMw += generators.fcrNReserveMw[generator]!
       reserves.fcrDUpMw += generators.fcrDUpReserveMw[generator]!
@@ -63,7 +81,8 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
       reserves.mfrrUpMw += generators.mfrrUpReserveMw[generator]!
       reserves.mfrrDownMw += generators.mfrrDownReserveMw[generator]!
     }
-    for (const system of structure.externalIndices) {
+    for (let systemPosition = 0; systemPosition < structure.externalIndices.length; systemPosition += 1) {
+      const system = structure.externalIndices[systemPosition]!
       const external = externalReserveVolumes(grid, grid.definition.index.externalSystems[system]!)
       reserves.fcrNMw += external[0]!
       reserves.fcrDUpMw += external[1]!

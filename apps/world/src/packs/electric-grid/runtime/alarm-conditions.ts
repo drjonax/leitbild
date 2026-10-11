@@ -80,12 +80,19 @@ const reserveObservations = (grid: GridRuntimeInstance, settings: GridAlarmSetti
   const generators = grid.arrays.generators
   const externalSystems = grid.definition.index.externalSystems
   let loadMw = 0
-  for (const load of structure.loadIndices) loadMw += connectedGridLoadMw(grid.arrays.loads, load)
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
+    loadMw += connectedGridLoadMw(grid.arrays.loads, load)
+  }
   let externalLoadMw = 0
-  for (const system of structure.externalIndices) externalLoadMw += externalReserveVolumes(grid, externalSystems[system]!)[5]!
+  for (let systemPosition = 0; systemPosition < structure.externalIndices.length; systemPosition += 1) {
+    const system = structure.externalIndices[systemPosition]!
+    externalLoadMw += externalReserveVolumes(grid, externalSystems[system]!)[5]!
+  }
   const areaLoadMw = loadMw + externalLoadMw
   let largestUnitMw = 0
-  for (const generator of structure.generatorIndices) {
+  for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+    const generator = structure.generatorIndices[generatorPosition]!
     if (generators.lifecycle[generator] === generatorOnline) largestUnitMw = Math.max(largestUnitMw, generators.targetMw[generator]!)
   }
   const alarm = settings.reserveDeficit
@@ -94,10 +101,15 @@ const reserveObservations = (grid: GridRuntimeInstance, settings: GridAlarmSetti
     if (requirement.basis === 'fixed' && structure.externalIndices.length === 0) continue
     const requiredMw = reserveRequirementFor(requirement, areaLoadMw, largestUnitMw)
     let externalMw = 0
-    if (externalVolume >= 0) for (const system of structure.externalIndices) externalMw += externalReserveVolumes(grid, externalSystems[system]!)[externalVolume]!
+    for (let systemPosition = 0; externalVolume >= 0 && systemPosition < structure.externalIndices.length; systemPosition += 1) {
+      externalMw += externalReserveVolumes(grid, externalSystems[structure.externalIndices[systemPosition]!]!)[externalVolume]!
+    }
     const allocation = allocated(generators)
     let unitsMw = 0
-    for (const generator of structure.generatorIndices) unitsMw += generators.lifecycle[generator] === generatorOnline ? allocation[generator]! : 0
+    for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+      const generator = structure.generatorIndices[generatorPosition]!
+      unitsMw += generators.lifecycle[generator] === generatorOnline ? allocation[generator]! : 0
+    }
     const heldMw = externalMw + unitsMw
     const deficitMw = Math.max(0, requiredMw - heldMw)
     if (deficitMw < alarm.clearMw) continue
@@ -130,7 +142,8 @@ const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAl
   let shedMw = 0
   let lfddMw = 0
   let emergencyMw = 0
-  for (const load of structure.loadIndices) {
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
     shedMw += loads.shedMw[load]!
     lfddMw += loads.lfddShedMw[load]!
     if (loads.manualShedEmergency[load] === 1) emergencyMw += loads.curtailedMw[load]!
@@ -287,7 +300,10 @@ export const gridAlarmObservations = (grid: GridRuntimeInstance, islands: GridIs
       continue
     }
     let demandMw = 0
-    for (const load of structure.loadIndices) demandMw += grid.arrays.loads.demandMw[load]!
+    for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+      const load = structure.loadIndices[loadPosition]!
+      demandMw += grid.arrays.loads.demandMw[load]!
+    }
     const plantConnections = structure.connectionPointIndices.length
     if (demandMw <= 0 && plantConnections === 0) continue
     emit(islandObservation(island, 'de-energised', settings.islandDeEnergised, {

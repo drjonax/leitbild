@@ -41,7 +41,10 @@ const scheduledImportMw = (grid: GridRuntimeInstance, systemId: string): number 
 const dispatchIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island: GridIsland): void => {
   const structure = plan.islands[island.planIndex]!
   let demandMw = 0
-  for (const load of structure.loadIndices) demandMw += connectedGridLoadMw(grid.arrays.loads, load)
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
+    demandMw += connectedGridLoadMw(grid.arrays.loads, load)
+  }
   const residualMw = demandMw + islandLossesMw(grid, structure) - islandFixedInjectionMw(grid, structure)
   const externals = islandMembers(grid, structure).externals
   // Transfer capability between the external system and the island: the ties at its boundary buses in the island.

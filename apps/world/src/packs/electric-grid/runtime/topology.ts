@@ -262,7 +262,10 @@ const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwo
   const islands: GridTopologyIsland[] = componentsOfIsland.map((componentIndices, island) => {
     const busIndices = slice(buses, island)
     let namingBus = busIndices[0]!
-    for (const bus of busIndices) if (network.busIdSortRank[bus]! < network.busIdSortRank[namingBus]!) namingBus = bus
+    for (let busPosition = 0; busPosition < busIndices.length; busPosition += 1) {
+      const bus = busIndices[busPosition]!
+      if (network.busIdSortRank[bus]! < network.busIdSortRank[namingBus]!) namingBus = bus
+    }
     return topologyIsland({
       model,
       network,
@@ -292,7 +295,10 @@ const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwo
   }
   defineLazy(plan, 'islandIdByBus', () => {
     const idByBus = new Map<string, string>()
-    for (const island of islands) for (const bus of island.busIndices) idByBus.set(network.busIds[bus]!, island.id)
+    for (const island of islands) for (let busPosition = 0; busPosition < island.busIndices.length; busPosition += 1) {
+      const bus = island.busIndices[busPosition]!
+      idByBus.set(network.busIds[bus]!, island.id)
+    }
     return idByBus
   })
   return plan as unknown as GridTopologyPlan

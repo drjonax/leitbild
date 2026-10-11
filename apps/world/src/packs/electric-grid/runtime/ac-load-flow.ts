@@ -134,7 +134,8 @@ export const gridAcState = (grid: GridRuntimeInstance): AcPowerFlowState | null 
 const specifyIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island: GridTopologyIsland, acWork: GridAcWork): void => {
   const { specification, participation } = acWork
   const tables = gridTablesFor(grid.definition)
-  for (const bus of island.busIndices) {
+  for (let busPosition = 0; busPosition < island.busIndices.length; busPosition += 1) {
+    const bus = island.busIndices[busPosition]!
     specification.activeInjectionMw[bus] = plan.injectionsMw[bus]! + grid.lossLoadByBusMw[bus]!
     specification.reactiveInjectionMvar[bus] = 0
     specification.voltageControlled[bus] = 0
@@ -144,12 +145,14 @@ const specifyIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island
     participation[bus] = 0
   }
   const servedMw = grid.arrays.loads.servedMw
-  for (const load of island.loadIndices) {
+  for (let loadPosition = 0; loadPosition < island.loadIndices.length; loadPosition += 1) {
+    const load = island.loadIndices[loadPosition]!
     const bus = tables.loadBus[load]!
     specification.reactiveInjectionMvar[bus] = specification.reactiveInjectionMvar[bus]! - servedMw[load]! * tables.loadReactivePerMw[load]!
   }
   const generators = grid.arrays.generators
-  for (const generator of island.generatorIndices) {
+  for (let generatorPosition = 0; generatorPosition < island.generatorIndices.length; generatorPosition += 1) {
+    const generator = island.generatorIndices[generatorPosition]!
     if (tables.generatorSynchronous[generator] !== 1 || !generatorSynchronisedAt(generators, generator)) continue
     const definition = grid.definition.model.generators[generator]!
     const bus = tables.generatorBus[generator]!
@@ -163,7 +166,10 @@ const specifyIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island
     specification.reactiveMinimumMvar[bus] = specification.reactiveMinimumMvar[bus]! - limitMvar
     participation[bus] = participation[bus]! + tables.generatorKineticEnergyMws[generator]!
   }
-  for (const system of island.externalIndices) specifyExternal(grid, plan, island, system, acWork)
+  for (let systemPosition = 0; systemPosition < island.externalIndices.length; systemPosition += 1) {
+    const system = island.externalIndices[systemPosition]!
+    specifyExternal(grid, plan, island, system, acWork)
+  }
 }
 
 const specifyExternal = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island: GridTopologyIsland, system: number, acWork: GridAcWork): void => {

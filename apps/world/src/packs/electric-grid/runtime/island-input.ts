@@ -166,7 +166,8 @@ export const islandHasVoltageFormingSource = (grid: GridRuntimeInstance, island:
   if (island.externalIndices.length > 0) return true
   const tables = gridTablesFor(grid.definition)
   const generators = grid.arrays.generators
-  for (const generator of island.generatorIndices) {
+  for (let generatorPosition = 0; generatorPosition < island.generatorIndices.length; generatorPosition += 1) {
+    const generator = island.generatorIndices[generatorPosition]!
     if (tables.generatorSynchronous[generator] === 1 && generatorSynchronisedAt(generators, generator)) return true
   }
   return false
@@ -177,11 +178,15 @@ export const islandKineticEnergyMws = (grid: GridRuntimeInstance, island: GridTo
   const tables = gridTablesFor(grid.definition)
   const generators = grid.arrays.generators
   let kineticEnergyMws = 0
-  for (const generator of island.generatorIndices) {
+  for (let generatorPosition = 0; generatorPosition < island.generatorIndices.length; generatorPosition += 1) {
+    const generator = island.generatorIndices[generatorPosition]!
     kineticEnergyMws += generatorSynchronisedAt(generators, generator) ? tables.generatorKineticEnergyMws[generator]! : 0
   }
   let externalMws = 0
-  for (const system of island.externalIndices) externalMws += externalKineticEnergyMws(grid.definition.index.externalSystems[system]!)
+  for (let systemPosition = 0; systemPosition < island.externalIndices.length; systemPosition += 1) {
+    const system = island.externalIndices[systemPosition]!
+    externalMws += externalKineticEnergyMws(grid.definition.index.externalSystems[system]!)
+  }
   return kineticEnergyMws + externalMws
 }
 
@@ -193,7 +198,8 @@ export const externalKineticEnergyMws = (system: GridExternalSystemDefinition): 
 /** Connected systems (Plants) and HVDC converters inject fixed power into the island over an advance. */
 export const islandFixedInjectionMw = (grid: GridRuntimeInstance, island: GridTopologyIsland): number => {
   let injectionMw = 0
-  for (const point of island.connectionPointIndices) {
+  for (let pointPosition = 0; pointPosition < island.connectionPointIndices.length; pointPosition += 1) {
+    const point = island.connectionPointIndices[pointPosition]!
     const connection = grid.arrays.connections[point]!
     if (connection?.connected === true) injectionMw += connection.systemActivePowerMw
   }
@@ -202,7 +208,10 @@ export const islandFixedInjectionMw = (grid: GridRuntimeInstance, island: GridTo
 
 export const islandLossesMw = (grid: GridRuntimeInstance, island: GridTopologyIsland): number => {
   let lossesMw = 0
-  for (const bus of island.busIndices) lossesMw += grid.lossLoadByBusMw[bus]!
+  for (let busPosition = 0; busPosition < island.busIndices.length; busPosition += 1) {
+    const bus = island.busIndices[busPosition]!
+    lossesMw += grid.lossLoadByBusMw[bus]!
+  }
   return lossesMw
 }
 

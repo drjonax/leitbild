@@ -30,7 +30,8 @@ const addAt = (values: Float64Array, index: number, amount: number): void => {
 
 const deEnergiseIsland = (grid: GridRuntimeInstance, island: GridTopologyIsland): void => {
   const generators = grid.arrays.generators
-  for (const generator of island.generatorIndices) {
+  for (let generatorPosition = 0; generatorPosition < island.generatorIndices.length; generatorPosition += 1) {
+    const generator = island.generatorIndices[generatorPosition]!
     generators.dispatchMw[generator] = 0
     generators.scheduledMw[generator] = 0
     generators.fcrMw[generator] = 0
@@ -38,8 +39,12 @@ const deEnergiseIsland = (grid: GridRuntimeInstance, island: GridTopologyIsland)
     generators.mfrrMw[generator] = 0
     generators.frequencyHz[generator] = Number.NaN
   }
-  for (const load of island.loadIndices) completeDeadGridLoad(grid.arrays.loads, load)
-  for (const item of island.storageIndices) {
+  for (let loadPosition = 0; loadPosition < island.loadIndices.length; loadPosition += 1) {
+    const load = island.loadIndices[loadPosition]!
+    completeDeadGridLoad(grid.arrays.loads, load)
+  }
+  for (let itemPosition = 0; itemPosition < island.storageIndices.length; itemPosition += 1) {
+    const item = island.storageIndices[itemPosition]!
     const state = grid.arrays.storage[item]!
     state.dispatchMw = 0
     state.frequencyHz = null
@@ -70,24 +75,33 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
   const externalSystems = grid.definition.index.externalSystems
   let mechanicalMw = 0
   let kineticEnergyMws = 0
-  for (const generator of structure.generatorIndices) {
+  for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+    const generator = structure.generatorIndices[generatorPosition]!
     if (!generatorSynchronisedAt(generators, generator)) continue
     mechanicalMw += generators.scheduledMw[generator]! + generators.fcrMw[generator]! + generators.afrrMw[generator]! + generators.mfrrMw[generator]!
     kineticEnergyMws += tables.generatorKineticEnergyMws[generator]!
   }
-  for (const item of structure.storageIndices) mechanicalMw += grid.arrays.storage[item]!.dispatchMw
-  for (const system of structure.externalIndices) {
+  for (let itemPosition = 0; itemPosition < structure.storageIndices.length; itemPosition += 1) {
+    const item = structure.storageIndices[itemPosition]!
+    mechanicalMw += grid.arrays.storage[item]!.dispatchMw
+  }
+  for (let systemPosition = 0; systemPosition < structure.externalIndices.length; systemPosition += 1) {
+    const system = structure.externalIndices[systemPosition]!
     mechanicalMw += grid.arrays.externalSystems[system]!.mechanicalMw
     kineticEnergyMws += externalKineticEnergyMws(externalSystems[system]!)
   }
   const fixedMw = islandFixedInjectionMw(grid, structure)
   let servedMw = 0
-  for (const load of structure.loadIndices) servedMw += loads.servedMw[load]!
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
+    servedMw += loads.servedMw[load]!
+  }
   const lossesMw = islandLossesMw(grid, structure)
   const acceleratingMw = mechanicalMw + fixedMw - servedMw - lossesMw
   if (!(kineticEnergyMws > 0)) throw new Error(`energised island ${island.id} has no synchronous kinetic energy`)
   let suppliedMw = fixedMw
-  for (const generator of structure.generatorIndices) {
+  for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+    const generator = structure.generatorIndices[generatorPosition]!
     generators.frequencyHz[generator] = frequencyHz
     if (!generatorSynchronisedAt(generators, generator)) {
       generators.dispatchMw[generator] = 0
@@ -99,13 +113,15 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
     addAt(injections, tables.generatorBus[generator]!, dispatchMw)
     suppliedMw += dispatchMw
   }
-  for (const item of structure.storageIndices) {
+  for (let itemPosition = 0; itemPosition < structure.storageIndices.length; itemPosition += 1) {
+    const item = structure.storageIndices[itemPosition]!
     const state = grid.arrays.storage[item]!
     state.frequencyHz = frequencyHz
     addAt(injections, tables.storageBus[item]!, state.dispatchMw)
     suppliedMw += state.dispatchMw
   }
-  for (const point of structure.connectionPointIndices) {
+  for (let pointPosition = 0; pointPosition < structure.connectionPointIndices.length; pointPosition += 1) {
+    const point = structure.connectionPointIndices[pointPosition]!
     const connection = grid.arrays.connections[point]!
     if (connection?.connected === true) addAt(injections, tables.connectionPointBus[point]!, connection.systemActivePowerMw)
   }
@@ -116,13 +132,18 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
     if (islandOf[from] === island.planIndex) addAt(injections, from, hvdcFromTerminalMw(grid, link))
     if (islandOf[to] === island.planIndex) addAt(injections, to, hvdcToTerminalMw(grid, link))
   }
-  for (const load of structure.loadIndices) {
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
     addAt(injections, tables.loadBus[load]!, -loads.servedMw[load]!)
     completeLiveGridLoad(loads, load, frequencyHz, nominalHz)
   }
-  for (const bus of structure.busIndices) addAt(injections, bus, -grid.lossLoadByBusMw[bus]!)
+  for (let busPosition = 0; busPosition < structure.busIndices.length; busPosition += 1) {
+    const bus = structure.busIndices[busPosition]!
+    addAt(injections, bus, -grid.lossLoadByBusMw[bus]!)
+  }
   // The island holds at most one synchronous external system (definitions.ts).
-  for (const system of structure.externalIndices) {
+  for (let systemPosition = 0; systemPosition < structure.externalIndices.length; systemPosition += 1) {
+    const system = structure.externalIndices[systemPosition]!
     const definition = externalSystems[system]!
     const state = grid.arrays.externalSystems[system]!
     state.importMw = state.mechanicalMw - externalKineticEnergyMws(definition) / kineticEnergyMws * acceleratingMw
@@ -352,8 +373,14 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   for (const island of islands.islands) {
     if (!island.energized) continue
     const structure = plan.islands[island.planIndex]!
-    for (const load of structure.loadIndices) grid.arrays.loads.voltagePu[load] = busArrays.voltagePu[tables.loadBus[load]!]!
-    for (const item of structure.storageIndices) grid.arrays.storage[item]!.voltagePu = publishedNullable(busArrays.voltagePu[tables.storageBus[item]!]!)
+    for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+      const load = structure.loadIndices[loadPosition]!
+      grid.arrays.loads.voltagePu[load] = busArrays.voltagePu[tables.loadBus[load]!]!
+    }
+    for (let itemPosition = 0; itemPosition < structure.storageIndices.length; itemPosition += 1) {
+      const item = structure.storageIndices[itemPosition]!
+      grid.arrays.storage[item]!.voltagePu = publishedNullable(busArrays.voltagePu[tables.storageBus[item]!]!)
+    }
   }
 
   const audit = grid.diagnostics.energyAudit
