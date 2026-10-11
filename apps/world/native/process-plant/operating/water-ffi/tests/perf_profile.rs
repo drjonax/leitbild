@@ -15,6 +15,7 @@ use leitbild_operating_plant::{
         BandReport, MetastableBand, Network, Properties, RotorState, ToleranceClasses, Water,
         packet::Packet,
         prepare::{self, OperatingPoint, Settings},
+        properties::Need,
     },
     rotor::{Shaft, SpeedRequest, Support},
     thermal::{Saturation, Scalar},
@@ -78,20 +79,42 @@ const WATER_BUILD: &str = include_str!(concat!(
 /// Kinds of property query, as the network boundary issues them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Kind {
-    Forward { vapor: bool },
-    Inverse { vapor: bool, enthalpy: bool },
-    Direction { vapor: bool },
-    Saturation { directional: bool },
+    Forward {
+        vapor: bool,
+    },
+    /// `thermodynamic`: the thermodynamics-only inverse (`Need::Thermodynamic`).
+    Inverse {
+        vapor: bool,
+        enthalpy: bool,
+        thermodynamic: bool,
+    },
+    Direction {
+        vapor: bool,
+    },
+    Completion {
+        vapor: bool,
+    },
+    Saturation {
+        directional: bool,
+    },
 }
 impl Kind {
     fn name(self) -> String {
         let phase = |v: bool| if v { "vapor" } else { "liquid" };
         match self {
             Self::Forward { vapor } => format!("forward_{}", phase(vapor)),
-            Self::Inverse { vapor, enthalpy } => {
-                format!("{}_{}", if enthalpy { "ph" } else { "pu" }, phase(vapor))
-            }
+            Self::Inverse {
+                vapor,
+                enthalpy,
+                thermodynamic,
+            } => format!(
+                "{}_{}{}",
+                if enthalpy { "ph" } else { "pu" },
+                phase(vapor),
+                if thermodynamic { "_thermodynamic" } else { "" }
+            ),
             Self::Direction { vapor } => format!("caloric_direction_{}", phase(vapor)),
+            Self::Completion { vapor } => format!("caloric_completion_{}", phase(vapor)),
             Self::Saturation { directional } => {
                 format!(
                     "saturation_{}",
@@ -147,9 +170,41 @@ impl Properties for Probe {
         self.time(Kind::Forward { vapor }, p, t, || If97.forward(vapor, p, t))
     }
     fn caloric(&self, vapor: bool, p: f64, target: f64, enthalpy: bool) -> Result<Held, String> {
-        self.time(Kind::Inverse { vapor, enthalpy }, p, target, || {
+        let kind = Kind::Inverse {
+            vapor,
+            enthalpy,
+            thermodynamic: false,
+        };
+        self.time(kind, p, target, || {
             If97.caloric(vapor, p, target, enthalpy)
                 .map(|point| Held { vapor, point })
+        })
+    }
+    fn caloric_for(
+        &self,
+        vapor: bool,
+        p: f64,
+        target: f64,
+        enthalpy: bool,
+        need: Need,
+    ) -> Result<Held, String> {
+        let kind = Kind::Inverse {
+            vapor,
+            enthalpy,
+            thermodynamic: need == Need::Thermodynamic,
+        };
+        self.time(kind, p, target, || {
+            If97.caloric_for(vapor, p, target, enthalpy, need)
+                .map(|point| Held { vapor, point })
+        })
+    }
+    fn complete(&self, point: &Held) -> Result<Held, String> {
+        let p = If97.values(&point.point).pressure_pa;
+        self.time(Kind::Completion { vapor: point.vapor }, p, 0., || {
+            If97.complete(&point.point).map(|c| Held {
+                vapor: point.vapor,
+                point: c,
+            })
         })
     }
     fn values(&self, point: &Held) -> Water {
@@ -444,13 +499,23 @@ fn isolated(q: &Query, repeats: usize) -> f64 {
                         .ok(),
                 );
             }
-            Kind::Inverse { vapor, enthalpy } => {
+            Kind::Inverse {
+                vapor,
+                enthalpy,
+                thermodynamic,
+            } => {
+                let need = if thermodynamic {
+                    Need::Thermodynamic
+                } else {
+                    Need::Complete
+                };
                 black_box(
-                    If97.caloric(
+                    If97.caloric_for(
                         vapor,
                         black_box(q.pressure),
                         black_box(q.argument),
                         enthalpy,
+                        need,
                     )
                     .ok(),
                 );
@@ -461,8 +526,8 @@ fn isolated(q: &Query, repeats: usize) -> f64 {
                         .ok(),
                 );
             }
-            // Directions need their held point; timed in situ only.
-            Kind::Direction { .. } => return f64::NAN,
+            // Directions and completions need their held point; timed in situ only.
+            Kind::Direction { .. } | Kind::Completion { .. } => return f64::NAN,
         }
         best = best.min(started.elapsed().as_secs_f64());
     }
@@ -546,7 +611,10 @@ fn s1_network_residual_property_profile() {
     let mut checked = 0;
     let mut forward_us = Vec::new();
     for q in queries.iter() {
-        let Kind::Inverse { vapor, enthalpy } = q.kind else {
+        let Kind::Inverse {
+            vapor, enthalpy, ..
+        } = q.kind
+        else {
             continue;
         };
         let branch = if vapor { Branch::Vapor } else { Branch::Liquid };

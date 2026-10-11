@@ -340,10 +340,10 @@ int ld01_water_complete(const OperatingWaterPoint* caloric,int fields,OperatingW
 // Coefficient probes stay with the centre's admission: a stable-side centre
 // is probed on stable-side states only, as before metastable admission, and a
 // metastable centre inside the band.
-static int water_direction_at(int branch,double p,double T,double dp,double dT,
- const OperatingWaterPoint& q,OperatingWaterPoint* direction) noexcept {
- bool metastable;
- try{metastable=metastable_side(branch,p,T,r4.T_p(p));}catch(...){return 3;}
+// The exact part of a direction at q: p, T, rho, u, h and departure by the
+// Gibbs identities. The saturation slope is read only on a saturated branch
+// and for the departure.
+static OperatingWaterPoint exact_direction(int branch,double p,double dp,double dT,const OperatingWaterPoint& q) {
  const bool saturated=branch==2||branch==3;
  const double actual_dT=saturated?q.saturation_slope*dp:dT;
  OperatingWaterPoint d{};d.region=q.region;d.p=dp;d.T=actual_dT;
@@ -351,6 +351,14 @@ static int water_direction_at(int branch,double p,double T,double dp,double dT,
  d.rho=q.rho*(q.kappa*dp-q.alpha*actual_dT);
  d.u=(p*q.kappa-q.T*q.alpha)/q.rho*dp+(q.cp-p*q.alpha/q.rho)*actual_dT;
  d.h=(1-q.T*q.alpha)/q.rho*dp+q.cp*actual_dT;
+ return d;
+}
+static int water_direction_at(int branch,double p,double T,double dp,double dT,
+ const OperatingWaterPoint& q,OperatingWaterPoint* direction) noexcept {
+ bool metastable;
+ try{metastable=metastable_side(branch,p,T,r4.T_p(p));}catch(...){return 3;}
+ const bool saturated=branch==2||branch==3;
+ OperatingWaterPoint d=exact_direction(branch,p,dp,dT,q);
  const double scale=std::max(std::abs(dp)/p,saturated?0.:std::abs(dT)/q.T);
  if(scale!=0.) {
   const double h=std::cbrt(std::numeric_limits<double>::epsilon())/scale;
@@ -392,6 +400,20 @@ int ld01_water_direction_held(int branch,const OperatingWaterPoint* held,double 
  if(!held||!direction||!std::isfinite(dp)||!std::isfinite(dT))return 2;
  OperatingWaterPoint d{};
  const int status=water_direction_at(branch,held->p,held->T,dp,dT,*held,&d);if(status)return status;
+ *direction=d;return 0;
+}
+// The exact thermodynamic part of ld01_water_direction_held, without the
+// coefficient probes: p, T, rho, u and h only, bit for bit those fields of the
+// full direction; every other field is NaN. Liquid and vapor branches only,
+// whose exact part never reads the saturation slope.
+int ld01_water_direction_exact(int branch,const OperatingWaterPoint* held,double dp,double dT,
+ OperatingWaterPoint* direction) noexcept {
+ if(!held||!direction||(branch!=0&&branch!=1)||!std::isfinite(dp)||!std::isfinite(dT))return 2;
+ const double none=std::numeric_limits<double>::quiet_NaN();
+ OperatingWaterPoint d=exact_direction(branch,held->p,dp,dT,*held);
+ d.cp=d.cv=d.alpha=d.kappa=d.mu=d.conductivity=d.saturation_slope=d.saturation_departure=none;
+ const std::array<double,5> fields{{d.p,d.T,d.rho,d.u,d.h}};
+ if(!std::all_of(fields.begin(),fields.end(),[](double v){return std::isfinite(v);}))return 3;
  *direction=d;return 0;
 }
 // The caloric inverse's branch ends at p: the stable end (branch code and

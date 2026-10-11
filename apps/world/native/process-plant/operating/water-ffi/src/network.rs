@@ -4,7 +4,10 @@
 //! boundary, and the narrow adapter that hands the network to stock IDA.
 use crate::{Branch, CaloricLinearization, If97, MetastableBand as Compiled, WaterPoint, point};
 use leitbild_operating_plant::{
-    network::{Band, BandReport, MetastableBand, Properties, Water},
+    network::{
+        Band, BandReport, MetastableBand, Properties, Water,
+        properties::{Need, Partials, ThermodynamicDirection, ThermodynamicPartials},
+    },
     thermal::{Saturation, Scalar, WaterProperties},
 };
 
@@ -47,8 +50,59 @@ impl Properties for If97 {
         }
         .map_err(|e| e.to_string())
     }
+    /// The thermodynamics-only inverse leaves cv, conductivity and the
+    /// saturation slope unevaluated (NaN); its other fields are bit for bit
+    /// the complete inverse's.
+    fn caloric_for(
+        &self,
+        vapor: bool,
+        pressure_pa: f64,
+        target: f64,
+        enthalpy: bool,
+        need: Need,
+    ) -> Result<CaloricLinearization, String> {
+        match need {
+            Need::Complete => self.caloric(vapor, pressure_pa, target, enthalpy),
+            Need::Thermodynamic => {
+                CaloricLinearization::thermodynamic(branch(vapor), pressure_pa, target, enthalpy)
+                    .map_err(|e| e.to_string())
+            }
+        }
+    }
+    fn complete(&self, point: &CaloricLinearization) -> Result<CaloricLinearization, String> {
+        point.completed().map_err(|e| e.to_string())
+    }
     fn values(&self, point: &CaloricLinearization) -> Water {
         water(point.point())
+    }
+    /// The two direction maps from the point completed once.
+    fn partials(&self, point: &CaloricLinearization) -> Result<Partials, String> {
+        let held = point.completed().map_err(|e| e.to_string())?;
+        Ok(Partials {
+            pressure: self.direction(&held, 1., 0.)?,
+            target: self.direction(&held, 0., 1.)?,
+        })
+    }
+    /// Probe-free: the exact part of each direction map only.
+    fn thermodynamic_partials(
+        &self,
+        point: &CaloricLinearization,
+    ) -> Result<ThermodynamicPartials, String> {
+        let exact = |dp: f64, dt: f64| {
+            point
+                .exact_directional(dp, dt)
+                .map(|[t, rho, u, h]| ThermodynamicDirection {
+                    temperature_k: t,
+                    density_kg_m3: rho,
+                    internal_energy_j_kg: u,
+                    enthalpy_j_kg: h,
+                })
+                .map_err(|e| e.to_string())
+        };
+        Ok(ThermodynamicPartials {
+            pressure: exact(1., 0.)?,
+            target: exact(0., 1.)?,
+        })
     }
     fn direction(
         &self,
@@ -97,13 +151,13 @@ impl Properties for If97 {
 }
 
 #[cfg(feature = "ida")]
-pub use integrated::{Assembly, Integrated};
+pub use integrated::{Assembly, Integrated, ResidualMemo};
 
 #[cfg(feature = "ida")]
 mod integrated {
     use crate::ida::{Failure, System};
     use leitbild_operating_plant::network::{
-        self, CscOut, DensePattern, Network, Properties, SparseJacobian,
+        self, CscOut, DensePattern, Network, Properties, Reuse, SparseJacobian,
     };
 
     fn failure(f: network::Failure) -> Failure {
@@ -125,21 +179,43 @@ mod integrated {
         },
     }
 
+    /// The property points of the last residual, held with the exact bits
+    /// of the `(t, y, y')` it was evaluated at: a single-entry memo for the
+    /// Jacobian assembly IDA requests at that same state. Pure memoization:
+    /// every held point is also keyed by its exact inputs, a miss recomputes,
+    /// and it is never state (never copied, restored or serialized).
+    pub struct ResidualMemo<C> {
+        key: Option<(u64, Vec<u64>, Vec<u64>)>,
+        reuse: Reuse<C>,
+    }
+    impl<C: Copy> ResidualMemo<C> {
+        fn matches(&self, time: f64, y: &[f64], yp: &[f64]) -> bool {
+            let bits = |v: &[f64], held: &[u64]| {
+                v.len() == held.len() && v.iter().zip(held).all(|(a, b)| a.to_bits() == *b)
+            };
+            matches!(&self.key, Some((t, hy, hyp)) if *t == time.to_bits() && bits(y, hy) && bits(yp, hyp))
+        }
+    }
+
     /// The network as one stock-IDA system; no solver logic lives here.
     pub struct Integrated<P: Properties> {
         pub network: Network<P>,
         assembly: Assembly,
+        memo: ResidualMemo<P::Caloric>,
     }
     impl<P: Properties> Integrated<P> {
         pub fn dense(network: Network<P>) -> Self {
+            let reuse = network.reuse();
             Self {
                 network,
                 assembly: Assembly::Dense,
+                memo: ResidualMemo { key: None, reuse },
             }
         }
         pub fn colored(network: Network<P>) -> Result<Self, String> {
             let structure = network.sparse_jacobian().map_err(|e| format!("{e:?}"))?;
             let (pointers, rows) = structure.pattern.to_i64()?;
+            let reuse = network.reuse();
             Ok(Self {
                 network,
                 assembly: Assembly::Colored {
@@ -147,10 +223,23 @@ mod integrated {
                     rows,
                     pointers,
                 },
+                memo: ResidualMemo { key: None, reuse },
             })
         }
         pub fn assembly(&self) -> &Assembly {
             &self.assembly
+        }
+        /// The last residual's held points if it was evaluated at exactly
+        /// `(time, y, yp)`, moved out for one Jacobian assembly (which then
+        /// inverts nothing its base evaluation repeats); `None` on any
+        /// difference, after which the assembly recomputes.
+        pub fn take_memo(&mut self, time: f64, y: &[f64], yp: &[f64]) -> Option<Reuse<P::Caloric>> {
+            if !self.memo.matches(time, y, yp) {
+                return None;
+            }
+            self.memo.key = None;
+            let fresh = self.network.reuse();
+            Some(std::mem::replace(&mut self.memo.reuse, fresh))
         }
     }
     impl<P: Properties> System for Integrated<P> {
@@ -186,9 +275,18 @@ mod integrated {
             yp: &[f64],
             out: &mut [f64],
         ) -> Result<(), Failure> {
+            // The residual records its points for the memo: with zero seeds
+            // a held point gives exactly the values of an unheld one.
+            self.memo.key = None;
+            self.memo.reuse.clear();
             self.network
-                .evaluate(time, y, yp, None, 0., None)
+                .evaluate(time, y, yp, None, 0., Some(&mut self.memo.reuse))
                 .map_err(failure)?;
+            self.memo.key = Some((
+                time.to_bits(),
+                y.iter().map(|v| v.to_bits()).collect(),
+                yp.iter().map(|v| v.to_bits()).collect(),
+            ));
             for (r, v) in out.iter_mut().zip(self.network.rows()) {
                 *r = v.value;
             }
