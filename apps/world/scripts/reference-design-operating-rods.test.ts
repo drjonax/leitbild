@@ -6,9 +6,11 @@ import { compileOperatingRods, parseS2Holding, parseS2Rods, OPERATING_RODS_PAGES
 const fence = (name: string, body: string) => '```' + name + '\n' + body + '\n```\n'
 
 test('S2 rod and holding blocks are strict and single', () => {
-  expect(parseS2Rods(fence('ld01-s2-rods', '{"spiderDrag":"envelope-disk"}'))).toEqual({ spiderDrag: 'envelope-disk' })
-  expect(() => parseS2Rods(fence('ld01-s2-rods', '{"spiderDrag":"maybe"}'))).toThrow()
-  expect(() => parseS2Rods(fence('ld01-s2-rods', '{"spiderDrag":"omitted","envelopeDiskDragCoefficient":1.28}'))).toThrow()
+  expect(parseS2Rods(fence('ld01-s2-rods', '{"spiderDrag":"envelope-disk","passageBlendSpeed_m_s":0.001}')))
+    .toEqual({ spiderDrag: 'envelope-disk', passageBlendSpeed_m_s: 0.001 })
+  expect(() => parseS2Rods(fence('ld01-s2-rods', '{"spiderDrag":"maybe","passageBlendSpeed_m_s":0.001}'))).toThrow()
+  expect(() => parseS2Rods(fence('ld01-s2-rods', '{"spiderDrag":"omitted"}'))).toThrow()
+  expect(() => parseS2Rods(fence('ld01-s2-rods', '{"spiderDrag":"omitted","passageBlendSpeed_m_s":0}'))).toThrow()
   expect(() => parseS2Rods('no block')).toThrow('Expected one ld01-s2-rods block')
   expect(parseS2Holding(fence('ld01-s2-holding-circuit', '{"turbineTripToOpening_s":0.2}'))).toEqual({ turbineTripToOpening_s: 0.2 })
   expect(() => parseS2Holding(fence('ld01-s2-holding-circuit', '{"turbineTripToOpening_s":0}'))).toThrow()
@@ -42,6 +44,8 @@ test.skipIf(!wiki)('the actual rods section is the footprint, its record and the
   expect(s.reference_travel_m).toBe(2.8)
   // R1: the page's envelope-disk law, its coefficient read from its own record.
   expect(s.spider_drag).toEqual({ selection: 'envelope-disk', coefficient: 1.28 })
+  // R3: the passage blend band's speed.
+  expect(s.guide.blend_speed_m_s).toBe(0.001)
   const root = join(wiki!, 'world/packs/process-plant/reference-designs/ld-01')
   for (const [i, name] of OPERATING_RODS_PAGES.entries()) {
     const text = await Bun.file(join(root, name)).text()
