@@ -103,7 +103,7 @@ pub use integrated::{Assembly, Integrated};
 mod integrated {
     use crate::ida::{Failure, System};
     use leitbild_operating_plant::network::{
-        self, CscOut, DensePattern, Network, Properties, SparseJacobian,
+        self, BlockJacobian, CscOut, DensePattern, Network, Properties, SparseJacobian,
     };
 
     fn failure(f: network::Failure) -> Failure {
@@ -120,6 +120,13 @@ mod integrated {
         /// Compiled structural pattern with one evaluation per color.
         Colored {
             structure: SparseJacobian,
+            rows: Vec<i64>,
+            pointers: Vec<i64>,
+        },
+        /// The same pattern, each column evaluated on the elements that
+        /// read it (`Network::jacobian_blocks`).
+        Blocks {
+            structure: BlockJacobian,
             rows: Vec<i64>,
             pointers: Vec<i64>,
         },
@@ -149,6 +156,18 @@ mod integrated {
                 },
             })
         }
+        pub fn blocks(network: Network<P>) -> Result<Self, String> {
+            let structure = network.block_jacobian().map_err(|e| format!("{e:?}"))?;
+            let (pointers, rows) = structure.pattern.to_i64()?;
+            Ok(Self {
+                network,
+                assembly: Assembly::Blocks {
+                    structure,
+                    rows,
+                    pointers,
+                },
+            })
+        }
         pub fn assembly(&self) -> &Assembly {
             &self.assembly
         }
@@ -161,6 +180,7 @@ mod integrated {
             match &self.assembly {
                 Assembly::Dense => DensePattern::nonzeros(self.network.dimension()),
                 Assembly::Colored { structure, .. } => structure.pattern.nonzeros(),
+                Assembly::Blocks { structure, .. } => structure.pattern.nonzeros(),
             }
         }
         /// S1 declares no physical event roots yet.
@@ -228,6 +248,17 @@ mod integrated {
                     pointers.copy_from_slice(compiled_pointers);
                     self.network
                         .jacobian_colored(time, cj, y, yp, structure, data)
+                        .map_err(failure)
+                }
+                Assembly::Blocks {
+                    structure,
+                    rows: compiled_rows,
+                    pointers: compiled_pointers,
+                } => {
+                    rows.copy_from_slice(compiled_rows);
+                    pointers.copy_from_slice(compiled_pointers);
+                    self.network
+                        .jacobian_blocks(time, cj, y, yp, structure, data)
                         .map_err(failure)
                 }
             }
