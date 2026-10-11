@@ -274,12 +274,9 @@ fn nuclear_partials_against_seeded_rows() {
     );
 }
 
-/// The block assembly's network and nuclear columns against the colored
-/// joined reference, entry by entry (column-relative), and the block
-/// pattern against every colored nonzero. The owners' own two heat
-/// responses (fuel heat into the solid rows, SG metal heat into the
-/// secondary rows) are not in this assembly and are left out of the
-/// comparison by row; every other row of those columns is compared.
+/// The block assembly (every class) against the colored joined reference,
+/// entry by entry and column-relative, and the block pattern against every
+/// colored nonzero; stock KLU on both patterns.
 #[test]
 #[ignore = "requires the S1 packet, the wiki gates, maintained IF97 and stock IDA/KLU; zero-time check"]
 fn joined_blocks_against_colored() {
@@ -310,11 +307,7 @@ fn joined_blocks_against_colored() {
             }
         }
     }
-    let classes = Classes {
-        network: true,
-        nuclear: true,
-        owners: false,
-    };
+    let classes = Classes::ALL;
     let mut values = vec![0.; mine.nonzeros()];
     let mut best = f64::INFINITY;
     let mut refused = None;
@@ -335,18 +328,10 @@ fn joined_blocks_against_colored() {
         }
         best = best.min(cpu() - s);
     }
-    let excluded = |j: usize, row: usize| {
-        if j < o.nuclear {
-            (o.secondary..o.rods).contains(&row)
-        } else {
-            (o.solids..o.secondary).contains(&row)
-        }
-    };
     let mut worst = 0_f64;
     let mut worst_at = json!(null);
-    let mut excluded_entries = 0usize;
     let mut differing = Vec::new();
-    for j in 0..o.solids {
+    for j in 0..n {
         let mut entries: BTreeMap<usize, [f64; 2]> = BTreeMap::new();
         for (row, v) in stored_column(&reference, &colored, j) {
             entries.entry(row).or_default()[0] = v;
@@ -354,16 +339,7 @@ fn joined_blocks_against_colored() {
         for (row, v) in stored_column(mine, &values, j) {
             entries.entry(row).or_default()[1] = v;
         }
-        let compared: Vec<(usize, [f64; 2])> = entries
-            .into_iter()
-            .filter(|(row, e)| {
-                let out = excluded(j, *row);
-                if out && e[0] != 0. {
-                    excluded_entries += 1;
-                }
-                !out
-            })
-            .collect();
+        let compared: Vec<(usize, [f64; 2])> = entries.into_iter().collect();
         let scale = compared
             .iter()
             .map(|(_, e)| e[0].abs())
@@ -408,11 +384,10 @@ fn joined_blocks_against_colored() {
         "composition": {"dimension": n, "offsets": o, "full_owners": full},
         "colored": {"pattern_nonzeros": reference.nonzeros(), "colors": colors, "ms": 1e3 * colored_s},
         "blocks": {"pattern_nonzeros": mine.nonzeros(), "compile_ms": 1e3 * compile_s,
-            "network_and_nuclear_columns_ms": 1e3 * best},
+            "jacobian_ms": 1e3 * best},
         "colored_nonzeros_outside_block_pattern": outside.len(),
         "outside_sample": outside.iter().take(20).collect::<Vec<_>>(),
-        "columns_compared": o.solids,
-        "owner_chain_entries_left_out": excluded_entries,
+        "columns_compared": n,
         "worst_column_relative": worst, "worst_at": worst_at,
         "above_1e-9": differing,
     });

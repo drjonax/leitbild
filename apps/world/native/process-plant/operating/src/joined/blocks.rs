@@ -12,7 +12,7 @@
 //! one assembly and nothing falls back to another assembly.
 use super::{
     nuclear::{LinearTemplate, Nuclear, RegionWater, Target},
-    operator::{Joined, LocalCoupler},
+    operator::{Joined, LocalCoupler, LocalRows, OwnerRows},
 };
 use crate::{
     kinetics,
@@ -675,6 +675,92 @@ impl<P: Properties + WaterProperties> LocalCoupling for Hook<'_, '_, P> {
     }
 }
 
+/// The input ports of the nuclear rows and the secondary rows, as the
+/// rows they move per unit port direction: region water, feedback fuel
+/// temperature and rod travel into the population rows (physical
+/// partials over the row scale), and each SG's metal-to-secondary heat
+/// into the secondary rows (the coupler's scaled response per W).
+struct Ports<'r> {
+    water: Vec<Vec<(usize, [f64; 4])>>,
+    fuel_t: BTreeMap<usize, Vec<(usize, f64)>>,
+    travel: BTreeMap<usize, Vec<(usize, f64)>>,
+    secondary_heat: BTreeMap<usize, Vec<(usize, f64)>>,
+    secondary_rows: bool,
+    rs: &'r [f64],
+}
+impl Ports<'_> {
+    fn water(
+        &self,
+        sink: &mut Sink<'_>,
+        j: usize,
+        region: usize,
+        w: &RegionWater,
+        over: f64,
+    ) -> Result<(), Failure> {
+        let d = [
+            w.density_kg_m3.direction,
+            w.boron_ppm_eq.direction,
+            w.pressure_pa.direction,
+            w.temperature_k.direction,
+        ];
+        for (row, p) in self.water.get(region).into_iter().flatten() {
+            let rhs: f64 = p.iter().zip(&d).map(|(a, b)| a * b).sum();
+            sink.add(*row, j, -rhs / self.rs[*row] / over)?;
+        }
+        Ok(())
+    }
+    fn population(
+        &self,
+        sink: &mut Sink<'_>,
+        j: usize,
+        partials: &BTreeMap<usize, Vec<(usize, f64)>>,
+        input: usize,
+        direction: f64,
+    ) -> Result<(), Failure> {
+        for (row, p) in partials.get(&input).into_iter().flatten() {
+            sink.add(*row, j, -p * direction / self.rs[*row])?;
+        }
+        Ok(())
+    }
+    fn secondary(&self, sink: &mut Sink<'_>, j: usize, g: usize, heat: f64) -> Result<(), Failure> {
+        if heat == 0. || !self.secondary_rows {
+            return Ok(());
+        }
+        let rows = self.secondary_heat.get(&g).ok_or_else(|| {
+            fatal(format!(
+                "SG {g}'s secondary heat response was not assembled"
+            ))
+        })?;
+        for (row, r) in rows {
+            sink.add(*row, j, heat * r)?;
+        }
+        Ok(())
+    }
+    /// One local coupling's rows, region water and SG heat, over `over`
+    /// (the column's seed sign).
+    fn local(
+        &self,
+        sink: &mut Sink<'_>,
+        j: usize,
+        last: &LocalRows,
+        over: f64,
+        owners: bool,
+    ) -> Result<(), Failure> {
+        for (row, v) in &last.rows {
+            sink.add(*row, j, v.direction / over)?;
+        }
+        for (region, w) in &last.water {
+            self.water(sink, j, *region, w, over)?;
+        }
+        if owners {
+            for (g, q) in &last.secondary_w {
+                self.secondary(sink, j, *g, q.direction / over)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The joined stage Jacobian `dF/dy + cj dF/dy'` by blocks into `values`,
 /// in `structure.pattern`'s stored order: the network's element replay
 /// with the coupled owners' local terms, the nuclear block's template and
@@ -701,14 +787,45 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
     joined.evaluate(t, y, yp, None, 0., Some(&mut reuse))?;
     let partials = partials_at(joined, t, y)?;
     let scales = joined.scales();
-    let rs = &structure.row_scales;
     let deposition: Vec<Vec<(usize, f64)>> = joined.nuclear().deposition().to_vec();
     values.fill(0.);
     let mut sink = Sink {
         pattern: &structure.pattern,
         values,
     };
-    let (network, mut coupler) = joined.local_parts(y, yp, cj);
+    let mut ports = Ports {
+        water: vec![Vec::new(); joined_regions(&partials)],
+        fuel_t: BTreeMap::new(),
+        travel: BTreeMap::new(),
+        secondary_heat: BTreeMap::new(),
+        secondary_rows: false,
+        rs: &structure.row_scales,
+    };
+    for (row, region, p) in &partials.water {
+        ports.water[*region].push((*row, *p));
+    }
+    for (row, a, p) in &partials.fuel_t {
+        ports.fuel_t.entry(*a).or_default().push((*row, *p));
+    }
+    for (row, cluster, p) in &partials.travel {
+        ports.travel.entry(*cluster).or_default().push((*row, *p));
+    }
+    // The SGs whose metal heat the secondary rows read; with prepared SG
+    // views there are no secondary rows and the heat enters none.
+    let generators: BTreeSet<usize> = if o.rods > o.secondary {
+        joined
+            .solids()
+            .incidence()
+            .segments
+            .iter()
+            .map(|(_, g)| *g)
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    ports.secondary_rows = o.rods > o.secondary;
+    let (network, mut coupler) = joined.local_parts(t, y, yp, cj);
+    let regular = network.pzr.cell;
     let held = Held::new(network.properties());
     let mut replay = Replay::new(
         network,
@@ -720,12 +837,18 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
         &structure.network,
         true,
     )?;
-    let mut response = Vec::new();
-    // The population rows' water partials by region.
-    let mut water_rows: Vec<Vec<(usize, [f64; 4])>> = vec![Vec::new(); joined_regions(&partials)];
-    for (row, region, p) in &partials.water {
-        water_rows[*region].push((*row, *p));
+    let mut owner = OwnerRows::default();
+    if classes.owners {
+        // Each SG's secondary-row response per W of metal heat.
+        for &g in &generators {
+            coupler.secondary_heat_column(g, &mut owner)?;
+            ports.secondary_heat.insert(
+                g,
+                owner.rows.iter().map(|(r, v)| (*r, v.direction)).collect(),
+            );
+        }
     }
+    let mut response = Vec::new();
     if classes.network {
         for j in 0..o.nuclear {
             response.clear();
@@ -738,36 +861,12 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
             for &(row, d) in &response {
                 sink.add(row, j, d / sign)?;
             }
-            if !hook.called {
-                continue;
-            }
-            let last = hook.coupler.last();
-            for (row, v) in &last.rows {
-                sink.add(*row, j, v.direction / sign)?;
-            }
-            for (region, w) in &last.water {
-                let d = [
-                    w.density_kg_m3.direction,
-                    w.boron_ppm_eq.direction,
-                    w.pressure_pa.direction,
-                    w.temperature_k.direction,
-                ];
-                for (row, p) in &water_rows[*region] {
-                    let rhs: f64 = p.iter().zip(&d).map(|(a, b)| a * b).sum();
-                    sink.add(*row, j, -rhs / rs[*row] / sign)?;
-                }
-            }
-            if !classes.owners {
-                continue;
-            }
-            if let Some((g, q)) = last.secondary_w.iter().find(|(_, q)| q.direction != 0.) {
-                return Err(fatal(format!(
-                    "network column {j} moves SG {g}'s metal heat ({}); the secondary rows' heat response awaits the coupler",
-                    q.direction
-                )));
+            if hook.called {
+                ports.local(&mut sink, j, hook.coupler.last(), sign, classes.owners)?;
             }
         }
     }
+    let mut seed = NetworkSeed::default();
     if classes.nuclear {
         let template = &structure.template;
         // Every nuclear row is differential: its own coordinate's cj.
@@ -778,16 +877,19 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
             sink.add(r.row, r.row, r.decay_per_s)?;
             for &(feed, c) in &template.terms[r.terms.clone()] {
                 for &(col, d) in &partials.feeds[feed] {
-                    sink.add(r.row, col, -c * d * scales[col] / rs[r.row])?;
+                    sink.add(r.row, col, -c * d * scales[col] / ports.rs[r.row])?;
                 }
             }
         }
-        let mut fuel_heat: Vec<(usize, usize, f64)> = Vec::new();
+        let mut fuel_heat: BTreeMap<usize, Vec<(usize, f64)>> = BTreeMap::new();
         let mut coolant: BTreeMap<usize, Vec<(usize, f64)>> = BTreeMap::new();
         for (target, col, c) in &template.consumers {
             match target {
-                Target::Row(row) => sink.add(*row, *col, -c * scales[*col] / rs[*row])?,
-                Target::FuelHeat(a) => fuel_heat.push((*a, *col, c * scales[*col])),
+                Target::Row(row) => sink.add(*row, *col, -c * scales[*col] / ports.rs[*row])?,
+                Target::FuelHeat(a) => fuel_heat
+                    .entry(*a)
+                    .or_default()
+                    .push((*col, c * scales[*col])),
                 Target::CoolantHeat(a) => {
                     for (cell, f) in &deposition[*a] {
                         coolant
@@ -799,10 +901,13 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
             }
         }
         for (row, col, v) in &partials.own {
-            sink.add(*row, *col, -v * scales[*col] / rs[*row])?;
+            sink.add(*row, *col, -v * scales[*col] / ports.rs[*row])?;
         }
         for (a, col, v) in &partials.fuel_w {
-            fuel_heat.push((*a, *col, v * scales[*col]));
+            fuel_heat
+                .entry(*a)
+                .or_default()
+                .push((*col, v * scales[*col]));
         }
         for (a, col, v) in &partials.coolant_w {
             for (cell, f) in &deposition[*a] {
@@ -813,9 +918,9 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
             }
         }
         // Direct coolant heat: the deposition cells' liquid enthalpy port.
-        let mut seed = NetworkSeed::default();
         for (col, heats) in &coolant {
             seed.receipts.clear();
+            seed.volumes.clear();
             for (cell, q) in heats {
                 seed.receipts.push((*cell, [[0., *q, 0.], [0.; 3]]));
             }
@@ -825,16 +930,72 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
                 sink.add(row, *col, d)?;
             }
         }
-        if classes.owners && fuel_heat.iter().any(|e| e.2 != 0.) {
-            return Err(fatal(
-                "the bands' fuel-heat response awaits the coupler's fuel_heat_column",
-            ));
+        // Fuel heat: each half's solid rows per W, through the solids' split.
+        if classes.owners {
+            for (a, columns) in &fuel_heat {
+                coupler.fuel_heat_column(*a, &replay.fluid(), &mut owner)?;
+                for (col, w) in columns {
+                    for (row, v) in &owner.rows {
+                        sink.add(*row, *col, w * v.direction)?;
+                    }
+                }
+            }
         }
     }
     if classes.owners {
-        return Err(fatal(
-            "the solid, secondary and rod columns await the coupler's owner_column",
-        ));
+        let zero = [[Scalar::constant(0.); 3]; 2];
+        let mut buffer = vec![zero; regular];
+        for j in o.solids..o.end {
+            buffer.fill(zero);
+            coupler.owner_column(
+                j,
+                &replay.fluid(),
+                &mut Receipts::new(&mut buffer),
+                &mut owner,
+            )?;
+            for (row, v) in &owner.rows {
+                sink.add(*row, j, v.direction)?;
+            }
+            for (a, v) in &owner.fuel_t {
+                ports.population(&mut sink, j, &ports.fuel_t, *a, v.direction)?;
+            }
+            for (cluster, v) in &owner.travel {
+                ports.population(&mut sink, j, &ports.travel, *cluster, v.direction)?;
+            }
+            for (g, q) in &owner.secondary_w {
+                ports.secondary(&mut sink, j, *g, q.direction)?;
+            }
+            // The owners' receipts and moving volumes into the network.
+            seed.receipts.clear();
+            seed.volumes.clear();
+            for (cell, r) in buffer.iter().enumerate() {
+                if r.iter().flatten().any(|q| q.direction != 0.) {
+                    seed.receipts
+                        .push((cell, r.map(|phase| phase.map(|q| q.direction))));
+                }
+            }
+            for (cell, v) in &owner.volumes {
+                if v.volume_m3.direction != 0. || v.rate_m3_s.direction != 0. {
+                    seed.volumes
+                        .push((*cell, v.volume_m3.direction, v.rate_m3_s.direction));
+                }
+            }
+            if seed.receipts.is_empty() && seed.volumes.is_empty() {
+                continue;
+            }
+            response.clear();
+            let mut hook = Hook {
+                coupler: &mut coupler,
+                called: false,
+            };
+            replay.external(&seed, Some(&mut hook), &mut response)?;
+            for &(row, d) in &response {
+                sink.add(row, j, d)?;
+            }
+            if hook.called {
+                ports.local(&mut sink, j, hook.coupler.last(), 1., true)?;
+            }
+        }
     }
     Ok(())
 }

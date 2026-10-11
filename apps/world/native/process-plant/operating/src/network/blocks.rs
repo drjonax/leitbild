@@ -1003,6 +1003,24 @@ impl<'a, P: Properties> Replay<'a, P> {
         self.signs[j]
     }
 
+    /// The base evaluation's fluid, without direction: what an owner column
+    /// reads while it seeds only its own coordinates.
+    pub fn fluid(&self) -> Fluid<'_> {
+        let (net, pass) = (self.blocks.net, &self.pass);
+        Fluid {
+            cells: &pass.cells,
+            points: &pass.points,
+            liquid_mass: &pass.phase_mass[0],
+            vapor_mass: &pass.phase_mass[1],
+            tracer: &pass.tracer,
+            charts: &pass.charts,
+            endpoints: &net.endpoints,
+            elevations: &net.elevations,
+            volumes: &net.volumes,
+            current_volumes: &pass.volume,
+        }
+    }
+
     /// Network column `j`'s response: `(network row, direction)` along the
     /// column's seed sign, and through `hook` the coupled owners'.
     pub fn column(
