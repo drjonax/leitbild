@@ -79,6 +79,13 @@ const REPRESENTATION_SEARCH: usize = 8;
 /// start, at t = 0 and at every event, holds every scaled row to it.
 const CONSISTENT_ROW_BOUND: f64 = 1e-12;
 const CONSISTENT_PASSES: usize = 2;
+/// The cell's nonnegative stocks, IDA-constrained and bound at a restart.
+const NONNEGATIVE: [(usize, &str); 4] = [
+    (st::BUBBLE_MASS, "M_b"),
+    (st::DROP_MASS, "M_d"),
+    (st::DROP_BORON, "B_d"),
+    (st::ADMITTED_BUBBLE_MASS, "M_bA"),
+];
 
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
@@ -1099,12 +1106,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             output_s: ctx.output_s(),
             observation_s: ctx.gates.f64(&["comparison", "observation_s"]),
             breakpoints: breakpoints(entry),
-            nonnegative: vec![
-                st::BUBBLE_MASS,
-                st::DROP_MASS,
-                st::DROP_BORON,
-                st::ADMITTED_BUBBLE_MASS,
-            ],
+            nonnegative: NONNEGATIVE.iter().map(|c| c.0).collect(),
             cpu_cap_s: cap,
             set_deadline_cpu_s: deadline,
             credited,
@@ -1424,7 +1426,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             "event_restart_first_step_s":ctx.set.event_restart_first_step_s,"pt1_exclusion_around_event_s":armed.then_some(judgement.pt1_exclusion_around_event_s),
             "cutout_settings_source":cutout.map(|_| "transcribed from prose (safety LD01.PROT.PZR.LOW_LEVEL, heater isolator, electronic differential level); no strict block declares them"),
             "observation_s":ctx.gates.f64(&["comparison", "observation_s"]),"cutoff_hz":ctx.budgets.f64(&["uncreditedAbove_Hz"]),
-            "output_interval_s":ctx.output_s(),"breakpoints":breakpoints(entry),"run_cpu_cap_s":cap,"nonnegative_constraints":["M_b","M_d","B_d"],
+            "output_interval_s":ctx.output_s(),"breakpoints":breakpoints(entry),"run_cpu_cap_s":cap,"nonnegative_constraints":NONNEGATIVE.iter().map(|c| json!({"coordinate":c.0,"stock":c.1})).collect::<Vec<_>>(),"restart_bound_tolerance_scaled":ctx.set.restart_bound_tolerance,
             "ports":p.ports.iter().map(|q| json!({"id":q.id,"kind":format!("{:?}",q.kind),"elevation_m":q.elevation_m,"face":q.face,"bore_m":q.bore_m,"relief":q.relief.map(|d| json!({"opening_Pa":d.opening_pa,"reseat_Pa":d.reseat_pa,"fullStrokes_per_s":d.full_strokes_per_s,"effectiveAreaPerLift_m2":d.effective_area_per_lift_m2}))})).collect::<Vec<_>>(),
             "sources":{"surge_enthalpy_j_kg":enthalpy(&ctx.set.sources.surge),"spray_enthalpy_j_kg":enthalpy(&ctx.set.sources.spray),"absorber_mass_fraction":p.absorber_mass_fraction},
             "relief_back_pressure_pa":ctx.set.relief_back_pressure_pa},
