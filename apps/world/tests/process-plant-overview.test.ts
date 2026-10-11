@@ -235,7 +235,7 @@ describe('the unit overview World generates for a Plant', () => {
       if (readouts.kind !== 'readouts') throw new Error('expected the lead values')
       return readouts.pens.map(pen => pen.tagId ?? String(pen.path))
     }
-    expect(leads(atPower)).toEqual(['core.powerMw', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'CTMT-PR', 'core.coolantOutletTemperatureC', 'GEN-MW'])
+    expect(leads(atPower)).toEqual(['NIS-PR-AVG', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'CTMT-PR', 'core.coolantOutletTemperatureC', 'GEN-MW'])
     // Safety injection and containment's actuations can still act on pressurizer and containment pressure; the
     // auxiliary feedwater the actuation started is delivered; safety injection, yet to act, delivers nothing to lead with.
     expect(leads(tripped)).toEqual(['PT-455', 'CTMT-PR', 'AFW-FLOW', 'PZR-LVL', 'SUB-MARGIN', 'core.coolantOutletTemperatureC'])
@@ -312,12 +312,13 @@ describe('equipment opened from the unit overview', () => {
     // Its injection and charging lines stop at it, by name.
     expect(mimic.mimic.stubs.map(stub => stub.text)).toContain('from ACC ×4, CHG ×2, RHR iso, SI header')
     expect(result.display.height).toBeLessThanOrEqual(fullHd.height)
-    // Opened at power it leads with power, subcooling margin, the RCS leak rate and outlet temperature, then its
-    // instruments, the core exit thermocouples among them; the de-energized source range no longer fits.
+    // Opened at power it leads with the power range, subcooling margin, the RCS leak rate and outlet temperature, then
+    // its instruments, the core exit thermocouples, P-10 and the startup rate among them; the de-energized source
+    // range no longer fits.
     const readouts = result.display.panels.find(panel => panel.kind === 'readouts')!
     if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
-    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(0, 4)).toEqual(['core.powerMw', 'SUB-MARGIN', 'RCS-LEAK-RATE', 'core.coolantOutletTemperatureC'])
-    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-2)).toEqual(['NIS-IR', 'CET-AVG'])
+    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(0, 4)).toEqual(['NIS-PR-AVG', 'SUB-MARGIN', 'RCS-LEAK-RATE', 'core.coolantOutletTemperatureC'])
+    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-4)).toEqual(['NIS-IR', 'CET-AVG', 'P-10', 'NIS-IR-SUR'])
   })
 
   test('every item of the overview opens', () => {

@@ -686,7 +686,7 @@ describe('a display shows what its question is about', () => {
   test('equipment asked about but shown nowhere is refused with what of it could be shown', () => {
     // Evaluation run 16: asked whether reactor power was stable, an answer trended another signal.
     const message = rejectionOf(() => ask('world.process-plant.display.compose', display(['core'], [trendOf('SG-B-LVL-NR')])))
-    expect(message).toContain('subjects.0: core (Reactor Core, Core) is what the question is about but no panel shows it: draw it in a mimic or show one of its signals (such as core.powerMw')
+    expect(message).toContain('subjects.0: core (Reactor Core, Core) is what the question is about but no panel shows it: draw it in a mimic or show one of its signals (such as NIS-PR-AVG')
     // Any signal of the equipment shows it.
     expect(() => ask('world.process-plant.display.compose', display(['core'], [trendOf('core.powerMw')]))).not.toThrow()
   })

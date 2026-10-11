@@ -31,17 +31,26 @@ const lowRcpFlowTripThresholdKgPerS = 3_000
 // (NUREG-1431 Table 3.3.1-1, functions 6 and 7).
 const deltaTTripVoteFor = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): number => Math.min(2, loops.length)
 
-// P-7 and P-8, on fission power as the power-range channels read it: above
-// P-8 (48 % of the reference core's 3,400 MW rated power) the loss of one
-// loop's forced flow trips the reactor; between P-7 (10 %) and P-8 the loss
-// of two (NUREG-1431 Table 3.3.1-1, functions 10, 11 and 16).
-const p7PowerMw = 340
-const p8PowerMw = 1_632
+// The reactor protection system reads power on the power-range channels
+// (NIS-PR-AVG), in percent of rated power.
+const powerRange = { tagId: 'NIS-PR-AVG' } as const
 
-// P-9: above half of the reference core's 3,400 MW rated power the steam
-// dumps cannot take the whole load a turbine trip rejects, so the turbine
-// trip trips the reactor. Below it the reactor rides the trip out.
-const p9PowerMw = 1_700
+// The high-power alarm and trip, at the reference core's 3,600 MW and
+// 3,750 MW of its 3,400 MW rated power.
+const powerHighAlarmPercent = 105.9
+const powerHighAlarmClearPercent = 102.9
+const powerHighTripPercent = 110.3
+
+// P-7 and P-8, on the power-range channels: above P-8 (48 % of rated power)
+// the loss of one loop's forced flow trips the reactor; between P-7 (10 %)
+// and P-8 the loss of two (NUREG-1431 Table 3.3.1-1, functions 10, 11 and 16).
+const p7PowerRangePercent = 10
+const p8PowerRangePercent = 48
+
+// P-9: above half of rated power the steam dumps cannot take the whole load
+// a turbine trip rejects, so the turbine trip trips the reactor. Below it the
+// reactor rides the trip out.
+const p9PowerRangePercent = 50
 
 export const reactorReferenceIcRules = (
   loops: ReadonlyArray<ProcessPlantReferenceLoop>,
@@ -50,14 +59,14 @@ export const reactorReferenceIcRules = (
     id: 'reactor-power-high',
     label: 'Reactor power high',
     ruleClass: 'alarm',
-    condition: comparison({ path: 'core.powerMw' }, '>', 3_600),
-    clearCondition: comparison({ path: 'core.powerMw' }, '<', 3_500),
+    condition: comparison(powerRange, '>', powerHighAlarmPercent),
+    clearCondition: comparison(powerRange, '<', powerHighAlarmClearPercent),
     clearDelayMs: 1_000,
     delayMs: 1_000,
     effects: [alarm({
       id: 'power-high',
       title: 'Reactor power high',
-      message: 'Core fission power is above the reference high-power threshold.',
+      message: `The power range reads above ${powerHighAlarmPercent} % of rated power.`,
       severity: 'critical',
       annunciator: reactorAlarm,
     })],
@@ -66,13 +75,13 @@ export const reactorReferenceIcRules = (
     id: 'reactor-high-power-trip',
     label: 'Reactor high-power trip',
     ruleClass: 'protection',
-    condition: comparison({ path: 'core.powerMw' }, '>', 3_750),
+    condition: comparison(powerRange, '>', powerHighTripPercent),
     delayMs: 1_000,
     effects: [
       trip({
         id: 'high-power-trip',
         title: 'Reactor high-power trip',
-        message: 'Core fission power is above the reference trip threshold.',
+        message: `The power range reads above the ${powerHighTripPercent} % high-power trip setpoint.`,
         annunciator: reactorAction,
       }),
       ...reactorTripBreakerWrites('high-power-trip'),
@@ -142,13 +151,13 @@ export const reactorReferenceIcRules = (
     // The stop valve closed and power above P-9, as the RPS logic ANDs them.
     condition: all([
       comparison({ tagId: 'TURB-STOP-POS' }, '<', 0.05),
-      comparison({ path: 'core.powerMw' }, '>', p9PowerMw),
+      comparison(powerRange, '>', p9PowerRangePercent),
     ]),
     effects: [
       trip({
         id: 'turbine-trip-reactor-trip',
         title: 'Reactor trip on turbine trip',
-        message: `The turbine stop valve closed with reactor power above P-9 (${p9PowerMw} MW, half of rated).`,
+        message: `The turbine stop valve closed with the power range above P-9 (${p9PowerRangePercent} % of rated power).`,
         annunciator: reactorAction,
       }),
       ...reactorTripBreakerWrites('turbine-trip'),
@@ -165,11 +174,11 @@ export const reactorReferenceIcRules = (
     // rather than waiting for the loop flow to coast down to the low-flow trip.
     condition: any([
       all([
-        comparison({ path: 'core.powerMw' }, '>', p8PowerMw),
+        comparison(powerRange, '>', p8PowerRangePercent),
         vote(1, loops.map(loop => comparison({ tagId: `RCP-${loop}-RUNNING` }, '==', false))),
       ]),
       all([
-        comparison({ path: 'core.powerMw' }, '>', p7PowerMw),
+        comparison(powerRange, '>', p7PowerRangePercent),
         vote(Math.min(2, loops.length), loops.map(loop => comparison({ tagId: `RCP-${loop}-RUNNING` }, '==', false))),
       ]),
     ]),
@@ -177,7 +186,7 @@ export const reactorReferenceIcRules = (
       trip({
         id: 'rcp-breaker-open-trip',
         title: 'Reactor trip on RCP breaker open',
-        message: `A reactor coolant pump stopped, its breaker open or its bus dead, with power above P-8 (${p8PowerMw} MW), or two stopped above P-7 (${p7PowerMw} MW).`,
+        message: `A reactor coolant pump stopped, its breaker open or its bus dead, with the power range above P-8 (${p8PowerRangePercent} %), or two stopped above P-7 (${p7PowerRangePercent} %).`,
         annunciator: reactorAction,
       }),
       ...reactorTripBreakerWrites('rcp-breaker-open-trip'),

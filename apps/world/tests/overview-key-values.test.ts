@@ -31,8 +31,9 @@ describe('the values a unit overview leads with', () => {
       const atPower = after(plant, null, 0)
       expect(atPower.mode).toBe('powerOperation')
       const paths = overviewKeyValues(plant, atPower)
+      // The power the reactor protection trips on is the power range's, in percent of rated power.
       expect(paths).toEqual([
-        'core.powerMw',
+        'core.powerRangePercent',
         'vessel.netInventoryFlowKgPerS',
         'pressurizer.pressureMPa',
         'containment.pressureMPa',
@@ -83,16 +84,17 @@ describe('the values equipment opened from the overview leads with', () => {
     expect(of(['rcpA'])).not.toContain('rcpA.running' as never)
   })
 
-  test('at power the core leads with its power, the subcooling margin, the RCS leak rate and its outlet temperature, then its nuclear instruments while they measure', () => {
+  test('at power the core leads with its power range, the subcooling margin, the RCS leak rate and its outlet temperature, then its nuclear instruments while they measure', () => {
     // The subcooling margin and the RCS leak rate are bound to the reactor coolant system, as the core exit
     // thermocouples are: their alarms are the core's related alarms. The de-energized source range measures
     // nothing at power: it is left out, and its high-voltage flag is never a value of its own (run 22: "Source-range
     // detector high voltage on · Reactor Core" as a sentence row).
-    expect(of(['core'])).toEqual(['core.powerMw', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
+    // The power range's P-10 and the intermediate range's startup rate follow as instruments.
+    expect(of(['core'])).toEqual(['core.powerRangePercent', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC', 'core.aboveP10', 'core.intermediateRangeStartupRateDpm'] as never)
     // With its high voltage on, the source range counts something and ranks as an instrument, before the
     // intermediate range.
     const counting: PlantNow = { ...atPower, read: path => String(path) === 'core.sourceRangeEnergized' ? true : runtime.readVariable(path) }
-    expect(of(['core'], counting).slice(3)).toEqual(['core.coolantOutletTemperatureC', 'core.sourceRangeCountRateCps', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
+    expect(of(['core'], counting).slice(3)).toEqual(['core.coolantOutletTemperatureC', 'core.sourceRangeCountRateCps', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC', 'core.aboveP10'] as never)
   })
 
   test('a signal only rules of other modes judge follows its key values and instruments', () => {
