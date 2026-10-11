@@ -73,6 +73,71 @@ pub enum Feed {
     Capture,
 }
 
+/// The constant structure of the 2,316 precursor and 9,650 history rows,
+/// compiled once for a block-analytic Jacobian (JAC's shape). Every row is
+/// `x' - (sum coefficient * feed - decay * x) = 0` in physical units; the
+/// joined row divides by the layout's row scale. Indices are global joined
+/// coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LinearTemplate {
+    pub rows: Vec<LinearRow>,
+    /// `(feed index, rhs coefficient per feed unit)`.
+    pub terms: Vec<(usize, f64)>,
+    /// Feed `2a` is carrier `a`'s achieved fissions `F_a = sum_i G_ai N_i`,
+    /// feed `2a + 1` its fertile captures `sigma_f fertile_a exposure_a`.
+    pub feeds: Vec<TemplateFeed>,
+    /// Constant uses of the stores elsewhere: `(target, global column,
+    /// coefficient)`, physical rhs per unit store.
+    pub consumers: Vec<(Target, usize, f64)>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct LinearRow {
+    /// Global row, equal to its own coordinate.
+    pub row: usize,
+    pub decay_per_s: f64,
+    /// Its terms in [`LinearTemplate::terms`].
+    pub terms: std::ops::Range<usize>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TemplateFeed {
+    Fission { carrier: usize },
+    Capture { carrier: usize },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// A regional population row (global): delayed emission `W_ia lambda C`.
+    Row(usize),
+    /// A carrier's fuel heat: the released history energy `lambda E`.
+    FuelHeat(usize),
+    /// A carrier's direct coolant heat (no constant store use at present).
+    CoolantHeat(usize),
+}
+
+/// The nuclear block's compiled coefficients, read-only.
+#[derive(Clone, Copy, Debug)]
+pub struct Coefficients<'a> {
+    pub capture: capture::Parameters,
+    pub poison: &'a poisons::Model,
+    pub reference_fertile: &'a [f64],
+    pub transfer_rates_per_s: &'a [f64],
+    pub emission_fractions: &'a [f64],
+    pub outside_fractions: &'a [f64],
+    /// Source capsule age at t = 0; the feedback reads `age0 + t`.
+    pub capsule_age0_s: f64,
+    /// 23 fission then 2 capture groups.
+    pub groups: &'a [super::packet::Group],
+    pub fission: &'a heat_history::Model,
+    pub fertile: &'a heat_history::Model,
+    pub prompt_coolant_fraction: f64,
+    pub binding_coolant_fraction: f64,
+    pub xenon_binding_j: f64,
+    pub samarium_binding_j: f64,
+    pub xenon_cross_section_m2: f64,
+    pub samarium_cross_section_m2: f64,
+    pub delayed_yields_per_fission: &'a [[f64; DELAYED]],
+    pub precursor_decay_per_s: &'a [[f64; DELAYED]],
+}
+
 /// Per-carrier heat and diagnostics of the last evaluation.
 #[derive(Clone, Debug, Default)]
 pub struct Heat {
@@ -116,6 +181,9 @@ pub struct Nuclear {
     carriers: usize,
     /// Compiled (region, material) supports, kinetics order.
     supports: Vec<kinetics::Support>,
+    /// Per material: delayed yields and decay constants (kinetics order).
+    delayed_yields: Vec<[f64; DELAYED]>,
+    precursor_decay: Vec<[f64; DELAYED]>,
     // Preallocated stage buffers; nothing allocates on the success path.
     work: Work,
 }
@@ -408,6 +476,16 @@ impl Nuclear {
             regions: r,
             carriers: a,
             supports: source.supports.clone(),
+            delayed_yields: source
+                .materials
+                .iter()
+                .map(|m| m.delayed_yields_per_fission)
+                .collect(),
+            precursor_decay: source
+                .materials
+                .iter()
+                .map(|m| m.decay_constants_per_s)
+                .collect(),
             work,
         })
     }
@@ -437,6 +515,87 @@ impl Nuclear {
     /// The compiled (region, material) supports.
     pub fn supports(&self) -> &[kinetics::Support] {
         &self.supports
+    }
+    /// Every compiled coefficient the rows read, read-only.
+    pub fn coefficients(&self) -> Coefficients<'_> {
+        Coefficients {
+            capture: self.capture,
+            poison: &self.poison,
+            reference_fertile: &self.reference_fertile,
+            transfer_rates_per_s: &self.transfer_rates,
+            emission_fractions: &self.emission,
+            outside_fractions: &self.outside,
+            capsule_age0_s: self.capsule_age0_s,
+            groups: &self.groups,
+            fission: &self.fission,
+            fertile: &self.fertile,
+            prompt_coolant_fraction: self.prompt_coolant_fraction,
+            binding_coolant_fraction: self.binding_coolant_fraction,
+            xenon_binding_j: self.xenon_binding_j,
+            samarium_binding_j: self.samarium_binding_j,
+            xenon_cross_section_m2: self.xenon_cross_section,
+            samarium_cross_section_m2: self.samarium_cross_section,
+            delayed_yields_per_fission: &self.delayed_yields,
+            precursor_decay_per_s: &self.precursor_decay,
+        }
+    }
+    /// The precursor and history rows' constant structure, with this
+    /// block's coordinates starting at global index `offset`.
+    pub fn linear_template(&self, offset: usize) -> LinearTemplate {
+        let a = self.carriers;
+        let mut t = LinearTemplate {
+            rows: Vec::with_capacity(DELAYED * a + HISTORIES * a),
+            terms: Vec::with_capacity(DELAYED * a + HISTORIES * a),
+            feeds: (0..a)
+                .flat_map(|carrier| {
+                    [
+                        TemplateFeed::Fission { carrier },
+                        TemplateFeed::Capture { carrier },
+                    ]
+                })
+                .collect(),
+            consumers: Vec::new(),
+        };
+        // C'_ag = sum_i nu_ag G_ai N_i - lambda C = nu_ag F_a - lambda C.
+        for m in 0..a {
+            for g in 0..DELAYED {
+                let k = t.terms.len();
+                t.terms.push((2 * m, self.delayed_yields[m][g]));
+                t.rows.push(LinearRow {
+                    row: offset + self.precursor(m, g),
+                    decay_per_s: self.precursor_decay[m][g],
+                    terms: k..k + 1,
+                });
+            }
+        }
+        for m in 0..a {
+            for (g, group) in self.groups.iter().enumerate() {
+                let feed = if g < FISSION_GROUPS { 2 * m } else { 2 * m + 1 };
+                let k = t.terms.len();
+                t.terms.push((feed, group.retained_joules_per_event));
+                t.rows.push(LinearRow {
+                    row: offset + self.history(m, g),
+                    decay_per_s: group.decay_per_s,
+                    terms: k..k + 1,
+                });
+                t.consumers.push((
+                    Target::FuelHeat(m),
+                    offset + self.history(m, g),
+                    group.decay_per_s,
+                ));
+            }
+        }
+        // Delayed emission into the regional populations.
+        for (k, support) in self.supports.iter().enumerate() {
+            for g in 0..DELAYED {
+                t.consumers.push((
+                    Target::Row(offset + support.region),
+                    offset + self.precursor(support.material, g),
+                    self.emission[k] * self.precursor_decay[support.material][g],
+                ));
+            }
+        }
+        t
     }
     /// Local index of carrier `a`'s precursor group `g`.
     pub fn precursor(&self, a: usize, g: usize) -> usize {
