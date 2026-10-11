@@ -52,6 +52,46 @@ const p8PowerRangePercent = 48
 // reactor rides the trip out.
 const p9PowerRangePercent = 50
 
+// Rod control's temperature error, Tavg minus the Tref turbine load programs:
+// in power operation it alarms outside 1.7 °C (3 °F) either way for 2 s and
+// clears inside 1.1 °C (2 °F), as a signed deviation like the pressurizer's
+// level from its program.
+const averageTemperatureDeviation = { tagId: 'TAVG-TREF' } as const
+const averageTemperatureDeviationAlarmC = 1.7
+const averageTemperatureDeviationClearC = 1.1
+
+const rodControlAlarm = annunciator({
+  system: 'reactorCoolantSystem',
+  equipmentId: 'core',
+  group: 'rod-control',
+  priority: 'high',
+  role: 'symptom',
+})
+
+const averageTemperatureDeviationRules = (): ReadonlyArray<ProcessPlantIcRule> => (['high', 'low'] as const).map(side => rule({
+  id: `tavg-tref-deviation-${side}`,
+  label: `Tavg ${side === 'high' ? 'above' : 'below'} Tref`,
+  ruleClass: 'alarm',
+  modes: ['powerOperation'],
+  condition: side === 'high'
+    ? comparison(averageTemperatureDeviation, '>', averageTemperatureDeviationAlarmC)
+    : comparison(averageTemperatureDeviation, '<', -averageTemperatureDeviationAlarmC),
+  clearCondition: side === 'high'
+    ? comparison(averageTemperatureDeviation, '<', averageTemperatureDeviationClearC)
+    : comparison(averageTemperatureDeviation, '>', -averageTemperatureDeviationClearC),
+  clearDelayMs: 1_000,
+  delayMs: 2_000,
+  latch: false,
+  resetWhenClear: true,
+  effects: [alarm({
+    id: `tavg-tref-deviation-${side}`,
+    title: `Tavg ${side === 'high' ? 'above' : 'below'} Tref`,
+    message: `The loops' average temperature stands more than ${averageTemperatureDeviationAlarmC} °C ${side === 'high' ? 'above' : 'below'} the reference temperature turbine load programs (Tref).`,
+    severity: 'warning',
+    annunciator: rodControlAlarm,
+  })],
+}))
+
 export const reactorReferenceIcRules = (
   loops: ReadonlyArray<ProcessPlantReferenceLoop>,
 ): ReadonlyArray<ProcessPlantIcRule> => [
@@ -211,4 +251,5 @@ export const reactorReferenceIcRules = (
       write('insert-control-rods-low-rcp-flow', { path: 'core.rodInsertionFraction' }, 1),
     ],
   }),
+  ...averageTemperatureDeviationRules(),
 ]

@@ -721,3 +721,25 @@ describe('pressurizer low level', () => {
     expect(plantRun.secondsUntil(cutoff, 150)).not.toBeNull()
   }, 120_000)
 })
+
+describe('Tavg against Tref', () => {
+  test('alarms in power operation when Tavg stands 1.7 °C off the reference turbine load programs, either way', () => {
+    // Drawn at ±1.7 °C on the deviation, in power operation only.
+    const deviation = resolveProcessPlantSignalBinding(graph, { tagId: 'TAVG-TREF' as never }).path
+    expect(icThresholdsForSignal(plant, deviation).thresholds.map(threshold => [threshold.value, threshold.direction, threshold.kind, threshold.modeIds])).toEqual([
+      [-1.7, 'low', 'alarm', ['powerOperation']],
+      [1.7, 'high', 'alarm', ['powerOperation']],
+    ])
+    // A 10 % turbine load reduction with no automatic rod control: Tref falls 1.4 °C at once and Tavg climbs.
+    const plantRun = started()
+    plantRun.run(10_000)
+    expect(plantRun.tag('TAVG-TREF') as number).toBeCloseTo(0, 1)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: resolveProcessPlantSignalBinding(graph, { tagId: 'TURB-LOAD' as never }).path, value: 0.9 })
+    plantRun.run(20_000)
+    expect(plantRun.tag('TAVG-TREF') as number).toBeGreaterThan(1.3)
+    expect(plantRun.activeIds()).not.toContain('alarm:tavg-tref-deviation-high:tavg-tref-deviation-high')
+    expect(plantRun.secondsUntil('alarm:tavg-tref-deviation-high:tavg-tref-deviation-high', 120)).not.toBeNull()
+    expect(plantRun.tag('TAVG-TREF') as number).toBeGreaterThan(1.7)
+    expect(plantRun.activeIds()).not.toContain('alarm:tavg-tref-deviation-low:tavg-tref-deviation-low')
+  }, 120_000)
+})
