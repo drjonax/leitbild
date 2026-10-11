@@ -152,6 +152,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn operating_ida_max_order(ida: *mut c_void, order: c_int) -> c_int;
     fn operating_ida_max_step(ida: *mut c_void, step: f64) -> c_int;
+    fn operating_ida_init_step(ida: *mut c_void, step: f64) -> c_int;
     fn operating_ida_solution_scaling(ida: *mut c_void, enabled: c_int) -> c_int;
     fn operating_ida_newton_coefficient(ida: *mut c_void, coefficient: f64) -> c_int;
     fn operating_ida_reinitialize(ida: *mut c_void, t: f64, y: *const f64, yp: *const f64)
@@ -541,6 +542,17 @@ impl<S: System> Ida<S> {
             return Err("IDA handle is fail-stopped".into());
         }
         let code = unsafe { operating_ida_max_step(self.handle.as_ptr(), f64::INFINITY) };
+        self.check(code)
+    }
+    /// IDASetInitStep: the first step of the next segment, finite and
+    /// positive. Stock keeps it across IDAReInit, so a caller that restarts
+    /// sets it explicitly each time; stock still error-tests that step.
+    pub fn set_init_step(&mut self, step: f64) -> Result<()> {
+        self.configurable("initial step")?;
+        if !step.is_finite() || step <= 0. {
+            return Err(format!("IDA initial step {step} must be finite and positive"));
+        }
+        let code = unsafe { operating_ida_init_step(self.handle.as_ptr(), step) };
         self.check(code)
     }
     /// IDASetLinearSolutionScaling for the matrix-based KLU solver (stock
