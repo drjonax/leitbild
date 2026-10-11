@@ -370,7 +370,8 @@ export const activeThreshold = <T extends ComposedDisplayThreshold>(
 
 /**
  * What a legend row says of a signal's limits, read in the direction the
- * value moves: the nearest limit in force ahead of it, with the time to it;
+ * value moves: the nearest limit in force ahead of it, with the time to it,
+ * where it would reach it within half an hour (slower, it reads as steady);
  * past one it is moving back across, with the time to it; past the
  * outermost on the side it has gone (moving on or steady); no limit in force
  * that way; no I&C limit at all; or none acting in the current mode. A value
@@ -452,14 +453,23 @@ export const trendReading = (config: {
     if (ahead !== null && isPast(ahead)) {
       return { ...reading, limit: { kind: 'past', margin: ahead, back: { travel: heading, eta: timeToThresholdText(value, rate, ahead.threshold, projectable, true, change), minutes: projectedMinutes(value, rate, ahead.threshold, projectable, true) } } }
     }
-    if (ahead !== null) {
+    // A value creeping toward a limit it would not reach in half an hour reads as a steady one: by the nearest
+    // limit in force either way (HMI review of run 23: "51.1 pp below HI 75 %" on a pressurizer level 6.9 pp
+    // above its LO 17 % alarm).
+    const minutes = ahead === null || end !== null ? null : minutesToThreshold(value, rate, ahead.threshold)
+    const creeping = ahead !== null && end === null && (minutes === null || minutes > PROJECTION_MAX_MINUTES)
+    if (ahead !== null && !creeping) {
       return { ...reading, limit: { kind: 'margin', margin: ahead, eta: timeToThresholdText(value, rate, ahead.threshold, projectable, false, change), minutes: projectedMinutes(value, rate, ahead.threshold, projectable) } }
     }
-    const behind = outermostPassed(value, inForce)
-    return { ...reading, limit: behind !== null ? { kind: 'past', margin: behind, back: null } : { kind: 'clear', direction: heading === 'falling' ? 'low' : 'high' } }
+    if (ahead === null) {
+      const behind = outermostPassed(value, inForce)
+      return { ...reading, limit: behind !== null ? { kind: 'past', margin: behind, back: null } : { kind: 'clear', direction: heading === 'falling' ? 'low' : 'high' } }
+    }
   }
   const margin = coincidentMargin(nearestThresholdMargin(value, inForce)!, inForce)
   if (isPast(margin)) return { ...reading, limit: { kind: 'past', margin, back: null } }
+  // Creeping, it still moves: the nearest limit is named however far, as the one ahead was.
+  if (heading === 'rising' || heading === 'falling') return { ...reading, limit: { kind: 'margin', margin, eta: '', minutes: null } }
   // Going nowhere, a value is near a limit only within a quarter of the scale
   // it reads over: farther, a margin says nothing an operator acts on (a
   // tripped core at 0 MW is no "3600 MW below HI ALM").
