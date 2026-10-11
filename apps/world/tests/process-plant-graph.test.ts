@@ -69,9 +69,12 @@ describe('process plant model composition', () => {
     // pressurizer's heaters were split into a control group on unit bus A
     // and a 1.5 MW backup group on diesel-backed safety bus A, through its
     // own breaker, and again when the steam generators' narrow-range level
-    // instruments declared the 0 to 100 % span their indication saturates at;
+    // instruments declared the 0 to 100 % span their indication saturates at,
+    // and again when the reactor coolant loops were given their hydraulics
+    // (flywheel coastdown, a vessel pressure drop the loops share, reverse
+    // flow in an idle loop and natural circulation by buoyancy);
     // PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('3fba4828a951521a8077a10b5a68feba4726240f66eb7623a81a361a74678a1a')
+    expect(system.modelDigest).toBe('fffb95b75dea510b8a22efb72aed2bc3f5ceb8747c6fbe7bbbc8fec71f5283aa')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

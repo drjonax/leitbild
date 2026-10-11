@@ -25,6 +25,7 @@ export interface PwrTransientKernel {
     readonly safetyInjectionFlowKgPerS: NumberHandle | null
     readonly tubeLeakFlowKgPerS: NumberHandle | null
     readonly reactorCoolantPumpLoopFlowKgPerS: ReadonlyArray<NumberHandle>
+    readonly reactorCoolantPumpLoopReverseFlowKgPerS: ReadonlyArray<NumberHandle>
     readonly reactorCoolantPumpRunning: ReadonlyArray<BooleanHandle>
     readonly reactorCoolantPumpSpeedFraction: ReadonlyArray<NumberHandle>
     readonly steamGeneratorSecondaryInventoryKg: ReadonlyArray<NumberHandle>
@@ -329,6 +330,7 @@ export const compilePwrTransientKernel = (
       safetyInjectionFlowKgPerS: handleFor(table, reactorVessel, 'safetyInjectionFlowKgPerS'),
       tubeLeakFlowKgPerS: handleFor(table, reactorVessel, 'tubeLeakFlowKgPerS'),
       reactorCoolantPumpLoopFlowKgPerS: handlesFor(table, reactorCoolantPumps, 'loopFlowKgPerS'),
+      reactorCoolantPumpLoopReverseFlowKgPerS: handlesFor(table, reactorCoolantPumps, 'loopReverseFlowKgPerS'),
       reactorCoolantPumpRunning: handlesFor(table, reactorCoolantPumps, 'runningState'),
       reactorCoolantPumpSpeedFraction: handlesFor(table, reactorCoolantPumps, 'speedFraction'),
       steamGeneratorSecondaryInventoryKg: handlesFor(table, steamGenerators, 'secondaryInventoryKg'),
@@ -413,7 +415,8 @@ export const evaluatePwrTransientKernel = (
       leakFlowKgPerS: readOptionalNumber(table, handles.primaryLeakFlowKgPerS),
       safetyInjectionFlowKgPerS: readOptionalNumber(table, handles.safetyInjectionFlowKgPerS),
       tubeLeakFlowKgPerS: readOptionalNumber(table, handles.tubeLeakFlowKgPerS),
-      reactorCoolantFlowKgPerS: sumNumbers(table, handles.reactorCoolantPumpLoopFlowKgPerS),
+      // A loop driven backwards takes its flow away from the core.
+      reactorCoolantFlowKgPerS: sumNumbers(table, handles.reactorCoolantPumpLoopFlowKgPerS) - sumNumbers(table, handles.reactorCoolantPumpLoopReverseFlowKgPerS),
       runningReactorCoolantPumpCount: countBooleans(table, handles.reactorCoolantPumpRunning, true),
       minReactorCoolantPumpSpeedFraction: minimum(table, handles.reactorCoolantPumpSpeedFraction),
     },

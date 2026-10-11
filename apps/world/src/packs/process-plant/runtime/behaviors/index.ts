@@ -52,7 +52,7 @@ export const componentBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefini
   behaviorDefinitionById('electrical-bus-propagation'),
   behaviorDefinitionById('turbine-electrical-output'),
   behaviorDefinitionById('centrifugal-pump-flow'),
-  behaviorDefinitionById('centrifugal-pump-primary-loop-inertia'),
+  behaviorDefinitionById('centrifugal-pump-primary-loop-flow'),
   behaviorDefinitionById('reactor-core-heat-to-coolant'),
   behaviorDefinitionById('steam-generator-heat-transfer'),
   behaviorDefinitionById('steam-generator-tube-leak-transfer'),

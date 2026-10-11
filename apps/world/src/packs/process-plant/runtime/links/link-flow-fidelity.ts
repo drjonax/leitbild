@@ -6,10 +6,10 @@ import { processPlantServices } from '../service-profiles.ts'
  * How far a link's solved flow can be trusted, read from where the runtime
  * takes it (`processLinkFlowSourceFor`; keep the two in step):
  * - `solved`: the flow follows from the equipment that drives it, sign included;
- * - `magnitudeOnly`: the size is solved but not the direction (a primary loop
- *   carries its pump's loop flow, which never reverses: an idle loop driven
- *   backwards by the others still reads forward; the surge line carries the
- *   size of a surge that runs either way);
+ * - `magnitudeOnly`: the size is solved but not the direction (a primary loop's
+ *   legs carry the size of its flow, forward or, for an idle loop the others
+ *   drive backwards, reverse, which only its pump's reverse flow tells apart;
+ *   the surge line carries the size of a surge that runs either way);
  * - `unverified`: the number is a modelling placeholder, not this link's flow
  *   (a share of a hub's outflow, or a passive flow with nothing feeding it).
  */

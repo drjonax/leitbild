@@ -15,7 +15,8 @@ import {
   sumOutgoingComponentLinkValue,
   sumProcessLinkValueByService as sumLinkValueByService,
 } from '../component-link-helpers.ts'
-import { flowWeightedIncomingLinkValue, sumIncomingLinkValue } from '../links/link-flow-helpers.ts'
+import { flowWeightedIncomingLinkValue } from '../links/link-flow-helpers.ts'
+import { primaryLoopLegReversed, reactorCoreNetInflowKgPerS } from '../primary-loop-hydraulics.ts'
 import { reactorKineticsPowerStep } from '../physics.ts'
 import { primarySystemPressurizer, primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
 import { saturationTemperatureCFromPressureMPa } from '../thermophysics.ts'
@@ -318,7 +319,7 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'decayHeatMw'), nextDecayHeat)
       context.write(componentVariablePath(component, 'totalThermalPowerMw'), totalThermalPower)
 
-      const primaryFlow = sumIncomingLinkValue(system, component.index, 'flowKgPerS', context, link => link.service === 'primaryCoolant')
+      const primaryFlow = reactorCoreNetInflowKgPerS(system, component, context)
       const nominalPrimaryFlow = optionalParameterNumber(component, 'nominalPrimaryFlowKgPerS', Math.max(1, primaryFlow))
       const minimumCooling = optionalParameterNumber(component, 'minimumNaturalCirculationCoolingFraction', 0.08)
       context.write(componentVariablePath(component, 'averageHotLegFlowKgPerS'), primaryFlow)
@@ -356,15 +357,15 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
     writes: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC', 'vapourGenerationKgPerS'],
     update: ({ system, component, context }): void => {
       const dt = context.dtSeconds
-      const primaryInletLink = (link: { readonly service?: unknown }): boolean =>
-        link.service === 'primaryCoolant'
+      const primaryInletLink = (link: ReactorBehaviorLink): boolean =>
+        (link.service === 'primaryCoolant' && !primaryLoopLegReversed(system, link, context))
         || link.service === 'charging'
         || link.service === 'primaryInjection'
         || link.service === 'safetyInjection'
       const mixedInletTemperature = flowWeightedIncomingLinkValue(system, component.index, 'temperatureC', context, primaryInletLink)
         ?? averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
         ?? context.readNumber(componentVariablePath(component, 'coolantInletTemperatureC'))
-      const flow = Math.max(1, sumIncomingLinkValue(system, component.index, 'flowKgPerS', context, link => link.service === 'primaryCoolant'))
+      const flow = Math.max(1, reactorCoreNetInflowKgPerS(system, component, context))
       const pressure = coolantPressureMPa(system, component, context)
       const saturation = saturatedWaterSteam(pressure)
       const latentHeat = saturation.vapourEnthalpyKjPerKg - saturation.liquidEnthalpyKjPerKg

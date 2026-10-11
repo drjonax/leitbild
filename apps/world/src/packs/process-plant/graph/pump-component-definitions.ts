@@ -21,10 +21,28 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       flowTimeConstantS: z.number().finite().positive().optional(),
       maxFlowRampKgPerS2: z.number().finite().positive().optional(),
       nominalSpeedRpm: z.number().finite().positive().optional(),
+      /** For a reactor coolant pump: the time constant with which its loop's flow follows the head that drives it. */
       loopInertiaTimeConstantS: z.number().finite().positive().optional(),
+      /**
+       * For a pump with a flywheel: the time in which its speed halves once its
+       * motor stops, the water's drag on the impeller slowing it as the square
+       * of its speed.
+       */
       coastdownTimeConstantS: z.number().finite().positive().optional(),
       loopResistanceCoefficient: z.number().finite().nonnegative().optional(),
-      minimumNaturalCirculationFlowKgPerS: z.number().finite().nonnegative().optional(),
+      /**
+       * For a reactor coolant pump: the head it develops at rated speed with no
+       * flow. Its head falls along a parabola from it to the nominal head at
+       * the loop's rated flow; standing still, held by its anti-reverse
+       * device, the impeller resists flow by their difference at rated flow.
+       */
+      shutoffHeadPa: z.number().finite().positive().optional(),
+      /**
+       * For a reactor coolant pump: the height of its loop's steam generator
+       * thermal centre above the core's, over which the cold leg's denser
+       * water drives the loop by natural circulation.
+       */
+      naturalCirculationHeightM: z.number().finite().nonnegative().optional(),
       hydraulicEfficiencyFraction: z.number().finite().positive().max(1).optional(),
       fluidDensityKgPerM3: z.number().finite().positive().optional(),
       /**
@@ -53,6 +71,8 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'demandMw', label: 'Pump electrical demand', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'loopFlowTargetKgPerS', label: 'Primary loop target flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
       variable({ path: 'loopFlowKgPerS', label: 'Primary loop flow', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
+      // An idle loop the other loops drive backwards reads no forward flow.
+      variable({ path: 'loopReverseFlowKgPerS', label: 'Primary loop reverse flow', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
     ],
   }),
 ]

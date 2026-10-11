@@ -1,3 +1,4 @@
+import { primaryLoopPumpForLink } from '../../graph/index.ts'
 import { componentVariablePath, processLinkVariablePath, type ProcessLinkBehaviorDefinition } from '../behavior-contract.ts'
 import { clamp } from '../component-helpers.ts'
 import {
@@ -29,7 +30,9 @@ export const processLinkFlowBehaviorDefinitions: ReadonlyArray<ProcessLinkBehavi
       if (!source.bypassTargetPumpLimit && toComponent.kind === 'centrifugalPump') {
         flowSource = Math.min(flowSource, context.readNumber(componentVariablePath(toComponent, 'flowKgPerS')))
       }
-      const capacity = physicalFlowCapacityKgPerS(link)
+      // A reactor coolant loop's legs carry what the loops' hydraulics solve,
+      // above their rated flow as well when three pumps drive four loops.
+      const capacity = primaryLoopPumpForLink(system.graph, link) === null ? physicalFlowCapacityKgPerS(link) : Number.POSITIVE_INFINITY
       const componentValveCapacity = componentValveCapacityForInboundLink(system, link, context)
       const effectiveValveFactor = source.alreadyIncludesPathAvailability
         ? 1

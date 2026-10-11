@@ -423,7 +423,9 @@ describe('pumps', () => {
     for (const loop of ['A', 'B', 'C', 'D']) {
       expect(plantRun.tag(`RCP-${loop}-RUN`), loop).toBe(true)
       expect(plantRun.tag(`RCP-${loop}-RUNNING`), loop).toBe(false)
-      expect(Number(plantRun.tag(`RCP-${loop}-FLOW`)), loop).toBeLessThan(600)
+      // A minute into their flywheels' coastdown the loops carry about a sixth of their flow.
+      expect(Number(plantRun.tag(`RCP-${loop}-FLOW`)), loop).toBeLessThan(0.2 * 4250)
+      expect(Number(plantRun.tag(`RCP-${loop}-FLOW`)), loop).toBeGreaterThan(0.1 * 4250)
     }
     for (const id of ['mainFeedwaterPumpA', 'mainFeedwaterPumpB', 'condensatePumpA', 'condensatePumpB', 'circulatingWaterPump']) {
       expect(plantRun.read(`${id}.runningState`), id).toBe(false)

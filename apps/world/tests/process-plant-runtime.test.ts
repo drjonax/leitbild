@@ -466,9 +466,16 @@ describe('process plant runtime', () => {
     unitTrain.tick(2_000)
     expect(unitTrain.readVariable(valueOf('unitBusA.energized'))).toBe(false)
     expect(unitTrain.readVariable(valueOf('safetyBusA.energized'))).toBe(true)
-    expect(Number(unitTrain.readVariable(valueOf('rcpA.developedHeadPa')))).toBe(0)
-    expect(Number(unitTrain.readVariable(valueOf('rcpC.developedHeadPa')))).toBe(0)
-    expect(Number(unitTrain.readVariable(valueOf('rcpB.developedHeadPa')))).toBeGreaterThan(0)
+    // The unit-bus-A pumps stop driving and coast: their head falls away from nominal.
+    for (const pump of ['rcpA', 'rcpC']) {
+      expect(unitTrain.readVariable(valueOf(`${pump}.runningState`)), pump).toBe(false)
+      expect(Number(unitTrain.readVariable(valueOf(`${pump}.demandMw`))), pump).toBe(0)
+      expect(Number(unitTrain.readVariable(valueOf(`${pump}.developedHeadPa`))), pump).toBeLessThan(0.5 * 650_000)
+    }
+    // Unit bus B's pumps run on, along their head curve at the larger flow the others' coastdown leaves them.
+    expect(unitTrain.readVariable(valueOf('rcpB.runningState'))).toBe(true)
+    expect(Number(unitTrain.readVariable(valueOf('rcpB.developedHeadPa')))).toBeGreaterThan(0.5 * 650_000)
+    expect(Number(unitTrain.readVariable(valueOf('rcpB.developedHeadPa')))).toBeGreaterThan(Number(unitTrain.readVariable(valueOf('rcpA.developedHeadPa'))))
     expect(unitTrain.readVariable(valueOf('mainFeedwaterPumpA.runningState'))).toBe(false)
     expect(unitTrain.readVariable(valueOf('mainFeedwaterPumpB.runningState'))).toBe(true)
   })
@@ -858,8 +865,11 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('feedwater-control-valve-a-to-sg-a.flowKgPerS')))).toBeCloseTo(0, 6)
     expect(Number(runtime.readVariable(valueOf('rcpA.flowKgPerS')))).toBeCloseTo(0, 6)
     expect(Number(runtime.readVariable(valueOf('rcpA.developedHeadPa')))).toBeCloseTo(0, 6)
-    expect(Number(runtime.readVariable(valueOf('rcpA.loopFlowKgPerS')))).toBeCloseTo(260, 6)
-    expect(Number(runtime.readVariable(valueOf('rcs-hot-leg-a.flowKgPerS')))).toBeCloseTo(260, 6)
+    // The three running loops drive the idle one backwards from the start.
+    const reverseFlow = Number(runtime.readVariable(valueOf('rcpA.loopReverseFlowKgPerS')))
+    expect(Number(runtime.readVariable(valueOf('rcpA.loopFlowKgPerS')))).toBe(0)
+    expect(reverseFlow).toBeGreaterThan(0.3 * 4250)
+    expect(Number(runtime.readVariable(valueOf('rcs-hot-leg-a.flowKgPerS')))).toBeCloseTo(reverseFlow, 6)
   })
 
   test('feedwater tank and condenser mass balances are internally consistent across fixed steps', () => {
@@ -1771,36 +1781,47 @@ describe('process plant runtime', () => {
     expect(Number(runtime.readVariable(valueOf('auxFeedwaterHeader.flowBalanceResidualKgPerS')))).toBeCloseTo(0, 6)
   })
 
-  test('reactor coolant pump trip coasts down primary loop flow and heat transfer', () => {
+  test('a reactor coolant pump that trips while the others run coasts down, then the others drive its loop backwards', () => {
     const runtime = createProcessPlantRuntime({ system: compiledSystem() })
+    const read = (path: string): number => Number(runtime.readVariable(valueOf(path)))
 
     for (let index = 0; index < 50; index += 1) runtime.tick(100)
-    const flowingHeatTransfer = Number(runtime.readVariable(valueOf('sgA.heatTransferMw')))
-    const initialFlow = Number(runtime.readVariable(valueOf('rcs-hot-leg-a.flowKgPerS')))
-    const initialSteamFlow = Number(runtime.readVariable(valueOf('sg-a-steam-to-msiv-a.flowKgPerS')))
-    const initialCoolingAvailability = Number(runtime.readVariable(valueOf('core.coreCoolingAvailabilityFraction')))
+    const ratedLoopFlow = read('rcs-hot-leg-a.flowKgPerS')
+    const flowingHeatTransfer = read('sgA.heatTransferMw')
+    const initialSteamFlow = read('sg-a-steam-to-msiv-a.flowKgPerS')
     runtime.writeCommand({ type: 'setVariable', path: valueOf('rcpA.running'), value: false })
     for (let index = 0; index < 20; index += 1) runtime.tick(100)
 
-    const coastdownFlow = Number(runtime.readVariable(valueOf('rcs-hot-leg-a.flowKgPerS')))
-    expect(coastdownFlow).toBeGreaterThan(0)
-    expect(coastdownFlow).toBeLessThan(initialFlow)
-    for (let index = 0; index < 400; index += 1) runtime.tick(100)
-    const coastedNaturalCirculationFlow = Number(runtime.readVariable(valueOf('rcs-hot-leg-a.flowKgPerS')))
-    const naturalCirculationTarget = Number(runtime.readVariable(valueOf('rcpA.loopFlowTargetKgPerS')))
-    expect(naturalCirculationTarget).toBeCloseTo(260, 6)
-    expect(coastedNaturalCirculationFlow).toBeGreaterThan(naturalCirculationTarget)
-    expect(coastedNaturalCirculationFlow).toBeLessThan(initialFlow * 0.2)
-    expect(coastedNaturalCirculationFlow).toBeLessThan(1_000)
-    expect(Number(runtime.readVariable(valueOf('sgA.heatTransferMw')))).toBeLessThan(flowingHeatTransfer)
-    expect(Number(runtime.readVariable(valueOf('core.coreCoolingAvailabilityFraction')))).toBeLessThan(initialCoolingAvailability)
-    expect(Number(runtime.readVariable(valueOf('core.coreHeatRemovalDeficitMw')))).toBeGreaterThan(0)
+    // Two seconds in, its flywheel still drives loop A forward.
+    expect(read('rcpA.speedRpm')).toBeLessThan(read('rcpB.speedRpm'))
+    expect(read('rcpA.loopFlowKgPerS')).toBeGreaterThan(0.8 * ratedLoopFlow)
+    expect(read('rcpA.loopFlowKgPerS')).toBeLessThan(ratedLoopFlow)
+    for (let index = 0; index < 600; index += 1) runtime.tick(100)
+
+    // A minute on, its loop runs backwards: its flow transmitter reads no
+    // flow, and its legs carry the reverse flow's size.
+    const reverseFlow = read('rcpA.loopReverseFlowKgPerS')
+    expect(read('rcpA.loopFlowKgPerS')).toBe(0)
+    expect(reverseFlow).toBeGreaterThan(0.3 * ratedLoopFlow)
+    expect(reverseFlow).toBeLessThan(0.6 * ratedLoopFlow)
+    expect(read('rcs-hot-leg-a.flowKgPerS')).toBeCloseTo(reverseFlow, 6)
+    // The running pumps, against a vessel whose pressure drop has fallen,
+    // each carry somewhat more than their rated flow ...
+    for (const loop of ['B', 'C', 'D']) {
+      expect(read(`rcp${loop}.loopFlowKgPerS`), loop).toBeGreaterThan(1.05 * ratedLoopFlow)
+      expect(read(`rcp${loop}.loopFlowKgPerS`), loop).toBeLessThan(1.15 * ratedLoopFlow)
+    }
+    // ... so the core keeps 70 to 75 % of its rated flow.
+    const coreFlow = read('core.averageHotLegFlowKgPerS')
+    expect(coreFlow).toBeCloseTo(3 * read('rcpB.loopFlowKgPerS') - reverseFlow, 0)
+    expect(coreFlow / (4 * ratedLoopFlow)).toBeGreaterThan(0.7)
+    expect(coreFlow / (4 * ratedLoopFlow)).toBeLessThan(0.75)
     const diagnostics = runtime.pwrTransientDiagnostics()
-    expect(diagnostics.core.coolingAvailabilityFraction).toBeLessThan(initialCoolingAvailability)
     expect(diagnostics.primary.runningReactorCoolantPumpCount).toBe(3)
-    expect(diagnostics.primary.reactorCoolantFlowKgPerS).toBeLessThan(initialFlow * 4)
-    expect(diagnostics.primary.minReactorCoolantPumpSpeedFraction).toBeGreaterThanOrEqual(0)
-    expect(Number(runtime.readVariable(valueOf('sg-a-steam-to-msiv-a.flowKgPerS')))).toBeLessThan(initialSteamFlow * 0.75)
+    expect(diagnostics.primary.reactorCoolantFlowKgPerS).toBeCloseTo(coreFlow, 0)
+    // The idle steam generator takes little from the downcomer water passing back through it.
+    expect(read('sgA.heatTransferMw')).toBeLessThan(0.1 * flowingHeatTransfer)
+    expect(read('sg-a-steam-to-msiv-a.flowKgPerS')).toBeLessThan(initialSteamFlow * 0.75)
   })
 
   test('primary loop inertia is scoped to the tripped reactor coolant pump loop', () => {

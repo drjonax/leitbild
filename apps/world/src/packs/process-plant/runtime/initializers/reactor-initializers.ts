@@ -88,8 +88,9 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'demandMw') return running
         ? parameterNumber(component, 'nominalFlowKgPerS') * parameterNumber(component, 'nominalHeadPa') / optionalParameterNumber(component, 'fluidDensityKgPerM3', 800) / optionalParameterNumber(component, 'hydraulicEfficiencyFraction', 0.82) / 1_000_000
         : 0
-      if (localPath === 'loopFlowTargetKgPerS') return primaryLoopId === null ? 0 : running ? parameterNumber(component, 'nominalFlowKgPerS') : optionalParameterNumber(component, 'minimumNaturalCirculationFlowKgPerS', 0)
-      if (localPath === 'loopFlowKgPerS') return primaryLoopId === null ? 0 : running ? parameterNumber(component, 'nominalFlowKgPerS') : optionalParameterNumber(component, 'minimumNaturalCirculationFlowKgPerS', 0)
+      if (localPath === 'loopFlowTargetKgPerS') return primaryLoopId !== null && running ? parameterNumber(component, 'nominalFlowKgPerS') : 0
+      if (localPath === 'loopFlowKgPerS') return primaryLoopId !== null && running ? parameterNumber(component, 'nominalFlowKgPerS') : 0
+      if (localPath === 'loopReverseFlowKgPerS') return 0
       return undefined
     },
   },

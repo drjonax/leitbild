@@ -9,8 +9,11 @@ import {
 } from '../component-helpers.ts'
 import {
   averageIncomingComponentLinkValue as averageIncomingLinkValue,
+  averageOutgoingComponentLinkValue as averageOutgoingLinkValue,
+  incomingComponentLinks,
   sumOutgoingComponentLinkValue,
 } from '../component-link-helpers.ts'
+import { primaryLoopLegReversed } from '../primary-loop-hydraulics.ts'
 import { inventoryBalanceStep } from '../physics.ts'
 import { primarySystemReactorCore } from '../system-topology.ts'
 import { steamGeneratorNarrowRange, steamGeneratorNarrowRangeLevelPercent, steamGeneratorOperatingLevel } from '../../steam-generator-operating-level.ts'
@@ -28,6 +31,16 @@ type SteamGeneratorBehaviorInput = Parameters<ComponentBehaviorDefinition['updat
 const primaryCoolantPressureMPa = ({ system, component, context }: SteamGeneratorBehaviorInput): number =>
   averageIncomingLinkValue(system, component, 'pressureMPa', context, link => link.service === 'primaryCoolant')
   ?? parameterNumber(component, 'nominalPressureMPa')
+
+/** The temperature of the reactor coolant entering a generator's tubes: from
+ * its hot leg, or, while the other loops drive its loop backwards, from its
+ * cold side, the downcomer's water coming back through its pump. */
+const enteringPrimaryCoolantTemperatureC = ({ system, component, context }: SteamGeneratorBehaviorInput): number | null => {
+  const reversed = incomingComponentLinks(system, component).some(link => link.service === 'primaryCoolant' && primaryLoopLegReversed(system, link, context))
+  return reversed
+    ? averageOutgoingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
+    : averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
+}
 
 /** Heat the reactor coolant gives up cooling from one temperature to another,
  * from its enthalpy at coolant pressure: hot coolant holds 5.2–6.4 kJ/kg K. */
@@ -49,7 +62,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
     writes: ['heatTransferMw', 'steamFlowKgPerS', 'boilingRateKgPerS', 'tubeCoverageFraction', 'tubeUncoveredFraction', 'availableHeatTransferFraction'],
     update: (input): void => {
       const { system, component, context } = input
-      const primaryWaterTemperature = averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
+      const primaryWaterTemperature = enteringPrimaryCoolantTemperatureC(input)
         ?? context.readNumber(componentVariablePath(component, 'primaryInletTemperatureC'))
       const primaryWaterFlow = averageIncomingLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'primaryCoolant') ?? 0
       const secondaryTemperature = context.readNumber(componentVariablePath(component, 'secondaryTemperatureC'))
@@ -197,7 +210,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       const levelPath = componentVariablePath(component, 'levelPercent')
       const heatTransfer = context.readNumber(componentVariablePath(component, 'heatTransferMw'))
       const nominalPressure = parameterNumber(component, 'nominalPressureMPa')
-      const primaryInletTemperature = averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
+      const primaryInletTemperature = enteringPrimaryCoolantTemperatureC(input)
         ?? context.readNumber(componentVariablePath(component, 'primaryInletTemperatureC'))
       const primaryFlow = Math.max(1, averageIncomingLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'primaryCoolant') ?? 1)
       const primaryPressure = primaryCoolantPressureMPa(input)

@@ -33,6 +33,7 @@
         "maxPowerRampFractionPerS": 0.18,
         "fuelThermalCapacityMjPerC": 45000,
         "nominalPrimaryFlowKgPerS": 17000,
+        "nominalPressureDropMPa": 0.35,
         "coreBypassFlowFraction": 0.05,
         "nominalSourceRangeCountRateCps": 100000,
         "nominalIntermediateRangeCurrentAmps": 0.0005,
@@ -798,9 +799,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "A",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -847,9 +849,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "B",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -896,9 +899,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "C",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -945,9 +949,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "D",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -994,9 +999,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "E",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -1043,9 +1049,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "F",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {

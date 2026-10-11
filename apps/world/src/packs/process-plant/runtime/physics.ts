@@ -30,19 +30,6 @@ export const inventoryBalanceStep = (config: {
   return Math.max(config.minInventory, Math.min(config.maxInventory, next))
 }
 
-export const pumpHeadResistanceFlowTarget = (config: {
-  readonly developedHeadPa: number
-  readonly nominalHeadPa: number
-  readonly nominalFlowKgPerS: number
-  readonly resistanceCoefficient: number
-  readonly minimumFlowKgPerS: number
-}): number => {
-  const headRatio = Math.max(0, config.developedHeadPa) / Math.max(1, config.nominalHeadPa)
-  const resistanceFactor = 1 + Math.max(0, config.resistanceCoefficient)
-  const hydraulicFlow = config.nominalFlowKgPerS * Math.sqrt(headRatio / resistanceFactor)
-  return Math.max(config.minimumFlowKgPerS, hydraulicFlow)
-}
-
 export const pressureDropMPaFromFlow = (config: {
   readonly flowKgPerS: number
   readonly nominalFlowKgPerS: number

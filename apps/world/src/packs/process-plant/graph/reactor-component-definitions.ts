@@ -64,6 +64,11 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       maxPowerRampFractionPerS: z.number().finite().positive().optional(),
       fuelThermalCapacityMjPerC: z.number().finite().positive(),
       nominalPrimaryFlowKgPerS: z.number().finite().positive().optional(),
+      /**
+       * The coolant's pressure drop through the reactor vessel, cold-leg nozzles
+       * to hot-leg nozzles, at nominal primary flow: the path every loop shares.
+       */
+      nominalPressureDropMPa: z.number().finite().positive().optional(),
       /** The share of vessel flow that bypasses the fuel (head, baffle and guide-thimble flow), so carries no core heat. */
       coreBypassFlowFraction: z.number().finite().min(0).max(0.3).optional(),
       /** Design shaft power the running reactor coolant pumps put into the coolant; sizes the initial loop temperatures. */
