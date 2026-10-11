@@ -42,13 +42,15 @@ import type { ItemLook } from '../../../../packs/process-plant/displays/mimic/ev
 import { openBridgeDevice, textWidth } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
 
 /**
- * The flap names the most severe active alarm and counts the others (" +2")
- * where the reserved frame has room; the alarms panel lists every one.
+ * The flap names the most severe active alarm, with what the I&C does there
+ * ("LO-LO · AFW START") and a count of the others (" +2"), as far as the
+ * reserved frame has room: first the count goes, then the action, never
+ * what it watches, for which the frame always has room. The alarms panel
+ * lists every one.
  */
-export const flapLabel = (label: string, others: number, frameWidth: number): string => {
-  if (others === 0) return label
-  const counted = `${label} +${others}`
-  return textWidth('alertLabel', counted) + openBridgeDevice.flapLabelInset <= frameWidth ? counted : label
+export const flapLabel = (label: { readonly flap: string; readonly flapShort: string }, others: number, frameWidth: number): string => {
+  const forms = [...(others === 0 ? [] : [`${label.flap} +${others}`]), label.flap, ...(others === 0 ? [] : [`${label.flapShort} +${others}`])]
+  return forms.find(form => textWidth('alertLabel', form) + openBridgeDevice.flapLabelInset <= frameWidth) ?? label.flapShort
 }
 
 /** The text widths the server reserved were measured in OpenBridge's Noto Sans, so the mimic loads its glyphs (mimic-font.ts). */

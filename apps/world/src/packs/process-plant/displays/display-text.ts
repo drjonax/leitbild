@@ -24,59 +24,131 @@ export const unitLabel = (unit: string): string => unitLabels[unit] ?? unit
 export const displayValue = (value: number, unit: string): number =>
   unit === 'fraction' ? Number((value * 100).toPrecision(12)) : unit === 'Pa' ? Number((value / 1000).toPrecision(12)) : value
 
-/** Precision follows magnitude; trend readers compare, they do not audit digits. */
 /**
- * A reading as a display shows it: a magnitude below a billionth of the
- * signal's declared range is no reading at all, so it shows as 0 rather than
- * as the tail of an exponential decay ("0.000000000000 MW" for a tripped
- * core). Without a declared range the reading is shown as it is.
+ * The finest step a signal's reading is shown in, in its native unit: a
+ * thousandth of what the model declares it reads over (its instrument span,
+ * else its hard range, else the reach of its I&C limits from zero). Null
+ * where it declares none of them, or a span read over decades (a positive
+ * lower end three or more decades below its top, as an intermediate-range
+ * current's): such a reading is shown as it is, to its magnitude.
  */
-export const shownReading = (value: number, limits: { readonly hardRange?: { readonly min: number; readonly max: number } } | undefined): number => {
-  const range = limits?.hardRange
-  if (range === undefined) return value
-  return Math.abs(value) < (range.max - range.min) * 1e-9 ? 0 : value
+export const readingResolution = (
+  limits: { readonly instrumentSpan?: NumericSpan | undefined; readonly hardRange?: NumericSpan | undefined } | undefined,
+  thresholds: ReadonlyArray<{ readonly value: number }>,
+): number | null => {
+  const values = thresholds.map(threshold => threshold.value)
+  const span = limits?.instrumentSpan ?? limits?.hardRange ?? (values.length === 0 ? undefined : { min: Math.min(0, ...values), max: Math.max(0, ...values) })
+  if (span === undefined || (span.min > 0 && span.max / span.min >= LOGARITHMIC_DECADES_RATIO)) return null
+  const width = span.max - span.min
+  return width > 0 ? width * RESOLUTION_FRACTION : null
 }
 
-export const valueDigits = (value: number): number => {
+const LOGARITHMIC_DECADES_RATIO = 1_000
+
+interface NumericSpan {
+  readonly min: number
+  readonly max: number
+}
+
+/** A reading's resolution is this share of the scale it reads over (readingResolution). */
+export const RESOLUTION_FRACTION = 0.001
+
+/**
+ * A reading as a display shows it: a magnitude below the signal's resolution
+ * is no reading at all, so it shows as 0 rather than as the tail of a decay
+ * or solver noise ("0.0000098 MW" for a tripped generator, "−3e-12 kg/s" for
+ * no leak).
+ */
+export const shownReading = (value: number, resolution: number | null): number =>
+  resolution !== null && Math.abs(value) < resolution ? 0 : value
+
+/** Precision follows magnitude, never finer than the resolution (in display units) a reading is shown in. */
+export const valueDigits = (value: number, resolution: number | null = null): number => {
   const magnitude = Math.abs(value)
   // An exact zero (a closed valve, a stopped flow) reads "0", not "0.000".
   if (magnitude === 0) return 0
   // Below a thousandth, two significant digits: an intermediate-range current of 5e-4 A reads 0.00050, never 0.000.
-  if (magnitude < 1e-3) return Math.min(12, 1 - Math.floor(Math.log10(magnitude)))
-  return magnitude >= 100 ? 0 : magnitude >= 10 ? 1 : magnitude >= 1 ? 2 : 3
+  const byMagnitude = magnitude < 1e-3 ? Math.min(12, 1 - Math.floor(Math.log10(magnitude)))
+    : magnitude >= 100 ? 0 : magnitude >= 10 ? 1 : magnitude >= 1 ? 2 : 3
+  return resolution === null ? byMagnitude : Math.min(byMagnitude, Math.max(0, -Math.floor(Math.log10(resolution))))
 }
 
-export const formatValue = (value: number): string => value.toFixed(valueDigits(value))
+export const formatValue = (value: number, resolution: number | null = null): string => {
+  const digits = valueDigits(value, resolution)
+  const text = value.toFixed(digits)
+  // A value rounded away at the resolution reads as zero, unsigned.
+  return Number(text) === 0 ? (0).toFixed(digits) : text
+}
 
-/** A native value as the display shows it, with its unit: "100 %", "15.7 MPa". */
-export const formatQuantity = (value: number, unit: string): string => {
+/** A native value as the display shows it, with its unit: "100 %", "15.7 MPa"; at a resolution in native units where one is given. */
+export const formatQuantity = (value: number, unit: string, resolution: number | null = null): string => {
   const label = unitLabel(unit)
-  return `${formatValue(displayValue(value, unit))}${label === '' ? '' : ` ${label}`}`
+  return `${formatValue(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))}${label === '' ? '' : ` ${label}`}`
 }
 
-const kindAbbreviation = { trip: 'TRIP', alarm: 'ALM', control: 'CTL' } as const
+/** Where a reading sits at an end of the span its instrument declares: its indication says only that the quantity is there or beyond. */
+export const offScale = (value: number, span: NumericSpan | undefined): 'below' | 'above' | null =>
+  span === undefined ? null : value <= span.min ? 'below' : value >= span.max ? 'above' : null
 
-/** Direction and kind, doubled for a limit beyond the first of its kind: "LO ALM", "LO-LO ALM", "HI TRIP". */
-export const limitKindName = (threshold: Pick<ComposedDisplayThreshold, 'direction' | 'kind' | 'escalation'>): string => {
+/** A reading's number as its value cell shows it, in display units without the unit: "<0" at the bottom of its span, ">100" at the top. */
+export const readingValueText = (value: number, unit: string, resolution: number | null, span: NumericSpan | undefined): string => {
+  const end = offScale(value, span)
+  return `${end === 'below' ? '<' : end === 'above' ? '>' : ''}${formatValue(displayValue(value, unit), resolution === null ? null : displayValue(resolution, unit))}`
+}
+
+/** A reading as its value cell shows it: "<0 %" at the bottom of its span, ">100 %" at the top, else the value. */
+export const readingText = (value: number, unit: string, resolution: number | null, span: NumericSpan | undefined): string => {
+  const label = unitLabel(unit)
+  return `${readingValueText(value, unit, resolution, span)}${label === '' ? '' : ` ${label}`}`
+}
+
+/** "below range" or "above range" for a reading at an end of its span; empty otherwise. */
+export const offScaleText = (value: number, span: NumericSpan | undefined): string => {
+  const end = offScale(value, span)
+  return end === null ? '' : `${end} range`
+}
+
+/** LO or HI for the first limit on its side, LO-LO or HI-HI beyond it. */
+export const limitOrderName = (threshold: Pick<ComposedDisplayThreshold, 'direction' | 'order'>): string => {
   const direction = threshold.direction === 'low' ? 'LO' : 'HI'
-  return `${threshold.escalation > 1 ? `${direction}-${direction}` : direction} ${kindAbbreviation[threshold.kind]}`
+  return threshold.order > 1 ? `${direction}-${direction}` : direction
 }
 
-/** Direction, kind and the exact configured value: "LO ALM 30 %". */
+/**
+ * A limit as a chip, a drawing's badge and an alarm row name it: its order
+ * and what the I&C does there ("LO-LO · RX TRIP", "LO · ALM"). An actuation
+ * that is not the reactor trip is never called TRIP.
+ */
+export const limitKindName = (threshold: Pick<ComposedDisplayThreshold, 'direction' | 'order' | 'action'>): string =>
+  `${limitOrderName(threshold)} · ${threshold.action}`
+
+/** Order, exact configured value and action, as a limit's line is labelled: "LO-LO 20 % · RX TRIP". */
 export const thresholdName = (
-  threshold: Pick<ComposedDisplayThreshold, 'direction' | 'kind' | 'escalation' | 'value'>,
+  threshold: Pick<ComposedDisplayThreshold, 'direction' | 'order' | 'value' | 'action'>,
   unit: string,
   options: { readonly withUnit: boolean } = { withUnit: true },
 ): string => {
   const label = options.withUnit ? unitLabel(unit) : ''
-  return `${limitKindName(threshold)} ${displayValue(threshold.value, unit)}${label === '' ? '' : ` ${label}`}`
+  return `${limitOrderName(threshold)} ${displayValue(threshold.value, unit)}${label === '' ? '' : ` ${label}`} · ${threshold.action}`
 }
+
+/** The whole name, with the modes it alone acts in: "LO-LO 20 % · RX TRIP (Modes 1–2)". */
+export const thresholdFullName = (
+  threshold: Pick<ComposedDisplayThreshold, 'direction' | 'order' | 'value' | 'action' | 'modeLabel'>,
+  unit: string,
+): string => `${thresholdName(threshold, unit)}${threshold.modeLabel === undefined ? '' : ` (${threshold.modeLabel})`}`
 
 export interface ThresholdMargin {
   readonly threshold: ComposedDisplayThreshold
   /** Distance before the rule acts, in native units; negative once the value is beyond it. */
   readonly margin: number
 }
+
+/** How far a value is from acting on a threshold: negative once beyond it. */
+export const marginTo = (value: number, threshold: ComposedDisplayThreshold): ThresholdMargin => ({
+  threshold,
+  margin: threshold.operator === '<' || threshold.operator === '<=' ? value - threshold.value : threshold.value - value,
+})
 
 /**
  * Whether the value is past the threshold, so its rule acts: beyond it, or on
@@ -87,9 +159,10 @@ export const isPast = (margin: ThresholdMargin): boolean =>
 
 /**
  * The alarm or trip threshold the value is closest to acting on or, once it
- * is past some, the outermost it has passed: 19.5 % is past LO TRIP 20 %, not
- * only past LO ALM 30 % (evaluation run 19: steam generators below their
- * low-low trip read as merely past the low alarm).
+ * is past some, the outermost it has passed: 19.5 % is past LO-LO 20 %, not
+ * only past LO 30 % (evaluation run 19: steam generators below their
+ * low-low trip read as merely past the low alarm). For a value seen once,
+ * with no direction to read.
  */
 export const nearestThresholdMargin = (
   value: number,
@@ -97,10 +170,7 @@ export const nearestThresholdMargin = (
 ): ThresholdMargin | null => {
   const margins = thresholds
     .filter(threshold => threshold.kind !== 'control')
-    .map(threshold => ({
-      threshold,
-      margin: threshold.operator === '<' || threshold.operator === '<=' ? value - threshold.value : threshold.value - value,
-    }))
+    .map(threshold => marginTo(value, threshold))
   if (margins.length === 0) return null
   const passed = margins.filter(isPast)
   if (passed.length > 0) return passed.reduce((outermost, candidate) => candidate.margin > outermost.margin ? candidate : outermost)
@@ -111,13 +181,13 @@ export const nearestThresholdMargin = (
  * A margin worded from whole to shortest, each form dropping one more whole
  * part so a narrow tile never cuts a word: first the mode qualifier, then the
  * limit's unit, then its value. How far away the limit is, with its unit, and
- * which limit it is always stay.
+ * which limit it is (its order and action) always stay.
  */
-export const marginTextForms = (margin: ThresholdMargin, unit: string): ReadonlyArray<string> => {
+export const marginTextForms = (margin: ThresholdMargin, unit: string, resolution: number | null = null): ReadonlyArray<string> => {
   const threshold = margin.threshold
-  const lead = isPast(margin) ? 'past' : `${formatQuantity(margin.margin, unit)} ${threshold.direction === 'low' ? 'above' : 'below'}`
+  const lead = isPast(margin) ? 'past' : `${formatQuantity(margin.margin, unit, resolution)} ${threshold.direction === 'low' ? 'above' : 'below'}`
   return [...new Set([
-    `${lead} ${thresholdName(threshold, unit)}${threshold.modeLabel === undefined ? '' : ` (${threshold.modeLabel})`}`,
+    `${lead} ${thresholdFullName(threshold, unit)}`,
     `${lead} ${thresholdName(threshold, unit)}`,
     `${lead} ${thresholdName(threshold, unit, { withUnit: false })}`,
     `${lead} ${limitKindName(threshold)}`,
@@ -125,11 +195,11 @@ export const marginTextForms = (margin: ThresholdMargin, unit: string): Readonly
 }
 
 /**
- * "4.50 % above LO ALM 30 %", or "past LO ALM 30 %" once the value is beyond
- * it: the margin first, with its unit, so a narrow tile drops the limit's
- * name rather than how far away it is (marginTextForms).
+ * "4.50 % above LO 30 % · ALM", or "past LO-LO 20 % · AFW START" once the
+ * value is beyond it: the margin first, with its unit, so a narrow tile drops
+ * the limit's value rather than how far away it is (marginTextForms).
  */
-export const marginText = (margin: ThresholdMargin, unit: string): string => marginTextForms(margin, unit)[0]!
+export const marginText = (margin: ThresholdMargin, unit: string, resolution: number | null = null): string => marginTextForms(margin, unit, resolution)[0]!
 
 /** Simulation time of day as the display header shows it: "10:01:00". */
 export const simulationClock = (ms: number): string => new Date(ms).toISOString().slice(11, 19)

@@ -21,12 +21,16 @@ export const rawDomain = (values: ReadonlyArray<number>): ValueDomain | null => 
 // values of one or more, so a nearly steady signal does not fill its strip
 // with noise-sized swings, even near zero (a 5 °C subcooling margin).
 const MIN_SPAN_FRACTION = 0.04
+// ... and at least this many steps of the resolution its reading is shown in,
+// so solver noise around zero (a leak rate of ±3e-12 kg/s) is never magnified
+// into a curve.
+const MIN_SPAN_STEPS = 20
 
-/** Fixed display scale: padded, never zero-height, never narrower than 4 % of the value or one unit. */
-export const paddedDomain = (raw: ValueDomain): ValueDomain => {
+/** Fixed display scale: padded, never zero-height, never narrower than 4 % of the value, one unit or twenty resolution steps. */
+export const paddedDomain = (raw: ValueDomain, resolution: number | null = null): ValueDomain => {
   const span = raw.max - raw.min
   const magnitude = Math.max(Math.abs(raw.max), Math.abs(raw.min))
-  const minimum = magnitude >= 1 ? Math.max(magnitude * MIN_SPAN_FRACTION, 1) : magnitude * MIN_SPAN_FRACTION
+  const minimum = Math.max(magnitude >= 1 ? Math.max(magnitude * MIN_SPAN_FRACTION, 1) : magnitude * MIN_SPAN_FRACTION, (resolution ?? 0) * MIN_SPAN_STEPS)
   const middle = (raw.max + raw.min) / 2
   const padded = span < minimum
     ? { min: middle - minimum / 2, max: middle + minimum / 2 }

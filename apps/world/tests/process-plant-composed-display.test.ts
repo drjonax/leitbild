@@ -14,7 +14,7 @@ import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
-import { formatQuantity, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity, thresholdFullName, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
 import { composedDisplayStateSchema } from '../src/packs/process-plant/displays/composition.ts'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
@@ -73,29 +73,33 @@ describe('I&C thresholds for composed displays', () => {
   test('come from single-comparison rules on the exact signal, with qualified modes kept', () => {
     const pressure = compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path
     const { thresholds } = icThresholdsForSignal(compiled, pressure)
-    expect(thresholds.map(threshold => [threshold.value, threshold.kind, threshold.modeLabel ?? null])).toEqual([
+    expect(thresholds.map(threshold => [threshold.value, threshold.kind, threshold.modeLabel ?? null, threshold.modeNames ?? null])).toEqual([
       // Safety injection on low pressure, drawn though a block below P-11 can hold it off: a gate on an on/off state.
-      [12.7, 'trip', 'Power operation or Startup or Hot standby'],
-      [13.8, 'trip', 'Power operation'],
-      [14.8, 'alarm', null],
-      [15.35, 'control', null],
-      [15.65, 'control', null],
-      [15.85, 'control', null],
-      [16, 'alarm', null],
-      [16.18, 'trip', null],
-      [16.35, 'trip', 'Power operation'],
+      [12.7, 'trip', 'Modes 1–3', 'Power operation or Startup or Hot standby'],
+      [13.8, 'trip', 'Mode 1', 'Power operation'],
+      [14.8, 'alarm', null, null],
+      [15.35, 'control', null, null],
+      [15.65, 'control', null, null],
+      [15.85, 'control', null, null],
+      [16, 'alarm', null, null],
+      [16.18, 'trip', null, null],
+      [16.35, 'trip', 'Mode 1', 'Power operation'],
     ])
   })
 
-  test('name a signal\'s further limits of one kind LO-LO and HI-HI', () => {
+  test('name a limit by its order, value and what the I&C declares it does, never "TRIP" for another actuation', () => {
     const names = (tagId: string, unit: string) => icThresholdsForSignal(compiled, compiled.graph.signalBindingByTagId.get(tagId as never)!.path).thresholds
-      .filter(threshold => threshold.kind !== 'control').map(threshold => thresholdName(threshold, unit))
-    expect(names('SUB-MARGIN', 'degC')).toEqual(['LO-LO ALM 0 °C', 'LO ALM 16.7 °C'])
-    // Safety injection actuates below the low-pressure reactor trip, unless blocked below P-11: the low-low
-    // pressurizer pressure SI signal.
-    expect(names('PT-455', 'MPa')).toEqual(['LO-LO TRIP 12.7 MPa', 'LO TRIP 13.8 MPa', 'LO ALM 14.8 MPa', 'HI ALM 16 MPa', 'HI TRIP 16.18 MPa', 'HI-HI TRIP 16.35 MPa'])
-    // Low-low level starts auxiliary feedwater and trips the reactor at the one set point: two trips, neither further.
-    expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO TRIP 20 %', 'LO TRIP 20 %', 'LO ALM 30 %', 'HI ALM 75 %', 'HI TRIP 82 %'])
+      .filter(threshold => threshold.kind !== 'control').map(threshold => thresholdFullName(threshold, unit))
+    expect(names('SUB-MARGIN', 'degC')).toEqual(['LO-LO 0 °C · ALM', 'LO 16.7 °C · ALM'])
+    // Safety injection below the low-pressure reactor trip, unless blocked below P-11, is SI by its declared
+    // first-out group. The low-pressure reactor trip, the PORV opening and the high-pressure reactor trip
+    // declare no group yet: ACTUATION, never TRIP.
+    expect(names('PT-455', 'MPa')).toEqual(['LO-LO 12.7 MPa · SI (Modes 1–3)', 'LO-LO 13.8 MPa · ACTUATION (Mode 1)', 'LO 14.8 MPa · ALM', 'HI 16 MPa · ALM', 'HI-HI 16.18 MPa · ACTUATION', 'HI-HI 16.35 MPa · ACTUATION (Mode 1)'])
+    // Low-low level starts auxiliary feedwater and trips the reactor at one set point: two limits of one order,
+    // the reactor trip named by its group, in modes 1 and 2 only; the AFW start declares no group yet.
+    expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO-LO 20 % · ACTUATION', 'LO-LO 20 % · RX TRIP (Modes 1–2)', 'LO 30 % · ALM', 'HI 75 % · ALM', 'HI-HI 82 % · ACTUATION'])
+    // Every name keeps the order-then-value shape answers cite.
+    expect(names('SG-A-LVL-NR', 'percent').every(name => /^(LO|HI)(-(LO|HI))? \d+ % · /.test(name))).toBe(true)
   })
 
   test('draw a limit that only on/off states of other signals gate, naming them', () => {
@@ -148,17 +152,18 @@ describe('world.process-plant.display.compose', () => {
     expect(result.issuedAt).toBe(simulationTime)
     const state = composedDisplayStateSchema.parse(JSON.parse(view.state))
     expect(state).toMatchObject({ issuedAt: simulationTime, modelDigest: compiled.modelDigest })
-    expect(result.shows.join('\n')).toContain('"LO ALM 30 %" alarm line: Steam generator B level low · Steam generator A level low, acts below 30 percent for SG-B-LVL-NR, SG-A-LVL-NR')
+    expect(result.shows.join('\n')).toContain('"LO 30 % · ALM" alarm line: Steam generator B level low · Steam generator A level low, acts below 30 percent for SG-B-LVL-NR, SG-A-LVL-NR')
+    expect(result.shows.join('\n')).toContain('"LO-LO 20 % · RX TRIP" automatic action line: Reactor trip on steam generator B low-low level · Reactor trip on steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR (only in Power operation or Startup: Modes 1–2; drawn faint in other modes, even with the value past it)')
     expect((result as unknown as { signals: unknown }).signals).toEqual([
       { ref: 'SG-B-LVL-NR', tagId: 'SG-B-LVL-NR', path: 'sgB.levelPercent', label: 'Steam generator narrow-range level', name: 'SG-B-LVL-NR', unit: 'percent' },
       { ref: 'SG-A-LVL-NR', tagId: 'SG-A-LVL-NR', path: 'sgA.levelPercent', label: 'Steam generator narrow-range level', name: 'SG-A-LVL-NR', unit: 'percent' },
     ])
-    expect(result.shows.join('\n')).toContain('"LO TRIP 20 %" trip line: Steam generator B low-low level · Steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR')
+    expect(result.shows.join('\n')).toContain('"LO-LO 20 % · ACTUATION" automatic action line: Steam generator B low-low level · Steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR')
     expect((result as unknown as { simulationClock: string }).simulationClock).toBe('21:00:00')
     const margins = (result as unknown as { margins: ReadonlyArray<string> }).margins
     expect(margins).toHaveLength(2)
     // At the 55 % program the high alarm is nearer than the low one.
-    expect(margins[0]).toMatch(/^SG-[AB]-LVL-NR: [0-9.]+ %, [0-9.]+ % below HI ALM 75 %$/)
+    expect(margins[0]).toMatch(/^SG-[AB]-LVL-NR: [0-9.]+ %, [0-9.]+ % below HI 75 % · ALM$/)
     expect(runtime.checkpoint()).toEqual(before)
   })
 
@@ -217,11 +222,12 @@ describe('world.process-plant.display.compose', () => {
     ]))
     const margin = now - 14.8
     // The rate as the legend words it (1 MPa/min reads 1.000 just below one).
-    expect(result.margins[0]).toBe(`PT-455: ${formatQuantity(now, 'MPa')}, falling 1.000 MPa/min, ${formatQuantity(margin, 'MPa')} above LO ALM 14.8 MPa · ≈${Math.round(margin * 60)} s`)
+    const resolution = 16.35 * 0.001
+    expect(result.margins[0]).toBe(`PT-455: ${formatQuantity(now, 'MPa', resolution)}, falling 1.000 MPa/min over 30 s, ${formatQuantity(margin, 'MPa', resolution)} above LO 14.8 MPa · ALM · ≈${Math.round(margin * 60)} s`)
     const content = embeddedViewContentSchema.parse(result.viewContent)
     const item = content.items.find(candidate => candidate.names.includes('PT-455'))!
     expect(item.trend).toEqual({ rate: expect.closeTo(-1, 6), unit: 'MPa', direction: 'falling' })
-    expect(item.limitAhead).toEqual({ name: 'LO ALM 14.8 MPa', value: 14.8, unit: 'MPa' })
+    expect(item.limitAhead).toEqual({ name: 'LO 14.8 MPa · ALM', value: 14.8, unit: 'MPa' })
     expect(item.timeToLimitMs).toBe(Math.round(margin * 60_000))
     // The shortest time to a limit leads.
     expect(content.lead).toEqual({ item: content.items.indexOf(item), reason: result.margins[0]! })
@@ -230,7 +236,7 @@ describe('world.process-plant.display.compose', () => {
     expect([levelItem.trend, levelItem.timeToLimitMs]).toEqual([undefined, undefined])
     // Without history the same pressure reads as before: the nearest limit, no direction.
     const unrecorded = ask('world.process-plant.display.compose', composition([{ ref: 'PT-455', role: 'primary' }])) as { margins: ReadonlyArray<string>; viewContent: unknown }
-    expect(unrecorded.margins).toEqual([`PT-455: ${formatQuantity(now, 'MPa')}, ${formatQuantity(16 - now, 'MPa')} below HI ALM 16 MPa`])
+    expect(unrecorded.margins).toEqual([`PT-455: ${formatQuantity(now, 'MPa', resolution)}, ${formatQuantity(16 - now, 'MPa', resolution)} below HI 16 MPa · ALM`])
     expect(embeddedViewContentSchema.parse(unrecorded.viewContent).items[0]!.trend).toBeUndefined()
   })
 
@@ -240,7 +246,7 @@ describe('world.process-plant.display.compose', () => {
       ...composition([{ ref: 'PT-455', role: 'primary' }]),
       panels: [{ kind: 'readouts', signals: [{ ref: 'PT-455', role: 'primary' }, { ref: 'core.totalThermalPowerMw', role: 'context' }] }],
     }) as { margins: ReadonlyArray<string> }
-    expect(result.margins).toEqual([`PT-455: ${formatQuantity(pressure, 'MPa')}, ${formatQuantity(16 - pressure, 'MPa')} below HI ALM 16 MPa`])
+    expect(result.margins).toEqual([`PT-455: ${formatQuantity(pressure, 'MPa', 0.01635)}, ${formatQuantity(16 - pressure, 'MPa', 0.01635)} below HI 16 MPa · ALM`])
   })
 
   test('a recorded signal needs the Run\'s history to be composed', () => {
@@ -288,7 +294,7 @@ describe('world.process-plant.display.compose', () => {
     // The PORV is bundled in the pressurizer on its relief outlet; its alarm acts on the pressurizer's relief flow, not the line's.
     const readouts = (ref: string) => ({ ...composition([{ ref, role: 'primary' }]), panels: [{ kind: 'readouts', signals: [{ ref, role: 'primary' }, { ref: 'PT-455', role: 'context' }] }] })
     expect(rejectionOf(() => ask('world.process-plant.display.compose', readouts('pressurizer-relief-to-tank.flowKgPerS'))))
-      .toContain('show pressurizer.reliefFlowKgPerS (Pressurizer relief flow, HI ALM 1 kg/s) instead')
+      .toContain('show pressurizer.reliefFlowKgPerS (Pressurizer relief flow, HI 1 kg/s · ALM) instead')
     expect(() => ask('world.process-plant.display.compose', readouts('pressurizer.reliefFlowKgPerS'))).not.toThrow()
     // A line that shares its port carries only part of the judged flow, a reading of its own: run 22 refused
     // "is AFW reaching every SG?" its evidence, the auxiliary feed line into each generator.

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ComposedTrendStrip, ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
-  import { displayValue, formatQuantity, simulationClock, thresholdName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, formatQuantity, offScale, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import {
     limitInScale,
     paddedDomain,
@@ -11,9 +11,9 @@
     valueTicks,
     type ValueDomain,
   } from './trend-geometry.ts'
-  import { limitLabelRanks, stackLabels, type LabelSlot } from './limit-labels.ts'
+  import { limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
-  import { limitAhead, limitInForce, limitsInForce, ratePerMinute, rateWindowMs, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import { HOLD_GAP_MS, rateWindowMs, trendReading, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import { fitName, penStroke } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
 
@@ -54,7 +54,7 @@
     adviceLabel: boolean
     /** The Plant's operating mode in the latest sample; undefined before it or where the Plant declares none. */
     mode: ComposedDisplaySample['mode']
-    /** I&C rules active now; their threshold labels take the alarm colour. */
+    /** I&C rules active now; their threshold labels take the alarm colour while they act in the mode. */
     activeRuleIds: ReadonlySet<string>
   } = $props()
 
@@ -62,14 +62,20 @@
   // Several strips share the page; each hatch pattern needs its own id.
   const uid = $props.id()
   const patternId = `no-data-${uid}`
-  // The right gutter fits a limit label such as "HI-HI TRIP 16.35 (+1)".
-  const pad = $derived({ left: 44, right: 118, top: 18, bottom: timeAxis ? 22 : 0 })
+
+  // The strip's pens share one measurement, and so one resolution: readings
+  // below it are drawn as 0 and its scale never magnifies them.
+  const resolution = $derived(strip.pens.map(pen => pen.resolution).find(value => value !== null) ?? null)
+  const shownPoints = (pen: (typeof strip.pens)[number]): ReadonlyArray<TrendPoint> =>
+    (series.get(String(pen.path)) ?? []).map(point => ({ t: point.t, v: shownReading(point.v, pen.resolution) }))
 
   // Trip and alarm thresholds near the values share their scale; farther ones
   // are named at the plot edge they lie beyond. Control set points are marked
-  // on the axis only when they fall inside it, to keep the trend quiet.
+  // on the axis only when they fall inside it, to keep the trend quiet. Limits
+  // at one value are one line, each with its own label.
   const limitThresholds = $derived(strip.thresholds.filter(threshold => threshold.kind !== 'control'))
-  const drawnThresholds = $derived(limitThresholds.filter(threshold => limitInScale(threshold.value, range)))
+  const lines = $derived(limitLines(limitThresholds, mode))
+  const drawnLines = $derived(lines.filter(line => limitInScale(line.value, range)))
   const controlThresholds = $derived(strip.thresholds.filter(threshold => threshold.kind === 'control'))
 
   // Fixed scale: the grow-only range seen since the view opened plus the drawn
@@ -77,10 +83,26 @@
   const domain = $derived.by((): ValueDomain | null => {
     const raw = rawDomain([
       ...(range === null ? [] : [range.min, range.max]),
-      ...drawnThresholds.map(threshold => threshold.value),
+      ...drawnLines.map(line => line.value),
     ])
-    return raw === null ? null : paddedDomain(raw)
+    return raw === null ? null : paddedDomain(raw, resolution)
   })
+
+  // Label rows: one per limit, its order, value and action ("LO-LO 20 · AFW
+  // START"); one that does not act in the current mode adds a row naming the
+  // modes it acts in ("Modes 1–2"), drawn faint like its line.
+  const LINE = 12
+  /** The modes line under an idle limit's name. */
+  const MODES_LINE = 10
+  const measureLabel = textMeasure(panelFont(10, 700))
+  const measureModes = textMeasure(panelFont(9))
+  const rowText = (threshold: ComposedTrendThreshold): string => thresholdName(threshold, strip.unit, { withUnit: false })
+  // The right gutter is as wide as its widest label, room for a fold count included, within bounds.
+  const GUTTER_MIN = 118
+  const GUTTER_MAX = 190
+  const gutter = $derived(Math.min(GUTTER_MAX, Math.max(GUTTER_MIN, Math.ceil(Math.max(0, ...limitThresholds.map(threshold => measureLabel(`▲ ${rowText(threshold)} (+9)`)))) + 14)))
+  const pad = $derived({ left: 44, right: gutter, top: 18, bottom: timeAxis ? 22 : 0 })
+  const GUTTER_TEXT = $derived(gutter - 12)
 
   const windowStart = $derived(now - windowMs)
   const plotWidth = $derived(Math.max(40, width - pad.left - pad.right))
@@ -91,85 +113,106 @@
   const ticks = $derived(domain === null ? [] : valueTicks(domain, plotHeight < 60 ? 2 : 3))
   const labels = $derived(tickLabels(ticks.map(tick => displayValue(tick, strip.unit))))
 
-  // The alarm colour follows the rule's severity, as in the alarm list and chips.
-  const activeSeverity = (threshold: ComposedTrendThreshold): string | null =>
-    threshold.ruleIds.some(ruleId => activeRuleIds.has(ruleId)) ? threshold.severity ?? 'warning' : null
-
-  // A mode-qualified limit that does not act in the Plant's current mode is
-  // drawn faint and dashed and labelled with its modes, so a value beyond it
-  // does not read as beyond a limit; one that acts now is drawn as any other.
-  // While the mode is not known yet, a qualified limit is drawn dashed.
-  const lineLook = (threshold: ComposedTrendThreshold): 'acting' | 'qualified' | 'idle' =>
-    threshold.modeIds === undefined ? 'acting'
-      : mode === undefined ? 'qualified'
-        : limitInForce(threshold, mode, activeSeverity(threshold) !== null) ? 'acting' : 'idle'
-
   // The value labels are read against: the latest value of the strip's first pen.
-  const current = $derived(strip.pens.map(pen => series.get(String(pen.path))?.at(-1)?.v).find(value => value !== undefined))
+  const current = $derived(strip.pens.map(pen => shownPoints(pen).at(-1)?.v).find(value => value !== undefined))
 
-  // Labels stack down the gutter, each at its line or pushed clear of its
-  // neighbour with a leader back to it; a limit off the scale is named at the
-  // edge it lies beyond, ▲ or ▼. Only a strip too short for all of them folds
-  // the least important into a neighbour's count (limit-labels.ts): never an
-  // active limit, nor the one a value is heading for, while another can give way.
-  const LINE = 12
-  /** The modes line under an idle limit's name. */
-  const MODES_LINE = 10
-  const GUTTER_TEXT = 106
-  const measureModes = textMeasure(panelFont(9))
+  // Labels stack down the gutter, each line's block at its line or pushed clear
+  // of its neighbour with a leader back to it; a limit off the scale is named
+  // at the edge it lies beyond, ▲ or ▼. Only a strip too short for all of them
+  // folds the least important lines into a neighbour's count (limit-labels.ts):
+  // never one with an active limit, nor the one a value is heading for, while
+  // another can give way.
   const labelRoom = $derived({ start: pad.top - LINE, end: pad.top + plotHeight + LINE / 2 })
-  const aheadRuleIds = $derived(new Set(strip.pens.flatMap(pen => {
-    const points = series.get(String(pen.path)) ?? []
+  // The limit each pen's legend names (trend-reading.ts): what its value heads for or is past.
+  const namedRuleIds = $derived(new Set(strip.pens.flatMap(pen => {
+    const points = shownPoints(pen)
     const latest = points.at(-1)
-    const ahead = latest === undefined ? null : limitAhead(latest.v, ratePerMinute(points, rateWindowMs(horizonMs)), limitsInForce(pen.thresholds, mode, activeRuleIds))
-    return ahead === null ? [] : [ahead.threshold.ruleId]
+    if (latest === undefined) return []
+    const limit = trendReading({ value: latest.v, points, windowMs: rateWindowMs(horizonMs), unit: pen.unit, thresholds: pen.thresholds, mode, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }).limit
+    return limit?.kind === 'margin' || limit?.kind === 'past' ? [limit.margin.threshold.ruleId] : []
   })))
-  const edgeOf = (threshold: ComposedTrendThreshold): 'above' | 'below' | null =>
-    range === null || limitInScale(threshold.value, range) ? null : threshold.value > range.max ? 'above' : 'below'
+  const edgeOf = (value: number): 'above' | 'below' | null =>
+    range === null || limitInScale(value, range) ? null : value > range.max ? 'above' : 'below'
+  const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
+  const worst = (severities: ReadonlyArray<string | null>): string | null =>
+    severities.filter((severity): severity is keyof typeof severityRank => severity !== null).sort((left, right) => severityRank[left] - severityRank[right])[0] ?? null
+  const describe = (threshold: ComposedTrendThreshold): string =>
+    `${thresholdFullName(threshold, strip.unit)}: ${threshold.label} (${threshold.signals.join(', ')})${threshold.modeNames === undefined ? '' : `, only in ${threshold.modeNames}`}${threshold.gatedBy === undefined ? '' : `, only while ${threshold.gatedBy.join(' and ')}`}${edgeOf(threshold.value) === null ? '' : ', off this scale'}`
   const thresholdLabels = $derived.by(() => {
-    const ranks = limitLabelRanks(limitThresholds.map(threshold => ({
-      key: threshold.ruleId,
-      value: threshold.value,
-      active: activeSeverity(threshold),
-      ahead: threshold.ruleIds.some(ruleId => aheadRuleIds.has(ruleId)),
-      inForce: lineLook(threshold) !== 'idle',
+    const ranks = limitLabelRanks(lines.map(line => ({
+      key: line.key,
+      value: line.value,
+      active: worst(line.members.map(member => limitSeverity(member, activeRuleIds, mode))),
+      ahead: line.members.some(member => member.ruleIds.some(ruleId => namedRuleIds.has(ruleId))),
+      inForce: line.look !== 'idle',
     })), current)
-    // Top to bottom as they read: highest value first.
-    const ordered = [...limitThresholds].sort((left, right) => right.value - left.value)
-    const slots = ordered.map((threshold): LabelSlot => {
-      const edge = edgeOf(threshold)
-      const size = lineLook(threshold) === 'idle' ? LINE + MODES_LINE : LINE
+    const rowsOf = (line: (typeof lines)[number]) => line.members.flatMap(member => {
+      const idle = limitLook(member, mode) === 'idle'
+      return [
+        { kind: 'name' as const, member, idle, size: LINE },
+        ...(idle ? [{ kind: 'modes' as const, member, idle, size: MODES_LINE }] : []),
+      ]
+    })
+    const slots = lines.map((line): LabelSlot => {
+      const edge = edgeOf(line.value)
+      const size = rowsOf(line).reduce((sum, row) => sum + row.size, 0)
       return {
-        key: threshold.ruleId,
-        want: edge === 'above' ? labelRoom.start : edge === 'below' ? labelRoom.end - size : y(threshold.value) - LINE / 2,
+        key: line.key,
+        want: edge === 'above' ? labelRoom.start : edge === 'below' ? labelRoom.end - size : y(line.value) - LINE / 2,
         size,
-        group: threshold.direction,
-        rank: ranks.get(threshold.ruleId)!,
+        group: line.members[0]!.direction,
+        rank: ranks.get(line.key)!,
       }
     })
-    const byKey = new Map(ordered.map(threshold => [threshold.ruleId, threshold]))
-    const describe = (threshold: ComposedTrendThreshold): string =>
-      `${thresholdName(threshold, strip.unit)}: ${threshold.label} (${threshold.signals.join(', ')})${threshold.modeLabel === undefined ? '' : `, only in ${threshold.modeLabel}`}${edgeOf(threshold) === null ? '' : ', off this scale'}`
+    const byKey = new Map(lines.map(line => [line.key, line]))
     return stackLabels(slots, labelRoom).map(label => {
-      const named = byKey.get(label.key)!
+      const line = byKey.get(label.key)!
       const folded = label.folded.map(key => byKey.get(key)!)
-      const edge = edgeOf(named)
-      const idle = lineLook(named) === 'idle'
+      const edge = edgeOf(line.value)
+      const foldedSeverity = worst(folded.flatMap(other => other.members.map(member => limitSeverity(member, activeRuleIds, mode))))
+      let top = label.start
+      const rows = rowsOf(line).map((row, index) => {
+        const at = top + row.size / 2
+        top += row.size
+        const arrow = index === 0 && edge !== null ? (edge === 'above' ? '▲ ' : '▼ ') : ''
+        const count = index === 0 && folded.length > 0 ? ` (+${folded.reduce((sum, other) => sum + other.members.length, 0)})` : ''
+        return {
+          key: `${row.kind}:${row.member.ruleId}`,
+          y: at,
+          idle: row.idle,
+          modes: row.kind === 'modes',
+          // Thresholds are configured numbers; show them exactly, never rounded. Whole words only; the tooltip keeps every mode.
+          text: row.kind === 'modes' ? fitName(row.member.modeLabel!, text => measureModes(text) <= GUTTER_TEXT) : `${arrow}${rowText(row.member)}${count}`,
+          // A folded line's alarm colours the label it folds into.
+          severity: row.kind === 'modes' ? null : limitSeverity(row.member, activeRuleIds, mode) ?? (index === 0 ? foldedSeverity : null),
+        }
+      })
       return {
         key: label.key,
         edge,
-        idle,
-        // Whole words only; the tooltip keeps every mode.
-        modes: idle ? fitName(named.modeLabel!, text => measureModes(text) <= GUTTER_TEXT) : '',
-        lineY: y(named.value),
+        lineY: y(line.value),
         y: label.start + LINE / 2,
-        // Thresholds are configured numbers; show them exactly, never rounded.
-        text: `${edge === 'above' ? '▲ ' : edge === 'below' ? '▼ ' : ''}${thresholdName(named, strip.unit, { withUnit: false })}${folded.length > 0 ? ` (+${folded.length})` : ''}`,
-        title: [named, ...folded].map(describe).join('\n'),
-        severity: activeSeverity(named) ?? folded.map(activeSeverity).find(severity => severity !== null) ?? null,
+        rows,
+        title: [...line.members, ...folded.flatMap(other => other.members)].map(describe).join('\n'),
       }
     })
   })
+
+  // Where a reading sits at an end of its instrument's span, the trace says
+  // only that the quantity is there or beyond: that stretch is hatched on the
+  // span's end, below it or above it.
+  const OFF_SCALE_BAND = 8
+  const offScaleBands = $derived(strip.pens.flatMap(pen => {
+    const span = pen.limits?.instrumentSpan
+    if (span === undefined) return []
+    const points = shownPoints(pen)
+    return points.flatMap((point, index) => {
+      const end = offScale(point.v, span)
+      const until = Math.min(points[index + 1]?.t ?? now, point.t + HOLD_GAP_MS, now)
+      if (end === null || until < windowStart) return []
+      return [{ key: `${pen.path}:${point.t}`, end, from: Math.max(point.t, windowStart), until, at: end === 'below' ? span.min : span.max }]
+    })
+  }))
 
   // Where the window starts before any recorded value, say why instead of
   // leaving an unexplained blank; a sliver too narrow for words stays unlabelled.
@@ -189,8 +232,8 @@
   const adviceNearLeft = $derived(issuedAt !== null && x(issuedAt) - pad.left < 56)
 
   const summary = $derived(strip.pens.map(pen => {
-    const latest = series.get(String(pen.path))?.at(-1)
-    return `${pen.name}: ${latest === undefined ? 'no value' : formatQuantity(latest.v, pen.unit)}`
+    const latest = shownPoints(pen).at(-1)
+    return `${pen.name}: ${latest === undefined ? 'no value' : readingText(latest.v, pen.unit, pen.resolution, pen.limits?.instrumentSpan)}`
   }).join('; '))
 </script>
 
@@ -221,26 +264,28 @@
         {/each}
       {/if}
 
-      {#each drawnThresholds as threshold (threshold.ruleId)}
+      {#each drawnLines as line (line.key)}
         <line
-          class={`threshold ${threshold.kind} ${lineLook(threshold)}`}
+          class={`threshold ${line.kind} ${line.look}`}
           x1={pad.left}
           x2={pad.left + plotWidth}
-          y1={y(threshold.value)}
-          y2={y(threshold.value)}
-        ><title>{threshold.label}</title></line>
+          y1={y(line.value)}
+          y2={y(line.value)}
+        ><title>{line.members.map(member => member.label).join('\n')}</title></line>
+      {/each}
+      {#each offScaleBands as band (band.key)}
+        <rect class="offscale" x={x(band.from)} width={Math.max(1, x(band.until) - x(band.from))} y={band.end === 'below' ? y(band.at) : y(band.at) - OFF_SCALE_BAND} height={OFF_SCALE_BAND} fill={`url(#${patternId})`}><title>{band.end} range: the instrument's indication is saturated, the quantity is there or beyond</title></rect>
       {/each}
       {#each thresholdLabels as label (label.key)}
         {#if label.edge === null && Math.abs(label.y - label.lineY) > 2}
           <polyline class="leader" points={`${pad.left + plotWidth},${label.lineY} ${pad.left + plotWidth + 4},${label.lineY} ${pad.left + plotWidth + 8},${label.y}`} />
         {/if}
-        <text class={`threshold-label ${label.severity === null ? '' : `active-${label.severity}`}`} class:idle={label.idle} x={pad.left + plotWidth + 10} y={label.y} dominant-baseline="middle"><title>{label.title}</title>{label.text}</text>
-        {#if label.idle}
-          <text class="threshold-label idle modes" x={pad.left + plotWidth + 10} y={label.y + LINE / 2 + MODES_LINE / 2} dominant-baseline="middle"><title>{label.title}</title>{label.modes}</text>
-        {/if}
+        {#each label.rows as row (row.key)}
+          <text class={`threshold-label ${row.severity === null ? '' : `active-${row.severity}`}`} class:idle={row.idle} class:modes={row.modes} x={pad.left + plotWidth + 10} y={row.y} dominant-baseline="middle"><title>{label.title}</title>{row.text}</text>
+        {/each}
       {/each}
       {#each controlThresholds.filter(threshold => threshold.value >= domain!.min && threshold.value <= domain!.max) as threshold (threshold.ruleId)}
-        <line class="control-mark" x1={pad.left + plotWidth} x2={pad.left + plotWidth + 3} y1={y(threshold.value)} y2={y(threshold.value)}><title>{threshold.label} at {formatQuantity(threshold.value, strip.unit)} (control set point)</title></line>
+        <line class="control-mark" x1={pad.left + plotWidth} x2={pad.left + plotWidth + 3} y1={y(threshold.value)} y2={y(threshold.value)}><title>{threshold.label} at {formatQuantity(threshold.value, strip.unit, resolution)} (control set point)</title></line>
       {/each}
 
       {#if adviceVisible && issuedAt !== null}
@@ -256,7 +301,7 @@
       {#each strip.pens as pen, index (pen.path)}
         <path
           class="pen"
-          d={stepPath(series.get(String(pen.path)) ?? [], x, y, { start: windowStart, end: now })}
+          d={stepPath(shownPoints(pen), x, y, { start: windowStart, end: now })}
           style={penStroke(pen.role, index)}
         />
       {/each}
@@ -286,6 +331,7 @@
   .threshold-label.active-warning { fill: var(--alert-warning-color); font-weight: 700; }
   .threshold-label.active-notice, .threshold-label.active-info { fill: var(--alert-caution-color); font-weight: 700; }
   .hatch { stroke: var(--border-divider-color); stroke-width: 1; }
+  .offscale { stroke: var(--element-neutral-color); stroke-width: 0.5; stroke-opacity: 0.6; }
   .gap-label { fill: var(--element-neutral-color); font-size: 11px; }
   .control-mark { stroke: var(--element-neutral-color); stroke-width: 2; }
   .advice { stroke: var(--element-neutral-color); stroke-dasharray: 2 3; }

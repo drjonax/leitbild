@@ -6,7 +6,7 @@
   let { threshold }: { threshold: ComposedDisplayThreshold } = $props()
 </script>
 
-<!-- Shown only while the threshold's I&C rule is active; colour and text both carry the state. -->
+<!-- Shown only while the threshold's I&C rule is active in a mode it acts in; colour and text both carry the state, in the words a badge, a trend line and an alarm row use ("LO-LO · RX TRIP"). -->
 <span class={`chip ${alertTypeOf(threshold.severity ?? 'warning')}`} title={threshold.label}>{limitKindName(threshold)}</span>
 
 <style>

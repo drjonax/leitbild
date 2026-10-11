@@ -2,12 +2,21 @@
 // these functions only relate them to the latest sampled values. How a trend
 // reads (rates, the limit ahead, times to it) is World's trend-reading.ts,
 // which the compose result states too.
-import { marginTextForms, type ThresholdMargin } from '../../../packs/process-plant/displays/display-text.ts'
+import { marginTextForms } from '../../../packs/process-plant/displays/display-text.ts'
+import { limitStateText, type LimitState } from '../../../packs/process-plant/displays/trend-reading.ts'
 import type { ComposedDisplayAlarm } from './composed-display-client.ts'
 
-/** The fullest wording of a margin that fits its room (marginTextForms); the shortest where none does. */
-export const fitMarginText = (margin: ThresholdMargin, unit: string, fits: (text: string) => boolean): string => {
-  const forms = marginTextForms(margin, unit)
+/**
+ * A limit state worded from whole to shortest: in full (with the time to the
+ * limit, or how it moves back across one it is past), then its margin alone,
+ * each form dropping one more whole part (marginTextForms).
+ */
+export const limitStateForms = (state: LimitState, unit: string, resolution: number | null): ReadonlyArray<string> =>
+  [...new Set([limitStateText(state, unit, resolution), ...(state.kind === 'margin' || state.kind === 'past' ? marginTextForms(state.margin, unit, resolution) : [])])]
+
+/** The fullest wording of a limit state that fits its room (limitStateForms); the shortest where none does. */
+export const fitLimitStateText = (state: LimitState, unit: string, resolution: number | null, fits: (text: string) => boolean): string => {
+  const forms = limitStateForms(state, unit, resolution)
   return forms.find(fits) ?? forms.at(-1)!
 }
 

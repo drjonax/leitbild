@@ -7,6 +7,7 @@
   import { displayValue, formatQuantity, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
   import { alertTypeOf } from '../panel-presenters.ts'
+  import { limitInForce } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import { chevronSegment, pipeSegments, pipeValue, stubEndSegment } from './pipe-segments.ts'
   import { mimicLegend } from './mimic-legend.ts'
   import { openBridgeDevice } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
@@ -60,9 +61,16 @@
 
   const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
 
-  /** The most severe active alarm framing an item, trips first, with the flap text that says what it watches. */
-  const alertOf = (item: MimicDrawnItem): { readonly status: 'alarm' | 'warning' | 'caution'; readonly label: string; readonly others: number } | null => {
-    const flaps = new Map(item.binding.frames.map(frame => [frame.ruleId, frame.flap]))
+  /**
+   * The most severe active alarm framing an item, trips first, with the flap
+   * text that says what it watches and does: as the trend chip of its signal
+   * picks it, among the rules that act in the Plant's current mode (a reactor
+   * trip latched at power frames nothing in hot standby; the banner and the
+   * alarm list keep it).
+   */
+  const alertOf = (item: MimicDrawnItem): { readonly status: 'alarm' | 'warning' | 'caution'; readonly label: { readonly flap: string; readonly flapShort: string }; readonly others: number } | null => {
+    const inForce = item.binding.frames.filter(frame => latest?.mode === undefined || limitInForce(frame, latest.mode))
+    const flaps = new Map(inForce.map(frame => [frame.ruleId, frame]))
     const active = alarms
       .filter(alarm => flaps.has(alarm.ruleId))
       .sort((left, right) => Number(right.kind === 'trip') - Number(left.kind === 'trip') || severityRank[left.severity] - severityRank[right.severity])

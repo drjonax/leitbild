@@ -3,9 +3,10 @@
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
-  import { displayValue, isPast, marginText, nearestThresholdMargin, shownReading, type ThresholdMargin, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
-  import { fitMarginText } from './panel-presenters.ts'
-  import { activeThreshold, limitsInForce } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import { displayValue, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
+  import { fitLimitStateText } from './panel-presenters.ts'
+  import { limitStateText, rateWindowMs, readingStateText, trendReading, type LimitState, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { displayName, fitName } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
   import { SPARKLINE_SIZE, sparklineWindowText } from './sparkline.ts'
@@ -36,18 +37,42 @@
     const room = rooms[path] ?? 0
     return room === 0 ? name : fitName(name, text => measureName(text) <= room)
   }
-  // A margin takes its row's width, measured as drawn, and drops whole parts
-  // to fit it, the mode qualifier first, never cutting a word; its tooltip
-  // keeps the whole text.
+  // A limit state takes its row's width, measured as drawn, and drops whole
+  // parts to fit it, the time and mode qualifier first, never cutting a word;
+  // its tooltip keeps the whole text.
   const measureMargin = { near: textMeasure(panelFont(11)), beyond: textMeasure(panelFont(11, 600)) }
   const marginRooms: Record<string, number> = $state({})
-  const fittedMargin = (path: string, margin: ThresholdMargin, unit: string): string => {
+  const fittedState = (path: string, reading: TrendReading, pen: ComposedDisplayPen): string => {
     const room = marginRooms[path] ?? 0
-    const measure = isPast(margin) ? measureMargin.beyond : measureMargin.near
-    return room === 0 ? marginText(margin, unit) : fitMarginText(margin, unit, text => measure(text) <= room)
+    const limit = shownLimit(reading)
+    const prefix = reading.offScale === null ? '' : `${reading.offScale} range${limit === null ? '' : ' · '}`
+    const measure = beyond(reading) ? measureMargin.beyond : measureMargin.near
+    if (limit === null) return prefix
+    return room === 0 ? `${prefix}${limitStateText(limit, pen.unit, pen.resolution)}` : `${prefix}${fitLimitStateText(limit, pen.unit, pen.resolution, text => measure(`${prefix}${text}`) <= room)}`
   }
+  // A readout says what limits act on its value, not that it has none.
+  const shownLimit = (reading: TrendReading): LimitState | null => reading.limit === null || reading.limit.kind === 'unlimited' ? null : reading.limit
+  // Past a limit, or off its instrument's span, the line reads as a caution.
+  const beyond = (reading: TrendReading): boolean => reading.offScale !== null || reading.limit?.kind === 'past'
   const sampled = (path: string) => latest?.values.find(entry => entry.path === path)
   const sparklineMs = $derived(column && history !== undefined ? panel.sparklineMs : undefined)
+  // Each value as the row reads it: in the column, which way its sparkline's
+  // history goes over the sparkline's rate window, so its margin names the
+  // limit it is heading for; elsewhere seen once, the limit it is past or else
+  // the nearest either way.
+  const readingOf = (pen: ComposedDisplayPen, value: number): TrendReading => trendReading({
+    value,
+    points: sparklineMs === undefined || history === undefined || !pen.recorded ? null : shownPoints(pen),
+    windowMs: rateWindowMs(sparklineMs ?? 0),
+    unit: pen.unit,
+    thresholds: pen.thresholds,
+    mode: latest?.mode,
+    activeRuleIds,
+    resolution: pen.resolution,
+    ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }),
+  })
+  const shownPoints = (pen: ComposedDisplayPen) => (history?.series.get(String(pen.path)) ?? []).map(point => ({ t: point.t, v: shownReading(point.v, pen.resolution) }))
+  const limitDrawn = (reading: TrendReading) => reading.limit?.kind === 'margin' || reading.limit?.kind === 'past' ? reading.limit.margin.threshold : null
   const now = $derived(latest === undefined ? Number.NaN : Date.parse(latest.simulationTime))
   const rows = $derived(Math.ceil(panel.pens.length / (column ? 1 : composedDisplayLayout.readoutsPerRow)))
   const size = $derived(column
@@ -59,9 +84,10 @@
 <ul class="readouts" style={size}>
   {#each panel.pens as pen (pen.path)}
     {@const entry = sampled(String(pen.path))}
-    {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.limits) : entry?.value}
-    {@const margin = typeof value === 'number' ? nearestThresholdMargin(value, limitsInForce(pen.thresholds, latest?.mode, activeRuleIds)) : null}
-    {@const inAlarm = activeThreshold(pen.thresholds, activeRuleIds)}
+    {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.resolution) : entry?.value}
+    {@const reading = typeof value === 'number' ? readingOf(pen, value) : null}
+    {@const inAlarm = reading?.inAlarm ?? null}
+    {@const end = typeof value === 'number' ? offScale(value, pen.limits?.instrumentSpan) : null}
     <li class:primary={pen.role === 'primary'} title={`${pen.label} · ${pen.role}`}>
       <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`}><span class="name" bind:clientWidth={rooms[String(pen.path)]}>{named(String(pen.path), displayName(pen))}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}</span>
       {#if typeof value === 'boolean'}
@@ -69,21 +95,24 @@
         <span class="state" title={pen.described}>{value ? pen.described : `Not ${pen.described.charAt(0).toLowerCase()}${pen.described.slice(1)}`}</span>
       {:else}
         <span class="reading">
+          <!-- At an end of its instrument's span the reading says only that the quantity is there or beyond: "<0", in low-integrity style. -->
           <obc-readout
-            value={typeof value === 'number' ? displayValue(value, pen.unit) : null}
+            value={typeof value !== 'number' ? null : end === null ? displayValue(value, pen.unit) : readingValueText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan)}
+            valueType={end === null ? 'number' : 'text'}
+            dataQuality={end === null ? undefined : 'low-integrity'}
             off={typeof value !== 'number'}
             offText="—"
             unit={unitLabel(pen.unit)}
-            fractionDigits={typeof value === 'number' ? valueDigits(displayValue(value, pen.unit)) : 0}
+            fractionDigits={typeof value === 'number' ? valueDigits(displayValue(value, pen.unit), pen.resolution === null ? null : displayValue(pen.resolution, pen.unit)) : 0}
             size="small"
           ></obc-readout>
           {#if sparklineMs !== undefined && history !== undefined && pen.valueKind === 'number'}
             <Sparkline
               {pen}
               windowMs={sparklineMs}
-              points={(history.series.get(String(pen.path)) ?? []).map(point => ({ t: point.t, v: shownReading(point.v, pen.limits) }))}
+              points={shownPoints(pen)}
               {now}
-              value={typeof value === 'number' ? value : undefined}
+              limit={reading === null ? null : limitDrawn(reading)}
               {inAlarm}
               historyMissing={history.historyMissing.has(String(pen.path))}
               historyError={history.historyErrors.get(String(pen.path))}
@@ -91,8 +120,8 @@
           {/if}
         </span>
       {/if}
-      {#if margin !== null}
-        <span class="margin" class:beyond={isPast(margin)} title={marginText(margin, pen.unit)} bind:clientWidth={marginRooms[String(pen.path)]}>{fittedMargin(String(pen.path), margin, pen.unit)}</span>
+      {#if reading !== null && (reading.offScale !== null || shownLimit(reading) !== null)}
+        <span class="margin" class:beyond={beyond(reading)} title={readingStateText({ offScale: reading.offScale, limit: shownLimit(reading) }, pen.unit, pen.resolution)} bind:clientWidth={marginRooms[String(pen.path)]}>{fittedState(String(pen.path), reading, pen)}</span>
       {:else if entry?.quality === 'outside-hard-range'}
         <span class="margin beyond">outside range</span>
       {/if}

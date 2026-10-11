@@ -2,11 +2,11 @@
   import { untrack } from 'svelte'
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { composedTrendLegendHeight } from '../../../packs/process-plant/displays/composition.ts'
-  import { formatQuantity, isPast, shownReading } from '../../../packs/process-plant/displays/display-text.ts'
+  import { readingText, shownReading } from '../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { displayName, fitName, penStroke, roleLabel } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
-  import { activeThreshold, limitStateText, rateText, rateWindowMs, trendReading, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import { rateText, rateWindowMs, readingStateText, trendReading, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import AlarmChip from './AlarmChip.svelte'
 
   // One row per pen, columns aligned: what it is, its value, how close it is
@@ -55,22 +55,22 @@
 <ul class="legend" style={`height:${composedTrendLegendHeight(pens.length)}px`} bind:clientWidth={width} bind:this={legend}>
   {#each pens as pen, index (pen.path)}
     {@const entry = sampled(String(pen.path))}
-    {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.limits) : entry?.value}
-    {@const points = series.get(String(pen.path)) ?? []}
+    {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.resolution) : entry?.value}
+    {@const points = (series.get(String(pen.path)) ?? []).map(point => ({ t: point.t, v: shownReading(point.v, pen.resolution) }))}
     {@const liveOnly = live || historyMissing.has(String(pen.path))}
-    {@const inAlarm = activeThreshold(pen.thresholds, activeRuleIds)}
-    {@const reading = typeof value === 'number' ? trendReading({ value, points: live ? null : points, windowMs, unit: pen.unit, thresholds: pen.thresholds, mode: latest?.mode, activeRuleIds }) : null}
-    {@const limit = reading?.limit ?? null}
+    {@const reading = typeof value === 'number' ? trendReading({ value, points: live ? null : points, windowMs, unit: pen.unit, thresholds: pen.thresholds, mode: latest?.mode, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }) : null}
+    {@const inAlarm = reading?.inAlarm ?? null}
+    {@const state = reading === null ? '' : readingStateText(reading, pen.unit, pen.resolution)}
     <li>
       {#if live}<span class="swatch live" aria-hidden="true"></span>{:else}<svg class="swatch" width="22" height="8" aria-hidden="true"><line x1="0" x2="22" y1="4" y2="4" style={penStroke(pen.role, index)} /></svg>{/if}
       <span class="name" title={`${displayName(pen)} · ${pen.label} · ${roleLabel[pen.role]}${pen.command ? ' · operator or automation demand, not a measured state' : ''}${live ? ' · not recorded by this Run: current value only' : liveOnly ? ' · no recorded history in this window' : ''}`}>{#if live}<span class="badge">not recorded</span>{/if}{named(displayName(pen), (live ? 1 : 0) + (pen.command ? 1 : 0))}{#if pen.command}<span class="badge">demand</span>{/if}</span>
-      <span class="value">{typeof value === 'number' ? formatQuantity(value, pen.unit) : typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'}</span>
+      <span class="value" class:offscale={reading?.offScale != null}>{typeof value === 'number' ? readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan) : typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'}</span>
       <span class="state">
         {#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}
-        {#if limit !== null}<span class:beyond={limit.kind === 'margin' && isPast(limit.margin)}>{limitStateText(limit, pen.unit)}</span>{/if}
+        {#if state !== ''}<span class:beyond={reading?.offScale != null || reading?.limit?.kind === 'past'}>{state}</span>{/if}
         {#if entry?.quality === 'outside-hard-range'}<span class="beyond">outside range</span>{/if}
       </span>
-      <span class="rate">{typeof value === 'number' && reading !== null && !live ? rateText(reading.rate, value, pen.unit, { windowMs, change: reading.change }) : ''}{liveOnly && !live ? ' · live only' : ''}</span>
+      <span class="rate">{typeof value === 'number' && reading !== null && !live ? (reading.offScale === null ? rateText(reading.rate, value, pen.unit, { windowMs, change: reading.change, resolution: pen.resolution }) : 'off scale: no rate') : ''}{liveOnly && !live ? ' · live only' : ''}</span>
     </li>
   {/each}
 </ul>
@@ -91,4 +91,6 @@
   .state, .rate { font-size: 11px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .rate { overflow: hidden; text-overflow: ellipsis; }
   .beyond { color: var(--alert-caution-color); font-weight: 600; }
+  /* A reading at an end of its instrument's span is no value: drawn as low integrity. */
+  .value.offscale { font-weight: 400; font-style: italic; }
 </style>

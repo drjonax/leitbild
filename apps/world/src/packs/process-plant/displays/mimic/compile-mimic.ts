@@ -180,7 +180,8 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const presentation = planned.presentation
     const vessel = isVessel(presentation) || planned.role === 'hub'
     for (const row of planned.rows) for (const { style, text } of rowTexts(row)) measure(style, text, planned.binding.label)
-    const flaps = planned.binding.frames.map(frame => measure('alertLabel', frame.flap, planned.binding.label))
+    // A frame reserves room for each flap shortened to what it watches; the whole flap shows where that room allows (openbridge-mimic.ts flapLabel).
+    const flaps = planned.binding.frames.map(frame => measure('alertLabel', frame.flapShort, planned.binding.label))
     const tag = measure('tag', planned.binding.label, planned.binding.label)
     nodes.push({
       id: planned.id,

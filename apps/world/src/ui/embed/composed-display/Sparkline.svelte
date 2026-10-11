@@ -9,22 +9,24 @@
   // line in OpenBridge's instrument frame, with no axes. It takes the alarm
   // colour only while the value is in alarm. A value the Run does not record
   // has no line; the empty frame says so.
-  let { pen, windowMs, points, now, value, inAlarm, historyMissing, historyError }: {
+  let { pen, windowMs, points, now, limit, inAlarm, historyMissing, historyError }: {
     pen: ComposedDisplayPen
     windowMs: number
+    /** Its recorded history as shown: readings below its resolution read 0. */
     points: ReadonlyArray<TrendPoint>
     /** The latest sample's Run time: where the line ends. */
     now: number
-    value: number | undefined
-    /** The most severe of its thresholds whose rule is active now. */
+    /** The limit its row's margin names, drawn dashed where it lies inside the plotted range. */
+    limit: ComposedDisplayThreshold | null
+    /** The most severe of its limits in force whose rule is active now. */
     inAlarm: ComposedDisplayThreshold | null
     historyMissing: boolean
     historyError: string | undefined
   } = $props()
 
   const { width, height } = SPARKLINE_SIZE
-  const line = $derived(pen.recorded && Number.isFinite(now) ? sparkline({ points, now, windowMs, size: SPARKLINE_SIZE, value, thresholds: pen.thresholds }) : null)
-  const text = $derived(sparklineText({ recorded: pen.recorded, windowMs, unit: pen.unit, line, historyMissing, historyError }))
+  const line = $derived(pen.recorded && Number.isFinite(now) ? sparkline({ points, now, windowMs, size: SPARKLINE_SIZE, limit, resolution: pen.resolution }) : null)
+  const text = $derived(sparklineText({ recorded: pen.recorded, windowMs, unit: pen.unit, resolution: pen.resolution, line, historyMissing, historyError }))
   const alert = $derived(inAlarm === null ? '' : alertTypeOf(inAlarm.severity ?? 'warning'))
 </script>
 

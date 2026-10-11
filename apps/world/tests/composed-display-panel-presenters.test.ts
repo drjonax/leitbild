@@ -1,123 +1,137 @@
 import { describe, expect, test } from 'bun:test'
 import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
-import { limitLabelRanks, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
-import { agoText, alarmAge, fitMarginText, median, visibleAlarms, annunciatorStates } from '../src/ui/embed/composed-display/panel-presenters.ts'
-import { activeThreshold, limitAhead, limitInForce, limitsInForce, projectionBasis, returningText, minutesToThreshold, movingAwayFromLimits, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText } from '../src/packs/process-plant/displays/trend-reading.ts'
-import { formatQuantity, limitKindName, marginText, marginTextForms, nearestThresholdMargin, simulationClock, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
-import { escalateLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
+import { limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
+import { agoText, alarmAge, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates } from '../src/ui/embed/composed-display/panel-presenters.ts'
+import { activeThreshold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { formatQuantity, formatValue, limitKindName, marginText, marginTextForms, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
+import { modesShortText, orderLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import type { ComposedDisplayAlarm } from '../src/ui/embed/composed-display/composed-display-client.ts'
 
 const thresholds: ReadonlyArray<ComposedDisplayThreshold> = [
-  { ruleId: 'trip-low', label: 'Low-low', kind: 'trip', operator: '<', direction: 'low', value: 20, escalation: 1 },
-  { ruleId: 'alarm-low', label: 'Low', kind: 'alarm', operator: '<', direction: 'low', value: 30, escalation: 1 },
-  { ruleId: 'control', label: 'Demand', kind: 'control', operator: '<', direction: 'low', value: 50, escalation: 1 },
-  { ruleId: 'alarm-high', label: 'High', kind: 'alarm', operator: '>', direction: 'high', value: 75, escalation: 1, modeLabel: 'power operation', modeIds: ['powerOperation'] },
+  { ruleId: 'trip-low', label: 'Low-low', kind: 'trip', operator: '<', direction: 'low', value: 20, order: 2, action: 'RX TRIP' },
+  { ruleId: 'alarm-low', label: 'Low', kind: 'alarm', operator: '<', direction: 'low', value: 30, order: 1, action: 'ALM' },
+  { ruleId: 'control', label: 'Demand', kind: 'control', operator: '<', direction: 'low', value: 50, order: 1, action: 'CTL' },
+  { ruleId: 'alarm-high', label: 'High', kind: 'alarm', operator: '>', direction: 'high', value: 75, order: 1, action: 'ALM', modeLabel: 'Mode 1', modeNames: 'Power operation', modeIds: ['powerOperation'] },
 ]
 
 describe('composed display panel presenters', () => {
   test('margin to the nearest acting alarm or trip threshold, ignoring control set points', () => {
     const near = nearestThresholdMargin(34.5, thresholds)!
     expect([near.threshold.ruleId, near.margin]).toEqual(['alarm-low', 4.5])
-    expect(marginText(near, '%')).toBe('4.50 % above LO ALM 30 %')
+    expect(marginText(near, '%')).toBe('4.50 % above LO 30 % · ALM')
     const beyond = nearestThresholdMargin(26.9, thresholds)!
-    expect(marginText(beyond, '%')).toBe('past LO ALM 30 %')
+    expect(marginText(beyond, '%')).toBe('past LO 30 % · ALM')
     // Past both, the trip is what it says.
-    expect(marginText(nearestThresholdMargin(19.5, thresholds)!, '%')).toBe('past LO TRIP 20 %')
-    expect(marginText(nearestThresholdMargin(70, thresholds)!, '%')).toBe('5.00 % below HI ALM 75 % (power operation)')
-    expect(thresholdName(thresholds[0]!, 'MPa')).toBe('LO TRIP 20 MPa')
-    expect(thresholdName(thresholds[0]!, 'MPa', { withUnit: false })).toBe('LO TRIP 20')
+    expect(marginText(nearestThresholdMargin(19.5, thresholds)!, '%')).toBe('past LO-LO 20 % · RX TRIP')
+    expect(marginText(nearestThresholdMargin(70, thresholds)!, '%')).toBe('5.00 % below HI 75 % · ALM (Mode 1)')
+    expect(thresholdName(thresholds[0]!, 'MPa')).toBe('LO-LO 20 MPa · RX TRIP')
+    expect(thresholdName(thresholds[0]!, 'MPa', { withUnit: false })).toBe('LO-LO 20 · RX TRIP')
+    expect(thresholdFullName(thresholds[3]!, '%')).toBe('HI 75 % · ALM (Mode 1)')
     expect(nearestThresholdMargin(10, [thresholds[2]!])).toBeNull()
   })
 
-  test('limits of one kind escalate by order away from normal, never by signal', () => {
-    const limit = (ruleId: string, kind: 'alarm' | 'trip', direction: 'low' | 'high', value: number, modeIds?: ReadonlyArray<string>) =>
-      ({ ruleId, label: ruleId, kind, operator: direction === 'low' ? '<' : '>', direction, value, ...(modeIds === undefined ? {} : { modeLabel: modeIds.join(' or '), modeIds }) }) as const
-    const names = (limits: Parameters<typeof escalateLimits>[0]) => escalateLimits(limits).map(threshold => thresholdName(threshold, 'degC'))
+  test('limits order away from normal whatever each does, never by signal', () => {
+    const limit = (ruleId: string, kind: 'alarm' | 'trip', direction: 'low' | 'high', value: number, action: string, modeIds?: ReadonlyArray<string>) =>
+      ({ ruleId, label: ruleId, kind, action, operator: direction === 'low' ? '<' : '>', direction, value, ...(modeIds === undefined ? {} : { modeLabel: modeIds.join(' or '), modeIds }) }) as const
+    const names = (limits: Parameters<typeof orderLimits>[0]) => orderLimits(limits).map(threshold => thresholdName(threshold, 'degC'))
     // Subcooling: a warning at 16.7 °C and a critical alarm at 0 °C, both alarms below normal.
-    expect(names([limit('lost', 'alarm', 'low', 0), limit('low', 'alarm', 'low', 16.7)])).toEqual(['LO-LO ALM 0 °C', 'LO ALM 16.7 °C'])
-    // A trip and an alarm are each the first of their kind; high limits count upward.
-    expect(names([limit('trip', 'trip', 'low', 20), limit('alarm', 'alarm', 'low', 30), limit('high', 'alarm', 'high', 75), limit('higher', 'alarm', 'high', 82), limit('highest', 'alarm', 'high', 90)]))
-      .toEqual(['LO TRIP 20 °C', 'LO ALM 30 °C', 'HI ALM 75 °C', 'HI-HI ALM 82 °C', 'HI-HI ALM 90 °C'])
+    expect(names([limit('lost', 'alarm', 'low', 0, 'ALM'), limit('low', 'alarm', 'low', 16.7, 'ALM')])).toEqual(['LO-LO 0 °C · ALM', 'LO 16.7 °C · ALM'])
+    // Steam generator level: the alarm at 30 is LO, and both actuations at 20 beyond it are LO-LO, each named by what it does.
+    expect(names([limit('afw', 'trip', 'low', 20, 'AFW START'), limit('rx', 'trip', 'low', 20, 'RX TRIP', ['powerOperation', 'startup']), limit('alarm', 'alarm', 'low', 30, 'ALM'), limit('high', 'alarm', 'high', 75, 'ALM'), limit('higher', 'trip', 'high', 82, 'FWI')]))
+      .toEqual(['LO-LO 20 °C · AFW START', 'LO-LO 20 °C · RX TRIP', 'LO 30 °C · ALM', 'HI 75 °C · ALM', 'HI-HI 82 °C · FWI'])
     // A limit in every mode and one only in power operation act together; limits of two different modes are alternatives.
-    expect(names([limit('relief', 'trip', 'high', 16.18), limit('reactor', 'trip', 'high', 16.35, ['powerOperation'])])).toEqual(['HI TRIP 16.18 °C', 'HI-HI TRIP 16.35 °C'])
-    expect(names([limit('startup', 'alarm', 'low', 20, ['startup']), limit('power', 'alarm', 'low', 30, ['powerOperation'])])).toEqual(['LO ALM 20 °C', 'LO ALM 30 °C'])
-    // Two rules at one value are one step.
-    expect(names([limit('a', 'alarm', 'low', 10), limit('b', 'alarm', 'low', 10), limit('c', 'alarm', 'low', 5)])).toEqual(['LO ALM 10 °C', 'LO ALM 10 °C', 'LO-LO ALM 5 °C'])
-    expect(limitKindName({ direction: 'high', kind: 'trip', escalation: 2 })).toBe('HI-HI TRIP')
+    expect(names([limit('relief', 'trip', 'high', 16.18, 'PORV'), limit('reactor', 'trip', 'high', 16.35, 'RX TRIP', ['powerOperation'])])).toEqual(['HI 16.18 °C · PORV', 'HI-HI 16.35 °C · RX TRIP'])
+    expect(names([limit('startup', 'alarm', 'low', 20, 'ALM', ['startup']), limit('power', 'alarm', 'low', 30, 'ALM', ['powerOperation'])])).toEqual(['LO 20 °C · ALM', 'LO 30 °C · ALM'])
+    // Two rules at one value are one step; a third beyond them is LO-LO, never LO-LO-LO.
+    expect(names([limit('a', 'alarm', 'low', 10, 'ALM'), limit('b', 'alarm', 'low', 10, 'ALM'), limit('c', 'alarm', 'low', 5, 'ALM'), limit('d', 'trip', 'low', 2, 'SI')])).toEqual(['LO 10 °C · ALM', 'LO 10 °C · ALM', 'LO-LO 5 °C · ALM', 'LO-LO 2 °C · SI'])
+    expect(limitKindName({ direction: 'high', order: 2, action: 'FWI' })).toBe('HI-HI · FWI')
+    expect(limitKindName({ direction: 'low', order: 1, action: 'ALM' })).toBe('LO · ALM')
   })
 
-  test('a margin fitted to its room drops whole parts, the mode qualifier first, never cutting a word', () => {
-    // Primary inventory net flow on the overview: 0 kg/s against the power-operation-only LO TRIP -250 kg/s.
-    const netFlowTrip = { ruleId: 'net-flow', label: 'Primary inventory loss trip', kind: 'trip', operator: '<', direction: 'low', value: -250, escalation: 1, modeLabel: 'Power operation', modeIds: ['powerOperation'] } as const
+  test('the modes a limit acts in are named by their short labels, a run of them as a range', () => {
+    const condition = { type: 'comparison', signal: { path: 'core.powerMw' }, operator: '>', value: 1 } as never
+    const modes = ['Power operation', 'Startup', 'Hot standby', 'Hot shutdown', 'Cold shutdown'].map((label, index) => ({ id: `m${index + 1}`, label, shortLabel: String(index + 1), condition }))
+    expect(modesShortText(modes, ['m1', 'm2'])).toBe('Modes 1–2')
+    expect(modesShortText(modes, ['m1', 'm2', 'm3'])).toBe('Modes 1–3')
+    expect(modesShortText(modes, ['m3'])).toBe('Mode 3')
+    expect(modesShortText(modes, ['m3', 'm1'])).toBe('Modes 1, 3')
+    // A mode without a short label is named by its label.
+    expect(modesShortText([{ id: 'run', label: 'Running', condition }, ...modes], ['run', 'm1'])).toBe('Running or Power operation')
+  })
+
+  test('a margin fitted to its room drops whole parts, the time and mode qualifier first, never cutting a word', () => {
+    // Primary inventory net flow on the overview: 0 kg/s against the power-operation-only LO-LO -250 kg/s trip.
+    const netFlowTrip = { ruleId: 'net-flow', label: 'Primary inventory loss trip', kind: 'trip', operator: '<', direction: 'low', value: -250, order: 1, action: 'RX TRIP', modeLabel: 'Mode 1', modeNames: 'Power operation', modeIds: ['powerOperation'] } as const
     const margin = { threshold: netFlowTrip, margin: 250 }
     expect(marginTextForms(margin, 'kg/s')).toEqual([
-      '250 kg/s above LO TRIP -250 kg/s (Power operation)',
-      '250 kg/s above LO TRIP -250 kg/s',
-      '250 kg/s above LO TRIP -250',
-      '250 kg/s above LO TRIP',
+      '250 kg/s above LO -250 kg/s · RX TRIP (Mode 1)',
+      '250 kg/s above LO -250 kg/s · RX TRIP',
+      '250 kg/s above LO -250 · RX TRIP',
+      '250 kg/s above LO · RX TRIP',
     ])
-    expect(marginText(margin, 'kg/s')).toBe('250 kg/s above LO TRIP -250 kg/s (Power operation)')
+    expect(marginText(margin, 'kg/s')).toBe('250 kg/s above LO -250 kg/s · RX TRIP (Mode 1)')
     const within = (length: number) => (text: string) => text.length <= length
-    expect(fitMarginText(margin, 'kg/s', within(48))).toBe('250 kg/s above LO TRIP -250 kg/s')
-    expect(fitMarginText(margin, 'kg/s', within(28))).toBe('250 kg/s above LO TRIP -250')
+    const state: LimitState = { kind: 'margin', margin, eta: '≈4 min', minutes: 4 }
+    expect(limitStateForms(state, 'kg/s', null)[0]).toBe('250 kg/s above LO -250 kg/s · RX TRIP (Mode 1) · ≈4 min')
+    expect(fitLimitStateText(state, 'kg/s', null, within(48))).toBe('250 kg/s above LO -250 kg/s · RX TRIP (Mode 1)')
+    expect(fitLimitStateText(state, 'kg/s', null, within(38))).toBe('250 kg/s above LO -250 kg/s · RX TRIP')
     // Too narrow for any: the shortest, which still says how far and from which limit.
-    expect(fitMarginText(margin, 'kg/s', within(10))).toBe('250 kg/s above LO TRIP')
-    expect(marginTextForms({ threshold: netFlowTrip, margin: -5 }, 'kg/s')).toEqual(['past LO TRIP -250 kg/s (Power operation)', 'past LO TRIP -250 kg/s', 'past LO TRIP -250', 'past LO TRIP'])
+    expect(fitLimitStateText(state, 'kg/s', null, within(10))).toBe('250 kg/s above LO · RX TRIP')
+    expect(marginTextForms({ threshold: netFlowTrip, margin: -5 }, 'kg/s')).toEqual(['past LO -250 kg/s · RX TRIP (Mode 1)', 'past LO -250 kg/s · RX TRIP', 'past LO -250 · RX TRIP', 'past LO · RX TRIP'])
     // A unitless limit without modes has fewer forms, none repeated.
-    expect(marginTextForms({ threshold: { ...thresholds[1]!, value: 0.5 }, margin: 0.25 }, 'boolean')).toEqual(['0.250 above LO ALM 0.5', '0.250 above LO ALM'])
+    expect(marginTextForms({ threshold: { ...thresholds[1]!, value: 0.5 }, margin: 0.25 }, 'boolean')).toEqual(['0.250 above LO 0.5 · ALM', '0.250 above LO · ALM'])
+    // With nothing in force the way it moves, a single form.
+    expect(limitStateForms({ kind: 'clear', direction: 'low' }, '%', null)).toEqual(['no LO limit in force'])
   })
 
   test('a value on a limit that acts at equality is past it', () => {
     // Subcooling at exactly 0 °C: LO-LO ALM acts at "<= 0", so it leads, not the 16.7 °C alarm.
     const subcooling = [
-      { ruleId: 'margin-low', label: 'RCS subcooling margin low', kind: 'alarm', operator: '<', direction: 'low', value: 16.7, escalation: 1 },
-      { ruleId: 'margin-lost', label: 'RCS subcooling lost', kind: 'alarm', operator: '<=', direction: 'low', value: 0, escalation: 2 },
+      { ruleId: 'margin-low', label: 'RCS subcooling margin low', kind: 'alarm', operator: '<', direction: 'low', value: 16.7, order: 1, action: 'ALM' },
+      { ruleId: 'margin-lost', label: 'RCS subcooling lost', kind: 'alarm', operator: '<=', direction: 'low', value: 0, order: 2, action: 'ALM' },
     ] as const
     const margin = nearestThresholdMargin(0, subcooling)!
     expect(margin.threshold.ruleId).toBe('margin-lost')
-    expect(marginText(margin, 'degC')).toBe('past LO-LO ALM 0 °C')
+    expect(marginText(margin, 'degC')).toBe('past LO-LO 0 °C · ALM')
     // On a limit that acts only beyond it, the value is not past it yet.
     expect(nearestThresholdMargin(16.7, subcooling)!.threshold.ruleId).toBe('margin-low')
     expect(marginText(nearestThresholdMargin(16.7, subcooling)!, 'degC')).not.toMatch(/^past/)
   })
 
   test('fractions read as percent wherever the display or the answer names them', () => {
-    const busLow = { ruleId: 'bus-low', label: 'Bus voltage low', kind: 'alarm', operator: '<', direction: 'low', value: 0.9, escalation: 1 } as const
+    const busLow = { ruleId: 'bus-low', label: 'Bus voltage low', kind: 'alarm', operator: '<', direction: 'low', value: 0.9, order: 1, action: 'ALM' } as const
     expect(formatQuantity(1, 'fraction')).toBe('100 %')
     expect(formatQuantity(0.955, 'fraction')).toBe('95.5 %')
     expect(formatQuantity(0, 'kg/s')).toBe('0 kg/s')
     expect(formatQuantity(125, 'volts_dc')).toBe('125 V DC')
     expect(unitLabel('degC/s')).toBe('°C/s')
-    expect(thresholdName(busLow, 'fraction')).toBe('LO ALM 90 %')
-    expect(marginText(nearestThresholdMargin(0.955, [busLow])!, 'fraction')).toBe('5.50 % above LO ALM 90 %')
+    expect(thresholdName(busLow, 'fraction')).toBe('LO 90 % · ALM')
+    expect(marginText(nearestThresholdMargin(0.955, [busLow])!, 'fraction')).toBe('5.50 % above LO 90 % · ALM')
     expect(rateText(-0.012, 0.955, 'fraction')).toBe('▼ −1.20 %/min')
     expect(unitLabel('fraction')).toBe('%')
   })
 
   test('the limit ahead follows the direction of travel, also while in alarm', () => {
-    // SG B in LO ALM 30, falling: the next limit is LO TRIP 20, not the alarm it has passed.
-    expect(limitAhead(28, -2.25, thresholds)?.threshold.ruleId).toBe('trip-low')
+    // SG B in LO ALM 30, falling: the next limit is LO-LO 20, not the alarm it has passed.
+    expect(limitAhead(28, 'falling', thresholds)?.threshold.ruleId).toBe('trip-low')
+    // Rising: past LO ALM 30, it is the limit it moves back across first.
+    expect(limitAhead(28, 'rising', thresholds)?.threshold.ruleId).toBe('alarm-low')
     // Rising away from the low limits toward HI ALM 75.
-    expect(limitAhead(60, 24, thresholds)?.threshold.ruleId).toBe('alarm-high')
-    // Rising with no high limit configured: none ahead, and the legend says so.
+    expect(limitAhead(60, 'rising', thresholds)?.threshold.ruleId).toBe('alarm-high')
+    // Rising with no high limit configured: none ahead.
     const lowOnly = thresholds.filter(threshold => threshold.direction === 'low')
-    expect(limitAhead(72, 24, lowOnly)).toBeNull()
-    expect(movingAwayFromLimits(72, 24, lowOnly)).toBe('rising')
-    // Steady: the nearest limit either way.
-    expect(limitAhead(34.5, 0, thresholds)?.threshold.ruleId).toBe('alarm-low')
-    expect(movingAwayFromLimits(34.5, 0, thresholds)).toBeNull()
+    expect(limitAhead(72, 'rising', lowOnly)).toBeNull()
   })
 
-  test('a value in alarm that is moving back says when it will be back inside the limit', () => {
+  test('a value in alarm that is moving back is timed back across the limit, never said to recover', () => {
     // SG A N-16 in HI ALM 5 mSv/h and drifting down.
-    const highRadiation = { ruleId: 'n16-high', label: 'Secondary radiation high', kind: 'alarm', operator: '>', direction: 'high', value: 5, escalation: 1 } as const
-    expect(returningText(5.4, -0.2, highRadiation, 'mSv/h', true)).toBe('back below HI ALM 5 mSv/h in ≈2 min')
-    expect(returningText(5.4, 0.2, highRadiation, 'mSv/h', true)).toBe('')
-    // Hours away at this rate: when, never a recovery already made.
-    expect(returningText(5.4, -0.01, highRadiation, 'mSv/h', true)).toBe('back below HI ALM 5 mSv/h in over 30 min')
-    // Without a basis for a time, the recovery is said, not timed.
-    expect(returningText(5.4, -0.2, highRadiation, 'mSv/h', false)).toBe('recovering, not projected')
-    expect(returningText(5.4, 0.2, highRadiation, 'mSv/h', false)).toBe('')
+    const highRadiation = { ruleId: 'n16-high', label: 'Secondary radiation high', kind: 'alarm', operator: '>', direction: 'high', value: 5, order: 1, action: 'ALM' } as const
+    expect(timeToThresholdText(5.4, -0.2, highRadiation, true, true)).toBe('≈2 min')
+    expect(timeToThresholdText(5.4, 0.2, highRadiation, true, true)).toBe('')
+    expect(timeToThresholdText(5.4, -0.01, highRadiation, true, true)).toBe('')
+    expect(minutesToThreshold(5.4, -0.2, highRadiation, true)).toBeCloseTo(2, 6)
+    // Not past it, there is nothing to come back across.
+    expect(minutesToThreshold(4.6, 0.2, highRadiation, true)).toBeNull()
   })
 
   test('a time to a limit is projected only from half a minute of change one way that is not slowing', () => {
@@ -214,7 +228,7 @@ describe('composed display panel presenters', () => {
     expect(rateChange(stepped, window, 12)).toBeNull()
     expect(simulationClock(Date.parse('2026-01-01T10:01:00.049Z'))).toBe('10:01:00')
     // Rising 0.31 MPa/min with 0.285 MPa left to HI ALM 16 (turbine trip, run 6).
-    const highAlarm = { ruleId: 'pzr-high', label: 'Pressurizer pressure high', kind: 'alarm', operator: '>', direction: 'high', value: 16, escalation: 1 } as const
+    const highAlarm = { ruleId: 'pzr-high', label: 'Pressurizer pressure high', kind: 'alarm', operator: '>', direction: 'high', value: 16, order: 1, action: 'ALM' } as const
     expect(timeToThresholdText(15.715, 0.31, highAlarm, true)).toBe('≈55 s')
     expect(timeToThresholdText(15.715, -0.31, highAlarm, true)).toBe('')
     expect(timeToThresholdText(10, 0.1, highAlarm, true)).toBe('')
@@ -224,9 +238,36 @@ describe('composed display panel presenters', () => {
     expect(unitLabel('degC')).toBe('°C')
   })
 
-  test('the most severe active threshold marks the value', () => {
-    expect(activeThreshold(thresholds, new Set(['alarm-low', 'trip-low']))?.ruleId).toBe('trip-low')
-    expect(activeThreshold(thresholds, new Set(['control']))).toBeNull()
+  test('the most severe active threshold acting in the current mode marks the value', () => {
+    expect(activeThreshold(thresholds, new Set(['alarm-low', 'trip-low']), undefined)?.ruleId).toBe('trip-low')
+    expect(activeThreshold(thresholds, new Set(['control']), undefined)).toBeNull()
+    // A high alarm of power operation does not mark a value in hot standby, latched or not.
+    expect(activeThreshold(thresholds, new Set(['alarm-high']), { id: 'hotStandby', label: 'Hot standby' })).toBeNull()
+  })
+
+  test('a reading is shown to a resolution of a thousandth of what the model declares it reads over', () => {
+    // An instrument span first, then a hard range, then the reach of its I&C limits from zero.
+    expect(readingResolution({ instrumentSpan: { min: 0, max: 100 }, hardRange: { min: -10, max: 200 } }, [])).toBeCloseTo(0.1, 12)
+    expect(readingResolution({ hardRange: { min: 0, max: 4500 } }, [])).toBeCloseTo(4.5, 12)
+    // GEN-MW, with its 450 MW low alarm; RCS-LEAK-RATE, with its 0.063 kg/s high alarm.
+    expect(readingResolution(undefined, [{ value: 450 }])).toBeCloseTo(0.45, 12)
+    expect(readingResolution(undefined, [{ value: 0.063 }])).toBeCloseTo(0.000063, 12)
+    expect(readingResolution(undefined, [])).toBeNull()
+    // Evaluation run 22: a tripped generator read 0.0000098 MW, and no leak −0.000000000003 kg/s.
+    expect(formatQuantity(shownReading(0.0000098, 0.45), 'MW', 0.45)).toBe('0 MW')
+    expect(formatQuantity(shownReading(-3e-12, 0.000063), 'kg/s', 0.000063)).toBe('0 kg/s')
+    // Values above the resolution keep their digits, never more than it supports.
+    expect(formatQuantity(1162.07, 'MW', 0.45)).toBe('1162 MW')
+    expect(formatQuantity(7.672, 'kg/s', 0.000063)).toBe('7.67 kg/s')
+    expect(formatQuantity(0.6, 'MW', 0.45)).toBe('0.6 MW')
+    expect(formatQuantity(15.52, 'MPa', 0.016)).toBe('15.5 MPa')
+    expect(formatValue(-0.04, 0.1)).toBe('0.0')
+    // Without a declared basis, a reading is shown as it is.
+    expect(formatQuantity(0.0000098, 'MW')).toBe('0.0000098 MW')
+    // At an end of its instrument's span, a reading says it is there or beyond.
+    expect(readingText(0, 'percent', 0.1, { min: 0, max: 100 })).toBe('<0 %')
+    expect(readingText(100, 'percent', 0.1, { min: 0, max: 100 })).toBe('>100 %')
+    expect(readingText(0, 'percent', 0.1, undefined)).toBe('0 %')
   })
 })
 
@@ -297,21 +338,42 @@ describe('limit labels', () => {
     expect([...ranks.entries()].sort((left, right) => left[1] - right[1]).map(([key]) => key)).toEqual(['lo-trip', 'lo-alarm', 'hi-alarm', 'hi-trip', 'far', 'idle'])
   })
 
-  test('a mode-qualified limit acts only in its modes, or while its rule is still active', () => {
+  test('a mode-qualified limit acts only in its modes, even with its rule latched from one of them', () => {
     // RCP A loop flow low acts in power operation only (rcp-trip, in hot standby).
-    const flowLow = { ruleId: 'rcp-a-loop-flow-low', label: 'RCP A loop flow low', kind: 'alarm', operator: '<', direction: 'low', value: 2500, escalation: 1, modeLabel: 'Power operation', modeIds: ['powerOperation'] } as const
+    const flowLow = { ruleId: 'rcp-a-loop-flow-low', label: 'RCP A loop flow low', kind: 'alarm', operator: '<', direction: 'low', value: 2500, order: 1, action: 'ALM', modeLabel: 'Mode 1', modeNames: 'Power operation', modeIds: ['powerOperation'] } as const
     const hotStandby = { id: 'hotStandby', label: 'Hot standby' }
-    expect(limitInForce(flowLow, hotStandby, false)).toBe(false)
-    expect(limitInForce(flowLow, { id: 'powerOperation' }, false)).toBe(true)
-    expect(limitInForce(flowLow, null, false)).toBe(false)
-    // A trip latched at power stays in force after the mode changes.
-    expect(limitInForce(flowLow, hotStandby, true)).toBe(true)
-    expect(limitInForce(thresholds[0]!, hotStandby, false)).toBe(true)
+    expect(limitInForce(flowLow, hotStandby)).toBe(false)
+    expect(limitInForce(flowLow, { id: 'powerOperation' })).toBe(true)
+    expect(limitInForce(flowLow, null)).toBe(false)
+    expect(limitInForce(thresholds[0]!, hotStandby)).toBe(true)
     // No margin or limit ahead is read against a limit that does not act: 401 kg/s is past nothing in hot standby.
-    expect(limitsInForce([flowLow], hotStandby, new Set())).toEqual([])
-    expect(limitAhead(401, -629, limitsInForce([flowLow], hotStandby, new Set()))).toBeNull()
-    expect(limitsInForce([flowLow], hotStandby, new Set(['rcp-a-loop-flow-low']))).toEqual([flowLow])
+    expect(limitsInForce([flowLow], hotStandby)).toEqual([])
+    expect(limitAhead(401, 'falling', limitsInForce([flowLow], hotStandby))).toBeNull()
     // Before the first sample the mode is unknown; nothing is compared yet.
-    expect(limitsInForce([flowLow], undefined, new Set())).toEqual([flowLow])
+    expect(limitsInForce([flowLow], undefined)).toEqual([flowLow])
+  })
+
+  test('limits at one value are one line, each keeping its own label, look and colour', () => {
+    // Evaluation run 22, loss of main feedwater in hot standby: two identical "LO TRIP 20" lines, both red.
+    const line = (ruleId: string, action: string, modeIds?: ReadonlyArray<string>) => ({
+      ruleId, label: ruleId, kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 20, order: 2, action,
+      ruleIds: [ruleId], signals: ['SG-B-LVL-NR'], ...(modeIds === undefined ? {} : { modeLabel: 'Modes 1–2', modeNames: 'Power operation or Startup', modeIds }),
+    }) as const
+    const afw = line('sg-b-afw', 'AFW START')
+    const reactorTrip = line('sg-b-rx-trip', 'RX TRIP', ['powerOperation', 'startup'])
+    const alarm = { ...line('sg-b-low', 'ALM'), kind: 'alarm', severity: 'warning', value: 30, order: 1 } as const
+    const hotStandby = { id: 'hotStandby', label: 'Hot standby' }
+    const lines = limitLines([reactorTrip, alarm, afw], hotStandby)
+    expect(lines.map(entry => [entry.value, entry.look, entry.members.map(member => member.ruleId)])).toEqual([
+      [30, 'acting', ['sg-b-low']],
+      // The AFW start acts now, so the line is drawn in force and its label comes first.
+      [20, 'acting', ['sg-b-afw', 'sg-b-rx-trip']],
+    ])
+    expect(lines[1]!.members.map(member => thresholdName(member, 'percent', { withUnit: false }))).toEqual(['LO-LO 20 · AFW START', 'LO-LO 20 · RX TRIP'])
+    // Both rules active and the value past both: only the limit in force takes the alarm colour; the reactor trip of modes 1-2 stays idle.
+    const active = new Set(['sg-b-afw', 'sg-b-rx-trip'])
+    expect([limitSeverity(afw, active, hotStandby), limitSeverity(reactorTrip, active, hotStandby)]).toEqual(['critical', null])
+    expect([limitLook(afw, hotStandby), limitLook(reactorTrip, hotStandby), limitLook(reactorTrip, undefined), limitLook(reactorTrip, { id: 'powerOperation', label: 'Power operation' })]).toEqual(['acting', 'idle', 'qualified', 'acting'])
+    expect(limitLines([reactorTrip], hotStandby)[0]!.look).toBe('idle')
   })
 })

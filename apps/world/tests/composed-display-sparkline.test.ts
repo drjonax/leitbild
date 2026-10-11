@@ -3,7 +3,7 @@ import type { ComposedDisplayThreshold } from '../src/packs/process-plant/displa
 import { SPARKLINE_SIZE, sparkline, sparklineText, sparklineWindowText } from '../src/ui/embed/composed-display/sparkline.ts'
 import type { TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { paddedDomain } from '../src/ui/embed/composed-display/trend-geometry.ts'
-import { shownReading } from '../src/packs/process-plant/displays/display-text.ts'
+import { readingResolution, shownReading } from '../src/packs/process-plant/displays/display-text.ts'
 
 const now = 1_000_000
 const windowMs = 600_000
@@ -12,10 +12,10 @@ const size = SPARKLINE_SIZE
 
 // The pressurizer's pressure limits, as the reference PWR declares them.
 const pressure: ReadonlyArray<ComposedDisplayThreshold> = [
-  { ruleId: 'trip-low', label: 'Pressure low trip', kind: 'trip', operator: '<', direction: 'low', value: 13.8, escalation: 1 },
-  { ruleId: 'alarm-low', label: 'Pressure low', kind: 'alarm', operator: '<', direction: 'low', value: 14.8, escalation: 1 },
-  { ruleId: 'spray', label: 'Spray on', kind: 'control', operator: '>', direction: 'high', value: 15.65, escalation: 1 },
-  { ruleId: 'alarm-high', label: 'Pressure high', kind: 'alarm', operator: '>', direction: 'high', value: 16, escalation: 1 },
+  { ruleId: 'trip-low', label: 'Pressure low trip', kind: 'trip', operator: '<', direction: 'low', value: 13.8, order: 2, action: 'RX TRIP' },
+  { ruleId: 'alarm-low', label: 'Pressure low', kind: 'alarm', operator: '<', direction: 'low', value: 14.8, order: 1, action: 'ALM' },
+  { ruleId: 'spray', label: 'Spray on', kind: 'control', operator: '>', direction: 'high', value: 15.65, order: 1, action: 'CTL' },
+  { ruleId: 'alarm-high', label: 'Pressure high', kind: 'alarm', operator: '>', direction: 'high', value: 16, order: 1, action: 'ALM' },
 ]
 
 const every = (stepMs: number, from: number, to: number, value: (t: number) => number): ReadonlyArray<TrendPoint> =>
@@ -36,61 +36,76 @@ describe('lead value sparklines', () => {
         ...every(60_000, start + 300_000, now - 60_000, () => 15.4),
         { t: now, v: 15.45 },
       ],
-      now, windowMs, size, value: 15.45, thresholds: [],
+      now, windowMs, size, limit: null, resolution: null,
     })
     expect(line.range).toEqual({ min: 15.4, max: 15.6 })
     expect(line.path.match(/M/g)).toHaveLength(2)
     expect(line.broken).toBe(true)
-    expect(sparklineText({ recorded: true, windowMs, unit: 'MPa', line, historyMissing: false, historyError: undefined })).toBe('Last 10 min: 15.4 to 15.6 MPa · broken where nothing was recorded')
+    expect(sparklineText({ recorded: true, windowMs, unit: 'MPa', resolution: null, line, historyMissing: false, historyError: undefined })).toBe('Last 10 min: 15.4 to 15.6 MPa · broken where nothing was recorded')
     expect(line.path.startsWith(`M${(50_000 / windowMs * (size.width - 4)).toFixed(1)} `)).toBe(true)
     expect(line.end?.x).toBe(size.width - 4)
   })
 
   test('a value held from before the window draws from its start, and a line whose last value no longer holds has no end', () => {
-    const held = sparkline({ points: [{ t: start - 60_000, v: 3400 }, { t: start + 60_000, v: 3400 }], now, windowMs, size, value: 3400, thresholds: [] })
+    const held = sparkline({ points: [{ t: start - 60_000, v: 3400 }, { t: start + 60_000, v: 3400 }], now, windowMs, size, limit: null, resolution: null })
     expect(held.path.startsWith('M0.0 ')).toBe(true)
     // The last value is older than the historian's re-recording interval allows: no dot at now.
     expect(held.end).toBeNull()
-    expect(sparkline({ points: [], now, windowMs, size, value: undefined, thresholds: [] })).toEqual({ path: '', end: null, limit: null, range: null, broken: false })
+    expect(sparkline({ points: [], now, windowMs, size, limit: null, resolution: null })).toEqual({ path: '', end: null, limit: null, range: null, broken: false })
   })
 
   test('a steady value is a flat line in the middle, a small wobble stays small, and a ramp fills the height', () => {
     // Recorded once a minute, as the historian records an unchanged value.
-    const flat = sparkline({ points: every(60_000, start, now, () => 15.5), now, windowMs, size, value: 15.5, thresholds: [] })
+    const flat = sparkline({ points: every(60_000, start, now, () => 15.5), now, windowMs, size, limit: null, resolution: null })
     expect(new Set(ys(flat.path))).toEqual(new Set([size.height / 2]))
     expect([flat.path.match(/M/g)?.length, flat.broken]).toEqual([1, false])
     // ±0.01 MPa about 15.51 MPa is noise on a scale at least 1 MPa tall.
-    const wobble = ys(sparkline({ points: every(1_000, now - 60_000, now, t => (t / 1_000) % 2 === 0 ? 15.5 : 15.52), now, windowMs, size, value: 15.52, thresholds: [] }).path)
+    const wobble = ys(sparkline({ points: every(1_000, now - 60_000, now, t => (t / 1_000) % 2 === 0 ? 15.5 : 15.52), now, windowMs, size, limit: null, resolution: null }).path)
     expect(Math.max(...wobble) - Math.min(...wobble)).toBeLessThan(1)
     // Reactor power falling 200 MW over the window: from near the top to near the bottom.
-    const ramp = sparkline({ points: every(10_000, start, now, t => 3400 - 200 * (t - start) / windowMs), now, windowMs, size, value: 3200, thresholds: [] })
+    const ramp = sparkline({ points: every(10_000, start, now, t => 3400 - 200 * (t - start) / windowMs), now, windowMs, size, limit: null, resolution: null })
     expect(ys(ramp.path)[0]).toBeLessThan(6)
     expect(ramp.end!.y).toBeGreaterThan(size.height - 6)
   })
 
   test('mark the limit the row names only where it lies inside the plotted range', () => {
     const rising = every(10_000, start, now, t => 15.8 + 0.1 * (t - start) / windowMs)
-    const near = sparkline({ points: rising, now, windowMs, size, value: 15.9, thresholds: pressure })
+    const near = sparkline({ points: rising, now, windowMs, size, limit: pressure[3]!, resolution: null })
     expect(near.limit?.threshold.ruleId).toBe('alarm-high')
     expect(near.limit!.y).toBeLessThan(near.end!.y)
-    // At 15.5 MPa the nearest limit, HI ALM 16 MPa, falls on the scale's edge: not drawn.
-    expect(sparkline({ points: every(60_000, start, now, () => 15.5), now, windowMs, size, value: 15.5, thresholds: pressure }).limit).toBeNull()
+    // At 15.5 MPa, HI ALM 16 MPa falls on the scale's edge: not drawn.
+    expect(sparkline({ points: every(60_000, start, now, () => 15.5), now, windowMs, size, limit: pressure[3]!, resolution: null }).limit).toBeNull()
     // Generator output far above its low alarm keeps its own scale.
     const output = sparkline({
-      points: every(60_000, start, now, () => 1100), now, windowMs, size, value: 1100,
-      thresholds: [{ ruleId: 'gen-low', label: 'Generator output low', kind: 'alarm', operator: '<', direction: 'low', value: 450, escalation: 1 }],
+      points: every(60_000, start, now, () => 1100), now, windowMs, size, resolution: null,
+      limit: { ruleId: 'gen-low', label: 'Generator output low', kind: 'alarm', operator: '<', direction: 'low', value: 450, order: 1, action: 'ALM' },
     })
     expect([output.limit, output.end?.y]).toEqual([null, size.height / 2])
   })
 
+  test('noise below the resolution a reading is shown in never fills the line', () => {
+    // RCS-LEAK-RATE in evaluation run 22: ±3e-12 kg/s of solver noise drew a full-height zigzag.
+    const resolution = 0.000063
+    const noise = every(1_000, now - 120_000, now, t => ((t / 1_000) % 2 === 0 ? 3e-12 : -3e-12))
+    const raw = ys(sparkline({ points: noise, now, windowMs, size, limit: null, resolution: null }).path)
+    expect(Math.max(...raw) - Math.min(...raw)).toBeGreaterThan(size.height / 2)
+    // As shown: every reading is 0, a flat line.
+    const shown = sparkline({ points: noise.map(point => ({ t: point.t, v: shownReading(point.v, resolution) })), now, windowMs, size, limit: null, resolution })
+    expect(new Set(ys(shown.path))).toEqual(new Set([size.height / 2]))
+    // A wobble of a resolution step or two stays a ripple on a scale of twenty steps at least.
+    const steps = ys(sparkline({ points: every(1_000, now - 120_000, now, t => ((t / 1_000) % 2 === 0 ? 0 : 2 * resolution)), now, windowMs, size, limit: null, resolution }).path)
+    expect(Math.max(...steps) - Math.min(...steps)).toBeLessThan(size.height / 4)
+    expect(paddedDomain({ min: 0, max: 2 * resolution }, resolution).max - paddedDomain({ min: 0, max: 2 * resolution }, resolution).min).toBeCloseTo(20 * resolution, 12)
+  })
+
   test('say what the line shows, and why a value has none', () => {
-    const line = sparkline({ points: every(10_000, start, now, t => 15.8 + 0.1 * (t - start) / windowMs), now, windowMs, size, value: 15.9, thresholds: pressure })
+    const line = sparkline({ points: every(10_000, start, now, t => 15.8 + 0.1 * (t - start) / windowMs), now, windowMs, size, limit: pressure[3]!, resolution: null })
     const text = (overrides: Partial<Parameters<typeof sparklineText>[0]>) =>
-      sparklineText({ recorded: true, windowMs, unit: 'MPa', line, historyMissing: false, historyError: undefined, ...overrides })
+      sparklineText({ recorded: true, windowMs, unit: 'MPa', resolution: null, line, historyMissing: false, historyError: undefined, ...overrides })
     expect(sparklineWindowText(600_000)).toBe('10 min')
     expect(sparklineWindowText(90_000)).toBe('90 s')
-    expect(text({})).toBe('Last 10 min: 15.8 to 15.9 MPa · dashed line: HI ALM 16 MPa')
-    expect(text({ line: sparkline({ points: [{ t: now, v: 0.101325 }], now, windowMs, size, value: 0.101325, thresholds: [] }), unit: 'MPa', historyMissing: true }))
+    expect(text({})).toBe('Last 10 min: 15.8 to 15.9 MPa · dashed line: HI 16 MPa · ALM')
+    expect(text({ line: sparkline({ points: [{ t: now, v: 0.101325 }], now, windowMs, size, limit: null, resolution: null }), unit: 'MPa', historyMissing: true }))
       .toBe('Last 10 min: steady at 0.101 MPa · nothing recorded before this display opened')
     expect(text({ line: null, historyError: 'Reading history failed with HTTP 503' }))
       .toBe('No values in the last 10 min yet · its history could not be read (Reading history failed with HTTP 503), so the line starts when this display opened')
@@ -100,12 +115,14 @@ describe('lead value sparklines', () => {
 
 describe('readings near nothing', () => {
   test('a decayed power reads 0 within its declared range, and its sparkline still draws', () => {
-    const range = { hardRange: { min: 0, max: 4500 } }
-    expect(shownReading(1e-13, range)).toBe(0)
-    expect(shownReading(3400, range)).toBe(3400)
-    // An intermediate-range current is a real reading far below a billionth of a megawatt range.
-    expect(shownReading(5e-11, { hardRange: { min: 1e-11, max: 1e-3 } })).toBe(5e-11)
-    expect(shownReading(1e-13, undefined)).toBe(1e-13)
+    const resolution = readingResolution({ hardRange: { min: 0, max: 4500 } }, [])
+    expect(shownReading(1e-13, resolution)).toBe(0)
+    expect(shownReading(2, resolution)).toBe(0)
+    expect(shownReading(3400, resolution)).toBe(3400)
+    // An intermediate-range current reads over decades: a real reading far below a thousandth of its range.
+    expect(readingResolution({ hardRange: { min: 1e-11, max: 1e-3 } }, [])).toBeNull()
+    expect(shownReading(5e-11, readingResolution({ hardRange: { min: 1e-11, max: 1e-3 } }, []))).toBe(5e-11)
+    expect(shownReading(1e-13, null)).toBe(1e-13)
   })
 
   test('a scale over values whose share underflows still has height, and no reading is NaN', () => {
@@ -114,7 +131,7 @@ describe('readings near nothing', () => {
     const now = Date.parse('2026-01-01T10:10:00Z')
     const output = sparkline({
       points: [{ t: now - 300_000, v: 1e-320 }, { t: now - 200_000, v: Number.NaN }, { t: now - 100_000, v: 5e-324 }],
-      now, windowMs: 600_000, size: { width: 112, height: 28 }, value: 5e-324, thresholds: [],
+      now, windowMs: 600_000, size: { width: 112, height: 28 }, limit: null, resolution: null,
     })
     expect(output.path).not.toContain('NaN')
     expect(output.end === null || Number.isFinite(output.end.y)).toBe(true)

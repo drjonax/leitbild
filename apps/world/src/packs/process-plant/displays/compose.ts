@@ -40,8 +40,8 @@ import {
   type ComposedPanelShape,
   type ComposedPanelSize,
 } from './composition.ts'
-import { displayValue, formatQuantity, isPast, nearestThresholdMargin, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
-import { appendPoint, COMPARISON_HISTORY_MS, limitsInForce, limitStateText, rateWindowMs, readingLookBackMs, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
+import { displayValue, isPast, nearestThresholdMargin, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
+import { appendPoint, COMPARISON_HISTORY_MS, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
@@ -82,11 +82,18 @@ export interface ComposedDisplayPen {
    */
   readonly command: boolean
   readonly limits?: ProcessVariableLimits
+  /** The finest step its reading is shown in, in native units (readingResolution); null where the model declares nothing to derive it from. */
+  readonly resolution: number | null
   readonly thresholds: ReadonlyArray<ComposedDisplayThreshold>
   readonly combinedRules: ReadonlyArray<ComposedDisplayCombinedRule>
 }
 
-/** A threshold drawn on a panel: one per distinct rule action of the primary signals. */
+/**
+ * A threshold drawn on a panel: one per limit identity (its value, order,
+ * action and modes) among the panel's signals, so parallel loops' limits
+ * share one. Limits of different identity at one value (the AFW start and
+ * the reactor trip at 20 %) are drawn as one line with a label for each.
+ */
 export interface ComposedTrendThreshold extends ComposedDisplayThreshold {
   /** Every rule merged into this line, so an active alarm on any of them marks it. */
   readonly ruleIds: ReadonlyArray<string>
@@ -254,13 +261,13 @@ const zodIssues = (error: z.ZodError): ReadonlyArray<ComposedDisplayIssue> => er
 
 // Every displayed signal's thresholds are drawn: an operator must see when any
 // of them nears or crosses a limit. Parallel loops share set points, so one
-// line per distinct rule action (kind, direction, value, mode) keeps the panel
-// readable and names every signal it covers.
+// threshold per limit identity (kind, direction, value, order, action, modes)
+// keeps the panel readable and names every signal it covers.
 const drawnThresholds = (pens: ReadonlyArray<ComposedDisplayPen>): ReadonlyArray<ComposedTrendThreshold> => {
   const byAction = new Map<string, ComposedTrendThreshold>()
   for (const pen of pens) {
     for (const threshold of pen.thresholds) {
-      const key = `${threshold.kind}|${threshold.direction}|${threshold.value}|${threshold.modeLabel ?? ''}`
+      const key = `${threshold.kind}|${threshold.direction}|${threshold.value}|${threshold.order}|${threshold.action}|${threshold.modeLabel ?? ''}|${(threshold.gatedBy ?? []).join(',')}`
       const signal = pen.tagId ?? String(pen.path)
       const existing = byAction.get(key)
       byAction.set(key, existing === undefined
@@ -346,6 +353,7 @@ const resolvePens = (
       recorded: options.recordedSeriesIds.has(seriesId),
       command: binding.writable,
       ...(binding.limits === undefined ? {} : { limits: binding.limits }),
+      resolution: readingResolution(binding.limits, thresholds),
       thresholds,
       combinedRules,
     })
@@ -1028,10 +1036,11 @@ export const compileDetailDisplay = (
 const operatorText = { '<': 'below', '<=': 'at or below', '>': 'above', '>=': 'at or above' } as const
 const signalName = (pen: ComposedDisplayPen): string => `${pen.name} (${pen.tagId === undefined ? `${pen.path}, ` : `${pen.label}, `}${pen.unit}, ${pen.role}${pen.command ? ', a command (demand), shown as demand' : ''})`
 
-// Lines are named as the display labels them ("LO ALM 30 %"), so an answer
-// can refer to them by the same name.
+// Lines are named as the display labels them ("LO-LO 20 % · RX TRIP"), so
+// an answer can refer to them by the same name; an actuation is named by what
+// it actuates, never as a trip unless it trips the reactor.
 const thresholdText = (threshold: ComposedTrendThreshold, unit: ProcessUnit): string =>
-  `${threshold.kind === 'control' ? `I&C control set point marked on the axis: ${threshold.label}` : `"${thresholdName(threshold, unit)}" ${threshold.kind} line: ${threshold.label}`}, acts ${operatorText[threshold.operator]} ${threshold.value} ${unit} for ${threshold.signals.join(', ')}${threshold.modeLabel === undefined ? '' : ` (only in ${threshold.modeLabel})`}${threshold.gatedBy === undefined ? '' : ` (only while ${threshold.gatedBy.join(' and ')})`}`
+  `${threshold.kind === 'control' ? `I&C control set point marked on the axis: ${threshold.label}` : `"${thresholdName(threshold, unit)}" ${threshold.kind === 'alarm' ? 'alarm' : 'automatic action'} line: ${threshold.label}`}, acts ${operatorText[threshold.operator]} ${threshold.value} ${unit} for ${threshold.signals.join(', ')}${threshold.modeNames === undefined ? '' : ` (only in ${threshold.modeNames}: ${threshold.modeLabel}; drawn faint in other modes, even with the value past it)`}${threshold.gatedBy === undefined ? '' : ` (only while ${threshold.gatedBy.join(' and ')})`}`
 
 /** How each requested reference resolved, so the agent learns exact tags, paths and units. */
 export const composedDisplaySignals = (display: CompiledComposedDisplay): ReadonlyArray<{
@@ -1051,7 +1060,7 @@ export const composedDisplaySignals = (display: CompiledComposedDisplay): Readon
 })))
 
 const mimicShows = (mimic: CompiledMimic): ReadonlyArray<string> => [
-  `Live equipment mimic generated from the Plant model (${mimic.summary.carriers.join(', ')}): ${mimic.summary.equipment.map(item => `${item.label} (${item.id})`).join(', ')}. Pumps are drawn running or stopped from their actual speed, valves from their actual position, levels as vessel fills; pipes show flow, no flow (hollow) or unknown (dashed), with a direction arrow only where the model computes the direction; a command that disagrees with the equipment is stated as "CMD …" and the equipment is outlined as abnormal (not an alarm), so the cause of an upset stands out; equipment with an active alarm is framed with what the alarm watches ("P LO-LO")`,
+  `Live equipment mimic generated from the Plant model (${mimic.summary.carriers.join(', ')}): ${mimic.summary.equipment.map(item => `${item.label} (${item.id})`).join(', ')}. Pumps are drawn running or stopped from their actual speed, valves from their actual position, levels as vessel fills; pipes show flow, no flow (hollow) or unknown (dashed), with a direction arrow only where the model computes the direction; a command that disagrees with the equipment is stated as "CMD …" and the equipment is outlined as abnormal (not an alarm), so the cause of an upset stands out; equipment with an active alarm or actuation acting in the current mode is framed with its most severe limit, named as its signal's chip names it ("P LO-LO · SI")`,
   ...(mimic.summary.stops.length === 0 ? [] : [`The drawing stops at: ${mimic.summary.stops.join('; ')}`]),
   ...mimic.summary.entries.map(entry => `The pipe drawn into ${entry.item} enters it at ${entry.port}; the drawing does not name that port, so say it`),
 ]
@@ -1165,8 +1174,10 @@ const historyForReading = (now: ComposedDisplayNow, seriesId: string, windowStar
  * only for signals drawn over time, and only what their reading needs.
  */
 const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ReadonlyArray<PenReading> => shownPens(display).flatMap(pen => {
-  const value = now.read(pen.path)
-  if (typeof value !== 'number') return []
+  const read = now.read(pen.path)
+  if (typeof read !== 'number') return []
+  // As the view shows it: below its resolution a reading is 0, and so is every point its rate is read from.
+  const value = shownReading(read, pen.resolution)
   const view = penView(display, pen)
   const overTime = view.kind === 'legend' || view.kind === 'comparison' ? view : null
   const windowStart = overTime === null ? now.simulationMs : now.simulationMs - overTime.horizonMs
@@ -1174,28 +1185,30 @@ const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow):
   const history = overTime === null || !pen.recorded ? [] : historyForReading(now, pen.seriesId, windowStart, windowMs)
   const reading = trendReading({
     value,
-    points: overTime === null ? null : appendPoint(history, { t: now.simulationMs, v: value }, windowStart),
+    points: overTime === null ? null : appendPoint(history.map(point => ({ t: point.t, v: shownReading(point.v, pen.resolution) })), { t: now.simulationMs, v: value }, windowStart),
     windowMs,
     unit: pen.unit,
     thresholds: pen.thresholds,
     mode: now.mode,
     activeRuleIds: now.activeRuleIds,
+    resolution: pen.resolution,
+    ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }),
   })
-  // A legend words every state of its limits; a readout and a comparison show only a margin to one, in words or as lines.
-  const worded = view.kind === 'legend' || view.kind === 'live' || reading.limit?.kind === 'margin'
-  const limit = reading.limit === null || !worded ? '' : limitStateText(reading.limit, pen.unit)
-  const travel = travelText(reading.rate, value, pen.unit, reading.change)
-  if (limit === '' && travel === '') return []
+  // A legend words every state of its limits; a readout and a comparison show only a margin to one, or the one it is past, in words or as lines.
+  const worded = view.kind === 'legend' || view.kind === 'live' || reading.limit?.kind === 'margin' || reading.limit?.kind === 'past'
+  const state = readingStateText({ offScale: reading.offScale, limit: worded ? reading.limit : null }, pen.unit, pen.resolution)
+  const travel = travelText(reading.rate, value, pen.unit, reading.change, pen.resolution, overTime === null ? undefined : windowMs)
+  if (state === '' && travel === '') return []
   // The alarm chip beside the value names the active limit, where the words do not say it is past one.
-  const saysPast = worded && reading.limit?.kind === 'margin' && isPast(reading.limit.margin)
+  const saysPast = worded && reading.limit?.kind === 'past'
   const chip = reading.inAlarm === null || saysPast ? '' : `in ${thresholdName(reading.inAlarm, pen.unit)}`
   return [{
     pen,
     value,
     reading,
     legend: view.kind === 'legend',
-    text: [`${pen.name}: ${formatQuantity(value, pen.unit)}`, travel, chip, limit].filter(part => part !== '').join(', '),
-    rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode, now.activeRuleIds)),
+    text: [`${pen.name}: ${readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan)}`, travel, chip, state].filter(part => part !== '').join(', '),
+    rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode)),
   }]
 })
 
@@ -1256,7 +1269,7 @@ const travelContent = (entry: PenReading | undefined): Pick<EmbeddedViewContent[
   const unit = unitLabel(pen.unit)
   const trend = reading.travel === null || reading.rate === null ? {} : { trend: { rate: Number(displayValue(reading.rate, pen.unit).toPrecision(6)), unit, direction: reading.travel } }
   const limit = reading.limit
-  if (!entry.legend || limit?.kind !== 'margin' || isPast(limit.margin)) return trend
+  if (!entry.legend || limit?.kind !== 'margin') return trend
   const threshold = limit.margin.threshold
   return {
     ...trend,
@@ -1285,7 +1298,7 @@ export const composedDisplayContent = (
     const value = now.read(pen.path)
     return {
       names: penNames(pen),
-      values: typeof value === 'number' ? shownQuantity(value, pen.unit) : [],
+      values: typeof value === 'number' ? shownQuantity(shownReading(value, pen.resolution), pen.unit) : [],
       limits: pen.thresholds.flatMap(threshold => shownQuantity(threshold.value, pen.unit)),
       history: trended.has(pen.path),
       ...travelContent(readings.find(entry => entry.pen.path === pen.path)),

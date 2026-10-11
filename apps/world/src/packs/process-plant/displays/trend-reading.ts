@@ -1,4 +1,4 @@
-import { displayValue, formatValue, isPast, marginText, nearestThresholdMargin, thresholdName, unitLabel, type ThresholdMargin } from './display-text.ts'
+import { displayValue, formatValue, isPast, marginTo, marginText, nearestThresholdMargin, offScale, RESOLUTION_FRACTION, unitLabel, type ThresholdMargin } from './display-text.ts'
 import type { ComposedDisplayThreshold } from './ic-thresholds.ts'
 
 // How a signal's recent history reads: its rate over the display's window,
@@ -67,14 +67,16 @@ export const ratePerMinute = (points: ReadonlyArray<TrendPoint>, windowMs: numbe
   return variance === 0 ? null : (covariance / variance) * 60_000
 }
 
-// A change below 0.1 % of the value per minute reads as steady.
-const isSteady = (rate: number, value: number): boolean => Math.abs(rate) <= Math.abs(value) * 0.001
+// A change below 0.1 % of the value a minute reads as steady, and so does one
+// of less than a resolution step a minute: noise the display does not show.
+const isSteady = (rate: number, value: number, resolution: number | null = null): boolean =>
+  Math.abs(rate) <= Math.max(Math.abs(value) * 0.001, resolution ?? 0)
 
 export type Travel = 'rising' | 'falling' | 'steady'
 
-/** Which way the value is going at this rate, as the rate reads ("► steady" below 0.1 % a minute); null without a rate. */
-export const travelOf = (rate: number | null, value: number): Travel | null =>
-  rate === null ? null : isSteady(rate, value) ? 'steady' : rate > 0 ? 'rising' : 'falling'
+/** Which way the value is going at this rate, as the rate reads ("► steady" below 0.1 % a minute or a resolution step); null without a rate. */
+export const travelOf = (rate: number | null, value: number, resolution: number | null = null): Travel | null =>
+  rate === null ? null : isSteady(rate, value, resolution) ? 'steady' : rate > 0 ? 'rising' : 'falling'
 
 export type RateChange = 'accelerating' | 'slowing' | 'reversing'
 
@@ -85,18 +87,28 @@ const CHANGE_MIN_WINDOW_MS = 30_000
 const CHANGE_MIN_DISTINCT_VALUES = 5
 
 /**
- * How the rate over the window, half a minute at least, compares with the
- * rate over three such windows, so a curve that has flattened is not reported
- * only by its older, steeper slope.
+ * How the rate the legend states compares with what the curve does at its
+ * end and did before: slowing or reversing where the last third of the
+ * window (10 s at least) moves at less than half the window's rate or the
+ * other way, so a curve that has just flattened is never read by its steeper
+ * slope (evaluation run 22: "≈5 s to LO TRIP" from a 30-s rate over a trace
+ * already flat); else as the rate over the window, half a minute at least,
+ * compares with three such windows.
  */
-export const rateChange = (points: ReadonlyArray<TrendPoint>, windowMs: number, value: number): RateChange | null => {
+export const rateChange = (points: ReadonlyArray<TrendPoint>, windowMs: number, value: number, resolution: number | null = null): RateChange | null => {
   const window = Math.max(windowMs, CHANGE_MIN_WINDOW_MS)
   const last = points.at(-1)
   if (last === undefined || new Set(points.filter(point => point.t >= last.t - window).map(point => point.v)).size < CHANGE_MIN_DISTINCT_VALUES) return null
+  const stated = ratePerMinute(points, windowMs)
+  const end = ratePerMinute(points, Math.max(RATE_MIN_SPAN_MS, windowMs / 3))
+  if (stated !== null && end !== null && !isSteady(stated, value, resolution)) {
+    if (!isSteady(end, value, resolution) && Math.sign(end) !== Math.sign(stated)) return 'reversing'
+    if (Math.abs(end) < Math.abs(stated) * 0.5) return 'slowing'
+  }
   const recent = ratePerMinute(points, window)
   const longer = ratePerMinute(points, window * 3)
-  if (recent === null || longer === null || isSteady(longer, value)) return null
-  if (!isSteady(recent, value) && Math.sign(recent) !== Math.sign(longer)) return 'reversing'
+  if (recent === null || longer === null || isSteady(longer, value, resolution)) return null
+  if (!isSteady(recent, value, resolution) && Math.sign(recent) !== Math.sign(longer)) return 'reversing'
   if (Math.abs(recent) < Math.abs(longer) * 0.5) return 'slowing'
   if (Math.abs(recent) > Math.abs(longer) * 1.5) return 'accelerating'
   return null
@@ -115,20 +127,24 @@ export const rateText = (
   rate: number | null,
   value: number,
   unit: string,
-  detail: { readonly windowMs?: number; readonly change?: RateChange | null } = {},
+  detail: { readonly windowMs?: number; readonly change?: RateChange | null; readonly resolution?: number | null } = {},
 ): string => {
   if (rate === null) return ''
   const window = detail.windowMs === undefined ? '' : ` · ${windowText(detail.windowMs)}`
-  if (isSteady(rate, value)) return `► steady${window}`
+  if (isSteady(rate, value, detail.resolution ?? null)) return `► steady${window}`
   const change = detail.change === undefined || detail.change === null ? '' : ` · ${detail.change}`
   return `${rate > 0 ? '▲ +' : '▼ −'}${rateMagnitude(rate, unit)}${window}${change}`
 }
 
-/** The same rate in words, for text beside the display: "falling 1.80 %/min, slowing"; empty without a rate. */
-export const travelText = (rate: number | null, value: number, unit: string, change: RateChange | null): string => {
-  const travel = travelOf(rate, value)
+/**
+ * The same rate in words, for text beside the display: "falling 1.80 %/min
+ * over 30 s, slowing", the window as the legend states it where given;
+ * empty without a rate.
+ */
+export const travelText = (rate: number | null, value: number, unit: string, change: RateChange | null, resolution: number | null = null, windowMs?: number): string => {
+  const travel = travelOf(rate, value, resolution)
   if (travel === null || travel === 'steady') return travel ?? ''
-  return `${travel} ${rateMagnitude(rate!, unit)}${change === null ? '' : `, ${change}`}`
+  return `${travel} ${rateMagnitude(rate!, unit)}${windowMs === undefined ? '' : ` over ${windowText(windowMs)}`}${change === null ? '' : `, ${change}`}`
 }
 
 // A time to a limit is projected only from a tendency with a basis: half a
@@ -143,15 +159,15 @@ const PROJECTION_BASIS_MS = 30_000
  * display can tell apart in it, each step the way the rate goes, and the rate
  * is neither slowing nor reversing (rateChange, as the legend says it).
  */
-export const projectionBasis = (points: ReadonlyArray<TrendPoint>, windowMs: number, unit: string): boolean => {
+export const projectionBasis = (points: ReadonlyArray<TrendPoint>, windowMs: number, unit: string, resolution: number | null = null): boolean => {
   const last = points.at(-1)
   if (last === undefined || points[0]!.t > last.t - PROJECTION_BASIS_MS) return false
   const rate = ratePerMinute(points, windowMs)
-  if (rate === null || isSteady(rate, last.v)) return false
-  const change = rateChange(points, windowMs, last.v)
+  if (rate === null || isSteady(rate, last.v, resolution)) return false
+  const change = rateChange(points, windowMs, last.v, resolution)
   if (change === 'slowing' || change === 'reversing') return false
   const recent = points.filter(point => point.t >= last.t - PROJECTION_BASIS_MS)
-  const shown = recent.map(point => formatValue(displayValue(point.v, unit)))
+  const shown = recent.map(point => formatValue(displayValue(point.v, unit), resolution === null ? null : displayValue(resolution, unit)))
   let steps = 0
   for (let index = 1; index < recent.length; index += 1) {
     if (shown[index] === shown[index - 1]) continue
@@ -169,75 +185,65 @@ export const projectionBasis = (points: ReadonlyArray<TrendPoint>, windowMs: num
  */
 export const readingLookBackMs = (windowMs: number): number => 3 * Math.max(windowMs, CHANGE_MIN_WINDOW_MS, PROJECTION_BASIS_MS)
 
-/** Minutes until the value reaches the threshold at the current rate, if moving toward it. */
-export const minutesToThreshold = (value: number, rate: number | null, threshold: ComposedDisplayThreshold): number | null => {
+/**
+ * Minutes until the value reaches the threshold's value at the current rate,
+ * if moving toward it: before acting on it, or (`back`) moving back across a
+ * limit it is past.
+ */
+export const minutesToThreshold = (value: number, rate: number | null, threshold: ComposedDisplayThreshold, back = false): number | null => {
   if (rate === null || rate === 0) return null
   const distance = threshold.value - value
   if (Math.sign(distance) !== Math.sign(rate)) return null
   const already = threshold.direction === 'low' ? value <= threshold.value : value >= threshold.value
-  return already ? null : distance / rate
+  return already !== back ? null : distance / rate
 }
 
 // A time beyond this is not shown: the rate now says little about half an hour on.
 const PROJECTION_MAX_MINUTES = 30
 
 /** Minutes to the threshold where the display shows a time to it: projectable, approaching and within half an hour. */
-export const projectedMinutes = (value: number, rate: number | null, threshold: ComposedDisplayThreshold, projectable: boolean): number | null => {
-  const minutes = minutesToThreshold(value, rate, threshold)
+export const projectedMinutes = (value: number, rate: number | null, threshold: ComposedDisplayThreshold, projectable: boolean, back = false): number | null => {
+  const minutes = minutesToThreshold(value, rate, threshold, back)
   return minutes === null || minutes > PROJECTION_MAX_MINUTES || !projectable ? null : minutes
 }
+
+/** What a time to a limit says where the tendency gives no basis for one (projectionBasis). */
+export const NOT_PROJECTED = 'approaching, not projected'
 
 /**
  * "≈45 s" or "≈4 min" to the threshold at the current rate; where the
  * tendency gives no basis for a time (projectionBasis), "approaching, not
  * projected" instead; empty when not approaching it within half an hour.
  */
-export const timeToThresholdText = (value: number, rate: number | null, threshold: ComposedDisplayThreshold, projectable: boolean): string => {
-  const minutes = minutesToThreshold(value, rate, threshold)
+export const timeToThresholdText = (value: number, rate: number | null, threshold: ComposedDisplayThreshold, projectable: boolean, back = false): string => {
+  const minutes = minutesToThreshold(value, rate, threshold, back)
   if (minutes === null || minutes > PROJECTION_MAX_MINUTES) return ''
-  if (!projectable) return 'approaching, not projected'
+  if (!projectable) return NOT_PROJECTED
   return minutes < 2 ? `≈${Math.max(1, Math.round(minutes * 60))} s` : `≈${Math.round(minutes)} min`
 }
 
 /**
- * The limit the value is heading for: the nearest alarm or trip threshold not
- * yet passed in the direction it is moving, or either way while it is steady.
- * Null when it moves away from every limit it has not passed.
+ * The limit a moving value heads for: of the limits in force, the nearest
+ * whose value lies ahead of it in the direction it moves, whether it has not
+ * reached that limit yet or is past it and moving back across it. Null where
+ * none lies ahead.
  */
 export const limitAhead = (
   value: number,
-  rate: number | null,
+  travel: 'rising' | 'falling',
   thresholds: ReadonlyArray<ComposedDisplayThreshold>,
 ): ThresholdMargin | null => {
-  const unpassed = thresholds
-    .filter(threshold => threshold.kind !== 'control')
-    .map(threshold => ({ threshold, margin: threshold.direction === 'low' ? value - threshold.value : threshold.value - value }))
-    .filter(candidate => candidate.margin >= 0)
-  const moving = rate !== null && !isSteady(rate, value)
-  const ahead = moving ? unpassed.filter(candidate => (candidate.threshold.direction === 'low') === (rate < 0)) : unpassed
-  return ahead.length === 0 ? null : ahead.reduce((nearest, candidate) => candidate.margin < nearest.margin ? candidate : nearest)
+  const ahead = thresholds
+    .filter(threshold => threshold.kind !== 'control' && (travel === 'rising' ? threshold.value > value : threshold.value < value))
+  if (ahead.length === 0) return null
+  const nearest = ahead.reduce((best, candidate) => Math.abs(candidate.value - value) < Math.abs(best.value - value) ? candidate : best)
+  return marginTo(value, nearest)
 }
 
-/**
- * For a value past an active limit and moving back: when it will be back
- * inside it, always with a time ("back above LO ALM 30 % in ≈2 min", "back
- * above LO TRIP 13.8 MPa in over 30 min"), so a slow drift never reads as a
- * recovery already made; "recovering, not projected" where the tendency gives
- * no basis for a time (projectionBasis); empty otherwise.
- */
-export const returningText = (value: number, rate: number | null, active: ComposedDisplayThreshold, unit: string, projectable: boolean): string => {
-  if (rate === null || isSteady(rate, value)) return ''
-  const returning = active.direction === 'low' ? rate > 0 : rate < 0
-  if (!returning) return ''
-  if (!projectable) return 'recovering, not projected'
-  const eta = timeToThresholdText(value, rate, { ...active, direction: active.direction === 'low' ? 'high' : 'low' }, true)
-  return `back ${active.direction === 'low' ? 'above' : 'below'} ${thresholdName(active, unit)} in ${eta === '' ? 'over 30 min' : eta}`
-}
-
-/** Whether the value moves away from every limit it has not passed ("no HI limit ahead"). */
-export const movingAwayFromLimits = (value: number, rate: number | null, thresholds: ReadonlyArray<ComposedDisplayThreshold>): 'rising' | 'falling' | null => {
-  if (rate === null || isSteady(rate, value) || thresholds.every(threshold => threshold.kind === 'control')) return null
-  return limitAhead(value, rate, thresholds) === null ? (rate > 0 ? 'rising' : 'falling') : null
+/** Of the limits in force the value is past, the outermost on the side it is past: 0 % is past LO-LO 20 %, not only past LO 30 %. */
+const outermostPassed = (value: number, thresholds: ReadonlyArray<ComposedDisplayThreshold>): ThresholdMargin | null => {
+  const passed = thresholds.filter(threshold => threshold.kind !== 'control').map(threshold => marginTo(value, threshold)).filter(isPast)
+  return passed.length === 0 ? null : passed.reduce((outermost, candidate) => candidate.margin > outermost.margin ? candidate : outermost)
 }
 
 /**
@@ -249,11 +255,12 @@ export type PlantModeNow = { readonly id: string; readonly label: string } | nul
 
 /**
  * Whether a limit acts now: one the I&C applies in every mode always; a
- * mode-qualified one while the Plant is in one of its modes, or while its rule
- * is still active (a trip latched in power operation stays until it is reset).
+ * mode-qualified one only while the Plant is in one of its modes. A trip
+ * latched in another mode stays in the alarm list until reset, but its limit
+ * no longer acts: it is drawn as not in force even with the value past it.
  */
-export const limitInForce = (threshold: Pick<ComposedDisplayThreshold, 'modeIds'>, mode: { readonly id: string } | null, active: boolean): boolean =>
-  active || threshold.modeIds === undefined || (mode !== null && threshold.modeIds.includes(mode.id))
+export const limitInForce = (threshold: Pick<ComposedDisplayThreshold, 'modeIds'>, mode: { readonly id: string } | null): boolean =>
+  threshold.modeIds === undefined || (mode !== null && threshold.modeIds.includes(mode.id))
 
 /**
  * A signal's limits that act in the Plant's current mode, so no margin or
@@ -264,27 +271,33 @@ export const limitInForce = (threshold: Pick<ComposedDisplayThreshold, 'modeIds'
 export const limitsInForce = (
   thresholds: ReadonlyArray<ComposedDisplayThreshold>,
   mode: PlantModeNow,
-  activeRuleIds: ReadonlySet<string>,
 ): ReadonlyArray<ComposedDisplayThreshold> =>
-  mode === undefined ? thresholds : thresholds.filter(threshold => limitInForce(threshold, mode, activeRuleIds.has(threshold.ruleId)))
-
-/** The most severe of a signal's thresholds whose I&C rule is active now. */
-export const activeThreshold = (
-  thresholds: ReadonlyArray<ComposedDisplayThreshold>,
-  activeRuleIds: ReadonlySet<string>,
-): ComposedDisplayThreshold | null =>
-  thresholds.filter(threshold => threshold.kind !== 'control' && activeRuleIds.has(threshold.ruleId))
-    .sort((left, right) => Number(right.kind === 'trip') - Number(left.kind === 'trip'))[0] ?? null
+  mode === undefined ? thresholds : thresholds.filter(threshold => limitInForce(threshold, mode))
 
 /**
- * What a legend row says of a signal's limits, in the order it chooses:
- * coming back inside an active limit; the limit ahead (for a row shown live
- * only, the nearest) with the time to it; moving away from every limit; no
- * I&C limit at all; or none acting in the current mode. Null where it says
- * nothing.
+ * The most severe of a signal's limits in force whose I&C rule is active now,
+ * trips first: what its chip and its drawing's badge both name.
+ */
+export const activeThreshold = <T extends ComposedDisplayThreshold>(
+  thresholds: ReadonlyArray<T>,
+  activeRuleIds: ReadonlySet<string>,
+  mode: PlantModeNow,
+): T | null =>
+  limitsInForce(thresholds, mode).filter(threshold => threshold.kind !== 'control' && activeRuleIds.has(threshold.ruleId))
+    .sort((left, right) => Number(right.kind === 'trip') - Number(left.kind === 'trip') || severityRank[left.severity ?? 'warning'] - severityRank[right.severity ?? 'warning'])[0] as T | undefined ?? null
+
+const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
+
+/**
+ * What a legend row says of a signal's limits, read in the direction the
+ * value moves: the nearest limit in force ahead of it, with the time to it;
+ * past one it is moving back across, with the time to it; past the
+ * outermost on the side it has gone (moving on or steady); no limit in force
+ * that way; no I&C limit at all; or none acting in the current mode. A value
+ * with no direction (steady, or seen once) names the limit it is past, else
+ * the nearest either way where it is near. Null where it says nothing.
  */
 export type LimitState =
-  | { readonly kind: 'returning'; readonly text: string }
   | {
     readonly kind: 'margin'
     readonly margin: ThresholdMargin
@@ -293,7 +306,13 @@ export type LimitState =
     /** Minutes to the limit where the row shows a projected time. */
     readonly minutes: number | null
   }
-  | { readonly kind: 'away'; readonly travel: 'rising' | 'falling' }
+  | {
+    readonly kind: 'past'
+    readonly margin: ThresholdMargin
+    /** Moving back across it: which way, and the time to it as a margin's eta; null while it goes on or holds. */
+    readonly back: { readonly travel: 'rising' | 'falling'; readonly eta: string; readonly minutes: number | null } | null
+  }
+  | { readonly kind: 'clear'; readonly direction: 'low' | 'high' }
   | { readonly kind: 'unlimited' }
   | { readonly kind: 'idle'; readonly mode: { readonly label: string } | null }
 
@@ -302,8 +321,10 @@ export interface TrendReading {
   readonly rate: number | null
   readonly travel: Travel | null
   readonly change: RateChange | null
-  /** The most severe of its limits active now: the alarm chip beside it. */
+  /** The most severe of its limits in force active now: the alarm chip beside it. */
   readonly inAlarm: ComposedDisplayThreshold | null
+  /** Where the reading sits at an end of its instrument's span: it says only that the quantity is there or beyond. */
+  readonly offScale: 'below' | 'above' | null
   readonly limit: LimitState | null
 }
 
@@ -311,7 +332,8 @@ export interface TrendReading {
  * How a legend row reads a numeric signal now. `points` is the recorded
  * history and the samples since, oldest first, read over `windowMs`; null for
  * a row shown live only (not recorded by the Run), which has no rate and names
- * the nearest limit.
+ * the nearest limit. A reading at an end of its span has no rate: the
+ * indication is saturated, and how far beyond it the quantity goes is unknown.
  */
 export const trendReading = (config: {
   readonly value: number
@@ -321,41 +343,71 @@ export const trendReading = (config: {
   readonly thresholds: ReadonlyArray<ComposedDisplayThreshold>
   readonly mode: PlantModeNow
   readonly activeRuleIds: ReadonlySet<string>
+  readonly resolution?: number | null
+  readonly span?: { readonly min: number; readonly max: number }
 }): TrendReading => {
   const { value, points, windowMs, unit, thresholds, mode, activeRuleIds } = config
-  const rate = points === null ? null : ratePerMinute(points, windowMs)
-  const inForce = limitsInForce(thresholds, mode, activeRuleIds)
-  const inAlarm = activeThreshold(thresholds, activeRuleIds)
-  const projectable = points !== null && projectionBasis(points, windowMs, unit)
-  const reading = { rate, travel: travelOf(rate, value), change: points === null ? null : rateChange(points, windowMs, value), inAlarm }
-  const back = inAlarm === null ? '' : returningText(value, rate, inAlarm, unit, projectable)
-  if (back !== '') return { ...reading, limit: { kind: 'returning', text: back } }
-  const margin = points === null ? nearestThresholdMargin(value, inForce) : limitAhead(value, rate, inForce)
-  if (margin !== null) {
-    const past = isPast(margin)
-    return {
-      ...reading,
-      limit: {
-        kind: 'margin',
-        margin,
-        eta: past ? '' : timeToThresholdText(value, rate, margin.threshold, projectable),
-        minutes: past ? null : projectedMinutes(value, rate, margin.threshold, projectable),
-      },
-    }
+  const resolution = config.resolution ?? null
+  const end = offScale(value, config.span)
+  const rate = points === null || end !== null ? null : ratePerMinute(points, windowMs)
+  const travel = travelOf(rate, value, resolution)
+  const inForce = limitsInForce(thresholds, mode).filter(threshold => threshold.kind !== 'control')
+  const reading = {
+    rate,
+    travel,
+    change: rate === null || points === null ? null : rateChange(points, windowMs, value, resolution),
+    inAlarm: activeThreshold(thresholds, activeRuleIds, mode),
+    offScale: end,
   }
-  const away = points === null ? null : movingAwayFromLimits(value, rate, inForce)
-  if (away !== null) return { ...reading, limit: { kind: 'away', travel: away } }
-  const limited = thresholds.some(threshold => threshold.kind !== 'control')
-  if (!limited) return { ...reading, limit: { kind: 'unlimited' } }
-  const idle = inForce.every(threshold => threshold.kind === 'control')
-  return { ...reading, limit: idle && mode !== undefined ? { kind: 'idle', mode } : null }
+  if (!thresholds.some(threshold => threshold.kind !== 'control')) return { ...reading, limit: { kind: 'unlimited' } }
+  if (inForce.length === 0) return { ...reading, limit: mode === undefined ? null : { kind: 'idle', mode } }
+  // Off scale, the quantity lies at or beyond the end of the span: its limits are read that way, with no time to any.
+  const heading = end === 'below' ? 'falling' : end === 'above' ? 'rising' : travel
+  if (heading === 'rising' || heading === 'falling') {
+    const projectable = points !== null && projectionBasis(points, windowMs, unit, resolution)
+    const ahead = limitAhead(value, heading, inForce)
+    if (ahead !== null && isPast(ahead)) {
+      return { ...reading, limit: { kind: 'past', margin: ahead, back: { travel: heading, eta: timeToThresholdText(value, rate, ahead.threshold, projectable, true), minutes: projectedMinutes(value, rate, ahead.threshold, projectable, true) } } }
+    }
+    if (ahead !== null) {
+      return { ...reading, limit: { kind: 'margin', margin: ahead, eta: timeToThresholdText(value, rate, ahead.threshold, projectable), minutes: projectedMinutes(value, rate, ahead.threshold, projectable) } }
+    }
+    const behind = outermostPassed(value, inForce)
+    return { ...reading, limit: behind !== null ? { kind: 'past', margin: behind, back: null } : { kind: 'clear', direction: heading === 'falling' ? 'low' : 'high' } }
+  }
+  const margin = nearestThresholdMargin(value, inForce)!
+  if (isPast(margin)) return { ...reading, limit: { kind: 'past', margin, back: null } }
+  // Going nowhere, a value is near a limit only within a quarter of the scale
+  // it reads over: farther, a margin says nothing an operator acts on (a
+  // tripped core at 0 MW is no "3600 MW below HI ALM").
+  const reach = resolution === null ? Number.POSITIVE_INFINITY : resolution / RESOLUTION_FRACTION * NEAR_FRACTION
+  return { ...reading, limit: margin.margin <= reach ? { kind: 'margin', margin, eta: '', minutes: null } : null }
 }
 
-/** A legend row's limit state in its words: "0.658 MPa above LO ALM 14.8 MPa · ≈2 min", "no LO limit ahead". */
-export const limitStateText = (state: LimitState, unit: string): string => {
-  if (state.kind === 'returning') return state.text
-  if (state.kind === 'margin') return `${marginText(state.margin, unit)}${state.eta === '' ? '' : ` · ${state.eta}`}`
-  if (state.kind === 'away') return `no ${state.travel === 'rising' ? 'HI' : 'LO'} limit ahead`
+const NEAR_FRACTION = 0.25
+
+/**
+ * A legend row's limit state in its words: "0.66 MPa above LO 14.8 MPa · ALM
+ * · ≈2 min", "past LO-LO 20 % · AFW START", "past LO 35 % · ALM · rising,
+ * back above it in ≈2 min", "no LO limit in force". A value moving back
+ * across a limit it is past is said to rise or fall, with the time back
+ * across it where the tendency gives one, never to recover: a pressurizer
+ * level rising while a relief valve discharges is no recovery (evaluation
+ * run 22's "recovering, not projected").
+ */
+export const limitStateText = (state: LimitState, unit: string, resolution: number | null = null): string => {
+  if (state.kind === 'margin') return `${marginText(state.margin, unit, resolution)}${state.eta === '' ? '' : ` · ${state.eta}`}`
+  if (state.kind === 'past') {
+    const back = state.back
+    if (back === null) return marginText(state.margin, unit, resolution)
+    const across = `back ${state.margin.threshold.direction === 'low' ? 'above' : 'below'} it`
+    return `${marginText(state.margin, unit, resolution)} · ${back.travel}, ${back.eta === NOT_PROJECTED ? 'not projected' : `${across} in ${back.eta === '' ? 'over 30 min' : back.eta}`}`
+  }
+  if (state.kind === 'clear') return `no ${state.direction === 'low' ? 'LO' : 'HI'} limit in force`
   if (state.kind === 'unlimited') return 'no I&C limit'
   return `no limit acts ${state.mode === null ? 'now' : `in ${state.mode.label}`}`
 }
+
+/** A reading's state in words: off scale first, then its limit state; empty where it says nothing. */
+export const readingStateText = (reading: Pick<TrendReading, 'offScale' | 'limit'>, unit: string, resolution: number | null = null): string =>
+  [reading.offScale === null ? '' : `${reading.offScale} range`, reading.limit === null ? '' : limitStateText(reading.limit, unit, resolution)].filter(part => part !== '').join(' · ')

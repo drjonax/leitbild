@@ -2,7 +2,7 @@
 // lead values (ISA-101 Level 1): which way each value is going and how fast,
 // at a glance, with no axes. Time is Simulation Run time in epoch
 // milliseconds; values are the signal's native unit.
-import { displayValue, formatQuantity, formatValue, nearestThresholdMargin, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
+import { displayValue, formatQuantity, formatValue, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
 import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
 import { HOLD_GAP_MS, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
 import { paddedDomain, rawDomain, stepPath, type ValueDomain } from './trend-geometry.ts'
@@ -30,18 +30,19 @@ export interface Sparkline {
 /**
  * A lead value's sparkline over one window ending now. The scale fits the
  * values the line draws, padded and never narrower than a share of the value
- * (paddedDomain), so a steady value reads as a flat line, not as noise. The
- * nearest limit is the one the row's margin line names; it never widens the
- * scale, which would flatten the line.
+ * or twenty resolution steps (paddedDomain), so a steady value reads as a
+ * flat line, not as noise. The limit drawn is the one the row's margin line
+ * names; it never widens the scale, which would flatten the line.
  */
 export const sparkline = (input: {
   readonly points: ReadonlyArray<TrendPoint>
   readonly now: number
   readonly windowMs: number
   readonly size: { readonly width: number; readonly height: number }
-  /** The latest sampled value, which the nearest limit is judged from. */
-  readonly value: number | undefined
-  readonly thresholds: ReadonlyArray<ComposedDisplayThreshold>
+  /** The limit its row's margin names, if any: drawn where it lies inside the plotted range. */
+  readonly limit: ComposedDisplayThreshold | null
+  /** The resolution its reading is shown in (readingResolution); the points are already shown readings. */
+  readonly resolution: number | null
 }): Sparkline => {
   const { points, now, windowMs, size } = input
   const start = now - windowMs
@@ -54,11 +55,11 @@ export const sparkline = (input: {
   })
   const range = rawDomain(drawn.map(point => point.v))
   if (range === null) return { path: '', end: null, limit: null, range: null, broken: false }
-  const domain = paddedDomain(range)
+  const domain = paddedDomain(range, input.resolution)
   const x = (t: number): number => ((t - start) / windowMs) * (size.width - INSET_END)
   const y = (v: number): number => INSET_Y + (1 - (v - domain.min) / (domain.max - domain.min)) * (size.height - 2 * INSET_Y)
   const last = drawn.at(-1)!
-  const limit = input.value === undefined ? null : nearestThresholdMargin(input.value, input.thresholds)?.threshold ?? null
+  const limit = input.limit
   return {
     path: stepPath(drawn, x, y, { start, end: now }),
     end: last.t >= now - HOLD_GAP_MS ? { x: x(now), y: y(last.v) } : null,
@@ -80,6 +81,8 @@ export const sparklineText = (input: {
   readonly recorded: boolean
   readonly windowMs: number
   readonly unit: string
+  /** The resolution its reading is shown in (readingResolution). */
+  readonly resolution: number | null
   readonly line: Sparkline | null
   /** The historian held nothing in the window when the display opened. */
   readonly historyMissing: boolean
@@ -94,8 +97,8 @@ export const sparklineText = (input: {
   const range = input.line?.range ?? null
   if (range === null) return `No values in the last ${window} yet${since}`
   const spread = range.min === range.max
-    ? `steady at ${formatQuantity(range.min, input.unit)}`
-    : `${formatValue(displayValue(range.min, input.unit))} to ${formatQuantity(range.max, input.unit)}`
+    ? `steady at ${formatQuantity(range.min, input.unit, input.resolution)}`
+    : `${formatValue(displayValue(range.min, input.unit), input.resolution === null ? null : displayValue(input.resolution, input.unit))} to ${formatQuantity(range.max, input.unit, input.resolution)}`
   const limit = input.line?.limit ?? null
   const broken = input.line?.broken === true ? ' · broken where nothing was recorded' : ''
   return `Last ${window}: ${spread}${limit === null ? '' : ` · dashed line: ${thresholdName(limit.threshold, input.unit)}`}${broken}${since}`

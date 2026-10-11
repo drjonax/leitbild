@@ -2,10 +2,10 @@
   import type { ComposedComparisonPanel } from '../../../packs/process-plant/displays/compose.ts'
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
-  import { displayValue, formatQuantity, formatValue, limitKindName, thresholdName } from '../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, formatValue, limitKindName, limitOrderName, readingText, shownReading, thresholdFullName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import { median } from './panel-presenters.ts'
-  import { activeThreshold, COMPARISON_HISTORY_MS, limitAhead, limitInForce, limitsInForce, ratePerMinute, rateText, rateWindowMs, windowText, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
-  import { limitLabelRanks, stackLabels, type LabelSlot } from './limit-labels.ts'
+  import { COMPARISON_HISTORY_MS, ratePerMinute, rateText, rateWindowMs, trendReading, windowText, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import { limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
   import { displayName, fitName } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
   import { paddedDomain, rawDomain, type ValueDomain } from './trend-geometry.ts'
@@ -33,11 +33,15 @@
   const scaleStart = $derived(labelWidth)
   const scaleWidth = $derived(Math.max(60, width - labelWidth - valueWidth))
 
-  const valueOf = (path: string): number | undefined => {
-    const value = latest?.values.find(entry => entry.path === path)?.value
-    return typeof value === 'number' ? value : undefined
+  // Readings as shown: below its resolution a reading is 0.
+  const valueOf = (pen: (typeof panel.pens)[number]): number | undefined => {
+    const value = latest?.values.find(entry => entry.path === String(pen.path))?.value
+    return typeof value === 'number' ? shownReading(value, pen.resolution) : undefined
   }
-  const values = $derived(panel.pens.map(pen => valueOf(String(pen.path))))
+  const values = $derived(panel.pens.map(valueOf))
+  const resolution = $derived(panel.pens.map(pen => pen.resolution).find(value => value !== null) ?? null)
+  const shownPoints = (pen: (typeof panel.pens)[number]): ReadonlyArray<TrendPoint> =>
+    (series.get(String(pen.path)) ?? []).map(point => ({ t: point.t, v: shownReading(point.v, pen.resolution) }))
   const center = $derived(median(values.filter((value): value is number => value !== undefined)))
 
   // Position on a fixed, grow-only scale, shown as a pointer: bar lengths from a
@@ -47,7 +51,7 @@
       ...(range === null ? [] : [range.min, range.max]),
       ...panel.thresholds.filter(threshold => threshold.kind !== 'control').map(threshold => threshold.value),
     ])
-    return raw === null ? null : paddedDomain(raw)
+    return raw === null ? null : paddedDomain(raw, resolution)
   })
   const x = (value: number): number => domain === null ? scaleStart : scaleStart + ((value - domain.min) / (domain.max - domain.min)) * scaleWidth
   const row = composedDisplayLayout.comparisonRow
@@ -56,20 +60,22 @@
   const deviation = (value: number): string => {
     if (center === null) return ''
     const difference = value - center
-    return Math.abs(difference) < 1e-9 ? '' : `${difference > 0 ? '+' : '−'}${formatValue(displayValue(Math.abs(difference), panel.unit))} vs median`
+    const shown = displayValue(Math.abs(difference), panel.unit)
+    const step = resolution === null ? null : displayValue(resolution, panel.unit)
+    return Math.abs(difference) < (resolution ?? 1e-9) ? '' : `${difference > 0 ? '+' : '−'}${formatValue(shown, step)} vs median`
   }
-  const lines = $derived(panel.thresholds.filter(threshold => threshold.kind !== 'control'))
+  // As on a trend: limits at one value are one line; a mode-qualified limit
+  // that does not act in the current mode is faint and dashed and names its
+  // modes, even with a value past it; while the mode is not known yet, a
+  // qualified one is dashed.
+  const mode = $derived(latest?.mode)
+  const lines = $derived(limitLines(panel.thresholds, mode))
   // The same 30 s window as a 10-minute trend's legend, so one signal never shows two rates.
   const RATE_WINDOW_MS = rateWindowMs(COMPARISON_HISTORY_MS)
-  const activeOf = (threshold: (typeof lines)[number]): string | null =>
-    threshold.ruleIds.some(ruleId => activeRuleIds.has(ruleId)) ? threshold.severity ?? 'warning' : null
-  // As on a trend: a mode-qualified limit that does not act in the current
-  // mode is faint and dashed and names its modes; while the mode is not known
-  // yet, a qualified one is dashed.
-  const lineLook = (threshold: (typeof lines)[number]): 'acting' | 'qualified' | 'idle' =>
-    threshold.modeIds === undefined ? 'acting'
-      : latest?.mode === undefined ? 'qualified'
-        : limitInForce(threshold, latest.mode, activeOf(threshold) !== null) ? 'acting' : 'idle'
+  const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
+  const activeOf = (line: (typeof lines)[number]): string | null =>
+    line.members.map(member => limitSeverity(member, activeRuleIds, mode)).filter((severity): severity is keyof typeof severityRank => severity !== null)
+      .sort((left, right) => severityRank[left] - severityRank[right])[0] ?? null
 
   // Limit names over the scale sit at their lines, pushed apart along the head
   // with a leader where two lines are closer than their names are wide ("HI
@@ -80,28 +86,33 @@
   const measureHead = textMeasure(panelFont(10.5, 700))
   const HEAD_GAP = 8
   const LINE_TOP = top - 6
-  const headName = (threshold: (typeof lines)[number]): string =>
-    `${thresholdName(threshold, panel.unit, { withUnit: false })}${lineLook(threshold) === 'idle' ? ` (${threshold.modeLabel})` : ''}`
-  const aheadRuleIds = $derived(new Set(panel.pens.flatMap((pen, index) => {
+  // One name per line: its order and value, then what each limit there does,
+  // one that does not act in the current mode with its modes: "LO-LO 20 ·
+  // AFW START + RX TRIP (Modes 1–2)".
+  const headName = (line: (typeof lines)[number]): string =>
+    `${limitOrderName(line.members[0]!)} ${displayValue(line.value, panel.unit)} · ${line.members.map(member => `${member.action}${limitLook(member, mode) === 'idle' ? ` (${member.modeLabel})` : ''}`).join(' + ')}`
+  // The limit each value's reading names (trend-reading.ts): what it heads for or is past.
+  const namedRuleIds = $derived(new Set(panel.pens.flatMap((pen, index) => {
     const value = values[index]
-    const ahead = value === undefined ? null : limitAhead(value, ratePerMinute(series.get(String(pen.path)) ?? [], RATE_WINDOW_MS), limitsInForce(pen.thresholds, latest?.mode, activeRuleIds))
-    return ahead === null ? [] : [ahead.threshold.ruleId]
+    if (value === undefined) return []
+    const limit = trendReading({ value, points: shownPoints(pen), windowMs: RATE_WINDOW_MS, unit: pen.unit, thresholds: pen.thresholds, mode, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }).limit
+    return limit?.kind === 'margin' || limit?.kind === 'past' ? [limit.margin.threshold.ruleId] : []
   })))
   const heads = $derived.by(() => {
     if (domain === null) return []
-    const ranks = limitLabelRanks(lines.map(threshold => ({
-      key: threshold.ruleId,
-      value: threshold.value,
-      active: activeOf(threshold),
-      ahead: threshold.ruleIds.some(ruleId => aheadRuleIds.has(ruleId)),
-      inForce: lineLook(threshold) !== 'idle',
+    const ranks = limitLabelRanks(lines.map(line => ({
+      key: line.key,
+      value: line.value,
+      active: activeOf(line),
+      ahead: line.members.some(member => member.ruleIds.some(ruleId => namedRuleIds.has(ruleId))),
+      inForce: line.look !== 'idle',
     })), center ?? undefined)
-    const tight = lines.reduce((sum, threshold) => sum + measureHead(headName(threshold)) + HEAD_GAP, 0) > width
-    const slots = lines.map((threshold): LabelSlot => {
-      const size = measureHead(`${headName(threshold)}${tight ? ' (+9)' : ''}`) + HEAD_GAP
-      return { key: threshold.ruleId, want: x(threshold.value) - size / 2, size, group: threshold.direction, rank: ranks.get(threshold.ruleId)! }
+    const tight = lines.reduce((sum, line) => sum + measureHead(headName(line)) + HEAD_GAP, 0) > width
+    const slots = lines.map((line): LabelSlot => {
+      const size = measureHead(`${headName(line)}${tight ? ' (+9)' : ''}`) + HEAD_GAP
+      return { key: line.key, want: x(line.value) - size / 2, size, group: line.members[0]!.direction, rank: ranks.get(line.key)! }
     })
-    const byKey = new Map(lines.map(threshold => [threshold.ruleId, threshold]))
+    const byKey = new Map(lines.map(line => [line.key, line]))
     const sizes = new Map(slots.map(slot => [slot.key, slot.size]))
     return stackLabels(slots, { start: 0, end: width }).map(label => {
       const named = byKey.get(label.key)!
@@ -110,9 +121,9 @@
         key: label.key,
         lineX: x(named.value),
         x: label.start + sizes.get(label.key)! / 2,
-        idle: lineLook(named) === 'idle',
+        idle: named.look === 'idle',
         text: `${headName(named)}${folded.length > 0 ? ` (+${folded.length})` : ''}`,
-        title: [named, ...folded].map(threshold => `${thresholdName(threshold, panel.unit)}: ${threshold.label}${threshold.modeLabel === undefined ? '' : `, only in ${threshold.modeLabel}`}`).join('\n'),
+        title: [named, ...folded].flatMap(line => line.members).map(threshold => `${thresholdFullName(threshold, panel.unit)}: ${threshold.label}${threshold.modeNames === undefined ? '' : `, only in ${threshold.modeNames}`}`).join('\n'),
         active: activeOf(named) ?? folded.map(activeOf).find(active => active !== null) ?? null,
       }
     })
@@ -120,10 +131,10 @@
 </script>
 
 <div class="comparison" bind:clientWidth={width}>
-  <svg {width} {height} role="img" aria-label={`Comparison now: ${panel.pens.map((pen, index) => `${displayName(pen)} ${values[index] === undefined ? 'no value' : formatQuantity(values[index]!, panel.unit)}`).join('; ')}`}>
+  <svg {width} {height} role="img" aria-label={`Comparison now: ${panel.pens.map((pen, index) => `${displayName(pen)} ${values[index] === undefined ? 'no value' : readingText(values[index]!, panel.unit, pen.resolution, pen.limits?.instrumentSpan)}`).join('; ')}`}>
     {#if domain !== null}
-      {#each lines as threshold (threshold.ruleId)}
-        <line class={`threshold ${lineLook(threshold)}`} x1={x(threshold.value)} x2={x(threshold.value)} y1={LINE_TOP} y2={height}><title>{threshold.label}</title></line>
+      {#each lines as line (line.key)}
+        <line class={`threshold ${line.look}`} x1={x(line.value)} x2={x(line.value)} y1={LINE_TOP} y2={height}><title>{line.members.map(member => member.label).join('\n')}</title></line>
       {/each}
       {#each heads as head (head.key)}
         {#if Math.abs(head.x - head.lineX) > 2}
@@ -139,18 +150,19 @@
     {#each panel.pens as pen, index (pen.path)}
       {@const value = values[index]}
       {@const y = top + index * row}
-      {@const inAlarm = activeThreshold(pen.thresholds, activeRuleIds)}
+      {@const reading = value === undefined ? null : trendReading({ value, points: shownPoints(pen), windowMs: RATE_WINDOW_MS, unit: pen.unit, thresholds: pen.thresholds, mode, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) })}
+      {@const inAlarm = reading?.inAlarm ?? null}
       <text class="tag" class:primary={pen.role === 'primary'} x="0" y={y + row / 2} dominant-baseline="middle">{fitted(labelled[index]!)}<title>{labelled[index]!.text} · {pen.label} · {pen.role}{pen.command ? ' · operator or automation demand, not a measured state' : ''}</title></text>
       <line class="track" x1={scaleStart} x2={scaleStart + scaleWidth} y1={y + row / 2} y2={y + row / 2} />
       {#if value !== undefined && domain !== null}
         <path class="pointer" class:primary={pen.role === 'primary'} class:alarm={inAlarm !== null} d={`M${x(value)} ${y + 4} l5 ${row / 2 - 4} l-5 ${row / 2 - 4} l-5 ${-(row / 2 - 4)} z`} />
-        <text class="value" x={scaleStart + scaleWidth + 10} y={y + row / 2} dominant-baseline="middle">{formatQuantity(value, panel.unit)}{#if inAlarm !== null}<tspan class={`state ${inAlarm.severity ?? 'warning'}`} dx="6">{limitKindName(inAlarm)}</tspan>{/if}<tspan class="sub" dx="6">{deviation(value)} {rateText(ratePerMinute(series.get(String(pen.path)) ?? [], RATE_WINDOW_MS), value, panel.unit)}</tspan></text>
+        <text class="value" x={scaleStart + scaleWidth + 10} y={y + row / 2} dominant-baseline="middle">{readingText(value, panel.unit, pen.resolution, pen.limits?.instrumentSpan)}{#if inAlarm !== null}<tspan class={`state ${inAlarm.severity ?? 'warning'}`} dx="6">{limitKindName(inAlarm)}</tspan>{/if}<tspan class="sub" dx="6">{reading?.offScale == null ? `${deviation(value)} ${rateText(ratePerMinute(shownPoints(pen), RATE_WINDOW_MS), value, panel.unit, { resolution: pen.resolution })}` : `${reading.offScale} range`}</tspan></text>
       {:else}
         <text class="value" x={scaleStart + scaleWidth + 10} y={y + row / 2} dominant-baseline="middle">—</text>
       {/if}
     {/each}
   </svg>
-  {#if center !== null && domain !== null}<p class="caption">Scale {formatValue(displayValue(domain.min, panel.unit))}–{formatQuantity(domain.max, panel.unit)} · dotted line: median of the {panel.pens.length} signals now · rates over {windowText(RATE_WINDOW_MS)}</p>{/if}
+  {#if center !== null && domain !== null}<p class="caption">Scale {formatValue(displayValue(domain.min, panel.unit))}–{formatValue(displayValue(domain.max, panel.unit))} {unitLabel(panel.unit)} · dotted line: median of the {panel.pens.length} signals now · rates over {windowText(RATE_WINDOW_MS)}</p>{/if}
 </div>
 
 <style>
