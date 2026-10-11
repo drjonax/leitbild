@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { gridAlarmCounts, gridAlarmPhase, gridAlarmShelved, type GridAlarmRecord } from '../runtime/alarms.ts'
+import type { GridRuntimeInstance } from '../runtime/instance.ts'
+import { solvedGridIslands } from '../runtime/island-lifecycle.ts'
 import { defineGridQuery, gridFor, requireGridIsland } from './common.ts'
 
 const finite = z.number().finite()
@@ -22,6 +24,8 @@ const alarmSchema = z.object({
   id: z.string().describe('Stable alarm id <scope>:<asset key>:<condition>, the asset key being the asset id without its own scope prefix (hvdc:nordlink:tripped); the same condition on the same asset always has this id.'),
   scope: z.enum(['island', 'branch', 'generator', 'hvdc']),
   assetId: z.string().describe('Island id or Grid Asset id.'),
+  assetLabel: z.string().describe('The asset\'s label; for an island, its reference bus\'s.'),
+  mapAssetId: z.string().nullable().describe('Grid Asset that locates the alarm on the map (world.electric-grid.asset.get): the asset itself, or an island\'s reference bus; null for an island that no longer exists.'),
   condition: z.string(),
   priority,
   title: z.string(),
@@ -60,10 +64,28 @@ const matchesState = (record: GridAlarmRecord, states: ReadonlySet<z.infer<typeo
   return (states.has('active') && record.active) || (states.has('unacknowledged') && !record.acknowledged) || (states.has('cleared') && !record.active)
 }
 
-const alarmView = (record: GridAlarmRecord): z.infer<typeof alarmSchema> => ({
+/** What an alarm names and where the map shows it: an island by its current reference bus. */
+const alarmAsset = (grid: GridRuntimeInstance, record: GridAlarmRecord): { readonly assetLabel: string; readonly mapAssetId: string | null } => {
+  const { index } = grid.definition
+  if (record.scope === 'island') {
+    const islands = solvedGridIslands(grid)
+    const island = islands.islands.find(candidate => candidate.id === record.assetId)
+    if (island === undefined) return { assetLabel: `Island ${record.assetId} (no longer present)`, mapAssetId: null }
+    const busId = islands.plan.islands[island.planIndex]!.referenceBusId
+    return { assetLabel: `Island at ${index.busById.get(busId)!.label}`, mapAssetId: busId }
+  }
+  const label = record.scope === 'hvdc'
+    ? index.hvdcLinks.find(link => link.id === record.assetId)?.label
+    : index.assetById.get(record.assetId)?.label
+  if (label === undefined) throw new Error(`Grid alarm ${record.id} names unknown ${record.scope} ${record.assetId}`)
+  return { assetLabel: label, mapAssetId: record.assetId }
+}
+
+const alarmView = (grid: GridRuntimeInstance, record: GridAlarmRecord): z.infer<typeof alarmSchema> => ({
   id: record.id,
   scope: record.scope,
   assetId: record.assetId,
+  ...alarmAsset(grid, record),
   condition: record.condition,
   priority: record.priority,
   title: record.title,
@@ -118,7 +140,10 @@ export const gridAlarmsQuery = defineGridQuery({
       total: matched.length,
       offset: payload.offset,
       limit: payload.limit,
-      alarms: matched.slice(payload.offset, payload.offset + payload.limit).map(alarmView),
+      alarms: matched.slice(payload.offset, payload.offset + payload.limit).map(record => alarmView(grid, record)),
     }
   },
 })
+
+export type GridAlarmsListResult = z.infer<typeof alarmsResultSchema>
+export type GridAlarmView = z.infer<typeof alarmSchema>

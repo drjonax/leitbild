@@ -34,16 +34,34 @@ export const gridIslandSchema = z.object({
   servedLoadMw: finite,
   unservedLoadMw: finite,
   reserveMw: finite.describe('Upward reserve of online units, limited by their headroom (MW).'),
+  lfddStages: z.array(z.object({
+    id: z.string(),
+    thresholdHz: finite,
+    status: z.enum(['armed', 'operated', 'disarmed']).describe('armed: operates on under-frequency; operated: latched, its feeders disconnected until restore-lfdd-stage; disarmed: restored, inactive until rearm-lfdd-stage.'),
+    disconnectedMw: finite.describe('Demand the operated stage keeps disconnected in this island (MW); 0 unless operated.'),
+  }).strict()).describe('The Automation\'s LFDD stages, highest threshold first, as latched in this island; empty while de-energised (losing supply resets them).'),
 }).strict()
 export type GridIslandView = z.infer<typeof gridIslandSchema>
 
-const islandsResultSchema = z.object({
+export const gridIslandsResultSchema = z.object({
   gridId: z.string(),
   total: count,
   offset: count,
   limit: z.number().int().positive(),
   islands: z.array(gridIslandSchema),
 }).strict()
+
+const lfddStagesOf = (grid: GridRuntimeInstance, island: GridIsland): GridIslandView['lfddStages'] => {
+  if (!island.energized || island.frequency === null) return []
+  const stages = island.frequency.lfdd.stages
+  return grid.definition.automation.lfdd.stages.map(stage => {
+    const state = stages[stage.id]
+    if (state === undefined) throw new Error(`Grid island ${island.id} has no state for LFDD stage ${stage.id}`)
+    const disconnectedMw = state.status !== 'operated' ? 0 : Object.entries(state.shedFractionByLoad)
+      .reduce((sum, [loadId, fraction]) => sum + fraction * grid.loads.get(loadId)!.demandMw, 0)
+    return { id: stage.id, thresholdHz: stage.thresholdHz, status: state.status, disconnectedMw: Math.round(disconnectedMw * 10) / 10 }
+  })
+}
 
 const islandView = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland): GridIslandView => {
   const structure = islands.plan.islands[island.planIndex]!
@@ -77,16 +95,17 @@ const islandView = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: 
     reserveMw: generators.reduce((sum, generator) => sum + (generator.state === 'online'
       ? Math.min(generator.reserveMw, Math.max(0, generator.availableMw - generator.dispatchMw))
       : 0), 0),
+    lfddStages: lfddStagesOf(grid, island),
   }
 }
 
 export const gridIslandsQuery = defineGridQuery({
   id: 'world.electric-grid.islands.list',
   title: 'List Grid islands',
-  description: 'Lists the electrically separate islands of one Grid, largest demand first: buses, units, energisation, island frequency, generation, demand, served and unserved load, and reserve. Use an island id to filter assets.search and power-flow.snapshot.',
+  description: 'Lists the electrically separate islands of one Grid, largest demand first: buses, units, energisation, island frequency, generation, demand, served and unserved load, reserve, and the latch state of each LFDD stage (restore-lfdd-stage and rearm-lfdd-stage act on it). Use an island id to filter assets.search and power-flow.snapshot.',
   searchTerms: ['island', 'islanding', 'separation', 'system split', 'blackout', 'energised', 'dead island', 'frequency', 'øydrift', 'nettdeling', 'separasjon', 'mørklegging', 'spenningsløs', 'frekvens'],
   input: islandsPayloadSchema,
-  output: islandsResultSchema,
+  output: gridIslandsResultSchema,
   answer: (payload, grids) => {
     const grid = gridFor(grids, payload.gridId)
     const plan = solvedGridIslands(grid)
@@ -102,3 +121,5 @@ export const gridIslandsQuery = defineGridQuery({
     }
   },
 })
+
+export type GridIslandsResult = z.infer<typeof gridIslandsResultSchema>

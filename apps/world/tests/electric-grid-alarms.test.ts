@@ -206,9 +206,11 @@ describe('electric grid alarms', () => {
     const list = (input: Readonly<Record<string, unknown>>) => answerElectricGridQuery({
       request: { capabilityId: 'world.electric-grid.alarms.list', input: { gridId: run.grid.definition.gridId, ...input } },
       grids,
-    }) as { counts: { active: number; activeByPriority: Record<string, number> }; total: number; alarms: ReadonlyArray<{ id: string; priority: number; active: boolean; shelved: boolean; islandId: string | null }> }
+    }) as { counts: { active: number; activeByPriority: Record<string, number> }; total: number; alarms: ReadonlyArray<{ id: string; priority: number; active: boolean; shelved: boolean; islandId: string | null; assetLabel: string; mapAssetId: string | null }> }
     const all = list({})
     expect(all.total).toBe(run.grid.alarms.records.size)
+    // Each alarm names its asset and the Grid Asset that locates it on the map.
+    expect(all.alarms.find(alarm => alarm.id === loadingAlarm('overload'))).toMatchObject({ assetLabel: 'branch:g-a', mapAssetId: 'branch:g-a' })
     expect(all.alarms.map(alarm => alarm.priority)).toEqual([...all.alarms.map(alarm => alarm.priority)].sort())
     expect(list({ priorities: [1] }).alarms.every(alarm => alarm.priority === 1)).toBe(true)
     expect(all.counts.activeByPriority['1']).toBe(list({ priorities: [1], states: ['active'] }).total)

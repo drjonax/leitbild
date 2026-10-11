@@ -294,15 +294,26 @@ describe('electric grid physics invariants', () => {
     expect(transitions).toBe(operated.length)
     const shedBeforeMw = shed('low') + shed('normal')
     const stageShedMw = Object.entries(stages[operated[0]!]!.shedFractionByLoad).reduce((sum, [loadId, fraction]) => sum + fraction * run.grid.loads.get(loadId)!.demandMw, 0)
+    // islands.list publishes each stage's latch, so an operator sees what to restore and re-arm.
+    const listedStages = () => (answerElectricGridQuery({
+      request: { capabilityId: 'world.electric-grid.islands.list', input: { gridId: 'grid:test' } },
+      grids: new Map([[run.grid.definition.gridId, run.grid]]),
+    }) as { readonly islands: ReadonlyArray<{ readonly id: string; readonly lfddStages: ReadonlyArray<{ readonly id: string; readonly status: string; readonly disconnectedMw: number }> }> })
+      .islands.find(candidate => candidate.id === island.id)!.lfddStages
+    expect(listedStages().map(stage => stage.id)).toEqual(definition.automation.lfdd.stages.map(stage => stage.id))
+    expect(listedStages().filter(stage => stage.status === 'operated').map(stage => stage.id)).toEqual(operated)
+    expect(listedStages().find(stage => stage.id === operated[0])!.disconnectedMw).toBeCloseTo(stageShedMw, 1)
     const restore = applyGridCommand(run.grid, command(gridRestoreLfddStageCommandKind, { islandId: island.id, stageId: operated[0] }))
     expect(restore).toEqual({ ok: true })
     expect(islandOfBus(run.grid, 'bus:b').frequency!.lfdd.stages[operated[0]!]!.status).toBe('disarmed')
+    expect(listedStages().find(stage => stage.id === operated[0])).toMatchObject({ status: 'disarmed', disconnectedMw: 0 })
     run.advance(60)
     // Demand moves with the daily profile meanwhile, so the comparison holds to 0.1 MW.
     expect(shed('low') + shed('normal')).toBeCloseTo(shedBeforeMw - stageShedMw, 1)
     expect(applyGridCommand(run.grid, command(gridRestoreLfddStageCommandKind, { islandId: island.id, stageId: operated[0] })).ok).toBe(false)
     expect(applyGridCommand(run.grid, command(gridRearmLfddStageCommandKind, { islandId: island.id, stageId: operated[0] }))).toEqual({ ok: true })
     expect(islandOfBus(run.grid, 'bus:b').frequency!.lfdd.stages[operated[0]!]!.status).toBe('armed')
+    expect(listedStages().find(stage => stage.id === operated[0])!.status).toBe('armed')
   })
 })
 

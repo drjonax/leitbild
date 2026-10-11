@@ -200,3 +200,7 @@ export const gridRemedialActionsEvaluateQuery = defineGridQuery({
     }
   },
 })
+
+export type GridContingencyScreenResult = z.infer<typeof screenResultSchema>
+export type GridRemedialEvaluationResult = z.infer<typeof remedialResultSchema>
+export type GridRemedialActionInput = z.input<typeof actionSchema>
