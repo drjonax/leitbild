@@ -330,7 +330,8 @@ export const solvePlanInto = (plan: GridTopologyPlan, solveIsland: Uint8Array): 
       continue
     }
     plan.referenceMismatchMw[component] = 0
-    for (const bus of plan.systems[component]!.buses) anglesRad[bus] = 0
+    const buses = plan.systems[component]!.buses
+    for (let position = 0; position < buses.length; position += 1) anglesRad[buses[position]!] = 0
   }
 }
 

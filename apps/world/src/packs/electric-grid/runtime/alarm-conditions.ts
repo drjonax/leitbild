@@ -74,7 +74,7 @@ const reserveProducts = (automation: GridAutomation): ReadonlyArray<ReserveProdu
 
 /**
  * Requirement of each product for the island not covered by its online units' allocations and its
- * external systems, dimensioned per synchronous area (synchronousAreaRequirementMw).
+ * external systems, dimensioned per synchronous area as island-reserves.ts allocates them.
  */
 const reserveObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings, island: GridIsland, structure: GridTopologyIsland, emit: Emit): void => {
   const generators = grid.arrays.generators

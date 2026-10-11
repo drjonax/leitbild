@@ -23,8 +23,8 @@ const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, buses: Int
   let minimum = Number.POSITIVE_INFINITY
   let maximum = Number.NEGATIVE_INFINITY
   const voltages = grid.arrays.buses.voltagePu
-  for (const bus of buses) {
-    const voltage = publishedNullable(voltages[bus]!)!
+  for (let position = 0; position < buses.length; position += 1) {
+    const voltage = publishedNullable(voltages[buses[position]!]!)!
     if (voltage < minimum) minimum = voltage
     if (voltage > maximum) maximum = voltage
   }

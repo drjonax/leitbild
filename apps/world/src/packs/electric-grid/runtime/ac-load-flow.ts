@@ -178,7 +178,8 @@ const specifyExternal = (grid: GridRuntimeInstance, plan: GridTopologyPlan, isla
   const scratch = externalBoundaryScratch(grid)
   // The equivalent shares each component's AC slack by its kinetic energy, spread over that
   // component's boundary buses as it closes the DC balance there (externalBoundaryShares).
-  for (const componentIndex of island.componentIndices) {
+  for (let componentPosition = 0; componentPosition < island.componentIndices.length; componentPosition += 1) {
+    const componentIndex = island.componentIndices[componentPosition]!
     const count = boundaryBusesInComponent(grid, plan, system, componentIndex, scratch.buses)
     if (count === 0) continue
     externalBoundarySharesInto(grid, definition, scratch.buses, count, scratch.capacities, scratch.shares)
@@ -195,7 +196,8 @@ const specifyExternal = (grid: GridRuntimeInstance, plan: GridTopologyPlan, isla
 
 /** A warm start needs a finite previous solution at every bus of the component. */
 const warmStartable = (state: AcPowerFlowState, buses: Int32Array): boolean => {
-  for (const bus of buses) {
+  for (let position = 0; position < buses.length; position += 1) {
+    const bus = buses[position]!
     if (!(state.voltagePu[bus]! > 0) || !Number.isFinite(state.voltagePu[bus]!) || !Number.isFinite(state.angleRad[bus]!)) return false
   }
   return true
@@ -222,7 +224,8 @@ export const solveGridAcLoadFlow = (grid: GridRuntimeInstance, islands: GridIsla
     let reactiveLossesMvar = 0
     let iterations = 0
     let failure: AcIslandFailure | null = null
-    for (const componentIndex of structure.componentIndices) {
+    for (let componentPosition = 0; componentPosition < structure.componentIndices.length; componentPosition += 1) {
+      const componentIndex = structure.componentIndices[componentPosition]!
       const component = plan.components[componentIndex]!
       const dcSystem = plan.systems[componentIndex]!
       let system = acWork.systems.get(dcSystem)

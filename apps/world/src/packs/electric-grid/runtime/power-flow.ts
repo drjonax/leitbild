@@ -13,8 +13,8 @@ import {
 } from './island-input.ts'
 import { completeDeadGridLoad, completeLiveGridLoad } from './load-service.ts'
 import { gridBranchFlowsMwInto } from './network/dc-power-flow.ts'
-import { islandScratch, flowModelAc, flowModelDc, flowModelNone, publishedNullable, voltageModelAc, voltageModelDeEnergised, voltageModelNotConverged } from './state/arrays.ts'
-import { gridTablesFor, type GridTables } from './state/tables.ts'
+import { islandScratch, flowModelAc, flowModelDc, flowModelNone, publishedNullable, voltageModelAc, voltageModelDeEnergised, voltageModelNotConverged, type GridIslandScratch } from './state/arrays.ts'
+import { gridTablesFor } from './state/tables.ts'
 import { busStateViews } from './state/views.ts'
 import { solvePlanInto } from './topology.ts'
 
@@ -174,11 +174,13 @@ const closeComponentsThroughBoundaries = (
 ): number => {
   const scratch = externalBoundaryScratch(grid)
   let closingMw = 0
-  for (const componentIndex of island.componentIndices) {
+  for (let componentPosition = 0; componentPosition < island.componentIndices.length; componentPosition += 1) {
+    const componentIndex = island.componentIndices[componentPosition]!
     const count = boundaryBusesInComponent(grid, plan, system, componentIndex, scratch.buses)
     if (count === 0) continue
     let othersMw = 0
-    for (const bus of plan.components[componentIndex]!.busIndices) othersMw += injections[bus]!
+    const buses = plan.components[componentIndex]!.busIndices
+    for (let busPosition = 0; busPosition < buses.length; busPosition += 1) othersMw += injections[buses[busPosition]!]!
     externalBoundarySharesInto(grid, grid.definition.index.externalSystems[system]!, scratch.buses, count, scratch.capacities, scratch.shares)
     for (let position = 0; position < count; position += 1) addAt(injections, scratch.buses[position]!, -othersMw * scratch.shares[position]!)
     closingMw -= othersMw
@@ -207,16 +209,77 @@ const lossScratch = (grid: GridRuntimeInstance, busCount: number): Float64Array 
 }
 
 /**
- * AC series loss of π branch `index`, MW: r·|I|² with I = (V_from/τ − V_to)/(r + jx), the tap τ at
- * the from end. It equals the active power entering both ends (the shunt branches carry no active
- * power) and is never negative, which their rounded sum can be on a lossless branch.
+ * Branch quantities of one solution in model order, and the losses the branches carry as load at
+ * their ends (`lossLoad`); returns their sum. Flow and loading: the AC flows where the island
+ * converged (the larger end apparent power is what the rating bounds), else the DC flow, labelled
+ * so. Losses: the AC series loss r·|I|² where the island converged, else the quadratic DC estimate
+ * r·P²/S_base. Voltages: the AC result where the island converged, unknown (NaN, published as
+ * null) where it did not, 0 when de-energised.
  */
-const acSeriesLossMw = (tables: GridTables, index: number, fromPu: number, toPu: number, angleRad: number, sBaseMva: number): number => {
-  const from = fromPu / tables.branchFromTap[index]!
-  const half = Math.sin(angleRad / 2)
-  const differenceSquared = (from - toPu) ** 2 + 4 * from * toPu * half * half
-  const r = tables.branchResistancePu[index]!
-  return r * differenceSquared / (r * r + tables.branchReactanceSquaredPu[index]!) * sBaseMva
+const writeBranchSolution = (
+  grid: GridRuntimeInstance,
+  plan: GridTopologyPlan,
+  flows: Float64Array,
+  ac: NonNullable<ReturnType<typeof gridAcState>>,
+  lossLoad: Float64Array,
+  scratch: GridIslandScratch,
+): number => {
+  const { network, closedBranches } = plan
+  const { branchFrom, branchTo, sBaseMva } = network
+  const islandOf = plan.islandIndexOfBus
+  const { energised, acConverged } = scratch
+  const frequencyOfIsland = scratch.frequencyHz
+  const { voltagePu, angleRad, branchFromActiveMw, branchToActiveMw, branchFromReactiveMvar, branchToReactiveMvar } = ac
+  const tables = gridTablesFor(grid.definition)
+  const { branchResistancePu, branchReactanceSquaredPu, branchFromTap, branchRatingMw } = tables
+  const branches = grid.arrays.branches
+  const { flowModel, flowMw, apparentPowerMva, lossesMw, loadingPercent, availability, frequencyHz, voltageFromPu, voltageToPu, reactiveFromMvar, reactiveToMvar } = branches
+  let totalLossesMw = 0
+  for (let index = 0; index < network.branchCount; index += 1) {
+    const from = branchFrom[index]!
+    const to = branchTo[index]!
+    const island = islandOf[from]!
+    const live = closedBranches[index] === 1 && energised[island] === 1
+    const acLive = live && acConverged[island] === 1
+    const dcFlowMw = live ? flows[index]! : 0
+    let branchLossMw = 0
+    if (acLive) {
+      // r·|I|² with I = (V_from/τ − V_to)/(r + jx), the tap τ at the from end: the active power
+      // entering both ends (the shunts carry none), never negative as their rounded sum can be.
+      const fromPu = voltagePu[from]! / branchFromTap[index]!
+      const toPu = voltagePu[to]!
+      const half = Math.sin((angleRad[from]! - angleRad[to]!) / 2)
+      const differenceSquared = (fromPu - toPu) ** 2 + 4 * fromPu * toPu * half * half
+      const r = branchResistancePu[index]!
+      branchLossMw = r * differenceSquared / (r * r + branchReactanceSquaredPu[index]!) * sBaseMva
+    } else if (live) {
+      branchLossMw = branchResistancePu[index]! * dcFlowMw * dcFlowMw / sBaseMva
+    }
+    lossLoad[from] = lossLoad[from]! + branchLossMw / 2
+    lossLoad[to] = lossLoad[to]! + branchLossMw / 2
+    totalLossesMw += branchLossMw
+    let apparentMva: number
+    if (acLive) {
+      const fromMw = branchFromActiveMw[index]!
+      flowModel[index] = flowModelAc
+      flowMw[index] = fromMw
+      apparentMva = Math.max(Math.hypot(fromMw, branchFromReactiveMvar[index]!), Math.hypot(branchToActiveMw[index]!, branchToReactiveMvar[index]!))
+    } else {
+      flowModel[index] = live ? flowModelDc : flowModelNone
+      flowMw[index] = dcFlowMw
+      apparentMva = Math.abs(dcFlowMw)
+    }
+    apparentPowerMva[index] = apparentMva
+    lossesMw[index] = branchLossMw
+    loadingPercent[index] = apparentMva / (branchRatingMw[index]! * availability[index]!) * 100
+    frequencyHz[index] = live ? frequencyOfIsland[island]! : Number.NaN
+    voltageFromPu[index] = energised[island] !== 1 ? 0 : acConverged[island] === 1 ? voltagePu[from]! : Number.NaN
+    const toIsland = islandOf[to]!
+    voltageToPu[index] = energised[toIsland] !== 1 ? 0 : acConverged[toIsland] === 1 ? voltagePu[to]! : Number.NaN
+    reactiveFromMvar[index] = acLive ? branchFromReactiveMvar[index]! : Number.NaN
+    reactiveToMvar[index] = acLive ? branchToReactiveMvar[index]! : Number.NaN
+  }
+  return totalLossesMw
 }
 
 /**
@@ -258,7 +321,9 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   let mismatchSumMw = 0
   for (const island of islands.islands) {
     if (!island.energized) continue
-    for (const componentIndex of plan.islands[island.planIndex]!.componentIndices) {
+    const componentIndices = plan.islands[island.planIndex]!.componentIndices
+    for (let componentPosition = 0; componentPosition < componentIndices.length; componentPosition += 1) {
+      const componentIndex = componentIndices[componentPosition]!
       const mismatchMw = Math.abs(plan.referenceMismatchMw[componentIndex]!)
       if (!(mismatchMw < islandBalanceToleranceMw)) {
         throw new Error(`Grid ${grid.definition.gridId} island ${island.id}: component at ${plan.components[componentIndex]!.referenceBusId} injections sum to ${plan.referenceMismatchMw[componentIndex]} MW; the balance must close within ${islandBalanceToleranceMw} MW`)
@@ -307,49 +372,7 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
     frequencyOfIsland[island.planIndex] = frequencyHz === null ? Number.NaN : frequencyHz
     solvedIds[island.planIndex] = island.id
   }
-  // Branch quantities in model order. Voltages: the AC result where the island converged, unknown
-  // (NaN, published as null) where it did not, 0 when de-energised.
-  const branchArrays = grid.arrays.branches
-  const tables = gridTablesFor(grid.definition)
-  for (let index = 0; index < network.branchCount; index += 1) {
-    const from = network.branchFrom[index]!
-    const to = network.branchTo[index]!
-    const island = islandOf[from]!
-    const live = plan.closedBranches[index] === 1 && energised[island] === 1
-    const acLive = live && acConverged[island] === 1
-    const dcFlowMw = live ? flows[index]! : 0
-    // Losses carried as load at the branch ends from the next advance on: the AC series loss r·|I|²
-    // where the island converged, else the quadratic DC estimate r·P²/S_base.
-    const branchLossMw = acLive
-      ? acSeriesLossMw(tables, index, ac.voltagePu[from]!, ac.voltagePu[to]!, ac.angleRad[from]! - ac.angleRad[to]!, network.sBaseMva)
-      : live ? tables.branchResistancePu[index]! * dcFlowMw * dcFlowMw / network.sBaseMva : 0
-    addAt(lossLoad, from, branchLossMw / 2)
-    addAt(lossLoad, to, branchLossMw / 2)
-    lossesMw += branchLossMw
-    // Flow and loading: the AC flows where the island converged (the larger end apparent power is
-    // what the rating bounds), else the DC flow, labelled so.
-    let apparentPowerMva: number
-    if (acLive) {
-      const fromMw = ac.branchFromActiveMw[index]!
-      const toMw = ac.branchToActiveMw[index]!
-      branchArrays.flowModel[index] = flowModelAc
-      branchArrays.flowMw[index] = fromMw
-      apparentPowerMva = Math.max(Math.hypot(fromMw, ac.branchFromReactiveMvar[index]!), Math.hypot(toMw, ac.branchToReactiveMvar[index]!))
-    } else {
-      branchArrays.flowModel[index] = live ? flowModelDc : flowModelNone
-      branchArrays.flowMw[index] = dcFlowMw
-      apparentPowerMva = Math.abs(dcFlowMw)
-    }
-    branchArrays.apparentPowerMva[index] = apparentPowerMva
-    branchArrays.lossesMw[index] = branchLossMw
-    branchArrays.loadingPercent[index] = apparentPowerMva / (tables.branchRatingMw[index]! * branchArrays.availability[index]!) * 100
-    branchArrays.frequencyHz[index] = live ? frequencyOfIsland[island]! : Number.NaN
-    branchArrays.voltageFromPu[index] = energised[island] !== 1 ? 0 : acConverged[island] === 1 ? ac.voltagePu[from]! : Number.NaN
-    const toIsland = islandOf[to]!
-    branchArrays.voltageToPu[index] = energised[toIsland] !== 1 ? 0 : acConverged[toIsland] === 1 ? ac.voltagePu[to]! : Number.NaN
-    branchArrays.reactiveFromMvar[index] = acLive ? ac.branchFromReactiveMvar[index]! : Number.NaN
-    branchArrays.reactiveToMvar[index] = acLive ? ac.branchToReactiveMvar[index]! : Number.NaN
-  }
+  lossesMw += writeBranchSolution(grid, plan, flows, ac, lossLoad, scratch)
   for (const link of grid.arrays.hvdcLinks) lossesMw += link.lossesMw
 
   if (grid.busStates.size === 0) for (const [busId, state] of busStateViews(network.busIds, busArrays)) grid.busStates.set(busId, state)
@@ -366,6 +389,7 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   }
   busArrays.angleRad.set(plan.anglesRad)
   busArrays.netInjectionMw.set(injections)
+  const tables = gridTablesFor(grid.definition)
   for (const island of islands.islands) {
     if (!island.energized) continue
     const structure = plan.islands[island.planIndex]!
