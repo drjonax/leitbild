@@ -8,7 +8,9 @@
 //! rest with capped settling, zero-time spectral go/no-go at the settled
 //! state, then the hold against its rtol/10 reference, and RCP supply loss
 //! and seizure, each in a capped event window against the 2.5 ms-capped and
-//! rtol/100 references and continued 10 s uncapped (request 2, E0-E4).
+//! rtol/100 references (request 2, E0-E3, with request 3's cap-cycle floor,
+//! H2), then restarted at the window's end by the exact consistent start and
+//! continued 10 s at stock settings, its recovery judged on cost (H1).
 //! Credited outputs are observed every 0.002 s through one stock IDA root
 //! function, which changes no step, and are compared after the contract's
 //! zero-phase low-pass. A decisive failure stops dependent runs and is
@@ -16,8 +18,8 @@
 #![cfg(all(feature = "ida", target_os = "macos"))]
 use leitbild_operating_plant::{
     network::{
-        Band, ConsistentPair, CscOut, Network, Properties, PzrPreparation, RotorState,
-        ToleranceClasses, consistent_start,
+        Band, ConsistentPair, ConsistentSystem, CscOut, Network, Properties, PzrPreparation,
+        RotorState, ToleranceClasses, consistent_start,
         packet::Packet,
         prepare::{self, OperatingPoint, Settings},
         stratified,
@@ -123,7 +125,8 @@ struct EventWindow {
     full_unit_step_exit_s: f64,
 }
 /// E3: the capped reference R1, the second refinement R2 and the bound on
-/// content above the credited band.
+/// content above the credited band; H2: the floor, as a fraction of each
+/// output's credited budget, above which that bound is judged.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct EventReference {
@@ -131,6 +134,7 @@ struct EventReference {
     max_step_s: f64,
     second_refinement_tolerance_factor: f64,
     cap_cycle_uncredited_rms_ratio_max: f64,
+    cap_cycle_floor_budget_fraction: f64,
 }
 /// E0/E1: the filter and observation interval of the contract's comparison.
 #[derive(Debug, Deserialize)]
@@ -140,13 +144,16 @@ struct Comparison {
     #[serde(rename = "observation_s")]
     observation_s: f64,
 }
-/// E4: the uncapped continuation after each event window.
+/// H1: the continuation after each event window, restarted at the window's
+/// forced stop by the named restart and judged on cost, with at most
+/// `max_convergence_failures` Newton convergence failures.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Recovery {
     #[serde(rename = "postWindow_s")]
     post_window_s: f64,
-    max_step_rate_factor: f64,
+    restart: String,
+    max_convergence_failures: u32,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -203,10 +210,14 @@ struct Budgets {
 
 /// The filter the harness implements; the declared block must name it.
 const DECLARED_FILTER: &str = "zero-phase 4th-order Butterworth";
+/// The restart the harness implements at each event window's forced stop
+/// ([`restart`], H1); the declared block must name it.
+const DECLARED_RESTART: &str = "exact consistent start";
 /// Stock IDA's Newton convergence coefficient (SUNDIALS 7.5.0 `ida.c`
 /// EPCON), which the event window tightens by `newtonCoefficientFactor`.
-/// Stock reads it only before its first step, so the window's value also
-/// holds through the uncapped continuation (S1 declaration, E4).
+/// Stock reads it once, in its first-call setup after construction or
+/// IDAReInit, so the tightened value holds over the window only; H1's
+/// restart sets this stock value again before the continuation's first step.
 const STOCK_NEWTON_COEFFICIENT: f64 = 0.33;
 
 /// `span` is a whole number, at least one, of `unit`s, to rounding.
@@ -216,15 +227,21 @@ fn whole(span: f64, unit: f64) -> bool {
 }
 impl Gates {
     /// Checks of the declared configuration before any run: the block names
-    /// the implemented filter; the observation interval divides the output
-    /// interval, which divides every timed span; both event windows lie
-    /// within E2's budget window; the projected full-unit step is below E2's
-    /// exit; and the credited band lies below the observation's Nyquist
-    /// frequency and the spectral fast-mode limit.
+    /// the implemented filter and restart; the observation interval divides
+    /// the output interval, which divides every timed span; both event
+    /// windows, each with its recovery continuation (H1), lie within E2's
+    /// budget window; the projected full-unit step is below E2's exit; the
+    /// cap-cycle floor is a fraction of the credited budget (H2); and the
+    /// credited band lies below the observation's Nyquist frequency and the
+    /// spectral fast-mode limit.
     fn check(&self, budgets: &Budgets) {
         assert_eq!(
             self.comparison.filter, DECLARED_FILTER,
             "undeclared comparison filter"
+        );
+        assert_eq!(
+            self.recovery.restart, DECLARED_RESTART,
+            "undeclared recovery restart"
         );
         let (dt, output) = (self.comparison.observation_s, self.output_interval_s);
         assert!(
@@ -245,14 +262,20 @@ impl Gates {
         }
         for window in [self.supply_loss.duration_s, self.seizure.duration_s] {
             assert!(
-                window <= self.event_window.max_window_s,
-                "a {window} s event window exceeds E2's {} s",
+                window + self.recovery.post_window_s <= self.event_window.max_window_s,
+                "a {window} s event window and its {} s recovery exceed E2's {} s",
+                self.recovery.post_window_s,
                 self.event_window.max_window_s
             );
         }
         assert!(
             self.projected_full_unit_step_s <= self.event_window.full_unit_step_exit_s,
             "the projected full-unit step reaches E2's exit: E2 returns to the owner"
+        );
+        let floor = self.event_reference.cap_cycle_floor_budget_fraction;
+        assert!(
+            floor > 0. && floor < 1.,
+            "the cap-cycle floor {floor} is not a fraction of the credited budget"
         );
         assert!(
             budgets.uncredited_above_hz > 0. && 2. * budgets.uncredited_above_hz * dt < 1.,
@@ -263,9 +286,16 @@ impl Gates {
             "spectral fast-mode limit must not reach into the credited band"
         );
     }
-    /// E2's window budget in steps: budget x window / projected full-unit step.
-    fn window_steps(&self, window_s: f64) -> f64 {
-        self.event_window.budget_cpu_s_per_s * window_s / self.projected_full_unit_step_s
+    /// E2's cost budget in steps over a span: budget x span / projected
+    /// full-unit step. Over the window it is E2's own gate; over the window
+    /// and its continuation together, H1's recovery gate.
+    fn budget_steps(&self, span_s: f64) -> f64 {
+        self.event_window.budget_cpu_s_per_s * span_s / self.projected_full_unit_step_s
+    }
+    /// The run cap over a span, `runCapFactor` times its budget in steps;
+    /// reaching it fails the run (frozen failure rules).
+    fn cap_steps(&self, span_s: f64) -> i64 {
+        (self.run_cap_factor * self.budget_steps(span_s)) as i64
     }
 }
 
@@ -569,7 +599,7 @@ impl Clock {
 }
 
 /// Stock counters at one point of a run.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Counts {
     steps: i64,
     residuals: i64,
@@ -591,16 +621,17 @@ impl Counts {
             linear_setups: s.linear_setups,
         }
     }
-    /// The counts accumulated after `earlier` in the same history.
-    fn since(self, earlier: Self) -> Self {
+    /// The counts of one run over two histories: these, then `later`'s
+    /// after a restart (stock restarts its counters at IDAReInit).
+    fn plus(self, later: Self) -> Self {
         Self {
-            steps: self.steps - earlier.steps,
-            residuals: self.residuals - earlier.residuals,
-            jacobians: self.jacobians - earlier.jacobians,
-            nonlinear_iterations: self.nonlinear_iterations - earlier.nonlinear_iterations,
-            error_failures: self.error_failures - earlier.error_failures,
-            convergence_failures: self.convergence_failures - earlier.convergence_failures,
-            linear_setups: self.linear_setups - earlier.linear_setups,
+            steps: self.steps + later.steps,
+            residuals: self.residuals + later.residuals,
+            jacobians: self.jacobians + later.jacobians,
+            nonlinear_iterations: self.nonlinear_iterations + later.nonlinear_iterations,
+            error_failures: self.error_failures + later.error_failures,
+            convergence_failures: self.convergence_failures + later.convergence_failures,
+            linear_setups: self.linear_setups + later.linear_setups,
         }
     }
     fn json(self) -> Value {
@@ -614,8 +645,9 @@ struct Observation {
     probe: Network<If97>,
     interval_s: f64,
 }
-/// E4: the same history continued after the window, with the step bound
-/// removed; its step cap applies to the continuation's own steps.
+/// H1: the continuation after the window, restarted at its forced stop
+/// ([`restart`]); its step cap applies to the window's and the
+/// continuation's steps together.
 struct Continuation {
     duration_s: f64,
     step_cap: i64,
@@ -631,9 +663,11 @@ struct Spec<'a> {
     step_cap: i64,
     cpu_cap_s: f64,
     blocked_path_limit_m3_s: f64,
-    /// IDASetMaxStep over the window; +inf leaves stock unbounded.
+    /// IDASetMaxStep over the window; +inf leaves stock unbounded. A
+    /// continuation restarts unbounded.
     max_step_s: f64,
-    /// IDASetNonlinConvCoef for the whole history; `None` keeps stock's.
+    /// IDASetNonlinConvCoef over the window; `None` keeps stock's. A
+    /// continuation restarts at stock's.
     newton_coefficient: Option<f64>,
     observation: Option<Observation>,
     continuation: Option<Continuation>,
@@ -671,9 +705,18 @@ struct Run {
     fine: Vec<Credited>,
     y: Vec<f64>,
     yp: Vec<f64>,
+    /// The window's counts plus the continuation's.
     total: Counts,
     /// Counts when the window's end was reached.
     window: Option<Counts>,
+    /// Counts of the continuation from its restart: stock restarts its
+    /// integrator counters at IDAReInit and its Jacobian count at the
+    /// continuation's first setup.
+    continuation: Option<Counts>,
+    /// Stock's last accepted step and its BDF order at the run's end, the
+    /// continuation's end for a continued run.
+    last_step_s: f64,
+    last_order: i32,
     cpu_s: f64,
     solver_cpu_s: f64,
     observation_cpu_s: f64,
@@ -681,6 +724,8 @@ struct Run {
     jacobian_wall_s: f64,
     /// The run's exact consistent-rate solve at its start (no IDACalcIC).
     initial_pair: Option<ConsistentPair>,
+    /// H1's restart at the window's forced stop, when the run continued.
+    restart_pair: Option<ConsistentPair>,
     failure: Option<String>,
     rtol: f64,
     max_step_s: f64,
@@ -722,13 +767,76 @@ fn frozen_rule(s: &Sample, taps: &Taps, admitted_atol: f64, blocked_limit: f64) 
     }
 }
 
+/// The integrator's error weights at a state, `1 / (rtol |y| + atol)`, the
+/// scale of the consistent start's projection guard.
+fn error_weights(y: &[f64], rtol: f64, atol: &[f64]) -> Vec<f64> {
+    y.iter()
+        .zip(atol)
+        .map(|(v, a)| 1. / (rtol * v.abs() + a))
+        .collect()
+}
+
+/// The stock-IDA settings a continuation restarts with: the window's
+/// tolerances, differential identity, order cap and nonnegative stocks.
+struct Segment<'a> {
+    rtol: f64,
+    atol: &'a [f64],
+    differential: &'a [f64],
+    max_order: usize,
+    nonnegative: &'a [usize],
+}
+
+/// H1's restart at a window's forced stop `time`, from its accepted state
+/// (`y`, `yp`): the exact consistent start there (the algebraic projection
+/// under its guard, the correction's WRMS at most 1 with the integrator's
+/// error weights at the state, then the exact rate solve to the declared
+/// row bound), then stock IDAReInit at that pair with stock's Newton
+/// coefficient set before its first step, no step cap, the segment's order
+/// cap and nonnegative stocks, and a stop at `end_s`. IDAReInit keeps the
+/// tolerances and differential identity and restarts stock's counters.
+/// `consistent` reaches the residual the start is solved on inside the
+/// integrated system. On success `y` and `yp` hold the restart pair; on a
+/// refusal they are unchanged and so is the history unless IDAReInit ran.
+fn restart<S: System, C: ConsistentSystem>(
+    ida: &mut Ida<S>,
+    consistent: impl Fn(&mut S) -> &mut C,
+    time: f64,
+    y: &mut [f64],
+    yp: &mut [f64],
+    segment: &Segment<'_>,
+    end_s: f64,
+) -> Result<ConsistentPair, String> {
+    let weights = error_weights(y, segment.rtol, segment.atol);
+    let mut projected = y.to_vec();
+    let (rates, pair) = consistent_start(
+        consistent(ida.system_mut()),
+        time,
+        &mut projected,
+        segment.differential,
+        &weights,
+        CONSISTENT_ROW_BOUND,
+        2,
+    )
+    .map_err(|e| format!("{DECLARED_RESTART} at t={time}: {e:?}"))?;
+    ida.reinitialize(time, &projected, &rates)?;
+    ida.set_nonlinear_convergence_coefficient(STOCK_NEWTON_COEFFICIENT)?;
+    ida.set_max_step(f64::INFINITY)?;
+    ida.set_max_order(segment.max_order)?;
+    ida.constrain_nonnegative(segment.nonnegative)?;
+    ida.stop_at(end_s)?;
+    y.copy_from_slice(&projected);
+    yp.copy_from_slice(&rates);
+    Ok(pair)
+}
+
 /// Advance one declared run from a prepared, settled or event-changed state.
 /// Its start projects the algebraic coordinates onto the constraints within
 /// the run's own error weights (a bitwise no-op on an exact state) and then
 /// solves the exact consistent rates, at t = 0 and every event alike;
 /// IDACalcIC is never called. The window ends at a forced stop; a declared
-/// continuation then removes the step bound and continues the same history
-/// (no reinitialization, no new start) to its own end.
+/// continuation then restarts there by the same exact consistent start
+/// ([`restart`], H1), with stock IDA reinitialized at no step cap and stock's
+/// Newton coefficient, and runs to its own end.
 fn advance_run(
     mut network: Network<If97>,
     taps: &Taps,
@@ -753,11 +861,7 @@ fn advance_run(
     } = spec;
     let started = cpu_s();
     let mut y = y0.to_vec();
-    let weights: Vec<f64> = y0
-        .iter()
-        .zip(atol)
-        .map(|(v, a)| 1. / (rtol * v.abs() + a))
-        .collect();
+    let weights = error_weights(y0, rtol, atol);
     let (mut yp, initial_pair, mut failure) = match consistent_start(
         &mut network,
         0.,
@@ -826,8 +930,11 @@ fn advance_run(
         samples.push(s);
     }
     let mut window: Option<Counts> = None;
+    let mut restart_pair = None;
     let mut k = 1;
     while failure.is_none() {
+        // Past the window the history is the continuation's, restarted at
+        // the window's end (a window without one ends the run there).
         let in_window = window.is_none();
         // Output k of the grid from t = 0; each phase's last output is its
         // end, reached exactly.
@@ -843,22 +950,27 @@ fn advance_run(
                 let d = cpu_s();
                 let mut s = sample(&mut ida.system_mut().inner.network, taps, t, &y, &yp);
                 diagnostic_cpu += cpu_s() - d;
-                s.steps = stats.steps;
+                // The run's steps: the window's, then the continuation's
+                // counted from its restart.
+                let run_steps = window.map_or(0, |w| w.steps) + stats.steps;
+                s.steps = run_steps;
                 s.last_step = stats.last_step;
                 if in_window && clock.is_some() {
                     fine.push(s.credited());
                 }
-                let (counted, cap, phase) = match window {
-                    None => (stats.steps, step_cap, "run"),
-                    Some(w) => (
-                        stats.steps - w.steps,
+                let (cap, phase) = if in_window {
+                    (step_cap, "run")
+                } else {
+                    (
                         continuation.as_ref().map_or(i64::MAX, |c| c.step_cap),
                         "recovery",
-                    ),
+                    )
                 };
                 failure = frozen_rule(&s, taps, admitted_atol, blocked_path_limit_m3_s)
                     .or_else(|| {
-                        (counted > cap).then(|| format!("{phase} cap reached: {counted} steps"))
+                        (run_steps > cap).then(|| {
+                            format!("{phase} cap reached: {run_steps} steps from the run's start")
+                        })
                     })
                     .or_else(|| {
                         (cpu_s() - started > cpu_cap_s)
@@ -873,10 +985,26 @@ fn advance_run(
                     if continuation.is_none() {
                         break;
                     }
-                    // E4: the cap lifts at the window's end and the same
-                    // history continues to the continuation's end.
-                    if let Err(e) = ida.remove_max_step().and_then(|()| ida.stop_at(end_s)) {
-                        failure = Some(format!("window end at t={t}: {e}"));
+                    // H1: the cap and the tightened coefficient end with the
+                    // window; the run restarts from its accepted state there.
+                    let segment = Segment {
+                        rtol,
+                        atol,
+                        differential: ids,
+                        max_order,
+                        nonnegative: &stocks,
+                    };
+                    match restart(
+                        &mut ida,
+                        |s| &mut s.inner.network,
+                        t,
+                        &mut y,
+                        &mut yp,
+                        &segment,
+                        end_s,
+                    ) {
+                        Ok(pair) => restart_pair = Some(pair),
+                        Err(e) => failure = Some(format!("window-end restart: {e}")),
                     }
                 } else if (!in_window && t >= end_s) || stop(&samples) {
                     break;
@@ -905,19 +1033,33 @@ fn advance_run(
     let stats = ida.stats().expect("stats");
     let cpu = cpu_s() - started;
     let network = &ida.system().inner.network;
+    // Stock restarted its counters at the restart, so the continuation's are
+    // read whole and added to the window's. Without a restart (none
+    // declared, or refused before a continuation step) the window's counts
+    // are the run's.
+    let last = Counts::of(&stats);
+    let (continued, total) = match (window, restart_pair.is_some()) {
+        (Some(w), true) => (Some(last), w.plus(last)),
+        (Some(w), false) => (None, w),
+        (None, _) => (None, last),
+    };
     Run {
         samples,
         fine,
         y,
         yp,
-        total: Counts::of(&stats),
+        total,
         window,
+        continuation: continued,
+        last_step_s: stats.last_step,
+        last_order: stats.last_order,
         cpu_s: cpu,
         solver_cpu_s: cpu - diagnostic_cpu - observation_cpu,
         observation_cpu_s: observation_cpu,
         evaluation_wall_s: network.counters.evaluation_wall_s,
         jacobian_wall_s: network.counters.jacobian_wall_s,
         initial_pair,
+        restart_pair,
         failure,
         rtol,
         max_step_s,
@@ -955,10 +1097,12 @@ fn run_json(run: &Run) -> Value {
         .map(|s| s.energy_identity_w.abs() / (1. + s.energy_identity_terms_w))
         .fold(0., f64::max);
     let continued = run.end_s > run.duration_s;
-    json!({"configuration":{"rtol":run.rtol,"max_step_s":run.max_step_s.is_finite().then_some(run.max_step_s),"newton_coefficient":run.newton_coefficient.unwrap_or(STOCK_NEWTON_COEFFICIENT),"window_s":run.duration_s,"end_s":run.end_s},
-        "initial_pair":run.initial_pair,"pzr":pzr,
+    let continuation = continued.then(|| json!({"from_s":run.duration_s,"restart":DECLARED_RESTART,"max_step_s":null,"newton_coefficient":STOCK_NEWTON_COEFFICIENT}));
+    json!({"configuration":{"rtol":run.rtol,"max_step_s":run.max_step_s.is_finite().then_some(run.max_step_s),"newton_coefficient":run.newton_coefficient.unwrap_or(STOCK_NEWTON_COEFFICIENT),"window_s":run.duration_s,"end_s":run.end_s,"continuation":continuation},
+        "initial_pair":run.initial_pair,"restart_pair":run.restart_pair,"pzr":pzr,
         "steps":run.total.steps,"residuals":run.total.residuals,"jacobians":run.total.jacobians,"error_failures":run.total.error_failures,"convergence_failures":run.total.convergence_failures,
-        "counts":run.total.json(),"window_counts":run.window.map(Counts::json),"recovery_counts":run.window.filter(|_| continued).map(|w| run.total.since(w).json()),
+        "counts":run.total.json(),"window_counts":run.window.map(Counts::json),"continuation_counts":run.continuation.map(Counts::json),
+        "last_step_s":run.last_step_s,"last_order":run.last_order,
         "observations":run.fine.len(),"cpu_s":run.cpu_s,"solver_cpu_s":run.solver_cpu_s,"observation_cpu_s":run.observation_cpu_s,"evaluation_wall_s":run.evaluation_wall_s,"jacobian_wall_s":run.jacobian_wall_s,
         "steps_per_simulated_s":run.total.steps as f64/reached,"solver_cpu_s_per_simulated_s":run.solver_cpu_s/reached,
         "max_identity_relative":identity,"reached_s":reached,"failure":run.failure})
@@ -1146,9 +1290,39 @@ fn convergence_ratio(run_r1: &Value, r1_r2: &Value) -> Value {
     }
     Value::Object(out)
 }
-/// E3's cap-cycle check: the RMS over the window of each credited output's
-/// own content above the credited band, x - lowpass(x), in core DP, both
-/// loop flows and roof pressure, may not exceed `ratio_max` times R1's.
+/// The cap-cycle check's outputs, in receipt order.
+const CAP_CYCLE_OUTPUTS: [&str; 4] = ["core_dp_pa", "loop_a_kg_s", "loop_b_kg_s", "pzr_roof_pa"];
+/// H2's floors of the cap-cycle check, in [`CAP_CYCLE_OUTPUTS`] order:
+/// `fraction` of each output's credited budget, the core-DP and loop-flow
+/// budgets and, for the roof, its sample-noise budget.
+fn cap_cycle_floors(budgets: &Budgets, fraction: f64) -> [f64; 4] {
+    [
+        budgets.core_differential_pressure_pa,
+        budgets.loop_flow_kg_s,
+        budgets.loop_flow_kg_s,
+        budgets.pzr_roof_pressure_sample_noise_pa,
+    ]
+    .map(|budget| fraction * budget)
+}
+/// A credited series' own content above the credited band, x - lowpass(x),
+/// taken relative to its first value: the filter is linear with unit DC
+/// gain, so the content is unchanged and rounding stays small.
+fn above_band(
+    series: &[Credited],
+    pick: fn(&Credited) -> f64,
+    cutoff_hz: f64,
+    dt: f64,
+) -> Vec<f64> {
+    let x: Vec<f64> = series.iter().map(|c| pick(c) - pick(&series[0])).collect();
+    let low = zero_phase_lowpass(&x, cutoff_hz, dt);
+    x.iter().zip(&low).map(|(a, b)| a - b).collect()
+}
+/// E3's cap-cycle check as amended by H2: the RMS over the window of each
+/// credited output's content above the credited band ([`above_band`]), in
+/// core DP, both loop flows and roof pressure. An output passes if its RMS
+/// is at or below its `floors` entry, or at most `ratio_max` times R1's; the
+/// ratio is judged only above the floor. Each output also carries the
+/// excess spectrum ([`excess_spectrum`]), a diagnostic that judges nothing.
 fn cap_cycle(
     run: &Run,
     r1: &Run,
@@ -1156,34 +1330,41 @@ fn cap_cycle(
     dt: f64,
     cutoff_hz: f64,
     ratio_max: f64,
+    floors: [f64; 4],
 ) -> (Value, bool) {
-    let names = ["core_dp_pa", "loop_a_kg_s", "loop_b_kg_s", "pzr_roof_pa"];
-    let content = |r: &Run| -> Result<[f64; 4], String> {
+    let picks: [fn(&Credited) -> f64; 4] = [
+        |c| c.core_dp_pa,
+        |c| c.loop_kg_s[0],
+        |c| c.loop_kg_s[1],
+        |c| c.roof_pa,
+    ];
+    let content = |r: &Run| -> Result<Vec<Vec<f64>>, String> {
         let s = window_series(r, window_s, dt)?;
-        let above = |pick: &dyn Fn(&Credited) -> f64| {
-            // Relative to the first value: the filter is linear with unit DC
-            // gain, so the content is unchanged and rounding stays small.
-            let x: Vec<f64> = s.iter().map(|c| pick(c) - pick(&s[0])).collect();
-            let low = zero_phase_lowpass(&x, cutoff_hz, dt);
-            rms(&x.iter().zip(&low).map(|(a, b)| a - b).collect::<Vec<_>>())
-        };
-        Ok([
-            above(&|c| c.core_dp_pa),
-            above(&|c| c.loop_kg_s[0]),
-            above(&|c| c.loop_kg_s[1]),
-            above(&|c| c.roof_pa),
-        ])
+        Ok(picks
+            .iter()
+            .map(|pick| above_band(s, *pick, cutoff_hz, dt))
+            .collect())
     };
     match (content(run), content(r1)) {
         (Ok(a), Ok(b)) => {
-            let pass = a.iter().zip(&b).all(|(x, y)| *x <= ratio_max * *y);
-            let outputs: serde_json::Map<String, Value> = names
-                .iter()
-                .zip(a.iter().zip(&b))
-                .map(|(n, (x, y))| (n.to_string(), json!({"run_rms":x,"r1_rms":y,"ratio":x / y})))
-                .collect();
+            let mut outputs = serde_json::Map::new();
+            let mut pass = true;
+            for (i, name) in CAP_CYCLE_OUTPUTS.iter().enumerate() {
+                let (x, y, floor) = (rms(&a[i]), rms(&b[i]), floors[i]);
+                let below_floor = x <= floor;
+                let output_pass = below_floor || x <= ratio_max * y;
+                pass &= output_pass;
+                outputs.insert(
+                    name.to_string(),
+                    json!({"run_rms":x,"r1_rms":y,"ratio":x / y,"floor":floor,"judged":!below_floor,"pass":output_pass,
+                        "excess_spectrum":excess_spectrum(&a[i], &b[i], dt, cutoff_hz)}),
+                );
+            }
             (
-                json!({"cutoff_hz":cutoff_hz,"window_s":window_s,"ratio_max":ratio_max,"outputs":outputs,"pass":pass}),
+                json!({"cutoff_hz":cutoff_hz,"window_s":window_s,"ratio_max":ratio_max,
+                    "rule":"an output passes if its run RMS above the cutoff is at or below its floor (H2: the declared fraction of its credited budget, the roof's being its sample-noise budget), or at most ratio_max times R1's; judged is true where the run RMS exceeds the floor",
+                    "excess_spectrum":EXCESS_SPECTRUM_METHOD,
+                    "outputs":outputs,"pass":pass}),
                 pass,
             )
         }
@@ -1194,12 +1375,130 @@ fn cap_cycle(
     }
 }
 
-/// One declared event from its event-changed state (E2-E4): the window run
-/// (20 ms cap, tightened Newton coefficient), continued uncapped through the
-/// recovery interval; R1, the same run capped at 2.5 ms; R2, BDF2 at the
-/// second refinement's tolerances with no cap and stock's coefficient. Over
-/// the window, credited outputs must agree with both within the contract.
-#[allow(clippy::too_many_arguments)] // The event's own state plus the declared owners.
+/// The Welch segment of the excess spectrum, about 2 s (H2's diagnostic).
+const WELCH_SEGMENT_S: f64 = 2.;
+const EXCESS_SPECTRUM_METHOD: &str = "diagnostic only, never a gate: one-sided Welch power spectral densities (unit^2/Hz) of the run's and R1's above-band content x - lowpass(x), the series the check uses; Hann windows of 2 s (the whole window when shorter), 50% overlap, each segment's mean removed, by direct DFT. Over the bins strictly above the cutoff: excess_hz is the bin with the largest P_run - P_R1 (null when no bin exceeds R1) and excess_density that difference, excess_share that bin's share of the run's power above the cutoff, and run_dominant_hz the run's own largest bin";
+/// One-sided Welch power spectral density of `x`, sampled every `dt` s:
+/// periodic-Hann segments of `segment_s` (the whole series when shorter) at
+/// 50% overlap, each segment's mean removed, by direct DFT on exact
+/// twiddles. Returns the density per bin k at k / (n dt) Hz (the unit
+/// squared per Hz; its sum times the bin spacing is the series' variance),
+/// the bin spacing and the number of segments.
+fn welch(x: &[f64], dt: f64, segment_s: f64) -> (Vec<f64>, f64, usize) {
+    let n = ((segment_s / dt).round() as usize).min(x.len());
+    assert!(n >= 2, "a Welch segment needs two observations");
+    let window: Vec<f64> = (0..n)
+        .map(|i| 0.5 - 0.5 * (2. * PI * i as f64 / n as f64).cos())
+        .collect();
+    let (sin, cos): (Vec<f64>, Vec<f64>) = (0..n)
+        .map(|j| (2. * PI * j as f64 / n as f64).sin_cos())
+        .unzip();
+    let mut density = vec![0.; n / 2 + 1];
+    let mut segments = 0;
+    for start in (0..=x.len() - n).step_by((n / 2).max(1)) {
+        let segment = &x[start..start + n];
+        let m = mean(segment);
+        let tapered: Vec<f64> = segment
+            .iter()
+            .zip(&window)
+            .map(|(v, w)| (v - m) * w)
+            .collect();
+        for (k, d) in density.iter_mut().enumerate() {
+            let (mut re, mut im, mut j) = (0., 0., 0);
+            for v in &tapered {
+                re += v * cos[j];
+                im -= v * sin[j];
+                j += k;
+                if j >= n {
+                    j -= n;
+                }
+            }
+            *d += re * re + im * im;
+        }
+        segments += 1;
+    }
+    let scale = dt / (window.iter().map(|w| w * w).sum::<f64>() * segments as f64);
+    for (k, d) in density.iter_mut().enumerate() {
+        // One-sided: every bin but DC and an even segment's Nyquist bin
+        // carries its negative-frequency twin.
+        *d *= if k == 0 || 2 * k == n {
+            scale
+        } else {
+            2. * scale
+        };
+    }
+    (density, 1. / (n as f64 * dt), segments)
+}
+/// H2's diagnostic on one output, never a gate: over the Welch bins strictly
+/// above `cutoff_hz` of the run's and R1's above-band content, the bin of
+/// the largest excess P_run - P_R1 (its frequency only where it is an
+/// excess), that bin's share of the run's power above the cutoff, and the
+/// run's own dominant frequency.
+fn excess_spectrum(run: &[f64], r1: &[f64], dt: f64, cutoff_hz: f64) -> Value {
+    let (p, df, segments) = welch(run, dt, WELCH_SEGMENT_S);
+    let (q, _, _) = welch(r1, dt, WELCH_SEGMENT_S);
+    let above: Vec<usize> = (0..p.len())
+        .filter(|k| *k as f64 * df > cutoff_hz)
+        .collect();
+    let power: f64 = above.iter().map(|k| p[*k]).sum();
+    let largest =
+        |f: &dyn Fn(usize) -> f64| above.iter().copied().max_by(|a, b| f(*a).total_cmp(&f(*b)));
+    let excess = largest(&|k| p[k] - q[k]).filter(|k| p[*k] > q[*k]);
+    let dominant = largest(&|k| p[k]).filter(|_| power > 0.);
+    json!({"excess_hz":excess.map(|k| k as f64 * df),"excess_density":excess.map(|k| p[k] - q[k]),"excess_share":excess.map(|k| p[k] / power),
+        "run_dominant_hz":dominant.map(|k| k as f64 * df),"run_power_above_cutoff":power * df,
+        "resolution_hz":df,"segment_s":1. / df,"segments":segments})
+}
+
+/// H1's recovery gate on an event run continued past its window, judged on
+/// cost: the run reached the window plus the continuation without failure,
+/// the continuation had at most the declared Newton convergence failures,
+/// and the window's and the continuation's steps together, at the projected
+/// full-unit step, stay within E2's budget over both spans. The receipt
+/// gives the continuation's step rate over the interval it actually reached,
+/// its last step and order, and the restart's projection and residual.
+fn recovery(gates: &Gates, run: &Run, window_s: f64, post_window_s: f64) -> (Value, bool) {
+    let span = window_s + post_window_s;
+    let reached = run.samples.last().map_or(0., |s| s.t);
+    let completed = run.failure.is_none() && reached >= span;
+    let continuation = run.continuation;
+    let window_steps = run.window.map(|w| w.steps);
+    let steps = window_steps.zip(continuation).map(|(w, c)| w + c.steps);
+    let projected = steps.map(|n| n as f64 * gates.projected_full_unit_step_s / span);
+    let budget = gates.event_window.budget_cpu_s_per_s;
+    let failures = continuation.map(|c| c.convergence_failures);
+    let max_failures = i64::from(gates.recovery.max_convergence_failures);
+    let interval = continuation.map(|_| reached - window_s);
+    let rate = continuation
+        .zip(interval)
+        .filter(|(_, i)| *i > 0.)
+        .map(|(c, i)| c.steps as f64 / i);
+    let pass = completed
+        && failures.is_some_and(|f| f <= max_failures)
+        && projected.is_some_and(|p| p <= budget);
+    let restart = run.restart_pair.as_ref().map(|p| {
+        json!({"at_s":window_s,"projection_wrms":p.projection.as_ref().map(|q| q.correction_wrms),"projection_passes":p.projection.as_ref().map(|q| q.passes),"largest_scaled_residual":p.residual.value,"bound":p.bound})
+    });
+    (
+        json!({"post_window_s":post_window_s,"span_s":span,"restart":DECLARED_RESTART,"restart_pair":restart,
+            "reached_s":reached,"completed":completed,"interval_reached_s":interval,
+            "counts":continuation.map(Counts::json),"steps_per_s":rate,
+            "last_step_s":continuation.map(|_| run.last_step_s),"last_order":continuation.map(|_| run.last_order),
+            "window_steps":window_steps,"continuation_steps":continuation.map(|c| c.steps),"steps":steps,
+            "allowed_steps":gates.budget_steps(span),"run_cap_steps":gates.cap_steps(span),
+            "projected_full_unit_step_s":gates.projected_full_unit_step_s,"projected_cpu_s_per_s":projected,"budget_cpu_s_per_s":budget,
+            "convergence_failures":failures,"max_convergence_failures":max_failures,"pass":pass}),
+        pass,
+    )
+}
+
+/// One declared event from its event-changed state: the window run (E2:
+/// 20 ms cap, tightened Newton coefficient), restarted at the window's end
+/// by the exact consistent start and continued at stock settings through
+/// the recovery interval (H1); R1, the same window capped at 2.5 ms; R2,
+/// BDF2 at the second refinement's tolerances with no cap and stock's
+/// coefficient (E3). Over the window, credited outputs must agree with both
+/// within the contract, and the cap-cycle check holds above its floor (H2).
 fn event_case(
     event: &dyn Fn() -> (Network<If97>, Vec<f64>, Vec<f64>),
     taps: &Taps,
@@ -1208,7 +1507,6 @@ fn event_case(
     budgets: &Budgets,
     window_s: f64,
     post_window_s: f64,
-    quiet_rate: Option<f64>,
 ) -> (Value, bool, [Run; 3]) {
     let (ew, er) = (&gates.event_window, &gates.event_reference);
     let (dt, output, cutoff) = (
@@ -1218,21 +1516,17 @@ fn event_case(
     );
     let rtol = gates.relative_tolerance;
     let tight = STOCK_NEWTON_COEFFICIENT * ew.newton_coefficient_factor;
-    let allowed = gates.window_steps(window_s);
-    let window_cap = (gates.run_cap_factor * allowed) as i64;
-    let recovery_limit = quiet_rate.map(|r| gates.recovery.max_step_rate_factor * r);
-    let recovery_cap = recovery_limit.map_or(i64::MAX, |r| {
-        (gates.run_cap_factor * r * post_window_s) as i64
-    });
+    let allowed = gates.budget_steps(window_s);
+    let window_cap = gates.cap_steps(window_s);
     let never = |_: &[Sample]| false;
-    // The window run (E2), continued uncapped (E4).
+    // The window run (E2), restarted at its end and continued (H1).
     let (network, y, ids) = event();
     let mut s = spec(gates, window_s, rtol, atol, window_cap);
     s.max_step_s = ew.max_step_s;
     s.newton_coefficient = Some(tight);
     s.continuation = Some(Continuation {
         duration_s: post_window_s,
-        step_cap: recovery_cap,
+        step_cap: gates.cap_steps(window_s + post_window_s),
     });
     let run = advance_run(network, taps, &y, &ids, observed(s, event().0, dt), &never);
     // R1: the same run with the 2.5 ms cap over the window.
@@ -1251,25 +1545,22 @@ fn event_case(
     let vs_r2 = compare(&run, &r2, window_s, dt, output, cutoff);
     let r1_vs_r2 = compare(&r1, &r2, window_s, dt, output, cutoff);
     let (within_r1, within_r2) = (within(&vs_r1, budgets), within(&vs_r2, budgets));
-    let (cap_cycle, cap_cycle_pass) = cap_cycle(
+    let (mut cap_cycle, cap_cycle_pass) = cap_cycle(
         &run,
         &r1,
         window_s,
         dt,
         cutoff,
         er.cap_cycle_uncredited_rms_ratio_max,
+        cap_cycle_floors(budgets, er.cap_cycle_floor_budget_fraction),
     );
+    cap_cycle["floor_budget_fraction"] = json!(er.cap_cycle_floor_budget_fraction);
     // E2: the window's steps at the projected full-unit step.
     let window_steps = run.window.map(|c| c.steps);
     let projected = window_steps.map(|n| n as f64 * gates.projected_full_unit_step_s / window_s);
     let budget_pass = projected.is_some_and(|p| p <= ew.budget_cpu_s_per_s);
-    // E4: the continuation's step rate against the quiet-hold rate.
-    let reached = run.samples.last().map_or(0., |s| s.t);
-    let recovery = run.window.map(|w| run.total.since(w));
-    let recovery_rate = recovery.map(|c| c.steps as f64 / post_window_s);
-    let recovery_pass = run.failure.is_none()
-        && reached >= window_s + post_window_s
-        && matches!((recovery_rate, recovery_limit), (Some(r), Some(l)) if r <= l);
+    // H1: the window and its continuation on cost.
+    let (recovery, recovery_pass) = recovery(gates, &run, window_s, post_window_s);
     let pass = run.failure.is_none()
         && r1.failure.is_none()
         && r2.failure.is_none()
@@ -1280,7 +1571,7 @@ fn event_case(
         && recovery_pass;
     let receipt = json!({"window_s":window_s,"post_window_s":post_window_s,
         "configuration":{"window":{"max_step_s":ew.max_step_s,"newton_coefficient":tight,"stock_newton_coefficient":STOCK_NEWTON_COEFFICIENT,"newton_coefficient_factor":ew.newton_coefficient_factor},
-            "recovery":{"max_step_s":null,"newton_coefficient":tight,"continuation":"one IDA history: the bound is removed at the window's forced stop, with no reinitialization and no new consistent start; stock reads the Newton coefficient only before its first step"},
+            "recovery":{"restart":DECLARED_RESTART,"max_step_s":null,"newton_coefficient":STOCK_NEWTON_COEFFICIENT,"max_order":gates.max_order,"continuation":format!("restarted at the window's forced stop from its accepted state: the exact consistent start there (the algebraic projection, its correction's WRMS at most 1 with the integrator's error weights at the state, then the exact rate solve to {CONSISTENT_ROW_BOUND:e}), then stock IDAReInit at that pair with no step cap and stock's Newton coefficient set before its first step, and the window's tolerances, differential identity, order cap and nonnegative stocks. Stock restarts its counters there: the continuation is counted from the restart and the run's counts add the window's")},
             "r1":{"rtol":rtol,"atol_factor":1.,"max_step_s":er.max_step_s,"newton_coefficient":tight,"max_order":gates.max_order},
             "r2":{"rtol":rtol*f,"atol_factor":f,"max_step_s":null,"newton_coefficient":STOCK_NEWTON_COEFFICIENT,"max_order":gates.max_order}},
         "run":run_json(&run),"r1_capped":run_json(&r1),"r2_refined":run_json(&r2),
@@ -1288,7 +1579,7 @@ fn event_case(
         "versus_r1":vs_r1,"versus_r2":vs_r2,"r1_versus_r2":r1_vs_r2,"within_r1":within_r1,"within_r2":within_r2,
         "convergence_ratio":convergence_ratio(&vs_r1,&r1_vs_r2),
         "cap_cycle":cap_cycle,
-        "recovery":{"post_window_s":post_window_s,"counts":recovery.map(Counts::json),"steps_per_s":recovery_rate,"quiet_hold_steps_per_s":quiet_rate,"max_step_rate_factor":gates.recovery.max_step_rate_factor,"max_steps_per_s":recovery_limit,"run_cap_steps":recovery_cap,"reached_s":reached,"pass":recovery_pass},
+        "recovery":recovery,
         "pass":pass});
     (receipt, pass, [run, r1, r2])
 }
@@ -1403,7 +1694,7 @@ fn s1_hydraulics_admission() {
         .expect("packet hash");
     let dt = gates.comparison.observation_s;
     let cutoff = budgets.uncredited_above_hz;
-    let mut receipt = json!({"kind":"s1-hydraulics-admission","declaration":"S1 re-declared under owner decision request 2 (E0-E4) before the single re-run","packet":packet_path,"packet_sha256":packet_sha256,"app_commit":git(&["rev-parse","HEAD"]),"app_worktree_dirty":!git(&["status","--porcelain"]).is_empty(),"wiki":wiki,"wiki_commit":git(&["-C",wiki.as_str(),"rev-parse","HEAD"]),"wiki_worktree_dirty":!git(&["-C",wiki.as_str(),"status","--porcelain"]).is_empty(),"gates":format!("{gates:?}"),"budgets":format!("{budgets:?}"),"load_average_start":load_start,
+    let mut receipt = json!({"kind":"s1-hydraulics-admission","declaration":"S1 re-declared under owner decision request 2 (E0-E3) and amended under owner decision request 3 (H1 recovery restart and cost gate, replacing E4; H2 cap-cycle floor) before run 5","packet":packet_path,"packet_sha256":packet_sha256,"app_commit":git(&["rev-parse","HEAD"]),"app_worktree_dirty":!git(&["status","--porcelain"]).is_empty(),"wiki":wiki,"wiki_commit":git(&["-C",wiki.as_str(),"rev-parse","HEAD"]),"wiki_worktree_dirty":!git(&["-C",wiki.as_str(),"status","--porcelain"]).is_empty(),"gates":format!("{gates:?}"),"budgets":format!("{budgets:?}"),"load_average_start":load_start,
         "observation":{"interval_s":dt,"method":"one stock IDA root function g = t - next per observation time inside each output interval, located on IDA's own interpolant; the same history continues, so no step, order, Newton iteration or Jacobian changes; observed states are evaluated on a probe network configured as the run's"},
         "comparison":{"filter":DECLARED_FILTER,"cutoff_hz":cutoff,"design":"two bilinear biquads prewarped at the cutoff (Q = 1/(2 cos(pi/8)) and 1/(2 cos(3 pi/8))), forward then backward (|H|^2, -6 dB at the cutoff), each pass started in steady state over odd reflection padding","padding_s":padding_s(cutoff),
             "metrics":{"pzr_roof_bias_pa":"mean |filtered difference| over every observation of the compared interval","pzr_roof_sample_noise_pa":"population standard deviation of the filtered roof error's change between successive output-interval samples","pzr_level_m, core_dp_pa, loop_flow_kg_s":"max |filtered difference| over every observation (both loops for flow)"}}});
@@ -1743,7 +2034,8 @@ fn s1_hydraulics_admission() {
     let measured = gates.hold.duration_s - gates.hold.measured_from_s;
     let hold_rate_measured =
         steps_between(&hold, gates.hold.measured_from_s, gates.hold.duration_s) / measured;
-    // The quiet-hold rate exists only for a hold that reached its end.
+    // The quiet-hold rate, for the joint cost check, exists only for a hold
+    // that reached its end.
     let quiet_rate = hold.failure.is_none().then_some(hold_rate_measured);
     let hold_residuals = hold.total.residuals as f64 / hold.total.steps.max(1) as f64;
     let hold_diff = compare(
@@ -1761,7 +2053,7 @@ fn s1_hydraulics_admission() {
         && within(&hold_diff, &budgets);
     ok &= hold_pass;
     cases.insert("hold".into(), json!({"run":run_json(&hold),"reference":run_json(&hold_ref),"reference_rtol":rtol*factor,"reference_atol_factor":factor,"steps_per_s_measured":hold_rate_measured,"measured_from_s":gates.hold.measured_from_s,"max_steps_per_s":gates.hold.max_steps_per_second,"run_cap_steps":hold_cap,"residuals_per_step":hold_residuals,"max_residuals_per_step":gates.hold.max_residuals_per_step,"reference_difference":hold_diff,"pass":hold_pass}));
-    // RCP supply loss and seizure (E2-E4).
+    // RCP supply loss and seizure (E2, E3, H1, H2).
     let (trip, trip_pass, trip_runs) = event_case(
         &supplied,
         &taps,
@@ -1770,7 +2062,6 @@ fn s1_hydraulics_admission() {
         &budgets,
         gates.supply_loss.duration_s,
         gates.recovery.post_window_s,
-        quiet_rate,
     );
     ok &= trip_pass;
     cases.insert("rcp_supply_loss".into(), trip);
@@ -1782,7 +2073,6 @@ fn s1_hydraulics_admission() {
         &budgets,
         gates.seizure.duration_s,
         gates.recovery.post_window_s,
-        quiet_rate,
     );
     ok &= seize_pass;
     cases.insert("rcp_seizure".into(), seize);
@@ -1831,9 +2121,10 @@ fn s1_hydraulics_admission() {
 }
 
 /// Harness smoke test only, NOT S1 evidence: preparation and a few seconds
-/// of the declared RCP start, then the declared event pipeline (E0-E4) on a
-/// short window from that spin-up state, to exercise its code before the
-/// gate run. The pipeline's values here judge nothing.
+/// of the declared RCP start, then the declared event pipeline (E0-E3, H1,
+/// H2) on a short window from that spin-up state, to exercise its code
+/// before the gate run, including the window-end restart and its counts.
+/// The pipeline's values here judge nothing.
 #[test]
 #[ignore = "requires the actual packet, the wiki, maintained IF97 and stock IDA/KLU"]
 fn s1_harness_smoke() {
@@ -1902,7 +2193,7 @@ fn s1_harness_smoke() {
     );
     assert!(run.failure.is_none(), "{:?}", run.failure);
     let from = || (fresh(&packet), run.y.clone(), prepared.differential.clone());
-    let (case, _, runs) = event_case(&from, &taps, &atol, &gates, &budgets, 0.5, 0.5, None);
+    let (case, _, runs) = event_case(&from, &taps, &atol, &gates, &budgets, 0.5, 0.5);
     println!(
         "{}",
         json!({"kind":"s1-harness-smoke-event-pipeline-NOT-EVIDENCE","from_t_s":run.samples.last().map(|s|s.t),"case":case})
@@ -1912,12 +2203,54 @@ fn s1_harness_smoke() {
         assert_eq!(r.fine.len(), 251, "observations over the 0.5 s window");
     }
     assert!(case["versus_r1"]["evaluable"].as_bool() == Some(true));
-    assert!(case["recovery"]["counts"]["steps"].as_i64() > Some(0));
+    // H1: the event run restarted at the window's end by the exact
+    // consistent start and reached its continuation's end; its counts are
+    // the window's and the continuation's, which only it has.
+    let [event, r1, r2] = &runs;
+    let pair = event.restart_pair.as_ref().expect("restart pair");
+    assert!(pair.residual.value <= CONSISTENT_ROW_BOUND, "{pair:?}");
+    assert!(
+        pair.constraint_rate.value <= CONSISTENT_ROW_BOUND,
+        "{pair:?}"
+    );
+    assert!(
+        pair.projection
+            .as_ref()
+            .is_some_and(|p| p.correction_wrms <= 1.),
+        "{pair:?}"
+    );
+    let (window, continued) = (event.window.unwrap(), event.continuation.unwrap());
+    assert!(continued.steps > 0);
+    assert_eq!(
+        event.total,
+        window.plus(continued),
+        "the run's counts are the window's plus the continuation's"
+    );
+    assert!(r1.continuation.is_none() && r2.continuation.is_none());
+    assert_eq!(Some(r1.total), r1.window);
+    assert_eq!(case["recovery"]["reached_s"].as_f64(), Some(1.));
+    assert_eq!(
+        case["recovery"]["steps"].as_i64(),
+        Some(window.steps + continued.steps)
+    );
+    // H2: every cap-cycle output reports its floor, judgement and excess
+    // spectrum.
+    for name in CAP_CYCLE_OUTPUTS {
+        let output = &case["cap_cycle"]["outputs"][name];
+        assert!(output["floor"].as_f64().is_some_and(|f| f > 0.), "{output}");
+        assert!(output["judged"].is_boolean() && output["pass"].is_boolean());
+        assert!(
+            output["excess_spectrum"]["resolution_hz"]
+                .as_f64()
+                .is_some()
+        );
+    }
 }
 
 /// Zero-time check of the declared configuration, NOT S1 evidence: the
 /// gates block parses into exactly its fields and passes the declared
-/// checks; the derived window budgets and caps are printed.
+/// checks; the derived window and recovery budgets and caps, the restart
+/// and the cap-cycle floors are printed.
 #[test]
 #[ignore = "requires the wiki"]
 fn s1_declared_gates() {
@@ -1930,13 +2263,20 @@ fn s1_declared_gates() {
     );
     gates.check(&budgets);
     let event = |window: f64| {
-        let allowed = gates.window_steps(window);
-        json!({"window_s":window,"allowed_steps":allowed,"run_cap_steps":(gates.run_cap_factor*allowed) as i64,"observations":(window/gates.comparison.observation_s).round()+1.})
+        let span = window + gates.recovery.post_window_s;
+        json!({"window_s":window,"allowed_steps":gates.budget_steps(window),"run_cap_steps":gates.cap_steps(window),"observations":(window/gates.comparison.observation_s).round()+1.,
+            "recovery":{"span_s":span,"allowed_steps":gates.budget_steps(span),"run_cap_steps":gates.cap_steps(span)}})
     };
+    let floors = cap_cycle_floors(
+        &budgets,
+        gates.event_reference.cap_cycle_floor_budget_fraction,
+    );
     println!(
         "{}",
         json!({"kind":"s1-declared-gates-NOT-EVIDENCE","wiki":wiki,"cutoff_hz":budgets.uncredited_above_hz,"padding_s":padding_s(budgets.uncredited_above_hz),
             "window_newton_coefficient":STOCK_NEWTON_COEFFICIENT*gates.event_window.newton_coefficient_factor,
+            "recovery":{"restart":gates.recovery.restart,"newton_coefficient":STOCK_NEWTON_COEFFICIENT,"max_convergence_failures":gates.recovery.max_convergence_failures},
+            "cap_cycle_floors":CAP_CYCLE_OUTPUTS.iter().zip(floors).map(|(n, f)| (n.to_string(), json!(f))).collect::<serde_json::Map<_, _>>(),
             "r2_rtol":gates.relative_tolerance*gates.event_reference.second_refinement_tolerance_factor,
             "seizure":event(gates.seizure.duration_s),"supply_loss":event(gates.supply_loss.duration_s),
             "hold_run_cap_steps":(gates.run_cap_factor*gates.hold.max_steps_per_second*gates.hold.duration_s) as i64})
@@ -2487,7 +2827,9 @@ fn the_cap_cycle_check_bounds_content_above_the_credited_band() {
         )
     };
     let r1 = make(20.);
-    let (report, pass) = cap_cycle(&make(30.), &r1, window, dt, 2., 2.);
+    // The declared floors: 5 Pa, 4 kg/s, 4 kg/s and 20 Pa.
+    let floors = cap_cycle_floors(&budgets(), 0.1);
+    let (report, pass) = cap_cycle(&make(30.), &r1, window, dt, 2., 2., floors);
     assert!(pass, "{report}");
     let core = &report["outputs"]["core_dp_pa"];
     assert!(
@@ -2498,12 +2840,459 @@ fn the_cap_cycle_check_bounds_content_above_the_credited_band() {
         (core["run_rms"].as_f64().unwrap() - 30. / 2_f64.sqrt()).abs() < 0.01,
         "{report}"
     );
-    assert!((report["outputs"]["pzr_roof_pa"]["ratio"].as_f64().unwrap() - 1.).abs() < 1e-9);
+    assert_eq!(core["floor"].as_f64(), Some(5.));
+    assert_eq!(core["judged"], json!(true));
+    let roof = &report["outputs"]["pzr_roof_pa"];
+    assert!((roof["ratio"].as_f64().unwrap() - 1.).abs() < 1e-9);
+    assert_eq!(
+        (&roof["floor"], &roof["judged"]),
+        (&json!(20.), &json!(true))
+    );
+    // Loop A's 0.35 kg/s lies below its 4 kg/s floor and is not judged.
+    let loop_a = &report["outputs"]["loop_a_kg_s"];
+    assert_eq!(
+        (&loop_a["judged"], &loop_a["pass"]),
+        (&json!(false), &json!(true))
+    );
     // An output without content in either run passes with no ratio.
     assert!(
         report["outputs"]["loop_b_kg_s"]["ratio"].is_null(),
         "{report}"
     );
-    let (report, pass) = cap_cycle(&make(50.), &r1, window, dt, 2., 2.);
+    let (report, pass) = cap_cycle(&make(50.), &r1, window, dt, 2., 2., floors);
     assert!(!pass, "{report}");
+    let core = &report["outputs"]["core_dp_pa"];
+    assert_eq!(
+        (&core["judged"], &core["pass"]),
+        (&json!(true), &json!(false))
+    );
+    // The diagnostic names the excess's frequency; identical content has
+    // none, and an output without content has no dominant frequency.
+    let spectrum = |name: &str| &report["outputs"][name]["excess_spectrum"];
+    let df = spectrum("core_dp_pa")["resolution_hz"].as_f64().unwrap();
+    assert!((spectrum("core_dp_pa")["excess_hz"].as_f64().unwrap() - 6.5).abs() <= df);
+    assert!(spectrum("pzr_roof_pa")["excess_hz"].is_null(), "{report}");
+    assert!((spectrum("pzr_roof_pa")["run_dominant_hz"].as_f64().unwrap() - 8.5).abs() <= df);
+    assert!(
+        spectrum("loop_b_kg_s")["run_dominant_hz"].is_null(),
+        "{report}"
+    );
+}
+
+#[test]
+fn the_cap_cycle_floor_passes_content_below_it_and_judges_the_rest_by_the_ratio() {
+    let (dt, window, n) = (0.002, 10., 5001);
+    let floors = cap_cycle_floors(&budgets(), 0.1);
+    assert_eq!(floors, [5., 4., 4., 20.]);
+    // One 6.5 Hz component of amplitude a per output (core DP, loop A,
+    // loop B, roof): a content RMS of a / sqrt 2.
+    let make = |a: [f64; 4]| {
+        synthetic(
+            (0..n)
+                .map(|j| {
+                    let t = j as f64 * dt;
+                    let s = (2. * PI * 6.5 * t).sin();
+                    Credited {
+                        t,
+                        roof_pa: 15.5e6 + a[3] * s,
+                        level_m: 6.,
+                        core_dp_pa: 1.2e5 + a[0] * s,
+                        loop_kg_s: [4600. + a[1] * s, 4610. + a[2] * s],
+                    }
+                })
+                .collect(),
+        )
+    };
+    let judge = |run: [f64; 4], r1: [f64; 4], floors: [f64; 4]| {
+        cap_cycle(&make(run), &make(r1), window, dt, 2., 2., floors)
+    };
+    // Below every floor (4.2 Pa, 3.5 kg/s, 3.5 kg/s, 17.7 Pa) each output
+    // passes unjudged, whatever its ratio (here 10).
+    let small = [6., 5., 5., 25.];
+    let (report, pass) = judge(small, small.map(|a| a / 10.), floors);
+    assert!(pass, "{report}");
+    for name in CAP_CYCLE_OUTPUTS {
+        let output = &report["outputs"][name];
+        assert_eq!(
+            (&output["judged"], &output["pass"]),
+            (&json!(false), &json!(true)),
+            "{report}"
+        );
+        assert!((output["ratio"].as_f64().unwrap() - 10.).abs() < 1e-6);
+    }
+    // Above its floor each output is judged by the ratio: 2.5 fails it and
+    // the whole check, 1.5 passes; the others stay unjudged.
+    let large = [10., 8., 8., 40.];
+    for (i, name) in CAP_CYCLE_OUTPUTS.iter().enumerate() {
+        for (ratio, expected) in [(2.5, false), (1.5, true)] {
+            let (mut run, mut r1) = (small, small);
+            run[i] = large[i];
+            r1[i] = large[i] / ratio;
+            let (report, pass) = judge(run, r1, floors);
+            assert_eq!(pass, expected, "{name} at {ratio}: {report}");
+            let output = &report["outputs"][name];
+            assert_eq!(
+                (&output["judged"], &output["pass"]),
+                (&json!(true), &json!(expected)),
+                "{report}"
+            );
+            for other in CAP_CYCLE_OUTPUTS.iter().filter(|o| *o != name) {
+                assert_eq!(report["outputs"][other]["judged"], json!(false));
+            }
+        }
+    }
+    // Content exactly at its floor passes unjudged.
+    let (report, _) = judge(large, large.map(|a| a / 2.5), floors);
+    let at = CAP_CYCLE_OUTPUTS.map(|name| report["outputs"][name]["run_rms"].as_f64().unwrap());
+    let (report, pass) = judge(large, large.map(|a| a / 2.5), at);
+    assert!(pass, "{report}");
+    for name in CAP_CYCLE_OUTPUTS {
+        assert_eq!(report["outputs"][name]["judged"], json!(false));
+    }
+}
+
+#[test]
+fn the_excess_spectrum_recovers_a_tone_within_one_bin() {
+    let (dt, n) = (0.002, 5001);
+    let tone = |f: f64, a: f64| -> Vec<f64> {
+        (0..n)
+            .map(|j| a * (2. * PI * f * j as f64 * dt).sin())
+            .collect()
+    };
+    let sum = |a: &[f64], b: &[f64]| -> Vec<f64> { a.iter().zip(b).map(|(x, y)| x + y).collect() };
+    // The density over 2 s Hann segments at 50% overlap: 0.5 Hz bins, nine
+    // segments in 10 s, and its sum over the bins is the variance.
+    let (density, df, segments) = welch(&tone(6.5, 3.), dt, WELCH_SEGMENT_S);
+    assert_eq!((density.len(), segments), (501, 9));
+    assert!((df - 0.5).abs() < 1e-12, "{df}");
+    let variance = density.iter().sum::<f64>() * df;
+    assert!((variance - 4.5).abs() < 0.05, "{variance}");
+    // Both share a 6.5 Hz tone and a larger 0.7 Hz one below the cutoff;
+    // the run adds 11.3 Hz, off the bin grid.
+    let r1 = sum(&tone(6.5, 3.), &tone(0.7, 10.));
+    let run = sum(&r1, &tone(11.3, 1.));
+    let report = excess_spectrum(&run, &r1, dt, 2.);
+    let at = |k: &str| report[k].as_f64().unwrap();
+    assert!((at("excess_hz") - 11.3).abs() <= df, "{report}");
+    assert!(at("excess_density") > 0.);
+    // Only bins above the cutoff compete: the run's own dominant frequency
+    // is its 6.5 Hz tone, not the 0.7 Hz one.
+    assert!((at("run_dominant_hz") - 6.5).abs() <= df, "{report}");
+    // The added tone is a tenth of the run's power above the cutoff, spread
+    // by the Hann main lobe over its neighbouring bins.
+    let share = at("excess_share");
+    assert!(share > 0.02 && share < 0.1, "{report}");
+    assert!((at("run_power_above_cutoff") - 5.).abs() < 0.1, "{report}");
+    // Content equal to R1's has no excess, but still its dominant frequency.
+    let same = excess_spectrum(&r1, &r1, dt, 2.);
+    assert!(
+        same["excess_hz"].is_null() && same["excess_share"].is_null(),
+        "{same}"
+    );
+    assert!((same["run_dominant_hz"].as_f64().unwrap() - 6.5).abs() <= df);
+    // A window shorter than a segment is one segment of its own length.
+    let short = excess_spectrum(&run[..751], &r1[..751], dt, 2.);
+    assert_eq!(short["segments"], json!(1));
+    let coarse = short["resolution_hz"].as_f64().unwrap();
+    assert!((coarse - 1. / 1.502).abs() < 1e-12, "{short}");
+    assert!(
+        (short["excess_hz"].as_f64().unwrap() - 11.3).abs() <= coarse,
+        "{short}"
+    );
+}
+
+/// The amended `ld01-s1-gates` values (owner decision request 3) as a unit
+/// fixture, NOT their owner: the harness reads the wiki's block.
+const GATES_FIXTURE: &str = r#"{"relativeTolerance":1e-05,"stockScaledAbsolute":1e-08,"tracerScaledAbsolute":1e-08,"rotorScaledAbsolute":1e-08,"volumeFlowAbsolute_m3_s":0.001,"maxOrder":2,"referenceToleranceFactor":0.1,"outputInterval_s":0.1,"projectedFullUnitStep_s":0.008,"integratorBudget_cpu_s_per_s":0.35,"totalCpu_s":1200,"runCapFactor":2,"settling":{"maxSimulated_s":120,"maxCpu_s":300,"window_s":5,"rotorSpeedRelative":0.0001,"loopFlowRelativeChange":0.0005},"hold":{"duration_s":60,"measuredFrom_s":10,"maxStepsPerSecond":40,"maxResidualsPerStep":1.5},"supplyLoss":{"rotor":0,"duration_s":30},"seizure":{"rotor":0,"duration_s":10},"spectrum":{"fastModeHz":50,"lightDamping":0.001,"maxExcitationRatio":30},"blockedPathMaxVolumeFlow_m3_s":0.01,"eventWindow":{"maxStep_s":0.02,"newtonCoefficientFactor":0.1,"budget_cpu_s_per_s":0.5,"maxWindow_s":60,"fullUnitStepExit_s":0.01},"eventReference":{"maxStep_s":0.0025,"secondRefinementToleranceFactor":0.01,"capCycleUncreditedRmsRatioMax":2.0,"capCycleFloorBudgetFraction":0.1},"comparison":{"filter":"zero-phase 4th-order Butterworth","observation_s":0.002},"recovery":{"postWindow_s":10,"restart":"exact consistent start","maxConvergenceFailures":0}}"#;
+
+#[test]
+fn recovery_is_judged_on_the_window_and_continuation_cost() {
+    let gates: Gates = serde_json::from_str(GATES_FIXTURE).expect("fixture gates");
+    gates.check(&budgets());
+    // The withdrawn E4 rate factor is refused, not ignored.
+    let withdrawn = GATES_FIXTURE.replace(
+        r#""maxConvergenceFailures":0"#,
+        r#""maxConvergenceFailures":0,"maxStepRateFactor":2.0"#,
+    );
+    assert!(serde_json::from_str::<Gates>(&withdrawn).is_err());
+    // E2's window gates stay: 625 and 1,875 steps, capped at 1,250 and
+    // 3,750. H1 over the window and its 10 s: 1,250 and 2,500, capped at
+    // 2,500 and 5,000.
+    assert_eq!(
+        [10., 30., 20., 40.].map(|s| gates.budget_steps(s)),
+        [625., 1875., 1250., 2500.]
+    );
+    assert_eq!(
+        [10., 30., 20., 40.].map(|s| gates.cap_steps(s)),
+        [1250, 3750, 2500, 5000]
+    );
+    let continued =
+        |reached: f64, window: i64, steps: i64, newton: i64, failure: Option<&str>| Run {
+            samples: vec![Sample {
+                t: reached,
+                ..Sample::default()
+            }],
+            window: Some(Counts {
+                steps: window,
+                ..Counts::default()
+            }),
+            continuation: Some(Counts {
+                steps,
+                convergence_failures: newton,
+                ..Counts::default()
+            }),
+            failure: failure.map(str::to_string),
+            ..Run::default()
+        };
+    // Seizure (10 s + 10 s): run 4's 595 window steps leave 655 for the
+    // continuation, at exactly 0.5 CPU-s/s; one more step misses.
+    let (report, pass) = recovery(&gates, &continued(20., 595, 655, 0, None), 10., 10.);
+    assert!(pass, "{report}");
+    assert_eq!(report["steps"], json!(1250));
+    assert_eq!(report["projected_cpu_s_per_s"].as_f64(), Some(0.5));
+    assert_eq!(report["steps_per_s"].as_f64(), Some(65.5));
+    let (report, pass) = recovery(&gates, &continued(20., 595, 656, 0, None), 10., 10.);
+    assert!(!pass, "{report}");
+    // One Newton convergence failure in the continuation fails it.
+    let (report, pass) = recovery(&gates, &continued(20., 595, 100, 1, None), 10., 10.);
+    assert!(!pass, "{report}");
+    // Supply loss (30 s + 10 s): 1,508 window steps leave 992.
+    let (report, pass) = recovery(&gates, &continued(40., 1508, 992, 0, None), 30., 10.);
+    assert!(pass, "{report}");
+    let (_, pass) = recovery(&gates, &continued(40., 1508, 993, 0, None), 30., 10.);
+    assert!(!pass);
+    // A run that stopped short (run 4's supply loss: 25 continuation steps
+    // to 36.8 s, then its cap) fails, with its rate over the 6.8 s reached.
+    let (report, pass) = recovery(
+        &gates,
+        &continued(36.8, 1508, 25, 0, Some("recovery cap reached")),
+        30.,
+        10.,
+    );
+    assert!(!pass, "{report}");
+    let rate = report["steps_per_s"].as_f64().unwrap();
+    assert!((rate - 25. / 6.8).abs() < 1e-9, "{report}");
+    assert!((report["interval_reached_s"].as_f64().unwrap() - 6.8).abs() < 1e-9);
+    // Without a continuation (a refused restart) there is nothing to judge.
+    let refused = Run {
+        continuation: None,
+        failure: Some("window-end restart refused".into()),
+        ..continued(30., 1508, 0, 0, None)
+    };
+    let (report, pass) = recovery(&gates, &refused, 30., 10.);
+    assert!(!pass && report["steps"].is_null(), "{report}");
+}
+
+/// y0' = -y0 (differential) and 0 = y1 + y1^3 - y0 (algebraic, nonlinear),
+/// with its exact pencil: a stock-IDA fixture for H1's restart.
+struct Cubic;
+impl System for Cubic {
+    fn dimension(&self) -> usize {
+        2
+    }
+    fn nonzeros(&self) -> usize {
+        3
+    }
+    fn root_count(&self) -> usize {
+        0
+    }
+    fn roots(&mut self, _: f64, _: &[f64], _: &[f64], _: &mut [f64]) -> Result<(), Failure> {
+        Ok(())
+    }
+    fn residual(&mut self, _: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        out[0] = yp[0] + y[0];
+        out[1] = y[1] + y[1].powi(3) - y[0];
+        Ok(())
+    }
+    fn jacobian(
+        &mut self,
+        _: f64,
+        cj: f64,
+        y: &[f64],
+        _: &[f64],
+        data: &mut [f64],
+        rows: &mut [i64],
+        pointers: &mut [i64],
+    ) -> Result<(), Failure> {
+        data.copy_from_slice(&[cj + 1., -1., 1. + 3. * y[1] * y[1]]);
+        rows.copy_from_slice(&[0, 1, 1]);
+        pointers.copy_from_slice(&[0, 2, 3]);
+        Ok(())
+    }
+}
+impl ConsistentSystem for Cubic {
+    fn system_dimension(&self) -> usize {
+        2
+    }
+    fn rows_at(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+    ) -> Result<Vec<f64>, leitbild_operating_plant::network::Failure> {
+        let mut out = vec![0.; 2];
+        self.residual(t, y, yp, &mut out)
+            .expect("the fixture residual");
+        Ok(out)
+    }
+    /// dF/dy and dF/dy', column-major.
+    fn pencil_at(
+        &mut self,
+        _: f64,
+        y: &[f64],
+        _: &[f64],
+    ) -> Result<(Vec<f64>, Vec<f64>), leitbild_operating_plant::network::Failure> {
+        Ok((
+            vec![1., -1., 0., 1. + 3. * y[1] * y[1]],
+            vec![1., 0., 0., 0.],
+        ))
+    }
+}
+
+#[test]
+fn the_window_end_restart_starts_exactly_and_continues_as_a_fresh_history() {
+    let (rtol, atol, ids) = (1e-4, [1e-6; 2], [1., 0.]);
+    let start = |time: f64, y: &[f64], yp: &[f64]| {
+        let mut ida = Ida::new(
+            Observed::new(Cubic, None),
+            Initial {
+                time,
+                y,
+                yp,
+                differential: &ids,
+                absolute_tolerance: &atol,
+                relative_tolerance: rtol,
+            },
+        )
+        .unwrap();
+        ida.set_max_order(2).unwrap();
+        ida.constrain_nonnegative(&[0]).unwrap();
+        ida
+    };
+    // The run's exact consistent start at t = 0 (Cardano's root of
+    // y^3 + y = 1), then the window: 20 ms cap, tightened coefficient,
+    // forced stop at 0.5 s.
+    let root = 1. / 2. + (1. / 4. + 1. / 27_f64).sqrt();
+    let mut y = [1., root.cbrt() - (root - 1.).cbrt()];
+    let weights = error_weights(&y, rtol, &atol);
+    let (rates, _) = consistent_start(
+        &mut Cubic,
+        0.,
+        &mut y,
+        &ids,
+        &weights,
+        CONSISTENT_ROW_BOUND,
+        2,
+    )
+    .unwrap();
+    let mut yp = [rates[0], rates[1]];
+    let mut ida = start(0., &y, &yp);
+    ida.set_max_step(0.02).unwrap();
+    ida.set_nonlinear_convergence_coefficient(0.033).unwrap();
+    ida.stop_at(0.5).unwrap();
+    let mut capped: f64 = 0.;
+    for k in 1..=5 {
+        let t = f64::from(k) / 10.;
+        assert_eq!(
+            ida.advance(t, &mut y, &mut yp).unwrap(),
+            Advance::Reached(t)
+        );
+        capped = capped.max(ida.stats().unwrap().last_step);
+    }
+    let window = ida.stats().unwrap();
+    assert!(
+        capped <= 0.02 * (1. + 1e-12) && window.steps >= 25,
+        "{window:?}"
+    );
+    // Stock's own pair there holds the differential row only to its BDF
+    // rate error.
+    let own = Cubic.rows_at(0.5, &y, &yp).unwrap();
+    assert!(own[0].abs() > CONSISTENT_ROW_BOUND, "{own:?}");
+    let segment = Segment {
+        rtol,
+        atol: &atol,
+        differential: &ids,
+        max_order: 2,
+        nonnegative: &[0],
+    };
+    // A state outside the projection's guard (here an algebraic offset two
+    // Newton passes remove, at a correction WRMS of about 4.6) is refused,
+    // not repaired: the pair and stock's history are left as they were.
+    let (mut off, mut off_rates) = ([y[0], y[1] + 3e-4], yp);
+    let refused = restart(
+        &mut ida,
+        |s| &mut s.inner,
+        0.5,
+        &mut off,
+        &mut off_rates,
+        &segment,
+        1.5,
+    )
+    .unwrap_err();
+    assert!(
+        refused.contains("exceeds the solver's error scale"),
+        "{refused}"
+    );
+    assert_eq!((off, off_rates), ([y[0], y[1] + 3e-4], yp));
+    assert_eq!(Counts::of(&ida.stats().unwrap()), Counts::of(&window));
+    // H1's restart from the accepted state: the exact start's level, and
+    // stock's counters restart there.
+    let pair = restart(
+        &mut ida,
+        |s| &mut s.inner,
+        0.5,
+        &mut y,
+        &mut yp,
+        &segment,
+        1.5,
+    )
+    .unwrap();
+    assert!(
+        pair.residual.value <= CONSISTENT_ROW_BOUND
+            && pair.constraint_rate.value <= CONSISTENT_ROW_BOUND,
+        "{pair:?}"
+    );
+    // The projection starts from stock's accepted state, whose algebraic
+    // row holds only to its Newton tolerance, and stays within its guard.
+    let projection = pair.projection.as_ref().expect("projection");
+    assert_eq!(projection.before.value, own[1].abs(), "{pair:?}");
+    assert!(projection.after.value <= CONSISTENT_ROW_BOUND, "{pair:?}");
+    assert!(projection.correction_wrms <= 1., "{pair:?}");
+    let rows = Cubic.rows_at(0.5, &y, &yp).unwrap();
+    assert!(
+        rows.iter().all(|r| r.abs() <= CONSISTENT_ROW_BOUND),
+        "restart pair {rows:?}; stock's own pair at the forced stop {own:?}"
+    );
+    let restarted = ida.stats().unwrap();
+    assert_eq!((restarted.steps, restarted.internal_time), (0, 0.5));
+    // A fresh handle at the restart pair with stock's coefficient and no
+    // cap: the continuation is that same history, counted alone.
+    let mut fresh = start(0.5, &y, &yp);
+    fresh.stop_at(1.5).unwrap();
+    let (mut fy, mut fyp) = (y, yp);
+    let mut longest: f64 = 0.;
+    for k in 6..=15 {
+        let t = f64::from(k) / 10.;
+        assert_eq!(
+            ida.advance(t, &mut y, &mut yp).unwrap(),
+            Advance::Reached(t)
+        );
+        assert_eq!(
+            fresh.advance(t, &mut fy, &mut fyp).unwrap(),
+            Advance::Reached(t)
+        );
+        longest = longest.max(ida.stats().unwrap().last_step);
+        assert!((y[0] - (-t).exp()).abs() < 1e-3, "y0({t}) = {}", y[0]);
+        // Interpolated outputs hold the constraint to the error scale.
+        assert!((y[1] + y[1].powi(3) - y[0]).abs() < rtol, "{y:?}");
+    }
+    let (continued, independent) = (ida.stats().unwrap(), fresh.stats().unwrap());
+    assert!(longest > 0.02, "the cap ended with the window: {longest}");
+    assert!(continued.steps > 0, "{continued:?}");
+    assert_eq!(Counts::of(&continued), Counts::of(&independent));
+    assert_eq!(
+        (continued.last_step, continued.last_order),
+        (independent.last_step, independent.last_order)
+    );
+    assert_eq!(y.map(f64::to_bits), fy.map(f64::to_bits));
 }
