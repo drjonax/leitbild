@@ -92,7 +92,12 @@ describe('Grid map query Capabilities', () => {
     expect(geometry.buses.map(bus => bus.id)).toEqual(model.buses.map(bus => bus.id))
     expect(geometry.branches.map(branch => branch.id)).toEqual(model.branches.map(branch => branch.id))
     expect(geometry.generators.map(generator => generator.id)).toEqual(model.generators.map(generator => generator.id))
-    expect(geometry.loads.map(load => load.id)).toEqual(model.loads.map(load => load.id))
+    // Loads draw per bus: every load once, at its own bus, in model order within and across buses.
+    expect(geometry.loads.flatMap(group => group.loadIds)).toEqual([...model.loads].sort((left, right) =>
+      geometry.loads.findIndex(group => group.loadIds.includes(left.id)) - geometry.loads.findIndex(group => group.loadIds.includes(right.id))).map(load => load.id))
+    expect(new Set(geometry.loads.map(group => group.bus)).size).toBe(geometry.loads.length)
+    const busOfLoad = new Map(model.loads.map(load => [load.id, load.busId]))
+    for (const group of geometry.loads) expect(group.loadIds.every(id => busOfLoad.get(id) === geometry.buses[group.bus]!.id)).toBe(true)
     expect(geometry.simplificationMeters).toBeGreaterThan(0)
     for (const branch of geometry.branches) {
       expect(branch.pathSource).toBe('artifact')
@@ -130,6 +135,9 @@ describe('Grid map query Capabilities', () => {
     for (const values of Object.values(state.loads)) expect(values).toHaveLength(geometry.loads.length)
     expect(state.revision).toBe(grid.tick)
     expect(state.buses.island.every(position => position < state.islands.length)).toBe(true)
+    const shared = geometry.loads.findIndex(group => group.loadIds.length > 1)
+    const sharedDemandMw = geometry.loads[shared]!.loadIds.reduce((sum, id) => sum + grid.loads.get(id)!.demandMw, 0)
+    expect(Math.abs(state.loads.demandMw[shared]! - sharedDemandMw)).toBeLessThanOrEqual(0.05)
 
     const branchIndex = geometry.branches.findIndex(branch => branch.kind === 'ac_line' && branch.kv === 420)
     const generatorIndex = state.generators.state.indexOf('online')
@@ -164,8 +172,9 @@ describe('Grid map query Capabilities', () => {
     const grid = runningGrid()
     const geometryBytes = JSON.stringify(ask(grid, geometryId)).length
     const stateBytes = JSON.stringify(ask(grid, stateId)).length
-    // Norway v2: about 1,100 buses, 1,340 mapped branches, 850 generators and 1,320 loads. Geometry is
-    // fetched once per digest (964 KB, 232 KB gzip, measured); state every revision (45 KB, 8 KB gzip).
+    // Norway v2: 1,000 buses, 1,244 mapped branches, 851 generators and 3,142 loads at 648 buses,
+    // drawn per bus. Geometry is fetched once per digest (981 KB, 236 KB gzip, measured); state every
+    // revision (37 KB, 7 KB gzip). Per load they were 1,248 KB and 62 KB.
     expect(geometryBytes).toBeLessThanOrEqual(1_200_000)
     expect(stateBytes).toBeLessThanOrEqual(60_000)
     // Budget 2 ms: the Pack answer plus the Host's output validation and serialisation.

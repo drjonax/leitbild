@@ -481,7 +481,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
     return {
       title: load.label,
       fields: [
-        packField('kind', 'Kind', load.kind.replaceAll('_', ' ')),
+        packField('kind', 'Kind', load.kinds.map(kind => kind.replaceAll('_', ' ')).join(', ')),
         packField('served', 'Served', `${mw(result.loads.servedMw[position]!)} of ${mw(result.loads.demandMw[position]!)}`),
         packField('shed', 'Shed', mw(result.loads.shedMw[position]!)),
       ],
@@ -494,13 +494,17 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
 const loadGeometry = (rawGeometry: unknown): PackLiveMapGeometry => {
   const geometry = gridMapGeometryResultSchema.parse(rawGeometry)
   const refs = refsFor(geometry)
+  // A bus's load marker selects its first load; any of its loads selected elsewhere highlights it.
   const assetIds = [
     ...geometry.branches.map(branch => branch.id),
     ...geometry.buses.map(bus => bus.id),
     ...geometry.generators.map(generator => generator.id),
-    ...geometry.loads.map(load => load.id),
+    ...geometry.loads.map(load => load.loadIds[0]!),
   ]
-  const fidByAssetId = new Map(assetIds.map((assetId, fid) => [assetId, fid]))
+  const fidByAssetId = new Map([
+    ...assetIds.slice(0, refs.loadStart).map((assetId, fid) => [assetId, fid] as const),
+    ...geometry.loads.flatMap((load, position) => load.loadIds.map(loadId => [loadId, refs.loadStart + position] as const)),
+  ])
   const features: PackLiveMapFeature[] = [
     ...geometry.branches.map((branch, position) => ({
       fid: refs.branchStart + position,

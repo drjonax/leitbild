@@ -1,5 +1,5 @@
 import type { GridModelDefinition } from '../grid-model.ts'
-import type { GridRuntimeInstance } from '../runtime/instance.ts'
+import type { GridLoadState, GridRuntimeInstance } from '../runtime/instance.ts'
 import { gridIslandFrequencyHz, solvedGridIslands } from '../runtime/island-lifecycle.ts'
 import { defineGridQuery, gridFor, gridPayloadSchema, type ElectricGridQuery } from './common.ts'
 import { gridMapGeometryFor, type GridMapGeometry } from './map-geometry.ts'
@@ -45,7 +45,8 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
     availability[position] = hundredths(state.availability)
   })
   const generatorStates = model.generators.map(generator => grid.generators.get(generator.id)!)
-  const loadStates = model.loads.map(load => grid.loads.get(load.id)!)
+  const loadGroups = geometry.payload.loads.map(group => group.loadIds.map(id => grid.loads.get(id)!))
+  const summed = (value: (state: GridLoadState) => number): number[] => loadGroups.map(group => tenths(group.reduce((sum, state) => sum + value(state), 0)))
   return {
     geometryDigest: geometry.geometryDigest,
     revision: tick,
@@ -61,9 +62,9 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
       state: generatorStates.map(state => state.state),
     },
     loads: {
-      demandMw: loadStates.map(state => tenths(state.demandMw)),
-      servedMw: loadStates.map(state => tenths(state.servedMw)),
-      shedMw: loadStates.map(state => tenths(state.shedMw)),
+      demandMw: summed(state => state.demandMw),
+      servedMw: summed(state => state.servedMw),
+      shedMw: summed(state => state.shedMw),
     },
   }
 }
@@ -71,7 +72,7 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
 export const createGridMapStateQuery = (geometryFor: (model: GridModelDefinition) => GridMapGeometry): ElectricGridQuery => defineGridQuery({
   id: 'world.electric-grid.map.state',
   title: 'Get Grid map state',
-  description: 'Returns compact live state of one Grid as arrays in world.electric-grid.map.geometry order: branch loading, flow, switching state and availability; bus island and energisation; generator dispatch and state; load demand, served and shed. Fetch it when the Grid object revision changes.',
+  description: 'Returns compact live state of one Grid as arrays in world.electric-grid.map.geometry order: branch loading, flow, switching state and availability; bus island and energisation; generator dispatch and state; load demand, served and shed summed per bus. Fetch it when the Grid object revision changes.',
   searchTerms: ['map state', 'live map', 'loading', 'flow', 'energised', 'islands', 'kartstatus', 'belastning', 'flyt', 'spenningssatt', 'øydrift'],
   input: gridPayloadSchema,
   output: gridMapStateResultSchema,

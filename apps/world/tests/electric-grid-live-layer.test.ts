@@ -202,7 +202,9 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     const grid = createGridRuntimeInstance({ definition: norway, at })
     advanceGrid(grid, 0, at)
     const geometry = gridLiveMapLayer.loadGeometry(wire(grid, 'world.electric-grid.map.geometry'))
-    const assetCount = norway.model.buses.length + norway.model.branches.length + norway.model.generators.length + norway.model.loads.length
+    // Loads draw one marker per bus.
+    const loadMarkers = new Set(norway.model.loads.map(load => load.busId)).size
+    const assetCount = norway.model.buses.length + norway.model.branches.length + norway.model.generators.length + loadMarkers
     expect(geometry.features.map(feature => feature.fid)).toEqual(Array.from({ length: assetCount }, (_, fid) => fid))
     for (const feature of geometry.features) {
       expect(Object.keys(feature.properties).every(key => ['kind', 'kv', 'capacityMw'].includes(key))).toBe(true)

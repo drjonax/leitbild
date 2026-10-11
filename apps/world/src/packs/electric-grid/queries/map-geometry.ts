@@ -8,8 +8,8 @@ import { validateGridGeometryArtifact } from '../schemas/grid-geometry.ts'
 import { defineGridQuery, gridFor, gridPayloadSchema, type ElectricGridQuery } from './common.ts'
 import { gridMapGeometryResultSchema, type GridMapGeometryWire } from './map-schemas.ts'
 
-// Static map geometry of a Grid: buses, branch paths, generators and loads in model order, so
-// world.electric-grid.map.state can publish compact arrays aligned with it. Built once per
+// Static map geometry of a Grid: buses, branch paths and generators in model order and loads per
+// bus, so world.electric-grid.map.state can publish compact arrays aligned with it. Built once per
 // model and cached; clients refetch it only when geometryDigest changes.
 
 type LonLat = readonly [number, number]
@@ -139,6 +139,20 @@ export const loadGridGeometryArtifact = (config: {
   }
 }
 
+/**
+ * The model's loads grouped by bus, in model order of each bus's first load. The map draws one
+ * marker per group: a population-split model has several loads per substation (3142 at 648 buses).
+ */
+export const loadsPerBus = (model: GridModelDefinition): ReadonlyArray<ReadonlyArray<GridModelDefinition['loads'][number]>> => {
+  const groups = new Map<string, Array<GridModelDefinition['loads'][number]>>()
+  for (const load of model.loads) {
+    const group = groups.get(load.busId)
+    if (group === undefined) groups.set(load.busId, [load])
+    else group.push(load)
+  }
+  return [...groups.values()]
+}
+
 const buildGridMapGeometry = (model: GridModelDefinition, artifact: GridArtifactPaths | null): GridMapGeometry => {
   const modelDigest = sha256(JSON.stringify(model))
   const geometryDigest = sha256(`${modelDigest}\n${artifact?.sha256 ?? 'bus-to-bus'}`)
@@ -180,13 +194,19 @@ const buildGridMapGeometry = (model: GridModelDefinition, artifact: GridArtifact
         capacityMw: generator.capacityMw,
         location: location(generator.location),
       })),
-      loads: model.loads.map(load => ({
-        id: load.id,
-        label: load.label,
-        kind: load.kind,
-        bus: busIndex.get(load.busId)!,
-        location: location(load.location),
-      })),
+      loads: loadsPerBus(model).map(group => {
+        const bus = busIndex.get(group[0]!.busId)!
+        return {
+          bus,
+          label: group.length === 1 ? group[0]!.label : `${group.length} loads at ${model.buses[bus]!.label}`,
+          loadIds: group.map(load => load.id),
+          kinds: [...new Set(group.map(load => load.kind))],
+          location: location([
+            group.reduce((sum, load) => sum + load.location[0], 0) / group.length,
+            group.reduce((sum, load) => sum + load.location[1], 0) / group.length,
+          ]),
+        }
+      }),
     },
   }
 }
@@ -231,7 +251,7 @@ export const gridMapGeometryFor = createGridMapGeometry({
 export const createGridMapGeometryQuery = (geometryFor: (model: GridModelDefinition) => GridMapGeometry): ElectricGridQuery => defineGridQuery({
   id: 'world.electric-grid.map.geometry',
   title: 'Get Grid map geometry',
-  description: 'Returns the static map geometry of one Grid in model order: buses, branches with their path from fromBus to toBus and its source, generators and loads. world.electric-grid.map.state publishes live state as arrays in the same order; refetch this only when its geometryDigest changes.',
+  description: 'Returns the static map geometry of one Grid in model order: buses, branches with their path from fromBus to toBus and its source, generators, and loads per bus. world.electric-grid.map.state publishes live state as arrays in the same order; refetch this only when its geometryDigest changes.',
   searchTerms: ['map', 'geometry', 'lines', 'routes', 'substations', 'live map', 'kart', 'geometri', 'linjer', 'traseer', 'stasjoner'],
   input: gridPayloadSchema,
   output: gridMapGeometryResultSchema,

@@ -37,12 +37,12 @@ export const gridMapGeometryResultSchema = z.object({
     location: lonLat,
   }).strict()),
   loads: z.array(z.object({
-    id: z.string(),
-    label: z.string(),
-    kind: loadDefinitionSchema.shape.kind,
     bus: index.describe('Index into buses.'),
-    location: lonLat,
-  }).strict()),
+    label: z.string().describe('The load\'s label, or the number of loads and the bus label.'),
+    loadIds: z.array(z.string()).min(1).describe('The loads at the bus, in model order.'),
+    kinds: z.array(loadDefinitionSchema.shape.kind).min(1).describe('Their distinct kinds, in order of first appearance.'),
+    location: lonLat.describe('Mean location of the loads.'),
+  }).strict()).describe('Loads drawn per bus: one entry for all loads at a bus, in model order of each bus\'s first load. map.state reports their sums.'),
 }).strict()
 /** As a client reads it: positions are typed longitude/latitude. */
 export type GridMapGeometryResult = z.output<typeof gridMapGeometryResultSchema>
@@ -77,9 +77,9 @@ export const gridMapStateResultSchema = z.object({
     state: z.array(generatorLifecycleStateSchema),
   }).strict(),
   loads: z.object({
-    demandMw: z.array(finite).describe('MW, 0.1 resolution.'),
-    servedMw: z.array(finite).describe('MW, 0.1 resolution.'),
-    shedMw: z.array(finite).describe('Shed manually or by LFDD (MW, 0.1 resolution).'),
-  }).strict(),
+    demandMw: z.array(finite).describe('Sum over the bus\'s loads (MW, 0.1 resolution).'),
+    servedMw: z.array(finite).describe('Sum over the bus\'s loads (MW, 0.1 resolution).'),
+    shedMw: z.array(finite).describe('Shed manually or by LFDD, summed over the bus\'s loads (MW, 0.1 resolution).'),
+  }).strict().describe('Aligned with map.geometry loads: one entry per bus with loads.'),
 }).strict()
 export type GridMapStateResult = z.infer<typeof gridMapStateResultSchema>
