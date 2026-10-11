@@ -880,6 +880,63 @@ impl Solids {
         Ok(())
     }
 
+    /// Set `cell`'s wall water directly: a preparation's own coolant state
+    /// (the steady solids preparation), not a network evaluation's.
+    pub fn set_wall_water(&mut self, cell: usize, water: WallWater) -> Result<(), Failure> {
+        let k = self
+            .wall_slot
+            .get(cell)
+            .copied()
+            .flatten()
+            .ok_or_else(|| fatal(format!("cell {cell} has no wall slot")))?;
+        self.wall[k] = Some(water);
+        Ok(())
+    }
+
+    /// The own coordinates a closed scope's rows complete, ascending: each
+    /// half's energies and surfaces, the helium stores, the passive stores
+    /// and the SG segments' metal.
+    pub fn scope_coordinates(&self, closed: &Closed) -> Vec<usize> {
+        let mut out: Vec<usize> = closed
+            .bands
+            .iter()
+            .flat_map(|b| (0..3).flat_map(move |k| [self.energy(*b, k), self.surface(*b, k)]))
+            .chain(closed.helium.iter().map(|h| self.helium(*h)))
+            .chain(closed.stores.iter().map(|p| self.passive(*p)))
+            .chain(closed.segments.iter().map(|g| self.metal(*g)))
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// The fuel assemblies' solid groups for a steady preparation: every
+    /// connected component of the incidence over halves, helium, plenum and
+    /// passive contacts and their stores, as a closed scope with its own
+    /// coordinates. The SG segments belong to no group.
+    pub fn assembly_groups(&self) -> Result<Vec<(Closed, Vec<usize>)>, Failure> {
+        let mut assigned = vec![false; self.metal0()];
+        let mut groups = Vec::new();
+        for i in 0..self.metal0() {
+            if assigned[i] {
+                continue;
+            }
+            let (scope, _) = self.column_scope(i)?;
+            let closed = self.close(&scope);
+            if !closed.segments.is_empty() {
+                return Err(fatal(format!("solid coordinate {i} reaches an SG segment")));
+            }
+            let own = self.scope_coordinates(&closed);
+            for &j in &own {
+                if assigned[j] {
+                    return Err(fatal(format!("solid coordinate {j} in two groups")));
+                }
+                assigned[j] = true;
+            }
+            groups.push((closed, own));
+        }
+        Ok(groups)
+    }
+
     /// The wall water of the last [`Solids::wall_water`] call at `cell`.
     pub fn wall_water_at(&self, cell: usize) -> Option<WallWater> {
         self.wall_slot
