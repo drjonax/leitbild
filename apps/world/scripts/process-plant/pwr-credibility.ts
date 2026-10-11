@@ -232,17 +232,22 @@ const cases: ReadonlyArray<CredibilityCase> = [
     eventFamily: 'NRC SRP Chapter 15 heat-sink degradation envelope',
     description: 'Normal feedwater is lost while AFW inventory is unavailable; after the low-low level reactor trip, decay heat boils the SGs down, uncovering tubes and degrading heat transfer in the compact model.',
     sourceRefs: ['nrc-srp-ch15', 'nrc-trace', 'iaea-ssg-2', 'leitbild-pwr-scope'],
+    // The condensate storage tank is empty, and its hotwell reject is failed shut, so the water a rising
+    // hotwell would return cannot refill it.
     initialState: {
       'auxFeedwaterTank.inventoryKg': 0,
       'auxFeedwaterTank.levelPercent': 0,
       'auxFeedwaterTank.availableOutletFlowKgPerS': 0,
+      'hotwellRejectValve.positionFailureActive': true,
+      'hotwellRejectValve.failedPositionFraction': 0,
     },
     actions: system => [
       ...tripComponentsMatching(system, 60_000, 'trip-main-feedwater-no-afw-inventory', isMainFeedwaterPump),
     ],
-    // On ANS-5.1 decay heat the generators boil down to their tubes some 14
-    // minutes after the feedwater is lost; they boil dry within the hour.
-    durationMs: 1_200_000,
+    // Tripped on a low-low level a quarter of the wide range below normal, the
+    // generators keep most of their water: on ANS-5.1 decay heat they boil
+    // down to their tubes some 50 minutes after the feedwater is lost.
+    durationMs: 3_600_000,
   },
   {
     id: 'turbine-trip-bypass',
