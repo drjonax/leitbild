@@ -31,6 +31,7 @@ const variablePath = (value: string): VariablePath => value as VariablePath
 type SourceRefId =
   | 'nrc-srp-ch15'
   | 'nrc-srp-15-2-7'
+  | 'nrc-srp-15-6-3'
   | 'iaea-ssg-2'
   | 'nrc-trace'
   | 'oecd-nea-mslb'
@@ -55,6 +56,12 @@ const sourceRefs: Readonly<Record<SourceRefId, SourceRef>> = {
     title: 'NRC NUREG-0800 Section 15.2.7, Loss of Normal Feedwater Flow (Rev. 2, March 2007)',
     url: 'https://www.nrc.gov/reading-rm/doc-collections/nuregs/staff/sr0800/ch15/index.html',
     note: 'A moderate-frequency event: reactor coolant and main steam pressure stay below 110 % of design, fuel cladding stays intact, and the event does not grow into an accident. Plant analyses meet it by tripping the reactor on low-low steam generator level and removing decay heat with auxiliary feedwater, without the pressurizer filling.',
+  },
+  'nrc-srp-15-6-3': {
+    id: 'nrc-srp-15-6-3',
+    title: 'NRC NUREG-0800 Section 15.6.3, Radiological Consequences of Steam Generator Tube Failure (PWR)',
+    url: 'https://www.nrc.gov/reading-rm/doc-collections/nuregs/staff/sr0800/ch15/index.html',
+    note: 'The design-basis tube failure is a double-ended rupture of one tube. In the Westinghouse analyses it rests on (WCAP-10698, the margin-to-overfill methodology) the break drains the pressurizer within minutes, the reactor trips and safety injection actuates on low pressurizer pressure, and safety injection then makes up the break flow until the operators equalize primary and secondary pressure. The loops stay full: the lasting loss is about the pressurizer\'s water, while most of the leaked mass is replaced.',
   },
   'iaea-ssg-2': {
     id: 'iaea-ssg-2',
@@ -245,7 +252,7 @@ const cases: ReadonlyArray<CredibilityCase> = [
     title: 'Steam Generator Tube Leak',
     eventFamily: 'NRC SRP 15.6.3 steam generator tube failure indication',
     description: 'Primary-to-secondary leakage should drain RCS inventory and produce affected-secondary radiation.',
-    sourceRefs: ['nrc-srp-ch15', 'iaea-ssg-2', 'leitbild-pwr-scope'],
+    sourceRefs: ['nrc-srp-15-6-3', 'iaea-ssg-2', 'leitbild-pwr-scope'],
     actions: () => [
       setVariable('open-sg-a-tube-leak', 90_000, 'sgA.tubeLeakFraction', 0.18),
     ],
@@ -291,6 +298,7 @@ const telemetryVariables = [
   'core.fuelHeatupRateCPerS',
   'core.rodInsertionFraction',
   'vessel.primaryCoolantInventoryKg',
+  'rcsInventoryBalance.balancedInventoryKg',
   'vessel.meanPrimaryCoolantTemperatureC',
   'vessel.primaryLeakFlowKgPerS',
   'vessel.safetyInjectionFlowKgPerS',
@@ -672,13 +680,16 @@ const targets: ReadonlyArray<CredibilityTarget> = [
   {
     id: 'sgtr-primary-inventory-loss',
     caseId: 'sgtr',
-    label: 'SGTR drains primary inventory',
-    signal: 'vessel.primaryCoolantInventoryKg delta from T+80s to final',
-    expectation: 'Primary-to-secondary leakage should produce a durable RCS inventory consequence.',
-    measure: { kind: 'delta', path: variablePath('vessel.primaryCoolantInventoryKg'), fromMs: 80_000, toMs: durationMs },
-    acceptable: { min: -80_000, max: -8_000 },
+    label: 'SGTR drains reactor coolant inventory until safety injection makes it up',
+    signal: 'rcsInventoryBalance.balancedInventoryKg delta from T+80s to final',
+    // The loops stay full in a tube rupture: the pressurizer gives up its water to the break, so the measure is the
+    // whole reactor coolant system, loops and pressurizer. Safety injection replaces most of what leaks, so the
+    // lasting loss is about a full-power pressurizer's water (some 16 t), not the leaked mass.
+    expectation: 'Primary-to-secondary leakage should drain the reactor coolant system, loops and pressurizer together, until safety injection makes up the break flow, leaving a lasting loss of about the pressurizer\'s water.',
+    measure: { kind: 'delta', path: variablePath('rcsInventoryBalance.balancedInventoryKg'), fromMs: 80_000, toMs: durationMs },
+    acceptable: { min: -25_000, max: -3_000 },
     severity: 'gate',
-    sourceRefs: ['nrc-srp-ch15', 'iaea-ssg-2'],
+    sourceRefs: ['nrc-srp-15-6-3', 'iaea-ssg-2'],
   },
   {
     id: 'sgtr-radiation-indication',
