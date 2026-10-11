@@ -15,6 +15,9 @@ import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/p
 import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { islandKineticEnergyMws } from '../src/packs/electric-grid/runtime/island-input.ts'
+import { gridIslandAtBus, solvedGridIslands } from '../src/packs/electric-grid/runtime/island-lifecycle.ts'
+import { createGridRecordingPlan } from '../src/packs/electric-grid/recording.ts'
+import { gridMapIslandState } from '../src/packs/electric-grid/queries/map-state.ts'
 import { electricGridRuntimeStateSchema, restoredGridRuntimeStateFor, runtimeStateForElectricGrids } from '../src/packs/electric-grid/sim/runtime-state.ts'
 import { isoAt, steppedGrid, tripSignals, type SteppedGrid } from './fixtures/grid-corridor.ts'
 import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
@@ -320,5 +323,92 @@ describe('NordLink import block on the Norway Model', () => {
     expect(nadirHz).toBeGreaterThan(49.0)
     expect(run.grid.frequencyEvents.filter(event => event.kind === 'lfdd-stage-operated' || event.kind === 'generator-trip')).toEqual([])
     expect(run.grid.alarms.records.has(gridAlarmId('hvdc', nordlink.id, 'tripped'))).toBe(false)
+  }, 120_000)
+})
+
+describe('HVDC terminals of asynchronous external systems', () => {
+  test('lie in no island: islands.list, the projection, energisation, alarms and recordings leave them out', () => {
+    const run = steppedGrid(definitionWith({ [nordlinkId]: 600 }))
+    run.advanceTo(10_000)
+    const terminal = 'bus:boundary-DE'
+    const islands = solvedGridIslands(run.grid)
+    expect(islands.plan.islandIndexOfBus[islands.plan.network.busIndexById.get(terminal)!]).toBe(-1)
+    expect(() => gridIslandAtBus(islands, terminal)).toThrow('is an HVDC terminal of an asynchronous external system and lies in no island')
+    // One Norwegian island, counted alike by islands.list, the projection count and the projected islands.
+    const listed = query(run.grid, 'world.electric-grid.islands.list')
+    expect(listed.total).toBe(1)
+    expect(run.grid.projection.islandCount).toBe(1)
+    expect(run.grid.projection.islands.map(island => island.id)).toEqual(listed.islands.map((island: { id: string }) => island.id))
+    expect(listed.islands[0].busCount).toBe(3)
+    // Its own state: the system's area and the links ending there; no bus state, energisation or island.
+    expect(run.grid.busStates.has(terminal)).toBe(false)
+    expect(run.grid.hvdcTerminals.get(terminal)).toEqual({
+      busId: terminal,
+      externalSystemId: 'external:DE',
+      area: 'DE',
+      links: [
+        { linkId: nordlinkId, state: 'deblocked', setpointMw: 600, transferMw: 600 },
+        { linkId: westLinkId, state: 'deblocked', setpointMw: 0, transferMw: 0 },
+      ],
+      deliveredMw: 600 * (1 - 0.031),
+    })
+    const detail = query(run.grid, 'world.electric-grid.asset.get', { assetId: terminal }).asset
+    expect(detail).toMatchObject({
+      kind: 'bus', subkind: 'hvdc-terminal', status: { tone: 'ready', label: 'HVDC terminal' },
+      summary: 'Germany · Test NordLink 600 MW export · Test west link 0 MW export', applicableOperationIds: [],
+      state: { externalSystemId: 'external:DE', area: 'DE', deliveredMw: 600 * (1 - 0.031) },
+    })
+    const busIds = (input: Readonly<Record<string, unknown>>) => query(run.grid, 'world.electric-grid.assets.search', { kinds: ['bus'], ...input }).assets.map((asset: { id: string }) => asset.id)
+    expect(busIds({ status: ['de-energized'] })).toEqual([])
+    expect(busIds({ status: ['energized'] })).toEqual(['bus:south', 'bus:west', 'bus:boundary-SE3@420'])
+    expect(busIds({ islandId: listed.islands[0].id })).toEqual(['bus:south', 'bus:west', 'bus:boundary-SE3@420'])
+    // A link matches the island of its Norwegian converter.
+    expect(query(run.grid, 'world.electric-grid.power-flow.snapshot', { islandId: listed.islands[0].id }).hvdcLinks.map((row: { id: string }) => row.id)).toEqual([nordlinkId, westLinkId])
+    // The map's island state, in the Model's bus order, places the terminal in no island.
+    const mapIslands = gridMapIslandState(run.grid)
+    expect(mapIslands.busIsland).toEqual(model.buses.map(bus => bus.id === terminal ? null : 0))
+    const recording = createGridRecordingPlan({ selection: { packId: 'electric-grid', profileId: 'engineering' }, grids: new Map([[run.grid.definition.gridId, run.grid]]) })
+    expect(recording.descriptors.filter(descriptor => descriptor.signalId.startsWith(terminal))).toEqual([])
+    expect(recording.descriptors.filter(descriptor => descriptor.signalId.startsWith('bus:west.'))).toHaveLength(2)
+
+    // Whatever its links do, the terminal raises no alarm and forms no island: a trip and a block
+    // stop the transfer, and only the trip raises the link's own alarm.
+    expect(run.command(gridTripHvdcCommandKind, { assetId: nordlinkId }).ok).toBe(true)
+    expect(run.command(gridBlockHvdcCommandKind, { assetId: westLinkId }).ok).toBe(true)
+    run.advanceTo(20_000)
+    expect(run.grid.hvdcTerminals.get(terminal)).toMatchObject({ links: [{ state: 'tripped', transferMw: 0 }, { state: 'blocked', transferMw: 0 }], deliveredMw: 0 })
+    expect(query(run.grid, 'world.electric-grid.asset.get', { assetId: terminal }).asset.status).toEqual({ tone: 'idle', label: 'HVDC terminal' })
+    // The lost export raises the link's trip and the Norwegian island's frequency and reserve alarms; none concerns the terminal.
+    const records = [...run.grid.alarms.records.values()]
+    expect(records.find(record => record.id === gridAlarmId('hvdc', nordlinkId, 'tripped'))).toMatchObject({ active: true, islandId: listed.islands[0].id })
+    expect(records.filter(record => record.islandId !== listed.islands[0].id || record.id.includes(terminal) || record.assetId === terminal)).toEqual([])
+    expect(query(run.grid, 'world.electric-grid.islands.list').total).toBe(1)
+
+    // A Norwegian converter bus that loses supply is a dead island with its alarm; the terminal still is none.
+    expect(run.command(gridOpenBranchCommandKind, { assetId: 'west-line' }).ok).toBe(true)
+    run.advanceTo(30_000)
+    const split = query(run.grid, 'world.electric-grid.islands.list')
+    expect(split.islands.map((island: { busCount: number; energized: boolean }) => [island.busCount, island.energized])).toEqual([[2, true], [1, false]])
+    expect(run.grid.projection.islandCount).toBe(2)
+    const deEnergised = [...run.grid.alarms.records.values()].filter(record => record.active && record.condition === 'de-energised')
+    expect(deEnergised.map(record => record.islandId)).toEqual([run.grid.busStates.get('bus:west')!.islandId])
+  })
+
+  test('on the Norway Model the four HVDC-only neighbours are terminals and the island count agrees everywhere', () => {
+    const definition = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:norway', model: { ref: norwayGridModelRef }, automation: { ref: nordicFrequencyAutomationRef }, operatingPoint: { ref: norwayRuntimeTestOperatingPointRef },
+    }))
+    const run = steppedGrid(definition)
+    run.advanceTo(4_000, [1_000])
+    expect([...run.grid.hvdcTerminals.keys()].sort()).toEqual(['bus:boundary-DE', 'bus:boundary-DK1', 'bus:boundary-GB', 'bus:boundary-NL'])
+    const listed = query(run.grid, 'world.electric-grid.islands.list', { limit: 500 })
+    expect(listed.total).toBe(run.grid.projection.islandCount)
+    expect(listed.total).toBe(run.grid.projection.islands.length)
+    expect(listed.total).toBe(1)
+    expect(listed.islands[0].busCount).toBe(definition.model.buses.length - 4)
+    for (const terminal of run.grid.hvdcTerminals.values()) {
+      expect(terminal.links.length).toBeGreaterThan(0)
+      expect(run.grid.busStates.has(terminal.busId)).toBe(false)
+    }
   }, 120_000)
 })

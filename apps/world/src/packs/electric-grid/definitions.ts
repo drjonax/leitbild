@@ -215,8 +215,12 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
       for (const field of ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw', 'areaParticipation'] as const) {
         if (system[field] !== undefined) failModel(model, `${system.id} is asynchronous and cannot carry ${field}`)
       }
+      // An HVDC terminal lies outside the modelled AC network and every island.
       for (const busId of system.boundaryBusIds) {
         if ((branchesByBus.get(busId)?.length ?? 0) > 0) failModel(model, `boundary bus ${busId} of asynchronous ${system.id} must not have AC branches`)
+        if ((shuntsByBus.get(busId)?.length ?? 0) > 0) failModel(model, `boundary bus ${busId} of asynchronous ${system.id} must not carry a shunt`)
+        const point = model.connectionPoints.find(candidate => candidate.busId === busId)
+        if (point !== undefined) failModel(model, `boundary bus ${busId} of asynchronous ${system.id} must not carry connection point ${point.id}`)
         asynchronousBoundaryBusIds.add(busId)
       }
     }

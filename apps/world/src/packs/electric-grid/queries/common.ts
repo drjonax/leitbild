@@ -58,5 +58,6 @@ export const requireGridIsland = (grid: GridRuntimeInstance, islandId: string): 
   return islandId
 }
 
-/** The stable island id holding a bus at the last solve. */
-export const gridBusIslandId = (grid: GridRuntimeInstance, busId: string): string => grid.busStates.get(busId)!.islandId
+/** The stable island id holding a bus at the last solve; null for an HVDC terminal, which lies in no island. */
+export const gridBusIslandId = (grid: GridRuntimeInstance, busId: string): string | null =>
+  grid.hvdcTerminals.has(busId) ? null : grid.busStates.get(busId)!.islandId

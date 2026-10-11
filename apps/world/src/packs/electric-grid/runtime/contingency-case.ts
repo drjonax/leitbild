@@ -146,8 +146,10 @@ export const liveContingencyCase = (grid: GridRuntimeInstance): ContingencyCase 
     if (flowModel !== null) baseFlowModels.push({ islandId: island.id, flowModel })
   }
   // A case island is one AC component: each closes its own balance (through its boundary buses where the
-  // synchronous equivalent ties several components into one synchronous island).
-  const caseIslands = plan.systems.map((system, index) => caseIsland(system, energisedPlanIsland[plan.components[index]!.islandIndex] === 1))
+  // synchronous equivalent ties several components into one synchronous island). An HVDC terminal's
+  // component lies in no island and carries nothing.
+  const energisedPlanIslandOf = (planIsland: number): boolean => planIsland >= 0 && energisedPlanIsland[planIsland] === 1
+  const caseIslands = plan.systems.map((system, index) => caseIsland(system, energisedPlanIslandOf(plan.components[index]!.islandIndex)))
   const dcFlowsMw = new Float64Array(network.branchCount)
   for (const island of caseIslands) if (island.energised) islandFlowsInto(network, island, plan.anglesRad, dcFlowsMw)
   // Base flows are the branch states' flows, in the model the runtime declares for their island; an AC
@@ -179,7 +181,7 @@ export const liveContingencyCase = (grid: GridRuntimeInstance): ContingencyCase 
     anglesRad: plan.anglesRad.slice(),
     baseFlowModels,
     loadingBase,
-    participation: participationFor(grid, network, bus => energisedPlanIsland[plan.islandIndexOfBus[bus]!] === 1),
+    participation: participationFor(grid, network, bus => energisedPlanIslandOf(plan.islandIndexOfBus[bus]!)),
     redispatchedMw: new Map(),
   }
 }

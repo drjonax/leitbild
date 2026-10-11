@@ -348,8 +348,9 @@ describe('HVDC links', () => {
     const link = run.grid.hvdcLinks.get('hvdc:west-east')!
     expect(link.transferMw).toBeCloseTo(-100, 9)
     expect(link.lossesMw).toBeCloseTo(2, 9)
-    // East sends 100 MW west (98 MW arrive) and 200 MW to Germany outside the AC model.
-    expect(run.grid.busStates.get('bus:boundary-DE')!.energized).toBe(false)
+    // East sends 100 MW west (98 MW arrive) and 200 MW to Germany outside the AC model: an HVDC terminal in no island.
+    expect(run.grid.busStates.has('bus:boundary-DE')).toBe(false)
+    expect(run.grid.hvdcTerminals.get('bus:boundary-DE')!.deliveredMw).toBeCloseTo(200 * (1 - 0.03), 9)
     expect(run.grid.busStates.get('bus:west')!.netInjectionMw).toBeCloseTo(0, 6)
     const west = islandOfBus(run.grid, 'bus:west')
     const east = islandOfBus(run.grid, 'bus:east')

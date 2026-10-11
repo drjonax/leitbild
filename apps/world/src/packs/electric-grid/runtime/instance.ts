@@ -34,6 +34,7 @@ import {
 } from './state/arrays.ts'
 import { branchStateViews, generatorStateViews, loadStateViews, writeReserves } from './state/views.ts'
 import type { GridIslandSystem } from './network/dc-power-flow.ts'
+import { hvdcTerminalStateViews, type GridHvdcTerminalState } from './hvdc-terminals.ts'
 
 /**
  * Where a bus voltage comes from. `ac-fdlf`: the island's AC load flow converged and the voltage
@@ -42,7 +43,7 @@ import type { GridIslandSystem } from './network/dc-power-flow.ts'
  */
 export type GridVoltageModel = 'ac-fdlf' | 'not-converged' | 'de-energised'
 
-/** A bus at the last network solution: a read-only view of the bus arrays (state/views.ts). */
+/** A bus in an island at the last network solution: a read-only view of the bus arrays (state/views.ts). An HVDC terminal has a GridHvdcTerminalState instead. */
 export interface GridBusState {
   readonly busId: string
   /** Stable id of the island holding the bus. */
@@ -209,6 +210,7 @@ export interface GridHvdcLinkState {
 /**
  * One AC component: buses joined by closed branches. Its first bus in model order is its DC angle
  * reference; it absorbs nothing, because the component's injections sum to zero by construction.
+ * An HVDC terminal (hvdc-terminals.ts) is a component of its own, held by no island.
  */
 export interface GridTopologyComponent {
   readonly referenceBusId: string
@@ -216,7 +218,7 @@ export interface GridTopologyComponent {
   readonly busIndices: Int32Array
   /** Ids of `busIndices`, computed on first read. */
   readonly buses: ReadonlyArray<string>
-  /** Index of the synchronous island holding the component. */
+  /** Index of the synchronous island holding the component; −1 for an HVDC terminal. */
   readonly islandIndex: number
 }
 
@@ -256,15 +258,15 @@ export interface GridTopologyPlan {
   readonly network: CompiledGridNetwork
   /** Closed flag (1) per model branch this plan was built from; compared with live branch states every tick. */
   readonly closedBranches: Uint8Array
-  /** Synchronous islands; their ids name the structure, not the stable island identity. */
+  /** Synchronous islands; their ids name the structure, not the stable island identity. HVDC terminals lie in none. */
   readonly islands: ReadonlyArray<GridTopologyIsland>
   /** AC components, ordered by their first bus. */
   readonly components: ReadonlyArray<GridTopologyComponent>
   /** DC systems aligned with `components`. */
   readonly systems: ReadonlyArray<GridIslandSystem>
-  /** Structural island id of each bus id, computed on first read; the runtime reads `islandIndexOfBus`. */
+  /** Structural island id of each bus id in an island, computed on first read; the runtime reads `islandIndexOfBus`. */
   readonly islandIdByBus: ReadonlyMap<string, string>
-  /** Plan island index per bus in model order. */
+  /** Plan island index per bus in model order; −1 at an HVDC terminal. */
   readonly islandIndexOfBus: Int32Array
   /** Plan component index per bus in model order. */
   readonly componentIndexOfBus: Int32Array
@@ -346,6 +348,8 @@ export interface GridRuntimeInstance {
   readonly externalConnections: Map<string, GridExternalConnectionState>
   readonly externalSystems: Map<string, GridExternalSystemState>
   readonly hvdcLinks: Map<string, GridHvdcLinkState>
+  /** The boundary buses of asynchronous external systems, which lie in no island, by bus id; `busStates` holds every other bus. */
+  readonly hvdcTerminals: ReadonlyMap<string, GridHvdcTerminalState>
   busStates: Map<string, GridBusState>
   topologyPlan: GridTopologyPlan | null
   /** Stable islands reconciled against `islandPlan.plan`; null before the first tick. */
@@ -381,7 +385,7 @@ export interface GridAssetSnapshot {
   readonly label: string
   readonly kind: GridAssetKind
   readonly definition: GridAssetDefinition
-  readonly state?: GridBusState | GridBranchState | GridGeneratorState | GridLoadState | GridStorageState
+  readonly state?: GridBusState | GridHvdcTerminalState | GridBranchState | GridGeneratorState | GridLoadState | GridStorageState
 }
 
 export interface RestoredGridRuntimeState {
@@ -557,6 +561,7 @@ export const createGridRuntimeInstance = (config: {
     externalConnections,
     externalSystems,
     hvdcLinks,
+    hvdcTerminals: hvdcTerminalStateViews(index, hvdcLinks),
     busStates: new Map(),
     topologyPlan: null,
     islandPlan: null,
@@ -620,7 +625,7 @@ export const gridAssetSnapshotFor = (grid: GridRuntimeInstance, assetId: string)
   const entry = grid.definition.index.assetById.get(assetId)
   if (!entry) return undefined
   const state = entry.kind === 'bus'
-    ? grid.busStates.get(entry.id)
+    ? grid.definition.index.asynchronousBoundaryBusIds.has(entry.id) ? grid.hvdcTerminals.get(entry.id)! : grid.busStates.get(entry.id)
     : entry.kind === 'branch'
       ? grid.branches.get(entry.id)
       : entry.kind === 'generator'

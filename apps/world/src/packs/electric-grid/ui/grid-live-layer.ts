@@ -459,7 +459,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
   // The largest energised island is the main grid and keeps the plain stroke; every other
   // island takes a categorical stroke colour, repeating after eight.
   const busesPerIsland = result.islands.map(() => 0)
-  for (const island of result.buses.island) busesPerIsland[island]! += 1
+  for (const island of result.buses.island) if (island !== null) busesPerIsland[island]! += 1
   const mainIsland = result.islands.reduce((main, island, position) =>
     island.energized && (main < 0 || busesPerIsland[position]! > busesPerIsland[main]!) ? position : main, -1)
   const islandColor = (island: number): number => island === mainIsland ? -1 : (mainIsland >= 0 && island > mainIsland ? island - 1 : island) % 8
@@ -481,13 +481,14 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
   })
   geometry.buses.forEach((bus, position) => {
     const energized = busEnergized(position)
-    // An asynchronous system's boundary bus lies outside the modelled AC network: never a dead island.
-    const external = bus.external !== undefined && !bus.external.synchronous
+    // An HVDC terminal (an asynchronous system's boundary bus) lies outside the modelled AC network and every island: never a dead island.
+    const island = result.buses.island[position]!
+    const external = island === null
     featureStates.set(refs.busStart + position, {
       live: true,
       energized,
       external,
-      island: external ? -1 : islandColor(result.buses.island[position]!),
+      island: island === null ? -1 : islandColor(island),
       alarm: !external && !energized,
     })
   })
@@ -577,16 +578,25 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
     if (fid < refs.generatorStart) {
       const position = fid - refs.busStart
       const bus = geometry.buses[position]!
-      const island = result.islands[result.buses.island[position]!]!
-      if (bus.external !== undefined && !bus.external.synchronous) {
+      const islandPosition = result.buses.island[position]!
+      if (islandPosition === null) {
+        const links = geometry.hvdcLinks.flatMap((link, linkPosition) => link.toBus === position ? [{ link, linkPosition }] : [])
         return {
           title: bus.label,
           fields: [
-            packField('external', 'External system', bus.external.label),
-            packField('role', 'Connection', 'HVDC terminal outside the modelled AC network; the external system supplies or absorbs its links\' transfer'),
+            ...(bus.external === undefined ? [] : [packField('external', 'External system', bus.external.label)]),
+            packField('role', 'Connection', 'HVDC terminal outside the modelled AC network and every island; the external system supplies or absorbs its links\' transfer'),
+            ...links.map(({ link, linkPosition }) => {
+              const linkState = result.hvdcLinks.state[linkPosition]!
+              const transfer = result.hvdcLinks.transferMw[linkPosition]!
+              return packField(`link-${linkPosition}`, link.label, linkState !== 'deblocked'
+                ? hvdcStateText[linkState]
+                : transfer === 0 ? '0 MW' : `${mw(Math.abs(transfer))} ${transfer > 0 ? 'export' : 'import'}`)
+            }),
           ],
         }
       }
+      const island = result.islands[islandPosition]!
       return {
         title: bus.label,
         fields: [

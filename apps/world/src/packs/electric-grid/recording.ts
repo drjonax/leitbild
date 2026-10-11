@@ -123,12 +123,13 @@ export const gridRecordingSeriesCount = (counts: GridModelAssetCounts, profileId
   operations.length + estimatedIslandSeriesCount + (profileId === 'engineering'
     ? counts.bus * 2 + counts.branch * 3 + counts.generator + counts.load + counts.storage : 0)
 
-// Per-asset values read the Grid's arrays by model index; bus values exist once the network has been solved.
+// Per-asset values read the Grid's arrays by model index; bus values exist once the network has been
+// solved. An HVDC terminal lies in no island and takes no part in energisation, so it has no bus series.
 const engineeringSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => {
   const { buses, branches, generators, loads, storage } = grid.arrays
   const solved = (): boolean => grid.busStates.size > 0
   return [
-    ...grid.definition.model.buses.flatMap((bus, index) => [
+    ...grid.definition.model.buses.flatMap((bus, index) => grid.hvdcTerminals.has(bus.id) ? [] : [
       series({ grid, signalId: `${bus.id}.energized`, title: `${bus.label} energised`, valueType: 'boolean', quantity: 'boolean', unit: 'boolean', value: () => solved() ? buses.energized[index] === 1 : null }),
       series({ grid, signalId: `${bus.id}.frequency`, title: `${bus.label} frequency`, quantity: 'frequency', unit: 'Hz', value: () => solved() ? publishedNullable(buses.frequencyHz[index]!) : null }),
     ]),

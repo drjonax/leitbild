@@ -80,8 +80,8 @@ export const gridMapStateResultSchema = z.object({
     flowModel: z.enum(['ac', 'dc']).nullable().describe('ac: flows from its converged AC load flow; dc: its AC load flow did not converge (DC flows); null: not energised.'),
   }).strict()).describe('Current electrical islands; buses.island indexes this list.'),
   buses: z.object({
-    island: z.array(count).describe('Index into islands per bus.'),
-    energized: z.array(flag).describe('1 when the bus island is energised.'),
+    island: z.array(count.nullable()).describe('Index into islands per bus; null at an HVDC terminal (the bus of an external system reached only by HVDC), which lies in no island.'),
+    energized: z.array(flag).describe('1 when the bus island is energised; 0 at an HVDC terminal, which takes no part in energisation.'),
   }).strict(),
   branches: z.object({
     loadingPercent: z.array(finite).describe('Rated flow (AC apparent power, or the DC flow) over the derated rating (%, 0.1 resolution).'),

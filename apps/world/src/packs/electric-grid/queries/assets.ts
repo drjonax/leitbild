@@ -14,6 +14,7 @@ import {
   generatorStateSchema,
   hvdcLinkDefinitionSchema,
   hvdcLinkStateSchema,
+  hvdcTerminalStateSchema,
   loadDefinitionSchema,
   loadStateSchema,
   storageDefinitionSchema,
@@ -35,8 +36,8 @@ const searchPayloadSchema = z.object({
   text: z.string().max(200).default(''),
   kinds: z.array(assetKindSchema).max(6).optional(),
   status: z.array(assetStatusSchema).min(1).max(20).optional()
-    .describe('Match any of these states: bus energized/de-energized; branch closed/open/tripped/derated; generator online/offline/starting/stopping/tripped; load normal/constrained/shed/outage; storage idle/charging/discharging/unavailable; HVDC link deblocked/blocked/tripped.'),
-  islandId: z.string().min(1).optional().describe('Only assets in this island (world.electric-grid.islands.list); a branch or HVDC link matches when either end is in it.'),
+    .describe('Match any of these states: bus energized/de-energized; branch closed/open/tripped/derated; generator online/offline/starting/stopping/tripped; load normal/constrained/shed/outage; storage idle/charging/discharging/unavailable; HVDC link deblocked/blocked/tripped. An HVDC terminal (the bus of an external system reached only by HVDC, in no island) matches no state.'),
+  islandId: z.string().min(1).optional().describe('Only assets in this island (world.electric-grid.islands.list); a branch or HVDC link matches when either end is in it. An HVDC terminal lies in no island.'),
   minLoadingPercent: z.number().finite().nonnegative().optional().describe('Only branches loaded at or above this percent of their derated rating.'),
   sort: z.enum(['model', 'loading', 'dispatch', 'shed']).default('model')
     .describe('model: Model order; loading: branches by loading; dispatch: generators by output; shed: loads by unserved demand. Assets without the sorted quantity follow in Model order.'),
@@ -54,7 +55,7 @@ const assetSearchResultSchema = z.object({
 
 const listItemFields = assetListItemSchema.omit({ kind: true }).shape
 const assetDetailSchema = z.discriminatedUnion('kind', [
-  z.object({ ...listItemFields, kind: z.literal('bus'), definition: busDefinitionSchema, state: busStateSchema.optional() }).strict(),
+  z.object({ ...listItemFields, kind: z.literal('bus'), definition: busDefinitionSchema, state: z.union([busStateSchema, hvdcTerminalStateSchema]).optional() }).strict(),
   z.object({ ...listItemFields, kind: z.literal('branch'), definition: branchDefinitionSchema, state: branchStateSchema }).strict(),
   z.object({ ...listItemFields, kind: z.literal('generator'), definition: generatorDefinitionSchema, state: generatorStateSchema }).strict(),
   z.object({ ...listItemFields, kind: z.literal('load'), definition: loadDefinitionSchema, state: loadStateSchema }).strict(),
@@ -77,7 +78,11 @@ const busIdsOf = (entry: SearchEntry): ReadonlyArray<string> => entry.kind === '
   : entry.kind === 'branch' || entry.kind === 'hvdc' ? [entry.definition.fromBusId, entry.definition.toBusId] : [entry.definition.busId]
 
 const statusesOf = (grid: GridRuntimeInstance, entry: SearchEntry): ReadonlyArray<AssetStatus> => {
-  if (entry.kind === 'bus') return [grid.busStates.get(entry.id)!.energized ? 'energized' : 'de-energized']
+  if (entry.kind === 'bus') {
+    // An HVDC terminal is outside Norwegian energisation.
+    if (grid.hvdcTerminals.has(entry.id)) return []
+    return [grid.busStates.get(entry.id)!.energized ? 'energized' : 'de-energized']
+  }
   if (entry.kind === 'hvdc') return [grid.hvdcLinks.get(entry.id)!.state]
   if (entry.kind === 'branch') {
     const state = grid.branches.get(entry.id)!
@@ -137,7 +142,7 @@ export const gridAssetSearchQuery = defineGridQuery({
 export const gridAssetGetQuery = defineGridQuery({
   id: 'world.electric-grid.asset.get',
   title: 'Get Grid Asset',
-  description: 'Returns the Model definition with provenance, the current state, map target and applicable operations of one Grid Asset. Branch flow is positive from fromBusId to toBusId; storage and generator output are positive into the Grid; an HVDC link (kind hvdc) transfers positive from its Norwegian converter fromBusId, so positive exports from Norway.',
+  description: 'Returns the Model definition with provenance, the current state, map target and applicable operations of one Grid Asset. Branch flow is positive from fromBusId to toBusId; storage and generator output are positive into the Grid; an HVDC link (kind hvdc) transfers positive from its Norwegian converter fromBusId, so positive exports from Norway. The bus of an external system reached only by HVDC is an HVDC terminal in no island: its state names the system\'s area and the links ending there.',
   searchTerms: ['asset detail', 'definition', 'provenance', 'state', 'parameters', 'detaljer', 'kilde', 'tilstand'],
   input: assetPayloadSchema,
   output: assetDetailResultSchema,

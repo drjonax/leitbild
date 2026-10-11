@@ -51,7 +51,7 @@ export const separableBranch = (grid: GridRuntimeInstance, busId: string): { rea
   const { model } = grid.definition
   const closed = Uint8Array.from(model.branches, branch => grid.branches.get(branch.id)!.state === 'closed' ? 1 : 0)
   const islandId = grid.busStates.get(busId)!.islandId
-  const islandBuses = new Set(model.buses.filter(bus => grid.busStates.get(bus.id)!.islandId === islandId).map(bus => bus.id))
+  const islandBuses = new Set([...grid.busStates].filter(([, state]) => state.islandId === islandId).map(([id]) => id))
   let best: { readonly branch: GridBranchDefinition; readonly part: SeparablePart } | null = null
   model.branches.forEach((branch, index) => {
     if (closed[index] !== 1 || !islandBuses.has(branch.fromBusId)) return

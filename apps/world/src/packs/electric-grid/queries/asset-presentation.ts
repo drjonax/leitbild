@@ -107,7 +107,20 @@ export const assetPresentationFor = (grid: GridRuntimeInstance, asset: GridAsset
   let tone: 'ready' | 'working' | 'error' | 'idle' = 'ready'
   let statusLabel = 'Normal'
   let summary: string = asset.kind
-  if (asset.kind === 'bus') {
+  const terminal = asset.kind === 'bus' ? grid.hvdcTerminals.get(asset.id) : undefined
+  if (terminal !== undefined) {
+    // In no island and outside Norwegian energisation: described by its system and its links.
+    const system = grid.definition.index.externalSystems.find(candidate => candidate.id === terminal.externalSystemId)!
+    const links = terminal.links
+    subkind = 'hvdc-terminal'
+    tone = links.some(link => link.state === 'deblocked') ? 'ready' : 'idle'
+    statusLabel = 'HVDC terminal'
+    summary = [system.label, ...links.map(link => {
+      const label = grid.definition.index.hvdcLinks.find(candidate => candidate.id === link.linkId)!.label
+      if (link.state !== 'deblocked') return `${label} ${link.state}`
+      return `${label} ${Math.round(Math.abs(link.transferMw)).toLocaleString()} MW ${link.transferMw >= 0 ? 'export' : 'import'}`
+    })].join(' · ')
+  } else if (asset.kind === 'bus') {
     const state = grid.busStates.get(asset.id)
     const definition = asset.definition as typeof grid.definition.model.buses[number]
     const connections = [...grid.externalConnections.values()].filter(connection => connection.busId === asset.id)

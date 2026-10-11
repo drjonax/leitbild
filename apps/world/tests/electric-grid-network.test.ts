@@ -217,6 +217,8 @@ describe('electric-grid sparse network core', () => {
     const plan = topologyPlanForGrid(grid)
     const residuals = kclResidualsMw(grid)
     plan.components.forEach((component, index) => {
+      // An HVDC terminal lies in no island: no AC injection and no bus state.
+      if (component.islandIndex < 0) return
       for (const busId of component.buses) {
         if (busId === component.referenceBusId) expect(Math.abs(residuals.get(busId)! - plan.referenceMismatchMw[index]!)).toBeLessThan(1e-9)
         else expect(Math.abs(residuals.get(busId)!)).toBeLessThan(1e-9)

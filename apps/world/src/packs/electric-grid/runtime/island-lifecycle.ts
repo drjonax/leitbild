@@ -181,6 +181,8 @@ const overlapComponents = (previous: GridIslandPlan, plan: GridTopologyPlan): Re
     return current
   }
   for (let bus = 0; bus < nextOfBus.length; bus += 1) {
+    // An HVDC terminal lies in no island in every plan.
+    if (nextOfBus[bus]! < 0) continue
     const a = find(previousOfBus[bus]!)
     const b = find(previous.islands.length + nextOfBus[bus]!)
     if (a !== b) parent[a] = b
@@ -242,6 +244,7 @@ const initialIslands = (grid: GridRuntimeInstance, plan: GridTopologyPlan): Read
     const bus = network.busIndexById.get(item.anchorBusId)
     if (bus === undefined) throw new Error(`stored Grid island ${item.id} is anchored at unknown bus ${item.anchorBusId}`)
     const planIndex = plan.islandIndexOfBus[bus]!
+    if (planIndex < 0) throw new Error(`stored Grid island ${item.id} is anchored at HVDC terminal ${item.anchorBusId}, which lies in no island`)
     if (byPlanIndex.has(planIndex)) throw new Error(`stored Grid islands ${byPlanIndex.get(planIndex)!.id} and ${item.id} lie in one island`)
     byPlanIndex.set(planIndex, item)
   }
@@ -370,11 +373,13 @@ export const solvedGridIslands = (grid: GridRuntimeInstance): GridIslandPlan => 
   return islands
 }
 
-/** The stable island holding a bus. */
+/** The stable island holding a bus; an HVDC terminal lies in none. */
 export const gridIslandAtBus = (islands: GridIslandPlan, busId: string): GridIsland => {
   const bus = islands.plan.network.busIndexById.get(busId)
   if (bus === undefined) throw new Error(`unknown Grid bus ${busId}`)
-  return islands.islands[islands.plan.islandIndexOfBus[bus]!]!
+  const planIndex = islands.plan.islandIndexOfBus[bus]!
+  if (planIndex < 0) throw new Error(`Grid bus ${busId} is an HVDC terminal of an asynchronous external system and lies in no island`)
+  return islands.islands[planIndex]!
 }
 
 /** The frequency of a stable island: null while de-energised; an energised island always carries one. */

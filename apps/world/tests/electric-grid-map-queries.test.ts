@@ -144,7 +144,13 @@ describe('Grid map query Capabilities', () => {
     for (const values of Object.values(state.loads)) expect(values).toHaveLength(geometry.loads.length)
     for (const values of Object.values(state.hvdcLinks)) expect(values).toHaveLength(geometry.hvdcLinks.length)
     expect(state.revision).toBe(grid.tick)
-    expect(state.buses.island.every(position => position < state.islands.length)).toBe(true)
+    // Every bus lies in an island but an HVDC terminal, which lies in none.
+    const terminals = new Set(grid.definition.index.asynchronousBoundaryBusIds)
+    geometry.buses.forEach((bus, position) => {
+      const island = state.buses.island[position]!
+      if (terminals.has(bus.id)) expect(island).toBeNull()
+      else expect(island).toBeLessThan(state.islands.length)
+    })
     const shared = geometry.loads.findIndex(group => group.loadIds.length > 1)
     const sharedDemandMw = geometry.loads[shared]!.loadIds.reduce((sum, id) => sum + grid.loads.get(id)!.demandMw, 0)
     expect(Math.abs(state.loads.demandMw[shared]! - sharedDemandMw)).toBeLessThanOrEqual(0.05)

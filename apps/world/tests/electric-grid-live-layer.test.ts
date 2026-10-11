@@ -318,7 +318,8 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     const busFid = (busId: string) => geometry.features.findIndex(feature => feature.properties.kind === 'bus') + norway.model.buses.findIndex(bus => bus.id === busId)
     for (const busId of ['bus:boundary-DE', 'bus:boundary-DK1', 'bus:boundary-GB', 'bus:boundary-NL']) {
       expect(before.featureStates.get(busFid(busId))).toMatchObject({ external: true, alarm: false, island: -1 })
-      expect(before.hoverCard(busFid(busId))!.fields.map(field => field.key)).toEqual(['external', 'role'])
+      const links = norway.model.hvdcLinks.flatMap((link, position) => link.toBusId === busId ? [`link-${position}`] : [])
+      expect(before.hoverCard(busFid(busId))!.fields.map(field => field.key)).toEqual(['external', 'role', ...links])
     }
     expect(before.featureStates.get(busFid('bus:boundary-SE3@420'))).toMatchObject({ external: false, energized: true })
 
@@ -330,6 +331,11 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     expect(card.title).toBe('NordLink')
     expect(card.fields.find(field => field.key === 'state')!.value).toBe('Tripped by its converter protection: reset it, then deblock')
     expect(card.fields.find(field => field.key === 'path')!.value).toBe('Mapped cable route')
+    // The German terminal's card names its link and what the link does.
+    const terminalCard = after.hoverCard(busFid('bus:boundary-DE'))!
+    expect(before.hoverCard(busFid('bus:boundary-DE'))!.fields.find(field => field.key === `link-${nordlink}`))
+      .toEqual({ key: `link-${nordlink}`, label: 'NordLink', value: transferMw === 0 ? '0 MW' : `${Math.abs(transferMw).toLocaleString()} MW ${transferMw > 0 ? 'export' : 'import'}` })
+    expect(terminalCard.fields.find(field => field.key === `link-${nordlink}`)!.value).toBe('Tripped by its converter protection: reset it, then deblock')
   })
 
   test('read a branch its protection tripped as tripped, distinct from one an operator opened', () => {

@@ -1,14 +1,15 @@
 import type { GridHvdcLinkDefinition } from '../grid-model.ts'
 import { queueGridSignal } from './grid-signals.ts'
+import { hvdcReceivingEndMw } from './hvdc-terminals.ts'
 import type { GridHvdcLinkState, GridHvdcTrip, GridHvdcTripCause, GridIsland, GridRuntimeInstance } from './instance.ts'
 import { gridTablesFor } from './state/tables.ts'
 
 /**
  * HVDC links are controllable injection pairs, never AC branches. The sending converter draws
  * |transfer| from its AC bus and the receiving converter delivers |transfer|·(1 − loss). A terminal
- * on the boundary bus of an asynchronous external system lies outside the modelled AC network: that
- * system absorbs or supplies it. A blocked or tripped link transfers nothing. This is the injection
- * of link `index`'s from-end converter into its AC bus (MW).
+ * on the boundary bus of an asynchronous external system lies outside the modelled AC network and
+ * every island (hvdc-terminals.ts): that system absorbs or supplies it. A blocked or tripped link
+ * transfers nothing. This is the injection of link `index`'s from-end converter into its AC bus (MW).
  */
 export const hvdcFromTerminalMw = (grid: GridRuntimeInstance, index: number): number => {
   const tables = gridTablesFor(grid.definition)
@@ -21,8 +22,7 @@ export const hvdcFromTerminalMw = (grid: GridRuntimeInstance, index: number): nu
 export const hvdcToTerminalMw = (grid: GridRuntimeInstance, index: number): number => {
   const tables = gridTablesFor(grid.definition)
   if (tables.asynchronousBoundaryBus[tables.hvdcToBus[index]!] === 1) return 0
-  const transferMw = grid.arrays.hvdcLinks[index]!.transferMw
-  return transferMw >= 0 ? Math.abs(transferMw) * (1 - grid.definition.index.hvdcLinks[index]!.lossPercent / 100) : transferMw
+  return hvdcReceivingEndMw(grid.arrays.hvdcLinks[index]!.transferMw, grid.definition.index.hvdcLinks[index]!.lossPercent)
 }
 
 /** Whether an ascending list of bus indices holds `bus`. */

@@ -12,8 +12,8 @@ import { gridMapStateResultSchema, type GridMapStateResult } from './map-schemas
 export interface GridMapIslandState {
   /** Stable islands in plan order. */
   readonly islands: ReadonlyArray<{ readonly id: string; readonly energized: boolean; readonly frequencyHz: number | null; readonly flowModel: 'ac' | 'dc' | null }>
-  /** Index into islands per bus, in model order. */
-  readonly busIsland: ReadonlyArray<number>
+  /** Index into islands per bus, in model order; null at an HVDC terminal, which lies in no island. */
+  readonly busIsland: ReadonlyArray<number | null>
   /** Grid solve counter; it increases with every solve. */
   readonly tick: number
 }
@@ -23,7 +23,7 @@ export const gridMapIslandState = (grid: GridRuntimeInstance): GridMapIslandStat
   const plan = solvedGridIslands(grid)
   const islands = plan.islands.map(island => ({ id: island.id, energized: island.energized, frequencyHz: gridIslandFrequencyHz(island), flowModel: gridIslandFlowModel(grid, island) }))
   // The compiled network numbers buses in model order, and stable islands align with plan islands.
-  const busIsland = Array.from(plan.plan.islandIndexOfBus)
+  const busIsland = Array.from(plan.plan.islandIndexOfBus, island => island < 0 ? null : island)
   return { islands, busIsland, tick: grid.tick }
 }
 
@@ -60,7 +60,7 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
     islands: [...islands],
     buses: {
       island: [...busIsland],
-      energized: busIsland.map(position => islands[position]!.energized ? 1 : 0),
+      energized: busIsland.map(position => position !== null && islands[position]!.energized ? 1 : 0),
     },
     branches: { loadingPercent, flowMw, flowModel, closed, tripped, availability },
     generators: {

@@ -8,6 +8,7 @@ import type {
   GridStorageDefinition,
 } from '../grid-model.ts'
 import { gridReservesByProductSchema } from '../model.ts'
+import type { GridHvdcTerminalState } from '../runtime/hvdc-terminals.ts'
 import type {
   GridBranchState,
   GridBusState,
@@ -136,6 +137,19 @@ export const busStateSchema = z.object({
   netInjectionMw: finite.describe('Net active power injected at the bus, including its share of branch losses (MW).'),
 }).strict()
 
+export const hvdcTerminalStateSchema = z.object({
+  busId: z.string(),
+  externalSystemId: z.string().describe('The asynchronous external system the terminal belongs to; it holds the terminal\'s AC voltage and absorbs or supplies its links\' transfer.'),
+  area: z.string().describe('The external system\'s area, for example DE or GB.'),
+  links: z.array(z.object({
+    linkId: z.string(),
+    state: z.enum(['deblocked', 'blocked', 'tripped']),
+    setpointMw: finite.describe('Transfer set-point (MW), positive exports from Norway.'),
+    transferMw: finite.describe('Power sent at the sending converter (MW), positive exports from Norway.'),
+  }).strict()).readonly().describe('The HVDC links ending at the terminal, in Model order.'),
+  deliveredMw: finite.describe('Net power the converters at the terminal deliver into the external system (MW): positive while Norway exports, after converter and cable losses.'),
+}).strict().describe('An HVDC terminal: the bus of an external system reached only by HVDC links. It lies outside the modelled AC network and in no island, and takes no part in energisation or island alarms.')
+
 export const branchSwitchingStateSchema = z.enum(['closed', 'open', 'tripped'])
   .describe('open: opened by an operator; tripped: opened by its protection, closable only after reset-branch-protection.')
 
@@ -238,6 +252,7 @@ export type WireSchemasAcceptRuntimeValues = [
   Accepts<typeof loadDefinitionSchema, GridLoadDefinition>,
   Accepts<typeof storageDefinitionSchema, GridStorageDefinition>,
   Accepts<typeof busStateSchema, GridBusState>,
+  Accepts<typeof hvdcTerminalStateSchema, GridHvdcTerminalState>,
   Accepts<typeof branchStateSchema, GridBranchState>,
   Accepts<typeof generatorStateSchema, GridGeneratorState>,
   Accepts<typeof loadStateSchema, GridLoadState>,

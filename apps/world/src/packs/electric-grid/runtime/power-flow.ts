@@ -378,9 +378,22 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   lossesMw += writeBranchSolution(grid, plan, flows, ac, lossLoad, scratch)
   for (const link of grid.arrays.hvdcLinks) lossesMw += link.lossesMw
 
-  if (grid.busStates.size === 0) for (const [busId, state] of busStateViews(network.busIds, busArrays)) grid.busStates.set(busId, state)
+  const tables = gridTablesFor(grid.definition)
+  if (grid.busStates.size === 0) {
+    for (const [busId, state] of busStateViews(network.busIds, busArrays)) if (!grid.hvdcTerminals.has(busId)) grid.busStates.set(busId, state)
+  }
   for (let bus = 0; bus < network.busCount; bus += 1) {
     const planIndex = islandOf[bus]!
+    if (planIndex < 0) {
+      // An HVDC terminal lies in no island and has no bus state (grid.hvdcTerminals): no quantities here.
+      busArrays.solvedIsland[bus] = -1
+      busArrays.energized[bus] = 0
+      busArrays.voltagePu[bus] = Number.NaN
+      busArrays.voltageModel[bus] = voltageModelDeEnergised
+      busArrays.reactiveInjectionMvar[bus] = Number.NaN
+      busArrays.frequencyHz[bus] = Number.NaN
+      continue
+    }
     const energized = energised[planIndex] === 1
     const converged = acConverged[planIndex] === 1
     busArrays.solvedIsland[bus] = planIndex
@@ -392,7 +405,6 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   }
   busArrays.angleRad.set(plan.anglesRad)
   busArrays.netInjectionMw.set(injections)
-  const tables = gridTablesFor(grid.definition)
   for (const island of islands.islands) {
     if (!island.energized) continue
     const structure = plan.islands[island.planIndex]!
