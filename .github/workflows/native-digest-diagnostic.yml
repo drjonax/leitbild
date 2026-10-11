@@ -45,6 +45,14 @@ jobs:
               echo "$commit $profile: $(tail -1 "$out/linux-$commit-$profile.log")"
             done
           done
+      - name: Probe the libm functions the laws call
+        run: |
+          probe="$(mktemp -d)"
+          rustc --edition 2021 -C opt-level=0 -o "$probe/probe0" .github/native-digest-diagnostic/libm_probe.rs
+          rustc --edition 2021 -C opt-level=3 -o "$probe/probe3" .github/native-digest-diagnostic/libm_probe.rs
+          "$probe/probe0" "$OUT/linux-libm-opt0.txt"
+          "$probe/probe3" "$OUT/linux-libm-opt3.txt"
+          cmp "$OUT/linux-libm-opt0.txt" "$OUT/linux-libm-opt3.txt" && echo "linux opt0 == opt3"
       - uses: actions/upload-artifact@v4
         with:
           name: digest-logs
