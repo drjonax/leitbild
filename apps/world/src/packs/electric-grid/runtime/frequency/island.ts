@@ -5,7 +5,7 @@ import { fcrDDownActivation, fcrDUpActivation, fcrNActivation } from './governor
 import type { ExternalFrequencyState, FrequencyAction, IslandFrequencyState, UnitFrequencyState } from './island-state.ts'
 import { validateIslandInput } from './island-state.ts'
 import { evaluateLfdd, lfddShedFractionByLoad, type LfddState } from './lfdd.ts'
-import { distributeMfrrActivation, evaluateMfrr, idleMfrrRamp, mfrrOutputMw, mfrrRampInProgress, type MfrrState, type MfrrUnitRamp } from './mfrr.ts'
+import { distributeMfrrActivation, evaluateMfrr, idleMfrrRamp, mfrrOutputMw, mfrrRampInProgress, mfrrTiming, type MfrrState, type MfrrTiming, type MfrrUnitRamp } from './mfrr.ts'
 import { completeStorageSubStep, planStorageSubStep, type StorageFrequencyState, type StorageOperatingState } from './storage.ts'
 import { integrateSwingSubStep, islandKineticEnergyMws, lagOutputWeight, type ResponseElement } from './swing.ts'
 import type { ExternalFrequencyEquivalent, FrequencyUnit, IslandFrequencyInput } from './types.ts'
@@ -84,16 +84,17 @@ const deliveredMfrrMw = (unit: FrequencyUnit, scheduledMw: number, activationMw:
 
 type WorkingUnitState = { -readonly [K in keyof UnitFrequencyState]: UnitFrequencyState[K] }
 
-/** Exact integral of a linear mFRR ramp over [t0, t1]: held before the ramp, linear during it, held after. */
-const mfrrEnergyMws = (ramp: MfrrUnitRamp, t0: number, t1: number, fullActivationSeconds: number): number => {
+/** Exact integral of an mFRR activation over [t0, t1]: held through preparation, linear during the ramp, held after. */
+const mfrrEnergyMws = (ramp: MfrrUnitRamp, t0: number, t1: number, timing: MfrrTiming): number => {
   if (ramp.fromMw === ramp.toMw) return ramp.toMw * (t1 - t0)
-  const rampStart = ramp.startedAtSeconds
-  const rampEnd = rampStart + fullActivationSeconds
+  const rampStart = ramp.startedAtSeconds + timing.preparationSeconds
+  const rampSeconds = timing.fullActivationSeconds - timing.preparationSeconds
+  const rampEnd = rampStart + rampSeconds
   const a = Math.min(rampEnd, Math.max(rampStart, t0))
   const b = Math.min(rampEnd, Math.max(rampStart, t1))
   const before = Math.max(0, Math.min(t1, rampStart) - t0) * ramp.fromMw
   const after = Math.max(0, t1 - Math.max(t0, rampEnd)) * ramp.toMw
-  const during = (b - a) * (ramp.fromMw + (ramp.toMw - ramp.fromMw) * ((a + b) / 2 - rampStart) / fullActivationSeconds)
+  const during = (b - a) * (ramp.fromMw + (ramp.toMw - ramp.fromMw) * ((a + b) / 2 - rampStart) / rampSeconds)
   return before + during + after
 }
 
@@ -143,7 +144,7 @@ export const advanceIslandFrequency = (
   const extremes: { minimumHz: number; minimumAtSeconds: number; maximumHz: number; maximumAtSeconds: number } | null =
     dtSeconds > 0 ? { minimumHz: frequencyHz, minimumAtSeconds: elapsedSeconds, maximumHz: frequencyHz, maximumAtSeconds: elapsedSeconds } : null
   const mfrrAt = (ramp: MfrrUnitRamp, atSeconds: number): number =>
-    automation.mfrr.enabled ? mfrrOutputMw(ramp, atSeconds, automation.mfrr.fullActivationSeconds) : 0
+    automation.mfrr.enabled ? mfrrOutputMw(ramp, atSeconds, mfrrTiming(automation.mfrr)) : 0
   for (const unit of input.storage) {
     const current = storageStates.get(unit.id)!
     if (unit.connected || current.operatingState === 'disconnected') continue
@@ -154,7 +155,7 @@ export const advanceIslandFrequency = (
   const remainderSeconds = dtSeconds - fullSteps * h
   const stepCount = fullSteps + (remainderSeconds > stepTolerance ? 1 : 0)
   const mfrrEnabled = automation.mfrr.enabled
-  const mfrrFullSeconds = automation.mfrr.enabled ? automation.mfrr.fullActivationSeconds : 1
+  const mfrrTimes: MfrrTiming = automation.mfrr.enabled ? mfrrTiming(automation.mfrr) : { preparationSeconds: 0, fullActivationSeconds: 1 }
 
   // Synchronised units and their working states, kept in step; rebuilt only after a protection trip.
   let active: FrequencyUnit[] = []
@@ -249,9 +250,9 @@ export const advanceIslandFrequency = (
           mfrrEndMw = ramp.toMw
           mfrrEnergyMw = ramp.toMw * stepSeconds
         } else {
-          mfrrStartMw = mfrrOutputMw(ramp, t0, mfrrFullSeconds)
-          mfrrEndMw = mfrrOutputMw(ramp, t1, mfrrFullSeconds)
-          mfrrEnergyMw = mfrrEnergyMws(ramp, t0, t1, mfrrFullSeconds)
+          mfrrStartMw = mfrrOutputMw(ramp, t0, mfrrTimes)
+          mfrrEndMw = mfrrOutputMw(ramp, t1, mfrrTimes)
+          mfrrEnergyMw = mfrrEnergyMws(ramp, t0, t1, mfrrTimes)
         }
         const deliveredStartMw = deliveredMfrrMw(unit, fromMw, mfrrStartMw)
         const deliveredEndMw = deliveredMfrrMw(unit, endMw, mfrrEndMw)
@@ -671,7 +672,7 @@ const runRestorationCycle = (context: {
   }
   const mfrrConfig = automation.mfrr
   if (!mfrrConfig.enabled || !context.mfrr) return { agc: cycle.state, mfrr: context.mfrr, action: null }
-  const rampInProgress = units.some(unit => mfrrRampInProgress(unitStates.get(unit.id)!.mfrr, t0, mfrrConfig.fullActivationSeconds))
+  const rampInProgress = units.some(unit => mfrrRampInProgress(unitStates.get(unit.id)!.mfrr, t0, mfrrTiming(mfrrConfig)))
   const activatedReservesMw = units.reduce((sum, unit) => {
     const current = unitStates.get(unit.id)!
     return sum + (unit.synchronised ? current.afrrMw + current.fcrNMw + current.fcrDUpMw + current.fcrDDownMw : 0)

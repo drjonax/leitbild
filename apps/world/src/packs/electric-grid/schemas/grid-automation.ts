@@ -113,6 +113,9 @@ const mfrrSchema = z.discriminatedUnion('enabled', [
     afrrUtilisationThresholdFraction: positiveFraction,
     /** Time the utilisation must persist before mFRR is activated. */
     sustainedSeconds: seconds,
+    /** From activation to the start of the provider's ramp: output holds meanwhile. */
+    preparationSeconds: nonNegativeSeconds,
+    /** From activation to full delivery, preparation included. */
     fullActivationSeconds: seconds,
     minimumActivationMw: z.number().finite().positive(),
     requirement: directionalRequirementSchema,
@@ -236,6 +239,7 @@ export const gridAutomationSchema = z.object({
     if (Math.abs(cycles - Math.round(cycles)) > 1e-9) issue('aFRR cycle must be a whole number of sub-steps', ['afrr', 'cycleSeconds'])
   }
   if (value.mfrr.enabled && !value.afrr.enabled) issue('mFRR activation is driven by aFRR utilisation and requires aFRR', ['mfrr', 'enabled'])
+  if (value.mfrr.enabled && value.mfrr.preparationSeconds >= value.mfrr.fullActivationSeconds) issue('mFRR preparation must end before full activation', ['mfrr', 'preparationSeconds'])
   value.lfdd.stages.forEach((stage, index) => {
     if (stage.thresholdHz >= value.fcrD.up.fullHz) issue('LFDD stages must lie below full FCR-D up activation', ['lfdd', 'stages', index, 'thresholdHz'])
   })

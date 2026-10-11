@@ -12,6 +12,7 @@ import {
   type IslandFrequencyState,
 } from '../src/packs/electric-grid/runtime/frequency/island-state.ts'
 import { advanceIslandFrequency, type IslandFrequencyAdvance } from '../src/packs/electric-grid/runtime/frequency/island.ts'
+import { mfrrOutputMw, mfrrRampInProgress, mfrrTiming } from '../src/packs/electric-grid/runtime/frequency/mfrr.ts'
 import { integrateSwingSubStep } from '../src/packs/electric-grid/runtime/frequency/swing.ts'
 import type { FrequencyLoad, FrequencyStorageUnit, FrequencyUnit, IslandFrequencyInput } from '../src/packs/electric-grid/runtime/frequency/types.ts'
 import { gridAutomationSchema, type GridAutomation } from '../src/packs/electric-grid/schemas/grid-automation.ts'
@@ -241,14 +242,22 @@ describe('island frequency control', () => {
     }
   })
 
-  test('(d) aFRR restores |Δf| < 10 mHz within 300 s after a 267 MW loss in a 15 GW island', () => {
+  test('(d) aFRR and then mFRR restore |Δf| < 10 mHz after a 267 MW loss in a 15 GW island', () => {
     const island = buildIsland({ automation: nordic, loadMw: 15_000, kineticEnergyMws: 60_000, lossMw: 267 })
     const result = simulate(nordic, island.state, island.after, 900, 1)
-    const restoredAt = [...result.frequencyAt].find(([seconds]) =>
-      [...result.frequencyAt].every(([later, hz]) => later < seconds || Math.abs(hz - 50) < 0.01))
+    if (!nordic.mfrr.enabled) throw new Error('Nordic preset must enable mFRR')
+    // The island's 200 MW aFRR cannot cover the loss: while the activated mFRR is in its 2.5 min
+    // preparation, FCR-N holds the uncovered 67 MW at about 67 / (6,000 + 150) MW/Hz = 11 mHz;
+    // the mFRR ramp then restores frequency.
+    const activationSeconds = result.actions.find(action => action.kind === 'mfrr-activated')!.atSeconds
+    const rampStartSeconds = activationSeconds + nordic.mfrr.preparationSeconds
+    const samples = [...result.frequencyAt]
+    const plateauHz = Math.max(...samples.filter(([seconds]) => seconds >= 300 && seconds < rampStartSeconds).map(([, hz]) => Math.abs(hz - 50)))
+    expect(plateauHz).toBeLessThan(0.015)
+    const restoredAt = samples.find(([seconds]) => samples.every(([later, hz]) => later < seconds || Math.abs(hz - 50) < 0.01))
     expect(restoredAt).toBeDefined()
-    expect(restoredAt![0]).toBeLessThanOrEqual(300)
-    console.info(`(d) |Δf| < 10 mHz from ${restoredAt![0]} s; f(300 s) ${frequencyAt(result, 300).toFixed(5)} Hz; nadir ${result.nadirHz.toFixed(4)} Hz`)
+    expect(restoredAt![0]).toBeLessThanOrEqual(rampStartSeconds + 60)
+    console.info(`(d) mFRR activated at ${activationSeconds.toFixed(0)} s, ramping from ${rampStartSeconds.toFixed(0)} s; |Δf| ≤ ${(plateauHz * 1_000).toFixed(1)} mHz meanwhile, < 10 mHz from ${restoredAt![0]} s; nadir ${result.nadirHz.toFixed(4)} Hz`)
   })
 
   test('mFRR takes over saturated aFRR and frees it', () => {
@@ -333,6 +342,20 @@ describe('island frequency control', () => {
     expect(charge).toBeLessThan(nordic.storage.stateOfChargeLimits.minimumFraction + 1e-3)
     expect(result.last.storage[0]!.limitedByStateOfCharge).toBe(true)
     expect(result.actions.filter(action => action.kind === 'storage-state-changed').length).toBeLessThanOrEqual(2)
+  })
+})
+
+describe('mFRR activation timing', () => {
+  test('holds through the 2.5 min preparation time, then ramps 10 min to full activation at 12.5 min', () => {
+    const nordic = gridAutomationPreset('electric-grid.frequency.nordic-2025')
+    if (!nordic.mfrr.enabled) throw new Error('Nordic preset must enable mFRR')
+    const timing = mfrrTiming(nordic.mfrr)
+    expect(timing).toEqual({ preparationSeconds: 150, fullActivationSeconds: 750 })
+    const ramp = { fromMw: 20, toMw: 120, startedAtSeconds: 1_000 }
+    expect([1_000, 1_100, 1_150, 1_450, 1_750, 2_000].map(at => mfrrOutputMw(ramp, 1_000 + (at - 1_000), timing))).toEqual([20, 20, 20, 70, 120, 120])
+    expect(mfrrRampInProgress(ramp, 1_749, timing)).toBe(true)
+    expect(mfrrRampInProgress(ramp, 1_750, timing)).toBe(false)
+    expect(() => gridAutomationSchema.parse({ ...nordic, mfrr: { ...nordic.mfrr, preparationSeconds: 750 } })).toThrow('mFRR preparation must end before full activation')
   })
 })
 
