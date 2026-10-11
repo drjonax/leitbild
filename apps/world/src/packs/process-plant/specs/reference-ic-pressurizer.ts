@@ -40,6 +40,13 @@ const lowPressureReactorTripMPa = 13.8
 /** The level control's low deviation alarm, below the level program. */
 const levelDeviationAlarmPercent = 5
 
+/**
+ * The low-level bistable, at the pressurizer's heater cutoff level
+ * (heaterCutoffLevelPercent), on the level it reads, so a display draws it on
+ * the level beside the alarm it raises.
+ */
+const lowLevelCutoffPercent = 17
+
 export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
     id: 'pzr-pressure-low',
@@ -236,13 +243,14 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     })],
   }),
   // The low-level bistable at 17 % cuts off every heater, so that none runs
-  // uncovered, and isolates letdown, so that the system keeps its water.
-  // Letdown stays isolated until an operator opens it again.
+  // uncovered (the pressurizer's own breakers open below its cutoff level),
+  // and isolates letdown, so that the system keeps its water. Letdown stays
+  // isolated until an operator opens it again.
   rule({
     id: 'pzr-level-low-letdown-isolation',
     label: 'Pressurizer level low letdown isolation',
     ruleClass: 'normalControl',
-    condition: comparison({ tagId: 'PZR-HTR-LO-LVL' }, '==', true),
+    condition: comparison({ tagId: 'PZR-LVL' }, '<', lowLevelCutoffPercent),
     latch: false,
     resetWhenClear: true,
     effects: [write('isolate-letdown', { tagId: 'LET-ISOL' }, 0)],
@@ -251,15 +259,15 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     id: 'pzr-level-low-heaters-off',
     label: 'Pressurizer level low, heaters off',
     ruleClass: 'alarm',
-    condition: comparison({ tagId: 'PZR-HTR-LO-LVL' }, '==', true),
-    clearCondition: comparison({ tagId: 'PZR-HTR-LO-LVL' }, '==', false),
+    condition: comparison({ tagId: 'PZR-LVL' }, '<', lowLevelCutoffPercent),
+    clearCondition: comparison({ tagId: 'PZR-LVL' }, '>=', lowLevelCutoffPercent),
     clearDelayMs: 1_000,
     latch: false,
     resetWhenClear: true,
     effects: [alarm({
       id: 'heaters-off-letdown-isolated',
       title: 'Pressurizer level low: heaters off, letdown isolated',
-      message: 'Pressurizer level is below the 17 % cutoff: every heater is off and letdown is isolated.',
+      message: `Pressurizer level is below the ${lowLevelCutoffPercent} % cutoff: every heater is off and letdown is isolated.`,
       severity: 'critical',
       annunciator: annunciator({ ...pzrAlarm, priority: 'urgent' }),
     })],

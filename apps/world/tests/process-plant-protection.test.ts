@@ -701,8 +701,14 @@ describe('pressurizer low level', () => {
   test('alarms on the level control\'s low deviation, 5 % below its program, not at a fixed level', () => {
     const path = resolveProcessPlantSignalBinding(graph, { tagId: 'PZR-LVL-DEV' as never }).path
     expect(icThresholdsForSignal(plant, path).thresholds.map(threshold => [threshold.value, threshold.kind, threshold.direction])).toEqual([[-5, 'alarm', 'low']])
+    // On the level itself only the 17 % bistable that cuts off the heaters and isolates letdown (as its alarm and
+    // its control action, drawn on the level: run 22 QA read "PZR-LVL 21.2 % · no LO limit in force") and the
+    // high-level alarm.
     const level = resolveProcessPlantSignalBinding(graph, { tagId: 'PZR-LVL' as never }).path
-    expect(icThresholdsForSignal(plant, level).thresholds.map(threshold => threshold.value)).toEqual([75])
+    expect(icThresholdsForSignal(plant, level).thresholds.map(threshold => [threshold.value, threshold.kind, threshold.direction])).toEqual([[17, 'alarm', 'low'], [17, 'control', 'low'], [75, 'alarm', 'high']])
+    // The bistable acts where the pressurizer's own heater breakers open.
+    const pressurizer = plant.graph.components.find(component => component.kind === 'pressurizer')!
+    expect((pressurizer.parameters as { heaterCutoffLevelPercent: number }).heaterCutoffLevelPercent).toBe(17)
   })
 
   test('stays clear after a trip, where the level falls with its program to no load', () => {
