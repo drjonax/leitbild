@@ -653,6 +653,8 @@ pub struct Segment {
     /// Start of this handle's segment and its ledger there.
     pub started_s: f64,
     pub started_q: [f64; LEDGER],
+    /// The ledger integrand's refusal of a converged step, if any.
+    pub ledger_refusal: Option<String>,
 }
 impl System for Segment {
     fn dimension(&self) -> usize {
@@ -717,11 +719,26 @@ impl System for Segment {
     fn quadrature_count(&self) -> usize {
         LEDGER
     }
+    /// Stock IDAS calls this at each converged step, a state the residual
+    /// has not evaluated. A refusal there is fatal and recorded as the
+    /// ledger's own: a recoverable one would make IDAS retry the step and
+    /// change the trajectory the residual alone would take.
     fn quadrature(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
-        let q = self.system.ledger_rates(t, y, yp).map_err(ida_failure)?;
-        out.copy_from_slice(&q);
         self.system.counters.quadratures += 1;
-        Ok(())
+        match self.system.ledger_rates(t, y, yp) {
+            Ok(q) => {
+                out.copy_from_slice(&q);
+                Ok(())
+            }
+            Err(f) => {
+                let reason = format!(
+                    "ledger integrand refused the converged step at t={t} s ({})",
+                    text(&f)
+                );
+                self.ledger_refusal = Some(reason.clone());
+                Err(Failure::Fatal(reason))
+            }
+        }
     }
 }
 
@@ -1110,6 +1127,13 @@ pub enum End {
     Failure {
         reason: String,
     },
+    /// The ledger's integrand refused a converged step the residual never
+    /// evaluated (request 4, K2). The run stops there rather than letting
+    /// stock IDAS retry, which would change the trajectory; this is not a
+    /// physics stop.
+    LedgerFailure {
+        reason: String,
+    },
 }
 
 pub struct Run {
@@ -1177,6 +1201,7 @@ fn new_handle(
             roots,
             started_s: t,
             started_q: q0,
+            ledger_refusal: None,
         },
         Initial {
             time: t,
@@ -1975,7 +2000,11 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                     "IDA stopped at t={} s: {e}",
                     ida.stats().map_or(t, |s| s.internal_time)
                 );
-                Some(if spec.limit {
+                Some(if let Some(refusal) = &ida.system().ledger_refusal {
+                    End::LedgerFailure {
+                        reason: format!("{refusal}; {reason}"),
+                    }
+                } else if spec.limit {
                     End::Limit {
                         label: classify_limit(&reason),
                     }
@@ -2208,6 +2237,7 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
         End::CpuCap => json!({"kind":"run CPU cap reached"}),
         End::SetBound => json!({"kind":"set CPU bound reached"}),
         End::Failure { reason } => json!({"kind":"failure","reason":reason}),
+        End::LedgerFailure { reason } => json!({"kind":"ledger failure","reason":reason}),
     };
     let series: Vec<Value> = run
         .samples

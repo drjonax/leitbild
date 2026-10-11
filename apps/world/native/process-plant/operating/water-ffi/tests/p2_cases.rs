@@ -15,7 +15,7 @@
 //! receipt. The cell, its spray and relief ports and the relief calibration
 //! are the case-set packet's `pzr` section, unchanged. Nothing is retuned: a
 //! failure is a result.
-#![cfg(all(feature = "quadratures", target_os = "macos"))]
+#![cfg(all(feature = "ida", target_os = "macos"))]
 mod p2_harness;
 
 use leitbild_operating_plant::{
@@ -266,6 +266,13 @@ struct Context {
 }
 impl Context {
     fn load() -> Self {
+        // The cases gate on the integrator's own ledger (request 4, K2): a
+        // binary that links stock IDA refuses here instead of running
+        // without it.
+        assert!(
+            leitbild_operating_water::ida::quadratures_linked(),
+            "the P2 cases gate on the IDAS quadrature ledger: build with --features quadratures against the stock IDAS prefix"
+        );
         let packet_path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET")
             .expect("LD01_OPERATING_HOT_SPINE_PACKET names the P2 packet");
         let wiki = std::env::var("LD01_WIKI_ROOT").expect("LD01_WIKI_ROOT names the wiki worktree");

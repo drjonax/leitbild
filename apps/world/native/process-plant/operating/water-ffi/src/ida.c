@@ -189,6 +189,14 @@ int operating_ida_max_order(OperatingIDA *o,int order) { return IDASetMaxOrd(o->
 int operating_ida_max_step(OperatingIDA *o,double step) { return IDASetMaxStep(o->ida,step); }
 /* Stock IDASetInitStep: the first step; it persists across IDAReInit. */
 int operating_ida_init_step(OperatingIDA *o,double step) { return IDASetInitStep(o->ida,step); }
+/* 1 when this glue was compiled against stock IDAS (quadratures), else 0. */
+int operating_ida_quadratures_linked(void) {
+#ifdef OPERATING_IDAS
+    return 1;
+#else
+    return 0;
+#endif
+}
 int operating_ida_solution_scaling(OperatingIDA *o,int enabled) {
     return IDASetLinearSolutionScaling(o->ida,enabled?SUNTRUE:SUNFALSE);
 }

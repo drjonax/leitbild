@@ -171,6 +171,7 @@ unsafe extern "C" {
     fn operating_ida_max_order(ida: *mut c_void, order: c_int) -> c_int;
     fn operating_ida_max_step(ida: *mut c_void, step: f64) -> c_int;
     fn operating_ida_init_step(ida: *mut c_void, step: f64) -> c_int;
+    fn operating_ida_quadratures_linked() -> c_int;
     #[cfg(feature = "quadratures")]
     fn operating_ida_quadrature_init(
         ida: *mut c_void,
@@ -350,6 +351,21 @@ unsafe extern "C" fn quadrature<S: System>(
     }));
     c.status(result)
 }
+/// Whether this binary's IDA glue was compiled against stock IDAS, the only
+/// SUNDIALS integrator with quadratures. It must agree with the
+/// `quadratures` feature; a run that needs the ledger checks it first.
+pub fn quadratures_linked() -> bool {
+    let linked = unsafe { operating_ida_quadratures_linked() } == 1;
+    assert_eq!(
+        linked,
+        cfg!(feature = "quadratures"),
+        "the IDA glue and the quadratures feature disagree; rebuild"
+    );
+    linked
+}
+#[cfg(not(feature = "quadratures"))]
+const NO_QUADRATURES: &str =
+    "stock IDA has no quadratures: this build links IDA, not IDAS (build with the quadratures feature)";
 pub struct Ida<S: System> {
     handle: NonNull<c_void>,
     context: Box<Context<S>>,
@@ -656,6 +672,19 @@ impl<S: System> Ida<S> {
         let code = unsafe { operating_ida_quadrature(self.handle.as_ptr(), &mut time, q.as_mut_ptr()) };
         self.check(code)?;
         Ok(time)
+    }
+    /// Without stock IDAS a ledger is refused, never emulated.
+    #[cfg(not(feature = "quadratures"))]
+    pub fn initialize_quadratures(&mut self, _: &[f64]) -> Result<()> {
+        Err(NO_QUADRATURES.into())
+    }
+    #[cfg(not(feature = "quadratures"))]
+    pub fn reinitialize_quadratures(&mut self, _: &[f64]) -> Result<()> {
+        Err(NO_QUADRATURES.into())
+    }
+    #[cfg(not(feature = "quadratures"))]
+    pub fn quadratures(&self, _: &mut [f64]) -> Result<f64> {
+        Err(NO_QUADRATURES.into())
     }
     /// IDASetLinearSolutionScaling for the matrix-based KLU solver (stock
     /// enables it): rescale linear solutions after a changed cj.

@@ -823,6 +823,7 @@ fn idas_quadratures_follow_the_steps_and_leave_the_trajectory_unchanged() {
         },
     )
     .unwrap();
+    assert!(leitbild_operating_water::ida::quadratures_linked());
     assert!(ledgered.initialize_quadratures(&[0., 0.]).is_err());
     ledgered.initialize_quadratures(&[0.5]).unwrap();
     assert!(ledgered.initialize_quadratures(&[0.5]).is_err());
@@ -834,4 +835,15 @@ fn idas_quadratures_follow_the_steps_and_leave_the_trajectory_unchanged() {
     assert!((q[0] - (0.5 + 1. - z[0])).abs() < 1e-7);
     assert!(ledgered.quadratures(&mut [0., 0.]).is_err());
     assert!(plain.quadratures(&mut q).is_err());
+}
+
+#[cfg(not(feature = "quadratures"))]
+#[test]
+fn stock_ida_refuses_a_ledger_rather_than_emulating_one() {
+    assert!(!leitbild_operating_water::ida::quadratures_linked());
+    let (y, yp) = ([1., 2.], [-1., 0.]);
+    let mut ida = new(decay(), &y, &yp);
+    let error = ida.initialize_quadratures(&[0.]).unwrap_err();
+    assert!(error.contains("stock IDA has no quadratures"), "{error}");
+    assert!(ida.quadratures(&mut [0.]).is_err());
 }
