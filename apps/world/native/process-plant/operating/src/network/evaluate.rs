@@ -85,7 +85,24 @@ impl<P: Properties> Network<P> {
         yp: &[f64],
         seed: Option<&[f64]>,
         cj: f64,
+        reuse: Option<&mut Reuse<P::Caloric>>,
+    ) -> Result<(), Failure> {
+        self.evaluate_coupled(t, y, yp, seed, cj, reuse, None)
+    }
+
+    /// [`Network::evaluate`] with an owner composed through the network's
+    /// ports ([`super::ports`]): it reads this evaluation's cells and charts
+    /// and adds its receipts before any section, momentum or stock row.
+    #[allow(clippy::too_many_arguments)] // The network's stage inputs and its one port.
+    pub fn evaluate_coupled(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+        seed: Option<&[f64]>,
+        cj: f64,
         mut reuse: Option<&mut Reuse<P::Caloric>>,
+        coupling: Option<&mut dyn super::Coupling>,
     ) -> Result<(), Failure> {
         if let Some((started, seconds)) = self.wall_budget
             && started.elapsed().as_secs_f64() > seconds
@@ -245,6 +262,9 @@ impl<P: Properties> Network<P> {
                 self.receipts[f.from][l.phase][k] = self.receipts[f.from][l.phase][k] - q;
                 self.receipts[f.to][l.phase][k] = self.receipts[f.to][l.phase][k] + q;
             }
+        }
+        if let Some(coupling) = coupling {
+            self.couple(coupling, y, seed, &points, &phase_mass)?;
         }
         self.compose_sections(y, yp, seed, cj, &points)?;
         self.compose_momentum(t, y, yp, seed, cj, &phase_mass)?;
