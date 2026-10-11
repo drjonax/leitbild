@@ -255,12 +255,18 @@ describe('a pressurizer draining below its low-level cutoff', () => {
     let heatedAbove = false
     let cutOffAt: number | null = null
     let heatedBelow = 0
-    plantRun.run(150, () => {
-      const level = read('pressurizer.levelPercent')
-      if (level > 20 && read('pressurizer.demandMw') > 0) heatedAbove = true
-      if (cutOffAt === null && read('pressurizer.heatersCutOff') === 1) cutOffAt = level
-      if (level < 16.5) heatedBelow = Math.max(heatedBelow, read('pressurizer.demandMw'))
-    })
+    // Read each solver step: the reactor trips on low pressure as the level nears the cutoff, and the coolant's
+    // shrink as the rods drop takes the level through it at several percent a second.
+    for (let second = 0; second < 150; second++) {
+      for (let step = 0; step < 10; step++) {
+        plantRun.runtime.tick(100)
+        const level = read('pressurizer.levelPercent')
+        if (level > 20 && read('pressurizer.demandMw') > 0) heatedAbove = true
+        if (cutOffAt === null && read('pressurizer.heatersCutOff') === 1) cutOffAt = level
+        if (level < 16.5) heatedBelow = Math.max(heatedBelow, read('pressurizer.demandMw'))
+      }
+      plantRun.evaluate()
+    }
     expect(heatedAbove).toBe(true)
     expect(cutOffAt).not.toBeNull()
     expect(cutOffAt!).toBeGreaterThan(15)
@@ -327,7 +333,9 @@ describe('after a loss of offsite power', () => {
     for (const diesel of ['dieselGeneratorA', 'dieselGeneratorB']) {
       plantRun.runtime.writeCommand({ type: 'setVariable', path: `${diesel}.startCommand` as VariablePath, value: true })
     }
-    plantRun.run(880)
+    // On the ANS-5.1 decay heat the generators take some 16 minutes to heat
+    // their auxiliary feed back up to the relief valves' set point.
+    plantRun.run(1_180)
     // Natural circulation carries the decay heat to the generators; their
     // relief valves, set at 7.86 MPa, open only as far as it takes to pass
     // the steam they raise ...

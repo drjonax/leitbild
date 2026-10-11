@@ -713,7 +713,9 @@ describe('nuclear instrumentation', () => {
     const protection = createProcessPlantProtectionRunner({ system: tripped, protection: tripped.automation })
     const tag = (tagId: string) => runtime.readVariable(resolveProcessPlantSignalBinding(tripped.graph, { tagId: tagId as never }).path)
     let energizedAt: number | null = null
-    for (let second = 1; second <= 600; second += 1) {
+    // The flux falls on its -80 s period after the trip: P-6 clears some 15 minutes on, and the source range counts
+    // down to the startup source's 10 cps within half an hour.
+    for (let second = 1; second <= 1_800; second += 1) {
       runtime.tick(1_000)
       protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-model-truth' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
       if (energizedAt === null && tag('NIS-SR-HV') === true) {
@@ -904,12 +906,14 @@ describe('steam generator atmospheric relief valves', () => {
     let dumpOpening = 0
     let safetyValveOpening = 0
     const pressures: number[] = []
-    for (let second = 1; second <= 1_200; second += 1) {
+    // On the ANS-5.1 decay heat the generators take some 16 minutes to heat their auxiliary feed back up to the
+    // relief valves' set point; the last five minutes show them holding it.
+    for (let second = 1; second <= 1_500; second += 1) {
       plantRun.run(1_000)
       leastSubcooling = Math.min(leastSubcooling, Number(plantRun.tag('SUB-MARGIN')))
       if (second > 120) dumpOpening = Math.max(dumpOpening, Number(plantRun.tag('TURB-BYP-POS')))
       safetyValveOpening = Math.max(safetyValveOpening, Number(plantRun.read('mainSteamSafetyValve.effectivePositionFraction')))
-      if (second > 900) pressures.push(Number(plantRun.tag('SG-A-PRESS')))
+      if (second > 1_200) pressures.push(Number(plantRun.tag('SG-A-PRESS')))
     }
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
     // Without circulating water the dumps are blocked (C-9); the relief valves vent to the atmosphere instead.

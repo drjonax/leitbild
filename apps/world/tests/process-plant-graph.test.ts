@@ -75,9 +75,11 @@ describe('process plant model composition', () => {
     // flow in an idle loop and natural circulation by buoyancy), and again,
     // as a model-truth change, when the pressurizer's level deviation from
     // its program was given its tag (PZR-LVL-DEV), so its low-deviation alarm
-    // replaces the fixed 35 % low-level alarm that stood after every trip;
+    // replaces the fixed 35 % low-level alarm that stood after every trip,
+    // and again when the core was given six delayed-neutron groups, decay
+    // heat on the ANS-5.1 curve and a scram worth on its trip breakers;
     // PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('216f30992f3779d7df9bdb7c2e2fe18bbd710f0d62f3b2998ec9f0a2d4492af1')
+    expect(system.modelDigest).toBe('6c4692f30747876672ae50ab52822bc4eea05892af8a5f655b5901294b54b2b8')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

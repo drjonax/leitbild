@@ -18,8 +18,34 @@
         "coolantThermalTimeConstantS": 8,
         "fuelThermalTimeConstantS": 20,
         "fuelTemperatureRiseAtRatedPowerC": 140,
-        "decayHeatFractionAtPower": 0.06,
-        "decayHeatTimeConstantS": 900,
+        "delayedNeutrons": {
+          "fraction": 0.0065,
+          "groups": [
+            { "relativeYield": 0.033, "decayConstantPerS": 0.0124 },
+            { "relativeYield": 0.219, "decayConstantPerS": 0.0305 },
+            { "relativeYield": 0.196, "decayConstantPerS": 0.111 },
+            { "relativeYield": 0.395, "decayConstantPerS": 0.301 },
+            { "relativeYield": 0.115, "decayConstantPerS": 1.14 },
+            { "relativeYield": 0.042, "decayConstantPerS": 3.01 }
+          ]
+        },
+        "decayHeatGroups": [
+          { "fractionOfFissionPower": 0.0184, "timeConstantS": 3 },
+          { "fractionOfFissionPower": 0.015, "timeConstantS": 25 },
+          { "fractionOfFissionPower": 0.0095, "timeConstantS": 200 },
+          { "fractionOfFissionPower": 0.0064, "timeConstantS": 1500 },
+          { "fractionOfFissionPower": 0.0044, "timeConstantS": 12000 },
+          { "fractionOfFissionPower": 0.0027, "timeConstantS": 100000 },
+          { "fractionOfFissionPower": 0.0036, "timeConstantS": 1000000 }
+        ],
+        "scram": {
+          "reactivityPcm": 4000,
+          "insertionTimeS": 2.7,
+          "reactorTripBreakers": [
+            "reactorTripBreakerA",
+            "reactorTripBreakerB"
+          ]
+        },
         "referenceCoolantOutletTemperatureC": 322,
         "referenceFuelTemperatureC": 441,
         "coolantTemperatureFeedbackPcmPerC": -3,

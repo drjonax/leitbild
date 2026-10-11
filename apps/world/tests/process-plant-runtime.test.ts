@@ -1152,8 +1152,11 @@ describe('process plant runtime', () => {
 
     for (let index = 0; index < 50; index += 1) runtime.tick(100)
     const initialFissionPower = Number(runtime.readVariable(valueOf('core.powerMw')))
+    // The trip breakers drop the rods; within half a minute the delayed neutrons sustain less than the decay heat.
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('reactorTripBreakerA.closed'), value: false })
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('reactorTripBreakerB.closed'), value: false })
     runtime.writeCommand({ type: 'setVariable', path: valueOf('core.rodInsertionFraction'), value: 1 })
-    for (let index = 0; index < 150; index += 1) runtime.tick(100)
+    for (let index = 0; index < 300; index += 1) runtime.tick(100)
 
     const trippedFissionPower = Number(runtime.readVariable(valueOf('core.powerMw')))
     const decayHeat = Number(runtime.readVariable(valueOf('core.decayHeatMw')))

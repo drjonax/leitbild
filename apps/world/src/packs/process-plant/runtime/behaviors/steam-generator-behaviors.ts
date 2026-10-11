@@ -122,8 +122,8 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       const leakFlow = leakFraction * leakCoefficient * Math.sqrt(pressureDelta)
       // The steam-line monitor reads N-16, which fast neutrons make from the
       // coolant's oxygen in the core and which decays with a 7 s half-life:
-      // the leaking coolant carries it in proportion to fission power, so the
-      // reading falls to background within seconds of a reactor trip. The
+      // the leaking coolant carries it in proportion to fission power, so after
+      // a reactor trip the reading falls with it, to background within minutes. The
       // gain is the reading per kg/s of leak at rated power; with no core
       // there are no neutrons and no N-16.
       const core = primarySystemReactorCore(system)

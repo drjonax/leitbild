@@ -1,4 +1,5 @@
 import { primaryLoopIdForPump } from '../../graph/index.ts'
+import { reactorNeutronics } from '../../graph/reactor-component-definitions.ts'
 import { clamp, optionalParameterBoolean, optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
 import type { ComponentInitialValueDefinition } from './model.ts'
 import { reactorInitialThermalState } from '../../reactor-initial-conditions.ts'
@@ -12,9 +13,15 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       const initialPowerFraction = parameterNumber(component, 'initialPowerFraction')
       const initialFissionPower = ratedPowerMw * initialPowerFraction
       const { inlet: initialCoolantInlet, outlet: initialCoolantOutlet, coreExit: initialCoreExit, pumpHeatMw: initialPumpHeat, lower: initialFuelLower, mid: initialFuelMid, upper: initialFuelUpper, average: initialFuelAverage } = reactorInitialThermalState(component.parameters as Record<string, unknown>)
-      // At equilibrium the decay heat is its share of fission power, and the
-      // two parts of core thermal power add up to the fission power.
-      const initialDecayHeat = initialFissionPower * optionalParameterNumber(component, 'decayHeatFractionAtPower', 0.06)
+      // At equilibrium each precursor group sustains the fission power, each
+      // decay heat group holds its share of it, and the two parts of core
+      // thermal power add up to the fission power.
+      const neutronics = reactorNeutronics(component)
+      const delayedNeutronGroup = /^delayedNeutronGroup(\d+)PowerMw$/u.exec(localPath)
+      if (delayedNeutronGroup !== null) return initialFissionPower
+      const decayHeatGroup = /^decayHeatGroup(\d+)Mw$/u.exec(localPath)
+      if (decayHeatGroup !== null) return initialFissionPower * neutronics.decayHeatGroups[Number(decayHeatGroup[1]) - 1]!.fractionOfFissionPower
+      const initialDecayHeat = initialFissionPower * neutronics.decayHeatGroups.reduce((sum, group) => sum + group.fractionOfFissionPower, 0)
       if (localPath === 'powerMw') return initialFissionPower
       if (localPath === 'fissionPowerMw') return initialFissionPower
       if (localPath === 'totalThermalPowerMw') return initialFissionPower

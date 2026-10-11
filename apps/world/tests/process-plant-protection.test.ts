@@ -429,7 +429,8 @@ describe('steam generator tube leak detection', () => {
     expect(atPower).toBeGreaterThan(1)
     for (const breaker of ['reactorTripBreakerA', 'reactorTripBreakerB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${breaker}.closed` as VariablePath, value: false })
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
-    plantRun.run(60_000)
+    // N-16 falls with the fission power, on its -80 s period: to background within five minutes.
+    plantRun.run(300_000)
     // The leak goes on, but no N-16 rides it on a shut-down core.
     expect(Number(plantRun.read('sgA.primaryToSecondaryLeakKgPerS'))).toBeGreaterThan(1)
     expect(Number(plantRun.tag('SG-A-N16'))).toBeLessThan(0.025)
@@ -443,7 +444,8 @@ describe('steam generator tube leak detection', () => {
     plantRun.run(5_000)
     for (const breaker of ['reactorTripBreakerA', 'reactorTripBreakerB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${breaker}.closed` as VariablePath, value: false })
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
-    plantRun.run(60_000)
+    // Five minutes after the trip the fission power is a ten-thousandth of rated.
+    plantRun.run(300_000)
     plantRun.act('steam-generator-tube-leak-a', { leakPercent: 1.2 })
     expect(plantRun.secondsUntil(leakRateHigh, 60)).not.toBeNull()
     plantRun.run(30_000)

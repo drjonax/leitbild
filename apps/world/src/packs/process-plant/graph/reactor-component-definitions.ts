@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { idSchema } from '../../../core/model/index.ts'
-import type { ComponentDefinition, ComponentKind } from './model.ts'
+import type { CompiledComponent, ComponentDefinition, ComponentKind } from './model.ts'
 import { defineComponent, normalized, variable } from './component-definition-helpers.ts'
 import { aspect, fixedSemantics } from './semantics.ts'
 
@@ -9,6 +9,74 @@ const primaryLoopIdsFrom = (parameters: unknown): ReadonlyArray<string> => {
     primaryLoopIds: z.array(idSchema).min(1).max(64).optional(),
   }).passthrough().parse(parameters)
   return parsed.primaryLoopIds ?? []
+}
+
+// How a core behaves once it is shut down, as its parameters declare it. The
+// reference four-loop core declares:
+// - Keepin's six delayed-neutron groups for thermal fission of U-235, beta
+//   0.0065 (G. R. Keepin, Physics of Nuclear Kinetics, 1965; Lamarsh and
+//   Baratta, Introduction to Nuclear Engineering, Table 7.4);
+// - seven decay-heat groups fitted, within 3 % from 10 s to two days, to the
+//   Wigner-Way fit of the ANS-5.1 curve for a core a year at power,
+//   P / P0 = 0.0622 (t^-0.2 - (t + T)^-0.2): 6 % at shutdown, 3.7 % at 10 s,
+//   2.3 % at 100 s, 1.5 % at ten minutes, 1 % at an hour;
+// - the 4 % dk/k total trip reactivity and 2.7 s drop to dashpot entry that
+//   Westinghouse four-loop safety analyses assume for the falling rods (FSAR
+//   Chapter 15.0, rod cluster control assembly insertion characteristics),
+//   the drop time the standard technical specifications hold each rod to
+//   (NUREG-1431, LCO 3.1.4).
+
+/** Delayed-neutron precursor groups the core's kinetics carries. */
+export const delayedNeutronGroupCount = 6
+/** Fission-product decay-heat groups the core's thermal power carries. */
+export const decayHeatGroupCount = 7
+
+const delayedNeutronsSchema = z.object({
+  /** The share of fission neutrons born delayed, beta. */
+  fraction: z.number().finite().gt(0).lt(0.02),
+  /** Each precursor group's share of the delayed neutrons and its decay constant. */
+  groups: z.array(z.object({
+    relativeYield: z.number().finite().gt(0).lt(1),
+    decayConstantPerS: z.number().finite().positive(),
+  }).strict()).length(delayedNeutronGroupCount),
+}).strict().refine(neutrons => Math.abs(neutrons.groups.reduce((sum, group) => sum + group.relativeYield, 0) - 1) < 1e-6, {
+  message: 'delayed-neutron group yields must add up to 1',
+})
+
+const decayHeatGroupsSchema = z.array(z.object({
+  /** The group's decay heat at equilibrium, as a share of fission power. */
+  fractionOfFissionPower: z.number().finite().gt(0).lt(0.2),
+  timeConstantS: z.number().finite().positive(),
+}).strict()).length(decayHeatGroupCount).refine(groups => groups.reduce((sum, group) => sum + group.fractionOfFissionPower, 0) < 0.2, {
+  message: 'decay heat groups must add up to less than a fifth of fission power',
+})
+
+const scramSchema = z.object({
+  /** The negative reactivity all control rods insert, falling from their at-power positions, once the trip breakers open. */
+  reactivityPcm: z.number().finite().positive(),
+  /** The time the falling rods take to insert it. */
+  insertionTimeS: z.number().finite().positive(),
+  /** The reactor trip breakers in series on the rod drive power: either one open drops the rods. */
+  reactorTripBreakers: z.array(idSchema).min(1),
+}).strict()
+
+const reactorNeutronicsSchema = z.object({
+  delayedNeutrons: delayedNeutronsSchema,
+  decayHeatGroups: decayHeatGroupsSchema,
+  scram: scramSchema,
+}).passthrough()
+
+export type ReactorNeutronics = z.infer<typeof reactorNeutronicsSchema>
+
+const neutronicsByComponent = new WeakMap<CompiledComponent, ReactorNeutronics>()
+
+/** A core's delayed neutrons, decay heat and scram, as its parameters declare them. */
+export const reactorNeutronics = (component: CompiledComponent): ReactorNeutronics => {
+  const cached = neutronicsByComponent.get(component)
+  if (cached !== undefined) return cached
+  const parsed = reactorNeutronicsSchema.parse(component.parameters)
+  neutronicsByComponent.set(component, parsed)
+  return parsed
 }
 
 export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
@@ -47,9 +115,12 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       coolantThermalTimeConstantS: z.number().finite().positive().optional(),
       fuelThermalTimeConstantS: z.number().finite().positive().optional(),
       fuelTemperatureRiseAtRatedPowerC: z.number().finite().positive().optional(),
-      /** The share of core thermal power that fission products release later as decay heat, at equilibrium. */
-      decayHeatFractionAtPower: z.number().finite().min(0).max(0.2).optional(),
-      decayHeatTimeConstantS: z.number().finite().positive().optional(),
+      /** Delayed-neutron precursor groups, which set how fission power falls once the core is shut down. */
+      delayedNeutrons: delayedNeutronsSchema,
+      /** Fission-product decay heat as exponential groups; together their share of fission power at equilibrium. */
+      decayHeatGroups: decayHeatGroupsSchema,
+      /** What the reactor trip does to the core. */
+      scram: scramSchema,
       referenceCoolantOutletTemperatureC: z.number().finite().optional(),
       referenceFuelTemperatureC: z.number().finite().optional(),
       coolantTemperatureFeedbackPcmPerC: z.number().finite().optional(),
@@ -116,7 +187,10 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'coreCoolingAvailabilityFraction', label: 'Core cooling availability', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', measurand: 'availability', quantity: 'ratio', unit: 'fraction' }),
       variable({ path: 'coreHeatRemovalDeficitMw', label: 'Core heat removal deficit', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'powerDelta', unit: 'MW' }),
       variable({ path: 'fuelHeatupRateCPerS', label: 'Fuel heatup rate', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperatureRate', unit: 'degC/s' }),
-      variable({ path: 'decayHeatMw', label: 'Decay heat', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
+      variable({ path: 'decayHeatMw', label: 'Decay heat', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
+      // Each delayed-neutron precursor group as the fission power it sustains at equilibrium.
+      ...Array.from({ length: delayedNeutronGroupCount }, (_, index) => variable({ path: `delayedNeutronGroup${index + 1}PowerMw`, label: `Delayed-neutron precursor group ${index + 1}`, kind: 'state', discipline: 'nuclear', writable: false, publish: 'internal', quantity: 'power', unit: 'MW' })),
+      ...Array.from({ length: decayHeatGroupCount }, (_, index) => variable({ path: `decayHeatGroup${index + 1}Mw`, label: `Decay heat group ${index + 1}`, kind: 'state', discipline: 'thermal', writable: false, publish: 'internal', quantity: 'power', unit: 'MW' })),
       variable({ path: 'pumpHeatMw', label: 'Reactor coolant pump heat', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'heatToCoolantMw', label: 'Heat to coolant', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'vapourGenerationKgPerS', label: 'Reactor coolant steam generation', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
