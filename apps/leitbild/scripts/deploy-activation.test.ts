@@ -16,7 +16,7 @@ id() { return 0; }
 install() {
   if test "$1" = -d; then mkdir -p "\${@:8}"; else cp "\${@: -2:1}" "\${@: -1}"; fi
 }
-sha256sum() { test "$FAULT" != checksum; }
+sha256sum() { cat >/dev/null; test "$FAULT" != checksum; }
 sleep() { :; }
 find() { if test "$FAULT" = retention; then return 41; else command find "$@"; fi; }
 mv() {
