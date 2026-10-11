@@ -97,6 +97,16 @@ pub struct WallWater {
 /// solids reads the fuel heat.
 pub const FUEL_HEAT_SPLIT: [f64; 2] = [0.5, 0.5];
 
+/// One wall slot's reads and the solid elements reading it
+/// ([`Solids::wall_reads`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WallRead {
+    pub cell: usize,
+    pub faces: Vec<usize>,
+    pub halves: Vec<usize>,
+    pub segments: Vec<usize>,
+}
+
 /// Wall water a local refresh replaced: (slot, previous water).
 #[must_use = "restore the replaced wall water after the local call"]
 #[derive(Debug)]
@@ -691,6 +701,29 @@ impl Solids {
     }
     pub fn incidence(&self) -> &Incidence {
         &self.incidence
+    }
+    /// What each wall slot reads and feeds, in slot order: its network
+    /// cell (the cell's pressure and liquid caloric point: `p`, `M_l`,
+    /// `U_l`), the faces whose liquid charts its mass flux reads (every face
+    /// with the cell as an endpoint, `endpoints` in face order), and the
+    /// core halves and SG segments whose rows read it. Passive contacts read
+    /// only their cell's liquid temperature, never a wall slot
+    /// ([`Solids::passive_wetted_by`]).
+    pub fn wall_reads(&self, endpoints: &[(usize, usize)]) -> Vec<WallRead> {
+        self.wall_cells
+            .iter()
+            .map(|&cell| WallRead {
+                cell,
+                faces: endpoints
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (from, to))| *from == cell || *to == cell)
+                    .map(|(f, _)| f)
+                    .collect(),
+                halves: self.inverse.cell_bands[cell].clone(),
+                segments: self.inverse.cell_segments[cell].clone(),
+            })
+            .collect()
     }
     /// The unclosed scope of the elements that read own coordinate `i`
     /// (energy, surface or store), and the store whose temperature `i`
