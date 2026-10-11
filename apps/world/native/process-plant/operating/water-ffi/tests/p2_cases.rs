@@ -300,12 +300,23 @@ impl Context {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or(Value::Null);
+        // The maintained water build this binary links: its own build
+        // receipt and the library's hash as found.
+        let water = std::env::var("LD01_OPERATING_WATER_LIB_DIR")
+            .expect("LD01_OPERATING_WATER_LIB_DIR names the water build");
+        let water_receipt: Value = serde_json::from_slice(
+            &std::fs::read(format!("{water}/water-build.json")).expect("the water build's receipt"),
+        )
+        .expect("water-build.json");
+        let library = std::fs::read(format!("{water}/libld01_operating_water.a"))
+            .expect("the water library");
+        let water_build = json!({"directory":water,"library_sha256":sha256(&library),"receipt":water_receipt});
         let app = std::env::current_dir().unwrap().display().to_string();
         let provenance = json!({
             "app_commit":sh(&["rev-parse","HEAD"],&app),"app_dirty":!sh(&["status","--porcelain"],&app).is_empty(),
             "wiki_root":wiki,"wiki_commit":sh(&["rev-parse","HEAD"],&wiki),"wiki_dirty":!sh(&["status","--porcelain"],&wiki).is_empty(),
             "blocks_read_from":"wiki HEAD",
-            "packet":packet_path,"packet_sha256":sha256(&bytes),"packet_composition":composition,
+            "packet":packet_path,"packet_sha256":sha256(&bytes),"packet_composition":composition,"water_build":water_build,
             "case_block":cases_block.provenance(),"gates_block":gates.provenance(),"accuracy_block":budgets.provenance(),
             "transport_block":transport.provenance(),"heater_banks_block":banks_block.provenance(),"heater_contact_block":contact_block.provenance(),
             "caloric_304_block":caloric_block.provenance(),"shell_block":shell_block.provenance()});
