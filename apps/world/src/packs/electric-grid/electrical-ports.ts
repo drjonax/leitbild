@@ -19,9 +19,10 @@ export const gridElectricalPortDefinitions = (
   }))
 
 /**
- * Port state at each connection point. A live bus reports nominal voltage (the DC model computes
- * none) and its island frequency; a de-energised bus reports energized=false, voltage 0 and no
- * frequency, and no power flows through the port. `connected` is the Grid side of the bay: true
+ * Port state at each connection point. A live bus reports its AC load-flow voltage and its island
+ * frequency; a de-energised bus reports energized=false, voltage 0 and no frequency, and no power
+ * flows through the port. An energised bus whose island's AC load flow did not converge reports
+ * no voltage (null), never a DC or nominal one. `connected` is the Grid side of the bay: true
  * while a present system is connected there, whatever that system's own breaker does, so a
  * system that lost offsite power sees it return when the bus is energised again. Power flows only
  * while the system's own port is connected and energised.

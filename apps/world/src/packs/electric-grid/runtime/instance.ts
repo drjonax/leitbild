@@ -11,6 +11,7 @@ import type { GridProjection } from '../model.ts'
 import type { ElectricalConnectionDefinition } from '../../../core/model/index.ts'
 import type { IslandFrequencyState } from './frequency/island-state.ts'
 import type { FrequencyReserveAllocation } from './frequency/types.ts'
+import type { GridIslandAcOutcome } from './ac-load-flow.ts'
 import type { GeneratorTripCause } from './frequency/generator-protection.ts'
 import { dispatchGridFromLiveIslands } from './dispatch.ts'
 import { noReserves } from './frequency/governors.ts'
@@ -22,23 +23,27 @@ import { createGridProtectionState, idleBranchProtection, type GridBranchProtect
 import type { GridIslandSystem } from './network/dc-power-flow.ts'
 
 /**
- * The DC model computes no voltage. A live bus reports nominal voltage (1.0 pu) marked
- * `dc-nominal`; that value is not a computed result.
+ * Where a bus voltage comes from. `ac-fdlf`: the island's AC load flow converged and the voltage
+ * is its result; `not-converged`: the island is energised but its AC load flow failed, so no
+ * voltage is known (never a DC or nominal stand-in); `de-energised`: no source holds the bus (0 pu).
  */
-export type GridVoltageModel = 'dc-nominal'
+export type GridVoltageModel = 'ac-fdlf' | 'not-converged' | 'de-energised'
 
 export interface GridBusState {
   readonly busId: string
   /** Stable id of the island holding the bus. */
   islandId: string
   energized: boolean
-  /** 1.0 (nominal, not computed) on a live bus, 0 on a de-energised bus. */
-  voltagePu: number
-  readonly voltageModel: GridVoltageModel
+  /** AC voltage magnitude (pu); null while the island's AC load flow has not converged; 0 when de-energised. */
+  voltagePu: number | null
+  voltageModel: GridVoltageModel
+  /** Net reactive injection of the bus's sources in the AC solution (Mvar: generation − demand, shunts are network); null unless converged; 0 when de-energised. */
+  reactiveInjectionMvar: number | null
   /** Island frequency; null when the bus is de-energised. */
   frequencyHz: number | null
+  /** DC voltage angle (rad), relative to the bus's AC component reference. */
   angleRad: number
-  /** Net injection solved by the DC flow (MW), including the bus's share of branch losses. */
+  /** Net active injection of the DC balance (MW), including the bus's share of branch losses. */
   netInjectionMw: number
 }
 
@@ -46,12 +51,17 @@ export interface GridBranchState {
   /** open: by operator; tripped: by its protection, open until reset-branch-protection. */
   state: 'closed' | 'open' | 'tripped'
   availability: number
+  /** DC active power flow from the from-bus (MW); the relays and loading act on it. */
   flowMw: number
   loadingPercent: number
-  voltageFromPu: number
-  voltageToPu: number
+  /** AC voltage at each end (pu); null while the island's AC load flow has not converged; 0 when de-energised. */
+  voltageFromPu: number | null
+  voltageToPu: number | null
+  /** AC reactive power entering the branch at each end (Mvar); null unless the island's AC load flow converged. */
+  reactiveFromMvar: number | null
+  reactiveToMvar: number | null
   frequencyHz: number | null
-  /** Quadratic DC loss r·P²/S_base (MW). */
+  /** I²R loss of the AC solution when the island converged, else the quadratic DC estimate r·P²/S_base (MW). */
   lossesMw: number
   readonly protection: GridBranchProtectionState
 }
@@ -108,7 +118,8 @@ export interface GridLoadState {
   shedCauses: ReadonlyArray<GridLoadShedCause>
   servedMw: number
   frequencyHz: number | null
-  voltagePu: number
+  /** Voltage of the load's bus (pu): the AC result, null while its island has not converged, 0 when de-energised. */
+  voltagePu: number | null
   serviceState: 'normal' | 'constrained' | 'shed' | 'outage'
 }
 
@@ -116,7 +127,8 @@ export interface GridStorageState {
   stateOfChargeFraction: number
   dispatchMw: number
   frequencyHz: number | null
-  voltagePu: number
+  /** Voltage of the storage's bus (pu), as for loads. */
+  voltagePu: number | null
   state: 'idle' | 'charging' | 'discharging' | 'unavailable'
 }
 
@@ -277,6 +289,8 @@ export interface GridRuntimeInstance {
   readonly frequencyEvents: GridFrequencyEvent[]
   readonly protection: GridProtectionState
   readonly alarms: GridAlarmState
+  /** The latest AC load-flow outcome of each energised island, by stable island id. */
+  readonly acOutcomeByIsland: Map<string, GridIslandAcOutcome>
   /** Alarm transitions and protection trips waiting for the adapter to emit them, oldest first. */
   readonly signalQueue: GridRuntimeSignal[]
   readonly diagnostics: GridRuntimeDiagnostics
@@ -367,6 +381,8 @@ export const createGridRuntimeInstance = (config: {
       loadingPercent: 0,
       voltageFromPu: 0,
       voltageToPu: 0,
+      reactiveFromMvar: null,
+      reactiveToMvar: null,
       frequencyHz: null,
       lossesMw: 0,
       protection: stored === undefined ? idleBranchProtection() : { ...stored.protection },
@@ -475,6 +491,7 @@ export const createGridRuntimeInstance = (config: {
     frequencyEvents: [],
     protection: createGridProtectionState(restored?.protection),
     alarms: createGridAlarmState(restored?.alarms),
+    acOutcomeByIsland: new Map(),
     signalQueue: [],
     diagnostics: {
       lastSuccessfulTickAt: null,
@@ -505,7 +522,10 @@ const initialGridProjection = (at: string, nominalFrequencyHz: number, tick: num
   frequencyIslandId: null,
   frequencyMinHz: null,
   frequencyMaxHz: null,
-  voltageModel: 'dc-nominal',
+  voltageModel: 'ac-fdlf',
+  voltageMinPu: null,
+  voltageMaxPu: null,
+  notConvergedIslandCount: 0,
   totalGenerationMw: 0,
   totalLoadMw: 0,
   servedLoadMw: 0,

@@ -119,6 +119,6 @@ export const dispatchGridFromLiveIslands = (grid: GridRuntimeInstance, epochMs: 
     resetGridIslandFrequencies(grid)
     const restarted = reconcileGridIslands(grid, plan)
     advanceGridFrequencyControl(grid, restarted, 0)
-    solveGridNetwork(grid, restarted, 0)
+    solveGridNetwork(grid, restarted, 0, true)
   }
 }

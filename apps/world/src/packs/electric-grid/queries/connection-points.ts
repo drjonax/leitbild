@@ -16,8 +16,8 @@ const connectionPointResultSchema = z.object({
     systemActivePowerMw: finite.describe('Power from the connected system into the Grid, positive into the Grid (MW).'),
     connected: z.boolean(),
     energized: z.boolean(),
-    voltagePu: finite.describe('1.0 on a live bus (nominal, not computed by the DC model); 0 when de-energised.'),
-    voltageModel: z.literal('dc-nominal'),
+    voltagePu: finite.nullable().describe('AC load-flow voltage of the bus (pu); null while its island has not converged; 0 when de-energised.'),
+    voltageModel: z.enum(['ac-fdlf', 'not-converged', 'de-energised']),
     frequencyHz: finite.nullable().describe('Island frequency; null when the bus is de-energised (Hz).'),
   }).strict()),
 }).strict()

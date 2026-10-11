@@ -205,7 +205,9 @@ describe('electrical Pack connection', () => {
   // Skipped until DQ1 removes the v2 winter overloads: with branch protection the Halden scenario
   // starts in a cascade (27 branches above rating at the starting dispatch), so the ±0.1 Hz start
   // and the contained unit trip cannot be observed in the combined runtime yet.
-  test.skip('holds the Nordic normal band at start and contains a Halden unit trip above 49 Hz (waits for DQ1 overload-free v2 data)', () => undefined)
+  // DQ1's winter data is free of AC overloads, but the runtime's DC flows still load Flesaker – Mjøndalen
+  // past its thermal trip level at the start (fixtures/grid-operating-point.ts), so the Halden scenario cascades.
+  test.skip('holds the Nordic normal band at start and contains a Halden unit trip above 49 Hz (waits for DC branch loading to agree with the AC gate)', () => undefined)
 
   test('isolating the Halden switchyard takes offsite power from the Plants, and reclosing returns it through the ports', async () => {
     const scenario = scenarios.find(candidate => candidate.id === 'halden-power-complex')

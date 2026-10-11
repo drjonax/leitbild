@@ -176,8 +176,9 @@ describe('electric grid N-1 screening', () => {
     run.advanceTo(12_000)
     const normal = ask(run.grid, 'world.electric-grid.contingency.screen', { contingencies: 'all-branches', ratingBasis: 'normal' })
     const emergency = ask(run.grid, 'world.electric-grid.contingency.screen', { contingencies: 'all-branches', ratingBasis: 'emergency' })
-    // The A path runs at 129 % / 126 % of its rating, 108 % / 105 % of its emergency rating.
-    expect(normal.baseCase).toMatchObject({ overloadedCount: 2, worstBranch: { assetId: 'branch:g-a' } })
+    // The A path runs at 131 % / 125 % of its rating, 109 % / 105 % of its emergency rating, and G–B
+    // just above its rating (101 %): the AC losses of the stressed corridor (L at 0.81 pu) add to the transfer.
+    expect(normal.baseCase).toMatchObject({ overloadedCount: 3, worstBranch: { assetId: 'branch:g-a' } })
     expect(emergency.baseCase.overloadedCount).toBe(2)
     expect(emergency.baseCase.worstBranch.loadingPercent).toBeCloseTo(normal.baseCase.worstBranch.loadingPercent / 1.2, 0)
     // Losing either A line moves the whole transfer onto the B path; no outage islands the meshed corridor.
@@ -221,7 +222,7 @@ describe('electric grid N-1 screening', () => {
     })
     const { results: _results, gridId: _gridId, revision: _revision, ratingBasis: _ratingBasis, ...summary } = screened
     expect(evaluated.before).toEqual(summary)
-    expect(evaluated.before.baseCase.overloadedCount).toBe(2)
+    expect(evaluated.before.baseCase.overloadedCount).toBe(3)
     expect(evaluated.after.baseCase.overloadedCount).toBe(0)
     expect(evaluated.after.totalViolations).toBeLessThan(evaluated.before.totalViolations)
     expect(evaluated.actionBalances).toHaveLength(1)

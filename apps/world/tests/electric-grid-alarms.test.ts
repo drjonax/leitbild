@@ -190,13 +190,13 @@ describe('electric grid alarms', () => {
     lifecycle(run, { alarmIds: active.map(record => record.id), action: 'acknowledge' })
     expect(projectGridObject({ object: { ...object, packData } as never, grid: run.grid, at: isoAt(30_000) }).alerts[0]!.acknowledged).toBe(true)
 
+    // Every network solution notes its AC load flow, replacing an earlier note (electric-grid-ac-runtime.test.ts
+    // raises and clears the alarm on a real non-convergence); the overloaded corridor's converges.
     const islandId = run.grid.islandPlan!.islands.find(island => island.energized)!.id
     noteGridAcSolution(run.grid, islandId, { converged: false, reason: 'mismatch 3.2 MW after 20 iterations' })
     run.advanceTo(32_000)
-    expect(run.grid.alarms.records.get(gridAlarmId('island', islandId, 'ac-non-convergence'))).toMatchObject({ active: true, priority: 1 })
-    noteGridAcSolution(run.grid, islandId, { converged: true })
-    run.advanceTo(50_000)
-    expect(run.grid.alarms.records.get(gridAlarmId('island', islandId, 'ac-non-convergence'))!.active).toBe(false)
+    expect(run.grid.alarms.acNonConvergence.size).toBe(0)
+    expect(run.grid.alarms.records.get(gridAlarmId('island', islandId, 'ac-non-convergence'))).toBeUndefined()
   })
 
   test('alarms.list filters by priority, state and island, most urgent first', () => {

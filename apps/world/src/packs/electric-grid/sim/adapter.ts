@@ -430,6 +430,10 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
         // after every connection has published a committed runtime projection.
         observeSystemObjects(objects, false)
         for (const grid of grids.values()) {
+          // The snapshot's systems already inject their live power; until every connection has
+          // published a committed projection, a provisional dispatch balances the islands for it,
+          // so the first published state is an operating point (the starting dispatch replaces it).
+          if (grid.protection.startingDispatchPending) dispatchGridFromLiveIslands(grid, Date.parse(initialAt))
           advanceGrid(grid, 0, initialAt)
           const object = objectsById.get(grid.definition.gridId as ObjectId)
           if (object) objectsById.set(object.id, projectGridObject({ object, grid, at: initialAt }))

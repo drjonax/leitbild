@@ -32,7 +32,7 @@
       readonly totalGenerationMw: number
       readonly servedLoadMw: number
       readonly reserveMarginMw: number
-      readonly voltageModel: 'dc-nominal'
+      readonly voltageModel: 'ac-fdlf'
       readonly statusLabel: string
       readonly activeAlarmCount: number
       readonly islands: ReadonlyArray<{ readonly id: string; readonly energized: boolean; readonly loadMw: number; readonly alarmCount: number }>

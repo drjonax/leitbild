@@ -113,8 +113,9 @@ export const busStateSchema = z.object({
   busId: z.string(),
   islandId: z.string().describe('Stable id of the island holding the bus (world.electric-grid.islands.list).'),
   energized: z.boolean(),
-  voltagePu: finite.describe('1.0 on a live bus (nominal, not computed by the DC model); 0 on a de-energised bus.'),
-  voltageModel: z.literal('dc-nominal'),
+  voltagePu: finite.nullable().describe('AC load-flow voltage (pu); null while the island\'s AC load flow has not converged; 0 on a de-energised bus.'),
+  voltageModel: z.enum(['ac-fdlf', 'not-converged', 'de-energised']).describe('ac-fdlf: voltagePu is the AC result; not-converged: the island is energised but no voltage is known; de-energised: no source holds the bus.'),
+  reactiveInjectionMvar: finite.nullable().describe('Net reactive injection of the bus\'s sources in the AC solution (Mvar, generation − demand); null unless converged.'),
   frequencyHz: islandFrequencyHz,
   angleRad: finite,
   netInjectionMw: finite.describe('Net active power injected at the bus, including its share of branch losses (MW).'),
@@ -141,10 +142,12 @@ export const branchStateSchema = z.object({
   availability: finite.describe('Available fraction of the rating (derate).'),
   flowMw: finite.describe('Active power flow, positive from fromBusId to toBusId (MW).'),
   loadingPercent: finite.describe('|flowMw| over the derated rating (%).'),
-  voltageFromPu: finite,
-  voltageToPu: finite,
+  voltageFromPu: finite.nullable().describe('AC voltage at the from end (pu); null while not converged; 0 when de-energised.'),
+  voltageToPu: finite.nullable(),
+  reactiveFromMvar: finite.nullable().describe('AC reactive power entering the branch at its from end (Mvar); null unless converged.'),
+  reactiveToMvar: finite.nullable(),
   frequencyHz: islandFrequencyHz,
-  lossesMw: finite.describe('Quadratic DC loss r·P²/S_base (MW).'),
+  lossesMw: finite.describe('I²R loss of the AC solution (MW); the quadratic DC estimate r·P²/S_base while the island\'s AC load flow has not converged.'),
   protection: branchProtectionStateSchema,
 }).strict()
 
@@ -180,7 +183,7 @@ export const loadStateSchema = z.object({
   shedMw: finite.describe('Total shed demand: curtailedMw + lfddShedMw (MW).'),
   shedCauses: z.array(loadShedCauseSchema).readonly(),
   frequencyHz: islandFrequencyHz,
-  voltagePu: finite,
+  voltagePu: finite.nullable().describe('Voltage of the load\'s bus (pu); null while not converged; 0 when de-energised.'),
   serviceState: loadServiceStateSchema,
 }).strict()
 
@@ -188,7 +191,7 @@ export const storageStateSchema = z.object({
   stateOfChargeFraction: finite,
   dispatchMw: finite.describe('Active power, positive when discharging into the Grid (MW).'),
   frequencyHz: islandFrequencyHz,
-  voltagePu: finite,
+  voltagePu: finite.nullable(),
   state: z.enum(['idle', 'charging', 'discharging', 'unavailable']),
 }).strict()
 

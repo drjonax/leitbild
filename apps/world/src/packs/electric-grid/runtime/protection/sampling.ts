@@ -55,7 +55,9 @@ export const createGridNetworkSampler = (grid: GridRuntimeInstance, startMs: num
       // A unit tripped by frequency protection on the last sub-step can leave an island without a
       // voltage-forming source before frequency control notices its collapse: it de-energises now.
       refreshGridIslandEnergisation(grid, islands)
-      solveGridNetwork(grid, islands, (epochMs - lastSolveMs) / 1_000)
+      const instant = sampleInstant(elapsedMs)
+      // Without relays every solution carries its losses; with them, only those at sample instants.
+      solveGridNetwork(grid, islands, (epochMs - lastSolveMs) / 1_000, !settings.enabled || instant !== null)
       lastSolveMs = epochMs
       let current = islands
       const armed = !grid.protection.startingDispatchPending
@@ -63,7 +65,6 @@ export const createGridNetworkSampler = (grid: GridRuntimeInstance, startMs: num
         initialiseBranchThermalStates(grid)
         grid.protection.thermalInitialised = true
       }
-      const instant = sampleInstant(elapsedMs)
       if (settings.enabled && armed && instant !== null) {
         const last = grid.protection.lastSampleElapsedMs
         grid.protection.lastSampleElapsedMs = instant
@@ -71,7 +72,7 @@ export const createGridNetworkSampler = (grid: GridRuntimeInstance, startMs: num
         while (trips.length > 0) {
           applyBranchTrips(grid, trips, at, instant)
           current = reconcileGridIslands(grid, topologyPlanForGrid(grid))
-          solveGridNetwork(grid, current, 0)
+          solveGridNetwork(grid, current, 0, true)
           trips = instantaneousBranchTrips(grid, settings)
         }
       }

@@ -170,7 +170,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       description: model.description,
       nominalFrequencyHz: model.nominalFrequencyHz,
       sBaseMva: model.sBaseMva,
-      fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount },
+      fidelity: { powerFlow: 'dc', voltage: 'ac-fdlf', frequency: 'island-swing', recommendedMaximumBusCount },
       // v2 records no wall-clock build time; the runtime's generatedAt carries the newest input snapshot.
       sourceBuild: { id: model.sourceBuild.id, generatedAt: newestInput },
       sourceIds: model.sourceBuild.inputs.map(input => input.sourceId),

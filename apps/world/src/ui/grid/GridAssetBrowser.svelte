@@ -283,7 +283,7 @@
       field('Bus', formatted(valueOf(definition, 'busId'))),
     ]
     if (asset.kind === 'bus') return [
-      field('Voltage', state === undefined ? 'Not solved' : formatted(valueOf(state, 'voltagePu'), 'pu', 3)),
+      field('Voltage', state === undefined ? 'Not solved' : valueOf(state, 'voltageModel') === 'not-converged' ? 'Unknown: AC load flow did not converge' : formatted(valueOf(state, 'voltagePu'), 'pu', 3)),
       field('Frequency', state === undefined ? 'Not solved' : formatted(valueOf(state, 'frequencyHz'), 'Hz', 3)),
       field('Island', state === undefined ? 'Not solved' : formatted(valueOf(state, 'islandId'))),
       field('Nominal', formatted(valueOf(definition, 'nominalKv'), 'kV')),

@@ -15,9 +15,13 @@ export interface GridAssetProvenance {
 }
 
 export interface GridModelFidelity {
+  /** Active power flows and every island's balance from the DC solve. */
   readonly powerFlow: 'dc'
-  /** The DC model computes no voltage; live buses report nominal voltage marked dc-nominal. */
-  readonly voltage: 'not-modelled'
+  /**
+   * Bus voltages, reactive power and branch losses from a fast-decoupled AC load flow of every
+   * energised island after each DC solve; an island whose load flow does not converge publishes no voltage.
+   */
+  readonly voltage: 'ac-fdlf'
   /** One swing equation per synchronous island. */
   readonly frequency: 'island-swing'
   readonly recommendedMaximumBusCount: number

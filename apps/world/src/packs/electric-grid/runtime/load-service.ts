@@ -22,14 +22,13 @@ const shedCauseLists: ReadonlyArray<ReadonlyArray<GridLoadShedCause>> = [
 const shedCausesFor = (state: GridLoadState): ReadonlyArray<GridLoadShedCause> =>
   shedCauseLists[(state.curtailedMw > 0 ? 1 : 0) + (state.lfddShedMw > 0 ? 2 : 0)]!
 
-/** Closes a live load's service for this tick from its served and LFDD-shed demand. */
+/** Closes a live load's service for this tick from its served and LFDD-shed demand; its voltage follows from the AC solution. */
 export const completeLiveGridLoad = (state: GridLoadState, frequencyHz: number, nominalFrequencyHz: number): void => {
   state.outageMw = 0
   state.shedMw = state.curtailedMw + state.lfddShedMw
   state.unservedMw = state.shedMw
   state.shedCauses = shedCausesFor(state)
   state.frequencyHz = frequencyHz
-  state.voltagePu = 1
   state.serviceState = state.shedMw > 0 ? 'shed' : Math.abs(frequencyHz - nominalFrequencyHz) >= constrainedDeviationHz ? 'constrained' : 'normal'
 }
 

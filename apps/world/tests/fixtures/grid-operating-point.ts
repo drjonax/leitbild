@@ -1,10 +1,11 @@
 import { norwaySummerLowOperatingPointRef } from '../../src/packs/electric-grid/definition-refs.ts'
 
 /**
- * The Operating Point the Norway runtime tests start from. Today's v2 winter-weekday-peak data
- * loads 13 branches above their continuous rating and 6 above their emergency rating in the DC
- * base case, so branch protection trips 26 of them at the first relay sample and the grid
- * cascades; summer-night-low starts with two branches just above their rating and no trip. The
- * data lane (DQ1) is removing the winter overloads; the tests move back to winter with it.
+ * The Operating Point the Norway runtime tests start from. At DQ1's winter-weekday-peak no branch
+ * exceeds its emergency rating in AC, but the runtime's DC flows load Flesaker – Mjøndalen to 118 %
+ * of its rating (AC 106 %), above its thermal element's steady trip level of 115.8 %: branch
+ * protection trips it at the first relay sample and four more follow instantaneously.
+ * summer-night-low starts without an alarm. The tests move back to winter once branch loading
+ * agrees between the DC runtime and the AC gate.
  */
 export const norwayRuntimeTestOperatingPointRef = norwaySummerLowOperatingPointRef

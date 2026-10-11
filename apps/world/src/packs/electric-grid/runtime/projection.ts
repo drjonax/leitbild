@@ -10,6 +10,23 @@ const workingDeviationHz = 0.05
 // Projection values are rounded to metering resolution (0.1 MW, 0.1 mHz) to keep the shared object compact.
 const mw = (value: number): number => Math.round(value * 10) / 10
 const hz = (value: number): number => Math.round(value * 10_000) / 10_000
+const pu = (value: number): number => Math.round(value * 10_000) / 10_000
+
+/** The island's AC voltage result: converged with its bus voltage range, not converged, or de-energised. */
+const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, busIds: ReadonlyArray<string>): Pick<GridIslandProjection, 'voltageModel' | 'voltageMinPu' | 'voltageMaxPu'> => {
+  if (!island.energized) return { voltageModel: 'de-energised', voltageMinPu: null, voltageMaxPu: null }
+  const outcome = grid.acOutcomeByIsland.get(island.id)
+  if (outcome === undefined) throw new Error(`Grid ${grid.definition.gridId} island ${island.id} is energised but has no AC load-flow outcome`)
+  if (!outcome.converged) return { voltageModel: 'not-converged', voltageMinPu: null, voltageMaxPu: null }
+  let minimum = Number.POSITIVE_INFINITY
+  let maximum = Number.NEGATIVE_INFINITY
+  for (const busId of busIds) {
+    const voltage = grid.busStates.get(busId)!.voltagePu!
+    if (voltage < minimum) minimum = voltage
+    if (voltage > maximum) maximum = voltage
+  }
+  return { voltageModel: 'ac-fdlf', voltageMinPu: pu(minimum), voltageMaxPu: pu(maximum) }
+}
 
 const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland, alarmCount: number): GridIslandProjection | null => {
   const structure = islands.plan.islands[island.planIndex]!
@@ -64,6 +81,7 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
       fcrNMw: mw(reserves.fcrNMw), fcrDUpMw: mw(reserves.fcrDUpMw), fcrDDownMw: mw(reserves.fcrDDownMw),
       afrrUpMw: mw(reserves.afrrUpMw), afrrDownMw: mw(reserves.afrrDownMw), mfrrUpMw: mw(reserves.mfrrUpMw), mfrrDownMw: mw(reserves.mfrrDownMw),
     },
+    ...islandVoltage(grid, island, structure.buses),
     alarmCount,
   }
 }
@@ -80,6 +98,7 @@ export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIsland
     return view === null ? [] : [view]
   })
   const energised = projected.filter(island => island.energized && island.frequencyHz !== null)
+  const converged = projected.filter(island => island.voltageModel === 'ac-fdlf')
   const headline = [...energised].sort((a, b) => b.loadMw - a.loadMw || a.id.localeCompare(b.id))[0] ?? null
   const frequencies = energised.map(island => island.frequencyHz!)
   let plantSupplyMw = 0
@@ -126,7 +145,10 @@ export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIsland
     frequencyIslandId: headline?.id ?? null,
     frequencyMinHz: frequencies.length === 0 ? null : Math.min(...frequencies),
     frequencyMaxHz: frequencies.length === 0 ? null : Math.max(...frequencies),
-    voltageModel: 'dc-nominal',
+    voltageModel: 'ac-fdlf',
+    voltageMinPu: converged.length === 0 ? null : Math.min(...converged.map(island => island.voltageMinPu!)),
+    voltageMaxPu: converged.length === 0 ? null : Math.max(...converged.map(island => island.voltageMaxPu!)),
+    notConvergedIslandCount: projected.filter(island => island.voltageModel === 'not-converged').length,
     totalGenerationMw: generationMw,
     totalLoadMw: demandMw + plantDemandMw,
     servedLoadMw: servedMw + plantDemandMw,

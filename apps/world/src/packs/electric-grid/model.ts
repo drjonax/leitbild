@@ -40,6 +40,11 @@ export const gridIslandProjectionSchema = z.object({
   servedLoadMw: nonNegative,
   lossesMw: nonNegative,
   reserves: gridReservesByProductSchema,
+  /** ac-fdlf: the island's AC load flow converged; not-converged: it did not, and its buses publish no voltage. */
+  voltageModel: z.enum(['ac-fdlf', 'not-converged', 'de-energised']),
+  /** Lowest and highest bus voltage of a converged energised island (pu); null otherwise. */
+  voltageMinPu: finiteNumber.positive().nullable(),
+  voltageMaxPu: finiteNumber.positive().nullable(),
   alarmCount: count,
 }).strict()
 export type GridIslandProjection = z.infer<typeof gridIslandProjectionSchema>
@@ -55,8 +60,13 @@ export const gridProjectionSchema = z.object({
   frequencyIslandId: z.string().min(1).nullable(),
   frequencyMinHz: finiteNumber.positive().nullable(),
   frequencyMaxHz: finiteNumber.positive().nullable(),
-  /** Voltage is not computed by the DC model: live buses report nominal voltage. */
-  voltageModel: z.literal('dc-nominal'),
+  /** Bus voltages come from each energised island's AC load flow (fast-decoupled); islands[] tells which converged. */
+  voltageModel: z.literal('ac-fdlf'),
+  /** Lowest and highest bus voltage over the converged energised islands (pu); null when there is none. */
+  voltageMinPu: finiteNumber.positive().nullable(),
+  voltageMaxPu: finiteNumber.positive().nullable(),
+  /** Energised islands whose AC load flow did not converge: their buses publish no voltage. */
+  notConvergedIslandCount: count,
   totalGenerationMw: nonNegative,
   totalLoadMw: nonNegative,
   servedLoadMw: nonNegative,
@@ -101,7 +111,10 @@ export const emptyGridProjection = (at: string, nominalFrequencyHz: number): Gri
   frequencyIslandId: null,
   frequencyMinHz: null,
   frequencyMaxHz: null,
-  voltageModel: 'dc-nominal',
+  voltageModel: 'ac-fdlf',
+  voltageMinPu: null,
+  voltageMaxPu: null,
+  notConvergedIslandCount: 0,
   totalGenerationMw: 0,
   totalLoadMw: 0,
   servedLoadMw: 0,

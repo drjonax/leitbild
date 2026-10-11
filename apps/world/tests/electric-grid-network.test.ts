@@ -25,7 +25,7 @@ const sBaseMva = 100
 
 const handModel = (id: string, busIds: ReadonlyArray<string>, branches: ReadonlyArray<GridBranchDefinition>): GridModelDefinition => ({
   id, title: id, description: 'Hand-built network test model', nominalFrequencyHz: 50, sBaseMva,
-  fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
+  fidelity: { powerFlow: 'dc', voltage: 'ac-fdlf', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
   sourceBuild: { id: 'network-test', generatedAt: '2026-10-10T00:00:00.000Z' },
   sourceIds: [],
   buses: busIds.map((busId, index) => ({ id: busId, label: busId, nominalKv: 420, location: [10 + index * 0.1, 60] as const })),

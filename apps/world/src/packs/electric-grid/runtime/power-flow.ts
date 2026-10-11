@@ -1,6 +1,8 @@
+import { gridAcState, solveGridAcLoadFlow } from './ac-load-flow.ts'
+import { noteGridAcSolution } from './alarms.ts'
 import { generatorKineticEnergyMws } from './generator-dynamics.ts'
 import { hvdcTerminalInjectionsMw } from './hvdc.ts'
-import type { GridExternalSystemDefinition } from '../grid-model.ts'
+import type { GridBranchDefinition, GridExternalSystemDefinition } from '../grid-model.ts'
 import type { GridBusState, GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import {
   boundaryTieCapacityMw,
@@ -98,7 +100,6 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
   })
   states.storage.forEach((state, index) => {
     state.frequencyHz = frequencyHz
-    state.voltagePu = 1
     addAt(injections, members.storageBuses[index]!, state.dispatchMw)
     suppliedMw += state.dispatchMw
   })
@@ -164,13 +165,37 @@ const closeComponentsThroughBoundaries = (
   return closingMw
 }
 
+const lossScratches = new WeakMap<GridRuntimeInstance, Float64Array>()
+const lossScratch = (grid: GridRuntimeInstance, busCount: number): Float64Array => {
+  const cached = lossScratches.get(grid)
+  if (cached !== undefined && cached.length === busCount) return cached
+  const created = new Float64Array(busCount)
+  lossScratches.set(grid, created)
+  return created
+}
+
+/**
+ * AC series loss of a π branch, MW: r·|I|² with I = (V_from/τ − V_to)/(r + jx), the tap τ at the
+ * from end. It equals the active power entering both ends (the shunt branches carry no active
+ * power) and is never negative, which their rounded sum can be on a lossless branch.
+ */
+const acSeriesLossMw = (branch: GridBranchDefinition, fromPu: number, toPu: number, angleRad: number, sBaseMva: number): number => {
+  // Lines and cables have no transformer: their ratio is exactly 1.
+  const from = fromPu / (branch.kind === 'transformer' ? branch.tapRatio! : 1)
+  const half = Math.sin(angleRad / 2)
+  const differenceSquared = (from - toPu) ** 2 + 4 * from * toPu * half * half
+  const r = branch.resistancePu
+  return r * differenceSquared / (r * r + branch.reactancePu ** 2) * sBaseMva
+}
+
 /**
  * Network solution of one tick: electrical injections with inertial sharing, one DC solve per
- * energised island, the balance check, quadratic DC losses that the islands carry as load from the
- * next advance on, and bus and branch states. De-energised islands carry no power: zero voltage
- * and no frequency.
+ * energised island, the balance check, then the AC load flow of every energised island; the AC
+ * losses (the DC estimate where an island did not converge) are what the islands carry as load
+ * from the next advance on when `carryLosses`. Bus and branch states take the AC voltages and
+ * reactive power. De-energised islands carry no power: zero voltage and no frequency.
  */
-export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandPlan, dtSeconds: number): void => {
+export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandPlan, dtSeconds: number, carryLosses: boolean): void => {
   const { plan } = islands
   const { network } = plan
   const model = grid.definition.model
@@ -214,7 +239,27 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   const flows = flowScratch.get(grid) ?? new Float64Array(network.branchCount)
   flowScratch.set(grid, flows)
   gridBranchFlowsMwInto(network, plan.closedBranches, plan.anglesRad, flows)
-  const lossLoad = grid.lossLoadByBusMw
+
+  // AC load flow per energised island; its outcome is published, and a failure raises the island's alarm.
+  const acOutcomes = solveGridAcLoadFlow(grid, islands)
+  const ac = gridAcState(grid)!
+  grid.acOutcomeByIsland.clear()
+  const acConvergedPlanIsland = new Uint8Array(plan.islands.length)
+  for (const island of islands.islands) {
+    const outcome = acOutcomes.get(island.planIndex)
+    if (outcome === undefined) continue
+    grid.acOutcomeByIsland.set(island.id, outcome)
+    if (outcome.converged) acConvergedPlanIsland[island.planIndex] = 1
+    noteGridAcSolution(grid, island.id, outcome.converged ? { converged: true } : { converged: false, reason: `${outcome.failure.reason}: ${outcome.failure.detail}` })
+  }
+  // An island that de-energised or merged has no load flow any more, so no non-convergence either.
+  for (const islandId of grid.alarms.acNonConvergence.keys()) {
+    if (!grid.acOutcomeByIsland.has(islandId)) noteGridAcSolution(grid, islandId, { converged: true })
+  }
+
+  // The losses the islands carry as load change only when `carryLosses`: with branch relays, at their
+  // fixed sample instants, so the carried losses do not depend on where the adapter's ticks end.
+  const lossLoad = carryLosses ? grid.lossLoadByBusMw : lossScratch(grid, network.busCount)
   lossLoad.fill(0)
   let lossesMw = 0
   const islandOf = plan.islandIndexOfBus
@@ -226,25 +271,37 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
     frequencyOfPlanIsland[island.planIndex] = island.energized ? island.frequency!.frequencyHz : null
     idOfPlanIsland[island.planIndex] = island.id
   }
+  /** A bus voltage: the AC result when its island converged, unknown (null) when it did not, 0 when de-energised. */
+  const voltageAt = (bus: number): number | null => {
+    const planIndex = islandOf[bus]!
+    if (energisedPlanIsland[planIndex] !== 1) return 0
+    return acConvergedPlanIsland[planIndex] === 1 ? ac.voltagePu[bus]! : null
+  }
   // Branch states are kept in model order (topology.ts checks it), so they are walked alongside the model.
   let index = 0
   for (const state of grid.branches.values()) {
     const branch = model.branches[index]!
     const from = network.branchFrom[index]!
+    const to = network.branchTo[index]!
     const live = plan.closedBranches[index] === 1 && energisedPlanIsland[islandOf[from]!] === 1
+    const acLive = live && acConvergedPlanIsland[islandOf[from]!] === 1
     const flowMw = live ? flows[index]! : 0
-    // Quadratic DC loss r·P²/S_base, split equally between the branch ends as load for the next tick.
-    const branchLossMw = live ? branch.resistancePu * flowMw * flowMw / network.sBaseMva : 0
+    // Losses carried as load at the branch ends from the next advance on: the AC series loss r·|I|²
+    // where the island converged, else the quadratic DC estimate r·P²/S_base.
+    const branchLossMw = acLive
+      ? acSeriesLossMw(branch, ac.voltagePu[from]!, ac.voltagePu[to]!, ac.angleRad[from]! - ac.angleRad[to]!, network.sBaseMva)
+      : live ? branch.resistancePu * flowMw * flowMw / network.sBaseMva : 0
     addAt(lossLoad, from, branchLossMw / 2)
-    addAt(lossLoad, network.branchTo[index]!, branchLossMw / 2)
+    addAt(lossLoad, to, branchLossMw / 2)
     lossesMw += branchLossMw
-    const toLive = energisedPlanIsland[islandOf[network.branchTo[index]!]!] === 1
     state.flowMw = flowMw
     state.lossesMw = branchLossMw
     state.loadingPercent = Math.abs(flowMw) / (branch.ratingMw * state.availability) * 100
     state.frequencyHz = live ? frequencyOfPlanIsland[islandOf[from]!]! : null
-    state.voltageFromPu = energisedPlanIsland[islandOf[from]!] === 1 ? 1 : 0
-    state.voltageToPu = toLive ? 1 : 0
+    state.voltageFromPu = voltageAt(from)
+    state.voltageToPu = voltageAt(to)
+    state.reactiveFromMvar = acLive ? ac.branchFromReactiveMvar[index]! : null
+    state.reactiveToMvar = acLive ? ac.branchToReactiveMvar[index]! : null
     index += 1
   }
   for (const link of grid.definition.index.hvdcLinks) lossesMw += grid.hvdcLinks.get(link.id)!.lossesMw
@@ -253,18 +310,29 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   for (let bus = 0; bus < network.busCount; bus += 1) {
     const planIndex = islandOf[bus]!
     const energized = energisedPlanIsland[planIndex] === 1
+    const converged = acConvergedPlanIsland[planIndex] === 1
     const busId = network.busIds[bus]!
     let state = busStates.get(busId)
     if (!state) {
-      state = { busId, islandId: '', energized: false, voltagePu: 0, voltageModel: 'dc-nominal', frequencyHz: null, angleRad: 0, netInjectionMw: 0 } satisfies GridBusState
+      state = { busId, islandId: '', energized: false, voltagePu: 0, voltageModel: 'de-energised', reactiveInjectionMvar: 0, frequencyHz: null, angleRad: 0, netInjectionMw: 0 } satisfies GridBusState
       busStates.set(busId, state)
     }
     state.islandId = idOfPlanIsland[planIndex]!
     state.energized = energized
-    state.voltagePu = energized ? 1 : 0
+    state.voltagePu = voltageAt(bus)
+    state.voltageModel = !energized ? 'de-energised' : converged ? 'ac-fdlf' : 'not-converged'
+    state.reactiveInjectionMvar = !energized ? 0 : converged ? ac.reactiveInjectionMvar[bus]! : null
     state.frequencyHz = energized ? frequencyOfPlanIsland[planIndex]! : null
     state.angleRad = plan.anglesRad[bus]!
     state.netInjectionMw = injections[bus]!
+  }
+  for (const island of islands.islands) {
+    if (!island.energized) continue
+    const structure = plan.islands[island.planIndex]!
+    const members = islandMembers(grid, structure)
+    const states = islandAssetStates(grid, structure)
+    states.loads.forEach((state, position) => { state.voltagePu = voltageAt(members.loadBuses[position]!) })
+    states.storage.forEach((state, position) => { state.voltagePu = voltageAt(members.storageBuses[position]!) })
   }
 
   const audit = grid.diagnostics.energyAudit

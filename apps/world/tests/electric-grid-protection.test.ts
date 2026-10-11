@@ -104,7 +104,7 @@ describe('electric grid branch protection', () => {
     }
     const reference = cascade([1_000])
     console.info(`corridor cascade: ${reference.trips.map(trip => `${trip.assetId} ${trip.element} @${trip.elapsedSeconds} s`).join(', ')}`)
-    // Opening the direct line loads the A path at 129 % of its rating: its thermal element operates,
+    // Opening the direct line loads the A path at 131 % of its rating: its thermal element operates,
     // the B path then carries everything and trips instantaneously, and the separated islands' units
     // trip on RoCoF.
     expect(reference.trips.map(trip => [trip.assetId, trip.element])).toEqual([
