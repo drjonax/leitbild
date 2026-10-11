@@ -104,10 +104,11 @@ describe('process plant model composition', () => {
     // readings their normal bands, again when the turbine-driven auxiliary
     // feedwater pump was given its 30 s run-up, again when the
     // condensate storage tank was sized from its Technical Specification
-    // reserve, and again when the steam generators' narrow range was
-    // recalibrated to the upper quarter of their wide range; PWR Runs
-    // checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('cd339c8a9b619704de56e2a1b2872fb891077296cf5065482926c4f6b7262877')
+    // reserve, again when the steam generators' narrow range was
+    // recalibrated to the upper quarter of their wide range, and again when
+    // the hotwell and the feedwater tank were given their level control;
+    // PWR Runs checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('08595041dbc067b1d8e729722f7e1ccce94ca1d8cbaeff8644a3f1e8ebd4755b')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

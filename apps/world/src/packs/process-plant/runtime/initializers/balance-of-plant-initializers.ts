@@ -1,6 +1,7 @@
 import { optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
 import type { ComponentInitialValueDefinition } from './model.ts'
 import { condenserThermalBalance } from '../condenser-thermodynamics.ts'
+import { inletControlTarget, inletLevelControlOf } from '../behaviors/balance-of-plant-behaviors.ts'
 
 export const balanceOfPlantInitialValueDefinitions: ReadonlyArray<ComponentInitialValueDefinition> = [
   {
@@ -14,6 +15,10 @@ export const balanceOfPlantInitialValueDefinitions: ReadonlyArray<ComponentIniti
       if (localPath === 'soluteConcentrationPpm') return optionalParameterNumber(component, 'initialSoluteConcentrationPpm', 0)
       if (localPath === 'makeupFlowKgPerS') return parameterNumber(component, 'makeupFlowKgPerS')
       if (localPath === 'availableOutletFlowKgPerS') return parameterNumber(component, 'maxOutletFlowKgPerS')
+      if (localPath === 'inletControlFraction') {
+        const control = inletLevelControlOf(component)
+        return control === null ? 1 : inletControlTarget(control, initialFraction * 100)
+      }
       return undefined
     },
   },

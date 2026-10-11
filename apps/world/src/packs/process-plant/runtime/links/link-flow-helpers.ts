@@ -237,7 +237,10 @@ export const downstreamServiceDemandFraction = (
   if (downstreamPaths.length === 0) return 1
   let liveDemandWeight = 0
   for (const path of downstreamPaths) {
-    let pathWeight = 1
+    // A tank at the end takes in what its inlet level controller lets in.
+    const terminal = system.graph.components[(path.at(-1) ?? link).toComponentIndex]!
+    const inletControlPath = componentVariablePath(terminal, 'inletControlFraction')
+    let pathWeight = context.has(inletControlPath) ? clamp(context.readNumber(inletControlPath), 0, 1) : 1
     for (const pathLink of path) {
       pathWeight *= componentValveAvailabilityForLink(system, pathLink, context)
       if (pathWeight <= 0) break

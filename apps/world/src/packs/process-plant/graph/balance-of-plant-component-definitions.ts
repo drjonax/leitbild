@@ -20,6 +20,18 @@ export const balanceOfPlantComponentDefinitions: ReadonlyArray<ComponentDefiniti
       makeupFlowKgPerS: z.number().finite().nonnegative(),
       maxOutletFlowKgPerS: z.number().finite().nonnegative(),
       thermalTimeConstantS: z.number().finite().positive().optional(),
+      /**
+       * A level controller on what the tank takes in, as a feedwater tank's
+       * level control valve throttles the condensate pumps' flow into it: fully
+       * open up to its set point, shut a proportional band above it, moving
+       * with its time constant. What flows toward the tank on a service whose
+       * flow follows downstream demand is cut by its opening.
+       */
+      inletLevelControl: z.object({
+        setpointPercent: z.number().finite().min(0).max(100),
+        proportionalBandPercent: z.number().finite().positive(),
+        timeConstantS: z.number().finite().positive(),
+      }).strict().optional(),
     }).strict(),
     semantics: fixedSemantics({ keyValues: ['levelPercent'], aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })], ratedOutflow: [{ port: 'outlet', parameter: 'maxOutletFlowKgPerS' }] }),
     variables: [
@@ -29,6 +41,8 @@ export const balanceOfPlantComponentDefinitions: ReadonlyArray<ComponentDefiniti
       variable({ path: 'soluteConcentrationPpm', label: 'Tank solute concentration', kind: 'state', discipline: 'chemical', writable: false, publish: 'telemetry', quantity: 'concentration', unit: 'ppm' }),
       variable({ path: 'makeupFlowKgPerS', label: 'Tank makeup flow', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'boundary', quantity: 'flowRate', unit: 'kg/s' }),
       variable({ path: 'availableOutletFlowKgPerS', label: 'Available outlet flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
+      // Fully open without an inlet level controller.
+      variable({ path: 'inletControlFraction', label: 'Inlet level control valve position', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
     ],
   }),
   defineComponent({

@@ -530,7 +530,8 @@ describe('process plant runtime', () => {
     expect(active.alarms.length).toBeGreaterThan(0)
     // Losing both main feedwater pumps trips the reactor on low-low level before the RCPs are tripped.
     expect(active.trips).toContain('trip:sg-a-level-low-low-reactor-trip:low-low-level-reactor-trip')
-    expect(snapshot.trips.find(lifecycle => lifecycle.firstOut)?.ruleId).toMatch(/^sg-[a-d]-level-low-low-reactor-trip$/u)
+    // The reactor trip's first out is that low-low level; the same level's auxiliary feedwater start leads its own group.
+    expect(snapshot.trips.find(lifecycle => lifecycle.firstOut && lifecycle.annunciator?.firstOutGroup === 'reactor-trip')?.ruleId).toMatch(/^sg-[a-d]-level-low-low-reactor-trip$/u)
   }, PLANT_HANG_GUARD_MS) // 450 s correctness trajectory, same watchdog as the normal-hold case.
 
   test('scheduled typed PWR fault actions compile to validated runtime writes', () => {
@@ -902,6 +903,7 @@ describe('process plant runtime', () => {
       const condenserOutflow =
         Number(runtime.readVariable(valueOf('condenser-to-condensate-pump-a.flowKgPerS')))
         + Number(runtime.readVariable(valueOf('condenser-to-condensate-pump-b.flowKgPerS')))
+        + Number(runtime.readVariable(valueOf('condenser-to-hotwell-reject-valve.flowKgPerS')))
       expect(condenserAfter - condenserBefore).toBeCloseTo((condenserInflow - condenserOutflow) * dtSeconds, 6)
     }
   })
@@ -1575,9 +1577,9 @@ describe('process plant runtime', () => {
     // The collapsed level is a share of the 100 t full-height inventory.
     expect(Number(runtime.readVariable(valueOf('sgA.secondaryInventoryKg')))).toBeLessThan(100_000 * beforeCollapsedLevel / 100)
     expect(Number(runtime.readVariable(valueOf('sgA.feedwaterFlowKgPerS')))).toBeLessThan(initialFeedwaterFlow)
-    // The narrow range reads the boiling mixture, collapsed water and swell, over its 32 % to 92 % span of full height.
+    // The narrow range reads the boiling mixture, collapsed water and swell, over its 55.1 % to 73.1 % span of full height.
     const mixture = Number(runtime.readVariable(valueOf('sgA.collapsedLevelPercent'))) + Number(runtime.readVariable(valueOf('sgA.swellLevelPercent')))
-    expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeCloseTo((mixture / 100 - 0.32) / 0.6 * 100, 6)
+    expect(Number(runtime.readVariable(valueOf('sgA.levelPercent')))).toBeCloseTo(Math.max(0, (mixture / 100 - 0.551) / 0.18 * 100), 6)
     expect(Number(runtime.readVariable(valueOf('sgA.voidFraction')))).toBeGreaterThan(0)
 
     const diagnostics = runtime.pwrTransientDiagnostics()

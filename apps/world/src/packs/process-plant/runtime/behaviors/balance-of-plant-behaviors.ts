@@ -32,6 +32,20 @@ const condenserBackPressureAvailability = (backPressurePa: number | null, nomina
   return clamp(1 - Math.max(0, backPressurePa - nominalBackPressurePa) / 55_000, 0.25, 1)
 }
 
+interface InletLevelControl {
+  readonly setpointPercent: number
+  readonly proportionalBandPercent: number
+  readonly timeConstantS: number
+}
+
+/** A tank's inlet level controller, or null where it takes in whatever comes. */
+export const inletLevelControlOf = (component: CompiledComponent): InletLevelControl | null =>
+  ((component.parameters as Readonly<Record<string, unknown>>).inletLevelControl as InletLevelControl | undefined) ?? null
+
+/** Where the inlet valve goes at a level: open to the set point, shut a proportional band above it. */
+export const inletControlTarget = (control: InletLevelControl, levelPercent: number): number =>
+  clamp((control.setpointPercent + control.proportionalBandPercent - levelPercent) / control.proportionalBandPercent, 0, 1)
+
 export const balanceOfPlantBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
     id: 'turbine-electrical-output',
@@ -82,7 +96,7 @@ export const balanceOfPlantBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       'incoming:soluteConcentrationPpm',
       'outgoing:flowKgPerS',
     ],
-    writes: ['inventoryKg', 'levelPercent', 'temperatureC', 'soluteConcentrationPpm', 'availableOutletFlowKgPerS'],
+    writes: ['inventoryKg', 'levelPercent', 'temperatureC', 'soluteConcentrationPpm', 'availableOutletFlowKgPerS', 'inletControlFraction'],
     update: ({ system, component, context }): void => {
       const nominalInventory = parameterNumber(component, 'nominalInventoryKg')
       const currentInventory = context.readNumber(componentVariablePath(component, 'inventoryKg'))
@@ -124,6 +138,15 @@ export const balanceOfPlantBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       context.write(componentVariablePath(component, 'inventoryKg'), nextInventory)
       context.write(componentVariablePath(component, 'levelPercent'), nextLevel)
       context.write(componentVariablePath(component, 'availableOutletFlowKgPerS'), nextAvailableOutletFlow)
+      const inletControl = inletLevelControlOf(component)
+      if (inletControl !== null) {
+        context.write(componentVariablePath(component, 'inletControlFraction'), relaxToward(
+          context.readNumber(componentVariablePath(component, 'inletControlFraction')),
+          inletControlTarget(inletControl, nextLevel),
+          context.dtSeconds,
+          inletControl.timeConstantS,
+        ))
+      }
       context.write(componentVariablePath(component, 'soluteConcentrationPpm'), nextSolute)
       context.write(
         componentVariablePath(component, 'temperatureC'),
@@ -166,6 +189,8 @@ export const balanceOfPlantBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
         ?? parameterNumber(component, 'coolingWaterTemperatureC')
       const coolingWaterDesignDeltaT = parameterNumber(component, 'coolingWaterDesignDeltaTK')
       const { coolingWaterHeatCapacity, condensingAvailability, condensateProduction, targetCondensateTemperature, heatRejected, coolingWaterOutletTemperature, targetBackPressure } = condenserThermalBalance({ steamFlow, steamTemperature, nominalSteamFlow, coolingWaterFlow, coolingWaterInletTemperature, coolingWaterDesignDeltaT, condensateApproach: parameterNumber(component, 'condensateApproachTemperatureK') })
+      // The hotwell holds what the condenser condenses, less what the
+      // condensate pumps and the reject line take out.
       const outgoingCondensateFlow = sumOutgoingLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'condensate')
       const nominalInventory = parameterNumber(component, 'nominalCondensateInventoryKg')
       const currentInventory = context.readNumber(componentVariablePath(component, 'condensateInventoryKg'))

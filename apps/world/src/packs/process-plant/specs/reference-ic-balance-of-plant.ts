@@ -347,7 +347,10 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
     })],
   }),
   // The hotwell's low-level alarm, well below its 55 % normal level and
-  // before the condensate pumps lose their suction.
+  // before the condensate pumps lose their suction. The feedwater tank's level
+  // control valve stops the condensate pumps' flow when the feedwater pumps
+  // stop, so a trip does not drain it, and what rises above 60 % is rejected
+  // to the condensate storage tank.
   rule({
     id: 'condenser-hotwell-level-low',
     label: 'Condenser hotwell level low',

@@ -1355,13 +1355,32 @@
         "makeupFlowKgPerS": 1200,
         "maxOutletFlowKgPerS": 1500,
         "thermalTimeConstantS": 90,
-        "initialSoluteConcentrationPpm": 0
+        "initialSoluteConcentrationPpm": 0,
+        "inletLevelControl": {
+          "setpointPercent": 82,
+          "proportionalBandPercent": 2,
+          "timeConstantS": 5
+        }
       },
       "metadata": {
         "presentation": {
           "shortLabel": "FW tank"
         }
-      }
+      },
+      "variables": [
+        {
+          "path": "levelPercent",
+          "tagId": "FW-TANK-LVL",
+          "equipmentId": "feedwaterTank",
+          "description": "Feedwater tank level"
+        },
+        {
+          "path": "inletControlFraction",
+          "tagId": "COND-LCV-POS",
+          "equipmentId": "feedwaterTank",
+          "description": "Feedwater tank level control valve position: the share of the condensate pumps' flow the tank takes in"
+        }
+      ]
     },
     {
       "id": "feedwaterHeader",
@@ -2561,6 +2580,12 @@
           "externalRefs": [
             "secondary.condenser.vacuum"
           ]
+        },
+        {
+          "path": "condensateLevelPercent",
+          "tagId": "HOTWELL-LVL",
+          "equipmentId": "condenser",
+          "description": "Condenser hotwell level"
         }
       ],
       "metadata": {
@@ -2652,6 +2677,44 @@
       "metadata": {
         "presentation": {
           "shortLabel": "Cond pump B"
+        }
+      }
+    },
+    {
+      "id": "hotwellRejectValve",
+      "kind": "processValve",
+      "label": "Hotwell Reject Valve",
+      "parameters": {
+        "initialPositionFraction": 0,
+        "controller": {
+          "kind": "proportionalPosition",
+          "measuredPath": "condenser.condensateLevelPercent",
+          "setpoint": 60,
+          "biasPositionFraction": 0,
+          "gainPerUnit": 0.05,
+          "direction": "direct",
+          "minPositionFraction": 0,
+          "maxPositionFraction": 1,
+          "timeConstantS": 10
+        }
+      },
+      "variables": [
+        {
+          "path": "positionFraction",
+          "tagId": "HOTWELL-REJECT",
+          "equipmentId": "hotwellRejectValve",
+          "description": "Hotwell reject valve (hotwell to the condensate storage tank) position demand"
+        },
+        {
+          "path": "effectivePositionFraction",
+          "tagId": "HOTWELL-REJECT-POS",
+          "equipmentId": "hotwellRejectValve",
+          "description": "Hotwell reject valve (hotwell to the condensate storage tank) position feedback"
+        }
+      ],
+      "metadata": {
+        "presentation": {
+          "shortLabel": "Hotwell reject"
         }
       }
     },
@@ -8482,6 +8545,77 @@
       ]
     },
     {
+      "id": "condenser-to-hotwell-reject-valve",
+      "from": "condenser.condensateOutlet",
+      "to": "hotwellRejectValve.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "condensate",
+      "nominalFluid": "water",
+      "designPhase": "liquid",
+      "solverModel": "incompressibleLiquid",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Condenser hotwell to reject valve flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0
+        },
+        {
+          "path": "temperatureC",
+          "label": "Condenser hotwell to reject valve temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 35
+        }
+      ]
+    },
+    {
+      "id": "hotwell-reject",
+      "from": "hotwellRejectValve.outlet",
+      "to": "auxFeedwaterTank.inlet",
+      "connectionKind": "fluidFlow",
+      "service": "condensate",
+      "nominalFluid": "water",
+      "designPhase": "liquid",
+      "solverModel": "incompressibleLiquid",
+      "variables": [
+        {
+          "path": "flowKgPerS",
+          "label": "Hotwell reject flow",
+          "kind": "derived",
+          "discipline": "hydraulic",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "flowRate",
+          "unit": "kg/s",
+          "initialValue": 0,
+          "tagId": "HOTWELL-REJECT-FLOW",
+          "equipmentId": "hotwell-reject",
+          "description": "Hotwell reject flow to the condensate storage tank"
+        },
+        {
+          "path": "temperatureC",
+          "label": "Hotwell reject temperature",
+          "kind": "derived",
+          "discipline": "thermal",
+          "writable": false,
+          "publish": "telemetry",
+          "quantity": "temperature",
+          "unit": "degC",
+          "initialValue": 35
+        }
+      ]
+    },
+    {
       "id": "aux-feedwater-tank-to-motor-pump",
       "from": "auxFeedwaterTank.outlet",
       "to": "auxFeedwaterPumpMotor.inlet",
@@ -12068,6 +12202,7 @@
     "feedwaterTank.temperatureC",
     "feedwaterTank.makeupFlowKgPerS",
     "feedwaterTank.availableOutletFlowKgPerS",
+    "feedwaterTank.inletControlFraction",
     "auxFeedwaterPumpMotor.running",
     "auxFeedwaterPumpMotor.runningState",
     "auxFeedwaterPumpMotorB.running",
@@ -12095,6 +12230,9 @@
     "condenser.availableCondensateOutletFlowKgPerS",
     "condenser.condensateTemperatureC",
     "condenser.backPressurePa",
+    "hotwellRejectValve.positionFraction",
+    "hotwellRejectValve.effectivePositionFraction",
+    "hotwell-reject.flowKgPerS",
     "turbineBypassValve.positionFraction",
     "turbineBypassValve.effectivePositionFraction",
     "turbineBypassValve.inletFlowKgPerS",
