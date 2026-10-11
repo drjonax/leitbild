@@ -282,6 +282,9 @@ pub struct CellSystem {
     pub fixed_roots: Vec<Root>,
     /// Gate 5's cutout while its switching level is still watched by root.
     pub cutout_watch: Option<Cutout>,
+    /// The restart rule's nonnegative coordinates and their tolerance in
+    /// solver scaling (sixth case run), handed to the shared consistent start.
+    pub restart_bounds: Option<(Vec<usize>, f64)>,
     pub counters: Counters,
 }
 
@@ -661,6 +664,9 @@ impl ConsistentSystem for CellSystem {
     fn system_dimension(&self) -> usize {
         self.n()
     }
+    fn restart_bounds(&self) -> Option<(Vec<usize>, f64)> {
+        self.restart_bounds.clone()
+    }
     fn rows_at(&mut self, t: f64, y: &[f64], yp: &[f64]) -> Result<Vec<f64>, CellFailure> {
         let e = self.evaluate(t, y, yp, None, None)?;
         Ok((0..self.n()).map(|i| e.row(i).value).collect())
@@ -693,8 +699,9 @@ pub struct Segment {
     /// Start of this handle's segment and its ledger there.
     pub started_s: f64,
     pub started_q: [f64; LEDGER],
-    /// The ledger integrand's refusal of a converged step, if any.
-    pub ledger_refusal: Option<String>,
+    /// The ledger integrand's refusal of a converged step, if any: the
+    /// reason, the step's time and its state.
+    pub ledger_refusal: Option<(String, f64, Vec<f64>)>,
     /// False in the no-ledger smoke diagnostic: no quadratures are set up.
     pub ledger: bool,
 }
@@ -777,7 +784,7 @@ impl System for Segment {
                     "ledger integrand refused the converged step at t={t} s ({})",
                     text(&f)
                 );
-                self.ledger_refusal = Some(reason.clone());
+                self.ledger_refusal = Some((reason.clone(), t, y.to_vec()));
                 Err(Failure::Fatal(reason))
             }
         }
@@ -1112,6 +1119,8 @@ pub struct RunSpec {
     pub event_restart_first_step_s: f64,
     /// The integrator's ledger (K2); false only in a smoke diagnostic.
     pub ledger: bool,
+    /// The restart rule's largest placed violation, in solver scaling.
+    pub restart_bound_tolerance: f64,
     /// The low-level heater cutout chain (gate 5).
     pub cutout: Option<Cutout>,
 }
@@ -1494,6 +1503,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     let mut totals = Totals::default();
     // Gate 5's cutout: its switching level is watched by root from t = 0.
     system.cutout_watch = spec.cutout;
+    system.restart_bounds = Some((spec.nonnegative.clone(), spec.restart_bound_tolerance));
     match start(&mut system, t, &mut y, spec) {
         Ok((rates, pair)) => {
             yp = rates;
@@ -2145,9 +2155,58 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                     "IDA stopped at t={} s: {e}",
                     ida.stats().map_or(t, |s| s.internal_time)
                 );
-                Some(if let Some(refusal) = &ida.system().ledger_refusal {
-                    End::LedgerFailure {
-                        reason: format!("{refusal}; {reason}"),
+                Some(if let Some((refusal, tr, yr)) = ida.system().ledger_refusal.clone() {
+                    // Sixth case run's rule: a declared limit root that has
+                    // crossed at the refused step ends the run at that limit;
+                    // the ledger is reported to the last accepted step.
+                    let segment = ida.system();
+                    let mut at_refused = vec![0.; segment.roots.len()];
+                    let mut at_last = vec![0.; segment.roots.len()];
+                    let crossed = if segment.system.root_values(&yr, &segment.roots, &mut at_refused).is_ok()
+                        && segment.system.root_values(&y, &segment.roots, &mut at_last).is_ok()
+                    {
+                        segment
+                            .roots
+                            .iter()
+                            .zip(at_last.iter().zip(&at_refused))
+                            .find(|(r, (before, after))| {
+                                matches!(r, Root::ZoneMass(_) | Root::MixtureTop | Root::SteelLimit(_))
+                                    && (**after == 0. || before.signum() != after.signum())
+                            })
+                            .map(|(r, _)| *r)
+                    } else {
+                        None
+                    };
+                    let mut ya = vec![0.; n];
+                    let mut ypa = vec![0.; n];
+                    let mut q = [0.; LEDGER];
+                    if let Ok(tn) = ida.current_state(&mut ya, &mut ypa)
+                        && tn > t
+                        && ida.quadratures_at(tn, &mut q).is_ok()
+                        && let Ok(mut smp) = sample(&ida.system().system, tn, &ya, &ypa, &spec.atol, spec.rtol)
+                    {
+                        smp.ledger_q = q;
+                        smp.event = Some("last accepted step before the ledger refusal".into());
+                        out.samples.push(smp);
+                        t = tn;
+                        y = ya;
+                        yp = ypa;
+                    }
+                    let at = format!("crossed at the step the ledger refused at t={tr} s");
+                    match crossed {
+                        Some(root @ Root::SteelLimit(_)) => End::Limit {
+                            label: format!("steel-range applicability limit: {} ({at})", root.label()),
+                        },
+                        Some(root) if spec.limit => End::Limit {
+                            label: format!("structural event: {} ({at})", root.label()),
+                        },
+                        Some(root) => End::StopRule {
+                            rule: 3,
+                            reason: format!("PZR structural event: {} ({at})", root.label()),
+                        },
+                        None => End::LedgerFailure {
+                            reason: format!("{refusal}; {reason}"),
+                        },
                     }
                 } else if spec.limit {
                     End::Limit {
@@ -2417,6 +2476,7 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
         "min_drag_gap_margin":min_gap,"min_admitted_mass_kg":{"value":min_a.0,"at_s":min_a.1},
         "relief_events":run.relief_events,"area_step_crossings":run.area_crossings,"structural_events":run.structural,
         "credited_departure_overruns":run.uncredited,"resolvability_reports":run.resolvability,
-        "handle_stats":run.handle_stats,"ledger_disabled_for_diagnosis":run.ledger_disabled,"step_probe":run.step_probe,"cutout":run.cutout,"observations":run.observations.len(),
+        "handle_stats":run.handle_stats,"ledger_disabled_for_diagnosis":run.ledger_disabled,
+        "restart_placements":run.initializations.iter().flat_map(|i| i["pair"]["placements"].as_array().cloned().unwrap_or_default()).collect::<Vec<_>>(),"step_probe":run.step_probe,"cutout":run.cutout,"observations":run.observations.len(),
         "samples":run.samples.len(),"series":series})
 }

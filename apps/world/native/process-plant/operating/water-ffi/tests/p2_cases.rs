@@ -240,6 +240,9 @@ struct CaseSet {
     event_restart_first_step_s: f64,
     /// Closure bound on the integrator's ledger, in solver tolerances (K2).
     quadrature_closure_factor: f64,
+    /// Largest constraint violation, in solver scaling, a restart may place
+    /// on its bound (sixth case run).
+    restart_bound_tolerance: f64,
     cases: Vec<Entry>,
 }
 
@@ -677,6 +680,7 @@ fn system(ctx: &Context, entry: &Entry, prepared: &Prepared, v: Variant) -> Cell
         metal: Some(metal),
         fixed_roots,
         cutout_watch: None,
+        restart_bounds: None,
         counters: Counters::default(),
     }
 }
@@ -1108,6 +1112,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             consistent_passes: CONSISTENT_PASSES,
             lift_root_bound: ctx.lift_root_bound(),
             event_restart_first_step_s: ctx.set.event_restart_first_step_s,
+            restart_bound_tolerance: ctx.set.restart_bound_tolerance,
             // Diagnostic only: a smoke may run without the ledger, to see
             // whether the residual alone completes a run the ledger stopped.
             ledger: !(smoke.is_some() && std::env::var("LD01_P2_DIAG_WITHOUT_LEDGER").is_ok()),

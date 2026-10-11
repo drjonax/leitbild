@@ -183,6 +183,8 @@ unsafe extern "C" {
     fn operating_ida_quadrature_reinit(ida: *mut c_void, q0: *const f64) -> c_int;
     #[cfg(feature = "quadratures")]
     fn operating_ida_quadrature(ida: *mut c_void, time: *mut f64, q: *mut f64) -> c_int;
+    #[cfg(feature = "quadratures")]
+    fn operating_ida_quadrature_at(ida: *mut c_void, t: f64, q: *mut f64) -> c_int;
     fn operating_ida_solution_scaling(ida: *mut c_void, enabled: c_int) -> c_int;
     fn operating_ida_newton_coefficient(ida: *mut c_void, coefficient: f64) -> c_int;
     fn operating_ida_reinitialize(ida: *mut c_void, t: f64, y: *const f64, yp: *const f64)
@@ -672,6 +674,23 @@ impl<S: System> Ida<S> {
         let code = unsafe { operating_ida_quadrature(self.handle.as_ptr(), &mut time, q.as_mut_ptr()) };
         self.check(code)?;
         Ok(time)
+    }
+    /// Stock IDAS IDAGetQuadDky: the quadratures at `t` within the last
+    /// accepted step, for example at the internal time `current_state` reads.
+    #[cfg(feature = "quadratures")]
+    pub fn quadratures_at(&self, t: f64, q: &mut [f64]) -> Result<()> {
+        if self.context.quadratures == 0 || q.len() != self.context.quadratures {
+            return Err("IDAS quadratures were not initialized with this length".into());
+        }
+        let code = unsafe { operating_ida_quadrature_at(self.handle.as_ptr(), t, q.as_mut_ptr()) };
+        if code < 0 {
+            return Err(format!("stock IDAS IDAGetQuadDky status {code} at {t} s"));
+        }
+        Ok(())
+    }
+    #[cfg(not(feature = "quadratures"))]
+    pub fn quadratures_at(&self, _: f64, _: &mut [f64]) -> Result<()> {
+        Err(NO_QUADRATURES.into())
     }
     /// Without stock IDAS a ledger is refused, never emulated.
     #[cfg(not(feature = "quadratures"))]

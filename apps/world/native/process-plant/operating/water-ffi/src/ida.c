@@ -243,6 +243,17 @@ int operating_ida_quadrature_reinit(OperatingIDA *o,const double *q0) {
     memcpy(N_VGetArrayPointer(o->q),q0,N_VGetLength(o->q)*sizeof(double));
     return IDAQuadReInit(o->ida,o->q);
 }
+/* Stock IDAS IDAGetQuadDky (k = 0): the quadratures at t within the last
+   accepted step. */
+int operating_ida_quadrature_at(OperatingIDA *o,double t,double *q) {
+    if (!o->q) return IDA_ILL_INPUT;
+    N_Vector out=N_VClone(o->q);
+    if (!out) return IDA_MEM_FAIL;
+    int code=IDAGetQuadDky(o->ida,t,0,out);
+    if (code>=0) memcpy(q,N_VGetArrayPointer(out),N_VGetLength(out)*sizeof(double));
+    N_VDestroy(out);
+    return code;
+}
 /* Stock IDAGetQuad: the quadratures at the last returned time. */
 int operating_ida_quadrature(OperatingIDA *o,double *time,double *q) {
     if (!o->q) return IDA_ILL_INPUT;
