@@ -243,7 +243,7 @@ export const buildLoads = (config: {
             share: entry.share,
             location: [roundTo(entry.centre[0], 6), roundTo(entry.centre[1], 6)] as const,
             km: entry.meanKm,
-            how: `${roundTo(entry.share * 100, 1)} % of it: the ${roundTo(entry.residentShare * 100, 1)} % of the municipality's residents (${sourceIds.population}) whose nearest ≥132 kV substation in ${priceArea} this is${keptShares.length < residentShares!.length ? `, scaled up for the ${residentShares!.length - keptShares.length} shares below ${minimumShareMw} MW` : ''}`,
+            how: `${roundTo(entry.share * 100, 1)} % of it: the ${roundTo(entry.residentShare * 100, 1)} % of the municipality's residents on Statistisk sentralbyrå's 1 km population grid (${sourceIds.population}, © SSB, CC BY 4.0; aggregated per substation) whose nearest ≥132 kV substation in ${priceArea} this is${keptShares.length < residentShares!.length ? `, scaled up for the ${residentShares!.length - keptShares.length} shares below ${minimumShareMw} MW` : ''}`,
           }))
         : [{ station: nearest.station, share: 1, location: point, km: nearest.km, how: `at the nearest ≥132 kV substation in ${priceArea} to the municipality point (no residents in the population grid)` }]
     for (const entry of served) {

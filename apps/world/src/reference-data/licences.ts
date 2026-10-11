@@ -23,12 +23,14 @@ export const osmOdbl: LicenceRef = {
   shareAlike: true,
 }
 
-// Elhub open energy data and Kartverket municipality data are published under CC BY 4.0.
+// Elhub open energy data, Kartverket municipality data, Statistics Norway's statistics including
+// its 1 km population grid (ssb.no/diverse/lisens: credit "Statistisk sentralbyrå" or "SSB") and
+// the Energy-Charts production and exchange series (Fraunhofer ISE) are published under CC BY 4.0.
 export const ccBy40: LicenceRef = {
   id: asLicenceId('cc-by-4.0'),
   name: 'Creative Commons Attribution 4.0 International',
   url: 'https://creativecommons.org/licenses/by/4.0/',
-  attribution: '© Elhub AS; © Kartverket · CC BY 4.0',
+  attribution: '© Elhub AS; © Kartverket; © Statistisk sentralbyrå (SSB); © Energy-Charts.info (Fraunhofer ISE), data: ENTSO-E · CC BY 4.0',
   commercialUseAllowed: true,
   redistributionAllowed: true,
   shareAlike: false,
