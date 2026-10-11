@@ -136,16 +136,23 @@ const gridFrequencyRideThrough = (): ReadonlyArray<ProcessPlantIcRule> => {
 }
 
 export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ReadonlyArray<ProcessPlantIcRule> => [
+  // P-4: the reactor trip breakers open trip the turbine, whatever tripped
+  // the reactor. It is a turbine trip like any other, annunciated in the
+  // turbine trip's first-out group and sealed in until reset, so a display
+  // lists it among the actuations of every reactor trip.
   rule({
     id: 'reactor-trip-turbine-trip',
-    label: 'Reactor trip turbine trip',
-    ruleClass: 'normalControl',
+    label: 'Turbine trip on reactor trip (P-4)',
+    ruleClass: 'protection',
     condition: reactorTripBreakerOpen(),
-    latch: false,
-    resetWhenClear: true,
     effects: [
-      write('close-turbine-stop-valve-on-reactor-trip', { path: 'turbineStopValve.positionFraction' }, 0),
-      write('reject-turbine-load-on-reactor-trip', { tagId: 'TURB-LOAD' }, 0),
+      trip({
+        id: 'reactor-trip-turbine-trip',
+        title: 'Turbine trip on reactor trip (P-4)',
+        message: 'The reactor trip breakers are open (P-4): the turbine stop valve shuts and the generator\'s load is rejected.',
+        annunciator: annunciator({ ...turbineAlarm, firstOutGroup: 'turbine-trip', priority: 'urgent', role: 'automaticAction' }),
+      }),
+      ...turbineTripWrites('reactor-trip'),
     ],
   }),
   rule({

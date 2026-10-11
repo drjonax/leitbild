@@ -574,6 +574,19 @@ describe('what each trip does', () => {
     expect(groupsOf('safety-injection-containment-pressure-high-1')).toEqual(['safety-injection', 'reactor-trip'])
   })
 
+  test('a reactor trip trips the turbine through P-4 and annunciates it with the other turbine trips', () => {
+    expect(groupsOf('reactor-trip-turbine-trip')).toEqual(['turbine-trip'])
+    // An operator's manual trip: the trip breakers open with no other trip in, and the turbine follows.
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'reactorTripBreakerA.closed' as VariablePath, value: false })
+    expect(plantRun.secondsUntil('trip:reactor-trip-turbine-trip:reactor-trip-turbine-trip', 3)).not.toBeNull()
+    plantRun.run(3_000)
+    expect(plantRun.trip('trip:reactor-trip-turbine-trip:reactor-trip-turbine-trip')).toMatchObject({ active: true, latched: true, annunciator: { firstOutGroup: 'turbine-trip' } })
+    expect(plantRun.tag('TURB-STOP-POS')).toBe(0)
+    expect(plantRun.tag('TURB-LOAD')).toBe(0)
+  })
+
   test('the PORV\'s opening is pressure control: it annunciates no trip', () => {
     const relief = plant.automation.rules.find(rule => rule.id === 'pzr-pressure-high-relief')!
     expect(relief.ruleClass).toBe('normalControl')
