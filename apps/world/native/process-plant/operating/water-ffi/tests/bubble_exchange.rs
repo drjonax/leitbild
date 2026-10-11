@@ -1,8 +1,10 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md#bulk-bubble-exchange
-//! The stratified cell's bulk bubble exchange (request 4, K1) against the
-//! maintained IF97 boundary: its zero cases and signs, its magnitude against
-//! the lead's single-bubble hand estimate, the mass, energy and boron
-//! identity with the exchange active, and its directions against central
+//! The stratified cell's bulk bubble exchange (request 4, K1) and zone A's
+//! bubble stock (contract amendment 6) against the maintained IF97
+//! boundary: the zero cases and signs of both stocks, their magnitude
+//! against the lead's single-bubble hand estimate, rods inside A condensing
+//! into A, the A–R crossing as A thins, the mass, energy and boron identity
+//! with both exchanges active, and their directions against central
 //! differences, in the cell and in the network's colored Jacobian. The cell
 //! section mirrors the contract's `pzr.cell` with the committed strict
 //! blocks; the roof pressure is the S1 packet's declared operating point.
@@ -11,13 +13,13 @@ use leitbild_operating_plant::{
         CscOut, Failure, Network, Properties, PzrPreparation, RotorState,
         packet::Packet,
         stratified::{
-            self as st, Boundary, Case, Cell, Coordinates, ExchangeCase, Heat, Parameters, Receipt,
-            bubble_exchange, ranz_marshall, terminal_velocity,
+            self as st, Boundary, Case, Cell, Coordinates, ExchangeCase, Heat, HeaterReceipt,
+            Parameters, Receipt, bubble_exchange, ranz_marshall, terminal_velocity,
         },
     },
     rotor::{Shaft, SpeedRequest, Support},
     sparse::compare_with_dense,
-    thermal::Scalar,
+    thermal::{Saturation, Scalar, WaterPoint},
 };
 use leitbild_operating_water::If97;
 use serde_json::json;
@@ -31,7 +33,7 @@ fn section() -> String {
  "ports":[{"id":"PZR.SURGE.MOUTH","kind":"surge","elevation_m":6.5,"face":34,"bore_m":0.3}],
  "taps":[{"id":"PT1","elevation_m":18.5},{"id":"LT.LOW","elevation_m":6.5},{"id":"LT.HIGH","elevation_m":18.5}],
  "heaters":{"bottom_m":6.5,"top_m":9.5,"displacement_m3":0.25132741228718347},
- "stratified":{"withdrawalScale_m":0.30,"admittedPreparationThickness_m":0.30,"inversionExchangeVelocity_m_s":320,"liquidRelaxationTime_s":0.3,"vaporRelaxationTime_s":0.5,"relaxationSensitivity":[0.5,1,2],"bubbleDiameter_m":0.00075,"bubbleVaporCoefficient_W_m2K":1000,"bubbleExchangeSensitivity":[0.5,1,2],"bubbleExchangeDiameterSensitivity_m":0.0005,"sprayDropDiameter_m":0.003,"dropDiameterSensitivity_m":[0.0015,0.003,0.006],"resolvabilityFactor":1000},
+ "stratified":{"withdrawalScale_m":0.30,"admittedPreparationThickness_m":0.30,"inversionExchangeVelocity_m_s":320,"liquidRelaxationTime_s":0.3,"vaporRelaxationTime_s":0.5,"relaxationSensitivity":[0.5,1,2],"bubbleDiameter_m":0.00075,"bubbleExchangeSensitivity":[0.5,1,2],"bubbleExchangeDiameterSensitivity_m":0.0005,"sprayDropDiameter_m":0.003,"dropDiameterSensitivity_m":[0.0015,0.003,0.006],"resolvabilityFactor":1000},
  "metastable":{"pressureRange_Pa":[2000000,16000000],"lowerBoundExclusive":true,"liquidSuperheatMax_K":2.0,"vaporSubcoolingMax_K":1.4,"trialMax_K":3.0,"creditedMax_K":0.5,"liquidTemperatureMax_K":623.15,"liquidPressureCeiling_Pa":17000000,"vaporPressureCeiling_Pa":16000000},
  "absorberMassFraction":0.001,"interfacialLength_m":0.003}"#
         .to_string()
@@ -80,6 +82,8 @@ fn scales(v: &[f64; st::COORDINATES]) -> [f64; st::COORDINATES] {
     scales[st::BUBBLE_MASS] = 50.;
     scales[st::DROP_MASS] = 30.;
     scales[st::DROP_BORON] = 0.03;
+    scales[st::ADMITTED_BUBBLE_VOLUME] = 0.5;
+    scales[st::ADMITTED_BUBBLE_MASS] = 50.;
     scales
 }
 
@@ -104,28 +108,104 @@ fn prepared() -> Prepared {
     prepared_with(ExchangeCase::nominal())
 }
 
-/// The prepared values with `bubbles` kg in transit, their volume, and R
-/// at `T_R = Tsat(p_s) + excess` at its own centroid pressure. The column's
-/// pressures follow from masses and volumes alone, so R's energy sets its
-/// temperature against this state's own `Tsat(p_s)`.
-fn with_bubbles(p: &Prepared, excess_k: f64, bubbles: f64) -> [f64; st::COORDINATES] {
+/// Both bubble stocks and the two liquids' temperatures against
+/// `Tsat(p_s)`; `None` keeps a liquid's prepared energy.
+#[derive(Clone, Copy)]
+struct Stocks {
+    bubbles: f64,
+    admitted_bubbles: f64,
+    resident_excess_k: Option<f64>,
+    admitted_excess_k: Option<f64>,
+}
+/// The prepared values with both stocks in transit with their volumes, and
+/// each named liquid at `T = Tsat(p_s) + excess` at its own centroid
+/// pressure. The column's pressures follow from masses and volumes alone,
+/// so the liquids' energies set their temperatures against this state's own
+/// `Tsat(p_s)`.
+fn with_stocks(p: &Prepared, stocks: Stocks) -> [f64; st::COORDINATES] {
     let mut v = p.preparation.values;
-    let prepared = &p.preparation.column.interface_saturation;
-    v[st::BUBBLE_MASS] = bubbles;
-    v[st::BUBBLE_VOLUME] = bubbles / prepared.vapor.density.value;
+    let rho = p
+        .preparation
+        .column
+        .interface_saturation
+        .vapor
+        .density
+        .value;
+    v[st::BUBBLE_MASS] = stocks.bubbles;
+    v[st::BUBBLE_VOLUME] = stocks.bubbles / rho;
+    v[st::ADMITTED_BUBBLE_MASS] = stocks.admitted_bubbles;
+    v[st::ADMITTED_BUBBLE_VOLUME] = stocks.admitted_bubbles / rho;
     let c = p
         .cell
         .column(&If97, &Coordinates::values(&v), None)
         .unwrap();
-    let t = c.interface_saturation.temperature.value + excess_k;
-    let u = If97
-        .forward(false, c.resident.pressure.value, t)
-        .unwrap()
-        .internal_energy_j_kg;
-    v[st::RESIDENT_ENERGY] = v[st::RESIDENT_MASS] * u;
+    let tsat = c.interface_saturation.temperature.value;
+    for (excess, zone, mass, energy) in [
+        (
+            stocks.resident_excess_k,
+            c.resident,
+            st::RESIDENT_MASS,
+            st::RESIDENT_ENERGY,
+        ),
+        (
+            stocks.admitted_excess_k,
+            c.admitted,
+            st::ADMITTED_MASS,
+            st::ADMITTED_ENERGY,
+        ),
+    ] {
+        if let Some(excess) = excess {
+            let u = If97
+                .forward(false, zone.pressure.value, tsat + excess)
+                .unwrap()
+                .internal_energy_j_kg;
+            v[energy] = v[mass] * u;
+        }
+    }
     v
 }
+/// R at `Tsat(p_s) + excess` with `bubbles` kg in b only.
+fn with_bubbles(p: &Prepared, excess_k: f64, bubbles: f64) -> [f64; st::COORDINATES] {
+    with_stocks(
+        p,
+        Stocks {
+            bubbles,
+            admitted_bubbles: 0.,
+            resident_excess_k: Some(excess_k),
+            admitted_excess_k: None,
+        },
+    )
+}
+/// A at `Tsat(p_s) + excess` with `bubbles` kg in b_A only.
+fn with_admitted_bubbles(p: &Prepared, excess_k: f64, bubbles: f64) -> [f64; st::COORDINATES] {
+    with_stocks(
+        p,
+        Stocks {
+            bubbles: 0.,
+            admitted_bubbles: bubbles,
+            resident_excess_k: None,
+            admitted_excess_k: Some(excess_k),
+        },
+    )
+}
 
+fn evaluate_with(
+    p: &Prepared,
+    values: &[f64; st::COORDINATES],
+    rate: &[f64; st::COORDINATES],
+    receipt: Receipt,
+    boundary: &Boundary,
+) -> Result<st::Evaluation, Failure> {
+    p.cell.residual(
+        &If97,
+        &Coordinates::values(values),
+        &Coordinates::values(rate),
+        &[receipt],
+        boundary,
+        &p.scales,
+        None,
+    )
+}
 fn evaluate(
     p: &Prepared,
     values: &[f64; st::COORDINATES],
@@ -133,17 +213,15 @@ fn evaluate(
     receipt: Receipt,
     heat: Heat,
 ) -> Result<st::Evaluation, Failure> {
-    p.cell.residual(
-        &If97,
-        &Coordinates::values(values),
-        &Coordinates::values(rate),
-        &[receipt],
+    evaluate_with(
+        p,
+        values,
+        rate,
+        receipt,
         &Boundary {
             heat,
             ..Boundary::closed()
         },
-        &p.scales,
-        None,
     )
 }
 fn at_rest(p: &Prepared, values: &[f64; st::COORDINATES]) -> st::Evaluation {
@@ -156,131 +234,165 @@ fn at_rest(p: &Prepared, values: &[f64; st::COORDINATES]) -> st::Evaluation {
     )
     .unwrap()
 }
-
-#[test]
-fn the_exchange_is_zero_without_bubbles_and_for_liquid_at_or_above_saturation() {
-    let p = prepared();
-    // The prepared rest state: no bubbles, so nothing condenses.
-    let ev = at_rest(&p, &p.preparation.values);
-    let x = &ev.flows.bubble_exchange;
-    assert_eq!(x.condensation.value, 0.);
-    assert_eq!(x.area_m2.value, 0.);
-    // R subcooled by 2 K but no bubbles: zero, with the linear law's slope
-    // along the stock still present for the Jacobian.
-    let v = with_bubbles(&p, -2., 0.);
-    let ev = at_rest(&p, &v);
-    assert_eq!(ev.flows.bubble_exchange.condensation.value, 0.);
-    let mut seeded = Coordinates::values(&v);
-    seeded.bubble_mass = Scalar::new(0., 1.);
-    let ev = p
-        .cell
+/// The residual at rest with one coordinate seeded.
+fn seeded(p: &Prepared, values: &[f64; st::COORDINATES], j: usize) -> st::Evaluation {
+    let mut x = Coordinates::values(values).to_array();
+    x[j] = Scalar::new(x[j].value, 1e-3 * p.scales[j]);
+    p.cell
         .residual(
             &If97,
-            &seeded,
+            &Coordinates::from_slice(&x).unwrap(),
             &Coordinates::values(&[0.; st::COORDINATES]),
             &[Receipt::zero()],
             &Boundary::closed(),
             &p.scales,
             None,
         )
-        .unwrap();
-    // dW_x/dM_b = 6 h_L (T_s - T_R)/(ρ_g,sat d h_fg) at that state: the
-    // other factors multiply the zero area.
-    let slope = ev.flows.bubble_exchange.condensation.direction;
-    let (c, f) = (&ev.column, &ev.flows);
-    let sat = &c.interface_saturation;
-    let d = p.cell.case().bubble_diameter_m;
-    let (h, _) = ranz_marshall(d, f.bubble.velocity, &c.resident.water());
-    let expected = 6. * h.value * (sat.temperature.value - c.resident.temperature.value)
-        / (sat.vapor.density.value * d * (sat.vapor.enthalpy.value - sat.liquid.enthalpy.value));
-    assert!(
-        slope > 0. && (slope - expected).abs() <= 1e-12 * expected,
-        "{slope} vs {expected}"
-    );
-    // R at or above the stock's saturation: zero value and zero directions,
-    // whichever coordinate is seeded. The flashing relaxation takes R's
-    // superheat; the two never act together.
-    for excess in [1e-3, 0.05, 0.3] {
-        let v = with_bubbles(&p, excess, 40.);
+        .unwrap()
+}
+/// The maintained-diameter rate per kg, `6 h_L (T_s − T_L)/(ρ_g,sat d h_fg)`,
+/// from the public coefficient on a liquid's state.
+fn rate_per_kg(d: f64, u: Scalar, liquid: &st::Zone, sat: &Saturation) -> f64 {
+    let (h, _) = ranz_marshall(d, u, &liquid.water());
+    6. * h.value * (sat.temperature.value - liquid.temperature.value)
+        / (sat.vapor.density.value * d * (sat.vapor.enthalpy.value - sat.liquid.enthalpy.value))
+}
+
+#[test]
+fn the_exchange_is_zero_without_bubbles_and_for_liquid_at_or_above_saturation() {
+    let p = prepared();
+    let d = p.cell.exchange_diameter_m();
+    // The prepared rest state: no bubbles, so nothing condenses or crosses.
+    let ev = at_rest(&p, &p.preparation.values);
+    let f = &ev.flows;
+    for x in [f.bubble_exchange, f.admitted_bubble_exchange] {
+        assert_eq!((x.condensation.value, x.area_m2.value), (0., 0.));
+    }
+    assert_eq!(f.bubble_crossing.value, 0.);
+    // Each liquid 2 K below Tsat(p_s) without bubbles: zero, with the linear
+    // law's slope along its stock present for the Jacobian. The other
+    // factors multiply the zero area.
+    for (v, stock, host) in [
+        (with_bubbles(&p, -2., 0.), st::BUBBLE_MASS, false),
+        (
+            with_admitted_bubbles(&p, -2., 0.),
+            st::ADMITTED_BUBBLE_MASS,
+            true,
+        ),
+    ] {
         let ev = at_rest(&p, &v);
+        let x = if host {
+            ev.flows.admitted_bubble_exchange
+        } else {
+            ev.flows.bubble_exchange
+        };
+        assert_eq!(x.condensation.value, 0.);
+        let zone = if host {
+            ev.column.admitted
+        } else {
+            ev.column.resident
+        };
+        let expected = rate_per_kg(
+            d,
+            ev.flows.bubble.velocity,
+            &zone,
+            &ev.column.interface_saturation,
+        );
+        let ev = seeded(&p, &v, stock);
+        let x = if host {
+            ev.flows.admitted_bubble_exchange
+        } else {
+            ev.flows.bubble_exchange
+        };
+        let slope = x.condensation.direction / (1e-3 * p.scales[stock]);
+        assert!(
+            slope > 0. && (slope - expected).abs() <= 1e-12 * expected,
+            "{slope} vs {expected}"
+        );
+    }
+    // Both liquids at or above the stocks' saturation: zero value and zero
+    // directions, whichever coordinate is seeded. The flashing relaxation
+    // takes a liquid's superheat; the two never act together.
+    for excess in [1e-3, 0.05, 0.3] {
+        let stocks = Stocks {
+            bubbles: 40.,
+            admitted_bubbles: 5.,
+            resident_excess_k: Some(excess),
+            admitted_excess_k: Some(excess),
+        };
+        let v = with_stocks(&p, stocks);
+        let ev = at_rest(&p, &v);
+        let c = &ev.column;
+        let tsat = c.interface_saturation.temperature.value;
+        assert!(c.resident.temperature.value > tsat && c.admitted.temperature.value > tsat);
         let f = &ev.flows;
-        let r_minus_ts =
-            ev.column.resident.temperature.value - ev.column.interface_saturation.temperature.value;
-        assert!(r_minus_ts > 0., "R must sit above Tsat(p_s): {r_minus_ts}");
         assert_eq!(f.bubble_exchange.condensation.value, 0., "+{excess} K");
-        assert_eq!(f.bubble_exchange.liquid_heat_w.value, 0.);
+        assert_eq!(f.admitted_bubble_exchange.condensation.value, 0.);
         if excess == 0.3 {
             assert!(f.resident_flashing.value > 0., "R +0.3 K flashes");
         }
         for j in 0..st::COORDINATES {
-            let mut x = Coordinates::values(&v).to_array();
-            x[j] = Scalar::new(x[j].value, 1e-3 * p.scales[j]);
-            let x = Coordinates::from_slice(&x).unwrap();
-            let ev = p
-                .cell
-                .residual(
-                    &If97,
-                    &x,
-                    &Coordinates::values(&[0.; st::COORDINATES]),
-                    &[Receipt::zero()],
-                    &Boundary::closed(),
-                    &p.scales,
-                    None,
-                )
-                .unwrap();
-            let c = ev.flows.bubble_exchange.condensation;
-            assert_eq!((c.value, c.direction), (0., 0.), "column {j}");
+            let f = seeded(&p, &v, j).flows;
+            for x in [f.bubble_exchange, f.admitted_bubble_exchange] {
+                let c = x.condensation;
+                assert_eq!((c.value, c.direction), (0., 0.), "column {j}");
+            }
         }
     }
-    // R subcooled: condensation, no flashing; the vapor side is the
-    // saturated stock's and is exactly zero in value and direction.
-    let v = with_bubbles(&p, -0.5, 40.);
-    let ev = at_rest(&p, &v);
-    let f = &ev.flows;
-    assert!(f.bubble_exchange.condensation.value > 0.);
-    assert_eq!(f.resident_flashing.value, 0.);
-    for j in 0..st::COORDINATES {
-        let mut x = Coordinates::values(&v).to_array();
-        x[j] = Scalar::new(x[j].value, 1e-3 * p.scales[j]);
-        let ev = p
-            .cell
-            .residual(
-                &If97,
-                &Coordinates::from_slice(&x).unwrap(),
-                &Coordinates::values(&[0.; st::COORDINATES]),
-                &[Receipt::zero()],
-                &Boundary::closed(),
-                &p.scales,
-                None,
-            )
-            .unwrap();
-        let q = ev.flows.bubble_exchange.vapor_heat_w;
-        assert_eq!((q.value, q.direction), (0., 0.), "column {j}");
-    }
-    // Liquid at Tsat(p_s), within the caloric inverse's bound: the exchange
-    // is at most that bound's share. It is continuous through saturation:
-    // linear in the subcooling down to zero.
-    let v = with_bubbles(&p, 0., 40.);
-    let ev = at_rest(&p, &v);
-    let gap = (ev.column.interface_saturation.temperature.value
-        - ev.column.resident.temperature.value)
-        .abs();
-    assert!(gap < 1e-6, "{gap} K");
-    let condensation = |subcooling: f64| {
-        at_rest(&p, &with_bubbles(&p, -subcooling, 40.))
-            .flows
-            .bubble_exchange
-            .condensation
-            .value
-    };
-    let per_kelvin = condensation(1.);
-    assert!(ev.flows.bubble_exchange.condensation.value <= 2. * per_kelvin * gap);
-    let small = condensation(1e-3);
-    assert!(
-        (small / (1e-3 * per_kelvin) - 1.).abs() < 0.01,
-        "{small} against {}",
-        1e-3 * per_kelvin
+    // Subcooled liquids: condensation, no flashing.
+    let v = with_stocks(
+        &p,
+        Stocks {
+            bubbles: 40.,
+            admitted_bubbles: 5.,
+            resident_excess_k: Some(-0.5),
+            admitted_excess_k: Some(-0.5),
+        },
     );
+    let f = at_rest(&p, &v).flows;
+    assert!(f.bubble_exchange.condensation.value > 0.);
+    assert!(f.admitted_bubble_exchange.condensation.value > 0.);
+    assert_eq!(
+        (f.resident_flashing.value, f.admitted_flashing.value),
+        (0., 0.)
+    );
+    // At Tsat(p_s), within the caloric inverse's bound, each exchange is at
+    // most that bound's share; it is linear in the subcooling down to zero,
+    // so continuous through saturation.
+    for host in [false, true] {
+        let stocks = |excess: f64| Stocks {
+            bubbles: if host { 0. } else { 40. },
+            admitted_bubbles: if host { 40. } else { 0. },
+            resident_excess_k: (!host).then_some(excess),
+            admitted_excess_k: host.then_some(excess),
+        };
+        let condensation = |excess: f64| {
+            let ev = at_rest(&p, &with_stocks(&p, stocks(excess)));
+            let x = if host {
+                ev.flows.admitted_bubble_exchange
+            } else {
+                ev.flows.bubble_exchange
+            };
+            let zone = if host {
+                ev.column.admitted
+            } else {
+                ev.column.resident
+            };
+            let gap =
+                (ev.column.interface_saturation.temperature.value - zone.temperature.value).abs();
+            (x.condensation.value, gap)
+        };
+        let (at, gap) = condensation(0.);
+        assert!(gap < 1e-6, "{gap} K");
+        let (per_kelvin, _) = condensation(-1.);
+        assert!(at <= 2. * per_kelvin * gap);
+        let (small, _) = condensation(-1e-3);
+        assert!(
+            (small / (1e-3 * per_kelvin) - 1.).abs() < 0.01,
+            "{small} against {}",
+            1e-3 * per_kelvin
+        );
+    }
 }
 
 /// One shrinking bubble in an unbounded bath at constant subcooling, the
@@ -290,8 +402,8 @@ fn the_exchange_is_zero_without_bubbles_and_for_liquid_at_or_above_saturation() 
 /// the diameter; returns the collapse time and rise distance.
 fn single_bubble_collapse(
     d0: f64,
-    bath: &leitbild_operating_plant::thermal::WaterPoint,
-    sat: &leitbild_operating_plant::thermal::Saturation,
+    bath: &WaterPoint,
+    sat: &Saturation,
     subcooling_k: f64,
 ) -> (f64, f64) {
     let (rho_g, hfg) = (
@@ -315,77 +427,233 @@ fn single_bubble_collapse(
 }
 
 #[test]
-fn subcooled_liquid_condenses_the_stock_at_the_hand_estimate() {
+fn subcooled_liquid_condenses_each_stock_at_the_hand_estimate() {
     let p = prepared();
     // Request 4, K1: at 4.5 K a 0.75 mm bubble collapses in about 0.5 s over
-    // about 4 cm; at 0.5 K in about 4.5 s over about 35 cm.
-    for (subcooling, collapse_s, rise_m) in [(4.5, 0.5, 0.04), (0.5, 4.5, 0.35)] {
+    // about 4 cm; at 0.5 K in about 4.5 s over about 35 cm. The same law
+    // condenses b in R and b_A in A, each against its own host's state.
+    for host in ["R", "A"] {
+        for (subcooling, collapse_s, rise_m) in [(4.5, 0.5, 0.04), (0.5, 4.5, 0.35)] {
+            let bubbles = 1.;
+            let v = if host == "R" {
+                with_bubbles(&p, -subcooling, bubbles)
+            } else {
+                with_admitted_bubbles(&p, -subcooling, bubbles)
+            };
+            let ev = at_rest(&p, &v);
+            let f = &ev.flows;
+            let c = &ev.column;
+            let (x, zone, stock) = if host == "R" {
+                (&f.bubble_exchange, &c.resident, st::BUBBLE_MASS)
+            } else {
+                (
+                    &f.admitted_bubble_exchange,
+                    &c.admitted,
+                    st::ADMITTED_BUBBLE_MASS,
+                )
+            };
+            let sat = &c.interface_saturation;
+            let dt = sat.temperature.value - zone.temperature.value;
+            assert!((dt - subcooling).abs() < 1e-6, "{dt}");
+            // Sign: the stock loses W_x to its host, which gains it with
+            // h_g,sat(p_s); b's other sink is the rise into g, b_A's the
+            // crossing into b.
+            let w = x.condensation.value;
+            let (hf, hg) = (sat.liquid.enthalpy.value, sat.vapor.enthalpy.value);
+            assert!(w > 0. && x.liquid_heat_w.value < 0.);
+            let other = if host == "R" {
+                f.bubble_rise.value
+            } else {
+                f.bubble_crossing.value
+            };
+            assert!(
+                (f.sources[stock].value + other + w).abs() <= 1e-12 * w,
+                "{host}: the stock's sinks"
+            );
+            assert!((x.liquid_heat_w.value + w * (hg - hf)).abs() <= 1e-12 * w * (hg - hf));
+            // The law from its public pieces: A_i h_L (T_s - T_L) / h_fg.
+            let d = p.cell.exchange_diameter_m();
+            assert_eq!(x.diameter_m, d);
+            let (h, re) = ranz_marshall(d, f.bubble.velocity, &zone.water());
+            let area = 6. * bubbles / (sat.vapor.density.value * d);
+            let expected = area * h.value * dt / (hg - hf);
+            assert!((w - expected).abs() <= 1e-12 * w, "{w} vs {expected}");
+            assert_eq!(
+                (x.liquid_coefficient.value, x.reynolds.value),
+                (h.value, re.value)
+            );
+            let again = bubble_exchange(
+                d,
+                p.cell.exchange().factor,
+                s(bubbles),
+                f.bubble.velocity,
+                zone,
+                sat,
+            );
+            assert_eq!(again.condensation.value.to_bits(), w.to_bits());
+            // The maintained-diameter rate, and the single-bubble estimate
+            // that starts at the same coefficient: dd/dt(0) = d W_x/(3 M).
+            let rate = w / bubbles;
+            let shrink = 2. * h.value * dt / (sat.vapor.density.value * (hg - hf));
+            assert!((shrink - d * rate / 3.).abs() <= 1e-12 * shrink);
+            let (time, rise) = single_bubble_collapse(d, &zone.water(), sat, dt);
+            println!(
+                "{host} {subcooling} K: W_x/M = {rate:.4} 1/s (e-folding {:.3} s), u_b = {:.4} m/s, Re_x = {:.1}, We = {:.3}, h_L = {:.0} W/(m2 K); one bubble collapses in {time:.3} s over {:.2} cm",
+                1. / rate,
+                f.bubble.velocity.value,
+                re.value,
+                x.weber.value,
+                h.value,
+                100. * rise
+            );
+            assert!(
+                (time / collapse_s - 1.).abs() <= 0.1,
+                "{time} s against about {collapse_s} s"
+            );
+            assert!(
+                (rise / rise_m - 1.).abs() <= 0.1,
+                "{rise} m against about {rise_m} m"
+            );
+        }
+    }
+}
+
+/// The normal bank's span, 6.5–7.5 m, wets A over its lowest 0.30 m and R
+/// above: a receipt with heat and wall-born vapor on both contacts.
+fn normal_bank(vapor_a: f64, vapor_r: f64) -> HeaterReceipt {
+    HeaterReceipt {
+        bottom_m: 6.5,
+        top_m: 7.5,
+        wet_heat_w: [s(1.2e5), s(2.8e5)],
+        wet_vapor_kg_s: [s(vapor_a), s(vapor_r)],
+        exposed_heat_w: s(0.),
+        condensate_kg_s: s(0.),
+        condensate_enthalpy_j_kg: s(0.),
+    }
+}
+
+#[test]
+fn rods_inside_a_condense_into_a() {
+    let p = prepared();
+    let (vapor_a, vapor_r) = (0.08, 0.19);
+    for subcooling in [1., 4.5] {
         let bubbles = 1.;
-        let v = with_bubbles(&p, -subcooling, bubbles);
-        let ev = at_rest(&p, &v);
-        let f = &ev.flows;
-        let x = &f.bubble_exchange;
-        let c = &ev.column;
-        let sat = &c.interface_saturation;
-        let r = &c.resident;
-        let dt = sat.temperature.value - r.temperature.value;
-        assert!((dt - subcooling).abs() < 1e-4, "{dt}");
-        // Sign: the stock loses W_x to R, which gains it with h_g,sat(p_s).
-        let w = x.condensation.value;
-        assert!(w > 0. && x.liquid_heat_w.value < 0.);
-        let (hf, hg) = (sat.liquid.enthalpy.value, sat.vapor.enthalpy.value);
-        assert!(
-            (f.sources[st::BUBBLE_MASS].value + f.bubble_rise.value + w).abs() <= 1e-12 * w,
-            "the stock's sinks are rise and condensation only here"
+        let v = with_stocks(
+            &p,
+            Stocks {
+                bubbles,
+                admitted_bubbles: bubbles,
+                resident_excess_k: Some(-subcooling),
+                admitted_excess_k: Some(-subcooling),
+            },
         );
-        assert!((x.liquid_heat_w.value + w * (hg - hf)).abs() <= 1e-12 * w * (hg - hf));
-        // The law from its public pieces: A_i h_L (T_s - T_R) / h_fg.
-        let d = p.cell.case().bubble_diameter_m;
-        assert_eq!(x.diameter_m, d);
-        let (h, re) = ranz_marshall(d, f.bubble.velocity, &r.water());
-        let area = 6. * bubbles / (sat.vapor.density.value * d);
-        let expected = area * h.value * dt / (hg - hf);
-        assert!((w - expected).abs() <= 1e-12 * w, "{w} vs {expected}");
-        assert_eq!(x.liquid_coefficient.value, h.value);
-        assert_eq!(x.reynolds.value, re.value);
-        // The residual's exchange is the public law on its own inputs.
-        let again = bubble_exchange(
+        let boundary = Boundary {
+            heaters: vec![normal_bank(vapor_a, vapor_r)],
+            ..Boundary::closed()
+        };
+        let ev = evaluate_with(&p, &v, &[0.; st::COORDINATES], Receipt::zero(), &boundary).unwrap();
+        let (f, c) = (&ev.flows, &ev.column);
+        let (wa, wr) = (
+            f.admitted_bubble_exchange.condensation.value,
+            f.bubble_exchange.condensation.value,
+        );
+        let crossing = f.bubble_crossing.value;
+        assert_eq!(f.admitted_flashing.value, 0.);
+        // A's rod vapor is born into b_A, R's into b: the stocks' sources.
+        let tight = |a: f64, b: f64| (a - b).abs() <= 1e-12 * a.abs().max(b.abs()).max(1.);
+        assert!(tight(
+            f.sources[st::ADMITTED_BUBBLE_MASS].value,
+            vapor_a - crossing - wa
+        ));
+        assert!(tight(
+            f.sources[st::BUBBLE_MASS].value,
+            vapor_r + crossing - f.bubble_rise.value - wr
+        ));
+        // A pays its rod vapor and receives b_A's condensate; R receives
+        // nothing of A's vapor but what crosses into its stock (beside its
+        // own free-surface exchange).
+        assert!(tight(f.sources[st::ADMITTED_MASS].value, -vapor_a + wa));
+        assert!(tight(
+            f.sources[st::RESIDENT_MASS].value,
+            -vapor_r + wr + f.interface.liquid.mass.value
+        ));
+        // The crossing is the stock's rise over A's region thickness, which
+        // counts b_A's own volume.
+        let thickness = c.boundary_elevation.value - c.bottom_m;
+        assert!(tight(
+            crossing,
+            bubbles * f.bubble.velocity.value / thickness
+        ));
+        // Quasi-steady b_A, M_bA' = 0: A condenses the share λ_A/(λ_A + u_b/δ)
+        // of its own births, both rates linear in the stock.
+        let lambda = rate_per_kg(
             p.cell.exchange_diameter_m(),
-            p.cell.exchange().factor,
-            p.cell
-                .parameters()
-                .stratified
-                .bubble_vapor_coefficient_w_m2k,
-            s(bubbles),
             f.bubble.velocity,
-            r,
-            sat,
+            &c.admitted,
+            &c.interface_saturation,
         );
-        assert_eq!(again.condensation.value.to_bits(), w.to_bits());
-        // The maintained-diameter rate, and the single-bubble estimate that
-        // starts at the same coefficient: dd/dt(0) = d W_x/(3 M_b).
-        let rate = w / bubbles;
-        let shrink = 2. * h.value * dt / (sat.vapor.density.value * (hg - hf));
-        assert!((shrink - d * rate / 3.).abs() <= 1e-12 * shrink);
-        let (time, rise) = single_bubble_collapse(d, &r.water(), sat, dt);
+        assert!(tight(wa / bubbles, lambda));
+        let leave = crossing / bubbles;
+        let condensed_in_a = lambda / (lambda + leave);
+        // A plug of bubbles crossing δ at u_b would keep exp(−λ δ/u_b).
+        let plug = 1. - (-lambda * thickness / f.bubble.velocity.value).exp();
         println!(
-            "{subcooling} K: W_x/M_b = {rate:.4} 1/s (e-folding {:.3} s), u_b = {:.4} m/s, Re_x = {:.1}, We = {:.3}, h_L = {:.0} W/(m2 K); one bubble collapses in {time:.3} s over {:.2} cm",
-            1. / rate,
-            f.bubble.velocity.value,
-            re.value,
-            x.weber.value,
-            h.value,
-            100. * rise
+            "{subcooling} K: A condenses {:.1}% of its rod vapor at quasi-steady b_A (a plug crossing would condense {:.1}%); λ_A = {lambda:.3} 1/s, u_b/δ_A = {leave:.3} 1/s, δ_A = {thickness:.4} m",
+            100. * condensed_in_a,
+            100. * plug
         );
-        // The hand estimate's own two figures.
+        assert!(condensed_in_a > if subcooling > 2. { 0.9 } else { 0.6 });
+    }
+}
+
+#[test]
+fn the_crossing_stays_finite_and_continuous_as_a_thins() {
+    let p = prepared();
+    let base = with_admitted_bubbles(&p, -1., 1.);
+    let mut previous: Option<(f64, f64)> = None;
+    for thinning in [1., 0.1, 0.01, 1e-3, 1e-4, 1e-6] {
+        // A's liquid shrinks at its own state; the stock stays 1 kg.
+        let mut v = base;
+        for i in [
+            st::ADMITTED_VOLUME,
+            st::ADMITTED_MASS,
+            st::ADMITTED_ENERGY,
+            st::ADMITTED_BORON,
+        ] {
+            v[i] *= thinning;
+        }
+        let ev = at_rest(&p, &v);
+        assert!(ev.rows.iter().all(|r| r.value.is_finite()));
+        let (f, c) = (&ev.flows, &ev.column);
+        let u = f.bubble.velocity.value;
+        let area = p.cell.free_area(c.bottom_m);
+        // A's region is still inside the first band, so its thickness is
+        // (V_A + V_bA)/A_0, and the crossing is the stock's own density
+        // M_bA/V_bA times A_0 u_b times A's void fraction: bounded by that
+        // product however thin the liquid is.
+        let (mb, vb) = (v[st::ADMITTED_BUBBLE_MASS], v[st::ADMITTED_BUBBLE_VOLUME]);
+        let void = vb / (v[st::ADMITTED_VOLUME] + vb);
+        let bound = mb / vb * area * u;
+        let crossing = f.bubble_crossing.value;
         assert!(
-            (time / collapse_s - 1.).abs() <= 0.1,
-            "{time} s against about {collapse_s} s"
+            (crossing - bound * void).abs() <= 1e-12 * bound,
+            "{crossing} vs {}",
+            bound * void
         );
-        assert!(
-            (rise / rise_m - 1.).abs() <= 0.1,
-            "{rise} m against about {rise_m} m"
+        assert!(crossing < bound);
+        // The share of A's births condensed in A falls continuously toward
+        // zero as A thins: its births pass to b, with no switch.
+        let condensed = f.admitted_bubble_exchange.condensation.value;
+        let share = condensed / (condensed + crossing);
+        if let Some((last_crossing, last_share)) = previous {
+            assert!(crossing > last_crossing && share < last_share);
+        }
+        println!(
+            "A x{thinning:e}: δ_A = {:.3e} m, void {void:.4}, crossing {crossing:.3} kg/s (bound {bound:.2}), condensed in A {:.2}%",
+            c.boundary_elevation.value - c.bottom_m,
+            100. * share
         );
+        previous = Some((crossing, share));
     }
 }
 
@@ -394,31 +662,46 @@ fn sensitivities_scale_the_exchange_and_change_only_its_diameter() {
     let mut rates = Vec::new();
     for (name, exchange) in cases() {
         let prepared = prepared_with(exchange);
-        let v = with_bubbles(&prepared, -1., 5.);
+        let v = with_stocks(
+            &prepared,
+            Stocks {
+                bubbles: 5.,
+                admitted_bubbles: 2.,
+                resident_excess_k: Some(-1.),
+                admitted_excess_k: Some(-1.),
+            },
+        );
         let ev = at_rest(&prepared, &v);
-        let x = ev.flows.bubble_exchange;
-        // Drag always at the bubble diameter: the rise is the nominal one.
+        let f = ev.flows;
+        // Drag always at the bubble diameter: the rise and crossing are the
+        // nominal ones.
         assert_eq!(prepared.cell.case().bubble_diameter_m, 0.00075, "{name}");
-        rates.push((name, x.condensation.value, ev.flows.bubble_rise.value, x));
+        rates.push((name, f));
     }
-    let (_, nominal, rise, nominal_exchange) = rates[0];
-    assert!(nominal > 0.);
-    for (name, w, r, x) in &rates[1..] {
-        assert_eq!(*r, rise, "{name}: the rise must not change");
-        match *name {
-            "exchange x0.5" => assert!((w / nominal - 0.5).abs() <= 1e-14),
-            "exchange x2" => assert!((w / nominal - 2.).abs() <= 1e-14),
-            _ => {
-                // The earlier selection's 0.5 mm: larger area per mass and a
-                // smaller Reynolds number at the same rise speed.
-                assert_eq!(x.diameter_m, 0.0005);
-                let area = x.area_m2.value / nominal_exchange.area_m2.value;
-                assert!((area - 1.5).abs() <= 1e-14, "{area}");
-                assert!(x.reynolds.value < nominal_exchange.reynolds.value);
-                assert!(w / nominal > 1.5, "{}", w / nominal);
+    let (_, nominal) = rates[0];
+    for (name, f) in &rates[1..] {
+        assert_eq!(f.bubble_rise.value, nominal.bubble_rise.value, "{name}");
+        assert_eq!(f.bubble_crossing.value, nominal.bubble_crossing.value);
+        for (x, x0) in [
+            (f.bubble_exchange, nominal.bubble_exchange),
+            (f.admitted_bubble_exchange, nominal.admitted_bubble_exchange),
+        ] {
+            let ratio = x.condensation.value / x0.condensation.value;
+            match *name {
+                "exchange x0.5" => assert!((ratio - 0.5).abs() <= 1e-14),
+                "exchange x2" => assert!((ratio - 2.).abs() <= 1e-14),
+                _ => {
+                    // The earlier selection's 0.5 mm: larger area per mass
+                    // and a smaller Reynolds number at the same rise speed.
+                    assert_eq!(x.diameter_m, 0.0005);
+                    let area = x.area_m2.value / x0.area_m2.value;
+                    assert!((area - 1.5).abs() <= 1e-14, "{area}");
+                    assert!(x.reynolds.value < x0.reynolds.value);
+                    assert!(ratio > 1.5, "{ratio}");
+                }
             }
+            println!("{name}: W_x {} x nominal", ratio);
         }
-        println!("{name}: W_x = {w} kg/s ({} x nominal)", w / nominal);
     }
 }
 
@@ -484,35 +767,44 @@ fn cases_take_the_exchange_factor_and_diameter_only_from_the_block() {
     let mut bad = parameters();
     bad.stratified.bubble_exchange_diameter_sensitivity_m = 0.00075;
     assert!(bad.validate().is_err());
-    let mut bad = parameters();
-    bad.stratified.bubble_vapor_coefficient_w_m2k = 0.;
-    assert!(bad.validate().is_err());
-    // The block's keys are required: a section without them does not parse.
-    let missing = section().replace(r#""bubbleVaporCoefficient_W_m2K":1000,"#, "");
+    // The exchange's keys are required, and the dropped vapor-side
+    // coefficient is refused, not read.
+    let missing = section().replace(r#""bubbleExchangeSensitivity":[0.5,1,2],"#, "");
     assert!(serde_json::from_str::<Parameters>(&missing).is_err());
+    let dropped = section().replace(
+        r#""bubbleDiameter_m":0.00075,"#,
+        r#""bubbleDiameter_m":0.00075,"bubbleVaporCoefficient_W_m2K":1000,"#,
+    );
+    assert!(serde_json::from_str::<Parameters>(&dropped).is_err());
 }
 
-/// An active state with the exchange on: R 1.5 K below Tsat(p_s), A in a
-/// slight inversion, the vapor slightly superheated, both transit stocks and
-/// perturbed volumes.
+/// An active state with both exchanges on: R 1.5 K and A 1.2 K below
+/// Tsat(p_s), the vapor slightly superheated, every transit stock present
+/// and perturbed volumes.
 fn active(p: &Prepared) -> [f64; st::COORDINATES] {
-    let mut v = with_bubbles(p, -1.5, 40.);
+    let mut v = with_stocks(
+        p,
+        Stocks {
+            bubbles: 40.,
+            admitted_bubbles: 3.,
+            resident_excess_k: Some(-1.5),
+            admitted_excess_k: Some(-1.2),
+        },
+    );
     let c = &p.preparation.column;
     let t = c.interface_saturation.temperature.value;
-    let state = |vapor: bool, pressure: f64, t: f64| {
-        If97.forward(vapor, pressure, t)
-            .unwrap()
-            .internal_energy_j_kg
-    };
-    v[st::ADMITTED_ENERGY] =
-        v[st::ADMITTED_MASS] * state(false, c.admitted.pressure.value, t - 1.2);
-    v[st::VAPOR_ENERGY] = v[st::VAPOR_MASS] * state(true, c.vapor.pressure.value, t + 0.4);
+    let u = If97
+        .forward(true, c.vapor.pressure.value, t + 0.4)
+        .unwrap()
+        .internal_energy_j_kg;
+    v[st::VAPOR_ENERGY] = v[st::VAPOR_MASS] * u;
     v[st::DROP_MASS] = 15.;
     v[st::DROP_VOLUME] = 0.026;
     v[st::DROP_BORON] = 0.012;
     v[st::VAPOR_VOLUME] -= 0.35;
     v[st::RESIDENT_VOLUME] -= 0.07;
     v[st::ADMITTED_VOLUME] += 0.01;
+    v[st::ADMITTED_BUBBLE_VOLUME] += 0.002;
     v[st::ROOF_PRESSURE] += 2.0e4;
     v
 }
@@ -524,6 +816,7 @@ fn active_rates() -> [f64; st::COORDINATES] {
     r[st::RESIDENT_VOLUME] = 0.04;
     r[st::BUBBLE_VOLUME] = -0.008;
     r[st::DROP_VOLUME] = 0.0004;
+    r[st::ADMITTED_BUBBLE_VOLUME] = -0.001;
     r[st::VAPOR_MASS] = -2.5;
     r[st::VAPOR_ENERGY] = -6.0e6;
     r[st::ADMITTED_MASS] = 7.;
@@ -535,11 +828,12 @@ fn active_rates() -> [f64; st::COORDINATES] {
     r[st::BUBBLE_MASS] = -1.5;
     r[st::DROP_MASS] = 0.4;
     r[st::DROP_BORON] = 0.0003;
+    r[st::ADMITTED_BUBBLE_MASS] = -0.2;
     r
 }
 
 #[test]
-fn mass_energy_and_boron_close_at_roundoff_with_the_exchange_active() {
+fn mass_energy_and_boron_close_at_roundoff_with_both_exchanges_active() {
     let heat = Heat {
         vapor: s(1.3e4),
         admitted: s(2.4e5),
@@ -561,18 +855,24 @@ fn mass_energy_and_boron_close_at_roundoff_with_the_exchange_active() {
                 boron: s(0.023),
             },
         ] {
-            let ev = evaluate(&p, &v, &rate, receipt, heat).unwrap();
+            let boundary = Boundary {
+                heat,
+                heaters: vec![normal_bank(0.08, 0.19)],
+                ..Boundary::closed()
+            };
+            let ev = evaluate_with(&p, &v, &rate, receipt, &boundary).unwrap();
             let f = &ev.flows;
             for (what, q) in [
-                ("exchange", f.bubble_exchange.condensation),
+                ("R exchange", f.bubble_exchange.condensation),
+                ("A exchange", f.admitted_bubble_exchange.condensation),
+                ("crossing", f.bubble_crossing),
                 ("rise", f.bubble_rise),
                 ("fall", f.drop_fall),
-                ("inversion", f.inversion),
-                ("drift", f.transit_drift[0]),
+                ("drift b", f.transit_drift[0]),
+                ("drift b_A", f.admitted_transit_drift),
             ] {
                 assert!(q.value.abs() > 0., "{name}: {what} inactive");
             }
-            assert!(f.bubble_exchange.condensation.value > 1., "{name}");
             // Rates that zero every stock row, with the same volume rates.
             let implied: Vec<f64> = (0..st::COORDINATES)
                 .map(|i| rate[i] - ev.rows[i].value * p.scales[i])
@@ -582,6 +882,7 @@ fn mass_energy_and_boron_close_at_roundoff_with_the_exchange_active() {
                 + implied[st::ADMITTED_MASS]
                 + implied[st::RESIDENT_MASS]
                 + implied[st::BUBBLE_MASS]
+                + implied[st::ADMITTED_BUBBLE_MASS]
                 + implied[st::DROP_MASS];
             let boron =
                 implied[st::ADMITTED_BORON] + implied[st::RESIDENT_BORON] + implied[st::DROP_BORON];
@@ -590,11 +891,13 @@ fn mass_energy_and_boron_close_at_roundoff_with_the_exchange_active() {
                 + implied[st::ADMITTED_ENERGY]
                 + implied[st::RESIDENT_ENERGY]
                 + work
-                + implied[st::BUBBLE_MASS] * sat.vapor.enthalpy.value
+                + (implied[st::BUBBLE_MASS] + implied[st::ADMITTED_BUBBLE_MASS])
+                    * sat.vapor.enthalpy.value
                 + implied[st::DROP_MASS] * sat.liquid.enthalpy.value
                 + f.transit_drift[0].value
-                + f.transit_drift[1].value;
-            let expected_energy = receipt.enthalpy.value + 1.3e4 + 2.4e5 + 7.7e4;
+                + f.transit_drift[1].value
+                + f.admitted_transit_drift.value;
+            let expected_energy = receipt.enthalpy.value + 1.3e4 + 2.4e5 + 7.7e4 + 1.2e5 + 2.8e5;
             let bound = |x: f64| 1e-12 * x.abs().max(1.);
             assert!(
                 (mass - receipt.mass.value).abs() <= bound(1e3),
@@ -612,21 +915,19 @@ fn mass_energy_and_boron_close_at_roundoff_with_the_exchange_active() {
             assert!((b.mass_kg_s.value - b.receipt_mass_kg_s.value).abs() <= bound(1e3));
             assert!((b.energy_w.value - b.receipt_energy_w.value).abs() <= bound(1e10));
             assert!((b.boron_kg_s.value - b.receipt_boron_kg_s.value).abs() <= bound(1.));
-            // The latent heat enters R once: its energy source carries the
-            // condensate at h_g,sat, i.e. its sensible share and -Q_L.
-            let x = &f.bubble_exchange;
+            // The latent heat enters each host once: the condensate carries
+            // h_g,sat, i.e. its sensible share and -Q_L.
             let (hf, hg) = (sat.liquid.enthalpy.value, sat.vapor.enthalpy.value);
-            let w = x.condensation.value;
-            assert!(
-                (w * hg - (w * hf - x.liquid_heat_w.value - x.vapor_heat_w.value)).abs()
-                    <= 1e-12 * w * hg
-            );
+            for x in [f.bubble_exchange, f.admitted_bubble_exchange] {
+                let w = x.condensation.value;
+                assert!((w * hg - (w * hf - x.liquid_heat_w.value)).abs() <= 1e-12 * w * hg);
+            }
         }
     }
 }
 
 #[test]
-fn seeded_directions_match_central_differences_with_the_exchange_active() {
+fn seeded_directions_match_central_differences_with_both_exchanges_active() {
     let p = prepared();
     let v = active(&p);
     let rate = active_rates();
@@ -674,10 +975,18 @@ fn seeded_directions_match_central_differences_with_the_exchange_active() {
     };
     let base = run(&y, &yp, None);
     assert!(base.flows.bubble_exchange.condensation.value > 1.);
+    assert!(base.flows.admitted_bubble_exchange.condensation.value > 0.1);
+    let flows = |e: &st::Evaluation| {
+        [
+            e.flows.bubble_exchange.condensation,
+            e.flows.admitted_bubble_exchange.condensation,
+            e.flows.bubble_crossing,
+        ]
+    };
     // Every unit column of the dense stage Jacobian dF/dy + cj dF/dy', and
-    // the exchange alone, against two central differences.
+    // the two exchanges and the crossing alone, against two central
+    // differences.
     let mut worst: f64 = 0.;
-    let mut worst_exchange: f64 = 0.;
     for j in 0..st::COORDINATES {
         let mut d = vec![0.; st::COORDINATES];
         d[j] = 1e-3;
@@ -693,42 +1002,50 @@ fn seeded_directions_match_central_differences_with_the_exchange_active() {
                 run(&ys, &yps, None)
             };
             let (plus, minus) = (shift(1.), shift(-1.));
-            let rows: Vec<f64> = (0..st::COORDINATES)
+            let mut out: Vec<f64> = (0..st::COORDINATES)
                 .map(|i| (plus.rows[i].value - minus.rows[i].value) / (2. * h))
                 .collect();
-            let exchange = (plus.flows.bubble_exchange.condensation.value
-                - minus.flows.bubble_exchange.condensation.value)
-                / (2. * h);
-            (rows, exchange)
+            out.extend(
+                flows(&plus)
+                    .iter()
+                    .zip(flows(&minus))
+                    .map(|(a, b)| (a.value - b.value) / (2. * h)),
+            );
+            out
         };
-        let ((coarse, coarse_x), (fine, fine_x)) = (difference(0.1), difference(0.05));
-        for i in 0..st::COORDINATES {
-            let an = seeded.rows[i].direction;
+        let (coarse, fine) = (difference(0.1), difference(0.05));
+        let analytic: Vec<f64> = seeded
+            .rows
+            .iter()
+            .map(|r| r.direction)
+            .chain(flows(&seeded).iter().map(|q| q.direction))
+            .collect();
+        // The rows' floor, 1e-12, is 1e-9 of the 1e-3 seed: the scale at
+        // which the caloric inverse's converged state is only accurate to its
+        // bound. A flow's floor is the same 1e-9 resolution of its own size:
+        // along M_b, for instance, A's pressure moves only millipascals per
+        // difference step, and A's converged temperature resolves no finer.
+        let flow_sizes: Vec<f64> = flows(&base).iter().map(|q| q.value.abs()).collect();
+        for (i, an) in analytic.iter().enumerate() {
             let fd = fine[i];
             let spread = (coarse[i] - fine[i]).abs();
             let size = an.abs().max(fd.abs()).max(1e-12);
             let error = (an - fd).abs();
+            let floor = if i < st::COORDINATES {
+                1e-12
+            } else {
+                1e-9 * flow_sizes[i - st::COORDINATES]
+            };
             if size > 1e-9 {
                 worst = worst.max(error / size);
             }
             assert!(
-                error <= 3. * spread + 2e-6 * size + 1e-12,
-                "column {j} row {i}: analytic {an:e}, difference {fd:e}, spread {spread:e}"
+                error <= 3. * spread + 2e-6 * size + floor,
+                "column {j} entry {i}: analytic {an:e}, difference {fd:e}, spread {spread:e}"
             );
         }
-        let an = seeded.flows.bubble_exchange.condensation.direction;
-        let spread = (coarse_x - fine_x).abs();
-        let size = an.abs().max(fine_x.abs()).max(1e-15);
-        let error = (an - fine_x).abs();
-        if size > 1e-12 {
-            worst_exchange = worst_exchange.max(error / size);
-        }
-        assert!(
-            error <= 3. * spread + 2e-6 * size + 1e-15,
-            "column {j}: exchange direction {an:e}, difference {fine_x:e}, spread {spread:e}"
-        );
     }
-    println!("worst relative direction error: rows {worst:e}, exchange {worst_exchange:e}");
+    println!("worst relative direction error of entries above 1e-9: {worst:e}");
 }
 
 /// The fixture's stratified block against a wiki checkout's strict block,
@@ -757,9 +1074,9 @@ const PZR: PzrPreparation = PzrPreparation {
 };
 
 /// The network from the packet with its rotors running, and a state with
-/// the exchange active: the prepared coordinates with 20 kg of bubbles in R
-/// 1 K below this state's own `Tsat(p_s)`, a small insurge on the port face
-/// and moving PZR volumes and roof pressure.
+/// both exchanges active: the prepared coordinates with 20 kg of bubbles in R
+/// and 5 kg in A, both liquids 1 K below this state's own `Tsat(p_s)`, a
+/// small insurge on the port face and moving PZR volumes and roof pressure.
 fn network_with_bubbles() -> (Network<If97>, Vec<f64>, Vec<f64>, String) {
     let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
     let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -788,9 +1105,12 @@ fn network_with_bubbles() -> (Network<If97>, Vec<f64>, Vec<f64>, String) {
         .vapor
         .density
         .value;
-    let bubbles = 20.;
+    let (bubbles, admitted_bubbles) = (20., 5.);
     y[base + st::BUBBLE_MASS] = bubbles / scale(st::BUBBLE_MASS);
     y[base + st::BUBBLE_VOLUME] = bubbles / sat / scale(st::BUBBLE_VOLUME);
+    y[base + st::ADMITTED_BUBBLE_MASS] = admitted_bubbles / scale(st::ADMITTED_BUBBLE_MASS);
+    y[base + st::ADMITTED_BUBBLE_VOLUME] =
+        admitted_bubbles / sat / scale(st::ADMITTED_BUBBLE_VOLUME);
     let port = network
         .face_layout
         .iter()
@@ -808,18 +1128,24 @@ fn network_with_bubbles() -> (Network<If97>, Vec<f64>, Vec<f64>, String) {
     }
     network.evaluate(0., &y, &yp, None, 0., None).unwrap();
     let c = *network.pzr_column().unwrap();
-    let u = If97
-        .forward(
-            false,
-            c.resident.pressure.value,
-            c.interface_saturation.temperature.value - 1.,
-        )
-        .unwrap()
-        .internal_energy_j_kg;
-    y[base + st::RESIDENT_ENERGY] = c.resident.mass.value * u / scale(st::RESIDENT_ENERGY);
+    for (zone, energy) in [
+        (c.resident, st::RESIDENT_ENERGY),
+        (c.admitted, st::ADMITTED_ENERGY),
+    ] {
+        let u = If97
+            .forward(
+                false,
+                zone.pressure.value,
+                c.interface_saturation.temperature.value - 1.,
+            )
+            .unwrap()
+            .internal_energy_j_kg;
+        y[base + energy] = zone.mass.value * u / scale(energy);
+    }
     network.evaluate(0., &y, &yp, None, 0., None).unwrap();
-    let x = network.pzr_evaluation().unwrap().flows.bubble_exchange;
-    assert!(x.condensation.value > 1., "{x:?}");
+    let f = &network.pzr_evaluation().unwrap().flows;
+    assert!(f.bubble_exchange.condensation.value > 1., "{f:?}");
+    assert!(f.admitted_bubble_exchange.condensation.value > 0.1, "{f:?}");
     (network, y, yp, path)
 }
 
@@ -922,7 +1248,7 @@ fn the_network_energy_pairs_with_the_exchange_active() {
     assert!(fluid.abs() <= 1e-9 * (1. + terms), "{budget}");
     println!(
         "{}",
-        json!({"kind":"network-energy-pairing-with-the-bulk-exchange","packet":path,"condensation_kg_s":evaluation.flows.bubble_exchange.condensation.value,"fluid_energy_minus_shaft_w":fluid,"terms_abs_w":terms,"pzr":budget["pzr"]})
+        json!({"kind":"network-energy-pairing-with-the-bulk-exchange","packet":path,"condensation_kg_s":[evaluation.flows.bubble_exchange.condensation.value,evaluation.flows.admitted_bubble_exchange.condensation.value],"crossing_kg_s":evaluation.flows.bubble_crossing.value,"fluid_energy_minus_shaft_w":fluid,"terms_abs_w":terms,"pzr":budget["pzr"]})
     );
 }
 

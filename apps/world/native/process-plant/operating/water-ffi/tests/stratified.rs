@@ -25,7 +25,7 @@ fn section(fluid_volume: f64) -> String {
  "ports":[{{"id":"PZR.SURGE.MOUTH","kind":"surge","elevation_m":6.5,"face":34,"bore_m":0.3}}],
  "taps":[{{"id":"PT1","elevation_m":18.5}},{{"id":"LT.LOW","elevation_m":6.5}},{{"id":"LT.HIGH","elevation_m":18.5}}],
  "heaters":{{"bottom_m":6.5,"top_m":9.5,"displacement_m3":0.25132741228718347}},
- "stratified":{{"withdrawalScale_m":0.30,"admittedPreparationThickness_m":0.30,"inversionExchangeVelocity_m_s":320,"liquidRelaxationTime_s":0.3,"vaporRelaxationTime_s":0.5,"relaxationSensitivity":[0.5,1,2],"bubbleDiameter_m":0.00075,"bubbleVaporCoefficient_W_m2K":1000,"bubbleExchangeSensitivity":[0.5,1,2],"bubbleExchangeDiameterSensitivity_m":0.0005,"sprayDropDiameter_m":0.003,"dropDiameterSensitivity_m":[0.0015,0.003,0.006],"resolvabilityFactor":1000}},
+ "stratified":{{"withdrawalScale_m":0.30,"admittedPreparationThickness_m":0.30,"inversionExchangeVelocity_m_s":320,"liquidRelaxationTime_s":0.3,"vaporRelaxationTime_s":0.5,"relaxationSensitivity":[0.5,1,2],"bubbleDiameter_m":0.00075,"bubbleExchangeSensitivity":[0.5,1,2],"bubbleExchangeDiameterSensitivity_m":0.0005,"sprayDropDiameter_m":0.003,"dropDiameterSensitivity_m":[0.0015,0.003,0.006],"resolvabilityFactor":1000}},
  "metastable":{{"pressureRange_Pa":[2000000,16000000],"lowerBoundExclusive":true,"liquidSuperheatMax_K":2.0,"vaporSubcoolingMax_K":1.4,"trialMax_K":3.0,"creditedMax_K":0.5,"liquidTemperatureMax_K":623.15,"liquidPressureCeiling_Pa":17000000,"vaporPressureCeiling_Pa":16000000}},
  "absorberMassFraction":0.001,"interfacialLength_m":0.003}}"#
     )
@@ -63,6 +63,8 @@ fn scales(v: &[f64; st::COORDINATES]) -> [f64; st::COORDINATES] {
     scales[st::BUBBLE_MASS] = 50.;
     scales[st::DROP_MASS] = 30.;
     scales[st::DROP_BORON] = 0.03;
+    scales[st::ADMITTED_BUBBLE_VOLUME] = 0.5;
+    scales[st::ADMITTED_BUBBLE_MASS] = 50.;
     scales
 }
 
@@ -360,6 +362,7 @@ fn arbitrary_receipts_are_conserved_exactly_by_the_assembled_rows() {
             + implied[st::ADMITTED_MASS]
             + implied[st::RESIDENT_MASS]
             + implied[st::BUBBLE_MASS]
+            + implied[st::ADMITTED_BUBBLE_MASS]
             + implied[st::DROP_MASS];
         let boron =
             implied[st::ADMITTED_BORON] + implied[st::RESIDENT_BORON] + implied[st::DROP_BORON];
@@ -368,10 +371,12 @@ fn arbitrary_receipts_are_conserved_exactly_by_the_assembled_rows() {
             + implied[st::ADMITTED_ENERGY]
             + implied[st::RESIDENT_ENERGY]
             + work
-            + implied[st::BUBBLE_MASS] * sat.vapor.enthalpy.value
+            + (implied[st::BUBBLE_MASS] + implied[st::ADMITTED_BUBBLE_MASS])
+                * sat.vapor.enthalpy.value
             + implied[st::DROP_MASS] * sat.liquid.enthalpy.value
             + f.transit_drift[0].value
-            + f.transit_drift[1].value;
+            + f.transit_drift[1].value
+            + f.admitted_transit_drift.value;
         let expected_energy = receipt.enthalpy.value + 1.3e4 + 2.4e5 + 7.7e4;
         let scale = |x: f64| 1e-12 * x.abs().max(1.);
         assert!(
@@ -609,20 +614,20 @@ fn seeded_directions_match_central_differences_on_an_active_state() {
     let mut worst: f64 = 0.;
     for (n, seed) in [
         [
-            0.3, -0.7, 0.2, 0.5, -0.4, 0.9, 0.1, -0.2, 0.6, 0.3, -0.5, 0.8, -0.1, 0.4, 0.7, -0.3,
-            0.2,
+            0.3, -0.7, 0.2, 0.5, -0.4, 0.9, 0., 0.1, -0.2, 0.6, 0.3, -0.5, 0.8, -0.1, 0.4, 0.7,
+            -0.3, 0.2, 0.,
         ],
         [
-            0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+            0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
         ],
         [
-            1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+            1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
         ],
         [
-            0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+            0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
         ],
         [
-            0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0.,
+            0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.,
         ],
     ]
     .iter()
@@ -893,10 +898,14 @@ fn heater_sources_go_to_the_zones_the_rods_wet_by_level() {
     assert!((d(st::RESIDENT_ENERGY) - expected[1]).abs() <= 1e-9 * expected[1].abs());
     assert!((d(st::ADMITTED_MASS) - expected_mass[0]).abs() <= 1e-15);
     assert!((d(st::RESIDENT_MASS) - expected_mass[1]).abs() <= 1e-15);
-    assert!((d(st::BUBBLE_MASS) - 0.07).abs() <= 1e-15);
+    // Each zone's wet boiling enters its own bubble stock (amendment 6).
+    assert!((d(st::ADMITTED_BUBBLE_MASS) - 0.007).abs() <= 1e-15);
+    assert!((d(st::BUBBLE_MASS) - 0.063).abs() <= 1e-15);
     assert!(d(st::VAPOR_ENERGY).abs() <= 1e-9);
     // Wet heat totals: the liquid layers and the bubbles' carried enthalpy.
-    let total = d(st::ADMITTED_ENERGY) + d(st::RESIDENT_ENERGY) + d(st::BUBBLE_MASS) * hg;
+    let total = d(st::ADMITTED_ENERGY)
+        + d(st::RESIDENT_ENERGY)
+        + (d(st::BUBBLE_MASS) + d(st::ADMITTED_BUBBLE_MASS)) * hg;
     assert!((total - 3.2e5).abs() <= 1e-9 * 3.2e5);
 
     // Mixture level lowered to 8.5 m: the backup bank is wet over 2 of its
@@ -989,6 +998,7 @@ fn every_port_kind_and_both_banks_are_conserved_exactly() {
         st::ADMITTED_MASS,
         st::RESIDENT_MASS,
         st::BUBBLE_MASS,
+        st::ADMITTED_BUBBLE_MASS,
         st::DROP_MASS,
     ]
     .iter()
@@ -1000,10 +1010,11 @@ fn every_port_kind_and_both_banks_are_conserved_exactly() {
         + implied[st::ADMITTED_ENERGY]
         + implied[st::RESIDENT_ENERGY]
         + work
-        + implied[st::BUBBLE_MASS] * sat.vapor.enthalpy.value
+        + (implied[st::BUBBLE_MASS] + implied[st::ADMITTED_BUBBLE_MASS]) * sat.vapor.enthalpy.value
         + implied[st::DROP_MASS] * sat.liquid.enthalpy.value
         + f.transit_drift[0].value
-        + f.transit_drift[1].value;
+        + f.transit_drift[1].value
+        + f.admitted_transit_drift.value;
     let heater = 1.1e5 + 2.3e5;
     let expect_mass = -21. + 2.4 - out.vapor_kg_s.value - out.drop_kg_s.value;
     let expect_energy =
@@ -1213,6 +1224,7 @@ fn wall_receipts_are_routed_to_the_zones_their_wetting_reports() {
     let mut walls = Vec::new();
     let mut expected = [[0.; 2]; 3];
     let mut bubbles = 0.;
+    let mut admitted_bubbles = 0.;
     for (n, (element, fractions)) in cases.iter().enumerate() {
         let w = p.cell.wall_wetting(c, *element).unwrap();
         let got = [
@@ -1236,7 +1248,8 @@ fn wall_receipts_are_routed_to_the_zones_their_wetting_reports() {
         expected[1][1] += j - boil[1];
         expected[2][0] += dry - j * gv;
         expected[2][1] -= j;
-        bubbles += boil[0] + boil[1];
+        admitted_bubbles += boil[0];
+        bubbles += boil[1];
     }
     let boundary = Boundary { walls, ..shut() };
     let ev = evaluate_all(&p, &v, &zero, receipts, &boundary);
@@ -1253,6 +1266,7 @@ fn wall_receipts_are_routed_to_the_zones_their_wetting_reports() {
         assert!((d(zone - 1) - m).abs() <= 1e-15, "mass row {}", zone - 1);
     }
     assert!((d(st::BUBBLE_MASS) - bubbles).abs() <= 1e-15);
+    assert!((d(st::ADMITTED_BUBBLE_MASS) - admitted_bubbles).abs() <= 1e-15);
     let b = &ev.balance;
     assert!((b.energy_w.value - b.receipt_energy_w.value).abs() <= 1e-6);
     // A wall cannot heat a zone it does not contact.
@@ -1365,6 +1379,7 @@ fn walls_with_every_port_kind_are_conserved_exactly() {
         st::ADMITTED_MASS,
         st::RESIDENT_MASS,
         st::BUBBLE_MASS,
+        st::ADMITTED_BUBBLE_MASS,
         st::DROP_MASS,
     ]
     .iter()
@@ -1376,10 +1391,11 @@ fn walls_with_every_port_kind_are_conserved_exactly() {
         + implied[st::ADMITTED_ENERGY]
         + implied[st::RESIDENT_ENERGY]
         + work
-        + implied[st::BUBBLE_MASS] * sat.vapor.enthalpy.value
+        + (implied[st::BUBBLE_MASS] + implied[st::ADMITTED_BUBBLE_MASS]) * sat.vapor.enthalpy.value
         + implied[st::DROP_MASS] * sat.liquid.enthalpy.value
         + f.transit_drift[0].value
-        + f.transit_drift[1].value;
+        + f.transit_drift[1].value
+        + f.admitted_transit_drift.value;
     let gv = ev.column.vapor.enthalpy.value;
     let walls_energy: f64 = walls
         .iter()

@@ -189,8 +189,9 @@ impl<P: Properties> Network<P> {
         // fluid energy receipt is what its rows imply enters the cell: the
         // zones' U' plus the volume work p_k V_k' they pay, plus the energy the
         // zones hand to the mass-only transit stocks at the evaluated
-        // saturation, M_b' h_g(p_s) + M_d' h_f(p_s), plus the saturation drift
-        // [Q_b, Q_d] their hosts pay. Each part is reported.
+        // saturation, (M_b' + M_bA') h_g(p_s) + M_d' h_f(p_s), plus the
+        // saturation drift [Q_b, Q_d, Q_bA] their hosts pay. Each part is
+        // reported.
         let rhs = |offset: usize| {
             let i = self.pzr.base + offset;
             (yp[i] - self.rows[i].value) * self.scales[i]
@@ -217,13 +218,22 @@ impl<P: Properties> Network<P> {
                 .sum();
             let sat = &column.interface_saturation;
             let (bubbles, drops) = (rhs(stratified::BUBBLE_MASS), rhs(stratified::DROP_MASS));
-            let transit = bubbles * sat.vapor.enthalpy.value + drops * sat.liquid.enthalpy.value;
-            let drift = evaluation.flows.transit_drift.map(|q| q.value);
-            let received = zones + work + transit + drift[0] + drift[1];
+            let admitted_bubbles = rhs(stratified::ADMITTED_BUBBLE_MASS);
+            let transit = (bubbles + admitted_bubbles) * sat.vapor.enthalpy.value
+                + drops * sat.liquid.enthalpy.value;
+            let f = &evaluation.flows;
+            let drift = [
+                f.transit_drift[0].value,
+                f.transit_drift[1].value,
+                f.admitted_transit_drift.value,
+            ];
+            let received = zones + work + transit + drift.iter().sum::<f64>();
             energy += received;
-            energy_abs +=
-                zones.abs() + work.abs() + transit.abs() + drift[0].abs() + drift[1].abs();
-            pzr = json!({"zone_internal_energy_rate_w":zones,"zone_volume_work_w":work,"transit_energy_rate_w":transit,"bubble_mass_rate_kg_s":bubbles,"drop_mass_rate_kg_s":drops,"transit_drift_w":drift,"received_w":received});
+            energy_abs += zones.abs()
+                + work.abs()
+                + transit.abs()
+                + drift.iter().map(|q| q.abs()).sum::<f64>();
+            pzr = json!({"zone_internal_energy_rate_w":zones,"zone_volume_work_w":work,"transit_energy_rate_w":transit,"bubble_mass_rate_kg_s":bubbles,"admitted_bubble_mass_rate_kg_s":admitted_bubbles,"drop_mass_rate_kg_s":drops,"transit_drift_w":drift,"bubble_condensation_kg_s":[f.bubble_exchange.condensation.value,f.admitted_bubble_exchange.condensation.value],"bubble_crossing_kg_s":f.bubble_crossing.value,"received_w":received});
         }
         let mut motor_work = 0.;
         let mut electric = 0.;
@@ -276,8 +286,8 @@ impl<P: Properties> Network<P> {
             }
         }
         let names = [
-            "p_roof", "V_g", "V_A", "V_R", "V_b", "V_d", "M_g", "U_g", "M_A", "U_A", "B_A", "M_R",
-            "U_R", "B_R", "M_b", "M_d", "B_d",
+            "p_roof", "V_g", "V_A", "V_R", "V_b", "V_d", "V_bA", "M_g", "U_g", "M_A", "U_A", "B_A",
+            "M_R", "U_R", "B_R", "M_b", "M_d", "B_d", "M_bA",
         ];
         for (offset, name) in names.into_iter().enumerate().take(PZR_COORDINATES) {
             let category = &name[..1];
@@ -392,7 +402,7 @@ impl<P: Properties> Network<P> {
                 inventory.energy_j.value,
                 0.,
             ],
-            receipt: json!({"mass_kg":inventory.mass_kg.value,"boron_kg_eq":inventory.boron_kg.value,"energy_j":inventory.energy_j.value,"zone_internal_energy_j":energy,"bubble_mass_kg":x.bubble_mass.value,"drop_mass_kg":x.drop_mass.value,"drop_boron_kg_eq":x.drop_boron.value,"mixture_level_m":column.mixture_elevation.value-column.bottom_m,"collapsed_level_m":column.collapsed_elevation.value-column.bottom_m,"admitted_thickness_m":column.admitted_thickness.value}),
+            receipt: json!({"mass_kg":inventory.mass_kg.value,"boron_kg_eq":inventory.boron_kg.value,"energy_j":inventory.energy_j.value,"zone_internal_energy_j":energy,"bubble_mass_kg":x.bubble_mass.value,"admitted_bubble_mass_kg":x.admitted_bubble_mass.value,"drop_mass_kg":x.drop_mass.value,"drop_boron_kg_eq":x.drop_boron.value,"mixture_level_m":column.mixture_elevation.value-column.bottom_m,"collapsed_level_m":column.collapsed_elevation.value-column.bottom_m,"admitted_thickness_m":column.admitted_thickness.value}),
         })
     }
 }
