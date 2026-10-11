@@ -10,8 +10,9 @@ import type { TopologyLedgerEntry } from '../topology/ledger.ts'
 import { adaptNodeSidecar } from '../topology/node-sidecar.ts'
 import type { TopologyBranch, TopologyBus, TopologyHvdcLink, TopologySummary } from '../topology/result.ts'
 import { curatedNetwork } from './curated-branches.ts'
-import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from './curations.ts'
+import { curationSourceId, topologyCurationSet, withCuratedTransformerUnits, withoutCuratedExclusions } from './curations.ts'
 import { curatedTransformerRatings, withCuratedLineRatings, withInterconnectorRatings } from './curated-ratings.ts'
+import { withNormallyOpenLines } from './normally-open.ts'
 import { electricalRules } from './electrical.ts'
 import { buildGenerators, buildSiteGenerators, registeredHydroUnits, registeredWindUnits } from './generators.ts'
 import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverTurbineRule, runOfRiverUtilisationHours } from './generator-rules.ts'
@@ -97,7 +98,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   const curations = inputs.curations.data
 
   const adapted = adaptNodeSidecar(inputs.sidecar.data, ids.osm)
-  const topologyInput = withoutCuratedExclusions(adapted.input, curations, ledger)
+  const topologyInput = withCuratedTransformerUnits(withoutCuratedExclusions(adapted.input, curations, ledger), curations, ledger)
   const topology = compileGridTopology(
     topologyInput,
     topologyInterconnectors(inputs.interconnectors.data, ids.interconnectors),
@@ -147,7 +148,8 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     ...curated.lines,
   ], inputs.interconnectors.data, new Set(buses.filter(bus => bus.kind === 'boundary').map(bus => bus.id)), ids.interconnectors, ledger)
   const ratedLines = withCuratedLineRatings(ties.lines, curations, ties.ratedIds, ledger)
-  const lines = ratedLines.map(line => line.branch)
+  const normallyOpen = withNormallyOpenLines(ratedLines.map(line => line.branch), curations, ledger)
+  const lines = normallyOpen.lines
   const mainBusIds = new Set([...main.mainBusIds, ...curated.buses.map(bus => bus.id)])
   const stations = createStationIndex(buses, main.buses, mainBusIds, sidecar.outline)
   const registeredGenerators = buildGenerators({
@@ -272,6 +274,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     summerStartUtc: summerHour.priceAreas.startUtc,
     winterStartUtc: winterHour.priceAreas.startUtc,
     dispatch: inputs.referenceDispatch.data.hours,
+    normallyOpenBranchIds: normallyOpen.openBranchIds,
     summerLineRatingMw: new Map([...ratedLines, ...equivalents].map(line => [line.branch.id, line.ratings.summerMw])),
     externalSystemStates: model.externalSystems.some(system => system.synchronous)
       ? {

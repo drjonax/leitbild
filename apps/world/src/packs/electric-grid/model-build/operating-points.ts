@@ -301,6 +301,8 @@ export const buildOperatingPoints = (config: {
   readonly dispatch: { readonly winterPeak: GridReferenceHourDispatch; readonly summerLow: GridReferenceHourDispatch }
   /** Summer-air rating of every line and sub-transmission equivalent, MW, by branch id. */
   readonly summerLineRatingMw: ReadonlyMap<string, number>
+  /** Lines that normal operation keeps open (normally-open curations): both Operating Points start them open. */
+  readonly normallyOpenBranchIds: ReadonlyArray<string>
   /** The synchronous equivalent's inertia and load per season, from the interconnector table's cases. */
   readonly externalSystemStates: { readonly winter: ReadonlyArray<ExternalSystemState>; readonly summer: ReadonlyArray<ExternalSystemState> }
 }): { readonly winter: GridOperatingPointV2; readonly summer: GridOperatingPointV2 } => {
@@ -314,6 +316,8 @@ export const buildOperatingPoints = (config: {
   const winterDemandMw = loadDemandAt(model, meteredDemand.winter)
   const summerDemandMw = loadDemandAt(model, meteredDemand.summer)
   const demandText = (metered: PriceAreaGroupMw): string => `each price area and Elhub group at its metered demand (${meteredDemand.sourceId}; national ${roundTo(nationalMw(metered), 0)} MW), shared by its loads in proportion to their reference demand`
+  // normally-open curations (normally-open.ts): lines in the model that normal operation keeps open.
+  const normallyOpen = config.normallyOpenBranchIds.map(assetId => ({ assetId, state: 'open' as const }))
   const winterSchedules = referenceSchedules(model, config.dispatch.winterPeak)
   const summerSchedules = referenceSchedules(model, config.dispatch.summerLow)
   return {
@@ -326,6 +330,7 @@ export const buildOperatingPoints = (config: {
       demand: demandOf(model, 'winter', model.referenceHour, meteredDemand.winter),
       loadScale: 1,
       generatorStates: [...dispatchGenerators(model, winterDemandMw, config.dispatch.winterPeak, winterSchedules)],
+      branchStates: normallyOpen,
       hvdcSchedules: [...winterSchedules.hvdc],
       externalExchangeSchedules: [...winterSchedules.exchange],
       externalSystemStates: [...config.externalSystemStates.winter],
@@ -339,6 +344,7 @@ export const buildOperatingPoints = (config: {
       demand: demandOf(model, 'summer', config.summerHour, meteredDemand.summer),
       loadScale: 1,
       generatorStates: [...dispatchGenerators(model, summerDemandMw, config.dispatch.summerLow, summerSchedules)],
+      branchStates: normallyOpen,
       hvdcSchedules: [...summerSchedules.hvdc],
       externalExchangeSchedules: [...summerSchedules.exchange],
       branchRatings: [...summerBranchRatings(model, config.summerLineRatingMw)],

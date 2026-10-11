@@ -7,8 +7,8 @@ import { ambientRatingRule, emergencyRule, overheadLineRatings, type LineRatings
 import type { BuildLedger } from './ledger.ts'
 import { v2OsmWayIds, type CuratedTransformerRating, type RatedLine } from './network.ts'
 
-// set-line-rating and set-transformer-rating curations: ratings a published document gives in
-// place of the rule-inferred ones. Each record must find exactly one branch.
+// set-line-rating, set-transformer-rating and add-transformer-units curations: ratings a published
+// document gives in place of the rule-inferred ones. Each record must find exactly one branch.
 
 const sortedFeatures = (curations: GridCurationCollection) => [...curations.features].sort((left, right) => compareText(left.id, right.id))
 
@@ -109,22 +109,29 @@ export interface CuratedTransformerRatings {
 
 export const curatedTransformerRatings = (curations: GridCurationCollection, stationOfFeature: (featureId: string) => string | undefined): CuratedTransformerRatings => {
   const byKey = new Map<string, CuratedTransformerRating>()
+  /** add-transformer-units records give the topology its units too; the branch must carry exactly those. */
+  const unitsOf = new Map<string, number>()
   for (const feature of sortedFeatures(curations)) {
     const properties = feature.properties
-    if (properties.kind !== 'set-transformer-rating') continue
+    if (properties.kind !== 'set-transformer-rating' && properties.kind !== 'add-transformer-units') continue
     const id = curationSourceId(feature)
     const stationId = stationOfFeature(properties.substationOsmId)
     if (stationId === undefined) throw new Error(`${id}: ${properties.substationOsmId} is not a station of the topology`)
     const key = `bus:${stationId}@${properties.highKv}|bus:${stationId}@${properties.lowKv}`
     if (byKey.has(key)) throw new Error(`${id}: ${properties.substationOsmId} ${properties.highKv}/${properties.lowKv} kV already has a curated rating`)
-    byKey.set(key, { curationId: id, ratingMva: properties.ratingMva, reason: properties.reason })
+    const ratingMva = properties.kind === 'set-transformer-rating' ? properties.ratingMva : properties.units * properties.unitRatingMva
+    byKey.set(key, { curationId: id, ratingMva, reason: properties.reason })
+    if (properties.kind === 'add-transformer-units') unitsOf.set(key, properties.units)
   }
   const applied = new Set<string>()
   return {
     of: branch => {
       const key = `${branch.fromBusId}|${branch.toBusId}`
       const rating = byKey.get(key)
-      if (rating !== undefined) applied.add(key)
+      if (rating === undefined) return undefined
+      const units = unitsOf.get(key)
+      if (units !== undefined && branch.circuits !== units) throw new Error(`${rating.curationId}: ${branch.id} has ${branch.circuits} units where the record gives ${units}; OSM maps more transformers between these levels`)
+      applied.add(key)
       return rating
     },
     assertAllApplied: () => {

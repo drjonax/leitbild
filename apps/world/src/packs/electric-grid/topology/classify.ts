@@ -26,6 +26,8 @@ export type ClassifiedInput = {
 
 const wayIdPattern = /^way\/\d+$/
 const osmIdPattern = /^(node|way|relation)\/\d+$/
+/** A transformer unit an add-transformer-units curation gives (model-build/curations.ts). */
+const curatedUnitPattern = /^curation:[a-z0-9]+(?:-[a-z0-9]+)*\/unit-[1-9][0-9]*$/
 
 const fail = (featureId: string, problem: string): never => {
   throw new Error(`topology input: ${featureId} ${problem}`)
@@ -44,8 +46,11 @@ const validateFeature = (feature: TopologyInputFeature): void => {
     for (const index of indices) if (!Number.isInteger(index) || index < 0 || index > last) fail(feature.featureId, `has terminal vertex index ${index} out of range`)
     if (feature.levels.length === 0) fail(feature.featureId, 'has no levels (a voltage-less way carries one level with voltageKv null)')
   }
-  if ((feature.kind === 'substation' || feature.kind === 'plant' || feature.kind === 'transformer') && !osmIdPattern.test(feature.featureId)) {
+  if ((feature.kind === 'substation' || feature.kind === 'plant') && !osmIdPattern.test(feature.featureId)) {
     fail(feature.featureId, 'is not an OSM element id')
+  }
+  if (feature.kind === 'transformer' && !osmIdPattern.test(feature.featureId) && !curatedUnitPattern.test(feature.featureId)) {
+    fail(feature.featureId, 'is neither an OSM element id nor a curated transformer unit')
   }
 }
 

@@ -141,6 +141,27 @@ const propertiesSchema = z.discriminatedUnion('kind', [
     substationOsmId: osmId, highKv: kv, lowKv: kv,
     ratingMva: z.number().finite().positive(),
   }).strict().refine(properties => properties.highKv > properties.lowKv, 'highKv must exceed lowKv'),
+  /**
+   * Transformer units in service that a published document gives (concession, operator) and OSM
+   * does not map: the topology joins the station's highKv and lowKv levels with these units, as it
+   * would mapped transformers, so no unit is inferred between levels they already join; the units
+   * take units × unitRatingMva with the transformer rule's impedance on that rating.
+   */
+  z.object({
+    kind: z.literal('add-transformer-units'), ...common,
+    substationOsmId: osmId, highKv: kv, lowKv: kv,
+    units: z.number().int().positive(),
+    unitRatingMva: z.number().finite().positive(),
+  }).strict().refine(properties => properties.highKv > properties.lowKv, 'highKv must exceed lowKv'),
+  /**
+   * A mapped line or cable operated open in normal operation (a sectioning point, delt drift): it
+   * stays in the model, and the Operating Points start it open. Every listed way must lie on
+   * exactly one model line; each line carrying a listed way starts open.
+   */
+  z.object({
+    kind: z.literal('normally-open'), ...common,
+    wayOsmIds: z.array(wayId).min(1), voltageKv: kv,
+  }).strict(),
 ])
 
 const featureSchema = z.object({
@@ -173,6 +194,8 @@ const allowedExpiry: Record<CurationFeature['properties']['kind'], {
   'set-line-rating': { required: ['review-by'], allowed: ['review-by'] },
   'set-transformer-rating': { required: ['review-by'], allowed: ['review-by'] },
   'add-network-equivalent': { required: ['review-by'], allowed: ['review-by'] },
+  'add-transformer-units': { required: ['review-by'], allowed: ['review-by'] },
+  'normally-open': { required: ['review-by'], allowed: ['review-by'] },
 }
 
 const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray<string> => {
@@ -191,6 +214,8 @@ const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray
     case 'set-line-rating': return properties.wayOsmIds
     case 'set-transformer-rating': return [properties.substationOsmId]
     case 'add-network-equivalent': return [properties.fromSubstationOsmId, properties.toSubstationOsmId]
+    case 'add-transformer-units': return [properties.substationOsmId]
+    case 'normally-open': return properties.wayOsmIds
   }
 }
 

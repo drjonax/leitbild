@@ -1,5 +1,6 @@
 import type { GridCuration, GridCurationCollection } from '../schemas/grid-curation.ts'
-import type { TopologyCuration, TopologyCurationSet, TopologyInput, TopologyInputFeature } from '../topology/input.ts'
+import type { TopologyCuration, TopologyCurationSet, TopologyInput, TopologyInputFeature, TopologyTransformerInput } from '../topology/input.ts'
+import { compareText } from '../topology/ids.ts'
 import type { BuildLedger } from './ledger.ts'
 
 // How each curation kind reaches the model build:
@@ -9,7 +10,9 @@ import type { BuildLedger } from './ledger.ts'
 //   attach-via-regional-grid                   → a registered plant's bus (generators.ts);
 //   attach-load-via-regional-grid              → a municipality's load bus (loads.ts);
 //   add-shunt-device                           → the shunt of its bus (network.ts);
+//   add-transformer-units                      → transformer units in the topology input, rated (curated-ratings.ts);
 //   set-line-rating, set-transformer-rating    → a branch's rating (curated-ratings.ts);
+//   normally-open                              → the line starts open in the Operating Points (normally-open.ts);
 //   add-network-equivalent                     → a sub-transmission equivalent branch (network-equivalents.ts);
 //   assert-radial, boundary                    → the audit only.
 
@@ -68,4 +71,30 @@ export const withoutCuratedExclusions = (input: TopologyInput, collection: GridC
     throw new Error(`${curationSourceId(curation)}: target ${target} is not in the topology input; update or remove the record`)
   }
   return { ...input, features }
+}
+
+/**
+ * Adds the units of each add-transformer-units record to the topology input as transformers at the
+ * record's point, which must lie in the station: the compiler joins the levels with them as with
+ * mapped units, and curated-ratings.ts rates them. A point outside the station leaves the units
+ * unmatched, and the rating then finds no transformer and fails the build.
+ */
+export const withCuratedTransformerUnits = (input: TopologyInput, collection: GridCurationCollection, ledger: BuildLedger): TopologyInput => {
+  const units: TopologyTransformerInput[] = []
+  for (const feature of [...collection.features].sort((left, right) => compareText(left.id, right.id))) {
+    const properties = feature.properties
+    if (properties.kind !== 'add-transformer-units') continue
+    if (feature.geometry.type !== 'Point') throw new Error(`${curationSourceId(feature)}: add-transformer-units is located by a Point`)
+    const location = feature.geometry.coordinates
+    for (let unit = 1; unit <= properties.units; unit += 1) {
+      units.push({ kind: 'transformer', featureId: `${curationSourceId(feature)}/unit-${unit}`, lifecycle: 'operational', location: [location[0], location[1]], voltagesKv: [properties.highKv, properties.lowKv], ratingMva: null })
+    }
+    ledger.add({
+      reason: 'transformer-units-added',
+      elementIds: [curationSourceId(feature), properties.substationOsmId],
+      mw: properties.units * properties.unitRatingMva,
+      detail: `${properties.units} × ${properties.unitRatingMva} MVA ${properties.highKv}/${properties.lowKv} kV at ${properties.substationOsmId}: ${properties.reason}`,
+    })
+  }
+  return { ...input, features: [...input.features, ...units] }
 }

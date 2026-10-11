@@ -5,8 +5,8 @@ import type { TopologyBranch } from './result.ts'
 import type { StationGroup } from './station-groups.ts'
 
 // Every station with buses at several AC levels gets transformer branches that connect all its
-// levels: mapped OSM transformers first, then inferred units between adjacent levels that the
-// mapped ones leave disconnected.
+// levels: mapped OSM transformers and curated units first, then inferred units between adjacent
+// levels that those leave disconnected.
 
 export type TransformerInput = {
   readonly groups: ReadonlyArray<StationGroup>
@@ -84,7 +84,9 @@ export const buildTransformerBranches = (input: TransformerInput, ledger: Topolo
       parallelSpanGroups: 0,
       interconnectorId: null,
       provenance: units
-        ? { sources: [...input.sourceIds], method: 'mapped', confidence: 'high', note: null }
+        ? units.ids.some(id => id.startsWith('curation:'))
+          ? { sources: [...input.sourceIds], method: 'curated', confidence: 'medium', note: `units given by ${[...new Set(units.ids.map(id => id.split('/')[0]!))].join(', ')}` }
+          : { sources: [...input.sourceIds], method: 'mapped', confidence: 'high', note: null }
         : {
             sources: [...input.sourceIds],
             method: 'inferred',

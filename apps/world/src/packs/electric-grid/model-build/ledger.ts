@@ -21,6 +21,8 @@ const reasonDispositions = {
   'curated-branch-added': 'curated',
   'curated-rating-set': 'curated',
   'network-equivalent-added': 'curated',
+  'transformer-units-added': 'curated',
+  'branch-normally-open': 'curated',
 } as const
 
 export type BuildLedgerReason = keyof typeof reasonDispositions
