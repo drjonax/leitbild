@@ -92,7 +92,11 @@ const dispatchIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, islan
     state.targetMw = Math.min(state.availableMw, Math.max(generatorMinimumStableMw(definition), bases[index]! + shiftMw))
   })
   // The island holds at most one synchronous external system (definitions.ts).
-  for (const system of externals) grid.externalSystems.get(system.id)!.scheduledImportMw = exchangeMw
+  for (const system of externals) {
+    const state = grid.externalSystems.get(system.id)!
+    state.scheduledImportMw = exchangeMw
+    state.targetImportMw = exchangeMw
+  }
   allocateGridIslandReserves(grid, structure)
 }
 

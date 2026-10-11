@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { gridProjectionSchema } from '../model.ts'
 import { processContingencyPoolStatus } from '../runtime/contingency-pool.ts'
+import { operatingPointImportMw } from '../runtime/boundary-separation.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
 import type { GridOperatingPointDefinition } from '../grid-model.ts'
 import { gridDemandSampleClock } from '../runtime/demand.ts'
@@ -53,8 +54,25 @@ const automationSummary = (grid: GridRuntimeInstance) => {
     manualFrequencyRestoration: automation.mfrr.enabled,
     lfddStageThresholdsHz: automation.lfdd.stages.map(stage => stage.thresholdHz),
     synchroCheck: { ...automation.synchroCheck },
+    externalExchangeRampMwPerMinute: automation.externalExchange.rampMwPerMinute,
   }
 }
+
+/** Each synchronous external system's exchange schedule now, beside the Operating Point's. */
+const externalExchangesOf = (grid: GridRuntimeInstance) => grid.definition.index.externalSystems.flatMap((system, position) => {
+  if (!system.synchronous) return []
+  const state = grid.arrays.externalSystems[position]!
+  return [{
+    systemId: system.id,
+    label: system.label,
+    operatingPointExportMw: 0 - operatingPointImportMw(grid, system),
+    scheduledExportMw: 0 - state.scheduledImportMw,
+    targetExportMw: 0 - state.targetImportMw,
+    exchangeMw: 0 - state.importMw,
+    islandId: state.islandId,
+    voidedBySeparation: state.exchangeVoided,
+  }]
+})
 
 const summaryResultSchema = z.object({
   gridId: z.string(),
@@ -91,7 +109,18 @@ const summaryResultSchema = z.object({
       maximumFrequencyDifferenceHz: finite.describe('Largest frequency difference at which a branch may close between two energised islands (Hz).'),
       maximumAngleDifferenceDegrees: finite.describe('Largest voltage-angle difference at which a branch may close a loop inside one energised island (°).'),
     }).strict(),
+    externalExchangeRampMwPerMinute: finite.describe('Rate at which a synchronous external system\'s scheduled exchange follows set-external-exchange (MW/min); the model\'s assumption, not a published limit.'),
   }).strict().describe('The Grid Automation preset in force, summarised.'),
+  externalExchanges: z.array(z.object({
+    systemId: z.string(),
+    label: z.string(),
+    operatingPointExportMw: finite.describe('The Operating Point\'s scheduled exchange (MW, positive exports from Norway).'),
+    scheduledExportMw: finite.describe('The schedule in force now (MW, positive exports); it ramps to targetExportMw.'),
+    targetExportMw: finite.describe('The schedule\'s target: the dispatch\'s, the last set-external-exchange, or 0 after a separation voided it (MW, positive exports).'),
+    exchangeMw: finite.describe('Power flowing to the system now, its schedule plus its response to frequency (MW, positive exports); 0 while coupled to no island.'),
+    islandId: z.string().nullable().describe('The Norwegian island the system is coupled to through a closed tie; null while separated from every island.'),
+    voidedBySeparation: z.boolean().describe('A separation from every Norwegian island voided the exchange and the schedule is not back at the Operating Point\'s; an external exchange-voided alarm is active meanwhile.'),
+  }).strict()).describe('Each synchronous external system\'s exchange schedule beside the Operating Point\'s; set-external-exchange sets its target.'),
   projection: gridProjectionSchema,
   demandProfiles: z.object({
     sample: demandSampleSchema,
@@ -218,6 +247,7 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
     },
     operatingPoint: operatingPointSummary(grid.definition.operatingPoint),
     automation: automationSummary(grid),
+    externalExchanges: externalExchangesOf(grid),
     projection: grid.projection,
     demandProfiles: demandProfilesSummary(grid),
     assetCounts: {
@@ -270,7 +300,7 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
 export const gridSummaryQuery = defineGridQuery({
   id: 'world.electric-grid.grid.summary',
   title: 'Get Grid summary',
-  description: 'Returns the Grid projection (system frequency, generation, demand, served and unserved load, reserve), asset counts, fidelity and diagnostics, the most loaded constrained branches, the largest units, and the loads with unserved demand. The thresholds field states what counts as constrained and affected. Per-island frequency is in world.electric-grid.islands.list.',
+  description: 'Returns the Grid projection (system frequency, generation, demand, served and unserved load, reserve), each synchronous external system\'s exchange schedule beside the Operating Point\'s, asset counts, fidelity and diagnostics, the most loaded constrained branches, the largest units, and the loads with unserved demand. The thresholds field states what counts as constrained and affected. Per-island frequency is in world.electric-grid.islands.list.',
   searchTerms: ['grid status', 'overview', 'system state', 'frequency', 'balance', 'reserve', 'unserved load', 'constrained corridors', 'nettstatus', 'oversikt', 'driftsbilde', 'frekvens', 'ikke levert energi', 'flaskehals'],
   input: gridPayloadSchema,
   output: summaryResultSchema,

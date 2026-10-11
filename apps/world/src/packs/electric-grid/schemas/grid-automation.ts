@@ -37,7 +37,7 @@ const directionalRequirementSchema = z.object({
 
 export const automationSectionSchema = z.enum([
   'simulation', 'swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection', 'synchroCheck',
-  'branchProtection', 'alarms',
+  'externalExchange', 'branchProtection', 'alarms',
 ])
 
 const sourceReferenceSchema = z.object({
@@ -207,6 +207,11 @@ const synchroCheckSchema = z.object({
   maximumAngleDifferenceDegrees: z.number().finite().positive().max(180),
 }).strict()
 
+const externalExchangeSchema = z.object({
+  /** Rate at which a synchronous external system's scheduled exchange follows set-external-exchange (MW/min). */
+  rampMwPerMinute: z.number().finite().positive(),
+}).strict()
+
 export const gridAutomationSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -222,6 +227,7 @@ export const gridAutomationSchema = z.object({
   storage: storageSchema,
   generatorProtection: generatorProtectionSchema,
   synchroCheck: synchroCheckSchema,
+  externalExchange: externalExchangeSchema,
   branchProtection: branchProtectionSchema,
   alarms: alarmsSchema,
 }).strict().superRefine((value, context) => {

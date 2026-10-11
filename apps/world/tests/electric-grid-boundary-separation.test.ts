@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { gridCloseBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
+import { gridSetExternalExchangeCommandKind } from '../src/packs/electric-grid/commands/external.ts'
 import { gridDispatchGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { nordicFrequencyAutomationRef, norwayGridModelRef } from '../src/packs/electric-grid/definition-refs.ts'
@@ -145,7 +146,18 @@ describe('a separated boundary bus of a synchronous external system', () => {
     expect(listed.islands.map((island: { id: string; busCount: number; energized: boolean }) => [island.id, island.busCount, island.energized])).toEqual([[islandId, 2, true]])
     expect(run.grid.projection.islandCount).toBe(1)
     for (const busId of [se1, se3]) expect(busState(run.grid, busId)).toMatchObject({ islandId: null, energized: true, frequencyHz: 50, voltageModel: 'external' })
-    expect(remainder(run)).toMatchObject({ islandId: null, energized: false, importMw: 0, scheduledImportMw: 0 })
+    expect(remainder(run)).toMatchObject({ islandId: null, energized: false, importMw: 0, scheduledImportMw: 0, targetImportMw: 0, exchangeVoided: true })
+    // The voided exchange is visible: the summary beside the Operating Point's, and an external alarm.
+    expect(query(run.grid, 'world.electric-grid.grid.summary').externalExchanges).toEqual([{
+      systemId: 'external:nordic-remainder', label: 'Nordic remainder', operatingPointExportMw: -scheduledImportMw, scheduledExportMw: 0, targetExportMw: 0, exchangeMw: 0, islandId: null, voidedBySeparation: true,
+    }])
+    const voidedAlarm = () => run.grid.alarms.records.get('external:nordic-remainder:exchange-voided')
+    expect(voidedAlarm()).toMatchObject({ active: true, scope: 'external', priority: 2, islandId: null, value: scheduledImportMw, unit: 'MW' })
+    expect(query(run.grid, 'world.electric-grid.alarms.list', { states: ['active'] }).alarms.find((alarm: { id: string }) => alarm.id === 'external:nordic-remainder:exchange-voided'))
+      .toMatchObject({ assetLabel: 'Nordic remainder', mapAssetId: se3 })
+    // Nothing to exchange with while separated.
+    expect(reasonOf(run.command(gridSetExternalExchangeCommandKind, { assetId: 'external:nordic-remainder', scheduledExportMw: -scheduledImportMw })))
+      .toBe('external:nordic-remainder is coupled to no Norwegian island: all its ties are open, so there is nothing to exchange with; close a tie to it first (close-branch, under the synchro-check)')
     expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
 
     // A persisted Run restores the separation: the island alone, the void exchange, the buses held by the remainder.
@@ -155,7 +167,7 @@ describe('a separated boundary bus of a synchronous external system', () => {
     advanceGrid(restored, 0, isoAt(20_000))
     advanceGrid(restored, 2, isoAt(22_000))
     expect(restored.islandPlan!.islands.map(island => island.id)).toEqual([islandId])
-    expect(restored.externalSystems.get('external:nordic-remainder')).toMatchObject({ islandId: null, scheduledImportMw: 0 })
+    expect(restored.externalSystems.get('external:nordic-remainder')).toMatchObject({ islandId: null, scheduledImportMw: 0, targetImportMw: 0, exchangeVoided: true })
     expect(busState(restored, se3)).toMatchObject({ islandId: null, energized: true, frequencyHz: 50, voltageModel: 'external' })
 
     // Reclosing onto the separated system compares the island with its nominal frequency.
@@ -185,6 +197,22 @@ describe('a separated boundary bus of a synchronous external system', () => {
     run.advanceTo(atMs + 10_000, [1_000])
     expect(busState(run.grid, se3)).toMatchObject({ islandId, voltageModel: 'ac-fdlf' })
     expect(busState(run.grid, se1)).toMatchObject({ islandId: null, voltageModel: 'external', frequencyHz: mainIsland(run).frequency!.frequencyHz! })
+    expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
+
+    // Coupled again, the exchange is restored by command, within the closed tie's rating, at the Automation's 100 MW/min.
+    const setExchange = (scheduledExportMw: number) => run.command(gridSetExternalExchangeCommandKind, { assetId: 'external:nordic-remainder', scheduledExportMw })
+    expect(reasonOf(setExchange(-1_600))).toBe('scheduled exchange -1600 MW with external:nordic-remainder exceeds the 1500 MW rating of its closed ties (positive exports from Norway)')
+    expect(reasonOf(setExchange(0))).toBe('external:nordic-remainder already has the target scheduled exchange 0 MW (scheduled now 0 MW, positive exports from Norway)')
+    expect(setExchange(-scheduledImportMw).ok).toBe(true)
+    const restoredAtMs = atMs + 10_000
+    run.advanceTo(restoredAtMs + 60_000, [1_000])
+    expect(remainder(run).scheduledImportMw).toBeCloseTo(100, 9)
+    expect(remainder(run)).toMatchObject({ targetImportMw: scheduledImportMw, exchangeVoided: true })
+    expect(voidedAlarm()!.value).toBeCloseTo(200, 9)
+    run.advanceTo(restoredAtMs + 200_000, [1_000])
+    expect(remainder(run)).toMatchObject({ scheduledImportMw, targetImportMw: scheduledImportMw, exchangeVoided: false })
+    expect(voidedAlarm()).toMatchObject({ active: false })
+    expect(query(run.grid, 'world.electric-grid.grid.summary').externalExchanges[0]).toMatchObject({ scheduledExportMw: -scheduledImportMw, targetExportMw: -scheduledImportMw, islandId, voidedBySeparation: false })
     expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
   }, 120_000)
 })

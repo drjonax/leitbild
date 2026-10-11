@@ -8,6 +8,7 @@ import {
   gridTripHvdcCommandKind,
 } from '../src/packs/electric-grid/commands/hvdc.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
+import { gridSetExternalExchangeCommandKind } from '../src/packs/electric-grid/commands/external.ts'
 import { nordicFrequencyAutomationRef, norwayGridModelRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { CompiledGridDefinition, GridBusDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
@@ -253,6 +254,16 @@ describe('HVDC ramp groups', () => {
       ['ramp:skagerrak', ['hvdc:skagerrak-1', 'hvdc:skagerrak-2', 'hvdc:skagerrak-3', 'hvdc:skagerrak-4'], 25],
     ])
     expect(definition.index.hvdcRampGroupOfLink.has('hvdc:north-sea-link')).toBe(false)
+  })
+})
+
+describe('set-external-exchange', () => {
+  test('acts only on a synchronous external system: an HVDC-only neighbour is set through its links', () => {
+    const run = steppedGrid(definitionWith())
+    expect(reasonOf(run.command(gridSetExternalExchangeCommandKind, { assetId: 'external:DE', scheduledExportMw: 100 }))).toBe('external:DE is reached only by HVDC; set-hvdc-setpoint sets the transfer of its links')
+    expect(reasonOf(run.command(gridSetExternalExchangeCommandKind, { assetId: 'external:SE', scheduledExportMw: 100 }))).toContain('external system not found: external:SE')
+    expect(run.command(gridSetExternalExchangeCommandKind, { assetId: 'external:nordic-remainder', scheduledExportMw: 200 }).ok).toBe(true)
+    expect(run.grid.externalSystems.get('external:nordic-remainder')).toMatchObject({ scheduledImportMw: 0, targetImportMw: -200, exchangeVoided: false })
   })
 })
 

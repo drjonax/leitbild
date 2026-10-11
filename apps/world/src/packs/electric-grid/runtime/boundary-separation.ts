@@ -1,3 +1,4 @@
+import type { GridExternalSystemDefinition } from '../grid-model.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyPlan } from './instance.ts'
 import { gridTablesFor } from './state/tables.ts'
 
@@ -32,10 +33,18 @@ export const externalSystemFrequencyHz = (grid: GridRuntimeInstance, islands: Gr
   return frequencyHz
 }
 
+/** The Operating Point's scheduled import from synchronous external system `system` (MW; negative exports). */
+export const operatingPointImportMw = (grid: GridRuntimeInstance, system: GridExternalSystemDefinition): number => {
+  const exchanges = grid.definition.operatingPoint.externalExchanges
+  for (let position = 0; position < exchanges.length; position += 1) if (exchanges[position]!.systemId === system.id) return 0 - exchanges[position]!.scheduledExportMw
+  throw new Error(`Grid ${grid.definition.gridId} Operating Point has no scheduled exchange for ${system.id}`)
+}
+
 /**
  * A synchronous external system coupled to no Norwegian island exchanges nothing with Norway: its
- * scheduled import becomes 0, so reclosing a tie synchronises at zero exchange and the schedule
- * returns only with a new dispatch.
+ * scheduled import and its target become 0, so reclosing a tie synchronises at zero exchange, and
+ * set-external-exchange restores the schedule (external-exchange.ts). The exchange counts as voided
+ * while the Operating Point schedules one.
  */
 export const voidDetachedExchanges = (grid: GridRuntimeInstance, plan: GridTopologyPlan): void => {
   const systems = grid.definition.index.externalSystems
@@ -46,6 +55,10 @@ export const voidDetachedExchanges = (grid: GridRuntimeInstance, plan: GridTopol
       const externals = plan.islands[island]!.externalIndices
       for (let position = 0; position < externals.length && !coupled; position += 1) coupled = externals[position] === system
     }
-    if (!coupled) grid.arrays.externalSystems[system]!.scheduledImportMw = 0
+    const state = grid.arrays.externalSystems[system]!
+    if (coupled || (state.scheduledImportMw === 0 && state.targetImportMw === 0)) continue
+    state.scheduledImportMw = 0
+    state.targetImportMw = 0
+    state.exchangeVoided = operatingPointImportMw(grid, systems[system]!) !== 0
   }
 }

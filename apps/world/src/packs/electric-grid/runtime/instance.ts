@@ -171,8 +171,12 @@ export interface GridStorageState {
 
 /** A synchronous or asynchronous neighbouring system and its live exchange. */
 export interface GridExternalSystemState {
-  /** Scheduled import into Norway (MW; negative exports), set by dispatch. */
+  /** Scheduled import into Norway (MW; negative exports), set by dispatch; it ramps towards targetImportMw (external-exchange.ts). */
   scheduledImportMw: number
+  /** Scheduled import the schedule ramps to: the dispatch's, set-external-exchange's, or 0 after a separation voided it (MW). */
+  targetImportMw: number
+  /** A separation voided the exchange and the schedule is not back at the Operating Point's (boundary-separation.ts). */
+  exchangeVoided: boolean
   /** Power flowing in from the system (MW), including its inertial share and reserves. */
   importMw: number
   /** Activated FCR and aFRR of the system (MW). */
@@ -416,7 +420,7 @@ export interface RestoredGridRuntimeState {
   }>
   readonly loads: ReadonlyArray<{ readonly id: string; readonly nominalDemandMw: number; readonly manualDemandLimitMw: number | null; readonly manualShedEmergency: boolean }>
   readonly storage: ReadonlyArray<{ readonly id: string; readonly stateOfChargeFraction: number }>
-  readonly externalSystems: ReadonlyArray<{ readonly id: string; readonly scheduledImportMw: number }>
+  readonly externalSystems: ReadonlyArray<{ readonly id: string; readonly scheduledImportMw: number; readonly targetImportMw: number; readonly exchangeVoided: boolean }>
   readonly hvdcLinks: ReadonlyArray<{ readonly id: string; readonly state: GridHvdcLinkOperatingState; readonly setpointMw: number; readonly transferMw: number; readonly trip: GridHvdcTrip | null }>
   readonly islands: ReadonlyArray<{ readonly id: string; readonly anchorBusId: string; readonly frequency: IslandFrequencyState | null }>
   readonly lossLoadByBusMw: ReadonlyArray<number>
@@ -517,16 +521,22 @@ export const createGridRuntimeInstance = (config: {
     } satisfies GridStorageState]
   }))
   const scheduledExports = new Map(operatingPoint.externalExchanges.map(exchange => [exchange.systemId, exchange.scheduledExportMw]))
-  const externalSystems = new Map(index.externalSystems.map(system => [system.id, {
+  const externalSystems = new Map(index.externalSystems.map(system => {
     // An asynchronous system exchanges only through HVDC links; a synchronous one starts at its scheduled exchange.
-    scheduledImportMw: restoredExternals?.get(system.id)?.scheduledImportMw ?? (system.synchronous ? -requiredValue(scheduledExports, system.id, 'scheduled exchange') : 0),
-    importMw: 0,
-    fcrMw: 0,
-    afrrMw: 0,
-    mechanicalMw: 0,
-    islandId: null,
-    energized: false,
-  } satisfies GridExternalSystemState]))
+    const operatingPointImportMw = system.synchronous ? -requiredValue(scheduledExports, system.id, 'scheduled exchange') : 0
+    const stored = restoredExternals?.get(system.id)
+    return [system.id, {
+      scheduledImportMw: stored?.scheduledImportMw ?? operatingPointImportMw,
+      targetImportMw: stored?.targetImportMw ?? operatingPointImportMw,
+      exchangeVoided: stored?.exchangeVoided ?? false,
+      importMw: 0,
+      fcrMw: 0,
+      afrrMw: 0,
+      mechanicalMw: 0,
+      islandId: null,
+      energized: false,
+    } satisfies GridExternalSystemState] as const
+  }))
   const hvdcSetpoints = new Map(operatingPoint.hvdcSetpoints.map(entry => [entry.linkId, entry.setpointMw]))
   const hvdcLinks = new Map(index.hvdcLinks.map(link => {
     const stored = restoredHvdc?.get(link.id)
