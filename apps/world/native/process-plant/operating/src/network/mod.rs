@@ -34,8 +34,8 @@ pub mod walls;
 pub use account::{Tolerances, empty_energy_ratio};
 pub use blocks::{BlockJacobian, Held, LocalCoupling, NetworkSeed, Replay};
 pub use jacobian::{
-    ConsistentPair, ConsistentSystem, CscOut, DensePattern, Largest, Projection, SparseJacobian,
-    consistent_rates, consistent_start, project_constraints,
+    ConsistentPair, ConsistentSystem, CscOut, DensePattern, Largest, Placement, Projection,
+    SparseJacobian, consistent_rates, consistent_start, place_on_bounds, project_constraints,
 };
 pub use ports::{CellVolume, Coupling, Fluid, Receipts};
 pub use properties::{Band, BandReport, MetastableBand, Properties, Reuse, Water};
