@@ -1411,7 +1411,8 @@ describe('process plant runtime', () => {
     }
 
     expect(Number(runtime.readVariable(valueOf('vessel.reliefOutflowKgPerS')))).toBeGreaterThan(0)
-    expect(relieved).toBeGreaterThan(1_000)
+    // About 25 kg/s for 30 s: the PORV's 26.5 kg/s steam rating at 16.2 MPa, at the pressure it relieves from.
+    expect(relieved).toBeGreaterThan(700)
     // Loops and pressurizer together lose what crosses the boundary: the relief, less charging over letdown.
     // (The boundary flow reads the relief line a solver step late.)
     expect(Math.abs(systemMass() - initialMass - boundaryNet)).toBeLessThan(relieved * 0.01)

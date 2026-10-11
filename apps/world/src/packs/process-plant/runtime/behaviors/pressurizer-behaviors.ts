@@ -184,9 +184,9 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
     update: ({ system, component, context }): void => {
       const dt = context.dtSeconds
       const volume = parameterNumber(component, 'volumeM3')
-      const nominalPressure = parameterNumber(component, 'nominalPressureMPa')
       const reliefSetpoint = parameterNumber(component, 'reliefSetpointMPa')
       const reliefCapacity = parameterNumber(component, 'reliefCapacityKgPerS')
+      const reliefRatedPressure = parameterNumber(component, 'reliefRatedPressureMPa')
       const flashingTimeConstant = parameterNumber(component, 'flashingTimeConstantS')
       const condensationTimeConstant = parameterNumber(component, 'condensationTimeConstantS')
       const pressure = context.readNumber(componentVariablePath(component, 'pressureMPa'))
@@ -222,7 +222,10 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const nextBlockValvePosition = componentHasElectricalPower(system, component, context, 'blockValvePower')
         ? approach(blockValvePosition, clamp(context.readNumber(componentVariablePath(component, 'blockValvePositionFraction')), 0, 1), dt / parameterNumber(component, 'blockValveStrokeTimeS'))
         : blockValvePosition
-      const reliefFlow = reliefCapacity * Math.min(reliefOpening, nextBlockValvePosition) * clamp(pressure / nominalPressure, 0, 1.4)
+      // The relief line passes what the less open of its two valves lets
+      // through: its flow area. Steam chokes in the valve, so the flow through
+      // that area is the rated flow scaled by the inlet pressure.
+      const reliefFlow = reliefCapacity * Math.min(reliefOpening, nextBlockValvePosition) * pressure / reliefRatedPressure
       // The code safety valves pop open at their set pressure, reach full lift
       // with the accumulation above it and stay open until pressure falls by
       // the blowdown below it. Their lift follows pressure between reseat and

@@ -100,34 +100,45 @@ describe('the full-power operating point', () => {
 })
 
 describe('a stuck-open PORV', () => {
-  test('holds coolant pressure near the hot leg\'s saturation pressure while the pressurizer fills', () => {
+  test('lets the pressure fall to the hot legs\' saturation pressure while safety injection fills the pressurizer', () => {
     const plantRun = started()
     plantRun.run(60)
     for (const command of commandsForProcessPlantAction({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 100 }, graph: plant.graph })) {
       plantRun.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
     }
+    const { read } = plantRun
+    // Rated 26.5 kg/s of steam at 16.2 MPa, the open PORV passes about 25 kg/s at 15.5 MPa.
+    plantRun.run(1)
+    expect(read('pressurizer.reliefFlowKgPerS')).toBeGreaterThan(24)
+    expect(read('pressurizer.reliefFlowKgPerS')).toBeLessThan(26.5)
     let lowestLevel = 100
-    plantRun.run(90, () => { lowestLevel = Math.min(lowestLevel, plantRun.read('pressurizer.levelPercent')) })
+    plantRun.run(89, () => { lowestLevel = Math.min(lowestLevel, read('pressurizer.levelPercent')) })
     // The falling pressure lowers the overtemperature delta-T set point onto the loop delta-T, which trips the
-    // reactor before the low-pressure trip would; the coolant shrinks and then flashes.
+    // reactor before the low-pressure trip would; the coolant shrinks and the pressurizer level falls.
     expect(plantRun.active()).toContain('trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip')
     expect(lowestLevel).toBeLessThan(40)
+    // Safety injection then outruns the relief: the pressurizer refills while the pressure keeps falling, toward
+    // the saturation pressure of the hot legs, about 8 MPa after the trip, never far below it. A level rising
+    // while the pressure falls is the trap Three Mile Island's operators fell into.
     const pressures: number[] = []
-    plantRun.run(450, () => pressures.push(plantRun.read('pressurizer.pressureMPa')))
-    const { read } = plantRun
-    // For minutes the pressure hangs near the saturation pressure of the hot
-    // legs, about 8 MPa after the trip, never falling far below it ...
+    let filled: { readonly pressure: number; readonly hotLegSaturation: number; readonly subcooling: number } | null = null
+    for (let second = 0; second < 1_200 && filled === null; second += 1) {
+      plantRun.run(1)
+      pressures.push(read('pressurizer.pressureMPa'))
+      if (read('pressurizer.levelPercent') > 90) {
+        filled = {
+          pressure: read('pressurizer.pressureMPa'),
+          hotLegSaturation: saturationPressureMPaFromTemperatureC(read('core.coolantOutletTemperatureC')),
+          subcooling: read('vessel.subcoolingMarginC'),
+        }
+      }
+    }
     expect(Math.min(...pressures)).toBeGreaterThan(7)
-    expect(Math.max(...pressures.slice(60))).toBeLessThan(9.5)
-    const hotLegSaturation = saturationPressureMPaFromTemperatureC(read('core.coolantOutletTemperatureC'))
-    expect(Math.abs(read('pressurizer.pressureMPa') - hotLegSaturation)).toBeLessThan(0.3)
-    expect(read('vessel.subcoolingMarginC')).toBeGreaterThan(-2)
-    expect(read('vessel.subcoolingMarginC')).toBeLessThan(2)
-    // ... while steam in the loops pushes water into the pressurizer, which
-    // rises far above its post-trip low, as at Three Mile Island.
-    expect(read('vessel.loopVoidFraction')).toBeGreaterThan(0.05)
-    expect(read('pressurizer.levelPercent')).toBeGreaterThan(90)
-    expect(read('pressurizer.reliefFlowKgPerS')).toBeGreaterThan(20)
+    expect(filled).not.toBeNull()
+    expect(Math.abs(filled!.pressure - filled!.hotLegSaturation)).toBeLessThan(0.3)
+    expect(filled!.subcooling).toBeGreaterThan(-2)
+    expect(filled!.subcooling).toBeLessThan(2)
+    expect(read('vessel.safetyInjectionFlowKgPerS')).toBeGreaterThan(40)
   })
 
   test('passes water at its liquid rating once the pressurizer is solid, which the inventory balance counts', () => {
@@ -137,11 +148,18 @@ describe('a stuck-open PORV', () => {
       plantRun.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
     }
     const { read } = plantRun
-    plantRun.run(150)
+    // While it has a steam space the pressurizer relieves steam, at its rating in proportion to the pressure.
+    let steamRelief = 0
+    let solidFor = 0
+    for (let second = 0; second < 1_200 && solidFor < 60; second += 1) {
+      plantRun.run(1)
+      if (read('pressurizer.levelPercent') > 99) solidFor += 1
+      else if (read('pressurizer.levelPercent') < 90) steamRelief = read('pressurizer.reliefFlowKgPerS') / (26.5 * read('pressurizer.pressureMPa') / 16.2)
+    }
+    expect(steamRelief).toBeCloseTo(1, 2)
     expect(read('pressurizer.levelPercent')).toBeGreaterThan(99)
-    // Rated 85 kg/s of steam at 15.5 MPa, in proportion to pressure; water
-    // flashing as it chokes in the valve passes about three times the mass.
-    const steamRating = 85 * read('pressurizer.pressureMPa') / 15.5
+    // Solid, water flashing as it chokes in the valve passes about three times the mass.
+    const steamRating = 26.5 * read('pressurizer.pressureMPa') / 16.2
     expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeGreaterThan(2.5)
     expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeLessThan(3.5)
     expect(Math.abs(read('rcsInventoryBalance.leakRateKgPerS'))).toBeLessThan(0.063)

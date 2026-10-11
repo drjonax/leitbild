@@ -327,7 +327,8 @@ describe('the PORV block valve', () => {
     expect(plantRun.tag('MOV-8000A-POS')).toBe(1)
     plantRun.act('pressurizer-relief-open', { positionPercent: 100 })
     plantRun.run(3_000)
-    expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBeGreaterThan(30)
+    // Fully open, it passes about its 26.5 kg/s steam rating.
+    expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBeGreaterThan(20)
     plantRun.act('pressurizer-porv-block-valve-close')
     plantRun.run(5_000)
     // A motor-operated valve: halfway through its stroke it still passes flow.
@@ -497,8 +498,8 @@ describe('blocking low-pressure safety injection below P-11', () => {
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
     plantRun.run(30_000)
     // The operators depressurize through the PORV and block SI as soon as P-11 comes in. The pressurizer's
-    // saturated water must flash to cool, so the PORV opens to 40 %: at 15 % it took ten minutes to pass 12 MPa.
-    expect(plantRun.operate('PORV-456A', 0.4).accepted).toBe(true)
+    // saturated water must flash to cool, so the PORV opens fully: its 26.5 kg/s outruns the heaters.
+    expect(plantRun.operate('PORV-456A', 1).accepted).toBe(true)
     let blockedAt: number | null = null
     for (let second = 0; second < 120 && blockedAt === null; second += 1) {
       plantRun.step()
@@ -512,8 +513,9 @@ describe('blocking low-pressure safety injection below P-11', () => {
     // The pushbutton springs back; the block is the logic's memory.
     expect(plantRun.tag('SI-BLOCK')).toBe(false)
     expect(plantRun.activeIds()).toContain('alarm:safety-injection-blocked:blocked')
+    // Well below the 12.7 MPa SI set point, SI stays blocked.
     plantRun.run(90_000)
-    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(11)
+    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(12)
     expect(plantRun.activeIds()).not.toContain(siActuated)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(false)
 
@@ -526,7 +528,7 @@ describe('blocking low-pressure safety injection below P-11', () => {
     }
     expect(resetAt).not.toBeNull()
     expect(resetAt!).toBeGreaterThanOrEqual(13.3)
-    expect(plantRun.operate('PORV-456A', 0.4).accepted).toBe(true)
+    expect(plantRun.operate('PORV-456A', 1).accepted).toBe(true)
     expect(plantRun.secondsUntil(siActuated, 120)).not.toBeNull()
     plantRun.run(5_000)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
