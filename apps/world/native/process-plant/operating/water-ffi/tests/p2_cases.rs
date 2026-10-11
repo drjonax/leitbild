@@ -1059,8 +1059,13 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
     let mut runs: Vec<(String, Variant, bool, Run)> = Vec::new();
     let mut declared_runs = variants(ctx, entry);
     if smoke.is_some() {
-        // A smoke run exercises the harness only: the nominal variant.
-        declared_runs.truncate(1);
+        // A smoke run exercises the harness only: the nominal variant, or the
+        // one named in LD01_P2_SMOKE_VARIANT.
+        match std::env::var("LD01_P2_SMOKE_VARIANT") {
+            Ok(name) => declared_runs.retain(|(label, _, _)| *label == name || label == "nominal"),
+            Err(_) => declared_runs.truncate(1),
+        }
+        assert!(!declared_runs.is_empty(), "no such smoke variant");
     }
     for (label, v, refined) in declared_runs {
         if cpu_s() >= deadline {
@@ -1102,6 +1107,9 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             consistent_passes: CONSISTENT_PASSES,
             lift_root_bound: ctx.lift_root_bound(),
             event_restart_first_step_s: ctx.set.event_restart_first_step_s,
+            // Diagnostic only: a smoke may run without the ledger, to see
+            // whether the residual alone completes a run the ledger stopped.
+            ledger: !(smoke.is_some() && std::env::var("LD01_P2_DIAG_WITHOUT_LEDGER").is_ok()),
             cutout,
         };
         let sys = system(ctx, entry, prepared, v);
@@ -1426,6 +1434,7 @@ fn skipped(label: &str) -> Run {
         resolvability: Vec::new(),
         uncredited: Vec::new(),
         handle_stats: Vec::new(),
+        ledger_disabled: false,
         step_probe: Vec::new(),
         cutout: None,
         observations: Vec::new(),

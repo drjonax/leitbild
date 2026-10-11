@@ -695,6 +695,8 @@ pub struct Segment {
     pub started_q: [f64; LEDGER],
     /// The ledger integrand's refusal of a converged step, if any.
     pub ledger_refusal: Option<String>,
+    /// False in the no-ledger smoke diagnostic: no quadratures are set up.
+    pub ledger: bool,
 }
 impl System for Segment {
     fn dimension(&self) -> usize {
@@ -787,7 +789,7 @@ impl System for Segment {
 /// which must be `t`.
 fn ledger_at(ida: &Ida<Segment>, t: f64) -> Result<[f64; LEDGER], String> {
     let segment = ida.system();
-    if t == segment.started_s {
+    if t == segment.started_s || !segment.ledger {
         return Ok(segment.started_q);
     }
     let mut q = [0.; LEDGER];
@@ -1108,6 +1110,8 @@ pub struct RunSpec {
     pub lift_root_bound: f64,
     /// Stock IDA's first step after every event restart (request 4, K4).
     pub event_restart_first_step_s: f64,
+    /// The integrator's ledger (K2); false only in a smoke diagnostic.
+    pub ledger: bool,
     /// The low-level heater cutout chain (gate 5).
     pub cutout: Option<Cutout>,
 }
@@ -1213,6 +1217,8 @@ pub struct Run {
     /// The cutout chain's record follows the handle counters.
     /// Every integrator handle's own stock counters, in order.
     pub handle_stats: Vec<Value>,
+    /// The no-ledger smoke diagnostic ran this run.
+    pub ledger_disabled: bool,
     /// Smoke diagnostic only: each accepted step's end inside the probed
     /// window, `[t_n, h, order, steps, inventory_kg, mass_receipt_kg_s, handle]`.
     pub step_probe: Vec<Value>,
@@ -1254,6 +1260,14 @@ fn new_handle(
         first_step,
         ledger: q0,
     } = start;
+    // Stock IDA refuses a start outside its nonnegativity constraints; name
+    // the coordinate instead of passing on a bare status.
+    if let Some(&i) = spec.nonnegative.iter().find(|&&i| y[i] < 0.) {
+        return Err(format!(
+            "the start at t={t} s has coordinate {i} = {:e} (scaled) below its nonnegativity constraint",
+            y[i]
+        ));
+    }
     let ids = system.differential();
     let roots = system.roots_active();
     let mut ida = Ida::new(
@@ -1263,6 +1277,7 @@ fn new_handle(
             started_s: t,
             started_q: q0,
             ledger_refusal: None,
+            ledger: spec.ledger,
         },
         Initial {
             time: t,
@@ -1278,7 +1293,9 @@ fn new_handle(
     if let Some(h) = first_step {
         ida.set_init_step(h)?;
     }
-    ida.initialize_quadratures(&q0)?;
+    if spec.ledger {
+        ida.initialize_quadratures(&q0)?;
+    }
     ida.stop_at(stop)?;
     Ok(ida)
 }
@@ -1435,6 +1452,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
         resolvability: Vec::new(),
         uncredited: Vec::new(),
         handle_stats: Vec::new(),
+        ledger_disabled: !spec.ledger,
         step_probe: Vec::new(),
         cutout: None,
         observations: Vec::new(),
@@ -2399,6 +2417,6 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
         "min_drag_gap_margin":min_gap,"min_admitted_mass_kg":{"value":min_a.0,"at_s":min_a.1},
         "relief_events":run.relief_events,"area_step_crossings":run.area_crossings,"structural_events":run.structural,
         "credited_departure_overruns":run.uncredited,"resolvability_reports":run.resolvability,
-        "handle_stats":run.handle_stats,"step_probe":run.step_probe,"cutout":run.cutout,"observations":run.observations.len(),
+        "handle_stats":run.handle_stats,"ledger_disabled_for_diagnosis":run.ledger_disabled,"step_probe":run.step_probe,"cutout":run.cutout,"observations":run.observations.len(),
         "samples":run.samples.len(),"series":series})
 }
