@@ -1057,6 +1057,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         _ => ((duration / ctx.output_s()) / 300.).ceil() as usize,
     };
     let mut runs: Vec<(String, Variant, bool, Run)> = Vec::new();
+    let mut loads = serde_json::Map::new();
     let mut declared_runs = variants(ctx, entry);
     if smoke.is_some() {
         // A smoke run exercises the harness only: the nominal variant, or the
@@ -1113,11 +1114,14 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             cutout,
         };
         let sys = system(ctx, entry, prepared, v);
+        let load_start = load_average();
         let r = run(sys, &prepared.y0, &spec);
+        let load_end = load_average();
         println!(
-            "{} {}: end {:?} at {} s, {} steps, {:.2} CPU-s",
-            entry.id, label, r.end, r.reached_s, r.totals.steps, r.cpu_s
+            "{} {}: end {:?} at {} s, {} steps, {:.2} CPU-s, load {:?} -> {:?}",
+            entry.id, label, r.end, r.reached_s, r.totals.steps, r.cpu_s, load_start, load_end
         );
+        loads.insert(label.clone(), json!({"start":load_start,"end":load_end}));
         runs.push((label, v, refined, r));
     }
     let surge = entry.surge.as_ref().map(|t| Table::new(t.clone()).unwrap());
@@ -1129,6 +1133,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         j["variant"] = json!({"relaxation_factor":v.relaxation_factor,"spray_drop_diameter_m":v.drop_diameter_m,"bubble_diameter_m":v.bubble_diameter_m,"halved_segments":v.halved_segments,
             "bubble_exchange_factor":v.exchange.factor,"bubble_exchange_diameter_m":v.exchange.diameter_m,"wall_birth_fraction":v.wall_birth_fraction,"refined":refined});
         j["cpu_cap_s"] = json!(cap);
+        j["load_average"] = loads[label.as_str()].clone();
         let l = ledger(r, surge.as_ref(), spray.as_ref(), ctx.set.quadrature_closure_factor);
         j["conservation"] = l.clone();
         j["area_step_rejections"] = json!(crossing_rejections(r));
