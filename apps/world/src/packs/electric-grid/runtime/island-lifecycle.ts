@@ -150,7 +150,11 @@ const inheritedFrequencyState = (grid: GridRuntimeInstance, island: GridTopology
   return state
 }
 
-/** `island:<naming bus>`; a suffix keeps the id unique among live islands. */
+/**
+ * A fresh island's id: `island:<anchor bus>` of its structure (GridTopologyIsland.anchorBusId); a
+ * suffix keeps it unique among live islands. An island keeps its id while its members change: a
+ * split child with the larger E_k and a merge keep the id of the parent with the larger E_k.
+ */
 const freshIslandId = (island: GridTopologyIsland, taken: ReadonlySet<string>): string => {
   const base = island.id
   if (!taken.has(base)) return base
@@ -160,7 +164,6 @@ const freshIslandId = (island: GridTopologyIsland, taken: ReadonlySet<string>): 
   }
 }
 
-const anchorBusOf = (plan: GridTopologyPlan, island: GridTopologyIsland): string => plan.network.busIds[island.busIndices[0]!]!
 
 interface Component {
   readonly previous: number[]
@@ -218,7 +221,7 @@ const newIsland = (config: {
   return gridIsland({
     id: config.id,
     planIndex: config.planIndex,
-    anchorBusId: anchorBusOf(config.plan, island),
+    anchorBusId: island.anchorBusId,
     energized,
     workspace: frequency === null ? null : islandWorkspaceHolding(config.grid, island, frequency),
     rocofHzPerSecond: frequency?.rocofHzPerSecond ?? null,
@@ -290,7 +293,7 @@ const reconciledIslands = (grid: GridRuntimeInstance, previous: GridIslandPlan, 
       result[planIndex] = gridIsland({
         id: island.id,
         planIndex,
-        anchorBusId: anchorBusOf(plan, structure),
+        anchorBusId: structure.anchorBusId,
         energized: island.energized,
         workspace,
         rocofHzPerSecond: island.rocofHzPerSecond,

@@ -228,7 +228,14 @@ export interface GridTopologyComponent {
  * Norwegian components tied to the Nordic remainder run at its frequency as one island.
  */
 export interface GridTopologyIsland {
+  /** `island:<anchorBusId>`: names the structure; a stable island keeps its own id (GridIsland). */
   readonly id: string
+  /**
+   * The bus the structure is named after: its first bus in the network's naming order
+   * (CompiledGridNetwork.busNamingRank), the highest-voltage station bus with the most connected
+   * capacity; never a junction or boundary bus while the island holds a station bus.
+   */
+  readonly anchorBusId: string
   /** The reference bus of the island's first component. */
   readonly referenceBusId: string
   /** Network indices of its buses, ascending (model order). */
@@ -282,7 +289,7 @@ export interface GridIsland {
   readonly id: string
   /** Index of the plan island this record follows. */
   readonly planIndex: number
-  /** A bus of the island; locates the island again in a rebuilt plan. */
+  /** The anchor bus of the island's structure (GridTopologyIsland.anchorBusId); locates the island again in a rebuilt plan. */
   readonly anchorBusId: string
   energized: boolean
   /** The frequency-control state as published, read from `workspace`; null while de-energised. */

@@ -493,8 +493,8 @@
             <h3>Islands ({islands.total})</h3>
             {#each islands.islands as island (island.id)}
               {@render assetRow(
-                island.referenceBus.id,
-                `${island.referenceBus.label} · ${island.busCount} buses`,
+                island.anchorBus.id,
+                `${island.anchorBus.label} · ${island.busCount} buses`,
                 island.energized
                   ? `${island.frequencyHz === null ? '' : `${island.frequencyHz.toFixed(2)} Hz · `}${mw(island.loadMw)} MW`
                   : 'De-energised',

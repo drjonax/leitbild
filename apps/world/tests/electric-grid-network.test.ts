@@ -137,7 +137,7 @@ const kclResidualsMw = (grid: GridRuntimeInstance): Map<string, number> => {
 
 describe('electric-grid sparse network core', () => {
   test('solves an analytic three-bus DC case exactly, in radians, with the first bus as reference', () => {
-    // Reference bus:c comes first in model order; island ids name the lowest bus id.
+    // Reference bus:c comes first in model order; equal buses (voltage and connected capacity) name the island by the lowest id.
     const model = handModel('three-bus', ['bus:c', 'bus:a', 'bus:b'], [
       line('c-a', 'bus:c', 'bus:a', 0.1),
       line('a-b', 'bus:a', 'bus:b', 0.2),
@@ -243,11 +243,12 @@ describe('electric-grid sparse network core', () => {
 
     grid.branches.get('bridge')!.state = 'open'
     const split = topologyPlanForGrid(grid)
+    // Each triangle is named after the bus with the most connected capacity, the open bridge included.
     expect(split.islands.map(island => [island.id, island.referenceBusId, island.buses])).toEqual([
-      ['island:bus:d', 'bus:d', ['bus:d', 'bus:e', 'bus:f']],
+      ['island:bus:f', 'bus:d', ['bus:d', 'bus:e', 'bus:f']],
       ['island:bus:a', 'bus:a', ['bus:a', 'bus:b', 'bus:c']],
     ])
-    expect(split.islandIdByBus.get('bus:f')).toBe('island:bus:d')
+    expect(split.islandIdByBus.get('bus:d')).toBe('island:bus:f')
     expect(split.islands[1]!.branches.map(branch => branch.id)).toEqual(['a-b', 'b-c', 'c-a'])
     solveGridAngles(split, injections)
     expect([...split.referenceMismatchMw]).toEqual([100, -80])

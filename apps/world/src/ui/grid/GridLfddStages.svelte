@@ -45,7 +45,7 @@
     <p class="hint">An operated stage stays latched until restored; a restored stage stays disarmed until re-armed, so step-wise restoration cannot trip it again.</p>
     {#each latched as entry (entry.island.id)}
       <div class="island">
-        <span class="island-name">{entry.island.referenceBus.label}{entry.island.frequencyHz === null ? '' : ` · ${entry.island.frequencyHz.toFixed(3)} Hz`}</span>
+        <span class="island-name">{entry.island.anchorBus.label}{entry.island.frequencyHz === null ? '' : ` · ${entry.island.frequencyHz.toFixed(3)} Hz`}</span>
         {#each entry.stages as stage (stage.id)}
           <div class="stage" class:operated={stage.status === 'operated'}>
             <span>{stage.id} · {stage.thresholdHz.toFixed(2)} Hz · {stage.status === 'operated' ? `operated, ${stage.disconnectedMw.toLocaleString('en-GB')} MW disconnected` : 'restored, disarmed'}</span>

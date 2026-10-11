@@ -56,10 +56,18 @@ const closedBranchesChanged = (grid: GridRuntimeInstance, closed: Uint8Array): b
   return false
 }
 
-const createCachedIsland = (network: CompiledGridNetwork, buses: Int32Array, branches: Int32Array, localOfBus: Int32Array): CachedIsland => {
+/** The bus that names a set of buses: the lowest in the network's naming order (busNamingRank). */
+const namingBusOf = (network: CompiledGridNetwork, buses: Int32Array): number => {
   let namingBus = buses[0]!
-  for (const bus of buses) if (network.busIdSortRank[bus]! < network.busIdSortRank[namingBus]!) namingBus = bus
-  return { buses, branches, system: createGridIslandSystem({ network, islandId: `component:${network.busIds[namingBus]!}`, buses, branches, localOfBus }) }
+  for (let position = 1; position < buses.length; position += 1) {
+    const bus = buses[position]!
+    if (network.busNamingRank[bus]! < network.busNamingRank[namingBus]!) namingBus = bus
+  }
+  return namingBus
+}
+
+const createCachedIsland = (network: CompiledGridNetwork, buses: Int32Array, branches: Int32Array, localOfBus: Int32Array): CachedIsland => {
+  return { buses, branches, system: createGridIslandSystem({ network, islandId: `component:${network.busIds[namingBusOf(network, buses)]!}`, buses, branches, localOfBus }) }
 }
 
 /**
@@ -194,6 +202,7 @@ const topologyIsland = (config: {
   readonly model: GridModelDefinition
   readonly network: CompiledGridNetwork
   readonly id: string
+  readonly anchorBusId: string
   readonly referenceBusId: string
   readonly busIndices: Int32Array
   readonly branchIndices: Int32Array
@@ -207,6 +216,7 @@ const topologyIsland = (config: {
   const { model, network } = config
   const island = {
     id: config.id,
+    anchorBusId: config.anchorBusId,
     referenceBusId: config.referenceBusId,
     busIndices: config.busIndices,
     branchIndices: config.branchIndices,
@@ -270,15 +280,12 @@ const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwo
   const connectionPoints = groupByIsland(islandCount, model.connectionPoints.length, point => islandIndexOfBus[tables.connectionPointBus[point]!]!)
   const islands: GridTopologyIsland[] = componentsOfIsland.map((componentIndices, island) => {
     const busIndices = slice(buses, island)
-    let namingBus = busIndices[0]!
-    for (let busPosition = 0; busPosition < busIndices.length; busPosition += 1) {
-      const bus = busIndices[busPosition]!
-      if (network.busIdSortRank[bus]! < network.busIdSortRank[namingBus]!) namingBus = bus
-    }
+    const anchorBusId = network.busIds[namingBusOf(network, busIndices)]!
     return topologyIsland({
       model,
       network,
-      id: `island:${network.busIds[namingBus]!}`,
+      id: `island:${anchorBusId}`,
+      anchorBusId,
       referenceBusId: components[componentIndices[0]!]!.referenceBusId,
       busIndices,
       branchIndices: slice(branches, island),

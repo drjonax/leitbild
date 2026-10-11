@@ -16,8 +16,9 @@ const islandsPayloadSchema = z.object({
 }).strict()
 
 export const gridIslandSchema = z.object({
-  id: z.string().describe('Stable island id; it survives splits and merges of the island.'),
-  referenceBus: z.object({ id: z.string(), label: z.string() }).strict(),
+  id: z.string().describe('Stable island id; it survives splits and merges of the island. A new island is named island:<anchor bus>; after a split the child with the larger kinetic energy keeps its parent\'s id, and a merge keeps the id of the parent with the larger kinetic energy.'),
+  anchorBus: z.object({ id: z.string(), label: z.string() }).strict().describe('The bus the island is named after as it is now: its highest-voltage station bus with the most connected branch capacity (never a junction or boundary bus while it holds a station). An island that kept its id through a split may carry an earlier anchor in its id.'),
+  referenceBus: z.object({ id: z.string(), label: z.string() }).strict().describe('The DC angle reference of its first AC component.'),
   busCount: count,
   branchCount: count,
   generatorCount: count,
@@ -76,6 +77,7 @@ const islandView = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: 
     : 0
   return {
     id: island.id,
+    anchorBus: { id: structure.anchorBusId, label: grid.definition.index.busById.get(structure.anchorBusId)!.label },
     referenceBus: { id: referenceBusId, label: grid.definition.index.busById.get(referenceBusId)!.label },
     busCount: structure.buses.length,
     branchCount: structure.branches.length,
