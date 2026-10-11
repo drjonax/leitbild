@@ -132,6 +132,35 @@ struct Blocks<P> {
     rod_reads: Option<RodReads>,
     /// Per SG: the secondary owner's own coordinates its view reads.
     secondary_outputs: Vec<Vec<usize>>,
+    /// Per solid coordinate: the closed scope of its owner column and the
+    /// store whose temperature it sets, compiled at first use.
+    column_scopes: Vec<Option<(solids::Closed, Option<usize>)>>,
+    /// Wall time of the local coupler's calls, by kind.
+    coupler: CouplerCounters,
+}
+
+/// Calls and wall time of the local coupler during block Jacobians, by
+/// kind: network columns' `local`, the owner columns by owner, and the two
+/// port columns.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct CouplerCounters {
+    pub local: Tally,
+    pub solid_columns: Tally,
+    pub secondary_columns: Tally,
+    pub rod_columns: Tally,
+    pub fuel_heat_columns: Tally,
+    pub secondary_heat_columns: Tally,
+}
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct Tally {
+    pub calls: usize,
+    pub wall_s: f64,
+}
+impl Tally {
+    fn add(&mut self, started: Instant) {
+        self.calls += 1;
+        self.wall_s += started.elapsed().as_secs_f64();
+    }
 }
 
 /// Network cells and faces any rod row or receipt reads, and the cells its
@@ -308,6 +337,8 @@ impl<P: Properties + WaterProperties> Joined<P> {
             rod_roots: None,
             rod_reads,
             secondary_outputs,
+            column_scopes: vec![None; solids.layout().len()],
+            coupler: CouplerCounters::default(),
             nuclear_rows: vec![s(0.); nuclear.layout().len()],
             solid_rows: vec![s(0.); solids.layout().len()],
             secondary_rows: vec![s(0.); secondary_len],
@@ -386,6 +417,10 @@ impl<P: Properties + WaterProperties> Joined<P> {
     }
     pub fn heats(&self) -> &Heats {
         &self.blocks.heats
+    }
+    /// The local coupler's calls and wall time over every block Jacobian.
+    pub fn coupler_counters(&self) -> CouplerCounters {
+        self.blocks.coupler
     }
     pub fn temperatures(&self) -> &solids::Temperatures {
         &self.blocks.temperatures
@@ -1360,7 +1395,6 @@ impl OwnerRows {
 struct Scratch {
     /// Global unit seed, zero outside the current column.
     seed: Vec<f64>,
-    temperatures: solids::Temperatures,
     views: Vec<SecondaryView>,
     heat_w: Vec<Scalar>,
     secondary_rows: Vec<Scalar>,
@@ -1419,24 +1453,11 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
     }
     fn scope(&self, cells: &[usize], wall: &[usize]) -> solids::Closed {
         let sol = &self.blocks.solids;
-        let incidence = sol.incidence();
         sol.close(&solids::SolidScope {
             bands: sol.halves_wetting(wall),
-            passive: incidence
-                .passive
-                .iter()
-                .enumerate()
-                .filter(|(_, (_, water))| cells.contains(water))
-                .map(|(k, _)| k)
-                .collect(),
+            passive: sol.passive_wetted_by(cells),
             plenum: Vec::new(),
-            segments: incidence
-                .segments
-                .iter()
-                .enumerate()
-                .filter(|(_, (primary, _))| wall.contains(primary))
-                .map(|(k, _)| k)
-                .collect(),
+            segments: sol.segments_wetted_by(wall),
         })
     }
     /// Whether the rod owner reads any of `cells` or `faces`.
@@ -1455,6 +1476,18 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
     /// rod owner, when it reads a listed cell or face, is evaluated whole:
     /// its rows and guide receipts.
     pub fn local(
+        &mut self,
+        cells: &[usize],
+        faces: &[usize],
+        fluid: &Fluid<'_>,
+        receipts: &mut Receipts<'_>,
+    ) -> Result<(), Failure> {
+        let started = Instant::now();
+        let result = self.local_terms(cells, faces, fluid, receipts);
+        self.blocks.coupler.local.add(started);
+        result
+    }
+    fn local_terms(
         &mut self,
         cells: &[usize],
         faces: &[usize],
@@ -1617,6 +1650,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
                 "owner column {column} outside the solid, secondary and rod coordinates"
             )));
         }
+        let started = Instant::now();
         self.scratch.seed[column] = 1.;
         let result = if column < o.secondary {
             self.solid_column(column - o.solids, fluid, receipts, out)
@@ -1626,10 +1660,20 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             self.rod_column(fluid, receipts, out)
         };
         self.scratch.seed[column] = 0.;
+        let c = &mut self.blocks.coupler;
+        if column < o.secondary {
+            c.solid_columns.add(started);
+        } else if column < o.rods {
+            c.secondary_columns.add(started);
+        } else {
+            c.rod_columns.add(started);
+        }
         result
     }
 
-    /// The solids' rows reading local solid coordinate `i`.
+    /// The solids' rows reading local solid coordinate `i`. Its closed
+    /// scope is compiled once per coordinate; the seeded store's
+    /// temperature is set in place for the call and restored after it.
     fn solid_column(
         &mut self,
         i: usize,
@@ -1645,47 +1689,16 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             views,
             heats,
             scales,
+            column_scopes,
             ..
         } = &mut *self.blocks;
-        let incidence = solids.incidence();
-        let halves = solids.halves();
-        let energies = 3 * halves;
-        let mut scope = solids::SolidScope::default();
-        let mut store = None;
-        if i < 2 * energies {
-            // A half's energy or surface: that half alone reads it.
-            let a = if i < energies {
-                i / 3
-            } else {
-                (i - energies) / 3
-            };
-            scope.bands.push(a);
-            if i < energies {
-                store = Some(i);
-            }
-        } else if (solids.helium(0)..solids.passive(0)).contains(&i) {
-            let h = i - solids.helium(0);
-            scope.bands = (0..halves)
-                .filter(|b| incidence.halves[*b].0 == h)
-                .collect();
-            scope.plenum = (0..incidence.plenum.len())
-                .filter(|c| incidence.plenum[*c].0 == h)
-                .collect();
-            store = Some(i);
-        } else if (solids.passive(0)..solids.metal(0)).contains(&i) {
-            let p = i - solids.passive(0);
-            scope.passive = (0..incidence.passive.len())
-                .filter(|c| incidence.passive[*c].0 == p)
-                .collect();
-            scope.plenum = (0..incidence.plenum.len())
-                .filter(|c| incidence.plenum[*c].1 == p)
-                .collect();
-            store = Some(i);
-        } else {
-            scope.segments.push(i - solids.metal(0));
-            store = Some(i);
+        if column_scopes[i].is_none() {
+            let (scope, store) = solids.column_scope(i)?;
+            column_scopes[i] = Some((solids.close(&scope), store));
         }
-        let closed = solids.close(&scope);
+        let Some((closed, store)) = &column_scopes[i] else {
+            return Err(fatal("solid column scope"));
+        };
         let x = view(
             self.y,
             self.yp,
@@ -1694,36 +1707,49 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             o.solids..o.secondary,
             &scales[1].coordinates,
         )?;
-        let seeded = &mut self.scratch.temperatures;
-        seeded.clone_from(temperatures);
-        if let Some(k) = store {
-            solids.temperatures_local(x, &[k], seeded)?;
+        let saved = match store {
+            Some(k) => Some((*k, *solids.temperature_of(*k, temperatures)?)),
+            None => None,
+        };
+        let evaluated = (|| {
+            if let Some((k, _)) = saved {
+                solids.temperatures_local(x, &[k], temperatures)?;
+            }
+            solids.rows_local(
+                properties,
+                x,
+                temperatures,
+                &heats.nuclear.fuel_w,
+                fluid,
+                views,
+                closed,
+                receipts,
+                &mut self.solid_rows,
+                &mut self.heat,
+            )?;
+            let energies = 3 * solids.halves();
+            if i < energies && i % 3 < 2 {
+                let a = i / 3;
+                out.fuel_t.push((
+                    a,
+                    thermal::fuel_feedback_temperature(
+                        temperatures.fuel[a][0],
+                        temperatures.fuel[a][1],
+                    )
+                    .map_err(trial)?,
+                ));
+            }
+            Ok(())
+        })();
+        if let Some((k, t)) = saved {
+            *solids.temperature_of(k, temperatures)? = t;
         }
-        solids.rows_local(
-            properties,
-            x,
-            seeded,
-            &heats.nuclear.fuel_w,
-            fluid,
-            views,
-            &closed,
-            receipts,
-            &mut self.solid_rows,
-            &mut self.heat,
-        )?;
+        evaluated?;
         out.rows.extend(
             self.solid_rows
                 .iter()
                 .map(|(r, v)| (o.solids + r, *v / s(scales[1].rows[*r]))),
         );
-        if i < energies && i % 3 < 2 {
-            let a = i / 3;
-            out.fuel_t.push((
-                a,
-                thermal::fuel_feedback_temperature(seeded.fuel[a][0], seeded.fuel[a][1])
-                    .map_err(trial)?,
-            ));
-        }
         out.secondary_w.extend(
             closed
                 .generators
@@ -1775,11 +1801,8 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
         let heat_w = &mut self.scratch.heat_w;
         heat_w.clone_from(&heats.solids.secondary_w);
         if !generators.is_empty() {
-            let incidence = solids.incidence();
             let closed = solids.close(&solids::SolidScope {
-                segments: (0..incidence.segments.len())
-                    .filter(|g| generators.contains(&incidence.segments[*g].1))
-                    .collect(),
+                segments: solids.segments_of(&generators),
                 ..solids::SolidScope::default()
             });
             let xs = view(
@@ -1886,6 +1909,17 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
         fluid: &Fluid<'_>,
         out: &mut OwnerRows,
     ) -> Result<(), Failure> {
+        let started = Instant::now();
+        let result = self.fuel_heat_terms(a, fluid, out);
+        self.blocks.coupler.fuel_heat_columns.add(started);
+        result
+    }
+    fn fuel_heat_terms(
+        &mut self,
+        a: usize,
+        fluid: &Fluid<'_>,
+        out: &mut OwnerRows,
+    ) -> Result<(), Failure> {
         let o = self.blocks.offsets;
         out.clear();
         let Blocks {
@@ -1945,6 +1979,12 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
     /// The secondary rows' response to a unit direction (W) in SG `g`'s
     /// metal-to-secondary heat, every coordinate unseeded.
     pub fn secondary_heat_column(&mut self, g: usize, out: &mut OwnerRows) -> Result<(), Failure> {
+        let started = Instant::now();
+        let result = self.secondary_heat_terms(g, out);
+        self.blocks.coupler.secondary_heat_columns.add(started);
+        result
+    }
+    fn secondary_heat_terms(&mut self, g: usize, out: &mut OwnerRows) -> Result<(), Failure> {
         let o = self.blocks.offsets;
         out.clear();
         let Blocks {

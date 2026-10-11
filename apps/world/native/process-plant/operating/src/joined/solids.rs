@@ -212,6 +212,28 @@ pub struct Solids {
     passive_ids: Vec<String>,
     /// Every element: the full evaluation's scope.
     all: Closed,
+    /// Structural incidence and its inverse, compiled once.
+    incidence: Incidence,
+    inverse: Inverse,
+}
+
+/// The inverse of [`Incidence`], each list ascending: for local scopes in
+/// time proportional to the scope rather than to every element.
+#[derive(Clone, Debug, Default)]
+struct Inverse {
+    /// Per helium store: the halves on it and its plenum contacts.
+    helium_bands: Vec<Vec<usize>>,
+    helium_plenum: Vec<Vec<usize>>,
+    /// Per passive store: its plenum contacts and passive contacts.
+    store_plenum: Vec<Vec<usize>>,
+    store_passive: Vec<Vec<usize>>,
+    /// Per SG: its segments.
+    generator_segments: Vec<Vec<usize>>,
+    /// Per network regular cell: the halves its water wets, its passive
+    /// contacts and the SG segments whose primary it is.
+    cell_bands: Vec<Vec<usize>>,
+    cell_passive: Vec<Vec<usize>>,
+    cell_segments: Vec<Vec<usize>>,
 }
 
 impl Solids {
@@ -461,8 +483,10 @@ impl Solids {
             stores: (0..passive_mass.len()).collect(),
             generators: (0..t.secondaries.len()).collect(),
         };
-        Ok(Self {
+        let mut solids = Self {
             all,
+            incidence: Incidence::default(),
+            inverse: Inverse::default(),
             layout,
             prepared,
             helium_rate: vec![s(0.); helium_nr.len()],
@@ -479,7 +503,72 @@ impl Solids {
             wall_cells,
             wall_slot,
             wall,
-        })
+        };
+        solids.compile_incidence(water_cells)?;
+        Ok(solids)
+    }
+
+    fn compile_incidence(&mut self, water_cells: usize) -> Result<(), Failure> {
+        let incidence = Incidence {
+            halves: self
+                .bands
+                .iter()
+                .map(|b| (b.helium, b.contacts.iter().map(|c| c.water).collect()))
+                .collect(),
+            passive: self.passive.iter().map(|c| (c.solid, c.water)).collect(),
+            plenum: self.plenum.iter().map(|c| (c.helium, c.solid)).collect(),
+            segments: self
+                .segments
+                .iter()
+                .map(|g| (g.primary, g.secondary))
+                .collect(),
+        };
+        let mut inv = Inverse {
+            helium_bands: vec![Vec::new(); self.helium_nr.len()],
+            helium_plenum: vec![Vec::new(); self.helium_nr.len()],
+            store_plenum: vec![Vec::new(); self.passive_mass.len()],
+            store_passive: vec![Vec::new(); self.passive_mass.len()],
+            generator_segments: vec![Vec::new(); self.secondaries],
+            cell_bands: vec![Vec::new(); water_cells],
+            cell_passive: vec![Vec::new(); water_cells],
+            cell_segments: vec![Vec::new(); water_cells],
+        };
+        let at = |v: &mut Vec<Vec<usize>>, k: usize, e: usize| -> Result<(), Failure> {
+            v.get_mut(k)
+                .ok_or_else(|| fatal(format!("solid incidence index {k} outside its owner")))?
+                .push(e);
+            Ok(())
+        };
+        for (b, (helium, cells)) in incidence.halves.iter().enumerate() {
+            at(&mut inv.helium_bands, *helium, b)?;
+            for c in cells {
+                at(&mut inv.cell_bands, *c, b)?;
+            }
+        }
+        for (c, (store, cell)) in incidence.passive.iter().enumerate() {
+            at(&mut inv.store_passive, *store, c)?;
+            at(&mut inv.cell_passive, *cell, c)?;
+        }
+        for (c, (helium, store)) in incidence.plenum.iter().enumerate() {
+            at(&mut inv.helium_plenum, *helium, c)?;
+            at(&mut inv.store_plenum, *store, c)?;
+        }
+        for (g, (cell, sg)) in incidence.segments.iter().enumerate() {
+            at(&mut inv.generator_segments, *sg, g)?;
+            at(&mut inv.cell_segments, *cell, g)?;
+        }
+        for v in [
+            &mut inv.cell_bands,
+            &mut inv.cell_passive,
+            &mut inv.cell_segments,
+        ] {
+            for list in v.iter_mut() {
+                list.dedup();
+            }
+        }
+        self.incidence = incidence;
+        self.inverse = inv;
+        Ok(())
     }
 
     pub fn layout(&self) -> &Layout {
@@ -527,32 +616,66 @@ impl Solids {
             .position(|p| p == id)
             .map(|p| self.passive(p))
     }
-    /// Every core half whose clad wets one of `cells`.
+    /// Every core half whose clad wets one of `cells`, ascending.
     pub fn halves_wetting(&self, cells: &[usize]) -> Vec<usize> {
-        (0..self.bands.len())
-            .filter(|b| {
-                self.bands[*b]
-                    .contacts
-                    .iter()
-                    .any(|c| cells.contains(&c.water))
-            })
-            .collect()
+        self.union(cells, &self.inverse.cell_bands)
     }
-    pub fn incidence(&self) -> Incidence {
-        Incidence {
-            halves: self
-                .bands
-                .iter()
-                .map(|b| (b.helium, b.contacts.iter().map(|c| c.water).collect()))
-                .collect(),
-            passive: self.passive.iter().map(|c| (c.solid, c.water)).collect(),
-            plenum: self.plenum.iter().map(|c| (c.helium, c.solid)).collect(),
-            segments: self
-                .segments
-                .iter()
-                .map(|g| (g.primary, g.secondary))
-                .collect(),
-        }
+    /// The passive contacts whose water is one of `cells`, ascending.
+    pub fn passive_wetted_by(&self, cells: &[usize]) -> Vec<usize> {
+        self.union(cells, &self.inverse.cell_passive)
+    }
+    /// The SG segments whose primary water is one of `cells`, ascending.
+    pub fn segments_wetted_by(&self, cells: &[usize]) -> Vec<usize> {
+        self.union(cells, &self.inverse.cell_segments)
+    }
+    /// The segments of the listed SGs, ascending.
+    pub fn segments_of(&self, generators: &[usize]) -> Vec<usize> {
+        self.union(generators, &self.inverse.generator_segments)
+    }
+    fn union(&self, keys: &[usize], map: &[Vec<usize>]) -> Vec<usize> {
+        let mut out: Vec<usize> = keys
+            .iter()
+            .filter_map(|k| map.get(*k))
+            .flatten()
+            .copied()
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+    pub fn incidence(&self) -> &Incidence {
+        &self.incidence
+    }
+    /// The unclosed scope of the elements that read own coordinate `i`
+    /// (energy, surface or store), and the store whose temperature `i`
+    /// sets, if any.
+    pub fn column_scope(&self, i: usize) -> Result<(SolidScope, Option<usize>), Failure> {
+        let energies = 3 * self.bands.len();
+        let (h0, p0, m0) = (self.helium0(), self.passive0(), self.metal0());
+        let mut scope = SolidScope::default();
+        let store = if i < 2 * energies {
+            // A half's energy or surface: that half alone reads it.
+            scope.bands.push(if i < energies {
+                i / 3
+            } else {
+                (i - energies) / 3
+            });
+            (i < energies).then_some(i)
+        } else if (h0..p0).contains(&i) {
+            scope.bands = self.inverse.helium_bands[i - h0].clone();
+            scope.plenum = self.inverse.helium_plenum[i - h0].clone();
+            Some(i)
+        } else if (p0..m0).contains(&i) {
+            scope.passive = self.inverse.store_passive[i - p0].clone();
+            scope.plenum = self.inverse.store_plenum[i - p0].clone();
+            Some(i)
+        } else if i < self.layout.len() {
+            scope.segments.push(i - m0);
+            Some(i)
+        } else {
+            return Err(fatal(format!("solid coordinate {i} outside the layout")));
+        };
+        Ok((scope, store))
     }
     /// Local index of half `a`'s surface `k` (fuel surface, clad inner,
     /// clad outer).
@@ -794,44 +917,74 @@ impl Solids {
     /// contact, an SG's secondary heat with all its segments.
     pub fn close(&self, scope: &SolidScope) -> Closed {
         use std::collections::BTreeSet;
-        let mut bands: BTreeSet<usize> = scope.bands.iter().copied().collect();
-        let mut passive: BTreeSet<usize> = scope.passive.iter().copied().collect();
-        let mut plenum: BTreeSet<usize> = scope.plenum.iter().copied().collect();
-        let mut segments: BTreeSet<usize> = scope.segments.iter().copied().collect();
-        let mut helium = BTreeSet::new();
-        let mut stores = BTreeSet::new();
-        let mut generators = BTreeSet::new();
-        loop {
-            let before = (bands.len(), passive.len(), plenum.len(), segments.len());
-            helium.extend(bands.iter().map(|b| self.bands[*b].helium));
-            for c in &plenum {
-                helium.insert(self.plenum[*c].helium);
-                stores.insert(self.plenum[*c].solid);
-            }
-            stores.extend(passive.iter().map(|c| self.passive[*c].solid));
-            for (b, band) in self.bands.iter().enumerate() {
-                if helium.contains(&band.helium) {
-                    bands.insert(b);
+        // One worklist over the incidence and its inverse: every element
+        // reached is visited once, so the cost follows the closed scope.
+        enum Item {
+            Band(usize),
+            Passive(usize),
+            Plenum(usize),
+            Segment(usize),
+            Helium(usize),
+            Store(usize),
+            Generator(usize),
+        }
+        let (mut bands, mut passive, mut plenum, mut segments) = (
+            BTreeSet::new(),
+            BTreeSet::new(),
+            BTreeSet::new(),
+            BTreeSet::new(),
+        );
+        let (mut helium, mut stores, mut generators) =
+            (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+        let mut work: Vec<Item> = scope
+            .bands
+            .iter()
+            .map(|b| Item::Band(*b))
+            .chain(scope.passive.iter().map(|c| Item::Passive(*c)))
+            .chain(scope.plenum.iter().map(|c| Item::Plenum(*c)))
+            .chain(scope.segments.iter().map(|g| Item::Segment(*g)))
+            .collect();
+        let inv = &self.inverse;
+        while let Some(item) = work.pop() {
+            match item {
+                Item::Band(b) => {
+                    if bands.insert(b) {
+                        work.push(Item::Helium(self.bands[b].helium));
+                    }
                 }
-            }
-            for (c, contact) in self.plenum.iter().enumerate() {
-                if helium.contains(&contact.helium) || stores.contains(&contact.solid) {
-                    plenum.insert(c);
+                Item::Passive(c) => {
+                    if passive.insert(c) {
+                        work.push(Item::Store(self.passive[c].solid));
+                    }
                 }
-            }
-            for (c, contact) in self.passive.iter().enumerate() {
-                if stores.contains(&contact.solid) {
-                    passive.insert(c);
+                Item::Plenum(c) => {
+                    if plenum.insert(c) {
+                        work.push(Item::Helium(self.plenum[c].helium));
+                        work.push(Item::Store(self.plenum[c].solid));
+                    }
                 }
-            }
-            generators.extend(segments.iter().map(|g| self.segments[*g].secondary));
-            for (g, segment) in self.segments.iter().enumerate() {
-                if generators.contains(&segment.secondary) {
-                    segments.insert(g);
+                Item::Segment(g) => {
+                    if segments.insert(g) {
+                        work.push(Item::Generator(self.segments[g].secondary));
+                    }
                 }
-            }
-            if before == (bands.len(), passive.len(), plenum.len(), segments.len()) {
-                break;
+                Item::Helium(h) => {
+                    if helium.insert(h) {
+                        work.extend(inv.helium_bands[h].iter().map(|b| Item::Band(*b)));
+                        work.extend(inv.helium_plenum[h].iter().map(|c| Item::Plenum(*c)));
+                    }
+                }
+                Item::Store(p) => {
+                    if stores.insert(p) {
+                        work.extend(inv.store_plenum[p].iter().map(|c| Item::Plenum(*c)));
+                        work.extend(inv.store_passive[p].iter().map(|c| Item::Passive(*c)));
+                    }
+                }
+                Item::Generator(k) => {
+                    if generators.insert(k) {
+                        work.extend(inv.generator_segments[k].iter().map(|g| Item::Segment(*g)));
+                    }
+                }
             }
         }
         Closed {
@@ -875,6 +1028,27 @@ impl Solids {
             &mut |i, r| out.push((i, r)),
             heat,
         )
+    }
+
+    /// The entry of `temperatures` that own store coordinate `i` sets.
+    pub fn temperature_of<'t>(
+        &self,
+        i: usize,
+        temperatures: &'t mut Temperatures,
+    ) -> Result<&'t mut Scalar, Failure> {
+        let (h0, p0, m0) = (self.helium0(), self.passive0(), self.metal0());
+        let entry = if i < 3 * self.bands.len() {
+            temperatures.fuel.get_mut(i / 3).map(|t| &mut t[i % 3])
+        } else if (h0..p0).contains(&i) {
+            temperatures.helium.get_mut(i - h0)
+        } else if (p0..m0).contains(&i) {
+            temperatures.passive.get_mut(i - p0)
+        } else if i >= m0 {
+            temperatures.metal.get_mut(i - m0)
+        } else {
+            None
+        };
+        entry.ok_or_else(|| fatal(format!("coordinate {i} has no temperature")))
     }
 
     /// Recompute the temperatures of the listed own coordinates only (their
