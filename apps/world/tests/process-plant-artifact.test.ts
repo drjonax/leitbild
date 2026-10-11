@@ -6,6 +6,7 @@ import type { SimulationRunId } from '../src/core/model/index.ts'
 import { answerProcessPlantQuery, compileProcessPlant, createPwrReferencePlantDefinition, plantGraphToMermaid } from '../src/packs/process-plant/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
+import { PROCESS_PLANT_SEARCH_DEFAULT_LIMIT } from '../src/packs/process-plant/queries/common.ts'
 import { artifactReadQuerySchema } from '../src/packs/process-plant/queries/graph-query.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
 import { readProcessPlantArtifact, type ProcessPlantArtifact } from '../src/ui/process-display/process-display-client.ts'
@@ -35,11 +36,15 @@ describe('selective Plant artifact evidence', () => {
   test('defaults to a compact paged index with explicit implementation coverage', () => {
     const index = read({}) as ArtifactIndex
     const full = read({ mode: 'full' }) as ProcessPlantArtifact
-    expect(index).toMatchObject({ mode: 'index', total: full.components.length, returned: full.components.length, hasMore: false })
+    // The reference Plant has more components than a default page holds, so the index pages them.
+    expect(full.components.length).toBeGreaterThan(PROCESS_PLANT_SEARCH_DEFAULT_LIMIT)
+    expect(index).toMatchObject({ mode: 'index', total: full.components.length, returned: PROCESS_PLANT_SEARCH_DEFAULT_LIMIT, hasMore: true })
     expect(index).not.toHaveProperty('content')
     expect(index.coverage).toContain('not the complete Pack')
     expect(index.coverage).toContain('Absence from this bundle does not establish absence')
-    expect(index.components).toEqual(full.components.map(({ sourceLinks: _links, ...component }) => component))
+    const rest = read({ offset: index.returned }) as ArtifactIndex
+    expect(rest).toMatchObject({ total: full.components.length, returned: full.components.length - index.returned, hasMore: false })
+    expect([...index.components, ...rest.components]).toEqual(full.components.map(({ sourceLinks: _links, ...component }) => component))
     expect(index.sourceFiles.map(file => file.path)).toEqual(full.sourceFiles.map(file => file.path))
     expect(JSON.stringify(index).length).toBeLessThan(JSON.stringify(full).length / 10)
     const first = read({ limit: 2 }) as ArtifactIndex
