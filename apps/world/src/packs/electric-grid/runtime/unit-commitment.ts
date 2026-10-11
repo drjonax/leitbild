@@ -29,16 +29,24 @@ export const generatorIsSynchronised = (state: GridGeneratorState): boolean =>
 
 /**
  * Advances generator lifecycles at the Grid's current elapsed time: a starting unit synchronises
- * when its start-up time has elapsed and loads to minimum stable generation; a stopping unit's
+ * when its start-up time has elapsed and loads to minimum stable generation, unless `maySynchronise`
+ * refuses it (restoration.ts: a dead bus without black start), which aborts its start; a stopping unit's
  * breaker opens once its set-point has ramped down to 0 MW. Returns whether any unit changed state.
  */
-export const advanceGridUnitCommitment = (grid: GridRuntimeInstance): boolean => {
+export const advanceGridUnitCommitment = (grid: GridRuntimeInstance, maySynchronise: (definition: GridGeneratorDefinition) => boolean): boolean => {
   let changed = false
   for (const definition of grid.definition.model.generators) {
     const state = grid.generators.get(definition.id)!
     if (state.state === 'starting') {
       if (state.synchronisesAtElapsedMs === null) throw new Error(`starting generator ${definition.id} has no synchronisation time`)
       if (grid.elapsedMs < state.synchronisesAtElapsedMs) continue
+      if (!maySynchronise(definition)) {
+        state.state = 'offline'
+        state.synchronisesAtElapsedMs = null
+        state.targetMw = 0
+        changed = true
+        continue
+      }
       state.state = 'online'
       state.synchronisesAtElapsedMs = null
       state.targetMw = generatorMinimumStableMw(definition)

@@ -37,6 +37,7 @@ import type { GridBranchState, GridGeneratorState, GridLoadState, GridRuntimeIns
 import { gridFrequencyCommandHandlers } from './lfdd-commands.ts'
 import { gridLifecycleCommandHandlers } from './lifecycle-commands.ts'
 import { manualShedRejection, queueEmergencyShed } from './load-shedding.ts'
+import { deadIslandStartRejection } from './restoration.ts'
 import { synchroCheckBlockReason } from './synchro-check.ts'
 import { generatorMinimumStableMw, generatorStartupSeconds } from './unit-commitment.ts'
 
@@ -133,6 +134,8 @@ const generatorHandlers = {
     if (state.availableMw <= 0 || state.availableMw < minimumStableMw) {
       throw new Error(`generator ${payload.assetId} has ${mw(state.availableMw)} available, below what it needs to run (minimum stable generation ${mw(minimumStableMw)})`)
     }
+    const deadIsland = deadIslandStartRejection(grid, definition)
+    if (deadIsland !== null) throw new Error(deadIsland)
     state.state = 'starting'
     state.targetMw = 0
     state.synchronisesAtElapsedMs = grid.elapsedMs + startupSeconds * 1_000

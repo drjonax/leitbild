@@ -3,9 +3,10 @@ import { applyGridDemand, demandSampleMs, rampSampleMs, segmentEndMs } from './d
 import { advanceGridFrequencyControl } from './frequency-control.ts'
 import { advanceHvdcLinks, hvdcLinksRamping } from './hvdc.ts'
 import type { GridRuntimeInstance } from './instance.ts'
-import { reconcileGridIslands, refreshGridIslandEnergisation } from './island-lifecycle.ts'
+import { reconcileGridIslands } from './island-lifecycle.ts'
 import { projectGridSystem } from './projection.ts'
 import { createGridNetworkSampler } from './protection/sampling.ts'
+import { energiseGridIslandsAfterCommitment, startingUnitMaySynchronise } from './restoration.ts'
 import { topologyPlanForGrid } from './topology.ts'
 import { advanceGridUnitCommitment, nextSynchronisationElapsedMs } from './unit-commitment.ts'
 
@@ -37,7 +38,7 @@ export const advanceGrid = (grid: GridRuntimeInstance, dtSeconds: number, at: Is
   const sampler = createGridNetworkSampler(grid, startMs, startElapsedMs)
   const commitUnits = (epochMs: number): void => {
     grid.elapsedMs = elapsedAtMs(epochMs)
-    if (advanceGridUnitCommitment(grid)) refreshGridIslandEnergisation(grid, islands)
+    if (advanceGridUnitCommitment(grid, unit => startingUnitMaySynchronise(grid, unit))) energiseGridIslandsAfterCommitment(grid, islands)
   }
   if (dtSeconds === 0) {
     commitUnits(endMs)
