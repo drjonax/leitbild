@@ -354,6 +354,22 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     expect(terminalCard.fields.find(field => field.key === `link-${nordlink}`)!.value).toBe('Tripped by its converter protection: reset it, then deblock')
   })
 
+  test('draw a boundary bus separated from Norway as a live bus of its external system, not as an HVDC terminal', () => {
+    const grid = createGridRuntimeInstance({ definition: norway, at })
+    advanceGrid(grid, 0, at)
+    const geometry = gridLiveMapLayer.loadGeometry(wire(grid, 'world.electric-grid.map.geometry'))
+    const busId = 'bus:boundary-SE1@132'
+    const ties = norway.model.branches.filter(branch => branch.fromBusId === busId || branch.toBusId === busId)
+    expect(ties.length).toBe(1)
+    command(grid, gridOpenBranchCommandKind, ties[0]!.id)
+    const state = geometry.presentState(wire(grid, 'world.electric-grid.map.state'))
+    const busFid = geometry.features.findIndex(feature => feature.properties.kind === 'bus') + norway.model.buses.findIndex(bus => bus.id === busId)
+    expect(state.featureStates.get(busFid)).toMatchObject({ external: false, energized: true, island: -1, alarm: false })
+    const card = state.hoverCard(busFid)!
+    expect(card.fields.map(field => field.key)).toEqual(['external', 'voltage', 'role'])
+    expect(card.fields.find(field => field.key === 'role')!.value).toStartWith('Separated from Norway')
+  })
+
   test('read a branch its protection tripped as tripped, distinct from one an operator opened', () => {
     // The test corridor with its direct line and B path open: the A path's relays trip it at once.
     const run = steppedGrid(corridorDefinition())
