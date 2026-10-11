@@ -290,12 +290,18 @@ describe('world.process-plant.display.compose', () => {
     expect(rejectionOf(() => ask('world.process-plant.display.compose', readouts('pressurizer-relief-to-tank.flowKgPerS'))))
       .toContain('show pressurizer.reliefFlowKgPerS (Pressurizer relief flow, HI ALM 1 kg/s) instead')
     expect(() => ask('world.process-plant.display.compose', readouts('pressurizer.reliefFlowKgPerS'))).not.toThrow()
-    // Run 21 (sg-b-runback): the feed line into SG B read "no I&C limit" while SG B's feedwater inflow was in LO ALM. The SG
-    // declares that inflow as the flow through its feedwater inlet, which the line shares with auxiliary feed: show both.
-    expect(rejectionOf(() => ask('world.process-plant.display.compose', readouts('feedwater-control-valve-b-to-sg-b.flowKgPerS'))))
-      .toContain('"feedwater-control-valve-b-to-sg-b.flowKgPerS" is judged by no I&C rule, but the whole flow through Steam Generator B\'s feedwater inlet, which this line shares with the line of AFW valve B, is: show sgB.feedwaterFlowKgPerS (Feedwater inflow, LO ALM 150 kg/s) beside it')
-    const beside = { ...composition([{ ref: 'feedwater-control-valve-b-to-sg-b.flowKgPerS', role: 'primary' }]), panels: [{ kind: 'readouts', signals: [{ ref: 'feedwater-control-valve-b-to-sg-b.flowKgPerS', role: 'primary' }, { ref: 'sgB.feedwaterFlowKgPerS', role: 'context' }] }] }
-    expect(() => ask('world.process-plant.display.compose', beside)).not.toThrow()
+    // A line that shares its port carries only part of the judged flow, a reading of its own: run 22 refused
+    // "is AFW reaching every SG?" its evidence, the auxiliary feed line into each generator.
+    expect(() => ask('world.process-plant.display.compose', readouts('feedwater-control-valve-b-to-sg-b.flowKgPerS'))).not.toThrow()
+    expect(() => ask('world.process-plant.display.compose', readouts('aux-feedwater-valve-b-to-sg-b.flowKgPerS'))).not.toThrow()
+  })
+
+  test('a rejection fits the 2,048 characters a capability message may carry, counting what it leaves out', () => {
+    // Run 22: four long refusals at once made a message too long for the wire, and the agent saw only "invalid request".
+    const guesses = Array.from({ length: 6 }, (_, index) => ({ ref: `a-long-guessed-signal-name-that-matches-nothing-in-this-plant-${index}.flowKgPerS`, role: index === 0 ? 'primary' : 'context' }))
+    const message = rejectionOf(() => ask('world.process-plant.display.compose', { ...composition(guesses), panels: [{ kind: 'readouts', signals: guesses }] }))
+    expect(message.length).toBeLessThanOrEqual(2048)
+    expect(message).toMatch(/Display composition rejected \(\d+ issues\)/)
   })
 
   test('no tag described as a position or run state binds a writable variable', () => {

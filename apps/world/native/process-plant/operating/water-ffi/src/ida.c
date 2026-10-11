@@ -190,6 +190,11 @@ int operating_ida_solution_scaling(OperatingIDA *o,int enabled) {
 int operating_ida_newton_coefficient(OperatingIDA *o,double coefficient) {
     return IDASetNonlinConvCoef(o->ida,coefficient);
 }
+/* Stock IDASetDeltaCjLSetup: the linear solver is set up again when cj/cjold
+   leaves ((1-dcj)/(1+dcj), (1+dcj)/(1-dcj)); stock's default is 0.25. */
+int operating_ida_delta_cj(OperatingIDA *o,double dcj) {
+    return IDASetDeltaCjLSetup(o->ida,dcj);
+}
 /* Stock IDAReInit restarts history at t from (y,yp); tolerances, ids,
    constraints, roots, linear solver, Jacobian, stop time and options stay. */
 int operating_ida_reinitialize(OperatingIDA *o,double t,const double *y,const double *yp) {
