@@ -47,6 +47,19 @@ const feedwaterIsolationRelease = (loops: ReadonlyArray<ProcessPlantReferenceLoo
 
 const hotwellLevelLowPercent = 35
 
+// The condensate storage tank is the auxiliary feedwater pumps' suction. Its
+// lowest 280,000 gal (1,060 m3) are the Technical Specification reserve for
+// auxiliary feedwater, the reference plant's minimum (USNRC Westinghouse
+// Technology Systems Manual 5.7; NUREG-1431 LCO 3.7.6 sizes it for hot standby
+// and then a cooldown to RHR entry), which other users cannot draw down. The
+// tank holds 450,000 gal (1,700 m3), so the reserve is its lowest 62 %, as
+// Sequoyah's 240,000 gal reserve is of its 385,000 gal tank (TVA, ML023230321).
+// The low-level alarm comes in as the level falls into the reserve: at the
+// pumps' full 110 kg/s it then lasts about 2.6 h. The pumps' automatic
+// transfer to essential service water on low suction pressure is not
+// modelled: the tank can run dry.
+const condensateStorageReserveLevelPercent = 62
+
 const turbineAlarm = annunciator({
   system: 'balanceOfPlant',
   equipmentId: 'turbine',
@@ -206,6 +219,24 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       write('start-motor-afw-b-on-main-feedwater-pump-trip', { path: 'auxFeedwaterPumpMotorB.running' }, true),
       ...loops.map(loop => write(`open-afw-valve-${loop.toLowerCase()}-on-main-feedwater-pump-trip`, { path: `auxFeedwaterValve${loop}.positionFraction` }, 1)),
     ],
+  }),
+  rule({
+    id: 'condensate-storage-tank-level-low',
+    label: 'Condensate storage tank level low',
+    ruleClass: 'alarm',
+    condition: comparison({ tagId: 'CST-LVL' }, '<', condensateStorageReserveLevelPercent),
+    clearCondition: comparison({ tagId: 'CST-LVL' }, '>', condensateStorageReserveLevelPercent + 2),
+    clearDelayMs: 2_000,
+    delayMs: 2_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'level-low',
+      title: 'Condensate storage tank level low',
+      message: `Condensate storage tank level is below ${condensateStorageReserveLevelPercent} %: auxiliary feedwater is drawing on the tank's Technical Specification reserve of 280,000 gal (1,060 m3).`,
+      severity: 'warning',
+      annunciator: annunciator({ system: 'feedwater', equipmentId: 'auxFeedwaterTank', group: 'auxiliary-feedwater', priority: 'high', role: 'symptom' }),
+    })],
   }),
   rule({
     id: 'main-feedwater-pump-trip',

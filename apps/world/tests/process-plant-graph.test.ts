@@ -101,10 +101,11 @@ describe('process plant model composition', () => {
     // loads it sequences, again when the pressurizer relief tank became a
     // nitrogen-blanketed quench tank and the relief lines gained their
     // tailpipe temperatures and the PORV its acoustic flow monitor, its
-    // readings their normal bands, and again when the turbine-driven
-    // auxiliary feedwater pump was given its 30 s run-up; PWR Runs
-    // checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('d933631f089b9ff58bbcfdf9c2cec7d4c7db16239d226f2221695cf316624704')
+    // readings their normal bands, again when the turbine-driven auxiliary
+    // feedwater pump was given its 30 s run-up, and again when the
+    // condensate storage tank was sized from its Technical Specification
+    // reserve; PWR Runs checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('c4af6eb70c23c8132ab16c10c93888d62fb70161e2300e074d8547446af3e905')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

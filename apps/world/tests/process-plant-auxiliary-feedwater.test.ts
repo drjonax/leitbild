@@ -26,9 +26,9 @@ const loops = ['A', 'B', 'C', 'D'] as const
 const ratedFlowKgPerS = { auxFeedwaterPumpMotor: 27.6, auxFeedwaterPumpMotorB: 27.6, auxFeedwaterPumpTurbine: 55.2 } as const
 const pumps = Object.keys(ratedFlowKgPerS) as ReadonlyArray<keyof typeof ratedFlowKgPerS>
 
-const started = (withIc = true) => {
-  const runtime = createProcessPlantRuntime({ system: plant })
-  const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
+const started = (withIc = true, system = plant) => {
+  const runtime = createProcessPlantRuntime({ system })
+  const protection = createProcessPlantProtectionRunner({ system, protection: system.automation })
   const read = (path: string): number => Number(runtime.readVariable(path as VariablePath))
   const tag = (tagId: string): number => Number(runtime.readVariable(resolveProcessPlantSignalBinding(graph, { tagId: tagId as never }).path))
   const set = (path: string, value: boolean | number): void => runtime.writeCommand({ type: 'setVariable', path: path as VariablePath, value })
@@ -42,7 +42,11 @@ const started = (withIc = true) => {
   const act = (actionId: string, parameters: Readonly<Record<string, unknown>> = {}): void => {
     for (const command of commandsForProcessPlantAction({ actionId, parameters, graph })) set(command.path, command.value as boolean | number)
   }
-  return { runtime, read, tag, set, run, act }
+  const active = (): ReadonlyArray<string> => {
+    const snapshot = protection.snapshot()
+    return [...snapshot.alarms, ...snapshot.trips].filter(lifecycle => lifecycle.active).map(lifecycle => lifecycle.id)
+  }
+  return { runtime, read, tag, set, run, act, active }
 }
 
 describe('auxiliary feedwater', () => {
@@ -226,5 +230,47 @@ describe('auxiliary feedwater', () => {
     expect(fed).toBeGreaterThan(4_000)
     expect(read('sgA.secondaryInventoryKg') - before).toBeGreaterThan(1_000)
     expect(Math.abs(read('sgA.secondaryInventoryKg') - before - (fed - boiled))).toBeLessThan(0.01 * fed)
+  })
+})
+
+describe('condensate storage tank', () => {
+  // 450,000 gal (1,700 m3), whose lowest 280,000 gal (62 %) are the Technical Specification reserve for auxiliary
+  // feedwater (USNRC Westinghouse Technology Systems Manual 5.7; Sequoyah keeps 240,000 of its 385,000 gal).
+  test('at the pumps\' full flow falls about 0.4 % a minute, so its reserve lasts hours, and alarms as the level enters it', () => {
+    const plantRun = started()
+    plantRun.run(5)
+    plantRun.act('loss-main-feedwater')
+    plantRun.run(180)
+    const { read, tag } = plantRun
+    expect(read('auxFeedwaterTank.inventoryKg') / read('auxFeedwaterTank.levelPercent') * 100).toBeCloseTo(1_690_000, -3)
+    const before = tag('CST-LVL')
+    plantRun.run(120)
+    const fallPerMinute = (before - tag('CST-LVL')) / 2
+    expect(tag('AFW-FLOW')).toBeGreaterThan(100)
+    expect(fallPerMinute).toBeGreaterThan(0.35)
+    expect(fallPerMinute).toBeLessThan(0.45)
+    // The reserve alone feeds the pumps' full flow for over two hours.
+    expect(0.62 * 1_690_000 / tag('AFW-FLOW') / 3_600).toBeGreaterThan(2.4)
+    expect(plantRun.active()).not.toContain('alarm:condensate-storage-tank-level-low:level-low')
+  })
+
+  test('alarms as auxiliary feedwater draws the level into the reserve', () => {
+    const drawnDown = compileProcessPlant(createPwrReferencePlantDefinition({
+      id: 'plant:afw-cst',
+      loopCount: 4,
+      valueOverrides: { 'auxFeedwaterTank.inventoryKg': 0.63 * 1_690_000, 'auxFeedwaterTank.levelPercent': 63 },
+    }))
+    const plantRun = started(true, drawnDown)
+    plantRun.run(5)
+    expect(plantRun.active()).not.toContain('alarm:condensate-storage-tank-level-low:level-low')
+    plantRun.act('loss-main-feedwater')
+    let alarmedAt: number | null = null
+    for (let second = 1; second <= 400 && alarmedAt === null; second += 1) {
+      plantRun.run(1)
+      if (plantRun.active().includes('alarm:condensate-storage-tank-level-low:level-low')) alarmedAt = second
+    }
+    expect(alarmedAt).not.toBeNull()
+    expect(plantRun.tag('CST-LVL')).toBeLessThan(62)
+    expect(plantRun.tag('CST-LVL')).toBeGreaterThan(61.5)
   })
 })
