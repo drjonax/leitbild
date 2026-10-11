@@ -209,10 +209,10 @@ describe('the unit overview of the principal circuits', () => {
       // A commanded valve: what it does, then CMD over the command where it disagrees.
       expect(valve.rows.map(row => row.kind === 'marker' ? row.part : row.kind)).toEqual(['word', 'command', 'value'])
     }
-    // In a drawn loop its place names it: no tag. Outside the loops two valves sit on the steam header's lines
-    // (run 22: two unlabelled steam valves), so they carry their tags.
-    expect(valves.filter(valve => valve.tagged).map(valve => valve.binding.label).sort()).toEqual(['TSV', 'Turbine bypass'])
-    for (const valve of valves) expect(valve.text?.height).toBe(3 * openBridgeDevice.row + (valve.tagged ? openBridgeDevice.tagLine : 0))
+    // Each carries its tag: in a drawn loop its place does not say which valve it is (run 22 QA: the feed regulating
+    // and main steam isolation valves were unlabelled; before them the two steam valves on the header's lines).
+    expect(valves.map(valve => valve.binding.label).sort()).toEqual(['FCV A', 'FCV B', 'FCV C', 'FCV D', 'MSIV A', 'MSIV B', 'MSIV C', 'MSIV D', 'TSV', 'Turbine bypass'])
+    for (const valve of valves) expect(valve.text?.height).toBe(3 * openBridgeDevice.row + openBridgeDevice.tagLine)
     const fcv = valves.find(item => item.binding.label === 'FCV A')!
     const state = fcv.binding.state!
     const at = (position: number, command: number) => indexSample([{ path: state.state!.path, value: position, quality: 'good' }, { path: state.command!, value: command, quality: 'good' }])

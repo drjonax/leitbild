@@ -149,8 +149,7 @@
     const apply = (next: typeof params) => {
       if (next.item.presentation.element !== 'device') return
       next.ob.updateDevice(element, next.item.presentation.icon, next.look, {
-        // A valve marker in a drawn loop carries no tag: the loop it sits on names it.
-        tag: next.item.tagged ? next.item.binding.label : '',
+        tag: next.item.binding.label,
         orientation: next.item.orientation,
         textSide: next.item.text?.side === 'bottom' ? 'bottom' : 'right',
         rows: next.rows,

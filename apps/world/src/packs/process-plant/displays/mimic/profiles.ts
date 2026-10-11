@@ -20,9 +20,9 @@ export interface MimicProfile {
   readonly readoutSize: 'small' | 'regular'
   /**
    * Valves on drawn lines: full symbols with their tag and readout stack, or
-   * compact markers (the valve's OpenBridge icon on the pipe, no tag, and one
-   * row that is empty unless the valve says something: its command disagrees,
-   * its position is not known, or it stands between shut and open).
+   * compact markers (the valve's OpenBridge icon on the pipe, its tag, and
+   * rows that are empty unless the valve says something: its command
+   * disagrees, its position is not known, or it stands between shut and open).
    */
   readonly valves: 'symbols' | 'markers'
   /**

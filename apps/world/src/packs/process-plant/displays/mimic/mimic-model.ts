@@ -41,12 +41,6 @@ export interface MimicDrawnItem {
    * unless the valve says something (rows.ts).
    */
   readonly marker: boolean
-  /**
-   * Whether its label is drawn: always on a symbol; on a marker only outside
-   * the drawn loops, where its place on a loop does not name it (a turbine
-   * stop valve beside the bypass on the same steam header).
-   */
-  readonly tagged: boolean
   /** The Plant components it stands for, by id (a group's members, a bundled device's host): what opening it shows. */
   readonly components: ReadonlyArray<string>
 }
