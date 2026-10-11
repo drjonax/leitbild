@@ -254,6 +254,13 @@ export const composedDisplayLayout = {
   /** Title row plus four alarm rows; more are summarised as a count. */
   alarms: 110,
   alarmRows: 4,
+  /** One row of the list and the gap beside it. */
+  alarmRow: 23,
+  /**
+   * The fewest rows an alarms panel beside a drawing keeps when it gives the
+   * drawing room: two alarms and the line counting the rest.
+   */
+  alarmMinRows: 3,
   panelGap: 6,
   /** The mimic's legend line under its drawing. */
   mimicLegend: 16,
@@ -305,7 +312,8 @@ export type ComposedPanelShape =
   | { readonly kind: 'readouts'; readonly values: number }
   /** Rows of values World adds, under a line that says so. */
   | { readonly kind: 'evidence'; readonly rows: number }
-  | { readonly kind: 'alarms' }
+  /** The rows its list holds (composedDisplayLayout.alarmRows, fewer where a drawing took the room). */
+  | { readonly kind: 'alarms'; readonly rows: number }
   /** A mimic has the height its generated drawing takes. */
   | { readonly kind: 'mimic'; readonly height: number }
 
@@ -338,7 +346,7 @@ export const composedPanelHeight = (panel: ComposedPanelSize): number => {
   if (panel.kind === 'readouts') return layout.readoutsRow * Math.ceil(panel.values / layout.readoutsPerRow)
   if (panel.kind === 'evidence') return layout.evidenceCaption + layout.evidenceRow * panel.rows
   if (panel.kind === 'mimic') return panel.height + layout.mimicLegend
-  return layout.alarms
+  return layout.alarms - (layout.alarmRows - panel.rows) * layout.alarmRow
 }
 
 /** The least height a panel can take: trends at their smallest plots. */

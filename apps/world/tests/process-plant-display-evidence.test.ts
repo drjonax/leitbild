@@ -272,6 +272,30 @@ describe('what World adds to a composed display', () => {
     expect(evidence.find(entry => entry.kind === 'wider')!.reason).toBe('SG-B-LVL-NR heads for the bottom of its span: the same quantity on the instrument with the wider span')
   }, PLANT_HANG_GUARD_MS)
 
+  test('a drawing that needs the room takes alarm rows, down to two alarms and their count, before it is refused', () => {
+    // Run 23's feed path to SG B, with its trend and related alarms, three minutes into the runback: since the
+    // condensate storage tank has its low-level alarm, its badge's room makes the drawing 20 px too tall beside four
+    // alarm rows. The alarms list counts what it cannot show, so it gives a row and the display composes first try.
+    const { compose } = runback()
+    const drawing = { kind: 'mimic', to: ['sgB'], services: ['feedwater', 'auxFeedwater'], loops: ['B'], reach: 3 }
+    const levels = [signal('SG-B-LVL-NR', 'primary'), signal('sgA.levelPercent', 'counter-evidence')]
+    const related = { kind: 'alarms', scope: 'related' }
+    const feedPath = [drawing, { kind: 'trend', horizon: '10m', signals: levels }, related]
+    const { display, result } = compose('SG B feed path', ['sgB'], feedPath)
+    expect(display.panels.map(panel => panel.kind)).toEqual(['mimic', 'trend', 'alarms'])
+    const alarms = display.panels.find(panel => panel.kind === 'alarms')!
+    if (alarms.kind !== 'alarms') throw new Error('expected the alarms')
+    expect(alarms.rows).toBe(3)
+    expect(result.view.height).toBeLessThanOrEqual(COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX)
+    // A drawing that fits keeps all four rows.
+    const lineUp = compose('Main feedwater to steam generators', ['feedwater'], [{ kind: 'mimic', services: ['feedwater'] }, { kind: 'alarms', scope: 'related' }])
+    const kept = lineUp.display.panels.find(panel => panel.kind === 'alarms')!
+    expect(kept.kind === 'alarms' && kept.rows).toBe(4)
+    // One that does not fit beside the fewest rows is still refused, with the ways it fits.
+    const taller = [drawing, { kind: 'trend', horizon: '10m', signals: [...levels, signal('SG-B-PRESS')] }, related]
+    expect(() => compose('SG B feed path and pressure', ['sgB'], taller)).toThrow(/the drawing needs \d+ × \d+ px, and this display leaves 800 × \d+/)
+  }, PLANT_HANG_GUARD_MS)
+
   test('a line-up drawing: the parallel supply into what it ends at, the flow its header carries in all and to each destination', () => {
     // Run 23: the SI line-up to loop C drew no accumulator; the feed line-up had no flow per steam generator.
     const power = atPower()

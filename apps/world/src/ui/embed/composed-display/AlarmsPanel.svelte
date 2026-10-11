@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
   import type { ComposedAlarmsPanel } from '../../../packs/process-plant/displays/compose.ts'
-  import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
+  import { composedDisplayLayout, composedPanelHeight } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from './composed-display-client.ts'
   import { alarmAge, alertTypeOf, expectedAfter, firstOutFlag, visibleAlarms } from './panel-presenters.ts'
 
@@ -26,7 +26,8 @@
   const TITLE = 17
   let height = $state<number>(composedDisplayLayout.alarms)
   // At its least height (composedDisplayLayout.alarms) the column's list holds two alarms.
-  const rows = $derived(fill ? Math.max(2, Math.floor((height - TITLE) / STACKED_PITCH)) : composedDisplayLayout.alarmRows)
+  // Beside other panels it holds the rows compose gave it: fewer where a drawing took the room (panel.rows).
+  const rows = $derived(fill ? Math.max(2, Math.floor((height - TITLE) / STACKED_PITCH)) : panel.rows)
   // Every alarm and trip has a tag, from what it annunciates; one the display was not compiled with says only its kind.
   const tagOf = (alarm: ComposedDisplayAlarm): string => annunciation.tags[alarm.id] ?? alarm.kind.toUpperCase()
 
@@ -47,7 +48,7 @@
   const unacknowledged = (list: ReadonlyArray<{ readonly acknowledged: boolean }>) => list.filter(alarm => !alarm.acknowledged).length
 </script>
 
-<section class="alarms" class:fill style={fill ? `min-height:${composedDisplayLayout.alarms}px` : `height:${composedDisplayLayout.alarms}px`} bind:clientHeight={height} aria-label="Active alarms">
+<section class="alarms" class:fill style={fill ? `min-height:${composedDisplayLayout.alarms}px` : `height:${composedPanelHeight({ kind: 'alarms', rows: panel.rows })}px`} bind:clientHeight={height} aria-label="Active alarms">
   {#if only !== null}
     <h2 class="narrowed" title={`${only.name}${only.drawn ? '' : ': none of its equipment is drawn here'}`}><span>{only.label} · {alarms.length} of {all.length}{only.drawn ? '' : ' · not drawn'}</span><button type="button" onclick={() => showAll?.()}>All ✕</button></h2>
   {:else}

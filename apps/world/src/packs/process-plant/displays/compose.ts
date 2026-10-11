@@ -160,6 +160,12 @@ export interface ComposedAlarmsPanel {
   readonly scope: 'related' | 'plant'
   /** I&C rules acting on the displayed signals; used when scope is related. */
   readonly ruleIds: ReadonlyArray<string>
+  /**
+   * The rows its list holds beside other panels: composedDisplayLayout.alarmRows,
+   * or as few as alarmMinRows where a drawing needs the room. When more alarms
+   * are active than fit, the last row counts the rest.
+   */
+  readonly rows: number
   /** A unit overview's annunciator tiles over the list: the Plant's declared systems (annunciators.ts), labelled for the tile width. */
   readonly systems?: ReadonlyArray<AnnunciatorSystem>
   /** The tiles' least width (composedDisplayLayout.annunciatorTile.widths). */
@@ -510,7 +516,7 @@ const compilePanel = (
   issues: ComposedDisplayIssue[],
 ): UnsizedPanel | undefined => {
   const panelPath = `panels.${panelIndex}`
-  if (panel.kind === 'alarms') return { kind: 'alarms', scope: panel.scope, ruleIds: [] }
+  if (panel.kind === 'alarms') return { kind: 'alarms', scope: panel.scope, ruleIds: [], rows: composedDisplayLayout.alarmRows }
   if (panel.kind === 'mimic') throw new Error('a mimic is compiled once the other panels are known')
   if (panel.kind === 'readouts') {
     const pens = resolvePens(system, panel.signals, panelPath, { numericOnly: false, panelName: 'readouts', recordedSeriesIds }, issues)
@@ -538,7 +544,7 @@ const panelShape = (panel: UnsizedPanel): ComposedPanelShape => {
   if (panel.kind === 'readouts') return { kind: 'readouts', values: panel.pens.length }
   if (panel.kind === 'evidence') return { kind: 'evidence', rows: panel.rows.length }
   if (panel.kind === 'mimic') return { kind: 'mimic', height: panel.mimic.height }
-  return { kind: 'alarms' }
+  return { kind: 'alarms', rows: panel.rows }
 }
 
 const compositionIssues = (composition: ComposedDisplayComposition): ReadonlyArray<ComposedDisplayIssue> => {
@@ -827,22 +833,39 @@ export const compileComposedDisplay = (
   if (composition.plantId !== system.plant.id) {
     issues.push({ path: 'plantId', message: `composition targets ${composition.plantId}, not ${system.plant.id}` })
   }
-  const others = composition.panels.map((panel, index) => panel.kind === 'mimic' ? undefined : compilePanel(system, panel, index, recordedSeriesIds, issues))
-  // The mimic draws in the room the other panels leave at their smallest.
-  const heights = others.map(panel => panel === undefined ? 0 : composedPanelMinimumHeight(panelShape(panel)) + composedDisplayLayout.panelGap)
-  const mimicBudget = (left: ReadonlyArray<number>) => ({
-    profile: chatMimicProfile,
-    maxWidth: MIMIC_MAX_WIDTH,
-    maxHeight: COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX - composedDisplayLayout.frame - composedDisplayLayout.mimicLegend - left.reduce((sum, index) => sum + heights[index]!, 0),
-  })
-  const besides = others.flatMap((panel, index) => panel === undefined ? [] : [index])
-  const panels = composition.panels.map((panel, index): UnsizedPanel | undefined => {
-    if (panel.kind !== 'mimic') return others[index]
+  const compiledOthers = composition.panels.map((panel, index) => panel.kind === 'mimic' ? undefined : compilePanel(system, panel, index, recordedSeriesIds, issues))
+  // The mimic draws in the room the other panels leave at their smallest. Beside it the alarms list is the part
+  // that gives: it counts what it cannot show, so it holds fewer rows, down to two alarms and that count, before
+  // a drawing that needs the room is refused (run 23's feed path to SG B with a trend and its alarms).
+  let alarmRows: number = composedDisplayLayout.alarmRows
+  const othersWith = (rows: number) => compiledOthers.map(panel => panel?.kind === 'alarms' ? { ...panel, rows } : panel)
+  const mimicBudget = (left: ReadonlyArray<number>, rows: number) => {
+    const heights = othersWith(rows).map(panel => panel === undefined ? 0 : composedPanelMinimumHeight(panelShape(panel)) + composedDisplayLayout.panelGap)
+    return {
+      profile: chatMimicProfile,
+      maxWidth: MIMIC_MAX_WIDTH,
+      maxHeight: COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX - composedDisplayLayout.frame - composedDisplayLayout.mimicLegend - left.reduce((sum, index) => sum + heights[index]!, 0),
+    }
+  }
+  const besides = compiledOthers.flatMap((panel, index) => panel === undefined ? [] : [index])
+  const rowsToGive = compiledOthers.some(panel => panel?.kind === 'alarms')
+    ? Array.from({ length: composedDisplayLayout.alarmRows - composedDisplayLayout.alarmMinRows + 1 }, (_, given) => composedDisplayLayout.alarmRows - given)
+    : [composedDisplayLayout.alarmRows]
+  const mimics = composition.panels.map((panel, index): UnsizedPanel | undefined => {
+    if (panel.kind !== 'mimic') return undefined
     const { kind: _kind, ...intent } = panel
-    const compiled = compileMimic(system.plant, intent, mimicBudget(besides))
+    // The most alarm rows the drawing leaves room for: a drawing too big for its room is tried again with a row
+    // fewer, and refused only where it does not fit beside the fewest.
+    const fewest = rowsToGive.at(-1)!
+    let compiled = compileMimic(system.plant, intent, mimicBudget(besides, alarmRows))
+    for (const rows of rowsToGive.filter(rows => rows < alarmRows)) {
+      if (compiled.ok || !compiled.issues.some(issue => issue.field === '(mimic)')) break
+      compiled = compileMimic(system.plant, intent, mimicBudget(besides, rows))
+      if (compiled.ok) alarmRows = rows
+    }
     if (!compiled.ok) {
       // A drawing refused for its size may fit as asked beside fewer panels.
-      const roomier = compiled.issues.some(issue => issue.field === '(mimic)') ? fewerPanels(besides, kept => compileMimic(system.plant, intent, mimicBudget(kept)).ok) : []
+      const roomier = compiled.issues.some(issue => issue.field === '(mimic)') ? fewerPanels(besides, kept => compileMimic(system.plant, intent, mimicBudget(kept, fewest)).ok) : []
       const without = roomier.map(removed => removed.map(other => `panels.${other} (${composition.panels[other]!.kind})`).join(' and '))
       for (const issue of compiled.issues) {
         const message = issue.field === '(mimic)' && without.length > 0 ? `${issue.message}; or it fits as asked without ${without.join(', or without ')}` : issue.message
@@ -852,6 +875,8 @@ export const compileComposedDisplay = (
     }
     return { kind: 'mimic', mimic: compiled.mimic }
   })
+  const others = othersWith(alarmRows)
+  const panels = composition.panels.map((_panel, index) => mimics[index] ?? others[index])
   if (issues.length > 0) return { ok: false, issues: [...authoring, ...issues] }
   const unsized = panels.filter((panel): panel is UnsizedPanel => panel !== undefined)
   const fit = fitComposedDisplay(unsized.map(panelShape))
@@ -1175,7 +1200,7 @@ export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, reco
   const fitted = fitGenerated(view, tiles.map(option => ({ readouts: values, annunciators: option.systems.length, tileWidth: option.width })), [room => compileMimicScope(system.plant, circuits.scope, { profile: overviewMimicProfile, ...room })])
   if (!fitted.ok) return { ok: false, issues: fitted.issues.map(message => ({ path: 'overview', message })) }
   const systems = tiles.find(option => option.width === fitted.panels.tileWidth)!.systems
-  return { ok: true, display: generatedDisplay(system, 'Unit overview', readouts, view, fitted, () => ({ kind: 'alarms', scope: 'plant', ruleIds: [], systems, tileWidth: fitted.panels.tileWidth })) }
+  return { ok: true, display: generatedDisplay(system, 'Unit overview', readouts, view, fitted, () => ({ kind: 'alarms', scope: 'plant', ruleIds: [], rows: composedDisplayLayout.alarmRows, systems, tileWidth: fitted.panels.tileWidth })) }
 }
 
 /**
@@ -1221,7 +1246,7 @@ export const compileDetailDisplay = (
   const fitted = fitGenerated(view, panels, scopes.map(scope => (room: Parameters<GeneratedDrawing>[0]) => compileMimicScope(system.plant, scope, { profile: detailMimicProfile, ...room })))
   if (!fitted.ok) return { ok: false, issues: [{ path: 'detail', message: `nothing around it can be drawn legibly; ${fitted.issues.join('; ')}` }] }
   const title = groupLabel(components.map(index => graph.components[index]!.label))
-  return { ok: true, display: generatedDisplay(system, title, readouts, view, fitted, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown) })) }
+  return { ok: true, display: generatedDisplay(system, title, readouts, view, fitted, shown => ({ kind: 'alarms', scope: 'related', ruleIds: relatedRuleIds(system, shown), rows: composedDisplayLayout.alarmRows })) }
 }
 
 const operatorText = { '<': 'below', '<=': 'at or below', '>': 'above', '>=': 'at or above' } as const
