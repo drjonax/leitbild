@@ -10,11 +10,12 @@ import { gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '.
 import { solveV2PowerFlow } from './fixtures/electric-grid/v2-power-flow.ts'
 
 // Realism gate: the Norway model's AC load flow at each Operating Point against what was measured in
-// that hour (tests/fixtures/electric-grid/norway-measured-exchange.json: Svenska kraftnät, Energy-Charts,
-// Elhub and Statnett's ENTSO-E flows, each with URL, retrieval time and SHA-256):
-// - HVDC transfer per neighbour, AC flow on each Norway–Sweden/Finland border and, where published, on
-//   each internal price-area border;
-// - each price area's net position (its exports, HVDC included);
+// that hour (tests/fixtures/electric-grid/norway-measured-exchange.json: Svenska kraftnät, Energy-Charts
+// and Elhub, each CC BY 4.0, with URL, retrieval time and SHA-256):
+// - HVDC transfer per neighbour and AC flow on each Norway–Sweden/Finland border;
+// - each price area's net position (its exports, HVDC included), estimated from Elhub. No openly
+//   licensed source publishes Norway's internal border flows: ENTSO-E needs an account, and Statnett
+//   states no terms for the flows its driftsdata API republishes;
 // - each price area's hydro and wind production and the national production.
 // A model value passes within its tolerance. A value outside it must be a known gap below, with the
 // reason; the gap's bound ratchets: it fails when the gap grows beyond it, and when the gap closes
@@ -47,15 +48,14 @@ const measuredSchema = z.object({
     title: z.string(),
     publisher: z.string(),
     url: z.string().url(),
-    licence: z.enum(['cc-by-4.0', 'not-stated']),
-    licenceNote: z.string().optional(),
+    licence: z.literal('cc-by-4.0'),
     attribution: z.string(),
     retrievals: z.array(z.object({ url: z.string().url(), retrievedAt: z.string(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }).strict()).min(1),
   }).strict()),
   hours: z.object({ winterPeak: hourSchema, summerLow: hourSchema }).strict(),
 }).strict()
 
-/** HVDC: 25 MW or 3 %. Energy-Charts and Statnett report NordLink at 1,404 and 1,447 MW in the winter hour (3 %); the Operating Point caps NordLink at its 1,400 MW rating. */
+/** HVDC: 25 MW or 3 %. Energy-Charts (ENTSO-E) and Statnett's flow map give NordLink 1,404 and 1,447 MW in the winter hour (3 %); the Operating Point caps NordLink at its 1,400 MW rating. */
 const hvdcTolerance = (measuredMw: number): number => Math.max(25, 0.03 * Math.abs(measuredMw))
 /**
  * AC border flows and measured net positions: 75 MW or 10 %. 75 MW lies below the standard deviation
@@ -65,12 +65,13 @@ const hvdcTolerance = (measuredMw: number): number => Math.max(25, 0.03 * Math.a
  */
 const flowTolerance = (measuredMw: number): number => Math.max(75, 0.1 * Math.abs(measuredMw))
 /**
- * Winter net positions are estimated, not measured: Elhub production less consumption less the hour's
- * unmetered losses shared by consumption (no internal flow is published for the winter hour). The
- * same estimate reproduces summer's flow-derived net positions within 50 MW (asserted below); winter's
- * unmetered losses are 2.8 times summer's, so 125 MW is added to the flow tolerance.
+ * Net positions are estimated: Elhub production less consumption less the hour's unmetered losses
+ * (production − consumption − measured net export) shared by consumption. Against the summer night's
+ * internal border flows (Statnett's ENTSO-E values, checked in lane VAL1 and not committed, as no
+ * licence is stated) the estimate erred by at most 44 MW, 7.7 % of that hour's 569 MW unmetered
+ * losses; so 8 % of the hour's unmetered losses is added to the flow tolerance.
  */
-const estimatedNetTolerance = (measuredMw: number): number => flowTolerance(measuredMw) + 125
+const estimatedNetTolerance = (measuredMw: number, unmeteredLossesMw: number): number => flowTolerance(measuredMw) + 0.08 * unmeteredLossesMw
 /** Production per area and kind: 100 MW or 10 %, as for flows; Elhub meters plants the model aggregates or dropped (76 MW nationally). */
 const productionTolerance = (measuredMw: number): number => Math.max(100, 0.1 * Math.abs(measuredMw))
 /** National production: 2 %. Elhub's and Energy-Charts' national totals differ by 0.5 % in the winter hour (26,604 and 26,477 MW) and by 2.6 % on the summer night, for which Energy-Charts publishes no pumped storage. */
@@ -91,18 +92,12 @@ const knownGaps: Readonly<Record<string, KnownGap>> = {
   'winterPeak border NO4→SE1': { boundMw: 100, reason: exchangeByParticipation },
   'summerLow border NO1→SE3': { boundMw: 300, reason: exchangeByParticipation },
   'summerLow border NO4→SE1': { boundMw: 300, reason: `${exchangeByParticipation}: the measured 255 MW export to SE1 becomes a 42 MW import` },
-  // Internal borders (summer, the only hour with published internal flows).
-  'summerLow border NO1→NO2': { boundMw: 500, reason: `${uniformStorageHydro}: NO2 generates about 900 MW too much and NO4 about 800 MW too little` },
-  'summerLow border NO1→NO3': { boundMw: 100, reason: `${uniformStorageHydro}; with per-area dispatch and per-border exchange the remaining 110 MW is a loop flow around NO1–NO3–NO5` },
-  'summerLow border NO2→NO5': { boundMw: 400, reason: `${uniformStorageHydro}; with per-area dispatch and per-border exchange about 250 MW of NO5's export still takes NO5→NO1→NO2 instead of NO5→NO2` },
-  'summerLow border NO3→NO4': { boundMw: 475, reason: `${uniformStorageHydro}: NO4 exports 457 MW south instead of the measured 926 MW` },
-  'summerLow border NO3→NO5': { boundMw: 375, reason: `${uniformStorageHydro}: the flow runs NO5→NO3 instead of the measured NO3→NO5` },
   // Net positions.
   'winterPeak net NO2': { boundMw: 850, reason: uniformStorageHydro },
   'winterPeak net NO3': { boundMw: 500, reason: uniformStorageHydro },
   'summerLow net NO1': { boundMw: 175, reason: uniformStorageHydro },
-  'summerLow net NO2': { boundMw: 900, reason: uniformStorageHydro },
-  'summerLow net NO3': { boundMw: 100, reason: uniformStorageHydro },
+  'summerLow net NO2': { boundMw: 875, reason: uniformStorageHydro },
+  'summerLow net NO3': { boundMw: 150, reason: uniformStorageHydro },
   'summerLow net NO4': { boundMw: 825, reason: uniformStorageHydro },
   // Production by area and kind.
   'winterPeak hydro NO1': { boundMw: 325, reason: `${uniformStorageHydro}; ${unmodelledLosses}` },
@@ -204,29 +199,13 @@ const modelHour = async (operatingPointId: string) => {
 type MeasuredHour = z.infer<typeof hourSchema>
 const measuredNationalExportMw = (hour: MeasuredHour): number => hour.acBorders.filter(border => border.to === 'FI').reduce((sum, border) => sum + border.mw, 0)
   + hour.swedenTotal.mw + hour.hvdc.reduce((sum, link) => sum + link.mw, 0)
-/** Net positions estimated from Elhub: production − consumption − the hour's unmetered losses shared by consumption. */
-const estimatedNetPositions = (hour: MeasuredHour): Map<AreaId, number> => {
-  const produced = (area: AreaId): number => Object.values(hour.areas[area]!.productionMw).reduce((sum, value) => sum + value, 0)
-  const totalProduction = areaIds.reduce((sum, area) => sum + produced(area), 0)
-  const totalConsumption = areaIds.reduce((sum, area) => sum + hour.areas[area]!.consumptionMw, 0)
-  const lossesMw = totalProduction - totalConsumption - measuredNationalExportMw(hour)
-  return new Map(areaIds.map(area => [area, produced(area) - hour.areas[area]!.consumptionMw - lossesMw * hour.areas[area]!.consumptionMw / totalConsumption]))
-}
-/** Net positions from the measured flows, where every border of the area is published. */
-const flowNetPositions = (hour: MeasuredHour): Map<AreaId, number> | null => {
-  const net = new Map<AreaId, number>(areaIds.map(area => [area, 0]))
-  for (const border of hour.acBorders) {
-    net.set(border.from, net.get(border.from)! + border.mw)
-    if (isNorwegian(border.to)) net.set(border.to, net.get(border.to)! - border.mw)
-  }
-  const internal = hour.acBorders.filter(border => isNorwegian(border.to)).length
-  // NO1–NO2, NO1–NO3, NO1–NO5, NO2–NO5, NO3–NO4 and NO3–NO5: Norway's six internal borders.
-  if (internal === 0) return null
-  if (internal !== 6) throw new Error(`expected all six internal borders or none, got ${internal}`)
-  net.set('NO2', net.get('NO2')! + hour.hvdc.reduce((sum, link) => sum + link.mw, 0))
-  return net
-}
-
+const producedMw = (hour: MeasuredHour, area: AreaId): number => Object.values(hour.areas[area]!.productionMw).reduce((sum, value) => sum + value, 0)
+const consumedMw = (hour: MeasuredHour): number => areaIds.reduce((sum, area) => sum + hour.areas[area]!.consumptionMw, 0)
+/** The hour's losses no meter sees: Elhub production − Elhub consumption − the measured net export. */
+const unmeteredLossesMw = (hour: MeasuredHour): number => areaIds.reduce((sum, area) => sum + producedMw(hour, area), 0) - consumedMw(hour) - measuredNationalExportMw(hour)
+/** Net positions estimated from Elhub: production − consumption − the unmetered losses shared by consumption. */
+const estimatedNetPositions = (hour: MeasuredHour): Map<AreaId, number> => new Map(areaIds.map(area =>
+  [area, producedMw(hour, area) - hour.areas[area]!.consumptionMw - unmeteredLossesMw(hour) * hour.areas[area]!.consumptionMw / consumedMw(hour)]))
 const comparisonsFor = async (name: 'winterPeak' | 'summerLow'): Promise<ReadonlyArray<Comparison>> => {
   const hour = measured.hours[name]
   const modelled = await modelHour(hour.operatingPointId)
@@ -237,11 +216,10 @@ const comparisonsFor = async (name: 'winterPeak' | 'summerLow'): Promise<Readonl
     if (modelMw === undefined) throw new Error(`the model has no branch between ${border.from} and ${border.to}`)
     rows.push({ key: `${name} border ${border.from}→${border.to}`, modelMw, measuredMw: border.mw, toleranceMw: flowTolerance(border.mw) })
   }
-  const measuredNet = flowNetPositions(hour)
   const estimatedNet = estimatedNetPositions(hour)
   for (const area of areaIds) {
-    const measuredMw = measuredNet?.get(area) ?? estimatedNet.get(area)!
-    rows.push({ key: `${name} net ${area}`, modelMw: modelled.net.get(area)!, measuredMw, toleranceMw: measuredNet === null ? estimatedNetTolerance(measuredMw) : flowTolerance(measuredMw) })
+    const measuredMw = estimatedNet.get(area)!
+    rows.push({ key: `${name} net ${area}`, modelMw: modelled.net.get(area)!, measuredMw, toleranceMw: estimatedNetTolerance(measuredMw, unmeteredLossesMw(hour)) })
   }
   for (const area of areaIds) {
     for (const kind of ['hydro', 'wind'] as const) {
@@ -269,18 +247,19 @@ describe('the Norway model against the measured exchange of its Operating Point 
     const sources = new Set(measured.sources.map(source => source.id))
     const cited = Object.values(measured.hours).flatMap(hour => [...hour.acBorders, ...hour.hvdc, hour.swedenTotal].map(entry => entry.source))
     expect(cited.filter(source => !sources.has(source))).toEqual([])
-    for (const source of measured.sources) expect(source.licence === 'not-stated' ? source.licenceNote !== undefined : true).toBe(true)
   })
 
-  test('the measured hours close: the Swedish borders sum to the Swedish total, and the Elhub estimate of net positions matches the summer flows', () => {
+  test('the measured hours close: the Swedish borders sum to the Swedish total, and the unmetered losses are those of a whole power system', () => {
     for (const hour of Object.values(measured.hours)) {
       const borders = hour.acBorders.filter(border => border.to.startsWith('SE')).reduce((sum, border) => sum + border.mw, 0)
       // Svenska kraftnät and Energy-Charts (ENTSO-E) meter the same ties: they agree within 3 MW.
       expect(Math.abs(borders - hour.swedenTotal.mw)).toBeLessThan(3)
+      // Norway's grid losses at all voltage levels are 6.8–6.9 % of gross consumption a year (SSB
+      // calculated line loss, 2015–17); one hour may differ, but not outside 3–10 %.
+      const share = unmeteredLossesMw(hour) / consumedMw(hour)
+      expect(share).toBeGreaterThan(0.03)
+      expect(share).toBeLessThan(0.1)
     }
-    const flowNet = flowNetPositions(measured.hours.summerLow)!
-    const estimated = estimatedNetPositions(measured.hours.summerLow)
-    expect(areaIds.filter(area => Math.abs(flowNet.get(area)! - estimated.get(area)!) > 50)).toEqual([])
   })
 
   for (const name of ['winterPeak', 'summerLow'] as const) {

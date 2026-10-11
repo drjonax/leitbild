@@ -1,7 +1,7 @@
 {
  "schema": "leitbild.electric-grid.norway-measured-exchange",
  "curatedAt": "2026-10-11",
- "note": "Measured physical exchange, production and consumption of Norway at the two Operating Point hours, for the measured-flows validation test. Flows are hourly means of the four quarter-hours, positive in the listed from→to direction. Elhub hourly energy (kWh) is the hour's mean power. HVDC flows are per neighbouring area, as Energy-Charts publishes them per country.",
+ "note": "Measured physical exchange, production and consumption of Norway at the two Operating Point hours, for the measured-flows validation test. Only openly licensed sources (CC BY 4.0). Flows are hourly means of the four quarter-hours, positive in the listed from→to direction. Elhub hourly energy (kWh) is the hour's mean power. HVDC flows are per neighbouring area, as Energy-Charts publishes them per country.",
  "sources": [
   {
    "id": "svk-physical-flows",
@@ -85,37 +85,6 @@
      "url": "https://api.elhub.no/energy-data/v0/price-areas?dataset=CONSUMPTION_PER_GROUP_MBA_HOUR&startDate=2026-07-12T06%3A00%3A00%2B02%3A00&endDate=2026-07-12T07%3A00%3A00%2B02%3A00",
      "retrievedAt": "2026-10-11T18:54:09.000Z",
      "sha256": "a42b18ec481f0404aaaf949efc45b6a1610af65d4880fad2b223ed7a703913b5"
-    }
-   ]
-  },
-  {
-   "id": "statnett-driftsdata-entsoe",
-   "title": "Statnett driftsdata REST API, PhysicalFlowMap/GetTranFlow: physical flow between bidding areas from ENTSO-E (PhysicalFlowMinuteTran), quarter-hour values",
-   "publisher": "Statnett SF (values sourced from the ENTSO-E Transparency Platform, as the API documentation states)",
-   "url": "https://driftsdata.statnett.no/restapi/swagger/docs/v1",
-   "licence": "not-stated",
-   "licenceNote": "Neither driftsdata.statnett.no nor statnett.no states terms of use for these values (checked 2026-10-11). Kept as 24 cited factual measurements for validation only; no other open source gives Norway's internal bidding-area flows without an ENTSO-E account. The API holds no internal flows before late January 2026, so the winter hour has none.",
-   "attribution": "Statnett SF; ENTSO-E Transparency Platform",
-   "retrievals": [
-    {
-     "url": "https://driftsdata.statnett.no/restapi/PhysicalFlowMap/GetTranFlow?Ticks=1783828800000&tranFlow=true",
-     "retrievedAt": "2026-10-11T18:54:29.019Z",
-     "sha256": "aeac7dc607e02405cb8fc05272ce20ae1fdc4b876ae6db589a29ae779c3cb344"
-    },
-    {
-     "url": "https://driftsdata.statnett.no/restapi/PhysicalFlowMap/GetTranFlow?Ticks=1783829700000&tranFlow=true",
-     "retrievedAt": "2026-10-11T18:54:29.728Z",
-     "sha256": "91be1a0bc8c3ee4308430d9afabebb56ddd8ee24e730b2046467770aafc2ead3"
-    },
-    {
-     "url": "https://driftsdata.statnett.no/restapi/PhysicalFlowMap/GetTranFlow?Ticks=1783830600000&tranFlow=true",
-     "retrievedAt": "2026-10-11T18:54:30.538Z",
-     "sha256": "1436ce1d602cfee808f996715dc1758aae3566811dd1fda727ec1843e7b7c9d7"
-    },
-    {
-     "url": "https://driftsdata.statnett.no/restapi/PhysicalFlowMap/GetTranFlow?Ticks=1783831500000&tranFlow=true",
-     "retrievedAt": "2026-10-11T18:54:31.428Z",
-     "sha256": "9029569a11d1acc7d1d6f66355ab8c67fe69c6189e000801ea24c15dca44970a"
     }
    ]
   }
@@ -358,78 +327,6 @@
       37
      ],
      "source": "energy-charts"
-    },
-    {
-     "from": "NO1",
-     "to": "NO2",
-     "mw": 1648,
-     "quarterHoursMw": [
-      1675,
-      1598.6,
-      1657.7,
-      1660.5
-     ],
-     "source": "statnett-driftsdata-entsoe"
-    },
-    {
-     "from": "NO1",
-     "to": "NO3",
-     "mw": -76.6,
-     "quarterHoursMw": [
-      -79.2,
-      -90,
-      -78,
-      -59.4
-     ],
-     "source": "statnett-driftsdata-entsoe"
-    },
-    {
-     "from": "NO1",
-     "to": "NO5",
-     "mw": -1011.7,
-     "quarterHoursMw": [
-      -1048.7,
-      -1022.4,
-      -1011.6,
-      -964.3
-     ],
-     "source": "statnett-driftsdata-entsoe"
-    },
-    {
-     "from": "NO2",
-     "to": "NO5",
-     "mw": -673.2,
-     "quarterHoursMw": [
-      -678.5,
-      -661,
-      -684.7,
-      -668.5
-     ],
-     "source": "statnett-driftsdata-entsoe"
-    },
-    {
-     "from": "NO3",
-     "to": "NO4",
-     "mw": -925.7,
-     "quarterHoursMw": [
-      -932.8,
-      -900.9,
-      -922,
-      -947.1
-     ],
-     "source": "statnett-driftsdata-entsoe"
-    },
-    {
-     "from": "NO3",
-     "to": "NO5",
-     "mw": 235.2,
-     "quarterHoursMw": [
-      236.1,
-      251.5,
-      235.5,
-      217.6
-     ],
-     "source": "statnett-driftsdata-entsoe"
     }
    ],
    "swedenTotal": {
