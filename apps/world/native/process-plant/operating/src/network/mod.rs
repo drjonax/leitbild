@@ -31,7 +31,7 @@ mod tolerance;
 pub mod walls;
 
 pub use account::{Tolerances, empty_energy_ratio};
-pub use blocks::BlockJacobian;
+pub use blocks::{BlockJacobian, Held, LocalCoupling, NetworkSeed, Replay};
 pub use jacobian::{
     ConsistentPair, ConsistentSystem, CscOut, DensePattern, Largest, Projection, SparseJacobian,
     consistent_rates, consistent_start, project_constraints,

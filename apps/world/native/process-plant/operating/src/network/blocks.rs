@@ -20,12 +20,21 @@
 //! linearly; nothing survives the assembly. Points recovered from an
 //! enthalpy target (births) take the boundary's own direction unheld.
 //!
+//! The same replay serves a joined operator ([`Replay`]): it mirrors
+//! [`Network::evaluate_joined`], with the moving cells' current volumes in
+//! the EOS rows, phase fractions, inertances, onset mass rates and the
+//! bounded phase-rate closure, and the coupled owners' receipts added after
+//! the face charts' as there. After each column's charts a
+//! [`LocalCoupling`] gives the coupled owners' receipt directions for that
+//! column, and a non-network column enters through its receipt and volume
+//! directions ([`NetworkSeed`]).
+//!
 //! The base pass recomputes every row value and refuses (Fatal) unless each
 //! is bitwise the residual's, so this assembly cannot differentiate another
 //! composition. A response outside the compiled pattern, or a nonfinite
 //! one, refuses. Nothing falls back to another assembly.
 use super::{
-    Failure, Network, PZR_COORDINATES, Properties,
+    Failure, Fluid, Network, PZR_COORDINATES, Properties, Receipts,
     properties::{self as props, BandReport, MetastableBand, Reuse, Water},
     rec, s, selected_phase, stratified,
 };
@@ -87,7 +96,8 @@ impl BlockJacobian {
 /// Exact assembly-local property directions: each point's held unit
 /// directions, combined linearly. A delegating implementation of
 /// [`Properties`], so the stratified cell owner's own column takes them.
-struct Held<'a, P: Properties> {
+/// Built for one assembly and dropped with it.
+pub struct Held<'a, P: Properties> {
     inner: &'a P,
     /// (p, T, rho) bits of a recovered internal-energy point, and its unit
     /// pressure and caloric-target directions.
@@ -96,7 +106,7 @@ struct Held<'a, P: Properties> {
     saturations: RefCell<Vec<(u64, Saturation, Saturation)>>,
 }
 impl<'a, P: Properties> Held<'a, P> {
-    fn new(inner: &'a P) -> Self {
+    pub fn new(inner: &'a P) -> Self {
         Self {
             inner,
             points: RefCell::new(Vec::new()),
@@ -221,13 +231,23 @@ struct Pass {
     /// Supporting cells' phase mass receipts, read by the impulse rows.
     mass_rate: [Vec<Scalar>; 2],
     column: stratified::Column,
-    /// Stage-one charts by face layout.
-    charts: Vec<Chart>,
+    /// Stage-one charts by face and phase, as the coupling reads them.
+    charts: Vec<[Option<Chart>; 2]>,
     receipts: Vec<[[Scalar; 3]; 2]>,
     section_drive: Vec<Scalar>,
     rows: Vec<Scalar>,
     /// Base pass: the impulse row's path has exactly zero inertance.
     cold: Vec<bool>,
+    /// Regular cells: current free volume, and its rate for a moving cell.
+    volume: Vec<Scalar>,
+    volume_rate: Vec<Option<Scalar>>,
+    /// Regular cells: the liquid tracer amount, as the coupling reads it.
+    tracer: Vec<Scalar>,
+}
+impl Pass {
+    fn chart(&self, li: usize) -> Chart {
+        self.charts[li / 2][li % 2].expect("every face layout has a stage-one chart")
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -278,6 +298,7 @@ impl<P: Properties> Blocks<'_, P> {
         &mut self,
         node: usize,
         seed: Option<Seed>,
+        cell_volume: Scalar,
     ) -> Result<(Cell, [Point; 2], Scalar), Failure> {
         let net = self.net;
         let l = net.cell_layout[node];
@@ -318,7 +339,8 @@ impl<P: Properties> Blocks<'_, P> {
                 volume[k] = mass / rec(q.density_kg_m3, dq.density_kg_m3);
             }
         }
-        let eos = (volume[0] + volume[1] - s(net.volumes[node])) / s(net.volumes[node]);
+        // The row keeps the compiled volume as its scale.
+        let eos = (volume[0] + volume[1] - cell_volume) / s(net.volumes[node]);
         for k in 0..2 {
             let mass = self.get(seed, l.mass[k]);
             if !selected_phase(mass) {
@@ -328,9 +350,9 @@ impl<P: Properties> Blocks<'_, P> {
                 continue;
             };
             let fraction = if k == l.phase {
-                s(1.) - volume[1 - k] / s(net.volumes[node])
+                s(1.) - volume[1 - k] / cell_volume
             } else {
-                volume[k] / s(net.volumes[node])
+                volume[k] / cell_volume
             };
             let boron_concentration = if k == 0 {
                 if mass.value != 0. {
@@ -387,7 +409,7 @@ impl<P: Properties> Blocks<'_, P> {
         let pi = self.get(seed, l.index);
         let f = &net.faces[l.face];
         let inertance = f.supports.iter().fold(s(0.), |sum, support| {
-            sum + pass.phase_mass[l.phase][support.region] / s(net.volumes[support.region])
+            sum + pass.phase_mass[l.phase][support.region] / pass.volume[support.region]
                 * s(support.inverse_area_length_per_m)
         });
         if inertance.value == 0.
@@ -410,7 +432,7 @@ impl<P: Properties> Blocks<'_, P> {
                 f,
                 &pass.phase_mass[l.phase],
                 &self.zero_rate,
-                &net.volumes[..n],
+                &pass.volume[..n],
                 pi,
                 s(0.),
                 flow::ColdOnset::Unavailable,
@@ -443,7 +465,7 @@ impl<P: Properties> Blocks<'_, P> {
             .ok_or_else(|| recoverable("liquid-carrier section has no liquid EOS point"))?;
         let mut profile = s(0.);
         for (face, w) in profile_of {
-            profile = profile + s(*w) * pass.charts[2 * face].volume_flow_m3_s;
+            profile = profile + s(*w) * pass.chart(2 * face).volume_flow_m3_s;
         }
         let current = liquid.density * liquid.fraction * profile;
         let gas_fraction = pass.cells[region].phase[1].map_or(s(0.), |p| p.fraction);
@@ -524,7 +546,7 @@ impl<P: Properties> Blocks<'_, P> {
         let net = self.net;
         let n = net.pzr.cell;
         let l = net.face_layout[li];
-        let current = pass.charts[li];
+        let current = pass.chart(li);
         let mut force = s(0.);
         if l.phase == 0 {
             for (section, w) in forced_by {
@@ -542,7 +564,7 @@ impl<P: Properties> Blocks<'_, P> {
             &net.faces[l.face],
             &pass.phase_mass[l.phase],
             &pass.mass_rate[l.phase],
-            &net.volumes[..n],
+            &pass.volume[..n],
             pi,
             force + current.pressure_gravity_pa,
             flow::ColdOnset::ProvenRest,
@@ -621,8 +643,11 @@ impl<P: Properties> Blocks<'_, P> {
                 u_t: rec(q.cp_j_kg_k, dq.cp_j_kg_k) - pressure * alpha / rho,
             });
         }
-        let rates = phase::current_rates(pressure, therm, md, hd)
-            .map_err(|e| recoverable(e.to_string()))?;
+        let rates = match pass.volume_rate[node] {
+            None => phase::current_rates(pressure, therm, md, hd),
+            Some(rate) => phase::current_rates_with_boundary(pressure, therm, md, hd, rate),
+        }
+        .map_err(|e| recoverable(e.to_string()))?;
         let mut rows = [boron, s(0.), s(0.), s(0.), s(0.)];
         for (k, mass_rate) in md.iter().enumerate() {
             rows[1 + 2 * k] = (self.rate(seed, l.mass[k]) - *mass_rate) / s(net.scales[l.mass[k]]);
@@ -630,6 +655,17 @@ impl<P: Properties> Blocks<'_, P> {
                 / s(net.scales[l.energy[k]]);
         }
         Ok(rows)
+    }
+
+    /// A regular cell's phase mass rate as the impulse rows read it: the
+    /// mass receipt, less `M V'/V` for a moving cell (the inertance weight
+    /// is the phase density `M/V`).
+    fn mass_rate(&self, pass: &Pass, k: usize, node: usize) -> Scalar {
+        let receipt = pass.receipts[node][k][0];
+        match pass.volume_rate[node] {
+            None => receipt,
+            Some(rate) => receipt - pass.phase_mass[k][node] * rate / pass.volume[node],
+        }
     }
 
     /// The stratified cell's 17 rows on the pass's column and port receipt.
@@ -668,12 +704,6 @@ impl<P: Properties> Blocks<'_, P> {
             )?
             .rows)
     }
-}
-
-/// One row's direction in this column's response.
-fn record(response: &mut [f64], responded: &mut Vec<usize>, row: usize, v: Scalar) {
-    response[row] = v.direction;
-    responded.push(row);
 }
 
 /// Per-section projection lists in the residual's order: each section's
@@ -815,57 +845,520 @@ impl<P: Properties> Network<P> {
         self.counters.jacobians += 1;
         let result = (|| {
             let n = self.dimension();
-            if y.len() != n
-                || yp.len() != n
-                || structure.columns() != n
-                || values.len() != structure.pattern.nonzeros()
-            {
+            if structure.columns() != n || values.len() != structure.pattern.nonzeros() {
                 return Err(fatal("block assembly layout"));
             }
             let mut reuse = self.reuse();
             self.evaluate(t, y, yp, None, 0., Some(&mut reuse))?;
-            let signs = self.column_signs(y);
-            let residual: Vec<u64> = self.rows.iter().map(|r| r.value.to_bits()).collect();
             let held = Held::new(&self.properties);
-            let mut blocks = Blocks {
-                net: &*self,
-                held: &held,
-                y,
-                yp,
-                cj,
-                reuse,
-                zero_rate: vec![s(0.); self.pzr.cell],
-            };
-            let projection = self.projection();
-            let base = blocks.base(structure, &projection)?;
-            if let Some(row) = (0..n).find(|i| base.rows[*i].value.to_bits() != residual[*i]) {
-                return Err(fatal(format!(
-                    "the block assembly does not reproduce residual row {row}: {} against {}",
-                    base.rows[row].value,
-                    f64::from_bits(residual[row])
-                )));
+            let mut replay = Replay::new(&*self, &held, y, yp, cj, reuse, structure, false)?;
+            let pointers = structure.pattern.pointers();
+            let indices = structure.pattern.indices();
+            let mut response = Vec::new();
+            let mut dense = vec![0.; n];
+            for j in 0..n {
+                response.clear();
+                replay.column(j, None, &mut response)?;
+                for &(row, v) in &response {
+                    dense[row] = v;
+                }
+                let stored = &indices[pointers[j]..pointers[j + 1]];
+                let sign = replay.sign(j);
+                for (position, row) in (pointers[j]..pointers[j + 1]).zip(stored) {
+                    let v = dense[*row];
+                    if !v.is_finite() {
+                        return Err(fatal(format!(
+                            "block column {j}: nonfinite response {v} at row {row}"
+                        )));
+                    }
+                    values[position] = v / sign;
+                }
+                for &(row, v) in &response {
+                    if v != 0. && stored.binary_search(&row).is_err() {
+                        return Err(fatal(format!(
+                            "block column {j}: response {v} at row {row}, which the pattern does not store; it omits a dependency"
+                        )));
+                    }
+                    dense[row] = 0.;
+                }
             }
-            blocks.columns(&base, structure, &projection, &signs, values)
+            Ok(())
         })();
         self.counters.jacobian_wall_s += started.elapsed().as_secs_f64();
         result
     }
 }
 
+/// The coupled owners' response to one network column of a block
+/// assembly: S2-JOIN's `couple_local` on the joined operator.
+pub trait LocalCoupling {
+    /// Called once per column after its stage-one charts and receipts, with
+    /// this column's fluid state (base values with this column's
+    /// directions) and the regular cells whose state and the faces whose
+    /// liquid chart flux moved. Adds the coupled receipts' directions for
+    /// this column into `receipts`; their values are not read.
+    fn local(
+        &mut self,
+        cells: &[usize],
+        faces: &[usize],
+        fluid: &Fluid<'_>,
+        receipts: &mut Receipts<'_>,
+    ) -> Result<(), Failure>;
+}
+
+/// The directions one non-network column of a joined operator gives the
+/// network: receipts into regular cells and moving cell volumes.
+#[derive(Clone, Debug, Default)]
+pub struct NetworkSeed {
+    /// `(regular cell, [phase][mass, enthalpy, tracer] receipt directions)`.
+    pub receipts: Vec<(usize, [[f64; 3]; 2])>,
+    /// `(regular cell, d volume, d volume rate)`.
+    pub volumes: Vec<(usize, f64, f64)>,
+}
+
+/// The network's element replay at one base evaluation, for the network's
+/// own block assembly and for a joined operator's.
+pub struct Replay<'a, P: Properties> {
+    blocks: Blocks<'a, P>,
+    structure: &'a BlockJacobian,
+    projection: Projection,
+    base: Pass,
+    pass: Pass,
+    signs: Vec<f64>,
+    work: Work,
+}
+
+/// Per-column scratch lists.
+#[derive(Default)]
+struct Work {
+    responded: Vec<(usize, f64)>,
+    cells: Vec<usize>,
+    faces: Vec<usize>,
+    charts: Vec<usize>,
+    receipts: Vec<usize>,
+    sections: Vec<usize>,
+    impulses: Vec<usize>,
+    stocks: Vec<usize>,
+    volumes: Vec<usize>,
+    coupled: Vec<[[Scalar; 3]; 2]>,
+}
+
+impl<'a, P: Properties> Replay<'a, P> {
+    /// The replay at the network's last evaluation, which must have been at
+    /// `(y, y')` with `reuse` as its matrix reuse; `coupled` names an
+    /// evaluation with a coupling (its receipts are then the network's
+    /// coupled receipts of that evaluation). Refuses unless the base pass
+    /// reproduces every network row bitwise.
+    #[allow(clippy::too_many_arguments)] // The network's stage inputs and its compiled structure.
+    pub fn new(
+        net: &'a Network<P>,
+        held: &'a Held<'a, P>,
+        y: &'a [f64],
+        yp: &'a [f64],
+        cj: f64,
+        reuse: Reuse<P::Caloric>,
+        structure: &'a BlockJacobian,
+        coupled: bool,
+    ) -> Result<Self, Failure> {
+        let n = net.dimension();
+        if y.len() != n || yp.len() != n || structure.columns() != n {
+            return Err(fatal("block replay layout"));
+        }
+        let mut blocks = Blocks {
+            net,
+            held,
+            y,
+            yp,
+            cj,
+            reuse,
+            zero_rate: vec![s(0.); net.pzr.cell],
+        };
+        let projection = net.projection();
+        let base = blocks.base(structure, &projection, coupled)?;
+        if let Some(row) =
+            (0..n).find(|i| base.rows[*i].value.to_bits() != net.rows[*i].value.to_bits())
+        {
+            return Err(fatal(format!(
+                "the block assembly does not reproduce residual row {row}: {} against {}",
+                base.rows[row].value, net.rows[row].value
+            )));
+        }
+        Ok(Self {
+            blocks,
+            structure,
+            projection,
+            pass: base.clone(),
+            base,
+            signs: net.column_signs(y),
+            work: Work {
+                coupled: vec![[[s(0.); 3]; 2]; net.pzr.cell],
+                ..Work::default()
+            },
+        })
+    }
+
+    /// The seed sign of network column `j` (an exact-zero impulse follows
+    /// its current force branch); its entries are the response over it.
+    pub fn sign(&self, j: usize) -> f64 {
+        self.signs[j]
+    }
+
+    /// Network column `j`'s response: `(network row, direction)` along the
+    /// column's seed sign, and through `hook` the coupled owners'.
+    pub fn column(
+        &mut self,
+        j: usize,
+        hook: Option<&mut dyn LocalCoupling>,
+        response: &mut Vec<(usize, f64)>,
+    ) -> Result<(), Failure> {
+        let seed = Seed {
+            column: j,
+            sign: self.signs[j],
+        };
+        self.run(Some(seed), None, hook, response)
+    }
+
+    /// A non-network column's response through its receipt and volume
+    /// directions; `hook` gives the coupled owners' response to the cells
+    /// and faces that moved.
+    pub fn external(
+        &mut self,
+        seed: &NetworkSeed,
+        hook: Option<&mut dyn LocalCoupling>,
+        response: &mut Vec<(usize, f64)>,
+    ) -> Result<(), Failure> {
+        self.run(None, Some(seed), hook, response)
+    }
+
+    fn run(
+        &mut self,
+        seed: Option<Seed>,
+        external: Option<&NetworkSeed>,
+        hook: Option<&mut dyn LocalCoupling>,
+        response: &mut Vec<(usize, f64)>,
+    ) -> Result<(), Failure> {
+        let Self {
+            blocks,
+            structure,
+            projection,
+            base,
+            pass,
+            work,
+            ..
+        } = self;
+        let net = blocks.net;
+        let regular = net.pzr.cell;
+        let pzr = net.pzr.cell;
+        let w = work;
+        w.responded.clear();
+        w.cells.clear();
+        w.faces.clear();
+        w.charts.clear();
+        w.receipts.clear();
+        w.sections.clear();
+        w.impulses.clear();
+        w.stocks.clear();
+        w.volumes.clear();
+        let mut pzr_seeded = false;
+        let moved = |a: Scalar| a.direction != 0.;
+        let owner = seed.map(|s| structure.owner[s.column]);
+        let view_moved = |cell: &Cell, base: &Cell| {
+            moved(cell.pressure)
+                || cell.phase.iter().flatten().any(|p| {
+                    moved(p.fraction)
+                        || moved(p.density)
+                        || moved(p.enthalpy)
+                        || moved(p.boron_concentration)
+                })
+                || cell
+                    .phase
+                    .iter()
+                    .zip(&base.phase)
+                    .any(|(a, b)| a.is_some() != b.is_some())
+        };
+        match owner {
+            Some(Owner::Cell(node, coordinate)) => {
+                let (cell, point, eos) = blocks.cell(node, seed, pass.volume[node])?;
+                let viewed = view_moved(&cell, &base.cells[node]);
+                pass.cells[node] = cell;
+                pass.points[node] = point;
+                w.responded
+                    .push((net.cell_layout[node].base, eos.direction));
+                if viewed {
+                    w.charts.extend_from_slice(&structure.reading[node]);
+                }
+                match coordinate {
+                    Coordinate::Mass(k) => {
+                        pass.phase_mass[k][node] = blocks.get(seed, net.cell_layout[node].mass[k]);
+                        w.charts.extend_from_slice(&structure.supporting[k][node]);
+                    }
+                    Coordinate::Boron => {
+                        pass.tracer[node] = blocks.get(seed, net.cell_layout[node].boron);
+                    }
+                    Coordinate::Pressure | Coordinate::Energy(_) => {}
+                }
+                w.cells.push(node);
+                w.receipts.push(node);
+                w.sections.extend_from_slice(&structure.sections_of[node]);
+                w.stocks.push(node);
+            }
+            Some(Owner::Pzr) => {
+                let (column, view) = blocks.pzr(seed, structure.port)?;
+                pass.column = column;
+                pass.cells[pzr] = view;
+                w.charts.extend_from_slice(&structure.reading[pzr]);
+                pzr_seeded = true;
+            }
+            Some(Owner::Impulse(li)) => {
+                w.charts.push(li);
+                w.impulses.push(li);
+            }
+            Some(Owner::Rotor(r)) => w.sections.push(structure.rotor_section[r]),
+            None => {}
+        }
+        if let Some(external) = external {
+            for &(node, dv, dr) in &external.volumes {
+                if node >= regular {
+                    return Err(fatal(format!(
+                        "a moving volume of cell {node} is not a regular cell"
+                    )));
+                }
+                let v = base.volume[node];
+                pass.volume[node] = Scalar::new(v.value, dv);
+                let rate = base.volume_rate[node].map_or(0., |r| r.value);
+                pass.volume_rate[node] = Some(Scalar::new(rate, dr));
+                let (cell, point, eos) = blocks.cell(node, None, pass.volume[node])?;
+                let viewed = view_moved(&cell, &base.cells[node]);
+                pass.cells[node] = cell;
+                pass.points[node] = point;
+                w.responded
+                    .push((net.cell_layout[node].base, eos.direction));
+                if viewed {
+                    w.charts.extend_from_slice(&structure.reading[node]);
+                    w.sections.extend_from_slice(&structure.sections_of[node]);
+                }
+                for k in 0..2 {
+                    w.charts.extend_from_slice(&structure.supporting[k][node]);
+                }
+                w.volumes.push(node);
+                w.cells.push(node);
+                w.receipts.push(node);
+                w.stocks.push(node);
+            }
+            for (node, d) in &external.receipts {
+                if *node >= regular {
+                    return Err(fatal(format!(
+                        "a receipt into cell {node} is not a regular cell"
+                    )));
+                }
+                for (target, d) in pass.receipts[*node].iter_mut().zip(d) {
+                    for (q, d) in target.iter_mut().zip(d) {
+                        q.direction += d;
+                    }
+                }
+                w.receipts.push(*node);
+            }
+        }
+        w.charts.sort_unstable();
+        w.charts.dedup();
+        // Stage-one charts and their receipts, in the residual's order.
+        for &li in &w.charts {
+            let chart = blocks.chart(li, pass, seed)?;
+            let l = net.face_layout[li];
+            pass.charts[l.face][l.phase] = Some(chart);
+            let f = &net.faces[l.face];
+            let flux = [
+                chart.mass_flow_kg_s,
+                chart.enthalpy_flow_w,
+                chart.boron_flow_kg_s,
+            ];
+            if flux.iter().any(|q| moved(*q)) {
+                for (k, q) in flux.into_iter().enumerate() {
+                    pass.receipts[f.from][l.phase][k].direction -= q.direction;
+                    pass.receipts[f.to][l.phase][k].direction += q.direction;
+                }
+                w.receipts.extend([f.from, f.to]);
+                if l.phase == 0 {
+                    w.faces.push(l.face);
+                }
+            }
+            if moved(chart.volume_flow_m3_s) {
+                w.sections.extend_from_slice(&structure.profiled_by[li]);
+            }
+            if moved(chart.pressure_gravity_pa) || base.cold[li] {
+                w.impulses.push(li);
+            }
+        }
+        // The coupled owners' receipts for this column, after the charts'.
+        if let Some(hook) = hook {
+            w.cells.sort_unstable();
+            w.cells.dedup();
+            w.faces.sort_unstable();
+            w.faces.dedup();
+            if !w.cells.is_empty() || !w.faces.is_empty() {
+                let fluid = Fluid {
+                    cells: &pass.cells,
+                    points: &pass.points,
+                    liquid_mass: &pass.phase_mass[0],
+                    vapor_mass: &pass.phase_mass[1],
+                    tracer: &pass.tracer,
+                    charts: &pass.charts,
+                    endpoints: &net.endpoints,
+                    elevations: &net.elevations,
+                    volumes: &net.volumes,
+                    current_volumes: &pass.volume,
+                };
+                w.coupled.fill([[s(0.); 3]; 2]);
+                hook.local(
+                    &w.cells,
+                    &w.faces,
+                    &fluid,
+                    &mut Receipts::new(&mut w.coupled),
+                )?;
+                for (node, r) in w.coupled.iter().enumerate() {
+                    if r.iter().flatten().any(|q| moved(*q)) {
+                        for (target, r) in pass.receipts[node].iter_mut().zip(r) {
+                            for (q, r) in target.iter_mut().zip(r) {
+                                q.direction += r.direction;
+                            }
+                        }
+                        w.receipts.push(node);
+                    }
+                }
+            }
+        }
+        w.sections.sort_unstable();
+        w.sections.dedup();
+        for &k in &w.sections {
+            let (drive, rotor) = blocks.section(k, pass, seed, &projection.profile[k])?;
+            pass.section_drive[k] = drive;
+            if let Some((index, shaft, row)) = rotor {
+                if moved(shaft) {
+                    let region = net.sections[k].region;
+                    pass.receipts[region][0][1].direction += shaft.direction;
+                    w.receipts.push(region);
+                }
+                w.responded.push((index, row.direction));
+            }
+            if moved(drive) {
+                w.impulses.extend_from_slice(&structure.forcing[k]);
+            }
+        }
+        w.receipts.sort_unstable();
+        w.receipts.dedup();
+        for &c in &w.receipts {
+            if c < regular {
+                for k in 0..2 {
+                    pass.mass_rate[k][c] = blocks.mass_rate(pass, k, c);
+                }
+                w.stocks.push(c);
+                // A zero-inertance path's onset reads its supports' mass rates.
+                for k in 0..2 {
+                    if moved(pass.mass_rate[k][c]) {
+                        w.impulses.extend(
+                            structure.supporting[k][c]
+                                .iter()
+                                .filter(|li| base.cold[**li]),
+                        );
+                    }
+                }
+            }
+        }
+        w.impulses.sort_unstable();
+        w.impulses.dedup();
+        for &li in &w.impulses {
+            let face = net.face_layout[li].face;
+            let (row, _) =
+                blocks.momentum(li, pass, seed, &projection.force[face], !base.cold[li])?;
+            w.responded.push((net.face_layout[li].index, row.direction));
+        }
+        w.stocks.sort_unstable();
+        w.stocks.dedup();
+        for &c in &w.stocks {
+            let rows = blocks.stocks(c, pass, seed)?;
+            let l = net.cell_layout[c];
+            for (i, row) in [l.boron, l.mass[0], l.energy[0], l.mass[1], l.energy[1]]
+                .into_iter()
+                .zip(rows)
+            {
+                w.responded.push((i, row.direction));
+            }
+        }
+        if pzr_seeded || w.receipts.binary_search(&pzr).is_ok() {
+            let rows = blocks.pzr_rows(pass, seed)?;
+            for (i, row) in net.pzr.coordinates().zip(rows) {
+                w.responded.push((i, row.direction));
+            }
+        }
+        response.extend_from_slice(&w.responded);
+        // Restore the base pass.
+        match owner {
+            Some(Owner::Cell(node, _)) => {
+                pass.cells[node] = base.cells[node];
+                pass.points[node] = base.points[node];
+                for k in 0..2 {
+                    pass.phase_mass[k][node] = base.phase_mass[k][node];
+                }
+                pass.tracer[node] = base.tracer[node];
+            }
+            Some(Owner::Pzr) => {
+                pass.column = base.column;
+                pass.cells[pzr] = base.cells[pzr];
+            }
+            _ => {}
+        }
+        for &node in &w.volumes {
+            pass.volume[node] = base.volume[node];
+            pass.volume_rate[node] = base.volume_rate[node];
+            pass.cells[node] = base.cells[node];
+            pass.points[node] = base.points[node];
+        }
+        for &li in &w.charts {
+            let l = net.face_layout[li];
+            pass.charts[l.face][l.phase] = base.charts[l.face][l.phase];
+        }
+        for &k in &w.sections {
+            pass.section_drive[k] = base.section_drive[k];
+        }
+        for &c in &w.receipts {
+            pass.receipts[c] = base.receipts[c];
+            if c < regular {
+                for k in 0..2 {
+                    pass.mass_rate[k][c] = base.mass_rate[k][c];
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<P: Properties> Blocks<'_, P> {
-    /// Every element at the base values, in the residual's order.
+    /// Every element at the base values, in the residual's order
+    /// ([`Network::evaluate_joined`]).
     fn base(
         &mut self,
         structure: &BlockJacobian,
         projection: &Projection,
+        coupled: bool,
     ) -> Result<Pass, Failure> {
         let net = self.net;
         let n = net.pzr.cell;
+        let volume: Vec<Scalar> = net.cell_volume.clone();
+        let volume_rate: Vec<Option<Scalar>> = net.cell_volume_rate.clone();
+        if volume
+            .iter()
+            .chain(volume_rate.iter().flatten())
+            .any(|v| v.direction != 0.)
+        {
+            return Err(fatal(
+                "the base evaluation's cell volumes carry a direction",
+            ));
+        }
         let mut cells = Vec::with_capacity(net.cells.len());
         let mut points = Vec::with_capacity(n);
         let mut eos = Vec::with_capacity(n);
-        for node in 0..n {
-            let (cell, point, row) = self.cell(node, None)?;
+        for (node, v) in volume.iter().enumerate() {
+            let (cell, point, row) = self.cell(node, None, *v)?;
             cells.push(cell);
             points.push(point);
             eos.push(row);
@@ -877,6 +1370,9 @@ impl<P: Properties> Blocks<'_, P> {
                 .map(|node| self.get(None, net.cell_layout[node].mass[k]))
                 .collect()
         });
+        let tracer: Vec<Scalar> = (0..n)
+            .map(|node| self.get(None, net.cell_layout[node].boron))
+            .collect();
         let layouts = net.face_layout.len();
         let mut pass = Pass {
             cells,
@@ -884,16 +1380,19 @@ impl<P: Properties> Blocks<'_, P> {
             phase_mass,
             mass_rate: [vec![s(0.); n], vec![s(0.); n]],
             column,
-            charts: Vec::with_capacity(layouts),
+            charts: vec![[None; 2]; net.faces.len()],
             receipts: vec![[[s(0.); 3]; 2]; net.cells.len()],
             section_drive: vec![s(0.); net.sections.len()],
             rows: vec![s(0.); net.dimension()],
             cold: vec![false; layouts],
+            volume,
+            volume_rate,
+            tracer,
         };
         for li in 0..layouts {
             let chart = self.chart(li, &pass, None)?;
-            pass.charts.push(chart);
             let l = net.face_layout[li];
+            pass.charts[l.face][l.phase] = Some(chart);
             let f = &net.faces[l.face];
             let flux = [
                 chart.mass_flow_kg_s,
@@ -903,6 +1402,23 @@ impl<P: Properties> Blocks<'_, P> {
             for (k, q) in flux.into_iter().enumerate() {
                 pass.receipts[f.from][l.phase][k] = pass.receipts[f.from][l.phase][k] - q;
                 pass.receipts[f.to][l.phase][k] = pass.receipts[f.to][l.phase][k] + q;
+            }
+        }
+        if coupled {
+            // The coupled owners' receipts of the same evaluation, added as
+            // Network::couple adds them.
+            for node in 0..n {
+                for k in 0..2 {
+                    for j in 0..3 {
+                        let c = net.coupled_receipts[node][k][j];
+                        if c.direction != 0. {
+                            return Err(fatal(
+                                "the base evaluation's coupled receipts carry a direction",
+                            ));
+                        }
+                        pass.receipts[node][k][j] = pass.receipts[node][k][j] + c;
+                    }
+                }
             }
         }
         for j in 0..net.sections.len() {
@@ -916,7 +1432,7 @@ impl<P: Properties> Blocks<'_, P> {
         }
         for k in 0..2 {
             for node in 0..n {
-                pass.mass_rate[k][node] = pass.receipts[node][k][0];
+                pass.mass_rate[k][node] = self.mass_rate(&pass, k, node);
             }
         }
         for li in 0..layouts {
@@ -943,240 +1459,5 @@ impl<P: Properties> Blocks<'_, P> {
             pass.rows[i] = row;
         }
         Ok(pass)
-    }
-
-    /// Every column's response on the elements that read it, written into
-    /// that column's stored entries.
-    fn columns(
-        &mut self,
-        base: &Pass,
-        structure: &BlockJacobian,
-        projection: &Projection,
-        signs: &[f64],
-        values: &mut [f64],
-    ) -> Result<(), Failure> {
-        let net = self.net;
-        let n = net.dimension();
-        let regular = net.pzr.cell;
-        let pzr = net.pzr.cell;
-        let mut pass = base.clone();
-        let mut response = vec![0.; n];
-        let mut responded: Vec<usize> = Vec::new();
-        let mut charts: Vec<usize> = Vec::new();
-        let mut receipts: Vec<usize> = Vec::new();
-        let mut sections: Vec<usize> = Vec::new();
-        let mut impulses: Vec<usize> = Vec::new();
-        let mut stocks: Vec<usize> = Vec::new();
-        let pointers = structure.pattern.pointers();
-        let indices = structure.pattern.indices();
-        for (j, owner) in structure.owner.iter().enumerate() {
-            let seed = Some(Seed {
-                column: j,
-                sign: signs[j],
-            });
-            charts.clear();
-            receipts.clear();
-            sections.clear();
-            impulses.clear();
-            stocks.clear();
-            let mut pzr_seeded = false;
-            let moved = |a: Scalar| a.direction != 0.;
-            match *owner {
-                Owner::Cell(node, coordinate) => {
-                    let (cell, point, eos) = self.cell(node, seed)?;
-                    // Charts read the view; an unmoved view (an absent
-                    // phase's stock) leaves them at their base.
-                    let viewed = moved(cell.pressure)
-                        || cell.phase.iter().flatten().any(|p| {
-                            moved(p.fraction)
-                                || moved(p.density)
-                                || moved(p.enthalpy)
-                                || moved(p.boron_concentration)
-                        })
-                        || cell
-                            .phase
-                            .iter()
-                            .zip(&base.cells[node].phase)
-                            .any(|(a, b)| a.is_some() != b.is_some());
-                    pass.cells[node] = cell;
-                    pass.points[node] = point;
-                    record(
-                        &mut response,
-                        &mut responded,
-                        net.cell_layout[node].base,
-                        eos,
-                    );
-                    if viewed {
-                        charts.extend_from_slice(&structure.reading[node]);
-                    }
-                    if let Coordinate::Mass(k) = coordinate {
-                        pass.phase_mass[k][node] = self.get(seed, net.cell_layout[node].mass[k]);
-                        charts.extend_from_slice(&structure.supporting[k][node]);
-                    }
-                    sections.extend_from_slice(&structure.sections_of[node]);
-                    stocks.push(node);
-                }
-                Owner::Pzr => {
-                    let (column, view) = self.pzr(seed, structure.port)?;
-                    pass.column = column;
-                    pass.cells[pzr] = view;
-                    charts.extend_from_slice(&structure.reading[pzr]);
-                    pzr_seeded = true;
-                }
-                Owner::Impulse(li) => {
-                    charts.push(li);
-                    impulses.push(li);
-                }
-                Owner::Rotor(r) => sections.push(structure.rotor_section[r]),
-            }
-            charts.sort_unstable();
-            charts.dedup();
-            // Stage-one charts and their receipts, in the residual's order.
-            // A chart output without direction leaves its readers at base.
-            for &li in &charts {
-                let chart = self.chart(li, &pass, seed)?;
-                pass.charts[li] = chart;
-                let l = net.face_layout[li];
-                let f = &net.faces[l.face];
-                let flux = [
-                    chart.mass_flow_kg_s,
-                    chart.enthalpy_flow_w,
-                    chart.boron_flow_kg_s,
-                ];
-                if flux.iter().any(|q| moved(*q)) {
-                    for (k, q) in flux.into_iter().enumerate() {
-                        pass.receipts[f.from][l.phase][k].direction -= q.direction;
-                        pass.receipts[f.to][l.phase][k].direction += q.direction;
-                    }
-                    receipts.extend([f.from, f.to]);
-                }
-                if moved(chart.volume_flow_m3_s) {
-                    sections.extend_from_slice(&structure.profiled_by[li]);
-                }
-                if moved(chart.pressure_gravity_pa) || base.cold[li] {
-                    impulses.push(li);
-                }
-            }
-            sections.sort_unstable();
-            sections.dedup();
-            for &k in &sections {
-                let (drive, rotor) = self.section(k, &pass, seed, &projection.profile[k])?;
-                pass.section_drive[k] = drive;
-                if let Some((index, shaft, row)) = rotor {
-                    if moved(shaft) {
-                        let region = net.sections[k].region;
-                        pass.receipts[region][0][1].direction += shaft.direction;
-                        receipts.push(region);
-                    }
-                    record(&mut response, &mut responded, index, row);
-                }
-                if moved(drive) {
-                    impulses.extend_from_slice(&structure.forcing[k]);
-                }
-            }
-            receipts.sort_unstable();
-            receipts.dedup();
-            for &c in &receipts {
-                if c < regular {
-                    for k in 0..2 {
-                        pass.mass_rate[k][c] = pass.receipts[c][k][0];
-                    }
-                    stocks.push(c);
-                    // A zero-inertance path's onset reads its supports' mass receipts.
-                    for k in 0..2 {
-                        if moved(pass.mass_rate[k][c]) {
-                            impulses.extend(
-                                structure.supporting[k][c]
-                                    .iter()
-                                    .filter(|li| base.cold[**li]),
-                            );
-                        }
-                    }
-                }
-            }
-            impulses.sort_unstable();
-            impulses.dedup();
-            for &li in &impulses {
-                let face = net.face_layout[li].face;
-                let (row, _) =
-                    self.momentum(li, &pass, seed, &projection.force[face], !base.cold[li])?;
-                record(
-                    &mut response,
-                    &mut responded,
-                    net.face_layout[li].index,
-                    row,
-                );
-            }
-            stocks.sort_unstable();
-            stocks.dedup();
-            for &c in &stocks {
-                let rows = self.stocks(c, &pass, seed)?;
-                let l = net.cell_layout[c];
-                for (i, row) in [l.boron, l.mass[0], l.energy[0], l.mass[1], l.energy[1]]
-                    .into_iter()
-                    .zip(rows)
-                {
-                    record(&mut response, &mut responded, i, row);
-                }
-            }
-            if pzr_seeded || receipts.binary_search(&pzr).is_ok() {
-                let rows = self.pzr_rows(&pass, seed)?;
-                for (i, row) in net.pzr.coordinates().zip(rows) {
-                    record(&mut response, &mut responded, i, row);
-                }
-            }
-            // Column j's stored entries; any other response refuses.
-            let stored = &indices[pointers[j]..pointers[j + 1]];
-            let sign = signs[j];
-            for (position, row) in (pointers[j]..pointers[j + 1]).zip(stored) {
-                let v = response[*row];
-                if !v.is_finite() {
-                    return Err(fatal(format!(
-                        "block column {j}: nonfinite response {v} at row {row}"
-                    )));
-                }
-                values[position] = v / sign;
-            }
-            for &row in &responded {
-                if response[row] != 0. && stored.binary_search(&row).is_err() {
-                    return Err(fatal(format!(
-                        "block column {j}: response {} at row {row}, which the pattern does not store; it omits a dependency",
-                        response[row]
-                    )));
-                }
-                response[row] = 0.;
-            }
-            responded.clear();
-            // Restore the base pass.
-            match *owner {
-                Owner::Cell(node, coordinate) => {
-                    pass.cells[node] = base.cells[node];
-                    pass.points[node] = base.points[node];
-                    if let Coordinate::Mass(k) = coordinate {
-                        pass.phase_mass[k][node] = base.phase_mass[k][node];
-                    }
-                }
-                Owner::Pzr => {
-                    pass.column = base.column;
-                    pass.cells[pzr] = base.cells[pzr];
-                }
-                Owner::Impulse(_) | Owner::Rotor(_) => {}
-            }
-            for &li in &charts {
-                pass.charts[li] = base.charts[li];
-            }
-            for &k in &sections {
-                pass.section_drive[k] = base.section_drive[k];
-            }
-            for &c in &receipts {
-                pass.receipts[c] = base.receipts[c];
-                if c < regular {
-                    for k in 0..2 {
-                        pass.mass_rate[k][c] = base.mass_rate[k][c];
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 }
