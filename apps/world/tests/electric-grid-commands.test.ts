@@ -64,7 +64,8 @@ const testModel = {
   ...norway.model,
   loads: [
     ...norway.model.loads,
-    testLoad({ id: evLoadId, kind: 'ev_charging', busId: osloBus.id, location: osloBus.location, demandMw: 120, criticalMw: 20 }),
+    // Smart charging: everything above the critical part is interruptible.
+    testLoad({ id: evLoadId, kind: 'ev_charging', busId: osloBus.id, location: osloBus.location, demandMw: 120, criticalMw: 20, interruptibleMw: 100 }),
     testLoad({ id: criticalLoadId, kind: 'hospital', busId: osloBus.id, location: osloBus.location, demandMw: 40, criticalMw: 40, priority: 'critical' }),
   ],
   generators: [

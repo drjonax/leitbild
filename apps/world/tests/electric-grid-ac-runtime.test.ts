@@ -175,7 +175,7 @@ describe('Grid AC load flow that does not converge', () => {
     // Shedding the load to 40 MW, within the line's AC limit, lets the island converge again.
     const shed = applyGridCommand(grid, {
       id: 'command:ac-shed' as CommandId, simulationRunId: 'run:ac' as SimulationRunId, actorId: 'actor:ac-test' as ActorId,
-      kind: gridShedLoadCommandKind, targetObjectIds: [grid.definition.gridId as ObjectId], payload: { assetId: 'load:l', targetDemandMw: 40 }, issuedAt: iso(2),
+      kind: gridShedLoadCommandKind, targetObjectIds: [grid.definition.gridId as ObjectId], payload: { assetId: 'load:l', targetDemandMw: 40, emergency: true }, issuedAt: iso(2),
     })
     expect(shed.ok).toBe(true)
     for (let second = 4; second <= 60; second += 2) advanceGrid(grid, 2, iso(second))

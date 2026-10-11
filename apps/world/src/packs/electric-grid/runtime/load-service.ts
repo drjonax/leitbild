@@ -1,26 +1,30 @@
 import type { GridLoadDefinition } from '../grid-model.ts'
 import type { GridLoadShedCause, GridLoadState } from './instance.ts'
+import { manualCurtailmentMw } from './load-shedding.ts'
 
 // A load serves at least its critical demand: neither manual nor automatic shedding disconnects it.
 // Load service is constrained 0.2 Hz from nominal: outside the Nordic normal band (49.9–50.1 Hz) and the FCR-N range.
 const constrainedDeviationHz = 0.2
 
-/** Applies the manual shedding limit to this demand sample: the load draws at most the limit, never less than its critical demand. */
+/**
+ * Applies the manual shedding limit to this demand sample: the load draws at most the limit, never
+ * less than its critical demand, and a curtailment never more than its interruptible demand.
+ */
 export const curtailGridLoad = (state: GridLoadState, load: GridLoadDefinition): void => {
-  const limitMw = state.manualDemandLimitMw
-  state.curtailedMw = limitMw === null ? 0 : Math.max(0, state.demandMw - Math.max(load.criticalMw, limitMw))
+  state.curtailedMw = manualCurtailmentMw(load, state)
 }
 
 /** Demand still connected after manual curtailment: what frequency control and LFDD act on. */
 export const connectedGridLoadMw = (state: GridLoadState): number => state.demandMw - state.curtailedMw
 
-// The four possible cause lists, shared: every live load is completed on every network solution.
+// The possible cause lists, shared: every live load is completed on every network solution.
 const shedCauseLists: ReadonlyArray<ReadonlyArray<GridLoadShedCause>> = [
-  Object.freeze([]), Object.freeze(['manual' as const]), Object.freeze(['lfdd' as const]), Object.freeze(['manual' as const, 'lfdd' as const]),
+  Object.freeze([]), Object.freeze(['manual' as const]), Object.freeze(['emergency' as const]),
+  Object.freeze(['lfdd' as const]), Object.freeze(['manual' as const, 'lfdd' as const]), Object.freeze(['emergency' as const, 'lfdd' as const]),
 ]
 
 const shedCausesFor = (state: GridLoadState): ReadonlyArray<GridLoadShedCause> =>
-  shedCauseLists[(state.curtailedMw > 0 ? 1 : 0) + (state.lfddShedMw > 0 ? 2 : 0)]!
+  shedCauseLists[(state.curtailedMw > 0 ? (state.manualShedEmergency ? 2 : 1) : 0) + (state.lfddShedMw > 0 ? 3 : 0)]!
 
 /** Closes a live load's service for this tick from its served and LFDD-shed demand; its voltage follows from the AC solution. */
 export const completeLiveGridLoad = (state: GridLoadState, frequencyHz: number, nominalFrequencyHz: number): void => {

@@ -116,7 +116,7 @@ export const gridContingencyScreenQuery = defineGridQuery({
 
 const actionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('redispatch'), assetId: z.string().min(1), targetMw: finite.nonnegative() }).strict(),
-  z.object({ kind: z.literal('shed-load'), assetId: z.string().min(1), targetDemandMw: finite.nonnegative() }).strict(),
+  z.object({ kind: z.literal('shed-load'), assetId: z.string().min(1), targetDemandMw: finite.nonnegative(), emergency: z.boolean().default(false) }).strict(),
   z.object({ kind: z.literal('open-branch'), assetId: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('close-branch'), assetId: z.string().min(1) }).strict(),
 ])

@@ -7,10 +7,10 @@ import type { GridRuntimeInstance, RestoredGridRuntimeState } from '../runtime/i
 const finite = z.number().finite()
 const nonNegative = finite.nonnegative()
 
-// Version 3 persists island identity, the full frequency-control state (governors, AGC, mFRR,
-// LFDD latches and generator relays), branch relay state and alarm records. Earlier runs do not
-// restore: there is no migration.
-export const electricGridRuntimeStateSchemaVersion = 3
+// Version 4 persists island identity, the full frequency-control state (governors, AGC, mFRR,
+// LFDD latches and generator relays), branch relay state, alarm records and whether a manual
+// shedding limit is emergency shedding. Earlier runs do not restore: there is no migration.
+export const electricGridRuntimeStateSchemaVersion = 4
 
 const reservesSchema = z.object({
   fcrNMw: nonNegative,
@@ -125,7 +125,7 @@ export const electricGridRuntimeStateSchema = z.object({
       reserves: reservesSchema,
       synchronisesAtElapsedMs: nonNegative.nullable(),
     }).strict()),
-    loads: z.array(z.object({ id: z.string().min(1), nominalDemandMw: nonNegative, manualDemandLimitMw: nonNegative.nullable() }).strict()),
+    loads: z.array(z.object({ id: z.string().min(1), nominalDemandMw: nonNegative, manualDemandLimitMw: nonNegative.nullable(), manualShedEmergency: z.boolean() }).strict()),
     storage: z.array(z.object({ id: z.string().min(1), stateOfChargeFraction: finite.min(0).max(1) }).strict()),
     externalSystems: z.array(z.object({ id: z.string().min(1), scheduledImportMw: finite }).strict()),
     hvdcLinks: z.array(z.object({ id: z.string().min(1), setpointMw: finite, transferMw: finite }).strict()),
@@ -178,7 +178,7 @@ export const runtimeStateForElectricGrids = (grids: ReadonlyMap<string, GridRunt
         reserves: { ...state.reserves },
         synchronisesAtElapsedMs: state.synchronisesAtElapsedMs,
       })),
-      loads: [...grid.loads].map(([id, state]) => ({ id, nominalDemandMw: state.nominalDemandMw, manualDemandLimitMw: state.manualDemandLimitMw })),
+      loads: [...grid.loads].map(([id, state]) => ({ id, nominalDemandMw: state.nominalDemandMw, manualDemandLimitMw: state.manualDemandLimitMw, manualShedEmergency: state.manualShedEmergency })),
       storage: [...grid.storage].map(([id, state]) => ({ id, stateOfChargeFraction: state.stateOfChargeFraction })),
       externalSystems: [...grid.externalSystems].map(([id, state]) => ({ id, scheduledImportMw: state.scheduledImportMw })),
       hvdcLinks: [...grid.hvdcLinks].map(([id, state]) => ({ id, setpointMw: state.setpointMw, transferMw: state.transferMw })),

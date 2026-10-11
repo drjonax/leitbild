@@ -107,16 +107,18 @@ const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAl
   reserveObservations(grid, settings, island, structure, emit)
   let shedMw = 0
   let lfddMw = 0
+  let emergencyMw = 0
   for (const load of structure.loads) {
     const service = grid.loads.get(load.id)!
     shedMw += service.shedMw
     lfddMw += service.lfddShedMw
+    if (service.manualShedEmergency) emergencyMw += service.curtailedMw
   }
   if (shedMw >= settings.unservedLoad.clearMw) {
     emit(islandObservation(island, 'unserved-load', settings.unservedLoad, {
       raising: shedMw > settings.unservedLoad.raiseMw,
       title: 'Unserved load',
-      message: `Island ${island.id} sheds ${mw(shedMw)}: ${mw(lfddMw)} by LFDD, ${mw(shedMw - lfddMw)} by manual curtailment`,
+      message: `Island ${island.id} sheds ${mw(shedMw)}: ${mw(lfddMw)} by LFDD, ${mw(emergencyMw)} by emergency shedding, ${mw(shedMw - lfddMw - emergencyMw)} by curtailment`,
       value: shedMw,
       limit: settings.unservedLoad.raiseMw,
       unit: 'MW',

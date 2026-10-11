@@ -36,6 +36,7 @@ import type { GridBranchDefinition, GridGeneratorDefinition, GridLoadDefinition 
 import type { GridBranchState, GridGeneratorState, GridLoadState, GridRuntimeInstance } from './instance.ts'
 import { gridFrequencyCommandHandlers } from './lfdd-commands.ts'
 import { gridLifecycleCommandHandlers } from './lifecycle-commands.ts'
+import { manualShedRejection, queueEmergencyShed } from './load-shedding.ts'
 import { synchroCheckBlockReason } from './synchro-check.ts'
 import { generatorMinimumStableMw, generatorStartupSeconds } from './unit-commitment.ts'
 
@@ -62,13 +63,18 @@ const branchFor = (grid: GridRuntimeInstance, assetId: string): { readonly defin
   return { definition: entry.definition, state }
 }
 
-/** Manual shedding may limit any load down to its critical demand; a load that is critical in full cannot be shed. */
-const sheddableLoadFor = (grid: GridRuntimeInstance, assetId: string): { readonly definition: GridLoadDefinition; readonly state: GridLoadState } => {
+const loadFor = (grid: GridRuntimeInstance, assetId: string): { readonly definition: GridLoadDefinition; readonly state: GridLoadState } => {
   const entry = grid.definition.index.assetById.get(assetId)
   const state = grid.loads.get(assetId)
   if (entry?.kind !== 'load' || !state) throw new Error(`load Grid Asset not found: ${assetId}`)
-  if (entry.definition.priority === 'critical') throw new Error(`load Grid Asset ${assetId} is critical in full; manual shedding never disconnects it`)
   return { definition: entry.definition, state }
+}
+
+/** Manual shedding may limit any load down to its critical demand; a load that is critical in full cannot be shed. */
+const sheddableLoadFor = (grid: GridRuntimeInstance, assetId: string): { readonly definition: GridLoadDefinition; readonly state: GridLoadState } => {
+  const load = loadFor(grid, assetId)
+  if (load.definition.priority === 'critical') throw new Error(`load Grid Asset ${assetId} is critical in full; manual shedding never disconnects it`)
+  return load
 }
 
 /** EV charging schedules stay within the modelled demand: the Model carries no charger capacity above it. */
@@ -181,21 +187,22 @@ const branchHandlers = {
 const loadHandlers = {
   [gridShedLoadCommandKind]: (grid, rawPayload) => {
     const payload = gridShedLoadPayloadSchema.parse(rawPayload)
-    const { definition, state } = sheddableLoadFor(grid, payload.assetId)
-    if (payload.targetDemandMw < definition.criticalMw) {
-      throw new Error(`target demand ${mw(payload.targetDemandMw)} is below the critical demand ${mw(definition.criticalMw)} of ${payload.assetId}, which cannot be shed`)
+    const { definition, state } = loadFor(grid, payload.assetId)
+    if (payload.targetDemandMw === state.manualDemandLimitMw && payload.emergency === state.manualShedEmergency) {
+      throw new Error(`load ${payload.assetId} is already limited to ${mw(payload.targetDemandMw)}${payload.emergency ? ' as emergency shedding' : ''}`)
     }
-    if (payload.targetDemandMw === state.manualDemandLimitMw) throw new Error(`load ${payload.assetId} is already limited to ${mw(payload.targetDemandMw)}`)
-    if (payload.targetDemandMw >= state.demandMw) {
-      throw new Error(`target demand ${mw(payload.targetDemandMw)} would shed nothing: ${payload.assetId} currently draws ${mw(state.demandMw)}`)
-    }
+    const rejection = manualShedRejection({ definition, state, demandMw: state.demandMw, targetMw: payload.targetDemandMw, emergency: payload.emergency })
+    if (rejection !== null) throw new Error(rejection)
     state.manualDemandLimitMw = payload.targetDemandMw
+    state.manualShedEmergency = payload.emergency
+    if (payload.emergency) queueEmergencyShed(grid, definition, state)
   },
   [gridRestoreLoadCommandKind]: (grid, rawPayload) => {
     const payload = gridRestoreLoadPayloadSchema.parse(rawPayload)
     const { state } = sheddableLoadFor(grid, payload.assetId)
     if (state.manualDemandLimitMw === null) throw new Error(`load ${payload.assetId} is not shed manually; there is nothing to restore`)
     state.manualDemandLimitMw = null
+    state.manualShedEmergency = false
   },
   [gridSetEvChargingDemandCommandKind]: (grid, rawPayload) => {
     const payload = gridSetEvChargingDemandPayloadSchema.parse(rawPayload)
@@ -204,6 +211,9 @@ const loadHandlers = {
     const maximumMw = evChargingMaximumMw(grid, definition)
     if (payload.demandMw > maximumMw) throw new Error(`EV charging demand ${mw(payload.demandMw)} exceeds the modelled demand ${mw(maximumMw)} of ${payload.assetId}`)
     if (payload.demandMw < definition.criticalMw) throw new Error(`EV charging demand ${mw(payload.demandMw)} is below the critical demand ${mw(definition.criticalMw)} of ${payload.assetId}`)
+    if (maximumMw - payload.demandMw > definition.interruptibleMw + 1e-9) {
+      throw new Error(`EV charging demand ${mw(payload.demandMw)} is ${mw(maximumMw - payload.demandMw)} below the modelled demand ${mw(maximumMw)} of ${payload.assetId}, beyond its ${mw(definition.interruptibleMw)} of interruptible demand: the schedule goes no lower than ${mw(Math.max(definition.criticalMw, maximumMw - definition.interruptibleMw))}`)
+    }
     if (payload.demandMw === state.nominalDemandMw) throw new Error(`EV charging demand of ${payload.assetId} is already ${mw(state.nominalDemandMw)}`)
     state.nominalDemandMw = payload.demandMw
   },

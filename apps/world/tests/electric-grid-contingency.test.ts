@@ -162,7 +162,7 @@ describe('electric grid N-1 screening', () => {
       actions: [
         { kind: 'open-branch', assetId: meshed },
         { kind: 'redispatch', assetId: unit.id, targetMw: grid.generators.get(unit.id)!.dispatchMw - 20 },
-        { kind: 'shed-load', assetId: oslo.id, targetDemandMw: (grid.loads.get(oslo.id)!.servedMw + oslo.criticalMw) / 2 },
+        { kind: 'shed-load', assetId: oslo.id, targetDemandMw: (grid.loads.get(oslo.id)!.servedMw + oslo.criticalMw) / 2, emergency: true },
       ],
     })
     expect(grid.topologyPlan).toBe(plan)
@@ -218,7 +218,7 @@ describe('electric grid N-1 screening', () => {
     const screened = ask(run.grid, 'world.electric-grid.contingency.screen', { contingencies: 'all-branches' })
     const evaluated = ask(run.grid, 'world.electric-grid.remedial-actions.evaluate', {
       contingencies: 'all-branches',
-      actions: [{ kind: 'shed-load', assetId: 'load:l', targetDemandMw: 450 }],
+      actions: [{ kind: 'shed-load', assetId: 'load:l', targetDemandMw: 450, emergency: true }],
     })
     const { results: _results, gridId: _gridId, revision: _revision, ratingBasis: _ratingBasis, ...summary } = screened
     expect(evaluated.before).toEqual(summary)

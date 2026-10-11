@@ -57,7 +57,7 @@ describe('electric grid alarms', () => {
     expect(run.grid.alarms.records.get(emergency.id)).toMatchObject({ active: true, acknowledged: true })
 
     // Shedding most of the load relieves the corridor (closing the direct line would fail its synchro-check angle).
-    expect(run.command(gridShedLoadCommandKind, { assetId: 'load:l', targetDemandMw: 400 }).ok).toBe(true)
+    expect(run.command(gridShedLoadCommandKind, { assetId: 'load:l', targetDemandMw: 400, emergency: true }).ok).toBe(true)
     run.advanceTo(66_000)
     expect(run.grid.alarms.records.get(emergency.id)!.active).toBe(true)
     run.advanceTo(72_000)
@@ -137,7 +137,7 @@ describe('electric grid alarms', () => {
     expect(lifecycle(run, { alarmIds: [alarmId], action: 'shelve', shelveSeconds: 60, reason: 'known overload' }).ok).toBe(true)
     expect(run.grid.alarms.records.get(alarmId)).toMatchObject({ acknowledged: true, shelvedUntilElapsedMs: 90_000 })
     expect(run.grid.projection.activeAlarmCount).toBe([...run.grid.alarms.records.values()].filter(record => record.active && record.shelvedUntil === null).length)
-    expect(run.command(gridShedLoadCommandKind, { assetId: 'load:l', targetDemandMw: 400 }).ok).toBe(true)
+    expect(run.command(gridShedLoadCommandKind, { assetId: 'load:l', targetDemandMw: 400, emergency: true }).ok).toBe(true)
     run.advanceTo(88_000)
     // The clear happened while shelved: no cleared event, only the record changes.
     expect(run.grid.alarms.records.get(alarmId)!.active).toBe(false)

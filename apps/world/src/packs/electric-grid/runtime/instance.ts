@@ -91,7 +91,8 @@ export interface GridGeneratorState {
   synchronisesAtElapsedMs: number | null
 }
 
-export type GridLoadShedCause = 'manual' | 'lfdd'
+/** manual: curtailment within the load's interruptible demand; emergency: manual shedding beyond it; lfdd: automatic. */
+export type GridLoadShedCause = 'manual' | 'emergency' | 'lfdd'
 
 /**
  * One load's service: demand follows the profile; a manual limit curtails it; latched LFDD stages
@@ -101,8 +102,12 @@ export type GridLoadShedCause = 'manual' | 'lfdd'
 export interface GridLoadState {
   /** Scheduled demand before the load profile (Model × Operating Point, or an EV charging schedule). */
   nominalDemandMw: number
+  /** Demand before the load profile as the Model and Operating Point set it; an EV schedule below it uses interruptible demand. */
+  readonly modelledDemandMw: number
   /** Manual shedding limit from shed-load: the load draws at most this; null when not shed manually. */
   manualDemandLimitMw: number | null
+  /** The limit was set as emergency shedding, beyond the load's interruptible demand. */
+  manualShedEmergency: boolean
   /** Demand this tick, profiled, before any shedding. */
   demandMw: number
   /** Demand disconnected by the manual shedding limit. */
@@ -327,7 +332,7 @@ export interface RestoredGridRuntimeState {
     readonly reserves: FrequencyReserveAllocation
     readonly synchronisesAtElapsedMs: number | null
   }>
-  readonly loads: ReadonlyArray<{ readonly id: string; readonly nominalDemandMw: number; readonly manualDemandLimitMw: number | null }>
+  readonly loads: ReadonlyArray<{ readonly id: string; readonly nominalDemandMw: number; readonly manualDemandLimitMw: number | null; readonly manualShedEmergency: boolean }>
   readonly storage: ReadonlyArray<{ readonly id: string; readonly stateOfChargeFraction: number }>
   readonly externalSystems: ReadonlyArray<{ readonly id: string; readonly scheduledImportMw: number }>
   readonly hvdcLinks: ReadonlyArray<{ readonly id: string; readonly setpointMw: number; readonly transferMw: number }>
@@ -414,10 +419,13 @@ export const createGridRuntimeInstance = (config: {
   }))
   const loads = new Map(model.loads.map(load => {
     const stored = restoredLoads?.get(load.id)
-    const nominalDemandMw = stored?.nominalDemandMw ?? load.demandMw * operatingPoint.loadScale
+    const modelledDemandMw = load.demandMw * operatingPoint.loadScale
+    const nominalDemandMw = stored?.nominalDemandMw ?? modelledDemandMw
     return [load.id, {
       nominalDemandMw,
+      modelledDemandMw,
       manualDemandLimitMw: stored?.manualDemandLimitMw ?? null,
+      manualShedEmergency: stored?.manualShedEmergency ?? false,
       demandMw: nominalDemandMw,
       curtailedMw: 0,
       lfddShedMw: 0,

@@ -1,10 +1,11 @@
 import { caseGeneratorOutputMw, type CaseParticipation, type ContingencyCase, type CaseChanges } from './contingency-case.ts'
+import { manualShedRejection } from './load-shedding.ts'
 import { generatorMinimumStableMw } from './unit-commitment.ts'
 
 /** A candidate remedial action, evaluated on a private case; the Agent applies the real one by command. */
 export type GridRemedialAction =
   | { readonly kind: 'redispatch'; readonly assetId: string; readonly targetMw: number }
-  | { readonly kind: 'shed-load'; readonly assetId: string; readonly targetDemandMw: number }
+  | { readonly kind: 'shed-load'; readonly assetId: string; readonly targetDemandMw: number; readonly emergency: boolean }
   | { readonly kind: 'open-branch'; readonly assetId: string }
   | { readonly kind: 'close-branch'; readonly assetId: string }
 
@@ -53,9 +54,10 @@ export const remedialCaseChanges = (base: ContingencyCase, actions: ReadonlyArra
     }
     if (action.kind === 'shed-load') {
       if (entry?.kind !== 'load') throw new Error(`shed-load needs a load Grid Asset: ${action.assetId}`)
-      if (entry.definition.priority === 'critical') throw new Error(`load Grid Asset ${action.assetId} is critical in full; manual shedding never disconnects it`)
-      const servedMw = grid.loads.get(action.assetId)!.servedMw
-      if (action.targetDemandMw < entry.definition.criticalMw) throw new Error(`target demand ${mw(action.targetDemandMw)} is below the critical demand ${mw(entry.definition.criticalMw)} of ${action.assetId}`)
+      const state = grid.loads.get(action.assetId)!
+      const rejection = manualShedRejection({ definition: entry.definition, state, demandMw: state.demandMw, targetMw: action.targetDemandMw, emergency: action.emergency })
+      if (rejection !== null) throw new Error(rejection)
+      const servedMw = state.servedMw
       if (action.targetDemandMw >= servedMw) throw new Error(`target demand ${mw(action.targetDemandMw)} would shed nothing: ${action.assetId} is served ${mw(servedMw)}`)
       const bus = network.busIndexById.get(entry.definition.busId)!
       injections[bus] = injections[bus]! + servedMw - action.targetDemandMw

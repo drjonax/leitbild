@@ -169,11 +169,14 @@ export const generatorStateSchema = z.object({
 }).strict()
 
 export const loadServiceStateSchema = z.enum(['normal', 'constrained', 'shed', 'outage'])
-export const loadShedCauseSchema = z.enum(['manual', 'lfdd'])
+export const loadShedCauseSchema = z.enum(['manual', 'emergency', 'lfdd'])
+  .describe('manual: curtailment within the load\'s interruptible demand; emergency: manual shedding beyond it; lfdd: automatic under-frequency shedding.')
 
 export const loadStateSchema = z.object({
   nominalDemandMw: finite.describe('Scheduled demand before the daily profile (MW).'),
+  modelledDemandMw: finite.describe('Demand before the daily profile as the Model and Operating Point set it (MW).'),
   manualDemandLimitMw: finite.nullable().describe('Manual shedding limit from shed-load (MW); null when not shed manually.'),
+  manualShedEmergency: z.boolean().describe('The manual limit was set as emergency shedding, beyond the interruptible demand.'),
   demandMw: finite.describe('Profiled demand before any shedding (MW).'),
   servedMw: finite.describe('Demand served: demand less curtailment, LFDD shedding and outage, at the island\'s load self-regulation (MW).'),
   curtailedMw: finite.describe('Demand shed manually (MW).'),
