@@ -85,8 +85,9 @@ describe('I&C thresholds for composed displays', () => {
       [15.65, 'control', null, null],
       [15.85, 'control', null, null],
       [16, 'alarm', null, null],
+      // The PORV opens below the high-pressure reactor trip, as at the reference plant (2,335 and 2,385 psig).
       [16.18, 'trip', null, null],
-      [16.35, 'trip', 'Mode 1', 'Power operation'],
+      [16.55, 'trip', 'Mode 1', 'Power operation'],
     ])
   })
 
@@ -97,7 +98,7 @@ describe('I&C thresholds for composed displays', () => {
     // Safety injection below the low-pressure reactor trip, unless blocked below P-11, is SI by its declared
     // first-out group. The low-pressure reactor trip, the PORV opening and the high-pressure reactor trip
     // declare no group yet: ACTUATION, never TRIP.
-    expect(names('PT-455', 'MPa')).toEqual(['LO-LO 12.7 MPa · SI (Modes 1–3)', 'LO-LO 13.8 MPa · ACTUATION (Mode 1)', 'LO 14.8 MPa · ALM', 'HI 16 MPa · ALM', 'HI-HI 16.18 MPa · ACTUATION', 'HI-HI 16.35 MPa · ACTUATION (Mode 1)'])
+    expect(names('PT-455', 'MPa')).toEqual(['LO-LO 12.7 MPa · SI (Modes 1–3)', 'LO-LO 13.8 MPa · ACTUATION (Mode 1)', 'LO 14.8 MPa · ALM', 'HI 16 MPa · ALM', 'HI-HI 16.18 MPa · ACTUATION', 'HI-HI 16.55 MPa · ACTUATION (Mode 1)'])
     // Low-low level starts auxiliary feedwater and trips the reactor at one set point: two limits of one order,
     // the reactor trip named by its group, in modes 1 and 2 only; the AFW start declares no group yet.
     expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO-LO 20 % · ACTUATION', 'LO-LO 20 % · RX TRIP (Modes 1–2)', 'LO 30 % · ALM', 'HI 75 % · ALM', 'HI-HI 82 % · ACTUATION'])

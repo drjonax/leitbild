@@ -78,11 +78,38 @@ describe('high pressurizer pressure', () => {
     plantRun.run(12_000)
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 30 })
     expect(plantRun.secondsUntil('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip', 120)).not.toBeNull()
-    expect(Number(plantRun.tag('PT-455'))).toBeGreaterThan(16.35)
+    expect(Number(plantRun.tag('PT-455'))).toBeGreaterThan(16.55)
     plantRun.run(10_000)
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
     expect(Number(plantRun.read('core.powerMw'))).toBeLessThan(500)
   })
+})
+
+describe('the pressurizer PORV on high pressure', () => {
+  const relief = 'trip:pzr-pressure-high-relief:relief-actuation'
+
+  test('opens at 16.18 MPa on every rise, reseats below 15.85 MPa, and holds the pressure below the reactor trip', () => {
+    // No spray, and the heaters full on: the pressure rises until the PORV relieves it, again and again.
+    const plantRun = started({ ...plant.automation, rules: plant.automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-high-demand') && !rule.id.startsWith('pzr-pressure-normal-band') && !rule.id.startsWith('pzr-pressure-low-demand')) })
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 12 })
+    let openings = 0
+    let wasOpen = false
+    let peak = 0
+    for (let second = 1; second <= 600; second += 1) {
+      plantRun.step()
+      const open = Number(plantRun.tag('PORV-456A')) > 0
+      if (open && !wasOpen) openings += 1
+      wasOpen = open
+      peak = Math.max(peak, Number(plantRun.tag('PT-455')))
+    }
+    expect(openings).toBeGreaterThan(1)
+    expect(peak).toBeGreaterThan(16.18)
+    expect(peak).toBeLessThan(16.55)
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(true)
+    expect(plantRun.trip(relief)!.occurrenceCount).toBe(openings)
+    expect(plantRun.trip('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip')!.occurrenceCount).toBe(0)
+  }, 120_000)
 })
 
 describe('pressurizer code safety valves', () => {

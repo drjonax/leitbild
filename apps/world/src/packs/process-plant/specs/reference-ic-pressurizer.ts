@@ -17,12 +17,30 @@ const pzrAction = annunciator({
   role: 'automaticAction',
 })
 
+// Pressurizer pressure ladder of the reference four-loop plant, absolute, with
+// the gauge pressure Westinghouse plants set it at: normal 15.5 MPa
+// (2,235 psig), held by the heaters below 15.35 MPa and the spray above
+// 15.65 MPa (2,260 psig); the high-pressure alarm at 16.0 MPa (2,306 psig);
+// the PORV opening at 16.18 MPa (2,335 psig) and reseating at 15.85 MPa; the
+// high-pressure reactor trip above it at 16.55 MPa (2,385 psig), so a PORV
+// that relieves a pressure surge keeps the reactor at power; the code safety
+// valves at 17.24 MPa (2,485 psig, the valves' own set pressure). Below
+// normal: the low-pressure alarm at 14.8 MPa, the low-pressure reactor trip at
+// 13.8 MPa, P-11 at 13.3 MPa and safety injection at 12.7 MPa
+// (reference-ic-safety-injection.ts).
+const highPressureAlarmMPa = 16.0
+const porvOpenMPa = 16.18
+const porvReseatMPa = 15.85
+const highPressureReactorTripMPa = 16.55
+const lowPressureAlarmMPa = 14.8
+const lowPressureReactorTripMPa = 13.8
+
 export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
     id: 'pzr-pressure-low',
     label: 'Pressurizer pressure low',
     ruleClass: 'alarm',
-    condition: comparison({ tagId: 'PT-455' }, '<', 14.8),
+    condition: comparison({ tagId: 'PT-455' }, '<', lowPressureAlarmMPa),
     clearCondition: comparison({ tagId: 'PT-455' }, '>', 15.0),
     clearDelayMs: 1_000,
     delayMs: 1_000,
@@ -40,7 +58,7 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     id: 'pzr-pressure-high',
     label: 'Pressurizer pressure high',
     ruleClass: 'alarm',
-    condition: comparison({ tagId: 'PT-455' }, '>', 16.0),
+    condition: comparison({ tagId: 'PT-455' }, '>', highPressureAlarmMPa),
     clearCondition: comparison({ tagId: 'PT-455' }, '<', 15.9),
     clearDelayMs: 1_000,
     delayMs: 1_000,
@@ -58,13 +76,17 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     id: 'pzr-pressure-high-relief',
     label: 'Pressurizer high pressure relief actuation',
     ruleClass: 'protection',
-    condition: comparison({ tagId: 'PT-455' }, '>', 16.18),
+    condition: comparison({ tagId: 'PT-455' }, '>', porvOpenMPa),
     delayMs: 1_000,
+    // The PORV's bistable acts on every rise past its set point, so the PORV
+    // cycles between it and its reseat pressure rather than opening once.
+    latch: false,
+    resetWhenClear: true,
     effects: [
       trip({
         id: 'relief-actuation',
         title: 'Pressurizer relief actuation',
-        message: 'Pressurizer pressure is above the reference relief actuation threshold.',
+        message: `Pressurizer pressure is above the PORV's ${porvOpenMPa} MPa (2,335 psig) opening set point: the PORV opens until pressure falls below ${porvReseatMPa} MPa.`,
         actuates: ['pressurizerReliefOpen'],
         annunciator: pzrAction,
       }),
@@ -131,7 +153,7 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     label: 'Pressurizer pressure low reactor trip',
     ruleClass: 'protection',
     modes: ['powerOperation'],
-    condition: comparison({ tagId: 'PT-455' }, '<', 13.8),
+    condition: comparison({ tagId: 'PT-455' }, '<', lowPressureReactorTripMPa),
     delayMs: 1_000,
     effects: [
       trip({
@@ -150,13 +172,13 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     label: 'Pressurizer pressure high reactor trip',
     ruleClass: 'protection',
     modes: ['powerOperation'],
-    condition: comparison({ tagId: 'PT-455' }, '>', 16.35),
+    condition: comparison({ tagId: 'PT-455' }, '>', highPressureReactorTripMPa),
     delayMs: 1_000,
     effects: [
       trip({
         id: 'high-pzr-pressure-reactor-trip',
         title: 'High pressurizer pressure reactor trip',
-        message: 'Pressurizer pressure is above the reference reactor-trip threshold.',
+        message: `Pressurizer pressure is above the ${highPressureReactorTripMPa} MPa (2,385 psig) high-pressure reactor trip set point, above the PORV's opening.`,
         actuates: ['reactorTrip'],
         annunciator: pzrAction,
       }),
@@ -168,7 +190,7 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     id: 'pzr-pressure-relief-reset',
     label: 'Pressurizer relief reset',
     ruleClass: 'normalControl',
-    condition: comparison({ tagId: 'PT-455' }, '<', 15.85),
+    condition: comparison({ tagId: 'PT-455' }, '<', porvReseatMPa),
     latch: false,
     resetWhenClear: true,
     effects: [write('close-porv', { tagId: 'PORV-456A' }, 0)],
