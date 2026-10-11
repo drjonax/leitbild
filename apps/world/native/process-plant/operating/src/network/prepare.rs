@@ -942,3 +942,235 @@ fn account<P: Properties>(
             .collect(),
     })
 }
+
+/// What a flowing preparation wrote and what it leaves unbalanced.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FlowReceipt {
+    /// Largest pressure change of every pass.
+    pub pass_changes_pa: Vec<f64>,
+    /// Per face: liquid volume flow written (m3/s), its impulse (Pa s), the
+    /// face's total liquid drive `Pi'` at the written state (Pa), and whether
+    /// the face is a tree face (balanced by construction) or the port face.
+    pub faces: Vec<FlowFace>,
+    /// Largest |drive| over the tree faces: round-off by construction.
+    pub max_tree_drive_pa: f64,
+    /// Largest |drive| over the remaining faces: the cycles' imbalance at
+    /// the transferred flows, left for physical settling.
+    pub max_cycle_drive_pa: f64,
+    /// Written minus the hydrostatic preparation's primary/SURGE stock.
+    pub mass_change_kg: f64,
+    pub energy_change_j: f64,
+    pub tracer_change_kg_eq: f64,
+    pub representation_offset: usize,
+}
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FlowFace {
+    pub face: usize,
+    pub tree: bool,
+    pub port: bool,
+    pub volume_flow_m3_s: f64,
+    pub impulse_pa_s: f64,
+    pub drive_pa: f64,
+}
+
+/// Memo §3 (B): the hydrostatic preparation extended to declared liquid
+/// volume flows. `y` is a hydrostatically prepared state of `network`
+/// ([`prepare`]): its PZR block and every regular cell's specific internal
+/// energy and tracer concentration are kept. Each face's liquid impulse is
+/// written as `I(rho) Q` from its supports' current liquid masses, each
+/// rotor's angular momentum as given, and the regular cells' pressures are
+/// integrated along the same spanning tree so that every tree face's total
+/// drive (pressure, gravity, pump head and passive loss at those flows)
+/// vanishes; the root SURGE follows the port face at rest. Density follows
+/// pressure, so passes repeat to the settings' pressure tolerance. Cycle
+/// faces keep their imbalance, reported, for physical settling. Nothing
+/// else is solved: no flow is adjusted and no stock is balanced.
+pub fn compose_flows<P: Properties>(
+    network: &mut Network<P>,
+    packet: &Packet,
+    y: &mut [f64],
+    port_pressure_pa: f64,
+    volume_flows_m3_s: &[f64],
+    rotor_momenta: &[f64],
+    settings: &Settings,
+) -> Result<FlowReceipt, Failure> {
+    settings.validate()?;
+    let faces = &packet.mechanics.faces;
+    let cells = network.cell_layout.len();
+    if y.len() != network.dimension()
+        || volume_flows_m3_s.len() != faces.len()
+        || rotor_momenta.len() != network.rotor_count()
+        || volume_flows_m3_s
+            .iter()
+            .chain(rotor_momenta)
+            .any(|v| !v.is_finite())
+    {
+        return Err(fatal("flowing preparation layout or values"));
+    }
+    let scales = network.scales().to_vec();
+    let value = |y: &[f64], i: usize| y[i] * scales[i];
+    // The hydrostatic preparation's own owners: specific energy and tracer
+    // concentration of each regular cell's liquid.
+    let mut before = [0.; 3];
+    let mut owners = Vec::with_capacity(cells);
+    for (node, l) in network.cell_layout.iter().enumerate() {
+        let (m, u, b) = (
+            value(y, l.mass[0]),
+            value(y, l.energy[0]),
+            value(y, l.boron),
+        );
+        if m.is_nan() || m <= 0. || value(y, l.mass[1]) != 0. {
+            return Err(fatal(format!(
+                "region {node} is not a prepared liquid cell"
+            )));
+        }
+        before[0] += m;
+        before[1] += u;
+        before[2] += b;
+        owners.push((u / m, b / m));
+    }
+    for (r, index) in network.rotor_index.clone().iter().enumerate() {
+        y[*index] = rotor_momenta[r] / scales[*index];
+    }
+    let port = &faces[network.pzr.port_face];
+    let root = port.from;
+    let tree = spanning_tree(faces, cells, root)?;
+    let mut pressure: Vec<f64> = network
+        .cell_layout
+        .iter()
+        .map(|l| value(y, l.base))
+        .collect();
+    let mut pass_changes_pa = Vec::new();
+    let mut written;
+    loop {
+        let states: Vec<Water> = owners
+            .iter()
+            .enumerate()
+            .map(|(node, (u, _))| {
+                let owner = Owner {
+                    specific_energy: *u,
+                    concentration: 0.,
+                    before: State {
+                        pressure_pa: pressure[node],
+                        temperature_k: 0.,
+                        mass_kg: 0.,
+                        internal_energy_j: 0.,
+                        tracer_kg_eq: 0.,
+                    },
+                };
+                cell_state(network.properties(), &owner, node, pressure[node]).map(|(_, w)| w)
+            })
+            .collect::<Result<_, _>>()?;
+        let stocks: Vec<Stock> = states
+            .iter()
+            .zip(&owners)
+            .enumerate()
+            .map(|(node, (water, (u, concentration)))| {
+                let mass = network.volume(node) * water.density_kg_m3;
+                Stock {
+                    pressure_pa: pressure[node],
+                    mass_kg: [mass, 0.],
+                    specific_energy_j_kg: [*u, 0.],
+                    tracer_kg_eq: mass * concentration,
+                }
+            })
+            .collect();
+        written = overwrite_stocks(network, y, &stocks, settings.representation_search)?;
+        for (j, f) in faces.iter().enumerate() {
+            let inertance: f64 = f
+                .supports
+                .iter()
+                .map(|s| {
+                    written[s.region].mass_kg[0] / network.volume(s.region)
+                        * s.inverse_area_length_per_m
+                })
+                .sum();
+            let liquid = network.face_layout[2 * j].index;
+            let vapor = network.face_layout[2 * j + 1].index;
+            y[liquid] = inertance * volume_flows_m3_s[j] / scales[liquid];
+            y[vapor] = 0.;
+        }
+        let zero = vec![0.; y.len()];
+        network
+            .evaluate(0., y, &zero, None, 0., None)
+            .map_err(|e| fatal(format!("the flowing state cannot be evaluated: {e:?}")))?;
+        let mixture: Vec<f64> = (0..cells)
+            .map(|node| cell_mixture(&network.cell(node)))
+            .collect();
+        let mut next = pressure.clone();
+        next[root] = port_pressure_pa + head(port, |region| mixture[region]);
+        for &(j, parent, child) in &tree.order {
+            let f = &faces[j];
+            let drive = network.face_drive(j, 0).value;
+            // drive = p_from - p_to - head + force; hold head and force.
+            let difference = pressure[f.from] - pressure[f.to] - drive;
+            next[child] = if child == f.to {
+                next[parent] - difference
+            } else {
+                next[parent] + difference
+            };
+        }
+        let (change, _) = largest(next.iter().zip(&pressure).map(|(a, b)| a - b));
+        pass_changes_pa.push(change);
+        if !change.is_finite() {
+            return Err(fatal(format!(
+                "non-finite flowing pass {pass_changes_pa:?}"
+            )));
+        }
+        let converged = change <= settings.pressure_tolerance_pa;
+        if !converged && pass_changes_pa.len() == settings.max_passes {
+            return Err(fatal(format!(
+                "flowing passes did not converge to {} Pa: {pass_changes_pa:?}",
+                settings.pressure_tolerance_pa
+            )));
+        }
+        if converged {
+            break;
+        }
+        for (p, (n, l)) in pressure
+            .iter_mut()
+            .zip(next.iter().zip(&network.cell_layout))
+        {
+            let scale = scales[l.base];
+            *p = *n / scale * scale;
+        }
+    }
+    let flow_faces: Vec<FlowFace> = faces
+        .iter()
+        .enumerate()
+        .map(|(j, _)| FlowFace {
+            face: j,
+            tree: tree.member[j],
+            port: j == network.pzr.port_face,
+            volume_flow_m3_s: volume_flows_m3_s[j],
+            impulse_pa_s: value(y, network.face_layout[2 * j].index),
+            drive_pa: network.face_drive(j, 0).value,
+        })
+        .collect();
+    let drive = |tree: bool| {
+        largest(
+            flow_faces
+                .iter()
+                .filter(|f| f.tree == tree && !f.port)
+                .map(|f| f.drive_pa),
+        )
+        .0
+    };
+    let after = written.iter().fold([0.; 3], |a, w| {
+        [
+            a[0] + w.mass_kg[0],
+            a[1] + w.internal_energy_j[0],
+            a[2] + w.tracer_kg_eq,
+        ]
+    });
+    Ok(FlowReceipt {
+        max_tree_drive_pa: drive(true),
+        max_cycle_drive_pa: drive(false),
+        faces: flow_faces,
+        pass_changes_pa,
+        mass_change_kg: after[0] - before[0],
+        energy_change_j: after[1] - before[1],
+        tracer_change_kg_eq: after[2] - before[2],
+        representation_offset: written.iter().map(|w| w.offset).fold(0, usize::max),
+    })
+}
