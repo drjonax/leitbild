@@ -21,11 +21,13 @@ mod p2_harness;
 use leitbild_operating_plant::{
     network::{
         ConsistentSystem, Failure as CellFailure, Properties, consistent_start,
+        heaters::{BanksBlock, Caloric304, ContactBlock, HeaterCase, Heaters},
         properties as props,
         stratified::{
             self as st, Case, Cell, Parameters, PortKind, ReliefDevice, ReliefMotion,
             SensitivityFamilies,
         },
+        walls::{ShellBlock, WallCase, Walls},
     },
     pzr_field as pf,
     thermal::{Scalar, WaterPoint},
@@ -35,8 +37,8 @@ use leitbild_operating_water::{
     ida::{Advance, Failure, Ida, Initial, System},
 };
 use p2_harness::{
-    CellSystem, Counters, End, Flow, Relief, Root, Run, RunSpec, Table, cpu_s, ledger, run,
-    run_json, thread_cpu_s,
+    CellSystem, Counters, Cutout, End, Flow, Metal, Relief, ReliefWindow, Root, Run, RunSpec,
+    Table, cpu_s, ledger, run, run_json, thread_cpu_s,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -48,6 +50,29 @@ const READINESS: &str =
 const HOT_SPINE: &str =
     "world/packs/process-plant/reference-designs/ld-01/model/operating-hot-spine.md";
 const SURGE_HISTORY: &str = "world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-surge-history.md";
+const HEATER_EQUIPMENT: &str =
+    "world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/heater-equipment.md";
+
+/// IDA's stock Newton convergence coefficient (`EPCON`, sundials-7.5.0
+/// src/ida/ida.c), which E5's `windowNewtonCoefficientFactor` multiplies.
+const IDA_STOCK_NEWTON_COEFFICIENT: f64 = 0.33;
+
+/// The low-level heater cutout's settings, transcribed from their owning
+/// prose because no strict block declares them (reported to the lead):
+/// `LD01.PROT.PZR.LOW_LEVEL` (ld-01/safety/source-and-primary-protection.md,
+/// "Observation ownership and commissioning settings": indication <=3.00 m
+/// for 0.5 s), the common isolator's 0.05 s contact delay (heater-equipment.md,
+/// "Physical isolation, protection and recovery"), and the electronic
+/// differential level's 0.5 s lag, 0.01 m quantization and 15 MPa
+/// calibration (instrumentation/phase-dependent-measurements.md, "PZR
+/// electronic differential level"). The tap span and gravity come from the
+/// packet; the sampling is the S1 output interval, the protection's 0.1 s.
+const CUTOUT_SETTING_M: f64 = 3.00;
+const CUTOUT_PERSISTENCE_S: f64 = 0.5;
+const ISOLATOR_CONTACT_DELAY_S: f64 = 0.05;
+const LT_LAG_S: f64 = 0.5;
+const LT_QUANTUM_M: f64 = 0.01;
+const LT_CALIBRATION_PA: f64 = 15.0e6;
 
 /// The S1 harness's declared PZR preparation controls (`s1_hydraulics.rs`).
 const PREPARATION_TOLERANCE_PA: f64 = 1e-6;
@@ -189,8 +214,20 @@ struct Entry {
     #[serde(rename = "segmentRefinement")]
     segment_refinement: Option<bool>,
     relief: Option<bool>,
+    #[serde(rename = "disclosedLimit")]
+    disclosed_limit: Option<bool>,
+    #[serde(rename = "pressureTarget")]
+    pressure_target: Option<Value>,
     /// Absent exactly for the blocked experimental cases.
     sensitivities: Option<Vec<String>>,
+}
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReliefJudgement {
+    #[serde(rename = "pt1ExclusionAroundEvent_s")]
+    pt1_exclusion_around_event_s: f64,
+    #[serde(rename = "windowNewtonCoefficientFactor")]
+    window_newton_coefficient_factor: f64,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -203,6 +240,7 @@ struct CaseSet {
     #[serde(rename = "reliefBackPressure_Pa")]
     relief_back_pressure_pa: f64,
     tolerance_classes: CaseTolerances,
+    relief_judgement: ReliefJudgement,
     cases: Vec<Entry>,
 }
 
@@ -220,6 +258,12 @@ struct Context {
     parameters: Parameters,
     /// The packet's `pzr.reliefCalibration`, from the relief device owner.
     relief_calibration: Value,
+    /// The PZR metal's strict blocks.
+    banks: BanksBlock,
+    caloric: Caloric304,
+    contact: ContactBlock,
+    shell: ShellBlock,
+    gravity_m_s2: f64,
 }
 impl Context {
     fn load() -> Self {
@@ -230,12 +274,26 @@ impl Context {
         let gates = Block::read(&wiki, READINESS, "ld01-s1-gates");
         let budgets = Block::read(&wiki, HOT_SPINE, "ld01-accuracy-contract");
         let transport = Block::read(&wiki, SURGE_HISTORY, "reference-pressurizer-transport");
+        let banks_block = Block::read(&wiki, HEATER_EQUIPMENT, "ld01-pzr-heater-banks");
+        let contact_block = Block::read(&wiki, HEATER_EQUIPMENT, "ld01-pzr-heater-contact");
+        let caloric_block = Block::read(&wiki, HEATER_EQUIPMENT, "reference-304-caloric");
+        let shell_block = Block::read(&wiki, PTS, "ld01-pzr-shell");
+        let banks: BanksBlock =
+            serde_json::from_value(banks_block.value.clone()).expect("heater banks");
+        let contact: ContactBlock =
+            serde_json::from_value(contact_block.value.clone()).expect("heater contact");
+        let caloric: Caloric304 =
+            serde_json::from_value(caloric_block.value.clone()).expect("304 caloric");
+        let shell: ShellBlock = serde_json::from_value(shell_block.value.clone()).expect("shell");
         let set: CaseSet = serde_json::from_value(cases_block.value.clone()).expect("case set");
         let bytes = std::fs::read(&packet_path).expect("packet");
         let packet: Value = serde_json::from_slice(&bytes).expect("packet json");
         let parameters: Parameters =
             serde_json::from_value(packet["pzr"]["cell"].clone()).expect("pzr.cell");
         let relief_calibration = packet["pzr"]["reliefCalibration"].clone();
+        let gravity_m_s2 = packet["hydraulics"]["gravity_m_s2"]
+            .as_f64()
+            .expect("packet gravity");
         // The case-set packet's composition record, when it sits beside it.
         let sidecar = packet_path.replace(".json", ".provenance.json");
         let composition: Value = std::fs::read(&sidecar)
@@ -249,7 +307,8 @@ impl Context {
             "blocks_read_from":"wiki HEAD",
             "packet":packet_path,"packet_sha256":sha256(&bytes),"packet_composition":composition,
             "case_block":cases_block.provenance(),"gates_block":gates.provenance(),"accuracy_block":budgets.provenance(),
-            "transport_block":transport.provenance()});
+            "transport_block":transport.provenance(),"heater_banks_block":banks_block.provenance(),"heater_contact_block":contact_block.provenance(),
+            "caloric_304_block":caloric_block.provenance(),"shell_block":shell_block.provenance()});
         let receipts_dir = format!(
             "{}/cases",
             Path::new(&packet_path).parent().unwrap().display()
@@ -266,6 +325,11 @@ impl Context {
             transport,
             parameters,
             relief_calibration,
+            banks,
+            caloric,
+            contact,
+            shell,
+            gravity_m_s2,
         }
     }
     fn rtol(&self) -> f64 {
@@ -302,6 +366,69 @@ struct Variant {
     relaxation_factor: f64,
     drop_diameter_m: f64,
     bubble_diameter_m: f64,
+    /// Gate 5's segment refinement: every heater segment halved.
+    halved_segments: bool,
+}
+
+/// The heater banks block, with every segment halved for the refinement.
+fn banks(ctx: &Context, halved: bool) -> BanksBlock {
+    let mut b = ctx.banks.clone();
+    if halved {
+        for bank in &mut b.banks {
+            bank.segments_m = bank
+                .segments_m
+                .iter()
+                .flat_map(|[lo, hi]| {
+                    let mid = 0.5 * (lo + hi);
+                    [[*lo, mid], [mid, *hi]]
+                })
+                .collect();
+        }
+    }
+    b
+}
+
+/// The PZR metal from its blocks: the rods (nominal contact case) and the
+/// shell and heads, with the case's recorded heater request when declared.
+fn metal(ctx: &Context, entry: &Entry, cell: &Cell, halved: bool) -> Metal {
+    let heaters = Heaters::new(
+        cell,
+        &banks(ctx, halved),
+        ctx.caloric,
+        ctx.contact,
+        HeaterCase::nominal(&ctx.contact),
+    )
+    .expect("heaters");
+    let walls = Walls::new(
+        cell,
+        &heaters,
+        ctx.shell.clone(),
+        ctx.caloric,
+        ctx.contact,
+        WallCase::nominal(&ctx.contact, &ctx.shell),
+    )
+    .expect("walls");
+    let maximum = ctx
+        .caloric
+        .specific_energy(s(ctx.caloric.maximum_k))
+        .expect("304 maximum")
+        .value;
+    let limit_energy_j = heaters
+        .segments()
+        .iter()
+        .map(|g| g.steel_mass_kg * maximum)
+        .chain(walls.elements().iter().map(|e| e.steel_mass_kg * maximum))
+        .collect();
+    Metal {
+        heaters,
+        walls,
+        request: entry
+            .heater
+            .as_ref()
+            .map(|t| Table::new(t.clone()).unwrap()),
+        isolated: false,
+        limit_energy_j,
+    }
 }
 
 fn enthalpy(state: &SourceState) -> f64 {
@@ -344,11 +471,12 @@ fn scales(p: &Parameters, values: &[f64; st::COORDINATES], relief: bool) -> Vec<
 /// `relative / (κ_eff · scale)` with the prepared cell's effective isentropic
 /// compressibility, as the network weights it; the relief lift the case
 /// block's `toleranceClasses.reliefLiftScaledAbsolute`.
-fn tolerances(ctx: &Context, column: &st::Column, sc: &[f64], rtol: f64) -> Vec<f64> {
+fn tolerances(ctx: &Context, column: &st::Column, sc: &[f64], rtol: f64, armed: bool) -> Vec<f64> {
     let stock = ctx.gates.f64(&["stockScaledAbsolute"]);
     let tracer = ctx.gates.f64(&["tracerScaledAbsolute"]);
+    // Every steel energy takes the stock class, as the cell's energies.
     let mut atol = vec![stock; sc.len()];
-    if sc.len() > st::COORDINATES {
+    if armed {
         atol[p2_harness::LIFT] = ctx.lift_root_bound();
     }
     for t in [st::ADMITTED_BORON, st::RESIDENT_BORON, st::DROP_BORON] {
@@ -379,7 +507,10 @@ struct Prepared {
     preparation: Value,
 }
 
-fn prepare(ctx: &Context, entry: &Entry) -> Prepared {
+/// The 6.00 m saturated preparation, then the metal at the prepared fluid
+/// temperature `Tsat(p_s)`; each steel energy is scaled by its prepared
+/// value.
+fn prepare(ctx: &Context, entry: &Entry, halved: bool) -> Prepared {
     let p = ctx.parameters.clone();
     let cell = Cell::new(p.clone(), Case::nominal(&p)).expect("cell");
     let roof = entry.roof_pressure_pa.expect("roofPressure_Pa");
@@ -402,11 +533,32 @@ fn prepare(ctx: &Context, entry: &Entry) -> Prepared {
     if entry.relief == Some(true) {
         y0.push(0.);
     }
+    let m = metal(ctx, entry, &cell, halved);
+    let temperature = preparation.saturation_temperature_k;
+    let mut steel = m
+        .heaters
+        .prepared_energy(temperature)
+        .expect("rod preparation");
+    steel.extend(
+        m.walls
+            .prepared_energy(temperature)
+            .expect("wall preparation"),
+    );
+    let mut sc = sc;
+    for e in &steel {
+        assert!(
+            e.is_finite() && *e > 0.,
+            "nonpositive prepared steel energy {e}"
+        );
+        sc.push(*e);
+        y0.push(1.);
+    }
     let c = &preparation.column;
     let prepared = json!({"roof_pressure_pa":roof,"level_m":level,"passes":preparation.pass_changes_pa,"saturation_temperature_k":preparation.saturation_temperature_k,
         "z_mix_m":c.mixture_elevation.value,"z_ar_m":c.boundary_elevation.value,"p_s_pa":c.interface_pressure.value,
         "mass_kg":{"g":preparation.values[st::VAPOR_MASS],"A":preparation.values[st::ADMITTED_MASS],"R":preparation.values[st::RESIDENT_MASS]},
         "volume_m3":{"g":preparation.values[st::VAPOR_VOLUME],"A":preparation.values[st::ADMITTED_VOLUME],"R":preparation.values[st::RESIDENT_VOLUME]},
+        "metal":{"temperature_k":temperature,"rods":m.heaters.census().coordinates,"walls":m.walls.census().coordinates,"steel_energy_j":steel},
         "y0":y0});
     Prepared {
         y0,
@@ -428,6 +580,7 @@ fn system(ctx: &Context, entry: &Entry, prepared: &Prepared, v: Variant) -> Cell
         Some(&ctx.set.sensitivity_families),
     )
     .expect("cell variant");
+    let metal = metal(ctx, entry, &cell, v.halved_segments);
     let port = |kind: PortKind| p.ports.iter().position(|q| q.kind == kind);
     let c = p.absorber_mass_fraction;
     let surge = entry.surge.as_ref().map(|tb| Flow {
@@ -472,6 +625,7 @@ fn system(ctx: &Context, entry: &Entry, prepared: &Prepared, v: Variant) -> Cell
         surge,
         spray,
         relief,
+        metal: Some(metal),
         fixed_roots,
         counters: Counters::default(),
     }
@@ -495,9 +649,20 @@ fn variants(ctx: &Context, entry: &Entry) -> Vec<(String, Variant, bool)> {
         relaxation_factor: 1.,
         drop_diameter_m: x.spray_drop_diameter_m,
         bubble_diameter_m: x.bubble_diameter_m,
+        halved_segments: false,
     };
     let f = &ctx.set.sensitivity_families;
     let mut out = vec![("nominal".to_string(), nominal, false)];
+    if entry.segment_refinement == Some(true) {
+        out.push((
+            "segments halved".to_string(),
+            Variant {
+                halved_segments: true,
+                ..nominal
+            },
+            false,
+        ));
+    }
     let refined_declared = matches!(entry.gate, Some(4..=7));
     if refined_declared {
         out.push(("refined".to_string(), nominal, true));
@@ -551,29 +716,121 @@ fn variants(ctx: &Context, entry: &Entry) -> Vec<(String, Variant, bool)> {
 }
 
 /// Nominal against refined at common output times, within the contract.
-fn compare(a: &Run, b: &Run, ctx: &Context) -> Value {
-    let (mut roof, mut level, mut mixture, mut noise, mut mean, mut n) =
-        (0_f64, 0_f64, 0_f64, 0_f64, 0., 0);
-    let mut previous: Option<f64> = None;
-    for sa in a.samples.iter().filter(|s| s.event.is_none()) {
-        let Some(sb) = b
-            .samples
-            .iter()
-            .find(|s| s.event.is_none() && (s.t - sa.t).abs() < 1e-9)
-        else {
-            continue;
-        };
-        let d = sa.pt1_pa - sb.pt1_pa;
-        if let Some(p) = previous {
-            noise = noise.max((d - p).abs());
+/// The 4th-order Butterworth low-pass at `fc` for sampling interval `dt` as
+/// two bilinear-transformed second-order sections `[b0, b1, b2, a1, a2]`,
+/// with the analog cutoff prewarped.
+fn butterworth4(fc: f64, dt: f64) -> [[f64; 5]; 2] {
+    let k = (std::f64::consts::PI * fc * dt).tan();
+    [1., 3.].map(|m: f64| {
+        let q = 1. / (2. * (m * std::f64::consts::PI / 8.).cos());
+        let norm = 1. / (1. + k / q + k * k);
+        let b0 = k * k * norm;
+        [
+            b0,
+            2. * b0,
+            b0,
+            2. * (k * k - 1.) * norm,
+            (1. - k / q + k * k) * norm,
+        ]
+    })
+}
+/// One pass of the sections over `x`, each started at its steady state for
+/// the first value (transposed direct form II).
+fn sections(x: &[f64], sos: &[[f64; 5]; 2]) -> Vec<f64> {
+    let mut y = x.to_vec();
+    for [b0, b1, b2, a1, a2] in sos.iter().copied() {
+        let gain = (b0 + b1 + b2) / (1. + a1 + a2);
+        let (x0, y0) = (y[0], gain * y[0]);
+        let (mut z1, mut z2) = ((b1 + b2) * x0 - (a1 + a2) * y0, b2 * x0 - a2 * y0);
+        for v in y.iter_mut() {
+            let input = *v;
+            let output = b0 * input + z1;
+            z1 = b1 * input - a1 * output + z2;
+            z2 = b2 * input - a2 * output;
+            *v = output;
         }
-        previous = Some(d);
-        roof = roof.max(d.abs());
-        mean += d;
-        n += 1;
-        level = level.max((sa.collapsed_level_m - sb.collapsed_level_m).abs());
-        mixture = mixture.max((sa.mixture_level_m - sb.mixture_level_m).abs());
     }
+    y
+}
+/// Zero-phase filtering: forward and backward over an odd extension of
+/// three cutoff periods at each end, which is then removed.
+fn filtfilt(x: &[f64], fc: f64, dt: f64) -> Vec<f64> {
+    let n = x.len();
+    if n < 3 {
+        return x.to_vec();
+    }
+    let pad = ((3. / (fc * dt)).ceil() as usize).min(n - 1);
+    let mut ext = Vec::with_capacity(n + 2 * pad);
+    ext.extend((1..=pad).rev().map(|i| 2. * x[0] - x[i]));
+    ext.extend_from_slice(x);
+    ext.extend((1..=pad).map(|i| 2. * x[n - 1] - x[n - 1 - i]));
+    let sos = butterworth4(fc, dt);
+    let mut f = sections(&ext, &sos);
+    f.reverse();
+    let mut b = sections(&f, &sos);
+    b.reverse();
+    b[pad..pad + n].to_vec()
+}
+
+/// Nominal against a reference run with the contract's comparison (request
+/// 2, E0/E1): the observed differences of PT1 and both levels filtered by
+/// the zero-phase 4th-order Butterworth at `uncreditedAbove_Hz`; roof bias as
+/// the mean |filtered difference|, roof noise as the standard deviation of
+/// its 0.1 s changes, levels as the maximum. With `exclusion` (E5) PT1 is
+/// judged only outside ±`exclusion` of every located relief event of either
+/// run. Relief events and a cutout are compared on their located times.
+fn compare(a: &Run, b: &Run, ctx: &Context, exclusion: Option<f64>) -> Value {
+    let fc = ctx.budgets.f64(&["uncreditedAbove_Hz"]);
+    let dt = ctx.gates.f64(&["comparison", "observation_s"]);
+    let ratio = (ctx.output_s() / dt).round() as usize;
+    let n = a.observations.len().min(b.observations.len());
+    let grid = (0..n).all(|i| (a.observations[i][0] - b.observations[i][0]).abs() < 1e-9);
+    let difference = |k: usize| -> Vec<f64> {
+        (0..n)
+            .map(|i| a.observations[i][k] - b.observations[i][k])
+            .collect()
+    };
+    let (raw_pt1, raw_collapsed, raw_mixture) = (difference(1), difference(2), difference(3));
+    let (pt1, collapsed, mixture) = (
+        filtfilt(&raw_pt1, fc, dt),
+        filtfilt(&raw_collapsed, fc, dt),
+        filtfilt(&raw_mixture, fc, dt),
+    );
+    let events: Vec<f64> = a
+        .relief_events
+        .iter()
+        .chain(&b.relief_events)
+        .filter_map(|e| e["t"].as_f64())
+        .collect();
+    let included = |i: usize| {
+        let t = a.observations[i][0];
+        exclusion.is_none_or(|m| events.iter().all(|e| (t - e).abs() > m))
+    };
+    let kept: Vec<usize> = (0..n).filter(|i| included(*i)).collect();
+    let bias = kept.iter().map(|i| pt1[*i].abs()).sum::<f64>() / kept.len().max(1) as f64;
+    let changes: Vec<f64> = (0..n)
+        .step_by(ratio)
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|w| included(w[0]) && included(w[1]))
+        .map(|w| pt1[w[1]] - pt1[w[0]])
+        .collect();
+    let mean_change = changes.iter().sum::<f64>() / changes.len().max(1) as f64;
+    let noise = (changes
+        .iter()
+        .map(|c| (c - mean_change).powi(2))
+        .sum::<f64>()
+        / changes.len().max(1) as f64)
+        .sqrt();
+    let max_abs = |v: &[f64]| v.iter().map(|x| x.abs()).fold(0., f64::max);
+    let level = max_abs(&collapsed);
+    let cutout = match (&a.cutout, &b.cutout) {
+        (Some(x), Some(y)) => {
+            Some((x["cause_s"].as_f64().unwrap() - y["cause_s"].as_f64().unwrap()).abs())
+        }
+        (None, None) => None,
+        _ => Some(f64::INFINITY),
+    };
     // Relief events inside the window both runs cover.
     let window = a.reached_s.min(b.reached_s);
     let kinds = |r: &Run| -> Vec<(f64, String)> {
@@ -598,14 +855,25 @@ fn compare(a: &Run, b: &Run, ctx: &Context) -> Value {
     } else {
         f64::INFINITY
     };
-    let bias = ctx.budgets.f64(&["pzrRoofPressureBias_Pa"]);
+    let budget = ctx.budgets.f64(&["pzrRoofPressureBias_Pa"]);
     let lvl = ctx.budgets.f64(&["pzrLevel_m"]);
     let tim = ctx.budgets.f64(&["thresholdTiming_s"]);
-    let pass = n > 0 && roof <= bias && level <= lvl && timing <= tim;
-    json!({"compared_samples":n,"common_window_s":window,"pt1_max_abs_difference_pa":roof,"pt1_mean_difference_pa":if n>0 {mean/n as f64} else {0.},
-        "pt1_sample_to_sample_noise_pa":noise,"collapsed_level_max_abs_difference_m":level,"mixture_level_max_abs_difference_m":mixture,
+    let noise_budget = ctx.budgets.f64(&["pzrRoofPressureSampleNoise_Pa"]);
+    let pass = grid
+        && !kept.is_empty()
+        && bias <= budget
+        && level <= lvl
+        && timing <= tim
+        && cutout.is_none_or(|c| c <= tim);
+    json!({"comparison":"contract (E0/E1): zero-phase 4th-order Butterworth, forward and backward with three-period odd extensions and steady-state starts",
+        "cutoff_hz":fc,"observation_s":dt,"observations":n,"same_grid":grid,"pt1_judged_observations":kept.len(),"pt1_exclusion_s":exclusion,
+        "pt1_bias_mean_abs_filtered_pa":bias,"pt1_noise_std_of_0p1s_changes_pa":noise,"pt1_max_abs_filtered_pa":kept.iter().map(|i| pt1[*i].abs()).fold(0., f64::max),
+        "collapsed_level_max_abs_filtered_m":level,"mixture_level_max_abs_filtered_m":max_abs(&mixture),
+        "raw":{"pt1_max_abs_pa":max_abs(&raw_pt1),"collapsed_level_max_abs_m":max_abs(&raw_collapsed),"mixture_level_max_abs_m":max_abs(&raw_mixture)},
+        "cutout_cause_time_difference_s":cutout.map(|c| if c.is_finite() {json!(c)} else {json!(null)}),
+        "common_window_s":window,
         "relief_events":{"nominal":ea.len(),"refined":eb.len(),"same_sequence":same_sequence,"max_crossing_time_difference_s":if timing.is_finite() {json!(timing)} else {json!(null)}},
-        "budgets":{"pzrRoofPressureBias_Pa":bias,"pzrLevel_m":lvl,"thresholdTiming_s":tim},
+        "budgets":{"pzrRoofPressureBias_Pa":budget,"pzrRoofPressureSampleNoise_Pa":noise_budget,"pzrLevel_m":lvl,"thresholdTiming_s":tim},
         "pass":pass})
 }
 
@@ -633,6 +901,25 @@ fn crossing_rejections(run: &Run) -> Vec<Value> {
         .collect()
 }
 
+/// Wet-law onset crossings: a contacted liquid zone (A or R) crossing its
+/// saturation between consecutive samples, with the step rejections in the
+/// samples' interval.
+fn onset_crossings(run: &Run) -> Vec<Value> {
+    let names = ["A", "R"];
+    let mut out = Vec::new();
+    for w in run.samples.windows(2) {
+        for (z, k) in [(0, 1), (1, 2)] {
+            let (a, b) = (w[0].departure_k[k], w[1].departure_k[k]);
+            if (a > 0.) != (b > 0.) {
+                out.push(json!({"zone":names[z],"from_s":w[0].t,"to_s":w[1].t,"direction":if b > a {1} else {-1},
+                    "error_test_failures":w[1].error_failures - w[0].error_failures,"convergence_failures":w[1].convergence_failures - w[0].convergence_failures,
+                    "steps":w[1].steps - w[0].steps}));
+            }
+        }
+    }
+    out
+}
+
 fn ended(run: &Run) -> bool {
     run.end == End::Completed
 }
@@ -645,10 +932,39 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
     let declared = entry.duration_s.or(entry.max_duration_s).expect("duration");
     let duration = smoke.map_or(declared, |d| d.min(declared));
     let cap = entry.run_cpu_s.expect("runCpu_s") * ctx.set.run_cap_factor;
-    let prepared = prepare(ctx, entry);
+    let armed = entry.relief == Some(true);
+    let prepared_nominal = prepare(ctx, entry, false);
+    let prepared_halved =
+        (entry.segment_refinement == Some(true)).then(|| prepare(ctx, entry, true));
     let rtol = ctx.rtol();
     let factor = ctx.gates.f64(&["referenceToleranceFactor"]);
-    let atol = tolerances(ctx, &prepared.column, &prepared.scales, rtol);
+    // E5: relief windows where the case arms the relief, with the stock
+    // Newton coefficient times the declared factor; their margin is the
+    // declared ±50 ms around each located event.
+    let judgement = &ctx.set.relief_judgement;
+    let relief_window = armed.then_some(ReliefWindow {
+        margin_s: judgement.pt1_exclusion_around_event_s,
+        newton_coefficient: IDA_STOCK_NEWTON_COEFFICIENT
+            * judgement.window_newton_coefficient_factor,
+    });
+    // Gate 5's low-level cutout chain.
+    let cutout = (entry.low_level_heater_cutout == Some(true)).then(|| {
+        let sat = If97
+            .saturation(s(LT_CALIBRATION_PA))
+            .expect("calibration saturation");
+        let p = &ctx.parameters;
+        Cutout {
+            setting_m: CUTOUT_SETTING_M,
+            persistence_s: CUTOUT_PERSISTENCE_S,
+            contact_delay_s: ISOLATOR_CONTACT_DELAY_S,
+            lag_s: LT_LAG_S,
+            quantum_m: LT_QUANTUM_M,
+            liquid_reference_kg_m3: sat.liquid.density.value,
+            vapor_reference_kg_m3: sat.vapor.density.value,
+            gravity_m_s2: ctx.gravity_m_s2,
+            span_m: p.tap(st::LT_HIGH).unwrap() - p.tap(st::LT_LOW).unwrap(),
+        }
+    });
     let stride = ((duration / ctx.output_s()) / 300.).ceil() as usize;
     let mut runs: Vec<(String, Variant, bool, Run)> = Vec::new();
     let mut declared_runs = variants(ctx, entry);
@@ -662,6 +978,12 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             continue;
         }
         let credited = !limit && (label == "nominal" || refined);
+        let prepared = if v.halved_segments {
+            prepared_halved.as_ref().expect("halved preparation")
+        } else {
+            &prepared_nominal
+        };
+        let atol = tolerances(ctx, &prepared.column, &prepared.scales, rtol, armed);
         let spec = RunSpec {
             label: label.clone(),
             rtol: if refined { rtol * factor } else { rtol },
@@ -669,13 +991,11 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
                 .iter()
                 .map(|a| if refined { a * factor } else { *a })
                 .collect(),
-            max_order: if refined {
-                ctx.gates.f64(&["controlMaxOrder"]) as usize
-            } else {
-                ctx.gates.f64(&["maxOrder"]) as usize
-            },
+            // Decision 0015: the refined run is BDF2 at rtol/10.
+            max_order: ctx.gates.f64(&["maxOrder"]) as usize,
             duration_s: duration,
             output_s: ctx.output_s(),
+            observation_s: ctx.gates.f64(&["comparison", "observation_s"]),
             breakpoints: breakpoints(entry),
             nonnegative: vec![st::BUBBLE_MASS, st::DROP_MASS, st::DROP_BORON],
             cpu_cap_s: cap,
@@ -686,8 +1006,10 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             consistent_bound: CONSISTENT_ROW_BOUND,
             consistent_passes: CONSISTENT_PASSES,
             lift_root_bound: ctx.lift_root_bound(),
+            relief_window,
+            cutout,
         };
-        let sys = system(ctx, entry, &prepared, v);
+        let sys = system(ctx, entry, prepared, v);
         let r = run(sys, &prepared.y0, &spec);
         println!(
             "{} {}: end {:?} at {} s, {} steps, {:.2} CPU-s",
@@ -701,7 +1023,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
     let mut ledgers = serde_json::Map::new();
     for (label, v, refined, r) in &runs {
         let mut j = run_json(r, stride);
-        j["variant"] = json!({"relaxation_factor":v.relaxation_factor,"spray_drop_diameter_m":v.drop_diameter_m,"bubble_diameter_m":v.bubble_diameter_m,"refined":refined});
+        j["variant"] = json!({"relaxation_factor":v.relaxation_factor,"spray_drop_diameter_m":v.drop_diameter_m,"bubble_diameter_m":v.bubble_diameter_m,"halved_segments":v.halved_segments,"refined":refined});
         j["cpu_cap_s"] = json!(cap);
         let l = ledger(r, surge.as_ref(), spray.as_ref());
         j["conservation"] = l.clone();
@@ -726,8 +1048,12 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         l["mass"]["within_solver_tolerance"].as_bool() == Some(true)
             && l["boron"]["within_solver_tolerance"].as_bool() == Some(true)
     };
+    // Gate 5: the steel-range applicability limit is a reported physical
+    // result, not a case failure.
+    let steel_limit =
+        |r: &Run| matches!(&r.end, End::Limit { label } if label.starts_with("steel-range"));
     if !limit {
-        if !ended(nominal) {
+        if !ended(nominal) && !(gate == 5 && steel_limit(nominal)) {
             failures.push(format!("nominal did not complete: {:?}", nominal.end));
         }
         if let End::StopRule { rule, reason } = &nominal.end {
@@ -736,8 +1062,28 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         if !conservation_ok(nominal) {
             failures.push("nominal mass or boron closure outside the solver tolerance".into());
         }
+        if let Some(halved) = get("segments halved") {
+            let cmp = compare(nominal, halved, ctx, None);
+            if !(ended(halved) || steel_limit(halved)) {
+                failures.push(format!(
+                    "segments-halved run did not complete: {:?}",
+                    halved.end
+                ));
+            }
+            if cmp["pass"].as_bool() != Some(true) {
+                failures.push(
+                    "nominal and segments-halved runs disagree beyond the contract budgets".into(),
+                );
+            }
+            checks.insert("segment_refinement_agreement".into(), cmp);
+        }
         if let Some(refined) = get("refined") {
-            let cmp = compare(nominal, refined, ctx);
+            let cmp = compare(
+                nominal,
+                refined,
+                ctx,
+                armed.then_some(judgement.pt1_exclusion_around_event_s),
+            );
             if !ended(refined) {
                 failures.push(format!("refined did not complete: {:?}", refined.end));
             }
@@ -749,7 +1095,61 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
     }
     let p = &ctx.parameters;
     let top = p.top_m;
+    checks.insert(
+        "wet_onset_crossings".into(),
+        json!(onset_crossings(nominal)),
+    );
     match gate {
+        5 => {
+            let at = |t: f64| nominal.samples.iter().find(|s| s.t >= t - 1e-9);
+            let state = |s: &p2_harness::Sample| {
+                json!({"t":s.t,"rod_temperature_k":s.rod_temperature_k,"bank_exposed_length_m":s.bank_exposed_m,
+                "bank_wet_fraction":s.bank_wet_fraction,"mixture_level_m":s.mixture_level_m,"collapsed_level_m":s.collapsed_level_m,"lt_indication_m":s.lt_indication_m,"joule_w":s.joule_w})
+            };
+            let open = nominal
+                .cutout
+                .as_ref()
+                .and_then(|c| c["isolator_open_s"].as_f64());
+            // Quasi-steady full-power inversion: T_A − T_R over the last 20 s
+            // of full power before the outsurge at 120 s.
+            let window: Vec<&p2_harness::Sample> = nominal
+                .samples
+                .iter()
+                .filter(|s| s.event.is_none() && s.t >= 100. && s.t <= 120.)
+                .collect();
+            let inversion = window
+                .iter()
+                .map(|s| s.temperatures_k[1] - s.temperatures_k[2])
+                .sum::<f64>()
+                / window.len().max(1) as f64;
+            let extreme = |f: fn(&p2_harness::Sample) -> f64| {
+                let v: Vec<f64> = nominal.samples.iter().map(f).collect();
+                json!([
+                    v.iter().copied().fold(f64::INFINITY, f64::min),
+                    v.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                ])
+            };
+            let rod_max = nominal
+                .samples
+                .iter()
+                .flat_map(|s| s.rod_temperature_k.iter().copied())
+                .fold(f64::NEG_INFINITY, f64::max);
+            let l = ledgers.get("nominal").cloned().unwrap_or(Value::Null);
+            checks.insert("heater".into(), json!({
+                "cutout":nominal.cutout,"state_at_isolator_open":open.and_then(at).map(state),"state_at_end":nominal.samples.last().map(state),
+                "electrical_delivery":{"electrical_j":l["energy"]["electrical_j"],"rod_energy_change_j":l["energy"]["rod_energy_change_j"],"wall_energy_change_j":l["energy"]["wall_energy_change_j"],
+                    "fluid_internal_energy_change_j":l["energy"]["internal_energy_change_j"],"port_receipts_j":l["energy"]["port_receipts_j"],"exterior_loss_j":l["energy"]["exterior_loss_j"],
+                    "hydrostatic_remainder_j":l["energy"]["hydrostatic_remainder_j"],"closure_j":l["energy"]["closure_j"],"max_closure_over_solver_tolerance":l["energy"]["max_closure_over_solver_tolerance"]},
+                "quasi_steady_inversion_k":inversion,"selection_inversion_k":0.072,
+                "rod_temperature_max_k":rod_max,"steel_limit_reached":steel_limit(nominal),
+                "ranges":{"pt1_pa":extreme(|s|s.pt1_pa),"inversion_exchange_kg_s":extreme(|s|s.inversion_kg_s),"bubble_stock_kg":extreme(|s|s.masses[3]),
+                    "swell_m":extreme(|s|s.mixture_level_m - s.collapsed_level_m),"mixture_level_m":extreme(|s|s.mixture_level_m),"collapsed_level_m":extreme(|s|s.collapsed_level_m),
+                    "flashing_kg_s":extreme(|s|s.flashing_kg_s[0] + s.flashing_kg_s[1]),"joule_w":extreme(|s|s.joule_w),"exterior_w":extreme(|s|s.exterior_w),
+                    "metal_identity_w":extreme(|s|s.metal_identity_w)}}));
+            if open.is_none() {
+                failures.push("the low-level cutout did not act".into());
+            }
+        }
         4 => {
             // Drop stock against the quasi-steady (W_s + W_c)(top − z_mix)/u_d:
             // the drops carry the spray and the vapor condensed at entry.
@@ -894,12 +1294,15 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
     let set_cpu: f64 = runs.iter().map(|r| r.3.cpu_s).sum();
     json!({"kind":"ld01-p2-case","case":entry.id,"gate":gate,"entry":entry_value(ctx, &entry.id),"smoke_duration_s":smoke,
         "provenance":ctx.provenance,
-        "configuration":{"rtol":rtol,"atol":atol,"scales":prepared.scales,"max_order":ctx.gates.f64(&["maxOrder"]),"refined":{"rtol_factor":factor,"max_order":ctx.gates.f64(&["controlMaxOrder"])},
+        "configuration":{"rtol":rtol,"atol":tolerances(ctx, &prepared_nominal.column, &prepared_nominal.scales, rtol, armed),"scales":prepared_nominal.scales,"max_order":ctx.gates.f64(&["maxOrder"]),"refined":{"rtol_factor":factor,"max_order":ctx.gates.f64(&["maxOrder"])},
+            "relief_window":relief_window.map(|w| json!({"margin_s":w.margin_s,"newton_coefficient":w.newton_coefficient,"stock_coefficient":IDA_STOCK_NEWTON_COEFFICIENT})),
+            "cutout_settings_source":cutout.map(|_| "transcribed from prose (safety LD01.PROT.PZR.LOW_LEVEL, heater isolator, electronic differential level); no strict block declares them"),
+            "observation_s":ctx.gates.f64(&["comparison", "observation_s"]),"cutoff_hz":ctx.budgets.f64(&["uncreditedAbove_Hz"]),
             "output_interval_s":ctx.output_s(),"breakpoints":breakpoints(entry),"run_cpu_cap_s":cap,"nonnegative_constraints":["M_b","M_d","B_d"],
             "ports":p.ports.iter().map(|q| json!({"id":q.id,"kind":format!("{:?}",q.kind),"elevation_m":q.elevation_m,"face":q.face,"bore_m":q.bore_m,"relief":q.relief.map(|d| json!({"opening_Pa":d.opening_pa,"reseat_Pa":d.reseat_pa,"fullStrokes_per_s":d.full_strokes_per_s,"effectiveAreaPerLift_m2":d.effective_area_per_lift_m2}))})).collect::<Vec<_>>(),
             "sources":{"surge_enthalpy_j_kg":enthalpy(&ctx.set.sources.surge),"spray_enthalpy_j_kg":enthalpy(&ctx.set.sources.spray),"absorber_mass_fraction":p.absorber_mass_fraction},
             "relief_back_pressure_pa":ctx.set.relief_back_pressure_pa},
-        "preparation":prepared.preparation,"runs":Value::Object(runs_json),"checks":Value::Object(checks),"stop_rules":stop_rules,
+        "preparation":prepared_nominal.preparation,"runs":Value::Object(runs_json),"checks":Value::Object(checks),"stop_rules":stop_rules,
         "case_cpu_s":set_cpu,"verdict":verdict})
 }
 
@@ -926,6 +1329,10 @@ fn skipped(label: &str) -> Run {
         initializations: Vec::new(),
         resolvability: Vec::new(),
         uncredited: Vec::new(),
+        windows: Vec::new(),
+        rewinds: Vec::new(),
+        cutout: None,
+        observations: Vec::new(),
         end: End::SetBound,
         totals: Default::default(),
         handles: 0,
@@ -940,19 +1347,17 @@ fn skipped(label: &str) -> Run {
     }
 }
 
-/// Gate 5 waits for Team HEATER's rod-metal module: the heater request must
-/// enter each bank's finite rod metal, never a zone, and the rods' wet and
-/// exposed sources are that module's. Without it the case refuses before any
-/// run, so no CPU of the set is spent on it.
-fn heater_case(ctx: &Context, entry: &Entry) -> Value {
-    json!({"kind":"ld01-p2-case","case":entry.id,"gate":entry.gate,"entry":entry_value(ctx,&entry.id),"provenance":ctx.provenance,
-        "verdict":"REFUSED: the heater rod-metal module (Team HEATER) is not in this build; the HeaterReceipt sources of each bank must come from it",
-        "runs":{},"case_cpu_s":0.})
-}
-
+/// A case the declaration does not run: a disclosed limit (gate 2, G1 (b)),
+/// or blocked as its text states (gate 3 after G2 (a): the band's 5.9 MPa
+/// lower edge and the unadmitted surge-line initial state).
 fn blocked_case(ctx: &Context, entry: &Entry) -> Value {
+    let verdict = if entry.disclosed_limit == Some(true) {
+        "DISCLOSED LIMIT (owner, request 2 G1 (b)); not run"
+    } else {
+        "BLOCKED by the case declaration; not run"
+    };
     json!({"kind":"ld01-p2-case","case":entry.id,"gate":entry.gate,"entry":entry_value(ctx,&entry.id),"provenance":ctx.provenance,
-        "verdict":"BLOCKED by the case declaration; not run","runs":{},"case_cpu_s":0.})
+        "verdict":verdict,"runs":{},"case_cpu_s":0.})
 }
 
 // ---------------------------------------------------------------------------
@@ -1506,8 +1911,6 @@ fn run_set(ids: Option<&[&str]>, write: bool, smoke: Option<f64>) -> Value {
         let load_start = load_average();
         let mut receipt = if entry.blocked == Some(true) {
             blocked_case(&ctx, entry)
-        } else if entry.gate == Some(5) {
-            heater_case(&ctx, entry)
         } else if entry.gate.is_none() {
             benchmark(&ctx, entry, deadline)
         } else {
