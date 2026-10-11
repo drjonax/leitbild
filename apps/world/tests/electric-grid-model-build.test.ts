@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from '../src/packs/electric-grid/build/curations.ts'
 import { ambientRatingRule, cableRules, lineParameters, networkEquivalentParameters, overheadRules, reactanceFloorPu, transformerParameters } from '../src/packs/electric-grid/build/electrical.ts'
+import { runOfRiverTurbineOf, runOfRiverTurbineRule } from '../src/packs/electric-grid/build/generator-rules.ts'
 import { simplifyPath, type LonLat } from '../src/packs/electric-grid/build/geo.ts'
 import { jsonLines } from '../src/packs/electric-grid/build/json-lines.ts'
 import { createBuildLedger } from '../src/packs/electric-grid/build/ledger.ts'
@@ -101,6 +102,30 @@ describe('model build: dispatch', () => {
     expect(states.get('generator:aggregate-osm-way-60495669@132-hydro-run-of-river')).toMatchObject({ state: 'online', targetMw: 40 })
     // 2 × 100 MW demand + 150 MW export − 140 MW measured output.
     expect(states.get('generator:nve-hydro-123')).toMatchObject({ state: 'online', availableMw: 300, targetMw: 210 })
+  })
+
+  test('takes a run-of-river turbine and its minimum stable share from the gross head', () => {
+    expect([10, 24.9, 25, 350, 351, 900].map(runOfRiverTurbineOf)).toEqual(['kaplan', 'kaplan', 'francis', 'francis', 'pelton', 'pelton'])
+    expect(runOfRiverTurbineRule.minimumStableShare).toEqual({ kaplan: 0.2, francis: 0.4, pelton: 0.2 })
+  })
+
+  test('commits run-of-river units below their minimum largest first on their area\'s inflow', () => {
+    const base = fixture.generators.find(generator => generator.id === 'generator:nve-hydro-123')!
+    const unit = (plantNumber: number, capacityMw: number) => ({
+      ...base, id: `generator:nve-hydro-${plantNumber}`, label: `run-of-river ${plantNumber}`, kind: 'hydro-run-of-river' as const,
+      capacityMw, ratedMva: capacityMw / 0.9, minimumStableMw: capacityMw * 0.4, priceArea: 'NO1' as const,
+      busId: 'bus:osm-way-60495669@132', registryIds: [String(plantNumber)], blackStartCapable: false,
+    })
+    const model = validateGridModel({ ...fixture, generators: [...fixture.generators, unit(901, 100), unit(902, 60), unit(903, 40)] }, 'fixture with run-of-river')
+    const quiet = { ...hour, importMw: { ...hour.importMw, SE: 0, DE: 0 }, generationMw: { ...hour.generationMw, hydroRunOfRiver: 48 } }
+    // Inflow share 48 / 240 MW = 0.2: the Francis group's 40 MW keeps only the 100 MW unit at its 40 % minimum.
+    const states = new Map(dispatchGenerators(model, () => 150, quiet, referenceSchedules(model, quiet)).map(state => [state.assetId, state]))
+    expect(states.get('generator:nve-hydro-901')).toMatchObject({ state: 'online', targetMw: 40 })
+    expect(states.get('generator:nve-hydro-902')).toMatchObject({ state: 'offline', targetMw: 0 })
+    expect(states.get('generator:nve-hydro-903')).toMatchObject({ state: 'offline', targetMw: 0 })
+    expect(states.get('generator:aggregate-osm-way-60495669@132-hydro-run-of-river')).toMatchObject({ state: 'online', targetMw: 8 })
+    // 300 MW demand − 100 MW wind − 48 MW run-of-river.
+    expect(states.get('generator:nve-hydro-123')).toMatchObject({ state: 'online', targetMw: 152 })
   })
 
   test('commits storage hydro at one loading and refuses a balance it cannot cover', () => {

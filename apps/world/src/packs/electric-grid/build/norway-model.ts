@@ -14,7 +14,7 @@ import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from 
 import { curatedTransformerRatings, withCuratedLineRatings } from './curated-ratings.ts'
 import { electricalRules } from './electrical.ts'
 import { buildGenerators, buildSiteGenerators, registeredHydroUnits, registeredWindUnits } from './generators.ts'
-import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverUtilisationHours } from './generator-rules.ts'
+import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverTurbineRule, runOfRiverUtilisationHours } from './generator-rules.ts'
 import { buildGeometry, type GridGeometry } from './geometry.ts'
 import { buildHaldenAddition, haldenAdditionId } from './halden-addition.ts'
 import type { GridModelAdditionV2 } from '../schemas/grid-model-addition.ts'
@@ -43,6 +43,7 @@ export const buildRules = {
   aggregationThresholdMw,
   attachmentRadiusKm,
   runOfRiverUtilisationHours,
+  runOfRiverTurbine: runOfRiverTurbineRule,
   loadAllocation: { minimumShareMw, municipalAttachmentLimitKm },
   dispatch: dispatchRule,
 }
@@ -149,7 +150,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   const stations = createStationIndex(buses, main.buses, mainBusIds, sidecar.outline)
   const registeredGenerators = buildGenerators({
     units: [
-      ...registeredHydroUnits(inputs.hydro.data.plants, ids.hydro, ledger),
+      ...registeredHydroUnits(inputs.hydro.data.plants, ids.hydro, new Map(inputs.hydroHeads.data.plants.map(plant => [plant.plantNumber, plant.grossHeadM])), ledger),
       ...registeredWindUnits(inputs.wind.data.farms, ids.wind, ledger),
     ],
     stations,

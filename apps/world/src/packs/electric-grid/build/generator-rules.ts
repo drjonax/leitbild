@@ -14,8 +14,8 @@ export interface GeneratorKindRule {
   readonly voltageSetpointPu: number
   /** H on rated MVA, s (0 for converter-connected units). */
   readonly inertiaSeconds: number
-  /** Minimum stable output as a share of capacity for a single registered plant. */
-  readonly minimumStableShare: number
+  /** Minimum stable output as a share of capacity for a single registered plant; run-of-river takes it from its turbine (runOfRiverTurbineRule). */
+  readonly minimumStableShare: number | 'turbine-by-head'
   /** Ramp limit as a share of capacity per minute. */
   readonly rampSharePerMinute: number
   readonly blackStartCapable: boolean
@@ -37,8 +37,12 @@ export const generatorKindRules: Readonly<Record<ModelledKind, GeneratorKindRule
   'hydro-reservoir': { id: 'unit-hydro-reservoir', synchronous: true, powerFactor: 0.9, voltageSetpointPu: 1.0, inertiaSeconds: 3.44, minimumStableShare: 0.3, rampSharePerMinute: 0.1, blackStartCapable: true, sources: hydroSources },
   'hydro-pumped': { id: 'unit-hydro-pumped', synchronous: true, powerFactor: 0.9, voltageSetpointPu: 1.0, inertiaSeconds: 3.44, minimumStableShare: 0.3, rampSharePerMinute: 0.1, blackStartCapable: true, sources: hydroSources },
   'hydro-run-of-river': {
-    id: 'unit-hydro-run-of-river', synchronous: true, powerFactor: 0.9, voltageSetpointPu: 1.0, inertiaSeconds: 3.44, minimumStableShare: 0.3, rampSharePerMinute: 0.1, blackStartCapable: false,
-    sources: { ...hydroSources, blackStartCapable: 'run-of-river plants lack the storage to sustain a black start' },
+    id: 'unit-hydro-run-of-river', synchronous: true, powerFactor: 0.9, voltageSetpointPu: 1.0, inertiaSeconds: 3.44, minimumStableShare: 'turbine-by-head', rampSharePerMinute: 0.1, blackStartCapable: false,
+    sources: {
+      ...hydroSources,
+      minimumStableShare: 'by the plant\'s turbine type from its NVE gross head (rule run-of-river-turbine-by-head)',
+      blackStartCapable: 'run-of-river plants lack the storage to sustain a black start',
+    },
   },
   thermal: {
     id: 'unit-thermal-gas-turbine', synchronous: true, powerFactor: 0.9, voltageSetpointPu: 1.0, inertiaSeconds: 2.5, minimumStableShare: 0.2, rampSharePerMinute: 0.1, blackStartCapable: false,
@@ -79,3 +83,27 @@ export const attachmentRadiusKm: Readonly<Record<'hydro' | 'wind', number>> = { 
  * little storage run near full output most of the year (modelling judgement).
  */
 export const runOfRiverUtilisationHours = 5000
+
+export type RunOfRiverTurbine = 'kaplan' | 'francis' | 'pelton'
+
+// A run-of-river plant turbines what flows in. Below its turbine's lowest stable discharge it
+// cannot run continuously: ESHA, Guide on How to Develop a Small Hydropower Plant (2004), §6
+// p. 183: double-regulated Kaplan and Pelton turbines operate satisfactorily from about one fifth
+// of rated discharge, Francis from one half, and below 40 % Francis turbines may show instability.
+// NVE publishes no turbine type, so the type follows the plant's gross head through ESHA Table 6.3
+// (Kaplan and propeller 2–40 m, Francis 25–350 m, Pelton 50–1300 m), taking Francis, the higher
+// minimum, where the ranges overlap. A plant is taken as one unit (NVE publishes no unit count),
+// and the discharge share as its output share (output falls faster than discharge at part load).
+export const runOfRiverTurbineRule = {
+  id: 'run-of-river-turbine-by-head',
+  /** Below this gross head only Kaplan and propeller turbines apply, m. */
+  kaplanBelowHeadM: 25,
+  /** Above this gross head only Pelton applies, m. */
+  peltonAboveHeadM: 350,
+  /** Lowest stable discharge, share of rated: Kaplan (double-regulated) and Pelton one fifth, Francis its 40 % stability limit. */
+  minimumStableShare: { kaplan: 0.2, francis: 0.4, pelton: 0.2 } as const satisfies Readonly<Record<RunOfRiverTurbine, number>>,
+  source: 'ESHA, Guide on How to Develop a Small Hydropower Plant (2004), Table 6.3 (range of heads) and p. 183 (operating range of discharge); turbine type by NVE gross head (BruttoFallhoyde_M)',
+} as const
+
+export const runOfRiverTurbineOf = (grossHeadM: number): RunOfRiverTurbine =>
+  grossHeadM < runOfRiverTurbineRule.kaplanBelowHeadM ? 'kaplan' : grossHeadM > runOfRiverTurbineRule.peltonAboveHeadM ? 'pelton' : 'francis'

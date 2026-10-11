@@ -22,6 +22,7 @@ export interface ModelSourceIds {
   readonly majorSites: string
   readonly referenceDispatch: string
   readonly population: string
+  readonly hydroHeads: string
   /** Curation feature id (slug) → `curation:<slug>`. */
   readonly curation: (slug: string) => string
 }
@@ -64,6 +65,7 @@ export const modelSources = (inputs: NorwayModelBuildInputs): ModelSources => {
     majorSites: `curated:norway-major-sites@${inputs.majorSites.data.curatedAt}`,
     referenceDispatch: `curated:norway-reference-dispatch@${inputs.referenceDispatch.data.curatedAt}`,
     population: `ssb:population-1km-${inputs.population.data.year}@${latestRetrieval(inputs.population.data.sources).slice(0, 10)}`,
+    hydroHeads: `nve:hydro-heads@${latestRetrieval(inputs.hydroHeads.data.sources).slice(0, 10)}`,
     curation: slug => `curation:${slug}`,
   }
   const curated = (sourceId: string, file: BuildFile<{ readonly curatedAt: string }>): GridSourceInput => ({
@@ -85,6 +87,7 @@ export const modelSources = (inputs: NorwayModelBuildInputs): ModelSources => {
       snapshotInput(ids.municipalities, inputs.municipalities),
       snapshotInput(ids.elhub, inputs.referenceHours),
       snapshotInput(ids.population, inputs.population),
+      snapshotInput(ids.hydroHeads, inputs.hydroHeads),
       curated(ids.interconnectors, inputs.interconnectors),
       curated(ids.majorSites, inputs.majorSites),
       // Transcribed measurements: the table's own data licence, not OSM's.

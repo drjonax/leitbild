@@ -12,6 +12,10 @@ import { roundTo } from './geo.ts'
 //   share it in proportion to rating); the Nordic remainder takes the Swedish and Finnish exchange.
 // - Wind farms, run-of-river hydro and thermal units each produce the national measured output of
 //   their kind in proportion to capacity (no per-unit or per-area production is published).
+// - A run-of-river unit whose inflow share lies below its minimum stable loading cannot run on it
+//   continuously: per price area and minimum, the largest such units that stay at or above it run on
+//   the group's inflow; the others stand (spilling or holding their pondage), and what no unit can
+//   turbine falls to storage hydro.
 // - Storage hydro (reservoir and pumped) closes each AC island's balance of demand plus export:
 //   every unit runs at the island's common loading when that is at least the minimum stable share,
 //   else the largest units are committed, as many as keep the loading at or above it.
@@ -143,6 +147,38 @@ const measuredShares = (model: GridModelV2, hour: GridReferenceHourDispatch): Re
   }
 }
 
+/**
+ * Run-of-river targets where an inflow share lies below a unit's minimum stable loading: per price
+ * area and minimum share, the largest units are committed while the group's inflow keeps each at
+ * or above its minimum, and run at the group's common loading; the rest get 0. Units at or above their
+ * minimum are absent from the result and keep their inflow.
+ */
+const commitRunOfRiver = (units: ReadonlyArray<GridGeneratorV2>, inflowMw: (generator: GridGeneratorV2) => number): ReadonlyMap<string, number> => {
+  const groups = new Map<string, GridGeneratorV2[]>()
+  for (const unit of units) {
+    if (inflowMw(unit) >= unit.minimumStableMw) continue
+    const key = `${unit.priceArea}|${unit.minimumStableMw / unit.capacityMw}`
+    groups.set(key, [...(groups.get(key) ?? []), unit])
+  }
+  const targets = new Map<string, number>()
+  for (const [key, members] of [...groups].sort(([left], [right]) => compareText(left, right))) {
+    const share = Number(key.split('|')[1])
+    const groupInflowMw = members.reduce((sum, unit) => sum + inflowMw(unit), 0)
+    const committed: GridGeneratorV2[] = []
+    let committedMw = 0
+    for (const unit of [...members].sort((left, right) => right.capacityMw - left.capacityMw || compareText(left.id, right.id))) {
+      // Largest first, stopping at the first that does not fit: the next unit is no larger than the
+      // committed capacity, so the common loading stays below twice the minimum share (≤ 1).
+      if ((committedMw + unit.capacityMw) * share > groupInflowMw) break
+      committed.push(unit)
+      committedMw += unit.capacityMw
+    }
+    const loading = committedMw === 0 ? 0 : groupInflowMw / committedMw
+    for (const unit of members) targets.set(unit.id, committed.includes(unit) ? unit.capacityMw * loading : 0)
+  }
+  return targets
+}
+
 export const dispatchGenerators = (
   model: GridModelV2,
   demandMwOf: (load: GridModelV2['loads'][number]) => number,
@@ -178,11 +214,16 @@ export const dispatchGenerators = (
     const measuredTotal = measured.reduce((sum, generator) => sum + measuredMw(generator), 0)
     // Measured output beyond the island's balance is curtailed in proportion.
     const curtail = measuredTotal > balanceMw ? balanceMw / measuredTotal : 1
+    const runOfRiver = commitRunOfRiver(measured.filter(generator => generator.kind === 'hydro-run-of-river'), generator => measuredMw(generator) * curtail)
+    let turbinedMw = 0
     for (const generator of measured) {
-      const targetMw = roundTo(measuredMw(generator) * curtail, 3)
-      states.push({ assetId: generator.id, state: 'online', availableMw: generator.kind === 'wind' ? roundTo(measuredMw(generator), 3) : generator.capacityMw, targetMw })
+      const targetMw = roundTo(runOfRiver.get(generator.id) ?? measuredMw(generator) * curtail, 3)
+      turbinedMw += targetMw
+      states.push(targetMw === 0 && runOfRiver.has(generator.id)
+        ? { assetId: generator.id, state: 'offline', availableMw: generator.capacityMw, targetMw: 0 }
+        : { assetId: generator.id, state: 'online', availableMw: generator.kind === 'wind' ? roundTo(measuredMw(generator), 3) : generator.capacityMw, targetMw })
     }
-    const residualMw = balanceMw - measuredTotal * curtail
+    const residualMw = balanceMw - turbinedMw
     const capacity = storage.reduce((sum, generator) => sum + generator.capacityMw, 0)
     if (residualMw > capacity) throw new Error(`island of ${island.size} buses: storage hydro (${roundTo(capacity, 1)} MW) cannot cover the residual demand ${roundTo(residualMw, 1)} MW`)
     const ordered = [...storage].sort((left, right) => right.capacityMw - left.capacityMw || compareText(left.id, right.id))
@@ -212,7 +253,7 @@ export const dispatchGenerators = (
 const describeHour = (hour: GridReferenceHourDispatch, schedules: ReferenceSchedules): string => {
   const exportMw = [...schedules.hvdcExportMw.values(), ...schedules.exchangeExportMw.values()].reduce((sum, value) => sum + value, 0)
   const limits = schedules.limited.map(entry => ` ${entry.linkId} measured ${entry.measuredMw} MW, scheduled at its ${entry.ratingMw} MW rating.`).join('')
-  return `Dispatch (rule ${dispatchRule.id}): ENTSO-E measured ${roundTo(hour.generationMw.windOnshore + hour.generationMw.windOffshore, 0)} MW wind, ${roundTo(hour.generationMw.hydroRunOfRiver, 0)} MW run-of-river and ${roundTo(hour.generationMw.fossilGas, 0)} MW gas, shared by capacity; HVDC links and the Nordic exchange at the measured flows (net export ${roundTo(exportMw, 0)} MW); storage hydro closes the balance at one common loading; losses are left to the slack.${limits}`
+  return `Dispatch (rule ${dispatchRule.id}): ENTSO-E measured ${roundTo(hour.generationMw.windOnshore + hour.generationMw.windOffshore, 0)} MW wind, ${roundTo(hour.generationMw.hydroRunOfRiver, 0)} MW run-of-river and ${roundTo(hour.generationMw.fossilGas, 0)} MW gas, shared by capacity (run-of-river units below their turbine's minimum stable loading committed per price area); HVDC links and the Nordic exchange at the measured flows (net export ${roundTo(exportMw, 0)} MW); storage hydro closes the balance at one common loading; losses are left to the slack.${limits}`
 }
 
 /** Summer-air ratings of each line or sub-transmission equivalent rated lower than in the model, MW; the emergency rating follows the emergency rule. */

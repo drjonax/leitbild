@@ -110,6 +110,17 @@ export const populationSnapshotSchema = z.object({
 })
 export type PopulationSnapshot = z.infer<typeof populationSnapshotSchema>
 
+/** NVE gross head per hydropower plant (scripts/electric-grid/snapshot-hydro-heads.ts). */
+export const hydroHeadsSnapshotSchema = z.object({
+  sources: z.array(snapshotSourceSchema).min(1),
+  sourceId: z.string().min(1),
+  plants: z.array(z.object({
+    plantNumber: z.number().int().positive(),
+    grossHeadM: z.number().finite().positive(),
+  }).strict()).min(1),
+})
+export type HydroHeadsSnapshot = z.infer<typeof hydroHeadsSnapshotSchema>
+
 const referenceHourSchema = z.object({
   priceAreas: z.object({
     startUtc: isoInstant,
@@ -171,6 +182,7 @@ export interface NorwayModelBuildInputs {
   readonly majorSites: BuildFile<GridMajorSiteTable>
   readonly referenceDispatch: BuildFile<GridReferenceDispatchTable>
   readonly population: BuildFile<PopulationSnapshot>
+  readonly hydroHeads: BuildFile<HydroHeadsSnapshot>
 }
 
 export const buildFileSchemas = {

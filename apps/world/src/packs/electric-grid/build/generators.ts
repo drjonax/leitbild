@@ -3,7 +3,7 @@ import type { GridMajorSiteTable } from '../schemas/grid-major-site.ts'
 import type { GridBusV2, GridGeneratorV2, GridLoadV2 } from '../schemas/grid-model.ts'
 import { compareText } from '../topology/ids.ts'
 import { haversineKm, roundTo, type LonLat } from './geo.ts'
-import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverUtilisationHours, smallHydroInertiaSeconds } from './generator-rules.ts'
+import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverTurbineOf, runOfRiverTurbineRule, runOfRiverUtilisationHours, smallHydroInertiaSeconds } from './generator-rules.ts'
 import type { HydroPlantRecord, WindFarmRecord } from './inputs.ts'
 import type { BuildLedger } from './ledger.ts'
 import { levelForCapacity, type Station, type StationIndex } from './stations.ts'
@@ -24,6 +24,8 @@ interface RegisteredUnit {
   readonly priceArea: PriceArea
   readonly location: LonLat
   readonly sourceId: string
+  /** NVE gross head, m (hydro plants that publish one). */
+  readonly grossHeadM: number | null
 }
 
 const hydroKind = (plant: HydroPlantRecord): { readonly kind: UnitKind; readonly note: string } => {
@@ -37,7 +39,7 @@ const hydroKind = (plant: HydroPlantRecord): { readonly kind: UnitKind; readonly
     : { kind: 'hydro-reservoir', note: `utilisation ${Math.round(hours)} h < ${runOfRiverUtilisationHours} h: storage plant inferred` }
 }
 
-export const registeredHydroUnits = (plants: ReadonlyArray<HydroPlantRecord>, sourceId: string, ledger: BuildLedger): ReadonlyArray<RegisteredUnit> =>
+export const registeredHydroUnits = (plants: ReadonlyArray<HydroPlantRecord>, sourceId: string, grossHeadOf: ReadonlyMap<number, number>, ledger: BuildLedger): ReadonlyArray<RegisteredUnit> =>
   plants.flatMap((plant): RegisteredUnit[] => {
     if (plant.kind === 'pump') {
       ledger.add({ reason: 'pump-not-a-generator', elementIds: [`nve-hydro:${plant.plantNumber}`], mw: plant.capacityMw, detail: `${plant.name}: NVE type P is a pump (demand), not generation` })
@@ -56,6 +58,7 @@ export const registeredHydroUnits = (plants: ReadonlyArray<HydroPlantRecord>, so
       priceArea: plant.priceArea,
       location: plant.location,
       sourceId,
+      grossHeadM: grossHeadOf.get(plant.plantNumber) ?? null,
     }]
   })
 
@@ -88,6 +91,7 @@ export const registeredWindUnits = (farms: ReadonlyArray<WindFarmRecord>, source
       priceArea: stages[0]!.priceArea,
       location: stages[0]!.location,
       sourceId,
+      grossHeadM: null,
     }
   })
 }
@@ -154,7 +158,16 @@ const attach = (unit: RegisteredUnit, stations: StationIndex, aggregated: boolea
   return { unit, station: nearest.station, bus: levelForCapacity(nearest.station, unit.capacityMw), km: nearest.km, method: 'nearest' }
 }
 
-const kindParameters = (kind: UnitKind, capacityMw: number, aggregated: boolean) => {
+/** A registered plant's minimum stable share and how it was found. */
+const minimumStable = (unit: Pick<RegisteredUnit, 'kind' | 'grossHeadM' | 'registryKey'>): { readonly share: number; readonly note: string | null } => {
+  const rule = generatorKindRules[unit.kind]
+  if (rule.minimumStableShare !== 'turbine-by-head') return { share: rule.minimumStableShare, note: null }
+  if (unit.grossHeadM === null) throw new Error(`${unit.registryKey}: NVE publishes no gross head, so its turbine (rule ${runOfRiverTurbineRule.id}) is unknown`)
+  const turbine = runOfRiverTurbineOf(unit.grossHeadM)
+  return { share: runOfRiverTurbineRule.minimumStableShare[turbine], note: `${turbine} turbine by its ${unit.grossHeadM} m gross head, minimum stable ${runOfRiverTurbineRule.minimumStableShare[turbine] * 100} % (rule ${runOfRiverTurbineRule.id})` }
+}
+
+const kindParameters = (kind: UnitKind, capacityMw: number, aggregated: boolean, minimumStableShare: number) => {
   const rule = generatorKindRules[kind]
   return {
     ratedMva: roundTo(capacityMw / rule.powerFactor, 3),
@@ -163,7 +176,7 @@ const kindParameters = (kind: UnitKind, capacityMw: number, aggregated: boolean)
     inertiaSeconds: aggregated && rule.synchronous ? smallHydroInertiaSeconds : rule.inertiaSeconds,
     synchronous: rule.synchronous,
     // An aggregate of many small plants can run any one of them, so it has no minimum.
-    minimumStableMw: aggregated ? 0 : roundTo(capacityMw * rule.minimumStableShare, 3),
+    minimumStableMw: aggregated ? 0 : roundTo(capacityMw * minimumStableShare, 3),
     rampMwPerMinute: roundTo(Math.max(capacityMw * rule.rampSharePerMinute, 0.001), 3),
     blackStartCapable: aggregated ? false : rule.blackStartCapable,
     ruleId: rule.id,
@@ -193,7 +206,8 @@ export const buildGenerators = (config: {
       aggregates.set(key, [...(aggregates.get(key) ?? []), attachment])
       continue
     }
-    const parameters = kindParameters(unit.kind, unit.capacityMw, false)
+    const minimum = minimumStable(unit)
+    const parameters = kindParameters(unit.kind, unit.capacityMw, false, minimum.share)
     const id = registeredGeneratorId(unit)
     const how = {
       containment: 'attached by the OSM station outline containing the NVE point',
@@ -227,10 +241,10 @@ export const buildGenerators = (config: {
       registryIds: [String(unit.plantNumber)],
       attachmentKm: roundTo(attachment.km, 2),
       provenance: {
-        sources: [unit.sourceId, sourceIds.osm, ...(attachment.route === undefined ? [] : [attachment.route.curationId])],
+        sources: [unit.sourceId, ...(minimum.note === null ? [] : [sourceIds.hydroHeads]), sourceIds.osm, ...(attachment.route === undefined ? [] : [attachment.route.curationId])],
         method: 'registry',
         confidence: 'medium',
-        note: `${unit.kindNote}; ${how}; rule ${parameters.ruleId}`,
+        note: `${unit.kindNote}; ${how}; ${minimum.note === null ? '' : `${minimum.note}; `}rule ${parameters.ruleId}`,
       },
     })
   }
@@ -240,7 +254,7 @@ export const buildGenerators = (config: {
     const capacityMw = members.reduce((sum, member) => sum + member.unit.capacityMw, 0)
     const weight = (value: (member: Attachment) => number): number => members.reduce((sum, member) => sum + value(member) * member.unit.capacityMw, 0) / capacityMw
     const location: [number, number] = [roundTo(weight(member => member.unit.location[0]), 6), roundTo(weight(member => member.unit.location[1]), 6)]
-    const parameters = kindParameters(kind, capacityMw, true)
+    const parameters = kindParameters(kind, capacityMw, true, 0)
     const id = `generator:aggregate-${busId.slice('bus:'.length)}-${kind}`
     ledger.add({
       reason: 'generators-aggregated',
@@ -303,6 +317,8 @@ export const buildSiteGenerators = (config: {
   const location = config.plantLocation(plant.osmPlantId)
   if (location === undefined) throw new Error(`${site.id}: OSM plant ${plant.osmPlantId} is not a plant of the sidecar`)
   const rule = generatorKindRules[plant.kind]
+  if (rule.minimumStableShare === 'turbine-by-head') throw new Error(`${site.id}: a ${plant.kind} site plant needs a fixed minimum stable share`)
+  const minimumStableShare = rule.minimumStableShare
   const id = `generator:osm-${plant.osmPlantId.replace('/', '-')}`
   const km = haversineKm(location, bus.location)
   config.ledger.add({ reason: 'site-generator-attached', elementIds: [id, bus.id], mw: plant.capacityMw, distanceKm: km, detail: `${plant.name} (${plant.units} units) → ${bus.label}, the bus of ${site.name}` })
@@ -318,7 +334,7 @@ export const buildSiteGenerators = (config: {
     voltageSetpointPu: rule.voltageSetpointPu,
     inertiaSeconds: rule.inertiaSeconds,
     synchronous: rule.synchronous,
-    minimumStableMw: roundTo(plant.capacityMw * rule.minimumStableShare, 3),
+    minimumStableMw: roundTo(plant.capacityMw * minimumStableShare, 3),
     rampMwPerMinute: roundTo(plant.capacityMw * rule.rampSharePerMinute, 3),
     blackStartCapable: rule.blackStartCapable,
     priceArea: site.priceArea,
