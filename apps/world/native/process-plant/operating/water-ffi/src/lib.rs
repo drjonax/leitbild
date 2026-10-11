@@ -536,120 +536,66 @@ fn invert_caloric(
     // These are the normative IF97 R1/R2 temperature bounds already selected
     // by this boundary. Pressure/domain admission remains in the native EOS.
     let (stable, trial) = branch_ends(branch, p)?;
-    let liquid = matches!(branch, Branch::Liquid);
-    let far: End = if liquid {
-        (branch, 273.15)
-    } else {
-        (branch, 1073.15)
+    let (low_end, high_end) = match branch {
+        Branch::Liquid => ((branch, 273.15), stable),
+        _ => (stable, (branch, 1073.15)),
     };
-    // Brackets and iterates read only the caloric state; the returned state
-    // is the forward point at the selected temperature, completed from the
-    // caloric state already evaluated there. The stable end comes first: it
-    // decides the metastable side exactly.
-    let end = caloric_state(stable.0, p, stable.1)?;
+    // Brackets and iterates read only the caloric state. The returned state is
+    // the complete forward point at the selected temperature, completed from
+    // the caloric state already evaluated there, so the iteration path and
+    // every returned field are those of full-point queries.
+    let low = caloric_state(low_end.0, p, low_end.1)?;
+    let high = caloric_state(high_end.0, p, high_end.1)?;
     // Beyond the stable end the target can only be a metastable state of the
     // requested branch: it is bracketed by that end and the trial end, and a
     // target beyond the trial end is refused, never clamped.
-    if (liquid && target > kind.value(end)) || (!liquid && target < kind.value(end)) {
-        let trial = trial.ok_or(Error::TrialBand)?;
-        let edge = caloric_state(branch, p, trial)?;
-        if (liquid && target > kind.value(edge)) || (!liquid && target < kind.value(edge)) {
-            return Err(Error::TrialBand);
+    match branch {
+        Branch::Liquid if target > kind.value(high) => {
+            let trial = trial.ok_or(Error::TrialBand)?;
+            let top = caloric_state(branch, p, trial)?;
+            if target > kind.value(top) {
+                return Err(Error::TrialBand);
+            }
+            return newton(
+                branch,
+                p,
+                target,
+                kind,
+                fields,
+                (high_end, high),
+                ((branch, trial), top),
+            );
         }
-        let (low, high) = if liquid {
-            ((stable, end), ((branch, trial), edge))
-        } else {
-            (((branch, trial), edge), (stable, end))
-        };
-        return newton(branch, p, target, kind, fields, low, high);
+        Branch::Vapor if target < kind.value(low) => {
+            let trial = trial.ok_or(Error::TrialBand)?;
+            let bottom = caloric_state(branch, p, trial)?;
+            if target < kind.value(bottom) {
+                return Err(Error::TrialBand);
+            }
+            return newton(
+                branch,
+                p,
+                target,
+                kind,
+                fields,
+                ((branch, trial), bottom),
+                (low_end, low),
+            );
+        }
+        _ => {}
     }
-    if target == kind.value(end) {
-        return complete_fields(&end, fields);
-    }
-    // The stable side: Newton from the stable end. Only a converged state
-    // inside the stable temperature range, clear of both of its limits, is
-    // taken; otherwise the full bracket below re-solves, and alone decides a
-    // refusal.
-    if let Some(q) = from_stable_end(branch, p, target, kind, &end, far.1) {
-        return complete_fields(&q, fields);
-    }
-    let far_state = caloric_state(far.0, p, far.1)?;
-    let (low, high) = if liquid {
-        ((far, far_state), (stable, end))
-    } else {
-        ((stable, end), (far, far_state))
-    };
-    if target < kind.value(low.1) || target > kind.value(high.1) {
+    if target < kind.value(low) || target > kind.value(high) {
         return Err(Error::Domain);
     }
-    newton(branch, p, target, kind, fields, low, high)
-}
-
-/// The inverse's declared convergence test: the energy defect within 2e-12
-/// of the target's magnitude or of the local thermal energy scale `u_T T`.
-fn converged(defect: f64, target: f64, ut: f64, t: f64) -> bool {
-    // An arbitrary EOS datum can make target U zero without making the
-    // attainable numerical precision or the heat capacity zero.
-    defect.abs() <= 2e-12 * target.abs().max(ut * t).max(1.)
-}
-
-/// A converged state within this of either temperature limit of the stable
-/// branch is re-solved on the full bracket. At the far limit the bracket's
-/// comparison decides a refusal; at the stable end (saturation, or region 1's
-/// 623.15 K limit) the adapter's branch checks can refuse states within a few
-/// ulps of the end, which the bracket's own iterates may meet. The margin
-/// exceeds the declared tolerance's temperature equivalent (at most about
-/// 4e-9 K on either branch) by more than five orders of magnitude, and keeps
-/// every iterate of the bracket for a root it admits away from either limit,
-/// so a state taken here is one the bracket recovers too.
-const END_MARGIN_K: f64 = 1e-3;
-
-/// Newton on the stable side from the stable end, whose own Newton step is
-/// the first iterate: a deterministic function of (branch, p, target) only.
-/// Near the stable end the caloric function's curvature (cp rising toward
-/// the liquid's saturation, falling away from the vapor's) keeps the
-/// iterates on the end's side of the root; nothing here relies on that.
-/// Returns `None`, never an error, when an iterate leaves the open stable
-/// temperature range, an iterate is refused, the partial is not positive,
-/// no iterate converges within 32, or the converged state is within
-/// `END_MARGIN_K` of either limit.
-fn from_stable_end(
-    branch: Branch,
-    p: f64,
-    target: f64,
-    kind: Caloric,
-    end: &WaterPoint,
-    far_t: f64,
-) -> Option<WaterPoint> {
-    let liquid = matches!(branch, Branch::Liquid);
-    let (low_t, high_t) = if liquid {
-        (far_t, end.temperature_k)
-    } else {
-        (end.temperature_k, far_t)
-    };
-    let (_, ut) = kind.partials(*end);
-    if !ut.is_finite() || ut <= 0. {
-        return None;
-    }
-    let mut t = end.temperature_k + (target - kind.value(*end)) / ut;
-    for _ in 0..32 {
-        if !(t > low_t && t < high_t) {
-            return None;
-        }
-        let q = caloric_state(branch, p, t).ok()?;
-        let defect = kind.value(q) - target;
-        let (_, ut) = kind.partials(q);
-        if !ut.is_finite() || ut <= 0. {
-            return None;
-        }
-        if converged(defect, target, ut, q.temperature_k) {
-            let clear =
-                q.temperature_k > low_t + END_MARGIN_K && q.temperature_k < high_t - END_MARGIN_K;
-            return clear.then_some(q);
-        }
-        t -= defect / ut;
-    }
-    None
+    newton(
+        branch,
+        p,
+        target,
+        kind,
+        fields,
+        (low_end, low),
+        (high_end, high),
+    )
 }
 
 /// Safeguarded Newton inside one bracket whose ends were evaluated as given.
@@ -684,7 +630,9 @@ fn newton(
             return Err(Error::NativeFailure);
         }
         // Use the local thermal energy scale as well as the energy value.
-        if converged(defect, target, ut, q.temperature_k) {
+        // An arbitrary EOS datum can make target U zero without making the
+        // attainable numerical precision or the heat capacity zero.
+        if defect.abs() <= 2e-12 * target.abs().max(ut * q.temperature_k).max(1.) {
             return complete_fields(&q, fields);
         }
         if defect < 0. {
