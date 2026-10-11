@@ -51,13 +51,15 @@ describe('the values a unit overview leads with', () => {
     const tripped = after(plant, { actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, 180)
     expect(tripped.mode).toBe('hotStandby')
     // The reactor trips have done all they can (breakers open, rods in), so fission power no longer leads; the
-    // generator's rules act only at power, so its output leaves the energy ends. Safety injection can still act
-    // on pressurizer pressure; auxiliary feedwater and safety injection deliver through their headers; the
+    // generator's rules act only at power, and the turbine trips that act in every mode have tripped it, so its
+    // output leaves the energy ends. Safety injection can still act on pressurizer pressure, and safety injection,
+    // steam line isolation and spray on containment pressure; the auxiliary feedwater the actuation started is
+    // delivered through its header, while safety injection, yet to act, delivers nothing to lead with; the
     // pressurizer's level and the vessel's subcooling margin are the key values of equipment the I&C judges.
     expect(overviewKeyValues(plant, tripped)).toEqual([
       'pressurizer.pressureMPa',
+      'containment.pressureMPa',
       'auxFeedwaterHeader.outletFlowKgPerS',
-      'safetyInjectionHeader.outletFlowKgPerS',
       'pressurizer.levelPercent',
       'vessel.subcoolingMarginC',
       'core.coolantOutletTemperatureC',

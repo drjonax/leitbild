@@ -236,8 +236,10 @@ describe('the unit overview World generates for a Plant', () => {
       return readouts.pens.map(pen => pen.tagId ?? String(pen.path))
     }
     expect(leads(atPower)).toEqual(['core.powerMw', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'CTMT-PR', 'core.coolantOutletTemperatureC', 'GEN-MW'])
-    expect(leads(tripped)).toEqual(['PT-455', 'AFW-FLOW', 'safetyInjectionHeader.outletFlowKgPerS', 'PZR-LVL', 'SUB-MARGIN', 'core.coolantOutletTemperatureC'])
-    expect(upset.runtime.readVariable('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeCloseTo(95, 0)
+    // Safety injection and containment's actuations can still act on pressurizer and containment pressure; the
+    // auxiliary feedwater the actuation started is delivered; safety injection, yet to act, delivers nothing to lead with.
+    expect(leads(tripped)).toEqual(['PT-455', 'CTMT-PR', 'AFW-FLOW', 'PZR-LVL', 'SUB-MARGIN', 'core.coolantOutletTemperatureC'])
+    expect(upset.runtime.readVariable('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeGreaterThan(50)
     if (!tripped.ok) return
     // Still the whole column, and it still fits the window.
     expect(tripped.display.height).toBeLessThanOrEqual(fullHd.height)

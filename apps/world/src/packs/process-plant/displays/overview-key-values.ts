@@ -18,14 +18,17 @@ const readableIn = (plant: CompiledProcessPlant) => (path: VariablePath): boolea
  * heat sink and inventory, not with a power it no longer makes:
  * - each value a trip rule acting in the mode judges, while that trip can
  *   still act (a reactor trip whose breakers are open guards nothing more);
- * - what the automatic actions acting in the mode deliver (the auxiliary
- *   feedwater and safety injection their pumps send through a header);
+ * - what the automatic actions acting in the mode deliver once they have
+ *   started it (the auxiliary feedwater and safety injection their pumps send
+ *   through a header); one yet to act shows by the value that sets it off;
  * - the key values of the equipment rules acting in the mode judge (a
  *   pressurizer's level, a vessel's subcooling margin), in rule order;
  * - and, keeping their places however many values come before them, the
  *   first key value of each energy source and sink a rule acting in the mode
  *   watches (a core's outlet temperature; a generator's output only while its
  *   rules act).
+ * A trip that has done all it can watches nothing more: a turbine already
+ * tripped keeps no generator output among the leads.
  * Per-loop values stay on their loop's symbols. Unpublished signals are left
  * out; so are writable ones, which would show a demand, on-off states, and
  * the states symbols draw as a position, a run or an energized state (a
@@ -54,9 +57,11 @@ export const overviewKeyValues = (plant: CompiledProcessPlant, now: PlantNow): R
   const guarding = inForce.filter(rule => ruleKind(rule) === 'trip' && canAct(rule)).flatMap(rule => conditionBindings(plant, rule.condition).map(binding => binding.path))
   const delivered = inForce.flatMap(rule => {
     const action = actions.get(rule.id)
-    return action === undefined ? [] : actionFlows(plant, action, MIMIC_REACH_LINKS).filter(flow => flow.effect === 'starts').map(flow => flow.path)
+    if (action === undefined) return []
+    const started = { ...action, writes: action.writes.filter(write => now.read(write.binding.path) === write.value) }
+    return actionFlows(plant, started, MIMIC_REACH_LINKS).filter(flow => flow.effect === 'starts').map(flow => flow.path)
   })
-  const judgedEquipment = [...new Set(inForce.filter(rule => ruleKind(rule) !== null)
+  const judgedEquipment = [...new Set(inForce.filter(rule => ruleKind(rule) !== null && canAct(rule))
     .flatMap(rule => conditionBindings(plant, rule.condition).flatMap(binding => binding.owner.type === 'component' ? [binding.owner.componentIndex] : [])))]
   const keyed = judgedEquipment.flatMap(component => graph.components[component]!.semantics.keyValues)
   const watched = new Set(judgedEquipment)
