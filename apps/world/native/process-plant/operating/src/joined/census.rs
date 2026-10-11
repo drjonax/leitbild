@@ -207,7 +207,7 @@ fn difference(row: &str) -> Option<&'static str> {
             "caloric temperatures eliminated by exact local inverses (memo §1 [P]; computational-design-review.md §4.1)"
         }
         "Network cells 38 x (M_l,U_l,M_v,U_v,B; p)" => {
-            "decision 0014: 28 regular cells x 6 plus one 17-coordinate stratified PZR cell (6 algebraic, 11 differential) replace the 10 PZR volumes"
+            "decision 0014 with amendment 6: 28 regular cells x 6 plus one 19-coordinate stratified PZR cell (7 algebraic, 12 differential, zone A's bubble stock included) replace the 10 PZR volumes"
         }
         "Network faces 48 x 2 phase impulses" => {
             "decision 0014: 35 faces (the PZR's 13 internal faces removed)"

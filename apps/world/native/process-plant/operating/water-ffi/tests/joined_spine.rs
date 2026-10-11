@@ -112,11 +112,12 @@ fn joined_census_against_table_1_1() {
     assert_eq!(row("Helium").composed, Some([193, 0]));
     assert_eq!(row("Guide/plenum").composed, Some([1351, 0]));
     assert_eq!(row("SG metal").composed, Some([8, 0]));
-    assert_eq!(row("Network cells").composed, Some([151, 34]));
+    // Decision 0014 with amendment 6: the stratified cell has 19 coordinates.
+    assert_eq!(row("Network cells").composed, Some([152, 35]));
     assert_eq!(row("Network faces").composed, Some([70, 0]));
     assert_eq!(row("RCP rotors").composed, Some([4, 0]));
-    assert_eq!(c.composed, [17241, 1192, 18433]);
-    assert_eq!(c.with_pending, [17301, 1300, 18601]);
+    assert_eq!(c.composed, [17242, 1193, 18435]);
+    assert_eq!(c.with_pending, [17302, 1301, 18603]);
     let histories = nuclear.histories();
     assert_eq!(histories.len(), 9650);
     let receipt = json!({
