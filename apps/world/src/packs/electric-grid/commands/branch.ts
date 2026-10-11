@@ -18,7 +18,7 @@ export const gridBranchCommandCapabilities: ReadonlyArray<SimulationCapability> 
   gridCommandCapability({
     id: gridOpenBranchCommandKind,
     title: 'Open branch',
-    description: 'Opens a closed line, cable, transformer, HVDC link, or switch without changing its availability. Opening can split the network into islands.',
+    description: 'Opens a closed AC line, cable or transformer without changing its availability; an HVDC link is not a branch: block-hvdc stops it. Opening can split the network into islands.',
     payloadSchema: gridOpenBranchPayloadSchema,
     risk: 'destructive',
     searchTerms: [...branchTerms, 'open', 'switching', 'breaker', 'disconnect', 'outage', 'islanding', 'effektbryter', 'bryter', 'utkobling', 'kobling', 'frakobling', 'øydrift'],
