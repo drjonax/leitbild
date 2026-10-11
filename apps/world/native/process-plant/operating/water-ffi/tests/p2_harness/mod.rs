@@ -80,8 +80,8 @@ fn s(v: f64) -> Scalar {
 }
 /// The integrator's ledger (request 4, K2): stock IDAS quadratures of
 /// mass, port energy, boron, Joule, exterior loss, hydrostatic remainder and
-/// the bubble and drop transit drifts.
-pub const LEDGER: usize = 8;
+/// the transit drifts of b, d and b_A.
+pub const LEDGER: usize = 9;
 fn ida_failure(f: CellFailure) -> Failure {
     match f {
         CellFailure::Recoverable(r) => Failure::Recoverable(r),
@@ -335,7 +335,12 @@ impl CellSystem {
             ),
             None => (0., 0., 0.),
         };
-        let drift = e.ev.flows.transit_drift.map(|q| q.value);
+        let f = &e.ev.flows;
+        let drift = [
+            f.transit_drift[0].value,
+            f.transit_drift[1].value,
+            f.admitted_transit_drift.value,
+        ];
         Ok([
             b.receipt_mass_kg_s.value,
             b.receipt_energy_w.value - fluid,
@@ -345,6 +350,7 @@ impl CellSystem {
             b.volume_work_w.value,
             drift[0],
             drift[1],
+            drift[2],
         ])
     }
     pub fn n(&self) -> usize {
@@ -806,7 +812,8 @@ pub struct Sample {
     pub boundary_elevation_m: f64,
     pub admitted_thickness_m: f64,
     pub withdrawal_fraction: f64,
-    pub masses: [f64; 5],
+    /// g, A, R, b, d and b_A, kg.
+    pub masses: [f64; 6],
     pub drop_boron_kg: f64,
     pub temperatures_k: [f64; 3],
     pub departure_k: [f64; 3],
@@ -826,6 +833,10 @@ pub struct Sample {
     /// condensed into R, kg/s, and its Weber number for the domain disclosure.
     pub bubble_condensation_kg_s: f64,
     pub bubble_exchange_weber: f64,
+    /// Zone A's stock (amendment 6): its condensation `W_xA` into A and the
+    /// survivors crossing into b at the A–R boundary, kg/s.
+    pub admitted_bubble_condensation_kg_s: f64,
+    pub bubble_crossing_kg_s: f64,
     pub interface_evaporation_kg_s: f64,
     pub inversion_kg_s: f64,
     pub conduction_w: f64,
@@ -840,7 +851,8 @@ pub struct Sample {
     pub relief_enthalpy_w: f64,
     pub receipt: [f64; 3],
     pub volume_work_w: f64,
-    pub transit_drift_w: [f64; 2],
+    /// Saturation drift heat of b (paid by R), d (by g) and b_A (by A), W.
+    pub transit_drift_w: [f64; 3],
     /// Instantaneous identities: internal totals minus receipts.
     pub identity: [f64; 3],
     pub inventory: [f64; 3],
@@ -902,6 +914,7 @@ pub fn sample(
         x.resident_mass.value,
         x.bubble_mass.value,
         x.drop_mass.value,
+        x.admitted_bubble_mass.value,
     ];
     let sc = &system.scales;
     let tol = |idx: &[usize]| -> f64 {
@@ -999,6 +1012,8 @@ pub fn sample(
         vapor_condensation_kg_s: f.vapor_condensation.value,
         bubble_condensation_kg_s: f.bubble_exchange.condensation.value,
         bubble_exchange_weber: f.bubble_exchange.weber.value,
+        admitted_bubble_condensation_kg_s: f.admitted_bubble_exchange.condensation.value,
+        bubble_crossing_kg_s: f.bubble_crossing.value,
         interface_evaporation_kg_s: -f.interface.liquid.mass.value,
         inversion_kg_s: f.inversion.value,
         conduction_w: f.conduction.value,
@@ -1019,7 +1034,11 @@ pub fn sample(
             b.receipt_boron_kg_s.value,
         ],
         volume_work_w: b.volume_work_w.value,
-        transit_drift_w: f.transit_drift.map(|q| q.value),
+        transit_drift_w: [
+            f.transit_drift[0].value,
+            f.transit_drift[1].value,
+            f.admitted_transit_drift.value,
+        ],
         identity: [
             b.mass_kg_s.value - b.receipt_mass_kg_s.value,
             b.energy_w.value - b.receipt_energy_w.value,
@@ -2199,7 +2218,7 @@ fn classify_limit(reason: &str) -> String {
 pub fn sample_json(s: &Sample) -> Value {
     let mut j = json!({"t":s.t,"event":s.event,"pt1_pa":s.pt1_pa,"p_s_pa":s.interface_pa,"p_bottom_pa":s.bottom_pa,"lt_dp_pa":s.lt_dp_pa,
         "mixture_level_m":s.mixture_level_m,"collapsed_level_m":s.collapsed_level_m,"z_ar_m":s.boundary_elevation_m,"delta_a_m":s.admitted_thickness_m,"phi":s.withdrawal_fraction,
-        "mass_kg":{"g":s.masses[0],"A":s.masses[1],"R":s.masses[2],"b":s.masses[3],"d":s.masses[4]},"drop_boron_kg":s.drop_boron_kg,
+        "mass_kg":{"g":s.masses[0],"A":s.masses[1],"R":s.masses[2],"b":s.masses[3],"d":s.masses[4],"bA":s.masses[5]},"drop_boron_kg":s.drop_boron_kg,
         "temperature_k":{"g":s.temperatures_k[0],"A":s.temperatures_k[1],"R":s.temperatures_k[2]},
         "departure_k":{"g":s.departure_k[0],"A":s.departure_k[1],"R":s.departure_k[2]},
         "drop_velocity_m_s":s.drop_velocity_m_s,"bubble_velocity_m_s":s.bubble_velocity_m_s,"gap_margin":s.gap_margin,
@@ -2212,7 +2231,8 @@ pub fn sample_json(s: &Sample) -> Value {
             "rod_temperature_k":s.rod_temperature_k,"wall_temperature_k":s.wall_temperature_k,"bank_wet_fraction":s.bank_wet_fraction,"bank_exposed_m":s.bank_exposed_m,"isolated":s.isolated},
         "lt":{"dp_acquired_pa":s.lt_dp_acquired_pa,"indication_m":s.lt_indication_m},
         "steps":s.steps,"last_step_s":s.last_step_s,"order":s.order,"error_test_failures":s.error_failures,"convergence_failures":s.convergence_failures});
-    j["bubble_exchange"] = json!({"condensation_kg_s":s.bubble_condensation_kg_s,"weber":s.bubble_exchange_weber});
+    j["bubble_exchange"] = json!({"condensation_kg_s":s.bubble_condensation_kg_s,"weber":s.bubble_exchange_weber,
+        "admitted_condensation_kg_s":s.admitted_bubble_condensation_kg_s,"crossing_kg_s":s.bubble_crossing_kg_s});
     j
 }
 
@@ -2246,7 +2266,7 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>, bound: f6
     let mut work = 0.;
     let mut joule = 0.;
     let mut exterior = 0.;
-    let mut drift = [0.; 2];
+    let mut drift = [0.; 3];
     let mut relief = [0.; 3];
     let mut worst = [[0.; 3]; 2];
     let mut worst_ratio = [[0.; 3]; 2];
@@ -2266,7 +2286,7 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>, bound: f6
         work += 0.5 * dt * (s.volume_work_w + previous.volume_work_w);
         joule += 0.5 * dt * (s.joule_w + previous.joule_w);
         exterior += 0.5 * dt * (s.exterior_w + previous.exterior_w);
-        for i in 0..2 {
+        for i in 0..3 {
             drift[i] += 0.5 * dt * (s.transit_drift_w[i] + previous.transit_drift_w[i]);
         }
         relief[0] += 0.5
@@ -2304,12 +2324,12 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>, bound: f6
         "mass":{"inventory_change_kg":h[0],"receipts_kg":q[0],"closure_kg":h[0]-q[0],"max_abs_closure_kg":worst[0][0],"max_closure_over_solver_tolerance":worst_ratio[0][0],"solver_tolerance_kg":last.tolerance[0],"within_solver_tolerance":worst_ratio[0][0] <= bound,"max_instantaneous_identity_kg_s":identity[0]},
         "energy":{"internal_energy_change_j":last.internal_energy_j-first.internal_energy_j,"metal_energy_change_j":last.metal_energy_j-first.metal_energy_j,
             "rod_energy_change_j":last.rod_energy_j-first.rod_energy_j,"wall_energy_change_j":(last.metal_energy_j-last.rod_energy_j)-(first.metal_energy_j-first.rod_energy_j),
-            "electrical_j":lq[3],"exterior_loss_j":lq[4],"port_receipts_j":lq[1],"hydrostatic_remainder_j":lq[5],"transit_drift_j":{"bubbles_paid_by_R":lq[6],"drops_paid_by_g":lq[7]},
+            "electrical_j":lq[3],"exterior_loss_j":lq[4],"port_receipts_j":lq[1],"hydrostatic_remainder_j":lq[5],"transit_drift_j":{"bubbles_paid_by_R":lq[6],"drops_paid_by_g":lq[7],"admitted_bubbles_paid_by_A":lq[8]},
             "closure_j":h[1]-q[1],"max_abs_closure_j":worst[0][1],"max_closure_over_solver_tolerance":worst_ratio[0][1],"within_solver_tolerance":worst_ratio[0][1] <= bound,"solver_tolerance_j":last.tolerance[1],"max_instantaneous_identity_w":identity[1]},
         "boron":{"inventory_change_kg":h[2],"receipts_kg":q[2],"closure_kg":h[2]-q[2],"max_abs_closure_kg":worst[0][2],"max_closure_over_solver_tolerance":worst_ratio[0][2],"solver_tolerance_kg":last.tolerance[2],"within_solver_tolerance":worst_ratio[0][2] <= bound,"max_instantaneous_identity_kg_s":identity[2]},
         "trapezoid":{
             "mass":{"receipts_kg":trapezoid[0],"closure_kg":h[0]-trapezoid[0],"max_abs_closure_kg":worst[1][0],"max_closure_over_solver_tolerance":worst_ratio[1][0],"minus_quadrature_kg":trapezoid[0]-q[0]},
-            "energy":{"electrical_j":joule,"exterior_loss_j":exterior,"port_receipts_j":integral[1],"hydrostatic_remainder_j":work,"transit_drift_j":{"bubbles_paid_by_R":drift[0],"drops_paid_by_g":drift[1]},
+            "energy":{"electrical_j":joule,"exterior_loss_j":exterior,"port_receipts_j":integral[1],"hydrostatic_remainder_j":work,"transit_drift_j":{"bubbles_paid_by_R":drift[0],"drops_paid_by_g":drift[1],"admitted_bubbles_paid_by_A":drift[2]},
                 "closure_j":h[1]-trapezoid[1],"max_abs_closure_j":worst[1][1],"max_closure_over_solver_tolerance":worst_ratio[1][1],"minus_quadrature_j":trapezoid[1]-q[1]},
             "boron":{"receipts_kg":trapezoid[2],"closure_kg":h[2]-trapezoid[2],"max_abs_closure_kg":worst[1][2],"max_closure_over_solver_tolerance":worst_ratio[1][2],"minus_quadrature_kg":trapezoid[2]-q[2]}},
         "relief_out":{"mass_kg":relief[0],"enthalpy_j":relief[1],"boron_kg":relief[2]},

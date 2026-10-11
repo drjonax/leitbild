@@ -1238,7 +1238,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
                     "hydrostatic_remainder_j":l["energy"]["hydrostatic_remainder_j"],"closure_j":l["energy"]["closure_j"],"max_closure_over_solver_tolerance":l["energy"]["max_closure_over_solver_tolerance"]},
                 "quasi_steady_inversion_k":inversion,"selection_inversion_k":0.072,
                 "rod_temperature_max_k":rod_max,"steel_limit_reached":steel_limit(nominal),
-                "ranges":{"pt1_pa":extreme(|s|s.pt1_pa),"inversion_exchange_kg_s":extreme(|s|s.inversion_kg_s),"bubble_stock_kg":extreme(|s|s.masses[3]),
+                "ranges":{"pt1_pa":extreme(|s|s.pt1_pa),"inversion_exchange_kg_s":extreme(|s|s.inversion_kg_s),"bubble_stock_kg":extreme(|s|s.masses[3]),"admitted_bubble_stock_kg":extreme(|s|s.masses[5]),
                     "swell_m":extreme(|s|s.mixture_level_m - s.collapsed_level_m),"mixture_level_m":extreme(|s|s.mixture_level_m),"collapsed_level_m":extreme(|s|s.collapsed_level_m),
                     "flashing_kg_s":extreme(|s|s.flashing_kg_s[0] + s.flashing_kg_s[1]),"joule_w":extreme(|s|s.joule_w),"exterior_w":extreme(|s|s.exterior_w),
                     "metal_identity_w":extreme(|s|s.metal_identity_w)}}));
