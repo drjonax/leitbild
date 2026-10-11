@@ -722,10 +722,18 @@ fn the_holding_opening_releases_every_held_cluster_once_as_a_time_event() {
     let mut b = block(SpiderDrag::Omitted);
     let mut physical = held(&mut b, &water, 2.8);
     b.set_failed_release(5);
-    assert!(Rods::<()>::time_event(&mut b, &(), 1.7, &mut physical).unwrap().is_none());
+    assert!(
+        Rods::<()>::time_event(&mut b, &(), 1.7, &mut physical)
+            .unwrap()
+            .is_none()
+    );
     Rods::<()>::command(&mut b, 1.5, Command::TurbineTrip).unwrap();
     let open = Rods::<()>::next_time_event(&b, 1.5).unwrap();
-    assert!(Rods::<()>::time_event(&mut b, &(), 1.6, &mut physical).unwrap().is_none());
+    assert!(
+        Rods::<()>::time_event(&mut b, &(), 1.6, &mut physical)
+            .unwrap()
+            .is_none()
+    );
     let before = physical.clone();
     let tx = Rods::<()>::time_event(&mut b, &(), open, &mut physical)
         .unwrap()
@@ -737,7 +745,11 @@ fn the_holding_opening_releases_every_held_cluster_once_as_a_time_event() {
         assert_eq!(b.modes()[c], expected, "cluster {c}");
     }
     // Transacted once: a second call at the same instant has nothing due.
-    assert!(Rods::<()>::time_event(&mut b, &(), open, &mut physical).unwrap().is_none());
+    assert!(
+        Rods::<()>::time_event(&mut b, &(), open, &mut physical)
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(Rods::<()>::next_time_event(&b, open), None);
 }
 
