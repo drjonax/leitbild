@@ -413,6 +413,7 @@ const requireCatalogMatch = (entry: GridModelCatalogEntry, model: GridModelDefin
       load: model.loads.length,
       storage: model.storage.length,
       connectionPoint: model.connectionPoints.length,
+      hvdcTerminal: model.externalSystems.reduce((sum, system) => sum + (system.synchronous ? 0 : system.boundaryBusIds.length), 0),
     },
     connectionPoints: model.connectionPoints,
   }

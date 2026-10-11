@@ -28,7 +28,7 @@ const fixtureBase: GridModelCatalogEntry = {
   fidelity: fixtureFidelity,
   source: { kind: 'grid-model', file: '../grid-model-v2.fixture.json', geometryFile: 'none.geometry.json' },
   loadProfilesRef: v2FixtureDemand.profiles.id,
-  assetCounts: { bus: 7, branch: 5, generator: 3, load: 2, storage: 0, connectionPoint: 1 },
+  assetCounts: { bus: 7, branch: 5, generator: 3, load: 2, storage: 0, connectionPoint: 1, hvdcTerminal: 1 },
   connectionPoints: [{ id: 'test-plant-unit-1', label: 'Test plant unit 1 bay', busId: 'bus:curated-test-plant-switchyard@420', nominalKv: 420, maximumExportMw: 100, maximumImportMw: 1100 }],
 }
 const fixtureAddition = (overrides: Partial<GridModelCatalogEntry> & Pick<GridModelCatalogEntry, 'id'> & { readonly file: string; readonly baseModelRef?: string }): GridModelCatalogEntry => ({

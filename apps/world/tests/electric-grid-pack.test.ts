@@ -12,7 +12,9 @@ import {
 } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { compileGridDefinition, compileGridModelIndex } from '../src/packs/electric-grid/definitions.ts'
+import { norwayWinterPeakOperatingPointRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { electricGridPackDataSchema } from '../src/packs/electric-grid/model.ts'
+import { createGridRecordingPlan } from '../src/packs/electric-grid/recording.ts'
 import { electricGridPack } from '../src/packs/electric-grid/pack.ts'
 import { composeGridModel, validateGridModelAddition } from '../src/packs/electric-grid/schemas/grid-model-addition.ts'
 import { gridModelV2 } from '../src/packs/electric-grid/definitions.ts'
@@ -95,6 +97,23 @@ describe('electric grid Pack', () => {
     expect(halden.definitionDigest).toBe('bf8fad1e6deea5c31ed3a115cd2834cc89392ba7347736534d698537d8e5386a')
     expect(() => definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal')).toThrow('unknown Grid Operating Point')
     expect(halden.model.connectionPoints).toHaveLength(4)
+  })
+
+  test('estimates the recorded series exactly on the Norway winter peak, leaving out the HVDC terminals\' bus series', () => {
+    const scenarioObject = gridScenario().initialObjects.find(object => object.packId === 'electric-grid')!
+    const packData = electricGridPackDataSchema.parse(scenarioObject.packData)
+    const object = { ...scenarioObject, packData: { ...packData, operatingPoint: { ref: norwayWinterPeakOperatingPointRef } } }
+    const definition = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:norway', model: packData.model, operatingPoint: { ref: norwayWinterPeakOperatingPointRef }, automation: packData.automation,
+    }))
+    const grid = createGridRuntimeInstance({ definition, at: nowIso() })
+    advanceGrid(grid, 0, nowIso())
+    expect(grid.hvdcTerminals.size).toBe(4)
+    const estimateSeries = electricGridPack.recording!.estimateSeries!
+    for (const profileId of ['operations', 'engineering']) {
+      const recorded = createGridRecordingPlan({ selection: { packId: 'electric-grid', profileId }, grids: new Map([[definition.gridId, grid]]) }).descriptors.length
+      expect(estimateSeries([object], profileId)).toBe(recorded)
+    }
   })
 
   test('compiles a Scenario to one Grid object with discoverable selections', () => {

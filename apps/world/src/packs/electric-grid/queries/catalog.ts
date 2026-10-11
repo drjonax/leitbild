@@ -36,6 +36,7 @@ const catalogResultSchema = z.object({
       load: z.number().int().nonnegative(),
       storage: z.number().int().nonnegative(),
       connectionPoint: z.number().int().nonnegative(),
+      hvdcTerminal: z.number().int().nonnegative().describe('Buses that are HVDC terminals: boundary buses of external systems reached only by HVDC, in no island.'),
     }).strict(),
     connectionPoints: z.array(z.object({
       id: z.string(),
