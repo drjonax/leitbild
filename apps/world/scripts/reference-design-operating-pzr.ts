@@ -25,13 +25,17 @@ const stratifiedSchema=z.object({withdrawalScale_m:positive,admittedPreparationT
   inversionExchangeVelocity_m_s:positive,liquidRelaxationTime_s:positive,vaporRelaxationTime_s:positive,
   relaxationSensitivity:triple,bubbleDiameter_m:positive,sprayDropDiameter_m:positive,
   dropDiameterSensitivity_m:triple,resolvabilityFactor:positive}).strict()
-const metastableSchema=z.object({pressureRange_Pa:z.tuple([positive,positive]),lowerBoundExclusive:z.boolean(),
-  liquidSuperheatMax_K:positive,vaporSubcoolingMax_K:positive,trialMax_K:positive,creditedMax_K:positive,
-  liquidTemperatureMax_K:positive,liquidPressureCeiling_Pa:positive,vaporPressureCeiling_Pa:positive}).strict()
+const metastableRangeShape={pressureRange_Pa:z.tuple([positive,positive]),lowerBoundExclusive:z.boolean(),
+  liquidSuperheatMax_K:positive,vaporSubcoolingMax_K:positive}
+export const metastableSchema=z.object({...metastableRangeShape,trialMax_K:positive,creditedMax_K:positive,
+  liquidTemperatureMax_K:positive,liquidPressureCeiling_Pa:positive,vaporPressureCeiling_Pa:positive,
+  lowPressureBand:z.object({...metastableRangeShape,vaporEquation:z.literal('IF97 Eq. (18)')}).strict()}).strict()
   .superRefine((b,c)=>{
-    if(!(b.pressureRange_Pa[0]<b.pressureRange_Pa[1])||!(b.creditedMax_K<=Math.min(b.liquidSuperheatMax_K,b.vaporSubcoolingMax_K))
-      ||!(Math.max(b.liquidSuperheatMax_K,b.vaporSubcoolingMax_K)<=b.trialMax_K))
-      c.addIssue({code:'custom',message:'Metastable band needs an ordered pressure range and credited <= band <= trial departures'})
+    const l=b.lowPressureBand,admitted=[b.liquidSuperheatMax_K,b.vaporSubcoolingMax_K,l.liquidSuperheatMax_K,l.vaporSubcoolingMax_K]
+    if(!(b.pressureRange_Pa[0]<b.pressureRange_Pa[1])||!(l.pressureRange_Pa[0]<l.pressureRange_Pa[1])
+      ||!(l.pressureRange_Pa[1]===b.pressureRange_Pa[0]&&b.lowerBoundExclusive)
+      ||!(b.creditedMax_K<=Math.min(...admitted))||!(Math.max(...admitted)<=b.trialMax_K))
+      c.addIssue({code:'custom',message:'Metastable band needs ordered, adjoining ranges and credited <= band <= trial departures'})
   })
 
 /** Text owned by exactly one heading (to the next heading of the same or a

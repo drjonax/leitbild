@@ -4,7 +4,9 @@
 //! boundary, and the narrow adapter that hands the network to stock IDA.
 use crate::{Branch, CaloricLinearization, If97, MetastableBand as Compiled, WaterPoint, point};
 use leitbild_operating_plant::{
-    network::{Band, BandReport, MetastableBand, Properties, Water},
+    network::{
+        Band, BandReport, LowPressureBand, MetastableBand, Properties, VaporEquation, Water,
+    },
     thermal::{Saturation, Scalar, WaterProperties},
 };
 
@@ -66,21 +68,35 @@ impl Properties for If97 {
     }
     fn metastable_band(&self) -> Result<MetastableBand, String> {
         let b = Compiled::compiled();
-        let lower_bound_exclusive = match b.lower_bound_exclusive {
-            0 => false,
-            1 => true,
-            other => return Err(format!("compiled band lower-bound flag {other}")),
+        let exclusive = |flag: i32| match flag {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => Err(format!("compiled band lower-bound flag {other}")),
         };
+        let [high, low] = b.ranges;
+        if high.vapor_equation != 15 || low.vapor_equation != 18 {
+            return Err(format!(
+                "compiled band vapor equations {} and {}, not 15 and 18",
+                high.vapor_equation, low.vapor_equation
+            ));
+        }
         Ok(MetastableBand {
-            pressure_range_pa: [b.pressure_low_pa, b.pressure_high_pa],
-            lower_bound_exclusive,
-            liquid_superheat_max_k: b.liquid_superheat_max_k,
-            vapor_subcooling_max_k: b.vapor_subcooling_max_k,
+            pressure_range_pa: [high.pressure_low_pa, high.pressure_high_pa],
+            lower_bound_exclusive: exclusive(high.lower_bound_exclusive)?,
+            liquid_superheat_max_k: high.liquid_superheat_max_k,
+            vapor_subcooling_max_k: high.vapor_subcooling_max_k,
             trial_max_k: b.trial_max_k,
             credited_max_k: b.credited_max_k,
             liquid_temperature_max_k: b.liquid_temperature_max_k,
             liquid_pressure_ceiling_pa: b.liquid_pressure_ceiling_pa,
             vapor_pressure_ceiling_pa: b.vapor_pressure_ceiling_pa,
+            low_pressure_band: LowPressureBand {
+                pressure_range_pa: [low.pressure_low_pa, low.pressure_high_pa],
+                lower_bound_exclusive: exclusive(low.lower_bound_exclusive)?,
+                liquid_superheat_max_k: low.liquid_superheat_max_k,
+                vapor_subcooling_max_k: low.vapor_subcooling_max_k,
+                vapor_equation: VaporEquation::If97Eq18,
+            },
         })
     }
     fn band(&self, point: &CaloricLinearization) -> BandReport {

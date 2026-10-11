@@ -49,6 +49,51 @@ pub struct MetastableBand {
     pub liquid_pressure_ceiling_pa: f64,
     #[serde(rename = "vaporPressureCeiling_Pa")]
     pub vapor_pressure_ceiling_pa: f64,
+    #[serde(rename = "lowPressureBand")]
+    pub low_pressure_band: LowPressureBand,
+}
+
+/// The block's second range (`lowPressureBand`): metastable vapor on IF97's
+/// metastable-vapor equation, the only equation the block may name for it.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LowPressureBand {
+    #[serde(rename = "pressureRange_Pa")]
+    pub pressure_range_pa: [f64; 2],
+    #[serde(rename = "lowerBoundExclusive")]
+    pub lower_bound_exclusive: bool,
+    #[serde(rename = "liquidSuperheatMax_K")]
+    pub liquid_superheat_max_k: f64,
+    #[serde(rename = "vaporSubcoolingMax_K")]
+    pub vapor_subcooling_max_k: f64,
+    #[serde(rename = "vaporEquation")]
+    pub vapor_equation: VaporEquation,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum VaporEquation {
+    #[serde(rename = "IF97 Eq. (18)")]
+    If97Eq18,
+}
+
+impl MetastableBand {
+    /// (liquid superheat, vapor subcooling) limits of the range holding `p`.
+    pub fn limits_at(&self, p: f64) -> Option<(f64, f64)> {
+        let within = |range: [f64; 2], exclusive: bool| {
+            (if exclusive {
+                p > range[0]
+            } else {
+                p >= range[0]
+            }) && p <= range[1]
+        };
+        let l = &self.low_pressure_band;
+        if within(self.pressure_range_pa, self.lower_bound_exclusive) {
+            Some((self.liquid_superheat_max_k, self.vapor_subcooling_max_k))
+        } else if within(l.pressure_range_pa, l.lower_bound_exclusive) {
+            Some((l.liquid_superheat_max_k, l.vapor_subcooling_max_k))
+        } else {
+            None
+        }
+    }
 }
 
 impl From<&super::stratified::Metastable> for MetastableBand {
@@ -63,6 +108,7 @@ impl From<&super::stratified::Metastable> for MetastableBand {
             liquid_temperature_max_k: b.liquid_temperature_max_k,
             liquid_pressure_ceiling_pa: b.liquid_pressure_ceiling_pa,
             vapor_pressure_ceiling_pa: b.vapor_pressure_ceiling_pa,
+            low_pressure_band: b.low_pressure_band,
         }
     }
 }
