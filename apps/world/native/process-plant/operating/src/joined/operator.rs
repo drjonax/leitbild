@@ -17,7 +17,9 @@
 //!
 //! A port may be `Prepared` while its owner is pending: the views or travel
 //! at the packet's prepared state. Such an operator evaluates zero-time
-//! receipts only; it refuses a Jacobian, so no integrator can advance it.
+//! receipts only, its Jacobian included (a consistent start of the composed
+//! coordinates at t = 0); [`Joined::integrable`] is false, and the stock-IDA
+//! adapter refuses it, so no integrator can advance it.
 use super::{
     block::{CellVolume, Coordinates, Layout, Rods, Secondary, SecondaryView},
     nuclear::{self, Nuclear, RegionWater},
@@ -297,13 +299,11 @@ impl<P: Properties + WaterProperties> Joined<P> {
             structure: None,
             counters: Counters::default(),
         };
-        if joined.integrable() {
-            let columns = joined.structural_pattern()?;
-            let pattern = Pattern::from_columns(offsets.end, &columns).map_err(fatal)?;
-            let coloring = Coloring::greedy(&pattern);
-            coloring.verify(&pattern).map_err(fatal)?;
-            joined.structure = Some((pattern, coloring));
-        }
+        let columns = joined.structural_pattern()?;
+        let pattern = Pattern::from_columns(offsets.end, &columns).map_err(fatal)?;
+        let coloring = Coloring::greedy(&pattern);
+        coloring.verify(&pattern).map_err(fatal)?;
+        joined.structure = Some((pattern, coloring));
         Ok(joined)
     }
 
@@ -537,9 +537,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
     ) -> Result<(), Failure> {
         let started = Instant::now();
         let Some((pattern, coloring)) = self.structure.take() else {
-            return Err(fatal(
-                "a joined operator with a prepared port gives no Jacobian",
-            ));
+            return Err(fatal("the joined structure is held by another assembly"));
         };
         let result = (|| {
             let n = self.dimension();
@@ -640,11 +638,26 @@ impl<P: Properties + WaterProperties> Joined<P> {
             carrier_vars(a, &mut rows);
             rows
         };
-        // The source of a carrier's heat: its own nuclear state and the
+        // Every nuclear row of a carrier: its own nuclear state and the
         // populations of its support regions.
         let heat_source = |a: usize, out: &mut BTreeSet<usize>| {
             carrier_vars(a, out);
             out.extend(regions_of[a].iter().map(|i| n_of(*i)));
+        };
+        // A carrier's prompt and binding heat: its fissions and captures,
+        // which read the support populations, fissile, fertile, Xe and Sm.
+        let events = |a: usize, out: &mut BTreeSet<usize>| {
+            for k in [0, 1, 3, 5] {
+                out.insert(o.nuclear + nuc.material(a, k));
+            }
+            out.extend(regions_of[a].iter().map(|i| n_of(*i)));
+        };
+        // Its fuel heat adds the released history energy.
+        let fuel_heat = |a: usize, out: &mut BTreeSet<usize>| {
+            events(a, out);
+            for g in 0..nuclear::HISTORIES {
+                out.insert(o.nuclear + nuc.history(a, g));
+            }
         };
         let half_vars = |a: usize, out: &mut BTreeSet<usize>| {
             for k in 0..3 {
@@ -702,7 +715,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
             half_vars(a, &mut rows);
             let mut cols = rows.clone();
             cols.insert(o.solids + sol.helium(*helium));
-            heat_source(a, &mut cols);
+            fuel_heat(a, &mut cols);
             for c in cells {
                 self.wall(*c, &mut cols);
             }
@@ -770,7 +783,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
             }
             for (a, deposits) in nuc.deposition().iter().enumerate() {
                 if deposits.iter().any(|(cell, _)| *cell == c) {
-                    heat_source(a, &mut cols);
+                    events(a, &mut cols);
                 }
             }
             for (p, water) in &incidence.passive {
