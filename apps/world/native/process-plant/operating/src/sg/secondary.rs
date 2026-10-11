@@ -454,6 +454,9 @@ impl<P: Properties> Secondary<P> for Secondaries {
     fn differential(&self) -> Vec<f64> {
         self.layout.ids()
     }
+    fn next_time_event(&self, t: f64) -> Option<f64> {
+        self.ramp_end().filter(|end| *end > t)
+    }
     fn generators(&self) -> usize {
         self.sgs.len()
     }

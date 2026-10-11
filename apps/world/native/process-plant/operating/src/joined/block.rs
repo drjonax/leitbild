@@ -320,6 +320,10 @@ pub trait Secondary<P> {
         y: &mut [f64],
     ) -> Result<Transaction, Failure>;
     fn command(&mut self, t: f64, command: Command) -> Result<Transaction, Failure>;
+    /// The earliest declared time event strictly after `t` (for example the
+    /// end of the STOP ramp), or `None`. The harness stops there and restarts
+    /// by the exact consistent start.
+    fn next_time_event(&self, t: f64) -> Option<f64>;
 }
 
 /// The rod bodies (spider and bodies, H7), their guide passages (F1 (a),
@@ -370,4 +374,7 @@ pub trait Rods<P> {
         y: &mut [f64],
     ) -> Result<Transaction, Failure>;
     fn command(&mut self, t: f64, command: Command) -> Result<Transaction, Failure>;
+    /// The earliest declared time event strictly after `t` (for example the
+    /// holding circuit's opening after its declared delay), or `None`.
+    fn next_time_event(&self, t: f64) -> Option<f64>;
 }
