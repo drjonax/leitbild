@@ -20,8 +20,8 @@
 #![cfg(all(feature = "ida", target_os = "macos"))]
 use leitbild_operating_plant::{
     network::{
-        Band, ConsistentPair, ConsistentSystem, CscOut, Network, Properties, PzrPreparation,
-        RotorState, ToleranceClasses, consistent_start,
+        Band, ConsistentPair, ConsistentSystem, CscOut, MetastableBand, Network, Properties,
+        PzrPreparation, RotorState, ToleranceClasses, consistent_start,
         packet::Packet,
         prepare::{self, OperatingPoint, Settings},
         stratified,
@@ -316,6 +316,90 @@ fn strict_block<T: for<'a> Deserialize<'a>>(page: &str, fence: &str) -> T {
     serde_json::from_str(&text[start..end]).unwrap_or_else(|e| panic!("{fence}: {e}"))
 }
 
+/// The water build this binary links: build.rs links the IF97 archive in
+/// `LD01_OPERATING_WATER_LIB_DIR`, and this test embeds that directory's
+/// build receipt as it stood when the test was compiled.
+const WATER_LIB_DIR: &str = env!("LD01_OPERATING_WATER_LIB_DIR");
+const WATER_BUILD: &str = include_str!(concat!(
+    env!("LD01_OPERATING_WATER_LIB_DIR"),
+    "/water-build.json"
+));
+/// The water build's receipt in the exact layout
+/// `reference-design-operating-water.ts` writes, parsed only to check it.
+#[allow(dead_code)] // Parsed to check its exact layout; the S1 receipt carries the file itself.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct WaterBuild {
+    revision: String,
+    header_sha256: String,
+    license_sha256: String,
+    adapter_sha256: String,
+    library_sha256: String,
+    platform: String,
+    architecture: String,
+    metastable_band: WaterBuildBand,
+}
+#[allow(dead_code)] // As for `WaterBuild`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct WaterBuildBand {
+    page: String,
+    page_sha256: String,
+    heading: String,
+    fence: String,
+    band: MetastableBand,
+}
+/// SHA-256 of a file, hex, by the system's `shasum`.
+fn sha256_file(path: &str) -> Result<String, String> {
+    let out = std::process::Command::new("shasum")
+        .args(["-a", "256", path])
+        .output()
+        .map_err(|e| format!("shasum {path}: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    match text.split_whitespace().next() {
+        Some(hash) if out.status.success() && hash.len() == 64 => Ok(hash.to_string()),
+        _ => Err(format!(
+            "shasum {path} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        )),
+    }
+}
+/// The provenance of the water build this binary links, refused unless
+/// sound: `receipt` (the receipt embedded at compile time) must still be
+/// `directory`'s `water-build.json`, byte for byte; the directory's archive
+/// must have the receipt's SHA-256, since the static archive is not
+/// byte-reproducible and only its hash names the build; and the receipt's
+/// band must be the packet's. Returns the receipt verbatim, parsed.
+fn water_build(
+    packet_band: &MetastableBand,
+    receipt: &str,
+    directory: &str,
+) -> Result<Value, String> {
+    let file = format!("{directory}/water-build.json");
+    let on_disk = std::fs::read_to_string(&file).map_err(|e| format!("{file}: {e}"))?;
+    if on_disk != receipt {
+        return Err(format!(
+            "{file} is not the build receipt this binary was compiled with"
+        ));
+    }
+    let build: WaterBuild = serde_json::from_str(receipt).map_err(|e| format!("{file}: {e}"))?;
+    let library = format!("{directory}/libld01_operating_water.a");
+    let library_sha256 = sha256_file(&library)?;
+    if library_sha256 != build.library_sha256 {
+        return Err(format!(
+            "{library} has SHA-256 {library_sha256}, not its receipt's {}",
+            build.library_sha256
+        ));
+    }
+    if build.metastable_band.band != *packet_band {
+        return Err(format!(
+            "the water build's band {:?} differs from the packet's {packet_band:?}",
+            build.metastable_band.band
+        ));
+    }
+    serde_json::from_str(receipt).map_err(|e| format!("{file}: {e}"))
+}
+
 /// Named topology used by the credited outputs, resolved from packet ids.
 /// The PZR roof pressure and level come from the stratified cell's taps.
 struct Taps {
@@ -608,9 +692,13 @@ struct Counts {
     jacobians: i64,
     nonlinear_iterations: i64,
     error_failures: i64,
+    /// IDAGetNumNonlinSolvConvFails ([`CONVERGENCE_FAILURES_COUNTER`]).
     convergence_failures: i64,
     linear_setups: i64,
 }
+/// What stock's Newton convergence-failure count counts, as the receipt
+/// states it (SUNDIALS 7.5.0 `sunnonlinsol_newton.c`).
+const CONVERGENCE_FAILURES_COUNTER: &str = "IDAGetNumNonlinSolvConvFails (SUNDIALS 7.5.0): every failed Newton attempt of stock's SUNNonlinSol_Newton, including one retried within the same step with a fresh Jacobian (counted even when that retry converges) and one ended by a recoverable residual or linear-solve failure; the same counter behind H1a's run-4 figures";
 impl Counts {
     fn of(s: &Stats) -> Self {
         Self {
@@ -1552,7 +1640,7 @@ fn recovery(gates: &Gates, run: &Run, window_s: f64, post_window_s: f64) -> (Val
             "window_steps":window_steps,"continuation_steps":continuation.map(|c| c.steps),"steps":steps,
             "allowed_steps":gates.budget_steps(span),"run_cap_steps":gates.cap_steps(span),
             "projected_full_unit_step_s":gates.projected_full_unit_step_s,"projected_cpu_s_per_s":projected,"budget_cpu_s_per_s":budget,
-            "convergence_failures":failures,"max_convergence_failures":max_failures,"pass":pass}),
+            "convergence_failures":failures,"max_convergence_failures":max_failures,"convergence_failures_counter":CONVERGENCE_FAILURES_COUNTER,"pass":pass}),
         pass,
     )
 }
@@ -1800,6 +1888,13 @@ fn s1_hydraulics_admission() {
         declared.rcp_speed_request, "nominal",
         "only the nominal request is selected"
     );
+    // No receipt is written without the water build this binary links.
+    let water = water_build(
+        &MetastableBand::from(&packet.pzr.cell.metastable),
+        WATER_BUILD,
+        WATER_LIB_DIR,
+    )
+    .unwrap_or_else(|e| panic!("no S1 receipt without its water build: {e}"));
     // The declared 6.00 m saturated preparation (S1 re-declaration).
     let point = OperatingPoint::from(declared);
     let taps = taps(&packet, &fresh(&packet));
@@ -1813,20 +1908,12 @@ fn s1_hydraulics_admission() {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .expect("git provenance")
     };
-    let packet_sha256 = std::process::Command::new("shasum")
-        .args(["-a", "256", &packet_path])
-        .output()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string()
-        })
-        .expect("packet hash");
+    let packet_sha256 = sha256_file(&packet_path).expect("packet hash");
     let dt = gates.comparison.observation_s;
     let cutoff = budgets.uncredited_above_hz;
     let mut receipt = json!({"kind":"s1-hydraulics-admission","declaration":"S1 re-declared under owner decision request 2 (E0-E3) and amended under owner decision request 3 (H1 recovery restart and cost gate, replacing E4, with H1a's convergence-failure allowance and the never-capped R0 reported beside it; H2 cap-cycle floor) before run 5","packet":packet_path,"packet_sha256":packet_sha256,"app_commit":git(&["rev-parse","HEAD"]),"app_worktree_dirty":!git(&["status","--porcelain"]).is_empty(),"wiki":wiki,"wiki_commit":git(&["-C",wiki.as_str(),"rev-parse","HEAD"]),"wiki_worktree_dirty":!git(&["-C",wiki.as_str(),"status","--porcelain"]).is_empty(),"gates":format!("{gates:?}"),"budgets":format!("{budgets:?}"),"load_average_start":load_start,
+        "provenance":{"water_build":water,"water_build_file":format!("{WATER_LIB_DIR}/water-build.json"),
+            "water_build_checks":"the build receipt embedded at compile time is the directory's water-build.json byte for byte, the directory's libld01_operating_water.a has its librarySha256, and its band equals the packet's pzr.cell.metastable"},
         "observation":{"interval_s":dt,"method":"one stock IDA root function g = t - next per observation time inside each output interval, located on IDA's own interpolant; the same history continues, so no step, order, Newton iteration or Jacobian changes; observed states are evaluated on a probe network configured as the run's"},
         "comparison":{"filter":DECLARED_FILTER,"cutoff_hz":cutoff,"design":"two bilinear biquads prewarped at the cutoff (Q = 1/(2 cos(pi/8)) and 1/(2 cos(3 pi/8))), forward then backward (|H|^2, -6 dB at the cutoff), each pass started in steady state over odd reflection padding","padding_s":padding_s(cutoff),
             "metrics":{"pzr_roof_bias_pa":"mean |filtered difference| over every observation of the compared interval","pzr_roof_sample_noise_pa":"population standard deviation of the filtered roof error's change between successive output-interval samples","pzr_level_m, core_dp_pa, loop_flow_kg_s":"max |filtered difference| over every observation (both loops for flow)"}}});
@@ -2272,6 +2359,14 @@ fn s1_harness_smoke() {
     gates.check(&budgets);
     let packet: Packet =
         serde_json::from_slice(&std::fs::read(&packet_path).unwrap()).expect("packet");
+    // The gate run's water-build provenance, on the build this binary links.
+    let water = water_build(
+        &MetastableBand::from(&packet.pzr.cell.metastable),
+        WATER_BUILD,
+        WATER_LIB_DIR,
+    )
+    .expect("water build");
+    assert!(water["librarySha256"].as_str().is_some(), "{water}");
     let declared = &packet.preparation.operating_point;
     // The declared 6.00 m saturated preparation (S1 re-declaration).
     let point = OperatingPoint::from(declared);
@@ -2322,7 +2417,7 @@ fn s1_harness_smoke() {
     );
     println!(
         "{}",
-        json!({"kind":"s1-harness-smoke-NOT-EVIDENCE","packet":packet_path,"preparation_passes":preparation.pass_changes_pa.len(),"max_eos_row":preparation.max_eos_row,"max_loop_rest_pa":preparation.max_loop_rest_pa,"max_phase_drive_pa":preparation.max_phase_drive_pa,"mass_change_kg":preparation.mass_change_kg,"run":run_json(&run),"samples":run.samples.iter().map(|s|json!({"t":s.t,"roof_pa":s.roof_pa,"loop_kg_s":s.loop_kg_s,"omega":s.omega,"steps":s.steps,"h":s.last_step,"energy_identity_w":s.energy_identity_w,"blocked_path_m3_s":s.blocked_path_m3_s})).collect::<Vec<_>>()})
+        json!({"kind":"s1-harness-smoke-NOT-EVIDENCE","packet":packet_path,"water_build":water,"preparation_passes":preparation.pass_changes_pa.len(),"max_eos_row":preparation.max_eos_row,"max_loop_rest_pa":preparation.max_loop_rest_pa,"max_phase_drive_pa":preparation.max_phase_drive_pa,"mass_change_kg":preparation.mass_change_kg,"run":run_json(&run),"samples":run.samples.iter().map(|s|json!({"t":s.t,"roof_pa":s.roof_pa,"loop_kg_s":s.loop_kg_s,"omega":s.omega,"steps":s.steps,"h":s.last_step,"energy_identity_w":s.energy_identity_w,"blocked_path_m3_s":s.blocked_path_m3_s})).collect::<Vec<_>>()})
     );
     assert!(run.failure.is_none(), "{:?}", run.failure);
     let from = || (fresh(&packet), run.y.clone(), prepared.differential.clone());
@@ -3224,6 +3319,14 @@ fn recovery_is_judged_on_the_window_and_continuation_cost() {
     assert_eq!(report["steps"], json!(1250));
     assert_eq!(report["projected_cpu_s_per_s"].as_f64(), Some(0.5));
     assert_eq!(report["steps_per_s"].as_f64(), Some(65.5));
+    assert!(
+        report["convergence_failures_counter"]
+            .as_str()
+            .is_some_and(
+                |s| s.starts_with("IDAGetNumNonlinSolvConvFails") && s.contains("fresh Jacobian")
+            ),
+        "{report}"
+    );
     let (report, pass) = recovery(&gates, &continued(20., 595, 656, 0, None), 10., 10.);
     assert!(!pass, "{report}");
     // The block's maxConvergenceFailures is the only threshold: at H1a's 2,
@@ -3385,6 +3488,75 @@ fn r0_is_reported_beside_the_continuation_and_fails_the_event_except_at_its_cap(
         );
     }
     assert!(!r0_fails(&r0(20., counts(300, 2, 0), counts(450, 5, 1))));
+}
+
+#[test]
+fn the_water_build_is_carried_verbatim_and_refused_unless_it_matches() {
+    let directory = format!(
+        "{}/s1-water-build-{}",
+        env!("CARGO_TARGET_TMPDIR"),
+        std::process::id()
+    );
+    std::fs::create_dir_all(&directory).unwrap();
+    let library = format!("{directory}/libld01_operating_water.a");
+    std::fs::write(&library, b"a stand-in archive for this unit test").unwrap();
+    let library_sha256 = sha256_file(&library).unwrap();
+    let file = format!("{directory}/water-build.json");
+    // H3's single band, as a packet carries it.
+    let band = MetastableBand {
+        pressure_range_pa: [2e6, 16e6],
+        lower_bound_exclusive: true,
+        liquid_superheat_max_k: 2.,
+        vapor_subcooling_max_k: 1.4,
+        trial_max_k: 3.,
+        credited_max_k: 0.5,
+        liquid_temperature_max_k: 623.15,
+        liquid_pressure_ceiling_pa: 17e6,
+        vapor_pressure_ceiling_pa: 16e6,
+    };
+    let receipt = |library_sha256: &str, band: Value| {
+        serde_json::to_string_pretty(&json!({"revision":"0be7b51f","headerSha256":"83693f04","licenseSha256":"e22c3d30","adapterSha256":"4446186e","librarySha256":library_sha256,"platform":"darwin","architecture":"arm64",
+            "metastableBand":{"page":"world/packs/process-plant/reference-designs/ld-01/model/operating-phase-properties.md","pageSha256":"0138902a","heading":"Bounded metastable admission","fence":"ld01-metastable-band","band":band}}))
+        .unwrap()
+            + "\n"
+    };
+    // The receipt written to the directory, then checked as the embedded one.
+    let check = |text: &str, packet: &MetastableBand| {
+        std::fs::write(&file, text).unwrap();
+        water_build(packet, text, &directory)
+    };
+    let good = receipt(&library_sha256, serde_json::to_value(band).unwrap());
+    // A sound build is carried verbatim.
+    let carried = check(&good, &band).unwrap();
+    assert_eq!(carried, serde_json::from_str::<Value>(&good).unwrap());
+    // A band other than the packet's is refused: G2 (a)'s 5.9 MPa edge.
+    let other = MetastableBand {
+        pressure_range_pa: [5.9e6, 16e6],
+        ..band
+    };
+    let refused = check(&good, &other).unwrap_err();
+    assert!(refused.contains("differs from the packet's"), "{refused}");
+    // So is an archive without the receipt's hash: the archive is not
+    // byte-reproducible, so only its hash names the build.
+    let rebuilt = receipt(&"0".repeat(64), serde_json::to_value(band).unwrap());
+    let refused = check(&rebuilt, &band).unwrap_err();
+    assert!(refused.contains("not its receipt's"), "{refused}");
+    // And a receipt that is not the directory's file, byte for byte.
+    std::fs::write(&file, &good).unwrap();
+    let stale = good.replace("4446186e", "a0775503");
+    let refused = water_build(&band, &stale, &directory).unwrap_err();
+    assert!(refused.contains("not the build receipt"), "{refused}");
+    // A receipt in the withdrawn two-range layout does not parse.
+    let legacy = receipt(
+        &library_sha256,
+        json!({"ranges":[{"pressure_low_pa":1e7,"pressure_high_pa":1.6e7}]}),
+    );
+    assert!(check(&legacy, &band).is_err());
+    // And a missing receipt is refused.
+    std::fs::remove_file(&file).unwrap();
+    let refused = water_build(&band, &good, &directory).unwrap_err();
+    assert!(refused.contains("water-build.json"), "{refused}");
+    std::fs::remove_dir_all(&directory).unwrap();
 }
 
 /// y0' = -y0 (differential) and 0 = y1 + y1^3 - y0 (algebraic, nonlinear),
