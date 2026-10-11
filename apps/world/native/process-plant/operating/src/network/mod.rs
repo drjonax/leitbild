@@ -6,9 +6,10 @@
 //! Two cell kinds. Every regular compiled fluid volume retains liquid and
 //! vapor mass/internal energy and liquid tracer, six coordinates; its
 //! rigid-volume EOS row recovers the local pressure. The one stratified PZR
-//! cell (decision 0014, contract amendment 3) retains seventeen coordinates
-//! in the contract order: algebraic `p_roof, V_g, V_A, V_R, V_b, V_d`, then
-//! differential `M_g, U_g, M_A, U_A, B_A, M_R, U_R, B_R, M_b, M_d, B_d`. Its
+//! cell (decision 0014, contract amendments 3 and 6) retains nineteen
+//! coordinates in the contract order: algebraic `p_roof, V_g, V_A, V_R, V_b,
+//! V_d, V_bA`, then differential `M_g, U_g, M_A, U_A, B_A, M_R, U_R, B_R, M_b,
+//! M_d, B_d, M_bA`. Its
 //! rows and its port views belong to the stratified cell owner, reached only
 //! through the integration point below. Each phase path retains one
 //! generalized hydraulic impulse `Pi = I*Q`. Pump rotors retain angular
@@ -69,23 +70,26 @@ pub struct CellLayout {
 /// Coordinates of the stratified PZR cell, in the contract order.
 pub const PZR_COORDINATES: usize = stratified::COORDINATES;
 /// Offsets within the PZR block: the algebraic roof pressure and volumes
-/// `V_g, V_A, V_R, V_b, V_d`, then the differential masses `M_g, M_A, M_R,
-/// M_b, M_d`, internal energies `U_g, U_A, U_R` and tracers `B_A, B_R, B_d`.
+/// `V_g, V_A, V_R, V_b, V_d, V_bA`, then the differential masses `M_g, M_A,
+/// M_R, M_b, M_d, M_bA`, internal energies `U_g, U_A, U_R` and tracers
+/// `B_A, B_R, B_d` (contract amendment 6).
 pub const PZR_PRESSURE: usize = stratified::ROOF_PRESSURE;
-pub const PZR_VOLUME: [usize; 5] = [
+pub const PZR_VOLUME: [usize; 6] = [
     stratified::VAPOR_VOLUME,
     stratified::ADMITTED_VOLUME,
     stratified::RESIDENT_VOLUME,
     stratified::BUBBLE_VOLUME,
     stratified::DROP_VOLUME,
+    stratified::ADMITTED_BUBBLE_VOLUME,
 ];
-pub const PZR_ALGEBRAIC: usize = 6;
-pub const PZR_MASS: [usize; 5] = [
+pub const PZR_ALGEBRAIC: usize = 7;
+pub const PZR_MASS: [usize; 6] = [
     stratified::VAPOR_MASS,
     stratified::ADMITTED_MASS,
     stratified::RESIDENT_MASS,
     stratified::BUBBLE_MASS,
     stratified::DROP_MASS,
+    stratified::ADMITTED_BUBBLE_MASS,
 ];
 pub const PZR_ENERGY: [usize; 3] = [
     stratified::VAPOR_ENERGY,
@@ -739,8 +743,8 @@ fn stratified_preparation<P: Properties>(
 /// prepared roof pressure; each zone volume, mass and energy by its own
 /// prepared value, so a prepared zone is exactly `y = 1`; the transit
 /// volumes, zero at preparation, by the cell's fluid volume; transit masses
-/// by their host zone's mass scale (bubbles by the vapor zone, drops by the
-/// resident layer); and every tracer by its host mass scale times the
+/// by their host zone's mass scale (both bubble stocks by the vapor zone,
+/// their destination, drops by the resident layer); and every tracer by its host mass scale times the
 /// packet's absorber fraction. A zero zone volume or absorber fraction has
 /// no declared scale class and refuses.
 fn pzr_scales(
@@ -751,16 +755,18 @@ fn pzr_scales(
     if absorber_mass_fraction == 0. {
         return Err(bad("zero-absorber tracer scale has no declared class"));
     }
-    let [vg, va, vr, vb, vd] = PZR_VOLUME;
+    let [vg, va, vr, vb, vd, vba] = PZR_VOLUME;
     if [vg, va, vr].iter().any(|i| values[*i] == 0.) {
         return Err(bad("a zero prepared PZR zone volume has no declared scale"));
     }
     let mut scales = *values;
     scales[vb] = fluid_volume_m3;
     scales[vd] = fluid_volume_m3;
-    let [mg, ma, mr, mb, md] = PZR_MASS;
+    scales[vba] = fluid_volume_m3;
+    let [mg, ma, mr, mb, md, mba] = PZR_MASS;
     scales[mb] = values[mg];
     scales[md] = values[mr];
+    scales[mba] = values[mg];
     for (tracer, host) in PZR_TRACER.into_iter().zip([ma, mr, md]) {
         scales[tracer] = scales[host] * absorber_mass_fraction;
     }

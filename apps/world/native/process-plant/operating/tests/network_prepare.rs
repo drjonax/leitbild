@@ -331,7 +331,6 @@ fn packet() -> Packet {
                     vapor_relaxation_time_s: 0.5,
                     relaxation_sensitivity: [0.5, 1., 2.],
                     bubble_diameter_m: 0.00075,
-                    bubble_vapor_coefficient_w_m2k: 1000.,
                     bubble_exchange_sensitivity: [0.5, 1., 2.],
                     bubble_exchange_diameter_sensitivity_m: 0.0005,
                     spray_drop_diameter_m: 0.003,
@@ -442,23 +441,35 @@ fn prepared(level: f64) -> (Network<Analytic>, Vec<f64>, Receipt) {
 #[test]
 fn the_network_compiles_and_prepares_the_stratified_cell() {
     let (network, prepared) = Network::new(&packet(), Analytic, &CONTROLS).unwrap();
-    // 5 regular cells, one 17-coordinate PZR, 6 faces of two paths, 1 rotor.
-    assert_eq!(network.dimension(), 5 * 6 + 17 + 6 * 2 + 1);
+    // 5 regular cells, one 19-coordinate PZR, 6 faces of two paths, 1 rotor.
+    assert_eq!(network.dimension(), 5 * 6 + 19 + 6 * 2 + 1);
     let algebraic = prepared.differential.iter().filter(|v| **v == 0.).count();
-    assert_eq!(algebraic, 5 + 6);
+    assert_eq!(algebraic, 5 + 7);
     let pzr = network.pzr.coordinates();
     assert!(
-        prepared.differential[pzr.start..pzr.start + 6]
+        prepared.differential[pzr.start..pzr.start + 7]
             .iter()
             .all(|v| *v == 0.)
     );
     assert!(
-        prepared.differential[pzr.start + 6..pzr.end]
+        prepared.differential[pzr.start + 7..pzr.end]
             .iter()
             .all(|v| *v == 1.)
     );
     // Every prepared zone volume, mass, energy and roof pressure is y = 1.
-    for offset in [0, 1, 2, 3, 6, 7, 8, 9, 11, 12] {
+    use leitbild_operating_plant::network::stratified as st;
+    for offset in [
+        st::ROOF_PRESSURE,
+        st::VAPOR_VOLUME,
+        st::ADMITTED_VOLUME,
+        st::RESIDENT_VOLUME,
+        st::VAPOR_MASS,
+        st::VAPOR_ENERGY,
+        st::ADMITTED_MASS,
+        st::ADMITTED_ENERGY,
+        st::RESIDENT_MASS,
+        st::RESIDENT_ENERGY,
+    ] {
         assert_eq!(prepared.y[pzr.start + offset], 1., "offset {offset}");
     }
 }

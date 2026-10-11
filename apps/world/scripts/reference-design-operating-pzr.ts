@@ -22,12 +22,13 @@ export function parseOperatingPzr(text:string){
 }
 const triple=z.tuple([positive,positive,positive])
 /** The cell's `ld01-pzr-stratified` block. The bulk bubble exchange (request
- * 4, K1) reuses `bubbleDiameter_m` and adds its vapor-side coefficient, its
- * factors (the nominal 1 among them) and its exchange-only diameter, which
- * must differ from the bubble diameter it is a sensitivity of. */
+ * 4, K1) reuses `bubbleDiameter_m` and adds its factors (the nominal 1 among
+ * them) and its exchange-only diameter, which must differ from the bubble
+ * diameter it is a sensitivity of. Its bubble stocks are saturated, so the
+ * exchange has no vapor-side coefficient and the strict schema refuses one. */
 export const stratifiedSchema=z.object({withdrawalScale_m:positive,admittedPreparationThickness_m:positive,
   inversionExchangeVelocity_m_s:positive,liquidRelaxationTime_s:positive,vaporRelaxationTime_s:positive,
-  relaxationSensitivity:triple,bubbleDiameter_m:positive,bubbleVaporCoefficient_W_m2K:positive,
+  relaxationSensitivity:triple,bubbleDiameter_m:positive,
   bubbleExchangeSensitivity:triple,bubbleExchangeDiameterSensitivity_m:positive,sprayDropDiameter_m:positive,
   dropDiameterSensitivity_m:triple,resolvabilityFactor:positive}).strict()
   .superRefine((b,c)=>{
