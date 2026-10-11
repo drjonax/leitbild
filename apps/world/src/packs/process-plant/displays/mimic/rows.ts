@@ -13,7 +13,7 @@ export type MimicRow =
   /** A value with its unit, from a key value or a valve's partial opening. */
   | { readonly kind: 'value'; readonly path: string; readonly unit: string; readonly required: boolean }
   | { readonly kind: 'position'; readonly required: true }
-  /** The state in a word where the symbol alone could be misread: STOP, ?, DEAD, POS ?. */
+  /** The state in a word where the symbol alone could be misread: RUN or STOP, ?, DEAD, POS ?. */
   | { readonly kind: 'state'; readonly texts: ReadonlyArray<string>; readonly required: true }
   /** What passes an item whose position is not computed: PASSING or NO FLOW. */
   | { readonly kind: 'throughput'; readonly texts: ReadonlyArray<string>; readonly required: true }
@@ -95,11 +95,13 @@ export const itemRows = (
   const state = binding.state
   const values: ReadonlyArray<MimicRow> = binding.values.map((value, index) => ({ kind: 'value', path: value.path, unit: value.unit, required: index === 0 }))
   if (presentation.element !== 'device' || state === null) return values
+  // Running equipment says RUN in words as stopped equipment says STOP: an
+  // icon's fill alone does not tell the two apart for every reader (HMI review, run 22).
   if (state.aspect === 'running') {
-    if (!stacked) return [{ kind: 'state', texts: ['STOP', '?', ...RUNNING_COMMANDS], required: true }]
+    if (!stacked) return [{ kind: 'state', texts: ['RUN', 'STOP', '?', ...RUNNING_COMMANDS], required: true }]
     // Stacked rows reserve only what the item's bindings let it say: no command, no CMD.
-    if (state.command === undefined) return [{ kind: 'state', texts: ['STOP', '?'], required: true }]
-    return [{ kind: 'state', texts: ['STOP', '?', 'CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(RUNNING_COMMANDS), required: true }]
+    if (state.command === undefined) return [{ kind: 'state', texts: ['RUN', 'STOP', '?'], required: true }]
+    return [{ kind: 'state', texts: ['RUN', 'STOP', '?', 'CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(RUNNING_COMMANDS), required: true }]
   }
   if (state.aspect === 'energized') return [{ kind: 'state', texts: ['DEAD', '?'], required: true }]
   if (switching(binding)) {
@@ -162,7 +164,7 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
   // The state word, unless the symbol disagrees with its command: then the command, or CMD over it.
   if (look.mismatch !== null && row.texts.includes(look.mismatch)) return look.mismatch
   if (look.mismatch !== null && row.texts.includes('CMD')) return 'CMD'
-  const word = look.state.kind === 'stopped' ? 'STOP' : look.state.kind === 'dead' ? 'DEAD' : look.state.kind === 'unknown' ? '?'
+  const word = look.state.kind === 'running' ? 'RUN' : look.state.kind === 'stopped' ? 'STOP' : look.state.kind === 'dead' ? 'DEAD' : look.state.kind === 'unknown' ? '?'
     : look.state.kind === 'closed' ? 'CLOSED' : look.state.kind === 'open' ? 'OPEN' : ''
   return row.texts.includes(word) ? word : ''
 }

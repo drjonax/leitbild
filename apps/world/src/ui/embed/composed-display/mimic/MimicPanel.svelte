@@ -93,8 +93,8 @@
       return fraction >= 0.05 && fraction <= 0.95 ? [{ type: 'value' as const, value: Math.round(fraction * 100), unit: '%' }] : []
     }
     const text = rowText(row, look, index, format)
-    // Every state word is emphasised: STOP or PASSING is what the operator reads the symbol for.
-    return text === '' ? [] : [{ type: 'state' as const, text, emphasis: true }]
+    // Every state word but RUN is emphasised: STOP or PASSING is what the operator reads the symbol for; RUN, written so the fill is never all that says it, is the normal state (ISA-101).
+    return text === '' ? [] : [{ type: 'state' as const, text, emphasis: text !== 'RUN' }]
   })
 
   const valueOf = (row: Extract<MimicRow, { kind: 'value' }>): number | null => {
