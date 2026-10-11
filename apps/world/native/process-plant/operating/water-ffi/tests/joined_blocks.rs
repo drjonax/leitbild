@@ -764,6 +764,48 @@ fn joined_dense_lines() {
         .take(40)
         .map(|(c, i)| json!({"coordinate": i, "block": block(*i), "row_nnz": row_count[*i], "column_nnz": col_count[*i], "sum": c}))
         .collect();
+    // Stored entries that are exactly zero at this state, by (column
+    // block, row block): what the pattern holds beyond this state's needs.
+    let mut zeros: BTreeMap<String, [usize; 2]> = BTreeMap::new();
+    for j in 0..n {
+        for (row, v) in stored_column(p, &values, j) {
+            let e = zeros
+                .entry(format!("{} column / {} row", block(j), block(row)))
+                .or_insert([0, 0]);
+            e[0] += 1;
+            if v == 0. {
+                e[1] += 1;
+            }
+        }
+    }
+    println!(
+        "{}",
+        json!({"stored_and_exact_zero_by_block": zeros.iter().map(|(k, v)| json!({"blocks": k, "stored": v[0], "exact_zero": v[1]})).collect::<Vec<_>>()})
+    );
+    // Stock KLU on this state's nonzeros only (the diagonal kept): the
+    // bound on what an element-exact pattern could reach here.
+    {
+        let mut columns = vec![Vec::new(); n];
+        let mut v = Vec::new();
+        for (j, column) in columns.iter_mut().enumerate() {
+            for (row, value) in stored_column(p, &values, j) {
+                if value != 0. || row == j {
+                    column.push(row);
+                    v.push(value);
+                }
+            }
+        }
+        let q = Pattern::from_columns(n, &columns).unwrap();
+        let (pointers, rows) = q.to_i64().unwrap();
+        let colamd = klu_profile(&pointers, &rows, &[v.clone()], 3);
+        let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+        println!(
+            "{}",
+            json!({"state_nonzeros": q.nonzeros(),
+                "colamd": {"refactor_ms": colamd["refactor_ms"], "factor_ms": colamd["factor_ms"], "lnz_plus_unz": colamd["lnz_plus_unz"]},
+                "amd": {"refactor_ms": amd["refactor_ms"], "factor_ms": amd["factor_ms"], "lnz_plus_unz": amd["lnz_plus_unz"]}})
+        );
+    }
     // Where the densest column's rows lie, and the densest rows.
     let densest = lines[0].1;
     let mut histogram: BTreeMap<&str, usize> = BTreeMap::new();
