@@ -44,8 +44,8 @@
     "@leitbild/knowledge": "workspace:*",
     "@leitbild/contracts": "workspace:*",
     "@leitbild/module-runtime": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.27.1",
-    "dompurify": "^3.4.14",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "dompurify": "^3.4.16",
     "marked": "^18.0.11",
     "unpdf": "^1.6.2",
     "zod": "^3.25 || ^4.0"
