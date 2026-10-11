@@ -276,6 +276,9 @@ fn base() -> Base {
         roots: 0,
         next: Rc::new(Slot::new(f64::INFINITY)),
         log,
+        refresh: Refresh::Fresh,
+        stored: None,
+        counts: RefreshCounts::default(),
     };
     let mut ida = Ida::new(
         system,
@@ -513,6 +516,52 @@ struct Recorder<S> {
     roots: usize,
     next: Rc<Slot<f64>>,
     log: Rc<RefCell<Log>>,
+    refresh: Refresh,
+    stored: Option<Stored>,
+    counts: RefreshCounts,
+}
+/// The iteration-matrix policy of a run (JAC's candidate 1, emulated in the
+/// probe without a kernel change).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Refresh {
+    /// Stock: every setup assembles `M = dF/dy + cj dF/dy'` at its state.
+    Fresh,
+    /// A setup at an attempt's start (stock's first-step or cj-ratio
+    /// trigger) recombines the stored `A + cj B` of the last assembly, with
+    /// no evaluation; a Newton-failure retry (a setup after further residual
+    /// calls at the same trial time, stock's jbad) and the first setup after
+    /// a (re)initialization assemble `A` and `B` at their own state.
+    CjLinear,
+    /// As `CjLinear`, but also assembling at the first setup after any
+    /// failed attempt (an attempt whose trial time is not later than the
+    /// previous attempt's), which bounds the stored pair's staleness: after
+    /// a recombined setup stock counts the matrix as current, so a Newton
+    /// failure never reaches its own fresh retry.
+    CjLinearBounded,
+}
+/// The last assembly's `A = dF/dy`, `B = dF/dy'`, structure and state.
+struct Stored {
+    a: Vec<f64>,
+    b: Vec<f64>,
+    rows: Vec<i64>,
+    pointers: Vec<i64>,
+    t: f64,
+    y: Vec<f64>,
+    yp: Vec<f64>,
+}
+#[derive(Clone, Copy, Debug, Default)]
+struct RefreshCounts {
+    /// Setups that assembled (one assembly of A and B in production).
+    assemblies: i64,
+    /// Setups recombined from the stored A and B.
+    recombinations: i64,
+    /// Recombinations whose (t, y, y') equals the stored state bitwise.
+    identical_state: i64,
+    /// Setups at a Newton-failure retry.
+    retries: i64,
+    /// Setups whose (t, y, y') equals the previous setup's bitwise, under
+    /// any policy (where an exact recombination always applies).
+    identical_any: i64,
 }
 impl<S: System> System for Recorder<S> {
     fn dimension(&self) -> usize {
@@ -545,8 +594,74 @@ impl<S: System> System for Recorder<S> {
         rows: &mut [i64],
         pointers: &mut [i64],
     ) -> Result<(), Failure> {
+        let (retry, after_failure) = {
+            let log = self.log.borrow();
+            let n = log.attempts.len();
+            let retry = log
+                .attempts
+                .last()
+                .is_some_and(|a| a.t == time && a.calls > 1);
+            let after_failure = n >= 2 && log.attempts[n - 2].t >= log.attempts[n - 1].t;
+            (retry, after_failure)
+        };
         self.log.borrow_mut().jacobian(time, y);
-        self.inner.jacobian(time, cj, y, yp, data, rows, pointers)
+        let identical = self
+            .stored
+            .as_ref()
+            .is_some_and(|s| s.t == time && s.y == y && s.yp == yp);
+        self.counts.identical_any += i64::from(identical);
+        self.counts.retries += i64::from(retry);
+        let recombine = match self.refresh {
+            Refresh::Fresh => false,
+            Refresh::CjLinear => !retry || identical,
+            Refresh::CjLinearBounded => (!retry && !after_failure) || identical,
+        };
+        match (self.refresh, &self.stored) {
+            (Refresh::CjLinear | Refresh::CjLinearBounded, Some(stored)) if recombine => {
+                for ((d, a), b) in data.iter_mut().zip(&stored.a).zip(&stored.b) {
+                    *d = a + cj * b;
+                }
+                rows.copy_from_slice(&stored.rows);
+                pointers.copy_from_slice(&stored.pointers);
+                self.counts.recombinations += 1;
+                self.counts.identical_state += i64::from(identical);
+                Ok(())
+            }
+            (Refresh::CjLinear | Refresh::CjLinearBounded, _) => {
+                // A, then A + B, by the same colored assembly at cj 0 and 1.
+                self.inner.jacobian(time, 0., y, yp, data, rows, pointers)?;
+                let a = data.to_vec();
+                self.inner.jacobian(time, 1., y, yp, data, rows, pointers)?;
+                let b: Vec<f64> = data.iter().zip(&a).map(|(m, a)| m - a).collect();
+                // A fresh setup returns the assembly's own M(cj) bit for bit.
+                self.inner.jacobian(time, cj, y, yp, data, rows, pointers)?;
+                self.stored = Some(Stored {
+                    a,
+                    b,
+                    rows: rows.to_vec(),
+                    pointers: pointers.to_vec(),
+                    t: time,
+                    y: y.to_vec(),
+                    yp: yp.to_vec(),
+                });
+                self.counts.assemblies += 1;
+                Ok(())
+            }
+            (Refresh::Fresh, _) => {
+                self.inner.jacobian(time, cj, y, yp, data, rows, pointers)?;
+                self.stored = Some(Stored {
+                    a: Vec::new(),
+                    b: Vec::new(),
+                    rows: Vec::new(),
+                    pointers: Vec::new(),
+                    t: time,
+                    y: y.to_vec(),
+                    yp: yp.to_vec(),
+                });
+                self.counts.assemblies += 1;
+                Ok(())
+            }
+        }
     }
     fn roots(&mut self, time: f64, _: &[f64], _: &[f64], out: &mut [f64]) -> Result<(), Failure> {
         out.fill(time - self.next.get());
@@ -587,6 +702,7 @@ enum After {
         duration_s: f64,
         newton: f64,
         dcj: Option<f64>,
+        refresh: Refresh,
     },
 }
 struct Plan<'a> {
@@ -600,6 +716,8 @@ struct Plan<'a> {
     observe_s: Option<f64>,
     /// IDASetDeltaCjLSetup at every start and restart; `None` keeps stock's.
     dcj: Option<f64>,
+    /// The iteration-matrix policy.
+    refresh: Refresh,
     step_cap: i64,
     cpu_cap_s: f64,
 }
@@ -620,6 +738,9 @@ struct Trace {
     total_residuals: i64,
     /// The integrated network's own evaluation counts and wall times.
     network: leitbild_operating_plant::network::Counters,
+    refresh: RefreshCounts,
+    /// The refresh counts at the window's end, when the run restarted there.
+    refresh_window: Option<RefreshCounts>,
 }
 
 fn counts(s: &leitbild_operating_water::ida::Stats) -> [i64; 5] {
@@ -685,6 +806,9 @@ fn run(base: &Base, kind: Event, plan: Plan<'_>) -> Trace {
         roots: 1,
         next: next.clone(),
         log: log.clone(),
+        refresh: plan.refresh,
+        stored: None,
+        counts: RefreshCounts::default(),
     };
     let mut ida = Ida::new(
         system,
@@ -731,6 +855,7 @@ fn run(base: &Base, kind: Event, plan: Plan<'_>) -> Trace {
     let mut t_now = 0.;
     let mut last_steps = 0;
     let mut window_counts = None;
+    let mut refresh_window = None;
     let mut prior = [0i64; 5];
     let mut failure = None;
     loop {
@@ -807,12 +932,17 @@ fn run(base: &Base, kind: Event, plan: Plan<'_>) -> Trace {
                 After::Restart(_) | After::Resume { .. } => {
                     // H1's restart, as the harness makes it (a resume keeps
                     // the window's cap at its own coefficient and dcj).
-                    let (newton, dcj, cap) = match plan.after {
-                        After::Resume { newton, dcj, .. } => {
-                            (newton, Some(dcj.unwrap_or(0.25)), plan.max_step_s)
-                        }
-                        _ => (STOCK_NEWTON, plan.dcj, f64::INFINITY),
+                    let (newton, dcj, cap, refresh) = match plan.after {
+                        After::Resume {
+                            newton,
+                            dcj,
+                            refresh,
+                            ..
+                        } => (newton, Some(dcj.unwrap_or(0.25)), plan.max_step_s, refresh),
+                        _ => (STOCK_NEWTON, plan.dcj, f64::INFINITY, plan.refresh),
                     };
+                    refresh_window = Some(ida.system().counts);
+                    ida.system_mut().refresh = refresh;
                     let weights = error_weights(&y, plan.rtol, plan.atol);
                     let mut projected = y.clone();
                     let (rates, _) = consistent_start(
@@ -827,6 +957,8 @@ fn run(base: &Base, kind: Event, plan: Plan<'_>) -> Trace {
                     .expect("window-end restart");
                     prior = counts(&stats);
                     ida.reinitialize(t, &projected, &rates).unwrap();
+                    // A restarted history assembles its first matrix.
+                    ida.system_mut().stored = None;
                     ida.set_nonlinear_convergence_coefficient(newton).unwrap();
                     if let Some(d) = dcj {
                         ida.set_delta_cj_lsetup(d).unwrap();
@@ -853,6 +985,7 @@ fn run(base: &Base, kind: Event, plan: Plan<'_>) -> Trace {
     }
     let stats = ida.stats().unwrap();
     let network = ida.system().inner.network.counters;
+    let refresh = ida.system().counts;
     let total = |i: usize| prior[i] + counts(&stats)[i];
     let log = log.borrow();
     Trace {
@@ -871,6 +1004,8 @@ fn run(base: &Base, kind: Event, plan: Plan<'_>) -> Trace {
         total_error_failures: total(3),
         total_convergence_failures: total(4),
         network,
+        refresh,
+        refresh_window,
     }
 }
 
@@ -1313,6 +1448,7 @@ fn donor_continuation_diagnosis() {
             after,
             observe_s: Some(dt),
             dcj: None,
+            refresh: Refresh::Fresh,
             step_cap: 20_000,
             cpu_cap_s: 600.,
         };
@@ -1542,6 +1678,7 @@ fn donor_cap_cycle_probe() {
                 after: After::None,
                 observe_s: Some(dt),
                 dcj: None,
+                refresh: Refresh::Fresh,
                 step_cap: 50_000,
                 cpu_cap_s: 600.,
             },
@@ -1592,6 +1729,7 @@ fn donor_newton_scaling_probe() {
                     after: After::None,
                     observe_s: Some(dt),
                     dcj: None,
+                    refresh: Refresh::Fresh,
                     step_cap: 50_000,
                     cpu_cap_s: 600.,
                 },
@@ -1683,6 +1821,7 @@ fn donor_delta_cj_probe() {
                 after: After::None,
                 observe_s: Some(dt),
                 dcj,
+                refresh: Refresh::Fresh,
                 step_cap: 50_000,
                 cpu_cap_s: 900.,
             },
@@ -1750,6 +1889,7 @@ fn donor_quiet_cost_probe() {
                     after: After::None,
                     observe_s: None,
                     dcj,
+                    refresh: Refresh::Fresh,
                     step_cap: 50_000,
                     cpu_cap_s: 900.,
                 },
@@ -1906,6 +2046,7 @@ fn donor_delta_cj_threshold_probe() {
         after: After::None,
         observe_s,
         dcj: Some(dcj),
+        refresh: Refresh::Fresh,
         step_cap: 50_000,
         cpu_cap_s: 900.,
     };
@@ -1987,9 +2128,11 @@ fn donor_established_cycle_probe() {
                         duration_s: 5.,
                         newton,
                         dcj,
+                        refresh: Refresh::Fresh,
                     },
                     observe_s: Some(dt),
                     dcj: None,
+                    refresh: Refresh::Fresh,
                     step_cap: 50_000,
                     cpu_cap_s: 900.,
                 },
@@ -2012,4 +2155,267 @@ fn donor_established_cycle_probe() {
         "method":"the capped S1 seizure at stock settings to 5 s, then the exact consistent start there (H1's restart) keeping the cap, with the listed Newton coefficient and dcj set before the resumed first step; harness above-band (2 Hz) core-DP RMS before (2-5 s) and after (7-10 s) the restart",
         "runs":runs,"cpu_s_total":cpu_s()-cpu0,"load_average_end":load_average()});
     write(&base, "donor-established-cycle.json", &receipt);
+}
+
+/// The harness's E0/E1 comparison of the credited outputs of `a` - `b` over
+/// [0, window]: zero-phase 4th-order Butterworth low-pass of each observed
+/// difference at the credited band; roof bias the mean |filtered|, roof
+/// noise the deviation of the filtered roof error's change between output
+/// samples, level/core DP/loop flow the max |filtered|.
+fn compare(base: &Base, a: &Trace, b: &Trace, window_s: f64) -> Value {
+    let dt = num(&base.gates, &["comparison", "observation_s"]);
+    let output = num(&base.gates, &["outputInterval_s"]);
+    let cutoff = num(&base.budgets, &["uncreditedAbove_Hz"]);
+    let n = (window_s / dt).round() as usize;
+    let grid = |t: &Trace| -> Option<Vec<Credited>> {
+        let s = t.fine.get(..=n)?.to_vec();
+        s.iter()
+            .enumerate()
+            .all(|(j, c)| (c.t - j as f64 * dt).abs() <= 1e-9)
+            .then_some(s)
+    };
+    let (Some(sa), Some(sb)) = (grid(a), grid(b)) else {
+        return json!({"evaluable":false});
+    };
+    let per_output = (output / dt).round() as usize;
+    let diff = |pick: fn(&Credited) -> f64| -> Vec<f64> {
+        let raw: Vec<f64> = sa.iter().zip(&sb).map(|(p, q)| pick(p) - pick(q)).collect();
+        zero_phase_lowpass(&raw, cutoff, dt)
+    };
+    let max_abs = |v: &[f64]| v.iter().fold(0., |m: f64, x| m.max(x.abs()));
+    let roof = diff(|c| c.roof_pa);
+    let outputs: Vec<f64> = roof.iter().step_by(per_output).copied().collect();
+    let changes: Vec<f64> = outputs.windows(2).map(|w| w[1] - w[0]).collect();
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let dev = |v: &[f64]| {
+        let m = mean(v);
+        (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
+    };
+    json!({"evaluable":true,"window_s":window_s,
+        "pzr_roof_bias_pa":mean(&roof.iter().map(|x| x.abs()).collect::<Vec<_>>()),
+        "pzr_roof_sample_noise_pa":dev(&changes),
+        "pzr_level_m":max_abs(&diff(|c| c.level_m)),
+        "core_dp_pa":max_abs(&diff(|c| c.core_dp_pa)),
+        "loop_flow_kg_s":max_abs(&diff(|c| c.loop_kg_s[0])).max(max_abs(&diff(|c| c.loop_kg_s[1])))})
+}
+fn refresh_json(c: &RefreshCounts) -> Value {
+    json!({"assemblies":c.assemblies,"recombinations":c.recombinations,"recombinations_at_identical_state":c.identical_state,
+        "newton_failure_retries":c.retries,"setups_at_identical_state_any_policy":c.identical_any})
+}
+/// Largest raw difference of two runs' fine credited series on a common
+/// observation grid, over [from, to].
+fn raw_difference(a: &Trace, b: &Trace, from: f64, to: f64) -> Value {
+    let (sa, sb) = (fine_between(a, from, to), fine_between(b, from, to));
+    if sa.len() != sb.len() || sa.iter().zip(&sb).any(|(p, q)| (p.t - q.t).abs() > 1e-9) {
+        return json!({"comparable":false});
+    }
+    let max = |f: fn(&Credited) -> f64| {
+        sa.iter()
+            .zip(&sb)
+            .map(|(p, q)| (f(p) - f(q)).abs())
+            .fold(0., f64::max)
+    };
+    json!({"comparable":true,"interval_s":[from,to],"core_dp_pa":max(|c| c.core_dp_pa),"roof_pa":max(|c| c.roof_pa),"level_m":max(|c| c.level_m),
+        "loop_kg_s":max(|c| c.loop_kg_s[0]).max(max(|c| c.loop_kg_s[1]))})
+}
+
+/// JAC's candidate 1, the cj-linear refresh: `M = A + cj B` recombined from
+/// the last assembly at a setup triggered by a cj change or a first step,
+/// and assembled fresh only at a Newton-failure retry or a (re)start. At
+/// dcj 0.1 and stock's Newton coefficient: (1) the 4.5 and 5 ms capped
+/// seizure, (2) the established cycle resumed at 5 s with the cap kept,
+/// (3) the S1 seizure and supply-loss window runs restarted at their ends
+/// (H1) and continued 10 s, the restart ramp, and (4) the hold and the
+/// never-capped seizure. Each beside the same run assembling every setup.
+#[test]
+#[ignore = "diagnostic probe, NOT S1 evidence; requires the actual packet, the wiki, maintained IF97 and stock IDA/KLU"]
+fn donor_cj_linear_probe() {
+    let cpu0 = cpu_s();
+    let base = base();
+    assert_eq!(base.settle["run5_reproduced"], json!(true));
+    let rtol = num(&base.gates, &["relativeTolerance"]);
+    let dt = num(&base.gates, &["comparison", "observation_s"]);
+    let cutoff = num(&base.budgets, &["uncreditedAbove_Hz"]);
+    let window = num(&base.gates, &["seizure", "duration_s"]);
+    let supply = num(&base.gates, &["supplyLoss", "duration_s"]);
+    let post = num(&base.gates, &["recovery", "postWindow_s"]);
+    let hold_s = num(&base.gates, &["hold", "duration_s"]);
+    let cap_window = num(&base.gates, &["eventWindow", "maxStep_s"]);
+    let tight = STOCK_NEWTON * num(&base.gates, &["eventWindow", "newtonCoefficientFactor"]);
+    let colors = colors(&base);
+    let dcj = Some(0.1);
+    let faces: Vec<usize> = ["UPPER->HOUSING.MAIN", "HOUSING.MAIN->HOUSING.NECK"]
+        .iter()
+        .map(|id| base.face_ids.iter().position(|f| f == id).unwrap())
+        .collect();
+    let policies = [
+        ("fresh", Refresh::Fresh),
+        ("cj_linear", Refresh::CjLinear),
+        ("cj_linear_bounded", Refresh::CjLinearBounded),
+    ];
+    let row = |trace: &Trace, span: f64| json!({"cost":cost(trace, colors, span),"refresh":refresh_json(&trace.refresh),"refresh_window":trace.refresh_window.as_ref().map(refresh_json)});
+    let rms = |trace: &Trace, a: f64, b: f64| {
+        let x: Vec<f64> = fine_between(trace, a, b)
+            .iter()
+            .map(|c| c.core_dp_pa)
+            .collect();
+        high_pass_rms(&x, dt, cutoff)
+    };
+    // (1) The capped seizure.
+    let mut capped = Vec::new();
+    for cap in [0.0045, 0.005] {
+        for (name, refresh) in policies {
+            let t = run(
+                &base,
+                Event::Seizure,
+                Plan {
+                    rtol,
+                    atol: &base.atol,
+                    window_s: window,
+                    max_step_s: cap,
+                    newton: None,
+                    after: After::None,
+                    observe_s: Some(dt),
+                    dcj,
+                    refresh,
+                    step_cap: 50_000,
+                    cpu_cap_s: 900.,
+                },
+            );
+            let report = cycle_report(&base, &t, &faces);
+            capped.push(json!({"max_step_s":cap,"policy":name,"core_dp_5_10_s":report["core_dp_5_10_s"],"newton_error_proxy_5_10_s_wrms":report["newton_error_proxy_5_10_s"]["jacobian_donor"]["mean_wrms"],"run":row(&t, window)}));
+        }
+    }
+    // (2) The established cycle: stock settings to 5 s, resumed at dcj 0.1.
+    let mut established = Vec::new();
+    for cap in [0.0045, 0.005] {
+        for (name, refresh) in policies {
+            let t = run(
+                &base,
+                Event::Seizure,
+                Plan {
+                    rtol,
+                    atol: &base.atol,
+                    window_s: 5.,
+                    max_step_s: cap,
+                    newton: None,
+                    after: After::Resume {
+                        duration_s: 5.,
+                        newton: STOCK_NEWTON,
+                        dcj,
+                        refresh,
+                    },
+                    observe_s: Some(dt),
+                    dcj: None,
+                    refresh: Refresh::Fresh,
+                    step_cap: 50_000,
+                    cpu_cap_s: 900.,
+                },
+            );
+            let resumed = t.refresh_window.map(|w| RefreshCounts {
+                assemblies: t.refresh.assemblies - w.assemblies,
+                recombinations: t.refresh.recombinations - w.recombinations,
+                identical_state: t.refresh.identical_state - w.identical_state,
+                retries: t.refresh.retries - w.retries,
+                identical_any: t.refresh.identical_any - w.identical_any,
+            });
+            established.push(json!({"max_step_s":cap,"policy":name,"core_dp_above_band_rms_pa":{"before_restart_2_5_s":rms(&t, 2., 5.),"after_restart_7_10_s":rms(&t, 7., 10.)},
+                "resumed_refresh":resumed.as_ref().map(refresh_json),"resumed_convergence_failures":t.total_convergence_failures-t.window_counts.map_or(0,|c| c[4]),
+                "resumed_error_failures":t.total_error_failures-t.window_counts.map_or(0,|c| c[3]),"run":row(&t, 10.)}));
+        }
+    }
+    // (3) The S1 window runs restarted at their ends (the restart ramp).
+    let mut ramps = Vec::new();
+    for (case, kind, w) in [
+        ("rcp_seizure", Event::Seizure, window),
+        ("rcp_supply_loss", Event::Supply, supply),
+    ] {
+        let mut traces = Vec::new();
+        for (name, refresh) in policies {
+            let t = run(
+                &base,
+                kind,
+                Plan {
+                    rtol,
+                    atol: &base.atol,
+                    window_s: w,
+                    max_step_s: cap_window,
+                    newton: Some(tight),
+                    after: After::Restart(post),
+                    observe_s: Some(dt),
+                    dcj,
+                    refresh,
+                    step_cap: 50_000,
+                    cpu_cap_s: 900.,
+                },
+            );
+            let cont = |i: usize| match i {
+                0 => t.total_steps - t.window_counts.map_or(0, |c| c[0]),
+                3 => t.total_error_failures - t.window_counts.map_or(0, |c| c[3]),
+                _ => t.total_convergence_failures - t.window_counts.map_or(0, |c| c[4]),
+            };
+            let resumed = t.refresh_window.map(|w| RefreshCounts {
+                assemblies: t.refresh.assemblies - w.assemblies,
+                recombinations: t.refresh.recombinations - w.recombinations,
+                identical_state: t.refresh.identical_state - w.identical_state,
+                retries: t.refresh.retries - w.retries,
+                identical_any: t.refresh.identical_any - w.identical_any,
+            });
+            ramps.push(json!({"case":case,"policy":name,"continuation":{"steps":cont(0),"error_failures":cont(3),"convergence_failures":cont(4),"refresh":resumed.as_ref().map(refresh_json)},
+                "window_refresh":t.refresh_window.as_ref().map(refresh_json),"run":row(&t, w + post)}));
+            traces.push(t);
+        }
+        // R1 as declared: the 2.5 ms cap and the window's coefficient, fresh.
+        let r1 = run(
+            &base,
+            kind,
+            Plan {
+                rtol,
+                atol: &base.atol,
+                window_s: w,
+                max_step_s: num(&base.gates, &["eventReference", "maxStep_s"]),
+                newton: Some(tight),
+                after: After::None,
+                observe_s: Some(dt),
+                dcj,
+                refresh: Refresh::Fresh,
+                step_cap: 50_000,
+                cpu_cap_s: 900.,
+            },
+        );
+        let versus: Vec<Value> = policies.iter().zip(&traces).map(|((name, _), t)| json!({"policy":name,"window_versus_r1":compare(&base, t, &r1, w)})).collect();
+        ramps.push(json!({"case":case,"r1_steps":r1.total_steps,"contract_versus_r1":versus,
+            "raw_difference_from_fresh":policies.iter().zip(&traces).skip(1).map(|((name, _), t)| json!({"policy":name,"window":raw_difference(t, &traces[0], 0., w),"continuation":raw_difference(t, &traces[0], w, w + post)})).collect::<Vec<_>>()}));
+    }
+    // (4) The hold and the never-capped seizure.
+    let mut natural = Vec::new();
+    for (case, kind, span) in [
+        ("hold", Event::Hold, hold_s),
+        ("rcp_seizure_never_capped", Event::Seizure, window + post),
+    ] {
+        for (name, refresh) in policies {
+            let t = run(
+                &base,
+                kind,
+                Plan {
+                    rtol,
+                    atol: &base.atol,
+                    window_s: span,
+                    max_step_s: f64::INFINITY,
+                    newton: None,
+                    after: After::None,
+                    observe_s: None,
+                    dcj,
+                    refresh,
+                    step_cap: 50_000,
+                    cpu_cap_s: 900.,
+                },
+            );
+            natural.push(json!({"case":case,"policy":name,"run":row(&t, span)}));
+        }
+    }
+    let receipt = json!({"kind":"donor-cj-linear-probe-NOT-EVIDENCE","provenance":provenance(&base),
+        "method":"JAC's cj-linear refresh emulated in the probe's IDA wrapper, no kernel change: a fresh setup assembles A = M(cj=0) and A + B = M(cj=1) by the network's colored assembly (two passes here; one assembly in production) and keeps them with the structure and state; a setup called right after an attempt's first residual (stock's first-step or cj-ratio trigger) recombines M = A + cj B from the stored pair with no evaluation; a setup after further residual calls at the same trial time (stock's Newton-failure retry, jbad) and the first setup after a (re)initialization assemble fresh. dcj 0.1 and stock's Newton coefficient everywhere except the H1 window's own tightened coefficient; the fresh policy assembles every setup as stock does. identical-state counts compare the setup's (t, y, y') bitwise with the stored assembly's (cj_linear) or the previous setup's (any policy)",
+        "colors":colors,"dcj":0.1,"capped_seizure":capped,"established_cycle":established,"restart_ramps":ramps,"natural":natural,"cpu_s_total":cpu_s()-cpu0,"load_average_end":load_average()});
+    write(&base, "donor-cj-linear.json", &receipt);
 }
