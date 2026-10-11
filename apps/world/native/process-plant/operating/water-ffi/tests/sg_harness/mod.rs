@@ -873,6 +873,19 @@ pub mod integrate {
                             events.push(json!({"t_s":t,"event":"command","receipt":tx.receipt}));
                             commands.remove(0);
                         }
+                        // The owner's time event due at this stop, as the joined
+                        // restart calls it; its changed coordinates go back to y.
+                        let ns = sys.secondary_len;
+                        let mut phys: Vec<f64> = (0..ns).map(|i| y[i] * sys.scales[i]).collect();
+                        if let Some(tx) =
+                            Secondary::<P>::time_event(&mut sys.secondary, &sys.props, t, &mut phys)
+                                .map_err(|e| format!("{e:?}"))?
+                        {
+                            events.push(json!({"t_s":t,"event":"time event","receipt":tx.receipt}));
+                        }
+                        for (i, v) in phys.iter().enumerate() {
+                            y[i] = v / sys.scales[i];
+                        }
                         events.push(json!({"t_s":t,"event":"time boundary"}));
                         restart = true;
                     }

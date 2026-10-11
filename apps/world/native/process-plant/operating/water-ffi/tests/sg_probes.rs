@@ -71,7 +71,7 @@ fn counts(events: &[Value]) -> Value {
     }
     let count = |kind: &str| events.iter().filter(|e| e["event"] == kind).count();
     json!({"transitionsByThresholdAndKind":by,"rootReturns":count("root"),
-        "exactConsistentRestarts":count("exact consistent restart"),"timeBoundaries":count("time boundary")})
+        "exactConsistentRestarts":count("exact consistent restart"),"timeBoundaries":count("time boundary"),"timeEvents":count("time event")})
 }
 fn write(name: &str, value: &Value) {
     if let Ok(dir) = std::env::var("LD01_OPERATING_SG_PROBE_OUT") {
