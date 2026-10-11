@@ -236,6 +236,10 @@ pub enum Root {
     Travel,
     /// A steel coordinate reaching the 304 domain's maximum temperature.
     SteelLimit(usize),
+    /// Gate 5's instantaneous LT indication falling through the cutout's
+    /// switching level: from here the lagged, sampled indication can first
+    /// satisfy the low-level predicate, so the run stops at every sample.
+    LowLevel,
 }
 impl Root {
     pub fn label(&self) -> String {
@@ -247,6 +251,7 @@ impl Root {
             Root::Demand => "relief demand threshold".into(),
             Root::Travel => "relief end of travel".into(),
             Root::SteelLimit(i) => format!("steel coordinate {i} at the 304 domain maximum"),
+            Root::LowLevel => "LT indication at the cutout's switching level".into(),
         }
     }
 }
@@ -275,6 +280,8 @@ pub struct CellSystem {
     pub metal: Option<Metal>,
     /// Roots that are always active: free-area edges and structural limits.
     pub fixed_roots: Vec<Root>,
+    /// Gate 5's cutout while its switching level is still watched by root.
+    pub cutout_watch: Option<Cutout>,
     pub counters: Counters,
 }
 
@@ -371,6 +378,9 @@ impl CellSystem {
         if let Some(m) = &self.metal {
             let base = self.metal_base();
             roots.extend((base..base + m.count()).map(Root::SteelLimit));
+        }
+        if self.cutout_watch.is_some() {
+            roots.push(Root::LowLevel);
         }
         if let Some(r) = self.relief.as_ref().filter(|r| r.armed) {
             roots.push(Root::Demand);
@@ -568,6 +578,17 @@ impl CellSystem {
             mixture - bottom,
         ]
     }
+    /// The cutout's calibrated LT indication from the column's tap
+    /// pressures at the coordinates, unlagged and unquantized.
+    fn lt_indication_m(&self, y: &[f64], c: &Cutout) -> Result<f64, String> {
+        let xv: Vec<Scalar> = (0..st::COORDINATES)
+            .map(|i| Scalar::new(y[i] * self.scales[i], 0.))
+            .collect();
+        let x = Coordinates::from_slice(&xv).map_err(|f| text(&f))?;
+        let column = self.cell.column(&If97, &x, None).map_err(|f| text(&f))?;
+        let taps = self.cell.taps(&If97, &column).map_err(|f| text(&f))?;
+        Ok(c.level(taps.level_difference_pa.value))
+    }
     pub fn root_values(&self, y: &[f64], roots: &[Root], out: &mut [f64]) -> Result<(), String> {
         let v = |i: usize| y[i] * self.scales[i];
         let mixture = self
@@ -587,6 +608,14 @@ impl CellSystem {
                 Root::SteelLimit(i) => {
                     let m = self.metal.as_ref().ok_or("steel root without metal")?;
                     v(*i) - m.limit_energy_j[*i - self.metal_base()]
+                }
+                Root::LowLevel => {
+                    let c = self
+                        .cutout_watch
+                        .ok_or("low-level root without a watched cutout")?;
+                    // The predicate is `round(level/q) <= round(setting/q)`,
+                    // which first holds below setting + q/2.
+                    self.lt_indication_m(y, &c)? - (c.setting_m + 0.5 * c.quantum_m)
                 }
                 Root::Demand | Root::Travel => {
                     let r = self
@@ -788,6 +817,10 @@ pub struct Sample {
     pub spray_condensation_kg_s: f64,
     pub flashing_kg_s: [f64; 2],
     pub vapor_condensation_kg_s: f64,
+    /// The bulk bubble exchange (request 4, K1): `W_x`, the bubble stock
+    /// condensed into R, kg/s, and its Weber number for the domain disclosure.
+    pub bubble_condensation_kg_s: f64,
+    pub bubble_exchange_weber: f64,
     pub interface_evaporation_kg_s: f64,
     pub inversion_kg_s: f64,
     pub conduction_w: f64,
@@ -959,6 +992,8 @@ pub fn sample(
         spray_condensation_kg_s: f.spray_condensation.value,
         flashing_kg_s: [f.admitted_flashing.value, f.resident_flashing.value],
         vapor_condensation_kg_s: f.vapor_condensation.value,
+        bubble_condensation_kg_s: f.bubble_exchange.condensation.value,
+        bubble_exchange_weber: f.bubble_exchange.weber.value,
         interface_evaporation_kg_s: -f.interface.liquid.mass.value,
         inversion_kg_s: f.inversion.value,
         conduction_w: f.conduction.value,
@@ -1413,6 +1448,8 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     let mut acquired = Acquired::default();
     let mut diagnostic = 0.;
     let mut totals = Totals::default();
+    // Gate 5's cutout: its switching level is watched by root from t = 0.
+    system.cutout_watch = spec.cutout;
     match start(&mut system, t, &mut y, spec) {
         Ok((rates, pair)) => {
             yp = rates;
@@ -1564,6 +1601,21 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     };
     out.observations.push(ida.system().system.observe(t, &y));
     let ratio = (spec.output_s / spec.observation_s).round() as u64;
+    // Once the low-level root has armed the cutout and until it causes the
+    // isolator, the run stops at every regular sample, where the declared
+    // acquisition is evaluated: the isolator's stop, 0.05 s after a sample,
+    // is then never behind the integrator.
+    let mut watching = false;
+    let mut armed_at: Option<f64> = None;
+    let stop_after = |pending: &[(f64, Pending)], t: f64, watching: bool| -> f64 {
+        let stop = next_stop(pending, t);
+        if watching {
+            let index = ((t / spec.observation_s + 1e-6).floor() as u64 / ratio + 1) * ratio;
+            stop.min(index as f64 * spec.observation_s)
+        } else {
+            stop
+        }
+    };
     assert!(
         ratio >= 1 && (ratio as f64 * spec.observation_s - spec.output_s).abs() <= 1e-12,
         "the output interval must be a whole number of observations"
@@ -1623,7 +1675,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     let mut probed = f64::NEG_INFINITY;
     loop {
         let next_output = k as f64 * spec.observation_s;
-        let stop = next_stop(&pending, t);
+        let stop = stop_after(&pending, t, watching);
         let target = next_output.min(stop).min(spec.duration_s);
         // Stock IDA's first step is 0.001 of the distance to its first
         // target. A handle's first target is therefore the next regular
@@ -1726,11 +1778,16 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                 if end.is_none()
                     && regular
                     && let Some(open) = acquire(&mut out, &mut acquired, &mut pending, t)
-                    && let Err(e) = ida.stop_at(next_stop(&pending, t))
                 {
-                    end = Some(End::Failure {
-                        reason: format!("isolator stop at {open} s: {e}"),
-                    });
+                    watching = false;
+                    if let Some(c) = out.cutout.as_mut() {
+                        c["armed_by_root_s"] = json!(armed_at);
+                    }
+                    if let Err(e) = ida.stop_at(stop_after(&pending, t, watching)) {
+                        end = Some(End::Failure {
+                            reason: format!("isolator stop at {open} s: {e}"),
+                        });
+                    }
                 }
                 if end.is_none() {
                     if t >= spec.duration_s {
@@ -1766,7 +1823,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                     &yp,
                                     spec,
                                     HandleStart {
-                                        stop: next_stop(&pending, t),
+                                        stop: stop_after(&pending, t, watching),
                                         first_step: Some(spec.event_restart_first_step_s),
                                         ledger: q,
                                     },
@@ -1789,7 +1846,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                             }
                         }
                     } else if t >= stop
-                        && let Err(e) = ida.stop_at(next_stop(&pending, t))
+                        && let Err(e) = ida.stop_at(stop_after(&pending, t, watching))
                     {
                         end = Some(End::Failure {
                             reason: format!("stop boundary: {e}"),
@@ -1882,7 +1939,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                 ),
                             });
                         }
-                        Root::Demand | Root::Travel => {}
+                        Root::Demand | Root::Travel | Root::LowLevel => {}
                     }
                 }
                 if end.is_none() && (demand.is_some() || travel) {
@@ -1962,7 +2019,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                     &yp,
                                     spec,
                                     HandleStart {
-                                        stop: next_stop(&pending, t),
+                                        stop: stop_after(&pending, t, watching),
                                         first_step: Some(spec.event_restart_first_step_s),
                                         ledger: q,
                                     },
@@ -1986,6 +2043,50 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                         }
                     }
                     out.relief_events.push(event);
+                }
+                // The cutout's switching level crossed downward: restart here
+                // without the root and stop at every sample from now on.
+                if end.is_none() && fired.iter().any(|(r, d)| *r == Root::LowLevel && *d < 0) {
+                    let mut next = ida.system().system.clone();
+                    next.cutout_watch = None;
+                    watching = acquired.cause.is_none();
+                    armed_at = Some(t);
+                    let ledger = ledger_at(&ida, t);
+                    absorb(&mut out, &mut totals, &ida);
+                    next.counters = Counters::default();
+                    match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q))) {
+                        Ok(((rates, pair), q)) => {
+                            yp = rates;
+                            out.initializations.push(pair);
+                            match new_handle(
+                                next,
+                                t,
+                                &y,
+                                &yp,
+                                spec,
+                                HandleStart {
+                                    stop: stop_after(&pending, t, watching),
+                                    first_step: Some(spec.event_restart_first_step_s),
+                                    ledger: q,
+                                },
+                            ) {
+                                Ok(h) => {
+                                    ida = h;
+                                    out.handles += 1;
+                                }
+                                Err(e) => {
+                                    end = Some(End::Failure {
+                                        reason: format!("cutout arming handle at t={t} s: {e}"),
+                                    })
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            end = Some(End::Failure {
+                                reason: format!("cutout arming start at t={t} s: {e}"),
+                            })
+                        }
+                    }
                 }
                 if end.is_none()
                     && let Some(smp) = &smp
@@ -2089,7 +2190,7 @@ fn classify_limit(reason: &str) -> String {
 }
 
 pub fn sample_json(s: &Sample) -> Value {
-    json!({"t":s.t,"event":s.event,"pt1_pa":s.pt1_pa,"p_s_pa":s.interface_pa,"p_bottom_pa":s.bottom_pa,"lt_dp_pa":s.lt_dp_pa,
+    let mut j = json!({"t":s.t,"event":s.event,"pt1_pa":s.pt1_pa,"p_s_pa":s.interface_pa,"p_bottom_pa":s.bottom_pa,"lt_dp_pa":s.lt_dp_pa,
         "mixture_level_m":s.mixture_level_m,"collapsed_level_m":s.collapsed_level_m,"z_ar_m":s.boundary_elevation_m,"delta_a_m":s.admitted_thickness_m,"phi":s.withdrawal_fraction,
         "mass_kg":{"g":s.masses[0],"A":s.masses[1],"R":s.masses[2],"b":s.masses[3],"d":s.masses[4]},"drop_boron_kg":s.drop_boron_kg,
         "temperature_k":{"g":s.temperatures_k[0],"A":s.temperatures_k[1],"R":s.temperatures_k[2]},
@@ -2103,7 +2204,9 @@ pub fn sample_json(s: &Sample) -> Value {
         "metal":{"energy_j":s.metal_energy_j,"joule_w":s.joule_w,"exterior_w":s.exterior_w,"fluid_receipts_w":s.metal_fluid_w,"identity_w":s.metal_identity_w,
             "rod_temperature_k":s.rod_temperature_k,"wall_temperature_k":s.wall_temperature_k,"bank_wet_fraction":s.bank_wet_fraction,"bank_exposed_m":s.bank_exposed_m,"isolated":s.isolated},
         "lt":{"dp_acquired_pa":s.lt_dp_acquired_pa,"indication_m":s.lt_indication_m},
-        "steps":s.steps,"last_step_s":s.last_step_s,"order":s.order,"error_test_failures":s.error_failures,"convergence_failures":s.convergence_failures})
+        "steps":s.steps,"last_step_s":s.last_step_s,"order":s.order,"error_test_failures":s.error_failures,"convergence_failures":s.convergence_failures});
+    j["bubble_exchange"] = json!({"condensation_kg_s":s.bubble_condensation_kg_s,"weber":s.bubble_exchange_weber});
+    j
 }
 
 /// Conservation ledgers over the samples (request 4, K2). The gated one is

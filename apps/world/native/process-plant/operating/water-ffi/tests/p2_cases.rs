@@ -24,8 +24,8 @@ use leitbild_operating_plant::{
         heaters::{BanksBlock, Caloric304, ContactBlock, HeaterCase, Heaters},
         properties as props,
         stratified::{
-            self as st, Case, Cell, Parameters, PortKind, ReliefDevice, ReliefMotion,
-            SensitivityFamilies,
+            self as st, Case, Cell, ExchangeCase, Parameters, PortKind, ReliefDevice,
+            ReliefMotion, SensitivityFamilies,
         },
         walls::{ShellBlock, WallCase, Walls},
     },
@@ -402,6 +402,11 @@ struct Variant {
     bubble_diameter_m: f64,
     /// Gate 5's segment refinement: every heater segment halved.
     halved_segments: bool,
+    /// The bulk bubble exchange's sensitivity selection (request 4, K1).
+    exchange: ExchangeCase,
+    /// The heater contact's wall birth fraction χ (nominal or its declared
+    /// sensitivity), shared by the rods and the shell's wet contact.
+    wall_birth_fraction: f64,
 }
 
 /// The heater banks block, with every segment halved for the refinement.
@@ -424,13 +429,17 @@ fn banks(ctx: &Context, halved: bool) -> BanksBlock {
 
 /// The PZR metal from its blocks: the rods (nominal contact case) and the
 /// shell and heads, with the case's recorded heater request when declared.
-fn metal(ctx: &Context, entry: &Entry, cell: &Cell, halved: bool) -> Metal {
+fn metal(ctx: &Context, entry: &Entry, cell: &Cell, halved: bool, chi: f64) -> Metal {
+    let contact = HeaterCase {
+        wall_birth_fraction: chi,
+        ..HeaterCase::nominal(&ctx.contact)
+    };
     let heaters = Heaters::new(
         cell,
         &banks(ctx, halved),
         ctx.caloric,
         ctx.contact,
-        HeaterCase::nominal(&ctx.contact),
+        contact,
     )
     .expect("heaters");
     let walls = Walls::new(
@@ -439,7 +448,10 @@ fn metal(ctx: &Context, entry: &Entry, cell: &Cell, halved: bool) -> Metal {
         ctx.shell.clone(),
         ctx.caloric,
         ctx.contact,
-        WallCase::nominal(&ctx.contact, &ctx.shell),
+        WallCase {
+            contact,
+            ..WallCase::nominal(&ctx.contact, &ctx.shell)
+        },
     )
     .expect("walls");
     let maximum = ctx
@@ -567,7 +579,7 @@ fn prepare(ctx: &Context, entry: &Entry, halved: bool) -> Prepared {
     if entry.relief == Some(true) {
         y0.push(0.);
     }
-    let m = metal(ctx, entry, &cell, halved);
+    let m = metal(ctx, entry, &cell, halved, ctx.contact.wet.wall_birth_fraction);
     let temperature = preparation.saturation_temperature_k;
     let mut steel = m
         .heaters
@@ -613,8 +625,9 @@ fn system(ctx: &Context, entry: &Entry, prepared: &Prepared, v: Variant) -> Cell
         },
         Some(&ctx.set.sensitivity_families),
     )
+    .and_then(|c| c.with_exchange(v.exchange))
     .expect("cell variant");
-    let metal = metal(ctx, entry, &cell, v.halved_segments);
+    let metal = metal(ctx, entry, &cell, v.halved_segments, v.wall_birth_fraction);
     let port = |kind: PortKind| p.ports.iter().position(|q| q.kind == kind);
     let c = p.absorber_mass_fraction;
     let surge = entry.surge.as_ref().map(|tb| Flow {
@@ -661,6 +674,7 @@ fn system(ctx: &Context, entry: &Entry, prepared: &Prepared, v: Variant) -> Cell
         relief,
         metal: Some(metal),
         fixed_roots,
+        cutout_watch: None,
         counters: Counters::default(),
     }
 }
@@ -684,6 +698,8 @@ fn variants(ctx: &Context, entry: &Entry) -> Vec<(String, Variant, bool)> {
         drop_diameter_m: x.spray_drop_diameter_m,
         bubble_diameter_m: x.bubble_diameter_m,
         halved_segments: false,
+        exchange: ExchangeCase::nominal(),
+        wall_birth_fraction: ctx.contact.wet.wall_birth_fraction,
     };
     let f = &ctx.set.sensitivity_families;
     let mut out = vec![("nominal".to_string(), nominal, false)];
@@ -742,6 +758,48 @@ fn variants(ctx: &Context, entry: &Entry) -> Vec<(String, Variant, bool)> {
                         false,
                     ));
                 }
+            }
+            // Request 4, K1: the values are their owners' strict keys,
+            // `ld01-pzr-stratified` and the heater contact block.
+            "bubbleExchange" => {
+                for factor in x.bubble_exchange_sensitivity.iter().filter(|f| **f != 1.) {
+                    out.push((
+                        format!("bubble exchange x{factor}"),
+                        Variant {
+                            exchange: ExchangeCase {
+                                factor: *factor,
+                                diameter_m: None,
+                            },
+                            ..nominal
+                        },
+                        false,
+                    ));
+                }
+            }
+            "bubbleExchangeDiameter" => {
+                let d = x.bubble_exchange_diameter_sensitivity_m;
+                out.push((
+                    format!("exchange diameter {d} m"),
+                    Variant {
+                        exchange: ExchangeCase {
+                            factor: 1.,
+                            diameter_m: Some(d),
+                        },
+                        ..nominal
+                    },
+                    false,
+                ));
+            }
+            "wallBirth" => {
+                let chi = ctx.contact.wet.wall_birth_fraction_sensitivity;
+                out.push((
+                    format!("wall birth chi {chi}"),
+                    Variant {
+                        wall_birth_fraction: chi,
+                        ..nominal
+                    },
+                    false,
+                ));
             }
             other => panic!("undeclared sensitivity family {other}"),
         }
@@ -1053,7 +1111,8 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
     let mut ledgers = serde_json::Map::new();
     for (label, v, refined, r) in &runs {
         let mut j = run_json(r, stride);
-        j["variant"] = json!({"relaxation_factor":v.relaxation_factor,"spray_drop_diameter_m":v.drop_diameter_m,"bubble_diameter_m":v.bubble_diameter_m,"halved_segments":v.halved_segments,"refined":refined});
+        j["variant"] = json!({"relaxation_factor":v.relaxation_factor,"spray_drop_diameter_m":v.drop_diameter_m,"bubble_diameter_m":v.bubble_diameter_m,"halved_segments":v.halved_segments,
+            "bubble_exchange_factor":v.exchange.factor,"bubble_exchange_diameter_m":v.exchange.diameter_m,"wall_birth_fraction":v.wall_birth_fraction,"refined":refined});
         j["cpu_cap_s"] = json!(cap);
         let l = ledger(r, surge.as_ref(), spray.as_ref(), ctx.set.quadrature_closure_factor);
         j["conservation"] = l.clone();
