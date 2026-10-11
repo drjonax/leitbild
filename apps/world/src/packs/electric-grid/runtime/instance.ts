@@ -11,10 +11,14 @@ import type { GridProjection } from '../model.ts'
 import type { ElectricalConnectionDefinition } from '../../../core/model/index.ts'
 import type { IslandFrequencyState } from './frequency/island-state.ts'
 import type { FrequencyReserveAllocation } from './frequency/types.ts'
+import type { GeneratorTripCause } from './frequency/generator-protection.ts'
 import { dispatchGridFromLiveIslands } from './dispatch.ts'
 import { noReserves } from './frequency/governors.ts'
 import { upwardReserveMw } from './reserve-allocation.ts'
 import type { CompiledGridNetwork } from './network/compiled-network.ts'
+import { createGridAlarmState, type GridAlarmState, type PersistedGridAlarmState } from './alarms.ts'
+import type { GridRuntimeSignal } from './grid-signals.ts'
+import { createGridProtectionState, idleBranchProtection, type GridBranchProtectionState, type GridGeneratorTripRecord, type GridProtectionState } from './protection/state.ts'
 import type { GridIslandSystem } from './network/dc-power-flow.ts'
 
 /**
@@ -39,7 +43,8 @@ export interface GridBusState {
 }
 
 export interface GridBranchState {
-  state: 'closed' | 'open'
+  /** open: by operator; tripped: by its protection, open until reset-branch-protection. */
+  state: 'closed' | 'open' | 'tripped'
   availability: number
   flowMw: number
   loadingPercent: number
@@ -48,6 +53,7 @@ export interface GridBranchState {
   frequencyHz: number | null
   /** Quadratic DC loss r·P²/S_base (MW). */
   lossesMw: number
+  readonly protection: GridBranchProtectionState
 }
 
 /** tripped →(reset)→ offline →(start)→ starting →(start-up time)→ online →(stop)→ stopping →(0 MW)→ offline. */
@@ -219,6 +225,8 @@ export interface GridFrequencyEvent {
   readonly atElapsedSeconds: number
   readonly kind: 'generator-trip' | 'lfdd-stage-operated' | 'mfrr-activated' | 'storage-state-changed' | 'island-collapsed'
   readonly summary: string
+  /** The unit and protection element of a generator trip. */
+  readonly trip?: { readonly unitId: string; readonly elementId: string; readonly cause: GeneratorTripCause }
 }
 
 export interface GridRuntimeInstance {
@@ -242,6 +250,10 @@ export interface GridRuntimeInstance {
   readonly lossLoadByBusMw: Float64Array
   /** Bounded list of the latest discrete frequency-control actions, newest last. */
   readonly frequencyEvents: GridFrequencyEvent[]
+  readonly protection: GridProtectionState
+  readonly alarms: GridAlarmState
+  /** Alarm transitions and protection trips waiting for the adapter to emit them, oldest first. */
+  readonly signalQueue: GridRuntimeSignal[]
   readonly diagnostics: GridRuntimeDiagnostics
   projection: GridProjection
 }
@@ -264,7 +276,7 @@ export interface GridAssetSnapshot {
 export interface RestoredGridRuntimeState {
   readonly elapsedMs: number
   readonly tick: number
-  readonly branches: ReadonlyArray<{ readonly id: string; readonly state: GridBranchState['state']; readonly availability: number }>
+  readonly branches: ReadonlyArray<{ readonly id: string; readonly state: GridBranchState['state']; readonly availability: number; readonly protection: GridBranchProtectionState }>
   readonly generators: ReadonlyArray<{
     readonly id: string
     readonly state: GridGeneratorState['state']
@@ -279,6 +291,12 @@ export interface RestoredGridRuntimeState {
   readonly hvdcLinks: ReadonlyArray<{ readonly id: string; readonly setpointMw: number; readonly transferMw: number }>
   readonly islands: ReadonlyArray<{ readonly id: string; readonly anchorBusId: string; readonly frequency: IslandFrequencyState | null }>
   readonly lossLoadByBusMw: ReadonlyArray<number>
+  readonly protection: {
+    readonly lastSampleElapsedMs: number | null
+    readonly thermalInitialised: boolean
+    readonly recordedGeneratorTrips: ReadonlyArray<GridGeneratorTripRecord & { readonly generatorId: string }>
+  }
+  readonly alarms: PersistedGridAlarmState
 }
 
 const requireRestored = <T extends { readonly id: string }>(items: ReadonlyArray<T>, ids: ReadonlyArray<string>, kind: string): ReadonlyMap<string, T> => {
@@ -315,6 +333,7 @@ export const createGridRuntimeInstance = (config: {
       voltageToPu: 0,
       frequencyHz: null,
       lossesMw: 0,
+      protection: stored === undefined ? idleBranchProtection() : { ...stored.protection },
     } satisfies GridBranchState]
   }))
   const generators = new Map(model.generators.map(generator => {
@@ -410,6 +429,9 @@ export const createGridRuntimeInstance = (config: {
     restoredIslands: restored?.islands ?? null,
     lossLoadByBusMw: restored ? Float64Array.from(restored.lossLoadByBusMw) : new Float64Array(model.buses.length),
     frequencyEvents: [],
+    protection: createGridProtectionState(restored?.protection),
+    alarms: createGridAlarmState(restored?.alarms),
+    signalQueue: [],
     diagnostics: {
       lastSuccessfulTickAt: null,
       lastTickDurationMs: 0,

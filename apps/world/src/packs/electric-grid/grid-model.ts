@@ -47,6 +47,8 @@ export interface GridBranchDefinition {
   readonly nominalKv: number
   readonly ratingMw: number
   readonly emergencyRatingMw: number
+  /** How long the branch may carry its emergency rating; absent in v1 Models, where the Automation's branch protection gives it. */
+  readonly emergencyDurationSeconds?: number | undefined
   readonly reactancePu: number
   readonly resistancePu: number
   readonly weatherExposure: 'low' | 'medium' | 'high'

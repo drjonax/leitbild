@@ -21,7 +21,10 @@ const actionSummary = (action: FrequencyAction): string => {
 
 const recordActions = (grid: GridRuntimeInstance, islandId: string, actions: ReadonlyArray<FrequencyAction>): void => {
   for (const action of actions) {
-    grid.frequencyEvents.push({ islandId, atElapsedSeconds: action.atSeconds, kind: action.kind, summary: actionSummary(action) })
+    grid.frequencyEvents.push({
+      islandId, atElapsedSeconds: action.atSeconds, kind: action.kind, summary: actionSummary(action),
+      ...(action.kind === 'generator-trip' ? { trip: { unitId: action.unitId, elementId: action.elementId, cause: action.cause } } : {}),
+    })
   }
   if (grid.frequencyEvents.length > retainedFrequencyEvents) grid.frequencyEvents.splice(0, grid.frequencyEvents.length - retainedFrequencyEvents)
 }

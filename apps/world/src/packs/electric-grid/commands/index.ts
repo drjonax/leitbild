@@ -1,4 +1,5 @@
 import type { SimulationCapability } from '../../../simulation/protocol.ts'
+import { gridAlarmCommandCapabilities, gridAlarmLifecycleCommandKind } from './alarm.ts'
 import {
   gridClearDerateCommandKind,
   gridCloseBranchCommandKind,
@@ -22,6 +23,7 @@ import {
   gridSetEvChargingDemandCommandKind,
   gridShedLoadCommandKind,
 } from './load.ts'
+import { gridProtectionCommandCapabilities, gridResetBranchProtectionCommandKind } from './protection.ts'
 
 export const electricGridCommandKinds = [
   gridDispatchGeneratorCommandKind,
@@ -39,6 +41,8 @@ export const electricGridCommandKinds = [
   gridSetEvChargingDemandCommandKind,
   gridRestoreLfddStageCommandKind,
   gridRearmLfddStageCommandKind,
+  gridResetBranchProtectionCommandKind,
+  gridAlarmLifecycleCommandKind,
 ] as const
 
 export const electricGridCommandCapabilities: ReadonlyArray<SimulationCapability> = [
@@ -46,6 +50,8 @@ export const electricGridCommandCapabilities: ReadonlyArray<SimulationCapability
   ...gridBranchCommandCapabilities,
   ...gridLoadCommandCapabilities,
   ...gridFrequencyCommandCapabilities,
+  ...gridProtectionCommandCapabilities,
+  ...gridAlarmCommandCapabilities,
 ]
 
 /** Commands that disconnect generation or supply at once; operator surfaces confirm them first. */

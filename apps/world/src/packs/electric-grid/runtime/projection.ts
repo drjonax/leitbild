@@ -1,12 +1,9 @@
 import type { IsoTimestamp } from '../../../core/model/index.ts'
 import type { GridIslandProjection } from '../model.ts'
+import { gridAlarmCounts } from './alarms.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from './instance.ts'
 import { externalFrequencyEquivalent, gridGeneratorIsSynchronised, islandFixedInjectionMw, islandMembers } from './island-input.ts'
 
-// Nordic standard frequency range ±100 mHz (SO GL Annex III): outside it an island raises a frequency alarm.
-const frequencyAlarmDeviationHz = 0.1
-// Corridor loading alarm threshold, percent of the continuous rating.
-const branchLoadingAlarmPercent = 85
 // Status turns "working" when the headline island is 50 mHz off nominal: half the standard range.
 const workingDeviationHz = 0.05
 
@@ -14,7 +11,7 @@ const workingDeviationHz = 0.05
 const mw = (value: number): number => Math.round(value * 10) / 10
 const hz = (value: number): number => Math.round(value * 10_000) / 10_000
 
-const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland): GridIslandProjection | null => {
+const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland, alarmCount: number): GridIslandProjection | null => {
   const structure = islands.plan.islands[island.planIndex]!
   const members = islandMembers(grid, structure)
   if (structure.generators.length + structure.loads.length + structure.storage.length + members.externals.length + members.connectionPointIds.length === 0) return null
@@ -26,7 +23,6 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
     : 0
   const loadMw = structure.loads.reduce((sum, definition) => sum + grid.loads.get(definition.id)!.demandMw, 0)
   const servedLoadMw = structure.loads.reduce((sum, definition) => sum + grid.loads.get(definition.id)!.servedMw, 0)
-  const lfddShedMw = structure.loads.reduce((sum, definition) => sum + grid.loads.get(definition.id)!.lfddShedMw, 0)
   let lossesMw = 0
   for (const bus of members.busIndices) lossesMw += grid.lossLoadByBusMw[bus]!
   const reserves = { fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrUpMw: 0, afrrDownMw: 0, mfrrUpMw: 0, mfrrDownMw: 0 }
@@ -46,9 +42,6 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
     }
   }
   const frequencyHz = island.energized ? island.frequency!.frequencyHz! : null
-  const alarmCount = island.energized
-    ? (Math.abs(frequencyHz! - nominalHz) > frequencyAlarmDeviationHz ? 1 : 0) + (lfddShedMw > 0 ? 1 : 0)
-    : loadMw > 0 ? 1 : 0
   return {
     id: island.id,
     energized: island.energized,
@@ -68,11 +61,15 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
   }
 }
 
-/** System projection: per-island state and alarms, the headline frequency of the largest-load energised island, and totals. */
+/**
+ * System projection: per-island state, the headline frequency of the largest-load energised island,
+ * and totals. Alarm counts are the active, unshelved alarm records (island alarms per island).
+ */
 export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIslandPlan, at: IsoTimestamp): void => {
   const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
+  const alarms = gridAlarmCounts(grid)
   const projected = islands.islands.flatMap(island => {
-    const view = islandProjection(grid, islands, island)
+    const view = islandProjection(grid, islands, island, alarms.activeByIsland.get(island.id) ?? 0)
     return view === null ? [] : [view]
   })
   const energised = projected.filter(island => island.energized && island.frequencyHz !== null)
@@ -105,7 +102,7 @@ export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIsland
   for (const state of grid.branches.values()) lossesMw += state.lossesMw
   for (const state of grid.hvdcLinks.values()) lossesMw += state.lossesMw
   const highestBranchLoadingPercent = [...grid.branches.values()].reduce((highest, item) => Math.max(highest, item.loadingPercent), 0)
-  const activeAlarmCount = projected.reduce((sum, island) => sum + island.alarmCount, 0) + (highestBranchLoadingPercent >= branchLoadingAlarmPercent ? 1 : 0)
+  const activeAlarmCount = alarms.active
   const statusTone = activeAlarmCount > 0
     ? 'error' as const
     : headline === null || Math.abs(headline.frequencyHz! - nominalHz) >= workingDeviationHz ? 'working' as const : 'ready' as const

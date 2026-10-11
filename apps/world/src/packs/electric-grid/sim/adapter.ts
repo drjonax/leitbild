@@ -35,6 +35,7 @@ import { applyGridCommand } from '../runtime/apply-command.ts'
 import { advanceGrid } from '../runtime/solver.ts'
 import { commandProvenanceSource } from './command-provenance.ts'
 import { electricGridAdapterId,electricGridRuntimeId } from './constants.ts'
+import { gridSignalEvents } from './grid-signal-events.ts'
 import { gridProjectionEvents,projectGridObject,projectedInitialGridObjects } from './object-projection.ts'
 import { parseElectricGridRuntimeState,restoredGridRuntimeStateFor,runtimeStateForElectricGrids } from './runtime-state.ts'
 
@@ -99,6 +100,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
   capabilities: [...electricGridCommandCapabilities, ...electricGridQueryCapabilities],
   connect: async (config: PackRuntimeConnectionConfig): Promise<PackRuntimeConnection> => {
     const { compileGridDefinition } = await import('../definitions.ts')
+    const simulationRunId = config.simulationRunId
     const initialObjects = (config.initialObjects ?? config.scenario.initialObjects).filter(object => object.packId === electricGridPackId)
     const rawState = await config.runtimeStateStore?.load()
     const runtimeState = rawState === undefined || rawState === null ? null : parseElectricGridRuntimeState(rawState)
@@ -207,7 +209,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       }
       emit({
         handlers,
-        events: gridProjectionEvents({
+        events: [...gridProjectionEvents({
           objectsById,
           grids: affectedGrids,
           previousKeys: projectionKeys,
@@ -218,7 +220,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
             ...(config.cause?.causedByCommandId === undefined ? {} : { causedByCommandId: config.cause.causedByCommandId }),
           },
           history: 'snapshot-only',
-        }),
+        }), ...gridSignalEvents(affectedGrids.values(), simulationRunId)],
       })
     }
 
@@ -275,7 +277,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
           })()
         : undefined
       persistence.scheduleSave()
-      emit({ handlers, events, ...(recording === undefined ? {} : { recording }) })
+      emit({ handlers, events: [...events, ...gridSignalEvents(grids.values(), simulationRunId)], ...(recording === undefined ? {} : { recording }) })
       lastSuccessfulInteractionAt = nowIso()
     }
 
@@ -351,7 +353,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
             history: 'record',
           })
           await persistence.saveNow()
-          emit({ handlers, events })
+          emit({ handlers, events: [...events, ...gridSignalEvents([grid], simulationRunId)] })
           return { ok: true, commandId: command.id, acceptedAt: nowIso() }
         } catch (error) {
           return commandRejected(command, error instanceof Error ? error.message : String(error))

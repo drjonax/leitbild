@@ -18,6 +18,7 @@ import {
   gridSetEvChargingDemandCommandKind,
   gridShedLoadCommandKind,
 } from '../commands/load.ts'
+import { gridResetBranchProtectionCommandKind } from '../commands/protection.ts'
 import type { GridAssetDefinition, GridGeneratorDefinition, GridLoadDefinition } from '../grid-model.ts'
 import type { GridAssetSnapshot, GridBranchState, GridGeneratorState, GridLoadState, GridRuntimeInstance } from '../runtime/instance.ts'
 import { generatorMinimumStableMw, generatorStartupSeconds } from '../runtime/unit-commitment.ts'
@@ -76,7 +77,7 @@ const loadOperationIds = (definition: GridLoadDefinition, state: GridLoadState):
 }
 
 const branchOperationIds = (state: GridBranchState): ReadonlyArray<string> => [
-  state.state === 'closed' ? gridOpenBranchCommandKind : gridCloseBranchCommandKind,
+  state.state === 'closed' ? gridOpenBranchCommandKind : state.state === 'open' ? gridCloseBranchCommandKind : gridResetBranchProtectionCommandKind,
   ...(state.availability < 1 ? [gridDerateBranchCommandKind, gridClearDerateCommandKind] : [gridDerateBranchCommandKind]),
 ]
 
@@ -126,8 +127,8 @@ export const assetPresentationFor = (grid: GridRuntimeInstance, asset: GridAsset
     const state = grid.branches.get(asset.id)!
     const definition = asset.definition as typeof grid.definition.model.branches[number]
     subkind = definition.kind
-    tone = state.state === 'open' ? 'idle' : state.loadingPercent >= 100 ? 'error' : state.loadingPercent >= 85 || state.availability < 1 ? 'working' : 'ready'
-    statusLabel = state.state === 'open' ? 'Open' : state.availability < 1 ? `Derated ${Math.round(state.availability * 100)}%` : 'Closed'
+    tone = state.state === 'tripped' ? 'error' : state.state === 'open' ? 'idle' : state.loadingPercent >= 100 ? 'error' : state.loadingPercent >= 85 || state.availability < 1 ? 'working' : 'ready'
+    statusLabel = state.state === 'tripped' ? `Tripped (${state.protection.trip!.element})` : state.state === 'open' ? 'Open' : state.availability < 1 ? `Derated ${Math.round(state.availability * 100)}%` : 'Closed'
     summary = `${Math.round(state.flowMw).toLocaleString()} MW · ${Math.round(state.loadingPercent)}% loaded`
   } else if (asset.kind === 'generator') {
     const state = grid.generators.get(asset.id)!

@@ -446,7 +446,7 @@
               {#if summary && summary.constrainedBranchCount > 0}<li>{summary.constrainedBranchCount} corridors at or above {summary.thresholds.constrainedBranchLoadingPercent}% loading</li>{/if}
               {#if summary && summary.affectedLoadCount > 0}<li>{summary.affectedLoadCount} loads with unserved demand</li>{/if}
               {#if deenergizedIslandCount > 0}<li>{deenergizedIslandCount} de-energised islands with demand</li>{/if}
-              {#if frequencyAlarmIslandCount > 0}<li>{frequencyAlarmIslandCount} islands outside the standard frequency range or shedding load</li>{/if}
+              {#if frequencyAlarmIslandCount > 0}<li>{frequencyAlarmIslandCount} energised islands with active alarms</li>{/if}
             </ul>
           {/if}
         </div>

@@ -35,6 +35,7 @@ import {
 import type { GridBranchDefinition, GridGeneratorDefinition, GridLoadDefinition } from '../grid-model.ts'
 import type { GridBranchState, GridGeneratorState, GridLoadState, GridRuntimeInstance } from './instance.ts'
 import { gridFrequencyCommandHandlers } from './lfdd-commands.ts'
+import { gridLifecycleCommandHandlers } from './lifecycle-commands.ts'
 import { synchroCheckBlockReason } from './synchro-check.ts'
 import { generatorMinimumStableMw, generatorStartupSeconds } from './unit-commitment.ts'
 
@@ -149,6 +150,7 @@ const branchHandlers = {
     const payload = gridOpenBranchPayloadSchema.parse(rawPayload)
     const { state } = branchFor(grid, payload.assetId)
     if (state.state === 'open') throw new Error(`branch ${payload.assetId} is already open`)
+    if (state.state === 'tripped') throw new Error(`branch ${payload.assetId} is already open: its protection tripped it; reset-branch-protection leaves it open`)
     state.state = 'open'
     grid.topologyPlan = null
   },
@@ -156,6 +158,7 @@ const branchHandlers = {
     const payload = gridCloseBranchPayloadSchema.parse(rawPayload)
     const { definition, state } = branchFor(grid, payload.assetId)
     if (state.state === 'closed') throw new Error(`branch ${payload.assetId} is already closed`)
+    if (state.state === 'tripped') throw new Error(`branch ${payload.assetId} was tripped by its ${state.protection.trip!.element} protection; reset it with reset-branch-protection before closing it`)
     const blocked = synchroCheckBlockReason(grid, definition)
     if (blocked !== null) throw new Error(blocked)
     state.state = 'closed'
@@ -211,6 +214,7 @@ const handlers = {
   ...branchHandlers,
   ...loadHandlers,
   ...gridFrequencyCommandHandlers,
+  ...gridLifecycleCommandHandlers,
 } satisfies Record<typeof electricGridCommandKinds[number], GridCommandHandler>
 
 const handlerByKind: ReadonlyMap<string, GridCommandHandler> = new Map(Object.entries(handlers))

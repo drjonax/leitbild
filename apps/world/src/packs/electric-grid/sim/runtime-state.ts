@@ -1,13 +1,16 @@
 import { z } from 'zod'
 import type { IslandFrequencyState } from '../runtime/frequency/island-state.ts'
+import type { IsoTimestamp } from '../../../core/model/index.ts'
+import { persistedGridAlarmState } from '../runtime/alarms.ts'
 import type { GridRuntimeInstance, RestoredGridRuntimeState } from '../runtime/instance.ts'
 
 const finite = z.number().finite()
 const nonNegative = finite.nonnegative()
 
-// Version 2 persists island identity and the full frequency-control state (governors, AGC, mFRR,
-// LFDD latches and protection relays). Version 1 runs do not restore: there is no migration.
-export const electricGridRuntimeStateSchemaVersion = 2
+// Version 3 persists island identity, the full frequency-control state (governors, AGC, mFRR,
+// LFDD latches and generator relays), branch relay state and alarm records. Earlier runs do not
+// restore: there is no migration.
+export const electricGridRuntimeStateSchemaVersion = 3
 
 const reservesSchema = z.object({
   fcrNMw: nonNegative,
@@ -59,6 +62,48 @@ const islandFrequencyStateSchema = z.object({
   }).strict(),
 }).strict()
 
+const isoTimestamp = z.iso.datetime({ offset: true }).transform(value => value as IsoTimestamp)
+
+const branchProtectionStateSchema = z.object({
+  thermalLevel: nonNegative,
+  overEmergencySinceElapsedMs: nonNegative.nullable(),
+  trip: z.object({
+    element: z.enum(['thermal', 'emergency-duration', 'instantaneous']),
+    at: isoTimestamp,
+    atElapsedMs: nonNegative,
+    flowMw: finite,
+    loadingPercent: nonNegative,
+    thermalLevel: nonNegative,
+  }).strict().nullable(),
+}).strict()
+
+const alarmRecordSchema = z.object({
+  id: z.string().min(1),
+  scope: z.enum(['island', 'branch', 'generator']),
+  assetId: z.string().min(1),
+  condition: z.string().min(1),
+  priority: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  title: z.string().min(1),
+  message: z.string().min(1),
+  islandId: z.string().min(1).nullable(),
+  value: finite.nullable(),
+  limit: finite.nullable(),
+  unit: z.enum(['Hz', '%', 'MW']).nullable(),
+  active: z.boolean(),
+  raisedAt: isoTimestamp,
+  raisedAtElapsedMs: nonNegative,
+  clearedAt: isoTimestamp.nullable(),
+  clearedAtElapsedMs: nonNegative.nullable(),
+  acknowledged: z.boolean(),
+  acknowledgedAt: isoTimestamp.nullable(),
+  shelvedUntil: isoTimestamp.nullable(),
+  shelvedUntilElapsedMs: nonNegative.nullable(),
+  clearSinceElapsedMs: nonNegative.nullable(),
+  clearDelayMs: nonNegative,
+  lastTransitionElapsedMs: nonNegative,
+  occurrences: z.number().int().positive(),
+}).strict()
+
 export const electricGridRuntimeStateSchema = z.object({
   schemaVersion: z.literal(electricGridRuntimeStateSchemaVersion),
   grids: z.array(z.object({
@@ -68,8 +113,9 @@ export const electricGridRuntimeStateSchema = z.object({
     tick: z.number().int().nonnegative(),
     branches: z.array(z.object({
       id: z.string().min(1),
-      state: z.enum(['closed', 'open']),
+      state: z.enum(['closed', 'open', 'tripped']),
       availability: finite.min(0).max(1),
+      protection: branchProtectionStateSchema,
     }).strict()),
     generators: z.array(z.object({
       id: z.string().min(1),
@@ -85,6 +131,21 @@ export const electricGridRuntimeStateSchema = z.object({
     hvdcLinks: z.array(z.object({ id: z.string().min(1), setpointMw: finite, transferMw: finite }).strict()),
     islands: z.array(z.object({ id: z.string().min(1), anchorBusId: z.string().min(1), frequency: islandFrequencyStateSchema.nullable() }).strict()),
     lossLoadByBusMw: z.array(nonNegative),
+    protection: z.object({
+      lastSampleElapsedMs: nonNegative.nullable(),
+      thermalInitialised: z.boolean(),
+      recordedGeneratorTrips: z.array(z.object({
+        generatorId: z.string().min(1),
+        element: z.enum(['under-frequency', 'over-frequency', 'rocof', 'command']),
+        elementId: z.string().min(1).nullable(),
+      }).strict()),
+    }).strict(),
+    alarms: z.object({
+      records: z.array(alarmRecordSchema),
+      pending: z.array(z.object({ id: z.string().min(1), sinceElapsedMs: nonNegative }).strict()),
+      baseIslandIds: z.array(z.string().min(1)).nullable(),
+      clock: z.object({ at: isoTimestamp, elapsedMs: nonNegative }).strict().nullable(),
+    }).strict(),
   }).strict()),
 }).strict()
 export type ElectricGridRuntimeState = z.infer<typeof electricGridRuntimeStateSchema>
@@ -108,7 +169,7 @@ export const runtimeStateForElectricGrids = (grids: ReadonlyMap<string, GridRunt
       definitionDigest: grid.definition.definitionDigest,
       elapsedMs: grid.elapsedMs,
       tick: grid.tick,
-      branches: [...grid.branches].map(([id, state]) => ({ id, state: state.state, availability: state.availability })),
+      branches: [...grid.branches].map(([id, state]) => ({ id, state: state.state, availability: state.availability, protection: structuredClone(state.protection) })),
       generators: [...grid.generators].map(([id, state]) => ({
         id,
         state: state.state,
@@ -123,6 +184,12 @@ export const runtimeStateForElectricGrids = (grids: ReadonlyMap<string, GridRunt
       hvdcLinks: [...grid.hvdcLinks].map(([id, state]) => ({ id, setpointMw: state.setpointMw, transferMw: state.transferMw })),
       islands: islands.islands.map(island => ({ id: island.id, anchorBusId: island.anchorBusId, frequency: island.frequency === null ? null : structuredClone(island.frequency) as ElectricGridRuntimeState['grids'][number]['islands'][number]['frequency'] })),
       lossLoadByBusMw: Array.from(grid.lossLoadByBusMw),
+      protection: {
+        lastSampleElapsedMs: grid.protection.lastSampleElapsedMs,
+        thermalInitialised: grid.protection.thermalInitialised,
+        recordedGeneratorTrips: [...grid.protection.recordedGeneratorTrips].map(([generatorId, trip]) => ({ generatorId, ...trip })),
+      },
+      alarms: persistedGridAlarmState(grid.alarms),
     }
   }),
 })

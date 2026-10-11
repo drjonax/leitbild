@@ -32,7 +32,7 @@ const searchPayloadSchema = z.object({
   text: z.string().max(200).default(''),
   kinds: z.array(assetKindSchema).max(5).optional(),
   status: z.array(assetStatusSchema).min(1).max(18).optional()
-    .describe('Match any of these states: bus energized/de-energized; branch closed/open/derated; generator online/offline/starting/stopping/tripped; load normal/constrained/shed/outage; storage idle/charging/discharging/unavailable.'),
+    .describe('Match any of these states: bus energized/de-energized; branch closed/open/tripped/derated; generator online/offline/starting/stopping/tripped; load normal/constrained/shed/outage; storage idle/charging/discharging/unavailable.'),
   islandId: z.string().min(1).optional().describe('Only assets in this island (world.electric-grid.islands.list); a branch matches when either end is in it.'),
   minLoadingPercent: z.number().finite().nonnegative().optional().describe('Only branches loaded at or above this percent of their derated rating.'),
   sort: z.enum(['model', 'loading', 'dispatch', 'shed']).default('model')
@@ -85,7 +85,7 @@ const sortValueOf = (grid: GridRuntimeInstance, entry: GridAssetIndexEntry, sort
 export const gridAssetSearchQuery = defineGridQuery({
   id: 'world.electric-grid.assets.search',
   title: 'Search Grid Assets',
-  description: 'Searches stable private Grid Assets by text, kind, state, island and branch loading, sorted by Model order, loading, dispatch or unserved demand, with bounded pagination, live status, map targets and applicable operations. Example: tripped units are kinds [generator] with status [tripped]; overloaded corridors are kinds [branch] with minLoadingPercent 100 and sort loading.',
+  description: 'Searches stable private Grid Assets by text, kind, state, island and branch loading, sorted by Model order, loading, dispatch or unserved demand, with bounded pagination, live status, map targets and applicable operations. Example: tripped units are kinds [generator] with status [tripped] (branches tripped by protection match tripped too); overloaded corridors are kinds [branch] with minLoadingPercent 100 and sort loading.',
   searchTerms: ['search', 'find', 'assets', 'tripped units', 'overloaded lines', 'generators', 'loads', 'substations', 'søk', 'finn', 'komponenter', 'utfall', 'overbelastet', 'stasjon', 'kraftverk'],
   input: searchPayloadSchema,
   output: assetSearchResultSchema,

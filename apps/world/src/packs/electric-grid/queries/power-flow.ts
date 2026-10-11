@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { GridBranchDefinition } from '../grid-model.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
 import { defineGridQuery, gridBusIslandId, gridFor, requireGridIsland } from './common.ts'
-import { branchDefinitionSchema } from './schemas.ts'
+import { branchDefinitionSchema, branchSwitchingStateSchema } from './schemas.ts'
 
 const finite = z.number().finite()
 
@@ -23,7 +23,7 @@ const powerFlowRowSchema = z.object({
   label: z.string(),
   kind: branchDefinitionSchema.shape.kind,
   ratingMw: finite,
-  state: z.enum(['closed', 'open']),
+  state: branchSwitchingStateSchema,
   availability: finite.describe('Available fraction of the rating (derate).'),
   flowMw: finite.describe('Active power flow to 0.1 MW, positive from the definition\'s fromBusId to toBusId.'),
   loadingPercent: finite.describe('|flowMw| over ratingMw × availability, to 0.1 %.'),
@@ -59,7 +59,7 @@ const rowFor = (grid: GridRuntimeInstance, definition: GridBranchDefinition, inc
 export const gridPowerFlowQuery = defineGridQuery({
   id: 'world.electric-grid.power-flow.snapshot',
   title: 'Get power-flow snapshot',
-  description: 'Returns a bounded page of compact branch rows: rating, open/closed, derate, flow (0.1 MW, positive from fromBusId to toBusId) and loading (0.1 % of the derated rating), optionally filtered by minimum loading and island and sorted by loading. Endpoints and electrical parameters come with includeDefinition.',
+  description: 'Returns a bounded page of compact branch rows: rating, closed/open/tripped, derate, flow (0.1 MW, positive from fromBusId to toBusId) and loading (0.1 % of the derated rating), optionally filtered by minimum loading and island and sorted by loading. Endpoints and electrical parameters come with includeDefinition.',
   searchTerms: ['power flow', 'branch flow', 'loading', 'overload', 'congestion', 'corridor', 'constraint', 'kraftflyt', 'belastning', 'overlast', 'flaskehals', 'snitt', 'linje'],
   input: powerFlowPayloadSchema,
   output: powerFlowResultSchema,

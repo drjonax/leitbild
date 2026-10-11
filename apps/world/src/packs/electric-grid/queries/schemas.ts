@@ -109,8 +109,24 @@ export const busStateSchema = z.object({
   netInjectionMw: finite.describe('Net active power injected at the bus, including its share of branch losses (MW).'),
 }).strict()
 
+export const branchSwitchingStateSchema = z.enum(['closed', 'open', 'tripped'])
+  .describe('open: opened by an operator; tripped: opened by its protection, closable only after reset-branch-protection.')
+
+const branchProtectionStateSchema = z.object({
+  thermalLevel: finite.describe('Conductor thermal state as (flow / derated rating)² in steady state; 1 is the steady state at the continuous rating.'),
+  overEmergencySinceElapsedMs: finite.nullable().describe('Grid elapsed time since which the flow exceeds the derated emergency rating; null below it.'),
+  trip: z.object({
+    element: z.enum(['thermal', 'emergency-duration', 'instantaneous']),
+    at: z.string(),
+    atElapsedMs: finite,
+    flowMw: finite,
+    loadingPercent: finite,
+    thermalLevel: finite,
+  }).strict().nullable().describe('The protection operation that tripped the branch; null unless tripped.'),
+}).strict()
+
 export const branchStateSchema = z.object({
-  state: z.enum(['closed', 'open']),
+  state: branchSwitchingStateSchema,
   availability: finite.describe('Available fraction of the rating (derate).'),
   flowMw: finite.describe('Active power flow, positive from fromBusId to toBusId (MW).'),
   loadingPercent: finite.describe('|flowMw| over the derated rating (%).'),
@@ -118,6 +134,7 @@ export const branchStateSchema = z.object({
   voltageToPu: finite,
   frequencyHz: islandFrequencyHz,
   lossesMw: finite.describe('Quadratic DC loss r·P²/S_base (MW).'),
+  protection: branchProtectionStateSchema,
 }).strict()
 
 export const generatorLifecycleStateSchema = z.enum(['online', 'offline', 'starting', 'stopping', 'tripped'])

@@ -1,4 +1,5 @@
 import type { PackRuntimeQuery, SimulationCapability } from '../../../simulation/protocol.ts'
+import { gridAlarmsQuery } from './alarms.ts'
 import { gridAssetGetQuery, gridAssetSearchQuery } from './assets.ts'
 import { gridCatalogQuery } from './catalog.ts'
 import type { ElectricGridQuery, GridRuntimes } from './common.ts'
@@ -14,6 +15,7 @@ const electricGridQueries: ReadonlyArray<ElectricGridQuery> = [
   gridCatalogQuery,
   gridSummaryQuery,
   gridIslandsQuery,
+  gridAlarmsQuery,
   gridAssetSearchQuery,
   gridAssetGetQuery,
   gridPowerFlowQuery,
