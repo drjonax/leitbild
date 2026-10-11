@@ -465,3 +465,113 @@ fn joined_single_column_probe() {
         );
     }
 }
+
+/// Diagnostic: the block assembly's CPU by class, best of 3 (each class
+/// alone includes the common base evaluation and replay set-up).
+#[test]
+#[ignore = "diagnostic timing of the block assembly by class"]
+fn joined_blocks_profile() {
+    use leitbild_operating_plant::joined::blocks::{Classes, JoinedJacobian, jacobian_blocks};
+    prefer_performance_core();
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, true);
+    let n = joined.dimension();
+    let zero = vec![0.; n];
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let mut values = vec![0.; structure.pattern.nonzeros()];
+    let mut out = Vec::new();
+    let value_ms = {
+        let mut best = f64::INFINITY;
+        for _ in 0..5 {
+            let s = cpu();
+            joined.evaluate(0., &y, &zero, None, 0., None).unwrap();
+            best = best.min(cpu() - s);
+        }
+        1e3 * best
+    };
+    for (label, network, nuclear, owners) in [
+        ("base", false, false, false),
+        ("network", true, false, false),
+        ("nuclear", false, true, false),
+        ("owners", false, false, true),
+        ("nuclear+owners", false, true, true),
+        ("all", true, true, true),
+    ] {
+        let classes = Classes {
+            network,
+            nuclear,
+            owners,
+        };
+        let mut best = f64::INFINITY;
+        for _ in 0..3 {
+            let s = cpu();
+            jacobian_blocks(
+                &mut joined,
+                &structure,
+                0.,
+                20.,
+                &y,
+                &zero,
+                &mut values,
+                classes,
+            )
+            .expect("block assembly");
+            best = best.min(cpu() - s);
+        }
+        out.push(json!({"classes": label, "ms": 1e3 * best}));
+    }
+    println!(
+        "{}",
+        json!({"kind": "joined-blocks-profile-NOT-EVIDENCE", "value_residual_ms": value_ms, "by_class": out})
+    );
+}
+
+/// Diagnostic: sizes of the solids' incidence and of the closed scopes the
+/// owner columns evaluate.
+#[test]
+#[ignore = "diagnostic of the solids' closed scopes"]
+fn joined_solid_scopes() {
+    use leitbild_operating_plant::joined::solids::SolidScope;
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { joined, .. } = joined_hot(&declared, &settled, true);
+    let solids = joined.solids();
+    let inc = solids.incidence();
+    let halves = solids.halves();
+    let mut sizes = BTreeMap::new();
+    for a in 0..halves {
+        let c = solids.close(&SolidScope {
+            bands: vec![a],
+            ..Default::default()
+        });
+        *sizes
+            .entry((
+                c.bands.len(),
+                c.plenum.len(),
+                c.passive.len(),
+                c.helium.len(),
+            ))
+            .or_insert(0) += 1;
+    }
+    let helium = inc
+        .halves
+        .iter()
+        .map(|h| h.0)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let wets: Vec<usize> = inc.halves.iter().map(|h| h.1.len()).collect();
+    println!(
+        "{}",
+        json!({"halves": halves, "helium_stores": helium, "passive_contacts": inc.passive.len(),
+            "plenum_contacts": inc.plenum.len(), "segments": inc.segments.len(),
+            "max_cells_wetted_per_half": wets.iter().max(),
+            "closed_scope_of_one_half (bands, plenum, passive, helium) -> halves": sizes.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()})
+    );
+}
