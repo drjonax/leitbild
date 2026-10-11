@@ -39,46 +39,6 @@ const loadKinds: Readonly<Record<GridLoadV2['kind'], GridLoadKind>> = {
 }
 
 /**
- * The runtime gives a synchronous external system exactly one boundary bus (one frequency per
- * system). The v2 Nordic remainder meets Norway at one boundary bus per area and voltage, so it
- * becomes one runtime system per boundary bus, its inertia, load and reserves shared in proportion
- * to the continuous rating of the AC ties ending there.
- */
-const splitSynchronous = (model: GridModelV2, system: GridModelV2['externalSystems'][number]): ReadonlyArray<GridExternalSystemDefinition> => {
-  const tieMw = (busId: string): number => model.branches
-    .filter(branch => branch.fromBusId === busId || branch.toBusId === busId)
-    .reduce((sum, branch) => sum + branch.ratingMw, 0)
-  const total = system.boundaryBusIds.reduce((sum, busId) => sum + tieMw(busId), 0)
-  if (total === 0) throw new Error(`${system.id}: no AC tie ends at its boundary buses`)
-  return system.boundaryBusIds.map(busId => {
-    const share = tieMw(busId) / total
-    const bus = model.buses.find(candidate => candidate.id === busId)!
-    const part = (value: number | undefined): number => {
-      if (value === undefined) throw new Error(`${system.id} lacks a synchronous parameter`)
-      return value * share
-    }
-    return {
-      id: system.boundaryBusIds.length === 1 ? system.id : `${system.id}@${busId.slice('bus:boundary-'.length)}`,
-      label: system.boundaryBusIds.length === 1 ? system.label : `${system.label} via ${busId.slice('bus:boundary-'.length)}`,
-      area: system.boundaryBusIds.length === 1 ? system.area : bus.externalArea!,
-      synchronous: true,
-      boundaryBusIds: [busId],
-      inertiaGws: part(system.inertiaGws),
-      loadMw: part(system.loadMw),
-      fcrNMwPerHz: part(system.fcrNMwPerHz),
-      fcrDUpMw: part(system.fcrDUpMw),
-      fcrDDownMw: part(system.fcrDDownMw),
-      afrrUpMw: part(system.afrrUpMw),
-      afrrDownMw: part(system.afrrDownMw),
-      provenance: {
-        ...system.provenance,
-        note: `${system.provenance.note ?? system.label}; ${(share * 100).toFixed(1)} % share by AC tie rating at ${busId}`,
-      },
-    }
-  })
-}
-
-/**
  * The runtime holds a set-point until a command changes it; it does not follow a time-of-day
  * schedule. A schedule with one point is that constant set-point; any other is refused, never
  * reduced to one of its points.
@@ -185,9 +145,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
   const newestInput = [...model.sourceBuild.inputs].map(input => input.snapshotAt).sort().at(-1)!
   const exchanges = new Map((operatingPoint.externalExchangeSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).exportMw]))
   const hvdcSchedules = new Map((operatingPoint.hvdcSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).transferMw]))
-  const externalSystems = model.externalSystems.flatMap((system): ReadonlyArray<GridExternalSystemDefinition> => system.synchronous
-    ? splitSynchronous(model, system)
-    : [{ id: system.id, label: system.label, area: system.area, synchronous: false, boundaryBusIds: system.boundaryBusIds, provenance: system.provenance }])
+  const externalSystems = model.externalSystems.map((system): GridExternalSystemDefinition => ({ ...system }))
   return {
     model: {
       id: model.id,
@@ -216,12 +174,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       generationAvailabilityScale: scales.generationAvailabilityScale ?? 1,
       storageStateOfCharge: scales.storageStateOfCharge ?? null,
       hvdcSetpoints: model.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: hvdcSchedules.get(link.id) ?? 0 })),
-      // A split synchronous system carries its share of the system's scheduled exchange, by tie rating.
-      externalExchanges: externalSystems.filter(system => system.synchronous).map(system => {
-        const parent = model.externalSystems.find(candidate => candidate.synchronous && (candidate.id === system.id || system.id.startsWith(`${candidate.id}@`)))!
-        const share = system.inertiaGws! / parent.inertiaGws!
-        return { systemId: system.id, scheduledExportMw: (exchanges.get(parent.id) ?? 0) * share }
-      }),
+      externalExchanges: externalSystems.filter(system => system.synchronous).map(system => ({ systemId: system.id, scheduledExportMw: exchanges.get(system.id) ?? 0 })),
     },
   }
 }

@@ -184,14 +184,16 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
       }
     }
     if (system.synchronous) {
-      // One frequency per synchronous system: two boundary buses could sit in different Norwegian islands.
-      if (system.boundaryBusIds.length !== 1) failModel(model, `synchronous external system ${system.id} must have exactly one boundary bus`)
+      // One synchronous equivalent: the Norwegian components it touches share its frequency, and
+      // each closes its balance through the equivalent's boundary buses in it.
+      const other = externalSystems.find(candidate => candidate.synchronous && candidate.id !== system.id)
+      if (other !== undefined) failModel(model, `synchronous external systems ${system.id} and ${other.id}: the runtime models the synchronous neighbours as one equivalent`)
       requireFinite(model, system.inertiaGws ?? Number.NaN, `${system.id} inertiaGws`, Number.MIN_VALUE)
       requireFinite(model, system.loadMw ?? Number.NaN, `${system.id} loadMw`, 0)
       for (const field of ['fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw'] as const) {
         requireFinite(model, system[field] ?? Number.NaN, `${system.id} ${field}`, 0)
       }
-      synchronousExternalByBus.set(system.boundaryBusIds[0]!, system)
+      for (const busId of system.boundaryBusIds) synchronousExternalByBus.set(busId, system)
     } else {
       for (const field of ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw'] as const) {
         if (system[field] !== undefined) failModel(model, `${system.id} is asynchronous and cannot carry ${field}`)

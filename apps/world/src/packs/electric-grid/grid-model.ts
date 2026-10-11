@@ -80,9 +80,9 @@ export interface GridShuntDefinition {
 export type GridExternalArea = 'SE1' | 'SE2' | 'SE3' | 'SE4' | 'FI' | 'DK1' | 'NL' | 'DE' | 'GB'
 
 /**
- * A neighbouring system behind boundary buses. A synchronous system shares frequency with the
- * Norwegian island that holds its boundary bus and joins that island's swing equation; an
- * asynchronous one only terminates HVDC links.
+ * A neighbouring system behind boundary buses. A synchronous system shares frequency with every
+ * Norwegian component holding one of its boundary buses: they form one synchronous island with it
+ * and it joins that island's swing equation. An asynchronous one only terminates HVDC links.
  */
 export interface GridExternalSystemDefinition {
   readonly id: string
@@ -259,7 +259,7 @@ export interface CompiledGridModelIndex {
   /** The Model's external systems and HVDC links, empty when it declares none. */
   readonly externalSystems: ReadonlyArray<GridExternalSystemDefinition>
   readonly hvdcLinks: ReadonlyArray<GridHvdcLinkDefinition>
-  /** Synchronous external systems by their (single) boundary bus. */
+  /** The synchronous external system (at most one) by each of its boundary buses. */
   readonly synchronousExternalByBus: ReadonlyMap<string, GridExternalSystemDefinition>
   /** Boundary buses of asynchronous external systems: HVDC terminals outside the modelled AC network. */
   readonly asynchronousBoundaryBusIds: ReadonlySet<string>

@@ -35,15 +35,22 @@ export const islandMembers = (grid: GridRuntimeInstance, island: GridTopologyIsl
     generatorBuses: Int32Array.from(island.generators, item => network.busIndexById.get(item.busId)!),
     loadBuses: Int32Array.from(island.loads, item => network.busIndexById.get(item.busId)!),
     storageBuses: Int32Array.from(island.storage, item => network.busIndexById.get(item.busId)!),
-    externals: island.buses.flatMap(busId => {
+    externals: [...new Set(island.buses.flatMap(busId => {
       const system = index.synchronousExternalByBus.get(busId)
       return system === undefined ? [] : [system]
-    }),
+    }))],
     connectionPointIds: model.connectionPoints.filter(point => island.busSet.has(point.busId)).map(point => point.id),
   }
   membersByIsland.set(island, members)
   return members
 }
+
+/** Rating of the closed AC ties at a boundary bus, derated by their availability (MW). */
+export const boundaryTieCapacityMw = (grid: GridRuntimeInstance, boundaryBusId: string): number =>
+  (grid.definition.index.branchesByBus.get(boundaryBusId) ?? []).reduce((sum, branch) => {
+    const state = grid.branches.get(branch.id)!
+    return sum + (state.state === 'closed' ? branch.ratingMw * state.availability : 0)
+  }, 0)
 
 /** Synchronised units: online, or stopping until its breaker opens at 0 MW (unit-commitment.ts). */
 export const gridGeneratorIsSynchronised = generatorIsSynchronised

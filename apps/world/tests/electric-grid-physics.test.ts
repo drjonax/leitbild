@@ -356,6 +356,74 @@ describe('HVDC links', () => {
   })
 })
 
+describe('a synchronous external equivalent with several boundary buses', () => {
+  test('keeps Norwegian components it ties together at one frequency and closes each through its own boundary buses', () => {
+    // North and south are joined by one corridor; north is tied to SE2, south to SE3 by two ties.
+    const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.5, 60 + index] as const })
+    const line = (id: string, fromBusId: string, toBusId: string, ratingMw: number): GridBranchDefinition =>
+      testLine({ id, fromBusId, toBusId, nominalKv: 420, ratingMw, reactancePu: 0.01, resistancePu: 0.001 })
+    const provenance = { sources: ['test:hand-built'], method: 'curated' as const, confidence: 'high' as const, note: 'Physics test model.' }
+    const model = handBuiltModel({
+      id: 'two-boundaries', title: 'Two boundaries', description: 'North and south Norway, each tied to the Nordic equivalent.',
+      buses: [bus('bus:north', 0), bus('bus:south', 1), bus('bus:boundary-SE2@420', 2), bus('bus:boundary-SE3@420', 3)],
+      branches: [
+        line('corridor', 'bus:north', 'bus:south', 1_500),
+        line('tie-se2', 'bus:north', 'bus:boundary-SE2@420', 1_000),
+        line('tie-se3-a', 'bus:south', 'bus:boundary-SE3@420', 1_500),
+        line('tie-se3-b', 'bus:south', 'bus:boundary-SE3@420', 500),
+      ],
+      generators: [
+        ...Array.from({ length: 4 }, (_, index) => syntheticHydroUnit({ id: `north-${index}`, label: `North ${index}`, busId: 'bus:north', location: [10, 60], capacityMw: 400 })),
+        ...Array.from({ length: 4 }, (_, index) => syntheticHydroUnit({ id: `south-${index}`, label: `South ${index}`, busId: 'bus:south', location: [10.5, 61], capacityMw: 400 })),
+      ],
+      loads: [testLoad({ id: 'north-load', busId: 'bus:north', demandMw: 600 }), testLoad({ id: 'south-load', busId: 'bus:south', demandMw: 1_000 })],
+      externalSystems: [{
+        id: 'external:nordic-remainder', label: 'Nordic remainder', area: 'nordic-remainder', synchronous: true,
+        boundaryBusIds: ['bus:boundary-SE2@420', 'bus:boundary-SE3@420'],
+        inertiaGws: 171, loadMw: 43_100, fcrNMwPerHz: 3_720, fcrDUpMw: 899, fcrDDownMw: 868, afrrUpMw: 138, afrrDownMw: 138, provenance,
+      }],
+    })
+    const run = runningGrid({ ...gridDefinitionForModel(model), gridId: 'grid:test' })
+    run.advance(10)
+    const islandIds = () => new Set(['bus:north', 'bus:south', 'bus:boundary-SE2@420', 'bus:boundary-SE3@420'].map(busId => run.grid.busStates.get(busId)!.islandId))
+    expect(islandIds().size).toBe(1)
+
+    expect(applyGridCommand(run.grid, command(gridOpenBranchCommandKind, { assetId: 'corridor' })).ok).toBe(true)
+    run.advance(10)
+    const plan = run.grid.topologyPlan!
+    // Two AC components, one synchronous island at one frequency.
+    expect(plan.components).toHaveLength(2)
+    expect(plan.islands).toHaveLength(1)
+    expect(islandIds().size).toBe(1)
+    expect(run.grid.busStates.get('bus:north')!.frequencyHz).toBe(run.grid.busStates.get('bus:south')!.frequencyHz)
+    // Each component closes its own balance: north through SE2, south through both SE3 ties.
+    for (const component of plan.components) {
+      const sumMw = component.buses.reduce((sum, busId) => sum + run.grid.busStates.get(busId)!.netInjectionMw, 0)
+      expect(Math.abs(sumMw)).toBeLessThan(1e-6)
+    }
+    // The two SE3 ties share the south's closing flow (here by their equal reactance).
+    expect(run.grid.branches.get('tie-se3-a')!.flowMw).toBeCloseTo(run.grid.branches.get('tie-se3-b')!.flowMw, 9)
+
+    // More northern output leaves through SE2: the south does not see it in its tie flows.
+    const se2Before = run.grid.branches.get('tie-se2')!.flowMw
+    const se3Before = run.grid.branches.get('tie-se3-a')!.flowMw + run.grid.branches.get('tie-se3-b')!.flowMw
+    for (let index = 0; index < 4; index += 1) run.grid.generators.get(`north-${index}`)!.targetMw += 25
+    for (let step = 0; step < 60; step += 1) run.advance(10)
+    const se2After = run.grid.branches.get('tie-se2')!.flowMw
+    const se3After = run.grid.branches.get('tie-se3-a')!.flowMw + run.grid.branches.get('tie-se3-b')!.flowMw
+    console.info(`two boundaries: SE2 export ${se2Before.toFixed(1)} → ${se2After.toFixed(1)} MW, SE3 export ${se3Before.toFixed(1)} → ${se3After.toFixed(1)} MW after +100 MW in the north`)
+    expect(se2After - se2Before).toBeGreaterThan(50)
+    expect(run.grid.busStates.get('bus:north')!.frequencyHz).toBe(run.grid.busStates.get('bus:south')!.frequencyHz)
+
+    // The corridor closes again between two components of one island: the angle across it lies in the
+    // external network, which the equivalent does not model, so synchro-check allows it.
+    expect(applyGridCommand(run.grid, command(gridCloseBranchCommandKind, { assetId: 'corridor' }))).toEqual({ ok: true })
+    run.advance(1)
+    expect(run.grid.topologyPlan!.components).toHaveLength(1)
+    expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
+  })
+})
+
 describe('synchro-check on closing a loop', () => {
   test('closing a branch inside one energised island is limited by the voltage-angle difference across it', () => {
     // Two parallel lines carry 300 MW from hydro units at A to a load at B: a short one (x 0.02 pu)

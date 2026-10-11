@@ -3,6 +3,7 @@ import { advanceGridFrequencyControl } from './frequency-control.ts'
 import type { GridGeneratorDefinition } from '../grid-model.ts'
 import type { GridIsland, GridRuntimeInstance, GridTopologyPlan } from './instance.ts'
 import {
+  boundaryTieCapacityMw,
   externalFrequencyEquivalent,
   islandFixedInjectionMw,
   islandLossesMw,
@@ -17,13 +18,6 @@ import { generatorMinimumStableMw } from './unit-commitment.ts'
 
 // Losses enter the dispatch from the previous solve; three passes settle them below 0.01 MW on Norway.
 const lossPasses = 3
-
-/** Transfer capability between an external system and Norway: the ratings of the closed AC branches at its boundary bus (MW). */
-const boundaryTransferLimitMw = (grid: GridRuntimeInstance, boundaryBusId: string): number =>
-  (grid.definition.index.branchesByBus.get(boundaryBusId) ?? []).reduce((sum, branch) => {
-    const state = grid.branches.get(branch.id)!
-    return sum + (state.state === 'closed' ? branch.ratingMw * state.availability : 0)
-  }, 0)
 
 
 /** Import the Operating Point schedules from a synchronous external system (MW; negative exports). */
@@ -48,7 +42,10 @@ const dispatchIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, islan
   const demandMw = structure.loads.reduce((sum, load) => sum + connectedGridLoadMw(grid.loads.get(load.id)!), 0)
   const residualMw = demandMw + islandLossesMw(grid, structure) - islandFixedInjectionMw(grid, structure)
   const externals = islandMembers(grid, structure).externals
-  const limitMw = externals.reduce((sum, system) => sum + boundaryTransferLimitMw(grid, system.boundaryBusIds[0]!), 0)
+  // Transfer capability between the external system and the island: the ties at its boundary buses in the island.
+  const limitMw = externals.reduce((sum, system) => sum + system.boundaryBusIds
+    .filter(busId => structure.busSet.has(busId))
+    .reduce((ties, busId) => ties + boundaryTieCapacityMw(grid, busId), 0), 0)
   const online = () => structure.generators.filter(definition => grid.generators.get(definition.id)!.state === 'online')
   const minimumMw = (units: ReadonlyArray<GridGeneratorDefinition>) => units.reduce((sum, definition) => sum + generatorMinimumStableMw(definition), 0)
   if (externals.length === 0) {
@@ -79,9 +76,8 @@ const dispatchIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, islan
     // The same share of every unit's range; at a share of 1 the floating-point sum may exceed availability by an ulp.
     state.targetMw = Math.min(state.availableMw, unitMinimumMw + share * (state.availableMw - unitMinimumMw))
   }
-  for (const system of externals) {
-    grid.externalSystems.get(system.id)!.scheduledImportMw = limitMw > 0 ? exchangeMw * boundaryTransferLimitMw(grid, system.boundaryBusIds[0]!) / limitMw : 0
-  }
+  // The island holds at most one synchronous external system (definitions.ts).
+  for (const system of externals) grid.externalSystems.get(system.id)!.scheduledImportMw = exchangeMw
   const allocation = allocateIslandReserves({
     automation: grid.definition.automation,
     units: structure.generators.map(definition => {

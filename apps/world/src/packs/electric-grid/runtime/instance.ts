@@ -143,9 +143,28 @@ export interface GridHvdcLinkState {
   lossesMw: number
 }
 
+/**
+ * One AC component: buses joined by closed branches. Its first bus in model order is its DC angle
+ * reference; it absorbs nothing, because the component's injections sum to zero by construction.
+ */
+export interface GridTopologyComponent {
+  readonly referenceBusId: string
+  /** Buses in model order. */
+  readonly buses: ReadonlyArray<string>
+  /** Network indices of `buses`. */
+  readonly busIndices: Int32Array
+  /** Index of the synchronous island holding the component. */
+  readonly islandIndex: number
+}
+
+/**
+ * A synchronous island: AC components that share one frequency. Components are joined by closed
+ * branches, or by the synchronous external system whose boundary buses they hold: several
+ * Norwegian components tied to the Nordic remainder run at its frequency as one island.
+ */
 export interface GridTopologyIsland {
   readonly id: string
-  /** The island's first bus in model order: the DC angle reference. It absorbs nothing; the island balance closes by construction. */
+  /** The reference bus of the island's first component. */
   readonly referenceBusId: string
   /** Buses in model order. */
   readonly buses: ReadonlyArray<string>
@@ -154,23 +173,29 @@ export interface GridTopologyIsland {
   readonly generators: ReadonlyArray<GridGeneratorDefinition>
   readonly loads: ReadonlyArray<GridLoadDefinition>
   readonly storage: ReadonlyArray<GridStorageDefinition>
+  /** Indices into the plan's components, ascending. */
+  readonly componentIndices: ReadonlyArray<number>
 }
 
 export interface GridTopologyPlan {
   readonly network: CompiledGridNetwork
   /** Closed flag (1) per model branch this plan was built from; compared with live branch states every tick. */
   readonly closedBranches: Uint8Array
-  /** Structural islands; their ids name the structure, not the stable island identity. */
+  /** Synchronous islands; their ids name the structure, not the stable island identity. */
   readonly islands: ReadonlyArray<GridTopologyIsland>
-  /** DC systems aligned with `islands`. */
+  /** AC components, ordered by their first bus. */
+  readonly components: ReadonlyArray<GridTopologyComponent>
+  /** DC systems aligned with `components`. */
   readonly systems: ReadonlyArray<GridIslandSystem>
   readonly islandIdByBus: ReadonlyMap<string, string>
   /** Plan island index per bus in model order. */
   readonly islandIndexOfBus: Int32Array
-  /** Latest solve per bus in model order: injection (MW) and angle (rad). */
+  /** Plan component index per bus in model order. */
+  readonly componentIndexOfBus: Int32Array
+  /** Latest solve per bus in model order: injection (MW) and angle (rad, relative to the bus's component reference). */
   readonly injectionsMw: Float64Array
   readonly anglesRad: Float64Array
-  /** Latest solve per island, aligned with `islands`: the island's injection sum, which must be 0. */
+  /** Latest solve per component, aligned with `components`: the component's injection sum, which must be 0. */
   readonly referenceMismatchMw: Float64Array
 }
 

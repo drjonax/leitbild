@@ -207,15 +207,15 @@ describe('electric-grid sparse network core', () => {
     expect(grid.diagnostics.topologyRebuildCount).toBe(2)
   })
 
-  test('closes KCL at every bus to 1e-9 MW; the reference bus absorbs no island mismatch', () => {
+  test('closes KCL at every bus to 1e-9 MW; the reference bus absorbs no component mismatch', () => {
     const definition = norwayDefinition()
     const grid = gridFor(definition)
     advanceGrid(grid, 0, at)
     const plan = topologyPlanForGrid(grid)
     const residuals = kclResidualsMw(grid)
-    plan.islands.forEach((island, index) => {
-      for (const busId of island.buses) {
-        if (busId === island.referenceBusId) expect(Math.abs(residuals.get(busId)! - plan.referenceMismatchMw[index]!)).toBeLessThan(1e-9)
+    plan.components.forEach((component, index) => {
+      for (const busId of component.buses) {
+        if (busId === component.referenceBusId) expect(Math.abs(residuals.get(busId)! - plan.referenceMismatchMw[index]!)).toBeLessThan(1e-9)
         else expect(Math.abs(residuals.get(busId)!)).toBeLessThan(1e-9)
       }
     })
@@ -251,7 +251,7 @@ describe('electric-grid sparse network core', () => {
     grid.topologyPlan = null
     const rejoined = topologyPlanForGrid(grid)
     expect(rejoined).not.toBe(whole)
-    expect(rejoined.islands[0]).toBe(whole.islands[0]!)
+    expect(rejoined.islands).toEqual(whole.islands)
     expect(rejoined.systems[0]).toBe(whole.systems[0]!)
     expect(topologyPlanForGrid(grid)).toBe(rejoined)
     expect(grid.diagnostics.topologyRebuildCount).toBe(3)
@@ -259,7 +259,8 @@ describe('electric-grid sparse network core', () => {
 
   test('isolates a radial Norway bus as its own island when its only branch opens', () => {
     const definition = norwayDefinition()
-    const leaf = definition.model.buses.find(bus => definition.index.branchesByBus.get(bus.id)?.length === 1
+    // A Norwegian leaf: a boundary bus stays with the Nordic equivalent when its tie opens.
+    const leaf = definition.model.buses.find(bus => !bus.id.startsWith('bus:boundary-') && definition.index.branchesByBus.get(bus.id)?.length === 1
       && definition.index.branchesByBus.get(bus.id)!.every(branch => definition.index.branchesByBus.get(branch.fromBusId === bus.id ? branch.toBusId : branch.fromBusId)!.length > 1))!
     const grid = gridFor(definition)
     advanceGrid(grid, 0, at)
@@ -276,7 +277,7 @@ describe('electric-grid sparse network core', () => {
     // Stable identity: the larger part keeps the parent's id; the separated bus is a new island.
     expect(grid.busStates.get(neighbour)!.islandId).toBe(parentId)
     expect(grid.busStates.get(leaf.id)!.islandId).not.toBe(parentId)
-    expect(plan.referenceMismatchMw[index]).toBe(grid.busStates.get(leaf.id)!.netInjectionMw)
+    expect(plan.referenceMismatchMw[plan.componentIndexOfBus[plan.network.busIndexById.get(leaf.id)!]!]).toBe(grid.busStates.get(leaf.id)!.netInjectionMw)
   })
 
   test('throws naming the island and bus when the susceptance matrix is not positive definite', () => {

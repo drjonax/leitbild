@@ -1,7 +1,9 @@
 import { generatorKineticEnergyMws } from './generator-dynamics.ts'
 import { hvdcTerminalInjectionsMw } from './hvdc.ts'
-import type { GridBusState, GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
+import type { GridExternalSystemDefinition } from '../grid-model.ts'
+import type { GridBusState, GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import {
+  boundaryTieCapacityMw,
   externalKineticEnergyMws,
   gridGeneratorIsSynchronised,
   islandFixedInjectionMw,
@@ -99,14 +101,6 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
     addAt(injections, members.storageBuses[index]!, state.dispatchMw)
     suppliedMw += state.dispatchMw
   })
-  for (const system of externals) {
-    const state = grid.externalSystems.get(system.id)!
-    state.importMw = state.mechanicalMw - externalKineticEnergyMws(system) / kineticEnergyMws * acceleratingMw
-    state.islandId = island.id
-    state.energized = true
-    addAt(injections, busIndex(system.boundaryBusIds[0]!), state.importMw)
-    suppliedMw += state.importMw
-  }
   for (const pointId of members.connectionPointIds) {
     const connection = grid.externalConnections.get(pointId)
     if (connection?.connected === true) addAt(injections, busIndex(connection.busId), connection.systemActivePowerMw)
@@ -122,7 +116,52 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
     completeLiveGridLoad(state, frequencyHz, nominalHz)
   })
   for (const bus of members.busIndices) addAt(injections, bus, -grid.lossLoadByBusMw[bus]!)
+  // The island holds at most one synchronous external system (definitions.ts).
+  for (const system of externals) {
+    const state = grid.externalSystems.get(system.id)!
+    state.importMw = state.mechanicalMw - externalKineticEnergyMws(system) / kineticEnergyMws * acceleratingMw
+    state.islandId = island.id
+    state.energized = true
+    const closingMw = closeComponentsThroughBoundaries(grid, plans.plan, structure, system, injections)
+    if (!(Math.abs(closingMw - state.importMw) < islandBalanceToleranceMw)) {
+      throw new Error(`Grid ${grid.definition.gridId} island ${island.id}: ${system.id} closes its components with ${closingMw} MW but its inertial share gives ${state.importMw} MW; the island balance must close within ${islandBalanceToleranceMw} MW`)
+    }
+    suppliedMw += state.importMw
+  }
   return { suppliedMw, servedMw, lossesMw }
+}
+
+/**
+ * Each AC component of the island closes its own balance through the external system's boundary
+ * buses in it: the equivalent carries whatever the component's other injections leave over, split
+ * between its boundary buses there in proportion to the rating of their closed ties (all to the
+ * first one when none is closed). Returns the sum over components, which must equal the external
+ * system's import from inertial sharing because the island's injections sum to zero by construction.
+ */
+const closeComponentsThroughBoundaries = (
+  grid: GridRuntimeInstance,
+  plan: GridTopologyPlan,
+  island: GridTopologyIsland,
+  system: GridExternalSystemDefinition,
+  injections: Float64Array,
+): number => {
+  const network = plan.network
+  let closingMw = 0
+  for (const componentIndex of island.componentIndices) {
+    const component = plan.components[componentIndex]!
+    const boundaries = system.boundaryBusIds.filter(busId => plan.componentIndexOfBus[network.busIndexById.get(busId)!] === componentIndex)
+    if (boundaries.length === 0) continue
+    let othersMw = 0
+    for (const bus of component.busIndices) othersMw += injections[bus]!
+    const capacities = boundaries.map(busId => boundaryTieCapacityMw(grid, busId))
+    const totalCapacityMw = capacities.reduce((sum, capacity) => sum + capacity, 0)
+    boundaries.forEach((busId, position) => {
+      const share = totalCapacityMw > 0 ? capacities[position]! / totalCapacityMw : position === 0 ? 1 : 0
+      addAt(injections, network.busIndexById.get(busId)!, -othersMw * share)
+    })
+    closingMw -= othersMw
+  }
+  return closingMw
 }
 
 /**
@@ -162,12 +201,14 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   let mismatchSumMw = 0
   for (const island of islands.islands) {
     if (!island.energized) continue
-    const mismatchMw = Math.abs(plan.referenceMismatchMw[island.planIndex]!)
-    if (!(mismatchMw < islandBalanceToleranceMw)) {
-      throw new Error(`Grid ${grid.definition.gridId} island ${island.id} injections sum to ${plan.referenceMismatchMw[island.planIndex]} MW; the island balance must close within ${islandBalanceToleranceMw} MW`)
+    for (const componentIndex of plan.islands[island.planIndex]!.componentIndices) {
+      const mismatchMw = Math.abs(plan.referenceMismatchMw[componentIndex]!)
+      if (!(mismatchMw < islandBalanceToleranceMw)) {
+        throw new Error(`Grid ${grid.definition.gridId} island ${island.id}: component at ${plan.components[componentIndex]!.referenceBusId} injections sum to ${plan.referenceMismatchMw[componentIndex]} MW; the balance must close within ${islandBalanceToleranceMw} MW`)
+      }
+      maximumMismatchMw = Math.max(maximumMismatchMw, mismatchMw)
+      mismatchSumMw += mismatchMw
     }
-    maximumMismatchMw = Math.max(maximumMismatchMw, mismatchMw)
-    mismatchSumMw += mismatchMw
   }
 
   const flows = flowScratch.get(grid) ?? new Float64Array(network.branchCount)

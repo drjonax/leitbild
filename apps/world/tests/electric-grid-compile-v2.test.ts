@@ -51,16 +51,13 @@ describe('Grid Model v2 → runtime model', () => {
     expect(model.sourceBuild).toEqual({ id: fixture.sourceBuild.id, generatedAt: '2026-10-10T00:00:00Z' })
   })
 
-  test('gives each synchronous runtime system one boundary bus and keeps the totals', async () => {
+  test('carries the synchronous Nordic equivalent with all its boundary buses and keeps the totals', async () => {
     const generated = validateGridModel(JSON.parse(await readFile(join(import.meta.dir, '../src/packs/electric-grid/models/norway-transmission.grid-model.json'), 'utf8')), 'generated')
     const winter = validateGridOperatingPoint(JSON.parse(await readFile(join(import.meta.dir, '../src/packs/electric-grid/models/norway-winter-weekday-peak.operating-point.json'), 'utf8')), 'winter', gridOperatingPointTargetsForModel(generated))
     const { model } = compileGridModelV2(generated, winter)
     const nordic = generated.externalSystems.find(system => system.synchronous)!
-    const parts = model.externalSystems.filter(system => system.synchronous)
-    expect(parts.map(part => part.boundaryBusIds.length)).toEqual(nordic.boundaryBusIds.map(() => 1))
-    for (const field of ['inertiaGws', 'loadMw', 'fcrNMwPerHz', 'fcrDUpMw', 'fcrDDownMw', 'afrrUpMw', 'afrrDownMw'] as const) {
-      expect(parts.reduce((sum, part) => sum + part[field]!, 0)).toBeCloseTo(nordic[field]!, 6)
-    }
+    expect(model.externalSystems.filter(system => system.synchronous)).toEqual([nordic])
+    expect(nordic.boundaryBusIds.length).toBeGreaterThan(1)
     expect(model.externalSystems.filter(system => !system.synchronous).map(system => system.id).sort()).toEqual(['external:DE', 'external:DK1', 'external:GB', 'external:NL'])
     const demandMw = model.loads.reduce((sum, load) => sum + load.demandMw, 0) * winter.loadScale
     expect(demandMw).toBeCloseTo(generated.loads.reduce((sum, load) => sum + load.referenceDemandMw, 0) * winter.loadScale, 6)
