@@ -101,7 +101,7 @@ fn z2_sg_duty_sweep_on_the_native_laws() {
     let block = Secondaries::new(&section, &stocks, &props).unwrap();
     let derived = block.derived();
     let sweep = Sweep {
-        tube: Tube::new(&probe.tube).unwrap(),
+        tube: Tube::new(&section.contact, probe.tube.thermal_diameter_m).unwrap(),
         segments: probe.segments.iter().map(Segment::from).collect(),
         volume_m3: section.steam_generators[0].volume_m3,
         crown_m3: section.steam_generators[0].crown_liquid_volume_m3,

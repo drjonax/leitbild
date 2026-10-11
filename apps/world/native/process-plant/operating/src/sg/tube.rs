@@ -104,28 +104,31 @@ pub struct Stationary {
 }
 
 impl Tube {
-    pub fn new(t: &packet::Tube) -> Result<Self, Failure> {
+    /// The tube film's law from the contact block's wall constants and the
+    /// effective thermal diameter.
+    pub fn new(c: &packet::Contact, thermal_diameter_m: f64) -> Result<Self, Failure> {
         if ![
-            t.thermal_diameter_m,
-            t.steel_conductivity_w_mk,
-            t.steel_density_kg_m3,
-            t.steel_cp_j_kgk,
+            thermal_diameter_m,
+            c.exchange_area_m2,
+            c.steel_conductivity_w_mk,
+            c.steel_density_kg_m3,
+            c.steel_cp_j_kgk,
         ]
         .iter()
         .all(|v| v.is_finite() && *v > 0.)
-            || !(t.emissivity > 0. && t.emissivity <= 1.)
+            || !(c.emissivity > 0. && c.emissivity <= 1.)
         {
             return Err(fatal("SG tube law constants"));
         }
         Ok(Self {
             law: WallLaw {
-                diameter_m: t.thermal_diameter_m,
+                diameter_m: thermal_diameter_m,
                 film: Film::Tube,
-                emissivity: t.emissivity,
+                emissivity: c.emissivity,
                 material: WallMaterial {
-                    conductivity: s(t.steel_conductivity_w_mk),
-                    density: t.steel_density_kg_m3,
-                    cp: s(t.steel_cp_j_kgk),
+                    conductivity: s(c.steel_conductivity_w_mk),
+                    density: c.steel_density_kg_m3,
+                    cp: s(c.steel_cp_j_kgk),
                 },
             },
         })
