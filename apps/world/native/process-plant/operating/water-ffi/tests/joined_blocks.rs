@@ -1065,10 +1065,10 @@ fn joined_lifted_feeds() {
         })
         .collect();
     let mut columns: Vec<BTreeMap<usize, f64>> = vec![BTreeMap::new(); m];
-    for j in 0..n {
+    for (j, column) in columns.iter_mut().enumerate().take(n) {
         for (row, v) in stored_column(p, &values, j) {
             if terms_of[row].is_empty() || row == j {
-                *columns[j].entry(row).or_insert(0.) += v;
+                *column.entry(row).or_insert(0.) += v;
             }
         }
     }
