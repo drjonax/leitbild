@@ -5,8 +5,9 @@ use leitbild_operating_plant::{
     hydraulics::{Pump as Impeller, Section, WallLaw},
     local_flow::{MomentumSupport, PressureSegment},
     network::{
-        Band, BandReport, ConsistentSystem, Failure, MetastableBand, Network, Properties,
-        PzrPreparation, RotorState, Water, consistent_rates, consistent_start,
+        Band, BandReport, ConsistentSystem, Failure, LowPressureBand, MetastableBand, Network,
+        Properties, PzrPreparation, RotorState, VaporEquation, Water, consistent_rates,
+        consistent_start,
         packet::*,
         prepare::{OperatingPoint, Receipt, Settings, prepare},
         stratified::{Band as FreeArea, Heaters, Metastable, PortKind, Stratified, Tap},
@@ -159,6 +160,13 @@ const BAND: MetastableBand = MetastableBand {
     liquid_temperature_max_k: 623.15,
     liquid_pressure_ceiling_pa: 17e6,
     vapor_pressure_ceiling_pa: 16e6,
+    low_pressure_band: LowPressureBand {
+        pressure_range_pa: [5.9e6, 10e6],
+        lower_bound_exclusive: true,
+        liquid_superheat_max_k: 2.,
+        vapor_subcooling_max_k: 1.1,
+        vapor_equation: VaporEquation::If97Eq18,
+    },
 };
 
 const AUTHORED_PA: f64 = 15.6e6;
@@ -345,6 +353,7 @@ fn packet() -> Packet {
                     liquid_temperature_max_k: BAND.liquid_temperature_max_k,
                     liquid_pressure_ceiling_pa: BAND.liquid_pressure_ceiling_pa,
                     vapor_pressure_ceiling_pa: BAND.vapor_pressure_ceiling_pa,
+                    low_pressure_band: BAND.low_pressure_band,
                 },
                 absorber_mass_fraction: TRACER_PER_KG,
                 interfacial_length_m: 0.003,
