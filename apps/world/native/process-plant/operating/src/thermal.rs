@@ -468,19 +468,26 @@ pub fn fuel_caloric(t: Scalar) -> Result<Caloric> {
     if !(290. ..=2000.).contains(&t.value) {
         return Err("fuel caloric domain 290--2000 K");
     }
-    let primitive = |x: Scalar| {
-        s(296.7 * 535.285) / ((s(535.285) / x).exp() - s(1.))
-            + s(0.0243 / 2.) * x * x
-            + s(8.745e7) * (-s(1.577e5 / 8.3143) / x).exp()
+    // The primitive and cp share their two exponentials, each evaluated
+    // once; the 300 K datum is the same primitive, evaluated once.
+    let primitive = |exp: Scalar, x: Scalar, arrhenius: Scalar| {
+        s(296.7 * 535.285) / (exp - s(1.)) + s(0.0243 / 2.) * x * x + s(8.745e7) * arrhenius
     };
+    let exponentials = |x: Scalar| ((s(535.285) / x).exp(), (-s(1.577e5 / 8.3143) / x).exp());
+    static DATUM: std::sync::OnceLock<Scalar> = std::sync::OnceLock::new();
+    let datum = *DATUM.get_or_init(|| {
+        let (exp, arrhenius) = exponentials(s(300.));
+        primitive(exp, s(300.), arrhenius)
+    });
     let q = s(535.285) / t;
     let exp = q.exp();
+    let arrhenius = (-s(1.577e5 / 8.3143) / t).exp();
     let cp = s(296.7) * q * q * exp / ((exp - s(1.)) * (exp - s(1.)))
         + s(0.0243) * t
-        + s(8.745e7 * 1.577e5 / 8.3143) / (t * t) * (-s(1.577e5 / 8.3143) / t).exp();
+        + s(8.745e7 * 1.577e5 / 8.3143) / (t * t) * arrhenius;
     positive(cp)?;
     Ok(Caloric {
-        specific_energy: (primitive(t) - primitive(s(300.))).finite()?,
+        specific_energy: (primitive(exp, t, arrhenius) - datum).finite()?,
         cp: cp.finite()?,
     })
 }
@@ -628,16 +635,17 @@ pub fn fuel_transfers(
     let jump = s(0.3048 * 2.0358e-5 / BTU) * k_he * t.helium.pow(0.5)
         / (p_he / s(6894.757293168) * s(g.accommodation / 4.003_f64.sqrt()));
     let gap_r = (s(ri - rf) + s(1.845) * jump) / (s(af) * k_he);
-    let q01 = s(4. * PI * nl) * (fuel_potential(t.inner_mean)? - fuel_potential(t.outer_mean)?);
-    let q1s = s(16. * PI * nl) * (fuel_potential(t.outer_mean)? - fuel_potential(t.fuel_surface)?);
+    // Each node's potential once, in the order the transfers first read it.
+    let (inner, outer) = (fuel_potential(t.inner_mean)?, fuel_potential(t.outer_mean)?);
+    let q01 = s(4. * PI * nl) * (inner - outer);
+    let q1s = s(16. * PI * nl) * (outer - fuel_potential(t.fuel_surface)?);
     let qfh = s(2.) * (t.fuel_surface - t.helium) / gap_r;
     let qhc = s(2.) * (t.helium - t.clad_inner) / gap_r;
     let qr = s(SB * af / (1. / g.fuel_emissivity + rf / ri * (1. / g.clad_emissivity - 1.)))
         * (t.fuel_surface.pow(4.) - t.clad_inner.pow(4.));
-    let qci = s(2. * PI * nl / log_inner)
-        * (clad_potential(t.clad_inner)? - clad_potential(t.clad_mean)?);
-    let qco = s(2. * PI * nl / log_outer)
-        * (clad_potential(t.clad_mean)? - clad_potential(t.clad_outer)?);
+    let (clad_inner, clad_mean) = (clad_potential(t.clad_inner)?, clad_potential(t.clad_mean)?);
+    let qci = s(2. * PI * nl / log_inner) * (clad_inner - clad_mean);
+    let qco = s(2. * PI * nl / log_outer) * (clad_mean - clad_potential(t.clad_outer)?);
     let residuals = [q1s - qfh - qr, qhc + qr - qci, qco - wall_heat_to_water];
     for q in [
         q01,
@@ -1816,6 +1824,47 @@ mod current_port_regression {
         }
         assert_eq!(plain, 2);
         assert_eq!(inner.queries.get(), 0);
+    }
+
+    /// The fuel caloric law with its shared exponentials and once-evaluated
+    /// datum is bit for bit the law evaluating each exponential and the
+    /// datum where it appears, in values, directions and refusals.
+    #[test]
+    fn fuel_caloric_shares_its_exponentials_bit_for_bit() {
+        let reference = |t: Scalar| -> Result<[Scalar; 2]> {
+            t.finite()?;
+            if !(290. ..=2000.).contains(&t.value) {
+                return Err("fuel caloric domain 290--2000 K");
+            }
+            let primitive = |x: Scalar| {
+                s(296.7 * 535.285) / ((s(535.285) / x).exp() - s(1.))
+                    + s(0.0243 / 2.) * x * x
+                    + s(8.745e7) * (-s(1.577e5 / 8.3143) / x).exp()
+            };
+            let q = s(535.285) / t;
+            let exp = q.exp();
+            let cp = s(296.7) * q * q * exp / ((exp - s(1.)) * (exp - s(1.)))
+                + s(0.0243) * t
+                + s(8.745e7 * 1.577e5 / 8.3143) / (t * t) * (-s(1.577e5 / 8.3143) / t).exp();
+            positive(cp)?;
+            Ok([(primitive(t) - primitive(s(300.))).finite()?, cp.finite()?])
+        };
+        let mut compared = 0;
+        for i in 0..=4000 {
+            let value = 285. + 0.43 * f64::from(i);
+            for direction in [0., -0., 1., -3.7e-3, 250.] {
+                let t = Scalar::new(value, direction);
+                let actual = fuel_caloric(t).map(|c| [c.specific_energy, c.cp]);
+                match (actual, reference(t)) {
+                    (Ok(a), Ok(b)) => {
+                        assert_eq!(a.map(bits2), b.map(bits2), "T {value} dT {direction}");
+                        compared += 1;
+                    }
+                    (a, b) => assert_eq!(a.err(), b.err(), "T {value} dT {direction}"),
+                }
+            }
+        }
+        assert!(compared > 19_000);
     }
 
     #[test]
