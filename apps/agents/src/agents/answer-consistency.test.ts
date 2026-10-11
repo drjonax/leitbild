@@ -208,3 +208,62 @@ describe('answers whose directions and limits agree with the display', () => {
   })
 })
 
+// Evaluation run 22 (GPT-6 Sol) as World served it: the display projected
+// ≈5 s for the SG levels and ≈48 s for subcooling. Without those times the
+// legend projects none, as where its short and long rates disagree.
+const sgLevelFalling = (sg: string, timeToLimitMs?: number) => moving(
+  signal([`SG-${sg}-LVL-NR`, `sg${sg}.levelPercent`, 'Steam generator narrow-range level', `Steam generator narrow-range level · Steam Generator ${sg}`], 21.6946, '%', [20, 20, 30, 75, 82]),
+  -21.2904, 'falling', { name: 'LO TRIP 20 %', value: 20, ...(timeToLimitMs === undefined ? {} : { timeToLimitMs }) },
+)
+const subcooling = (timeToLimitMs?: number) => moving(
+  signal(['SUB-MARGIN', 'vessel.subcoolingMarginC', 'RCS subcooling margin', 'RCS subcooling margin · Reactor Vessel'], 33.2133, '°C', [0, 16.7]),
+  -20.8267, 'falling', { name: 'LO ALM 16.7 °C', value: 16.7, ...(timeToLimitMs === undefined ? {} : { timeToLimitMs }) },
+)
+const TURBINE_TRIP = 'At current sim 10:01:00, **SG-A level leads the display**: 21.7% and falling 21.3%/min, just 1.69 percentage points above **LO TRIP 20%** (≈5 s at the sampled rate); SG-B shows the same trend.' + FENCE
+const RCP_TRIP = 'At current sim 10:01:00, SUB-MARGIN is 33.2 °C but falling 20.8 °C/min, about 48 s from LO ALM 16.7 °C if that rate persists.' + FENCE
+
+describe('answers that give a time to a limit', () => {
+  test('turbine-trip and rcp-trip: a time the display does not project', () => {
+    expect(answerViewIssues(TURBINE_TRIP, view([sgLevelFalling('A'), sgLevelFalling('B')]))).toEqual([
+      'It gives ≈5 s to LO TRIP 20% for SG-A-LVL-NR, but the display projects no time to it: give the rate and margin it shows, without a time.',
+    ])
+    expect(answerViewIssues(RCP_TRIP, view([subcooling()]))).toEqual([
+      'It gives about 48 s to LO ALM 16.7 °C for SUB-MARGIN, but the display projects no time to it: give the rate and margin it shows, without a time.',
+    ])
+  })
+
+  test('a time worked out from the rate, or far from the one the display projects', () => {
+    expect(answerViewIssues('SG A level is 21.7% and falling 21.3%/min; at this rate it will reach LO TRIP 20% in about 5 seconds.' + FENCE, view([sgLevelFalling('A')]))).toEqual([
+      'It gives about 5 seconds to LO TRIP 20% for SG-A-LVL-NR, but the display projects no time to it: give the rate and margin it shows, without a time.',
+    ])
+    expect(answerViewIssues('SUB-MARGIN is 33.2 °C, about 3 min from LO ALM 16.7 °C.' + FENCE, view([subcooling(47_573)]))).toEqual([
+      'It gives about 3 min to LO ALM 16.7 °C for SUB-MARGIN, but the display projects ≈48 s: give that time or none.',
+    ])
+  })
+
+  test('a limit named by its order and value, as relabelled limits read', () => {
+    expect(answerViewIssues('PT-455 is 13.2 MPa and falling, ≈30 s from LO-LO 12.7 · SI.' + FENCE, view([moving(siPressure(13.2), -1, 'falling', { name: 'LO-LO 12.7 MPa · SI', value: 12.7 })]))).toEqual([
+      'It gives ≈30 s to LO-LO 12.7 for PT-455, but the display projects no time to it: give the rate and margin it shows, without a time.',
+    ])
+  })
+})
+
+describe('answers whose times agree with the display', () => {
+  test('turbine-trip and rcp-trip: the time the display projects, rounded', () => {
+    expect(answerViewIssues(TURBINE_TRIP, view([sgLevelFalling('A', 4_776), sgLevelFalling('B', 4_776)]))).toEqual([])
+    expect(answerViewIssues(RCP_TRIP, view([subcooling(47_573)]))).toEqual([])
+    expect(answerViewIssues('SUB-MARGIN is falling, about a minute from LO ALM 16.7 °C (≈1 min at this rate).' + FENCE, view([subcooling(47_573)]))).toEqual([])
+  })
+
+  test('time gone by, a window, a return inside a passed limit and a time with no limit', () => {
+    const levels = view([sgLevelFalling('A'), moving(pressure(14.39), 1.04, 'rising')], { span: { shownMs: 60_000, horizonMs: 600_000 } })
+    for (const answer of [
+      'The OTΔT trip came 14 s before the SI actuation on LO-LO TRIP 12.7 MPa.',
+      'SG A level fell below LO TRIP 20% in 45 s, so auxiliary feedwater will start.',
+      'Over the last 1 min, SG A level fell toward LO TRIP 20%.',
+      'Pressurizer pressure is back above LO ALM 14.8 MPa in ≈23 s at this rate.',
+      'Natural circulation takes 5–15 min to establish; verify that subcooling stays above LO ALM 16.7 °C and core-exit temperature (not shown) stops rising.',
+      'The trend reaches back ≈1 min of history; SG A is 1.69 percentage points above LO TRIP 20%.',
+    ]) expect(answerViewIssues(answer + FENCE, levels).filter(issue => issue.startsWith('It gives'))).toEqual([])
+  })
+})

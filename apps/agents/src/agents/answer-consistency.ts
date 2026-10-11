@@ -9,9 +9,10 @@
 // contract's embedded view content). It is deterministic and errs towards
 // silence: a cited quantity counts as shown when the display reads anything
 // close to it in the same unit, a "watch" item when any word of what the
-// display shows names it, and anything the answer marks "not shown" is left
-// alone. Each issue names what to fix; evaluation.ts turns them into one
-// bounded correction turn.
+// display shows names it, a time to a limit when the display projects one
+// near it, and anything the answer marks "not shown" is left alone. Each
+// issue names what to fix; evaluation.ts turns them into one bounded
+// correction turn.
 // ============================================================================
 
 import type { EmbeddedViewContent } from '@leitbild/contracts'
@@ -340,7 +341,7 @@ const LIMIT = new RegExp(`\\b(HI(?:-HI)?|LO(?:-LO)?|high(?:[- ]high)?|low(?:[- ]
 const DISPLAY_ORDER = /^(?:HI|LO)(?:-(?:HI|LO))?$/
 
 type CitedLimit = { readonly value: number; readonly written: string; readonly unit: string | undefined }
-type NamedLimit = { readonly text: string; readonly low: boolean; readonly cited: CitedLimit | undefined }
+type NamedLimit = { readonly text: string; readonly index: number; readonly low: boolean; readonly cited: CitedLimit | undefined }
 
 const limitsNamed = (text: string): ReadonlyArray<NamedLimit> => [...text.matchAll(LIMIT)].flatMap(match => {
   const [whole, order, kind, written, unit] = match
@@ -348,6 +349,7 @@ const limitsNamed = (text: string): ReadonlyArray<NamedLimit> => [...text.matchA
   if (kind === undefined ? !capitals || written === undefined : !capitals && written === undefined) return []
   return [{
     text: whole,
+    index: match.index,
     low: /^lo/i.test(order!),
     cited: written === undefined ? undefined : { value: Number(written.replace('−', '-')), written, unit: unit === undefined ? undefined : canonicalUnit(unit) },
   }]
@@ -401,12 +403,112 @@ const limitAheadIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewCo
   })
 }
 
+// --- Times to a limit ----------------------------------------------------------
+
+// A time to a limit is the display's to project: it gives one only where the
+// recent trend is a basis for it. Evaluation run 22 repeated "≈5 s to LO TRIP"
+// beside a trace that had flattened; an answer that works out its own time
+// from a rate is the same claim without even the display's basis.
+const TIME = `(\\d+(?:\\.\\d+)?)\\s?(s|secs?|seconds?|mins?|minutes?)(?![\\w/])`
+const ABOUT = '(?:about|approximately|roughly|around|nearly|only|just|under|less than|some)'
+// "≈5 s": the display's own sign for a projected time.
+const SIGNED_TIME = new RegExp(`[≈~]\\s?${TIME}`, 'gi')
+// "about 48 s from LO ALM 16.7 °C", "2 min to the LO TRIP": a time, then the limit it leads to.
+const TIME_TO = new RegExp(`(?<![\\w.,])(?:${ABOUT}\\s+|[≈~]\\s?)?${TIME}\\s+(?:away\\s+)?(?:to|until|from|before|short of)\\s`, 'gi')
+// "will reach LO TRIP 20 % in about 5 s": a limit, then when, said of what is to come.
+const IN_TIME = new RegExp(`\\b(?:in|within)\\s+((?:${ABOUT}\\s+|[≈~]\\s?)?${TIME})`, 'gi')
+const TO_COME = /\b(?:will|would|could|may|might|reach(?:es)?|hits?|cross(?:es)?|at (?:this|that|the current|the sampled|its) rate|if|projected|expected)\b/i
+// Words between "… s to" and the limit it leads to: "48 s from LO ALM", "2 min to reaching the LO TRIP".
+const LEADS_TO = /^(?:(?:the|its|reaching|hitting|crossing|go|going|before)\s+)*$/i
+// What a value did, not what it will do: "fell below LO TRIP 20 % in 45 s".
+const DONE = /\b(?:was|were|had|fell|rose|dropped|reached|crossed|passed|came|took|tripped|actuated|went)\b/i
+// Time gone by, not to come: "≈2 min ago", "≈30 s after the trip", "for ≈1 min".
+const ELAPSED_AFTER = /^\s*(?:ago|earlier|later|after|since|into|of)\b/i
+const ELAPSED_BEFORE = /\b(?:last|past|previous|first|recorded|over|for|after|since)\s+(?:the\s+)?$/i
+// A return inside a limit already passed ("back above LO ALM 14.8 MPa in ≈23 s")
+// has no time in what the display publishes, so it is left alone.
+const RETURN = /\b(?:back|recover(?:s|ing)?|return(?:s|ing)?)\s+(?:above|below|inside|within|over|under|to)\b/i
+
+type Projection = { readonly text: string; readonly ms: number; readonly limit: NamedLimit }
+
+const projectionMs = (count: string, unit: string): number => Number(count) * (unit.toLowerCase().startsWith('m') ? 60_000 : 1_000)
+
+/**
+ * The times to a limit a clause gives, each with the limit it is to: the one
+ * named right after "… s to" or before "in … s", else the nearest. None in a
+ * clause about a return or time gone by, or naming no limit.
+ */
+const projectionsIn = (clause: string): ReadonlyArray<Projection> => {
+  const limits = limitsNamed(clause)
+  if (RETURN.test(clause) || limits.length === 0) return []
+  const elapsed = (start: number, end: number): boolean => ELAPSED_BEFORE.test(clause.slice(0, start)) || ELAPSED_AFTER.test(clause.slice(end))
+  const nearest = (at: number): NamedLimit => limits.reduce((best, limit) => Math.abs(limit.index - at) < Math.abs(best.index - at) ? limit : best)
+  const found = new Map<number, Projection>()
+  const add = (at: number, projection: Projection): void => {
+    if (![...found.keys()].some(index => Math.abs(index - at) <= 2)) found.set(at, projection)
+  }
+  for (const match of clause.matchAll(TIME_TO)) {
+    const end = match.index + match[0].length
+    const limit = limits.find(candidate => candidate.index >= end && LEADS_TO.test(clause.slice(end, candidate.index)))
+    if (limit !== undefined) add(match.index, { text: match[0].replace(/\s+(?:away\s+)?(?:to|until|from|before|short of)\s$/i, ''), ms: projectionMs(match[1]!, match[2]!), limit })
+  }
+  for (const match of clause.matchAll(IN_TIME)) {
+    const at = match.index + match[0].length - match[1]!.length
+    const limit = limits.filter(candidate => candidate.index < match.index).at(-1)
+    if (limit === undefined || !TO_COME.test(clause.slice(0, match.index)) || DONE.test(clause.slice(limit.index, match.index)) || elapsed(at, match.index + match[0].length)) continue
+    add(at, { text: match[1]!, ms: projectionMs(match[2]!, match[3]!), limit })
+  }
+  for (const match of clause.matchAll(SIGNED_TIME)) {
+    if (!elapsed(match.index, match.index + match[0].length)) add(match.index, { text: match[0], ms: projectionMs(match[1]!, match[2]!), limit: nearest(match.index) })
+  }
+  return [...found.values()]
+}
+
+/** A projected time as the display words it: "≈48 s", "≈4 min". */
+const shownTime = (ms: number): string => ms < 120_000 ? `≈${Math.max(1, Math.round(ms / 1_000))} s` : `≈${Math.round(ms / 60_000)} min`
+
+// Read as the display's projection where within a factor of two of it: the
+// display rounds, and an answer may round further ("about a minute").
+const sameTime = (said: number, shown: number): boolean => Math.abs(said - shown) <= 1_500 || (said >= shown / 2 && said <= shown * 2)
+
+/**
+ * A time to a limit the answer gives that the display does not project. The
+ * time is for the items with the limit the clause names, still short of it
+ * (a passed one is a return), and of those the ones it names; without a
+ * value, for the items the clause names or the clause before it named.
+ * Where the display projects a time for one of them, a time far from it is
+ * flagged; where it can tell no item, only a display projecting none at all.
+ */
+const projectionIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent): ReadonlyArray<string> => sentences.flatMap(sentence => {
+  let about: ReadonlyArray<Item> = []
+  return clausesOf(sentence).flatMap(clause => {
+    const named = itemsNamed(clause, view.items)
+    about = named.length > 0 ? named : about
+    return projectionsIn(clause).flatMap(({ text, ms, limit }) => {
+      const cited = limit.cited
+      const marked = cited === undefined ? [] : view.items.filter(item => item.limits.some(candidate => isCited(cited, candidate)))
+      // Every item marking the limit is past it: a return, of which the display publishes no time.
+      const limited = cited === undefined ? about : marked.filter(item => shortOf(item, cited, limit.low))
+      if (marked.length > 0 && limited.length === 0) return []
+      const chosen = itemsNamed(clause, limited)
+      const items = chosen.length > 0 ? chosen : limited
+      const timed = items.filter(item => item.timeToLimitMs !== undefined)
+      if (items.length === 0) {
+        return view.items.some(item => item.timeToLimitMs !== undefined) ? [] : [`It gives ${text} to ${limit.text}, but the display projects no time to a limit: give the rate and margin it shows, without a time.`]
+      }
+      if (timed.length === 0) return [`It gives ${text} to ${limit.text} for ${names(items)}, but the display projects no time to it: give the rate and margin it shows, without a time.`]
+      if (timed.some(item => sameTime(ms, item.timeToLimitMs!))) return []
+      return [`It gives ${text} to ${limit.text} for ${names(timed)}, but the display projects ${shownTime(timed[0]!.timeToLimitMs!)}: give that time or none.`]
+    })
+  })
+})
+
 /**
  * Where an answer and the display it presents disagree: quantities and
  * "watch" items the display does not show (unless the answer says so), a time
  * window longer than the display's axis, the display's lead left out, a
- * direction the display shows otherwise, and a limit other than the one the
- * display names ahead.
+ * direction the display shows otherwise, a limit other than the one the
+ * display names ahead, and a time to a limit the display does not project.
  */
 export const answerViewIssues = (answer: string, view: EmbeddedViewContent): ReadonlyArray<string> => {
   const prose = stripMarkdown(answer)
@@ -418,5 +520,6 @@ export const answerViewIssues = (answer: string, view: EmbeddedViewContent): Rea
     ...spanIssues(prose, view),
     ...directionIssues(sentences, view),
     ...limitAheadIssues(sentences, view),
+    ...projectionIssues(sentences, view),
   ])]
 }
