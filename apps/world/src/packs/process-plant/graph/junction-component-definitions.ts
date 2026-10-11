@@ -37,7 +37,7 @@ const valveSemantics = (parameters: unknown): ComponentSemantics => {
   if (valveFunction === undefined) throw new Error(`valve mode ${mode} has no declared function`)
   return {
     function: valveFunction,
-    aspects: [aspect('position', { variable: 'effectivePositionFraction', reading: 'value' }, 'positionFraction')],
+    aspects: [aspect('position', { variable: 'effectivePositionFraction', reading: 'value' }, 'positionFraction', 'isolationSignal')],
     embedded: [],
     ratedOutflow: [],
     portFlows: [],

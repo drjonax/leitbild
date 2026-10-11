@@ -87,12 +87,24 @@ export const feeds = (plant: CompiledProcessPlant, source: number, target: numbe
   return [...downstreamLinks(graph, [source], carriers, reach)].some(index => graph.links[index]!.toComponentIndex === target)
 }
 
-/** Whether a command starts a pump (or other running equipment) or stops it; null for any other command. */
-const startsOrStops = (plant: CompiledProcessPlant, write: AutomaticAction['writes'][number]): 'starts' | 'stops' | null => {
-  const running = plant.graph.components[write.component]!.semantics.aspects.find(aspect => aspect.aspect === 'running')
-  if (running?.command !== write.binding.path) return null
-  return write.value === true || (typeof write.value === 'number' && write.value > 0) ? 'starts' : 'stops'
+/**
+ * Whether a write starts or stops equipment, opens or shuts it: a run
+ * command starts a pump while true; a position command opens a valve above
+ * zero, or a breaker while it reads closed; an isolation input shuts it.
+ * Null for any other write (rod insertion), or an isolation released.
+ */
+const writeEffect = (plant: CompiledProcessPlant, write: AutomaticAction['writes'][number]): 'starts' | 'stops' | null => {
+  const component = plant.graph.components[write.component]!
+  const aspect = component.semantics.aspects.find(candidate => candidate.command === write.binding.path || candidate.isolation === write.binding.path)
+  if (aspect === undefined || (aspect.aspect !== 'running' && aspect.aspect !== 'position')) return null
+  const on = write.value === true || (typeof write.value === 'number' && write.value > 0)
+  if (aspect.isolation === write.binding.path) return on ? 'stops' : null
+  return on ? 'starts' : 'stops'
 }
+
+/** Whether a command starts a pump (or other running equipment) or stops it; null for any other command. */
+const startsOrStops = (plant: CompiledProcessPlant, write: AutomaticAction['writes'][number]): 'starts' | 'stops' | null =>
+  plant.graph.components[write.component]!.semantics.aspects.some(aspect => aspect.aspect === 'running' && aspect.command === write.binding.path) ? writeEffect(plant, write) : null
 
 /**
  * What an action delivers or isolates: the throughput downstream of the
@@ -112,19 +124,32 @@ export const actionFlows = (plant: CompiledProcessPlant, action: AutomaticAction
 /**
  * The equipment an action runs or moves: the components whose declared run
  * or position command it writes (pumps it starts, valves it opens or shuts),
- * not other commands it writes (rod insertion).
+ * or whose isolation input it sets (feed valves it isolates), not other
+ * commands it writes (rod insertion).
  */
 export const actionEquipment = (plant: CompiledProcessPlant, action: AutomaticAction): ReadonlyArray<number> => [...new Set(action.writes
-  .filter(write => plant.graph.components[write.component]!.semantics.aspects
-    .some(aspect => (aspect.aspect === 'running' || aspect.aspect === 'position') && aspect.command === write.binding.path))
+  .filter(write => writeEffect(plant, write) !== null)
   .map(write => write.component))]
 
-/** The flows the equipment an action runs or moves sends straight into a component: the lines from it into the component (auxiliary feed into one steam generator). */
-export const actionFlowsInto = (plant: CompiledProcessPlant, action: AutomaticAction, component: number): ReadonlyArray<VariablePath> => {
+/**
+ * The flows the equipment an action runs or moves sends straight into a
+ * component, the lines from it into the component, and whether the action
+ * delivers or isolates them: the auxiliary feed it starts into one steam
+ * generator, the steam a turbine trip shuts off from its turbine.
+ */
+export const actionFlowsInto = (plant: CompiledProcessPlant, action: AutomaticAction, component: number): ReadonlyArray<{ readonly path: VariablePath; readonly effect: 'starts' | 'stops' }> => {
   const graph = plant.graph
-  const commanded = new Set(actionEquipment(plant, action))
-  return [...new Set((graph.incomingLinksByComponent[component] ?? [])
-    .map(index => graph.links[index]!)
-    .filter(link => link.kind === 'fluidFlow' && commanded.has(link.fromComponentIndex))
-    .map(link => linkFlowBinding(graph, link.index).flowPath))]
+  const effectOn = new Map<number, 'starts' | 'stops'>()
+  for (const write of action.writes) {
+    const effect = writeEffect(plant, write)
+    if (effect !== null && !effectOn.has(write.component)) effectOn.set(write.component, effect)
+  }
+  const flows = new Map<VariablePath, 'starts' | 'stops'>()
+  for (const link of (graph.incomingLinksByComponent[component] ?? []).map(index => graph.links[index]!)) {
+    const effect = effectOn.get(link.fromComponentIndex)
+    if (link.kind !== 'fluidFlow' || effect === undefined) continue
+    const path = linkFlowBinding(graph, link.index).flowPath
+    if (!flows.has(path)) flows.set(path, effect)
+  }
+  return [...flows].map(([path, effect]) => ({ path, effect }))
 }

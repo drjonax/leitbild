@@ -89,6 +89,8 @@ describe('what World adds to a composed display', () => {
   test('SG B runback: the feed valve that does not follow its demand, the auxiliary feed into SG B, a healthy steam generator and the isolated main feed', () => {
     // Run 22: SG B level at 0 % three minutes after FCV B ran back to 35 %, the unit tripped into Hot standby. The
     // agent trended SG B's level, feed and steam flow; both reviewers missed FCV B and a healthy reference SG.
+    // Feedwater isolation now shuts every feed regulating valve: FCV B, failed at 35 %, does not follow it, and with
+    // the other valves shut SG A has reached its own low-low level, so its AFW start's header flow is added too.
     const { compose, read } = runback()
     const { result, evidence, display } = compose('SG B low-low and feedwater response', ['SG-B-LVL-NR'], [
       { kind: 'trend', horizon: '10m', signals: [signal('SG-B-LVL-NR', 'primary'), signal('sgB.feedwaterFlowKgPerS'), signal('sgB.steamOutflowKgPerS')] },
@@ -97,20 +99,23 @@ describe('what World adds to a composed display', () => {
     expect(listed(evidence)).toEqual([
       ['feedwaterControlValveB.effectivePositionFraction', 'cause'],
       ['feedwaterControlValveB.positionFraction', 'cause'],
+      ['auxFeedwaterHeader.outletFlowKgPerS', 'delivers'],
       ['aux-feedwater-valve-b-to-sg-b.flowKgPerS', 'delivers'],
       ['sgA.levelPercent', 'reference'],
-      ['feedwaterHeader.outletFlowKgPerS', 'isolates'],
+      ['feedwater-control-valve-b-to-sg-b.flowKgPerS', 'isolates'],
     ])
-    expect([read('feedwaterControlValveB.effectivePositionFraction'), read('feedwaterControlValveB.positionFraction')]).toEqual([expect.closeTo(0.35, 2), 1])
-    expect(read('aux-feedwater-valve-b-to-sg-b.flowKgPerS')).toBeCloseTo(95, 0)
-    expect(evidence[0]!.reason).toBe('FCV B does not follow its demand (CMD 100 %)')
-    expect(evidence[3]!.reason).toBe('the same reading on loop A, the healthiest other loop')
+    expect([read('feedwaterControlValveB.effectivePositionFraction'), read('feedwaterControlValveB.positionFraction')]).toEqual([expect.closeTo(0.35, 2), 0])
+    expect(read('aux-feedwater-valve-b-to-sg-b.flowKgPerS')).toBeGreaterThan(20)
+    expect(evidence[0]!.reason).toBe('FCV B does not follow its demand (CMD SHUT)')
+    expect(evidence[4]!.reason).toBe('the same reading on loop A, the healthiest other loop')
+    // Feedwater isolation shuts FCV B through its isolation input: what it shuts off is SG B's main feed line.
+    expect(evidence[5]!.reason).toBe('Feedwater isolation on reactor trip with low Tavg (P-4): the flow it shuts off into SG B')
     // In one labelled panel over the alarms, within a chat view's height; the agent's panels keep their order.
     expect(display.panels.map(panel => panel.kind)).toEqual(['trend', 'readouts', 'alarms'])
     const added = display.panels[1]!
     if (added.kind !== 'readouts') throw new Error('expected the added readouts')
     expect(added.added).toBe(true)
-    expect(added.pens.map(pen => pen.added?.kind)).toEqual(['cause', 'cause', 'delivers', 'reference', 'isolates'])
+    expect(added.pens.map(pen => pen.added?.kind)).toEqual(['cause', 'cause', 'delivers', 'delivers', 'reference', 'isolates'])
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
     expect(display.height).toBe(result.view.height)
     // The agent is told, and may cite them: they are in what the view shows.
@@ -119,23 +124,24 @@ describe('what World adds to a composed display', () => {
     expect(content.items.some(item => item.names.includes('MFW-B-CV-POS'))).toBe(true)
   }, 60_000)
 
-  test('PORV open: the safety injection it set off and the subcooling margin fill the free places of the agent\'s readouts', () => {
-    // Run 22: pressure 10.7 MPa falling with the PORV stuck at 35 %; the display showed no subcooling margin.
+  test('PORV open: the safety injection it set off fills a free place of the agent\'s readouts', () => {
+    // Run 22: pressure 10.7 MPa falling with the PORV stuck at 35 %; the display showed no subcooling margin. The
+    // overview in Hot standby now leads with containment pressure, which SI, steam line isolation and spray guard
+    // through Modes 3 and 4, so the subcooling margin is no longer among its six leads and is not added.
     const { compose, read } = situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 2)
     const { evidence, display, result } = compose('Pressurizer depressurization', ['PT-455', 'PORV-456A', 'PZR-LVL'], [
       { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('PZR-LVL')] },
       { kind: 'readouts', signals: [signal('pressurizer.reliefFlowKgPerS'), signal('PORV-456A-POS'), signal('PORV-456A'), signal('MOV-8000A-POS')] },
       { kind: 'alarms', scope: 'related' },
     ])
-    expect(listed(evidence)).toEqual([['safetyInjectionHeader.outletFlowKgPerS', 'delivers'], ['vessel.subcoolingMarginC', 'mode']])
+    expect(listed(evidence)).toEqual([['safetyInjectionHeader.outletFlowKgPerS', 'delivers']])
     expect(read('safetyInjectionHeader.outletFlowKgPerS')).toBeGreaterThan(30)
-    expect(evidence[1]!.reason).toBe('what the unit leads with in Hot standby')
     // The four readouts left two places in their second row: no panel and no height are added.
     expect(display.panels.map(panel => panel.kind)).toEqual(['trend', 'readouts', 'alarms'])
     const readouts = display.panels[1]!
     if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
     expect(readouts.added).toBeUndefined()
-    expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, null, 'delivers', 'mode'])
+    expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, null, 'delivers'])
     expect(result.view.height).toBe(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
   }, 60_000)
 
@@ -154,13 +160,14 @@ describe('what World adds to a composed display', () => {
       { kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary'), signal('SG-B-LVL-NR'), signal('PT-455'), signal('PZR-LVL')] },
       { kind: 'alarms', scope: 'related' },
     ])
-    // SG A falls towards the low-low level that starts auxiliary feedwater: what it would deliver, then C and D.
+    // With feedwater isolated on the trip, SG A has fallen to the low-low level that starts auxiliary feedwater within
+    // the minute: what it delivers, then C and D.
     expect(listed(trip.evidence)).toEqual([
       ['auxFeedwaterHeader.outletFlowKgPerS', 'delivers'],
       ['sgC.levelPercent', 'reference'],
       ['sgD.levelPercent', 'reference'],
     ])
-    expect(trip.evidence[0]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation, its limit ahead: what it would deliver')
+    expect(trip.evidence[0]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers')
     // One row was all the chat view had room for: the isolated main feed is left out.
     expect(trip.result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
   }, 60_000)

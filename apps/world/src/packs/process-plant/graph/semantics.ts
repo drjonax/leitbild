@@ -71,6 +71,13 @@ export interface StateAspectDeclaration {
    * `closedWhileTrue` commands closed while true, as its state reads.
    */
   readonly command?: LocalVariablePath
+  /**
+   * A boolean engineered safety features input that drives a position shut
+   * while it stands, whatever its command demands (feedwater isolation on a
+   * feed regulating valve). An automatic action that sets it moves the
+   * equipment as one that writes its command does.
+   */
+  readonly isolation?: LocalVariablePath
 }
 
 /** Equipment the model bundles inside a component; it sits on the link that leaves one of the component's ports. */
@@ -131,21 +138,24 @@ export const fixedSemantics = (semantics: Partial<ComponentSemantics>): ((parame
   return () => resolved
 }
 
-/** A state aspect read from a solved variable, with the command that demands it. */
+/** A state aspect read from a solved variable, with the command that demands it and the isolation input that overrides it. */
 export const aspect = (
   name: StateAspect,
   state: { readonly variable: string; readonly reading: AspectReading } | undefined,
   command?: string,
+  isolation?: string,
 ): StateAspectDeclaration => ({
   aspect: name,
   ...(state === undefined ? {} : { state: { variable: state.variable as LocalVariablePath, reading: state.reading } }),
   ...(command === undefined ? {} : { command: command as LocalVariablePath }),
+  ...(isolation === undefined ? {} : { isolation: isolation as LocalVariablePath }),
 })
 
 export interface CompiledStateAspect {
   readonly aspect: StateAspect
   readonly state?: { readonly path: VariablePath; readonly reading: AspectReading }
   readonly command?: VariablePath
+  readonly isolation?: VariablePath
 }
 
 export interface CompiledEmbeddedDevice {

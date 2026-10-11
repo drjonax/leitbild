@@ -224,10 +224,16 @@ const compileComponentSemantics = (
       const command = resolve(declaration.command)
       if (!command.writable || command.actuation !== 'command') throw new Error(`${context}: ${declaration.aspect} command ${declaration.command} is not a writable command`)
     }
+    if (declaration.isolation !== undefined) {
+      const isolation = resolve(declaration.isolation)
+      if (declaration.aspect !== 'position') throw new Error(`${context}: only a position is driven shut by an isolation input, not ${declaration.aspect}`)
+      if (!isolation.writable || isolation.actuation !== 'command' || isolation.quantity !== 'boolean') throw new Error(`${context}: position isolation ${declaration.isolation} is not a writable boolean command`)
+    }
     return {
       aspect: declaration.aspect,
       ...(state === undefined ? {} : { state: { path: variablePathFor(componentId, state.variable), reading: state.reading } }),
       ...(declaration.command === undefined ? {} : { command: variablePathFor(componentId, declaration.command) }),
+      ...(declaration.isolation === undefined ? {} : { isolation: variablePathFor(componentId, declaration.isolation) }),
     }
   }
   const portName = (name: string): PortName => {

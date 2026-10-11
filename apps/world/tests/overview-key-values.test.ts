@@ -115,8 +115,9 @@ describe('the values equipment opened from the overview leads with', () => {
 
   test('a steam generator leads with the auxiliary feed its low-low level sends into it, in every mode the actuation acts in', () => {
     // The low-low level actuation starts the pumps and opens this steam generator's valve: the line from that valve
-    // into it is what the actuation delivers here. Run 22's SG B detail showed neither it nor the pumps.
-    expect(of(['sgB'])).toEqual(['sgB.levelPercent', 'sgB.secondaryRadiationMSvPerH', 'sgB.pressureMPa', 'sgB.feedwaterFlowKgPerS', 'aux-feedwater-valve-b-to-sg-b.flowKgPerS'] as never)
+    // into it is what the actuation delivers here. Run 22's SG B detail showed neither it nor the pumps. Its
+    // high-high level isolates feedwater, shutting its feed regulating valve: the main feed line into it follows.
+    expect(of(['sgB'])).toEqual(['sgB.levelPercent', 'sgB.secondaryRadiationMSvPerH', 'sgB.pressureMPa', 'sgB.feedwaterFlowKgPerS', 'aux-feedwater-valve-b-to-sg-b.flowKgPerS', 'feedwater-control-valve-b-to-sg-b.flowKgPerS'] as never)
     expect(of(['sgB'], { ...atPower, mode: 'hotStandby' })).toContain('aux-feedwater-valve-b-to-sg-b.flowKgPerS' as never)
   })
 

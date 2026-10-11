@@ -161,7 +161,7 @@ export const equipmentKeyValues = (plant: CompiledProcessPlant, components: Read
     const keys = equipment(component)
     return actions
       .filter(action => conditionBindings(plant, action.rule.condition).some(binding => equipmentOf(binding).some(key => keys.has(key))))
-      .flatMap(action => actionFlowsInto(plant, action, component))
+      .flatMap(action => actionFlowsInto(plant, action, component).map(flow => flow.path))
   }
   const ranked = [...new Set([
     ...inTurn(onEquipment(judged(plant, now.mode, true))),

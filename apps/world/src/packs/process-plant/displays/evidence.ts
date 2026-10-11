@@ -34,8 +34,9 @@ const shortLabel = (system: ProcessPlantRuntimeInstance, component: number): str
  *   it, whose state does not follow its command (a feed valve stuck at 35 %
  *   while demanded open), as its state and its command;
  * - delivers and isolates: what an automatic action acting in the mode
- *   delivers or isolates (the header flow its pumps feed, or its flow into the
- *   one piece of shown equipment it feeds), where the action is active, or
+ *   delivers or isolates (the header flow its pumps feed, or the flow it
+ *   starts or shuts off into the one piece of shown equipment it feeds),
+ *   where the action is active, or
  *   its limit is the one a shown value is heading for, and it judges a shown
  *   value or acts on shown equipment;
  * - reference: for a primary reading of parallel equipment that is off
@@ -129,8 +130,11 @@ export const displayEvidence = (
     // Named as the I&C names the action ("Safety injection on low pressurizer pressure").
     const named = action.rule.label ?? action.rule.id
     const active = now.activeRuleIds.has(action.rule.id)
-    const into = fed.length === 1 ? actionFlowsInto(plant, action, fed[0]!).filter(readable) : []
-    for (const path of into) add(path, 'delivers', `${named}${active ? '' : ', its limit ahead'}: ${active ? 'its flow' : 'what it would send'} into ${shortLabel(system, fed[0]!)}`)
+    const into = fed.length === 1 ? actionFlowsInto(plant, action, fed[0]!).filter(flow => readable(flow.path)) : []
+    for (const flow of into) {
+      const what = flow.effect === 'starts' ? (active ? 'its flow' : 'what it would send') : (active ? 'the flow it shuts off' : 'the flow it would shut off')
+      add(flow.path, flow.effect === 'starts' ? 'delivers' : 'isolates', `${named}${active ? '' : ', its limit ahead'}: ${what} into ${shortLabel(system, fed[0]!)}`)
+    }
     if (into.length > 0) continue
     for (const flow of flows) {
       const effect = flow.effect === 'starts' ? (active ? 'what it delivers' : 'what it would deliver') : (active ? 'what it isolates' : 'what it would isolate')
