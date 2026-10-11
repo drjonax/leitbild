@@ -13,6 +13,7 @@
 //! [`block::Rods`]; until an owner composes its block, the census lists it
 //! as pending and no composed evaluation includes it.
 pub mod block;
+pub mod blocks;
 pub mod census;
 pub mod nuclear;
 pub mod operator;
