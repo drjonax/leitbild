@@ -5,8 +5,9 @@
 //! inverses, against the same law on complete tuples: an identity sweep over
 //! SG and PZR relief donors, bit for bit, and a cost and query profile. The
 //! complete reference is a delegating wrapper that keeps every default of
-//! the property boundary, which is exactly the restriction's earlier
-//! computation. A measurement and identity check, not a production path.
+//! the property boundary, with its partials restated as three independent
+//! passes: exactly the restriction's earlier computation. A measurement and
+//! identity check, not a production path.
 use leitbild_operating_plant::{
     network::{
         BandReport, MetastableBand, Properties, Water,
@@ -181,9 +182,50 @@ fn s(v: f64) -> Scalar {
     Scalar::constant(v)
 }
 
+/// `restriction_partials`' earlier computation, restated: three independent
+/// unit-seed passes of `restriction_flux` on the given properties, with no
+/// shared property boundary.
+fn unshared_partials<P: Properties>(
+    properties: &P,
+    vapor: bool,
+    p0: f64,
+    h0: f64,
+    p_back: f64,
+) -> Result<HeldFlux, String> {
+    let mut held: Option<HeldFlux> = None;
+    for k in 0..3 {
+        let unit = |j: usize, v: f64| Scalar::new(v, if j == k { 1. } else { 0. });
+        let f = stratified::restriction_flux(
+            properties,
+            vapor,
+            unit(0, p0),
+            unit(1, h0),
+            unit(2, p_back),
+        )
+        .map_err(|e| format!("{e:?}"))?;
+        let h = held.get_or_insert(HeldFlux {
+            mass_flux: f.mass_flux.value,
+            mass_flux_partials: [0.; 3],
+            throat_pressure_pa: f.throat_pressure_pa.value,
+            throat_partials: [0.; 3],
+            choked: f.choked,
+            saturation_calls: 0,
+            inversions: 0,
+        });
+        if h.mass_flux.to_bits() != f.mass_flux.value.to_bits() || h.choked != f.choked {
+            return Err("restriction value depends on its direction".into());
+        }
+        h.mass_flux_partials[k] = f.mass_flux.direction;
+        h.throat_partials[k] = f.throat_pressure_pa.direction;
+        h.saturation_calls += f.saturation_calls;
+        h.inversions += f.inversions;
+    }
+    held.ok_or_else(|| "no pass".into())
+}
+
 /// Relief donors: SG reliefs (saturated and slightly superheated vapor at
 /// 6-8 MPa) and the PZR relief (vapor at 14-16 MPa, and subcooled or
-/// saturated liquid at 14-16.5 MPa), each against an atmospheric, a
+/// saturated liquid at 14-16 MPa), each against an atmospheric, a
 /// relief-tank and a near-inlet back pressure. Donors stay at or below the
 /// 16 MPa vapor ceiling, where both saturation endpoints exist.
 fn donors() -> Vec<(bool, f64, f64, f64)> {
@@ -247,13 +289,16 @@ fn caloric_restriction_is_the_complete_restriction_bit_for_bit() {
         }
         let new = stratified::restriction_partials(&If97, vapor, p0, h0, back)
             .map_err(|e| format!("{e:?}"));
-        let old = stratified::restriction_partials(&Complete, vapor, p0, h0, back)
-            .map_err(|e| format!("{e:?}"));
+        let old = unshared_partials(&Complete, vapor, p0, h0, back);
         assert_eq!(
             held_bits(&new),
             held_bits(&old),
             "partials p0={p0:e} h0={h0:e}"
         );
+        // The shared boundary over complete tuples is the unshared one too.
+        let shared = stratified::restriction_partials(&Complete, vapor, p0, h0, back)
+            .map_err(|e| format!("{e:?}"));
+        assert_eq!(held_bits(&shared), held_bits(&old), "complete p0={p0:e}");
         partials += 1;
     }
     println!(
@@ -322,10 +367,7 @@ fn restriction_cost_profile() {
                 );
                 let partials_us = best_us(
                     || {
-                        black_box(
-                            stratified::restriction_partials(&Complete, vapor, p0, h0, back)
-                                .unwrap(),
-                        );
+                        black_box(unshared_partials(&Complete, vapor, p0, h0, back).unwrap());
                     },
                     5,
                 );
@@ -339,7 +381,7 @@ fn restriction_cost_profile() {
                     inner: &Complete,
                     tally: RefCell::default(),
                 };
-                stratified::restriction_partials(&c, vapor, p0, h0, back).unwrap();
+                unshared_partials(&c, vapor, p0, h0, back).unwrap();
                 (flux_us, partials_us, qv, c.json())
             } else {
                 let flux_us = best_us(
