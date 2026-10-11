@@ -54,6 +54,31 @@ const QUANTITY = new RegExp(`(?<![\\w.,])([-−]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?
 
 const canonicalUnit = (unit: string): string => UNIT_BY_SPELLING.get(unit.toLowerCase()) ?? unit
 
+// Units that measure one quantity, by their exact factor to a common base, so
+// a value cited in one is compared with a value shown in another ("15.5 MPa"
+// beside a display reading 15500 kPa). Any other unit compares only with
+// itself.
+const SCALES = new Map<string, { readonly base: string; readonly factor: number }>([
+  ['kPa', { base: 'Pa', factor: 1e3 }],
+  ['bar', { base: 'Pa', factor: 1e5 }],
+  ['MPa', { base: 'Pa', factor: 1e6 }],
+  ['kW', { base: 'W', factor: 1e3 }],
+  ['MW', { base: 'W', factor: 1e6 }],
+  ['µSv/h', { base: 'Sv/h', factor: 1e-6 }],
+  ['mSv/h', { base: 'Sv/h', factor: 1e-3 }],
+  ['kg/s', { base: 'kg/s', factor: 1 }],
+  ['t/h', { base: 'kg/s', factor: 1 / 3.6 }],
+])
+
+/** A quantity in the unit an answer cites, where both measure the same thing; undefined across quantities. */
+const inUnit = (quantity: Quantity, unit: string): number | undefined => {
+  const from = canonicalUnit(quantity.unit)
+  if (from === unit) return quantity.value
+  const source = SCALES.get(from)
+  const target = SCALES.get(unit)
+  return source !== undefined && target !== undefined && source.base === target.base ? quantity.value * source.factor / target.factor : undefined
+}
+
 const quantitiesIn = (text: string): ReadonlyArray<Quantity & { readonly text: string; readonly index: number }> =>
   [...text.matchAll(QUANTITY)].map(match => ({
     value: Number(match[1]!.replace(/,/g, '').replace('−', '-')),
@@ -66,6 +91,12 @@ const quantitiesIn = (text: string): ReadonlyArray<Quantity & { readonly text: s
 const near = (cited: number, written: string, shown: number): boolean => {
   const decimals = written.match(/\.(\d+)/)?.[1]?.length ?? 0
   return Math.abs(cited - shown) <= Math.max(0.5 * 10 ** -decimals, 0.03 * Math.max(Math.abs(cited), Math.abs(shown)))
+}
+
+/** Whether a shown quantity reads as the cited one, in the cited unit and rounded as it was written. */
+const reads = (cited: Quantity & { readonly text: string }, shown: Quantity): boolean => {
+  const value = inUnit(shown, cited.unit)
+  return value !== undefined && near(cited.value, cited.text, value)
 }
 
 // A clause that says it cites something the display does not show.
@@ -140,6 +171,7 @@ const shownQuantities = (view: EmbeddedViewContent) => view.items.map(item => {
     name: item.names[0]!,
     words: content(item.names.flatMap(wordsOf)).filter(word => !UNIT_WORDS.has(word)),
     history: item.history,
+    now: item.values,
     quantities: [
       ...marked,
       ...readings.flatMap(reading => item.limits.filter(limit => limit.unit === reading.unit).map(limit => ({ value: Math.abs(reading.value - limit.value), unit: reading.unit }))),
@@ -150,21 +182,30 @@ const shownQuantities = (view: EmbeddedViewContent) => view.items.map(item => {
 // Unit words in paths ("levelPercent", "flowKgPerS") name no item.
 const UNIT_WORDS = new Set([...UNIT_BY_SPELLING.keys()].flatMap(wordsOf).concat(['per', 'kg', 'mw', 'mpa', 'deg', 'c']))
 
+// A value said to be the current one ("is currently 99 %", "now at 20 %"):
+// it must be what the display reads now, not an earlier value of a trend.
+const CURRENT = /\b(?:currently|now|presently|at present)(?:\s+(?:at|reads?|reading|is|are|stands?|about|around|approximately|roughly))*\s*[~≈]?\s*$/i
+
 const quantityIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent): ReadonlyArray<string> => {
   const shown = shownQuantities(view)
   return sentences.flatMap(sentence => NOT_SHOWN.test(sentence) ? [] : quantitiesIn(sentence).flatMap(cited => {
     if (cited.unit === '%' && derivedPercent(sentence, cited.index)) return []
-    const sameUnit = shown.filter(item => item.quantities.some(quantity => quantity.unit === cited.unit))
-    if (sameUnit.length === 0) return [`It cites ${cited.text}, but the display shows no value in ${cited.unit}.`]
-    if (sameUnit.some(item => item.quantities.some(quantity => quantity.unit === cited.unit && near(cited.value, cited.text, quantity.value)))) return []
+    const comparable = shown.filter(item => item.quantities.some(quantity => inUnit(quantity, cited.unit) !== undefined))
+    if (comparable.length === 0) return [`It cites ${cited.text}, but the display shows no value in ${cited.unit}.`]
+    if (comparable.some(item => item.quantities.some(quantity => reads(cited, quantity)))) return []
     // A trend shows earlier values too, so a value of its unit is shown if
     // the sentence names a trended item before it or its clause right after
     // it ("SG A was 53.8 %", "157 kg/s steam outflow"; not "the valve's
-    // position feedback is 35 %").
-    const trended = sameUnit.filter(item => item.history)
+    // position feedback is 35 %"), unless the value is said to be current.
+    const trended = comparable.filter(item => item.history)
     const after = sentence.slice(cited.index + cited.text.length).split(/[,;:(]/)[0]!
     const named = new Set(content(wordsOf(`${sentence.slice(0, cited.index)} ${after}`)))
-    if (trended.some(item => item.words.some(word => named.has(word)))) return []
+    const trendedNamed = trended.filter(item => item.words.some(word => named.has(word)))
+    if (trendedNamed.length > 0 && CURRENT.test(sentence.slice(0, cited.index))) {
+      const now = trendedNamed.flatMap(item => item.now.flatMap(value => inUnit(value, cited.unit) === undefined ? [] : [`${item.name} ${Number(value.value.toPrecision(3))} ${value.unit}`]))
+      return [`It cites ${cited.text} as current, but the display reads ${now.join(', ')} now.`]
+    }
+    if (trendedNamed.length > 0) return []
     return [`It cites ${cited.text}, which the display does not show${trended.length === 0 ? '' : ` (it trends ${cited.unit} only for ${trended.map(item => item.name).join(', ')})`}.`]
   }))
 }
@@ -239,7 +280,7 @@ const leadIssues = (prose: string, view: EmbeddedViewContent): ReadonlyArray<str
   const item = view.items[view.lead.item]!
   const said = ` ${wordsOf(prose).join(' ')} `
   if (item.names.some(name => said.includes(` ${wordsOf(name).join(' ')} `))) return []
-  if (quantitiesIn(prose).some(cited => item.values.some(value => canonicalUnit(value.unit) === cited.unit && near(cited.value, cited.text, value.value)))) return []
+  if (quantitiesIn(prose).some(cited => item.values.some(value => reads(cited, value)))) return []
   return [`It leaves out what the display leads with: ${view.lead.reason}.`]
 }
 
@@ -269,7 +310,7 @@ const itemsNamed = (clause: string, items: ReadonlyArray<Item>): ReadonlyArray<I
   const cited = quantitiesIn(clause)
   const scored = items.map(item => {
     const terms = itemTerms(item)
-    const valued = cited.some(quantity => item.values.some(value => canonicalUnit(value.unit) === quantity.unit && near(quantity.value, quantity.text, value.value)))
+    const valued = cited.some(quantity => item.values.some(value => reads(quantity, value)))
     return { item, score: 2 * [...terms.pairs].filter(pair => pairs.has(pair)).length + [...terms.words].filter(word => words.has(word)).length + (valued ? 2 : 0) }
   })
   const best = Math.max(0, ...scored.map(entry => entry.score))
@@ -355,16 +396,18 @@ const limitsNamed = (text: string): ReadonlyArray<NamedLimit> => [...text.matchA
   }]
 })
 
-/** Whether a limit the display marks is the one cited: the same value as written, in its unit where the answer gives one. */
-const isCited = (cited: CitedLimit, limit: { readonly value: number; readonly unit: string }): boolean =>
-  (cited.unit === undefined || canonicalUnit(limit.unit) === cited.unit) && near(cited.value, cited.written, limit.value)
+/** Whether a limit the display marks is the one cited: the same value as written, in the unit the answer gives, if any. */
+const isCited = (cited: CitedLimit, limit: Quantity): boolean => {
+  const value = cited.unit === undefined ? limit.value : inUnit(limit, cited.unit)
+  return value !== undefined && near(cited.value, cited.written, value)
+}
 
-/** Whether an item's value is still short of a limit cited for it, read in that limit's unit. */
+/** Whether an item's value is still short of a limit cited for it, read in the cited unit (or that limit's). */
 const shortOf = (item: Item, cited: CitedLimit, low: boolean): boolean => {
   const unit = cited.unit ?? item.limits.find(limit => isCited(cited, limit))?.unit
   // An item that marks no such limit, or reads no value in its unit, is short of nothing.
   if (unit === undefined) return false
-  const value = item.values.find(reading => canonicalUnit(reading.unit) === canonicalUnit(unit))?.value
+  const value = item.values.map(reading => inUnit(reading, canonicalUnit(unit))).find(reading => reading !== undefined)
   return value !== undefined && (low ? value > cited.value : value < cited.value)
 }
 

@@ -17,6 +17,15 @@ const sgLevels = (value: number) => ['A', 'B', 'C', 'D'].map(sg => signal([`SG-$
 const afwFlows = ['A', 'B', 'C', 'D'].map(sg => signal([`Auxiliary feedwater to steam generator ${sg} flow`, `aux-feedwater-valve-${sg.toLowerCase()}-to-sg-${sg.toLowerCase()}.flowKgPerS`], 83.1, 'kg/s', [], false))
 
 describe('answers that cite what their display does not show', () => {
+  test('a value stated as current that only an earlier point of the trend could be', () => {
+    expect(answerViewIssues('Steam generator level is currently 99 percent.' + FENCE, view([signal(['Steam generator level'], 55, '%')]))).toEqual([
+      'It cites 99 percent as current, but the display reads Steam generator level 55 % now.',
+    ])
+    expect(answerViewIssues('SG A level is now at 80 %.' + FENCE, view([sgLevels(55.2)[0]!]))).toEqual([
+      'It cites 80 % as current, but the display reads SG-A-LVL-NR 55.2 % now.',
+    ])
+  })
+
   test('afw-reach: SG levels cited and watched beside a display of branch flows', () => {
     const issues = answerViewIssues(
       '**Yes—on Unit 2, auxiliary feedwater is currently reaching all four steam generators.** At 10:02:00 simulation time, each SG inlet shows 83.1 kg/s of auxiliary feedwater. All four SG levels remain low at 19.5%, with low-low trips active, so delivery is established but recovery is not yet demonstrated. Watch the levels for a sustained response; the panel below shows the four branch flows.' + FENCE,
@@ -82,6 +91,19 @@ describe('answers that cite what their display does not show', () => {
 })
 
 describe('answers consistent with their display', () => {
+  test('a value cited in another unit of the same quantity, converted exactly', () => {
+    // Evaluation boundary case: a display reading 15500 kPa beside an answer in MPa.
+    const shown = view([signal(['Pressurizer pressure', 'pressurizer.pressureKPa'], 15500, 'kPa', [14800])])
+    expect(answerViewIssues('Pressurizer pressure is 15.5 MPa, 0.7 MPa above LO ALM 14.8 MPa.' + FENCE, shown)).toEqual([])
+    expect(answerViewIssues('Feedwater flow is 504 t/h.' + FENCE, view([signal(['Feedwater flow'], 140, 'kg/s', [], false)]))).toEqual([])
+    // Another quantity is never converted: 15.5 MW is not a pressure.
+    expect(answerViewIssues('Pressurizer pressure is 15.5 MW.' + FENCE, shown)).toEqual(['It cites 15.5 MW, but the display shows no value in MW.'])
+  })
+
+  test('an earlier value of a trend, beside the current one', () => {
+    expect(answerViewIssues('SG B level is now 29.6 %, down from 55 % before the trip.' + FENCE, view([sgLevels(29.6)[1]!]))).toEqual([])
+  })
+
   test('values read now, limits, margins and percentage points as the display shows them', () => {
     expect(answerViewIssues(
       'At sim 10:01:00, Unit 2’s four steam generator narrow-range levels are equal: A, B, C and D each read **55.2%**. Each is 25.2 percentage points above its **LO ALM 30 %** threshold. Watch the trend below for any generator departing from the others.' + FENCE,
