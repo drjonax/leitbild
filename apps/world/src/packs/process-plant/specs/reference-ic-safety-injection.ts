@@ -24,6 +24,16 @@ const siAction = annunciator({
   role: 'automaticAction',
 })
 
+// The SI signal also trips the reactor: annunciated as its own trip in the
+// reactor trip's first-out group, where a first-out panel shows SI among the
+// reactor trip's causes, while the SI actuation stands apart in its group.
+const reactorTripOnSafetyInjection = (cause: string) => trip({
+  id: 'reactor-trip',
+  title: `Reactor trip on safety injection, ${cause}`,
+  message: `The safety injection signal, on ${cause}, trips the reactor.`,
+  annunciator: annunciator({ ...siAction, firstOutGroup: 'reactor-trip' }),
+})
+
 const siPumps = [
   { id: 'safetyInjectionPumpA', train: 'A' },
   { id: 'safetyInjectionPumpB', train: 'B' },
@@ -51,9 +61,9 @@ export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcR
         id: 'safety-injection',
         title: 'Safety injection actuated',
         message: `Pressurizer pressure is below ${lowPressurizerPressureSiMPa} MPa: the SI signal starts both high-head safety injection pumps and trips the reactor.`,
-        actuates: ['safetyInjection', 'reactorTrip'],
         annunciator: siAction,
       }),
+      reactorTripOnSafetyInjection('low pressurizer pressure'),
       ...safetyInjectionWrites('safety-injection'),
     ],
   }),
@@ -72,9 +82,9 @@ export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcR
         id: 'safety-injection',
         title: 'Safety injection actuated on containment pressure Hi-1',
         message: `Containment pressure is above Hi-1, ${containmentPressureHigh1MPa} MPa (3.86 psig): the SI signal starts both high-head safety injection pumps and trips the reactor.`,
-        actuates: ['safetyInjection', 'reactorTrip'],
         annunciator: siAction,
       }),
+      reactorTripOnSafetyInjection('containment pressure Hi-1'),
       ...safetyInjectionWrites('safety-injection-containment'),
     ],
   }),

@@ -6,7 +6,6 @@ import {
   createProcessPlantProtectionRunner,
   createProcessPlantRuntime,
   createPwrReferencePlantDefinition,
-  processPlantIcConfigSchema,
   type ProcessPlantIcConfig,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
@@ -87,8 +86,6 @@ describe('high pressurizer pressure', () => {
 })
 
 describe('the pressurizer PORV on high pressure', () => {
-  const relief = 'trip:pzr-pressure-high-relief:relief-actuation'
-
   test('opens at 16.18 MPa on every rise, reseats below 15.85 MPa, and holds the pressure below the reactor trip', () => {
     // No spray, and the heaters full on: the pressure rises until the PORV relieves it, again and again.
     const plantRun = started({ ...plant.automation, rules: plant.automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-high-demand') && !rule.id.startsWith('pzr-pressure-normal-band') && !rule.id.startsWith('pzr-pressure-low-demand')) })
@@ -108,7 +105,6 @@ describe('the pressurizer PORV on high pressure', () => {
     expect(peak).toBeGreaterThan(16.18)
     expect(peak).toBeLessThan(16.55)
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(true)
-    expect(plantRun.trip(relief)!.occurrenceCount).toBe(openings)
     expect(plantRun.trip('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip')!.occurrenceCount).toBe(0)
   }, 120_000)
 })
@@ -535,50 +531,38 @@ describe('blocking low-pressure safety injection below P-11', () => {
   })
 })
 
-describe('what each trip actuates', () => {
-  // A display names a limit's function from the trip's annunciator ("LO-LO 20 · AFW START"), never from a plant name.
-  const actuatesOf = (ruleId: string) => plant.automation.rules.find(rule => rule.id === ruleId)!.effects
-    .flatMap(effect => effect.type === 'trip.enter' ? [effect.annunciator?.actuates] : [])
+describe('what each trip does', () => {
+  // A display names a limit's action from the first-out group its trip names ("LO-LO 20 · AFW START"), never from a plant name.
+  const groupsOf = (ruleId: string) => plant.automation.rules.find(rule => rule.id === ruleId)!.effects
+    .flatMap(effect => effect.type === 'trip.enter' ? [effect.annunciator?.firstOutGroup] : [])
 
-  test('every trip names the declared actuations it carries out, its own function first', () => {
-    const declared = new Map(plant.automation.actuations.map(actuation => [actuation.id, actuation.shortLabel]))
+  test('every trip names a declared first-out group; the reactor trip\'s alone is the reactor trip', () => {
+    const declared = new Map(plant.automation.firstOutGroups.map(group => [group.id, group]))
     const trips = plant.automation.rules.flatMap(rule => rule.effects.flatMap(effect => effect.type === 'trip.enter' ? [{ rule, effect }] : []))
     expect(trips.length).toBeGreaterThan(20)
-    for (const { rule, effect } of trips) {
-      expect(effect.annunciator?.actuates?.length, rule.id).toBeGreaterThan(0)
-      for (const id of effect.annunciator!.actuates!) expect(declared.has(id), `${rule.id} ${id}`).toBe(true)
+    for (const { rule, effect } of trips) expect(declared.has(effect.annunciator?.firstOutGroup ?? ''), rule.id).toBe(true)
+    expect([...declared.values()].filter(group => group.reactorTrip).map(group => group.shortLabel)).toEqual(['RX TRIP'])
+    for (const ruleId of ['pzr-pressure-low-reactor-trip', 'pzr-pressure-high-reactor-trip', 'sg-b-level-low-low-reactor-trip', 'reactor-turbine-trip']) {
+      expect(groupsOf(ruleId), ruleId).toEqual(['reactor-trip'])
     }
-    for (const rule of plant.automation.rules) {
-      for (const effect of rule.effects) if (effect.type === 'alarm.enter') expect(effect.annunciator?.actuates, rule.id).toBeUndefined()
+    for (const ruleId of ['sg-b-level-low-low-afw-actuation', 'main-feedwater-pumps-tripped-afw-start', 'loss-of-offsite-power-afw-actuation']) {
+      expect(groupsOf(ruleId), ruleId).toEqual(['auxiliary-feedwater'])
     }
-    expect(actuatesOf('safety-injection-low-pzr-pressure')).toEqual([['safetyInjection', 'reactorTrip']])
-    expect(actuatesOf('sg-b-level-low-low-afw-actuation')).toEqual([['auxiliaryFeedwaterStart']])
-    expect(actuatesOf('sg-b-level-low-low-reactor-trip')).toEqual([['reactorTrip']])
-    expect(actuatesOf('pzr-pressure-high-relief')).toEqual([['pressurizerReliefOpen']])
-    expect(actuatesOf('reactor-trip-low-tavg-feedwater-isolation')).toEqual([['feedwaterIsolation']])
-    expect(actuatesOf('sg-b-level-high-high-feedwater-isolation')).toEqual([['feedwaterIsolation', 'turbineTrip']])
-    expect([...declared.entries()]).toEqual(expect.arrayContaining([['reactorTrip', 'RX TRIP'], ['safetyInjection', 'SI'], ['auxiliaryFeedwaterStart', 'AFW START']]))
+    expect(groupsOf('reactor-trip-low-tavg-feedwater-isolation')).toEqual(['feedwater-isolation'])
+    expect(groupsOf('sg-b-level-high-high-feedwater-isolation')).toEqual(['feedwater-isolation'])
+    expect(groupsOf('turbine-trip-on-loss-of-load')).toEqual(['turbine-trip'])
+    expect(declared.get('auxiliary-feedwater')?.shortLabel).toBe('AFW START')
   })
 
-  test('a trip naming an undeclared actuation, or none where actuations are declared, is refused', () => {
-    const si = plant.automation.rules.find(rule => rule.id === 'safety-injection-low-pzr-pressure')!
-    const withAnnunciator = (actuates: ReadonlyArray<string> | undefined) => ({
-      ...plant.automation,
-      rules: plant.automation.rules.map(rule => rule.id !== si.id ? rule : {
-        ...rule,
-        effects: rule.effects.map(effect => effect.type !== 'trip.enter' ? effect : {
-          ...effect,
-          annunciator: { ...effect.annunciator!, actuates: actuates as never },
-        }),
-      }),
-    })
-    expect(() => processPlantIcConfigSchema.parse(withAnnunciator(['coreSpray']))).toThrow('actuates coreSpray, which is not declared')
-    expect(() => processPlantIcConfigSchema.parse(withAnnunciator(undefined))).toThrow('names no actuation')
+  test('safety injection annunciates its own actuation first and the reactor trip it causes in the reactor trip\'s group', () => {
+    expect(groupsOf('safety-injection-low-pzr-pressure')).toEqual(['safety-injection', 'reactor-trip'])
+    expect(groupsOf('safety-injection-containment-pressure-high-1')).toEqual(['safety-injection', 'reactor-trip'])
   })
 
-  test('the I&C catalog lists the declared actuations', () => {
-    const plantRun = started()
-    expect(plantRun.protection.catalog().actuations.map(actuation => actuation.id)).toEqual(plant.automation.actuations.map(actuation => actuation.id))
+  test('the PORV\'s opening is pressure control: it annunciates no trip', () => {
+    const relief = plant.automation.rules.find(rule => rule.id === 'pzr-pressure-high-relief')!
+    expect(relief.ruleClass).toBe('normalControl')
+    expect(relief.effects.map(effect => effect.type)).toEqual(['writeSignal'])
   })
 })
 
@@ -656,13 +640,13 @@ describe('containment pressure', () => {
 
   test('displays draw the alarm below Hi-1 safety injection, Hi-2 steam line isolation and Hi-3 spray', () => {
     const pressure = resolveProcessPlantSignalBinding(graph, { tagId: 'CTMT-PR' as never }).path
-    const actuates = (ruleId: string) => plant.automation.rules.find(rule => rule.id === ruleId)!.effects
-      .flatMap(effect => effect.type === 'trip.enter' ? effect.annunciator!.actuates! : [])[0] ?? null
-    expect(icThresholdsForSignal(plant, pressure).thresholds.map(threshold => [threshold.value, threshold.kind, actuates(threshold.ruleId)])).toEqual([
+    const group = (ruleId: string) => plant.automation.rules.find(rule => rule.id === ruleId)!.effects
+      .flatMap(effect => effect.type === 'trip.enter' ? [effect.annunciator!.firstOutGroup] : [])[0] ?? null
+    expect(icThresholdsForSignal(plant, pressure).thresholds.map(threshold => [threshold.value, threshold.kind, group(threshold.ruleId)])).toEqual([
       [0.11, 'alarm', null],
-      [0.128, 'trip', 'safetyInjection'],
-      [0.147, 'trip', 'steamLineIsolation'],
-      [0.186, 'trip', 'containmentSpray'],
+      [0.128, 'trip', 'safety-injection'],
+      [0.147, 'trip', 'steam-line-isolation'],
+      [0.186, 'trip', 'containment-spray'],
     ])
     expect(plant.automation.rules.some(rule => rule.id === 'containment-pressure-high-reactor-trip')).toBe(false)
   })

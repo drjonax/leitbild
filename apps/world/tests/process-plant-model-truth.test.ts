@@ -821,7 +821,8 @@ describe('steam generator low-low level', () => {
     plantRun.run(30_000)
     expect(lifecycleOf(plantRun, reactorTripOf('a'))).toMatchObject({ active: true, firstOut: true })
     const active = plantRun.protection.snapshot().trips.filter(lifecycle => lifecycle.active)
-    expect(active.filter(lifecycle => lifecycle.firstOut).map(lifecycle => lifecycle.id)).toEqual([reactorTripOf('a')])
+    // First out among the reactor trips; the feedwater isolation and AFW start lead their own groups.
+    expect(active.filter(lifecycle => lifecycle.firstOut && lifecycle.annunciator?.firstOutGroup === 'reactor-trip').map(lifecycle => lifecycle.id)).toEqual([reactorTripOf('a')])
     // The turbine trip the reactor trip causes does not trip the reactor again.
     expect(active.map(lifecycle => lifecycle.id)).not.toContain('trip:reactor-turbine-trip:turbine-trip-reactor-trip')
     expect(plantRun.tag('TRIP-BKR-B-POS')).toBe(false)
@@ -1007,10 +1008,8 @@ describe('a loss of load', () => {
 
 describe('grid frequency ride-through', () => {
   // The plant's 50 Hz grid boundary, read by the generator's frequency relays (NC RfG Article 13, Nordic values).
-  const frequencyTrips = ['under', 'over', 'sustained-low', 'sustained-high'].map(name => {
-    const ruleId = `turbine-trip-on-${name === 'under' || name === 'over' ? `grid-${name}frequency` : `${name}-grid-frequency`}`
-    return `trip:${ruleId}:frequency-turbine-trip`
-  })
+  const relayRuleIds = ['turbine-trip-on-grid-underfrequency', 'turbine-trip-on-grid-overfrequency', 'turbine-trip-on-sustained-low-grid-frequency', 'turbine-trip-on-sustained-high-grid-frequency']
+  const frequencyTrips = relayRuleIds.map(ruleId => `trip:${ruleId}:frequency-turbine-trip`)
   const fineRun = () => {
     const runtime = createProcessPlantRuntime({ system: plant })
     const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
@@ -1028,19 +1027,19 @@ describe('grid frequency ride-through', () => {
 
   test('declares its bands on the grid frequency: unlimited 49 to 51 Hz, 30 min beyond, 0.5 s past 47.5 and 51.5 Hz', () => {
     expect(plant.graph.components.find(component => component.id === 'offsiteGrid')!.parameters).toMatchObject({ initialFrequencyHz: 50 })
-    const relays = plant.automation.rules.filter(rule => frequencyTrips.some(id => id.split(':')[1] === rule.id))
+    const relays = plant.automation.rules.filter(rule => relayRuleIds.includes(rule.id))
     expect(relays.map(rule => {
       const limit = (rule.condition as Extract<typeof rule.condition, { type: 'all' }>).conditions[1] as Extract<typeof rule.condition, { type: 'comparison' }>
-      return [limit.operator, limit.value, rule.delayMs, rule.effects.flatMap(effect => effect.type === 'trip.enter' ? effect.annunciator!.actuates! : [])]
+      return [limit.operator, limit.value, rule.delayMs, rule.effects.flatMap(effect => effect.type === 'trip.enter' ? [effect.annunciator!.firstOutGroup] : [])]
     })).toEqual([
-      ['<', 47.5, 500, ['turbineTrip']],
-      ['>', 51.5, 500, ['turbineTrip']],
-      ['<', 49, 1_800_000, ['turbineTrip']],
-      ['>', 51, 1_800_000, ['turbineTrip']],
+      ['<', 47.5, 500, ['turbine-trip']],
+      ['>', 51.5, 500, ['turbine-trip']],
+      ['<', 49, 1_800_000, ['turbine-trip']],
+      ['>', 51, 1_800_000, ['turbine-trip']],
     ])
     // Nothing else in the Plant reads the grid frequency: no rate-of-change relay, no reactor coolant pump underfrequency trip.
     const readers = plant.automation.rules.filter(rule => JSON.stringify(rule.condition).includes('offsiteGrid.frequencyHz'))
-    expect(readers.map(rule => rule.id).sort()).toEqual(frequencyTrips.map(id => id.split(':')[1]).sort())
+    expect(readers.map(rule => rule.id).sort()).toEqual([...relayRuleIds].sort())
   })
 
   test('rides through a 49.6 Hz nadir and 60 s at 48.5 Hz', () => {
@@ -1071,9 +1070,9 @@ describe('grid frequency ride-through', () => {
     plantRun.step(250)
     expect(plantRun.trips()).toEqual([])
     plantRun.step(250)
-    expect(plantRun.trips()).toEqual([frequencyTrips[0]])
+    expect(plantRun.trips()).toEqual([frequencyTrips[0]!])
     plantRun.hold(1)
-    expect(plantRun.trips()).toEqual(expect.arrayContaining([frequencyTrips[0], 'trip:reactor-turbine-trip:turbine-trip-reactor-trip']))
+    expect(plantRun.trips()).toEqual(expect.arrayContaining([frequencyTrips[0]!, 'trip:reactor-turbine-trip:turbine-trip-reactor-trip']))
     expect(plantRun.tag('GEN-MW')).toBe(0)
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
   })

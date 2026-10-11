@@ -1,6 +1,5 @@
 import { processPlantSignalReferenceSchema, type ProcessPlantSignalReference } from '../signals.ts'
 import type { ProcessPlantIcAnnunciator, ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
-import type { ReferenceActuationId } from './reference-ic-actuations.ts'
 import type { ReferenceAnnunciatorSystemId } from './reference-ic-annunciators.ts'
 import type { ReferenceFirstOutGroupId } from './reference-ic-first-out-groups.ts'
 import type { ReferenceOperatingModeId } from './reference-ic-modes.ts'
@@ -40,7 +39,7 @@ export const vote = (required: number, conditions: ReadonlyArray<ProcessPlantIcC
 
 /** An annunciator on one of the systems the reference PWR declares (reference-ic-annunciators.ts), in one of its first-out groups (reference-ic-first-out-groups.ts). */
 export type ReferenceAnnunciator = ProcessPlantIcAnnunciator & { readonly system: ReferenceAnnunciatorSystemId; readonly firstOutGroup?: ReferenceFirstOutGroupId }
-export const annunciator = (config: ReferenceAnnunciator): ReferenceAnnunciator => config
+export const annunciator = <Annunciator extends ReferenceAnnunciator>(config: Annunciator): Annunciator => config
 
 export const alarm = (config: {
   readonly id: string
@@ -57,21 +56,25 @@ export const alarm = (config: {
   ...(config.annunciator === undefined ? {} : { annunciator: config.annunciator }),
 })
 
-/** A trip: an automatic action, annunciated with what it actuates (reference-ic-actuations.ts), its own function first. */
+/**
+ * A trip: an automatic action, annunciated in the first-out group of what it
+ * does (reference-ic-first-out-groups.ts), so a display names a limit by its
+ * action ("RX TRIP", "AFW START") and the banner lists it as the reactor trip
+ * or apart from it as an actuation.
+ */
 export const trip = (config: {
   readonly id: string
   readonly title: string
   readonly message: string
   readonly severity?: 'info' | 'notice' | 'warning' | 'critical'
-  readonly actuates: readonly [ReferenceActuationId, ...ReferenceActuationId[]]
-  readonly annunciator: ReferenceAnnunciator
+  readonly annunciator: ReferenceAnnunciator & { readonly firstOutGroup: ReferenceFirstOutGroupId }
 }): ReferenceIcEffect => ({
   type: 'trip.enter',
   id: config.id,
   title: config.title,
   message: config.message,
   severity: config.severity ?? 'critical',
-  annunciator: { ...config.annunciator, actuates: [...config.actuates] },
+  annunciator: config.annunciator,
 })
 
 export const write = (id: string, signal: SignalRef, value: number | boolean): ReferenceIcEffect => ({

@@ -9,10 +9,12 @@ const pzrAlarm = annunciator({
   role: 'symptom',
 })
 
-const pzrAction = annunciator({
-  system: 'reactorCoolantSystem',
+// The pressure reactor trips are the reactor protection system's, in the reactor trip's first-out group.
+const pzrReactorTrip = annunciator({
+  system: 'reactorProtection',
   equipmentId: 'pressurizer',
-  group: 'pressurizer',
+  group: 'reactor-protection',
+  firstOutGroup: 'reactor-trip',
   priority: 'urgent',
   role: 'automaticAction',
 })
@@ -77,24 +79,18 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
   }),
   rule({
     id: 'pzr-pressure-high-relief',
-    label: 'Pressurizer high pressure relief actuation',
-    ruleClass: 'protection',
+    label: 'Pressurizer PORV open on high pressure',
+    // Pressure control, not protection: the PORV opens from the pressure
+    // controller's bistable at its set point, so it is no actuation and
+    // annunciates nothing; its discharge shows on the relief flow alarm.
+    ruleClass: 'normalControl',
     condition: comparison({ tagId: 'PT-455' }, '>', porvOpenMPa),
     delayMs: 1_000,
-    // The PORV's bistable acts on every rise past its set point, so the PORV
-    // cycles between it and its reseat pressure rather than opening once.
+    // It acts on every rise past its set point, so the PORV cycles between it
+    // and its reseat pressure rather than opening once.
     latch: false,
     resetWhenClear: true,
-    effects: [
-      trip({
-        id: 'relief-actuation',
-        title: 'Pressurizer relief actuation',
-        message: `Pressurizer pressure is above the PORV's ${porvOpenMPa} MPa (2,335 psig) opening set point: the PORV opens until pressure falls below ${porvReseatMPa} MPa.`,
-        actuates: ['pressurizerReliefOpen'],
-        annunciator: pzrAction,
-      }),
-      write('open-porv', { tagId: 'PORV-456A' }, 1),
-    ],
+    effects: [write('open-porv', { tagId: 'PORV-456A' }, 1)],
   }),
   rule({
     id: 'pzr-relief-flow-high',
@@ -147,8 +143,7 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
         id: 'low-pzr-pressure-reactor-trip',
         title: 'Low pressurizer pressure reactor trip',
         message: 'Pressurizer pressure is below the reference reactor-trip threshold.',
-        actuates: ['reactorTrip'],
-        annunciator: pzrAction,
+        annunciator: pzrReactorTrip,
       }),
       ...reactorTripBreakerWrites('low-pzr-pressure-trip'),
       write('insert-control-rods-low-pzr-pressure', { path: 'core.rodInsertionFraction' }, 1),
@@ -166,8 +161,7 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
         id: 'high-pzr-pressure-reactor-trip',
         title: 'High pressurizer pressure reactor trip',
         message: `Pressurizer pressure is above the ${highPressureReactorTripMPa} MPa (2,385 psig) high-pressure reactor trip set point, above the PORV's opening.`,
-        actuates: ['reactorTrip'],
-        annunciator: pzrAction,
+        annunciator: pzrReactorTrip,
       }),
       ...reactorTripBreakerWrites('high-pzr-pressure-trip'),
       write('insert-control-rods-high-pzr-pressure', { path: 'core.rodInsertionFraction' }, 1),
