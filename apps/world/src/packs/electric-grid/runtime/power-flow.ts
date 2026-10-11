@@ -233,7 +233,7 @@ const writeBranchSolution = (
   const tables = gridTablesFor(grid.definition)
   const { branchResistancePu, branchReactanceSquaredPu, branchFromTap, branchRatingMw } = tables
   const branches = grid.arrays.branches
-  const { flowModel, flowMw, apparentPowerMva, lossesMw, loadingPercent, availability, frequencyHz, voltageFromPu, voltageToPu, reactiveFromMvar, reactiveToMvar } = branches
+  const { flowModel, flowMw, toFlowMw, apparentPowerMva, lossesMw, loadingPercent, availability, frequencyHz, voltageFromPu, voltageToPu, reactiveFromMvar, reactiveToMvar } = branches
   let totalLossesMw = 0
   for (let index = 0; index < network.branchCount; index += 1) {
     const from = branchFrom[index]!
@@ -261,12 +261,15 @@ const writeBranchSolution = (
     let apparentMva: number
     if (acLive) {
       const fromMw = branchFromActiveMw[index]!
+      const toMw = branchToActiveMw[index]!
       flowModel[index] = flowModelAc
       flowMw[index] = fromMw
-      apparentMva = Math.max(Math.hypot(fromMw, branchFromReactiveMvar[index]!), Math.hypot(branchToActiveMw[index]!, branchToReactiveMvar[index]!))
+      toFlowMw[index] = toMw
+      apparentMva = Math.max(Math.hypot(fromMw, branchFromReactiveMvar[index]!), Math.hypot(toMw, branchToReactiveMvar[index]!))
     } else {
       flowModel[index] = live ? flowModelDc : flowModelNone
       flowMw[index] = dcFlowMw
+      toFlowMw[index] = 0 - dcFlowMw
       apparentMva = Math.abs(dcFlowMw)
     }
     apparentPowerMva[index] = apparentMva

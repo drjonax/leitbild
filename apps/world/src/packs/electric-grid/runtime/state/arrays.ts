@@ -69,6 +69,11 @@ export interface GridBranchArrays {
   readonly availability: Float64Array
   readonly flowModel: Uint8Array
   readonly flowMw: Float64Array
+  /**
+   * Active power entering the branch at its to end (MW): the AC end flow where the island's load
+   * flow converged, −flowMw on DC flows (lossless), +0 without flow. Not part of the published state.
+   */
+  readonly toFlowMw: Float64Array
   readonly apparentPowerMva: Float64Array
   readonly loadingPercent: Float64Array
   readonly voltageFromPu: Float64Array
@@ -197,6 +202,7 @@ export const createGridBranchArrays = (count: number): GridBranchArrays => ({
   availability: floats(count),
   flowModel: new Uint8Array(count),
   flowMw: floats(count),
+  toFlowMw: floats(count),
   apparentPowerMva: floats(count),
   loadingPercent: floats(count),
   voltageFromPu: floats(count),
