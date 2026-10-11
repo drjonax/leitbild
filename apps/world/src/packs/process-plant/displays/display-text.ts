@@ -115,7 +115,10 @@ export const nearestThresholdMargin = (
  */
 export const marginTextForms = (margin: ThresholdMargin, unit: string): ReadonlyArray<string> => {
   const threshold = margin.threshold
-  const lead = isPast(margin) ? 'past' : `${formatQuantity(margin.margin, unit)} ${threshold.direction === 'low' ? 'above' : 'below'}`
+  const distance = unitLabel(unit) === '%'
+    ? `${formatValue(displayValue(margin.margin, unit))} percentage points`
+    : formatQuantity(margin.margin, unit)
+  const lead = isPast(margin) ? 'past' : `${distance} ${threshold.direction === 'low' ? 'above' : 'below'}`
   return [...new Set([
     `${lead} ${thresholdName(threshold, unit)}${threshold.modeLabel === undefined ? '' : ` (${threshold.modeLabel})`}`,
     `${lead} ${thresholdName(threshold, unit)}`,
@@ -125,14 +128,16 @@ export const marginTextForms = (margin: ThresholdMargin, unit: string): Readonly
 }
 
 /**
- * "4.50 % above LO ALM 30 %", or "past LO ALM 30 %" once the value is beyond
+ * "4.50 percentage points above LO ALM 30 %", or "past LO ALM 30 %" once the value is beyond
  * it: the margin first, with its unit, so a narrow tile drops the limit's
  * name rather than how far away it is (marginTextForms).
  */
 export const marginText = (margin: ThresholdMargin, unit: string): string => marginTextForms(margin, unit)[0]!
 
-/** Simulation time of day as the display header shows it: "10:01:00". */
-export const simulationClock = (ms: number): string => new Date(ms).toISOString().slice(11, 19)
+/** Simulation time of day, labelled independently of the browser timezone. */
+export const simulationClock = (ms: number): string => Number.isFinite(new Date(ms).getTime())
+  ? `${new Date(ms).toISOString().slice(11, 19)} UTC`
+  : '--:--:-- UTC'
 
 // A trend never spans less than this, so a Run's first minute still reads as a curve.
 const MIN_TREND_SPAN_MS = 60_000

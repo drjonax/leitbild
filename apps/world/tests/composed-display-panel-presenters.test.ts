@@ -18,12 +18,12 @@ describe('composed display panel presenters', () => {
   test('margin to the nearest acting alarm or trip threshold, ignoring control set points', () => {
     const near = nearestThresholdMargin(34.5, thresholds)!
     expect([near.threshold.ruleId, near.margin]).toEqual(['alarm-low', 4.5])
-    expect(marginText(near, '%')).toBe('4.50 % above LO ALM 30 %')
+    expect(marginText(near, '%')).toBe('4.50 percentage points above LO ALM 30 %')
     const beyond = nearestThresholdMargin(26.9, thresholds)!
     expect(marginText(beyond, '%')).toBe('past LO ALM 30 %')
     // Past both, the trip is what it says.
     expect(marginText(nearestThresholdMargin(19.5, thresholds)!, '%')).toBe('past LO TRIP 20 %')
-    expect(marginText(nearestThresholdMargin(70, thresholds)!, '%')).toBe('5.00 % below HI ALM 75 % (power operation)')
+    expect(marginText(nearestThresholdMargin(70, thresholds)!, '%')).toBe('5.00 percentage points below HI ALM 75 % (power operation)')
     expect(thresholdName(thresholds[0]!, 'MPa')).toBe('LO TRIP 20 MPa')
     expect(thresholdName(thresholds[0]!, 'MPa', { withUnit: false })).toBe('LO TRIP 20')
     expect(nearestThresholdMargin(10, [thresholds[2]!])).toBeNull()
@@ -89,7 +89,7 @@ describe('composed display panel presenters', () => {
     expect(formatQuantity(125, 'volts_dc')).toBe('125 V DC')
     expect(unitLabel('degC/s')).toBe('°C/s')
     expect(thresholdName(busLow, 'fraction')).toBe('LO ALM 90 %')
-    expect(marginText(nearestThresholdMargin(0.955, [busLow])!, 'fraction')).toBe('5.50 % above LO ALM 90 %')
+    expect(marginText(nearestThresholdMargin(0.955, [busLow])!, 'fraction')).toBe('5.50 percentage points above LO ALM 90 %')
     expect(rateText(-0.012, 0.955, 'fraction')).toBe('▼ −1.20 %/min')
     expect(unitLabel('fraction')).toBe('%')
   })
@@ -212,7 +212,11 @@ describe('composed display panel presenters', () => {
     // Samples held for 10 s at a time (rcp-trip): steps, not a tendency.
     const stepped = Array.from({ length: 76 }, (_, index) => ({ t: index * 1000, v: 15 - Math.floor(index / 10) * (index < 50 ? 0.2 : 0.6) }))
     expect(rateChange(stepped, window, 12)).toBeNull()
-    expect(simulationClock(Date.parse('2026-01-01T10:01:00.049Z'))).toBe('10:01:00')
+    expect(simulationClock(Date.parse('2026-01-01T10:01:00.049Z'))).toBe('10:01:00 UTC')
+    expect(simulationClock(Date.parse('2026-10-25T02:30:00+02:00'))).toBe('00:30:00 UTC')
+    expect(simulationClock(Date.parse('2026-10-25T01:30:00+01:00'))).toBe('00:30:00 UTC')
+    expect(simulationClock(Number.NaN)).toBe('--:--:-- UTC')
+    expect(simulationClock(Number.MAX_VALUE)).toBe('--:--:-- UTC')
     // Rising 0.31 MPa/min with 0.285 MPa left to HI ALM 16 (turbine trip, run 6).
     const highAlarm = { ruleId: 'pzr-high', label: 'Pressurizer pressure high', kind: 'alarm', operator: '>', direction: 'high', value: 16, escalation: 1 } as const
     expect(timeToThresholdText(15.715, 0.31, highAlarm, true)).toBe('≈55 s')

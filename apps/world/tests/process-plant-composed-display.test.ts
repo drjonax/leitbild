@@ -154,11 +154,11 @@ describe('world.process-plant.display.compose', () => {
       { ref: 'SG-A-LVL-NR', tagId: 'SG-A-LVL-NR', path: 'sgA.levelPercent', label: 'Steam generator narrow-range level', name: 'SG-A-LVL-NR', unit: 'percent' },
     ])
     expect(result.shows.join('\n')).toContain('"LO TRIP 20 %" trip line: Steam generator B low-low level · Steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR')
-    expect((result as unknown as { simulationClock: string }).simulationClock).toBe('21:00:00')
+    expect((result as unknown as { simulationClock: string }).simulationClock).toBe('21:00:00 UTC')
     const margins = (result as unknown as { margins: ReadonlyArray<string> }).margins
     expect(margins).toHaveLength(2)
     // At the 55 % program the high alarm is nearer than the low one.
-    expect(margins[0]).toMatch(/^SG-[AB]-LVL-NR: [0-9.]+ %, [0-9.]+ % below HI ALM 75 %$/)
+    expect(margins[0]).toMatch(/^SG-[AB]-LVL-NR: [0-9.]+ %, [0-9.]+ percentage points below HI ALM 75 %$/)
     expect(runtime.checkpoint()).toEqual(before)
   })
 

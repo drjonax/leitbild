@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte'
   import type { ModuleCapabilityDescriptor, ModuleResourceDescriptor } from '@leitbild/contracts'
   import { jsonRequest, request } from './api.ts'
+  import { simulationTimeLabel } from './simulation-time.ts'
 
   interface AccelerationState {
     readonly kind: 'continuous' | 'timed'
@@ -244,15 +245,7 @@
       if (deletingCurrent) remaining.length > 0 ? onSwitch(remaining[0]!.ref.id) : onClose()
     })
   }
-  const displayTime = $derived.by((): string => {
-    if (!execution) return '--:--:--'
-    const base = Date.parse(execution.currentSimulationTime)
-    const updated = Date.parse(execution.updatedAt)
-    const value = execution.playback === 'paused' || execution.pace === 'maximum' || !Number.isFinite(updated)
-      ? base
-      : base + Math.max(0, wallNow - updated)
-    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  })
+  const displayTime = $derived(simulationTimeLabel(execution, wallNow))
 
   $effect(() => {
     resource.ref.id

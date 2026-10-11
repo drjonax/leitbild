@@ -61,8 +61,10 @@ interface ArtifactSourceFileView {
   readonly content: string
 }
 
-const sourceRoot = new URL('../../../..', import.meta.url)
-const processPlantSourceRoot = new URL('src/packs/process-plant/', sourceRoot)
+// Public artifact references use repository-relative paths, the same identity
+// as product source inspection. The behavior registry is World-local only.
+const sourceRoot = new URL('../../../../../..', import.meta.url)
+const processPlantSourceRoot = new URL('apps/world/src/packs/process-plant/', sourceRoot)
 const componentSourceCache = new Map<string, string>()
 const componentSourceImportCache = new Map<string, ReadonlyArray<ComponentSourceImportView>>()
 
@@ -216,7 +218,8 @@ const artifactComponents = (
   overviewComponentIds: ReadonlySet<ComponentId>,
 ): ReadonlyArray<ArtifactComponentView> => {
   return graph.components.map(component => {
-    const sourcePath = processPlantComponentBehaviorSourcePathByKind.get(component.kind) ?? null
+    const localSourcePath = processPlantComponentBehaviorSourcePathByKind.get(component.kind)
+    const sourcePath = localSourcePath === undefined ? null : `apps/world/${localSourcePath}`
     return {
       id: component.id,
       label: component.label,
