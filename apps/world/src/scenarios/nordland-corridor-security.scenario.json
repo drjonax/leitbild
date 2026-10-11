@@ -1,12 +1,12 @@
 {
   "id": "nordland-corridor-security",
   "title": "Nordland corridor N-1 security",
-  "description": "A summer night with summer line ratings: Nordland's 420 kV corridor (Salten – Svartisen – Rana – Nedre Røssåga) carries northern hydropower south. The grid starts without an overloaded branch, but it is not N-1 secure: an outage of Svartisen – Rana 420 kV would push its flow onto the parallel Helgeland 132 kV network, loading Smibelg – Sjona and its neighbours far beyond the 150 % at which their instantaneous protection trips them. Ten minutes in, Svartisen – Rana trips. Find the weakness with N-1 screening, test remedial actions on a private copy of the solved grid, apply the one that works and verify it before the trip. Without preparation, protection splits the Helgeland network and load is lost. There are no weather-driven faults.",
+  "description": "A winter weekday peak: Nordland's 420 kV corridor (Salten – Svartisen – Rana – Nedre Røssåga) carries about 620 MW of northern hydropower south through Svartisen – Rana. A few 132 kV lines elsewhere in Norway already run above their ratings and hold overload alarms, but Helgeland's are lightly loaded. The grid is not N-1 secure there: an outage of Svartisen – Rana 420 kV would push its flow onto the parallel Helgeland 132 kV network, loading Smibelg – Sjona and its neighbours far beyond the 150 % at which their instantaneous protection trips them. Ten minutes in, Svartisen – Rana trips. Find the weakness with N-1 screening, test remedial actions on a private copy of the solved grid, apply the one that works and verify it before the trip. Without preparation, protection splits the Helgeland network and load is lost. There are no weather-driven faults.",
   "objectives": [
-    "Screen every branch outage (contingency.screen, all-branches) and find the outages that would overload a branch; identify the one that hits the Helgeland 132 kV network hardest.",
-    "Evaluate candidate remedial actions with remedial-actions.evaluate (redispatch, load shedding, opening or closing branches) and choose one that removes that post-contingency overload without overloading another branch, islanding load or adding N-1 violations.",
-    "Apply the chosen action with its command and confirm with a fresh screening that the outage no longer overloads anything.",
-    "When Svartisen – Rana trips at ten minutes, verify that no branch is overloaded or tripped and that all load is still served."
+    "Screen every branch outage (contingency.screen, all-branches). The base case already holds a few overloaded 132 kV lines in other regions, so look for outages that push branches over their ratings; identify the one that hits the Helgeland 132 kV network hardest.",
+    "Evaluate candidate remedial actions with remedial-actions.evaluate (redispatch, load shedding, opening or closing branches) and choose one after which that outage no longer pushes any Helgeland branch over its rating, without islanding load or adding base-case overloads.",
+    "Apply the chosen action with its command and confirm with a fresh screening that the outage no longer overloads the Helgeland network.",
+    "When Svartisen – Rana trips at ten minutes, verify that no branch trips and that all load is still served."
   ],
   "packs": [
     {
@@ -19,7 +19,7 @@
           "label": "Norway transmission grid",
           "location": [15.5, 64.7],
           "model": { "ref": "electric-grid.norway.transmission" },
-          "operatingPoint": { "ref": "electric-grid.norway.summer-night-low" },
+          "operatingPoint": { "ref": "electric-grid.norway.winter-weekday-peak" },
           "automation": { "ref": "electric-grid.frequency.nordic-2025" }
         }
       ],
@@ -27,7 +27,7 @@
     }
   ],
   "world": {
-    "startsAt": "2026-07-12T04:00:00.000Z",
+    "startsAt": "2026-01-12T07:00:00.000Z",
     "environment": {}
   },
   "view": {

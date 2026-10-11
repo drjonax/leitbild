@@ -87,6 +87,7 @@ interface AssetGetResult {
       readonly state: string
       readonly dispatchMw?: number
       readonly mfrrMw?: number
+      readonly flowMw?: number
       readonly loadingPercent?: number
       readonly flowModel?: 'ac' | 'dc' | null
     }
@@ -119,6 +120,7 @@ interface AssetSearchResult {
 interface ScreenedBranch {
   readonly assetId: string
   readonly loadingPercent: number
+  readonly preContingencyLoadingPercent: number
 }
 
 interface ContingencyResult {
@@ -196,61 +198,68 @@ describe('bundled Electric Grid Scenarios', () => {
   const svartisenRana = 'branch:osm-ac345cb49df196e1'
   const smibelgSjona = 'branch:osm-0fb54dfbafcab6d8'
 
+  /**
+   * Overloads the outage causes: overloaded branches whose loading it raises by more than 10
+   * percentage points. The winter base case already overloads a few branches elsewhere, and a
+   * branch at its rating moves by a point as the screening redistributes the outage's flow.
+   */
+  const outageOverloads = (result: ContingencyResult): ReadonlyArray<ScreenedBranch> =>
+    result.overloadedBranches.filter(branch => branch.loadingPercent - branch.preContingencyLoadingPercent > 10)
+
   test('nordland-corridor-security: N-1 shows the Helgeland overload and sectionalising at Sjona removes it before the trip', async () => {
     const scenario = await startScenarioRun('nordland-corridor-security', 'grid:norway')
     try {
       await scenario.advanceTo(60)
-      expect(scenario.projection().highestBranchLoadingPercent).toBeLessThan(100)
+      const corridor = (await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: svartisenRana })).asset.state
+      const helgelandBefore = (await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: smibelgSjona })).asset.state
+      expect(corridor.state).toBe('closed')
+      expect(helgelandBefore.loadingPercent!).toBeLessThan(100)
       const screen = await scenario.query<ScreenResult>('world.electric-grid.contingency.screen', { contingencies: 'all-branches', limit: 50 })
-      expect(screen.baseCase.overloadedCount).toBe(0)
       const outage = screen.results.find(result => result.contingency.assetId === svartisenRana)
       expect(outage).toBeDefined()
       expect(outage!.islanding).toBe(false)
-      const helgeland = outage!.overloadedBranches.find(branch => branch.assetId === smibelgSjona)
+      const helgeland = outageOverloads(outage!).find(branch => branch.assetId === smibelgSjona)
       // Above the 150 % instantaneous element: protection would trip it at once.
       expect(helgeland!.loadingPercent).toBeGreaterThan(150)
+      const helgelandOverloads = outageOverloads(outage!).length
 
       const evaluated = await scenario.query<RemedialResult>('world.electric-grid.remedial-actions.evaluate', {
-        contingencies: 'all-branches',
+        contingencies: [svartisenRana],
         actions: [{ kind: 'open-branch', assetId: smibelgSjona }],
-        limit: 50,
+        limit: 1,
       })
       expect(evaluated.actionBalances).toEqual([])
-      expect(evaluated.after.baseCase.overloadedCount).toBe(0)
-      expect(evaluated.after.violatingCount).toBeLessThan(evaluated.before.violatingCount)
-      expect(evaluated.results.find(result => result.contingency.assetId === svartisenRana)?.violationCount ?? 0).toBe(0)
+      expect(evaluated.after.baseCase.overloadedCount).toBeLessThanOrEqual(evaluated.before.baseCase.overloadedCount)
+      expect(outageOverloads(evaluated.results[0]!)).toEqual([])
 
       expect((await scenario.command('world.electric-grid.open-branch', { assetId: smibelgSjona })).ok).toBe(true)
       const verified = await scenario.query<ScreenResult>('world.electric-grid.contingency.screen', { contingencies: [svartisenRana], limit: 1 })
-      expect(verified.results[0]!.violationCount).toBe(0)
+      expect(outageOverloads(verified.results[0]!)).toEqual([])
 
       await scenario.advanceTo(660)
       expectTimelineExecuted(scenario, 'nordland-corridor-security')
       expect((await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: svartisenRana })).asset.state.state).toBe('open')
+      const transformer = (await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: 'branch:transformer-osm-way-475820066-420-132' })).asset.state
+      expect(transformer.loadingPercent!).toBeLessThan(100)
       const afterTrip = scenario.projection()
-      expect(afterTrip.highestBranchLoadingPercent).toBeLessThan(100)
       expect(afterTrip.unservedLoadMw).toBe(0)
       expect(afterTrip.activeIslandCount).toBe(1)
       expect(await trippedCount(scenario, 'branch')).toBe(0)
-      console.info(`nordland-corridor-security: Svartisen – Rana outage loads Smibelg – Sjona to ${helgeland!.loadingPercent} %; opening Smibelg – Sjona leaves ${evaluated.after.violatingCount} of ${evaluated.before.violatingCount} violating outages; after the trip the highest loading is ${afterTrip.highestBranchLoadingPercent.toFixed(1)} %`)
+      console.info(`nordland-corridor-security: Svartisen – Rana carries ${Math.abs(corridor.flowMw!).toFixed(0)} MW (AC); its outage overloads ${helgelandOverloads} branches, Smibelg – Sjona to ${helgeland!.loadingPercent} % (DC screening); after opening Smibelg – Sjona it overloads none; after the trip the Svartisen 420/132 kV transformer is at ${transformer.loadingPercent!.toFixed(1)} %, no trips, ${afterTrip.unservedLoadMw} MW unserved`)
     } finally { await scenario.close() }
   }, 120_000)
 
-  // Relays act on the AC flows: after the trip Smibelg – Sjona carries 145 % of its rating (the DC
-  // screening estimates 152 %), above its emergency rating but below the 150 % instantaneous
-  // element, so its thermal element would trip it about ten minutes later (623 s measured).
-  test('nordland-corridor-security: without a remedial action the trip overloads Helgeland above its emergency rating', async () => {
+  test('nordland-corridor-security: without a remedial action the trip overloads Helgeland and its protection disconnects load', async () => {
     const scenario = await startScenarioRun('nordland-corridor-security', 'grid:norway')
     try {
       await scenario.advanceTo(660)
       expectTimelineExecuted(scenario, 'nordland-corridor-security')
-      const helgeland = (await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: smibelgSjona })).asset.state
-      expect(helgeland.state).toBe('closed')
-      expect(helgeland.flowModel).toBe('ac')
-      expect(helgeland.loadingPercent!).toBeGreaterThan(120)
-      expect(helgeland.loadingPercent!).toBeLessThan(150)
-      expect(scenario.projection().activeAlarmCount).toBeGreaterThan(0)
-      console.info(`nordland-corridor-security without action: Smibelg – Sjona at ${helgeland.loadingPercent!.toFixed(1)} % (AC) 60 s after the trip`)
+      expect((await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: smibelgSjona })).asset.state.state).toBe('tripped')
+      const branchTrips = await trippedCount(scenario, 'branch')
+      const unservedMw = scenario.projection().unservedLoadMw
+      expect(branchTrips).toBeGreaterThanOrEqual(3)
+      expect(unservedMw).toBeGreaterThan(0)
+      console.info(`nordland-corridor-security without action: ${branchTrips} branches tripped, ${unservedMw.toFixed(1)} MW unserved`)
     } finally { await scenario.close() }
   }, 120_000)
 
