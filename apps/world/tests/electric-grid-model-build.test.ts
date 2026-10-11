@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from '../src/packs/electric-grid/build/curations.ts'
-import { ambientRatingRule, cableRules, lineParameters, overheadRules, reactanceFloorPu, transformerParameters } from '../src/packs/electric-grid/build/electrical.ts'
+import { ambientRatingRule, cableRules, lineParameters, networkEquivalentParameters, overheadRules, reactanceFloorPu, transformerParameters } from '../src/packs/electric-grid/build/electrical.ts'
 import { simplifyPath, type LonLat } from '../src/packs/electric-grid/build/geo.ts'
 import { jsonLines } from '../src/packs/electric-grid/build/json-lines.ts'
 import { createBuildLedger } from '../src/packs/electric-grid/build/ledger.ts'
@@ -40,6 +40,15 @@ describe('model build: electrical rules', () => {
     })
     expect(lineParameters({ nominalKv: 420, lengthKm: 0.05, cableLengthKm: 0, circuits: 1 }).reactancePu).toBe(reactanceFloorPu)
     expect(() => lineParameters({ nominalKv: 66, lengthKm: 1, cableLengthKm: 0, circuits: 1 })).toThrow('no electrical rule for 66 kV')
+  })
+
+  test('model a sub-transmission equivalent as its circuits in series with a transformation at each end', () => {
+    const equivalent = networkEquivalentParameters({ viaKv: 47, routeKm: 16, circuits: 2 })
+    expect(equivalent.ratings.designMw).toBe(2 * Math.round(Math.sqrt(3) * 47 * 0.645))
+    expect(equivalent.ratingMw).toBe(Math.round(equivalent.ratings.designMw * ambientRatingRule.referenceFactor))
+    expect(equivalent.endTransformerMva).toBe(150)
+    expect(equivalent.reactancePu).toBeCloseTo(0.40 * 16 / 2 / (47 ** 2 / 100) + 2 * 0.12 * 100 / 150, 9)
+    expect(equivalent.resistancePu).toBeCloseTo(0.10 * 16 / 2 / (47 ** 2 / 100) + 2 * 0.12 * 100 / 150 / 40, 9)
   })
 
   test('size transformer reactance on the unit rating', () => {

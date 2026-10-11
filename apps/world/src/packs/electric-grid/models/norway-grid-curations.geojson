@@ -1577,6 +1577,63 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "follo-lambertseter-47kv-equivalent",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          10.806,
+          59.8
+        ]
+      },
+      "properties": {
+        "kind": "add-network-equivalent",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/100151486",
+          "relation/8244314"
+        ],
+        "fromSubstationOsmId": "way/100151486",
+        "fromKv": 420,
+        "toSubstationOsmId": "relation/8244314",
+        "toKv": 132,
+        "viaKv": 47,
+        "circuits": 2,
+        "routeKm": 16.0,
+        "reason": "Elvia's 47 kV network shares Oslo south and north Nordre Follo between Statnett's Follo 420/47 kV station and Elvia's Lambertseter 132/47 kV station: NVE Nettanlegg4 maps two 47 kV circuits over the 16.0 km route Follo – Myrvoll – Tårnlia – Prinsdal – Klemetsrud – Lambertseter. The ≥132 kV model would otherwise feed the area's whole demand at Lambertseter through its one 132 kV cable. Statnett and Elvia name Follo as one of the stations supplying Oslo south and Follo, with little transformation margin left, which is why Liåsen 420/132 kV is being built. Conductors, transformer ratings and the normal switching state of the 47 kV network are not published; the equivalent assumes both circuits closed.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, Elvia AS 47 kV lines (59.730, 10.788) → (59.871, 10.829)",
+            "note": "two circuits on the Follo – Myrvoll, Tårnlia – Prinsdal, Prinsdal – Klemetsrud, Klemetsrud – Lambertseter sections; route 16.0 km"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 5, transformer stations Follo (Statnett, 420 kV), Myrvoll, Tårnlia, Prinsdal, Klemetsrud, Lambertseter (Elvia, 47 kV)",
+            "note": "stations of the route"
+          },
+          {
+            "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-ost/nettplan-stor-oslo/liasen-transformatorstasjon/liasen-endringssoknad.pdf",
+            "ref": "Statnett, Liåsen transformatorstasjon – endringssøknad (2020-10-28), p. 8–9",
+            "note": "kun margin på transformering i Follo til ytterliggere ca. 27 MW (supply of Oslo sør og Follo)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8244314",
+            "ref": "relation/8244314",
+            "note": "Lambertseter trafostasjon, 132/47/11 kV"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
     }
   ]
 }

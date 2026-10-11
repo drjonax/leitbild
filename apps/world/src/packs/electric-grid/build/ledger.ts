@@ -20,6 +20,7 @@ const reasonDispositions = {
   'site-generator-attached': 'curated',
   'curated-branch-added': 'curated',
   'curated-rating-set': 'curated',
+  'network-equivalent-added': 'curated',
 } as const
 
 export type BuildLedgerReason = keyof typeof reasonDispositions

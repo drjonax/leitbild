@@ -875,6 +875,7 @@
     {"assetId":"external:nordic-remainder","timeZone":"Europe/Oslo","points":[{"localTime":"00:00","exportMw":-808.2}]}
   ],
   "branchStates": [
+    {"assetId":"branch:curated-follo-lambertseter-47kv-equivalent","state":"closed","availability":0.856},
     {"assetId":"branch:curated-jostedal-plant-terminal","state":"closed","availability":0.857},
     {"assetId":"branch:curated-nygard-plant-terminal","state":"closed","availability":0.857},
     {"assetId":"branch:osm-006c39afa959eff2","state":"closed","availability":0.857},

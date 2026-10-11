@@ -22,6 +22,7 @@ import type { NorwayModelBuildInputs } from './inputs.ts'
 import { buildExternalSystems, buildHvdcLinks, excludedInterconnectors, topologyInterconnectors } from './interconnectors.ts'
 import { createBuildLedger, type BuildLedgerEntry } from './ledger.ts'
 import { buildLoads, loadKindRules, minimumShareMw, municipalAttachmentLimitKm } from './loads.ts'
+import { networkEquivalents } from './network-equivalents.ts'
 import { knownGaps, type KnownGap } from './known-gaps.ts'
 import { allocateByPopulation } from './population-weights.ts'
 import { inferShunts, mainNetwork, toGridBus, toGridLine, toGridTransformer } from './network.ts'
@@ -218,7 +219,8 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   const transformerRatings = curatedTransformerRatings(curations, featureId => stationOfFeature.get(featureId))
   const transformers = main.branches.filter(branch => branch.kind === 'transformer').map(branch => toGridTransformer(branch, ratedLines, injections, transformerRatings.of(branch)))
   transformerRatings.assertAllApplied()
-  const branches: GridBranchV2[] = [...lines, ...transformers].sort((left, right) => compareText(left.id, right.id))
+  const equivalents = networkEquivalents({ curations, buses, stationOfFeature: featureId => stationOfFeature.get(featureId), ledger })
+  const branches: GridBranchV2[] = [...lines, ...transformers, ...equivalents.map(equivalent => equivalent.branch)].sort((left, right) => compareText(left.id, right.id))
 
   const rulesDigest = sha256Hex(JSON.stringify(buildRules))
   const buildId = sourceBuildId(sources.inputs, rulesDigest)
@@ -261,7 +263,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     summerStartUtc: summerHour.priceAreas.startUtc,
     winterStartUtc: winterHour.priceAreas.startUtc,
     dispatch: inputs.referenceDispatch.data.hours,
-    summerLineRatingMw: new Map(ratedLines.map(line => [line.branch.id, line.ratings.summerMw])),
+    summerLineRatingMw: new Map([...ratedLines, ...equivalents].map(line => [line.branch.id, line.ratings.summerMw])),
   })
   const halden = buildHaldenAddition(model, priceAreaOf)
   for (const target of [gridOperatingPointTargetsForModel(model), gridOperatingPointTargetsForModel(halden.composed)]) {

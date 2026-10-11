@@ -45,14 +45,8 @@ for (const file of ['norway-winter-weekday-peak.operating-point.json', 'norway-s
       expect(outside).toEqual([])
     })
 
-    test('loads no branch above its emergency rating unless the golden list names it as a model limitation', () => {
-      const above = rows.filter(row => row.mva > row.emergencyMva)
-      expect(above.flatMap(row => {
-        const entry = explained.get(row.branch.id)
-        return entry?.aboveEmergency === true && row.mva / row.continuousMva <= entry.maxLoading ? [] : [`${row.branch.label} ${Math.round(row.mva)}/${Math.round(row.emergencyMva)} MVA`]
-      })).toEqual([])
-      const settled = [...explained.values()].filter(entry => entry.aboveEmergency && !above.some(row => row.branch.id === entry.branchId)).map(entry => entry.branchId)
-      expect(settled).toEqual([])
+    test('loads no branch above its emergency rating', () => {
+      expect(rows.filter(row => row.mva > row.emergencyMva).map(row => `${row.branch.label} ${Math.round(row.mva)}/${Math.round(row.emergencyMva)} MVA`)).toEqual([])
     })
 
     test('overloads a branch above its continuous rating only where the golden list explains it', () => {

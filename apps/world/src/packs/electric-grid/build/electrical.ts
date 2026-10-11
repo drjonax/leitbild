@@ -190,4 +190,35 @@ export const transformerParameters = (ratingMva: number, circuits: number): Omit
   }
 }
 
-export const electricalRules = { sBaseMva, overheadRules, cableRules, ambientRatingRule, emergencyRule, transformerRule, reactanceFloorPu, shuntRule }
+export const networkEquivalentRule = {
+  id: 'sub-transmission-equivalent',
+  /** Design current of one circuit, kA: the 243-AL1/39-ST1A of the 132 kV class at 35 °C air (conductors of the sub-transmission path are not published). */
+  designCurrentKa: 0.645,
+  source: 'equivalent of a mapped sub-transmission route between two model buses: its circuits in parallel with the 132 kV class conductor (243-AL1/39-ST1A; x 0.40 Ω/km, r 0.10 Ω/km per circuit, FD1 values, the lower phase spacing at 47–66 kV making the true reactance a little lower), rated √3 · viaKv · 0.645 kA per circuit at 35 °C and by the ambient rule at the reference and summer air, in series with one transformation at each end sized by the transformer rule for the path\'s reference rating',
+} as const
+
+/** Series impedance and ratings of a sub-transmission equivalent (networkEquivalentRule). */
+export const networkEquivalentParameters = (config: {
+  readonly viaKv: number
+  readonly routeKm: number
+  readonly circuits: number
+}): Omit<SeriesParameters, 'chargingSusceptancePu'> & { readonly ratings: LineRatings; readonly endTransformerMva: number } => {
+  const conductor = overheadRules[132]
+  const designMw = Math.round(Math.sqrt(3) * config.viaKv * networkEquivalentRule.designCurrentKa) * config.circuits
+  const ratings = overheadLineRatings(designMw)
+  const impedanceBase = config.viaKv ** 2 / sBaseMva
+  const endTransformerMva = Math.ceil(ratings.referenceMw / transformerRule.stepMva) * transformerRule.stepMva
+  const end = transformerParameters(endTransformerMva, 1)
+  return {
+    reactancePu: conductor.xOhmPerKm * config.routeKm / config.circuits / impedanceBase + 2 * end.reactancePu,
+    resistancePu: conductor.rOhmPerKm * config.routeKm / config.circuits / impedanceBase + 2 * end.resistancePu,
+    ratingMw: ratings.referenceMw,
+    ratings,
+    endTransformerMva,
+    emergencyRatingMw: Math.round(ratings.referenceMw * emergencyRule.factor),
+    emergencyDurationSeconds: emergencyRule.durationSeconds,
+    ruleIds: [networkEquivalentRule.id, ambientRatingRule.id, transformerRule.id, emergencyRule.id],
+  }
+}
+
+export const electricalRules = { sBaseMva, overheadRules, cableRules, ambientRatingRule, emergencyRule, transformerRule, reactanceFloorPu, shuntRule, networkEquivalentRule }

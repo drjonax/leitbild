@@ -97,18 +97,16 @@ const radialAllowanceSchema = z.object({
 const perArea = z.record(gridPriceAreaSchema, z.number().finite().nonnegative())
 
 /**
- * A branch the AC load flow of an Operating Point loads above its continuous rating for a reason
- * the model cannot remove with evidence; the power-flow gate test accepts it up to maxLoading
- * (flow / continuous rating at the Operating Point's availability) and fails once it no longer
- * overloads. aboveEmergency marks an entry beyond the emergency rating as well: a known model
- * limitation the reason names, which the gate reports and accepts only while it stays above it.
+ * A branch the AC load flow of an Operating Point loads above its continuous rating (but within its
+ * emergency rating) for a reason the model cannot remove with evidence; the power-flow gate test
+ * accepts it up to maxLoading (flow / continuous rating at the Operating Point's availability) and
+ * fails once it no longer overloads.
  */
 const powerFlowOverloadSchema = z.object({
   branchId: z.string().regex(/^branch:/),
   label: text,
   operatingPointId: text,
   maxLoading: z.number().finite().min(1),
-  aboveEmergency: z.boolean(),
   reason: text,
   evidence: z.array(evidenceSchema).min(1),
 }).strict()

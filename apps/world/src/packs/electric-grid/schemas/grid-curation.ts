@@ -122,6 +122,19 @@ const propertiesSchema = z.discriminatedUnion('kind', [
     wayOsmIds: z.array(wayId).min(1), voltageKv: kv,
     designRatingMva: z.number().finite().positive(),
   }).strict(),
+  /**
+   * A network equivalent of sub-transmission below the model's 132 kV floor (a 47 or 66 kV mesh)
+   * that couples two model buses of different voltage in parallel with the grid: the build adds
+   * one branch labelled as an equivalent, not a mapped line, whose impedance and rating follow the
+   * sub-transmission equivalent rule from the mapped route (viaKv, circuits, routeKm).
+   */
+  z.object({
+    kind: z.literal('add-network-equivalent'), ...common,
+    fromSubstationOsmId: osmId, fromKv: kv, toSubstationOsmId: osmId, toKv: kv,
+    viaKv: kv, circuits: z.number().int().positive(), routeKm: z.number().finite().positive(),
+  }).strict()
+    .refine(properties => properties.fromKv !== properties.toKv, 'an equivalent couples two voltage levels')
+    .refine(properties => properties.viaKv < Math.min(properties.fromKv, properties.toKv), 'viaKv must lie below both end voltages'),
   /** A transformer whose rating a published document gives: the station's highKv/lowKv transformer takes it, with the transformer rule's impedance on that rating. */
   z.object({
     kind: z.literal('set-transformer-rating'), ...common,
@@ -159,6 +172,7 @@ const allowedExpiry: Record<CurationFeature['properties']['kind'], {
   'add-shunt-device': { required: ['review-by'], allowed: ['review-by'] },
   'set-line-rating': { required: ['review-by'], allowed: ['review-by'] },
   'set-transformer-rating': { required: ['review-by'], allowed: ['review-by'] },
+  'add-network-equivalent': { required: ['review-by'], allowed: ['review-by'] },
 }
 
 const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray<string> => {
@@ -176,6 +190,7 @@ const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray
     case 'add-shunt-device': return [properties.substationOsmId]
     case 'set-line-rating': return properties.wayOsmIds
     case 'set-transformer-rating': return [properties.substationOsmId]
+    case 'add-network-equivalent': return [properties.fromSubstationOsmId, properties.toSubstationOsmId]
   }
 }
 

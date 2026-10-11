@@ -215,11 +215,11 @@ const describeHour = (hour: GridReferenceHourDispatch, schedules: ReferenceSched
   return `Dispatch (rule ${dispatchRule.id}): ENTSO-E measured ${roundTo(hour.generationMw.windOnshore + hour.generationMw.windOffshore, 0)} MW wind, ${roundTo(hour.generationMw.hydroRunOfRiver, 0)} MW run-of-river and ${roundTo(hour.generationMw.fossilGas, 0)} MW gas, shared by capacity; HVDC links and the Nordic exchange at the measured flows (net export ${roundTo(exportMw, 0)} MW); storage hydro closes the balance at one common loading; losses are left to the slack.${limits}`
 }
 
-/** Each line rated lower at summer air, at that share of its model rating (3 decimals, rounded down). */
+/** Each line or sub-transmission equivalent rated lower at summer air, at that share of its model rating (3 decimals, rounded down). */
 const summerLineDerates = (model: GridModelV2, summerRatingMw: ReadonlyMap<string, number>): NonNullable<GridOperatingPointV2['branchStates']> => model.branches.flatMap(branch => {
-  if (branch.kind === 'transformer') return []
   const summerMw = summerRatingMw.get(branch.id)
-  if (summerMw === undefined) throw new Error(`${branch.id}: no summer rating`)
+  if (summerMw === undefined && branch.kind !== 'transformer') throw new Error(`${branch.id}: no summer rating`)
+  if (summerMw === undefined) return []
   const availability = Math.floor(summerMw / branch.ratingMw * 1000) / 1000
   return availability < 1 ? [{ assetId: branch.id, state: 'closed' as const, availability }] : []
 })
@@ -232,7 +232,7 @@ export const buildOperatingPoints = (config: {
   readonly summerStartUtc: string
   readonly winterStartUtc: string
   readonly dispatch: { readonly winterPeak: GridReferenceHourDispatch; readonly summerLow: GridReferenceHourDispatch }
-  /** Summer-air rating of every line, MW, by branch id. */
+  /** Summer-air rating of every line and sub-transmission equivalent, MW, by branch id. */
   readonly summerLineRatingMw: ReadonlyMap<string, number>
 }): { readonly winter: GridOperatingPointV2; readonly summer: GridOperatingPointV2 } => {
   const { model } = config
