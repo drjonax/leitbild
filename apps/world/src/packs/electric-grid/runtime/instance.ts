@@ -198,10 +198,10 @@ export interface GridHvdcLinkState {
  */
 export interface GridTopologyComponent {
   readonly referenceBusId: string
-  /** Buses in model order. */
-  readonly buses: ReadonlyArray<string>
-  /** Network indices of `buses`. */
+  /** Network indices of its buses, ascending (model order). */
   readonly busIndices: Int32Array
+  /** Ids of `busIndices`, computed on first read. */
+  readonly buses: ReadonlyArray<string>
   /** Index of the synchronous island holding the component. */
   readonly islandIndex: number
 }
@@ -215,15 +215,27 @@ export interface GridTopologyIsland {
   readonly id: string
   /** The reference bus of the island's first component. */
   readonly referenceBusId: string
-  /** Buses in model order. */
+  /** Network indices of its buses, ascending (model order). */
+  readonly busIndices: Int32Array
+  /** Model indices of its closed branches, ascending. */
+  readonly branchIndices: Int32Array
+  /** Model indices of its generators, loads and storage units: bus by bus, in model order within a bus. */
+  readonly generatorIndices: Int32Array
+  readonly loadIndices: Int32Array
+  readonly storageIndices: Int32Array
+  /** Model indices of the connection points at its buses, in model order. */
+  readonly connectionPointIndices: Int32Array
+  /** Synchronous external systems coupled to it through a boundary bus with a closed tie, in bus order. */
+  readonly externalIndices: Int32Array
+  /** Indices into the plan's components, ascending. */
+  readonly componentIndices: ReadonlyArray<number>
+  /** Ids and definitions of the integer lists above, computed on first read (queries, commands, tests); the runtime reads the lists. */
   readonly buses: ReadonlyArray<string>
   readonly busSet: ReadonlySet<string>
   readonly branches: ReadonlyArray<GridBranchDefinition>
   readonly generators: ReadonlyArray<GridGeneratorDefinition>
   readonly loads: ReadonlyArray<GridLoadDefinition>
   readonly storage: ReadonlyArray<GridStorageDefinition>
-  /** Indices into the plan's components, ascending. */
-  readonly componentIndices: ReadonlyArray<number>
 }
 
 export interface GridTopologyPlan {
@@ -236,6 +248,7 @@ export interface GridTopologyPlan {
   readonly components: ReadonlyArray<GridTopologyComponent>
   /** DC systems aligned with `components`. */
   readonly systems: ReadonlyArray<GridIslandSystem>
+  /** Structural island id of each bus id, computed on first read; the runtime reads `islandIndexOfBus`. */
   readonly islandIdByBus: ReadonlyMap<string, string>
   /** Plan island index per bus in model order. */
   readonly islandIndexOfBus: Int32Array

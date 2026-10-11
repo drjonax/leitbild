@@ -119,7 +119,7 @@ const freshIslandId = (island: GridTopologyIsland, taken: ReadonlySet<string>): 
   }
 }
 
-const anchorBusOf = (island: GridTopologyIsland): string => island.buses[0]!
+const anchorBusOf = (plan: GridTopologyPlan, island: GridTopologyIsland): string => plan.network.busIds[island.busIndices[0]!]!
 
 interface Component {
   readonly previous: number[]
@@ -175,7 +175,7 @@ const newIsland = (config: {
   return {
     id: config.id,
     planIndex: config.planIndex,
-    anchorBusId: anchorBusOf(island),
+    anchorBusId: anchorBusOf(config.plan, island),
     energized,
     frequency,
     rocofHzPerSecond: frequency?.rocofHzPerSecond ?? null,
@@ -226,7 +226,7 @@ const reconciledIslands = (grid: GridRuntimeInstance, previous: GridIslandPlan, 
   const taken = new Set<string>()
   // Fresh ids never reuse a previous island's id, so lineage stays unambiguous across components.
   const reserved = new Set(previous.islands.map(island => island.id))
-  const rank = (energy: number, island: GridTopologyIsland) => ({ energy, buses: island.buses.length, id: island.id })
+  const rank = (energy: number, island: GridTopologyIsland) => ({ energy, buses: island.busIndices.length, id: island.id })
   const byRank = (a: ReturnType<typeof rank>, b: ReturnType<typeof rank>): number =>
     b.energy - a.energy || b.buses - a.buses || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   for (const component of overlapComponents(previous, plan)) {
@@ -237,7 +237,7 @@ const reconciledIslands = (grid: GridRuntimeInstance, previous: GridIslandPlan, 
     if (component.previous.length === 1 && component.next.length === 1) {
       const island = parents[0]!.island
       taken.add(island.id)
-      result[component.next[0]!] = { ...island, planIndex: component.next[0]!, anchorBusId: anchorBusOf(plan.islands[component.next[0]!]!) }
+      result[component.next[0]!] = { ...island, planIndex: component.next[0]!, anchorBusId: anchorBusOf(plan, plan.islands[component.next[0]!]!) }
       continue
     }
     // Largest parent identity goes to the largest child; further children get new ids.

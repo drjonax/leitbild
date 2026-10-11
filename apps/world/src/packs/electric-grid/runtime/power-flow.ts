@@ -27,8 +27,8 @@ const addAt = (values: Float64Array, index: number, amount: number): void => {
 }
 
 const deEnergiseIsland = (grid: GridRuntimeInstance, island: GridTopologyIsland): void => {
-  for (const definition of island.generators) {
-    const state = grid.generators.get(definition.id)!
+  const states = islandAssetStates(grid, island)
+  for (const state of states.generators) {
     state.dispatchMw = 0
     state.scheduledMw = 0
     state.fcrMw = 0
@@ -36,9 +36,8 @@ const deEnergiseIsland = (grid: GridRuntimeInstance, island: GridTopologyIsland)
     state.mfrrMw = 0
     state.frequencyHz = null
   }
-  for (const definition of island.loads) completeDeadGridLoad(grid.loads.get(definition.id)!)
-  for (const definition of island.storage) {
-    const state = grid.storage.get(definition.id)!
+  for (const state of states.loads) completeDeadGridLoad(state)
+  for (const state of states.storage) {
     state.dispatchMw = 0
     state.frequencyHz = null
     state.voltagePu = 0

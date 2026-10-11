@@ -31,7 +31,7 @@ const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, busIds: Re
 const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland, alarmCount: number): GridIslandProjection | null => {
   const structure = islands.plan.islands[island.planIndex]!
   const members = islandMembers(grid, structure)
-  if (structure.generators.length + structure.loads.length + structure.storage.length + members.externals.length + members.connectionPointIds.length === 0) return null
+  if (structure.generatorIndices.length + structure.loadIndices.length + structure.storageIndices.length + members.externals.length + members.connectionPointIds.length === 0) return null
   const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
   const states = islandAssetStates(grid, structure)
   const generationMw = states.generators.reduce((sum, state) => sum + state.dispatchMw, 0)
@@ -69,7 +69,7 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
   return {
     id: island.id,
     energized: island.energized,
-    busCount: structure.buses.length,
+    busCount: structure.busIndices.length,
     frequencyHz: frequencyHz === null ? null : hz(frequencyHz),
     rocofHzPerSecond: island.energized && island.rocofHzPerSecond !== null ? hz(island.rocofHzPerSecond) : null,
     generationMw: mw(generationMw),

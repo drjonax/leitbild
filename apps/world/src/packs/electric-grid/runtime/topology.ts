@@ -1,7 +1,9 @@
+import type { GridModelDefinition } from '../grid-model.ts'
 import type { GridRuntimeInstance, GridTopologyComponent, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import { compiledGridNetworkFor, type CompiledGridNetwork } from './network/compiled-network.ts'
 import { createGridIslandSystem, solveGridIslandInto, type GridIslandSystem } from './network/dc-power-flow.ts'
 import { findGridIslands } from './network/islands.ts'
+import { gridTablesFor, type GridIndexByBus, type GridTables } from './state/tables.ts'
 
 /** One AC component structure (its buses and closed branches) with the DC factor built from it. */
 interface CachedIsland {
@@ -115,8 +117,123 @@ const synchronousIslandOfComponent = (grid: GridRuntimeInstance, network: Compil
   return islandOfComponent
 }
 
+/** Items grouped by island: island k's are `items[start[k] .. start[k + 1])`, in the order they were added. */
+interface IslandGroups {
+  readonly start: Int32Array
+  readonly items: Int32Array
+}
+
+/** Groups items by island in item order; `islandOf` returns −1 for an item in no island. */
+const groupByIsland = (islandCount: number, itemCount: number, islandOf: (item: number) => number): IslandGroups => {
+  const start = new Int32Array(islandCount + 1)
+  for (let item = 0; item < itemCount; item += 1) {
+    const island = islandOf(item)
+    if (island >= 0) start[island + 1] = start[island + 1]! + 1
+  }
+  for (let island = 0; island < islandCount; island += 1) start[island + 1] = start[island + 1]! + start[island]!
+  const fill = start.slice(0, islandCount)
+  const items = new Int32Array(start[islandCount]!)
+  for (let item = 0; item < itemCount; item += 1) {
+    const island = islandOf(item)
+    if (island < 0) continue
+    items[fill[island]!] = item
+    fill[island] = fill[island]! + 1
+  }
+  return { start, items }
+}
+
+/** Per island, the items each of its buses holds (`byBus`), bus by bus in ascending order. */
+const groupBusItems = (islandCount: number, buses: IslandGroups, byBus: GridIndexByBus): IslandGroups => {
+  const start = new Int32Array(islandCount + 1)
+  for (let island = 0; island < islandCount; island += 1) {
+    let count = 0
+    for (let position = buses.start[island]!; position < buses.start[island + 1]!; position += 1) {
+      const bus = buses.items[position]!
+      count += byBus.start[bus + 1]! - byBus.start[bus]!
+    }
+    start[island + 1] = start[island]! + count
+  }
+  const items = new Int32Array(start[islandCount]!)
+  let at = 0
+  for (let position = 0; position < buses.items.length; position += 1) {
+    const bus = buses.items[position]!
+    for (let entry = byBus.start[bus]!; entry < byBus.start[bus + 1]!; entry += 1) items[at++] = byBus.items[entry]!
+  }
+  return { start, items }
+}
+
+const slice = (groups: IslandGroups, island: number): Int32Array => groups.items.subarray(groups.start[island]!, groups.start[island + 1]!)
+
+/** A property computed on its first read and kept; the runtime reads the integer lists, readers at the boundary these. */
+const defineLazy = <T extends object, K extends string, V>(target: T, key: K, compute: () => V): void => {
+  Object.defineProperty(target, key, {
+    enumerable: true,
+    configurable: true,
+    get: () => {
+      const value = compute()
+      Object.defineProperty(target, key, { value, enumerable: true })
+      return value
+    },
+  })
+}
+
+/**
+ * Synchronous external systems coupled to one island: those whose boundary bus in it has a closed tie
+ * (a closed branch at a bus always lies in the bus's island), in bus order, each once.
+ */
+const coupledExternals = (tables: GridTables, buses: Int32Array, closedBranches: Uint8Array): Int32Array => {
+  const found: number[] = []
+  for (const bus of buses) {
+    const system = tables.synchronousExternalOfBus[bus]!
+    if (system < 0 || found.includes(system)) continue
+    for (let entry = tables.branchesOfBus.start[bus]!; entry < tables.branchesOfBus.start[bus + 1]!; entry += 1) {
+      if (closedBranches[tables.branchesOfBus.items[entry]!] !== 1) continue
+      found.push(system)
+      break
+    }
+  }
+  return Int32Array.from(found)
+}
+
+const topologyIsland = (config: {
+  readonly model: GridModelDefinition
+  readonly network: CompiledGridNetwork
+  readonly id: string
+  readonly referenceBusId: string
+  readonly busIndices: Int32Array
+  readonly branchIndices: Int32Array
+  readonly generatorIndices: Int32Array
+  readonly loadIndices: Int32Array
+  readonly storageIndices: Int32Array
+  readonly connectionPointIndices: Int32Array
+  readonly externalIndices: Int32Array
+  readonly componentIndices: ReadonlyArray<number>
+}): GridTopologyIsland => {
+  const { model, network } = config
+  const island = {
+    id: config.id,
+    referenceBusId: config.referenceBusId,
+    busIndices: config.busIndices,
+    branchIndices: config.branchIndices,
+    generatorIndices: config.generatorIndices,
+    loadIndices: config.loadIndices,
+    storageIndices: config.storageIndices,
+    connectionPointIndices: config.connectionPointIndices,
+    externalIndices: config.externalIndices,
+    componentIndices: config.componentIndices,
+  }
+  defineLazy(island, 'buses', () => Array.from(config.busIndices, bus => network.busIds[bus]!))
+  defineLazy(island, 'busSet', () => new Set((island as unknown as GridTopologyIsland).buses))
+  defineLazy(island, 'branches', () => Array.from(config.branchIndices, branch => model.branches[branch]!))
+  defineLazy(island, 'generators', () => Array.from(config.generatorIndices, generator => model.generators[generator]!))
+  defineLazy(island, 'loads', () => Array.from(config.loadIndices, load => model.loads[load]!))
+  defineLazy(island, 'storage', () => Array.from(config.storageIndices, item => model.storage[item]!))
+  return island as unknown as GridTopologyIsland
+}
+
 const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwork, closedBranches: Uint8Array): GridTopologyPlan => {
-  const { model, index } = grid.definition
+  const { model } = grid.definition
+  const tables = gridTablesFor(grid.definition)
   const found = findGridIslands(network, closedBranches)
   const cache = islandCaches.get(grid) ?? { current: new Map(), previous: new Map() }
   const generation = new Map<number, CachedIsland[]>()
@@ -137,49 +254,60 @@ const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwo
   islandCaches.set(grid, { current: generation, previous: cache.current })
   const islandOfComponent = synchronousIslandOfComponent(grid, network, found.islandOfBus, found.count, component => found.busStart[component + 1]! - found.busStart[component]!)
   const islandCount = found.count === 0 ? 0 : Math.max(...islandOfComponent) + 1
-  const components: GridTopologyComponent[] = systems.map((system, component) => ({
-    referenceBusId: network.busIds[system.buses[0]!]!,
-    buses: Array.from(system.buses, bus => network.busIds[bus]!),
-    busIndices: system.buses,
-    islandIndex: islandOfComponent[component]!,
-  }))
+  const components: GridTopologyComponent[] = systems.map((system, component) => {
+    const item = { referenceBusId: network.busIds[system.buses[0]!]!, busIndices: system.buses, islandIndex: islandOfComponent[component]! }
+    defineLazy(item, 'buses', () => Array.from(system.buses, bus => network.busIds[bus]!))
+    return item as GridTopologyComponent
+  })
   const componentsOfIsland: number[][] = Array.from({ length: islandCount }, () => [])
   components.forEach((component, componentIndex) => componentsOfIsland[component.islandIndex]!.push(componentIndex))
   const islandIndexOfBus = new Int32Array(network.busCount)
   for (let bus = 0; bus < network.busCount; bus += 1) islandIndexOfBus[bus] = islandOfComponent[found.islandOfBus[bus]!]!
-  const islandIdByBus = new Map<string, string>()
-  const islands: GridTopologyIsland[] = componentsOfIsland.map(componentIndices => {
-    const busIndices = componentIndices.flatMap(component => Array.from(systems[component]!.buses)).sort((a, b) => a - b)
+  // Members of every island as integer lists: buses and closed branches ascending; generators, loads
+  // and storage bus by bus in model order within a bus; connection points in model order.
+  const buses = groupByIsland(islandCount, network.busCount, bus => islandIndexOfBus[bus]!)
+  const branches = groupByIsland(islandCount, network.branchCount, branch => closedBranches[branch] === 1 ? islandIndexOfBus[network.branchFrom[branch]!]! : -1)
+  const generators = groupBusItems(islandCount, buses, tables.generatorsOfBus)
+  const loads = groupBusItems(islandCount, buses, tables.loadsOfBus)
+  const storage = groupBusItems(islandCount, buses, tables.storageOfBus)
+  const connectionPoints = groupByIsland(islandCount, model.connectionPoints.length, point => islandIndexOfBus[tables.connectionPointBus[point]!]!)
+  const islands: GridTopologyIsland[] = componentsOfIsland.map((componentIndices, island) => {
+    const busIndices = slice(buses, island)
     let namingBus = busIndices[0]!
     for (const bus of busIndices) if (network.busIdSortRank[bus]! < network.busIdSortRank[namingBus]!) namingBus = bus
-    const id = `island:${network.busIds[namingBus]!}`
-    const busIds = busIndices.map(bus => network.busIds[bus]!)
-    for (const busId of busIds) islandIdByBus.set(busId, id)
-    return {
-      id,
+    return topologyIsland({
+      model,
+      network,
+      id: `island:${network.busIds[namingBus]!}`,
       referenceBusId: components[componentIndices[0]!]!.referenceBusId,
-      buses: busIds,
-      busSet: new Set(busIds),
-      branches: componentIndices.flatMap(component => Array.from(systems[component]!.branches)).sort((a, b) => a - b).map(branch => model.branches[branch]!),
-      generators: busIds.flatMap(busId => index.generatorsByBus.get(busId) ?? []),
-      loads: busIds.flatMap(busId => index.loadsByBus.get(busId) ?? []),
-      storage: busIds.flatMap(busId => index.storageByBus.get(busId) ?? []),
+      busIndices,
+      branchIndices: slice(branches, island),
+      generatorIndices: slice(generators, island),
+      loadIndices: slice(loads, island),
+      storageIndices: slice(storage, island),
+      connectionPointIndices: slice(connectionPoints, island),
+      externalIndices: coupledExternals(tables, busIndices, closedBranches),
       componentIndices,
-    }
+    })
   })
-  return {
+  const plan = {
     network,
     closedBranches,
     islands,
     components,
     systems,
-    islandIdByBus,
     islandIndexOfBus,
     componentIndexOfBus: found.islandOfBus,
     injectionsMw: new Float64Array(network.busCount),
     anglesRad: new Float64Array(network.busCount),
     referenceMismatchMw: new Float64Array(found.count),
   }
+  defineLazy(plan, 'islandIdByBus', () => {
+    const idByBus = new Map<string, string>()
+    for (const island of islands) for (const bus of island.busIndices) idByBus.set(network.busIds[bus]!, island.id)
+    return idByBus
+  })
+  return plan as unknown as GridTopologyPlan
 }
 
 /** The grid's islands and factors; rebuilt only when a branch's closed state differs from the cached plan, however it changed. */

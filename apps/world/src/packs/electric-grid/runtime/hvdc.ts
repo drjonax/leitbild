@@ -1,6 +1,7 @@
 import type { GridHvdcLinkDefinition } from '../grid-model.ts'
 import { queueGridSignal } from './grid-signals.ts'
 import type { GridHvdcLinkState, GridHvdcTrip, GridHvdcTripCause, GridIsland, GridRuntimeInstance } from './instance.ts'
+import { gridTablesFor } from './state/tables.ts'
 
 /**
  * HVDC links are controllable injection pairs, never AC branches. The sending converter draws
@@ -17,14 +18,32 @@ export const hvdcTerminalInjectionsMw = (grid: GridRuntimeInstance, link: GridHv
   return { fromMw: outside.has(link.fromBusId) ? 0 : fromMw, toMw: outside.has(link.toBusId) ? 0 : toMw }
 }
 
-/** Net HVDC injection into the given buses (MW). */
-export const hvdcInjectionAtBusesMw = (grid: GridRuntimeInstance, busIds: ReadonlySet<string>): number => {
+/** Whether an ascending list of bus indices holds `bus`. */
+const holdsBus = (buses: Int32Array, bus: number): boolean => {
+  let low = 0
+  let high = buses.length - 1
+  while (low <= high) {
+    const middle = (low + high) >> 1
+    const value = buses[middle]!
+    if (value === bus) return true
+    if (value < bus) low = middle + 1
+    else high = middle - 1
+  }
+  return false
+}
+
+/** Net HVDC injection into an island's buses (MW); `buses` are its network bus indices, ascending. */
+export const hvdcInjectionIntoIslandMw = (grid: GridRuntimeInstance, buses: Int32Array): number => {
+  const tables = gridTablesFor(grid.definition)
+  const links = grid.definition.index.hvdcLinks
   let injectionMw = 0
-  for (const link of grid.definition.index.hvdcLinks) {
-    if (!busIds.has(link.fromBusId) && !busIds.has(link.toBusId)) continue
-    const terminals = hvdcTerminalInjectionsMw(grid, link)
-    if (busIds.has(link.fromBusId)) injectionMw += terminals.fromMw
-    if (busIds.has(link.toBusId)) injectionMw += terminals.toMw
+  for (let index = 0; index < links.length; index += 1) {
+    const from = holdsBus(buses, tables.hvdcFromBus[index]!)
+    const to = holdsBus(buses, tables.hvdcToBus[index]!)
+    if (!from && !to) continue
+    const terminals = hvdcTerminalInjectionsMw(grid, links[index]!)
+    if (from) injectionMw += terminals.fromMw
+    if (to) injectionMw += terminals.toMw
   }
   return injectionMw
 }

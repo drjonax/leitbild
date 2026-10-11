@@ -1,12 +1,12 @@
 import type { GridExternalSystemDefinition } from '../grid-model.ts'
 import type { ExternalFrequencyEquivalent, FrequencyStorageUnit, IslandFrequencyInput } from './frequency/types.ts'
 import { frequencyUnitFor, generatorIsVoltageForming, generatorKineticEnergyMws } from './generator-dynamics.ts'
-import { hvdcInjectionAtBusesMw } from './hvdc.ts'
+import { hvdcInjectionIntoIslandMw } from './hvdc.ts'
 import type { GridGeneratorState, GridLoadState, GridRuntimeInstance, GridStorageState, GridTopologyIsland } from './instance.ts'
 import { connectedGridLoadMw } from './load-service.ts'
 import { generatorIsSynchronised, generatorMinimumStableMw } from './unit-commitment.ts'
 import { noReserves } from './frequency/governors.ts'
-import { compiledGridNetworkFor } from './network/compiled-network.ts'
+import { gridTablesFor } from './state/tables.ts'
 
 // Converter, cable and transformer losses of a battery in each direction: √0.85, from the 85 %
 // round-trip efficiency of utility-scale Li-ion storage (NREL Annual Technology Baseline 2024).
@@ -29,19 +29,14 @@ export const islandMembers = (grid: GridRuntimeInstance, island: GridTopologyIsl
   const cached = membersByIsland.get(island)
   if (cached) return cached
   const { index, model } = grid.definition
-  const network = compiledGridNetworkFor(model)
+  const tables = gridTablesFor(grid.definition)
   const members: IslandMembers = {
-    busIndices: Int32Array.from(island.buses, busId => network.busIndexById.get(busId)!),
-    generatorBuses: Int32Array.from(island.generators, item => network.busIndexById.get(item.busId)!),
-    loadBuses: Int32Array.from(island.loads, item => network.busIndexById.get(item.busId)!),
-    storageBuses: Int32Array.from(island.storage, item => network.busIndexById.get(item.busId)!),
-    // A synchronous system couples to the island only through a boundary bus with a closed tie in it.
-    externals: [...new Set(island.buses.flatMap(busId => {
-      const system = index.synchronousExternalByBus.get(busId)
-      if (system === undefined || !island.branches.some(branch => branch.fromBusId === busId || branch.toBusId === busId)) return []
-      return [system]
-    }))],
-    connectionPointIds: model.connectionPoints.filter(point => island.busSet.has(point.busId)).map(point => point.id),
+    busIndices: island.busIndices,
+    generatorBuses: island.generatorIndices.map(generator => tables.generatorBus[generator]!),
+    loadBuses: island.loadIndices.map(load => tables.loadBus[load]!),
+    storageBuses: island.storageIndices.map(item => tables.storageBus[item]!),
+    externals: Array.from(island.externalIndices, system => index.externalSystems[system]!),
+    connectionPointIds: Array.from(island.connectionPointIndices, point => model.connectionPoints[point]!.id),
   }
   membersByIsland.set(island, members)
   return members
@@ -68,11 +63,12 @@ export const islandAssetStates = (grid: GridRuntimeInstance, island: GridTopolog
   }
   const cached = byIsland.get(island)
   if (cached !== undefined) return cached
+  const { model } = grid.definition
   const states: IslandAssetStates = {
-    generators: island.generators.map(definition => grid.generators.get(definition.id)!),
-    loads: island.loads.map(definition => grid.loads.get(definition.id)!),
-    storage: island.storage.map(definition => grid.storage.get(definition.id)!),
-    loadReactivePerMw: Float64Array.from(island.loads, definition => Math.tan(Math.acos(definition.powerFactor))),
+    generators: Array.from(island.generatorIndices, generator => grid.generators.get(model.generators[generator]!.id)!),
+    loads: Array.from(island.loadIndices, load => grid.loads.get(model.loads[load]!.id)!),
+    storage: Array.from(island.storageIndices, item => grid.storage.get(model.storage[item]!.id)!),
+    loadReactivePerMw: Float64Array.from(island.loadIndices, load => Math.tan(Math.acos(model.loads[load]!.powerFactor))),
   }
   byIsland.set(island, states)
   return states
@@ -119,15 +115,28 @@ export const gridGeneratorIsSynchronised = generatorIsSynchronised
  * generator or a synchronous external system. Converters, storage and connected systems (Plants)
  * follow an existing voltage and cannot energise an island on their own.
  */
-export const islandHasVoltageFormingSource = (grid: GridRuntimeInstance, island: GridTopologyIsland): boolean =>
-  islandMembers(grid, island).externals.length > 0
-  || island.generators.some(definition => generatorIsVoltageForming(definition) && gridGeneratorIsSynchronised(grid.generators.get(definition.id)!))
+export const islandHasVoltageFormingSource = (grid: GridRuntimeInstance, island: GridTopologyIsland): boolean => {
+  if (island.externalIndices.length > 0) return true
+  const generators = grid.definition.model.generators
+  const states = islandAssetStates(grid, island).generators
+  for (let position = 0; position < states.length; position += 1) {
+    if (generatorIsVoltageForming(generators[island.generatorIndices[position]!]!) && gridGeneratorIsSynchronised(states[position]!)) return true
+  }
+  return false
+}
 
 /** Kinetic energy Σ H·S of synchronised synchronous units plus synchronous external systems (MWs). */
-export const islandKineticEnergyMws = (grid: GridRuntimeInstance, island: GridTopologyIsland): number =>
-  island.generators.reduce((sum, definition) =>
-    sum + (gridGeneratorIsSynchronised(grid.generators.get(definition.id)!) ? generatorKineticEnergyMws(definition) : 0), 0)
-  + islandMembers(grid, island).externals.reduce((sum, system) => sum + externalKineticEnergyMws(system), 0)
+export const islandKineticEnergyMws = (grid: GridRuntimeInstance, island: GridTopologyIsland): number => {
+  const generators = grid.definition.model.generators
+  const states = islandAssetStates(grid, island).generators
+  let kineticEnergyMws = 0
+  for (let position = 0; position < states.length; position += 1) {
+    kineticEnergyMws += gridGeneratorIsSynchronised(states[position]!) ? generatorKineticEnergyMws(generators[island.generatorIndices[position]!]!) : 0
+  }
+  let externalMws = 0
+  for (const system of island.externalIndices) externalMws += externalKineticEnergyMws(grid.definition.index.externalSystems[system]!)
+  return kineticEnergyMws + externalMws
+}
 
 export const externalKineticEnergyMws = (system: GridExternalSystemDefinition): number => {
   if (system.inertiaGws === undefined) throw new Error(`synchronous external system ${system.id} has no inertia`)
@@ -141,7 +150,7 @@ export const islandFixedInjectionMw = (grid: GridRuntimeInstance, island: GridTo
     const connection = grid.externalConnections.get(pointId)
     if (connection?.connected === true) injectionMw += connection.systemActivePowerMw
   }
-  return injectionMw + hvdcInjectionAtBusesMw(grid, island.busSet)
+  return injectionMw + hvdcInjectionIntoIslandMw(grid, island.busIndices)
 }
 
 export const islandLossesMw = (grid: GridRuntimeInstance, island: GridTopologyIsland): number => {

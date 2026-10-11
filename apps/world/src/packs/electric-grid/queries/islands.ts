@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { gridIslandFlowModel } from '../runtime/ac-load-flow.ts'
-import { hvdcInjectionAtBusesMw } from '../runtime/hvdc.ts'
+import { hvdcInjectionIntoIslandMw } from '../runtime/hvdc.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from '../runtime/instance.ts'
 import { islandFixedInjectionMw, islandMembers } from '../runtime/island-input.ts'
 import { gridIslandFrequencyHz, solvedGridIslands } from '../runtime/island-lifecycle.ts'
@@ -88,7 +88,7 @@ const islandView = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: 
     generationMw: generators.reduce((sum, generator) => sum + generator.dispatchMw, 0),
     storageMw: structure.storage.reduce((sum, item) => sum + grid.storage.get(item.id)!.dispatchMw, 0),
     externalExchangeMw,
-    hvdcImportMw: island.energized ? hvdcInjectionAtBusesMw(grid, structure.busSet) : 0,
+    hvdcImportMw: island.energized ? hvdcInjectionIntoIslandMw(grid, structure.busIndices) : 0,
     loadMw,
     servedLoadMw,
     unservedLoadMw: loads.reduce((sum, load) => sum + load.unservedMw, 0),
