@@ -15,6 +15,7 @@ import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
+import { stateTexts } from '../src/packs/process-plant/displays/state-words.ts'
 import { formatQuantity, thresholdFullName, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
 import { composedDisplayStateSchema } from '../src/packs/process-plant/displays/composition.ts'
 import { compileComposedDisplay, composedDisplayShows } from '../src/packs/process-plant/displays/compose.ts'
@@ -76,6 +77,21 @@ const rejectionOf = (run: () => unknown): string => {
   }
   throw new Error('expected the composition to be rejected')
 }
+
+describe('on/off states on composed displays', () => {
+  test('read in the words the model gives them, never a negated label (HMI review of run 23)', () => {
+    const textsOf = (tagId: string) => stateTexts(compiled.graph, compiled.graph.signalBindingByTagId.get(tagId as never)!)
+    expect(textsOf('NIS-SR-HV')).toEqual({ on: 'Source-range HV on · Core', off: 'Source-range HV off · Core' })
+    // A signal that reads or commands a state aspect reads by its equipment and the aspect's words.
+    expect(textsOf('EDG-A-RUN')).toEqual({ on: 'EDG A RUN', off: 'EDG A STOP' })
+    expect(textsOf('BRK-OFFSITE-A-POS')).toEqual({ on: 'Offsite BKR A CLOSED', off: 'Offsite BKR A OPEN' })
+    expect(textsOf('RCP-A-RUN')).toEqual({ on: 'RCP A CMD RUN', off: 'RCP A CMD STOP' })
+    // Every tagged on/off signal of the reference Plant has words of its own: none falls back to its label answered yes or no.
+    const unworded = compiled.graph.signalBindings.filter(binding => binding.quantity === 'boolean' && binding.tagId !== undefined)
+      .filter(binding => stateTexts(compiled.graph, binding).off.endsWith(': no')).map(binding => binding.tagId)
+    expect(unworded).toEqual([])
+  })
+})
 
 describe('I&C thresholds for composed displays', () => {
   test('come from single-comparison rules on the exact signal, with qualified modes kept', () => {

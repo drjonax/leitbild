@@ -374,6 +374,14 @@ const assertNamesUnambiguous = (components: ReadonlyArray<CompiledComponent>, va
     const tag = variable.descriptor.tagId
     if (tag !== undefined && componentIds.has(String(tag))) throw new Error(`signal tag ${tag} equals a component id`)
   }
+  // State words name an on/off signal of their own component.
+  const byPath = new Map(variables.map(variable => [String(variable.path), variable]))
+  for (const component of components) {
+    for (const local of Object.keys(component.metadata?.presentation?.states ?? {})) {
+      const variable = byPath.get(`${component.id}.${local}`)
+      if (variable === undefined || variable.descriptor.quantity !== 'boolean') throw new Error(`component ${component.id} names state words for ${local}, which is not one of its on/off signals`)
+    }
+  }
 }
 
 // What writing a variable does, and what a ratio measures, are declared for

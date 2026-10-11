@@ -249,6 +249,17 @@ describe('operator names', () => {
     expect(componentById(graph, 'pressurizer').metadata?.presentation?.embedded).toEqual({ reliefValve: 'PORV', blockValve: 'PORV block', safetyValves: 'Safety valves' })
   })
 
+  test('words for on/off states name an on/off signal of their own component, and leave the Plant identity alone', () => {
+    const spec = assemblePwrReferencePlantGraph({ loopCount: 4 })
+    const definition = createPwrReferencePlantDefinition({ id: 'plant:worded', loopCount: 4 })
+    const worded = (states: Record<string, { on: string; off: string }>): PlantGraphSpec => ({
+      ...spec,
+      components: spec.components.map(entry => String(entry.id) === 'core' ? { ...entry, metadata: { ...entry.metadata, presentation: { ...entry.metadata?.presentation, states } } } : entry),
+    })
+    expect(compileProcessPlant({ ...definition, graph: worded({ sourceRangeEnergized: { on: 'SR HV on', off: 'SR HV off' } }) } as never).modelDigest).toBe(compileProcessPlant(definition).modelDigest)
+    expect(() => compilePlantGraph(worded({ powerMw: { on: 'at power', off: 'shut down' } }), processPlantComponentRegistry)).toThrow('not one of its on/off signals')
+  })
+
   test('renaming equipment never changes the Plant identity that persisted Runs are bound to', () => {
     const spec = assemblePwrReferencePlantGraph({ loopCount: 4 })
     const renamed: PlantGraphSpec = {

@@ -114,8 +114,8 @@
     <li class:primary={pen.role === 'primary'} title={`${pen.label} · ${pen.role}`}>
       <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`} bind:clientWidth={heads[String(pen.path)]}><span class="name" class:tag={pen.tagId !== undefined} bind:clientWidth={rooms[String(pen.path)]}>{named(pen)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} compact={compactChip(pen, inAlarm)} />{/if}</span>
       {#if typeof value === 'boolean'}
-        <!-- A state names its equipment, so a row of alike states (two buses) cannot be confused. -->
-        <span class="state" title={pen.described}>{value ? pen.described : `Not ${pen.described.charAt(0).toLowerCase()}${pen.described.slice(1)}`}</span>
+        <!-- A state in the words the model gives its two states ("Source-range HV off"), with its equipment where they do not name it. -->
+        <span class="state" title={pen.described}>{value ? pen.states?.on : pen.states?.off}</span>
       {:else}
         <span class="reading">
           <!-- At an end of its instrument's span the reading says only that the quantity is there or beyond: "<0", in low-integrity style. A reading over decades is written in powers of ten. -->

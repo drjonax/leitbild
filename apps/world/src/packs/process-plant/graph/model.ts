@@ -290,6 +290,12 @@ export const processGraphPresentationSchema = z.object({
   shortLabel: z.string().min(1).max(24).optional(),
   /** Short names of devices the component bundles, by device id ("PORV"). */
   embedded: z.record(idSchema, z.string().min(1).max(24)).optional(),
+  /**
+   * How operators read its on/off signals that serve no state aspect, by
+   * local variable path: "Source-range HV on" and "Source-range HV off",
+   * never "Not source-range detector high voltage on".
+   */
+  states: z.record(z.string().min(1), z.object({ on: z.string().min(1).max(40), off: z.string().min(1).max(40) }).strict()).optional(),
 }).strict()
 export type ProcessGraphPresentation = z.infer<typeof processGraphPresentationSchema>
 

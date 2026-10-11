@@ -201,7 +201,12 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "Core"
+          "shortLabel": "Core",
+          "states": {
+            "sourceRangeEnergized": { "on": "Source-range HV on", "off": "Source-range HV off" },
+            "aboveP6": { "on": "Above P-6", "off": "Below P-6" },
+            "aboveP10": { "on": "Above P-10", "off": "Below P-10" }
+          }
         }
       }
     },
@@ -442,6 +447,11 @@
             "reliefValve": "PORV",
             "blockValve": "PORV block",
             "safetyValves": "Safety valves"
+          },
+          "states": {
+            "backupHeatersOn": { "on": "Backup heaters on", "off": "Backup heaters off" },
+            "heatersCutOff": { "on": "Heaters cut off on low level", "off": "Heaters not cut off" },
+            "safetyValvesOpen": { "on": "Safety valves open", "off": "Safety valves shut" }
           }
         }
       }
@@ -3256,7 +3266,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "ACC A"
+          "shortLabel": "ACC A",
+          "states": {
+            "dischargeIsolationOpen": { "on": "Isolation CMD OPEN", "off": "Isolation CMD SHUT" }
+          }
         }
       }
     },
@@ -3288,7 +3301,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "ACC B"
+          "shortLabel": "ACC B",
+          "states": {
+            "dischargeIsolationOpen": { "on": "Isolation CMD OPEN", "off": "Isolation CMD SHUT" }
+          }
         }
       }
     },
@@ -3320,7 +3336,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "ACC C"
+          "shortLabel": "ACC C",
+          "states": {
+            "dischargeIsolationOpen": { "on": "Isolation CMD OPEN", "off": "Isolation CMD SHUT" }
+          }
         }
       }
     },
@@ -3352,7 +3371,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "ACC D"
+          "shortLabel": "ACC D",
+          "states": {
+            "dischargeIsolationOpen": { "on": "Isolation CMD OPEN", "off": "Isolation CMD SHUT" }
+          }
         }
       }
     },
@@ -3384,7 +3406,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "ACC E"
+          "shortLabel": "ACC E",
+          "states": {
+            "dischargeIsolationOpen": { "on": "Isolation CMD OPEN", "off": "Isolation CMD SHUT" }
+          }
         }
       }
     },
@@ -3416,7 +3441,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "ACC F"
+          "shortLabel": "ACC F",
+          "states": {
+            "dischargeIsolationOpen": { "on": "Isolation CMD OPEN", "off": "Isolation CMD SHUT" }
+          }
         }
       }
     },
@@ -3490,7 +3518,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "Grid"
+          "shortLabel": "Grid",
+          "states": {
+            "available": { "on": "Grid available", "off": "Grid lost" }
+          }
         }
       }
     },
@@ -3556,7 +3587,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "Bus A"
+          "shortLabel": "Bus A",
+          "states": {
+            "degraded": { "on": "Voltage degraded", "off": "Voltage normal" }
+          }
         }
       }
     },
@@ -3607,7 +3641,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "Bus B"
+          "shortLabel": "Bus B",
+          "states": {
+            "degraded": { "on": "Voltage degraded", "off": "Voltage normal" }
+          }
         }
       }
     },
@@ -4882,7 +4919,12 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "SI block logic"
+          "shortLabel": "SI block logic",
+          "states": {
+            "blockPushbutton": { "on": "SI block pushed", "off": "SI block released" },
+            "blocked": { "on": "Low-pressure SI blocked", "off": "Low-pressure SI unblocked" },
+            "belowP11": { "on": "Below P-11", "off": "Above P-11" }
+          }
         }
       }
     }
