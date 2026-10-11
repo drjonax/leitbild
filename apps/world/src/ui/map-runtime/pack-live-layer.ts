@@ -25,7 +25,7 @@ import { referenceLayerIdPrefix } from '../map/reference-layer-factory.ts'
 export interface LiveMapPort {
   getStyle(): { readonly layers: ReadonlyArray<{ readonly id: string; readonly type: string }> }
   getSource(id: string): unknown
-  addSource(id: string, source: { readonly type: 'geojson'; readonly data: GeoJSON.FeatureCollection; readonly promoteId?: string }): void
+  addSource(id: string, source: { readonly type: 'geojson'; readonly data: GeoJSON.FeatureCollection; readonly promoteId?: string; readonly attribution?: string }): void
   removeSource(id: string): void
   getLayer(id: string): unknown
   addLayer(layer: Record<string, unknown>, beforeId?: string): void
@@ -415,7 +415,7 @@ export const createPackLiveLayerController = (config: PackLiveLayerControllerCon
       }
       const specs = layer.layersFor(appearance)
       validateSpecs(layer, specs)
-      map.addSource(instance.sourceId, { type: 'geojson', data: featureCollection(instance.geometry!.features), promoteId: 'fid' })
+      map.addSource(instance.sourceId, { type: 'geojson', data: featureCollection(instance.geometry!.features), promoteId: 'fid', attribution: layer.attribution })
       map.addSource(instance.labelSourceId, { type: 'geojson', data: featureCollection(instance.state!.labels) })
       instance.labelSignature = JSON.stringify(instance.state!.labels)
       const anchor = liveLayerAnchorId(map.getStyle())

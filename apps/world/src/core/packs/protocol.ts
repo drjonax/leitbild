@@ -285,6 +285,8 @@ export interface PackLiveMapLayer {
   readonly layersFor: (appearance: PackMapAppearance) => ReadonlyArray<PackLiveMapLayerSpec>
   readonly imagesFor?: (appearance: PackMapAppearance) => ReadonlyArray<PackLiveMapImage>
   readonly referenceContext?: PackLiveMapReferenceContext
+  /** Credits for the data this layer draws, shown in the map's attribution control. */
+  readonly attribution: string
 }
 
 export interface PackObjectCreationContext {
