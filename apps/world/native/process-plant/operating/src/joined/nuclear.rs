@@ -114,6 +114,8 @@ pub struct Nuclear {
     deposition: Vec<Vec<(usize, f64)>>,
     regions: usize,
     carriers: usize,
+    /// Compiled (region, material) supports, kinetics order.
+    supports: Vec<kinetics::Support>,
     // Preallocated stage buffers; nothing allocates on the success path.
     work: Work,
 }
@@ -405,6 +407,7 @@ impl Nuclear {
             deposition,
             regions: r,
             carriers: a,
+            supports: source.supports.clone(),
             work,
         })
     }
@@ -430,6 +433,14 @@ impl Nuclear {
     /// The water cells receiving each carrier's direct coolant heat.
     pub fn deposition(&self) -> &[Vec<(usize, f64)>] {
         &self.deposition
+    }
+    /// The compiled (region, material) supports.
+    pub fn supports(&self) -> &[kinetics::Support] {
+        &self.supports
+    }
+    /// Local index of carrier `a`'s precursor group `g`.
+    pub fn precursor(&self, a: usize, g: usize) -> usize {
+        self.regions + DELAYED * a + g
     }
     /// Local index of carrier `a`'s material inventory `k` ([`MATERIALS`]).
     pub fn material(&self, a: usize, k: usize) -> usize {

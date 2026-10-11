@@ -15,6 +15,7 @@
 pub mod block;
 pub mod census;
 pub mod nuclear;
+pub mod operator;
 pub mod packet;
 pub mod solids;
 
