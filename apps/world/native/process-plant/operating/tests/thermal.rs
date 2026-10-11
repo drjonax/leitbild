@@ -445,6 +445,14 @@ fn finite_sg_and_guide_recipients_are_reciprocal_in_both_signs() {
         5.,
         1250.,
         0.02,
+        SteelContact {
+            emissivity: 0.3,
+            material: WallMaterial {
+                conductivity: c(15.),
+                density: 8000.,
+                cp: c(500.),
+            },
+        },
         true,
     )
     .unwrap();
@@ -459,6 +467,14 @@ fn finite_sg_and_guide_recipients_are_reciprocal_in_both_signs() {
         5.,
         1250.,
         0.02,
+        SteelContact {
+            emissivity: 0.3,
+            material: WallMaterial {
+                conductivity: c(15.),
+                density: 8000.,
+                cp: c(500.),
+            },
+        },
         false,
     )
     .unwrap();

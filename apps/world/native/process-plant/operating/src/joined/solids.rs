@@ -212,6 +212,8 @@ pub struct Solids {
     passive_ids: Vec<String>,
     /// Every element: the full evaluation's scope.
     all: Closed,
+    /// The SG tube steel (`ld01-sg-contact`).
+    steel: thermal::SteelContact,
     /// Structural incidence and its inverse, compiled once.
     incidence: Incidence,
     inverse: Inverse,
@@ -370,6 +372,42 @@ impl Solids {
             }
             segments.push(segment);
         }
+        // The tube steel and exchange area of `ld01-sg-contact`: every SG's
+        // segments tile its exchange area.
+        let c = &packet.secondary.contact;
+        if ![
+            c.exchange_area_m2,
+            c.steel_conductivity_w_mk,
+            c.steel_density_kg_m3,
+            c.steel_cp_j_kgk,
+        ]
+        .iter()
+        .all(|v| v.is_finite() && *v > 0.)
+            || !(c.emissivity > 0. && c.emissivity <= 1.)
+        {
+            return Err(fatal("SG contact constants"));
+        }
+        for k in 0..t.secondaries.len() {
+            let area: f64 = segments
+                .iter()
+                .filter(|g| g.secondary == k)
+                .map(|g| g.area)
+                .sum();
+            if (area - c.exchange_area_m2).abs() > 1e-12 * c.exchange_area_m2 {
+                return Err(fatal(format!(
+                    "SG {k}'s segments tile {area} m2, not the contact law's {} m2",
+                    c.exchange_area_m2
+                )));
+            }
+        }
+        let steel = thermal::SteelContact {
+            emissivity: c.emissivity,
+            material: thermal::WallMaterial {
+                conductivity: s(c.steel_conductivity_w_mk),
+                density: c.steel_density_kg_m3,
+                cp: s(c.steel_cp_j_kgk),
+            },
+        };
         let helium_nr: Vec<f64> = t.helium.iter().map(|h| h.nr_j_k).collect();
         let passive_mass: Vec<f64> = t.passive_stores.iter().map(|p| p.mass_kg).collect();
         if helium_nr
@@ -484,6 +522,7 @@ impl Solids {
             generators: (0..t.secondaries.len()).collect(),
         };
         let mut solids = Self {
+            steel,
             all,
             incidence: Incidence::default(),
             inverse: Inverse::default(),
@@ -1223,12 +1262,8 @@ impl Solids {
                 thermal::WallLaw {
                     diameter_m: g.diameter,
                     film: thermal::Film::Tube,
-                    emissivity: 0.3,
-                    material: thermal::WallMaterial {
-                        conductivity: s(15.),
-                        density: 8000.,
-                        cp: s(500.),
-                    },
+                    emissivity: self.steel.emissivity,
+                    material: self.steel.material,
                 },
                 water.saturation,
                 water.bulk,
@@ -1251,6 +1286,7 @@ impl Solids {
                 g.end,
                 g.area,
                 g.diameter,
+                self.steel,
                 view.steam_present,
             )
             .map_err(trial)?;

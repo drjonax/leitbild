@@ -542,6 +542,13 @@ pub struct WallMaterial {
     pub density: f64,
     pub cp: Scalar,
 }
+/// The SG tube steel of `ld01-sg-contact`: its gray emissivity and its
+/// material, shared by the primary film and the secondary contact.
+#[derive(Clone, Copy, Debug)]
+pub struct SteelContact {
+    pub emissivity: f64,
+    pub material: WallMaterial,
+}
 #[derive(Clone, Copy, Debug)]
 pub struct WallLaw {
     pub diameter_m: f64,
@@ -1293,7 +1300,8 @@ pub fn sg_gas_wall<P: WaterProperties>(
 /// Native M/U/V decides phase amounts. At dry/wet endpoints omit unavailable
 /// phase property calls. Inventory range admission is the fluid owner's job.
 // Public physical port: current water/metal state plus actual segment/area
-// geometry and phase-presence flag. No hidden prepared defaults/context.
+// geometry, the tube steel and phase-presence flag. No hidden prepared
+// defaults/context.
 #[allow(clippy::too_many_arguments)]
 pub fn secondary_wall<P: WaterProperties>(
     props: &P,
@@ -1305,6 +1313,7 @@ pub fn secondary_wall<P: WaterProperties>(
     end: f64,
     area: f64,
     diameter: f64,
+    steel: SteelContact,
     steam_present: bool,
 ) -> Result<Scalar> {
     if !area.is_finite() || area <= 0. {
@@ -1314,12 +1323,8 @@ pub fn secondary_wall<P: WaterProperties>(
     let law = WallLaw {
         diameter_m: diameter,
         film: Film::External,
-        emissivity: 0.3,
-        material: WallMaterial {
-            conductivity: s(15.),
-            density: 8000.,
-            cp: s(500.),
-        },
+        emissivity: steel.emissivity,
+        material: steel.material,
     };
     let liquid = if wet.value > 0. {
         liquid_wall(props, p, bulk_t, wall_t, s(0.), law)?.heat

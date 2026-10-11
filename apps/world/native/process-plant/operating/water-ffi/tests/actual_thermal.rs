@@ -5,6 +5,23 @@ use leitbild_operating_plant::initialization::{SurfacePolicy, initialize_fuel_su
 use leitbild_operating_plant::thermal::*;
 use leitbild_operating_water::If97;
 use serde_json::Value;
+
+/// The tube steel of `ld01-sg-contact` (emissivity and material), as the
+/// SG owner's section carries it.
+const SG_STEEL: SteelContact = SteelContact {
+    emissivity: 0.3,
+    material: WallMaterial {
+        conductivity: Scalar {
+            value: 15.,
+            direction: 0.,
+        },
+        density: 8000.,
+        cp: Scalar {
+            value: 500.,
+            direction: 0.,
+        },
+    },
+};
 use std::collections::HashMap;
 
 fn n(v: &Value, key: &str) -> f64 {
@@ -262,6 +279,7 @@ fn actual_finite_thermal_package_consumes_maintained_water_and_closes_reciprocal
             n(metal, "developed_end_m"),
             n(metal, "area_m2"),
             n(metal, "thermal_diameter_m"),
+            SG_STEEL,
             true,
         )
         .unwrap()
@@ -282,6 +300,7 @@ fn actual_finite_thermal_package_consumes_maintained_water_and_closes_reciprocal
                 n(metal, "developed_end_m"),
                 n(metal, "area_m2"),
                 n(metal, "thermal_diameter_m"),
+                SG_STEEL,
                 true,
             )
             .unwrap();
@@ -298,6 +317,7 @@ fn actual_finite_thermal_package_consumes_maintained_water_and_closes_reciprocal
                     n(metal, "developed_end_m"),
                     n(metal, "area_m2"),
                     n(metal, "thermal_diameter_m"),
+                    SG_STEEL,
                     true,
                 )
                 .unwrap()

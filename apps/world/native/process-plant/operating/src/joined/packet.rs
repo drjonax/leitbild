@@ -23,6 +23,16 @@ pub struct Packet {
     /// reads a mass flux.
     pub water_flow_area_m2: Vec<f64>,
     pub water_boron_amount_kg_eq: Vec<f64>,
+    pub secondary: SecondarySection,
+}
+
+/// The SG owner's section, read here only for its contact record
+/// (`ld01-sg-contact`): the tube steel the joined solids' films share with
+/// the secondary contact, and the exchange area their segments must tile.
+/// The SG owner decodes and validates the rest of its section.
+#[derive(Debug, Deserialize)]
+pub struct SecondarySection {
+    pub contact: crate::sg::packet::Contact,
 }
 
 #[derive(Debug, Deserialize)]
