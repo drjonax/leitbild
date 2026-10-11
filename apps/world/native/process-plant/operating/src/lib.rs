@@ -19,6 +19,7 @@ pub mod poisons;
 pub mod pressure;
 pub mod pzr;
 pub mod pzr_field;
+pub mod rods;
 pub mod rotor;
 pub mod source_feedback;
 pub mod sparse;
