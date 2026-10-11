@@ -1,6 +1,7 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, comparison, reactorTripBreakerOpen, reactorTripBreakerWrites, rule, trip, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, reactorTripBreakerWrites, rule, trip, write } from './reference-ic-helpers.ts'
 import { containmentPressureHigh1MPa } from './reference-ic-containment.ts'
+import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 
 // Safety injection on low pressurizer pressure: below 12.7 MPa (about
 // 1,830 psig, within the 1,807 to 1,870 psig Westinghouse plants set it at)
@@ -34,18 +35,36 @@ const reactorTripOnSafetyInjection = (cause: string) => trip({
   annunciator: annunciator({ ...siAction, firstOutGroup: 'reactor-trip' }),
 })
 
+// The SI signal also isolates main feedwater (NUREG-1431 Table 3.3.2-1,
+// function 5.c): both main feedwater pumps trip and every feed regulating
+// valve shuts, so feedwater does not overcool the reactor coolant or feed a
+// faulted steam generator while safety injection makes up the coolant. Like
+// the reactor trip on SI, it is annunciated on the SI signal's own system, in
+// the feedwater isolation's first-out group, where its other sources are
+// (P-4 with low Tavg, P-14 high-high level), and it is released with
+// them once both reactor trip breakers are closed again
+// (reference-ic-balance-of-plant.ts), which the SI signal's own reactor trip
+// keeps open meanwhile.
+const feedwaterIsolationOnSafetyInjection = (cause: string) => trip({
+  id: 'feedwater-isolation',
+  title: `Feedwater isolation on safety injection, ${cause}`,
+  message: `The safety injection signal, on ${cause}, isolates main feedwater: the main feedwater pumps trip and the feed regulating valves shut.`,
+  annunciator: annunciator({ ...siAction, firstOutGroup: 'feedwater-isolation' }),
+})
+
 const siPumps = [
   { id: 'safetyInjectionPumpA', train: 'A' },
   { id: 'safetyInjectionPumpB', train: 'B' },
 ] as const
 
-const safetyInjectionWrites = (idPrefix: string) => [
+const safetyInjectionWrites = (idPrefix: string, loops: ReadonlyArray<ProcessPlantReferenceLoop>) => [
   ...siPumps.map(pump => write(`start-high-head-si-pump-${pump.train.toLowerCase()}`, { tagId: `SI-PUMP-${pump.train}` }, true)),
   ...reactorTripBreakerWrites(idPrefix),
   write(`insert-control-rods-${idPrefix}`, { path: 'core.rodInsertionFraction' }, 1),
+  ...feedwaterIsolationWrites(`${idPrefix}-feedwater-isolation`, loops),
 ]
 
-export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> => [
+export const safetyInjectionReferenceIcRules = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
     id: 'safety-injection-low-pzr-pressure',
     label: 'Safety injection on low pressurizer pressure',
@@ -60,11 +79,12 @@ export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcR
       trip({
         id: 'safety-injection',
         title: 'Safety injection actuated',
-        message: `Pressurizer pressure is below ${lowPressurizerPressureSiMPa} MPa: the SI signal starts both high-head safety injection pumps and trips the reactor.`,
+        message: `Pressurizer pressure is below ${lowPressurizerPressureSiMPa} MPa: the SI signal starts both high-head safety injection pumps, trips the reactor and isolates main feedwater.`,
         annunciator: siAction,
       }),
       reactorTripOnSafetyInjection('low pressurizer pressure'),
-      ...safetyInjectionWrites('safety-injection'),
+      feedwaterIsolationOnSafetyInjection('low pressurizer pressure'),
+      ...safetyInjectionWrites('safety-injection', loops),
     ],
   }),
   // Containment pressure Hi-1 (NUREG-1431 Table 3.3.2-1, function 1.c), in
@@ -81,11 +101,12 @@ export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcR
       trip({
         id: 'safety-injection',
         title: 'Safety injection actuated on containment pressure Hi-1',
-        message: `Containment pressure is above Hi-1, ${containmentPressureHigh1MPa} MPa (3.86 psig): the SI signal starts both high-head safety injection pumps and trips the reactor.`,
+        message: `Containment pressure is above Hi-1, ${containmentPressureHigh1MPa} MPa (3.86 psig): the SI signal starts both high-head safety injection pumps, trips the reactor and isolates main feedwater.`,
         annunciator: siAction,
       }),
       reactorTripOnSafetyInjection('containment pressure Hi-1'),
-      ...safetyInjectionWrites('safety-injection-containment'),
+      feedwaterIsolationOnSafetyInjection('containment pressure Hi-1'),
+      ...safetyInjectionWrites('safety-injection-containment', loops),
     ],
   }),
   // The BLOCK pushbutton is accepted only where the block can hold: below

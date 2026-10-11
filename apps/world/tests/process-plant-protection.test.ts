@@ -612,9 +612,9 @@ describe('what each trip does', () => {
     expect(declared.get('auxiliary-feedwater')?.shortLabel).toBe('AFW START')
   })
 
-  test('safety injection annunciates its own actuation first and the reactor trip it causes in the reactor trip\'s group', () => {
-    expect(groupsOf('safety-injection-low-pzr-pressure')).toEqual(['safety-injection', 'reactor-trip'])
-    expect(groupsOf('safety-injection-containment-pressure-high-1')).toEqual(['safety-injection', 'reactor-trip'])
+  test('safety injection annunciates its own actuation first, then the reactor trip and the feedwater isolation it causes in their groups', () => {
+    expect(groupsOf('safety-injection-low-pzr-pressure')).toEqual(['safety-injection', 'reactor-trip', 'feedwater-isolation'])
+    expect(groupsOf('safety-injection-containment-pressure-high-1')).toEqual(['safety-injection', 'reactor-trip', 'feedwater-isolation'])
   })
 
   test('a reactor trip trips the turbine through P-4 and annunciates it with the other turbine trips', () => {
@@ -682,6 +682,30 @@ describe('feedwater isolation', () => {
     expect(Number(plantRun.tag('MFW-A-CV'))).toBeGreaterThan(0.5)
     expect(plantRun.trip(isolation)).toMatchObject({ active: true, resettable: true })
   }, PLANT_HANG_GUARD_MS)
+
+  test('safety injection isolates feedwater as it comes in, whatever P-4 with low Tavg does', () => {
+    // A small hot-leg break brings in SI on low pressurizer pressure at power (NUREG-1431 Table 3.3.2-1, function 5.c).
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-hot-leg-a.leak.areaFraction' as VariablePath, value: 0.005 })
+    const safetyInjection = 'trip:safety-injection-low-pzr-pressure:safety-injection'
+    const onSafetyInjection = 'trip:safety-injection-low-pzr-pressure:feedwater-isolation'
+    const seconds = plantRun.secondsUntil(safetyInjection, 90)
+    expect(seconds).not.toBeNull()
+    expect(plantRun.activeIds()).toContain(onSafetyInjection)
+    expect(plantRun.trip(onSafetyInjection)!.title).toBe('Feedwater isolation on safety injection, low pressurizer pressure')
+    plantRun.run(2_000)
+    for (const loop of loops) {
+      expect(plantRun.tag(`MFW-${loop}-CV`), loop).toBe(0)
+      expect(plantRun.read(`feedwaterControlValve${loop}.isolationSignal`), loop).toBe(true)
+    }
+    expect(plantRun.tag('MFW-PUMP-A-RUNNING')).toBe(false)
+    expect(plantRun.tag('MFW-PUMP-B-RUNNING')).toBe(false)
+    // Without P-4's isolation it is the SI signal's own: its writes shut every valve and trip both pumps.
+    const effects = plant.automation.rules.find(rule => rule.id === 'safety-injection-containment-pressure-high-1')!.effects
+    const writes = effects.flatMap(effect => effect.type === 'writeSignal' ? [`${'path' in effect.signal ? effect.signal.path : effect.signal.tagId}=${effect.value}`] : [])
+    expect(writes).toEqual(expect.arrayContaining(['MFW-PUMP-A-RUN=false', 'MFW-PUMP-B-RUN=false', ...loops.map(loop => `feedwaterControlValve${loop}.isolationSignal=true`)]))
+  }, 120_000)
 
   test('on P-14 high-high level shuts the feed regulating valves as it trips the pumps', () => {
     const effects = plant.automation.rules.find(rule => rule.id === 'sg-c-level-high-high-feedwater-isolation')!.effects
