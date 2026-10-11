@@ -10,7 +10,7 @@
     },
     "apps/agents": {
       "name": "@leitbild/agents",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@leitbild/contracts": "workspace:*",
         "@leitbild/knowledge": "workspace:*",
@@ -34,7 +34,7 @@
     },
     "apps/leitbild": {
       "name": "@leitbild/host",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@leitbild/contracts": "workspace:*",
         "@leitbild/knowledge": "workspace:*",
@@ -53,7 +53,7 @@
     },
     "apps/world": {
       "name": "@leitbild/world",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "3d-tiles-renderer": "^0.4.28",
         "@babylonjs/core": "^9.11.0",
@@ -103,7 +103,7 @@
     },
     "packages/integration-tests": {
       "name": "@leitbild/integration-tests",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@leitbild/contracts": "workspace:*",
       },

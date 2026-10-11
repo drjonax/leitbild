@@ -1,6 +1,6 @@
 {
   "name": "@leitbild/world",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Leitbild World module runtime and map-based simulation UI",
   "type": "module",
   "module": "src/index.ts",
