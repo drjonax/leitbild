@@ -16,7 +16,7 @@ use leitbild_operating_plant::{
 };
 use leitbild_operating_water::{
     CaloricLinearization, If97,
-    ida::{Failure, Ida, Initial, Stats, System},
+    ida::{Failure, Ida, Initial, KluOrdering, Stats, System},
     network::Integrated,
 };
 use serde_json::{Value, json};
@@ -557,8 +557,13 @@ pub struct Recording {
     states: Rc<RefCell<States>>,
     matrices: Rc<RefCell<Vec<Vec<f64>>>>,
     structure: Rc<RefCell<Option<Structure>>>,
+    /// Stock KLU's ordering for this run (S1's systems use stock COLAMD).
+    ordering: KluOrdering,
 }
 impl System for Recording {
+    fn klu_ordering(&self) -> KluOrdering {
+        self.ordering
+    }
     fn dimension(&self) -> usize {
         self.inner.dimension()
     }
@@ -702,6 +707,15 @@ pub struct Settled {
 /// and IDACalcIC horizon, advanced to each of `outputs` with `assembly`;
 /// records every Jacobian state and matrix.
 pub fn settle(declared: &Declared, outputs: &[f64], assembly: Assembly) -> Settled {
+    settle_ordered(declared, outputs, assembly, KluOrdering::Colamd)
+}
+/// [`settle`] with an explicit stock KLU ordering.
+pub fn settle_ordered(
+    declared: &Declared,
+    outputs: &[f64],
+    assembly: Assembly,
+    ordering: KluOrdering,
+) -> Settled {
     let (network, y0, yp0, ids, atol) = declared.prepared(If97);
     let stocks = network.nonnegative_stocks();
     let states = Rc::new(RefCell::new(Vec::new()));
@@ -716,6 +730,7 @@ pub fn settle(declared: &Declared, outputs: &[f64], assembly: Assembly) -> Settl
         states: states.clone(),
         matrices: matrices.clone(),
         structure: structure.clone(),
+        ordering,
     };
     let rtol = declared.gate(&["relativeTolerance"]);
     let (mut y, mut yp) = (y0.clone(), yp0.clone());
@@ -797,6 +812,26 @@ pub fn event(
     duration: f64,
     interval: f64,
 ) -> Settled {
+    event_ordered(
+        declared,
+        settled,
+        event,
+        assembly,
+        duration,
+        interval,
+        KluOrdering::Colamd,
+    )
+}
+/// [`event`] with an explicit stock KLU ordering.
+pub fn event_ordered(
+    declared: &Declared,
+    settled: &[f64],
+    event: Event,
+    assembly: Assembly,
+    duration: f64,
+    interval: f64,
+    ordering: KluOrdering,
+) -> Settled {
     let (mut network, _, _, ids, atol) = declared.prepared(If97);
     let stocks = network.nonnegative_stocks();
     let rtol = declared.gate(&["relativeTolerance"]);
@@ -838,6 +873,7 @@ pub fn event(
         states: states.clone(),
         matrices: matrices.clone(),
         structure: structure.clone(),
+        ordering,
     };
     let mut ida = Ida::new(
         system,
