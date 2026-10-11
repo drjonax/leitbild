@@ -288,15 +288,32 @@ fn joined_blocks_against_colored() {
         .outputs
         .pop()
         .unwrap();
-    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, full);
+    let JoinedHot {
+        mut joined, y: y0, ..
+    } = joined_hot(&declared, &settled, full);
     let n = joined.dimension();
     let o = joined.offsets();
     let zero = vec![0.; n];
     let cj = 20.;
-    let (reference, colored, colors, colored_s) = joined_colored(&mut joined, &y, &zero, cj);
+    // The structure is compiled at the hot reference; LD01_JAC_PERTURB
+    // (relative) moves every coordinate by a recorded pseudo-random factor
+    // before both assemblies, so the pattern is checked at another state.
     let started = cpu();
-    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y0).expect("block compile");
     let compile_s = cpu() - started;
+    let perturb: f64 = std::env::var("LD01_JAC_PERTURB").map_or(0., |v| v.parse().unwrap());
+    let mut state = 0x5eed_u64;
+    let y: Vec<f64> = y0
+        .iter()
+        .map(|v| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let u = 2. * ((state >> 11) as f64 / (1u64 << 53) as f64) - 1.;
+            v * (1. + perturb * u)
+        })
+        .collect();
+    let (reference, colored, colors, colored_s) = joined_colored(&mut joined, &y, &zero, cj);
     let mine = &structure.pattern;
     // Every colored nonzero lies in the block pattern.
     let mut outside = Vec::new();
@@ -379,6 +396,7 @@ fn joined_blocks_against_colored() {
     let klu_structural = klu(&reference, &colored);
     let receipt = json!({
         "kind": "s2-joined-blocks-against-colored-NOT-EVIDENCE",
+        "relative_state_perturbation": perturb,
         "block_assembly_refused": refused,
         "klu_block_pattern": klu_blocks, "klu_structural_pattern": klu_structural,
         "composition": {"dimension": n, "offsets": o, "full_owners": full},
@@ -464,4 +482,814 @@ fn joined_single_column_probe() {
             json!({"column": j, "owner": owner(j), "nonzero_rows": rows})
         );
     }
+}
+
+/// Z5 cost of the joined block Jacobian at the hot reference: thread CPU
+/// by column class and by piece, the property calls of each, the value
+/// residual, the colored reference and stock KLU on the block pattern,
+/// in interleaved rounds so that ratios within a round survive machine
+/// load. Each class alone includes the common base (one joined evaluation,
+/// the nuclear partials and the replay's network base pass).
+#[test]
+#[ignore = "requires the S1 packet, the wiki gates, maintained IF97 and stock IDA/KLU; zero-time Z5 measurement"]
+fn joined_blocks_profile() {
+    use leitbild_operating_plant::joined::blocks::{
+        Classes, JoinedJacobian, Profile, jacobian_blocks, jacobian_blocks_profiled,
+    };
+    use std::{cell::RefCell, rc::Rc};
+    prefer_performance_core();
+    let rounds: usize = std::env::var("LD01_JAC_ROUNDS").map_or(5, |r| r.parse().unwrap());
+    let declared = Declared::load();
+    let load_start = load_average();
+    let commit = command("git", &["rev-parse", "HEAD"]);
+    let dirty = !command("git", &["status", "--porcelain"]).is_empty();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let ledger: Shared = Rc::new(RefCell::new(Ledger::default()));
+    let JoinedHot { mut joined, y, .. } =
+        joined_hot_with(&declared, &settled, true, || Timed(ledger.clone()));
+    let n = joined.dimension();
+    let o = joined.offsets();
+    let zero = vec![0.; n];
+    let cj = 20.;
+    let started = cpu();
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let compile_ms = 1e3 * (cpu() - started);
+    let mut values = vec![0.; structure.pattern.nonzeros()];
+    let configurations: [(&str, Classes); 7] = [
+        ("base only", Classes::NONE),
+        (
+            "network columns",
+            Classes {
+                network: true,
+                ..Classes::NONE
+            },
+        ),
+        (
+            "nuclear columns",
+            Classes {
+                nuclear: true,
+                ..Classes::NONE
+            },
+        ),
+        (
+            "solid columns",
+            Classes {
+                solids: true,
+                ..Classes::NONE
+            },
+        ),
+        (
+            "secondary columns",
+            Classes {
+                secondary: true,
+                ..Classes::NONE
+            },
+        ),
+        (
+            "rod columns",
+            Classes {
+                rods: true,
+                ..Classes::NONE
+            },
+        ),
+        ("all", Classes::ALL),
+    ];
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); configurations.len() + 2];
+    let mut calls = Vec::new();
+    let mut pieces: std::collections::BTreeMap<&str, (u64, f64)> = Default::default();
+    let mut ratios = Vec::new();
+    let mut klu = json!(null);
+    for round in 0..rounds {
+        // The value residual, best of 5 within the round.
+        let mut value = f64::INFINITY;
+        for _ in 0..5 {
+            let s = cpu();
+            joined.evaluate(0., &y, &zero, None, 0., None).unwrap();
+            value = value.min(cpu() - s);
+        }
+        times[configurations.len()].push(value);
+        let mut this = Vec::new();
+        for (k, (label, classes)) in configurations.iter().enumerate() {
+            let before = ledger.borrow().snapshot();
+            let s = cpu();
+            jacobian_blocks(
+                &mut joined,
+                &structure,
+                0.,
+                cj,
+                &y,
+                &zero,
+                &mut values,
+                *classes,
+            )
+            .expect("block assembly");
+            let spent = cpu() - s;
+            times[k].push(spent);
+            this.push(spent);
+            if round == 0 {
+                let after = ledger.borrow().snapshot();
+                calls.push(
+                    json!({"classes": label, "property_calls": Ledger::between(&before, &after)}),
+                );
+            }
+        }
+        let mut profile = Profile::new(cpu);
+        jacobian_blocks_profiled(
+            &mut joined,
+            &structure,
+            0.,
+            cj,
+            &y,
+            &zero,
+            &mut values,
+            Classes::ALL,
+            &mut profile,
+        )
+        .expect("profiled block assembly");
+        if round == 0 {
+            for (piece, (c, sec)) in profile.pieces {
+                pieces.insert(piece, (c, sec));
+            }
+        } else {
+            for (piece, (_, sec)) in profile.pieces {
+                let e = pieces.get_mut(piece).unwrap();
+                e.1 = e.1.min(sec);
+            }
+        }
+        // The colored reference once per round.
+        let (reference, colored, _, colored_s) = joined_colored(&mut joined, &y, &zero, cj);
+        times[configurations.len() + 1].push(colored_s);
+        let all = *this.last().unwrap();
+        ratios.push(
+            json!({"round": round, "all_ms": 1e3 * all, "colored_ms": 1e3 * colored_s,
+            "value_residual_ms": 1e3 * value, "colored_over_blocks": colored_s / all,
+            "blocks_over_value_residual": all / value}),
+        );
+        if round == 0 {
+            jacobian_blocks(
+                &mut joined,
+                &structure,
+                0.,
+                cj,
+                &y,
+                &zero,
+                &mut values,
+                Classes::ALL,
+            )
+            .unwrap();
+            let (pointers, rows) = structure.pattern.to_i64().unwrap();
+            let _ = (reference, colored);
+            klu = json!({"colamd": klu_profile(&pointers, &rows, &[values.clone()], 3),
+                "amd": klu_profile_ordered(&pointers, &rows, &[values.clone()], 3, 0)});
+        }
+    }
+    let summary = |v: &Vec<f64>| {
+        let mut w = v.clone();
+        w.sort_by(f64::total_cmp);
+        json!({"min_ms": 1e3 * w[0], "median_ms": 1e3 * w[w.len() / 2]})
+    };
+    let by_class: Vec<Value> = configurations
+        .iter()
+        .enumerate()
+        .map(|(k, (label, _))| json!({"classes": label, "cpu": summary(&times[k])}))
+        .collect();
+    let receipt = json!({
+        "kind": "s2-z5-joined-block-jacobian-cost-NOT-EVIDENCE",
+        "team": "JAC",
+        "status": "zero-time measurement at the hot reference; S2 is not declared",
+        "clock": "CLOCK_THREAD_CPUTIME_ID, QOS_CLASS_USER_INTERACTIVE",
+        "app_commit": commit, "app_dirty": dirty,
+        "packet": declared.packet_path, "packet_sha256": sha256_file(&declared.packet_path),
+        "load_average_start": load_start,
+        "composition": {"dimension": n, "offsets": o},
+        "cj_per_s": cj, "rounds": rounds,
+        "block_pattern_nonzeros": structure.pattern.nonzeros(), "compile_ms": compile_ms,
+        "value_residual": summary(&times[configurations.len()]),
+        "colored_reference": summary(&times[configurations.len() + 1]),
+        "by_class": by_class,
+        "pieces_of_all_min_over_rounds_ms": pieces.iter().map(|(k, (c, sec))| json!({"piece": k, "calls": c, "ms": 1e3 * sec})).collect::<Vec<_>>(),
+        "property_calls_round_0": calls,
+        "within_round": ratios,
+        "klu_block_pattern": klu,
+        "load_average_end": load_average(),
+    });
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+    if let Ok(path) = std::env::var("LD01_JAC_RECEIPT") {
+        write_receipt(&path, &receipt);
+    }
+}
+
+/// Diagnostic: sizes of the solids' incidence and of the closed scopes the
+/// owner columns evaluate.
+#[test]
+#[ignore = "diagnostic of the solids' closed scopes"]
+fn joined_solid_scopes() {
+    use leitbild_operating_plant::joined::solids::SolidScope;
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { joined, .. } = joined_hot(&declared, &settled, true);
+    let solids = joined.solids();
+    let inc = solids.incidence();
+    let halves = solids.halves();
+    for a in [192usize, 193, 194, 195] {
+        println!(
+            "half {a}: helium {} wets {:?}",
+            inc.halves[a].0, inc.halves[a].1
+        );
+    }
+    println!("passive (first 5): {:?}", &inc.passive[..5]);
+    println!("segments: {:?}", inc.segments);
+    for c in [0usize, 1, 9, 10] {
+        println!(
+            "flux reads of cell {c}: {:?}",
+            joined.network.liquid_flux_reads(c)
+        );
+    }
+    let mut sizes = BTreeMap::new();
+    for a in 0..halves {
+        let c = solids.close(&SolidScope {
+            bands: vec![a],
+            ..Default::default()
+        });
+        *sizes
+            .entry((
+                c.bands.len(),
+                c.plenum.len(),
+                c.passive.len(),
+                c.helium.len(),
+            ))
+            .or_insert(0) += 1;
+    }
+    let helium = inc
+        .halves
+        .iter()
+        .map(|h| h.0)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let wets: Vec<usize> = inc.halves.iter().map(|h| h.1.len()).collect();
+    println!(
+        "{}",
+        json!({"halves": halves, "helium_stores": helium, "passive_contacts": inc.passive.len(),
+            "plenum_contacts": inc.plenum.len(), "segments": inc.segments.len(),
+            "max_cells_wetted_per_half": wets.iter().max(),
+            "closed_scope_of_one_half (bands, plenum, passive, helium) -> halves": sizes.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()})
+    );
+}
+
+/// Diagnostic: the block pattern's densest rows and columns, and stock KLU
+/// on the same matrix with its `k` densest coordinates bordered out (their
+/// rows and columns replaced by the unit diagonal), the remainder a
+/// bordered solve would factor. A measurement for the linear-solver
+/// decision; nothing here changes the solver.
+#[test]
+#[ignore = "diagnostic of the block pattern's dense lines and their KLU fill"]
+fn joined_dense_lines() {
+    use leitbild_operating_plant::{
+        joined::blocks::{Classes, JoinedJacobian, jacobian_blocks},
+        sparse::Pattern,
+    };
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, true);
+    let n = joined.dimension();
+    let o = joined.offsets();
+    let zero = vec![0.; n];
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let p = &structure.pattern;
+    let mut values = vec![0.; p.nonzeros()];
+    jacobian_blocks(
+        &mut joined,
+        &structure,
+        0.,
+        20.,
+        &y,
+        &zero,
+        &mut values,
+        Classes::ALL,
+    )
+    .expect("block assembly");
+    let mut row_count = vec![0usize; n];
+    for &r in p.indices() {
+        row_count[r] += 1;
+    }
+    let col_count: Vec<usize> = (0..n).map(|j| p.column(j).len()).collect();
+    let block = |i: usize| match i {
+        i if i < o.nuclear => "network",
+        i if i < o.solids => "nuclear",
+        i if i < o.secondary => "solids",
+        i if i < o.rods => "secondary",
+        _ => "rods",
+    };
+    let mut lines: Vec<(usize, usize)> = (0..n).map(|i| (row_count[i] + col_count[i], i)).collect();
+    lines.sort_unstable_by(|a, b| b.cmp(a));
+    let top: Vec<Value> = lines
+        .iter()
+        .take(40)
+        .map(|(c, i)| json!({"coordinate": i, "block": block(*i), "row_nnz": row_count[*i], "column_nnz": col_count[*i], "sum": c}))
+        .collect();
+    // Stored entries that are exactly zero at this state, by (column
+    // block, row block): what the pattern holds beyond this state's needs.
+    let mut zeros: BTreeMap<String, [usize; 2]> = BTreeMap::new();
+    for j in 0..n {
+        for (row, v) in stored_column(p, &values, j) {
+            let e = zeros
+                .entry(format!("{} column / {} row", block(j), block(row)))
+                .or_insert([0, 0]);
+            e[0] += 1;
+            if v == 0. {
+                e[1] += 1;
+            }
+        }
+    }
+    println!(
+        "{}",
+        json!({"stored_and_exact_zero_by_block": zeros.iter().map(|(k, v)| json!({"blocks": k, "stored": v[0], "exact_zero": v[1]})).collect::<Vec<_>>()})
+    );
+    // Stock KLU on this state's nonzeros only (the diagonal kept): the
+    // bound on what an element-exact pattern could reach here.
+    {
+        let mut columns = vec![Vec::new(); n];
+        let mut v = Vec::new();
+        for (j, column) in columns.iter_mut().enumerate() {
+            for (row, value) in stored_column(p, &values, j) {
+                if value != 0. || row == j {
+                    column.push(row);
+                    v.push(value);
+                }
+            }
+        }
+        let q = Pattern::from_columns(n, &columns).unwrap();
+        let (pointers, rows) = q.to_i64().unwrap();
+        let colamd = klu_profile(&pointers, &rows, &[v.clone()], 3);
+        let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+        println!(
+            "{}",
+            json!({"state_nonzeros": q.nonzeros(),
+                "colamd": {"refactor_ms": colamd["refactor_ms"], "factor_ms": colamd["factor_ms"], "lnz_plus_unz": colamd["lnz_plus_unz"]},
+                "amd": {"refactor_ms": amd["refactor_ms"], "factor_ms": amd["factor_ms"], "lnz_plus_unz": amd["lnz_plus_unz"]}})
+        );
+    }
+    // What the nonzero cross-block entries are, by coordinate kind.
+    {
+        let net = &joined.network;
+        let solids = joined.solids();
+        let halves = solids.halves();
+        let network_kind = |i: usize| -> String {
+            for l in &net.cell_layout {
+                for (name, index) in [
+                    ("p", l.base),
+                    ("B", l.boron),
+                    ("M_l", l.mass[0]),
+                    ("U_l", l.energy[0]),
+                    ("M_v", l.mass[1]),
+                    ("U_v", l.energy[1]),
+                ] {
+                    if index == i {
+                        return name.into();
+                    }
+                }
+            }
+            for l in &net.face_layout {
+                if l.index == i {
+                    return format!("impulse phase {}", l.phase);
+                }
+            }
+            if net.pzr.coordinates().contains(&i) {
+                return "pzr".into();
+            }
+            "rotor".into()
+        };
+        let solid_kind = |i: usize| -> String {
+            let k = i - o.solids;
+            if k < 3 * halves {
+                format!("energy {}", k % 3)
+            } else if k < 6 * halves {
+                format!("surface {}", (k - 3 * halves) % 3)
+            } else if k < solids.passive(0) {
+                "helium".into()
+            } else if k < solids.metal(0) {
+                "passive".into()
+            } else {
+                "metal".into()
+            }
+        };
+        let kind = |i: usize| -> String {
+            match block(i) {
+                "network" => format!("network {}", network_kind(i)),
+                "solids" => format!("solids {}", solid_kind(i)),
+                b => b.to_string(),
+            }
+        };
+        let mut kinds: BTreeMap<String, [usize; 2]> = BTreeMap::new();
+        for j in 0..n {
+            for (row, v) in stored_column(p, &values, j) {
+                let (cb, rb) = (block(j), block(row));
+                if cb == rb && cb != "network" {
+                    continue;
+                }
+                if !["network", "solids", "rods"].contains(&cb)
+                    || !["network", "solids"].contains(&rb)
+                {
+                    continue;
+                }
+                let e = kinds
+                    .entry(format!("{} -> {}", kind(j), kind(row)))
+                    .or_insert([0, 0]);
+                e[0] += 1;
+                if v != 0. {
+                    e[1] += 1;
+                }
+            }
+        }
+        println!(
+            "{}",
+            json!({"cross_kinds_stored_nonzero": kinds.iter().map(|(k, v)| json!([k, v[0], v[1]])).collect::<Vec<_>>()})
+        );
+    }
+    // Stock KLU (AMD) with this state's exact zeros dropped in one
+    // (column block, row block) at a time: which closures cost the fill.
+    {
+        let mut by_category = Vec::new();
+        for (cb, rb) in [
+            ("rods", "solids"),
+            ("network", "solids"),
+            ("nuclear", "solids"),
+            ("solids", "network"),
+            ("rods", "network"),
+            ("nuclear", "network"),
+            ("network", "network"),
+            ("solids", "solids"),
+        ] {
+            let mut columns = vec![Vec::new(); n];
+            let mut v = Vec::new();
+            for (j, column) in columns.iter_mut().enumerate() {
+                for (row, value) in stored_column(p, &values, j) {
+                    let dropped = value == 0. && row != j && block(j) == cb && block(row) == rb;
+                    if !dropped {
+                        column.push(row);
+                        v.push(value);
+                    }
+                }
+            }
+            let q = Pattern::from_columns(n, &columns).unwrap();
+            let (pointers, rows) = q.to_i64().unwrap();
+            let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+            by_category.push(
+                json!({"zeros_dropped_in": format!("{cb} columns / {rb} rows"),
+                "nonzeros": q.nonzeros(), "amd_refactor_ms": amd["refactor_ms"]["mean"],
+                "amd_lnz_plus_unz": amd["lnz_plus_unz"]["max"]}),
+            );
+        }
+        println!("{}", json!({"zeros_dropped_by_category": by_category}));
+    }
+    // Where the densest column's rows lie, and the densest rows.
+    let densest = lines[0].1;
+    let mut histogram: BTreeMap<&str, usize> = BTreeMap::new();
+    for r in p.column(densest) {
+        *histogram.entry(block(*r)).or_insert(0) += 1;
+    }
+    let mut by_row: Vec<(usize, usize)> = (0..n).map(|i| (row_count[i], i)).collect();
+    by_row.sort_unstable_by(|a, b| b.cmp(a));
+    let dense_rows: Vec<Value> = by_row
+        .iter()
+        .take(12)
+        .map(|(c, i)| json!({"row": i, "block": block(*i), "row_nnz": c}))
+        .collect();
+    let mut by_col: Vec<(usize, usize)> = (0..n).map(|i| (col_count[i], i)).collect();
+    by_col.sort_unstable_by(|a, b| b.cmp(a));
+    let dense_column_blocks: BTreeMap<&str, usize> =
+        by_col
+            .iter()
+            .take(100)
+            .fold(BTreeMap::new(), |mut m, (_, i)| {
+                *m.entry(block(*i)).or_insert(0) += 1;
+                m
+            });
+    println!(
+        "{}",
+        json!({"densest_column": densest, "its_rows_by_block": histogram, "densest_rows": dense_rows,
+            "top_100_columns_by_block": dense_column_blocks,
+            "columns_over_1000": by_col.iter().filter(|c| c.0 > 1000).count(),
+            "rows_over_1000": by_row.iter().filter(|c| c.0 > 1000).count()})
+    );
+    let mut bordered = Vec::new();
+    for k in [0usize, 24, 48, 100] {
+        let out: std::collections::BTreeSet<usize> = lines.iter().take(k).map(|l| l.1).collect();
+        let mut columns = vec![Vec::new(); n];
+        let mut v = Vec::new();
+        for (j, column) in columns.iter_mut().enumerate() {
+            if out.contains(&j) {
+                column.push(j);
+                v.push(1.);
+                continue;
+            }
+            for (row, value) in stored_column(p, &values, j) {
+                if !out.contains(&row) {
+                    column.push(row);
+                    v.push(value);
+                }
+            }
+        }
+        let q = Pattern::from_columns(n, &columns).unwrap();
+        let (pointers, rows) = q.to_i64().unwrap();
+        let colamd = klu_profile(&pointers, &rows, &[v.clone()], 3);
+        let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+        bordered.push(json!({"bordered_out": k, "nonzeros": q.nonzeros(),
+            "colamd": {"refactor_ms": colamd["refactor_ms"], "lnz_plus_unz": colamd["lnz_plus_unz"]},
+            "amd": {"refactor_ms": amd["refactor_ms"], "lnz_plus_unz": amd["lnz_plus_unz"]}}));
+    }
+    println!(
+        "{}",
+        json!({"kind": "joined-dense-lines-NOT-EVIDENCE", "dimension": n, "offsets": o,
+            "nonzeros": p.nonzeros(), "densest": top, "bordered": bordered})
+    );
+}
+
+/// Diagnostic: the linear template's rows eliminated exactly. If the
+/// template block `J_EE` (precursor and history coordinates) is diagonal,
+/// `S = J_RR - J_RE D^-1 J_ER` is the system a template-eliminating solve
+/// would factor; stock KLU is timed on `S` beside the whole matrix. A
+/// measurement for the linear-solver decision; nothing here changes it.
+#[test]
+#[ignore = "diagnostic of the template-eliminated KLU system"]
+fn joined_template_schur() {
+    use leitbild_operating_plant::{
+        joined::blocks::{Classes, JoinedJacobian, jacobian_blocks},
+        sparse::Pattern,
+    };
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, true);
+    let n = joined.dimension();
+    let o = joined.offsets();
+    let zero = vec![0.; n];
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let p = &structure.pattern;
+    let mut values = vec![0.; p.nonzeros()];
+    jacobian_blocks(
+        &mut joined,
+        &structure,
+        0.,
+        20.,
+        &y,
+        &zero,
+        &mut values,
+        Classes::ALL,
+    )
+    .expect("block assembly");
+    let template = joined.nuclear().linear_template(o.nuclear);
+    let mut eliminated = vec![false; n];
+    for r in &template.rows {
+        eliminated[r.row] = true;
+    }
+    let e_count = template.rows.len();
+    // Rows of the eliminated coordinates (row-major) and the diagonal.
+    let mut e_rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+    let mut diagonal = vec![0.; n];
+    let mut off_diagonal_ee = 0usize;
+    for j in 0..n {
+        for (row, v) in stored_column(p, &values, j) {
+            if eliminated[row] {
+                if row == j {
+                    diagonal[row] = v;
+                } else if eliminated[j] {
+                    if v != 0. {
+                        off_diagonal_ee += 1;
+                    }
+                } else {
+                    e_rows[row].push((j, v));
+                }
+            }
+        }
+    }
+    let started = cpu();
+    let kept: Vec<usize> = (0..n).filter(|i| !eliminated[*i]).collect();
+    let mut index = vec![usize::MAX; n];
+    for (k, i) in kept.iter().enumerate() {
+        index[*i] = k;
+    }
+    let mut s_columns: Vec<std::collections::BTreeMap<usize, f64>> =
+        vec![Default::default(); kept.len()];
+    for (k, &j) in kept.iter().enumerate() {
+        for (row, v) in stored_column(p, &values, j) {
+            if !eliminated[row] {
+                *s_columns[k].entry(index[row]).or_insert(0.) += v;
+            }
+        }
+    }
+    let mut fill_terms = 0usize;
+    for e in 0..n {
+        if !eliminated[e] {
+            continue;
+        }
+        let consumers: Vec<(usize, f64)> = stored_column(p, &values, e)
+            .into_iter()
+            .filter(|(r, v)| !eliminated[*r] && *v != 0.)
+            .collect();
+        for (c, a) in &e_rows[e] {
+            if *a == 0. {
+                continue;
+            }
+            for (r, b) in &consumers {
+                *s_columns[index[*c]].entry(index[*r]).or_insert(0.) -= b * a / diagonal[e];
+                fill_terms += 1;
+            }
+        }
+    }
+    let formation_ms = 1e3 * (cpu() - started);
+    let mut columns = Vec::with_capacity(kept.len());
+    let mut v = Vec::new();
+    for (k, column) in s_columns.iter().enumerate() {
+        let mut rows: Vec<usize> = column.keys().copied().collect();
+        if !column.contains_key(&k) {
+            rows.push(k);
+            rows.sort_unstable();
+        }
+        for r in &rows {
+            v.push(column.get(r).copied().unwrap_or(0.));
+        }
+        columns.push(rows);
+    }
+    let s = Pattern::from_columns(kept.len(), &columns).unwrap();
+    let (pointers, rows) = s.to_i64().unwrap();
+    let colamd = klu_profile(&pointers, &rows, &[v.clone()], 3);
+    let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+    let (fp, fr) = p.to_i64().unwrap();
+    let whole_amd = klu_profile_ordered(&fp, &fr, &[values.clone()], 3, 0);
+    println!(
+        "{}",
+        json!({"kind": "joined-template-schur-NOT-EVIDENCE", "dimension": n,
+            "eliminated": e_count, "off_diagonal_template_entries": off_diagonal_ee,
+            "kept": kept.len(), "schur_nonzeros": s.nonzeros(), "fill_terms": fill_terms,
+            "formation_ms_test_code": formation_ms,
+            "whole_amd": {"refactor_ms": whole_amd["refactor_ms"], "lnz_plus_unz": whole_amd["lnz_plus_unz"]},
+            "schur_colamd": {"refactor_ms": colamd["refactor_ms"], "lnz_plus_unz": colamd["lnz_plus_unz"], "solve_ms": colamd["solve_ms"], "symbolic": colamd["symbolic"]},
+            "schur_amd": {"refactor_ms": amd["refactor_ms"], "lnz_plus_unz": amd["lnz_plus_unz"], "solve_ms": amd["solve_ms"]}})
+    );
+}
+
+/// Diagnostic: the template rows' feeds lifted into explicit unknowns.
+/// Every template row is `x' - sum_f c_f feed_f + lambda x`, so its
+/// off-diagonal entries are `-c_f g_f / row scale` with `g_f` the feed's
+/// whole gradient (ports chained). The lifted Newton system adds one
+/// unknown and one row `phi_f - g_f . dy = 0` per feed and gives the
+/// template rows a single entry per feed instead of the gradient. The
+/// linear systems are equivalent exactly; this checks the rank structure
+/// on the assembled matrix and times stock KLU on the lifted one. A
+/// measurement for the linear-solver decision; nothing here changes it.
+#[test]
+#[ignore = "diagnostic of the feed-lifted KLU system"]
+fn joined_lifted_feeds() {
+    use leitbild_operating_plant::{
+        joined::blocks::{Classes, JoinedJacobian, jacobian_blocks},
+        sparse::Pattern,
+    };
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, true);
+    let n = joined.dimension();
+    let o = joined.offsets();
+    let zero = vec![0.; n];
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let p = &structure.pattern;
+    let mut values = vec![0.; p.nonzeros()];
+    jacobian_blocks(
+        &mut joined,
+        &structure,
+        0.,
+        20.,
+        &y,
+        &zero,
+        &mut values,
+        Classes::ALL,
+    )
+    .expect("block assembly");
+    let row_scales: Vec<f64> = joined
+        .layouts()
+        .into_iter()
+        .flat_map(|(_, l)| l.row_scales)
+        .collect();
+    let template = joined.nuclear().linear_template(o.nuclear);
+    let feeds = template.feeds.len();
+    let mut terms_of = vec![Vec::new(); n];
+    for r in &template.rows {
+        terms_of[r.row] = template.terms[r.terms.clone()].to_vec();
+    }
+    // Row-major off-diagonal entries of the template rows.
+    let mut rows_of: Vec<BTreeMap<usize, f64>> = vec![BTreeMap::new(); n];
+    for j in 0..n {
+        for (row, v) in stored_column(p, &values, j) {
+            if !terms_of[row].is_empty() && row != j && v != 0. {
+                rows_of[row].insert(j, v);
+            }
+        }
+    }
+    // Each feed's gradient from a row reading it alone.
+    let mut gradient: Vec<Option<BTreeMap<usize, f64>>> = vec![None; feeds];
+    for r in &template.rows {
+        let t = &terms_of[r.row];
+        if t.len() == 1 && gradient[t[0].0].is_none() && t[0].1 != 0. {
+            let (f, c) = t[0];
+            gradient[f] = Some(
+                rows_of[r.row]
+                    .iter()
+                    .map(|(col, v)| (*col, -v * row_scales[r.row] / c))
+                    .collect(),
+            );
+        }
+    }
+    let missing = gradient.iter().filter(|g| g.is_none()).count();
+    // Check every template row against its terms' gradients.
+    let mut worst = 0_f64;
+    for r in &template.rows {
+        let mut rebuilt: BTreeMap<usize, f64> = BTreeMap::new();
+        for (f, c) in &terms_of[r.row] {
+            if let Some(g) = &gradient[*f] {
+                for (col, v) in g {
+                    *rebuilt.entry(*col).or_insert(0.) -= c * v / row_scales[r.row];
+                }
+            }
+        }
+        let scale = rows_of[r.row]
+            .values()
+            .map(|v| v.abs())
+            .fold(0., f64::max)
+            .max(1e-300);
+        let cols: std::collections::BTreeSet<usize> = rows_of[r.row]
+            .keys()
+            .chain(rebuilt.keys())
+            .copied()
+            .collect();
+        for col in cols {
+            let a = rows_of[r.row].get(&col).copied().unwrap_or(0.);
+            let b = rebuilt.get(&col).copied().unwrap_or(0.);
+            worst = worst.max((a - b).abs() / scale);
+        }
+    }
+    // The lifted matrix: n + feeds unknowns.
+    let m = n + feeds;
+    let sigma: Vec<f64> = gradient
+        .iter()
+        .map(|g| {
+            g.as_ref().map_or(1., |g| {
+                g.values().map(|v| v.abs()).fold(0., f64::max).max(1e-300)
+            })
+        })
+        .collect();
+    let mut columns: Vec<BTreeMap<usize, f64>> = vec![BTreeMap::new(); m];
+    for (j, column) in columns.iter_mut().enumerate().take(n) {
+        for (row, v) in stored_column(p, &values, j) {
+            if terms_of[row].is_empty() || row == j {
+                *column.entry(row).or_insert(0.) += v;
+            }
+        }
+    }
+    for r in &template.rows {
+        for (f, c) in &terms_of[r.row] {
+            *columns[n + f].entry(r.row).or_insert(0.) -= c * sigma[*f] / row_scales[r.row];
+        }
+    }
+    for (f, g) in gradient.iter().enumerate() {
+        columns[n + f].insert(n + f, 1.);
+        for (col, v) in g.iter().flatten() {
+            *columns[*col].entry(n + f).or_insert(0.) -= v / sigma[f];
+        }
+    }
+    let mut lists = Vec::with_capacity(m);
+    let mut v = Vec::new();
+    for column in &columns {
+        lists.push(column.keys().copied().collect::<Vec<_>>());
+        v.extend(column.values().copied());
+    }
+    let lifted = Pattern::from_columns(m, &lists).unwrap();
+    let (pointers, rows) = lifted.to_i64().unwrap();
+    let colamd = klu_profile(&pointers, &rows, &[v.clone()], 3);
+    let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+    let (fp, fr) = p.to_i64().unwrap();
+    let whole_colamd = klu_profile(&fp, &fr, &[values.clone()], 3);
+    let whole_amd = klu_profile_ordered(&fp, &fr, &[values.clone()], 3, 0);
+    let pick = |k: &Value| json!({"refactor_ms": k["refactor_ms"], "factor_ms": k["factor_ms"], "lnz_plus_unz": k["lnz_plus_unz"], "solve_ms": k["solve_ms"], "nblocks": k["symbolic"]["nblocks"], "maxblock": k["symbolic"]["maxblock"]});
+    println!(
+        "{}",
+        json!({"kind": "joined-lifted-feeds-NOT-EVIDENCE", "dimension": n, "feeds": feeds,
+            "feeds_without_a_single_term_row": missing,
+            "template_rows_rebuilt_worst_relative": worst,
+            "whole": {"nonzeros": p.nonzeros(), "colamd": pick(&whole_colamd), "amd": pick(&whole_amd)},
+            "lifted": {"dimension": m, "nonzeros": lifted.nonzeros(), "colamd": pick(&colamd), "amd": pick(&amd)}})
+    );
 }

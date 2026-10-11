@@ -13,6 +13,7 @@
 use super::{
     nuclear::{LinearTemplate, Nuclear, RegionWater, Target},
     operator::{Joined, LocalCoupler, LocalRows, OwnerRows},
+    solids::FUEL_HEAT_SPLIT,
 };
 use crate::{
     kinetics,
@@ -421,9 +422,13 @@ pub fn nuclear_partials(
 /// entries may reach in any state, a superset of every entry the block
 /// assembly writes. The nuclear block's part is its exact structure (the
 /// template's rows, feeds and constant consumers, the partials' entries and
-/// their port chains); every other part is the joined operator's own
-/// structural pattern outside the nuclear rows. `partials` fixes the
-/// nuclear structure, which no state changes.
+/// their port chains). So are the fluid-solid ports: the network and rod
+/// columns' solid rows and the solid columns' network rows, from the wall,
+/// passive and segment laws' reads and the heat receipt's single slot.
+/// Every other part is the joined operator's own structural pattern.
+/// `partials` fixes the nuclear structure, which no state changes; the
+/// pattern holds while every wall cell holds liquid only, which S2's wall
+/// laws require (a vapor-holding wall cell refuses).
 pub fn joined_pattern<P: Properties + WaterProperties>(
     joined: &Joined<P>,
     template: &LinearTemplate,
@@ -432,42 +437,56 @@ pub fn joined_pattern<P: Properties + WaterProperties>(
     let o = joined.offsets();
     let n = o.end;
     let nuclear_rows = o.nuclear..o.solids;
+    let solid_rows = o.solids..o.secondary;
+    let network_rows = 0..o.nuclear;
     let base = joined.structural_pattern()?;
     let mut columns: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
     for (c, rows) in base.iter().enumerate() {
         if nuclear_rows.contains(&c) {
             continue;
         }
-        columns[c].extend(rows.iter().copied().filter(|r| !nuclear_rows.contains(r)));
+        // The fluid-solid ports are rebuilt exactly below: the network and
+        // rod columns' solid rows, and the solid columns' network rows.
+        let fluid_column = c < o.nuclear || c >= o.rods;
+        let solid_column = solid_rows.contains(&c);
+        columns[c].extend(rows.iter().copied().filter(|r| {
+            !nuclear_rows.contains(r)
+                && !(fluid_column && solid_rows.contains(r))
+                && !(solid_column && network_rows.contains(r))
+        }));
     }
     let network = &joined.network;
+    let pzr = network.pzr.cell;
     let cell_rows = |c: usize| -> std::ops::Range<usize> {
-        if c == network.pzr.cell {
+        if c == pzr {
             return network.pzr.coordinates();
         }
         let base = network.cell_layout[c].base;
         base..base + 6
     };
-    let solids = joined.solids();
-    let band_rows = |a: usize| -> Vec<usize> {
-        (0..3)
-            .flat_map(|k| {
-                [
-                    o.solids + solids.energy(a, k),
-                    o.solids + solids.surface(a, k),
-                ]
-            })
-            .collect()
+    // A heat receipt enters a regular cell's liquid energy row alone (the
+    // enthalpy slot of phase 0; mass and tracer receipts are zero), and the
+    // stratified cell's block.
+    let receipt_rows = |c: usize| -> Vec<usize> {
+        if c == pzr {
+            network.pzr.coordinates().collect()
+        } else {
+            vec![network.cell_layout[c].energy[0]]
+        }
     };
+    let solids = joined.solids();
     let deposition = joined.nuclear().deposition();
+    // A half's fuel heat is a source of its two fuel energy rows only
+    // (solids::FUEL_HEAT_SPLIT); the surface, helium and clad rows do not
+    // read it.
     let fuel_heat = |columns: &mut Vec<BTreeSet<usize>>, a: usize, col: usize| {
-        for r in band_rows(a) {
-            columns[col].insert(r);
+        for k in 0..2 {
+            columns[col].insert(o.solids + solids.energy(a, k));
         }
     };
     let coolant_heat = |columns: &mut Vec<BTreeSet<usize>>, a: usize, col: usize| {
         for (cell, _) in &deposition[a] {
-            columns[col].extend(cell_rows(*cell));
+            columns[col].extend(receipt_rows(*cell));
         }
     };
     for r in &template.rows {
@@ -529,6 +548,104 @@ pub fn joined_pattern<P: Properties + WaterProperties>(
             }
         }
     }
+    // The fluid-solid ports, from the laws as written (S2-JOIN's ports):
+    // - A wall law at cell c reads c's water (p, M_l, U_l: the liquid point
+    //   at (p, U_l/M_l) and sat(p); a vapor-holding wall cell refuses) and
+    //   the liquid mass flow of every face ending at c.
+    // - That flow is a donor's liquid density-fraction product times
+    //   Q = Pi/I, with I the supports' liquid mass per current volume
+    //   (times L/A). A support reads M_l and, for a moving cell, the rod
+    //   coordinates that move its volume. A donor's product reads p, M_l
+    //   and U_l, and where vapor is present M_v, U_v and the volume (the
+    //   liquid fraction is 1 - V_v/V). Either endpoint may donate. Boron
+    //   enters neither.
+    // - A half's wall heat writes its clad energy and clad outer surface
+    //   rows; a passive contact (liquid temperature only, no flux) its
+    //   store's row; an SG segment its metal row.
+    // - The heat it delivers reads the solid side's own temperature (the
+    //   clad outer surface, the passive store, the metal) and enters
+    //   receipt_rows of c.
+    // The vapor presence read here is this state's. S2 admits no phase
+    // birth (an S3 transaction), and a dependency outside the pattern is
+    // refused by the assembly, never dropped.
+    let mut moved: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    if let Some(st) = &rods {
+        for (cell, own) in &st.volumes {
+            moved
+                .entry(*cell)
+                .or_default()
+                .extend(own.iter().map(|i| o.rods + i));
+        }
+    }
+    let water_reads = |c: usize| -> Vec<usize> {
+        if c == pzr {
+            network.pzr.coordinates().collect()
+        } else {
+            let l = network.cell_layout[c];
+            vec![l.base, l.mass[0], l.energy[0]]
+        }
+    };
+    // A support's liquid mass per current volume (the inertia of Q).
+    let support_reads = |m: usize| -> Vec<usize> {
+        if m == pzr {
+            return network.pzr.coordinates().collect();
+        }
+        let mut out = vec![network.cell_layout[m].mass[0]];
+        out.extend(moved.get(&m).into_iter().flatten().copied());
+        out
+    };
+    // A donor's liquid density-fraction product: its liquid point at
+    // (p, U_l/M_l), and where vapor is present the vapor volume share.
+    let donor_reads = |m: usize| -> Vec<usize> {
+        if m == pzr {
+            return network.pzr.coordinates().collect();
+        }
+        let l = network.cell_layout[m];
+        let mut out = vec![l.base, l.mass[0], l.energy[0]];
+        if network.cell(m).phase[1].is_some() {
+            out.extend([l.mass[1], l.energy[1]]);
+            out.extend(moved.get(&m).into_iter().flatten().copied());
+        }
+        out
+    };
+    let flux_reads = |c: usize| -> Vec<usize> {
+        let mut out = Vec::new();
+        for (face, supports, ends) in network.liquid_flux_reads(c) {
+            out.push(network.face_layout[2 * face].index);
+            for m in supports {
+                out.extend(support_reads(m));
+            }
+            for m in ends {
+                out.extend(donor_reads(m));
+            }
+        }
+        out
+    };
+    let incidence = solids.incidence();
+    for (a, (_, cells)) in incidence.halves.iter().enumerate() {
+        let clad = o.solids + solids.energy(a, 2);
+        let outer = o.solids + solids.surface(a, 2);
+        for &c in cells {
+            for col in water_reads(c).into_iter().chain(flux_reads(c)) {
+                columns[col].extend([clad, outer]);
+            }
+            columns[outer].extend(receipt_rows(c));
+        }
+    }
+    for &(store, c) in &incidence.passive {
+        let row = o.solids + solids.passive(store);
+        for col in water_reads(c) {
+            columns[col].insert(row);
+        }
+        columns[row].extend(receipt_rows(c));
+    }
+    for (i, &(c, _)) in incidence.segments.iter().enumerate() {
+        let row = o.solids + solids.metal(i);
+        for col in water_reads(c).into_iter().chain(flux_reads(c)) {
+            columns[col].insert(row);
+        }
+        columns[row].extend(receipt_rows(c));
+    }
     for (c, rows) in columns.iter_mut().enumerate() {
         rows.insert(c);
     }
@@ -549,24 +666,73 @@ pub struct JoinedJacobian {
     row_scales: Vec<f64>,
 }
 
-/// Which pieces an assembly covers. The production assembly covers all.
-/// A narrower one verifies the pieces it names and leaves the others out:
-/// without `owners`, the solid, secondary and rod columns stay zero and so
-/// do the two responses the owners' own blocks carry (the bands' fuel heat
-/// into the solid rows, the SG metal heat into the secondary rows); every
-/// other entry of the named columns is assembled in full.
+/// Which column classes an assembly covers. The production assembly
+/// covers all; a narrower one verifies (or times) the classes it names,
+/// assembling every entry of their columns in full, chains included, and
+/// leaves every other column zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Classes {
     pub network: bool,
     pub nuclear: bool,
-    pub owners: bool,
+    pub solids: bool,
+    pub secondary: bool,
+    pub rods: bool,
 }
 impl Classes {
     pub const ALL: Self = Self {
         network: true,
         nuclear: true,
-        owners: true,
+        solids: true,
+        secondary: true,
+        rods: true,
     };
+    pub const NONE: Self = Self {
+        network: false,
+        nuclear: false,
+        solids: false,
+        secondary: false,
+        rods: false,
+    };
+}
+
+/// Where one block assembly spends its time, by piece, on the caller's
+/// clock: `(calls, seconds)`. A measurement aid; the assembly is the same.
+pub struct Profile {
+    pub clock: fn() -> f64,
+    pub pieces: BTreeMap<&'static str, (u64, f64)>,
+}
+impl Profile {
+    pub fn new(clock: fn() -> f64) -> Self {
+        Self {
+            clock,
+            pieces: BTreeMap::new(),
+        }
+    }
+}
+/// The optional profile of one assembly.
+struct Clock<'p>(Option<&'p mut Profile>);
+impl Clock<'_> {
+    fn now(&self) -> f64 {
+        self.0.as_ref().map_or(0., |p| (p.clock)())
+    }
+    fn source(&self) -> Option<fn() -> f64> {
+        self.0.as_ref().map(|p| p.clock)
+    }
+    /// Book the time since `since`, less `inner` already booked elsewhere.
+    fn book(&mut self, piece: &'static str, since: f64, inner: f64) {
+        if let Some(p) = self.0.as_mut() {
+            let e = p.pieces.entry(piece).or_insert((0, 0.));
+            e.0 += 1;
+            e.1 += (p.clock)() - since - inner;
+        }
+    }
+    fn book_spent(&mut self, piece: &'static str, calls: u64, seconds: f64) {
+        if let Some(p) = self.0.as_mut() {
+            let e = p.pieces.entry(piece).or_insert((0, 0.));
+            e.0 += calls;
+            e.1 += seconds;
+        }
+    }
 }
 
 /// The nuclear block's partials at the operator's last evaluation.
@@ -657,10 +823,23 @@ impl Sink<'_> {
 }
 
 /// The operator's coupler as the network replay's hook, noting whether
-/// this column called it (its `last()` is stale otherwise).
+/// this column called it (its `last()` is stale otherwise) and, when
+/// profiled, the time spent in it.
 struct Hook<'a, 'b, P> {
     coupler: &'a mut LocalCoupler<'b, P>,
     called: bool,
+    clock: Option<fn() -> f64>,
+    spent: f64,
+}
+impl<'a, 'b, P> Hook<'a, 'b, P> {
+    fn new(coupler: &'a mut LocalCoupler<'b, P>, clock: Option<fn() -> f64>) -> Self {
+        Self {
+            coupler,
+            called: false,
+            clock,
+            spent: 0.,
+        }
+    }
 }
 impl<P: Properties + WaterProperties> LocalCoupling for Hook<'_, '_, P> {
     fn local(
@@ -671,7 +850,12 @@ impl<P: Properties + WaterProperties> LocalCoupling for Hook<'_, '_, P> {
         receipts: &mut Receipts<'_>,
     ) -> Result<(), Failure> {
         self.called = true;
-        self.coupler.local(cells, faces, fluid, receipts)
+        let started = self.clock.map_or(0., |c| c());
+        let result = self.coupler.local(cells, faces, fluid, receipts);
+        if let Some(c) = self.clock {
+            self.spent += c() - started;
+        }
+        result
     }
 }
 
@@ -744,7 +928,6 @@ impl Ports<'_> {
         j: usize,
         last: &LocalRows,
         over: f64,
-        owners: bool,
     ) -> Result<(), Failure> {
         for (row, v) in &last.rows {
             sink.add(*row, j, v.direction / over)?;
@@ -752,10 +935,8 @@ impl Ports<'_> {
         for (region, w) in &last.water {
             self.water(sink, j, *region, w, over)?;
         }
-        if owners {
-            for (g, q) in &last.secondary_w {
-                self.secondary(sink, j, *g, q.direction / over)?;
-            }
+        for (g, q) in &last.secondary_w {
+            self.secondary(sink, j, *g, q.direction / over)?;
         }
         Ok(())
     }
@@ -779,13 +960,69 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
     values: &mut [f64],
     classes: Classes,
 ) -> Result<(), Failure> {
+    assemble(
+        joined,
+        structure,
+        t,
+        cj,
+        y,
+        yp,
+        values,
+        classes,
+        Clock(None),
+    )
+}
+
+/// [`jacobian_blocks`], booking each piece's time into `profile`.
+#[allow(clippy::too_many_arguments)] // The stage inputs, the structure, the classes and the profile.
+pub fn jacobian_blocks_profiled<P: Properties + WaterProperties>(
+    joined: &mut Joined<P>,
+    structure: &JoinedJacobian,
+    t: f64,
+    cj: f64,
+    y: &[f64],
+    yp: &[f64],
+    values: &mut [f64],
+    classes: Classes,
+    profile: &mut Profile,
+) -> Result<(), Failure> {
+    assemble(
+        joined,
+        structure,
+        t,
+        cj,
+        y,
+        yp,
+        values,
+        classes,
+        Clock(Some(profile)),
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // As jacobian_blocks, with the clock.
+fn assemble<P: Properties + WaterProperties>(
+    joined: &mut Joined<P>,
+    structure: &JoinedJacobian,
+    t: f64,
+    cj: f64,
+    y: &[f64],
+    yp: &[f64],
+    values: &mut [f64],
+    classes: Classes,
+    mut clock: Clock<'_>,
+) -> Result<(), Failure> {
     let o = joined.offsets();
     if y.len() != o.end || yp.len() != o.end || values.len() != structure.pattern.nonzeros() {
         return Err(fatal("joined block Jacobian layout"));
     }
+    let started = clock.now();
     let mut reuse = joined.network.reuse();
     joined.evaluate(t, y, yp, None, 0., Some(&mut reuse))?;
+    clock.book("base: joined evaluation", started, 0.);
+    let started = clock.now();
     let partials = partials_at(joined, t, y)?;
+    clock.book("base: nuclear partials", started, 0.);
+    let started = clock.now();
     let scales = joined.scales();
     let deposition: Vec<Vec<(usize, f64)>> = joined.nuclear().deposition().to_vec();
     values.fill(0.);
@@ -798,7 +1035,9 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
         fuel_t: BTreeMap::new(),
         travel: BTreeMap::new(),
         secondary_heat: BTreeMap::new(),
-        secondary_rows: false,
+        // With prepared SG views there are no secondary rows, and the
+        // metal heat enters none.
+        secondary_rows: o.rods > o.secondary,
         rs: &structure.row_scales,
     };
     for (row, region, p) in &partials.water {
@@ -810,9 +1049,8 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
     for (row, cluster, p) in &partials.travel {
         ports.travel.entry(*cluster).or_default().push((*row, *p));
     }
-    // The SGs whose metal heat the secondary rows read; with prepared SG
-    // views there are no secondary rows and the heat enters none.
-    let generators: BTreeSet<usize> = if o.rods > o.secondary {
+    // The SGs whose metal heat the secondary rows read.
+    let generators: BTreeSet<usize> = if ports.secondary_rows {
         joined
             .solids()
             .incidence()
@@ -823,7 +1061,14 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
     } else {
         BTreeSet::new()
     };
-    ports.secondary_rows = o.rods > o.secondary;
+    // Each half's two fuel energy rows: its fuel heat enters them alone,
+    // through the solids' constant split.
+    let fuel_rows: Vec<[usize; 2]> = {
+        let solids = joined.solids();
+        (0..solids.halves())
+            .map(|a| [0, 1].map(|k| o.solids + solids.energy(a, k)))
+            .collect()
+    };
     let (network, mut coupler) = joined.local_parts(t, y, yp, cj);
     let regular = network.pzr.cell;
     let held = Held::new(network.properties());
@@ -837,9 +1082,12 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
         &structure.network,
         true,
     )?;
+    clock.book("base: replay set-up (network base pass)", started, 0.);
     let mut owner = OwnerRows::default();
-    if classes.owners {
-        // Each SG's secondary-row response per W of metal heat.
+    // Each SG's secondary-row response per W of metal heat, read by the
+    // network and solid columns.
+    if classes.network || classes.solids {
+        let started = clock.now();
         for &g in &generators {
             coupler.secondary_heat_column(g, &mut owner)?;
             ports.secondary_heat.insert(
@@ -847,27 +1095,33 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
                 owner.rows.iter().map(|(r, v)| (*r, v.direction)).collect(),
             );
         }
+        clock.book("ports: SG heat responses", started, 0.);
     }
     let mut response = Vec::new();
     if classes.network {
+        let (mut local, mut locals) = (0., 0);
         for j in 0..o.nuclear {
+            let started = clock.now();
             response.clear();
             let sign = replay.sign(j);
-            let mut hook = Hook {
-                coupler: &mut coupler,
-                called: false,
-            };
+            let mut hook = Hook::new(&mut coupler, clock.source());
             replay.column(j, Some(&mut hook), &mut response)?;
             for &(row, d) in &response {
                 sink.add(row, j, d / sign)?;
             }
             if hook.called {
-                ports.local(&mut sink, j, hook.coupler.last(), sign, classes.owners)?;
+                local += hook.spent;
+                locals += 1;
+                ports.local(&mut sink, j, hook.coupler.last(), sign)?;
             }
+            let spent = hook.spent;
+            clock.book("network columns: replay and chains", started, spent);
         }
+        clock.book_spent("network columns: local coupling", locals, local);
     }
     let mut seed = NetworkSeed::default();
     if classes.nuclear {
+        let started = clock.now();
         let template = &structure.template;
         // Every nuclear row is differential: its own coordinate's cj.
         for i in o.nuclear..o.solids {
@@ -917,7 +1171,9 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
                     .push((*cell, f * v * scales[*col]));
             }
         }
+        clock.book("nuclear columns: template and partials", started, 0.);
         // Direct coolant heat: the deposition cells' liquid enthalpy port.
+        let started = clock.now();
         for (col, heats) in &coolant {
             seed.receipts.clear();
             seed.volumes.clear();
@@ -930,22 +1186,36 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
                 sink.add(row, *col, d)?;
             }
         }
-        // Fuel heat: each half's solid rows per W, through the solids' split.
-        if classes.owners {
-            for (a, columns) in &fuel_heat {
-                coupler.fuel_heat_column(*a, &replay.fluid(), &mut owner)?;
-                for (col, w) in columns {
-                    for (row, v) in &owner.rows {
-                        sink.add(*row, *col, w * v.direction)?;
-                    }
+        clock.book("nuclear columns: coolant heat replays", started, 0.);
+        // Fuel heat: a half's fuel energy rows are `rate - split_k fuel_w`
+        // in physical units over their row scales (solids::FUEL_HEAT_SPLIT).
+        let started = clock.now();
+        for (a, columns) in &fuel_heat {
+            let rows = fuel_rows
+                .get(*a)
+                .ok_or_else(|| fatal(format!("fuel heat of half {a} outside the solids")))?;
+            for (col, w) in columns {
+                for (row, split) in rows.iter().zip(FUEL_HEAT_SPLIT) {
+                    sink.add(*row, *col, -split * w / ports.rs[*row])?;
                 }
             }
         }
+        clock.book("nuclear columns: fuel heat", started, 0.);
     }
-    if classes.owners {
-        let zero = [[Scalar::constant(0.); 3]; 2];
-        let mut buffer = vec![zero; regular];
-        for j in o.solids..o.end {
+    let zero = [[Scalar::constant(0.); 3]; 2];
+    let mut buffer = vec![zero; regular];
+    for (name, range, named) in [
+        ("solid", o.solids..o.secondary, classes.solids),
+        ("secondary", o.secondary..o.rods, classes.secondary),
+        ("rod", o.rods..o.end, classes.rods),
+    ] {
+        if !named {
+            continue;
+        }
+        let (mut own, mut replays, mut local) = ((0, 0.), (0, 0.), (0, 0.));
+        let started_class = clock.now();
+        for j in range {
+            let started = clock.now();
             buffer.fill(zero);
             coupler.owner_column(
                 j,
@@ -953,6 +1223,8 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
                 &mut Receipts::new(&mut buffer),
                 &mut owner,
             )?;
+            own.0 += 1;
+            own.1 += clock.now() - started;
             for (row, v) in &owner.rows {
                 sink.add(*row, j, v.direction)?;
             }
@@ -983,18 +1255,47 @@ pub fn jacobian_blocks<P: Properties + WaterProperties>(
             if seed.receipts.is_empty() && seed.volumes.is_empty() {
                 continue;
             }
+            let started = clock.now();
             response.clear();
-            let mut hook = Hook {
-                coupler: &mut coupler,
-                called: false,
-            };
+            let mut hook = Hook::new(&mut coupler, clock.source());
             replay.external(&seed, Some(&mut hook), &mut response)?;
             for &(row, d) in &response {
                 sink.add(row, j, d)?;
             }
             if hook.called {
-                ports.local(&mut sink, j, hook.coupler.last(), 1., true)?;
+                local.0 += 1;
+                local.1 += hook.spent;
+                ports.local(&mut sink, j, hook.coupler.last(), 1.)?;
             }
+            replays.0 += 1;
+            replays.1 += clock.now() - started - hook.spent;
+        }
+        let total = clock.now() - started_class;
+        let (owner_piece, replay_piece, local_piece, chain_piece) = match name {
+            "solid" => (
+                "solid columns: owner_column",
+                "solid columns: network replay of receipts",
+                "solid columns: local coupling",
+                "solid columns: chains",
+            ),
+            "secondary" => (
+                "secondary columns: owner_column",
+                "secondary columns: network replay of receipts",
+                "secondary columns: local coupling",
+                "secondary columns: chains",
+            ),
+            _ => (
+                "rod columns: owner_column",
+                "rod columns: network replay of receipts and volumes",
+                "rod columns: local coupling",
+                "rod columns: chains",
+            ),
+        };
+        clock.book_spent(owner_piece, own.0, own.1);
+        clock.book_spent(replay_piece, replays.0, replays.1);
+        clock.book_spent(local_piece, local.0, local.1);
+        if clock.0.is_some() {
+            clock.book_spent(chain_piece, 1, total - own.1 - replays.1 - local.1);
         }
     }
     Ok(())

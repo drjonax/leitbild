@@ -195,6 +195,12 @@ int operating_ida_newton_coefficient(OperatingIDA *o,double coefficient) {
 int operating_ida_delta_cj(OperatingIDA *o,double dcj) {
     return IDASetDeltaCjLSetup(o->ida,dcj);
 }
+/* Stock SUNLinSol_KLUSetOrdering: KLU's fill-reducing ordering, 0 AMD,
+   1 COLAMD (stock's default), 2 natural. KLU reads it at its first symbolic
+   analysis, which the first linear setup performs and IDAReInit keeps. */
+int operating_ida_klu_ordering(OperatingIDA *o,int ordering) {
+    return SUNLinSol_KLUSetOrdering(o->linear,ordering);
+}
 /* Stock IDAReInit restarts history at t from (y,yp); tolerances, ids,
    constraints, roots, linear solver, Jacobian, stop time and options stay. */
 int operating_ida_reinitialize(OperatingIDA *o,double t,const double *y,const double *yp) {

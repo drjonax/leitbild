@@ -49,6 +49,18 @@ pub trait System {
         yp: &[f64],
         out: &mut [f64],
     ) -> std::result::Result<(), Failure>;
+    /// Stock KLU's fill-reducing ordering for this system's iteration
+    /// matrix, set on SUNLinSol_KLU at construction, before KLU's first
+    /// symbolic analysis. Stock SUNLinSol_KLU's own default is COLAMD.
+    fn klu_ordering(&self) -> KluOrdering {
+        KluOrdering::Colamd
+    }
+}
+/// Stock KLU's fill-reducing ordering (SUNLinSol_KLUSetOrdering).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KluOrdering {
+    Amd,
+    Colamd,
 }
 /// Successful `advance` outcome; the output buffers hold the state at `time`.
 #[derive(Clone, Debug, PartialEq)]
@@ -156,6 +168,7 @@ unsafe extern "C" {
     fn operating_ida_solution_scaling(ida: *mut c_void, enabled: c_int) -> c_int;
     fn operating_ida_newton_coefficient(ida: *mut c_void, coefficient: f64) -> c_int;
     fn operating_ida_delta_cj(ida: *mut c_void, dcj: f64) -> c_int;
+    fn operating_ida_klu_ordering(ida: *mut c_void, ordering: c_int) -> c_int;
     fn operating_ida_reinitialize(ida: *mut c_void, t: f64, y: *const f64, yp: *const f64)
     -> c_int;
     fn operating_ida_root_directions(ida: *mut c_void, directions: *mut c_int) -> c_int;
@@ -364,6 +377,15 @@ impl<S: System> Ida<S> {
         };
         let handle = NonNull::new(handle)
             .ok_or_else(|| format!("stock IDA construction failed ({status})"))?;
+        let ordering = match context.system.klu_ordering() {
+            KluOrdering::Amd => 0,
+            KluOrdering::Colamd => 1,
+        };
+        let code = unsafe { operating_ida_klu_ordering(handle.as_ptr(), ordering) };
+        if code < 0 {
+            unsafe { operating_ida_free(handle.as_ptr()) };
+            return Err(format!("stock SUNLinSol_KLUSetOrdering failed ({code})"));
+        }
         Ok(Self {
             handle,
             context,
@@ -551,7 +573,9 @@ impl<S: System> Ida<S> {
     pub fn set_init_step(&mut self, step: f64) -> Result<()> {
         self.configurable("initial step")?;
         if !step.is_finite() || step <= 0. {
-            return Err(format!("IDA initial step {step} must be finite and positive"));
+            return Err(format!(
+                "IDA initial step {step} must be finite and positive"
+            ));
         }
         let code = unsafe { operating_ida_init_step(self.handle.as_ptr(), step) };
         self.check(code)

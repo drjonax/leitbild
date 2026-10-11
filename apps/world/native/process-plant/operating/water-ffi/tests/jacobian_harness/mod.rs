@@ -3,6 +3,7 @@
 //! delegation, the S1 prepared state and a recorded stock-IDA settling run.
 //! Measurement support only; nothing here is a production path.
 #![allow(dead_code)] // Each test crate uses its own subset.
+pub mod recombine;
 use leitbild_operating_plant::{
     network::{
         BandReport, MetastableBand, Network, Properties, RotorState, ToleranceClasses, Water,
@@ -15,7 +16,7 @@ use leitbild_operating_plant::{
 };
 use leitbild_operating_water::{
     CaloricLinearization, If97,
-    ida::{Failure, Ida, Initial, Stats, System},
+    ida::{Failure, Ida, Initial, KluOrdering, Stats, System},
     network::Integrated,
 };
 use serde_json::{Value, json};
@@ -367,6 +368,47 @@ pub struct Ledger {
     pub direction_zero: Tally,
     pub saturation_value: Tally,
     pub saturation_direction: Tally,
+    /// The owners' current-call boundary (thermal::WaterProperties).
+    pub water_forward: Tally,
+    pub water_saturation: Tally,
+}
+impl Ledger {
+    pub fn snapshot(&self) -> [Tally; 7] {
+        [
+            self.caloric,
+            self.direction_nonzero,
+            self.direction_zero,
+            self.saturation_value,
+            self.saturation_direction,
+            self.water_forward,
+            self.water_saturation,
+        ]
+    }
+    pub const NAMES: [&'static str; 7] = [
+        "network caloric inversion",
+        "network caloric direction (nonzero)",
+        "network caloric direction (zero)",
+        "network saturation value",
+        "network saturation direction",
+        "owner liquid/vapor point",
+        "owner saturation",
+    ];
+    /// Calls and CPU between two snapshots, by kind.
+    pub fn between(before: &[Tally; 7], after: &[Tally; 7]) -> Value {
+        Value::Object(
+            Self::NAMES
+                .iter()
+                .zip(before.iter().zip(after))
+                .filter(|(_, (b, a))| a.calls > b.calls)
+                .map(|(name, (b, a))| {
+                    (
+                        name.to_string(),
+                        json!({"calls": a.calls - b.calls, "ms": 1e3 * (a.cpu - b.cpu)}),
+                    )
+                })
+                .collect(),
+        )
+    }
 }
 pub type Shared = Rc<RefCell<Ledger>>;
 /// The property calls of one production assembly.
@@ -380,7 +422,67 @@ pub struct Calls {
 }
 /// Delegates every query to the maintained IF97 adapter, unchanged, and
 /// times it by kind.
+#[derive(Clone)]
 pub struct Timed(pub Shared);
+impl leitbild_operating_plant::thermal::WaterProperties for Timed {
+    fn liquid(
+        &self,
+        pressure: Scalar,
+        temperature: Scalar,
+    ) -> leitbild_operating_plant::thermal::Result<leitbild_operating_plant::thermal::WaterPoint>
+    {
+        self.time(
+            |l| &mut l.water_forward,
+            || {
+                leitbild_operating_plant::thermal::WaterProperties::liquid(
+                    &If97,
+                    pressure,
+                    temperature,
+                )
+            },
+        )
+    }
+    fn vapor(
+        &self,
+        pressure: Scalar,
+        temperature: Scalar,
+    ) -> leitbild_operating_plant::thermal::Result<leitbild_operating_plant::thermal::WaterPoint>
+    {
+        self.time(
+            |l| &mut l.water_forward,
+            || {
+                leitbild_operating_plant::thermal::WaterProperties::vapor(
+                    &If97,
+                    pressure,
+                    temperature,
+                )
+            },
+        )
+    }
+    fn saturation(
+        &self,
+        pressure: Scalar,
+    ) -> leitbild_operating_plant::thermal::Result<Saturation> {
+        self.time(
+            |l| &mut l.water_saturation,
+            || leitbild_operating_plant::thermal::WaterProperties::saturation(&If97, pressure),
+        )
+    }
+    fn saturated_vapor_density(
+        &self,
+        temperature: Scalar,
+    ) -> leitbild_operating_plant::thermal::Result<Scalar> {
+        self.time(
+            |l| &mut l.water_saturation,
+            || {
+                leitbild_operating_plant::thermal::WaterProperties::saturated_vapor_density(
+                    &If97,
+                    temperature,
+                )
+            },
+        )
+    }
+}
 impl Timed {
     fn time<T>(&self, pick: fn(&mut Ledger) -> &mut Tally, f: impl FnOnce() -> T) -> T {
         let started = cpu();
@@ -455,8 +557,13 @@ pub struct Recording {
     states: Rc<RefCell<States>>,
     matrices: Rc<RefCell<Vec<Vec<f64>>>>,
     structure: Rc<RefCell<Option<Structure>>>,
+    /// Stock KLU's ordering for this run (S1's systems use stock COLAMD).
+    ordering: KluOrdering,
 }
 impl System for Recording {
+    fn klu_ordering(&self) -> KluOrdering {
+        self.ordering
+    }
     fn dimension(&self) -> usize {
         self.inner.dimension()
     }
@@ -600,6 +707,15 @@ pub struct Settled {
 /// and IDACalcIC horizon, advanced to each of `outputs` with `assembly`;
 /// records every Jacobian state and matrix.
 pub fn settle(declared: &Declared, outputs: &[f64], assembly: Assembly) -> Settled {
+    settle_ordered(declared, outputs, assembly, KluOrdering::Colamd)
+}
+/// [`settle`] with an explicit stock KLU ordering.
+pub fn settle_ordered(
+    declared: &Declared,
+    outputs: &[f64],
+    assembly: Assembly,
+    ordering: KluOrdering,
+) -> Settled {
     let (network, y0, yp0, ids, atol) = declared.prepared(If97);
     let stocks = network.nonnegative_stocks();
     let states = Rc::new(RefCell::new(Vec::new()));
@@ -614,6 +730,7 @@ pub fn settle(declared: &Declared, outputs: &[f64], assembly: Assembly) -> Settl
         states: states.clone(),
         matrices: matrices.clone(),
         structure: structure.clone(),
+        ordering,
     };
     let rtol = declared.gate(&["relativeTolerance"]);
     let (mut y, mut yp) = (y0.clone(), yp0.clone());
@@ -695,6 +812,26 @@ pub fn event(
     duration: f64,
     interval: f64,
 ) -> Settled {
+    event_ordered(
+        declared,
+        settled,
+        event,
+        assembly,
+        duration,
+        interval,
+        KluOrdering::Colamd,
+    )
+}
+/// [`event`] with an explicit stock KLU ordering.
+pub fn event_ordered(
+    declared: &Declared,
+    settled: &[f64],
+    event: Event,
+    assembly: Assembly,
+    duration: f64,
+    interval: f64,
+    ordering: KluOrdering,
+) -> Settled {
     let (mut network, _, _, ids, atol) = declared.prepared(If97);
     let stocks = network.nonnegative_stocks();
     let rtol = declared.gate(&["relativeTolerance"]);
@@ -736,6 +873,7 @@ pub fn event(
         states: states.clone(),
         matrices: matrices.clone(),
         structure: structure.clone(),
+        ordering,
     };
     let mut ida = Ida::new(
         system,
@@ -789,18 +927,117 @@ pub fn event(
     }
 }
 
+/// [`event`] on the block assembly through [`recombine::Recombined`] with
+/// `policy`: the restart ramp of the cj-linear refresh measurement. Returns
+/// the outputs, IDA's statistics, the wrapper's counts and the CPU.
+pub fn event_recombined(
+    declared: &Declared,
+    settled: &[f64],
+    event: Event,
+    duration: f64,
+    interval: f64,
+    policy: recombine::Policy,
+) -> (Vec<Vec<f64>>, Stats, recombine::Counts, f64, Value) {
+    let (mut network, _, _, ids, atol) = declared.prepared(If97);
+    let stocks = network.nonnegative_stocks();
+    let rtol = declared.gate(&["relativeTolerance"]);
+    let mut y = settled.to_vec();
+    let ids = match event {
+        Event::Seizure => {
+            let rotor = declared.gate(&["seizure", "rotor"]) as usize;
+            network.seize(rotor, &mut y).expect("seizure");
+            network.differential(&ids)
+        }
+        Event::SupplyLoss => {
+            let rotor = declared.gate(&["supplyLoss", "rotor"]) as usize;
+            network.set_rotor_state(
+                rotor,
+                RotorState {
+                    support: Support::Unsupported,
+                    shaft: Shaft::Free,
+                },
+            );
+            ids
+        }
+    };
+    let weights: Vec<f64> = y
+        .iter()
+        .zip(&atol)
+        .map(|(v, a)| 1. / (rtol * v.abs() + a))
+        .collect();
+    let (yp, _) = consistent_start(&mut network, 0., &mut y, &ids, &weights, 1e-12, 2)
+        .expect("exact consistent start");
+    let counts = Rc::new(RefCell::new(recombine::Counts::default()));
+    let system = recombine::Recombined::new(
+        Integrated::blocks(network).expect("block assembly"),
+        policy,
+        counts.clone(),
+    );
+    let mut ida = Ida::new(
+        system,
+        Initial {
+            time: 0.,
+            y: &y,
+            yp: &yp,
+            differential: &ids,
+            absolute_tolerance: &atol,
+            relative_tolerance: rtol,
+        },
+    )
+    .expect("stock IDA construction");
+    ida.set_max_order(declared.gate(&["maxOrder"]) as usize)
+        .expect("max order");
+    ida.constrain_nonnegative(&stocks).expect("nonnegative");
+    ida.stop_at(duration).expect("stop");
+    let (mut y, mut yp) = (y.clone(), yp.clone());
+    let started = cpu();
+    let mut marks = Vec::new();
+    let mut returned = Vec::new();
+    let steps = (duration / interval).round() as usize;
+    for k in 1..=steps {
+        let t = duration * k as f64 / steps as f64;
+        ida.advance(t, &mut y, &mut yp).expect("advance");
+        let stats = ida.stats().expect("stats");
+        let c = *counts.borrow();
+        marks.push(
+            json!({"t": t, "steps": stats.steps, "jacobian_calls": stats.jacobians,
+            "full": c.full, "recombined": c.recombined,
+            "convergence_failures": stats.convergence_failures,
+            "error_failures": stats.error_failures}),
+        );
+        returned.push(y.clone());
+    }
+    let cpu_s = cpu() - started;
+    let stats = ida.stats().expect("stats");
+    let c = *counts.borrow();
+    (returned, stats, c, cpu_s, json!(marks))
+}
+
 /// The joined operator at the hot reference with the packet's prepared SG
 /// views and rod travel as zero-time ports (S2-JOIN's Z1 composition, memo
 /// §3 (B)-(C)): a fresh hydrostatic preparation, the settled S1 run's face
 /// volume flows and rotor momenta written by the flowing preparation, then
 /// the fixed-stock surface initializer.
-pub struct JoinedHot {
-    pub joined: leitbild_operating_plant::joined::operator::Joined<If97>,
+pub struct JoinedHot<P: Properties = If97> {
+    pub joined: leitbild_operating_plant::joined::operator::Joined<P>,
     pub y: Vec<f64>,
     pub ids: Vec<f64>,
     pub flowing: Value,
 }
 pub fn joined_hot(declared: &Declared, settled: &[f64], full: bool) -> JoinedHot {
+    joined_hot_with(declared, settled, full, || If97)
+}
+/// [`joined_hot`] over the properties `properties` makes (the network's
+/// and the joined operator's own instances).
+pub fn joined_hot_with<P>(
+    declared: &Declared,
+    settled: &[f64],
+    full: bool,
+    properties: impl Fn() -> P,
+) -> JoinedHot<P>
+where
+    P: Properties + leitbild_operating_plant::thermal::WaterProperties,
+{
     use leitbild_operating_plant::{
         initialization::SurfacePolicy,
         joined::{
@@ -843,7 +1080,7 @@ pub fn joined_hot(declared: &Declared, settled: &[f64], full: bool) -> JoinedHot
         representation_search: 8,
     };
     let (mut network, mut prepared, hydrostatic) =
-        prepare::prepare(&declared.packet, If97, &point, &rotors, &settings)
+        prepare::prepare(&declared.packet, properties(), &point, &rotors, &settings)
             .expect("hydrostatic preparation");
     let receipt = prepare::compose_flows(
         &mut network,
@@ -898,7 +1135,7 @@ pub fn joined_hot(declared: &Declared, settled: &[f64], full: bool) -> JoinedHot
         network,
         &declared.packet,
         &joined_packet,
-        If97,
+        properties(),
         secondary,
         rods,
     )
@@ -947,8 +1184,8 @@ pub fn write_receipt(path: &str, receipt: &Value) {
 /// structural pattern, a verified greedy coloring and one exact seeded
 /// joined evaluation per color (the operator's own loop). The reference
 /// matrix of the block assembly; returns (pattern, values, colors, CPU s).
-pub fn joined_colored(
-    joined: &mut leitbild_operating_plant::joined::operator::Joined<If97>,
+pub fn joined_colored<P: Properties + leitbild_operating_plant::thermal::WaterProperties>(
+    joined: &mut leitbild_operating_plant::joined::operator::Joined<P>,
     y: &[f64],
     yp: &[f64],
     cj: f64,
