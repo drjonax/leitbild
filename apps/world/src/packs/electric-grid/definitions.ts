@@ -320,6 +320,7 @@ export const operatingPointWithOverrides = (operatingPoint: GridOperatingPointV2
     branchStates: mergedByAsset(operatingPoint.branchStates, overrides.branchStates),
     hvdcSchedules: mergedByAsset(operatingPoint.hvdcSchedules, overrides.hvdcSchedules),
     externalExchangeSchedules: mergedByAsset(operatingPoint.externalExchangeSchedules, overrides.externalExchangeSchedules),
+    externalSystemStates: mergedByAsset(operatingPoint.externalSystemStates, overrides.externalSystemStates),
   }
   return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== undefined)) as GridOperatingPointV2
 }

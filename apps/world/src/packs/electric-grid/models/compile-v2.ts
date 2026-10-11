@@ -145,7 +145,24 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
   const newestInput = [...model.sourceBuild.inputs].map(input => input.snapshotAt).sort().at(-1)!
   const exchanges = new Map((operatingPoint.externalExchangeSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).exportMw]))
   const hvdcSchedules = new Map((operatingPoint.hvdcSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).transferMw]))
-  const externalSystems = model.externalSystems.map((system): GridExternalSystemDefinition => ({ ...system }))
+  // The Operating Point sets a synchronous equivalent's inertia and load for its season and hour;
+  // the reserve volumes stay as the Model sets them.
+  const externalStates = new Map((operatingPoint.externalSystemStates ?? []).map(state => [state.assetId, state]))
+  const externalSystems = model.externalSystems.map((system): GridExternalSystemDefinition => {
+    const state = externalStates.get(system.id)
+    if (state === undefined) return { ...system }
+    return {
+      ...system,
+      inertiaGws: state.inertiaGws,
+      loadMw: state.loadMw,
+      provenance: {
+        sources: [...new Set([...state.provenance.sources, ...system.provenance.sources])],
+        method: 'curated',
+        confidence: state.provenance.confidence === 'high' ? system.provenance.confidence : state.provenance.confidence,
+        note: `Inertia and load at Operating Point ${operatingPoint.id}: ${state.provenance.note ?? state.provenance.method}. Model: ${system.provenance.note ?? system.provenance.method}`,
+      },
+    }
+  })
   return {
     model: {
       id: model.id,

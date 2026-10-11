@@ -223,6 +223,8 @@ const summerBranchRatings = (model: GridModelV2, summerRatingMw: ReadonlyMap<str
   return [{ assetId: branch.id, ratingMw: summerMw, emergencyRatingMw: Math.round(summerMw * emergencyRule.factor) }]
 })
 
+type ExternalSystemState = NonNullable<GridOperatingPointV2['externalSystemStates']>[number]
+
 export const buildOperatingPoints = (config: {
   readonly model: GridModelV2
   readonly compatibleModelRefs: ReadonlyArray<string>
@@ -233,6 +235,8 @@ export const buildOperatingPoints = (config: {
   readonly dispatch: { readonly winterPeak: GridReferenceHourDispatch; readonly summerLow: GridReferenceHourDispatch }
   /** Summer-air rating of every line and sub-transmission equivalent, MW, by branch id. */
   readonly summerLineRatingMw: ReadonlyMap<string, number>
+  /** The synchronous equivalent's inertia and load per season, from the interconnector table's cases. */
+  readonly externalSystemStates: { readonly winter: ReadonlyArray<ExternalSystemState>; readonly summer: ReadonlyArray<ExternalSystemState> }
 }): { readonly winter: GridOperatingPointV2; readonly summer: GridOperatingPointV2 } => {
   const { model } = config
   const sameHour = (label: string, dispatch: GridReferenceHourDispatch, startUtc: string): void => {
@@ -249,18 +253,19 @@ export const buildOperatingPoints = (config: {
       schemaVersion: 2,
       id: 'electric-grid.norway.winter-weekday-peak',
       title: 'Winter weekday peak',
-      description: `Elhub reference hour ${model.referenceHour} (national ${roundTo(priceAreas.reduce((sum, area) => sum + areaMw(area), 0), 0)} MW located demand). ${describeHour(config.dispatch.winterPeak, winterSchedules)}`,
+      description: `Elhub reference hour ${model.referenceHour} (national ${roundTo(priceAreas.reduce((sum, area) => sum + areaMw(area), 0), 0)} MW located demand). ${describeHour(config.dispatch.winterPeak, winterSchedules)} The Nordic remainder is at its winter-peak inertia and load.`,
       compatibleModelRefs: [...config.compatibleModelRefs],
       loadScale: 1,
       generatorStates: [...dispatchGenerators(model, load => load.referenceDemandMw, config.dispatch.winterPeak, winterSchedules)],
       hvdcSchedules: [...winterSchedules.hvdc],
       externalExchangeSchedules: [...winterSchedules.exchange],
+      externalSystemStates: [...config.externalSystemStates.winter],
     },
     summer: {
       schemaVersion: 2,
       id: 'electric-grid.norway.summer-night-low',
       title: 'Summer night low',
-      description: `Elhub summer low hour ${config.summerHour}: each price area's demand scaled to its metered total. ${describeHour(config.dispatch.summerLow, summerSchedules)} branchRatings rate overhead lines at ${ambientRatingRule.summerAirC} °C air (rule ${ambientRatingRule.id}). The Nordic remainder keeps the model's winter inertia and load; the Operating Point schema cannot override them.`,
+      description: `Elhub summer low hour ${config.summerHour}: each price area's demand scaled to its metered total. ${describeHour(config.dispatch.summerLow, summerSchedules)} branchRatings rate overhead lines at ${ambientRatingRule.summerAirC} °C air (rule ${ambientRatingRule.id}). The Nordic remainder is at its summer-low inertia and load.`,
       compatibleModelRefs: [...config.compatibleModelRefs],
       loadScale: 1,
       priceAreaDemandScale: summerScale,
@@ -268,6 +273,7 @@ export const buildOperatingPoints = (config: {
       hvdcSchedules: [...summerSchedules.hvdc],
       externalExchangeSchedules: [...summerSchedules.exchange],
       branchRatings: [...summerBranchRatings(model, config.summerLineRatingMw)],
+      externalSystemStates: [...config.externalSystemStates.summer],
     },
   }
 }

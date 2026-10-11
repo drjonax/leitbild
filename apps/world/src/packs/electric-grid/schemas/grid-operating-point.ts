@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { gridDataError, parseGridData, type GridDataIssue } from './data-issues.ts'
 import { gridIdPatterns, priceAreaSchema, type PriceArea } from './grid-ids.ts'
-import type { GridModelV2 } from './grid-model.ts'
+import { gridProvenanceSchema, type GridModelV2 } from './grid-model.ts'
 
 // Operating Point v2: the initial condition of a Grid Model, keyed by stable asset ids.
 // Demand is referenceDemandMw × loadScale × priceAreaDemandScale[area]. Absent per-asset
@@ -69,6 +69,19 @@ export const gridExchangeScheduleSchema = z.object({
   points: z.array(z.object({ localTime, exportMw: z.number().finite() }).strict()).min(1),
 }).strict().superRefine(requireIncreasingTimes)
 
+/**
+ * The state of a synchronous external equivalent at this Operating Point: the kinetic energy of
+ * its synchronous machines and its demand vary with the season and hour, its reserve volumes do not.
+ */
+export const gridExternalSystemStateSchema = z.object({
+  assetId: assetId(gridIdPatterns.externalSystem, 'external system'),
+  /** Kinetic energy E_k of the equivalent's synchronous machines. */
+  inertiaGws: positive,
+  /** Demand of the equivalent, for its load self-regulation. */
+  loadMw: positive,
+  provenance: gridProvenanceSchema,
+}).strict()
+
 /** Fields shared by Operating Point files and Scenario operatingPoint.overrides. */
 export const gridOperatingPointStateShape = {
   loadScale: positive,
@@ -77,6 +90,7 @@ export const gridOperatingPointStateShape = {
   branchStates: z.array(gridBranchInitialStateSchema).optional(),
   hvdcSchedules: z.array(gridHvdcScheduleSchema).optional(),
   externalExchangeSchedules: z.array(gridExchangeScheduleSchema).optional(),
+  externalSystemStates: z.array(gridExternalSystemStateSchema).optional(),
 }
 
 export interface GridOperatingPointState {
@@ -86,8 +100,9 @@ export interface GridOperatingPointState {
   readonly branchStates?: ReadonlyArray<z.infer<typeof gridBranchInitialStateSchema>> | undefined
   readonly hvdcSchedules?: ReadonlyArray<z.infer<typeof gridHvdcScheduleSchema>> | undefined
   readonly externalExchangeSchedules?: ReadonlyArray<z.infer<typeof gridExchangeScheduleSchema>> | undefined
+  readonly externalSystemStates?: ReadonlyArray<z.infer<typeof gridExternalSystemStateSchema>> | undefined
 }
-export const gridOperatingPointPerAssetFields = ['generatorStates', 'branchStates', 'hvdcSchedules', 'externalExchangeSchedules'] as const
+export const gridOperatingPointPerAssetFields = ['generatorStates', 'branchStates', 'hvdcSchedules', 'externalExchangeSchedules', 'externalSystemStates'] as const
 
 /** One entry per asset in each per-asset list. */
 export const refineGridOperatingPointState = (state: GridOperatingPointState, context: z.core.$RefinementCtx<unknown>): void => {
@@ -162,6 +177,11 @@ export const gridOperatingPointStateIssues = (state: GridOperatingPointState, ta
     const system = targets.externalSystems.get(entry.assetId)
     if (system === undefined) fail(['externalExchangeSchedules', index, 'assetId'], `unknown external system ${entry.assetId}`)
     else if (!system.synchronous) fail(['externalExchangeSchedules', index, 'assetId'], `${entry.assetId} is reached only through HVDC; schedule its links instead`)
+  })
+  state.externalSystemStates?.forEach((entry, index) => {
+    const system = targets.externalSystems.get(entry.assetId)
+    if (system === undefined) fail(['externalSystemStates', index, 'assetId'], `unknown external system ${entry.assetId}`)
+    else if (!system.synchronous) fail(['externalSystemStates', index, 'assetId'], `${entry.assetId} is not synchronous: it has no inertia or load in the model`)
   })
   return issues
 }

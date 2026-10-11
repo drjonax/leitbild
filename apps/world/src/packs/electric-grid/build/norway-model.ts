@@ -19,7 +19,7 @@ import { buildGeometry, type GridGeometry } from './geometry.ts'
 import { buildHaldenAddition, haldenAdditionId } from './halden-addition.ts'
 import type { GridModelAdditionV2 } from '../schemas/grid-model-addition.ts'
 import type { NorwayModelBuildInputs } from './inputs.ts'
-import { buildExternalSystems, buildHvdcLinks, excludedInterconnectors, topologyInterconnectors } from './interconnectors.ts'
+import { buildExternalSystems, buildHvdcLinks, excludedInterconnectors, nordicRemainderState, topologyInterconnectors } from './interconnectors.ts'
 import { createBuildLedger, type BuildLedgerEntry } from './ledger.ts'
 import { buildLoads, loadKindRules, minimumShareMw, municipalAttachmentLimitKm } from './loads.ts'
 import { networkEquivalents } from './network-equivalents.ts'
@@ -264,6 +264,12 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     winterStartUtc: winterHour.priceAreas.startUtc,
     dispatch: inputs.referenceDispatch.data.hours,
     summerLineRatingMw: new Map([...ratedLines, ...equivalents].map(line => [line.branch.id, line.ratings.summerMw])),
+    externalSystemStates: model.externalSystems.some(system => system.synchronous)
+      ? {
+          winter: [nordicRemainderState({ table: inputs.interconnectors.data, sourceIds: ids, synchronousCase: 'winterPeak' })],
+          summer: [nordicRemainderState({ table: inputs.interconnectors.data, sourceIds: ids, synchronousCase: 'summerLow' })],
+        }
+      : { winter: [], summer: [] },
   })
   const halden = buildHaldenAddition(model, priceAreaOf)
   for (const target of [gridOperatingPointTargetsForModel(model), gridOperatingPointTargetsForModel(halden.composed)]) {

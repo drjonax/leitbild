@@ -88,7 +88,7 @@ describe('electric grid Pack', () => {
     const halden = definition('electric-grid.halden.four-unit', 'electric-grid.norway.winter-weekday-peak')
     expect(() => compileGridModelIndex({ ...halden.model, connectionPoints: [{ ...halden.model.connectionPoints[0]!, busId: 'missing' }] })).toThrow('references unknown bus missing')
     // A published model is an immutable artifact used by persisted Run state; regenerating the model data changes this digest.
-    expect(halden.definitionDigest).toBe('5963111ba95cbf968793e38ee2ee4713e795252597824b96cdea1b3dae92e8f9')
+    expect(halden.definitionDigest).toBe('b771ee3ab0f6d370b38a43e54c2cfaaa2a6d5a2593afd72f65be3e8bdddbff7a')
     expect(() => definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal')).toThrow('unknown Grid Operating Point')
     expect(halden.model.connectionPoints).toHaveLength(4)
   })

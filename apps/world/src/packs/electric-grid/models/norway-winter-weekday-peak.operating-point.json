@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "electric-grid.norway.winter-weekday-peak",
   "title": "Winter weekday peak",
-  "description": "Elhub reference hour 2026-01-12T08:00:00+01:00 (national 22868 MW located demand). Dispatch (rule reference-hour-dispatch): ENTSO-E measured 3312 MW wind, 2594 MW run-of-river and 150 MW gas, shared by capacity; HVDC links and the Nordic exchange at the measured flows (net export 2147 MW); storage hydro closes the balance at one common loading; losses are left to the slack. hvdc:nordlink measured 1404 MW, scheduled at its 1400 MW rating.",
+  "description": "Elhub reference hour 2026-01-12T08:00:00+01:00 (national 22868 MW located demand). Dispatch (rule reference-hour-dispatch): ENTSO-E measured 3312 MW wind, 2594 MW run-of-river and 150 MW gas, shared by capacity; HVDC links and the Nordic exchange at the measured flows (net export 2147 MW); storage hydro closes the balance at one common loading; losses are left to the slack. hvdc:nordlink measured 1404 MW, scheduled at its 1400 MW rating. The Nordic remainder is at its winter-peak inertia and load.",
   "compatibleModelRefs": [
     "electric-grid.norway.transmission",
     "electric-grid.halden.four-unit"
@@ -872,5 +872,8 @@
   ],
   "externalExchangeSchedules": [
     {"assetId":"external:nordic-remainder","timeZone":"Europe/Oslo","points":[{"localTime":"00:00","exportMw":1506.3}]}
+  ],
+  "externalSystemStates": [
+    {"assetId":"external:nordic-remainder","inertiaGws":171,"loadMw":43100,"provenance":{"sources":["curated:norway-interconnectors@2026-10-10"],"method":"curated","confidence":"medium","note":"winterPeak case: Kinetic energy 256 GWs (Fingrid map, 2020-12-31 17–18) × remainder share 66.9 % (Norway 6.6 % NO4 + 26.5 % southern Norway) = 171 GWs. Load: non-coincident January 2026 peaks SE 24,965 + FI 15,553 + DK2 2,616 = 43,134 MW (coincident value probably 1–2 GW lower). FCR-N 600 MW over ±0.1 Hz and FCR-D 1450 MW up / 1400 MW down for the Nordic area (2026 SOA LFCR parameters); Norway's 2026 obligation share is 38 %, so the remainder holds 62 %: FCR-N 372 MW = 3720 MW/Hz, FCR-D up 899 MW (linear 49.9→49.5 Hz), FCR-D down 868 MW. aFRR: the Nordic 2026 volume of 200 MW each way (Appendix 1 to Annex LFCR 2026) less Norway's 31 % share = 138 MW."}}
   ]
 }

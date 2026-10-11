@@ -53,6 +53,15 @@ describe('Grid Scenario Operating Point overrides', () => {
     ])
   })
 
+  test('applies a Scenario\'s external inertia and load over the Operating Point\'s', () => {
+    const provenance = { sources: ['test:override'], method: 'curated' as const, confidence: 'low' as const, note: 'Scenario test value.' }
+    const definition = compileGridDefinition({
+      id: 'grid:low-inertia', model: { ref: 'electric-grid.norway.transmission' }, automation: { ref: 'electric-grid.frequency.nordic-2025' },
+      operatingPoint: { ref: 'electric-grid.norway.winter-weekday-peak', overrides: { externalSystemStates: [{ assetId: 'external:nordic-remainder', inertiaGws: 85, loadMw: 20_000, provenance }] } },
+    })
+    expect(definition.index.externalSystems.find(system => system.synchronous)).toMatchObject({ inertiaGws: 85, loadMw: 20_000 })
+  })
+
   test('applies a constant HVDC schedule as the link\'s initial set-point', async () => {
     const definition = compileGridDefinition({
       id: 'grid:hvdc', model: { ref: 'electric-grid.norway.transmission' }, automation: { ref: 'electric-grid.frequency.nordic-2025' },
@@ -73,7 +82,7 @@ describe('Grid Scenario Operating Point overrides', () => {
     expect(objects).toHaveLength(1)
     const schema = z.toJSONSchema(gridOperatingPointOverridesSchema) as { readonly properties: Record<string, unknown> }
     expect(Object.keys(schema.properties)).toEqual(expect.arrayContaining([
-      'loadScale', 'priceAreaDemandScale', 'generatorStates', 'branchStates', 'hvdcSchedules', 'externalExchangeSchedules', 'generationAvailabilityScale', 'storageStateOfCharge',
+      'loadScale', 'priceAreaDemandScale', 'generatorStates', 'branchStates', 'hvdcSchedules', 'externalExchangeSchedules', 'externalSystemStates', 'generationAvailabilityScale', 'storageStateOfCharge',
     ]))
     expect(() => gridOperatingPointOverridesSchema.parse({ automation: { ref: 'electric-grid.frequency.nordic-2025' } })).toThrow()
   })

@@ -56,7 +56,8 @@ describe('Grid Model v2 → runtime model', () => {
     const winter = validateGridOperatingPoint(JSON.parse(await readFile(join(import.meta.dir, '../src/packs/electric-grid/models/norway-winter-weekday-peak.operating-point.json'), 'utf8')), 'winter', gridOperatingPointTargetsForModel(generated))
     const { model } = compileGridModelV2(generated, winter)
     const nordic = generated.externalSystems.find(system => system.synchronous)!
-    expect(model.externalSystems.filter(system => system.synchronous)).toEqual([nordic])
+    const synchronous = model.externalSystems.filter(system => system.synchronous)
+    expect(synchronous.map(system => [system.id, system.boundaryBusIds])).toEqual([[nordic.id, nordic.boundaryBusIds]])
     expect(nordic.boundaryBusIds.length).toBeGreaterThan(1)
     expect(model.externalSystems.filter(system => !system.synchronous).map(system => system.id).sort()).toEqual(['external:DE', 'external:DK1', 'external:GB', 'external:NL'])
     const demandMw = model.loads.reduce((sum, load) => sum + load.demandMw, 0) * winter.loadScale
@@ -65,6 +66,25 @@ describe('Grid Model v2 → runtime model', () => {
     const index = compileGridModelIndex(model)
     expect(index.busById.size).toBe(generated.buses.length)
     expect(index.diagnostics.assetCount).toBeGreaterThan(generated.buses.length + generated.branches.length)
+  })
+
+  test('takes the synchronous equivalent\'s inertia and load from each season\'s Operating Point', async () => {
+    const read = async (file: string) => JSON.parse(await readFile(join(import.meta.dir, '../src/packs/electric-grid/models', file), 'utf8')) as unknown
+    const generated = validateGridModel(await read('norway-transmission.grid-model.json'), 'generated')
+    const targets = gridOperatingPointTargetsForModel(generated)
+    const winter = validateGridOperatingPoint(await read('norway-winter-weekday-peak.operating-point.json'), 'winter', targets)
+    const summer = validateGridOperatingPoint(await read('norway-summer-night-low.operating-point.json'), 'summer', targets)
+    const equivalent = (point: typeof winter) => compileGridModelV2(generated, point).model.externalSystems.find(system => system.synchronous)!
+    for (const point of [winter, summer]) {
+      const state = point.externalSystemStates!.find(entry => entry.assetId === 'external:nordic-remainder')!
+      expect(equivalent(point)).toMatchObject({ inertiaGws: state.inertiaGws, loadMw: state.loadMw })
+      // Reserve volumes are the Model's in every season.
+      expect(equivalent(point).fcrNMwPerHz).toBe(generated.externalSystems.find(system => system.synchronous)!.fcrNMwPerHz)
+    }
+    expect(equivalent(summer).inertiaGws).toBeLessThan(equivalent(winter).inertiaGws!)
+    expect(equivalent(summer).loadMw).toBeLessThan(equivalent(winter).loadMw!)
+    expect(() => validateGridOperatingPoint({ ...summer, externalSystemStates: [{ ...summer.externalSystemStates![0]!, assetId: 'external:DE' }] }, 'summer', targets))
+      .toThrow('$.externalSystemStates[0].assetId: external:DE is not synchronous')
   })
 
   test('refuses an Operating Point for another model, and schedules and branch states the runtime does not follow', () => {

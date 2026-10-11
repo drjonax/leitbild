@@ -1,3 +1,4 @@
+import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
 import type { GridExternalSystemV2, GridHvdcLinkV2 } from '../schemas/grid-model.ts'
 import type { ExternalArea } from '../schemas/grid-ids.ts'
 import type { GridInterconnectorTable } from '../schemas/grid-interconnector.ts'
@@ -59,6 +60,23 @@ export const buildHvdcLinks = (config: {
     },
   }
 }).sort((left, right) => compareText(left.id, right.id))
+
+/** The Nordic remainder's inertia and load in one of the table's synchronous cases, as an Operating Point state. */
+export const nordicRemainderState = (config: {
+  readonly table: GridInterconnectorTable
+  readonly sourceIds: ModelSourceIds
+  readonly synchronousCase: 'winterPeak' | 'summerLow'
+}): NonNullable<GridOperatingPointV2['externalSystemStates']>[number] => {
+  const nordic = config.table.externalSystems.find(system => system.area === 'nordic-remainder')
+  if (nordic === undefined || nordic.cases === null) throw new Error('the interconnector table has no synchronous Nordic remainder')
+  const values = nordic.cases[config.synchronousCase]
+  return {
+    assetId: 'external:nordic-remainder',
+    inertiaGws: values.inertiaGws,
+    loadMw: values.loadMw,
+    provenance: { sources: [config.sourceIds.interconnectors], method: 'curated', confidence: nordic.provenance.confidence, note: `${config.synchronousCase} case: ${values.derivation}` },
+  }
+}
 
 /** One synchronous Nordic remainder behind the AC boundaries, one external system per HVDC-only area. */
 export const buildExternalSystems = (config: {
