@@ -96,6 +96,34 @@ interface AssetSearchResult {
   readonly assets: ReadonlyArray<{ readonly id: string }>
 }
 
+interface ScreenedBranch {
+  readonly assetId: string
+  readonly loadingPercent: number
+}
+
+interface ContingencyResult {
+  readonly contingency: { readonly assetId: string }
+  readonly islanding: boolean
+  readonly overloadedBranches: ReadonlyArray<ScreenedBranch>
+  readonly violationCount: number
+}
+
+interface ScreeningSummary {
+  readonly violatingCount: number
+  readonly baseCase: { readonly overloadedCount: number }
+}
+
+interface ScreenResult extends ScreeningSummary {
+  readonly results: ReadonlyArray<ContingencyResult>
+}
+
+interface RemedialResult {
+  readonly actionBalances: ReadonlyArray<unknown>
+  readonly before: ScreeningSummary
+  readonly after: ScreeningSummary
+  readonly results: ReadonlyArray<ContingencyResult>
+}
+
 const trippedCount = async (scenario: ScenarioRun, kind: 'branch' | 'generator'): Promise<number> =>
   (await scenario.query<AssetSearchResult>('world.electric-grid.assets.search', { kinds: [kind], status: ['tripped'], limit: 1 })).total
 
@@ -140,6 +168,63 @@ describe('bundled Electric Grid Scenarios', () => {
         (await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: asset.id })).asset.state.mfrrMw!))).reduce((sum, value) => sum + value, 0)
       expect(activatedMfrrMw).toBeGreaterThan(0)
       console.info(`nordic-frequency-event: Kvilldal ${lostMw.toFixed(0)} MW lost; nadir ${nadirHz.toFixed(3)} Hz ${nadirAfterSeconds} s after the trip, |RoCoF| ≤ ${maximumRocof.toFixed(3)} Hz/s; within ±100 mHz from ${standardRangeFrom} s; f(15 min) ${finalHz.toFixed(4)} Hz; mFRR on the ten largest units ${activatedMfrrMw.toFixed(0)} MW`)
+    } finally { await scenario.close() }
+  }, 120_000)
+
+  const svartisenRana = 'branch:osm-ac345cb49df196e1'
+  const smibelgSjona = 'branch:osm-0fb54dfbafcab6d8'
+
+  test('nordland-corridor-security: N-1 shows the Helgeland overload and sectionalising at Sjona removes it before the trip', async () => {
+    const scenario = await startScenarioRun('nordland-corridor-security', 'grid:norway')
+    try {
+      await scenario.advanceTo(60)
+      expect(scenario.projection().highestBranchLoadingPercent).toBeLessThan(100)
+      const screen = await scenario.query<ScreenResult>('world.electric-grid.contingency.screen', { contingencies: 'all-branches', limit: 50 })
+      expect(screen.baseCase.overloadedCount).toBe(0)
+      const outage = screen.results.find(result => result.contingency.assetId === svartisenRana)
+      expect(outage).toBeDefined()
+      expect(outage!.islanding).toBe(false)
+      const helgeland = outage!.overloadedBranches.find(branch => branch.assetId === smibelgSjona)
+      // Above the 150 % instantaneous element: protection would trip it at once.
+      expect(helgeland!.loadingPercent).toBeGreaterThan(150)
+
+      const evaluated = await scenario.query<RemedialResult>('world.electric-grid.remedial-actions.evaluate', {
+        contingencies: 'all-branches',
+        actions: [{ kind: 'open-branch', assetId: smibelgSjona }],
+        limit: 50,
+      })
+      expect(evaluated.actionBalances).toEqual([])
+      expect(evaluated.after.baseCase.overloadedCount).toBe(0)
+      expect(evaluated.after.violatingCount).toBeLessThan(evaluated.before.violatingCount)
+      expect(evaluated.results.find(result => result.contingency.assetId === svartisenRana)?.violationCount ?? 0).toBe(0)
+
+      expect((await scenario.command('world.electric-grid.open-branch', { assetId: smibelgSjona })).ok).toBe(true)
+      const verified = await scenario.query<ScreenResult>('world.electric-grid.contingency.screen', { contingencies: [svartisenRana], limit: 1 })
+      expect(verified.results[0]!.violationCount).toBe(0)
+
+      await scenario.advanceTo(660)
+      expectTimelineExecuted(scenario, 'nordland-corridor-security')
+      expect((await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: svartisenRana })).asset.state.state).toBe('open')
+      const afterTrip = scenario.projection()
+      expect(afterTrip.highestBranchLoadingPercent).toBeLessThan(100)
+      expect(afterTrip.unservedLoadMw).toBe(0)
+      expect(afterTrip.activeIslandCount).toBe(1)
+      expect(await trippedCount(scenario, 'branch')).toBe(0)
+      console.info(`nordland-corridor-security: Svartisen – Rana outage loads Smibelg – Sjona to ${helgeland!.loadingPercent} %; opening Smibelg – Sjona leaves ${evaluated.after.violatingCount} of ${evaluated.before.violatingCount} violating outages; after the trip the highest loading is ${afterTrip.highestBranchLoadingPercent.toFixed(1)} %`)
+    } finally { await scenario.close() }
+  }, 120_000)
+
+  test('nordland-corridor-security: without a remedial action the trip overloads Helgeland and its protection disconnects load', async () => {
+    const scenario = await startScenarioRun('nordland-corridor-security', 'grid:norway')
+    try {
+      await scenario.advanceTo(660)
+      expectTimelineExecuted(scenario, 'nordland-corridor-security')
+      expect((await scenario.query<AssetGetResult>('world.electric-grid.asset.get', { assetId: smibelgSjona })).asset.state.state).toBe('tripped')
+      const branchTrips = await trippedCount(scenario, 'branch')
+      const unservedMw = scenario.projection().unservedLoadMw
+      expect(branchTrips).toBeGreaterThanOrEqual(3)
+      expect(unservedMw).toBeGreaterThan(0)
+      console.info(`nordland-corridor-security without action: ${branchTrips} branches tripped, ${unservedMw.toFixed(1)} MW unserved`)
     } finally { await scenario.close() }
   }, 120_000)
 })
