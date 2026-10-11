@@ -196,7 +196,7 @@ describe('electric grid generator commands', () => {
     expect(state.state).toBe('starting')
     step(10, 10)
     expect(state.state).toBe('online')
-  }, 30_000) // 80 simulated minutes of the full Norway Model at 0.1 s frequency sub-steps
+  }, 600_000) // Hang guard: 80 simulated minutes of the full Norway Model at 0.1 s frequency sub-steps took 71 s at load 130
 
   test('stop unloads an online unit at its ramp rate before it goes offline, and aborts a start', () => {
     const { grid, send, step } = harness()

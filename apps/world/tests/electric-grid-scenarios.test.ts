@@ -20,6 +20,11 @@ interface GridSample {
   readonly projection: GridProjection
 }
 
+// Hang guards, not cost budgets. A Scenario test runs one thread of minutes of CPU (Halden's four PWR
+// Plants: about 50 s), and a runnable thread gets about 8/load of a core on this 8-core machine, so at
+// load 130 the Halden test took 13 min of wall time. A guard must outlast that, not undercut it.
+const scenarioWatchdogMs = 1_200_000
+
 /** A Run of one bundled Scenario, paused, advanced only by `advanceTo` at maximum pace. */
 const startScenarioRun = async (scenarioId: string, gridId: string) => {
   const dataDir = await mkdtemp(join(tmpdir(), `leitbild-${scenarioId}-`))
@@ -193,7 +198,7 @@ describe('bundled Electric Grid Scenarios', () => {
       expect(activatedMfrrMw).toBeGreaterThan(0)
       console.info(`nordic-frequency-event: Kvilldal ${lostMw.toFixed(0)} MW lost; nadir ${nadirHz.toFixed(3)} Hz ${nadirAfterSeconds} s after the trip, |RoCoF| ≤ ${maximumRocof.toFixed(3)} Hz/s; within ±100 mHz from ${standardRangeFrom} s; f(18 min) ${finalHz.toFixed(4)} Hz; mFRR on the ten largest units ${activatedMfrrMw.toFixed(0)} MW`)
     } finally { await scenario.close() }
-  }, 120_000)
+  }, scenarioWatchdogMs)
 
   const svartisenRana = 'branch:osm-ac345cb49df196e1'
   const smibelgSjona = 'branch:osm-0fb54dfbafcab6d8'
@@ -247,7 +252,7 @@ describe('bundled Electric Grid Scenarios', () => {
       expect(await trippedCount(scenario, 'branch')).toBe(0)
       console.info(`nordland-corridor-security: Svartisen – Rana carries ${Math.abs(corridor.flowMw!).toFixed(0)} MW (AC); its outage overloads ${helgelandOverloads} branches, Smibelg – Sjona to ${helgeland!.loadingPercent} % (DC screening); after opening Smibelg – Sjona it overloads none; after the trip the Svartisen 420/132 kV transformer is at ${transformer.loadingPercent!.toFixed(1)} %, no trips, ${afterTrip.unservedLoadMw} MW unserved`)
     } finally { await scenario.close() }
-  }, 120_000)
+  }, scenarioWatchdogMs)
 
   test('nordland-corridor-security: without a remedial action the trip overloads Helgeland and its protection disconnects load', async () => {
     const scenario = await startScenarioRun('nordland-corridor-security', 'grid:norway')
@@ -261,7 +266,7 @@ describe('bundled Electric Grid Scenarios', () => {
       expect(unservedMw).toBeGreaterThan(0)
       console.info(`nordland-corridor-security without action: ${branchTrips} branches tripped, ${unservedMw.toFixed(1)} MW unserved`)
     } finally { await scenario.close() }
-  }, 120_000)
+  }, scenarioWatchdogMs)
 
   test('halden-offsite-power-restoration: the busbar fault de-energises the bays and reclosing returns offsite power to the Plants', async () => {
     const gridId = 'grid:halden-four-unit'
@@ -319,7 +324,7 @@ describe('bundled Electric Grid Scenarios', () => {
       const houseLoadMw = ports().reduce((sum, { plant }) => sum - plant.activePowerMw, 0)
       console.info(`halden-offsite-power-restoration: ${exportMw.toFixed(0)} MW export lost; house load ${houseLoadMw.toFixed(0)} MW imported after reclosing; nadir ${nadirHz.toFixed(3)} Hz; LFDD and outage ${lfddMw.toFixed(0)} MW; bays re-energised by dead-bus closing; f(240 s) ${scenario.projection().frequencyHz!.toFixed(3)} Hz`)
     } finally { await scenario.close() }
-  }, 180_000)
+  }, scenarioWatchdogMs)
 
   test('rogaland-black-start: the separated region goes dark, Lysebotn I black-starts it, blocks stay clear of LFDD and synchro-check gates the resynchronisation', async () => {
     const scenario = await startScenarioRun('rogaland-black-start', 'grid:norway')
@@ -451,5 +456,5 @@ describe('bundled Electric Grid Scenarios', () => {
       expect(await trippedCount(scenario, 'branch')).toBe(0)
       console.info(`rogaland-black-start: ${outageMw.toFixed(0)} MW dark, ${regionTripped.total} units tripped; starting block ${startingBlockMw.toFixed(1)} MW; ${pickedUpMw.toFixed(1)} MW picked up in ${fitting.length} blocks of at most ${largestBlockMw.toFixed(1)} MW with the lowest frequency ${lowestHz.toFixed(3)} Hz; synchro-check refused at ${offsetBeforeCloseHz.toFixed(3)} Hz and closed at ${offsetAtCloseHz.toFixed(3)} Hz after waiting ${waitedSeconds} s${trimmed ? ' with a 1 MW trim' : ''}; ${restored.reduce((sum, entry) => sum + entry.state.servedMw, 0).toFixed(0)} MW served at the end`)
     } finally { await scenario.close() }
-  }, 300_000)
+  }, scenarioWatchdogMs)
 })
