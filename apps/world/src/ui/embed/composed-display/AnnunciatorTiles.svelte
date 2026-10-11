@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AnnunciatorSystem } from '../../../packs/process-plant/displays/annunciators.ts'
+  import type { AnnunciatorSystem, DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { alertTypeOf, annunciatorStates } from './panel-presenters.ts'
@@ -12,8 +12,10 @@
   // once all are; TRIP and 1st say in words what colour alone cannot. This
   // display cannot acknowledge, so nothing flashes. A tile filters the alarm
   // list to its system.
-  let { systems, tileWidth, latest, selected, select }: {
+  let { systems, tileWidth, latest, annunciation, selected, select }: {
     systems: ReadonlyArray<AnnunciatorSystem>
+    /** What first out means per rule: a tile says 1st only for a group of more than one rule. */
+    annunciation: DisplayAnnunciation
     /** The tiles' least width the server sized the display for; their labels fit it. */
     tileWidth: number
     latest: ComposedDisplaySample | undefined
@@ -22,7 +24,7 @@
   } = $props()
 
   const layout = composedDisplayLayout
-  const states = $derived(annunciatorStates(systems, latest?.alarms ?? []))
+  const states = $derived(annunciatorStates(systems, latest?.alarms ?? [], annunciation))
 
   const described = (state: (typeof states)[number]): string => state.active === 0
     ? `${state.name}: no active alarm`

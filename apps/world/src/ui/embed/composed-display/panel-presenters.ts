@@ -4,6 +4,7 @@
 // which the compose result states too.
 import { marginTextForms } from '../../../packs/process-plant/displays/display-text.ts'
 import { limitStateText, type LimitState } from '../../../packs/process-plant/displays/trend-reading.ts'
+import type { DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
 import type { ComposedDisplayAlarm } from './composed-display-client.ts'
 
 /**
@@ -41,7 +42,36 @@ export const alertTypeOf = (severity: ComposedDisplayAlarm['severity']): 'alarm'
   severity === 'critical' ? 'alarm' : severity === 'warning' ? 'warning' : 'caution'
 
 /**
- * Alarms in reading order: the first-out alarm, then by severity so trips are
+ * The first-out flag an alarm row carries, scoped to its group: "1st RX
+ * TRIP". Null where it is not first out, or its group has no other rule to
+ * be first among (displayAnnunciation).
+ */
+export const firstOutFlag = (alarm: Pick<ComposedDisplayAlarm, 'firstOut' | 'ruleId'>, annunciation: Pick<DisplayAnnunciation, 'firstOutGroups'>): string | null => {
+  const group = annunciation.firstOutGroups[alarm.ruleId]
+  return alarm.firstOut && group !== undefined ? `1st ${group}` : null
+}
+
+/**
+ * The reactor trip the banner leads with: the active first-out of the
+ * reactor trip's group, else its earliest active member. Never another
+ * actuation, which the actuation line lists (evaluation run 22's banner read
+ * "TRIP · Auxiliary feedwater start" beside the reactor trip's first-out).
+ */
+export const bannerTrip = (alarms: ReadonlyArray<ComposedDisplayAlarm>, annunciation: Pick<DisplayAnnunciation, 'reactorTrip'>): ComposedDisplayAlarm | undefined => {
+  const group = new Set(annunciation.reactorTrip?.ruleIds ?? [])
+  const tripped = alarms.filter(alarm => alarm.active && group.has(alarm.ruleId))
+    .sort((left, right) => Number(right.firstOut) - Number(left.firstOut) || (left.firstActiveElapsedMs ?? 0) - (right.firstActiveElapsedMs ?? 0))
+  return tripped[0]
+}
+
+/** The automatic actuations other than the reactor trip that are active now, by name, in the order the I&C declares them: "AFW · SI · FWI". */
+export const actuatedNames = (alarms: ReadonlyArray<ComposedDisplayAlarm>, annunciation: Pick<DisplayAnnunciation, 'actuations'>): ReadonlyArray<string> => {
+  const active = new Set(alarms.filter(alarm => alarm.active).map(alarm => alarm.ruleId))
+  return annunciation.actuations.filter(actuation => actuation.ruleIds.some(ruleId => active.has(ruleId))).map(actuation => actuation.name)
+}
+
+/**
+ * Alarms in reading order: a first-out alarm, then by severity so trips are
  * never hidden behind warnings, then by onset. "related" keeps only the rules
  * acting on the display.
  */
@@ -49,12 +79,14 @@ export const visibleAlarms = (
   alarms: ReadonlyArray<ComposedDisplayAlarm>,
   scope: 'related' | 'plant',
   ruleIds: ReadonlyArray<string>,
+  annunciation: Pick<DisplayAnnunciation, 'firstOutGroups'>,
 ): ReadonlyArray<ComposedDisplayAlarm> => {
   const related = new Set(ruleIds)
+  const first = (alarm: ComposedDisplayAlarm): number => Number(firstOutFlag(alarm, annunciation) !== null)
   return alarms
     .filter(alarm => scope === 'plant' || related.has(alarm.ruleId))
     .sort((left, right) =>
-      Number(right.firstOut) - Number(left.firstOut)
+      first(right) - first(left)
       || Number(right.kind === 'trip') - Number(left.kind === 'trip')
       || severityRank[left.severity] - severityRank[right.severity]
       || Number(right.active) - Number(left.active)
@@ -81,10 +113,11 @@ export interface AnnunciatorState {
   readonly firstOut: boolean
 }
 
-/** Each annunciator system's share of the active alarms, in the order the model declares the systems. */
+/** Each annunciator system's share of the active alarms, in the order the model declares the systems; first out only as its group scopes it (firstOutFlag). */
 export const annunciatorStates = (
   systems: ReadonlyArray<{ readonly id: string; readonly name: string; readonly ruleIds: ReadonlyArray<string> }>,
   alarms: ReadonlyArray<ComposedDisplayAlarm>,
+  annunciation: Pick<DisplayAnnunciation, 'firstOutGroups'>,
 ): ReadonlyArray<AnnunciatorState> => systems.map(system => {
   const rules = new Set(system.ruleIds)
   const active = alarms.filter(alarm => alarm.active && rules.has(alarm.ruleId))
@@ -96,6 +129,6 @@ export const annunciatorStates = (
     unacknowledged: active.filter(alarm => !alarm.acknowledged).length,
     severity: worst?.severity ?? null,
     trip: active.some(alarm => alarm.kind === 'trip'),
-    firstOut: active.some(alarm => alarm.firstOut),
+    firstOut: active.some(alarm => firstOutFlag(alarm, annunciation) !== null),
   }
 })

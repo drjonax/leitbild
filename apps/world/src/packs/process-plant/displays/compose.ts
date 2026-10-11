@@ -47,7 +47,7 @@ import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
 import { principalCircuits } from './mimic/principal.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, type PlantNow } from './overview-key-values.ts'
-import { annunciatorSystems, type AnnunciatorSystem } from './annunciators.ts'
+import { annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
 import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
 import {
@@ -170,6 +170,8 @@ export interface CompiledComposedDisplay {
   readonly modelDigest: string
   readonly height: number
   readonly panels: ReadonlyArray<CompiledComposedPanel>
+  /** How its banner, actuation line and alarm rows name what the Plant's alarms and trips do. */
+  readonly annunciation: DisplayAnnunciation
 }
 
 export interface ComposedDisplayIssue {
@@ -771,6 +773,7 @@ export const compileComposedDisplay = (
       modelDigest: system.plant.modelDigest,
       height: fit.height,
       panels: compiled.map(panel => panel.kind === 'alarms' ? { ...panel, ruleIds } : panel),
+      annunciation: displayAnnunciation(system.plant),
     },
   }
 }
@@ -944,6 +947,7 @@ const generatedDisplay = (
     modelDigest: system.plant.modelDigest,
     height: overviewHeight(fitted.arrangement, fitted.panels, fitted.mimic, width),
     panels: [...shown, alarms(shown)],
+    annunciation: displayAnnunciation(system.plant),
   }
 }
 

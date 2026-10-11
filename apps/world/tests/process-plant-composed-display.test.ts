@@ -3,6 +3,7 @@ import { embeddedViewContentSchema, embeddedViewPublicationSchema } from '@leitb
 import type { IsoTimestamp } from '../src/core/model/index.ts'
 import {
   answerProcessPlantQuery,
+  commandsForProcessPlantAction,
   compileProcessPlant,
   createProcessPlantProtectionRunner,
   createProcessPlantRampRunner,
@@ -19,6 +20,8 @@ import { composedDisplayStateSchema } from '../src/packs/process-plant/displays/
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { createRunHistorian, recordedHistoryOf } from '../src/features/historian/store.ts'
+import { displayAnnunciation } from '../src/packs/process-plant/displays/annunciators.ts'
+import { actuatedNames, bannerTrip, firstOutFlag } from '../src/ui/embed/composed-display/panel-presenters.ts'
 
 const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:composed-display', loopCount: 4 }))
 const runtime = createProcessPlantRuntime({ system: compiled })
@@ -726,5 +729,64 @@ describe('a display shows what its question is about', () => {
     const message = rejectionOf(() => ask('world.process-plant.display.compose', display(['auxiliary feedwater'], [trendOf('core.powerMw')])))
     expect(message).toContain('subjects.0: "auxiliary feedwater" names no signal, equipment, service or loop of this Plant')
     expect(message).toContain('auxFeedwater')
+  })
+})
+
+describe('what a display\'s banner, actuation line and alarm rows name', () => {
+  const annunciation = displayAnnunciation(compiled)
+
+  test('come from the first-out groups and limits the I&C declares, never from ids or titles', () => {
+    expect(annunciation.reactorTrip?.name).toBe('RX TRIP')
+    expect(annunciation.reactorTrip?.ruleIds).toEqual(expect.arrayContaining(['sg-b-level-low-low-reactor-trip', 'reactor-overtemperature-delta-t-trip']))
+    // The AFW start and SI are actuations, never the reactor trip.
+    expect(annunciation.reactorTrip?.ruleIds).not.toContain('sg-b-level-low-low-afw-actuation')
+    expect(annunciation.reactorTrip?.ruleIds).not.toContain('safety-injection-low-pzr-pressure')
+    expect(annunciation.actuations.find(actuation => actuation.name === 'SI')?.ruleIds).toEqual(['safety-injection-low-pzr-pressure'])
+    // An actuation whose rule names no group yet is listed by its trip's own title.
+    expect(annunciation.actuations.find(actuation => actuation.ruleIds.includes('sg-b-level-low-low-afw-actuation'))?.name).toBe('Steam generator B low-low level')
+    // Alarm rows are tagged as chips, badges and trend lines name their limits.
+    expect([
+      annunciation.tags['sg-b-level-low-low-reactor-trip'],
+      annunciation.tags['safety-injection-low-pzr-pressure'],
+      annunciation.tags['pzr-pressure-low'],
+      annunciation.tags['reactor-overtemperature-delta-t-trip'],
+      annunciation.tags['loss-of-offsite-power'],
+      annunciation.tags['safety-bus-a-loss-alarm'],
+    ]).toEqual(['LO-LO · RX TRIP', 'LO-LO · SI', 'LO · ALM', 'RX TRIP', 'LO-LO · ALM', 'ALM'])
+    const annunciated = compiled.automation.rules.filter(rule => rule.enabled && rule.effects.some(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter'))
+    expect(annunciated.every(rule => annunciation.tags[rule.id] !== undefined)).toBe(true)
+    // First out is flagged only within a group of more than one rule: never for SI, alone in its group.
+    expect(annunciation.firstOutGroups['reactor-overtemperature-delta-t-trip']).toBe('RX TRIP')
+    expect(annunciation.firstOutGroups['safety-injection-low-pzr-pressure']).toBeUndefined()
+  })
+
+  test('a loss of main feedwater leads with the reactor trip\'s first-out, the actuations apart from it', () => {
+    // Evaluation run 22: the banner read "TRIP · Auxiliary feedwater start on main feedwater pump trip"
+    // while the reactor trip's first-out sat in the alarm list.
+    const lost = createProcessPlantRuntime({ system: compiled })
+    const protection = createProcessPlantProtectionRunner({ system: compiled, protection: compiled.automation })
+    const step = () => {
+      lost.tick(1_000)
+      protection.evaluate({ runtime: lost, elapsedMs: lost.elapsedMs(), simulationRunId: 'run-banner' as never, sourceRuntimeId: 'process-plant.local' })
+    }
+    for (let second = 0; second < 5; second += 1) step()
+    for (const command of commandsForProcessPlantAction({ actionId: 'loss-main-feedwater', parameters: {}, graph: compiled.graph })) lost.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    for (let second = 0; second < 120; second += 1) step()
+    const snapshot = protection.snapshot()
+    const alarms = [...snapshot.alarms, ...snapshot.trips].filter(lifecycle => lifecycle.active).map(lifecycle => ({
+      id: lifecycle.id, ruleId: lifecycle.ruleId, kind: lifecycle.kind, title: lifecycle.title, severity: lifecycle.severity,
+      active: lifecycle.active, acknowledged: lifecycle.acknowledged, firstOut: lifecycle.firstOut,
+      ...(lifecycle.firstActiveElapsedMs === undefined ? {} : { firstActiveElapsedMs: lifecycle.firstActiveElapsedMs }),
+    }))
+    // The earliest trip of any kind is the AFW start on the feed pumps' trip; the banner names the reactor trip.
+    const earliest = [...alarms].filter(alarm => alarm.kind === 'trip').sort((left, right) => left.firstActiveElapsedMs! - right.firstActiveElapsedMs!)[0]!
+    expect(earliest.ruleId).toBe('main-feedwater-pumps-tripped-afw-start')
+    const banner = bannerTrip(alarms, annunciation)!
+    expect(banner.ruleId).toMatch(/^sg-[a-d]-level-low-low-reactor-trip$/)
+    expect(banner.firstOut).toBe(true)
+    expect(firstOutFlag(banner, annunciation)).toBe('1st RX TRIP')
+    const actuated = actuatedNames(alarms, annunciation)
+    expect(actuated).toContain('Auxiliary feedwater start on main feedwater pump trip')
+    expect(actuated.some(name => name.includes('Reactor trip'))).toBe(false)
   })
 })

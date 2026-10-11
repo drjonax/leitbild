@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
 import { limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
-import { agoText, alarmAge, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates } from '../src/ui/embed/composed-display/panel-presenters.ts'
+import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { activeThreshold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { formatQuantity, formatValue, limitKindName, marginText, marginTextForms, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
 import { modesShortText, orderLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
@@ -180,14 +180,45 @@ describe('composed display panel presenters', () => {
       { id: 'c', ruleId: 'other', kind: 'alarm', title: 'Other', severity: 'critical', active: true, acknowledged: false, firstOut: false },
       { id: 'd', ruleId: 'sg-b-feedwater-low', kind: 'alarm', title: 'SG B feed low', severity: 'warning', active: true, acknowledged: false, firstOut: false, firstActiveElapsedMs: 50_000 },
     ]
-    expect(visibleAlarms(alarms, 'related', ['sg-b-level-low', 'sg-b-level-low-low', 'sg-b-feedwater-low']).map(alarm => alarm.id)).toEqual(['b', 'd', 'a'])
+    const groups = { firstOutGroups: { 'sg-b-level-low-low': 'RX TRIP', 'sg-c-level-low-low': 'RX TRIP' } }
+    expect(visibleAlarms(alarms, 'related', ['sg-b-level-low', 'sg-b-level-low-low', 'sg-b-feedwater-low'], groups).map(alarm => alarm.id)).toEqual(['b', 'd', 'a'])
     const plant: ReadonlyArray<ComposedDisplayAlarm> = [
       { id: 'cleared', ruleId: 'r1', kind: 'alarm', title: 'Cleared', severity: 'critical', active: false, acknowledged: false, firstOut: false, firstActiveElapsedMs: 1_000 },
       { id: 'critical', ruleId: 'r2', kind: 'alarm', title: 'Critical', severity: 'critical', active: true, acknowledged: true, firstOut: false, firstActiveElapsedMs: 2_000 },
       { id: 'trip', ruleId: 'r3', kind: 'trip', title: 'Trip', severity: 'warning', active: true, acknowledged: true, firstOut: false, firstActiveElapsedMs: 3_000 },
     ]
-    expect(visibleAlarms(plant, 'plant', []).map(alarm => alarm.id)).toEqual(['trip', 'critical', 'cleared'])
-    expect(visibleAlarms(alarms, 'plant', []).map(alarm => alarm.id)).toEqual(['b', 'c', 'd', 'a'])
+    expect(visibleAlarms(plant, 'plant', [], groups).map(alarm => alarm.id)).toEqual(['trip', 'critical', 'cleared'])
+    expect(visibleAlarms(alarms, 'plant', [], groups).map(alarm => alarm.id)).toEqual(['b', 'c', 'd', 'a'])
+    // First out of a group of one says nothing: it is not read first.
+    const flagged = alarms.map(alarm => alarm.id === 'a' ? { ...alarm, firstOut: true } : alarm)
+    expect(visibleAlarms(flagged, 'plant', [], { firstOutGroups: {} }).map(alarm => alarm.id)).toEqual(['b', 'c', 'd', 'a'])
+    expect(visibleAlarms(flagged, 'plant', [], { firstOutGroups: { 'sg-b-level-low': 'SG LO' } }).map(alarm => alarm.id)).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  test('the banner leads with the reactor trip\'s first-out, and lists the other actuations apart from it', () => {
+    // Evaluation run 22, loss of main feedwater: the AFW start came in first; the reactor tripped on SG B low-low level.
+    const trip = (id: string, ruleId: string, at: number, firstOut: boolean): ComposedDisplayAlarm =>
+      ({ id, ruleId, kind: 'trip', title: id, severity: 'critical', active: true, acknowledged: false, firstOut, firstActiveElapsedMs: at })
+    const alarms = [
+      trip('Steam generator B low-low level', 'sg-b-afw', 60_000, false),
+      trip('Auxiliary feedwater start on main feedwater pump trip', 'mfw-afw', 3_000, false),
+      trip('Reactor trip on steam generator B low-low level', 'sg-b-rx-trip', 61_000, true),
+      trip('Feedwater isolation on reactor trip, low Tavg', 'fwi', 75_000, false),
+      { ...trip('Safety injection actuated', 'si', 90_000, true), active: false },
+    ]
+    const annunciation = {
+      reactorTrip: { name: 'RX TRIP', ruleIds: ['sg-a-rx-trip', 'sg-b-rx-trip', 'otdt'] },
+      actuations: [{ name: 'AFW', ruleIds: ['sg-a-afw', 'sg-b-afw', 'mfw-afw'] }, { name: 'SI', ruleIds: ['si'] }, { name: 'FWI', ruleIds: ['fwi'] }],
+      firstOutGroups: { 'sg-a-rx-trip': 'RX TRIP', 'sg-b-rx-trip': 'RX TRIP', otdt: 'RX TRIP' },
+      tags: {},
+    }
+    expect(bannerTrip(alarms, annunciation)?.title).toBe('Reactor trip on steam generator B low-low level')
+    expect(actuatedNames(alarms, annunciation)).toEqual(['AFW', 'FWI'])
+    // Without a reactor trip, nothing leads the banner; the actuations still show.
+    expect(bannerTrip(alarms.filter(alarm => alarm.ruleId !== 'sg-b-rx-trip'), annunciation)).toBeUndefined()
+    // First out names its group, and only where the group has more than one rule.
+    expect(firstOutFlag(alarms[2]!, annunciation)).toBe('1st RX TRIP')
+    expect(firstOutFlag({ ruleId: 'si', firstOut: true }, annunciation)).toBeNull()
   })
 
   test('alarm age in Plant time', () => {
@@ -280,12 +311,12 @@ describe('annunciator tiles', () => {
     const systems = [{ id: 'steamGenerators', name: 'Steam generators', ruleIds: ['sg-a-low', 'sg-b-low'] }, { id: 'electrical', name: 'Electrical', ruleIds: ['bus-a-dead'] }, { id: 'containment', name: 'Containment', ruleIds: ['ctmt-high'] }]
     const states = annunciatorStates(systems, [
       alarm('sg-a-low', 'warning'),
-      alarm('sg-b-low', 'critical', { acknowledged: false }),
+      alarm('sg-b-low', 'critical', { acknowledged: false, firstOut: true }),
       alarm('bus-a-dead', 'notice', { kind: 'trip', firstOut: true }),
       alarm('not-annunciated', 'critical'),
       // Cleared but unacknowledged: listed, not counted as active.
       alarm('ctmt-high', 'critical', { active: false, acknowledged: false }),
-    ])
+    ], { firstOutGroups: { 'bus-a-dead': 'BUS DEAD', 'bus-b-dead': 'BUS DEAD' } })
     expect(states).toEqual([
       { id: 'steamGenerators', name: 'Steam generators', active: 2, unacknowledged: 1, severity: 'critical', trip: false, firstOut: false },
       { id: 'electrical', name: 'Electrical', active: 1, unacknowledged: 0, severity: 'notice', trip: true, firstOut: true },
