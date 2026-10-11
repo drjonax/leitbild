@@ -163,12 +163,15 @@ describe('Integration — Full message lifecycle', () => {
 
     const capturedContexts: Array<ReadonlyArray<{ role: string; content: string }>> = []
     let callCount = 0
+    const atModel = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
     const provider: LLMProvider = {
       chat: async (req) => {
         callCount++
         capturedContexts.push(req.messages)
         if (callCount === 1) {
-          await new Promise(r => setTimeout(r, 50))
+          atModel.resolve()
+          await release.promise
         }
         return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }] }
       },
@@ -190,8 +193,8 @@ describe('Integration — Full message lifecycle', () => {
       { senderId: 'alice', content: 'msg-1', type: 'chat' },
     )
 
-    // Wait for eval to start, then send more
-    await new Promise(r => setTimeout(r, 10))
+    // Wait for eval to reach the model, then send more
+    await atModel.promise
     routeMessage(
       { rooms: [intro.profile.id] },
       { senderId: 'bob', content: 'msg-2', type: 'chat' },
@@ -200,6 +203,7 @@ describe('Integration — Full message lifecycle', () => {
       { rooms: [intro.profile.id] },
       { senderId: 'charlie', content: 'msg-3', type: 'chat' },
     )
+    release.resolve()
 
     await agent.whenIdle()
 
@@ -223,12 +227,15 @@ describe('Integration — Full message lifecycle', () => {
 
     let callCount = 0
     const capturedContexts: Array<ReadonlyArray<{ role: string; content: string }>> = []
+    const atModel = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
     const provider: LLMProvider = {
       chat: async (req) => {
         callCount++
         capturedContexts.push(req.messages)
         if (callCount === 1) {
-          await new Promise(r => setTimeout(r, 50))
+          atModel.resolve()
+          await release.promise
           return { content: 'I see msg-1.', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 } }
         }
         return { content: '', generationMs: 10, tokensUsed: { prompt: 10, completion: 5 }, toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }] }
@@ -259,11 +266,12 @@ describe('Integration — Full message lifecycle', () => {
     )
 
     // Second message during eval → triggers re-eval after first completes
-    await new Promise(r => setTimeout(r, 10))
+    await atModel.promise
     routeMessage(
       { rooms: [intro.profile.id] },
       { senderId: 'bob', content: 'msg-2', type: 'chat' },
     )
+    release.resolve()
 
     await agent.whenIdle()
 
@@ -532,8 +540,10 @@ describe('Integration — Full message lifecycle', () => {
 
     const states: Array<{ state: string; context?: string }> = []
     let resolveChat: (() => void) | null = null
+    const atModel = Promise.withResolvers<void>()
     const provider: LLMProvider = {
       chat: () => new Promise(resolve => {
+        atModel.resolve()
         resolveChat = () => resolve({
           content: '',
           toolCalls: [{ function: { name: 'pass', arguments: { reason: 'done' } } }],
@@ -559,7 +569,7 @@ describe('Integration — Full message lifecycle', () => {
     expect(agent.state.get()).toBe('idle')
 
     routeMessage({ rooms: [intro.profile.id] }, { senderId: 'alice', content: 'Hi', type: 'chat' })
-    await new Promise(r => setTimeout(r, 10))
+    await atModel.promise
 
     expect(agent.state.get()).toBe('generating')
     expect(states).toHaveLength(1)
