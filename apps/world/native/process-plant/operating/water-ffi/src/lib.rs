@@ -65,6 +65,8 @@ unsafe extern "C" {
         temperature_k: f64,
         output: *mut WaterPoint,
     ) -> i32;
+    fn ld01_water_complete(caloric: *const WaterPoint, fields: i32, output: *mut WaterPoint)
+    -> i32;
     fn ld01_water_direction(
         branch: i32,
         pressure_pa: f64,
@@ -75,6 +77,20 @@ unsafe extern "C" {
         direction: *mut WaterPoint,
     ) -> i32;
     fn ld01_water_direction_held(
+        branch: i32,
+        held: *const WaterPoint,
+        pressure_direction: f64,
+        temperature_direction: f64,
+        direction: *mut WaterPoint,
+    ) -> i32;
+    fn ld01_water_fields(
+        branch: i32,
+        pressure_pa: f64,
+        temperature_k: f64,
+        fields: i32,
+        output: *mut WaterPoint,
+    ) -> i32;
+    fn ld01_water_direction_exact(
         branch: i32,
         held: *const WaterPoint,
         pressure_direction: f64,
@@ -124,7 +140,8 @@ pub fn point(branch: Branch, pressure_pa: f64, temperature_k: f64) -> Result<Wat
 /// iterates only: the same branch, domain and region checks and bit-identical
 /// rho/u/h/cp/alpha, the fields that inverse reads. Entropy, cv, sound speed,
 /// compressibility, transport and the p-only saturation slope are not
-/// evaluated; their fields are NaN. Never returned to a caller.
+/// evaluated; their fields are NaN. Never returned to a caller: the inverse
+/// returns `complete` of the selected state.
 fn caloric_state(
     branch: Branch,
     pressure_pa: f64,
@@ -143,6 +160,116 @@ fn caloric_state(
         4 => Err(Error::TrialBand),
         _ => Err(Error::NativeFailure),
     }
+}
+
+/// Fields the native completion adds to a caloric state, by bit (the
+/// bridge's `FIELD_*`): cv, compressibility, viscosity, conductivity and the
+/// saturation slope.
+const FIELD_CV: i32 = 1;
+const FIELD_KAPPA: i32 = 2;
+const FIELD_MU: i32 = 4;
+const FIELD_K: i32 = 8;
+const FIELD_SLOPE: i32 = 16;
+const FIELDS_ALL: i32 = FIELD_CV | FIELD_KAPPA | FIELD_MU | FIELD_K | FIELD_SLOPE;
+
+/// `point(branch, p, T)` from `caloric_state(branch, p, T)`'s own output,
+/// without evaluating its caloric fields again: the native boundary adds
+/// cv, compressibility, transport and the saturation slope to the held
+/// state. Only a state this boundary's `caloric_state` returned is passed.
+fn complete(caloric: &WaterPoint) -> Result<WaterPoint, Error> {
+    complete_fields(caloric, FIELDS_ALL)
+}
+
+/// The same completion restricted to `fields`; unrequested fields are NaN.
+fn complete_fields(caloric: &WaterPoint, fields: i32) -> Result<WaterPoint, Error> {
+    let mut output = WaterPoint::default();
+    // SAFETY: `caloric` is a live shared C-layout tuple that C only reads
+    // during the call; `output` is a unique live stack allocation written
+    // completely on success. Nothing is retained; C catches every exception.
+    let status = unsafe { ld01_water_complete(caloric, fields, &mut output) };
+    match status {
+        0 => Ok(output),
+        1 => Err(Error::Domain),
+        2 => Err(Error::AbiArgument),
+        _ => Err(Error::NativeFailure),
+    }
+}
+
+/// `point(branch, p, T)` with only `fields` evaluated beyond the caloric
+/// state: the same branch, domain and region checks and status codes.
+fn point_fields(branch: Branch, p: f64, t: f64, fields: i32) -> Result<WaterPoint, Error> {
+    let mut output = WaterPoint::default();
+    // SAFETY: the same C-layout contract as `point`: a unique live stack
+    // allocation, completely written on success and retained nowhere; the
+    // native function catches every C++ exception.
+    let status = unsafe { ld01_water_fields(branch as i32, p, t, fields, &mut output) };
+    match status {
+        0 => Ok(output),
+        1 => Err(Error::Domain),
+        2 => Err(Error::AbiArgument),
+        4 => Err(Error::TrialBand),
+        _ => Err(Error::NativeFailure),
+    }
+}
+
+/// The exact part of `directional_held(branch, held, dp, dt)`: p, T, rho, u
+/// and h bit for bit, every other field NaN; no coefficient probe.
+fn exact_held(branch: Branch, held: &WaterPoint, dp: f64, dt: f64) -> Result<WaterPoint, Error> {
+    let mut direction = WaterPoint::default();
+    // SAFETY: `held` is a live shared C-layout tuple that C only reads;
+    // `direction` is a unique live stack allocation written on success.
+    // Nothing is retained; the native function catches errors.
+    let status = unsafe { ld01_water_direction_exact(branch as i32, held, dp, dt, &mut direction) };
+    match status {
+        0 => Ok(direction),
+        1 => Err(Error::Domain),
+        2 => Err(Error::AbiArgument),
+        _ => Err(Error::NativeFailure),
+    }
+}
+
+/// The saturated liquid and vapor endpoints at `p` with their exact
+/// directions along `dp`: temperature, density and enthalpy bit for bit
+/// those of `directional(Saturated*, p, 0, dp, 0)`. Transport, cv, cp and
+/// expansion directions are not evaluated (NaN), and no coefficient probe is
+/// made. At a seed of exactly +0.0 those three directions are +0.0 (the
+/// exact directions are products of the seed with the finite positive
+/// slope, compressibility, density and cp), so the endpoint needs neither its
+/// compressibility nor its slope, and every other direction is NaN.
+pub fn saturation_caloric(p: f64, dp: f64) -> Result<[(WaterPoint, WaterPoint); 2], Error> {
+    if !dp.is_finite() {
+        return Err(Error::AbiArgument);
+    }
+    let value_only = dp.to_bits() == 0;
+    let endpoint = |branch: Branch| -> Result<(WaterPoint, WaterPoint), Error> {
+        if value_only {
+            let q = point_fields(branch, p, 0., 0)?;
+            let n = f64::NAN;
+            let zero = WaterPoint {
+                region: q.region,
+                pressure_pa: 0.,
+                temperature_k: 0.,
+                density_kg_m3: 0.,
+                internal_energy_j_kg: n,
+                enthalpy_j_kg: 0.,
+                cp_j_kg_k: n,
+                cv_j_kg_k: n,
+                expansion_per_k: n,
+                compressibility_per_pa: n,
+                viscosity_pa_s: n,
+                conductivity_w_m_k: n,
+                saturation_slope_k_pa: n,
+                saturation_departure_k: n,
+            };
+            return Ok((q, zero));
+        }
+        let q = point_fields(branch, p, 0., FIELD_KAPPA | FIELD_SLOPE)?;
+        Ok((q, exact_held(branch, &q, dp, 0.)?))
+    };
+    Ok([
+        endpoint(Branch::SaturatedLiquid)?,
+        endpoint(Branch::SaturatedVapor)?,
+    ])
 }
 
 /// Exact rho/u/h directional response; disclosed same-branch second-order
@@ -208,6 +335,11 @@ pub fn point_ph(branch: Branch, p: f64, h: f64) -> Result<WaterPoint, Error> {
     CaloricLinearization::enthalpy(branch, p, h).map(|q| q.point())
 }
 
+/// Fields the thermodynamics-only inverse adds to the caloric state:
+/// compressibility and viscosity. cv, conductivity and the saturation slope
+/// are not evaluated.
+const FIELDS_THERMODYNAMIC: i32 = FIELD_KAPPA | FIELD_MU;
+
 /// One immutable, successfully recovered caloric point. A Jacobian may reuse
 /// this point for directions at EXACTLY its pressure and specific energy;
 /// callers must construct another point when either value or branch changes.
@@ -218,26 +350,89 @@ pub struct CaloricLinearization {
     branch: Branch,
     kind: Caloric,
     point: WaterPoint,
+    /// FIELD_* bits evaluated beyond the caloric state.
+    fields: i32,
 }
 impl CaloricLinearization {
     pub fn internal_energy(branch: Branch, p: f64, u: f64) -> Result<Self, Error> {
-        Self::new(branch, p, u, Caloric::Internal)
+        Self::new(branch, p, u, Caloric::Internal, FIELDS_ALL)
     }
 
     pub fn enthalpy(branch: Branch, p: f64, h: f64) -> Result<Self, Error> {
-        Self::new(branch, p, h, Caloric::Enthalpy)
+        Self::new(branch, p, h, Caloric::Enthalpy, FIELDS_ALL)
     }
 
-    fn new(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<Self, Error> {
+    /// The same inverse (the same iterates and selected state) evaluating
+    /// only the thermodynamic fields and viscosity: in `point()`, cv,
+    /// conductivity and the saturation slope are NaN, never zero. Every
+    /// evaluated field is bit for bit the complete inverse's.
+    pub fn thermodynamic(
+        branch: Branch,
+        p: f64,
+        target: f64,
+        enthalpy: bool,
+    ) -> Result<Self, Error> {
+        let kind = if enthalpy {
+            Caloric::Enthalpy
+        } else {
+            Caloric::Internal
+        };
+        Self::new(branch, p, target, kind, FIELDS_THERMODYNAMIC)
+    }
+
+    fn new(branch: Branch, p: f64, target: f64, kind: Caloric, fields: i32) -> Result<Self, Error> {
         Ok(Self {
             branch,
             kind,
-            point: invert_caloric(branch, p, target, kind)?,
+            point: invert_caloric(branch, p, target, kind, fields)?,
+            fields,
         })
     }
 
     pub fn point(self) -> WaterPoint {
         self.point
+    }
+
+    /// Whether every field is evaluated.
+    pub fn is_complete(self) -> bool {
+        self.fields == FIELDS_ALL
+    }
+
+    /// This point with every field evaluated: bit for bit the complete
+    /// inverse's point for the same inputs, from the held caloric state
+    /// without inverting again.
+    pub fn completed(self) -> Result<Self, Error> {
+        if self.is_complete() {
+            return Ok(self);
+        }
+        Ok(Self {
+            point: complete(&self.point)?,
+            fields: FIELDS_ALL,
+            ..self
+        })
+    }
+
+    /// The exact thermodynamic part of `directional`: temperature, density,
+    /// internal energy and enthalpy bit for bit, without the coefficient
+    /// probes; it needs only the thermodynamic fields.
+    pub fn exact_directional(self, dp: f64, dtarget: f64) -> Result<[f64; 4], Error> {
+        if !dp.is_finite() || !dtarget.is_finite() {
+            return Err(Error::Domain);
+        }
+        if dp == 0. && dtarget == 0. {
+            return Ok([0.; 4]);
+        }
+        let (up, ut) = self.kind.partials(self.point);
+        if !ut.is_finite() || ut <= 0. {
+            return Err(Error::NativeFailure);
+        }
+        let d = exact_held(self.branch, &self.point, dp, (dtarget - up * dp) / ut)?;
+        Ok([
+            d.temperature_k,
+            d.density_kg_m3,
+            d.internal_energy_j_kg,
+            d.enthalpy_j_kg,
+        ])
     }
 
     /// Same implicit caloric tangent and native coefficient probes as the
@@ -250,13 +445,15 @@ impl CaloricLinearization {
         if dp == 0. && dtarget == 0. {
             return Ok(WaterPoint::default());
         }
-        let (up, ut) = self.kind.partials(self.point);
+        // The coefficient probes may read the held point's every field.
+        let held = self.completed()?;
+        let (up, ut) = held.kind.partials(held.point);
         if !ut.is_finite() || ut <= 0. {
             return Err(Error::NativeFailure);
         }
         // The held point is the forward point at exactly (branch, its p, its
         // T), the saturated-endpoint bracket included, so it is not repeated.
-        directional_held(self.branch, &self.point, dp, (dtarget - up * dp) / ut)
+        directional_held(held.branch, &held.point, dp, (dtarget - up * dp) / ut)
     }
 
     /// The accepted point's band report on its requested branch.
@@ -323,7 +520,13 @@ fn branch_ends(branch: Branch, p: f64) -> Result<(End, Option<f64>), Error> {
     Ok(((stable, stable_t), (!trial_t.is_nan()).then_some(trial_t)))
 }
 
-fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<WaterPoint, Error> {
+fn invert_caloric(
+    branch: Branch,
+    p: f64,
+    target: f64,
+    kind: Caloric,
+    fields: i32,
+) -> Result<WaterPoint, Error> {
     if !target.is_finite() {
         return Err(Error::Domain);
     }
@@ -338,8 +541,9 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
         _ => (stable, (branch, 1073.15)),
     };
     // Brackets and iterates read only the caloric state. The returned state is
-    // the complete forward point at the selected temperature, so the iteration
-    // path and every returned field are those of full-point queries.
+    // the complete forward point at the selected temperature, completed from
+    // the caloric state already evaluated there, so the iteration path and
+    // every returned field are those of full-point queries.
     let low = caloric_state(low_end.0, p, low_end.1)?;
     let high = caloric_state(high_end.0, p, high_end.1)?;
     // Beyond the stable end the target can only be a metastable state of the
@@ -357,6 +561,7 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
                 p,
                 target,
                 kind,
+                fields,
                 (high_end, high),
                 ((branch, trial), top),
             );
@@ -372,6 +577,7 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
                 p,
                 target,
                 kind,
+                fields,
                 ((branch, trial), bottom),
                 (low_end, low),
             );
@@ -381,23 +587,34 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
     if target < kind.value(low) || target > kind.value(high) {
         return Err(Error::Domain);
     }
-    newton(branch, p, target, kind, (low_end, low), (high_end, high))
+    newton(
+        branch,
+        p,
+        target,
+        kind,
+        fields,
+        (low_end, low),
+        (high_end, high),
+    )
 }
 
 /// Safeguarded Newton inside one bracket whose ends were evaluated as given.
+/// The returned point is the forward point at the selected end or
+/// temperature, completed with `fields` from the caloric state evaluated there.
 fn newton(
     branch: Branch,
     p: f64,
     target: f64,
     kind: Caloric,
-    (low_end, mut low): (End, WaterPoint),
-    (high_end, mut high): (End, WaterPoint),
+    fields: i32,
+    (_, mut low): (End, WaterPoint),
+    (_, mut high): (End, WaterPoint),
 ) -> Result<WaterPoint, Error> {
     if target == kind.value(low) {
-        return point(low_end.0, p, low_end.1);
+        return complete_fields(&low, fields);
     }
     if target == kind.value(high) {
-        return point(high_end.0, p, high_end.1);
+        return complete_fields(&high, fields);
     }
     let mut t = low.temperature_k
         + (high.temperature_k - low.temperature_k) * (target - kind.value(low))
@@ -416,7 +633,7 @@ fn newton(
         // An arbitrary EOS datum can make target U zero without making the
         // attainable numerical precision or the heat capacity zero.
         if defect.abs() <= 2e-12 * target.abs().max(ut * q.temperature_k).max(1.) {
-            return point(branch, p, t);
+            return complete_fields(&q, fields);
         }
         if defect < 0. {
             low = q;
@@ -537,7 +754,7 @@ fn directional_caloric(
     if !dp.is_finite() || !dtarget.is_finite() {
         return Err(Error::Domain);
     }
-    let q = CaloricLinearization::new(branch, p, target, kind)?;
+    let q = CaloricLinearization::new(branch, p, target, kind, FIELDS_ALL)?;
     Ok((q.point(), q.directional(dp, dtarget)?))
 }
 

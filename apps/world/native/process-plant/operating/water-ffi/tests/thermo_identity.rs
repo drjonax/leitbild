@@ -741,3 +741,175 @@ fn prepared_network_residual_cost() {
         })
     );
 }
+
+/// The caloric saturation tuple (`saturation_caloric`) is the complete
+/// tuple's temperature, densities and enthalpies with their directions, bit
+/// for bit, and refuses exactly where it refuses; every other field is NaN.
+#[test]
+fn caloric_saturation_is_the_complete_tuple_bit_for_bit() {
+    let mut pressures = pressures();
+    pressures.extend([
+        f64::NAN,
+        -1.,
+        0.,
+        5e4,
+        1e5f64.next_down(),
+        16.6e6,
+        17e6,
+        23e6,
+    ]);
+    let mut compared = 0;
+    for &p in &pressures {
+        for dp in [0., -0., 1., 1e4, -3e4, f64::NAN] {
+            let complete = Properties::saturation(&If97, Scalar::new(p, dp));
+            let caloric = If97.saturation_caloric(Scalar::new(p, dp));
+            match (complete, caloric) {
+                (Ok(a), Ok(b)) => {
+                    let pairs = [
+                        (a.temperature, b.temperature),
+                        (a.liquid.density, b.liquid.density),
+                        (a.liquid.enthalpy, b.liquid.enthalpy),
+                        (a.vapor.density, b.vapor.density),
+                        (a.vapor.enthalpy, b.vapor.enthalpy),
+                    ];
+                    for (x, y) in pairs {
+                        assert_eq!(
+                            [x.value.to_bits(), x.direction.to_bits()],
+                            [y.value.to_bits(), y.direction.to_bits()],
+                            "p={p:e} dp={dp:e}"
+                        );
+                    }
+                    for x in [
+                        b.liquid.cp,
+                        b.liquid.expansion,
+                        b.liquid.viscosity,
+                        b.liquid.conductivity,
+                        b.vapor.cp,
+                        b.vapor.viscosity,
+                        b.surface_tension,
+                    ] {
+                        assert!(x.value.is_nan() && x.direction.is_nan());
+                    }
+                    compared += 1;
+                }
+                (Err(_), Err(_)) => {}
+                (a, b) => panic!("p={p:e} dp={dp:e}: {:?} versus {:?}", a.is_ok(), b.is_ok()),
+            }
+        }
+    }
+    assert!(compared > 800, "{compared}");
+}
+
+/// Probe-free thermodynamic partials are the exact fields of `partials`, bit
+/// for bit, at complete and at thermodynamics-only held points alike, and the
+/// thermodynamics-only inverse's evaluated fields are the complete inverse's.
+#[test]
+fn thermodynamic_partials_are_the_exact_fields_of_partials() {
+    let mut state = 0x5EED_0003;
+    let mut compared = 0;
+    for &p in &pressures() {
+        for branch in [Branch::Liquid, Branch::Vapor] {
+            for kind in [Kind::Internal, Kind::Enthalpy] {
+                for target in targets(branch, kind, p, &mut state) {
+                    let enthalpy = matches!(kind, Kind::Enthalpy);
+                    let complete = kind.recover(branch, p, target);
+                    let thermo = CaloricLinearization::thermodynamic(branch, p, target, enthalpy);
+                    let (Ok(c), Ok(t)) = (complete, thermo) else {
+                        assert_eq!(complete.is_ok(), thermo.is_ok(), "p={p:e} t={target:e}");
+                        continue;
+                    };
+                    let (a, b) = (c.point(), t.point());
+                    for (x, y) in [
+                        (a.temperature_k, b.temperature_k),
+                        (a.density_kg_m3, b.density_kg_m3),
+                        (a.internal_energy_j_kg, b.internal_energy_j_kg),
+                        (a.enthalpy_j_kg, b.enthalpy_j_kg),
+                        (a.cp_j_kg_k, b.cp_j_kg_k),
+                        (a.expansion_per_k, b.expansion_per_k),
+                        (a.compressibility_per_pa, b.compressibility_per_pa),
+                        (a.viscosity_pa_s, b.viscosity_pa_s),
+                    ] {
+                        assert_eq!(x.to_bits(), y.to_bits(), "p={p:e} t={target:e}");
+                    }
+                    assert!(b.conductivity_w_m_k.is_nan() && b.cv_j_kg_k.is_nan());
+                    assert_eq!(
+                        bits(t.completed().unwrap().point()),
+                        bits(a),
+                        "completion p={p:e} t={target:e}"
+                    );
+                    for held in [c, t] {
+                        let Ok(full) = If97.partials(&held) else {
+                            continue;
+                        };
+                        let exact = If97.thermodynamic_partials(&held).unwrap();
+                        for (w, e) in [(full.pressure, exact.pressure), (full.target, exact.target)]
+                        {
+                            for (x, y) in [
+                                (w.temperature_k, e.temperature_k),
+                                (w.density_kg_m3, e.density_kg_m3),
+                                (w.internal_energy_j_kg, e.internal_energy_j_kg),
+                                (w.enthalpy_j_kg, e.enthalpy_j_kg),
+                            ] {
+                                assert_eq!(x.to_bits(), y.to_bits(), "p={p:e} t={target:e}");
+                            }
+                        }
+                        // A pure function of the held point.
+                        assert_eq!(
+                            format!("{:?}", If97.partials(&held).unwrap()),
+                            format!("{full:?}")
+                        );
+                        compared += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(compared > 80_000, "{compared}");
+}
+
+/// What `properties::Shared` and the value-only caloric tuple rely on: at a
+/// +0.0 pressure seed the complete tuple's exact directions (T, densities,
+/// enthalpies, computed by the bridge's Gibbs identities) are +0.0, and the
+/// caloric tuple equals it, and equals the values of the tuple at any finite
+/// seed, bit for bit, over a dense pressure sweep.
+#[test]
+fn value_only_caloric_saturation_is_a_held_tuple_with_zero_directions() {
+    let mut state = 0x5EED_0004;
+    let mut checked = 0;
+    for i in 0..20_000 {
+        let p = if i < 10_000 {
+            1e5 * 160f64.powf(f64::from(i) / 9_999.)
+        } else {
+            1e5 + (16e6 - 1e5) * unit(&mut state)
+        };
+        let Ok(zero) = If97.saturation_caloric(Scalar::new(p, 0.)) else {
+            continue;
+        };
+        let complete = Properties::saturation(&If97, Scalar::new(p, 0.)).unwrap();
+        let fields = |t: &Saturation| {
+            [
+                t.temperature,
+                t.liquid.density,
+                t.liquid.enthalpy,
+                t.vapor.density,
+                t.vapor.enthalpy,
+            ]
+        };
+        for (a, b) in fields(&zero).into_iter().zip(fields(&complete)) {
+            assert_eq!(
+                [a.value.to_bits(), a.direction.to_bits()],
+                [b.value.to_bits(), b.direction.to_bits()],
+                "p={p:e}"
+            );
+            assert_eq!(b.direction.to_bits(), 0, "p={p:e}: computed +0.0 direction");
+        }
+        for dp in [1., -1., 0.98, 1e4, -3e4, 1e-300, -0.] {
+            let seeded = If97.saturation_caloric(Scalar::new(p, dp)).unwrap();
+            for (a, b) in fields(&zero).into_iter().zip(fields(&seeded)) {
+                assert_eq!(a.value.to_bits(), b.value.to_bits(), "p={p:e}");
+            }
+        }
+        checked += 1;
+    }
+    assert!(checked > 19_000, "{checked}");
+}

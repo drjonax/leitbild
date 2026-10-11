@@ -117,9 +117,133 @@ impl Neg for Scalar {
 fn s(x: f64) -> Scalar {
     x.into()
 }
-fn positive(x: Scalar) -> Result<()> {
+
+/// A thermal law's number: the forward-mode [`Scalar`] (value and
+/// direction) of a seeded evaluation, or a plain `f64` value for a
+/// value-only evaluation, which does no derivative work. Every `f64`
+/// operation is exactly the value part of the `Scalar` one, so a law
+/// evaluated on `f64` returns bit for bit the values of the same law on
+/// `Scalar`s with zero directions; a direction read from a plain value is
+/// zero.
+pub trait Number:
+    Copy
+    + std::fmt::Debug
+    + Default
+    + From<f64>
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + Div<Output = Self>
+    + Neg<Output = Self>
+{
+    fn value(self) -> f64;
+    /// The direction; zero for a plain value.
+    fn direction(self) -> f64;
+    /// `value` with `direction` where the number carries one.
+    fn with(value: f64, direction: f64) -> Self;
+    /// This number as a `Scalar`: itself, or the value with zero direction.
+    fn lift(self) -> Scalar;
+    /// A `Scalar` as this number: itself, or its value.
+    fn of(x: Scalar) -> Self;
+    fn finite(self) -> Result<Self>;
+    fn exp(self) -> Self;
+    fn ln(self) -> Self;
+    fn pow(self, exponent: f64) -> Self;
+    fn abs(self) -> Self;
+    fn max(self, other: Self) -> Self;
+    fn min(self, other: Self) -> Self;
+}
+impl Number for Scalar {
+    fn value(self) -> f64 {
+        self.value
+    }
+    fn direction(self) -> f64 {
+        self.direction
+    }
+    fn with(value: f64, direction: f64) -> Self {
+        Scalar::new(value, direction)
+    }
+    fn lift(self) -> Scalar {
+        self
+    }
+    fn of(x: Scalar) -> Self {
+        x
+    }
+    fn finite(self) -> Result<Self> {
+        Scalar::finite(self)
+    }
+    fn exp(self) -> Self {
+        Scalar::exp(self)
+    }
+    fn ln(self) -> Self {
+        Scalar::ln(self)
+    }
+    fn pow(self, exponent: f64) -> Self {
+        Scalar::pow(self, exponent)
+    }
+    fn abs(self) -> Self {
+        Scalar::abs(self)
+    }
+    fn max(self, other: Self) -> Self {
+        Scalar::max(self, other)
+    }
+    fn min(self, other: Self) -> Self {
+        Scalar::min(self, other)
+    }
+}
+/// The value parts of `Scalar`'s operations.
+impl Number for f64 {
+    fn value(self) -> f64 {
+        self
+    }
+    fn direction(self) -> f64 {
+        0.
+    }
+    fn with(value: f64, _: f64) -> Self {
+        value
+    }
+    fn lift(self) -> Scalar {
+        Scalar::constant(self)
+    }
+    fn of(x: Scalar) -> Self {
+        x.value
+    }
+    fn finite(self) -> Result<Self> {
+        if self.is_finite() {
+            Ok(self)
+        } else {
+            Err("nonfinite thermal value/direction")
+        }
+    }
+    fn exp(self) -> Self {
+        f64::exp(self)
+    }
+    fn ln(self) -> Self {
+        f64::ln(self)
+    }
+    fn pow(self, exponent: f64) -> Self {
+        self.powf(exponent)
+    }
+    fn abs(self) -> Self {
+        if self < 0. {
+            -self
+        } else if self == 0. {
+            0.
+        } else {
+            self
+        }
+    }
+    fn max(self, other: Self) -> Self {
+        if self >= other { self } else { other }
+    }
+    fn min(self, other: Self) -> Self {
+        if self <= other { self } else { other }
+    }
+}
+
+fn positive<N: Number>(x: N) -> Result<()> {
     x.finite()?;
-    if x.value > 0. {
+    if x.value() > 0. {
         Ok(())
     } else {
         Err("positive thermal property required")
@@ -127,20 +251,41 @@ fn positive(x: Scalar) -> Result<()> {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct WaterPoint {
-    pub density: Scalar,
-    pub viscosity: Scalar,
-    pub conductivity: Scalar,
-    pub cp: Scalar,
-    pub expansion: Scalar,
-    pub enthalpy: Scalar,
+pub struct WaterPointOf<N> {
+    pub density: N,
+    pub viscosity: N,
+    pub conductivity: N,
+    pub cp: N,
+    pub expansion: N,
+    pub enthalpy: N,
 }
+pub type WaterPoint = WaterPointOf<Scalar>;
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Saturation {
-    pub temperature: Scalar,
-    pub liquid: WaterPoint,
-    pub vapor: WaterPoint,
-    pub surface_tension: Scalar,
+pub struct SaturationOf<N> {
+    pub temperature: N,
+    pub liquid: WaterPointOf<N>,
+    pub vapor: WaterPointOf<N>,
+    pub surface_tension: N,
+}
+pub type Saturation = SaturationOf<Scalar>;
+/// A property tuple as the law's number type (values for a value-only law).
+pub fn water_of<N: Number>(w: WaterPoint) -> WaterPointOf<N> {
+    WaterPointOf {
+        density: N::of(w.density),
+        viscosity: N::of(w.viscosity),
+        conductivity: N::of(w.conductivity),
+        cp: N::of(w.cp),
+        expansion: N::of(w.expansion),
+        enthalpy: N::of(w.enthalpy),
+    }
+}
+pub fn saturation_of<N: Number>(t: Saturation) -> SaturationOf<N> {
+    SaturationOf {
+        temperature: N::of(t.temperature),
+        liquid: water_of(t.liquid),
+        vapor: water_of(t.vapor),
+        surface_tension: N::of(t.surface_tension),
+    }
 }
 /// Current-call property boundary. There is deliberately no constant-property
 /// default. The adapter propagates pressure/temperature seeds through ALL
@@ -150,8 +295,106 @@ pub trait WaterProperties {
     fn vapor(&self, pressure: Scalar, temperature: Scalar) -> Result<WaterPoint>;
     fn saturation(&self, pressure: Scalar) -> Result<Saturation>;
     fn saturated_vapor_density(&self, temperature: Scalar) -> Result<Scalar>;
+    /// A wet-contact law's turnover endpoint (the wet/film turnover wall
+    /// temperature, or its wall derivative) for the law inputs whose exact
+    /// bits are `key`: `solve()`'s answer, a pure function of `key`. A
+    /// plain boundary evaluates it; one evaluation's [`Shared`] boundary
+    /// answers each key once.
+    fn turnover(&self, key: &[u64], solve: &mut dyn FnMut() -> Result<f64>) -> Result<f64> {
+        let _ = key;
+        solve()
+    }
 }
-fn check_water(w: WaterPoint) -> Result<()> {
+/// One evaluation's property boundary for the thermal laws: every query at
+/// bit-identical inputs (value and direction) is answered once, from the
+/// first answer. The answers are pure functions of their inputs, so a law
+/// sees exactly what a fresh query returns. A caller wraps its properties
+/// for one evaluation (one residual or one seeded pass) and drops the
+/// wrapper with it; nothing persists across evaluations or trials.
+pub struct Shared<'a, P: WaterProperties> {
+    inner: &'a P,
+    liquid: std::cell::RefCell<Vec<([u64; 4], WaterPoint)>>,
+    vapor: std::cell::RefCell<Vec<([u64; 4], WaterPoint)>>,
+    saturation: std::cell::RefCell<Vec<([u64; 2], Saturation)>>,
+    vapor_density: std::cell::RefCell<Vec<([u64; 2], Scalar)>>,
+    turnover: std::cell::RefCell<Vec<(Vec<u64>, f64)>>,
+}
+impl<'a, P: WaterProperties> Shared<'a, P> {
+    pub fn new(inner: &'a P) -> Self {
+        Self {
+            inner,
+            liquid: Default::default(),
+            vapor: Default::default(),
+            saturation: Default::default(),
+            vapor_density: Default::default(),
+            turnover: Default::default(),
+        }
+    }
+    /// Turnover endpoints solved so far.
+    pub fn turnovers(&self) -> usize {
+        self.turnover.borrow().len()
+    }
+    /// Queries answered by the inner implementation so far.
+    pub fn evaluated(&self) -> usize {
+        self.liquid.borrow().len()
+            + self.vapor.borrow().len()
+            + self.saturation.borrow().len()
+            + self.vapor_density.borrow().len()
+    }
+}
+fn bits2(x: Scalar) -> [u64; 2] {
+    [x.value.to_bits(), x.direction.to_bits()]
+}
+/// The held answer to `key`, or the inner answer, held when it succeeds.
+fn held<K: PartialEq + Copy, V: Copy>(
+    store: &std::cell::RefCell<Vec<(K, V)>>,
+    key: K,
+    answer: impl FnOnce() -> Result<V>,
+) -> Result<V> {
+    if let Some((_, v)) = store.borrow().iter().find(|(k, _)| *k == key) {
+        return Ok(*v);
+    }
+    let v = answer()?;
+    store.borrow_mut().push((key, v));
+    Ok(v)
+}
+impl<P: WaterProperties> WaterProperties for Shared<'_, P> {
+    fn liquid(&self, pressure: Scalar, temperature: Scalar) -> Result<WaterPoint> {
+        let [a, b] = bits2(pressure);
+        let [c, d] = bits2(temperature);
+        held(&self.liquid, [a, b, c, d], || {
+            self.inner.liquid(pressure, temperature)
+        })
+    }
+    fn vapor(&self, pressure: Scalar, temperature: Scalar) -> Result<WaterPoint> {
+        let [a, b] = bits2(pressure);
+        let [c, d] = bits2(temperature);
+        held(&self.vapor, [a, b, c, d], || {
+            self.inner.vapor(pressure, temperature)
+        })
+    }
+    fn saturation(&self, pressure: Scalar) -> Result<Saturation> {
+        held(&self.saturation, bits2(pressure), || {
+            self.inner.saturation(pressure)
+        })
+    }
+    fn saturated_vapor_density(&self, temperature: Scalar) -> Result<Scalar> {
+        held(&self.vapor_density, bits2(temperature), || {
+            self.inner.saturated_vapor_density(temperature)
+        })
+    }
+    fn turnover(&self, key: &[u64], solve: &mut dyn FnMut() -> Result<f64>) -> Result<f64> {
+        if let Some((_, v)) = self.turnover.borrow().iter().find(|(k, _)| k == key) {
+            return Ok(*v);
+        }
+        // The solve queries this boundary's properties; no borrow is held.
+        let v = solve()?;
+        self.turnover.borrow_mut().push((key.to_vec(), v));
+        Ok(v)
+    }
+}
+
+fn check_water<N: Number>(w: WaterPointOf<N>) -> Result<()> {
     for v in [w.density, w.viscosity, w.conductivity, w.cp] {
         positive(v)?;
     }
@@ -226,19 +469,26 @@ pub fn fuel_caloric(t: Scalar) -> Result<Caloric> {
     if !(290. ..=2000.).contains(&t.value) {
         return Err("fuel caloric domain 290--2000 K");
     }
-    let primitive = |x: Scalar| {
-        s(296.7 * 535.285) / ((s(535.285) / x).exp() - s(1.))
-            + s(0.0243 / 2.) * x * x
-            + s(8.745e7) * (-s(1.577e5 / 8.3143) / x).exp()
+    // The primitive and cp share their two exponentials, each evaluated
+    // once; the 300 K datum is the same primitive, evaluated once.
+    let primitive = |exp: Scalar, x: Scalar, arrhenius: Scalar| {
+        s(296.7 * 535.285) / (exp - s(1.)) + s(0.0243 / 2.) * x * x + s(8.745e7) * arrhenius
     };
+    let exponentials = |x: Scalar| ((s(535.285) / x).exp(), (-s(1.577e5 / 8.3143) / x).exp());
+    static DATUM: std::sync::OnceLock<Scalar> = std::sync::OnceLock::new();
+    let datum = *DATUM.get_or_init(|| {
+        let (exp, arrhenius) = exponentials(s(300.));
+        primitive(exp, s(300.), arrhenius)
+    });
     let q = s(535.285) / t;
     let exp = q.exp();
+    let arrhenius = (-s(1.577e5 / 8.3143) / t).exp();
     let cp = s(296.7) * q * q * exp / ((exp - s(1.)) * (exp - s(1.)))
         + s(0.0243) * t
-        + s(8.745e7 * 1.577e5 / 8.3143) / (t * t) * (-s(1.577e5 / 8.3143) / t).exp();
+        + s(8.745e7 * 1.577e5 / 8.3143) / (t * t) * arrhenius;
     positive(cp)?;
     Ok(Caloric {
-        specific_energy: (primitive(t) - primitive(s(300.))).finite()?,
+        specific_energy: (primitive(exp, t, arrhenius) - datum).finite()?,
         cp: cp.finite()?,
     })
 }
@@ -450,16 +700,17 @@ pub fn fuel_transfers(
     let jump = s(0.3048 * 2.0358e-5 / BTU) * k_he * t.helium.pow(0.5)
         / (p_he / s(6894.757293168) * s(g.accommodation / 4.003_f64.sqrt()));
     let gap_r = (s(ri - rf) + s(1.845) * jump) / (s(af) * k_he);
-    let q01 = s(4. * PI * nl) * (fuel_potential(t.inner_mean)? - fuel_potential(t.outer_mean)?);
-    let q1s = s(16. * PI * nl) * (fuel_potential(t.outer_mean)? - fuel_potential(t.fuel_surface)?);
+    // Each node's potential once, in the order the transfers first read it.
+    let (inner, outer) = (fuel_potential(t.inner_mean)?, fuel_potential(t.outer_mean)?);
+    let q01 = s(4. * PI * nl) * (inner - outer);
+    let q1s = s(16. * PI * nl) * (outer - fuel_potential(t.fuel_surface)?);
     let qfh = s(2.) * (t.fuel_surface - t.helium) / gap_r;
     let qhc = s(2.) * (t.helium - t.clad_inner) / gap_r;
     let qr = s(SB * af / (1. / g.fuel_emissivity + rf / ri * (1. / g.clad_emissivity - 1.)))
         * (t.fuel_surface.pow(4.) - t.clad_inner.pow(4.));
-    let qci = s(2. * PI * nl / log_inner)
-        * (clad_potential(t.clad_inner)? - clad_potential(t.clad_mean)?);
-    let qco = s(2. * PI * nl / log_outer)
-        * (clad_potential(t.clad_mean)? - clad_potential(t.clad_outer)?);
+    let (clad_inner, clad_mean) = (clad_potential(t.clad_inner)?, clad_potential(t.clad_mean)?);
+    let qci = s(2. * PI * nl / log_inner) * (clad_inner - clad_mean);
+    let qco = s(2. * PI * nl / log_outer) * (clad_mean - clad_potential(t.clad_outer)?);
     let residuals = [q1s - qfh - qr, qhc + qr - qci, qco - wall_heat_to_water];
     for q in [
         q01,
@@ -537,11 +788,12 @@ pub enum FilmBranch {
     Resistance { length_m: f64 },
 }
 #[derive(Clone, Copy, Debug)]
-pub struct WallMaterial {
-    pub conductivity: Scalar,
+pub struct WallMaterialOf<N> {
+    pub conductivity: N,
     pub density: f64,
-    pub cp: Scalar,
+    pub cp: N,
 }
+pub type WallMaterial = WallMaterialOf<Scalar>;
 /// The SG tube steel of `ld01-sg-contact`: its gray emissivity and its
 /// material, shared by the primary film and the secondary contact.
 #[derive(Clone, Copy, Debug)]
@@ -550,48 +802,141 @@ pub struct SteelContact {
     pub material: WallMaterial,
 }
 #[derive(Clone, Copy, Debug)]
-pub struct WallLaw {
+pub struct WallLawOf<N> {
     pub diameter_m: f64,
     pub film: Film,
     pub emissivity: f64,
-    pub material: WallMaterial,
+    pub material: WallMaterialOf<N>,
+}
+pub type WallLaw = WallLawOf<Scalar>;
+impl WallLaw {
+    /// The same law with its material as values, for a value-only law.
+    pub fn values(self) -> WallLawOf<f64> {
+        WallLawOf {
+            diameter_m: self.diameter_m,
+            film: self.film,
+            emissivity: self.emissivity,
+            material: WallMaterialOf {
+                conductivity: self.material.conductivity.value,
+                density: self.material.density,
+                cp: self.material.cp.value,
+            },
+        }
+    }
+}
+/// The exact bits of every input a wet-contact law's turnover reads: its
+/// pressure, bulk temperature, mass flux, saturation and bulk tuples (values
+/// and directions), its film and diameter, and its bracket. `quantity`
+/// names the endpoint quantity. The wall temperature, material and
+/// emissivity are not read by the turnover.
+#[allow(clippy::too_many_arguments)]
+fn turnover_key<N: Number>(
+    quantity: u64,
+    pressure: N,
+    bulk_t: N,
+    mass_flux: N,
+    law: &WallLawOf<N>,
+    sat: &SaturationOf<N>,
+    bulk: &WaterPointOf<N>,
+    bracket: [f64; 2],
+) -> Vec<u64> {
+    let mut key = Vec::with_capacity(64);
+    key.push(quantity);
+    let number = |key: &mut Vec<u64>, x: N| {
+        key.extend([x.value().to_bits(), x.direction().to_bits()]);
+    };
+    let point = |key: &mut Vec<u64>, w: &WaterPointOf<N>| {
+        for x in [
+            w.density,
+            w.viscosity,
+            w.conductivity,
+            w.cp,
+            w.expansion,
+            w.enthalpy,
+        ] {
+            key.extend([x.value().to_bits(), x.direction().to_bits()]);
+        }
+    };
+    number(&mut key, pressure);
+    number(&mut key, bulk_t);
+    number(&mut key, mass_flux);
+    number(&mut key, sat.temperature);
+    number(&mut key, sat.surface_tension);
+    point(&mut key, &sat.liquid);
+    point(&mut key, &sat.vapor);
+    point(&mut key, bulk);
+    key.push(law.diameter_m.to_bits());
+    match law.film {
+        Film::Core => key.push(0),
+        Film::Tube => key.push(1),
+        Film::External => key.push(2),
+        Film::Heater(f) => {
+            key.extend(
+                [
+                    3.,
+                    f.sensible_w_m2_k,
+                    f.onset_contact_angle_deg,
+                    f.wall_birth_fraction,
+                    f.minimum_film_bounds_k[0],
+                    f.minimum_film_bounds_k[1],
+                ]
+                .map(f64::to_bits),
+            );
+            match f.film {
+                FilmBranch::Vertical {
+                    coefficient,
+                    length_m,
+                    convection_factor,
+                } => key.extend([
+                    0,
+                    coefficient.to_bits(),
+                    length_m.to_bits(),
+                    convection_factor.to_bits(),
+                ]),
+                FilmBranch::Resistance { length_m } => key.extend([1, length_m.to_bits()]),
+            }
+        }
+    }
+    key.extend(bracket.map(f64::to_bits));
+    key
 }
 #[derive(Clone, Copy, Debug)]
-pub struct WallFlux {
-    pub heat: Scalar,
-    pub vapor_mass: Scalar,
-    pub liquid_energy: Scalar,
-    pub vapor_energy: Scalar,
+pub struct WallFluxOf<N> {
+    pub heat: N,
+    pub vapor_mass: N,
+    pub liquid_energy: N,
+    pub vapor_energy: N,
     pub mode: &'static str,
 }
+pub type WallFlux = WallFluxOf<Scalar>;
 
 // Reuse an EXACT same-call endpoint including its direction, not a cached or
 // frozen property. This also preserves the native saturation-curve chart.
-fn liquid_point<P: WaterProperties>(
+fn liquid_point<P: WaterProperties, N: Number>(
     props: &P,
-    pressure: Scalar,
-    t: Scalar,
-    sat: Saturation,
-) -> Result<WaterPoint> {
-    if t.value == sat.temperature.value && t.direction == sat.temperature.direction {
+    pressure: N,
+    t: N,
+    sat: SaturationOf<N>,
+) -> Result<WaterPointOf<N>> {
+    if t.value() == sat.temperature.value() && t.direction() == sat.temperature.direction() {
         Ok(sat.liquid)
     } else {
-        props.liquid(pressure, t)
+        Ok(water_of(props.liquid(pressure.lift(), t.lift())?))
     }
 }
 // Explicit physical coordinates and same-call endpoint/bulk ports; bundling
 // them solely for a lint would hide which property seeds this law consumes.
 #[allow(clippy::too_many_arguments)]
-fn liquid_film<P: WaterProperties>(
+fn liquid_film<P: WaterProperties, N: Number>(
     p: &P,
-    pressure: Scalar,
-    bulk_t: Scalar,
-    wall_t: Scalar,
-    mass_flux: Scalar,
-    law: WallLaw,
-    sat: Saturation,
-    bulk: WaterPoint,
-) -> Result<Scalar> {
+    pressure: N,
+    bulk_t: N,
+    wall_t: N,
+    mass_flux: N,
+    law: WallLawOf<N>,
+    sat: SaturationOf<N>,
+    bulk: WaterPointOf<N>,
+) -> Result<N> {
     check_water(bulk)?;
     let d = law.diameter_m;
     if !d.is_finite() || d <= 0. {
@@ -599,107 +944,121 @@ fn liquid_film<P: WaterProperties>(
     }
     if let Film::Heater(f) = law.film {
         // The heater's selected constant sensible coefficient.
-        return Ok(s(f.sensible_w_m2_k));
+        return Ok(N::from(f.sensible_w_m2_k));
     }
     let pr = bulk.viscosity * bulk.cp / bulk.conductivity;
     if matches!(law.film, Film::Core) {
-        let re = mass_flux.abs() * s(d) / bulk.viscosity;
-        let n = if wall_t.value >= bulk_t.value {
+        let re = mass_flux.abs() * N::from(d) / bulk.viscosity;
+        let n = if wall_t.value() >= bulk_t.value() {
             0.4
         } else {
             0.3
         };
-        return Ok(s(7.86).max(s(0.023) * re.pow(0.8) * pr.pow(n)) * bulk.conductivity / s(d));
+        return Ok(
+            N::from(7.86).max(N::from(0.023) * re.pow(0.8) * pr.pow(n)) * bulk.conductivity
+                / N::from(d),
+        );
     }
     let tw = wall_t.min(sat.temperature);
-    let film = liquid_point(p, pressure, s(0.5) * (bulk_t + tw), sat)?;
+    let film = liquid_point(p, pressure, N::from(0.5) * (bulk_t + tw), sat)?;
     check_water(film)?;
     let delta = (wall_t - bulk_t).abs();
     if matches!(law.film, Film::External) {
         let film_pr = film.viscosity * film.cp / film.conductivity;
-        let ra = s(G * d.powi(3)) * film.expansion * delta * film.density * film.density * film.cp
-            / (film.viscosity * film.conductivity);
+        let ra =
+            N::from(G * d.powi(3)) * film.expansion * delta * film.density * film.density * film.cp
+                / (film.viscosity * film.conductivity);
         // At equality evaluate q=h*delta's finite derivative directly, not the
         // singular derivative of a harmless fractional-power correction.
-        let nu = if delta.value == 0. {
-            s(0.36)
+        let nu = if delta.value() == 0. {
+            N::from(0.36)
         } else {
-            (s(0.6)
-                + s(0.387) * ra.pow(1. / 6.)
-                    / (s(1.) + (s(0.559) / film_pr).pow(9. / 16.)).pow(8. / 27.))
+            (N::from(0.6)
+                + N::from(0.387) * ra.pow(1. / 6.)
+                    / (N::from(1.) + (N::from(0.559) / film_pr).pow(9. / 16.)).pow(8. / 27.))
             .pow(2.)
         };
-        return Ok(nu * film.conductivity / s(d));
+        return Ok(nu * film.conductivity / N::from(d));
     }
     let wall = liquid_point(p, pressure, tw, sat)?;
     check_water(wall)?;
     let wall_pr = wall.viscosity * wall.cp / wall.conductivity;
-    let re = mass_flux.abs() * s(d) / bulk.viscosity;
-    let ra =
-        s(G * d.powi(3)) * bulk.expansion * delta * pr * (film.density / bulk.viscosity).pow(2.);
-    let natural = if delta.value == 0. {
-        s(0.)
+    let re = mass_flux.abs() * N::from(d) / bulk.viscosity;
+    let ra = N::from(G * d.powi(3))
+        * bulk.expansion
+        * delta
+        * pr
+        * (film.density / bulk.viscosity).pow(2.);
+    let natural = if delta.value() == 0. {
+        N::from(0.)
     } else {
-        s(0.59) * ra.pow(0.25).max(s(0.13 / 0.59) * ra.pow(1. / 3.))
+        N::from(0.59) * ra.pow(0.25).max(N::from(0.13 / 0.59) * ra.pow(1. / 3.))
     };
-    let turbulent = if re.value > 1000. {
-        let f = (s(1.58) * re.ln() - s(3.28)).pow(-2.);
-        let ratio = (pr / wall_pr).max(s(0.05)).min(s(20.));
-        (f / s(2.)) * (re - s(1000.)) * pr
-            / (s(1.) + s(12.7) * (f / s(2.)).pow(0.5) * (pr.pow(2. / 3.) - s(1.)))
+    let turbulent = if re.value() > 1000. {
+        let f = (N::from(1.58) * re.ln() - N::from(3.28)).pow(-2.);
+        let ratio = (pr / wall_pr).max(N::from(0.05)).min(N::from(20.));
+        (f / N::from(2.)) * (re - N::from(1000.)) * pr
+            / (N::from(1.)
+                + N::from(12.7) * (f / N::from(2.)).pow(0.5) * (pr.pow(2. / 3.) - N::from(1.)))
             * ratio.pow(0.11)
     } else {
-        s(0.)
+        N::from(0.)
     };
-    Ok(s(3.66).max(natural).max(turbulent) * bulk.conductivity / s(d))
+    Ok(N::from(3.66).max(natural).max(turbulent) * bulk.conductivity / N::from(d))
 }
-fn pool(pressure: Scalar, superheat: Scalar, core: bool) -> Scalar {
-    if superheat.value <= 0. {
-        return s(0.);
+fn pool<N: Number>(pressure: N, superheat: N, core: bool) -> N {
+    if superheat.value() <= 0. {
+        return N::from(0.);
     }
-    let r = pressure / s(22.064e6);
-    let n = s(0.9) - s(0.3) * r.pow(0.15);
-    let denom = if core { s(1.) - r * r } else { s(1.) - r };
-    let fp = s(1.73) * r.pow(0.27) + s(6.1) * r * r + s(0.68) * r * r / denom;
+    let r = pressure / N::from(22.064e6);
+    let n = N::from(0.9) - N::from(0.3) * r.pow(0.15);
+    let denom = if core {
+        N::from(1.) - r * r
+    } else {
+        N::from(1.) - r
+    };
+    let fp = N::from(1.73) * r.pow(0.27) + N::from(6.1) * r * r + N::from(0.68) * r * r / denom;
     // Variable exponent, so use exp(log(x)/(1-n)), not a fixed exponent.
-    ((s(5600.) * fp * superheat / (n * s(20000_f64.ln())).exp()).ln() / (s(1.) - n)).exp()
+    ((N::from(5600.) * fp * superheat / (n * N::from(20000_f64.ln())).exp()).ln()
+        / (N::from(1.) - n))
+        .exp()
 }
 // Local wet law deliberately receives the same explicit physical/property
 // coordinates as liquid_film, not an independently prepared correlation state.
 #[allow(clippy::too_many_arguments)]
-fn wet<P: WaterProperties>(
+fn wet<P: WaterProperties, N: Number>(
     props: &P,
-    pressure: Scalar,
-    bulk_t: Scalar,
-    wall_t: Scalar,
-    flux: Scalar,
-    law: WallLaw,
-    sat: Saturation,
-    bulk: WaterPoint,
-) -> Result<(Scalar, Scalar, Scalar, Scalar)> {
+    pressure: N,
+    bulk_t: N,
+    wall_t: N,
+    flux: N,
+    law: WallLawOf<N>,
+    sat: SaturationOf<N>,
+    bulk: WaterPointOf<N>,
+) -> Result<(N, N, N, N)> {
     let h = liquid_film(props, pressure, bulk_t, wall_t, flux, law, sat, bulk)?;
     let sensible = h * (wall_t - bulk_t);
     if let Film::Heater(f) = law.film
-        && bulk.enthalpy.value >= sat.liquid.enthalpy.value
+        && bulk.enthalpy.value() >= sat.liquid.enthalpy.value()
     {
         // Saturated or superheated bulk (SPEC 59a1c83): CTF's net boiling
         // increment on the wall superheat with zero initiation flux, added
         // to the signed sensible term outside the cube root. Continuous at
         // Tw = Tsat and with no branch at Tw = T_L.
         let onset = sat.temperature;
-        if wall_t.value <= onset.value {
-            return Ok((sensible, s(0.), onset, sensible));
+        if wall_t.value() <= onset.value() {
+            return Ok((sensible, N::from(0.), onset, sensible));
         }
         let superheat = wall_t - sat.temperature;
         let wall_sensible = h * superheat;
         let boiling = (wall_sensible.pow(3.) + pool(pressure, superheat, true).pow(3.))
             .pow(1. / 3.)
             - wall_sensible;
-        let gamma = s(f.wall_birth_fraction) * boiling / (sat.vapor.enthalpy - bulk.enthalpy);
+        let gamma = N::from(f.wall_birth_fraction) * boiling / (sat.vapor.enthalpy - bulk.enthalpy);
         return Ok((sensible + boiling, gamma, onset, sensible));
     }
-    if wall_t.value <= bulk_t.value {
-        return Ok((sensible, s(0.), bulk_t, sensible));
+    if wall_t.value() <= bulk_t.value() {
+        return Ok((sensible, N::from(0.), bulk_t, sensible));
     }
     let shape = if let Film::Heater(f) = law.film {
         let angle = f.onset_contact_angle_deg.to_radians();
@@ -711,7 +1070,7 @@ fn wet<P: WaterProperties>(
     // conductivity, the onset's saturation form and the CTF Gorenflo factor.
     let ctf = matches!(law.film, Film::Core | Film::Heater(_));
     let latent = sat.vapor.enthalpy - sat.liquid.enthalpy;
-    let d0 = s(2. / (shape * shape)) * h * sat.surface_tension * sat.temperature
+    let d0 = N::from(2. / (shape * shape)) * h * sat.surface_tension * sat.temperature
         / (sat.vapor.density
             * latent
             * if ctf {
@@ -725,14 +1084,14 @@ fn wet<P: WaterProperties>(
         // Its step from the saturated combination at h_L = h_f,sat is the
         // heater page's declared discontinuity.
         Film::Core | Film::Heater(_) => {
-            sat.temperature + s(0.5) * (d0 + (d0 * d0 + s(4.) * d0 * sub).pow(0.5))
+            sat.temperature + N::from(0.5) * (d0 + (d0 * d0 + N::from(4.) * d0 * sub).pow(0.5))
         }
         Film::Tube | Film::External => {
-            bulk_t + s(0.25) * (d0.pow(0.5) + (d0 + s(4.) * sub).pow(0.5)).pow(2.)
+            bulk_t + N::from(0.25) * (d0.pow(0.5) + (d0 + N::from(4.) * sub).pow(0.5)).pow(2.)
         }
     };
-    if wall_t.value <= onset.value {
-        return Ok((sensible, s(0.), onset, sensible));
+    if wall_t.value() <= onset.value() {
+        return Ok((sensible, N::from(0.), onset, sensible));
     }
     let enhancement = pool(pressure, wall_t - sat.temperature, ctf)
         - pool(pressure, onset - sat.temperature, ctf);
@@ -740,26 +1099,26 @@ fn wet<P: WaterProperties>(
     let qb = q - sensible;
     if let Film::Heater(f) = law.film {
         // Wall birth pays the actual liquid subcooling (or superheat).
-        let gamma = s(f.wall_birth_fraction) * qb / (sat.vapor.enthalpy - bulk.enthalpy);
+        let gamma = N::from(f.wall_birth_fraction) * qb / (sat.vapor.enthalpy - bulk.enthalpy);
         return Ok((q, gamma, onset, sensible));
     }
     let gamma = if matches!(law.film, Film::Core) {
-        let pe = flux.abs() * s(law.diameter_m) * sat.liquid.cp / bulk.conductivity;
-        let det = qb * s(law.diameter_m) * sat.liquid.cp
-            / (bulk.conductivity * s(0.0065) * s(70000.).max(pe));
-        let departure = if det.value > 0. {
+        let pe = flux.abs() * N::from(law.diameter_m) * sat.liquid.cp / bulk.conductivity;
+        let det = qb * N::from(law.diameter_m) * sat.liquid.cp
+            / (bulk.conductivity * N::from(0.0065) * N::from(70000.).max(pe));
+        let departure = if det.value() > 0. {
             ((bulk.enthalpy - sat.liquid.enthalpy + det) / det)
-                .max(s(0.))
-                .min(s(1.))
+                .max(N::from(0.))
+                .min(N::from(1.))
         } else {
-            s(0.)
+            N::from(0.)
         };
         let pumping = latent
             / (latent
                 + (sat.liquid.enthalpy - bulk.enthalpy) * sat.liquid.density / sat.vapor.density);
         departure * pumping * qb / latent
     } else {
-        s(0.)
+        N::from(0.)
     };
     Ok((q, gamma, onset, sensible))
 }
@@ -767,51 +1126,55 @@ fn wet<P: WaterProperties>(
 /// Public as the material-at-temperature hook: a caller that selects a
 /// self-consistent endpoint `Tm = Tmin(material at Tm)` evaluates it here
 /// and passes that material to [`liquid_wall`].
-pub fn minimum_film(
-    pressure: Scalar,
-    bulk_t: Scalar,
-    law: WallLaw,
-    sat: Saturation,
-) -> Result<Scalar> {
+pub fn minimum_film<N: Number>(
+    pressure: N,
+    bulk_t: N,
+    law: WallLawOf<N>,
+    sat: SaturationOf<N>,
+) -> Result<N> {
     positive(law.material.conductivity)?;
     positive(law.material.cp)?;
     let l = sat.liquid;
     let v = sat.vapor;
     let latent = v.enthalpy - l.enthalpy;
     let eff = (l.conductivity * l.density * l.cp
-        / (law.material.conductivity * s(law.material.density) * law.material.cp))
+        / (law.material.conductivity * N::from(law.material.density) * law.material.cp))
         .pow(0.5);
-    let x = s(3203.6) - pressure / s(6894.757293168);
-    let hn =
-        (s(705.44) - s(0.04722) * x + s(2.3907e-5) * x * x - s(5.8193e-9) * x * x * x - s(32.))
-            * s(5. / 9.)
-            + s(273.15);
+    let x = N::from(3203.6) - pressure / N::from(6894.757293168);
+    let hn = (N::from(705.44) - N::from(0.04722) * x + N::from(2.3907e-5) * x * x
+        - N::from(5.8193e-9) * x * x * x
+        - N::from(32.))
+        * N::from(5. / 9.)
+        + N::from(273.15);
     let hnc = hn + (hn - bulk_t) * eff;
     let tb = sat.temperature
-        + s(0.127) * v.density * latent / v.conductivity
-            * (s(G) * (l.density - v.density) / (l.density + v.density)).pow(2. / 3.)
-            * (sat.surface_tension / (s(G) * (l.density - v.density))).pow(0.5)
-            * (v.viscosity / (s(G) * (l.density - v.density))).pow(1. / 3.);
+        + N::from(0.127) * v.density * latent / v.conductivity
+            * (N::from(G) * (l.density - v.density) / (l.density + v.density)).pow(2. / 3.)
+            * (sat.surface_tension / (N::from(G) * (l.density - v.density))).pow(0.5)
+            * (v.viscosity / (N::from(G) * (l.density - v.density))).pow(1. / 3.);
     let henry = tb
-        + s(0.42)
+        + N::from(0.42)
             * (tb - bulk_t)
             * (eff * latent / (law.material.cp * (tb - sat.temperature))).pow(0.6);
     if let Film::Heater(f) = law.film {
         let [low, high] = f.minimum_film_bounds_k;
-        return Ok(s(low).max(s(high).min(hnc.max(henry))));
+        return Ok(N::from(low).max(N::from(high).min(hnc.max(henry))));
     }
-    Ok(s(755.3722222222222).max(s(898.7055555555555).min(hnc.max(henry))))
+    Ok(N::from(755.3722222222222).max(N::from(898.7055555555555).min(hnc.max(henry))))
 }
-fn film_heat<P: WaterProperties>(
+fn film_heat<P: WaterProperties, N: Number>(
     props: &P,
-    pressure: Scalar,
-    wall_t: Scalar,
-    law: WallLaw,
-    sat: Saturation,
-) -> Result<Scalar> {
-    let vapor = props.vapor(pressure, s(0.5) * (wall_t + sat.temperature))?;
+    pressure: N,
+    wall_t: N,
+    law: WallLawOf<N>,
+    sat: SaturationOf<N>,
+) -> Result<N> {
+    let vapor: WaterPointOf<N> = water_of(props.vapor(
+        pressure.lift(),
+        (N::from(0.5) * (wall_t + sat.temperature)).lift(),
+    )?);
     check_water(vapor)?;
-    let radiation = s(law.emissivity * SB) * (wall_t.pow(4.) - sat.temperature.pow(4.));
+    let radiation = N::from(law.emissivity * SB) * (wall_t.pow(4.) - sat.temperature.pow(4.));
     // The PZR film: Bromley's vertical film over its fixed length, with the
     // latent-enthalpy form and a convection factor, or the heads' vapor
     // resistance.
@@ -821,7 +1184,9 @@ fn film_heat<P: WaterProperties>(
             film: FilmBranch::Resistance { length_m },
             ..
         }) => {
-            return Ok(vapor.conductivity * (wall_t - sat.temperature) / s(length_m) + radiation);
+            return Ok(
+                vapor.conductivity * (wall_t - sat.temperature) / N::from(length_m) + radiation,
+            );
         }
         Film::Heater(HeaterFilm {
             film:
@@ -844,33 +1209,33 @@ fn film_heat<P: WaterProperties>(
             None,
         ),
     };
-    let h = s(coefficient)
+    let h = N::from(coefficient)
         * (vapor.conductivity.pow(3.)
             * vapor.density
             * (sat.liquid.density - vapor.density)
-            * s(G)
+            * N::from(G)
             * latent
-            / (s(length) * vapor.viscosity * (wall_t - sat.temperature)))
+            / (N::from(length) * vapor.viscosity * (wall_t - sat.temperature)))
             .pow(0.25);
     let convection = match factor {
-        Some(f) => s(f) * h * (wall_t - sat.temperature),
+        Some(f) => N::from(f) * h * (wall_t - sat.temperature),
         None => h * (wall_t - sat.temperature),
     };
     Ok(convection + radiation)
 }
 
-fn liquid_wall_inputs(
-    pressure: Scalar,
-    bulk_t: Scalar,
-    wall_t: Scalar,
-    mass_flux: Scalar,
-    law: WallLaw,
+fn liquid_wall_inputs<N: Number>(
+    pressure: N,
+    bulk_t: N,
+    wall_t: N,
+    mass_flux: N,
+    law: WallLawOf<N>,
 ) -> Result<()> {
     positive(pressure)?;
     positive(bulk_t)?;
     positive(wall_t)?;
     mass_flux.finite()?;
-    if !(1e5..=16e6).contains(&pressure.value) || !(0. ..=1.).contains(&law.emissivity) {
+    if !(1e5..=16e6).contains(&pressure.value()) || !(0. ..=1.).contains(&law.emissivity) {
         return Err("hot thermal wet-contact domain");
     }
     Ok(())
@@ -879,16 +1244,16 @@ fn liquid_wall_inputs(
 /// Full selected wet contact. Constitutive endpoint localization is bounded;
 /// it is not a material-surface solve or an integration method. The endpoint
 /// tangent follows the implicit law, not the bisection's iteration history.
-pub fn liquid_wall<P: WaterProperties>(
+pub fn liquid_wall<P: WaterProperties, N: Number>(
     props: &P,
-    pressure: Scalar,
-    bulk_t: Scalar,
-    wall_t: Scalar,
-    mass_flux: Scalar,
-    law: WallLaw,
-) -> Result<WallFlux> {
+    pressure: N,
+    bulk_t: N,
+    wall_t: N,
+    mass_flux: N,
+    law: WallLawOf<N>,
+) -> Result<WallFluxOf<N>> {
     liquid_wall_inputs(pressure, bulk_t, wall_t, mass_flux, law)?;
-    let sat = props.saturation(pressure)?;
+    let sat: SaturationOf<N> = saturation_of(props.saturation(pressure.lift())?);
     let bulk = liquid_point(props, pressure, bulk_t, sat)?;
     liquid_wall_current(props, pressure, bulk_t, wall_t, mass_flux, law, sat, bulk)
 }
@@ -898,29 +1263,30 @@ pub fn liquid_wall<P: WaterProperties>(
 /// cache or a constant-property interface. The public wrapper remains the
 /// standalone entry; both consume this one physical law and all its checks.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn liquid_wall_current<P: WaterProperties>(
+pub(crate) fn liquid_wall_current<P: WaterProperties, N: Number>(
     props: &P,
-    pressure: Scalar,
-    bulk_t: Scalar,
-    wall_t: Scalar,
-    mass_flux: Scalar,
-    law: WallLaw,
-    sat: Saturation,
-    bulk: WaterPoint,
-) -> Result<WallFlux> {
+    pressure: N,
+    bulk_t: N,
+    wall_t: N,
+    mass_flux: N,
+    law: WallLawOf<N>,
+    sat: SaturationOf<N>,
+    bulk: WaterPointOf<N>,
+) -> Result<WallFluxOf<N>> {
     liquid_wall_inputs(pressure, bulk_t, wall_t, mass_flux, law)?;
     // Preserve the standalone endpoint identity, including its seed: an exact
     // saturated bulk consumes that actual endpoint, not a nearby branch call.
-    let bulk =
-        if bulk_t.value == sat.temperature.value && bulk_t.direction == sat.temperature.direction {
-            sat.liquid
-        } else {
-            bulk
-        };
+    let bulk = if bulk_t.value() == sat.temperature.value()
+        && bulk_t.direction() == sat.temperature.direction()
+    {
+        sat.liquid
+    } else {
+        bulk
+    };
     check_water(bulk)?;
     // The heater admits metastable bulk liquid through its saturated-bulk
     // onset; the other films keep the stable recipient.
-    if bulk_t.value > sat.temperature.value && !matches!(law.film, Film::Heater(_)) {
+    if bulk_t.value() > sat.temperature.value() && !matches!(law.film, Film::Heater(_)) {
         return Err("stable liquid wall recipient required");
     }
     let (pre, pre_gamma, onset, _) =
@@ -928,108 +1294,114 @@ pub(crate) fn liquid_wall_current<P: WaterProperties>(
     // The heater's saturated-bulk combination boils above Tsat even with
     // the wall below a superheated liquid; its sensible region is below onset.
     let heater = matches!(law.film, Film::Heater(_));
-    if wall_t.value <= onset.value || (!heater && wall_t.value <= bulk_t.value) {
-        return Ok(WallFlux {
+    if wall_t.value() <= onset.value() || (!heater && wall_t.value() <= bulk_t.value()) {
+        return Ok(WallFluxOf {
             heat: pre.finite()?,
-            vapor_mass: s(0.),
+            vapor_mass: N::from(0.),
             liquid_energy: pre,
-            vapor_energy: s(0.),
+            vapor_energy: N::from(0.),
             mode: "sensible",
         });
     }
-    let qscale = s(0.131)
+    let qscale = N::from(0.131)
         * (sat.vapor.enthalpy - sat.liquid.enthalpy)
         * sat.vapor.density.pow(0.5)
-        * (s(G) * sat.surface_tension * (sat.liquid.density - sat.vapor.density)).pow(0.25)
+        * (N::from(G) * sat.surface_tension * (sat.liquid.density - sat.vapor.density)).pow(0.25)
         * (sat.liquid.density / (sat.liquid.density + sat.vapor.density)).pow(0.5);
     let minimum = minimum_film(pressure, bulk_t, law, sat)?;
-    let objective = |tw: Scalar,
-                     p: Scalar,
-                     t: Scalar,
-                     g: Scalar,
-                     l: WallLaw,
-                     ss: Saturation,
-                     b: WaterPoint|
-     -> Result<Scalar> {
-        let (q, _, _, sensible) = wet(props, p, t, tw, g, l, ss, b)?;
-        Ok(if matches!(law.film, Film::External) {
-            q - qscale
-        } else {
-            q - sensible - qscale
-        })
+    let objective = |tw: N| -> Result<N> {
+        turnover_objective(
+            props, tw, pressure, bulk_t, mass_flux, law, sat, bulk, qscale,
+        )
     };
-    let mut lo = onset.value;
-    let mut hi = minimum.value;
-    if objective(s(lo), pressure, bulk_t, mass_flux, law, sat, bulk)?.value >= 0.
-        || objective(s(hi), pressure, bulk_t, mass_flux, law, sat, bulk)?.value <= 0.
-    {
-        return Err("unordered wet/film turnover endpoints");
-    }
-    for _ in 0..52 {
-        let mid = 0.5 * (lo + hi);
-        if objective(s(mid), pressure, bulk_t, mass_flux, law, sat, bulk)?.value > 0. {
-            hi = mid;
-        } else {
-            lo = mid;
+    let bracket = [onset.value(), minimum.value()];
+    let key = |quantity| {
+        turnover_key(
+            quantity, pressure, bulk_t, mass_flux, &law, &sat, &bulk, bracket,
+        )
+    };
+    let root = props.turnover(&key(0), &mut || {
+        let [mut lo, mut hi] = bracket;
+        if objective(N::from(lo))?.value() >= 0. || objective(N::from(hi))?.value() <= 0. {
+            return Err("unordered wet/film turnover endpoints");
         }
-    }
-    let root = 0.5 * (lo + hi);
-    let fixed = objective(s(root), pressure, bulk_t, mass_flux, law, sat, bulk)?;
-    // Wall seed only: all other current coordinates/properties have zero seed.
-    let zero_point = |w: WaterPoint| WaterPoint {
-        density: s(w.density.value),
-        viscosity: s(w.viscosity.value),
-        conductivity: s(w.conductivity.value),
-        cp: s(w.cp.value),
-        expansion: s(w.expansion.value),
-        enthalpy: s(w.enthalpy.value),
+        for _ in 0..52 {
+            let mid = 0.5 * (lo + hi);
+            if objective(N::from(mid))?.value() > 0. {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        Ok(0.5 * (lo + hi))
+    })?;
+    let fixed = objective(N::from(root))?;
+    // Wall seed only: all other current coordinates/properties have zero
+    // seed. This derivative is a forward-mode evaluation on the values in a
+    // value-only evaluation too, so the turnover's singularity check refuses
+    // exactly where the seeded evaluation does.
+    let constant = |x: N| Scalar::constant(x.value());
+    let zero_point = |w: WaterPointOf<N>| WaterPoint {
+        density: constant(w.density),
+        viscosity: constant(w.viscosity),
+        conductivity: constant(w.conductivity),
+        cp: constant(w.cp),
+        expansion: constant(w.expansion),
+        enthalpy: constant(w.enthalpy),
     };
     let zero_sat = Saturation {
-        temperature: s(sat.temperature.value),
+        temperature: constant(sat.temperature),
         liquid: zero_point(sat.liquid),
         vapor: zero_point(sat.vapor),
-        surface_tension: s(sat.surface_tension.value),
+        surface_tension: constant(sat.surface_tension),
     };
     let zero_law = WallLaw {
+        diameter_m: law.diameter_m,
+        film: law.film,
+        emissivity: law.emissivity,
         material: WallMaterial {
-            conductivity: s(law.material.conductivity.value),
+            conductivity: constant(law.material.conductivity),
             density: law.material.density,
-            cp: s(law.material.cp.value),
+            cp: constant(law.material.cp),
         },
-        ..law
     };
-    let seeded = objective(
-        Scalar::new(root, 1.),
-        s(pressure.value),
-        s(bulk_t.value),
-        s(mass_flux.value),
-        zero_law,
-        zero_sat,
-        zero_point(bulk),
-    )?;
-    // qscale's captured seed is absent from ∂F/∂Tw: remove it explicitly.
-    let derivative = seeded.direction + qscale.direction;
+    let seeded = props.turnover(&key(1), &mut || {
+        Ok(turnover_objective(
+            props,
+            Scalar::new(root, 1.),
+            constant(pressure),
+            constant(bulk_t),
+            constant(mass_flux),
+            zero_law,
+            zero_sat,
+            zero_point(bulk),
+            qscale.lift(),
+        )?
+        .direction)
+    })?;
+    // qscale's captured seed is absent from dF/dTw: remove it explicitly.
+    let derivative = seeded + qscale.direction();
     if !derivative.is_finite() || derivative <= 0. {
         return Err("singular wet turnover derivative");
     }
-    let turn = Scalar::new(root, -fixed.direction / derivative);
+    let turn = N::with(root, -fixed.direction() / derivative);
     let (peak, peak_gamma, _, _) = wet(props, pressure, bulk_t, turn, mass_flux, law, sat, bulk)?;
     let qmin = film_heat(props, pressure, minimum, law, sat)?;
-    if !(onset.value < turn.value
-        && turn.value < minimum.value
-        && qmin.value > 0.
-        && qmin.value < peak.value)
+    if !(onset.value() < turn.value()
+        && turn.value() < minimum.value()
+        && qmin.value() > 0.
+        && qmin.value() < peak.value())
     {
         return Err("unordered complete wet/film endpoints");
     }
-    let (q, gamma, mode) = if wall_t.value <= turn.value {
+    let (q, gamma, mode) = if wall_t.value() <= turn.value() {
         (pre, pre_gamma, "nucleate")
-    } else if wall_t.value < minimum.value {
+    } else if wall_t.value() < minimum.value() {
         let weight = ((wall_t - minimum) / (turn - minimum)).pow(2.);
         let gm = qmin / (sat.vapor.enthalpy - bulk.enthalpy);
         (
-            weight * peak + (s(1.) - weight) * qmin,
-            weight * peak_gamma + (s(1.) - weight) * gm,
+            weight * peak + (N::from(1.) - weight) * qmin,
+            weight * peak_gamma + (N::from(1.) - weight) * gm,
             "transition",
         )
     } else {
@@ -1042,18 +1414,41 @@ pub(crate) fn liquid_wall_current<P: WaterProperties>(
     let gamma = if matches!(law.film, Film::Core | Film::Heater(_)) {
         gamma
     } else {
-        s(0.)
+        N::from(0.)
     };
     let gas_energy = gamma * sat.vapor.enthalpy;
     for x in [q, gamma, gas_energy, q - gas_energy] {
         x.finite()?;
     }
-    Ok(WallFlux {
+    Ok(WallFluxOf {
         heat: q,
         vapor_mass: gamma,
         liquid_energy: q - gas_energy,
         vapor_energy: gas_energy,
         mode,
+    })
+}
+
+/// The wet/film turnover objective at wall temperature `tw`: the wet law's
+/// boiling increment (the whole heat for the external film) less the
+/// critical flux scale `qscale`.
+#[allow(clippy::too_many_arguments)]
+fn turnover_objective<P: WaterProperties, M: Number>(
+    props: &P,
+    tw: M,
+    pressure: M,
+    bulk_t: M,
+    flux: M,
+    law: WallLawOf<M>,
+    sat: SaturationOf<M>,
+    bulk: WaterPointOf<M>,
+    qscale: M,
+) -> Result<M> {
+    let (q, _, _, sensible) = wet(props, pressure, bulk_t, tw, flux, law, sat, bulk)?;
+    Ok(if matches!(law.film, Film::External) {
+        q - qscale
+    } else {
+        q - sensible - qscale
     })
 }
 
@@ -1396,6 +1791,150 @@ mod current_port_regression {
                 cp: s(500.),
             },
         }
+    }
+
+    fn point_bits(w: WaterPoint) -> Vec<u64> {
+        [
+            w.density,
+            w.viscosity,
+            w.conductivity,
+            w.cp,
+            w.expansion,
+            w.enthalpy,
+        ]
+        .iter()
+        .flat_map(|x| [x.value.to_bits(), x.direction.to_bits()])
+        .collect()
+    }
+
+    /// One evaluation's shared boundary answers each distinct query once,
+    /// with exactly the direct answer, for every query kind.
+    #[test]
+    fn shared_boundary_answers_each_identical_query_once() {
+        let direct = Properties::default();
+        let inner = Properties::default();
+        let shared = Shared::new(&inner);
+        let pressures = [
+            Scalar::new(1e7, 1000.),
+            s(1e7),
+            Scalar::new(1e7, -0.),
+            s(1.01e7),
+        ];
+        let temperatures = [s(580.), Scalar::new(580., 0.3), s(590.)];
+        for _ in 0..3 {
+            for p in pressures {
+                for t in temperatures {
+                    assert_eq!(
+                        point_bits(shared.liquid(p, t).unwrap()),
+                        point_bits(direct.liquid(p, t).unwrap())
+                    );
+                    assert_eq!(
+                        point_bits(shared.vapor(p, t).unwrap()),
+                        point_bits(direct.vapor(p, t).unwrap())
+                    );
+                }
+                let (a, b) = (shared.saturation(p).unwrap(), direct.saturation(p).unwrap());
+                assert_eq!(
+                    [point_bits(a.liquid), point_bits(a.vapor)],
+                    [point_bits(b.liquid), point_bits(b.vapor)]
+                );
+                assert_eq!(bits2(a.temperature), bits2(b.temperature));
+            }
+            for t in temperatures {
+                assert_eq!(
+                    bits2(shared.saturated_vapor_density(t).unwrap()),
+                    bits2(direct.saturated_vapor_density(t).unwrap())
+                );
+            }
+        }
+        // 4 x 3 liquid, 4 x 3 vapor, 4 saturation and 3 density queries are
+        // distinct (+0.0 and -0.0 seeds are distinct inputs); each once.
+        assert_eq!(inner.queries.get(), 31);
+        assert_eq!(shared.evaluated(), 31);
+        assert_eq!(direct.queries.get(), 93);
+    }
+
+    /// The shared boundary solves each turnover key once and answers it
+    /// with exactly the solved value; a refusal is not held, and a plain
+    /// boundary solves every call.
+    #[test]
+    fn shared_boundary_solves_each_turnover_key_once() {
+        let inner = Properties::default();
+        let shared = Shared::new(&inner);
+        let mut solves = 0;
+        for _ in 0..3 {
+            for (key, value) in [(vec![0, 1], 600.25), (vec![0, 2], -0.), (vec![1, 1], 3.5)] {
+                let got = shared
+                    .turnover(&key, &mut || {
+                        solves += 1;
+                        Ok(value)
+                    })
+                    .unwrap();
+                assert_eq!(got.to_bits(), value.to_bits());
+            }
+        }
+        assert_eq!((solves, shared.turnovers()), (3, 3));
+        let mut refusals = 0;
+        for _ in 0..2 {
+            let refused = shared.turnover(&[9], &mut || {
+                refusals += 1;
+                Err("refused")
+            });
+            assert_eq!(refused, Err("refused"));
+        }
+        assert_eq!((refusals, shared.turnovers()), (2, 3));
+        let mut plain = 0;
+        for _ in 0..2 {
+            inner
+                .turnover(&[0, 1], &mut || {
+                    plain += 1;
+                    Ok(1.)
+                })
+                .unwrap();
+        }
+        assert_eq!(plain, 2);
+        assert_eq!(inner.queries.get(), 0);
+    }
+
+    /// The fuel caloric law with its shared exponentials and once-evaluated
+    /// datum is bit for bit the law evaluating each exponential and the
+    /// datum where it appears, in values, directions and refusals.
+    #[test]
+    fn fuel_caloric_shares_its_exponentials_bit_for_bit() {
+        let reference = |t: Scalar| -> Result<[Scalar; 2]> {
+            t.finite()?;
+            if !(290. ..=2000.).contains(&t.value) {
+                return Err("fuel caloric domain 290--2000 K");
+            }
+            let primitive = |x: Scalar| {
+                s(296.7 * 535.285) / ((s(535.285) / x).exp() - s(1.))
+                    + s(0.0243 / 2.) * x * x
+                    + s(8.745e7) * (-s(1.577e5 / 8.3143) / x).exp()
+            };
+            let q = s(535.285) / t;
+            let exp = q.exp();
+            let cp = s(296.7) * q * q * exp / ((exp - s(1.)) * (exp - s(1.)))
+                + s(0.0243) * t
+                + s(8.745e7 * 1.577e5 / 8.3143) / (t * t) * (-s(1.577e5 / 8.3143) / t).exp();
+            positive(cp)?;
+            Ok([(primitive(t) - primitive(s(300.))).finite()?, cp.finite()?])
+        };
+        let mut compared = 0;
+        for i in 0..=4000 {
+            let value = 285. + 0.43 * f64::from(i);
+            for direction in [0., -0., 1., -3.7e-3, 250.] {
+                let t = Scalar::new(value, direction);
+                let actual = fuel_caloric(t).map(|c| [c.specific_energy, c.cp]);
+                match (actual, reference(t)) {
+                    (Ok(a), Ok(b)) => {
+                        assert_eq!(a.map(bits2), b.map(bits2), "T {value} dT {direction}");
+                        compared += 1;
+                    }
+                    (a, b) => assert_eq!(a.err(), b.err(), "T {value} dT {direction}"),
+                }
+            }
+        }
+        assert!(compared > 19_000);
     }
 
     #[test]

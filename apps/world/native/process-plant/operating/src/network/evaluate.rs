@@ -183,21 +183,23 @@ impl<P: Properties> Network<P> {
                 let mass = self.get(y, seed, l.mass[k]);
                 let energy = self.get(y, seed, l.energy[k]);
                 let q = if mass.value != 0. {
-                    Some(props::inverse(
+                    Some(props::inverse_for(
                         &self.properties,
                         p,
                         energy / mass,
                         k,
                         false,
+                        self.cell_need[node],
                         reuse.as_deref_mut().map(|r| (r, node)),
                     )?)
                 } else if let Some(h) = self.leading_enthalpy[node][k] {
-                    Some(props::inverse(
+                    Some(props::inverse_for(
                         &self.properties,
                         p,
                         s(h),
                         k,
                         true,
+                        self.cell_need[node],
                         reuse.as_deref_mut().map(|r| (r, node)),
                     )?)
                 } else {
@@ -515,7 +517,7 @@ impl<P: Properties> Network<P> {
             for (k, phase) in therm.iter_mut().enumerate() {
                 let receipt_point = if node_points[k].is_none() {
                     if md[k].value > 0. {
-                        Some(props::inverse(
+                        Some(props::inverse_thermodynamic(
                             &self.properties,
                             pressure,
                             hd[k] / md[k],
@@ -524,7 +526,7 @@ impl<P: Properties> Network<P> {
                             reuse.as_deref_mut().map(|r| (r, node)),
                         )?)
                     } else if md[k].value == 0. && md[k].direction > 0. {
-                        Some(props::inverse(
+                        Some(props::inverse_thermodynamic(
                             &self.properties,
                             pressure,
                             s(hd[k].direction / md[k].direction),

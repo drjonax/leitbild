@@ -37,6 +37,8 @@ export const operatingWaterBridge=(band:MetastableBand)=>String.raw`
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
 void require(bool condition,const std::string& message) {
  if(!condition) throw std::domain_error(message);
 }
@@ -49,21 +51,148 @@ ${nativeIf97Source(true)}
 // compressibility, transport or the p-only saturation slope. Its values are
 // therefore bit-identical to ld01_water_point's. R3, R5 and dilute states, all
 // refused by this R1/R2 boundary, take the full path.
-template<class R> State gibbs_caloric(const R& r,int region,double T,double p) {
- const double none=std::numeric_limits<double>::quiet_NaN(),rho=r.rhomass(T,p);
- const State q{region,p,T,rho,r.umass(T,p),r.hmass(T,p),none,r.cpmass(T,p),
-  none,none,r.alpha(T,p),none,none,none};
- const std::array<double,7> fields{{q.p,q.T,q.rho,q.u,q.h,q.cp,q.alpha}};
- require(std::all_of(fields.begin(),fields.end(),[](double value){return std::isfinite(value);}),
+// One pass over a region's residual terms. upstream's members evaluate each
+// Gibbs derivative as its own loop, and the tuple's fields call them again and
+// again (umass, hmass, rhomass and alpha re-evaluate dgammar_dPI and
+// dgammar_dTAU; cvmass, drhodp and tcond re-evaluate them and cpmass). Here
+// each residual sum of BaseRegion::dgammar_dPI, dgammar_dTAU, d2gammar_dTAU2,
+// d2gammar_dPIdTAU and d2gammar_dPI2 is accumulated once, term by term in the
+// same order with the same per-term expression, every integer power evaluated
+// once per term by upstream's powi and shared by the sums that read it. The
+// fields then use upstream's own expressions (BaseRegion::rhomass, umass,
+// hmass, cpmass, cvmass, drhodp and lambda2, Region1's cvmass and drhodp, the
+// shared Gibbs::alpha) on these sums and the upstream ideal-gas members, so
+// every field is the same value bit for bit.
+constexpr int FIELD_CV=1,FIELD_KAPPA=2,FIELD_MU=4,FIELD_K=8,FIELD_SLOPE=16,FIELDS_ALL=31;
+constexpr int SUM_PI=1,SUM_TAU=2,SUM_TAUTAU=4,SUM_PITAU=8,SUM_PIPI=16;
+struct GibbsSums {double pi=0,tau=0,tautau=0,pitau=0,pipi=0;};
+template<class R> struct FusedGibbs : R {
+ template<int S> GibbsSums sums(double T,double p) const {
+  const double _PI=this->PIrterm(p),_TAU=this->TAUrterm(T);
+  GibbsSums s;
+  for(std::size_t i=0;i<this->Jr.size();++i){
+   const double n=this->nr[i];const int I=this->Ir[i],J=this->Jr[i];
+   const double pi_i=(S&(SUM_TAU|SUM_TAUTAU))?IF97::powi(_PI,I):0.;
+   const double pi_i1=(S&(SUM_PI|SUM_PITAU))?IF97::powi(_PI,I-1):0.;
+   const double tau_j=(S&(SUM_PI|SUM_PIPI))?IF97::powi(_TAU,J):0.;
+   const double tau_j1=(S&(SUM_TAU|SUM_PITAU))?IF97::powi(_TAU,J-1):0.;
+   if constexpr((S&SUM_PI)!=0) s.pi+=n*I*pi_i1*tau_j;
+   if constexpr((S&SUM_TAU)!=0) s.tau+=n*J*pi_i*tau_j1;
+   if constexpr((S&SUM_TAUTAU)!=0) s.tautau+=n*J*(J-1)*pi_i*IF97::powi(_TAU,J-2);
+   if constexpr((S&SUM_PITAU)!=0) s.pitau+=n*J*I*pi_i1*tau_j1;
+   if constexpr((S&SUM_PIPI)!=0) s.pipi+=n*I*(I-1)*IF97::powi(_PI,I-2)*tau_j;
+  }
+  return s;
+ }
+ // rho, u, h, cp and alpha; the other fields NaN.
+ State caloric(int region,double T,double p) const {
+  const double none=std::numeric_limits<double>::quiet_NaN();
+  const GibbsSums s=sums<SUM_PI|SUM_TAU|SUM_TAUTAU|SUM_PITAU>(T,p);
+  const double gp=this->dgamma0_dPI(T,p)+s.pi;
+  const double gt=this->dgamma0_dTAU(T,p)+s.tau;
+  const double gtt=s.tautau+this->d2gamma0_dTAU2(T,p);
+  const double gpt=s.pitau;
+  const double tau=this->T_star/T,PI=p/this->p_star;
+  const double rho=this->p_star/(this->R*T)/(IF97::p_fact/1000.0/IF97::R_fact)/gp;
+  const double u=this->R*T*(tau*gt-PI*gp);
+  const double h=this->R*this->T_star*gt;
+  const double cp=-this->R*tau*tau*gtt;
+  const double alpha=(gp-this->T_star/T*gpt)/(T*gp);
+  const State q{region,p,T,rho,u,h,none,cp,none,none,alpha,none,none,none};
+  const std::array<double,7> fields{{q.p,q.T,q.rho,q.u,q.h,q.cp,q.alpha}};
+  require(std::all_of(fields.begin(),fields.end(),[](double value){return std::isfinite(value);}),
+   "Nonfinite field in returned native tuple");
+  return q;
+ }
+ // drhodp: Region1's override, or BaseRegion's (rho is rhomass's value).
+ double drhodp_of(const GibbsSums& s,double T,double p,double rho) const {
+  if constexpr(std::is_same_v<R,IF97::Region1>)
+   return -s.pipi/(IF97::powi(s.pi,2)*this->R*T)*(1000*IF97::R_fact/IF97::p_fact);
+  else {
+   const double PI=p/this->p_star;
+   return (rho/p)*((1.0-PI*PI*s.pipi)/(1.0+PI*s.pi));
+  }
+ }
+ // cvmass: Region1's override, or BaseRegion's (cp is cpmass's value).
+ double cv_of(const GibbsSums& s,double T,double p,double cp) const {
+  if constexpr(std::is_same_v<R,IF97::Region1>){
+   const double tau=this->T_star/T;
+   return this->R*(-tau*tau*s.tautau+IF97::powi(s.pi-tau*s.pitau,2)/s.pipi);
+  }else{
+   const double tau=this->T_star/T,PI=p/this->p_star;
+   return cp-this->R*IF97::powi(1+PI*s.pi-tau*PI*s.pitau,2)/(1-PI*PI*s.pipi);
+  }
+ }
+ // BaseRegion::lambda2 on the same cpmass, cvmass, visc and drhodp values.
+ double lambda2_of(double T,double rho,double cp,double cv,double mu,double drhodp) const {
+  double y,Cpbar,mubar,k,Z,delChi;
+  const double rhobar=rho/IF97::Rhocrit;
+  const double LAMBDA=177.8514;
+  const double qD=1.0/0.40;
+  const double Tr=1.5*IF97::Tcrit;
+  const double xi0=0.13;
+  const double nu=0.630;
+  const double gam=1.239;
+  const double GAMMA0=0.06;
+  const double PI=3.141592654;
+  const double Cpstar=0.46151805*IF97::R_fact;
+  Cpbar=cp/Cpstar;
+  if((Cpbar<0)||(Cpbar>1.0E13)) Cpbar=1.0E13;
+  k=cp/cv;
+  mubar=mu/1.0E-6;
+  delChi=rhobar*(IF97::Pcrit/IF97::Rhocrit*drhodp-this->delTr(rho)*Tr/T);
+  if(delChi>0) y=qD*xi0*std::pow(delChi/GAMMA0,nu/gam);
+  else y=0.0;
+  if(y<1.2E-7) Z=0.0;
+  else Z=2.0/PI/y*(((1.0-1.0/k)*atan(y)+y/k)-(1.0-exp(-1.0/(1.0/y+y*y/(3.0*rhobar*rhobar)))));
+  return LAMBDA*rhobar*Cpbar*T/(IF97::Tcrit*mubar)*Z;
+ }
+ // The requested fields of gibbs()'s tuple beyond the caloric state q at its
+ // own (T,p): r.cvmass, r.drhodp/rho, r.visc and r.tcond (BaseRegion::tcond).
+ void complete(State& q,int fields) const {
+  const double T=q.T,p=q.p,rho=q.rho;
+  if(fields&(FIELD_CV|FIELD_K)){
+   const GibbsSums s=sums<SUM_PI|SUM_TAUTAU|SUM_PITAU|SUM_PIPI>(T,p);
+   const double cv=cv_of(s,T,p,q.cp),drhodp=drhodp_of(s,T,p,rho),mu=this->visc(T,rho);
+   if(fields&FIELD_CV) q.cv=cv;
+   if(fields&FIELD_KAPPA) q.kappa=drhodp/rho;
+   if(fields&FIELD_MU) q.mu=mu;
+   if(fields&FIELD_K){
+    const double lambda_star=0.001;
+    const double lambda_bar=this->lambda0(T)*this->lambda1(T,rho)+lambda2_of(T,rho,q.cp,cv,mu,drhodp);
+    q.conductivity=lambda_star*lambda_bar;
+   }
+  }else{
+   if(fields&FIELD_KAPPA) q.kappa=drhodp_of(sums<SUM_PI|SUM_PIPI>(T,p),T,p,rho)/rho;
+   if(fields&FIELD_MU) q.mu=this->visc(T,rho);
+  }
+ }
+};
+static const FusedGibbs<IF97::Region1> c1;
+static const FusedGibbs<IF97::Region2> c2;
+// Complete the requested fields of an admitted (region 1 or 2) caloric state,
+// refusing a non-finite one as gibbs()'s tuple check does; the saturation
+// slope is water_point_at's, with its check. Unrequested fields stay NaN.
+double complete_state(State& q,int fields) {
+ switch(q.region){
+  case 1:c1.complete(q,fields);break;
+  case 2:c2.complete(q,fields);break;
+  default:throw std::invalid_argument("Completion of a non-R1/R2 state");
+ }
+ const std::array<std::pair<int,double>,4> added{{{FIELD_CV,q.cv},{FIELD_KAPPA,q.kappa},{FIELD_MU,q.mu},{FIELD_K,q.conductivity}}};
+ require(std::all_of(added.begin(),added.end(),[&](const auto& f){return !(fields&f.first)||std::isfinite(f.second);}),
   "Nonfinite field in returned native tuple");
- return q;
+ if(!(fields&FIELD_SLOPE))return std::numeric_limits<double>::quiet_NaN();
+ const double slope=saturation_slope(q.p);
+ require(std::isfinite(slope)&&slope>0,"Invalid saturation derivative");
+ return slope;
 }
 State point_caloric(double T,double p) {
  if (!std::isfinite(T)||!std::isfinite(p)||p<=0||T<=0)
   throw std::domain_error("Invalid finite positive PT input");
  switch(IF97::RegionDetermination_TP(T,p)) {
-  case IF97::REGION_1: return gibbs_caloric(r1,1,T,p);
-  case IF97::REGION_2: return gibbs_caloric(r2,2,T,p);
+  case IF97::REGION_1: return c1.caloric(1,T,p);
+  case IF97::REGION_2: return c2.caloric(2,T,p);
   case IF97::REGION_3: case IF97::REGION_5: return point(T,p);
   default: throw std::domain_error("Ambiguous PT saturation pair needs explicit endpoint/inventory");
  }
@@ -84,7 +213,7 @@ State liquid_caloric(double T,double p) {
 State endpoint_caloric(double p,bool is_liquid) {
  require(p>=IF97::Pmin&&p<IF97::Pcrit,"Unsupported saturation endpoint domain");
  const double T=r4.T_p(p);
- if(T<=IF97::T23min) return is_liquid?gibbs_caloric(r1,1,T,p):gibbs_caloric(r2,2,T,p);
+ if(T<=IF97::T23min) return is_liquid?c1.caloric(1,T,p):c2.caloric(2,T,p);
  return endpoint(p,is_liquid);
 }
 // Bounded metastable admission: the parsed ld01-metastable-band block, recorded
@@ -105,17 +234,11 @@ bool in_band(double p) {
 bool metastable_side(int branch,double p,double T,double ts) {
  return (branch==0&&T>ts)||(branch==1&&T<ts&&T>=IF97::Tmin&&!(p<=r4.p_T(T)));
 }
-// Complete forward tuples (the shared adapter) and the caloric-inverse subset.
-struct CompleteTuple {
- static State liquid_equation(double T,double p){return gibbs(r1,1,T,p);}
- static State vapor_equation(double T,double p){return gibbs(r2,2,T,p);}
- static State stable_liquid(double T,double p){return liquid(T,p);}
- static State stable_vapor(double T,double p){return vapor(T,p);}
- static State saturated(double p,bool is_liquid){return endpoint(p,is_liquid);}
-};
+// The caloric state on the shared adapter's branch paths; ld01_water_point
+// completes it (complete_state) rather than evaluating gibbs()'s tuple.
 struct CaloricTuple {
- static State liquid_equation(double T,double p){return gibbs_caloric(r1,1,T,p);}
- static State vapor_equation(double T,double p){return gibbs_caloric(r2,2,T,p);}
+ static State liquid_equation(double T,double p){return c1.caloric(1,T,p);}
+ static State vapor_equation(double T,double p){return c2.caloric(2,T,p);}
  static State stable_liquid(double T,double p){return liquid_caloric(T,p);}
  static State stable_vapor(double T,double p){return vapor_caloric(T,p);}
  static State saturated(double p,bool is_liquid){return endpoint_caloric(p,is_liquid);}
@@ -158,14 +281,16 @@ struct OperatingWaterPoint {
  double saturation_departure;
 };
 // The complete forward point; metastable admission is off only for the
-// coefficient probes of a stable-side state (see water_direction_at).
+// coefficient probes of a stable-side state (see water_direction_at). It is the
+// caloric state completed with every remaining field: gibbs()'s tuple without
+// entropy and sound speed, which no returned tuple carries, with the same
+// branch, domain and region checks and status codes.
 static int water_point_at(int branch,double p,double T,OperatingWaterPoint* out,bool metastable) noexcept {
  if(!out) return 2;
  try {
   State q;double ts;
-  const int status=branch_state<CompleteTuple>(branch,p,T,q,ts,metastable);if(status)return status;
-  const double slope=saturation_slope(p);
-  require(std::isfinite(slope)&&slope>0,"Invalid saturation derivative");
+  const int status=branch_state<CaloricTuple>(branch,p,T,q,ts,metastable);if(status)return status;
+  const double slope=complete_state(q,FIELDS_ALL);
   *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,q.cv,q.alpha,q.kappa,q.mu,q.conductivity,slope,q.T-ts};
   return 0;
  }catch(const std::domain_error&){return 1;}
@@ -174,6 +299,20 @@ static int water_point_at(int branch,double p,double T,OperatingWaterPoint* out,
 }
 int ld01_water_point(int branch,double p,double T,OperatingWaterPoint* out) noexcept {
  return water_point_at(branch,p,T,out,true);
+}
+// ld01_water_point restricted to the requested FIELD_* bits beyond the caloric
+// state: the same branches, checks and status codes, unrequested fields NaN.
+int ld01_water_fields(int branch,double p,double T,int fields,OperatingWaterPoint* out) noexcept {
+ if(!out||fields<0||fields>FIELDS_ALL) return 2;
+ try {
+  State q;double ts;
+  const int status=branch_state<CaloricTuple>(branch,p,T,q,ts,true);if(status)return status;
+  const double slope=complete_state(q,fields);
+  *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,q.cv,q.alpha,q.kappa,q.mu,q.conductivity,slope,q.T-ts};
+  return 0;
+ }catch(const std::domain_error&){return 1;}
+ catch(const std::exception&){return 3;}
+ catch(...){return 3;}
 }
 // The same branches, checks and status codes as ld01_water_point. Fields it
 // does not evaluate (cv, kappa, mu, conductivity, saturation slope) are NaN.
@@ -189,6 +328,24 @@ int ld01_water_caloric(int branch,double p,double T,OperatingWaterPoint* out) no
  catch(const std::exception&){return 3;}
  catch(...){return 3;}
 }
+// ld01_water_point's tuple, restricted to the requested FIELD_* bits, from the
+// caloric state that ld01_water_caloric returned for the SAME (branch,p,T):
+// that state already holds region, p, T, rho, u, h, cp, alpha and departure bit
+// for bit, so only the requested cv, kappa, viscosity, conductivity and
+// saturation slope are added (complete_state); unrequested fields are NaN.
+int ld01_water_complete(const OperatingWaterPoint* caloric,int fields,OperatingWaterPoint* out) noexcept {
+ if(!caloric||!out||fields<0||fields>FIELDS_ALL||(caloric->region!=1&&caloric->region!=2))return 2;
+ try {
+  const OperatingWaterPoint& c=*caloric;
+  const double none=std::numeric_limits<double>::quiet_NaN();
+  State q{c.region,c.p,c.T,c.rho,c.u,c.h,none,c.cp,none,none,c.alpha,none,none,none};
+  const double slope=complete_state(q,fields);
+  *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,q.cv,q.alpha,q.kappa,q.mu,q.conductivity,slope,c.saturation_departure};
+  return 0;
+ }catch(const std::domain_error&){return 1;}
+ catch(const std::exception&){return 3;}
+ catch(...){return 3;}
+}
 // Thermodynamic rho/u/h tangents use Gibbs identities. Upstream does not expose
 // third/transport derivatives: cp/alpha/kappa/mu/k use same-branch, second-order
 // local coefficient probes. These are disclosed inexact Newton coefficients,
@@ -197,10 +354,10 @@ int ld01_water_caloric(int branch,double p,double T,OperatingWaterPoint* out) no
 // Coefficient probes stay with the centre's admission: a stable-side centre
 // is probed on stable-side states only, as before metastable admission, and a
 // metastable centre inside the band.
-static int water_direction_at(int branch,double p,double T,double dp,double dT,
- const OperatingWaterPoint& q,OperatingWaterPoint* direction) noexcept {
- bool metastable;
- try{metastable=metastable_side(branch,p,T,r4.T_p(p));}catch(...){return 3;}
+// The exact part of a direction at q: p, T, rho, u, h and departure by the
+// Gibbs identities. The saturation slope is read only on a saturated branch
+// and for the departure.
+static OperatingWaterPoint exact_direction(int branch,double p,double dp,double dT,const OperatingWaterPoint& q) {
  const bool saturated=branch==2||branch==3;
  const double actual_dT=saturated?q.saturation_slope*dp:dT;
  OperatingWaterPoint d{};d.region=q.region;d.p=dp;d.T=actual_dT;
@@ -208,6 +365,14 @@ static int water_direction_at(int branch,double p,double T,double dp,double dT,
  d.rho=q.rho*(q.kappa*dp-q.alpha*actual_dT);
  d.u=(p*q.kappa-q.T*q.alpha)/q.rho*dp+(q.cp-p*q.alpha/q.rho)*actual_dT;
  d.h=(1-q.T*q.alpha)/q.rho*dp+q.cp*actual_dT;
+ return d;
+}
+static int water_direction_at(int branch,double p,double T,double dp,double dT,
+ const OperatingWaterPoint& q,OperatingWaterPoint* direction) noexcept {
+ bool metastable;
+ try{metastable=metastable_side(branch,p,T,r4.T_p(p));}catch(...){return 3;}
+ const bool saturated=branch==2||branch==3;
+ OperatingWaterPoint d=exact_direction(branch,p,dp,dT,q);
  const double scale=std::max(std::abs(dp)/p,saturated?0.:std::abs(dT)/q.T);
  if(scale!=0.) {
   const double h=std::cbrt(std::numeric_limits<double>::epsilon())/scale;
@@ -249,6 +414,20 @@ int ld01_water_direction_held(int branch,const OperatingWaterPoint* held,double 
  if(!held||!direction||!std::isfinite(dp)||!std::isfinite(dT))return 2;
  OperatingWaterPoint d{};
  const int status=water_direction_at(branch,held->p,held->T,dp,dT,*held,&d);if(status)return status;
+ *direction=d;return 0;
+}
+// The exact thermodynamic part of ld01_water_direction_held, without the
+// coefficient probes: p, T, rho, u and h only, bit for bit those fields of the
+// full direction; every other field is NaN. A saturated branch reads the held
+// point's saturation slope, a liquid or vapor branch never does.
+int ld01_water_direction_exact(int branch,const OperatingWaterPoint* held,double dp,double dT,
+ OperatingWaterPoint* direction) noexcept {
+ if(!held||!direction||branch<0||branch>3||!std::isfinite(dp)||!std::isfinite(dT))return 2;
+ const double none=std::numeric_limits<double>::quiet_NaN();
+ OperatingWaterPoint d=exact_direction(branch,held->p,dp,dT,*held);
+ d.cp=d.cv=d.alpha=d.kappa=d.mu=d.conductivity=d.saturation_slope=d.saturation_departure=none;
+ const std::array<double,5> fields{{d.p,d.T,d.rho,d.u,d.h}};
+ if(!std::all_of(fields.begin(),fields.end(),[](double v){return std::isfinite(v);}))return 3;
  *direction=d;return 0;
 }
 // The caloric inverse's branch ends at p: the stable end (branch code and
