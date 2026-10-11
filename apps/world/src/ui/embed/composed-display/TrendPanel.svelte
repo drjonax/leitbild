@@ -62,9 +62,13 @@
   } = $props()
 
   let width = $state(520)
-  // Several strips share the page; each hatch pattern needs its own id.
+  // Several strips share the page; each pattern needs its own id. No
+  // recorded data is hatched diagonally, a reading off its span combed
+  // upright, so the two never read alike (QA review of run 22); the legend's
+  // row shows the comb beside "below range".
   const uid = $props.id()
   const patternId = `no-data-${uid}`
+  const offScalePatternId = `off-scale-${uid}`
 
   // The strip's pens share one measurement, and so one resolution: readings
   // below it are drawn as 0 and its scale never magnifies them.
@@ -268,9 +272,12 @@
         <pattern id={patternId} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2="6" class="hatch" />
         </pattern>
+        <pattern id={offScalePatternId} width="3" height={OFF_SCALE_BAND} patternUnits="userSpaceOnUse">
+          <line x1="0.5" y1="0" x2="0.5" y2={OFF_SCALE_BAND} class="comb" />
+        </pattern>
       </defs>
       {#if showGap}
-        <rect x={pad.left} y={pad.top} width={Math.max(0, x(gapEnd) - pad.left)} height={plotHeight} fill={`url(#${patternId})`} />
+        <rect x={pad.left} y={pad.top} width={Math.max(0, x(gapEnd) - pad.left)} height={plotHeight} fill={`url(#${patternId})`}><title>{gapText}</title></rect>
         {#if gapWide}
           <text class="gap-label" x={pad.left + (x(gapEnd) - pad.left) / 2} y={pad.top + plotHeight / 2} text-anchor="middle" dominant-baseline="middle">{gapText}</text>
         {/if}
@@ -296,7 +303,7 @@
         ><title>{line.members.map(member => member.label).join('\n')}</title></line>
       {/each}
       {#each offScaleBands as band (band.key)}
-        <rect class="offscale" x={x(band.from)} width={Math.max(1, x(band.until) - x(band.from))} y={band.end === 'below' ? y(band.at) : y(band.at) - OFF_SCALE_BAND} height={OFF_SCALE_BAND} fill={`url(#${patternId})`}><title>{band.end} range: the instrument's indication is saturated, the quantity is there or beyond</title></rect>
+        <rect class="offscale" x={x(band.from)} width={Math.max(1, x(band.until) - x(band.from))} y={band.end === 'below' ? y(band.at) : y(band.at) - OFF_SCALE_BAND} height={OFF_SCALE_BAND} fill={`url(#${offScalePatternId})`}><title>{band.end} range: the instrument's indication is saturated, the quantity is there or beyond</title></rect>
       {/each}
       {#each thresholdLabels as label (label.key)}
         {#if label.edge === null && Math.abs(label.y - label.lineY) > 2}
@@ -352,6 +359,7 @@
   .threshold-label .active-warning { fill: var(--alert-warning-color); font-weight: 700; }
   .threshold-label .active-notice, .threshold-label .active-info { fill: var(--alert-caution-color); font-weight: 700; }
   .hatch { stroke: var(--border-divider-color); stroke-width: 1; }
+  .comb { stroke: var(--element-neutral-color); stroke-width: 1; stroke-opacity: 0.8; }
   .offscale { stroke: var(--element-neutral-color); stroke-width: 0.5; stroke-opacity: 0.6; }
   .gap-label { fill: var(--element-neutral-color); font-size: 11px; }
   .control-mark { stroke: var(--element-neutral-color); stroke-width: 2; }

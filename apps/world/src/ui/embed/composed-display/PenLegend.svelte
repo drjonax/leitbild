@@ -68,6 +68,7 @@
       <span class="value" class:offscale={reading?.offScale != null}>{typeof value === 'number' ? readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan) : typeof value === 'boolean' ? (value ? 'ON' : 'OFF') : '—'}</span>
       <span class="state">
         {#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}
+        {#if reading?.offScale != null}<svg class="comb-key" width="13" height="8" role="img" aria-label="drawn on the trend as an upright comb"><title>Off its span: drawn on the trend as this upright comb; no recorded data is hatched diagonally</title>{#each [0.5, 3.5, 6.5, 9.5, 12.5] as at (at)}<line x1={at} x2={at} y1="0" y2="8" />{/each}</svg>{/if}
         {#if state !== ''}<span class:beyond={reading?.offScale != null || reading?.limit?.kind === 'past'}>{state}</span>{/if}
         {#if entry?.quality === 'outside-hard-range'}<span class="beyond">outside range</span>{/if}
       </span>
@@ -92,6 +93,9 @@
   .state, .rate { font-size: 11px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .rate { overflow: hidden; text-overflow: ellipsis; }
   .beyond { color: var(--alert-caution-color); font-weight: 600; }
+  /* The trend's off-span comb (TrendPanel), beside the words that say so. */
+  .comb-key { flex: none; }
+  .comb-key line { stroke: var(--element-neutral-color); stroke-width: 1; stroke-opacity: 0.8; }
   /* A reading at an end of its instrument's span is no value: drawn as low integrity. */
   .value.offscale { font-weight: 400; font-style: italic; }
 </style>
