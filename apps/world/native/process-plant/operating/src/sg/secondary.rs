@@ -473,6 +473,15 @@ impl<P: Properties> Secondary<P> for Secondaries {
     fn next_time_event(&self, t: f64) -> Option<f64> {
         self.ramp_end().filter(|end| *end > t)
     }
+    fn time_event(&mut self, _: &P, t: f64, _: &mut [f64]) -> Result<Option<Transaction>, Failure> {
+        // The STOP ramp ends: the admission law's kink, no state change, so
+        // a repeated call at the same instant changes nothing either.
+        Ok((self.ramp_end() == Some(t)).then(|| Transaction {
+            deposits: Vec::new(),
+            receipt: json!({"owner":"secondary","t_s":t,"event":"STOP ramp end",
+                "steamAdmission":"zero from here (STOP closed)","stateChanged":false}),
+        }))
+    }
     fn generators(&self) -> usize {
         self.sgs.len()
     }

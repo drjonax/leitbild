@@ -12,7 +12,8 @@ import { parseOperatingHotReference } from './reference-design-operating-fluid'
 import { parseColdControlRelease } from './reference-design-control-release'
 
 const positive = z.number().finite().positive()
-const rodSchema = z.object({ spiderDrag: z.enum(['pending', 'envelope-disk', 'omitted']) }).strict()
+const rodSchema = z.object({ spiderDrag: z.enum(['pending', 'envelope-disk', 'omitted']),
+  passageBlendSpeed_m_s: positive }).strict()
 const holdingSchema = z.object({ turbineTripToOpening_s: positive }).strict()
 function strictBlock(text: string, fence: string): unknown {
   const rows = [...text.matchAll(new RegExp('^```' + fence + '\\s*\\n([\\s\\S]*?)^```\\s*$', 'gm'))]
@@ -89,7 +90,8 @@ export function compileOperatingRodsFrom(texts: Readonly<Record<(typeof OPERATIN
     spider: { mass_kg: control.spiderMass_kg, volume_m3: control.spiderMass_kg / control.steelDensity_kg_m3,
       seated_bottom_m: control.spiderBottom_m, height_m: control.spiderHeight_m, radius_m: control.spiderRadius_m },
     guide: { bore_radius_m: handling.guideInnerDiameter_m / 2, lower_mouth_m: handling.seatedBottom_m, upper_mouth_m: faTop,
-      roughness_m: control.guideRoughness_m, lower_mouth_loss: control.endLossEach, upper_mouth_loss: control.endLossEach },
+      roughness_m: control.guideRoughness_m, lower_mouth_loss: control.endLossEach, upper_mouth_loss: control.endLossEach,
+      blend_speed_m_s: s2.passageBlendSpeed_m_s },
     // LOWER spans everything below the core a body can reach; UPPER runs to
     // the head, HOUSING.MAIN to the housing top (the preparation's spans).
     cells: {

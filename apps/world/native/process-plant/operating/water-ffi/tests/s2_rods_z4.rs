@@ -210,7 +210,8 @@ fn terminal(block: &RodBlock, f: &Fluid<'_>, travel: f64) -> Option<f64> {
     Some(0.5 * (lo + hi))
 }
 
-/// The packet's hydrostatic preparation seen through the network's port.
+/// The packet's hydrostatic preparation seen through the network's port:
+/// R3's band-set passage root.
 struct Gap<'a> {
     block: &'a RodBlock,
     out: Option<Value>,
@@ -219,22 +220,29 @@ impl Coupling for Gap<'_> {
     fn couple(&mut self, fluid: &Fluid<'_>, _: &mut Receipts<'_>) -> Result<(), Failure> {
         let n = Rods::<()>::clusters(self.block);
         let scales = &Rods::<()>::layout(self.block).scales;
-        let at = |m: f64| -> Result<f64, Failure> {
+        let travel = self.block.reference_travel();
+        let at = |m: f64| -> Result<leitbild_operating_plant::rods::Forces, Failure> {
             let mut y = vec![0.; 3 * n];
-            y[0] = self.block.reference_travel() / scales[0];
+            y[0] = travel / scales[0];
             y[2] = m / scales[2];
             let yp = vec![0.; 3 * n];
             let x = Coordinates::new(&y, &yp, None, 0., scales)?;
-            Ok(self.block.forces(0, &x, fluid)?.passage_residual.value)
+            self.block.forces(0, &x, fluid)
         };
-        let refused = self
-            .block
-            .passage_current(0, fluid, self.block.reference_travel(), 0.)
-            .err()
-            .map(|e| format!("{e:?}"));
-        self.out = Some(
-            json!({"upwardDonorBalanceAtZero_Pa":at(0.)?,"downwardDonorBalanceAtZero_Pa":at(-f64::MIN_POSITIVE)?,"preparation":refused}),
-        );
+        let lower = self.block.plena()[0];
+        let band = fluid.cells[lower].phase[0].unwrap().density.value
+            * 1e-3
+            * 24.
+            * std::f64::consts::PI
+            * (0.0055_f64.powi(2) - 0.00475_f64.powi(2));
+        let root = self.block.passage_current(0, fluid, travel, 0.)?;
+        let f = at(root)?;
+        self.out = Some(json!({"bandHalfWidth_kg_s_per_cluster":band,
+            "balanceAtUpperBandEdge_Pa(LOWER water)":at(band)?.passage_residual.value,
+            "balanceAtLowerBandEdge_Pa(UPPER water)":at(-band)?.passage_residual.value,
+            "root_kg_s_per_cluster":root,"root_kg_s_all_52":root * n as f64,"blendWeightAtRoot":f.blend_weight.value,
+            "residualAtRoot_Pa":f.passage_residual.value,
+            "note":"R3: the root lies inside the blend band and is set by it, not by physics (disclosed)"}));
         Ok(())
     }
 }
@@ -469,8 +477,8 @@ fn z4_zero_time_rod_force_balance() {
 
     let app = env!("CARGO_MANIFEST_DIR");
     let receipt = json!({
-        "kind":"s2-z4-zero-time-rod-force-balance-operating-block-r1-r2",
-        "selections":"R1: envelope-disk spider drag, C from the page's cold broad-drag record; R2: each bore's displaced water leaves through its annulus beside the passage current (lead, 11 October, build-readiness rod block choices)",
+        "kind":"s2-z4-zero-time-rod-force-balance-operating-block-r1-r2-r3",
+        "selections":"R1: envelope-disk spider drag, C from the page's cold broad-drag record; R2: each bore's displaced water leaves through its annulus beside the passage current; R3: the bores' water blended by one C1 weight within 1 mm/s of the annulus current's reversal (lead, 11 October, build-readiness rod block choices and R3 law)",
         "status":"NOT-EVIDENCE zero-time balance: no S2 state (Z1) exists, no trajectory is run; the field is the retained physical-fuel at-power reference of the first Z4 disposition",
         "date":"2026-10-11",
         "provenance":{"app_commit":git(app,&["rev-parse","HEAD"]),"app_dirty":!git(app,&["status","--porcelain"]).is_empty(),
@@ -489,7 +497,7 @@ fn z4_zero_time_rod_force_balance() {
         "reconciliation_with_first_z4":reconcile,
         "coreLossShift":{"upperMinus30kPa":minus30,"upperPlus10kPa":plus10,"releaseSlope_N_per_kPa_extraCoreLoss":slope,"stallAt_kPa_extraCoreLoss":stall_kpa},
         "moving_zero_time":{"note":"zero-time algebraic balances at the listed downward speeds under R1 and R2, each passage re-solved at that speed (the clear current reverses once the displaced bore water exceeds what the annulus can pass upward); NOT a drop trajectory or an insertion time","rows":moving},
-        "hydrostaticPreparation":gap,
+        "hydrostaticPreparation_R3":gap,
         "armature_G3":armature,
         "cost":cost,
     });

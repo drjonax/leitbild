@@ -635,7 +635,8 @@ impl<P: Properties + WaterProperties> Joined<P> {
         self.deposit(&done, y)?;
         Ok(done)
     }
-    /// A declared command to every composed owner, in order.
+    /// A declared command to every composed owner, in order, followed by
+    /// any time event the command makes due at once ([`Joined::time_events`]).
     pub fn command(
         &mut self,
         t: f64,
@@ -648,6 +649,47 @@ impl<P: Properties + WaterProperties> Joined<P> {
         }
         if let Some(b) = self.rods_mut() {
             done.push(b.command(t, command)?);
+        }
+        self.deposit(&done, y)?;
+        done.extend(self.time_events(t, y)?);
+        Ok(done)
+    }
+    /// The owners' transactions of every time event due exactly at `t`: at
+    /// a stop at [`Joined::next_time_event`] and after a command. Each owner
+    /// changes only its own coordinates of `y` (written back in solver
+    /// scaling before any restart); deposits enter their passive stores
+    /// once. The caller then updates the differential identity and restarts
+    /// by the exact consistent start.
+    pub fn time_events(
+        &mut self,
+        t: f64,
+        y: &mut [f64],
+    ) -> Result<Vec<super::block::Transaction>, Failure> {
+        let o = self.blocks.offsets;
+        let mut done = Vec::new();
+        let b = &mut self.blocks;
+        if let SecondaryPort::Owner(owner) = &mut b.secondary {
+            let scales = &b.scales[2].coordinates;
+            let mut x: Vec<f64> = (o.secondary..o.rods)
+                .zip(scales)
+                .map(|(i, s)| y[i] * s)
+                .collect();
+            if let Some(d) = owner.time_event(&b.properties, t, &mut x)? {
+                done.push(d);
+                for ((i, v), s) in (o.secondary..o.rods).zip(&x).zip(scales) {
+                    y[i] = v / s;
+                }
+            }
+        }
+        if let RodPort::Owner(owner) = &mut b.rods {
+            let scales = &b.scales[3].coordinates;
+            let mut x: Vec<f64> = (o.rods..o.end).zip(scales).map(|(i, s)| y[i] * s).collect();
+            if let Some(d) = owner.time_event(&b.properties, t, &mut x)? {
+                done.push(d);
+                for ((i, v), s) in (o.rods..o.end).zip(&x).zip(scales) {
+                    y[i] = v / s;
+                }
+            }
         }
         self.deposit(&done, y)?;
         Ok(done)

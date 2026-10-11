@@ -98,6 +98,9 @@ pub struct Guide {
     pub roughness_m: f64,
     pub lower_mouth_loss: f64,
     pub upper_mouth_loss: f64,
+    /// R3's blend band, as an annulus speed: the passage's water is blended
+    /// over |annulus volume current| below this speed times the annulus area.
+    pub blend_speed_m_s: f64,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -194,10 +197,19 @@ pub struct Forces {
     /// The annulus mass current in the bores' water, the passage current
     /// plus the displacement (R2), kg/s.
     pub annulus_current: Scalar,
-    /// The plenum whose water the bores hold (R2: the annulus current's source).
+    /// The plenum whose water the bores mostly hold (R2: the annulus
+    /// current's source; R3: the blend weight's side).
     pub donor: usize,
+    /// R3's blend weight on LOWER's water: 1 above the band, 0 below.
+    pub blend_weight: Scalar,
     pub donor_density: Scalar,
     pub donor_viscosity: Scalar,
+}
+
+/// R3's C1 weight on the annulus volume current over its band, `x`:
+/// `1/2 + 3x/4 - x^3/4` on `|x| < 1`, with zero slope at both edges.
+fn blend(x: Scalar) -> Scalar {
+    s(0.5) + s(0.75) * x - s(0.25) * x * x * x
 }
 
 fn fatal(reason: impl Into<String>) -> Failure {
@@ -231,6 +243,8 @@ pub struct RodBlock {
     guide_bottom: f64,
     guide_top: f64,
     passage: Passage,
+    /// R3's band in annulus volume current, m3/s.
+    blend_volume_current: f64,
     gravity: f64,
     reference_travel: f64,
     span: (f64, f64),
@@ -318,6 +332,7 @@ impl RodBlock {
             ("holding delay", section.holding.turbine_trip_to_opening_s),
             ("lower mouth loss", g.lower_mouth_loss),
             ("upper mouth loss", g.upper_mouth_loss),
+            ("passage blend speed", g.blend_speed_m_s),
         ] {
             positive(name, v)?;
         }
@@ -473,6 +488,7 @@ impl RodBlock {
                 lower_mouth_loss: g.lower_mouth_loss,
                 upper_mouth_loss: g.upper_mouth_loss,
             },
+            blend_volume_current: g.blend_speed_m_s * annulus.area,
             gravity: section.gravity_m_s2,
             reference_travel: section.reference_travel_m,
             span: (cl.lower.bottom_m, cl.housing_main.top_m),
@@ -659,22 +675,53 @@ impl RodBlock {
         // annulus, D = -A_b v upward (a dashpot current while falling). The
         // bores hold the water of the annulus current's source: LOWER's while
         // it flows up, whatever the clear current's sign, UPPER's when it
-        // flows down (F1 (a)'s donor at rest). Zero takes the upward one.
+        // flows down (F1 (a)'s donor at rest). R3: within one band of the
+        // annulus volume current's reversal, the two plena's density and
+        // viscosity are blended by one C1 weight, so the balance is
+        // continuous and strictly decreasing there.
         let displacement = -s(self.body_area) * v;
-        let liquid = |cell: usize| {
-            fluid.cells[cell].phase[0]
-                .ok_or_else(|| recoverable(format!("rods: guide plenum cell {cell} has no liquid")))
-        };
-        let upward = m.value + liquid(self.lower)?.density.value * displacement.value >= 0.;
-        let donor = if upward { self.lower } else { self.upper };
-        let phase = liquid(donor)?;
-        let (point, direction) = fluid.points[donor][0].ok_or_else(|| {
-            recoverable(format!(
-                "rods: guide donor cell {donor} has no liquid point"
+        let water = |cell: usize| -> Result<(Scalar, Scalar), Failure> {
+            let phase = fluid.cells[cell].phase[0].ok_or_else(|| {
+                recoverable(format!("rods: guide plenum cell {cell} has no liquid"))
+            })?;
+            let (point, direction) = fluid.points[cell][0].ok_or_else(|| {
+                recoverable(format!(
+                    "rods: guide plenum cell {cell} has no liquid point"
+                ))
+            })?;
+            Ok((
+                phase.density,
+                Scalar::new(point.viscosity_pa_s, direction.viscosity_pa_s),
             ))
-        })?;
-        let rho = phase.density;
-        let mu = Scalar::new(point.viscosity_pa_s, direction.viscosity_pa_s);
+        };
+        let (rho_lower, mu_lower) = water(self.lower)?;
+        let reversal = (m / rho_lower + displacement) / s(self.blend_volume_current);
+        let (rho, mu, weight) = if reversal.value >= 1. {
+            (rho_lower, mu_lower, s(1.))
+        } else {
+            let (rho_upper, mu_upper) = water(self.upper)?;
+            if reversal.value <= -1. {
+                (rho_upper, mu_upper, s(0.))
+            } else {
+                if rho_upper.value > rho_lower.value {
+                    return Err(recoverable(format!(
+                        "rods: {} passage current {} kg/s lies in the R3 blend band with UPPER denser than LOWER ({} > {} kg/m3): an inverted column has no unique passage state",
+                        self.clusters[c].id, m.value, rho_upper.value, rho_lower.value
+                    )));
+                }
+                let w = blend(reversal);
+                (
+                    w * rho_lower + (s(1.) - w) * rho_upper,
+                    w * mu_lower + (s(1.) - w) * mu_upper,
+                    w,
+                )
+            }
+        };
+        let donor = if weight.value >= 0.5 {
+            self.lower
+        } else {
+            self.upper
+        };
         let g = s(self.gravity);
         let lower_mouth = fluid.cells[self.lower].pressure
             + fluid.mixture_density(self.lower) * g * s(self.z_lower - self.guide_bottom);
@@ -722,6 +769,7 @@ impl RodBlock {
             annulus_dissipation: ann.dissipation,
             annulus_current,
             donor,
+            blend_weight: weight,
             donor_density: rho,
             donor_viscosity: mu,
         })
@@ -760,12 +808,12 @@ impl RodBlock {
     }
 
     /// The steady passage current of cluster `c` at `travel` and body speed
-    /// `speed` in this fluid state: the unique root of its monotone series
-    /// balance, by a bracketed Newton.
-    /// A donor-density gap, where the upward donor's balance is negative at
-    /// zero current and the downward donor's positive, has no steady passage
-    /// state and is refused. Convergence is declared at `1e-12` of the row
-    /// scale plus the balance's rounding floor between the plena pressures.
+    /// `speed` in this fluid state: the unique root of its strictly
+    /// decreasing series balance (R3's blend makes it continuous through the
+    /// annulus current's reversal), by a bracketed Newton. An inverted
+    /// column, UPPER denser than LOWER, is refused. Convergence is declared
+    /// at `1e-12` of the row scale plus the balance's rounding floor between
+    /// the plena pressures.
     pub fn passage_current(
         &self,
         c: usize,
@@ -786,44 +834,57 @@ impl RodBlock {
             let x = Coordinates::new(&yv, &yp, Some(&seed), 0., &self.layout.scales)?;
             Ok(self.forces(c, &x, fluid)?.passage_residual)
         };
-        // Each donor's balance at zero current; the current's sign follows.
-        let up = residual(0., 0.)?.value;
-        let down = residual(-f64::MIN_POSITIVE, 0.)?.value;
-        let (at_zero, donor, sign) = if up > 0. {
-            (up, self.lower, 1.)
-        } else if down < 0. {
-            (down, self.upper, -1.)
-        } else {
+        // R3: with LOWER no lighter than UPPER the blended balance is
+        // continuous and strictly decreasing, so it has exactly one root.
+        // Bracket it on the blend band around the annulus current's reversal,
+        // then outward by doubling.
+        let density = |cell: usize| -> Result<f64, Failure> {
+            Ok(fluid.cells[cell].phase[0]
+                .ok_or_else(|| fatal("rods: a plenum has no liquid to prepare the passages"))?
+                .density
+                .value)
+        };
+        let (rho_lower, rho_upper) = (density(self.lower)?, density(self.upper)?);
+        if rho_upper > rho_lower {
             return Err(fatal(format!(
-                "rods: {} has no steady passage state: at zero current the balance is {up} Pa with the upward donor and {down} Pa with the downward one",
+                "rods: {} has no unique passage state: UPPER is denser than LOWER ({rho_upper} > {rho_lower} kg/m3), an inverted column (R3)",
                 self.clusters[c].id
             )));
-        };
-        let rho = fluid.cells[donor].phase[0]
-            .ok_or_else(|| fatal("rods: a plenum has no liquid to prepare the passages"))?
-            .density
-            .value;
-        // The mouth losses alone close the balance below this current: both
-        // mouths for an upward current, the lower one for a downward clear
-        // current (the annulus current may still rise with a falling body).
-        let p = &self.passage;
-        let k = if sign > 0. {
-            p.lower_mouth_loss / (p.clear_area * p.clear_area)
-                + p.upper_mouth_loss / (p.annulus.area * p.annulus.area)
-        } else {
-            p.lower_mouth_loss / (p.clear_area * p.clear_area)
-        };
-        let bound = (2. * rho * at_zero.abs() / k).sqrt();
-        let (mut lo, mut hi) = if sign > 0. {
-            (0., bound)
-        } else {
-            (-bound, -0.)
-        };
-        if residual(lo, 0.)?.value < 0. || residual(hi, 0.)?.value > 0. {
-            return Err(fatal(format!(
-                "rods: {} passage balance is not bracketed on [{lo}, {hi}] kg/s",
-                self.clusters[c].id
-            )));
+        }
+        let centre = rho_lower * self.body_area * speed;
+        let half = rho_lower * self.blend_volume_current;
+        let (mut lo, mut hi) = (centre - half, centre + half);
+        let (at_lo, at_hi) = (residual(lo, 0.)?.value, residual(hi, 0.)?.value);
+        if at_hi > 0. {
+            let mut step = half;
+            lo = hi;
+            hi = lo + step;
+            while residual(hi, 0.)?.value > 0. {
+                if step > 1e6 * half.max(1.) {
+                    return Err(fatal(format!(
+                        "rods: {} passage balance stays positive up to {hi} kg/s",
+                        self.clusters[c].id
+                    )));
+                }
+                lo = hi;
+                step *= 2.;
+                hi = lo + step;
+            }
+        } else if at_lo < 0. {
+            let mut step = half;
+            hi = lo;
+            lo = hi - step;
+            while residual(lo, 0.)?.value < 0. {
+                if step > 1e6 * half.max(1.) {
+                    return Err(fatal(format!(
+                        "rods: {} passage balance stays negative down to {lo} kg/s",
+                        self.clusters[c].id
+                    )));
+                }
+                hi = lo;
+                step *= 2.;
+                lo = hi - step;
+            }
         }
         // Declared convergence: 1e-12 of the passage's row scale, above the
         // rounding floor of a balance taken between ~15 MPa plenum pressures.
@@ -849,12 +910,9 @@ impl RodBlock {
                 0.5 * (lo + hi)
             };
         }
-        // A collapsed bracket whose ends keep their signs is a jump of the
-        // balance, where the annulus current reverses and the bores' water
-        // changes plenum: no steady state there (R3, until E2b's law).
         let (below, above) = (residual(lo, 0.)?.value, residual(hi, 0.)?.value);
         Err(fatal(format!(
-            "rods: {} passage balance did not close to {tolerance} Pa: it falls from {below} Pa to {above} Pa between {lo} and {hi} kg/s, where the annulus current reverses (no steady passage state, R3)",
+            "rods: {} passage balance did not close to {tolerance} Pa on [{lo}, {hi}] kg/s ({below} to {above} Pa)",
             self.clusters[c].id
         )))
     }
@@ -971,6 +1029,19 @@ impl<P> Rods<P> for RodBlock {
     }
     fn next_time_event(&self, t: f64) -> Option<f64> {
         self.holding_open_at.filter(|open| *open > t)
+    }
+    fn time_event(&mut self, p: &P, t: f64, y: &mut [f64]) -> Result<Option<Transaction>, Failure> {
+        // The holding circuit opens at `t`: every held cluster that is not
+        // stuck releases here, since its release root (t - open) is exactly
+        // zero at the stop and would never report a crossing. A release the
+        // root already transacted left no held cluster: nothing is due.
+        let directions: Vec<i32> = (0..self.clusters.len())
+            .map(|c| i32::from(self.modes[c] == Mode::Held && !self.failed_release[c]))
+            .collect();
+        if self.holding_open_at != Some(t) || directions.iter().all(|d| *d == 0) {
+            return Ok(None);
+        }
+        Rods::<P>::transact(self, p, t, &directions, y).map(Some)
     }
     fn prepare(&mut self, _: &P, fluid: &Fluid<'_>) -> Result<Transaction, Failure> {
         let currents = self.prepare_currents(fluid)?;

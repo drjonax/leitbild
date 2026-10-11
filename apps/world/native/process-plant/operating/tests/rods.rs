@@ -96,6 +96,7 @@ fn section(drag: SpiderDrag) -> Section {
             roughness_m: 2e-6,
             lower_mouth_loss: 0.5,
             upper_mouth_loss: 0.5,
+            blend_speed_m_s: 1e-3,
         },
         cells: Cells {
             lower: span("LOWER", -6.9, -2.),
@@ -716,6 +717,31 @@ fn trip_release_seat_and_the_stuck_cluster_follow_the_modes() {
 }
 
 #[test]
+fn the_holding_opening_releases_every_held_cluster_once_as_a_time_event() {
+    let water = z4_field(0.);
+    let mut b = block(SpiderDrag::Omitted);
+    let mut physical = held(&mut b, &water, 2.8);
+    b.set_failed_release(5);
+    assert!(Rods::<()>::time_event(&mut b, &(), 1.7, &mut physical).unwrap().is_none());
+    Rods::<()>::command(&mut b, 1.5, Command::TurbineTrip).unwrap();
+    let open = Rods::<()>::next_time_event(&b, 1.5).unwrap();
+    assert!(Rods::<()>::time_event(&mut b, &(), 1.6, &mut physical).unwrap().is_none());
+    let before = physical.clone();
+    let tx = Rods::<()>::time_event(&mut b, &(), open, &mut physical)
+        .unwrap()
+        .expect("the opening is due");
+    assert!(tx.deposits.is_empty());
+    assert_eq!(physical, before, "a release moves no coordinate");
+    for c in 0..52 {
+        let expected = if c == 5 { Mode::Held } else { Mode::Free };
+        assert_eq!(b.modes()[c], expected, "cluster {c}");
+    }
+    // Transacted once: a second call at the same instant has nothing due.
+    assert!(Rods::<()>::time_event(&mut b, &(), open, &mut physical).unwrap().is_none());
+    assert_eq!(Rods::<()>::next_time_event(&b, open), None);
+}
+
+#[test]
 fn a_free_body_refuses_a_pending_spider_drag_selection() {
     let water = z4_field(0.);
     let mut b = block(SpiderDrag::Pending);
@@ -743,10 +769,9 @@ fn a_free_body_refuses_a_pending_spider_drag_selection() {
     );
 }
 
-#[test]
-fn a_hydrostatic_field_has_no_steady_passage_state() {
-    // The packet's hydrostatic preparation: LOWER 745.7, core 715.3/679.3,
-    // UPPER 679.3 kg/m3 with the network's well-balanced head and no flow.
+/// The packet's hydrostatic preparation: LOWER 745.7, core 715.3/679.3,
+/// UPPER 679.3 kg/m3 with the network's well-balanced head and no flow.
+fn hydrostatic() -> Vec<Water1> {
     let mut water = z4_field(0.);
     let (rl, r1, r2, ru) = (745.7088, 715.3052, 679.3369, 679.3369);
     let pl = 15.2e6;
@@ -757,14 +782,184 @@ fn a_hydrostatic_field_has_no_steady_passage_state() {
     water[9].rho = Scalar::constant(ru);
     water[10].p = Scalar::constant(pu - 3. * ru * G);
     water[10].rho = Scalar::constant(ru);
+    water
+}
+/// One cluster's passage residual and its exact current direction at
+/// travel `y`, speed `v` and current `m`.
+fn passage(b: &RodBlock, water: &[Water1], y: f64, v: f64, m: f64) -> Scalar {
+    let d = fluid_data(water);
+    let f = fluid(&d);
+    let scales = Rods::<()>::layout(b).scales.clone();
+    let mut x = vec![0.; 156];
+    let mut seed = vec![0.; 156];
+    x[0] = y / scales[0];
+    x[1] = v / scales[1];
+    x[2] = m / scales[2];
+    seed[2] = 1. / scales[2];
+    let yp = vec![0.; 156];
+    let c = Coordinates::new(&x, &yp, Some(&seed), 0., &scales).unwrap();
+    b.forces(0, &c, &f).unwrap().passage_residual
+}
+
+#[test]
+fn the_hydrostatic_field_has_exactly_one_band_set_passage_root() {
+    let water = hydrostatic();
     let mut b = block(SpiderDrag::Omitted);
     let d = fluid_data(&water);
     let f = fluid(&d);
-    let error = b.prepare_currents_at(&f, 2.8).unwrap_err();
+    let currents = b.prepare_currents_at(&f, 2.8).unwrap();
+    // R3: the root lies inside the band and is set by it (DONOR's estimate
+    // -1.26e-4 kg/s per cluster, about 6.6e-3 kg/s over the 52).
+    let band =
+        745.7088 * 1e-3 * 24. * std::f64::consts::PI * (0.0055_f64.powi(2) - 0.00475_f64.powi(2));
+    // rho_L (1 mm/s) A_ann: 745.7 kg/m3 times 5.796e-4 m2, 4.32e-4 kg/s.
+    assert!((band - 4.322e-4).abs() < 1e-7, "{band}");
+    let m = currents[0];
+    assert!((m + 1.26e-4).abs() < 0.005e-4, "root {m}");
+    let total: f64 = currents.iter().sum();
+    assert!((total + 6.6e-3).abs() < 0.05e-3, "total {total}");
+    assert!(passage(&b, &water, 2.8, 0., m).value.abs() < 1e-6);
+    // Strictly decreasing, hence exactly one root, across and beyond the band.
+    let mut previous = f64::INFINITY;
+    for k in -300..=300 {
+        let r = passage(&b, &water, 2.8, 0., k as f64 * band / 100.).value;
+        assert!(r < previous, "not decreasing at {k}");
+        previous = r;
+    }
+    // An inverted column refuses visibly.
+    let mut inverted = water.clone();
+    inverted[9].rho = Scalar::constant(760.);
+    inverted[10].rho = Scalar::constant(760.);
+    let d = fluid_data(&inverted);
+    let error = b.prepare_currents_at(&fluid(&d), 2.8).unwrap_err();
     assert!(
-        format!("{error:?}").contains("no steady passage state"),
+        format!("{error:?}").contains("inverted column"),
         "{error:?}"
     );
+}
+
+#[test]
+fn the_blended_passage_is_continuous_and_c1_through_zero_and_its_reversal() {
+    let band = 4.35e-4;
+    // At rest in the hydrostatic field, and falling at 4.8 m/s in the
+    // at-power field, where the annulus current reverses near 5 m/s.
+    for (water, v) in [(hydrostatic(), 0.), (z4_field(0.), -4.8)] {
+        let b = block(SpiderDrag::Omitted);
+        let centre = 745.7088 * 24. * std::f64::consts::PI * 0.00475_f64.powi(2) * v;
+        for offset in [-band, -0.3 * band, 0., 0.6 * band, band] {
+            let m = centre + offset;
+            let h = 1e-9;
+            let r = passage(&b, &water, 1.25, v, m);
+            let (left, right) = (
+                passage(&b, &water, 1.25, v, m - h).value,
+                passage(&b, &water, 1.25, v, m + h).value,
+            );
+            // Continuous (no jump beyond the slope's own change), and both
+            // one-sided slopes agree with the exact one: C1.
+            assert!((right - left).abs() <= 2.0001 * h * r.direction.abs() + 1e-6);
+            let (dl, dr) = ((r.value - left) / h, (right - r.value) / h);
+            for slope in [dl, dr] {
+                assert!(
+                    (slope - r.direction).abs() <= 2e-4 * r.direction.abs(),
+                    "v {v} offset {offset}: {dl} {dr} vs {}",
+                    r.direction
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn g10_directions_hold_inside_the_blend_band() {
+    // The hydrostatic field with every passage near its band-set root,
+    // a quarter of the bodies falling slowly with their annulus current
+    // still inside the band.
+    let water = hydrostatic();
+    let mut b = block(SpiderDrag::EnvelopeDisk { coefficient: 1.28 });
+    let d = fluid_data(&water);
+    let f = fluid(&d);
+    let root = b.prepare_currents_at(&f, 2.8).unwrap()[0];
+    let scales = Rods::<()>::layout(&b).scales.clone();
+    let mut physical = Rods::<()>::prepared(&b);
+    let mut rates = vec![0.; 156];
+    let area = 24. * std::f64::consts::PI * 0.00475_f64.powi(2);
+    for c in 0..52 {
+        physical[3 * c + 2] = root * (1. + 0.3 * ((c % 5) as f64 - 2.) / 2.);
+        if c % 4 == 1 {
+            b.set_mode(c, Mode::Free);
+            let v = -0.0001 * (1 + c % 3) as f64;
+            physical[3 * c + 1] = v;
+            physical[3 * c + 2] += 745.7088 * area * v;
+            rates[3 * c] = v;
+            rates[3 * c + 1] = -1.;
+        }
+    }
+    let y: Vec<f64> = physical.iter().zip(&scales).map(|(v, s)| v / s).collect();
+    let yp: Vec<f64> = rates.iter().zip(&scales).map(|(v, s)| v / s).collect();
+    let rows_scale = Rods::<()>::layout(&b).row_scales.clone();
+    let cj = 23.;
+    let n = y.len();
+    let mut worst = 0_f64;
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut seeds: Vec<Vec<f64>> = (0..n)
+        .map(|j| (0..n).map(|i| if i == j { 1. } else { 0. }).collect())
+        .collect();
+    for _ in 0..20 {
+        seeds.push(
+            (0..n)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    (state % 2001) as f64 / 1000. - 1.
+                })
+                .collect(),
+        );
+    }
+    for d in &seeds {
+        let (rows, _, _) = evaluate(&mut b, &y, &yp, Some(d), cj, &water);
+        let exact: Vec<f64> = rows
+            .iter()
+            .zip(&rows_scale)
+            .map(|(r, s)| r.direction / s)
+            .collect();
+        let h = 1e-9;
+        let mut arm = |sign: f64| {
+            let ys: Vec<f64> = y.iter().zip(d).map(|(v, e)| v + sign * h * e).collect();
+            let yps: Vec<f64> = yp
+                .iter()
+                .zip(d)
+                .map(|(v, e)| v + sign * h * cj * e)
+                .collect();
+            let (rows, _, _) = evaluate(&mut b, &ys, &yps, None, 0., &water);
+            rows.iter()
+                .zip(&rows_scale)
+                .map(|(r, s)| r.value / s)
+                .collect::<Vec<f64>>()
+        };
+        let (plus, minus) = (arm(1.), arm(-1.));
+        let norm = exact.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let error = exact
+            .iter()
+            .zip(plus.iter().zip(&minus))
+            .map(|(a, (p, m))| (a - (p - m) / (2. * h)).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        if norm > 0. {
+            worst = worst.max(error / norm);
+        }
+    }
+    assert!(
+        worst < 1e-6,
+        "worst relative directional error in the band {worst}"
+    );
+    // Conservation holds in the band too.
+    let (_, cells, volumes) = evaluate(&mut b, &y, &yp, None, 0., &water);
+    let mass: f64 = cells.iter().map(|c| c[0][0].value).sum();
+    let scale: f64 = cells.iter().map(|c| c[0][0].value.abs()).sum();
+    assert!(mass.abs() <= 1e-13 * scale);
+    let rate: f64 = volumes.iter().map(|v| v.rate_m3_s.value).sum();
+    assert!(rate.abs() < 1e-18);
 }
 
 #[test]
