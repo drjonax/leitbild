@@ -26,7 +26,9 @@
   const LABEL_GAP = 10
   const measures = { primary: textMeasure(panelFont(12, 700)), context: textMeasure(panelFont(12)) }
   const measure = (text: string, primary: boolean): number => (primary ? measures.primary : measures.context)(text)
-  const labelled = $derived(panel.pens.map(pen => ({ text: `${displayName(pen)}${pen.command ? ' (demand)' : ''}`, shorter: pen.shorterNames.map(name => `${name}${pen.command ? ' (demand)' : ''}`), primary: pen.role === 'primary' })))
+  // A demand and a value only the simulator computes say so after their name, whatever room is left.
+  const suffix = (pen: (typeof panel.pens)[number]): string => `${pen.command ? ' (demand)' : ''}${pen.simulatorOnly ? ' (SIM)' : ''}`
+  const labelled = $derived(panel.pens.map(pen => ({ text: `${displayName(pen)}${suffix(pen)}`, shorter: pen.shorterNames.map(name => `${name}${suffix(pen)}`), primary: pen.role === 'primary' })))
   const labelWidth = $derived(Math.min(Math.round(width * 0.4), Math.ceil(Math.max(...labelled.map(label => measure(label.text, label.primary)))) + LABEL_GAP))
   const fitted = (label: { readonly text: string; readonly shorter: ReadonlyArray<string>; readonly primary: boolean }): string =>
     fitName(label.text, text => measure(text, label.primary) <= labelWidth - LABEL_GAP, label.shorter)

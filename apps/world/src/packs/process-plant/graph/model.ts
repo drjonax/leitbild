@@ -409,8 +409,7 @@ const variableDescriptorBaseSchema = z.object({
   /**
    * A value the model solves that no instrument in a real plant measures: a
    * heat balance's deficit, the true flow through a relief valve or a leak, a
-   * bus's spare power. A display marks it as the simulator's, and evidence
-   * prefers a real instrument to it.
+   * bus's spare power. Displays tag it SIM wherever they show it.
    */
   simulatorOnly: z.literal(true).optional(),
 })
@@ -611,6 +610,7 @@ export interface ProcessSignalBinding {
   readonly writable: boolean
   readonly actuation?: VariableActuation
   readonly measurand?: RatioMeasurand
+  /** A value only the simulator computes (variableDescriptorBaseSchema.simulatorOnly). */
   readonly simulatorOnly?: true
   readonly published: boolean
   readonly owner:

@@ -396,6 +396,16 @@ describe('world.process-plant.display.compose', () => {
     expect(result.shows.join('\n')).toContain('PORV-456A (Pressurizer relief valve position demand, fraction, context, a command (demand), shown as demand)')
   })
 
+  test('says when a signal only the simulator computes, which the display tags SIM (HMI review of run 23)', () => {
+    const result = ask('world.process-plant.display.compose', {
+      ...composition([{ ref: 'CET-AVG', role: 'primary' }]),
+      panels: [{ kind: 'trend', horizon: '2m', signals: [{ ref: 'CET-AVG', role: 'primary' }] }, { kind: 'readouts', signals: [{ ref: 'core.coreHeatRemovalDeficitMw', role: 'context' }] }],
+    }) as { warnings: ReadonlyArray<string>; shows: ReadonlyArray<string> }
+    expect(result.warnings).toContain('Core heat removal deficit · Reactor Core is computed by the simulator only; no instrument of a real plant reads it. The display tags it SIM: say so where you cite it.')
+    expect(result.shows.join('\n')).toContain('computed by the simulator only, tagged SIM')
+    expect(result.warnings.join('\n')).not.toContain('CET-AVG is computed by the simulator only')
+  })
+
   test('a line flow the I&C judges on the equipment it passes is refused with the judged signal', () => {
     // An accumulator's discharge isolation valve is bundled in it on its outlet; its injecting alarm acts on the
     // accumulator's outlet flow, not the line's. (The PORV's relief flow is judged by no rule: its alarm is on its

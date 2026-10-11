@@ -90,6 +90,8 @@ export interface ComposedDisplayPen {
    * stuck open. Shown as "demand" wherever it appears.
    */
   readonly command: boolean
+  /** A diagnostic only the simulator computes, which no real plant's instrument reads: tagged SIM wherever it shows. */
+  readonly simulatorOnly?: true
   readonly limits?: ProcessVariableLimits
   /**
    * The instrument its equipment declares reads the same quantity over a
@@ -442,6 +444,7 @@ const resolvePens = (
       seriesId,
       recorded: options.recordedSeriesIds.has(seriesId),
       command: binding.writable,
+      ...(binding.simulatorOnly === undefined ? {} : { simulatorOnly: binding.simulatorOnly }),
       ...(binding.limits === undefined ? {} : { limits: binding.limits }),
       ...(wider === undefined ? {} : { wider }),
       resolution: readingResolution(binding.limits, thresholds, operatingPointValue(system.plant, binding.path)),
@@ -1222,7 +1225,7 @@ export const compileDetailDisplay = (
 }
 
 const operatorText = { '<': 'below', '<=': 'at or below', '>': 'above', '>=': 'at or above' } as const
-const signalName = (pen: ComposedDisplayPen): string => `${pen.name} (${pen.tagId === undefined ? `${pen.path}, ` : `${pen.label}, `}${pen.unit}, ${pen.role}${pen.command ? ', a command (demand), shown as demand' : ''})`
+const signalName = (pen: ComposedDisplayPen): string => `${pen.name} (${pen.tagId === undefined ? `${pen.path}, ` : `${pen.label}, `}${pen.unit}, ${pen.role}${pen.command ? ', a command (demand), shown as demand' : ''}${pen.simulatorOnly ? ', computed by the simulator only, tagged SIM' : ''})`
 
 // Lines are named as the display labels them ("LO-LO 20 % · RX TRIP"), so
 // an answer can refer to them by the same name; an actuation is named by what
@@ -1585,6 +1588,7 @@ export const composedDisplayWarnings = (display: CompiledComposedDisplay): Reado
   }
   return composedPanelPens(panel).flatMap(pen => [
     ...(pen.command ? [`${pen.name} is a writable command (a demand), not a measured state; never present it as the equipment's actual state or position.`] : []),
+    ...(pen.simulatorOnly ? [`${pen.name} is computed by the simulator only; no instrument of a real plant reads it. The display tags it SIM: say so where you cite it.`] : []),
     ...(panel.kind === 'trend' && pen.role === 'primary' && pen.thresholds.length === 0 ? [`No single-signal I&C threshold acts on ${pen.tagId ?? pen.path}; its trend shows values without threshold lines.`] : []),
     ...(panel.kind === 'trend' && !pen.recorded ? [`${pen.tagId ?? pen.path} is not recorded by this Run's historian; its trend starts when the view opens. Do not describe its history from the display.`] : []),
     ...pen.combinedRules.map(rule => `${pen.tagId ?? pen.path} also feeds the combined rule "${rule.label}" (${rule.kind}); it is listed, not drawn.`),

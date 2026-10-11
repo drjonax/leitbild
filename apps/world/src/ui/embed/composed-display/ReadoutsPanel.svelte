@@ -54,7 +54,7 @@
   const compactChip = (pen: ComposedDisplayPen, inAlarm: ComposedDisplayThreshold): boolean => {
     const head = heads[String(pen.path)] ?? 0
     if (pen.tagId === undefined || head === 0) return false
-    const badges = pen.command ? ['demand'] : []
+    const badges = [...(pen.command ? ['demand'] : []), ...(pen.simulatorOnly ? ['sim'] : [])]
     const room = head - badges.reduce((sum, word) => sum + badgeWidth(word) + HEAD_GAP, 0) - chipWidth(limitKindName(inAlarm)) - HEAD_GAP
     return measureName(pen.tagId) > room
   }
@@ -112,7 +112,7 @@
     {@const end = typeof value === 'number' ? offScale(value, pen.limits?.instrumentSpan) : null}
     {@const asText = end !== null || logarithmicSpan(pen.limits?.instrumentSpan)}
     <li class:primary={pen.role === 'primary'} title={`${pen.label} · ${pen.role}`}>
-      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`} bind:clientWidth={heads[String(pen.path)]}><span class="name" class:tag={pen.tagId !== undefined} bind:clientWidth={rooms[String(pen.path)]}>{named(pen)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} compact={compactChip(pen, inAlarm)} />{/if}</span>
+      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`} bind:clientWidth={heads[String(pen.path)]}><span class="name" class:tag={pen.tagId !== undefined} bind:clientWidth={rooms[String(pen.path)]}>{named(pen)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if pen.simulatorOnly}<span class="demand" title="Computed by the simulator only: no instrument of a real plant reads it">sim</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} compact={compactChip(pen, inAlarm)} />{/if}</span>
       {#if typeof value === 'boolean'}
         <!-- A state in the words the model gives its two states ("Source-range HV off"), with its equipment where they do not name it. -->
         <span class="state" title={pen.described}>{value ? pen.states?.on : pen.states?.off}</span>
