@@ -1,6 +1,8 @@
 import type { IsoTimestamp } from '../../../../core/model/index.ts'
 import { queueGridSignal } from '../grid-signals.ts'
 import type { GridFrequencyEvent, GridRuntimeInstance } from '../instance.ts'
+import { generatorTripped } from '../state/arrays.ts'
+import { gridTablesFor } from '../state/tables.ts'
 
 /** The latest frequency-protection trip of a unit among the retained frequency events; undefined when it was tripped by command. */
 export const latestGeneratorProtectionTrip = (grid: GridRuntimeInstance, generatorId: string): GridFrequencyEvent | undefined => {
@@ -18,11 +20,16 @@ export const latestGeneratorProtectionTrip = (grid: GridRuntimeInstance, generat
  */
 export const recordGeneratorTrips = (grid: GridRuntimeInstance, at: IsoTimestamp, elapsedMs: number, sinceElapsedMs: number): void => {
   const recorded = grid.protection.recordedGeneratorTrips
-  for (const definition of grid.definition.model.generators) {
-    if (grid.generators.get(definition.id)!.state !== 'tripped') {
-      recorded.delete(definition.id)
-      continue
-    }
+  const definitions = grid.definition.model.generators
+  const lifecycle = grid.arrays.generators.lifecycle
+  // Forget units whose trip was reset; the others keep their place in the record.
+  if (recorded.size > 0) {
+    const indexById = gridTablesFor(grid.definition).generatorIndexById
+    for (const generatorId of recorded.keys()) if (lifecycle[indexById.get(generatorId)!] !== generatorTripped) recorded.delete(generatorId)
+  }
+  for (let generator = 0; generator < definitions.length; generator += 1) {
+    if (lifecycle[generator] !== generatorTripped) continue
+    const definition = definitions[generator]!
     if (recorded.has(definition.id)) continue
     const event = latestGeneratorProtectionTrip(grid, definition.id)
     // This trip's protection operation lies after the previous solve; an older one belongs to an earlier, reset trip.

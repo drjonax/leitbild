@@ -1,6 +1,7 @@
 import type { GridLoadDefinition } from '../grid-model.ts'
 import { queueGridSignal } from './grid-signals.ts'
 import type { GridLoadState, GridRuntimeInstance } from './instance.ts'
+import type { GridLoadArrays } from './state/arrays.ts'
 
 // Manual load reduction has two tiers. Curtailment uses a load's interruptible demand (contractual
 // or technical flexibility from the Model) and needs no emergency; shedding beyond it is emergency
@@ -10,7 +11,7 @@ import type { GridLoadState, GridRuntimeInstance } from './instance.ts'
 const mw = (value: number): string => `${Math.round(value * 10) / 10} MW`
 
 /** Interruptible demand an EV charging schedule below the modelled demand has not used (MW). */
-export const remainingInterruptibleMw = (definition: GridLoadDefinition, state: GridLoadState): number =>
+export const remainingInterruptibleMw = (definition: GridLoadDefinition, state: Pick<GridLoadState, 'modelledDemandMw' | 'nominalDemandMw'>): number =>
   Math.max(0, definition.interruptibleMw - Math.max(0, state.modelledDemandMw - state.nominalDemandMw))
 
 /**
@@ -37,12 +38,18 @@ export const manualShedRejection = (config: {
     + `curtailment goes no lower than ${mw(lowestMw)}; set emergency to shed down to its critical demand ${mw(definition.criticalMw)}`
 }
 
-/** Demand the manual limit disconnects in this demand sample: within the interruptible demand unless the limit is emergency shedding. */
-export const manualCurtailmentMw = (definition: GridLoadDefinition, state: GridLoadState): number => {
-  const limitMw = state.manualDemandLimitMw
-  if (limitMw === null) return 0
-  const requestedMw = Math.max(0, state.demandMw - Math.max(definition.criticalMw, limitMw))
-  return state.manualShedEmergency ? requestedMw : Math.min(requestedMw, remainingInterruptibleMw(definition, state))
+/**
+ * Demand the manual limit disconnects from load `index` in this demand sample: within the
+ * interruptible demand unless the limit is emergency shedding.
+ */
+export const manualCurtailmentMw = (definition: GridLoadDefinition, loads: GridLoadArrays, index: number): number => {
+  const limitMw = loads.manualDemandLimitMw[index]!
+  // NaN codes "no manual limit".
+  if (limitMw !== limitMw) return 0
+  const requestedMw = Math.max(0, loads.demandMw[index]! - Math.max(definition.criticalMw, limitMw))
+  if (loads.manualShedEmergency[index] === 1) return requestedMw
+  const remainingMw = Math.max(0, definition.interruptibleMw - Math.max(0, loads.modelledDemandMw[index]! - loads.nominalDemandMw[index]!))
+  return Math.min(requestedMw, remainingMw)
 }
 
 /** Records emergency shedding as a Simulation Run signal next to the command that set it. */

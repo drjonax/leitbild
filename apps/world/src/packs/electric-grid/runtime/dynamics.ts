@@ -3,13 +3,13 @@ import type { GridLoadDefinition } from '../grid-model.ts'
 // Daily demand shape per load kind, as relative factors over the Europe/Oslo clock hour. These are
 // the Pack's existing shapes; they carry no measured source yet (Elhub hourly profiles replace them
 // with the data lane's operating points).
-const loadDailyFactor = (load: GridLoadDefinition, hour: number): number => {
+export const loadKindDailyFactor = (kind: GridLoadDefinition['kind'], hour: number): number => {
   const phase = 2 * Math.PI * hour / 24
-  if (load.kind === 'residential') return 1 + 0.055 * Math.sin(phase - 0.6) + 0.05 * Math.sin(2 * phase - 2.2)
-  if (load.kind === 'commercial' || load.kind === 'airport') return 0.98 + 0.08 * Math.sin(phase - 1.35) + 0.025 * Math.sin(2 * phase - 1.8)
-  if (load.kind === 'ev_charging') return 0.96 + 0.105 * Math.sin(phase - 2.35) + 0.035 * Math.sin(2 * phase - 2.9)
-  if (load.kind === 'industry' || load.kind === 'data_center' || load.kind === 'process_plant') return 1 + 0.018 * Math.sin(phase - 0.9)
-  if (load.kind === 'hospital') return 1 + 0.01 * Math.sin(phase - 0.4)
+  if (kind === 'residential') return 1 + 0.055 * Math.sin(phase - 0.6) + 0.05 * Math.sin(2 * phase - 2.2)
+  if (kind === 'commercial' || kind === 'airport') return 0.98 + 0.08 * Math.sin(phase - 1.35) + 0.025 * Math.sin(2 * phase - 1.8)
+  if (kind === 'ev_charging') return 0.96 + 0.105 * Math.sin(phase - 2.35) + 0.035 * Math.sin(2 * phase - 2.9)
+  if (kind === 'industry' || kind === 'data_center' || kind === 'process_plant') return 1 + 0.018 * Math.sin(phase - 0.9)
+  if (kind === 'hospital') return 1 + 0.01 * Math.sin(phase - 0.4)
   return 1
 }
 
@@ -32,6 +32,6 @@ export const osloHourOfDay = (epochMs: number): number => {
   return (((localMs % 86_400_000) + 86_400_000) % 86_400_000) / 3_600_000
 }
 
-/** Profiled demand of one load at an instant, given that instant's Europe/Oslo hour. */
-export const profiledGridDemand = (load: GridLoadDefinition, nominalDemandMw: number, osloHour: number): number =>
-  Math.max(load.criticalMw, nominalDemandMw * loadDailyFactor(load, osloHour))
+/** Profiled demand of one load whose kind's daily factor at the instant is `dailyFactor`. */
+export const profiledGridDemand = (load: GridLoadDefinition, nominalDemandMw: number, dailyFactor: number): number =>
+  Math.max(load.criticalMw, nominalDemandMw * dailyFactor)

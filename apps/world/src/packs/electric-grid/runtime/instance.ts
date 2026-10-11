@@ -20,8 +20,18 @@ import type { CompiledGridNetwork } from './network/compiled-network.ts'
 import { createGridAlarmState, type GridAlarmState, type PersistedGridAlarmState } from './alarms.ts'
 import type { GridRuntimeSignal } from './grid-signals.ts'
 import { createGridProtectionState, type GridBranchProtectionState, type GridGeneratorTripRecord, type GridProtectionState } from './protection/state.ts'
-import { branchStatusCodes, codeOf, createGridStateArrays, storedNullable, type GridStateArrays } from './state/arrays.ts'
-import { branchStateViews } from './state/views.ts'
+import {
+  branchStatusCodes,
+  codeOf,
+  createGridBranchArrays,
+  createGridGeneratorArrays,
+  createGridLoadArrays,
+  createGridStateArrays,
+  generatorLifecycleCodes,
+  storedNullable,
+  type GridStateArrays,
+} from './state/arrays.ts'
+import { branchStateViews, generatorStateViews, loadStateViews, writeReserves } from './state/views.ts'
 import type { GridIslandSystem } from './network/dc-power-flow.ts'
 
 /**
@@ -426,13 +436,12 @@ export const createGridRuntimeInstance = (config: {
   const restoredHvdc = restored ? requireRestored(restored.hvdcLinks, index.hvdcLinks.map(item => item.id), 'HVDC links') : null
   if (restored && restored.lossLoadByBusMw.length !== model.buses.length) throw new Error('stored Grid runtime state has a loss vector of the wrong length')
   const initialBranchStates = new Map(operatingPoint.branchStates.map(entry => [entry.branchId, entry]))
-  const arrays = createGridStateArrays(model.buses.length, model.branches.length)
+  const branchArrays = createGridBranchArrays(model.branches.length)
   // Before the first solution a branch carries no flow: no flow model, 0 MW, 0 pu at both ends,
   // no reactive power or frequency. Its relays start idle unless restored.
   model.branches.forEach((branch, index) => {
     const stored = restoredBranches?.get(branch.id)
     const initial = requiredValue(initialBranchStates, branch.id, 'initial branch state')
-    const branchArrays = arrays.branches
     branchArrays.status[index] = codeOf(branchStatusCodes, stored?.state ?? initial.state, `branch ${branch.id} state`)
     branchArrays.availability[index] = stored?.availability ?? initial.availability
     if (stored !== undefined) {
@@ -441,8 +450,10 @@ export const createGridRuntimeInstance = (config: {
       branchArrays.trip[index] = stored.protection.trip
     }
   })
-  const branches = branchStateViews(model.branches.map(branch => branch.id), arrays.branches)
-  const generators = new Map(model.generators.map(generator => {
+  // A unit carries no output before the first advance; a fresh Grid is dispatched from its live
+  // islands before it, a restored one keeps its stored set-points and reserves.
+  const generatorArrays = createGridGeneratorArrays(model.generators.length)
+  model.generators.forEach((generator, index) => {
     const stored = restoredGenerators?.get(generator.id)
     const availableMw = stored?.availableMw ?? Math.min(generator.capacityMw, generator.availableMw * operatingPoint.generationAvailabilityScale)
     if (availableMw > generator.capacityMw) throw new Error(`stored generator ${generator.id} availability exceeds its capacity`)
@@ -450,44 +461,27 @@ export const createGridRuntimeInstance = (config: {
       throw new Error(`generator ${generator.id} starts online with ${availableMw} MW available, below its minimum stable generation of ${generator.minimumStableMw} MW`)
     }
     const reserves = stored?.reserves ?? noReserves
-    return [generator.id, {
-      state: stored?.state ?? generator.initialState,
-      availableMw,
-      dispatchMw: 0,
-      // A fresh Grid is dispatched from its live islands before the first advance.
-      targetMw: stored?.targetMw ?? 0,
-      scheduledMw: 0,
-      fcrMw: 0,
-      afrrMw: 0,
-      mfrrMw: 0,
-      reserves,
-      reserveMw: upwardReserveMw(reserves),
-      frequencyHz: null,
-      synchronisesAtElapsedMs: stored?.synchronisesAtElapsedMs ?? null,
-    } satisfies GridGeneratorState]
-  }))
-  const loads = new Map(model.loads.map(load => {
+    generatorArrays.lifecycle[index] = codeOf(generatorLifecycleCodes, stored?.state ?? generator.initialState, `generator ${generator.id} state`)
+    generatorArrays.availableMw[index] = availableMw
+    generatorArrays.targetMw[index] = stored?.targetMw ?? 0
+    writeReserves(generatorArrays, index, reserves)
+    generatorArrays.reserveMw[index] = upwardReserveMw(reserves)
+    generatorArrays.synchronisesAtElapsedMs[index] = storedNullable(stored?.synchronisesAtElapsedMs ?? null, `generator ${generator.id} synchronisesAtElapsedMs`)
+  })
+  // A load is out of supply until its island is first solved.
+  const loadArrays = createGridLoadArrays(model.loads.length)
+  model.loads.forEach((load, index) => {
     const stored = restoredLoads?.get(load.id)
     const modelledDemandMw = load.demandMw * operatingPoint.loadScale
     const nominalDemandMw = stored?.nominalDemandMw ?? modelledDemandMw
-    return [load.id, {
-      nominalDemandMw,
-      modelledDemandMw,
-      manualDemandLimitMw: stored?.manualDemandLimitMw ?? null,
-      manualShedEmergency: stored?.manualShedEmergency ?? false,
-      demandMw: nominalDemandMw,
-      curtailedMw: 0,
-      lfddShedMw: 0,
-      outageMw: nominalDemandMw,
-      unservedMw: nominalDemandMw,
-      shedMw: 0,
-      shedCauses: [],
-      servedMw: 0,
-      frequencyHz: null,
-      voltagePu: 0,
-      serviceState: 'outage',
-    } satisfies GridLoadState]
-  }))
+    loadArrays.nominalDemandMw[index] = nominalDemandMw
+    loadArrays.modelledDemandMw[index] = modelledDemandMw
+    loadArrays.manualDemandLimitMw[index] = storedNullable(stored?.manualDemandLimitMw ?? null, `load ${load.id} manualDemandLimitMw`)
+    loadArrays.manualShedEmergency[index] = stored?.manualShedEmergency === true ? 1 : 0
+    loadArrays.demandMw[index] = nominalDemandMw
+    loadArrays.outageMw[index] = nominalDemandMw
+    loadArrays.unservedMw[index] = nominalDemandMw
+  })
   const storage = new Map(model.storage.map(item => {
     const fraction = restoredStorage?.get(item.id)?.stateOfChargeFraction ?? operatingPoint.storageStateOfCharge
     if (fraction === null) throw new Error(`storage ${item.id} has no initial state of charge: Operating Point ${operatingPoint.id} gives none`)
@@ -537,14 +531,24 @@ export const createGridRuntimeInstance = (config: {
     if (existing) throw new Error(`Grid connection point ${connection.network.objectId}:${point.id} is connected by both ${existing.definition.id} and ${connection.id}`)
     externalConnections.set(point.id, { definition: connection, busId: point.busId, systemPresent: true, systemActivePowerMw: 0, connected: false })
   }
+  const arrays = createGridStateArrays({
+    buses: model.buses.length,
+    branches: branchArrays,
+    generators: generatorArrays,
+    loads: loadArrays,
+    storage: [...storage.values()],
+    externalSystems: [...externalSystems.values()],
+    hvdcLinks: [...hvdcLinks.values()],
+    connections: model.connectionPoints.map(point => externalConnections.get(point.id) ?? null),
+  })
   const grid: GridRuntimeInstance = {
     definition,
     elapsedMs: restored?.elapsedMs ?? 0,
     tick: restored?.tick ?? 0,
     arrays,
-    branches,
-    generators,
-    loads,
+    branches: branchStateViews(model.branches.map(branch => branch.id), branchArrays),
+    generators: generatorStateViews(model.generators.map(generator => generator.id), generatorArrays),
+    loads: loadStateViews(model.loads.map(load => load.id), loadArrays),
     storage,
     externalConnections,
     externalSystems,

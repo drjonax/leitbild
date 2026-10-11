@@ -1,4 +1,5 @@
-import type { CompiledGridModelIndex, GridModelDefinition } from '../../grid-model.ts'
+import type { CompiledGridModelIndex, GridLoadDefinition, GridModelDefinition } from '../../grid-model.ts'
+import { generatorIsVoltageForming, generatorKineticEnergyMws } from '../generator-dynamics.ts'
 import { compiledGridNetworkFor, type CompiledGridNetwork } from '../network/compiled-network.ts'
 
 /** Items grouped by bus: the items of bus b are `items[start[b] .. start[b + 1])`, in model order. */
@@ -35,9 +36,19 @@ export interface GridTables {
   readonly synchronousExternalOfBus: Int32Array
   /** 1 on the boundary buses of asynchronous external systems (HVDC terminals outside the AC network). */
   readonly asynchronousBoundaryBus: Uint8Array
+  /** Boundary buses of each external system, in its Model order: system k's are `items[start[k] .. start[k + 1])`. */
+  readonly externalBoundaryBuses: GridIndexByBus
   /** Converter terminal buses of each HVDC link. */
   readonly hvdcFromBus: Int32Array
   readonly hvdcToBus: Int32Array
+  /** 1 for a synchronous (voltage-forming) unit, and its kinetic energy H·S (MWs; 0 when converter-connected). */
+  readonly generatorSynchronous: Uint8Array
+  readonly generatorKineticEnergyMws: Float64Array
+  /** Reactive demand per MW served of each load: tan(acos(power factor)). */
+  readonly loadReactivePerMw: Float64Array
+  /** The distinct load kinds of the Model, and each load's position among them (its daily profile). */
+  readonly loadKinds: ReadonlyArray<GridLoadDefinition['kind']>
+  readonly loadKind: Uint8Array
 }
 
 const indexById = (items: ReadonlyArray<{ readonly id: string }>): ReadonlyMap<string, number> =>
@@ -80,8 +91,13 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
       else asynchronousBoundaryBus[busOf(busId)] = 1
     }
   })
+  const loadKinds = [...new Set(model.loads.map(load => load.kind))]
+  const boundaryStart = new Int32Array(index.externalSystems.length + 1)
+  index.externalSystems.forEach((system, position) => { boundaryStart[position + 1] = boundaryStart[position]! + system.boundaryBusIds.length })
+  const boundaryItems = Int32Array.from(index.externalSystems.flatMap(system => system.boundaryBusIds), busOf)
   return {
     network,
+    externalBoundaryBuses: { start: boundaryStart, items: boundaryItems },
     branchIndexById: indexById(model.branches),
     generatorIndexById: indexById(model.generators),
     loadIndexById: indexById(model.loads),
@@ -101,6 +117,11 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
     asynchronousBoundaryBus,
     hvdcFromBus: Int32Array.from(index.hvdcLinks, link => busOf(link.fromBusId)),
     hvdcToBus: Int32Array.from(index.hvdcLinks, link => busOf(link.toBusId)),
+    generatorSynchronous: Uint8Array.from(model.generators, generator => generatorIsVoltageForming(generator) ? 1 : 0),
+    generatorKineticEnergyMws: Float64Array.from(model.generators, generatorKineticEnergyMws),
+    loadReactivePerMw: Float64Array.from(model.loads, load => Math.tan(Math.acos(load.powerFactor))),
+    loadKinds,
+    loadKind: Uint8Array.from(model.loads, load => loadKinds.indexOf(load.kind)),
   }
 }
 

@@ -1,5 +1,6 @@
 import type { GridGenerationKind, GridGeneratorDefinition } from '../grid-model.ts'
 import type { GridGeneratorState, GridRuntimeInstance } from './instance.ts'
+import { generatorOffline, generatorOnline, generatorStarting, generatorStopping } from './state/arrays.ts'
 
 // Grid Model v2 carries each unit's minimum stable output but no start-up time, so start-up
 // applies per generation kind. Start-up sources quote time to full output; the values below
@@ -34,26 +35,31 @@ export const generatorIsSynchronised = (state: GridGeneratorState): boolean =>
  * breaker opens once its set-point has ramped down to 0 MW. Returns whether any unit changed state.
  */
 export const advanceGridUnitCommitment = (grid: GridRuntimeInstance, maySynchronise: (definition: GridGeneratorDefinition) => boolean): boolean => {
+  const definitions = grid.definition.model.generators
+  const generators = grid.arrays.generators
   let changed = false
-  for (const definition of grid.definition.model.generators) {
-    const state = grid.generators.get(definition.id)!
-    if (state.state === 'starting') {
-      if (state.synchronisesAtElapsedMs === null) throw new Error(`starting generator ${definition.id} has no synchronisation time`)
-      if (grid.elapsedMs < state.synchronisesAtElapsedMs) continue
+  for (let generator = 0; generator < definitions.length; generator += 1) {
+    const lifecycle = generators.lifecycle[generator]!
+    if (lifecycle === generatorStarting) {
+      const definition = definitions[generator]!
+      const synchronisesAtMs = generators.synchronisesAtElapsedMs[generator]!
+      // NaN codes a missing synchronisation time.
+      if (synchronisesAtMs !== synchronisesAtMs) throw new Error(`starting generator ${definition.id} has no synchronisation time`)
+      if (grid.elapsedMs < synchronisesAtMs) continue
       if (!maySynchronise(definition)) {
-        state.state = 'offline'
-        state.synchronisesAtElapsedMs = null
-        state.targetMw = 0
+        generators.lifecycle[generator] = generatorOffline
+        generators.synchronisesAtElapsedMs[generator] = Number.NaN
+        generators.targetMw[generator] = 0
         changed = true
         continue
       }
-      state.state = 'online'
-      state.synchronisesAtElapsedMs = null
-      state.targetMw = generatorMinimumStableMw(definition)
+      generators.lifecycle[generator] = generatorOnline
+      generators.synchronisesAtElapsedMs[generator] = Number.NaN
+      generators.targetMw[generator] = generatorMinimumStableMw(definition)
       changed = true
-    } else if (state.state === 'stopping' && state.scheduledMw <= 0) {
-      state.state = 'offline'
-      state.targetMw = 0
+    } else if (lifecycle === generatorStopping && generators.scheduledMw[generator]! <= 0) {
+      generators.lifecycle[generator] = generatorOffline
+      generators.targetMw[generator] = 0
       changed = true
     }
   }
@@ -62,10 +68,13 @@ export const advanceGridUnitCommitment = (grid: GridRuntimeInstance, maySynchron
 
 /** Earliest elapsed time at which a starting unit synchronises; null when none is starting. */
 export const nextSynchronisationElapsedMs = (grid: GridRuntimeInstance): number | null => {
+  const generators = grid.arrays.generators
   let earliest: number | null = null
-  for (const state of grid.generators.values()) {
-    if (state.state !== 'starting' || state.synchronisesAtElapsedMs === null) continue
-    if (earliest === null || state.synchronisesAtElapsedMs < earliest) earliest = state.synchronisesAtElapsedMs
+  for (let generator = 0; generator < generators.lifecycle.length; generator += 1) {
+    if (generators.lifecycle[generator] !== generatorStarting) continue
+    const synchronisesAtMs = generators.synchronisesAtElapsedMs[generator]!
+    if (synchronisesAtMs !== synchronisesAtMs) continue
+    if (earliest === null || synchronisesAtMs < earliest) earliest = synchronisesAtMs
   }
   return earliest
 }

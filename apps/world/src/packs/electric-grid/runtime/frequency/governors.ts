@@ -102,11 +102,16 @@ export const noReserves: FrequencyReserveAllocation = Object.freeze({
 })
 
 /** A reserve requirement evaluated for one island: fixed, a share of its demand, or a multiple of its largest synchronised unit output. */
-export const reserveRequirementMw = (requirement: ReserveRequirement, islandLoadMw: number, units: ReadonlyArray<Pick<FrequencyUnit, 'synchronised' | 'targetMw'>>): number => {
+export const reserveRequirementMw = (requirement: ReserveRequirement, islandLoadMw: number, units: ReadonlyArray<Pick<FrequencyUnit, 'synchronised' | 'targetMw'>>): number =>
+  reserveRequirementFor(requirement, islandLoadMw, requirement.basis === 'largest-unit-output'
+    ? units.reduce((maximum, unit) => unit.synchronised ? Math.max(maximum, unit.targetMw) : maximum, 0)
+    : 0)
+
+/** reserveRequirementMw given the largest synchronised unit's set-point (read only for a largest-unit requirement). */
+export const reserveRequirementFor = (requirement: ReserveRequirement, islandLoadMw: number, largestUnitMw: number): number => {
   if (requirement.basis === 'fixed') return requirement.mw
   if (requirement.basis === 'share-of-island-load') return requirement.fraction * islandLoadMw
-  const largest = units.reduce((maximum, unit) => unit.synchronised ? Math.max(maximum, unit.targetMw) : maximum, 0)
-  return requirement.factor * largest
+  return requirement.factor * largestUnitMw
 }
 
 const allocationField: Record<ReserveProduct, keyof FrequencyReserveAllocation> = {

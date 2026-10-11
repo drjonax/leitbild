@@ -7,15 +7,22 @@ import { gridTablesFor } from './state/tables.ts'
  * HVDC links are controllable injection pairs, never AC branches. The sending converter draws
  * |transfer| from its AC bus and the receiving converter delivers |transfer|·(1 − loss). A terminal
  * on the boundary bus of an asynchronous external system lies outside the modelled AC network: that
- * system absorbs or supplies it. A blocked or tripped link transfers nothing.
+ * system absorbs or supplies it. A blocked or tripped link transfers nothing. This is the injection
+ * of link `index`'s from-end converter into its AC bus (MW).
  */
-export const hvdcTerminalInjectionsMw = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition): { readonly fromMw: number; readonly toMw: number } => {
-  const transferMw = grid.hvdcLinks.get(link.id)!.transferMw
-  const deliveredMw = Math.abs(transferMw) * (1 - link.lossPercent / 100)
-  const outside = grid.definition.index.asynchronousBoundaryBusIds
-  const fromMw = transferMw >= 0 ? -transferMw : deliveredMw
-  const toMw = transferMw >= 0 ? deliveredMw : transferMw
-  return { fromMw: outside.has(link.fromBusId) ? 0 : fromMw, toMw: outside.has(link.toBusId) ? 0 : toMw }
+export const hvdcFromTerminalMw = (grid: GridRuntimeInstance, index: number): number => {
+  const tables = gridTablesFor(grid.definition)
+  if (tables.asynchronousBoundaryBus[tables.hvdcFromBus[index]!] === 1) return 0
+  const transferMw = grid.arrays.hvdcLinks[index]!.transferMw
+  return transferMw >= 0 ? -transferMw : Math.abs(transferMw) * (1 - grid.definition.index.hvdcLinks[index]!.lossPercent / 100)
+}
+
+/** Injection of link `index`'s to-end converter into its AC bus (MW); see hvdcFromTerminalMw. */
+export const hvdcToTerminalMw = (grid: GridRuntimeInstance, index: number): number => {
+  const tables = gridTablesFor(grid.definition)
+  if (tables.asynchronousBoundaryBus[tables.hvdcToBus[index]!] === 1) return 0
+  const transferMw = grid.arrays.hvdcLinks[index]!.transferMw
+  return transferMw >= 0 ? Math.abs(transferMw) * (1 - grid.definition.index.hvdcLinks[index]!.lossPercent / 100) : transferMw
 }
 
 /** Whether an ascending list of bus indices holds `bus`. */
@@ -40,10 +47,8 @@ export const hvdcInjectionIntoIslandMw = (grid: GridRuntimeInstance, buses: Int3
   for (let index = 0; index < links.length; index += 1) {
     const from = holdsBus(buses, tables.hvdcFromBus[index]!)
     const to = holdsBus(buses, tables.hvdcToBus[index]!)
-    if (!from && !to) continue
-    const terminals = hvdcTerminalInjectionsMw(grid, links[index]!)
-    if (from) injectionMw += terminals.fromMw
-    if (to) injectionMw += terminals.toMw
+    if (from) injectionMw += hvdcFromTerminalMw(grid, index)
+    if (to) injectionMw += hvdcToTerminalMw(grid, index)
   }
   return injectionMw
 }
@@ -57,11 +62,21 @@ const islandAtBus = (grid: GridRuntimeInstance, busId: string): GridIsland => {
 }
 
 /** A converter terminal has AC voltage: its bus is energised, or it is the boundary of an asynchronous system. */
-const terminalEnergized = (grid: GridRuntimeInstance, busId: string): boolean =>
-  grid.definition.index.asynchronousBoundaryBusIds.has(busId) || islandAtBus(grid, busId).energized
+const terminalEnergizedAt = (grid: GridRuntimeInstance, bus: number): boolean => {
+  if (gridTablesFor(grid.definition).asynchronousBoundaryBus[bus] === 1) return true
+  const islands = grid.islandPlan
+  if (!islands) throw new Error(`Grid ${grid.definition.gridId} has no islands yet; HVDC converters act inside an advance`)
+  return islands.islands[islands.plan.islandIndexOfBus[bus]!]!.energized
+}
 
-const terminalsEnergized = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition): boolean =>
-  terminalEnergized(grid, link.fromBusId) && terminalEnergized(grid, link.toBusId)
+const terminalEnergized = (grid: GridRuntimeInstance, busId: string): boolean =>
+  terminalEnergizedAt(grid, gridTablesFor(grid.definition).network.busIndexById.get(busId)!)
+
+/** Whether both converter terminals of link `index` have AC voltage. */
+const terminalsEnergized = (grid: GridRuntimeInstance, index: number): boolean => {
+  const tables = gridTablesFor(grid.definition)
+  return terminalEnergizedAt(grid, tables.hvdcFromBus[index]!) && terminalEnergizedAt(grid, tables.hvdcToBus[index]!)
+}
 
 /** The converter terminal without AC voltage as `label (bus id)`, or null when both terminals have it. */
 export const unpoweredHvdcTerminal = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition): string | null => {
@@ -138,10 +153,12 @@ export const tripHvdcLink = (grid: GridRuntimeInstance, link: GridHvdcLinkDefini
  * converter whose AC terminal has lost voltage trips first: its transfer drops to 0.
  */
 export const advanceHvdcLinks = (grid: GridRuntimeInstance, seconds: number): void => {
-  for (const link of grid.definition.index.hvdcLinks) {
-    const state = grid.hvdcLinks.get(link.id)!
+  const links = grid.definition.index.hvdcLinks
+  for (let index = 0; index < links.length; index += 1) {
+    const link = links[index]!
+    const state = grid.arrays.hvdcLinks[index]!
     if (state.state !== 'deblocked') continue
-    if (!terminalsEnergized(grid, link)) {
+    if (!terminalsEnergized(grid, index)) {
       tripHvdcLink(grid, link, state, 'ac-voltage-loss')
       continue
     }
@@ -153,8 +170,11 @@ export const advanceHvdcLinks = (grid: GridRuntimeInstance, seconds: number): vo
 }
 
 /** True while some deblocked link's transfer is still ramping towards its set-point. */
-export const hvdcLinksRamping = (grid: GridRuntimeInstance): boolean =>
-  grid.definition.index.hvdcLinks.some(link => {
-    const state = grid.hvdcLinks.get(link.id)!
-    return state.state === 'deblocked' && state.transferMw !== state.setpointMw && terminalsEnergized(grid, link)
-  })
+export const hvdcLinksRamping = (grid: GridRuntimeInstance): boolean => {
+  const links = grid.definition.index.hvdcLinks
+  for (let index = 0; index < links.length; index += 1) {
+    const state = grid.arrays.hvdcLinks[index]!
+    if (state.state === 'deblocked' && state.transferMw !== state.setpointMw && terminalsEnergized(grid, index)) return true
+  }
+  return false
+}

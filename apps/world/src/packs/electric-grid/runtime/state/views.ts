@@ -1,15 +1,20 @@
-import type { GridBranchTrip } from '../protection/state.ts'
-import type { GridBranchProtectionState } from '../protection/state.ts'
-import type { GridBranchState, GridBusState } from '../instance.ts'
+import type { FrequencyReserveAllocation } from '../frequency/types.ts'
+import type { GridBranchState, GridBusState, GridGeneratorState, GridLoadState } from '../instance.ts'
+import { shedCauseLists } from '../load-service.ts'
+import type { GridBranchProtectionState, GridBranchTrip } from '../protection/state.ts'
 import {
   branchStatusCodes,
   codeOf,
   flowModelCodes,
+  generatorLifecycleCodes,
+  loadServiceStateCodes,
   publishedNullable,
   storedNullable,
   voltageModelCodes,
   type GridBranchArrays,
   type GridBusArrays,
+  type GridGeneratorArrays,
+  type GridLoadArrays,
 } from './arrays.ts'
 
 // Boundary views of the typed state: one object per asset, built once per Grid, whose own
@@ -100,4 +105,73 @@ export const busStateViews = (busIds: ReadonlyArray<string>, arrays: GridBusArra
     netInjectionMw: readOnly(index => arrays.netInjectionMw[index]),
   }
   return new Map(busIds.map((busId, index) => [busId, view<GridBusState>(index, accessors, { busId })]))
+}
+
+/** The reserve allocation of a unit as stored: one array per product field. */
+export const writeReserves = (arrays: GridGeneratorArrays, index: number, reserves: FrequencyReserveAllocation): void => {
+  arrays.fcrNReserveMw[index] = reserves.fcrNMw
+  arrays.fcrDUpReserveMw[index] = reserves.fcrDUpMw
+  arrays.fcrDDownReserveMw[index] = reserves.fcrDDownMw
+  arrays.afrrUpReserveMw[index] = reserves.afrrUpMw
+  arrays.afrrDownReserveMw[index] = reserves.afrrDownMw
+  arrays.mfrrUpReserveMw[index] = reserves.mfrrUpMw
+  arrays.mfrrDownReserveMw[index] = reserves.mfrrDownMw
+}
+
+/** A unit's reserve allocation as a published object (a copy; the arrays hold the state). */
+export const readReserves = (arrays: GridGeneratorArrays, index: number): FrequencyReserveAllocation => ({
+  fcrNMw: arrays.fcrNReserveMw[index]!,
+  fcrDUpMw: arrays.fcrDUpReserveMw[index]!,
+  fcrDDownMw: arrays.fcrDDownReserveMw[index]!,
+  afrrUpMw: arrays.afrrUpReserveMw[index]!,
+  afrrDownMw: arrays.afrrDownReserveMw[index]!,
+  mfrrUpMw: arrays.mfrrUpReserveMw[index]!,
+  mfrrDownMw: arrays.mfrrDownReserveMw[index]!,
+})
+
+/** Generator states by id over the generator arrays, in model order. */
+export const generatorStateViews = (generatorIds: ReadonlyArray<string>, arrays: GridGeneratorArrays): Map<string, GridGeneratorState> => {
+  const accessors: Record<string, Accessor> = {
+    state: codeField(generatorLifecycleCodes, arrays.lifecycle, 'generator state'),
+    availableMw: numberField(arrays.availableMw),
+    dispatchMw: numberField(arrays.dispatchMw),
+    targetMw: numberField(arrays.targetMw),
+    scheduledMw: numberField(arrays.scheduledMw),
+    fcrMw: numberField(arrays.fcrMw),
+    afrrMw: numberField(arrays.afrrMw),
+    mfrrMw: numberField(arrays.mfrrMw),
+    reserves: {
+      get() { return readReserves(arrays, this[viewIndex]) },
+      set(value: FrequencyReserveAllocation) { writeReserves(arrays, this[viewIndex], value) },
+    },
+    reserveMw: numberField(arrays.reserveMw),
+    frequencyHz: nullableField(arrays.frequencyHz, 'generator frequencyHz'),
+    synchronisesAtElapsedMs: nullableField(arrays.synchronisesAtElapsedMs, 'generator synchronisesAtElapsedMs'),
+  }
+  return new Map(generatorIds.map((id, index) => [id, view<GridGeneratorState>(index, accessors)]))
+}
+
+/** Load states by id over the load arrays, in model order. */
+export const loadStateViews = (loadIds: ReadonlyArray<string>, arrays: GridLoadArrays): Map<string, GridLoadState> => {
+  const accessors: Record<string, Accessor> = {
+    nominalDemandMw: numberField(arrays.nominalDemandMw),
+    modelledDemandMw: readOnly(index => arrays.modelledDemandMw[index]),
+    manualDemandLimitMw: nullableField(arrays.manualDemandLimitMw, 'load manualDemandLimitMw'),
+    manualShedEmergency: {
+      get() { return arrays.manualShedEmergency[this[viewIndex]] === 1 },
+      set(value: boolean) { arrays.manualShedEmergency[this[viewIndex]] = value ? 1 : 0 },
+    },
+    demandMw: numberField(arrays.demandMw),
+    curtailedMw: numberField(arrays.curtailedMw),
+    lfddShedMw: numberField(arrays.lfddShedMw),
+    outageMw: numberField(arrays.outageMw),
+    unservedMw: numberField(arrays.unservedMw),
+    shedMw: numberField(arrays.shedMw),
+    shedCauses: readOnly(index => shedCauseLists[arrays.shedCauses[index]!]),
+    servedMw: numberField(arrays.servedMw),
+    frequencyHz: nullableField(arrays.frequencyHz, 'load frequencyHz'),
+    voltagePu: nullableField(arrays.voltagePu, 'load voltagePu'),
+    serviceState: codeField(loadServiceStateCodes, arrays.serviceState, 'load serviceState'),
+  }
+  return new Map(loadIds.map((id, index) => [id, view<GridLoadState>(index, accessors)]))
 }

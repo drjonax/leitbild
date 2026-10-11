@@ -1,50 +1,53 @@
 import type { GridLoadDefinition } from '../grid-model.ts'
-import type { GridLoadShedCause, GridLoadState } from './instance.ts'
+import type { GridLoadShedCause } from './instance.ts'
 import { manualCurtailmentMw } from './load-shedding.ts'
+import { loadConstrained, loadNormal, loadOutage, loadShed, type GridLoadArrays } from './state/arrays.ts'
 
 // A load serves at least its critical demand: neither manual nor automatic shedding disconnects it.
 // Load service is constrained 0.2 Hz from nominal: outside the Nordic normal band (49.9–50.1 Hz) and the FCR-N range.
 const constrainedDeviationHz = 0.2
 
 /**
- * Applies the manual shedding limit to this demand sample: the load draws at most the limit, never
- * less than its critical demand, and a curtailment never more than its interruptible demand.
+ * Applies the manual shedding limit to load `index` for this demand sample: the load draws at most
+ * the limit, never less than its critical demand, and a curtailment never more than its interruptible demand.
  */
-export const curtailGridLoad = (state: GridLoadState, load: GridLoadDefinition): void => {
-  state.curtailedMw = manualCurtailmentMw(load, state)
+export const curtailGridLoad = (loads: GridLoadArrays, index: number, load: GridLoadDefinition): void => {
+  loads.curtailedMw[index] = manualCurtailmentMw(load, loads, index)
 }
 
-/** Demand still connected after manual curtailment: what frequency control and LFDD act on. */
-export const connectedGridLoadMw = (state: GridLoadState): number => state.demandMw - state.curtailedMw
+/** Demand of load `index` still connected after manual curtailment: what frequency control and LFDD act on. */
+export const connectedGridLoadMw = (loads: GridLoadArrays, index: number): number => loads.demandMw[index]! - loads.curtailedMw[index]!
 
-// The possible cause lists, shared: every live load is completed on every network solution.
-const shedCauseLists: ReadonlyArray<ReadonlyArray<GridLoadShedCause>> = [
+// The possible cause lists, shared: every live load is completed on every network solution. A
+// load's shedCauses code is its position here.
+export const shedCauseLists: ReadonlyArray<ReadonlyArray<GridLoadShedCause>> = [
   Object.freeze([]), Object.freeze(['manual' as const]), Object.freeze(['emergency' as const]),
   Object.freeze(['lfdd' as const]), Object.freeze(['manual' as const, 'lfdd' as const]), Object.freeze(['emergency' as const, 'lfdd' as const]),
 ]
 
-const shedCausesFor = (state: GridLoadState): ReadonlyArray<GridLoadShedCause> =>
-  shedCauseLists[(state.curtailedMw > 0 ? (state.manualShedEmergency ? 2 : 1) : 0) + (state.lfddShedMw > 0 ? 3 : 0)]!
+const shedCausesCode = (loads: GridLoadArrays, index: number): number =>
+  (loads.curtailedMw[index]! > 0 ? (loads.manualShedEmergency[index] === 1 ? 2 : 1) : 0) + (loads.lfddShedMw[index]! > 0 ? 3 : 0)
 
 /** Closes a live load's service for this tick from its served and LFDD-shed demand; its voltage follows from the AC solution. */
-export const completeLiveGridLoad = (state: GridLoadState, frequencyHz: number, nominalFrequencyHz: number): void => {
-  state.outageMw = 0
-  state.shedMw = state.curtailedMw + state.lfddShedMw
-  state.unservedMw = state.shedMw
-  state.shedCauses = shedCausesFor(state)
-  state.frequencyHz = frequencyHz
-  state.serviceState = state.shedMw > 0 ? 'shed' : Math.abs(frequencyHz - nominalFrequencyHz) >= constrainedDeviationHz ? 'constrained' : 'normal'
+export const completeLiveGridLoad = (loads: GridLoadArrays, index: number, frequencyHz: number, nominalFrequencyHz: number): void => {
+  loads.outageMw[index] = 0
+  const shedMw = loads.curtailedMw[index]! + loads.lfddShedMw[index]!
+  loads.shedMw[index] = shedMw
+  loads.unservedMw[index] = shedMw
+  loads.shedCauses[index] = shedCausesCode(loads, index)
+  loads.frequencyHz[index] = frequencyHz
+  loads.serviceState[index] = shedMw > 0 ? loadShed : Math.abs(frequencyHz - nominalFrequencyHz) >= constrainedDeviationHz ? loadConstrained : loadNormal
 }
 
 /** A load in a de-energised island is out of supply: nothing is served and no LFDD stage holds it. */
-export const completeDeadGridLoad = (state: GridLoadState): void => {
-  state.servedMw = 0
-  state.lfddShedMw = 0
-  state.outageMw = state.demandMw - state.curtailedMw
-  state.shedMw = state.curtailedMw
-  state.unservedMw = state.demandMw
-  state.shedCauses = shedCausesFor(state)
-  state.frequencyHz = null
-  state.voltagePu = 0
-  state.serviceState = 'outage'
+export const completeDeadGridLoad = (loads: GridLoadArrays, index: number): void => {
+  loads.servedMw[index] = 0
+  loads.lfddShedMw[index] = 0
+  loads.outageMw[index] = loads.demandMw[index]! - loads.curtailedMw[index]!
+  loads.shedMw[index] = loads.curtailedMw[index]!
+  loads.unservedMw[index] = loads.demandMw[index]!
+  loads.shedCauses[index] = shedCausesCode(loads, index)
+  loads.frequencyHz[index] = Number.NaN
+  loads.voltagePu[index] = 0
+  loads.serviceState[index] = loadOutage
 }

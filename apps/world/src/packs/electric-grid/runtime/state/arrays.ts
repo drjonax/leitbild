@@ -1,3 +1,4 @@
+import type { GridExternalConnectionState, GridExternalSystemState, GridHvdcLinkState, GridStorageState } from '../instance.ts'
 import type { GridBranchTrip } from '../protection/state.ts'
 
 // The Grid's per-tick state, one typed array per quantity in model order. The runtime reads and
@@ -9,6 +10,9 @@ export const branchStatusCodes = ['closed', 'open', 'tripped'] as const
 export const flowModelCodes = [null, 'ac', 'dc'] as const
 export const voltageModelCodes = ['ac-fdlf', 'not-converged', 'de-energised'] as const
 
+export const generatorLifecycleCodes = ['online', 'offline', 'starting', 'stopping', 'tripped'] as const
+export const loadServiceStateCodes = ['normal', 'constrained', 'shed', 'outage'] as const
+
 export const branchClosed = 0
 export const branchOpen = 1
 export const branchTripped = 2
@@ -18,6 +22,15 @@ export const flowModelDc = 2
 export const voltageModelAc = 0
 export const voltageModelNotConverged = 1
 export const voltageModelDeEnergised = 2
+export const generatorOnline = 0
+export const generatorOffline = 1
+export const generatorStarting = 2
+export const generatorStopping = 3
+export const generatorTripped = 4
+export const loadNormal = 0
+export const loadConstrained = 1
+export const loadShed = 2
+export const loadOutage = 3
 
 /** The code of `value` in `codes`; anything else is an explicit error. */
 export const codeOf = <T>(codes: ReadonlyArray<T>, value: T, subject: string): number => {
@@ -70,50 +83,164 @@ export interface GridBranchArrays {
   readonly trip: Array<GridBranchTrip | null>
 }
 
+export interface GridGeneratorArrays {
+  readonly lifecycle: Uint8Array
+  readonly availableMw: Float64Array
+  readonly dispatchMw: Float64Array
+  readonly targetMw: Float64Array
+  readonly scheduledMw: Float64Array
+  readonly fcrMw: Float64Array
+  readonly afrrMw: Float64Array
+  readonly mfrrMw: Float64Array
+  /** Reserve volumes allocated to each unit (FrequencyReserveAllocation, field by field). */
+  readonly fcrNReserveMw: Float64Array
+  readonly fcrDUpReserveMw: Float64Array
+  readonly fcrDDownReserveMw: Float64Array
+  readonly afrrUpReserveMw: Float64Array
+  readonly afrrDownReserveMw: Float64Array
+  readonly mfrrUpReserveMw: Float64Array
+  readonly mfrrDownReserveMw: Float64Array
+  readonly reserveMw: Float64Array
+  readonly frequencyHz: Float64Array
+  readonly synchronisesAtElapsedMs: Float64Array
+}
+
+export interface GridLoadArrays {
+  readonly nominalDemandMw: Float64Array
+  readonly modelledDemandMw: Float64Array
+  readonly manualDemandLimitMw: Float64Array
+  readonly manualShedEmergency: Uint8Array
+  readonly demandMw: Float64Array
+  readonly curtailedMw: Float64Array
+  readonly lfddShedMw: Float64Array
+  readonly outageMw: Float64Array
+  readonly unservedMw: Float64Array
+  readonly shedMw: Float64Array
+  /** Position of the load's shed-cause list in load-service.ts shedCauseLists. */
+  readonly shedCauses: Uint8Array
+  readonly servedMw: Float64Array
+  readonly frequencyHz: Float64Array
+  readonly voltagePu: Float64Array
+  readonly serviceState: Uint8Array
+}
+
 /** Per plan island scratch of one network solution, grown when a plan holds more islands. */
 export interface GridIslandScratch {
   energised: Uint8Array
   acConverged: Uint8Array
   solve: Uint8Array
   frequencyHz: Float64Array
+  /** Power supplied into and served in the energised islands over one solution (MW). */
+  readonly balance: { suppliedMw: number; servedMw: number }
 }
 
+/**
+ * The Grid's state by model index. Storage units, external systems, HVDC links and connection
+ * points are few; their state objects (the ones the id Maps hold) are kept in model order here.
+ */
 export interface GridStateArrays {
   readonly buses: GridBusArrays
   readonly branches: GridBranchArrays
+  readonly generators: GridGeneratorArrays
+  readonly loads: GridLoadArrays
+  readonly storage: ReadonlyArray<GridStorageState>
+  readonly externalSystems: ReadonlyArray<GridExternalSystemState>
+  readonly hvdcLinks: ReadonlyArray<GridHvdcLinkState>
+  /** The system connected at each connection point, or null. */
+  readonly connections: ReadonlyArray<GridExternalConnectionState | null>
   readonly islands: GridIslandScratch
 }
 
-export const createGridStateArrays = (busCount: number, branchCount: number): GridStateArrays => ({
-  buses: {
-    solvedIsland: new Int32Array(busCount),
-    solvedIslandIds: [],
-    energized: new Uint8Array(busCount),
-    voltagePu: new Float64Array(busCount),
-    voltageModel: new Uint8Array(busCount).fill(voltageModelDeEnergised),
-    reactiveInjectionMvar: new Float64Array(busCount),
-    frequencyHz: new Float64Array(busCount).fill(Number.NaN),
-    angleRad: new Float64Array(busCount),
-    netInjectionMw: new Float64Array(busCount),
-  },
-  branches: {
-    status: new Uint8Array(branchCount),
-    availability: new Float64Array(branchCount),
-    flowModel: new Uint8Array(branchCount),
-    flowMw: new Float64Array(branchCount),
-    apparentPowerMva: new Float64Array(branchCount),
-    loadingPercent: new Float64Array(branchCount),
-    voltageFromPu: new Float64Array(branchCount),
-    voltageToPu: new Float64Array(branchCount),
-    reactiveFromMvar: new Float64Array(branchCount).fill(Number.NaN),
-    reactiveToMvar: new Float64Array(branchCount).fill(Number.NaN),
-    frequencyHz: new Float64Array(branchCount).fill(Number.NaN),
-    lossesMw: new Float64Array(branchCount),
-    thermalLevel: new Float64Array(branchCount),
-    overEmergencySinceElapsedMs: new Float64Array(branchCount).fill(Number.NaN),
-    trip: new Array<GridBranchTrip | null>(branchCount).fill(null),
-  },
-  islands: { energised: new Uint8Array(0), acConverged: new Uint8Array(0), solve: new Uint8Array(0), frequencyHz: new Float64Array(0) },
+const floats = (count: number, fill = 0): Float64Array => new Float64Array(count).fill(fill)
+
+export const createGridGeneratorArrays = (count: number): GridGeneratorArrays => ({
+  lifecycle: new Uint8Array(count),
+  availableMw: floats(count),
+  dispatchMw: floats(count),
+  targetMw: floats(count),
+  scheduledMw: floats(count),
+  fcrMw: floats(count),
+  afrrMw: floats(count),
+  mfrrMw: floats(count),
+  fcrNReserveMw: floats(count),
+  fcrDUpReserveMw: floats(count),
+  fcrDDownReserveMw: floats(count),
+  afrrUpReserveMw: floats(count),
+  afrrDownReserveMw: floats(count),
+  mfrrUpReserveMw: floats(count),
+  mfrrDownReserveMw: floats(count),
+  reserveMw: floats(count),
+  frequencyHz: floats(count, Number.NaN),
+  synchronisesAtElapsedMs: floats(count, Number.NaN),
+})
+
+export const createGridLoadArrays = (count: number): GridLoadArrays => ({
+  nominalDemandMw: floats(count),
+  modelledDemandMw: floats(count),
+  manualDemandLimitMw: floats(count, Number.NaN),
+  manualShedEmergency: new Uint8Array(count),
+  demandMw: floats(count),
+  curtailedMw: floats(count),
+  lfddShedMw: floats(count),
+  outageMw: floats(count),
+  unservedMw: floats(count),
+  shedMw: floats(count),
+  shedCauses: new Uint8Array(count),
+  servedMw: floats(count),
+  frequencyHz: floats(count, Number.NaN),
+  voltagePu: floats(count),
+  serviceState: new Uint8Array(count).fill(loadOutage),
+})
+
+export const createGridBranchArrays = (count: number): GridBranchArrays => ({
+  status: new Uint8Array(count),
+  availability: floats(count),
+  flowModel: new Uint8Array(count),
+  flowMw: floats(count),
+  apparentPowerMva: floats(count),
+  loadingPercent: floats(count),
+  voltageFromPu: floats(count),
+  voltageToPu: floats(count),
+  reactiveFromMvar: floats(count, Number.NaN),
+  reactiveToMvar: floats(count, Number.NaN),
+  frequencyHz: floats(count, Number.NaN),
+  lossesMw: floats(count),
+  thermalLevel: floats(count),
+  overEmergencySinceElapsedMs: floats(count, Number.NaN),
+  trip: new Array<GridBranchTrip | null>(count).fill(null),
+})
+
+const createGridBusArrays = (count: number): GridBusArrays => ({
+  solvedIsland: new Int32Array(count),
+  solvedIslandIds: [],
+  energized: new Uint8Array(count),
+  voltagePu: floats(count),
+  voltageModel: new Uint8Array(count).fill(voltageModelDeEnergised),
+  reactiveInjectionMvar: floats(count),
+  frequencyHz: floats(count, Number.NaN),
+  angleRad: floats(count),
+  netInjectionMw: floats(count),
+})
+
+export const createGridStateArrays = (config: {
+  readonly buses: number
+  readonly branches: GridBranchArrays
+  readonly generators: GridGeneratorArrays
+  readonly loads: GridLoadArrays
+  readonly storage: ReadonlyArray<GridStorageState>
+  readonly externalSystems: ReadonlyArray<GridExternalSystemState>
+  readonly hvdcLinks: ReadonlyArray<GridHvdcLinkState>
+  readonly connections: ReadonlyArray<GridExternalConnectionState | null>
+}): GridStateArrays => ({
+  buses: createGridBusArrays(config.buses),
+  branches: config.branches,
+  generators: config.generators,
+  loads: config.loads,
+  storage: config.storage,
+  externalSystems: config.externalSystems,
+  hvdcLinks: config.hvdcLinks,
+  connections: config.connections,
+  islands: { energised: new Uint8Array(0), acConverged: new Uint8Array(0), solve: new Uint8Array(0), frequencyHz: new Float64Array(0), balance: { suppliedMw: 0, servedMw: 0 } },
 })
 
 /** The island scratch sized for `islandCount` plan islands, zeroed. */

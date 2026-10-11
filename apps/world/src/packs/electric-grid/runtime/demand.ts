@@ -1,6 +1,7 @@
-import { osloHourOfDay, profiledGridDemand } from './dynamics.ts'
+import { loadKindDailyFactor, osloHourOfDay, profiledGridDemand } from './dynamics.ts'
 import type { GridRuntimeInstance } from './instance.ts'
 import { curtailGridLoad } from './load-service.ts'
+import { gridTablesFor } from './state/tables.ts'
 
 /**
  * Demand follows the daily profile sampled on a fixed one-minute grid of absolute simulation time
@@ -11,14 +12,26 @@ export const demandSampleMs = 60_000
 
 export const demandSampleTimeMs = (epochMs: number): number => Math.floor(epochMs / demandSampleMs) * demandSampleMs
 
+const factorScratch = new WeakMap<GridRuntimeInstance, Float64Array>()
+
 /** Sets each load's demand to its profiled value at the demand sample containing `epochMs`, then applies its manual limit. */
 export const applyGridDemand = (grid: GridRuntimeInstance, epochMs: number): void => {
   const sampleMs = demandSampleTimeMs(epochMs)
   const osloHour = osloHourOfDay(sampleMs)
-  for (const load of grid.definition.model.loads) {
-    const state = grid.loads.get(load.id)!
-    state.demandMw = profiledGridDemand(load, state.nominalDemandMw, osloHour)
-    curtailGridLoad(state, load)
+  const tables = gridTablesFor(grid.definition)
+  // The daily factor depends only on the load kind: one evaluation per kind present.
+  let factors = factorScratch.get(grid)
+  if (factors === undefined) {
+    factors = new Float64Array(tables.loadKinds.length)
+    factorScratch.set(grid, factors)
+  }
+  for (let kind = 0; kind < tables.loadKinds.length; kind += 1) factors[kind] = loadKindDailyFactor(tables.loadKinds[kind]!, osloHour)
+  const loads = grid.arrays.loads
+  const definitions = grid.definition.model.loads
+  for (let load = 0; load < definitions.length; load += 1) {
+    const definition = definitions[load]!
+    loads.demandMw[load] = profiledGridDemand(definition, loads.nominalDemandMw[load]!, factors[tables.loadKind[load]!]!)
+    curtailGridLoad(loads, load, definition)
   }
 }
 

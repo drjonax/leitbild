@@ -1,12 +1,13 @@
 import type { GridExternalSystemDefinition } from '../grid-model.ts'
 import type { ExternalFrequencyEquivalent, FrequencyStorageUnit, IslandFrequencyInput } from './frequency/types.ts'
-import { frequencyUnitFor, generatorIsVoltageForming, generatorKineticEnergyMws } from './generator-dynamics.ts'
+import { frequencyUnitFor } from './generator-dynamics.ts'
 import { hvdcInjectionIntoIslandMw } from './hvdc.ts'
-import type { GridGeneratorState, GridLoadState, GridRuntimeInstance, GridStorageState, GridTopologyIsland } from './instance.ts'
+import type { GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import { connectedGridLoadMw } from './load-service.ts'
 import { generatorIsSynchronised, generatorMinimumStableMw } from './unit-commitment.ts'
 import { noReserves } from './frequency/governors.ts'
-import { branchClosed } from './state/arrays.ts'
+import { branchClosed, generatorOnline, generatorStopping, type GridGeneratorArrays } from './state/arrays.ts'
+import { readReserves } from './state/views.ts'
 import { gridTablesFor } from './state/tables.ts'
 
 // Converter, cable and transformer losses of a battery in each direction: √0.85, from the 85 %
@@ -43,69 +44,100 @@ export const islandMembers = (grid: GridRuntimeInstance, island: GridTopologyIsl
   return members
 }
 
-/** The runtime states of a structural island's generators, loads and storage, aligned with its lists. */
-export interface IslandAssetStates {
-  readonly generators: ReadonlyArray<GridGeneratorState>
-  readonly loads: ReadonlyArray<GridLoadState>
-  readonly storage: ReadonlyArray<GridStorageState>
-  /** Reactive demand per MW served of each load: tan(acos(power factor)). */
-  readonly loadReactivePerMw: Float64Array
-}
-
-// A Grid's asset state objects live as long as the Grid and are updated in place, so the lookups
-// of one structural island are made once (per Grid: structures are model-derived and may be shared).
-const assetStatesByGrid = new WeakMap<GridRuntimeInstance, WeakMap<GridTopologyIsland, IslandAssetStates>>()
-
-export const islandAssetStates = (grid: GridRuntimeInstance, island: GridTopologyIsland): IslandAssetStates => {
-  let byIsland = assetStatesByGrid.get(grid)
-  if (byIsland === undefined) {
-    byIsland = new WeakMap()
-    assetStatesByGrid.set(grid, byIsland)
-  }
-  const cached = byIsland.get(island)
-  if (cached !== undefined) return cached
-  const { model } = grid.definition
-  const states: IslandAssetStates = {
-    generators: Array.from(island.generatorIndices, generator => grid.generators.get(model.generators[generator]!.id)!),
-    loads: Array.from(island.loadIndices, load => grid.loads.get(model.loads[load]!.id)!),
-    storage: Array.from(island.storageIndices, item => grid.storage.get(model.storage[item]!.id)!),
-    loadReactivePerMw: Float64Array.from(island.loadIndices, load => Math.tan(Math.acos(model.loads[load]!.powerFactor))),
-  }
-  byIsland.set(island, states)
-  return states
-}
-
 /**
  * How a synchronous external system's exchange with one Norwegian AC component is shared among
  * the given boundary buses of that component: by area participation (renormalised over the areas
- * present), then within an area by the derated rating of each bus's closed ties.
+ * present), then within an area by the derated rating of each bus's closed ties. Writes the share
+ * of `boundaryBuses[k]` (bus indices) into `shares[k]`; `capacities` is scratch of the same length.
  */
-export const externalBoundaryShares = (grid: GridRuntimeInstance, system: GridExternalSystemDefinition, boundaryBusIds: ReadonlyArray<string>): ReadonlyArray<number> => {
+export const externalBoundarySharesInto = (
+  grid: GridRuntimeInstance,
+  system: GridExternalSystemDefinition,
+  boundaryBuses: ArrayLike<number>,
+  count: number,
+  capacities: Float64Array,
+  shares: Float64Array,
+): void => {
   const participation = system.areaParticipation
   if (participation === undefined) throw new Error(`${system.id} has no area participation to share its exchange`)
-  const entryOf = (busId: string) => {
-    const entry = participation.find(candidate => candidate.boundaryBusIds.includes(busId))
-    if (entry === undefined) throw new Error(`${system.id}: boundary bus ${busId} lies in no participating area`)
-    return entry
+  const busIds = gridTablesFor(grid.definition).network.busIds
+  const entryOf = (position: number) => {
+    const busId = busIds[boundaryBuses[position]!]!
+    for (const candidate of participation) if (candidate.boundaryBusIds.includes(busId)) return candidate
+    throw new Error(`${system.id}: boundary bus ${busId} lies in no participating area`)
   }
-  const entries = boundaryBusIds.map(entryOf)
-  const capacities = boundaryBusIds.map(busId => boundaryTieCapacityMw(grid, busId))
-  const presentAreas = [...new Set(entries)]
-  const presentShare = presentAreas.reduce((sum, entry) => sum + entry.share, 0)
-  return boundaryBusIds.map((busId, index) => {
-    const entry = entries[index]!
+  for (let position = 0; position < count; position += 1) capacities[position] = boundaryTieCapacityAt(grid, boundaryBuses[position]!)
+  // Areas present, each counted once in order of first appearance.
+  let presentShare = 0
+  for (let position = 0; position < count; position += 1) {
+    const entry = entryOf(position)
+    let seen = false
+    for (let earlier = 0; earlier < position && !seen; earlier += 1) seen = entryOf(earlier) === entry
+    if (!seen) presentShare += entry.share
+  }
+  for (let position = 0; position < count; position += 1) {
+    const entry = entryOf(position)
     let areaCapacityMw = 0
-    entries.forEach((candidate, position) => { if (candidate === entry) areaCapacityMw += capacities[position]! })
-    if (!(areaCapacityMw > 0)) throw new Error(`${system.id}: the ties of ${entry.area} at ${busId} carry no rating`)
-    return entry.share / presentShare * capacities[index]! / areaCapacityMw
+    for (let other = 0; other < count; other += 1) if (entryOf(other) === entry) areaCapacityMw += capacities[other]!
+    if (!(areaCapacityMw > 0)) throw new Error(`${system.id}: the ties of ${entry.area} at ${busIds[boundaryBuses[position]!]!} carry no rating`)
+    shares[position] = entry.share / presentShare * capacities[position]! / areaCapacityMw
+  }
+}
+
+/** Scratch for one external system's boundary buses in one component: bus indices, tie capacities, shares. */
+export interface ExternalBoundaryScratch {
+  readonly buses: Int32Array
+  readonly capacities: Float64Array
+  readonly shares: Float64Array
+}
+
+const boundaryScratches = new WeakMap<GridRuntimeInstance, ExternalBoundaryScratch>()
+
+/** The Grid's boundary scratch, sized for the Model's external system with the most boundary buses. */
+export const externalBoundaryScratch = (grid: GridRuntimeInstance): ExternalBoundaryScratch => {
+  let scratch = boundaryScratches.get(grid)
+  if (scratch === undefined) {
+    const size = Math.max(0, ...grid.definition.index.externalSystems.map(system => system.boundaryBusIds.length))
+    scratch = { buses: new Int32Array(size), capacities: new Float64Array(size), shares: new Float64Array(size) }
+    boundaryScratches.set(grid, scratch)
+  }
+  return scratch
+}
+
+/** Writes the boundary buses of external system `system` in plan component `component` into `buses`, in Model order; returns how many. */
+export const boundaryBusesInComponent = (grid: GridRuntimeInstance, plan: GridTopologyPlan, system: number, component: number, buses: Int32Array): number => {
+  const boundaryBuses = gridTablesFor(grid.definition).externalBoundaryBuses
+  let count = 0
+  for (let entry = boundaryBuses.start[system]!; entry < boundaryBuses.start[system + 1]!; entry += 1) {
+    const bus = boundaryBuses.items[entry]!
+    if (plan.componentIndexOfBus[bus] === component) buses[count++] = bus
+  }
+  return count
+}
+
+/** externalBoundaryShares for boundary bus ids: the shares in the order given. */
+export const externalBoundaryShares = (grid: GridRuntimeInstance, system: GridExternalSystemDefinition, boundaryBusIds: ReadonlyArray<string>): ReadonlyArray<number> => {
+  const busIndexById = gridTablesFor(grid.definition).network.busIndexById
+  const buses = Int32Array.from(boundaryBusIds, busId => {
+    const bus = busIndexById.get(busId)
+    if (bus === undefined) throw new Error(`unknown Grid bus ${busId}`)
+    return bus
   })
+  const shares = new Float64Array(buses.length)
+  externalBoundarySharesInto(grid, system, buses, buses.length, new Float64Array(buses.length), shares)
+  return Array.from(shares)
 }
 
 /** Rating of the closed AC ties at a boundary bus, derated by their availability (MW). */
 export const boundaryTieCapacityMw = (grid: GridRuntimeInstance, boundaryBusId: string): number => {
-  const tables = gridTablesFor(grid.definition)
-  const bus = tables.network.busIndexById.get(boundaryBusId)
+  const bus = gridTablesFor(grid.definition).network.busIndexById.get(boundaryBusId)
   if (bus === undefined) throw new Error(`unknown Grid bus ${boundaryBusId}`)
+  return boundaryTieCapacityAt(grid, bus)
+}
+
+/** boundaryTieCapacityMw of bus index `bus`. */
+export const boundaryTieCapacityAt = (grid: GridRuntimeInstance, bus: number): number => {
+  const tables = gridTablesFor(grid.definition)
   const branches = grid.definition.model.branches
   const arrays = grid.arrays.branches
   let capacityMw = 0
@@ -119,6 +151,12 @@ export const boundaryTieCapacityMw = (grid: GridRuntimeInstance, boundaryBusId: 
 /** Synchronised units: online, or stopping until its breaker opens at 0 MW (unit-commitment.ts). */
 export const gridGeneratorIsSynchronised = generatorIsSynchronised
 
+/** Whether unit `index` is synchronised, from its lifecycle code. */
+export const generatorSynchronisedAt = (generators: GridGeneratorArrays, index: number): boolean => {
+  const lifecycle = generators.lifecycle[index]!
+  return lifecycle === generatorOnline || lifecycle === generatorStopping
+}
+
 /**
  * An island is energised only while a voltage-forming source holds it: a synchronised synchronous
  * generator or a synchronous external system. Converters, storage and connected systems (Plants)
@@ -126,21 +164,21 @@ export const gridGeneratorIsSynchronised = generatorIsSynchronised
  */
 export const islandHasVoltageFormingSource = (grid: GridRuntimeInstance, island: GridTopologyIsland): boolean => {
   if (island.externalIndices.length > 0) return true
-  const generators = grid.definition.model.generators
-  const states = islandAssetStates(grid, island).generators
-  for (let position = 0; position < states.length; position += 1) {
-    if (generatorIsVoltageForming(generators[island.generatorIndices[position]!]!) && gridGeneratorIsSynchronised(states[position]!)) return true
+  const tables = gridTablesFor(grid.definition)
+  const generators = grid.arrays.generators
+  for (const generator of island.generatorIndices) {
+    if (tables.generatorSynchronous[generator] === 1 && generatorSynchronisedAt(generators, generator)) return true
   }
   return false
 }
 
 /** Kinetic energy Σ H·S of synchronised synchronous units plus synchronous external systems (MWs). */
 export const islandKineticEnergyMws = (grid: GridRuntimeInstance, island: GridTopologyIsland): number => {
-  const generators = grid.definition.model.generators
-  const states = islandAssetStates(grid, island).generators
+  const tables = gridTablesFor(grid.definition)
+  const generators = grid.arrays.generators
   let kineticEnergyMws = 0
-  for (let position = 0; position < states.length; position += 1) {
-    kineticEnergyMws += gridGeneratorIsSynchronised(states[position]!) ? generatorKineticEnergyMws(generators[island.generatorIndices[position]!]!) : 0
+  for (const generator of island.generatorIndices) {
+    kineticEnergyMws += generatorSynchronisedAt(generators, generator) ? tables.generatorKineticEnergyMws[generator]! : 0
   }
   let externalMws = 0
   for (const system of island.externalIndices) externalMws += externalKineticEnergyMws(grid.definition.index.externalSystems[system]!)
@@ -155,8 +193,8 @@ export const externalKineticEnergyMws = (system: GridExternalSystemDefinition): 
 /** Connected systems (Plants) and HVDC converters inject fixed power into the island over an advance. */
 export const islandFixedInjectionMw = (grid: GridRuntimeInstance, island: GridTopologyIsland): number => {
   let injectionMw = 0
-  for (const pointId of islandMembers(grid, island).connectionPointIds) {
-    const connection = grid.externalConnections.get(pointId)
+  for (const point of island.connectionPointIndices) {
+    const connection = grid.arrays.connections[point]!
     if (connection?.connected === true) injectionMw += connection.systemActivePowerMw
   }
   return injectionMw + hvdcInjectionIntoIslandMw(grid, island.busIndices)
@@ -164,7 +202,7 @@ export const islandFixedInjectionMw = (grid: GridRuntimeInstance, island: GridTo
 
 export const islandLossesMw = (grid: GridRuntimeInstance, island: GridTopologyIsland): number => {
   let lossesMw = 0
-  for (const bus of islandMembers(grid, island).busIndices) lossesMw += grid.lossLoadByBusMw[bus]!
+  for (const bus of island.busIndices) lossesMw += grid.lossLoadByBusMw[bus]!
   return lossesMw
 }
 
@@ -193,6 +231,29 @@ export const externalFrequencyEquivalent = (grid: GridRuntimeInstance, system: G
   }
 }
 
+const reserveVolumes = new WeakMap<GridRuntimeInstance, WeakMap<GridExternalSystemDefinition, Float64Array>>()
+
+/**
+ * The reserve volumes and load of a synchronous external system, as externalFrequencyEquivalent
+ * gives them: FCR-N, FCR-D up, FCR-D down, aFRR up, aFRR down (MW) and its load (MW). They follow
+ * from the definition and the Automation alone, so they are computed once per Grid.
+ */
+export const externalReserveVolumes = (grid: GridRuntimeInstance, system: GridExternalSystemDefinition): Float64Array => {
+  let bySystem = reserveVolumes.get(grid)
+  if (bySystem === undefined) {
+    bySystem = new WeakMap()
+    reserveVolumes.set(grid, bySystem)
+  }
+  let volumes = bySystem.get(system)
+  if (volumes === undefined) {
+    const equivalent = externalFrequencyEquivalent(grid, system)
+    const reserves = equivalent.reserves
+    volumes = Float64Array.of(reserves.fcrNMw, reserves.fcrDUpMw, reserves.fcrDDownMw, reserves.afrrUpMw, reserves.afrrDownMw, equivalent.loadMw)
+    bySystem.set(system, volumes)
+  }
+  return volumes
+}
+
 export const storageFrequencyUnit = (definition: { readonly id: string; readonly maxDischargeMw: number; readonly maxChargeMw: number; readonly capacityMwh: number }): FrequencyStorageUnit => ({
   id: definition.id,
   connected: true,
@@ -206,32 +267,33 @@ export const storageFrequencyUnit = (definition: { readonly id: string; readonly
 
 /** The frequency library's view of one energised island for the next advance. */
 export const islandFrequencyInput = (grid: GridRuntimeInstance, island: GridTopologyIsland, islandId: string): IslandFrequencyInput => {
-  const states = islandAssetStates(grid, island)
+  const { model } = grid.definition
+  const generators = grid.arrays.generators
+  const loads = grid.arrays.loads
   return {
-  islandId,
-  units: island.generators.map((definition, index) => {
-    const state = states.generators[index]!
-    // Only an online unit runs between its minimum stable generation and its availability; a
-    // stopping unit unloads to 0 MW and holds no reserve; an unsynchronised unit has no operating range.
-    const online = state.state === 'online'
-    return frequencyUnitFor({
-      definition,
-      synchronised: gridGeneratorIsSynchronised(state),
-      minimumMw: online ? generatorMinimumStableMw(definition) : 0,
-      availableMw: state.availableMw,
-      targetMw: state.targetMw,
-      reserves: state.state === 'stopping' ? noReserves : state.reserves,
-    })
-  }),
-  storage: island.storage.map(storageFrequencyUnit),
-  loads: island.loads.map((definition, index) => ({
-    id: definition.id,
-    priority: definition.priority,
-    demandMw: connectedGridLoadMw(states.loads[index]!),
-    protectedMw: definition.criticalMw,
-  })),
-  externals: islandMembers(grid, island).externals.map(system => externalFrequencyEquivalent(grid, system)),
-  lossesMw: islandLossesMw(grid, island),
-  fixedInjectionMw: islandFixedInjectionMw(grid, island),
+    islandId,
+    units: Array.from(island.generatorIndices, generator => {
+      const definition = model.generators[generator]!
+      const lifecycle = generators.lifecycle[generator]!
+      // Only an online unit runs between its minimum stable generation and its availability; a
+      // stopping unit unloads to 0 MW and holds no reserve; an unsynchronised unit has no operating range.
+      const online = lifecycle === generatorOnline
+      return frequencyUnitFor({
+        definition,
+        synchronised: generatorSynchronisedAt(generators, generator),
+        minimumMw: online ? generatorMinimumStableMw(definition) : 0,
+        availableMw: generators.availableMw[generator]!,
+        targetMw: generators.targetMw[generator]!,
+        reserves: lifecycle === generatorStopping ? noReserves : readReserves(generators, generator),
+      })
+    }),
+    storage: Array.from(island.storageIndices, item => storageFrequencyUnit(model.storage[item]!)),
+    loads: Array.from(island.loadIndices, load => {
+      const definition = model.loads[load]!
+      return { id: definition.id, priority: definition.priority, demandMw: connectedGridLoadMw(loads, load), protectedMw: definition.criticalMw }
+    }),
+    externals: Array.from(island.externalIndices, system => externalFrequencyEquivalent(grid, grid.definition.index.externalSystems[system]!)),
+    lossesMw: islandLossesMw(grid, island),
+    fixedInjectionMw: islandFixedInjectionMw(grid, island),
   }
 }

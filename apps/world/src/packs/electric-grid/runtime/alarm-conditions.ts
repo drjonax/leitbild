@@ -1,14 +1,13 @@
-import type { ReserveRequirement } from '../schemas/grid-automation.ts'
+import type { GridAutomation, ReserveRequirement } from '../schemas/grid-automation.ts'
 import type { GridAlarmSettings, GridAlarmTiming } from '../schemas/grid-protection-automation.ts'
 import { gridAlarmId, type GridAlarmObservation, type GridAlarmState } from './alarms.ts'
+import { reserveRequirementFor } from './frequency/governors.ts'
 import { hvdcTripReason } from './hvdc.ts'
-import { branchClosed, branchTripped, flowModelAc } from './state/arrays.ts'
-import { gridTablesFor } from './state/tables.ts'
-import { synchronousAreaRequirementMw } from './reserve-allocation.ts'
-import type { FrequencyReserveAllocation } from './frequency/types.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
-import { externalFrequencyEquivalent, islandMembers } from './island-input.ts'
+import { externalReserveVolumes } from './island-input.ts'
 import { connectedGridLoadMw } from './load-service.ts'
+import { branchClosed, branchTripped, flowModelAc, generatorOnline, generatorTripped, type GridGeneratorArrays } from './state/arrays.ts'
+import { gridTablesFor } from './state/tables.ts'
 
 const mw = (value: number): string => `${value.toFixed(1)} MW`
 
@@ -42,45 +41,64 @@ const frequencyObservations = (settings: GridAlarmSettings, nominalHz: number, i
   }
 }
 
-type ReserveProductField = keyof FrequencyReserveAllocation
+/** A reserve product's alarm: its condition name, requirement, units' allocation and external volume (externalReserveVolumes position, −1: none). */
+interface ReserveProductAlarm {
+  readonly product: string
+  readonly requirement: ReserveRequirement
+  readonly allocated: (generators: GridGeneratorArrays) => Float64Array
+  readonly externalVolume: number
+}
 
-/** Reserve products of the Automation: condition name, allocation field, requirement. */
-const reserveProducts = (grid: GridRuntimeInstance): ReadonlyArray<readonly [string, ReserveProductField, ReserveRequirement]> => {
-  const automation = grid.definition.automation
-  return [
-    ['fcr-n', 'fcrNMw', automation.fcrN.requirement],
-    ['fcr-d-up', 'fcrDUpMw', automation.fcrD.up.requirement],
-    ['fcr-d-down', 'fcrDDownMw', automation.fcrD.down.requirement],
-    ...(automation.afrr.enabled ? [['afrr-up', 'afrrUpMw', automation.afrr.requirement.up], ['afrr-down', 'afrrDownMw', automation.afrr.requirement.down]] as const : []),
-    ...(automation.mfrr.enabled ? [['mfrr-up', 'mfrrUpMw', automation.mfrr.requirement.up], ['mfrr-down', 'mfrrDownMw', automation.mfrr.requirement.down]] as const : []),
+const productAlarms = new WeakMap<GridAutomation, ReadonlyArray<ReserveProductAlarm>>()
+
+/** Reserve products of the Automation, computed once per Automation. */
+const reserveProducts = (automation: GridAutomation): ReadonlyArray<ReserveProductAlarm> => {
+  const cached = productAlarms.get(automation)
+  if (cached) return cached
+  const products: ReserveProductAlarm[] = [
+    { product: 'fcr-n', requirement: automation.fcrN.requirement, allocated: generators => generators.fcrNReserveMw, externalVolume: 0 },
+    { product: 'fcr-d-up', requirement: automation.fcrD.up.requirement, allocated: generators => generators.fcrDUpReserveMw, externalVolume: 1 },
+    { product: 'fcr-d-down', requirement: automation.fcrD.down.requirement, allocated: generators => generators.fcrDDownReserveMw, externalVolume: 2 },
+    ...(automation.afrr.enabled ? [
+      { product: 'afrr-up', requirement: automation.afrr.requirement.up, allocated: (generators: GridGeneratorArrays) => generators.afrrUpReserveMw, externalVolume: 3 },
+      { product: 'afrr-down', requirement: automation.afrr.requirement.down, allocated: (generators: GridGeneratorArrays) => generators.afrrDownReserveMw, externalVolume: 4 },
+    ] : []),
+    ...(automation.mfrr.enabled ? [
+      { product: 'mfrr-up', requirement: automation.mfrr.requirement.up, allocated: (generators: GridGeneratorArrays) => generators.mfrrUpReserveMw, externalVolume: -1 },
+      { product: 'mfrr-down', requirement: automation.mfrr.requirement.down, allocated: (generators: GridGeneratorArrays) => generators.mfrrDownReserveMw, externalVolume: -1 },
+    ] : []),
   ]
+  productAlarms.set(automation, products)
+  return products
 }
 
-const externalReserveMw = (grid: GridRuntimeInstance, structure: GridTopologyIsland, field: ReserveProductField): number => {
-  if (field === 'mfrrUpMw' || field === 'mfrrDownMw') return 0
-  return islandMembers(grid, structure).externals.reduce((sum, system) => sum + externalFrequencyEquivalent(grid, system).reserves[field], 0)
-}
-
-/** Requirement of each product for the island not covered by its online units' allocations and its external systems. */
+/**
+ * Requirement of each product for the island not covered by its online units' allocations and its
+ * external systems, dimensioned per synchronous area (synchronousAreaRequirementMw).
+ */
 const reserveObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings, island: GridIsland, structure: GridTopologyIsland, emit: Emit): void => {
-  const units = structure.generators.map(definition => {
-    const state = grid.generators.get(definition.id)!
-    return { synchronised: state.state === 'online', targetMw: state.targetMw, reserves: state.reserves }
-  })
-  const loadMw = structure.loads.reduce((sum, load) => sum + connectedGridLoadMw(grid.loads.get(load.id)!), 0)
-  const area = {
-    islandLoadMw: loadMw,
-    externals: islandMembers(grid, structure).externals.map(system => {
-      const equivalent = externalFrequencyEquivalent(grid, system)
-      return { reserves: equivalent.reserves, loadMw: equivalent.loadMw }
-    }),
+  const generators = grid.arrays.generators
+  const externalSystems = grid.definition.index.externalSystems
+  let loadMw = 0
+  for (const load of structure.loadIndices) loadMw += connectedGridLoadMw(grid.arrays.loads, load)
+  let externalLoadMw = 0
+  for (const system of structure.externalIndices) externalLoadMw += externalReserveVolumes(grid, externalSystems[system]!)[5]!
+  const areaLoadMw = loadMw + externalLoadMw
+  let largestUnitMw = 0
+  for (const generator of structure.generatorIndices) {
+    if (generators.lifecycle[generator] === generatorOnline) largestUnitMw = Math.max(largestUnitMw, generators.targetMw[generator]!)
   }
   const alarm = settings.reserveDeficit
-  for (const [product, field, requirement] of reserveProducts(grid)) {
-    // Dimensioned per synchronous area; a detached island has no share of a fixed area volume to fall short of.
-    const requiredMw = synchronousAreaRequirementMw(requirement, area, units)
-    if (requiredMw === null) continue
-    const heldMw = externalReserveMw(grid, structure, field) + units.reduce((sum, unit) => sum + (unit.synchronised ? unit.reserves[field] : 0), 0)
+  for (const { product, requirement, allocated, externalVolume } of reserveProducts(grid.definition.automation)) {
+    // A detached island has no share of a fixed area volume to fall short of.
+    if (requirement.basis === 'fixed' && structure.externalIndices.length === 0) continue
+    const requiredMw = reserveRequirementFor(requirement, areaLoadMw, largestUnitMw)
+    let externalMw = 0
+    if (externalVolume >= 0) for (const system of structure.externalIndices) externalMw += externalReserveVolumes(grid, externalSystems[system]!)[externalVolume]!
+    const allocation = allocated(generators)
+    let unitsMw = 0
+    for (const generator of structure.generatorIndices) unitsMw += generators.lifecycle[generator] === generatorOnline ? allocation[generator]! : 0
+    const heldMw = externalMw + unitsMw
     const deficitMw = Math.max(0, requiredMw - heldMw)
     if (deficitMw < alarm.clearMw) continue
     emit(islandObservation(island, `reserve-deficit-${product}`, alarm, {
@@ -101,21 +119,21 @@ const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAl
     emit(islandObservation(island, 'formed', settings.islandFormed, {
       raising: true,
       title: 'Island formed',
-      message: `Island ${island.id} (${structure.buses.length} buses) runs separated from the Grid's starting topology`,
+      message: `Island ${island.id} (${structure.busIndices.length} buses) runs separated from the Grid's starting topology`,
       value: null,
       limit: null,
       unit: null,
     }))
   }
   reserveObservations(grid, settings, island, structure, emit)
+  const loads = grid.arrays.loads
   let shedMw = 0
   let lfddMw = 0
   let emergencyMw = 0
-  for (const load of structure.loads) {
-    const service = grid.loads.get(load.id)!
-    shedMw += service.shedMw
-    lfddMw += service.lfddShedMw
-    if (service.manualShedEmergency) emergencyMw += service.curtailedMw
+  for (const load of structure.loadIndices) {
+    shedMw += loads.shedMw[load]!
+    lfddMw += loads.lfddShedMw[load]!
+    if (loads.manualShedEmergency[load] === 1) emergencyMw += loads.curtailedMw[load]!
   }
   if (shedMw >= settings.unservedLoad.clearMw) {
     emit(islandObservation(island, 'unserved-load', settings.unservedLoad, {
@@ -210,8 +228,11 @@ const branchObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettin
 }
 
 const generatorObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings, emit: Emit): void => {
-  for (const definition of grid.definition.model.generators) {
-    if (grid.generators.get(definition.id)!.state !== 'tripped') continue
+  const generators = grid.definition.model.generators
+  const lifecycle = grid.arrays.generators.lifecycle
+  for (let generator = 0; generator < generators.length; generator += 1) {
+    if (lifecycle[generator] !== generatorTripped) continue
+    const definition = generators[generator]!
     const trip = grid.protection.recordedGeneratorTrips.get(definition.id)
     emit({
       id: gridAlarmId('generator', definition.id, 'tripped'),
@@ -233,8 +254,10 @@ const generatorObservations = (grid: GridRuntimeInstance, settings: GridAlarmSet
 }
 
 const hvdcObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings, emit: Emit): void => {
-  for (const link of grid.definition.index.hvdcLinks) {
-    const trip = grid.hvdcLinks.get(link.id)!.trip
+  const links = grid.definition.index.hvdcLinks
+  for (let index = 0; index < links.length; index += 1) {
+    const link = links[index]!
+    const trip = grid.arrays.hvdcLinks[index]!.trip
     if (trip === null) continue
     emit({
       id: gridAlarmId('hvdc', link.id, 'tripped'),
@@ -263,8 +286,9 @@ export const gridAlarmObservations = (grid: GridRuntimeInstance, islands: GridIs
       energisedIslandObservations(grid, settings, state, island, structure, emit)
       continue
     }
-    const demandMw = structure.loads.reduce((sum, load) => sum + grid.loads.get(load.id)!.demandMw, 0)
-    const plantConnections = islandMembers(grid, structure).connectionPointIds.length
+    let demandMw = 0
+    for (const load of structure.loadIndices) demandMw += grid.arrays.loads.demandMw[load]!
+    const plantConnections = structure.connectionPointIndices.length
     if (demandMw <= 0 && plantConnections === 0) continue
     emit(islandObservation(island, 'de-energised', settings.islandDeEnergised, {
       raising: true,

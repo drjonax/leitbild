@@ -1,7 +1,9 @@
 import type { GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
-import { externalFrequencyEquivalent, islandAssetStates, islandMembers } from './island-input.ts'
+import { externalFrequencyEquivalent, externalReserveVolumes } from './island-input.ts'
 import { connectedGridLoadMw } from './load-service.ts'
 import { allocateIslandReserves, upwardReserveMw } from './reserve-allocation.ts'
+import { generatorOnline } from './state/arrays.ts'
+import { writeReserves } from './state/views.ts'
 import { generatorMinimumStableMw } from './unit-commitment.ts'
 
 const allocationInputs = new WeakMap<GridRuntimeInstance, WeakMap<GridTopologyIsland, Float64Array>>()
@@ -17,15 +19,14 @@ const allocationInputs = new WeakMap<GridRuntimeInstance, WeakMap<GridTopologyIs
  * change only at segment boundaries, so the advance does not depend on the adapter step.
  */
 export const allocateGridIslandReserves = (grid: GridRuntimeInstance, structure: GridTopologyIsland): void => {
-  const states = islandAssetStates(grid, structure)
-  const islandLoadMw = states.loads.reduce((sum, state) => sum + connectedGridLoadMw(state), 0)
-  const externals = islandMembers(grid, structure).externals.map(system => {
-    const equivalent = externalFrequencyEquivalent(grid, system)
-    return { reserves: equivalent.reserves, loadMw: equivalent.loadMw }
-  })
+  const generators = grid.arrays.generators
+  const loads = grid.arrays.loads
+  let islandLoadMw = 0
+  for (const load of structure.loadIndices) islandLoadMw += connectedGridLoadMw(loads, load)
+  const externalSystems = grid.definition.index.externalSystems
   // The allocation is a pure function of these inputs: when none changed since the island's last
   // allocation, the units keep it (most advances: set-points move only by command or dispatch).
-  const length = structure.generators.length * 3 + 1 + externals.length * 6
+  const length = structure.generatorIndices.length * 3 + 1 + structure.externalIndices.length * 6
   let byIsland = allocationInputs.get(grid)
   if (byIsland === undefined) {
     byIsland = new WeakMap()
@@ -37,42 +38,48 @@ export const allocateGridIslandReserves = (grid: GridRuntimeInstance, structure:
     inputs = new Float64Array(length)
     byIsland.set(structure, inputs)
   }
-  const record = (position: number, value: number): void => {
+  let position = 0
+  const record = (value: number): void => {
     if (inputs![position] !== value) {
       inputs![position] = value
       changed = true
     }
+    position += 1
   }
-  const generatorStates = states.generators
-  for (let index = 0; index < generatorStates.length; index += 1) {
-    const state = generatorStates[index]!
-    record(index * 3, state.state === 'online' ? 1 : 0)
-    record(index * 3 + 1, state.availableMw)
-    record(index * 3 + 2, state.targetMw)
+  for (const generator of structure.generatorIndices) {
+    record(generators.lifecycle[generator] === generatorOnline ? 1 : 0)
+    record(generators.availableMw[generator]!)
+    record(generators.targetMw[generator]!)
   }
-  let position = generatorStates.length * 3
-  record(position++, islandLoadMw)
-  for (const external of externals) {
-    const reserves = external.reserves
-    record(position++, reserves.fcrNMw)
-    record(position++, reserves.fcrDUpMw)
-    record(position++, reserves.fcrDDownMw)
-    record(position++, reserves.afrrUpMw)
-    record(position++, reserves.afrrDownMw)
-    record(position++, external.loadMw)
+  record(islandLoadMw)
+  for (const system of structure.externalIndices) {
+    const reserves = externalReserveVolumes(grid, externalSystems[system]!)
+    for (let field = 0; field < reserves.length; field += 1) record(reserves[field]!)
   }
   if (!changed) return
   const allocation = allocateIslandReserves({
     automation: grid.definition.automation,
-    units: structure.generators.map((definition, index) => {
-      const state = states.generators[index]!
-      return { definition, synchronised: state.state === 'online', minimumMw: generatorMinimumStableMw(definition), availableMw: state.availableMw, targetMw: state.targetMw }
+    units: Array.from(structure.generatorIndices, generator => {
+      const definition = grid.definition.model.generators[generator]!
+      return {
+        definition,
+        synchronised: generators.lifecycle[generator] === generatorOnline,
+        minimumMw: generatorMinimumStableMw(definition),
+        availableMw: generators.availableMw[generator]!,
+        targetMw: generators.targetMw[generator]!,
+      }
     }),
-    area: { islandLoadMw, externals },
+    area: {
+      islandLoadMw,
+      externals: Array.from(structure.externalIndices, system => {
+        const equivalent = externalFrequencyEquivalent(grid, externalSystems[system]!)
+        return { reserves: equivalent.reserves, loadMw: equivalent.loadMw }
+      }),
+    },
   })
-  structure.generators.forEach((definition, index) => {
-    const state = states.generators[index]!
-    state.reserves = allocation.allocations.get(definition.id)!
-    state.reserveMw = upwardReserveMw(state.reserves)
-  })
+  for (const generator of structure.generatorIndices) {
+    const reserves = allocation.allocations.get(grid.definition.model.generators[generator]!.id)!
+    writeReserves(generators, generator, reserves)
+    generators.reserveMw[generator] = upwardReserveMw(reserves)
+  }
 }

@@ -2,8 +2,9 @@ import type { IsoTimestamp } from '../../../core/model/index.ts'
 import type { GridIslandProjection } from '../model.ts'
 import { gridAlarmCounts } from './alarms.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from './instance.ts'
-import { externalFrequencyEquivalent, gridGeneratorIsSynchronised, islandAssetStates, islandFixedInjectionMw, islandMembers } from './island-input.ts'
+import { externalReserveVolumes, generatorSynchronisedAt, islandFixedInjectionMw } from './island-input.ts'
 import { publishedNullable } from './state/arrays.ts'
+import { gridTablesFor } from './state/tables.ts'
 
 // Status turns "working" when the headline island is 50 mHz off nominal: half the standard range.
 const workingDeviationHz = 0.05
@@ -32,39 +33,43 @@ const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, buses: Int
 
 const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland, alarmCount: number): GridIslandProjection | null => {
   const structure = islands.plan.islands[island.planIndex]!
-  const members = islandMembers(grid, structure)
-  if (structure.generatorIndices.length + structure.loadIndices.length + structure.storageIndices.length + members.externals.length + members.connectionPointIds.length === 0) return null
+  if (structure.generatorIndices.length + structure.loadIndices.length + structure.storageIndices.length + structure.externalIndices.length + structure.connectionPointIndices.length === 0) return null
   const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
-  const states = islandAssetStates(grid, structure)
-  const generationMw = states.generators.reduce((sum, state) => sum + state.dispatchMw, 0)
-    + states.storage.reduce((sum, state) => sum + state.dispatchMw, 0)
-  const importMw = island.energized
-    ? members.externals.reduce((sum, system) => sum + grid.externalSystems.get(system.id)!.importMw, 0) + islandFixedInjectionMw(grid, structure)
-    : 0
-  const loadMw = states.loads.reduce((sum, state) => sum + state.demandMw, 0)
-  const servedLoadMw = states.loads.reduce((sum, state) => sum + state.servedMw, 0)
+  const generators = grid.arrays.generators
+  const loads = grid.arrays.loads
+  let unitsMw = 0
+  for (const generator of structure.generatorIndices) unitsMw += generators.dispatchMw[generator]!
+  let storageMw = 0
+  for (const item of structure.storageIndices) storageMw += grid.arrays.storage[item]!.dispatchMw
+  const generationMw = unitsMw + storageMw
+  let externalImportMw = 0
+  if (island.energized) for (const system of structure.externalIndices) externalImportMw += grid.arrays.externalSystems[system]!.importMw
+  const importMw = island.energized ? externalImportMw + islandFixedInjectionMw(grid, structure) : 0
+  let loadMw = 0
+  for (const load of structure.loadIndices) loadMw += loads.demandMw[load]!
+  let servedLoadMw = 0
+  for (const load of structure.loadIndices) servedLoadMw += loads.servedMw[load]!
   let lossesMw = 0
-  for (const bus of members.busIndices) lossesMw += grid.lossLoadByBusMw[bus]!
+  for (const bus of structure.busIndices) lossesMw += grid.lossLoadByBusMw[bus]!
   const reserves = { fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrUpMw: 0, afrrDownMw: 0, mfrrUpMw: 0, mfrrDownMw: 0 }
   if (island.energized) {
-    for (const state of states.generators) {
-      if (!gridGeneratorIsSynchronised(state)) continue
-      const allocated = state.reserves
-      reserves.fcrNMw += allocated.fcrNMw
-      reserves.fcrDUpMw += allocated.fcrDUpMw
-      reserves.fcrDDownMw += allocated.fcrDDownMw
-      reserves.afrrUpMw += allocated.afrrUpMw
-      reserves.afrrDownMw += allocated.afrrDownMw
-      reserves.mfrrUpMw += allocated.mfrrUpMw
-      reserves.mfrrDownMw += allocated.mfrrDownMw
+    for (const generator of structure.generatorIndices) {
+      if (!generatorSynchronisedAt(generators, generator)) continue
+      reserves.fcrNMw += generators.fcrNReserveMw[generator]!
+      reserves.fcrDUpMw += generators.fcrDUpReserveMw[generator]!
+      reserves.fcrDDownMw += generators.fcrDDownReserveMw[generator]!
+      reserves.afrrUpMw += generators.afrrUpReserveMw[generator]!
+      reserves.afrrDownMw += generators.afrrDownReserveMw[generator]!
+      reserves.mfrrUpMw += generators.mfrrUpReserveMw[generator]!
+      reserves.mfrrDownMw += generators.mfrrDownReserveMw[generator]!
     }
-    for (const system of members.externals) {
-      const external = externalFrequencyEquivalent(grid, system).reserves
-      reserves.fcrNMw += external.fcrNMw
-      reserves.fcrDUpMw += external.fcrDUpMw
-      reserves.fcrDDownMw += external.fcrDDownMw
-      reserves.afrrUpMw += external.afrrUpMw
-      reserves.afrrDownMw += external.afrrDownMw
+    for (const system of structure.externalIndices) {
+      const external = externalReserveVolumes(grid, grid.definition.index.externalSystems[system]!)
+      reserves.fcrNMw += external[0]!
+      reserves.fcrDUpMw += external[1]!
+      reserves.fcrDDownMw += external[2]!
+      reserves.afrrUpMw += external[3]!
+      reserves.afrrDownMw += external[4]!
     }
   }
   const frequencyHz = island.energized ? island.frequency!.frequencyHz! : null
@@ -105,31 +110,35 @@ export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIsland
   const frequencies = energised.map(island => island.frequencyHz!)
   let plantSupplyMw = 0
   let plantDemandMw = 0
+  const tables = gridTablesFor(grid.definition)
   for (const connection of grid.externalConnections.values()) {
-    if (!connection.connected || grid.busStates.get(connection.busId)?.energized !== true) continue
+    if (!connection.connected || grid.arrays.buses.energized[tables.network.busIndexById.get(connection.busId)!] !== 1) continue
     plantSupplyMw += Math.max(0, connection.systemActivePowerMw)
     plantDemandMw += Math.max(0, -connection.systemActivePowerMw)
   }
   let generationMw = plantSupplyMw
   let reserveMarginMw = 0
-  for (const state of grid.generators.values()) {
-    generationMw += Math.max(0, state.dispatchMw)
-    if (gridGeneratorIsSynchronised(state)) reserveMarginMw += Math.min(state.reserveMw, Math.max(0, state.availableMw - state.dispatchMw))
+  const generators = grid.arrays.generators
+  for (let generator = 0; generator < generators.dispatchMw.length; generator += 1) {
+    const dispatchMw = generators.dispatchMw[generator]!
+    generationMw += Math.max(0, dispatchMw)
+    if (generatorSynchronisedAt(generators, generator)) reserveMarginMw += Math.min(generators.reserveMw[generator]!, Math.max(0, generators.availableMw[generator]! - dispatchMw))
   }
-  for (const state of grid.storage.values()) generationMw += Math.max(0, state.dispatchMw)
-  for (const state of grid.externalSystems.values()) generationMw += Math.max(0, state.importMw)
+  for (const state of grid.arrays.storage) generationMw += Math.max(0, state.dispatchMw)
+  for (const state of grid.arrays.externalSystems) generationMw += Math.max(0, state.importMw)
+  const loads = grid.arrays.loads
   let demandMw = 0
   let servedMw = 0
   let unservedMw = 0
-  for (const state of grid.loads.values()) {
-    demandMw += state.demandMw
-    servedMw += state.servedMw
-    unservedMw += state.unservedMw
+  for (let load = 0; load < loads.demandMw.length; load += 1) {
+    demandMw += loads.demandMw[load]!
+    servedMw += loads.servedMw[load]!
+    unservedMw += loads.unservedMw[load]!
   }
   let lossesMw = 0
   const branchArrays = grid.arrays.branches
   for (let index = 0; index < branchArrays.lossesMw.length; index += 1) lossesMw += branchArrays.lossesMw[index]!
-  for (const state of grid.hvdcLinks.values()) lossesMw += state.lossesMw
+  for (const state of grid.arrays.hvdcLinks) lossesMw += state.lossesMw
   let highestBranchLoadingPercent = 0
   for (let index = 0; index < branchArrays.loadingPercent.length; index += 1) highestBranchLoadingPercent = Math.max(highestBranchLoadingPercent, branchArrays.loadingPercent[index]!)
   const activeAlarmCount = alarms.active

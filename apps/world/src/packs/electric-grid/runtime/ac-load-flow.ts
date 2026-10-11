@@ -1,7 +1,7 @@
-import type { GridExternalSystemDefinition, GridModelDefinition } from '../grid-model.ts'
-import { generatorKineticEnergyMws } from './generator-dynamics.ts'
+import type { GridModelDefinition } from '../grid-model.ts'
 import type { GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
-import { externalBoundaryShares, externalKineticEnergyMws, gridGeneratorIsSynchronised, islandAssetStates, islandMembers } from './island-input.ts'
+import { boundaryBusesInComponent, externalBoundaryScratch, externalBoundarySharesInto, externalKineticEnergyMws, generatorSynchronisedAt } from './island-input.ts'
+import { gridTablesFor } from './state/tables.ts'
 import { createAcNetwork, type AcNetwork } from './network/ac-network.ts'
 import type { GridIslandSystem } from './network/dc-power-flow.ts'
 import {
@@ -82,6 +82,8 @@ interface GridAcWork {
   readonly participation: Float64Array
   readonly systems: WeakMap<GridIslandSystem, AcIslandSystem>
   readonly localOfBus: Int32Array
+  /** The outcome of each plan island at the last solve; null where it was not energised (reused). */
+  readonly outcomes: Array<GridIslandAcOutcome | null>
 }
 
 const work = new WeakMap<GridRuntimeInstance, GridAcWork>()
@@ -106,6 +108,7 @@ const workFor = (grid: GridRuntimeInstance, plan: GridTopologyPlan): GridAcWork 
     participation: new Float64Array(busCount),
     systems: new WeakMap(),
     localOfBus: new Int32Array(busCount),
+    outcomes: [],
   }
   work.set(grid, created)
   return created
@@ -130,8 +133,8 @@ export const gridAcState = (grid: GridRuntimeInstance): AcPowerFlowState | null 
  */
 const specifyIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island: GridTopologyIsland, acWork: GridAcWork): void => {
   const { specification, participation } = acWork
-  const members = islandMembers(grid, island)
-  for (const bus of members.busIndices) {
+  const tables = gridTablesFor(grid.definition)
+  for (const bus of island.busIndices) {
     specification.activeInjectionMw[bus] = plan.injectionsMw[bus]! + grid.lossLoadByBusMw[bus]!
     specification.reactiveInjectionMvar[bus] = 0
     specification.voltageControlled[bus] = 0
@@ -140,14 +143,16 @@ const specifyIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island
     specification.reactiveMaximumMvar[bus] = 0
     participation[bus] = 0
   }
-  const states = islandAssetStates(grid, island)
-  states.loads.forEach((state, index) => {
-    const bus = members.loadBuses[index]!
-    specification.reactiveInjectionMvar[bus] = specification.reactiveInjectionMvar[bus]! - state.servedMw * states.loadReactivePerMw[index]!
-  })
-  island.generators.forEach((definition, index) => {
-    if (!definition.synchronous || !gridGeneratorIsSynchronised(states.generators[index]!)) return
-    const bus = members.generatorBuses[index]!
+  const servedMw = grid.arrays.loads.servedMw
+  for (const load of island.loadIndices) {
+    const bus = tables.loadBus[load]!
+    specification.reactiveInjectionMvar[bus] = specification.reactiveInjectionMvar[bus]! - servedMw[load]! * tables.loadReactivePerMw[load]!
+  }
+  const generators = grid.arrays.generators
+  for (const generator of island.generatorIndices) {
+    if (tables.generatorSynchronous[generator] !== 1 || !generatorSynchronisedAt(generators, generator)) continue
+    const definition = grid.definition.model.generators[generator]!
+    const bus = tables.generatorBus[generator]!
     if (specification.voltageControlled[bus] === 1 && specification.voltageSetpointPu[bus] !== definition.voltageSetpointPu) {
       throw new Error(`Grid ${grid.definition.gridId}: units at ${plan.network.busIds[bus]} hold different voltage set-points (${specification.voltageSetpointPu[bus]} and ${definition.voltageSetpointPu} pu)`)
     }
@@ -156,27 +161,29 @@ const specifyIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island
     specification.voltageSetpointPu[bus] = definition.voltageSetpointPu
     specification.reactiveMaximumMvar[bus] = specification.reactiveMaximumMvar[bus]! + limitMvar
     specification.reactiveMinimumMvar[bus] = specification.reactiveMinimumMvar[bus]! - limitMvar
-    participation[bus] = participation[bus]! + generatorKineticEnergyMws(definition)
-  })
-  for (const system of members.externals) specifyExternal(grid, plan, island, system, acWork)
+    participation[bus] = participation[bus]! + tables.generatorKineticEnergyMws[generator]!
+  }
+  for (const system of island.externalIndices) specifyExternal(grid, plan, island, system, acWork)
 }
 
-const specifyExternal = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island: GridTopologyIsland, system: GridExternalSystemDefinition, acWork: GridAcWork): void => {
+const specifyExternal = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island: GridTopologyIsland, system: number, acWork: GridAcWork): void => {
   const { specification, participation } = acWork
+  const definition = grid.definition.index.externalSystems[system]!
+  const scratch = externalBoundaryScratch(grid)
   // The equivalent shares each component's AC slack by its kinetic energy, spread over that
   // component's boundary buses as it closes the DC balance there (externalBoundaryShares).
   for (const componentIndex of island.componentIndices) {
-    const boundaries = system.boundaryBusIds.filter(busId => plan.componentIndexOfBus[plan.network.busIndexById.get(busId)!] === componentIndex)
-    if (boundaries.length === 0) continue
-    const shares = externalBoundaryShares(grid, system, boundaries)
-    boundaries.forEach((busId, position) => {
-      const bus = plan.network.busIndexById.get(busId)!
+    const count = boundaryBusesInComponent(grid, plan, system, componentIndex, scratch.buses)
+    if (count === 0) continue
+    externalBoundarySharesInto(grid, definition, scratch.buses, count, scratch.capacities, scratch.shares)
+    for (let position = 0; position < count; position += 1) {
+      const bus = scratch.buses[position]!
       specification.voltageControlled[bus] = 1
       specification.voltageSetpointPu[bus] = externalVoltageSetpointPu
       specification.reactiveMinimumMvar[bus] = Number.NEGATIVE_INFINITY
       specification.reactiveMaximumMvar[bus] = Number.POSITIVE_INFINITY
-      participation[bus] = participation[bus]! + externalKineticEnergyMws(system) * shares[position]!
-    })
+      participation[bus] = participation[bus]! + externalKineticEnergyMws(definition) * scratch.shares[position]!
+    }
   }
 }
 
@@ -194,10 +201,12 @@ const warmStartable = (state: AcPowerFlowState, buses: Int32Array): boolean => {
  * start; an island whose component still fails is reported not converged and its buses keep no
  * voltage (NaN), never a DC or nominal value.
  */
-export const solveGridAcLoadFlow = (grid: GridRuntimeInstance, islands: GridIslandPlan): ReadonlyMap<number, GridIslandAcOutcome> => {
+export const solveGridAcLoadFlow = (grid: GridRuntimeInstance, islands: GridIslandPlan): ReadonlyArray<GridIslandAcOutcome | null> => {
   const { plan } = islands
   const acWork = workFor(grid, plan)
-  const outcomes = new Map<number, GridIslandAcOutcome>()
+  const outcomes = acWork.outcomes
+  outcomes.length = plan.islands.length
+  outcomes.fill(null)
   const specification: AcPowerFlowSpecification = acWork.specification
   for (const island of islands.islands) {
     if (!island.energized) continue
@@ -233,9 +242,9 @@ export const solveGridAcLoadFlow = (grid: GridRuntimeInstance, islands: GridIsla
       activeLossesMw += outcome.activeLossesMw
       reactiveLossesMvar += outcome.reactiveLossesMvar
     }
-    outcomes.set(island.planIndex, failure === null
+    outcomes[island.planIndex] = failure === null
       ? { converged: true, activeLossesMw, reactiveLossesMvar, iterations }
-      : { converged: false, failure })
+      : { converged: false, failure }
   }
   return outcomes
 }

@@ -1,21 +1,21 @@
 import { gridAcState, solveGridAcLoadFlow } from './ac-load-flow.ts'
 import { noteGridAcSolution } from './alarms.ts'
-import { generatorKineticEnergyMws } from './generator-dynamics.ts'
-import { hvdcTerminalInjectionsMw } from './hvdc.ts'
-import type { GridBranchDefinition, GridExternalSystemDefinition } from '../grid-model.ts'
+import { hvdcFromTerminalMw, hvdcToTerminalMw } from './hvdc.ts'
+import type { GridBranchDefinition } from '../grid-model.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import {
-  externalBoundaryShares,
+  boundaryBusesInComponent,
+  externalBoundaryScratch,
+  externalBoundarySharesInto,
   externalKineticEnergyMws,
-  gridGeneratorIsSynchronised,
-  islandAssetStates,
+  generatorSynchronisedAt,
   islandFixedInjectionMw,
   islandLossesMw,
-  islandMembers,
 } from './island-input.ts'
 import { completeDeadGridLoad, completeLiveGridLoad } from './load-service.ts'
 import { gridBranchFlowsMwInto } from './network/dc-power-flow.ts'
 import { islandScratch, flowModelAc, flowModelDc, flowModelNone, publishedNullable, voltageModelAc, voltageModelDeEnergised, voltageModelNotConverged } from './state/arrays.ts'
+import { gridTablesFor } from './state/tables.ts'
 import { busStateViews } from './state/views.ts'
 import { solvePlanInto } from './topology.ts'
 
@@ -29,17 +29,18 @@ const addAt = (values: Float64Array, index: number, amount: number): void => {
 }
 
 const deEnergiseIsland = (grid: GridRuntimeInstance, island: GridTopologyIsland): void => {
-  const states = islandAssetStates(grid, island)
-  for (const state of states.generators) {
-    state.dispatchMw = 0
-    state.scheduledMw = 0
-    state.fcrMw = 0
-    state.afrrMw = 0
-    state.mfrrMw = 0
-    state.frequencyHz = null
+  const generators = grid.arrays.generators
+  for (const generator of island.generatorIndices) {
+    generators.dispatchMw[generator] = 0
+    generators.scheduledMw[generator] = 0
+    generators.fcrMw[generator] = 0
+    generators.afrrMw[generator] = 0
+    generators.mfrrMw[generator] = 0
+    generators.frequencyHz[generator] = Number.NaN
   }
-  for (const state of states.loads) completeDeadGridLoad(state)
-  for (const state of states.storage) {
+  for (const load of island.loadIndices) completeDeadGridLoad(grid.arrays.loads, load)
+  for (const item of island.storageIndices) {
+    const state = grid.arrays.storage[item]!
     state.dispatchMw = 0
     state.frequencyHz = null
     state.voltagePu = 0
@@ -48,115 +49,118 @@ const deEnergiseIsland = (grid: GridRuntimeInstance, island: GridTopologyIsland)
 }
 
 interface IslandBalance {
-  readonly suppliedMw: number
-  readonly servedMw: number
-  readonly lossesMw: number
+  suppliedMw: number
+  servedMw: number
 }
 
 /**
  * Electrical injections of one energised island. Within the instant, the accelerating power
  * ΔP = Σ mechanical + fixed injections − served load − losses is shared by the synchronous machines
  * (and synchronous external systems) in proportion to their kinetic energy H·S, so the island's
- * injections sum to zero by construction and its angle-reference bus absorbs nothing.
+ * injections sum to zero by construction and its angle-reference bus absorbs nothing. Adds the
+ * island's supplied and served power to `balance`.
  */
-const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan, island: GridIsland, injections: Float64Array): IslandBalance => {
+const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan, island: GridIsland, injections: Float64Array, balance: IslandBalance): void => {
   const structure = plans.plan.islands[island.planIndex]!
-  const network = plans.plan.network
-  const members = islandMembers(grid, structure)
-  const states = islandAssetStates(grid, structure)
+  const tables = gridTablesFor(grid.definition)
+  const generators = grid.arrays.generators
+  const loads = grid.arrays.loads
   const frequencyHz = island.frequency!.frequencyHz!
   const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
-  const busIndex = (busId: string): number => network.busIndexById.get(busId)!
+  const externalSystems = grid.definition.index.externalSystems
   let mechanicalMw = 0
   let kineticEnergyMws = 0
-  structure.generators.forEach((definition, index) => {
-    const state = states.generators[index]!
-    if (!gridGeneratorIsSynchronised(state)) return
-    mechanicalMw += state.scheduledMw + state.fcrMw + state.afrrMw + state.mfrrMw
-    kineticEnergyMws += generatorKineticEnergyMws(definition)
-  })
-  for (const state of states.storage) mechanicalMw += state.dispatchMw
-  const externals = members.externals
-  for (const system of externals) {
-    mechanicalMw += grid.externalSystems.get(system.id)!.mechanicalMw
-    kineticEnergyMws += externalKineticEnergyMws(system)
+  for (const generator of structure.generatorIndices) {
+    if (!generatorSynchronisedAt(generators, generator)) continue
+    mechanicalMw += generators.scheduledMw[generator]! + generators.fcrMw[generator]! + generators.afrrMw[generator]! + generators.mfrrMw[generator]!
+    kineticEnergyMws += tables.generatorKineticEnergyMws[generator]!
+  }
+  for (const item of structure.storageIndices) mechanicalMw += grid.arrays.storage[item]!.dispatchMw
+  for (const system of structure.externalIndices) {
+    mechanicalMw += grid.arrays.externalSystems[system]!.mechanicalMw
+    kineticEnergyMws += externalKineticEnergyMws(externalSystems[system]!)
   }
   const fixedMw = islandFixedInjectionMw(grid, structure)
-  const servedMw = states.loads.reduce((sum, state) => sum + state.servedMw, 0)
+  let servedMw = 0
+  for (const load of structure.loadIndices) servedMw += loads.servedMw[load]!
   const lossesMw = islandLossesMw(grid, structure)
   const acceleratingMw = mechanicalMw + fixedMw - servedMw - lossesMw
   if (!(kineticEnergyMws > 0)) throw new Error(`energised island ${island.id} has no synchronous kinetic energy`)
   let suppliedMw = fixedMw
-  structure.generators.forEach((definition, index) => {
-    const state = states.generators[index]!
-    state.frequencyHz = frequencyHz
-    if (!gridGeneratorIsSynchronised(state)) {
-      state.dispatchMw = 0
-      return
+  for (const generator of structure.generatorIndices) {
+    generators.frequencyHz[generator] = frequencyHz
+    if (!generatorSynchronisedAt(generators, generator)) {
+      generators.dispatchMw[generator] = 0
+      continue
     }
-    const mechanical = state.scheduledMw + state.fcrMw + state.afrrMw + state.mfrrMw
-    state.dispatchMw = mechanical - generatorKineticEnergyMws(definition) / kineticEnergyMws * acceleratingMw
-    addAt(injections, members.generatorBuses[index]!, state.dispatchMw)
-    suppliedMw += state.dispatchMw
-  })
-  states.storage.forEach((state, index) => {
+    const mechanical = generators.scheduledMw[generator]! + generators.fcrMw[generator]! + generators.afrrMw[generator]! + generators.mfrrMw[generator]!
+    const dispatchMw = mechanical - tables.generatorKineticEnergyMws[generator]! / kineticEnergyMws * acceleratingMw
+    generators.dispatchMw[generator] = dispatchMw
+    addAt(injections, tables.generatorBus[generator]!, dispatchMw)
+    suppliedMw += dispatchMw
+  }
+  for (const item of structure.storageIndices) {
+    const state = grid.arrays.storage[item]!
     state.frequencyHz = frequencyHz
-    addAt(injections, members.storageBuses[index]!, state.dispatchMw)
+    addAt(injections, tables.storageBus[item]!, state.dispatchMw)
     suppliedMw += state.dispatchMw
-  })
-  for (const pointId of members.connectionPointIds) {
-    const connection = grid.externalConnections.get(pointId)
-    if (connection?.connected === true) addAt(injections, busIndex(connection.busId), connection.systemActivePowerMw)
   }
-  for (const link of grid.definition.index.hvdcLinks) {
-    const terminals = hvdcTerminalInjectionsMw(grid, link)
-    if (structure.busSet.has(link.fromBusId)) addAt(injections, busIndex(link.fromBusId), terminals.fromMw)
-    if (structure.busSet.has(link.toBusId)) addAt(injections, busIndex(link.toBusId), terminals.toMw)
+  for (const point of structure.connectionPointIndices) {
+    const connection = grid.arrays.connections[point]!
+    if (connection?.connected === true) addAt(injections, tables.connectionPointBus[point]!, connection.systemActivePowerMw)
   }
-  states.loads.forEach((state, index) => {
-    addAt(injections, members.loadBuses[index]!, -state.servedMw)
-    completeLiveGridLoad(state, frequencyHz, nominalHz)
-  })
-  for (const bus of members.busIndices) addAt(injections, bus, -grid.lossLoadByBusMw[bus]!)
+  const islandOf = plans.plan.islandIndexOfBus
+  for (let link = 0; link < tables.hvdcFromBus.length; link += 1) {
+    const from = tables.hvdcFromBus[link]!
+    const to = tables.hvdcToBus[link]!
+    if (islandOf[from] === island.planIndex) addAt(injections, from, hvdcFromTerminalMw(grid, link))
+    if (islandOf[to] === island.planIndex) addAt(injections, to, hvdcToTerminalMw(grid, link))
+  }
+  for (const load of structure.loadIndices) {
+    addAt(injections, tables.loadBus[load]!, -loads.servedMw[load]!)
+    completeLiveGridLoad(loads, load, frequencyHz, nominalHz)
+  }
+  for (const bus of structure.busIndices) addAt(injections, bus, -grid.lossLoadByBusMw[bus]!)
   // The island holds at most one synchronous external system (definitions.ts).
-  for (const system of externals) {
-    const state = grid.externalSystems.get(system.id)!
-    state.importMw = state.mechanicalMw - externalKineticEnergyMws(system) / kineticEnergyMws * acceleratingMw
+  for (const system of structure.externalIndices) {
+    const definition = externalSystems[system]!
+    const state = grid.arrays.externalSystems[system]!
+    state.importMw = state.mechanicalMw - externalKineticEnergyMws(definition) / kineticEnergyMws * acceleratingMw
     state.islandId = island.id
     state.energized = true
     const closingMw = closeComponentsThroughBoundaries(grid, plans.plan, structure, system, injections)
     if (!(Math.abs(closingMw - state.importMw) < islandBalanceToleranceMw)) {
-      throw new Error(`Grid ${grid.definition.gridId} island ${island.id}: ${system.id} closes its components with ${closingMw} MW but its inertial share gives ${state.importMw} MW; the island balance must close within ${islandBalanceToleranceMw} MW`)
+      throw new Error(`Grid ${grid.definition.gridId} island ${island.id}: ${definition.id} closes its components with ${closingMw} MW but its inertial share gives ${state.importMw} MW; the island balance must close within ${islandBalanceToleranceMw} MW`)
     }
     suppliedMw += state.importMw
   }
-  return { suppliedMw, servedMw, lossesMw }
+  balance.suppliedMw += suppliedMw
+  balance.servedMw += servedMw
 }
 
 /**
  * Each AC component of the island closes its own balance through the external system's boundary
  * buses in it: the equivalent carries whatever the component's other injections leave over, split
- * between its boundary buses there in proportion to the rating of their closed ties (all to the
- * first one when none is closed). Returns the sum over components, which must equal the external
- * system's import from inertial sharing because the island's injections sum to zero by construction.
+ * between its boundary buses there by externalBoundaryShares. Returns the sum over components,
+ * which must equal the external system's import from inertial sharing because the island's
+ * injections sum to zero by construction.
  */
 const closeComponentsThroughBoundaries = (
   grid: GridRuntimeInstance,
   plan: GridTopologyPlan,
   island: GridTopologyIsland,
-  system: GridExternalSystemDefinition,
+  system: number,
   injections: Float64Array,
 ): number => {
-  const network = plan.network
+  const scratch = externalBoundaryScratch(grid)
   let closingMw = 0
   for (const componentIndex of island.componentIndices) {
-    const component = plan.components[componentIndex]!
-    const boundaries = system.boundaryBusIds.filter(busId => plan.componentIndexOfBus[network.busIndexById.get(busId)!] === componentIndex)
-    if (boundaries.length === 0) continue
+    const count = boundaryBusesInComponent(grid, plan, system, componentIndex, scratch.buses)
+    if (count === 0) continue
     let othersMw = 0
-    for (const bus of component.busIndices) othersMw += injections[bus]!
-    const shares = externalBoundaryShares(grid, system, boundaries)
-    boundaries.forEach((busId, position) => addAt(injections, network.busIndexById.get(busId)!, -othersMw * shares[position]!))
+    for (const bus of plan.components[componentIndex]!.busIndices) othersMw += injections[bus]!
+    externalBoundarySharesInto(grid, grid.definition.index.externalSystems[system]!, scratch.buses, count, scratch.capacities, scratch.shares)
+    for (let position = 0; position < count; position += 1) addAt(injections, scratch.buses[position]!, -othersMw * scratch.shares[position]!)
     closingMw -= othersMw
   }
   return closingMw
@@ -213,9 +217,10 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   injections.fill(0)
   const scratch = islandScratch(grid.arrays, plan.islands.length)
   const solve = scratch.solve
-  let suppliedMw = 0
-  let servedMw = 0
-  for (const system of grid.externalSystems.values()) {
+  const balance = scratch.balance
+  balance.suppliedMw = 0
+  balance.servedMw = 0
+  for (const system of grid.arrays.externalSystems) {
     system.importMw = 0
     system.islandId = null
     system.energized = false
@@ -226,10 +231,10 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
       continue
     }
     solve[island.planIndex] = 1
-    const balance = injectEnergisedIsland(grid, islands, island, injections)
-    suppliedMw += balance.suppliedMw
-    servedMw += balance.servedMw
+    injectEnergisedIsland(grid, islands, island, injections, balance)
   }
+  const suppliedMw = balance.suppliedMw
+  const servedMw = balance.servedMw
   solvePlanInto(plan, solve)
   let maximumMismatchMw = 0
   let mismatchSumMw = 0
@@ -255,8 +260,8 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   grid.acOutcomeByIsland.clear()
   const acConverged = scratch.acConverged
   for (const island of islands.islands) {
-    const outcome = acOutcomes.get(island.planIndex)
-    if (outcome === undefined) continue
+    const outcome = acOutcomes[island.planIndex]!
+    if (outcome === null) continue
     grid.acOutcomeByIsland.set(island.id, outcome)
     if (outcome.converged) acConverged[island.planIndex] = 1
     noteGridAcSolution(grid, island.id, outcome.converged ? { converged: true } : { converged: false, reason: `${outcome.failure.reason}: ${outcome.failure.detail}` })
@@ -327,7 +332,7 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
     branchArrays.reactiveFromMvar[index] = acLive ? ac.branchFromReactiveMvar[index]! : Number.NaN
     branchArrays.reactiveToMvar[index] = acLive ? ac.branchToReactiveMvar[index]! : Number.NaN
   }
-  for (const link of grid.definition.index.hvdcLinks) lossesMw += grid.hvdcLinks.get(link.id)!.lossesMw
+  for (const link of grid.arrays.hvdcLinks) lossesMw += link.lossesMw
 
   if (grid.busStates.size === 0) for (const [busId, state] of busStateViews(network.busIds, busArrays)) grid.busStates.set(busId, state)
   for (let bus = 0; bus < network.busCount; bus += 1) {
@@ -343,13 +348,12 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   }
   busArrays.angleRad.set(plan.anglesRad)
   busArrays.netInjectionMw.set(injections)
+  const tables = gridTablesFor(grid.definition)
   for (const island of islands.islands) {
     if (!island.energized) continue
     const structure = plan.islands[island.planIndex]!
-    const members = islandMembers(grid, structure)
-    const states = islandAssetStates(grid, structure)
-    states.loads.forEach((state, position) => { state.voltagePu = publishedNullable(busArrays.voltagePu[members.loadBuses[position]!]!) })
-    states.storage.forEach((state, position) => { state.voltagePu = publishedNullable(busArrays.voltagePu[members.storageBuses[position]!]!) })
+    for (const load of structure.loadIndices) grid.arrays.loads.voltagePu[load] = busArrays.voltagePu[tables.loadBus[load]!]!
+    for (const item of structure.storageIndices) grid.arrays.storage[item]!.voltagePu = publishedNullable(busArrays.voltagePu[tables.storageBus[item]!]!)
   }
 
   const audit = grid.diagnostics.energyAudit
