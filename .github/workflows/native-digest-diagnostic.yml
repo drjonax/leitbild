@@ -1,0 +1,51 @@
+name: Native digest diagnostic (temporary)
+
+# Temporary same-platform baseline comparison for the heater shared-thermal
+# digest. It runs the instrumented test at the pre-edit baseline and at later
+# commits on the same runner, and uploads every case's exact bits. Removed
+# before the fix lands.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/native-digest-diagnostic.yml
+      - .github/native-digest-diagnostic/**
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Platform
+        run: |
+          uname -a
+          ldd --version | head -1
+          grep -m1 'model name' /proc/cpuinfo
+          grep -m1 -o -w -E 'fma|avx2|avx512f' /proc/cpuinfo | sort -u | tr '\n' ' '; echo
+          rustc -vV
+      - name: Record each commit, debug and release
+        run: |
+          out="$(mktemp -d)"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+          for commit in ed9fa309 5411c0b7 76af68ec; do
+            work="$(mktemp -d)"
+            git archive "$commit" apps/world/native/process-plant/operating | tar -x -C "$work"
+            crate="$work/apps/world/native/process-plant/operating"
+            python3 -I .github/native-digest-diagnostic/instrument.py "$crate/tests/heater_shared_thermal_digest.rs"
+            for profile in debug release; do
+              flag=""
+              if [ "$profile" = release ]; then flag="--release"; fi
+              (cd "$crate" && DIGEST_LOG="$out/linux-$commit-$profile.log" cargo test --locked $flag --test heater_shared_thermal_digest 2>&1 | grep -E 'test result|shared thermal digest' || true)
+              echo "$commit $profile: $(tail -1 "$out/linux-$commit-$profile.log")"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-logs
+          path: ${{ env.OUT }}
