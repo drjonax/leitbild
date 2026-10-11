@@ -295,6 +295,15 @@ pub trait WaterProperties {
     fn vapor(&self, pressure: Scalar, temperature: Scalar) -> Result<WaterPoint>;
     fn saturation(&self, pressure: Scalar) -> Result<Saturation>;
     fn saturated_vapor_density(&self, temperature: Scalar) -> Result<Scalar>;
+    /// A wet-contact law's turnover endpoint (the wet/film turnover wall
+    /// temperature, or its wall derivative) for the law inputs whose exact
+    /// bits are `key`: `solve()`'s answer, a pure function of `key`. A
+    /// plain boundary evaluates it; one evaluation's [`Shared`] boundary
+    /// answers each key once.
+    fn turnover(&self, key: &[u64], solve: &mut dyn FnMut() -> Result<f64>) -> Result<f64> {
+        let _ = key;
+        solve()
+    }
 }
 /// One evaluation's property boundary for the thermal laws: every query at
 /// bit-identical inputs (value and direction) is answered once, from the
@@ -308,6 +317,7 @@ pub struct Shared<'a, P: WaterProperties> {
     vapor: std::cell::RefCell<Vec<([u64; 4], WaterPoint)>>,
     saturation: std::cell::RefCell<Vec<([u64; 2], Saturation)>>,
     vapor_density: std::cell::RefCell<Vec<([u64; 2], Scalar)>>,
+    turnover: std::cell::RefCell<Vec<(Vec<u64>, f64)>>,
 }
 impl<'a, P: WaterProperties> Shared<'a, P> {
     pub fn new(inner: &'a P) -> Self {
@@ -317,7 +327,12 @@ impl<'a, P: WaterProperties> Shared<'a, P> {
             vapor: Default::default(),
             saturation: Default::default(),
             vapor_density: Default::default(),
+            turnover: Default::default(),
         }
+    }
+    /// Turnover endpoints solved so far.
+    pub fn turnovers(&self) -> usize {
+        self.turnover.borrow().len()
     }
     /// Queries answered by the inner implementation so far.
     pub fn evaluated(&self) -> usize {
@@ -367,6 +382,15 @@ impl<P: WaterProperties> WaterProperties for Shared<'_, P> {
         held(&self.vapor_density, bits2(temperature), || {
             self.inner.saturated_vapor_density(temperature)
         })
+    }
+    fn turnover(&self, key: &[u64], solve: &mut dyn FnMut() -> Result<f64>) -> Result<f64> {
+        if let Some((_, v)) = self.turnover.borrow().iter().find(|(k, _)| k == key) {
+            return Ok(*v);
+        }
+        // The solve queries this boundary's properties; no borrow is held.
+        let v = solve()?;
+        self.turnover.borrow_mut().push((key.to_vec(), v));
+        Ok(v)
     }
 }
 
@@ -719,6 +743,82 @@ impl WallLaw {
             },
         }
     }
+}
+/// The exact bits of every input a wet-contact law's turnover reads: its
+/// pressure, bulk temperature, mass flux, saturation and bulk tuples (values
+/// and directions), its film and diameter, and its bracket. `quantity`
+/// names the endpoint quantity. The wall temperature, material and
+/// emissivity are not read by the turnover.
+#[allow(clippy::too_many_arguments)]
+fn turnover_key<N: Number>(
+    quantity: u64,
+    pressure: N,
+    bulk_t: N,
+    mass_flux: N,
+    law: &WallLawOf<N>,
+    sat: &SaturationOf<N>,
+    bulk: &WaterPointOf<N>,
+    bracket: [f64; 2],
+) -> Vec<u64> {
+    let mut key = Vec::with_capacity(64);
+    key.push(quantity);
+    let number = |key: &mut Vec<u64>, x: N| {
+        key.extend([x.value().to_bits(), x.direction().to_bits()]);
+    };
+    let point = |key: &mut Vec<u64>, w: &WaterPointOf<N>| {
+        for x in [
+            w.density,
+            w.viscosity,
+            w.conductivity,
+            w.cp,
+            w.expansion,
+            w.enthalpy,
+        ] {
+            key.extend([x.value().to_bits(), x.direction().to_bits()]);
+        }
+    };
+    number(&mut key, pressure);
+    number(&mut key, bulk_t);
+    number(&mut key, mass_flux);
+    number(&mut key, sat.temperature);
+    number(&mut key, sat.surface_tension);
+    point(&mut key, &sat.liquid);
+    point(&mut key, &sat.vapor);
+    point(&mut key, bulk);
+    key.push(law.diameter_m.to_bits());
+    match law.film {
+        Film::Core => key.push(0),
+        Film::Tube => key.push(1),
+        Film::External => key.push(2),
+        Film::Heater(f) => {
+            key.extend(
+                [
+                    3.,
+                    f.sensible_w_m2_k,
+                    f.onset_contact_angle_deg,
+                    f.wall_birth_fraction,
+                    f.minimum_film_bounds_k[0],
+                    f.minimum_film_bounds_k[1],
+                ]
+                .map(f64::to_bits),
+            );
+            match f.film {
+                FilmBranch::Vertical {
+                    coefficient,
+                    length_m,
+                    convection_factor,
+                } => key.extend([
+                    0,
+                    coefficient.to_bits(),
+                    length_m.to_bits(),
+                    convection_factor.to_bits(),
+                ]),
+                FilmBranch::Resistance { length_m } => key.extend([1, length_m.to_bits()]),
+            }
+        }
+    }
+    key.extend(bracket.map(f64::to_bits));
+    key
 }
 #[derive(Clone, Copy, Debug)]
 pub struct WallFluxOf<N> {
@@ -1134,20 +1234,27 @@ pub(crate) fn liquid_wall_current<P: WaterProperties, N: Number>(
             props, tw, pressure, bulk_t, mass_flux, law, sat, bulk, qscale,
         )
     };
-    let mut lo = onset.value();
-    let mut hi = minimum.value();
-    if objective(N::from(lo))?.value() >= 0. || objective(N::from(hi))?.value() <= 0. {
-        return Err("unordered wet/film turnover endpoints");
-    }
-    for _ in 0..52 {
-        let mid = 0.5 * (lo + hi);
-        if objective(N::from(mid))?.value() > 0. {
-            hi = mid;
-        } else {
-            lo = mid;
+    let bracket = [onset.value(), minimum.value()];
+    let key = |quantity| {
+        turnover_key(
+            quantity, pressure, bulk_t, mass_flux, &law, &sat, &bulk, bracket,
+        )
+    };
+    let root = props.turnover(&key(0), &mut || {
+        let [mut lo, mut hi] = bracket;
+        if objective(N::from(lo))?.value() >= 0. || objective(N::from(hi))?.value() <= 0. {
+            return Err("unordered wet/film turnover endpoints");
         }
-    }
-    let root = 0.5 * (lo + hi);
+        for _ in 0..52 {
+            let mid = 0.5 * (lo + hi);
+            if objective(N::from(mid))?.value() > 0. {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        Ok(0.5 * (lo + hi))
+    })?;
     let fixed = objective(N::from(root))?;
     // Wall seed only: all other current coordinates/properties have zero
     // seed. This derivative is a forward-mode evaluation on the values in a
@@ -1178,19 +1285,22 @@ pub(crate) fn liquid_wall_current<P: WaterProperties, N: Number>(
             cp: constant(law.material.cp),
         },
     };
-    let seeded = turnover_objective(
-        props,
-        Scalar::new(root, 1.),
-        constant(pressure),
-        constant(bulk_t),
-        constant(mass_flux),
-        zero_law,
-        zero_sat,
-        zero_point(bulk),
-        qscale.lift(),
-    )?;
+    let seeded = props.turnover(&key(1), &mut || {
+        Ok(turnover_objective(
+            props,
+            Scalar::new(root, 1.),
+            constant(pressure),
+            constant(bulk_t),
+            constant(mass_flux),
+            zero_law,
+            zero_sat,
+            zero_point(bulk),
+            qscale.lift(),
+        )?
+        .direction)
+    })?;
     // qscale's captured seed is absent from dF/dTw: remove it explicitly.
-    let derivative = seeded.direction + qscale.direction();
+    let derivative = seeded + qscale.direction();
     if !derivative.is_finite() || derivative <= 0. {
         return Err("singular wet turnover derivative");
     }
@@ -1664,6 +1774,48 @@ mod current_port_regression {
         assert_eq!(inner.queries.get(), 31);
         assert_eq!(shared.evaluated(), 31);
         assert_eq!(direct.queries.get(), 93);
+    }
+
+    /// The shared boundary solves each turnover key once and answers it
+    /// with exactly the solved value; a refusal is not held, and a plain
+    /// boundary solves every call.
+    #[test]
+    fn shared_boundary_solves_each_turnover_key_once() {
+        let inner = Properties::default();
+        let shared = Shared::new(&inner);
+        let mut solves = 0;
+        for _ in 0..3 {
+            for (key, value) in [(vec![0, 1], 600.25), (vec![0, 2], -0.), (vec![1, 1], 3.5)] {
+                let got = shared
+                    .turnover(&key, &mut || {
+                        solves += 1;
+                        Ok(value)
+                    })
+                    .unwrap();
+                assert_eq!(got.to_bits(), value.to_bits());
+            }
+        }
+        assert_eq!((solves, shared.turnovers()), (3, 3));
+        let mut refusals = 0;
+        for _ in 0..2 {
+            let refused = shared.turnover(&[9], &mut || {
+                refusals += 1;
+                Err("refused")
+            });
+            assert_eq!(refused, Err("refused"));
+        }
+        assert_eq!((refusals, shared.turnovers()), (2, 3));
+        let mut plain = 0;
+        for _ in 0..2 {
+            inner
+                .turnover(&[0, 1], &mut || {
+                    plain += 1;
+                    Ok(1.)
+                })
+                .unwrap();
+        }
+        assert_eq!(plain, 2);
+        assert_eq!(inner.queries.get(), 0);
     }
 
     #[test]
