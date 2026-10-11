@@ -32,6 +32,19 @@ export const gridBranchInitialStateSchema = z.object({
   availability: z.number().finite().min(0.05).max(1).optional(),
 }).strict()
 
+/**
+ * A branch's continuous and emergency rating at this Operating Point's conditions (such as its air
+ * temperature), replacing the model's ratingMw and emergencyRatingMw; an availability in
+ * branchStates derates these in turn.
+ */
+export const gridBranchRatingSchema = z.object({
+  assetId: assetId(gridIdPatterns.branch, 'branch'),
+  ratingMw: positive,
+  emergencyRatingMw: positive,
+}).strict().superRefine((entry, context) => {
+  if (entry.emergencyRatingMw < entry.ratingMw) context.addIssue({ code: 'custom', path: ['emergencyRatingMw'], message: `must be at least ratingMw (${entry.ratingMw})` })
+})
+
 const requireIncreasingTimes = (value: { readonly points: ReadonlyArray<{ readonly localTime: string }> }, context: z.core.$RefinementCtx<unknown>): void => {
   value.points.forEach((entry, index) => {
     const previous = value.points[index - 1]
@@ -94,7 +107,15 @@ export const gridOperatingPointSchema = z.object({
   description: z.string().min(1),
   compatibleModelRefs: z.array(z.string().regex(gridIdPatterns.definitionRef)).min(1),
   ...gridOperatingPointStateShape,
-}).strict().superRefine(refineGridOperatingPointState)
+  branchRatings: z.array(gridBranchRatingSchema).optional(),
+}).strict().superRefine((operatingPoint, context) => {
+  refineGridOperatingPointState(operatingPoint, context)
+  const seen = new Set<string>()
+  operatingPoint.branchRatings?.forEach((entry, index) => {
+    if (seen.has(entry.assetId)) context.addIssue({ code: 'custom', path: ['branchRatings', index, 'assetId'], message: `${entry.assetId} already has an entry` })
+    seen.add(entry.assetId)
+  })
+})
 export type GridOperatingPointV2 = z.infer<typeof gridOperatingPointSchema>
 
 /** The assets of one compiled Grid Model that an Operating Point may address. */
@@ -148,7 +169,11 @@ export const gridOperatingPointStateIssues = (state: GridOperatingPointState, ta
 /** Validates Operating Point v2 JSON against one compatible model; errors carry JSON paths. */
 export const validateGridOperatingPoint = (json: unknown, source: string, targets: GridOperatingPointTargets): GridOperatingPointV2 => {
   const operatingPoint = parseGridData(gridOperatingPointSchema, json, source, 'Grid Operating Point v2')
-  const issues = gridOperatingPointStateIssues(operatingPoint, targets)
+  const issues = [
+    ...gridOperatingPointStateIssues(operatingPoint, targets),
+    ...(operatingPoint.branchRatings ?? []).flatMap((entry, index): GridDataIssue[] =>
+      targets.branches.has(entry.assetId) ? [] : [{ path: ['branchRatings', index, 'assetId'], message: `unknown branch ${entry.assetId}` }]),
+  ]
   if (issues.length > 0) throw gridDataError(source, 'Grid Operating Point v2', issues)
   return operatingPoint
 }

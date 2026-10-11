@@ -20,7 +20,8 @@ import type { GridOperatingPointV2 } from '../../../src/packs/electric-grid/sche
 // - The boundary buses of a synchronous external system hold 1 pu with unlimited reactive power
 //   (a strong external grid) and take its scheduled export in proportion to the continuous rating
 //   of the AC ties ending there, as compile-v2 shares the system's parameters.
-// - A branch's ratings scale by its Operating Point availability, as the runtime's derate does.
+// - A branch takes its Operating Point branchRatings where given, scaled by its availability as the
+//   runtime's derate does.
 // - Losses close by a distributed slack over the online storage hydro, in proportion to capacity
 //   (governor droop on rating); an island without storage hydro shares over its synchronous units.
 
@@ -38,7 +39,7 @@ export interface V2PowerFlow {
   readonly busIndex: ReadonlyMap<string, number>
   /** v2 branches in network order. */
   readonly branches: ReadonlyArray<GridModelV2['branches'][number]>
-  /** Continuous and emergency rating of each branch in network order at the Operating Point's availability, MVA. */
+  /** Continuous and emergency rating of each branch in network order at the Operating Point's branchRatings and availability, MVA. */
   readonly ratings: ReadonlyArray<{ readonly continuousMva: number; readonly emergencyMva: number }>
   /** Σ compiled demand, MW, and Σ of the loads' MW the solve used: the two must agree. */
   readonly compiledDemandMw: number
@@ -55,6 +56,7 @@ export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperati
   const busIndex = new Map(model.buses.map((bus, index) => [bus.id, index]))
   const open = new Set((operatingPoint.branchStates ?? []).filter(state => state.state === 'open').map(state => state.assetId))
   const availability = new Map((operatingPoint.branchStates ?? []).flatMap(state => state.availability === undefined ? [] : [[state.assetId, state.availability] as const]))
+  const ratingOf = new Map((operatingPoint.branchRatings ?? []).map(entry => [entry.assetId, entry]))
   const branches = model.branches.filter(branch => !open.has(branch.id))
   const n = model.buses.length
   const shunt = new Float64Array(n)
@@ -196,7 +198,8 @@ export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperati
     branches,
     ratings: branches.map(branch => {
       const share = availability.get(branch.id) ?? 1
-      return { continuousMva: branch.ratingMw * share, emergencyMva: branch.emergencyRatingMw * share }
+      const rated = ratingOf.get(branch.id) ?? branch
+      return { continuousMva: rated.ratingMw * share, emergencyMva: rated.emergencyRatingMw * share }
     }),
     compiledDemandMw: compiled.model.loads.reduce((sum, load) => sum + load.demandMw, 0),
     solvedDemandMw,

@@ -3,7 +3,7 @@ import type { GridGeneratorV2, GridModelV2 } from '../schemas/grid-model.ts'
 import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
 import type { GridReferenceHourDispatch } from '../schemas/grid-reference-dispatch.ts'
 import { compareText } from '../topology/ids.ts'
-import { ambientRatingRule } from './electrical.ts'
+import { ambientRatingRule, emergencyRule } from './electrical.ts'
 import { roundTo } from './geo.ts'
 
 // Initial operating points of the Norway model, dispatched to the measured national production
@@ -17,7 +17,7 @@ import { roundTo } from './geo.ts'
 //   else the largest units are committed, as many as keep the loading at or above it.
 // Network losses are not scheduled: the runtime's slack covers them. Islands without load start
 // with their generators offline. Overhead lines are rated at winter air (ambientRatingRule): the
-// summer Operating Point derates each to its rating at summer air.
+// summer Operating Point gives each its rating at summer air in branchRatings.
 
 export const dispatchRule = {
   id: 'reference-hour-dispatch',
@@ -215,13 +215,12 @@ const describeHour = (hour: GridReferenceHourDispatch, schedules: ReferenceSched
   return `Dispatch (rule ${dispatchRule.id}): ENTSO-E measured ${roundTo(hour.generationMw.windOnshore + hour.generationMw.windOffshore, 0)} MW wind, ${roundTo(hour.generationMw.hydroRunOfRiver, 0)} MW run-of-river and ${roundTo(hour.generationMw.fossilGas, 0)} MW gas, shared by capacity; HVDC links and the Nordic exchange at the measured flows (net export ${roundTo(exportMw, 0)} MW); storage hydro closes the balance at one common loading; losses are left to the slack.${limits}`
 }
 
-/** Each line or sub-transmission equivalent rated lower at summer air, at that share of its model rating (3 decimals, rounded down). */
-const summerLineDerates = (model: GridModelV2, summerRatingMw: ReadonlyMap<string, number>): NonNullable<GridOperatingPointV2['branchStates']> => model.branches.flatMap(branch => {
+/** Summer-air ratings of each line or sub-transmission equivalent rated lower than in the model, MW; the emergency rating follows the emergency rule. */
+const summerBranchRatings = (model: GridModelV2, summerRatingMw: ReadonlyMap<string, number>): NonNullable<GridOperatingPointV2['branchRatings']> => model.branches.flatMap(branch => {
   const summerMw = summerRatingMw.get(branch.id)
   if (summerMw === undefined && branch.kind !== 'transformer') throw new Error(`${branch.id}: no summer rating`)
-  if (summerMw === undefined) return []
-  const availability = Math.floor(summerMw / branch.ratingMw * 1000) / 1000
-  return availability < 1 ? [{ assetId: branch.id, state: 'closed' as const, availability }] : []
+  if (summerMw === undefined || summerMw >= branch.ratingMw) return []
+  return [{ assetId: branch.id, ratingMw: summerMw, emergencyRatingMw: Math.round(summerMw * emergencyRule.factor) }]
 })
 
 export const buildOperatingPoints = (config: {
@@ -261,14 +260,14 @@ export const buildOperatingPoints = (config: {
       schemaVersion: 2,
       id: 'electric-grid.norway.summer-night-low',
       title: 'Summer night low',
-      description: `Elhub summer low hour ${config.summerHour}: each price area's demand scaled to its metered total. ${describeHour(config.dispatch.summerLow, summerSchedules)} Overhead lines derated to their rating at ${ambientRatingRule.summerAirC} °C air (rule ${ambientRatingRule.id}). The Nordic remainder keeps the model's winter inertia and load; the Operating Point schema cannot override them.`,
+      description: `Elhub summer low hour ${config.summerHour}: each price area's demand scaled to its metered total. ${describeHour(config.dispatch.summerLow, summerSchedules)} branchRatings rate overhead lines at ${ambientRatingRule.summerAirC} °C air (rule ${ambientRatingRule.id}). The Nordic remainder keeps the model's winter inertia and load; the Operating Point schema cannot override them.`,
       compatibleModelRefs: [...config.compatibleModelRefs],
       loadScale: 1,
       priceAreaDemandScale: summerScale,
       generatorStates: [...dispatchGenerators(model, load => load.referenceDemandMw * summerScale[load.priceArea], config.dispatch.summerLow, summerSchedules)],
       hvdcSchedules: [...summerSchedules.hvdc],
       externalExchangeSchedules: [...summerSchedules.exchange],
-      branchStates: [...summerLineDerates(model, config.summerLineRatingMw)],
+      branchRatings: [...summerBranchRatings(model, config.summerLineRatingMw)],
     },
   }
 }
