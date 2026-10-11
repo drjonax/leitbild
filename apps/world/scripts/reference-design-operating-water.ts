@@ -300,6 +300,20 @@ static int water_point_at(int branch,double p,double T,OperatingWaterPoint* out,
 int ld01_water_point(int branch,double p,double T,OperatingWaterPoint* out) noexcept {
  return water_point_at(branch,p,T,out,true);
 }
+// ld01_water_point restricted to the requested FIELD_* bits beyond the caloric
+// state: the same branches, checks and status codes, unrequested fields NaN.
+int ld01_water_fields(int branch,double p,double T,int fields,OperatingWaterPoint* out) noexcept {
+ if(!out||fields<0||fields>FIELDS_ALL) return 2;
+ try {
+  State q;double ts;
+  const int status=branch_state<CaloricTuple>(branch,p,T,q,ts,true);if(status)return status;
+  const double slope=complete_state(q,fields);
+  *out={q.region,q.p,q.T,q.rho,q.u,q.h,q.cp,q.cv,q.alpha,q.kappa,q.mu,q.conductivity,slope,q.T-ts};
+  return 0;
+ }catch(const std::domain_error&){return 1;}
+ catch(const std::exception&){return 3;}
+ catch(...){return 3;}
+}
 // The same branches, checks and status codes as ld01_water_point. Fields it
 // does not evaluate (cv, kappa, mu, conductivity, saturation slope) are NaN.
 int ld01_water_caloric(int branch,double p,double T,OperatingWaterPoint* out) noexcept {
@@ -404,11 +418,11 @@ int ld01_water_direction_held(int branch,const OperatingWaterPoint* held,double 
 }
 // The exact thermodynamic part of ld01_water_direction_held, without the
 // coefficient probes: p, T, rho, u and h only, bit for bit those fields of the
-// full direction; every other field is NaN. Liquid and vapor branches only,
-// whose exact part never reads the saturation slope.
+// full direction; every other field is NaN. A saturated branch reads the held
+// point's saturation slope, a liquid or vapor branch never does.
 int ld01_water_direction_exact(int branch,const OperatingWaterPoint* held,double dp,double dT,
  OperatingWaterPoint* direction) noexcept {
- if(!held||!direction||(branch!=0&&branch!=1)||!std::isfinite(dp)||!std::isfinite(dT))return 2;
+ if(!held||!direction||branch<0||branch>3||!std::isfinite(dp)||!std::isfinite(dT))return 2;
  const double none=std::numeric_limits<double>::quiet_NaN();
  OperatingWaterPoint d=exact_direction(branch,held->p,dp,dT,*held);
  d.cp=d.cv=d.alpha=d.kappa=d.mu=d.conductivity=d.saturation_slope=d.saturation_departure=none;

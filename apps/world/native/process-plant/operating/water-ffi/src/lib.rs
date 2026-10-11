@@ -83,6 +83,13 @@ unsafe extern "C" {
         temperature_direction: f64,
         direction: *mut WaterPoint,
     ) -> i32;
+    fn ld01_water_fields(
+        branch: i32,
+        pressure_pa: f64,
+        temperature_k: f64,
+        fields: i32,
+        output: *mut WaterPoint,
+    ) -> i32;
     fn ld01_water_direction_exact(
         branch: i32,
         held: *const WaterPoint,
@@ -186,6 +193,58 @@ fn complete_fields(caloric: &WaterPoint, fields: i32) -> Result<WaterPoint, Erro
         2 => Err(Error::AbiArgument),
         _ => Err(Error::NativeFailure),
     }
+}
+
+/// `point(branch, p, T)` with only `fields` evaluated beyond the caloric
+/// state: the same branch, domain and region checks and status codes.
+fn point_fields(branch: Branch, p: f64, t: f64, fields: i32) -> Result<WaterPoint, Error> {
+    let mut output = WaterPoint::default();
+    // SAFETY: the same C-layout contract as `point`: a unique live stack
+    // allocation, completely written on success and retained nowhere; the
+    // native function catches every C++ exception.
+    let status = unsafe { ld01_water_fields(branch as i32, p, t, fields, &mut output) };
+    match status {
+        0 => Ok(output),
+        1 => Err(Error::Domain),
+        2 => Err(Error::AbiArgument),
+        4 => Err(Error::TrialBand),
+        _ => Err(Error::NativeFailure),
+    }
+}
+
+/// The exact part of `directional_held(branch, held, dp, dt)`: p, T, rho, u
+/// and h bit for bit, every other field NaN; no coefficient probe.
+fn exact_held(branch: Branch, held: &WaterPoint, dp: f64, dt: f64) -> Result<WaterPoint, Error> {
+    let mut direction = WaterPoint::default();
+    // SAFETY: `held` is a live shared C-layout tuple that C only reads;
+    // `direction` is a unique live stack allocation written on success.
+    // Nothing is retained; the native function catches errors.
+    let status = unsafe { ld01_water_direction_exact(branch as i32, held, dp, dt, &mut direction) };
+    match status {
+        0 => Ok(direction),
+        1 => Err(Error::Domain),
+        2 => Err(Error::AbiArgument),
+        _ => Err(Error::NativeFailure),
+    }
+}
+
+/// The saturated liquid and vapor endpoints at `p` with their exact
+/// directions along `dp`: temperature, density, internal energy and enthalpy
+/// bit for bit those of `directional(Saturated*, p, 0, dp, 0)`. Transport,
+/// cv, cp and expansion directions are not evaluated (NaN), and no
+/// coefficient probe is made.
+pub fn saturation_caloric(p: f64, dp: f64) -> Result<[(WaterPoint, WaterPoint); 2], Error> {
+    if !dp.is_finite() {
+        return Err(Error::AbiArgument);
+    }
+    let endpoint = |branch: Branch| -> Result<(WaterPoint, WaterPoint), Error> {
+        let q = point_fields(branch, p, 0., FIELD_KAPPA | FIELD_SLOPE)?;
+        Ok((q, exact_held(branch, &q, dp, 0.)?))
+    };
+    Ok([
+        endpoint(Branch::SaturatedLiquid)?,
+        endpoint(Branch::SaturatedVapor)?,
+    ])
 }
 
 /// Exact rho/u/h directional response; disclosed same-branch second-order
@@ -342,30 +401,13 @@ impl CaloricLinearization {
         if !ut.is_finite() || ut <= 0. {
             return Err(Error::NativeFailure);
         }
-        let mut direction = WaterPoint::default();
-        // SAFETY: `self.point` is a live shared C-layout tuple that C only
-        // reads; `direction` is a unique live stack allocation written on
-        // success. Nothing is retained; the native function catches errors.
-        let status = unsafe {
-            ld01_water_direction_exact(
-                self.branch as i32,
-                &self.point,
-                dp,
-                (dtarget - up * dp) / ut,
-                &mut direction,
-            )
-        };
-        match status {
-            0 => Ok([
-                direction.temperature_k,
-                direction.density_kg_m3,
-                direction.internal_energy_j_kg,
-                direction.enthalpy_j_kg,
-            ]),
-            1 => Err(Error::Domain),
-            2 => Err(Error::AbiArgument),
-            _ => Err(Error::NativeFailure),
-        }
+        let d = exact_held(self.branch, &self.point, dp, (dtarget - up * dp) / ut)?;
+        Ok([
+            d.temperature_k,
+            d.density_kg_m3,
+            d.internal_energy_j_kg,
+            d.enthalpy_j_kg,
+        ])
     }
 
     /// Same implicit caloric tangent and native coefficient probes as the

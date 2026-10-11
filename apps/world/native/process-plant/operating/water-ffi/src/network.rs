@@ -118,6 +118,28 @@ impl Properties for If97 {
     fn saturation(&self, pressure: Scalar) -> Result<Saturation, String> {
         WaterProperties::saturation(self, pressure).map_err(|e| e.to_string())
     }
+    /// Both endpoints' caloric states and exact directions only: no
+    /// transport, surface tension or coefficient probe.
+    fn saturation_caloric(&self, pressure: Scalar) -> Result<Saturation, String> {
+        let [(l, dl), (g, dg)] = crate::saturation_caloric(pressure.value, pressure.direction)
+            .map_err(|e| format!("maintained IF97 caloric saturation: {e}"))?;
+        let none = Scalar::new(f64::NAN, f64::NAN);
+        let endpoint =
+            |q: WaterPoint, d: WaterPoint| leitbild_operating_plant::thermal::WaterPoint {
+                density: Scalar::new(q.density_kg_m3, d.density_kg_m3),
+                viscosity: none,
+                conductivity: none,
+                cp: none,
+                expansion: none,
+                enthalpy: Scalar::new(q.enthalpy_j_kg, d.enthalpy_j_kg),
+            };
+        Ok(Saturation {
+            temperature: Scalar::new(l.temperature_k, dl.temperature_k),
+            liquid: endpoint(l, dl),
+            vapor: endpoint(g, dg),
+            surface_tension: none,
+        })
+    }
     fn metastable_band(&self) -> Result<MetastableBand, String> {
         let b = Compiled::compiled();
         let lower_bound_exclusive = match b.lower_bound_exclusive {

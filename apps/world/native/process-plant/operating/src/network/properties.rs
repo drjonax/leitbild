@@ -210,6 +210,14 @@ pub trait Properties {
         })
     }
     fn saturation(&self, pressure: Scalar) -> Result<Saturation, String>;
+    /// The saturation tuple's caloric part for a consumer that reads only the
+    /// temperature and each endpoint's density and enthalpy: those values and
+    /// their directions bit for bit those of `saturation`, the other fields
+    /// (cp, expansion, viscosity, conductivity, surface tension) NaN, never
+    /// zero. The default is the complete tuple.
+    fn saturation_caloric(&self, pressure: Scalar) -> Result<Saturation, String> {
+        self.saturation(pressure)
+    }
     /// The metastable band this implementation was compiled with.
     fn metastable_band(&self) -> Result<MetastableBand, String>;
     /// Band report of an ACCEPTED point; never called inside a residual.
