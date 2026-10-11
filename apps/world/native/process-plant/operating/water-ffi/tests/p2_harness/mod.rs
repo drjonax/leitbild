@@ -17,16 +17,26 @@
 //! closed and unarmed: no lift coordinate, no root, never any flow. The
 //! free-area steps are roots that only record the crossing. Zone masses
 //! reaching zero and the mixture reaching the roof are structural roots.
+//!
+//! The PZR metal joins every LD-01 case: the heater rods' segments and the
+//! shell and head elements, one steel energy each, after the cell's
+//! coordinates and the lift. Their sources are `walls::Walls::rates` on the
+//! same column; each bank delivers the split of the case's recorded heater
+//! request until the common isolator opens, and nothing before or after. A
+//! steel element reaching the 304 domain's maximum is a root that ends the
+//! run on that applicability limit.
 #![allow(dead_code)]
 // Zones, ledgers and rows are parallel fixed arrays indexed together.
 #![allow(clippy::needless_range_loop)]
 use leitbild_operating_plant::{
     network::{
         ConsistentSystem, Failure as CellFailure, Reuse, consistent_start,
+        heaters::Heaters,
         stratified::{
             self as st, Boundary, Cell, Coordinates, Heat, Receipt, ReliefDevice, ReliefMotion,
             ReliefState, Slots, Taps,
         },
+        walls::{MetalRates, Walls},
     },
     thermal::Scalar,
 };
@@ -173,6 +183,38 @@ pub struct Relief {
     pub armed: bool,
 }
 
+/// The PZR metal: heater rod segments and wall elements, one steel energy
+/// coordinate each (rods first, in `Heaters::segments` order, then the
+/// elements in `Walls::elements` order).
+#[derive(Clone)]
+pub struct Metal {
+    pub heaters: Heaters,
+    pub walls: Walls,
+    /// The case's recorded heater request, W; none leaves the banks unpowered.
+    pub request: Option<Table>,
+    /// The common isolator has opened: no bank delivers power.
+    pub isolated: bool,
+    /// Each coordinate's steel energy at the 304 domain's maximum, J.
+    pub limit_energy_j: Vec<f64>,
+}
+impl Metal {
+    pub fn rods(&self) -> usize {
+        self.heaters.segments().len()
+    }
+    pub fn count(&self) -> usize {
+        self.rods() + self.walls.elements().len()
+    }
+    /// Each bank's delivered Joule power at `t`.
+    pub fn bank_powers(&self, t: f64) -> Result<Vec<f64>, CellFailure> {
+        match (&self.request, self.isolated) {
+            (Some(table), false) => self
+                .heaters
+                .bank_powers(table.value(t).map_err(CellFailure::Fatal)?),
+            _ => Ok(vec![0.; self.heaters.banks().len()]),
+        }
+    }
+}
+
 /// Root functions of one integration segment.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Root {
@@ -188,6 +230,8 @@ pub enum Root {
     Demand,
     /// Relief end of travel while moving (`ReliefDevice::roots`).
     Travel,
+    /// A steel coordinate reaching the 304 domain's maximum temperature.
+    SteelLimit(usize),
 }
 impl Root {
     pub fn label(&self) -> String {
@@ -198,6 +242,7 @@ impl Root {
             Root::MixtureTop => "mixture level at the roof".into(),
             Root::Demand => "relief demand threshold".into(),
             Root::Travel => "relief end of travel".into(),
+            Root::SteelLimit(i) => format!("steel coordinate {i} at the 304 domain maximum"),
         }
     }
 }
@@ -220,6 +265,8 @@ pub struct CellSystem {
     pub surge: Option<Flow>,
     pub spray: Option<Flow>,
     pub relief: Option<Relief>,
+    /// The PZR metal, present in every LD-01 case.
+    pub metal: Option<Metal>,
     /// Roots that are always active: free-area edges and structural limits.
     pub fixed_roots: Vec<Root>,
     pub counters: Counters,
@@ -233,13 +280,21 @@ pub struct Evaluated {
     pub receipts: Vec<Receipt>,
     pub x: Coordinates,
     pub rate: Coordinates,
+    /// First metal coordinate, and the metal's rows, sources and powers.
+    pub metal_base: usize,
+    pub metal_rows: Vec<Scalar>,
+    pub metal: Option<MetalRates>,
+    pub bank_powers_w: Vec<f64>,
+    pub metal_energy_j: Vec<f64>,
 }
 impl Evaluated {
     pub fn row(&self, i: usize) -> Scalar {
         if i < st::COORDINATES {
             self.ev.rows[i]
-        } else {
+        } else if i < self.metal_base {
             self.lift_row
+        } else {
+            self.metal_rows[i - self.metal_base]
         }
     }
 }
@@ -253,7 +308,12 @@ impl CellSystem {
         if self.armed() {
             ids.push(1.);
         }
+        ids.extend(vec![1.; self.metal.as_ref().map_or(0, |m| m.count())]);
         ids
+    }
+    /// First metal coordinate: after the cell's and the lift.
+    pub fn metal_base(&self) -> usize {
+        st::COORDINATES + usize::from(self.armed())
     }
     /// The case declares the relief outlet: the lift is a coordinate.
     pub fn armed(&self) -> bool {
@@ -268,6 +328,10 @@ impl CellSystem {
     /// the lift moves, its end of travel.
     pub fn roots_active(&self) -> Vec<Root> {
         let mut roots = self.fixed_roots.clone();
+        if let Some(m) = &self.metal {
+            let base = self.metal_base();
+            roots.extend((base..base + m.count()).map(Root::SteelLimit));
+        }
         if let Some(r) = self.relief.as_ref().filter(|r| r.armed) {
             roots.push(Root::Demand);
             if matches!(r.motion, ReliefMotion::Opening | ReliefMotion::Closing) {
@@ -377,10 +441,45 @@ impl CellSystem {
             }
             None => (s(0.), s(0.), None),
         };
+        // The metal on the same column: rods and walls, coupled by the band
+        // enclosures, at each bank's delivered power.
+        let metal_base = self.metal_base();
+        let (metal_rows, metal, bank_powers_w, metal_energy_j) = match &self.metal {
+            Some(m) => {
+                let k = m.count();
+                let energy: Vec<Scalar> = (metal_base..metal_base + k)
+                    .map(|i| Scalar::new(y[i] * sc[i], dir(i, false)))
+                    .collect();
+                let powers = m.bank_powers(t)?;
+                let rates = m.walls.rates(
+                    &self.cell,
+                    &column,
+                    &m.heaters,
+                    &energy[..m.rods()],
+                    &powers,
+                    &energy[m.rods()..],
+                    &If97,
+                )?;
+                let mut sources = rates.rod_metal_rates();
+                sources.extend(rates.wall_metal_rates());
+                let rows: Vec<Scalar> = (0..k)
+                    .map(|j| {
+                        let i = metal_base + j;
+                        (Scalar::new(yp[i] * sc[i], dir(i, true)) - sources[j]) / s(sc[i])
+                    })
+                    .collect();
+                let values = energy.iter().map(|e| e.value).collect();
+                (rows, Some(rates), powers, values)
+            }
+            None => (Vec::new(), None, Vec::new(), Vec::new()),
+        };
         let boundary = Boundary {
             heat: Heat::zero(),
+            heaters: metal
+                .as_ref()
+                .map_or_else(Vec::new, |r| r.heater_receipts()),
+            walls: metal.as_ref().map_or_else(Vec::new, |r| r.wall_receipts()),
             relief,
-            ..Boundary::closed()
         };
         let ev = self.cell.residual_on_reusing(
             &If97,
@@ -399,9 +498,36 @@ impl CellSystem {
             receipts,
             x,
             rate,
+            metal_base,
+            metal_rows,
+            metal,
+            bank_powers_w,
+            metal_energy_j,
         })
     }
 
+    /// PT1 (the roof tap is `top_m`, so `p_roof`), collapsed and mixture
+    /// levels above the bottom, from the coordinates alone.
+    pub fn observe(&self, t: f64, y: &[f64]) -> [f64; 4] {
+        let v = |i: usize| y[i] * self.scales[i];
+        let bottom = self.cell.parameters().bottom_m;
+        let collapsed = self
+            .cell
+            .level(s(v(st::ADMITTED_VOLUME) + v(st::RESIDENT_VOLUME)))
+            .value;
+        let mixture = self
+            .cell
+            .level(s(v(st::ADMITTED_VOLUME)
+                + v(st::RESIDENT_VOLUME)
+                + v(st::BUBBLE_VOLUME)))
+            .value;
+        [
+            t,
+            v(st::ROOF_PRESSURE),
+            collapsed - bottom,
+            mixture - bottom,
+        ]
+    }
     pub fn root_values(&self, y: &[f64], roots: &[Root], out: &mut [f64]) -> Result<(), String> {
         let v = |i: usize| y[i] * self.scales[i];
         let mixture = self
@@ -418,6 +544,10 @@ impl CellSystem {
                 Root::BoundaryEdge(e) => boundary - e,
                 Root::ZoneMass(i) => v(*i),
                 Root::MixtureTop => mixture - top,
+                Root::SteelLimit(i) => {
+                    let m = self.metal.as_ref().ok_or("steel root without metal")?;
+                    v(*i) - m.limit_energy_j[*i - self.metal_base()]
+                }
                 Root::Demand | Root::Travel => {
                     let r = self
                         .relief
@@ -480,6 +610,8 @@ impl ConsistentSystem for CellSystem {
 pub struct Segment {
     pub system: CellSystem,
     pub roots: Vec<Root>,
+    /// Start of this handle's segment.
+    pub started_s: f64,
 }
 impl System for Segment {
     fn dimension(&self) -> usize {
@@ -596,6 +728,26 @@ pub struct Sample {
     /// Solver tolerance of the mass, energy and boron totals at this state.
     pub tolerance: [f64; 3],
     pub max_abs_scaled_row: f64,
+    /// Metal: total steel energy, delivered Joule power, exterior loss and
+    /// the fluid's receipts from the metal, W; rod and wall temperatures;
+    /// each bank's `f_wet` and exposed length; the metal identity
+    /// `Σ steel rates + Σ fluid receipts + exterior − Joule` (the enclosure
+    /// sums to zero), W.
+    pub metal_energy_j: f64,
+    pub rod_energy_j: f64,
+    pub joule_w: f64,
+    pub exterior_w: f64,
+    pub metal_fluid_w: f64,
+    pub rod_temperature_k: Vec<f64>,
+    pub wall_temperature_k: Vec<f64>,
+    pub bank_wet_fraction: Vec<f64>,
+    pub bank_exposed_m: Vec<f64>,
+    pub metal_identity_w: f64,
+    /// Acquired LT: lagged DP, indicated and quantized level, and whether
+    /// the common isolator has opened.
+    pub lt_dp_acquired_pa: Option<f64>,
+    pub lt_indication_m: Option<f64>,
+    pub isolated: bool,
     pub steps: i64,
     pub error_failures: i64,
     pub convergence_failures: i64,
@@ -639,6 +791,57 @@ pub fn sample(
     let max_row = (0..system.n())
         .map(|i| e.row(i).value.abs())
         .fold(0., f64::max);
+    let mut metal_fields = (
+        0.,
+        0.,
+        0.,
+        0.,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        0.,
+    );
+    let mut rod_energy = 0.;
+    let mut metal_tolerance = 0.;
+    if let (Some(m), Some(r)) = (&system.metal, &e.metal) {
+        rod_energy = e.metal_energy_j[..m.rods()].iter().sum();
+        let base = system.metal_base();
+        metal_tolerance = (base..base + m.count())
+            .map(|i| rtol * (y[i] * sc[i]).abs() + atol[i] * sc[i])
+            .sum();
+        let joule: f64 = e.bank_powers_w.iter().sum();
+        let exterior: f64 = r.walls.iter().map(|w| w.exterior_w.value).sum();
+        let fluid: f64 = r.rods.iter().map(|g| g.fluid_energy_w.value).sum::<f64>()
+            + r.walls.iter().map(|w| w.fluid_energy_w.value).sum::<f64>();
+        let rates: f64 = r
+            .rod_metal_rates()
+            .iter()
+            .chain(&r.wall_metal_rates())
+            .map(|q| q.value)
+            .sum();
+        let banks = m.heaters.banks();
+        let mut wet = vec![0.; banks.len()];
+        let mut exposed = vec![0.; banks.len()];
+        for (g, seg) in m.heaters.segments().iter().zip(&r.rods) {
+            wet[g.bank] += seg.wetting.wet_length_m.value;
+            exposed[g.bank] += seg.wetting.exposed_length_m.value;
+        }
+        for (b, bank) in banks.iter().enumerate() {
+            wet[b] /= bank.top_m - bank.bottom_m;
+        }
+        metal_fields = (
+            e.metal_energy_j.iter().sum(),
+            joule,
+            exterior,
+            fluid,
+            r.rods.iter().map(|g| g.temperature.value).collect(),
+            r.walls.iter().map(|w| w.temperature.value).collect(),
+            wet,
+            exposed,
+            rates + fluid + exterior - joule,
+        );
+    }
     Ok(Sample {
         t,
         event: None,
@@ -708,10 +911,21 @@ pub fn sample(
                 st::BUBBLE_MASS,
                 st::DROP_MASS,
             ]),
-            tol(&[st::VAPOR_ENERGY, st::ADMITTED_ENERGY, st::RESIDENT_ENERGY]),
+            tol(&[st::VAPOR_ENERGY, st::ADMITTED_ENERGY, st::RESIDENT_ENERGY]) + metal_tolerance,
             tol(&[st::ADMITTED_BORON, st::RESIDENT_BORON, st::DROP_BORON]),
         ],
         max_abs_scaled_row: max_row,
+        metal_energy_j: metal_fields.0,
+        rod_energy_j: rod_energy,
+        joule_w: metal_fields.1,
+        exterior_w: metal_fields.2,
+        metal_fluid_w: metal_fields.3,
+        rod_temperature_k: metal_fields.4,
+        wall_temperature_k: metal_fields.5,
+        bank_wet_fraction: metal_fields.6,
+        bank_exposed_m: metal_fields.7,
+        metal_identity_w: metal_fields.8,
+        isolated: system.metal.as_ref().is_some_and(|m| m.isolated),
         ..Sample::default()
     })
 }
@@ -725,6 +939,10 @@ pub struct RunSpec {
     pub max_order: usize,
     pub duration_s: f64,
     pub output_s: f64,
+    /// The contract comparison's observation interval (`ld01-s1-gates`
+    /// `comparison.observation_s`); every `output_s / observation_s`-th
+    /// observation is a full sample.
+    pub observation_s: f64,
     /// Boundary breakpoints inside (0, duration]; IDA stops at each.
     pub breakpoints: Vec<f64>,
     pub nonnegative: Vec<usize>,
@@ -741,6 +959,50 @@ pub struct RunSpec {
     pub consistent_passes: usize,
     /// Largest lift defect a travel root may hand `ReliefDevice::stop`.
     pub lift_root_bound: f64,
+    /// Relief windows (request 2, E5): their margin before an event and
+    /// after the lift rests, and the Newton coefficient inside them.
+    pub relief_window: Option<ReliefWindow>,
+    /// The low-level heater cutout chain (gate 5).
+    pub cutout: Option<Cutout>,
+}
+
+/// E5's relief windows: from `margin_s` before each located relief event
+/// until `margin_s` after the lift next comes to rest, with the IDA Newton
+/// coefficient `newton_coefficient` inside.
+#[derive(Clone, Copy, Debug)]
+pub struct ReliefWindow {
+    pub margin_s: f64,
+    pub newton_coefficient: f64,
+}
+
+/// The low-level heater cutout of gate 5: the electronic differential level
+/// sampled at the output interval (its lag integrated exactly between
+/// samples for a linear input), quantized, its predicate held for the
+/// persistence, then the common isolator's contact delay. Three identical
+/// healthy channels vote as one.
+#[derive(Clone, Copy, Debug)]
+pub struct Cutout {
+    pub setting_m: f64,
+    pub persistence_s: f64,
+    pub contact_delay_s: f64,
+    pub lag_s: f64,
+    pub quantum_m: f64,
+    /// Fixed calibration densities, gravity and tap span.
+    pub liquid_reference_kg_m3: f64,
+    pub vapor_reference_kg_m3: f64,
+    pub gravity_m_s2: f64,
+    pub span_m: f64,
+}
+impl Cutout {
+    /// Indicated level from the acquired DP, before quantization.
+    pub fn level(&self, dp: f64) -> f64 {
+        (dp - self.vapor_reference_kg_m3 * self.gravity_m_s2 * self.span_m)
+            / ((self.liquid_reference_kg_m3 - self.vapor_reference_kg_m3) * self.gravity_m_s2)
+    }
+    /// The quantized indication in counts of `quantum_m`.
+    pub fn counts(&self, level: f64) -> i64 {
+        (level / self.quantum_m).round() as i64
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -804,6 +1066,16 @@ pub struct Run {
     pub initializations: Vec<Value>,
     pub resolvability: Vec<Value>,
     pub uncredited: Vec<Value>,
+    /// E5 relief windows `[start, end]`, rewinds taken to open them, and
+    /// the cutout chain's record.
+    pub windows: Vec<Value>,
+    pub rewinds: Vec<Value>,
+    /// Every integrator handle's own stock counters, in order.
+    pub handle_stats: Vec<Value>,
+    pub cutout: Option<Value>,
+    /// `[t, PT1, collapsed level, mixture level]` every `observation_s`,
+    /// from the coordinates alone (no property call).
+    pub observations: Vec<[f64; 4]>,
     pub end: End,
     pub totals: Totals,
     pub handles: usize,
@@ -824,11 +1096,16 @@ fn new_handle(
     yp: &[f64],
     spec: &RunSpec,
     stop: f64,
+    tight: bool,
 ) -> Result<Ida<Segment>, String> {
     let ids = system.differential();
     let roots = system.roots_active();
     let mut ida = Ida::new(
-        Segment { system, roots },
+        Segment {
+            system,
+            roots,
+            started_s: t,
+        },
         Initial {
             time: t,
             y,
@@ -840,6 +1117,12 @@ fn new_handle(
     )?;
     ida.set_max_order(spec.max_order)?;
     ida.constrain_nonnegative(&spec.nonnegative)?;
+    if tight {
+        let w = spec
+            .relief_window
+            .ok_or("a tightened handle without a declared relief window")?;
+        ida.set_nonlinear_convergence_coefficient(w.newton_coefficient)?;
+    }
     ida.stop_at(stop)?;
     Ok(ida)
 }
@@ -919,6 +1202,82 @@ fn stop_rules(sample: &Sample, spec: &RunSpec, admitted_atol_kg: f64) -> Option<
     None
 }
 
+/// A discrete change at a known time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pending {
+    WindowStart,
+    WindowEnd,
+    IsolatorOpen,
+}
+impl Pending {
+    fn label(&self) -> &'static str {
+        match self {
+            Pending::WindowStart => "relief window start",
+            Pending::WindowEnd => "relief window end",
+            Pending::IsolatorOpen => "heater isolator opened",
+        }
+    }
+}
+
+/// The cutout's acquisition chain.
+#[derive(Clone, Copy, Debug, Default)]
+struct Acquired {
+    /// Last regular sample: time, input DP and acquired DP.
+    previous: Option<(f64, f64, f64)>,
+    since: Option<f64>,
+    cause: Option<f64>,
+}
+
+/// A regular output a relief window may rewind to: the state, the system's
+/// discrete state, the window and pending events, and the record lengths.
+#[derive(Clone)]
+struct Snapshot {
+    t: f64,
+    y: Vec<f64>,
+    yp: Vec<f64>,
+    system: CellSystem,
+    tight: bool,
+    window_open: Option<f64>,
+    pending: Vec<(f64, Pending)>,
+    acquired: Acquired,
+    k: u64,
+    lengths: [usize; 7],
+}
+
+fn finish(
+    out: &mut Run,
+    end: End,
+    ida: Option<&Ida<Segment>>,
+    totals: &Totals,
+    t: f64,
+    y: &[f64],
+    yp: &[f64],
+) {
+    out.end = end;
+    let mut totals = totals.clone();
+    if let Some(ida) = ida {
+        absorb(out, &mut totals, ida);
+    }
+    out.totals = totals;
+    out.reached_s = t;
+    out.y = y.to_vec();
+    out.yp = yp.to_vec();
+}
+/// Add a handle's counters to the run before it is replaced.
+fn absorb(out: &mut Run, totals: &mut Totals, ida: &Ida<Segment>) {
+    if let Ok(s) = ida.stats() {
+        totals.add(&s);
+        out.handle_stats.push(json!({"from_s":ida.system().started_s,"steps":s.steps,"jacobians":s.jacobians,"residuals":s.residuals,
+            "error_test_failures":s.error_failures,"convergence_failures":s.convergence_failures,"nonlinear_iterations":s.nonlinear_iterations,"last_step_s":s.last_step,"last_order":s.last_order}));
+    }
+    let c = &ida.system().system.counters;
+    out.counters.residuals += c.residuals;
+    out.counters.jacobians += c.jacobians;
+    out.counters.residual_wall_s += c.residual_wall_s;
+    out.counters.jacobian_wall_s += c.jacobian_wall_s;
+    out.counters.root_calls += c.root_calls;
+}
+
 /// Integrate one declared run from the prepared state `y0` at rest.
 pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     let started = cpu_s();
@@ -938,6 +1297,11 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
         initializations: Vec::new(),
         resolvability: Vec::new(),
         uncredited: Vec::new(),
+        windows: Vec::new(),
+        rewinds: Vec::new(),
+        handle_stats: Vec::new(),
+        cutout: None,
+        observations: Vec::new(),
         end: End::Completed,
         totals: Totals::default(),
         handles: 0,
@@ -962,35 +1326,21 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     breaks.push(spec.duration_s);
     breaks.sort_by(f64::total_cmp);
     breaks.dedup();
-    let next_break = |t: f64| breaks.iter().copied().find(|b| *b > t).unwrap();
+    let next_stop = |pending: &[(f64, Pending)], t: f64| -> f64 {
+        let fixed = breaks.iter().copied().find(|b| *b > t).unwrap();
+        pending
+            .iter()
+            .map(|p| p.0)
+            .filter(|p| *p > t)
+            .fold(fixed, f64::min)
+    };
+    let mut pending: Vec<(f64, Pending)> = Vec::new();
+    let mut tight = false;
+    let mut window_open: Option<f64> = None;
+    let mut acquired = Acquired::default();
+    let mut history: std::collections::VecDeque<Snapshot> = std::collections::VecDeque::new();
+    let mut rewound_for: Option<f64> = None;
     let mut diagnostic = 0.;
-    fn finish(
-        out: &mut Run,
-        end: End,
-        ida: Option<&Ida<Segment>>,
-        totals: &Totals,
-        t: f64,
-        y: &[f64],
-        yp: &[f64],
-    ) {
-        out.end = end;
-        let mut totals = totals.clone();
-        if let Some(ida) = ida {
-            if let Ok(s) = ida.stats() {
-                totals.add(&s);
-            }
-            let c = &ida.system().system.counters;
-            out.counters.residuals += c.residuals;
-            out.counters.jacobians += c.jacobians;
-            out.counters.residual_wall_s += c.residual_wall_s;
-            out.counters.jacobian_wall_s += c.jacobian_wall_s;
-            out.counters.root_calls += c.root_calls;
-        }
-        out.totals = totals;
-        out.reached_s = t;
-        out.y = y.to_vec();
-        out.yp = yp.to_vec();
-    }
     let mut totals = Totals::default();
     match start(&mut system, t, &mut y, spec) {
         Ok((rates, pair)) => {
@@ -1012,7 +1362,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             return out;
         }
     }
-    let mut ida = match new_handle(system, t, &y, &yp, spec, next_break(t)) {
+    let mut ida = match new_handle(system, t, &y, &yp, spec, next_stop(&pending, t), false) {
         Ok(h) => h,
         Err(e) => {
             finish(
@@ -1053,37 +1403,88 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
         *diagnostic += cpu_s() - d;
         Ok(smp)
     };
-    // Accepted internal endpoint: band and peaks only.
     let mut last_accepted = f64::NEG_INFINITY;
-    let mut check_accepted =
-        |out: &mut Run, ida: &Ida<Segment>, diagnostic: &mut f64| -> Option<(u8, String)> {
-            let d = cpu_s();
-            let mut ya = vec![0.; n];
-            let mut ypa = vec![0.; n];
-            let result = match ida.current_state(&mut ya, &mut ypa) {
-                Ok(ta) if ta > last_accepted => {
-                    last_accepted = ta;
-                    out.accepted_checks += 1;
-                    match sample(&ida.system().system, ta, &ya, &ypa, &spec.atol, spec.rtol) {
-                        Ok(smp) => {
-                            for k in 0..3 {
-                                if smp.metastable_k[k] > out.accepted_peaks[k].0 {
-                                    out.accepted_peaks[k] = (smp.metastable_k[k], ta);
-                                }
+    let check_accepted = |out: &mut Run,
+                          ida: &Ida<Segment>,
+                          diagnostic: &mut f64,
+                          last_accepted: &mut f64|
+     -> Option<(u8, String)> {
+        let d = cpu_s();
+        let mut ya = vec![0.; n];
+        let mut ypa = vec![0.; n];
+        let result = match ida.current_state(&mut ya, &mut ypa) {
+            Ok(ta) if ta > *last_accepted => {
+                *last_accepted = ta;
+                out.accepted_checks += 1;
+                match sample(&ida.system().system, ta, &ya, &ypa, &spec.atol, spec.rtol) {
+                    Ok(smp) => {
+                        for k in 0..3 {
+                            if smp.metastable_k[k] > out.accepted_peaks[k].0 {
+                                out.accepted_peaks[k] = (smp.metastable_k[k], ta);
                             }
-                            stop_rules(&smp, spec, admitted_atol_kg)
                         }
-                        Err(e) => Some((
-                            1,
-                            format!("property refusal at the accepted state t={ta} s: {e}"),
-                        )),
+                        stop_rules(&smp, spec, admitted_atol_kg)
                     }
+                    Err(e) => Some((
+                        1,
+                        format!("property refusal at the accepted state t={ta} s: {e}"),
+                    )),
                 }
-                _ => None,
-            };
-            *diagnostic += cpu_s() - d;
-            result
+            }
+            _ => None,
         };
+        *diagnostic += cpu_s() - d;
+        result
+    };
+    // The cutout's acquisition on one regular sample; schedules the isolator.
+    let acquire = |out: &mut Run,
+                   acquired: &mut Acquired,
+                   pending: &mut Vec<(f64, Pending)>,
+                   t: f64|
+     -> Option<f64> {
+        let c = spec.cutout?;
+        let last = out.samples.last_mut()?;
+        let u = last.lt_dp_pa;
+        let dp = match acquired.previous {
+            None => u,
+            Some((t0, u0, a0)) => {
+                let d = t - t0;
+                let slope = (u - u0) / d;
+                let decay = (-d / c.lag_s).exp();
+                u + ((a0 - u0) + slope * c.lag_s) * decay - slope * c.lag_s
+            }
+        };
+        acquired.previous = Some((t, u, dp));
+        let counts = c.counts(c.level(dp));
+        last.lt_dp_acquired_pa = Some(dp);
+        last.lt_indication_m = Some(counts as f64 * c.quantum_m);
+        if acquired.cause.is_some() {
+            return None;
+        }
+        if counts <= c.counts(c.setting_m) {
+            let since = *acquired.since.get_or_insert(t);
+            if t - since >= c.persistence_s - 1e-9 {
+                acquired.cause = Some(t);
+                let open = t + c.contact_delay_s;
+                pending.push((open, Pending::IsolatorOpen));
+                out.cutout = Some(
+                    json!({"predicate_since_s":since,"cause_s":t,"isolator_open_s":open,"indication_m":counts as f64 * c.quantum_m,
+                    "settings":{"setting_m":c.setting_m,"persistence_s":c.persistence_s,"contact_delay_s":c.contact_delay_s,"lag_s":c.lag_s,"quantum_m":c.quantum_m,
+                        "liquid_reference_kg_m3":c.liquid_reference_kg_m3,"vapor_reference_kg_m3":c.vapor_reference_kg_m3,"gravity_m_s2":c.gravity_m_s2,"span_m":c.span_m}}),
+                );
+                return Some(open);
+            }
+        } else {
+            acquired.since = None;
+        }
+        None
+    };
+    out.observations.push(ida.system().system.observe(t, &y));
+    let ratio = (spec.output_s / spec.observation_s).round() as u64;
+    assert!(
+        ratio >= 1 && (ratio as f64 * spec.observation_s - spec.output_s).abs() <= 1e-12,
+        "the output interval must be a whole number of observations"
+    );
     match record(
         &mut out,
         &ida,
@@ -1095,6 +1496,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
         &mut diagnostic,
     ) {
         Ok(smp) => {
+            acquire(&mut out, &mut acquired, &mut pending, t);
             if let Some((rule, reason)) = stop_rules(&smp, spec, admitted_atol_kg) {
                 finish(
                     &mut out,
@@ -1124,17 +1526,117 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             return out;
         }
     }
+    let snapshot = |out: &Run,
+                    ida: &Ida<Segment>,
+                    t: f64,
+                    y: &[f64],
+                    yp: &[f64],
+                    tight: bool,
+                    window_open: Option<f64>,
+                    pending: &[(f64, Pending)],
+                    acquired: Acquired,
+                    k: u64| Snapshot {
+        t,
+        y: y.to_vec(),
+        yp: yp.to_vec(),
+        system: ida.system().system.clone(),
+        tight,
+        window_open,
+        pending: pending.to_vec(),
+        acquired,
+        k,
+        lengths: [
+            out.samples.len(),
+            out.relief_events.len(),
+            out.area_crossings.len(),
+            out.structural.len(),
+            out.windows.len(),
+            out.initializations.len(),
+            out.observations.len(),
+        ],
+    };
+    if spec.relief_window.is_some() {
+        history.push_back(snapshot(
+            &out,
+            &ida,
+            t,
+            &y,
+            &yp,
+            tight,
+            window_open,
+            &pending,
+            acquired,
+            1,
+        ));
+    }
+    // `k` counts observations; every `ratio`-th is a full sample.
     let mut k: u64 = 1;
+    // Handles whose first advance has been taken.
+    let mut primed = 0;
     loop {
-        let next_output = k as f64 * spec.output_s;
-        let stop = next_break(t);
+        let next_output = k as f64 * spec.observation_s;
+        let stop = next_stop(&pending, t);
         let target = next_output.min(stop).min(spec.duration_s);
-        let advanced = ida.advance(target, &mut y, &mut yp);
+        // Stock IDA's first step is 0.001 of the distance to its first
+        // target. A handle's first target is therefore the next regular
+        // output (or stop), with the observation as the stop boundary, so the
+        // comparison's 2 ms observation grid does not set the first step.
+        let horizon = ((k.div_ceil(ratio) * ratio) as f64 * spec.observation_s)
+            .min(stop)
+            .min(spec.duration_s);
+        let advanced = if primed < out.handles && horizon > target {
+            primed = out.handles;
+            let first = ida
+                .stop_at(target)
+                .and_then(|()| ida.advance(horizon, &mut y, &mut yp));
+            match first {
+                Ok(a) => {
+                    let now = match a {
+                        Advance::Reached(tr) => tr,
+                        Advance::Root { time, .. } => time,
+                    };
+                    if stop > now {
+                        ida.stop_at(stop).map(|()| a)
+                    } else {
+                        Ok(a)
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            primed = out.handles;
+            ida.advance(target, &mut y, &mut yp)
+        };
+        // A pure observation: record it and continue without a sample.
+        if let Ok(Advance::Reached(tr)) = advanced
+            && (tr - next_output).abs() <= 1e-9 * next_output.max(1.)
+            && !k.is_multiple_of(ratio)
+            && tr < stop
+            && tr < spec.duration_s
+        {
+            t = tr;
+            out.observations.push(ida.system().system.observe(t, &y));
+            k += 1;
+            continue;
+        }
         let end = match advanced {
             Ok(Advance::Reached(tr)) => {
                 t = tr;
+                let on_grid = (t - next_output).abs() <= 1e-9 * next_output.max(1.);
+                if on_grid {
+                    out.observations.push(ida.system().system.observe(t, &y));
+                }
+                let regular = on_grid && k.is_multiple_of(ratio);
+                let due: Vec<Pending> = pending
+                    .iter()
+                    .filter(|p| (p.0 - t).abs() <= 1e-12 * t.max(1.))
+                    .map(|p| p.1)
+                    .collect();
+                pending.retain(|p| (p.0 - t).abs() > 1e-12 * t.max(1.));
+                let label = (!due.is_empty())
+                    .then(|| due.iter().map(|d| d.label()).collect::<Vec<_>>().join("; "));
                 let mut end = None;
-                match record(&mut out, &ida, &totals, t, &y, &yp, None, &mut diagnostic) {
+                match record(&mut out, &ida, &totals, t, &y, &yp, label, &mut diagnostic) {
                     Ok(smp) => {
                         reports(&mut out, &smp, spec, admitted_atol_kg);
                         if let Some((rule, reason)) = stop_rules(&smp, spec, admitted_atol_kg) {
@@ -1150,17 +1652,41 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                     }
                 }
                 if end.is_none()
-                    && let Some((rule, reason)) = check_accepted(&mut out, &ida, &mut diagnostic)
+                    && let Some((rule, reason)) =
+                        check_accepted(&mut out, &ida, &mut diagnostic, &mut last_accepted)
                 {
                     end = Some(stop_rule_end(spec, rule, reason));
-                    if out.accepted_band_violation.is_none() {
-                        out.accepted_band_violation = Some(format!("{rule}"));
+                }
+                if end.is_none() && on_grid {
+                    k += 1;
+                }
+                if end.is_none() && regular {
+                    if let Some(open) = acquire(&mut out, &mut acquired, &mut pending, t)
+                        && let Err(e) = ida.stop_at(next_stop(&pending, t))
+                    {
+                        end = Some(End::Failure {
+                            reason: format!("isolator stop at {open} s: {e}"),
+                        });
+                    }
+                    if spec.relief_window.is_some() {
+                        history.push_back(snapshot(
+                            &out,
+                            &ida,
+                            t,
+                            &y,
+                            &yp,
+                            tight,
+                            window_open,
+                            &pending,
+                            acquired,
+                            k,
+                        ));
+                        while history.len() > 6 {
+                            history.pop_front();
+                        }
                     }
                 }
                 if end.is_none() {
-                    if t >= next_output - 1e-9 * spec.output_s {
-                        k += 1;
-                    }
                     if t >= spec.duration_s {
                         end = Some(if spec.limit {
                             End::Limit {
@@ -1169,8 +1695,60 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                         } else {
                             End::Completed
                         });
+                    } else if !due.is_empty() {
+                        let mut next = ida.system().system.clone();
+                        for d in &due {
+                            match d {
+                                Pending::WindowStart => {
+                                    tight = true;
+                                    window_open = Some(t);
+                                }
+                                Pending::WindowEnd => {
+                                    tight = false;
+                                    out.windows.push(json!([window_open, t]));
+                                    window_open = None;
+                                }
+                                Pending::IsolatorOpen => {
+                                    if let Some(m) = next.metal.as_mut() {
+                                        m.isolated = true;
+                                    }
+                                }
+                            }
+                        }
+                        absorb(&mut out, &mut totals, &ida);
+                        next.counters = Counters::default();
+                        match start(&mut next, t, &mut y, spec) {
+                            Ok((rates, pair)) => {
+                                yp = rates;
+                                out.initializations.push(pair);
+                                match new_handle(
+                                    next,
+                                    t,
+                                    &y,
+                                    &yp,
+                                    spec,
+                                    next_stop(&pending, t),
+                                    tight,
+                                ) {
+                                    Ok(h) => {
+                                        ida = h;
+                                        out.handles += 1;
+                                    }
+                                    Err(e) => {
+                                        end = Some(End::Failure {
+                                            reason: format!("handle at t={t} s: {e}"),
+                                        })
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                end = Some(End::Failure {
+                                    reason: format!("start at t={t} s: {e}"),
+                                })
+                            }
+                        }
                     } else if t >= stop
-                        && let Err(e) = ida.stop_at(next_break(t))
+                        && let Err(e) = ida.stop_at(next_stop(&pending, t))
                     {
                         end = Some(End::Failure {
                             reason: format!("stop boundary: {e}"),
@@ -1188,6 +1766,100 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                     .filter(|(_, d)| **d != 0)
                     .map(|(r, d)| (*r, *d))
                     .collect();
+                let demand = fired
+                    .iter()
+                    .find(|(r, _)| *r == Root::Demand)
+                    .map(|(_, d)| *d);
+                let travel = fired.iter().any(|(r, _)| *r == Root::Travel);
+                // E5: a relief window opens a margin before the event. Met
+                // outside a window, the run rewinds to the last regular
+                // output at or before that start and re-integrates.
+                if let (Some(w), Some(_)) = (spec.relief_window, demand)
+                    && !tight
+                    && rewound_for.is_none_or(|r| (r - t).abs() > w.margin_s)
+                {
+                    let window_start = (t - w.margin_s).max(0.);
+                    if let Some(snap) = history
+                        .iter()
+                        .rev()
+                        .find(|s| s.t <= window_start + 1e-12)
+                        .cloned()
+                    {
+                        out.rewinds.push(
+                            json!({"event_s":t,"rewind_to_s":snap.t,"window_start_s":window_start}),
+                        );
+                        rewound_for = Some(t);
+                        absorb(&mut out, &mut totals, &ida);
+                        let [
+                            samples,
+                            events,
+                            crossings,
+                            structural,
+                            windows,
+                            _,
+                            observations,
+                        ] = snap.lengths;
+                        out.observations.truncate(observations);
+                        out.samples.truncate(samples);
+                        out.relief_events.truncate(events);
+                        out.area_crossings.truncate(crossings);
+                        out.structural.truncate(structural);
+                        out.windows.truncate(windows);
+                        t = snap.t;
+                        y = snap.y.clone();
+                        k = snap.k;
+                        tight = snap.tight;
+                        window_open = snap.window_open;
+                        pending = snap.pending.clone();
+                        acquired = snap.acquired;
+                        last_accepted = t;
+                        while history.back().is_some_and(|s| s.t > snap.t) {
+                            history.pop_back();
+                        }
+                        if !tight {
+                            if window_start > t {
+                                pending.push((window_start, Pending::WindowStart));
+                            } else {
+                                tight = true;
+                                window_open = Some(t);
+                            }
+                        }
+                        let mut next = snap.system.clone();
+                        next.counters = Counters::default();
+                        let end = match start(&mut next, t, &mut y, spec) {
+                            Ok((rates, pair)) => {
+                                yp = rates;
+                                out.initializations.push(pair);
+                                match new_handle(
+                                    next,
+                                    t,
+                                    &y,
+                                    &yp,
+                                    spec,
+                                    next_stop(&pending, t),
+                                    tight,
+                                ) {
+                                    Ok(h) => {
+                                        ida = h;
+                                        out.handles += 1;
+                                        None
+                                    }
+                                    Err(e) => Some(End::Failure {
+                                        reason: format!("rewind handle at t={t} s: {e}"),
+                                    }),
+                                }
+                            }
+                            Err(e) => Some(End::Failure {
+                                reason: format!("rewind start at t={t} s: {e}"),
+                            }),
+                        };
+                        if let Some(end) = end {
+                            finish(&mut out, end, Some(&ida), &totals, t, &y, &yp);
+                            break;
+                        }
+                        continue;
+                    }
+                }
                 let label = fired
                     .iter()
                     .map(|(r, d)| {
@@ -1249,14 +1921,18 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                 }
                             });
                         }
+                        Root::SteelLimit(_) => {
+                            out.structural.push(json!({"t":t,"root":root.label(),"direction":d,"sample":smp.as_ref().map(sample_json)}));
+                            end = Some(End::Limit {
+                                label: format!(
+                                    "steel-range applicability limit: {} at t={t} s",
+                                    root.label()
+                                ),
+                            });
+                        }
                         Root::Demand | Root::Travel => {}
                     }
                 }
-                let demand = fired
-                    .iter()
-                    .find(|(r, _)| *r == Root::Demand)
-                    .map(|(_, d)| *d);
-                let travel = fired.iter().any(|(r, _)| *r == Root::Travel);
                 if end.is_none() && (demand.is_some() || travel) {
                     let mut next = ida.system().system.clone();
                     let scale = next.scales[LIFT];
@@ -1269,7 +1945,6 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                         let before = (relief.demand_open, relief.motion);
                         let mut stop = None;
                         if travel {
-                            // The mechanical-stop transaction at the located root.
                             let mut lift = located;
                             match relief
                                 .device
@@ -1311,31 +1986,39 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                         let after = (relief.demand_open, relief.motion);
                         (before, after, relief.device.lift_rate(relief.motion), stop)
                     };
+                    // E5: the window closes a margin after the lift rests;
+                    // a lift moving again keeps it open.
+                    if let Some(w) = spec.relief_window {
+                        pending.retain(|p| p.1 != Pending::WindowEnd);
+                        if matches!(after.1, ReliefMotion::Open | ReliefMotion::Closed) {
+                            pending.push((t + w.margin_s, Pending::WindowEnd));
+                        }
+                    }
                     let mut event = json!({"t":t,"pt1_pa":y[st::ROOF_PRESSURE]*next.scales[st::ROOF_PRESSURE],
                         "demand_root":demand,"travel_root":travel,
                         "before":{"demand_open":before.0,"motion":format!("{:?}",before.1)},
                         "after":{"demand_open":after.0,"motion":format!("{:?}",after.1)},
-                        "lift_located":located,
+                        "lift_located":located,"tight_newton":tight,
                         "stop":stop.map(|r| json!({"motion_before":format!("{:?}",r.motion_before),"motion_after":format!("{:?}",r.motion_after),
                             "lift_before":r.lift_before,"lift_after":r.lift_after,"defect":r.defect})),
                         "lift_rate_per_s":rate});
                     if end.is_none() {
-                        if let Ok(s) = ida.stats() {
-                            totals.add(&s);
-                        }
-                        let c = &ida.system().system.counters;
-                        out.counters.residuals += c.residuals;
-                        out.counters.jacobians += c.jacobians;
-                        out.counters.residual_wall_s += c.residual_wall_s;
-                        out.counters.jacobian_wall_s += c.jacobian_wall_s;
-                        out.counters.root_calls += c.root_calls;
+                        absorb(&mut out, &mut totals, &ida);
                         next.counters = Counters::default();
                         match start(&mut next, t, &mut y, spec) {
                             Ok((rates, pair)) => {
                                 yp = rates;
                                 event["consistent_pair"] = pair["pair"].clone();
                                 out.initializations.push(pair);
-                                match new_handle(next, t, &y, &yp, spec, next_break(t)) {
+                                match new_handle(
+                                    next,
+                                    t,
+                                    &y,
+                                    &yp,
+                                    spec,
+                                    next_stop(&pending, t),
+                                    tight,
+                                ) {
                                     Ok(h) => {
                                         ida = h;
                                         out.handles += 1;
@@ -1379,6 +2062,9 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             }
         };
         if let Some(end) = end {
+            if let Some(open) = window_open {
+                out.windows.push(json!([open, Value::Null]));
+            }
             finish(&mut out, end, Some(&ida), &totals, t, &y, &yp);
             break;
         }
@@ -1465,6 +2151,9 @@ pub fn sample_json(s: &Sample) -> Value {
         "interface_evaporation_kg_s":s.interface_evaporation_kg_s,"inversion_kg_s":s.inversion_kg_s,"conduction_w":s.conduction_w,
         "surge_kg_s":s.surge_kg_s,"spray_kg_s":s.spray_kg_s,
         "relief":{"lift":s.lift,"demand_open":s.demand_open,"motion":s.motion,"vapor_kg_s":s.relief_vapor_kg_s,"drop_kg_s":s.relief_drop_kg_s,"boron_kg_s":s.relief_boron_kg_s},
+        "metal":{"energy_j":s.metal_energy_j,"joule_w":s.joule_w,"exterior_w":s.exterior_w,"fluid_receipts_w":s.metal_fluid_w,"identity_w":s.metal_identity_w,
+            "rod_temperature_k":s.rod_temperature_k,"wall_temperature_k":s.wall_temperature_k,"bank_wet_fraction":s.bank_wet_fraction,"bank_exposed_m":s.bank_exposed_m,"isolated":s.isolated},
+        "lt":{"dp_acquired_pa":s.lt_dp_acquired_pa,"indication_m":s.lt_indication_m},
         "steps":s.steps,"last_step_s":s.last_step_s,"order":s.order,"error_test_failures":s.error_failures,"convergence_failures":s.convergence_failures})
 }
 
@@ -1477,6 +2166,8 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
     };
     let mut integral = [0.; 3];
     let mut work = 0.;
+    let mut joule = 0.;
+    let mut exterior = 0.;
     let mut drift = [0.; 2];
     let mut relief = [0.; 3];
     let mut worst = [0.; 3];
@@ -1488,10 +2179,15 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
         if dt < 0. {
             continue;
         }
+        // Ports only: the cell's receipts less what the metal hands the fluid.
+        let port = |x: &Sample| [x.receipt[0], x.receipt[1] - x.metal_fluid_w, x.receipt[2]];
+        let (a, b) = (port(s), port(previous));
         for i in 0..3 {
-            integral[i] += 0.5 * dt * (s.receipt[i] + previous.receipt[i]);
+            integral[i] += 0.5 * dt * (a[i] + b[i]);
         }
         work += 0.5 * dt * (s.volume_work_w + previous.volume_work_w);
+        joule += 0.5 * dt * (s.joule_w + previous.joule_w);
+        exterior += 0.5 * dt * (s.exterior_w + previous.exterior_w);
         for i in 0..2 {
             drift[i] += 0.5 * dt * (s.transit_drift_w[i] + previous.transit_drift_w[i]);
         }
@@ -1505,7 +2201,10 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
         relief[2] += 0.5 * dt * (s.relief_boron_kg_s + previous.relief_boron_kg_s);
         let closure = [
             s.inventory[0] - first.inventory[0] - integral[0],
-            (s.internal_energy_j - first.internal_energy_j) - (integral[1] - work),
+            (s.internal_energy_j + s.metal_energy_j
+                - first.internal_energy_j
+                - first.metal_energy_j)
+                - (integral[1] + joule - exterior - work),
             s.inventory[2] - first.inventory[2] - integral[2],
         ];
         for i in 0..3 {
@@ -1528,12 +2227,17 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
     let exact_spray = spray.map(|tb| tb.integral(t));
     let final_closure = [
         last.inventory[0] - first.inventory[0] - integral[0],
-        (last.internal_energy_j - first.internal_energy_j) - (integral[1] - work),
+        (last.internal_energy_j + last.metal_energy_j
+            - first.internal_energy_j
+            - first.metal_energy_j)
+            - (integral[1] + joule - exterior - work),
         last.inventory[2] - first.inventory[2] - integral[2],
     ];
-    json!({"t_s":t,"method":"inventory change minus the trapezoidal integral of the cell's receipts over outputs, root events and breakpoints; energy as internal energy (zones plus transit at u_sat) against receipts minus the hydrostatic remainder",
+    json!({"t_s":t,"method":"inventory change minus the trapezoidal integral of the port receipts over outputs, root events and breakpoints; energy as fluid internal energy (zones plus transit at u_sat) plus steel energy, against port receipts plus electrical delivery minus exterior loss minus the hydrostatic remainder",
         "mass":{"inventory_change_kg":last.inventory[0]-first.inventory[0],"receipts_kg":integral[0],"closure_kg":final_closure[0],"max_abs_closure_kg":worst[0],"max_closure_over_solver_tolerance":worst_ratio[0],"solver_tolerance_kg":last.tolerance[0],"within_solver_tolerance":worst_ratio[0] <= 1.,"max_instantaneous_identity_kg_s":identity[0]},
-        "energy":{"internal_energy_change_j":last.internal_energy_j-first.internal_energy_j,"receipts_j":integral[1],"hydrostatic_remainder_j":work,"transit_drift_j":{"bubbles_paid_by_R":drift[0],"drops_paid_by_g":drift[1]},"closure_j":final_closure[1],"max_abs_closure_j":worst[1],"max_closure_over_solver_tolerance":worst_ratio[1],"solver_tolerance_j":last.tolerance[1],"max_instantaneous_identity_w":identity[1]},
+        "energy":{"internal_energy_change_j":last.internal_energy_j-first.internal_energy_j,"metal_energy_change_j":last.metal_energy_j-first.metal_energy_j,
+            "rod_energy_change_j":last.rod_energy_j-first.rod_energy_j,"wall_energy_change_j":(last.metal_energy_j-last.rod_energy_j)-(first.metal_energy_j-first.rod_energy_j),
+            "electrical_j":joule,"exterior_loss_j":exterior,"port_receipts_j":integral[1],"hydrostatic_remainder_j":work,"transit_drift_j":{"bubbles_paid_by_R":drift[0],"drops_paid_by_g":drift[1]},"closure_j":final_closure[1],"max_abs_closure_j":worst[1],"max_closure_over_solver_tolerance":worst_ratio[1],"solver_tolerance_j":last.tolerance[1],"max_instantaneous_identity_w":identity[1]},
         "boron":{"inventory_change_kg":last.inventory[2]-first.inventory[2],"receipts_kg":integral[2],"closure_kg":final_closure[2],"max_abs_closure_kg":worst[2],"max_closure_over_solver_tolerance":worst_ratio[2],"solver_tolerance_kg":last.tolerance[2],"within_solver_tolerance":worst_ratio[2] <= 1.,"max_instantaneous_identity_kg_s":identity[2]},
         "relief_out":{"mass_kg":relief[0],"enthalpy_j":relief[1],"boron_kg":relief[2]},
         "recorded_tables_exact":{"surge_kg":exact_surge,"spray_kg":exact_spray}})
@@ -1601,5 +2305,6 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
         "min_drag_gap_margin":min_gap,"min_admitted_mass_kg":{"value":min_a.0,"at_s":min_a.1},
         "relief_events":run.relief_events,"area_step_crossings":run.area_crossings,"structural_events":run.structural,
         "credited_departure_overruns":run.uncredited,"resolvability_reports":run.resolvability,
+        "relief_windows":run.windows,"window_rewinds":run.rewinds,"handle_stats":run.handle_stats,"cutout":run.cutout,"observations":run.observations.len(),
         "samples":run.samples.len(),"series":series})
 }
