@@ -764,6 +764,36 @@ fn joined_dense_lines() {
         .take(40)
         .map(|(c, i)| json!({"coordinate": i, "block": block(*i), "row_nnz": row_count[*i], "column_nnz": col_count[*i], "sum": c}))
         .collect();
+    // Where the densest column's rows lie, and the densest rows.
+    let densest = lines[0].1;
+    let mut histogram: BTreeMap<&str, usize> = BTreeMap::new();
+    for r in p.column(densest) {
+        *histogram.entry(block(*r)).or_insert(0) += 1;
+    }
+    let mut by_row: Vec<(usize, usize)> = (0..n).map(|i| (row_count[i], i)).collect();
+    by_row.sort_unstable_by(|a, b| b.cmp(a));
+    let dense_rows: Vec<Value> = by_row
+        .iter()
+        .take(12)
+        .map(|(c, i)| json!({"row": i, "block": block(*i), "row_nnz": c}))
+        .collect();
+    let mut by_col: Vec<(usize, usize)> = (0..n).map(|i| (col_count[i], i)).collect();
+    by_col.sort_unstable_by(|a, b| b.cmp(a));
+    let dense_column_blocks: BTreeMap<&str, usize> =
+        by_col
+            .iter()
+            .take(100)
+            .fold(BTreeMap::new(), |mut m, (_, i)| {
+                *m.entry(block(*i)).or_insert(0) += 1;
+                m
+            });
+    println!(
+        "{}",
+        json!({"densest_column": densest, "its_rows_by_block": histogram, "densest_rows": dense_rows,
+            "top_100_columns_by_block": dense_column_blocks,
+            "columns_over_1000": by_col.iter().filter(|c| c.0 > 1000).count(),
+            "rows_over_1000": by_row.iter().filter(|c| c.0 > 1000).count()})
+    );
     let mut bordered = Vec::new();
     for k in [0usize, 24, 48, 100] {
         let out: std::collections::BTreeSet<usize> = lines.iter().take(k).map(|l| l.1).collect();
@@ -794,5 +824,285 @@ fn joined_dense_lines() {
         "{}",
         json!({"kind": "joined-dense-lines-NOT-EVIDENCE", "dimension": n, "offsets": o,
             "nonzeros": p.nonzeros(), "densest": top, "bordered": bordered})
+    );
+}
+
+/// Diagnostic: the linear template's rows eliminated exactly. If the
+/// template block `J_EE` (precursor and history coordinates) is diagonal,
+/// `S = J_RR - J_RE D^-1 J_ER` is the system a template-eliminating solve
+/// would factor; stock KLU is timed on `S` beside the whole matrix. A
+/// measurement for the linear-solver decision; nothing here changes it.
+#[test]
+#[ignore = "diagnostic of the template-eliminated KLU system"]
+fn joined_template_schur() {
+    use leitbild_operating_plant::{
+        joined::blocks::{Classes, JoinedJacobian, jacobian_blocks},
+        sparse::Pattern,
+    };
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, true);
+    let n = joined.dimension();
+    let o = joined.offsets();
+    let zero = vec![0.; n];
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let p = &structure.pattern;
+    let mut values = vec![0.; p.nonzeros()];
+    jacobian_blocks(
+        &mut joined,
+        &structure,
+        0.,
+        20.,
+        &y,
+        &zero,
+        &mut values,
+        Classes::ALL,
+    )
+    .expect("block assembly");
+    let template = joined.nuclear().linear_template(o.nuclear);
+    let mut eliminated = vec![false; n];
+    for r in &template.rows {
+        eliminated[r.row] = true;
+    }
+    let e_count = template.rows.len();
+    // Rows of the eliminated coordinates (row-major) and the diagonal.
+    let mut e_rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+    let mut diagonal = vec![0.; n];
+    let mut off_diagonal_ee = 0usize;
+    for j in 0..n {
+        for (row, v) in stored_column(p, &values, j) {
+            if eliminated[row] {
+                if row == j {
+                    diagonal[row] = v;
+                } else if eliminated[j] {
+                    if v != 0. {
+                        off_diagonal_ee += 1;
+                    }
+                } else {
+                    e_rows[row].push((j, v));
+                }
+            }
+        }
+    }
+    let started = cpu();
+    let kept: Vec<usize> = (0..n).filter(|i| !eliminated[*i]).collect();
+    let mut index = vec![usize::MAX; n];
+    for (k, i) in kept.iter().enumerate() {
+        index[*i] = k;
+    }
+    let mut s_columns: Vec<std::collections::BTreeMap<usize, f64>> =
+        vec![Default::default(); kept.len()];
+    for (k, &j) in kept.iter().enumerate() {
+        for (row, v) in stored_column(p, &values, j) {
+            if !eliminated[row] {
+                *s_columns[k].entry(index[row]).or_insert(0.) += v;
+            }
+        }
+    }
+    let mut fill_terms = 0usize;
+    for e in 0..n {
+        if !eliminated[e] {
+            continue;
+        }
+        let consumers: Vec<(usize, f64)> = stored_column(p, &values, e)
+            .into_iter()
+            .filter(|(r, v)| !eliminated[*r] && *v != 0.)
+            .collect();
+        for (c, a) in &e_rows[e] {
+            if *a == 0. {
+                continue;
+            }
+            for (r, b) in &consumers {
+                *s_columns[index[*c]].entry(index[*r]).or_insert(0.) -= b * a / diagonal[e];
+                fill_terms += 1;
+            }
+        }
+    }
+    let formation_ms = 1e3 * (cpu() - started);
+    let mut columns = Vec::with_capacity(kept.len());
+    let mut v = Vec::new();
+    for (k, column) in s_columns.iter().enumerate() {
+        let mut rows: Vec<usize> = column.keys().copied().collect();
+        if !column.contains_key(&k) {
+            rows.push(k);
+            rows.sort_unstable();
+        }
+        for r in &rows {
+            v.push(column.get(r).copied().unwrap_or(0.));
+        }
+        columns.push(rows);
+    }
+    let s = Pattern::from_columns(kept.len(), &columns).unwrap();
+    let (pointers, rows) = s.to_i64().unwrap();
+    let colamd = klu_profile(&pointers, &rows, &[v.clone()], 3);
+    let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+    let (fp, fr) = p.to_i64().unwrap();
+    let whole_amd = klu_profile_ordered(&fp, &fr, &[values.clone()], 3, 0);
+    println!(
+        "{}",
+        json!({"kind": "joined-template-schur-NOT-EVIDENCE", "dimension": n,
+            "eliminated": e_count, "off_diagonal_template_entries": off_diagonal_ee,
+            "kept": kept.len(), "schur_nonzeros": s.nonzeros(), "fill_terms": fill_terms,
+            "formation_ms_test_code": formation_ms,
+            "whole_amd": {"refactor_ms": whole_amd["refactor_ms"], "lnz_plus_unz": whole_amd["lnz_plus_unz"]},
+            "schur_colamd": {"refactor_ms": colamd["refactor_ms"], "lnz_plus_unz": colamd["lnz_plus_unz"], "solve_ms": colamd["solve_ms"], "symbolic": colamd["symbolic"]},
+            "schur_amd": {"refactor_ms": amd["refactor_ms"], "lnz_plus_unz": amd["lnz_plus_unz"], "solve_ms": amd["solve_ms"]}})
+    );
+}
+
+/// Diagnostic: the template rows' feeds lifted into explicit unknowns.
+/// Every template row is `x' - sum_f c_f feed_f + lambda x`, so its
+/// off-diagonal entries are `-c_f g_f / row scale` with `g_f` the feed's
+/// whole gradient (ports chained). The lifted Newton system adds one
+/// unknown and one row `phi_f - g_f . dy = 0` per feed and gives the
+/// template rows a single entry per feed instead of the gradient. The
+/// linear systems are equivalent exactly; this checks the rank structure
+/// on the assembled matrix and times stock KLU on the lifted one. A
+/// measurement for the linear-solver decision; nothing here changes it.
+#[test]
+#[ignore = "diagnostic of the feed-lifted KLU system"]
+fn joined_lifted_feeds() {
+    use leitbild_operating_plant::{
+        joined::blocks::{Classes, JoinedJacobian, jacobian_blocks},
+        sparse::Pattern,
+    };
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, true);
+    let n = joined.dimension();
+    let o = joined.offsets();
+    let zero = vec![0.; n];
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let p = &structure.pattern;
+    let mut values = vec![0.; p.nonzeros()];
+    jacobian_blocks(
+        &mut joined,
+        &structure,
+        0.,
+        20.,
+        &y,
+        &zero,
+        &mut values,
+        Classes::ALL,
+    )
+    .expect("block assembly");
+    let row_scales: Vec<f64> = joined
+        .layouts()
+        .into_iter()
+        .flat_map(|(_, l)| l.row_scales)
+        .collect();
+    let template = joined.nuclear().linear_template(o.nuclear);
+    let feeds = template.feeds.len();
+    let mut terms_of = vec![Vec::new(); n];
+    for r in &template.rows {
+        terms_of[r.row] = template.terms[r.terms.clone()].to_vec();
+    }
+    // Row-major off-diagonal entries of the template rows.
+    let mut rows_of: Vec<BTreeMap<usize, f64>> = vec![BTreeMap::new(); n];
+    for j in 0..n {
+        for (row, v) in stored_column(p, &values, j) {
+            if !terms_of[row].is_empty() && row != j && v != 0. {
+                rows_of[row].insert(j, v);
+            }
+        }
+    }
+    // Each feed's gradient from a row reading it alone.
+    let mut gradient: Vec<Option<BTreeMap<usize, f64>>> = vec![None; feeds];
+    for r in &template.rows {
+        let t = &terms_of[r.row];
+        if t.len() == 1 && gradient[t[0].0].is_none() && t[0].1 != 0. {
+            let (f, c) = t[0];
+            gradient[f] = Some(
+                rows_of[r.row]
+                    .iter()
+                    .map(|(col, v)| (*col, -v * row_scales[r.row] / c))
+                    .collect(),
+            );
+        }
+    }
+    let missing = gradient.iter().filter(|g| g.is_none()).count();
+    // Check every template row against its terms' gradients.
+    let mut worst = 0_f64;
+    for r in &template.rows {
+        let mut rebuilt: BTreeMap<usize, f64> = BTreeMap::new();
+        for (f, c) in &terms_of[r.row] {
+            if let Some(g) = &gradient[*f] {
+                for (col, v) in g {
+                    *rebuilt.entry(*col).or_insert(0.) -= c * v / row_scales[r.row];
+                }
+            }
+        }
+        let scale = rows_of[r.row]
+            .values()
+            .map(|v| v.abs())
+            .fold(0., f64::max)
+            .max(1e-300);
+        let cols: std::collections::BTreeSet<usize> = rows_of[r.row]
+            .keys()
+            .chain(rebuilt.keys())
+            .copied()
+            .collect();
+        for col in cols {
+            let a = rows_of[r.row].get(&col).copied().unwrap_or(0.);
+            let b = rebuilt.get(&col).copied().unwrap_or(0.);
+            worst = worst.max((a - b).abs() / scale);
+        }
+    }
+    // The lifted matrix: n + feeds unknowns.
+    let m = n + feeds;
+    let sigma: Vec<f64> = gradient
+        .iter()
+        .map(|g| {
+            g.as_ref().map_or(1., |g| {
+                g.values().map(|v| v.abs()).fold(0., f64::max).max(1e-300)
+            })
+        })
+        .collect();
+    let mut columns: Vec<BTreeMap<usize, f64>> = vec![BTreeMap::new(); m];
+    for j in 0..n {
+        for (row, v) in stored_column(p, &values, j) {
+            if terms_of[row].is_empty() || row == j {
+                *columns[j].entry(row).or_insert(0.) += v;
+            }
+        }
+    }
+    for r in &template.rows {
+        for (f, c) in &terms_of[r.row] {
+            *columns[n + f].entry(r.row).or_insert(0.) -= c * sigma[*f] / row_scales[r.row];
+        }
+    }
+    for (f, g) in gradient.iter().enumerate() {
+        columns[n + f].insert(n + f, 1.);
+        for (col, v) in g.iter().flatten() {
+            *columns[*col].entry(n + f).or_insert(0.) -= v / sigma[f];
+        }
+    }
+    let mut lists = Vec::with_capacity(m);
+    let mut v = Vec::new();
+    for column in &columns {
+        lists.push(column.keys().copied().collect::<Vec<_>>());
+        v.extend(column.values().copied());
+    }
+    let lifted = Pattern::from_columns(m, &lists).unwrap();
+    let (pointers, rows) = lifted.to_i64().unwrap();
+    let colamd = klu_profile(&pointers, &rows, &[v.clone()], 3);
+    let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+    let (fp, fr) = p.to_i64().unwrap();
+    let whole_colamd = klu_profile(&fp, &fr, &[values.clone()], 3);
+    let whole_amd = klu_profile_ordered(&fp, &fr, &[values.clone()], 3, 0);
+    let pick = |k: &Value| json!({"refactor_ms": k["refactor_ms"], "factor_ms": k["factor_ms"], "lnz_plus_unz": k["lnz_plus_unz"], "solve_ms": k["solve_ms"], "nblocks": k["symbolic"]["nblocks"], "maxblock": k["symbolic"]["maxblock"]});
+    println!(
+        "{}",
+        json!({"kind": "joined-lifted-feeds-NOT-EVIDENCE", "dimension": n, "feeds": feeds,
+            "feeds_without_a_single_term_row": missing,
+            "template_rows_rebuilt_worst_relative": worst,
+            "whole": {"nonzeros": p.nonzeros(), "colamd": pick(&whole_colamd), "amd": pick(&whole_amd)},
+            "lifted": {"dimension": m, "nonzeros": lifted.nonzeros(), "colamd": pick(&colamd), "amd": pick(&amd)}})
     );
 }
