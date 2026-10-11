@@ -135,7 +135,7 @@ describe('live operator display chain with real Modules', () => {
     }, { callerId: assistant.id, callerName: assistant.name, roomId: room.profile.id, executionCallId: 'call_0_0' })
     expect(composed).toMatchObject({ success: true, data: { results: [{ key: 'display', success: true, viewRef: 'call_0_0/display' }] } })
     const entry = (composed.data as { results: Array<{ embeddedView: unknown; data: { shows: string[] } }> }).results[0]!
-    expect(entry.data.shows.join('\n')).toContain('"LO TRIP 13.8 MPa" trip line: Low pressurizer pressure reactor trip, acts below 13.8 MPa')
+    expect(entry.data.shows.join('\n')).toContain('"LO-LO 13.8 MPa · RX TRIP" automatic action line: Low pressurizer pressure reactor trip, acts below 13.8 MPa')
 
     // The evaluation loop accepts exactly this reference for this turn.
     const viewRefs = new Set<string>()
