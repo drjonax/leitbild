@@ -221,7 +221,12 @@ export interface PackLiveMapHoverCard {
 /** One validated state result, mapped onto the features of the geometry it aligns with. */
 export interface PackLiveMapState {
   readonly revision: number
-  /** Every feature's state; the renderer applies only the values that changed. */
+  /**
+   * Every feature's state; the renderer applies only the values that changed. Each changed value
+   * makes MapLibre re-evaluate the feature's state-dependent paint in every tile that holds it, so a
+   * value carries only the resolution its paint draws: a band index where paint steps on a reading,
+   * the exact reading staying with the hover card.
+   */
   readonly featureStates: ReadonlyMap<number, PackLiveFeatureState>
   /** A small label set rebuilt with each state, because text cannot read feature-state. */
   readonly labels: ReadonlyArray<PackLiveMapFeature>

@@ -36,6 +36,17 @@ const flowArrowImageId = `${liveLayerId}:flow-arrow`
 const watchLoadingPercent = 70
 const highLoadingPercent = 90
 const overloadLoadingPercent = 100
+// Feature-state carries a branch's loading band (0 normal, 1 watch, 2 high, 3 overloaded), the
+// steps its paint draws, not the raw percent: a revision then re-sets, and MapLibre re-evaluates,
+// only the branches that change band. The hover card and labels read the exact percent.
+const watchBand = 1
+const highBand = 2
+const overloadBand = 3
+export const gridLoadingBand = (loadingPercent: number): number =>
+  loadingPercent >= overloadLoadingPercent ? overloadBand
+    : loadingPercent >= highLoadingPercent ? highBand
+      : loadingPercent >= watchLoadingPercent ? watchBand
+        : 0
 // Flow below 5 MW draws no direction arrow: it is within the DC model's rounding of small flows.
 const flowArrowMinimumMw = 5
 // Below z6 the national view keeps ≥ 300 kV branches and anything in alarm.
@@ -147,7 +158,7 @@ const branchWidthStops = [
 /** Width by kV and zoom, wider when overloaded, hovered or selected; casings add `extra`. */
 const branchWidth = (extra: number): ReadonlyArray<unknown> => ['interpolate', ['exponential', 1.4], ['zoom'],
   ...branchWidthStops.flatMap(([zoom, values, emphasis]) => [zoom, ['+', byKv(values), extra,
-    ['case', emphasised, emphasis * 2, ['>=', numberState('loading'), overloadLoadingPercent], emphasis, 0]]]),
+    ['case', emphasised, emphasis * 2, ['==', numberState('loadingBand'), overloadBand], emphasis, 0]]]),
 ]
 
 const branchColor = (palette: LivePalette): ReadonlyArray<unknown> => ['case',
@@ -155,9 +166,9 @@ const branchColor = (palette: LivePalette): ReadonlyArray<unknown> => ['case',
   flagState('tripped', false), palette.tripped,
   ['!', flagState('closed', true)], palette.open,
   ['!', flagState('energized', true)], palette.deenergized,
-  ['>=', numberState('loading'), overloadLoadingPercent], palette.overload,
-  ['>=', numberState('loading'), highLoadingPercent], palette.high,
-  ['>=', numberState('loading'), watchLoadingPercent], palette.watch,
+  ['==', numberState('loadingBand'), overloadBand], palette.overload,
+  ['==', numberState('loadingBand'), highBand], palette.high,
+  ['==', numberState('loadingBand'), watchBand], palette.watch,
   palette.normal,
 ]
 
@@ -467,16 +478,16 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
   geometry.branches.forEach((branch, position) => {
     const closed = result.branches.closed[position] === 1
     const energized = busEnergized(branch.fromBus) && busEnergized(branch.toBus)
-    const loading = result.branches.loadingPercent[position]!
+    const loadingBand = gridLoadingBand(result.branches.loadingPercent[position]!)
     const flow = result.branches.flowMw[position]!
     featureStates.set(refs.branchStart + position, {
       live: true,
       closed,
       tripped: result.branches.tripped[position] === 1,
       energized,
-      loading,
+      loadingBand,
       flowDir: closed && energized && Math.abs(flow) > flowArrowMinimumMw ? Math.sign(flow) : 0,
-      alarm: !closed || !energized || loading >= highLoadingPercent,
+      alarm: !closed || !energized || loadingBand >= highBand,
     })
   })
   geometry.buses.forEach((bus, position) => {

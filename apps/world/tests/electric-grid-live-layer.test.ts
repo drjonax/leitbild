@@ -23,13 +23,14 @@ import {
   gridLiveLayerGroupId,
   gridLiveMapLayer,
   gridLiveStateLegend,
+  gridLoadingBand,
   gridOverviewPanelId,
   gridReferenceContextColor,
   parseGridAssetItemId,
 } from '../src/packs/electric-grid/ui/grid-live-layer.ts'
 import { gridMapPalette } from '../src/packs/electric-grid/ui/grid-map-palette.ts'
 import { gridNorwayStyle } from '../src/packs/electric-grid/ui/grid-norway-style.ts'
-import { liveFeatureTileBufferPx, recolorPaintValue } from '../src/ui/map-runtime/pack-live-layer.ts'
+import { featureStateChanges, liveFeatureTileBufferPx, recolorPaintValue } from '../src/ui/map-runtime/pack-live-layer.ts'
 import { corridorDefinition, corridorModel, steppedGrid } from './fixtures/grid-corridor.ts'
 
 const themes: ReadonlyArray<PackMapTheme> = ['light', 'dark']
@@ -56,7 +57,7 @@ const isColor = (value: unknown, hex: string): boolean => {
 }
 
 const branchState = (overrides: Partial<Record<string, number | boolean>> = {}): PackLiveFeatureState =>
-  ({ live: true, closed: true, energized: true, loading: 40, flowDir: 1, alarm: false, ...overrides })
+  ({ live: true, closed: true, energized: true, loadingBand: 0, flowDir: 1, alarm: false, ...overrides })
 
 describe('Grid live layer: MapLibre layers', () => {
   test('are a valid MapLibre style in both themes', () => {
@@ -83,7 +84,7 @@ describe('Grid live layer: MapLibre layers', () => {
   })
 
   test('keep line half-widths and flow arrows inside the live source tile buffer, so tile edges stay seamless', () => {
-    const widest = { live: true, hover: true, selected: true, loading: 150, tripped: true }
+    const widest = { live: true, hover: true, selected: true, loadingBand: 3, tripped: true }
     for (const theme of themes) {
       for (const layer of specs(theme).filter(candidate => candidate.type === 'line')) {
         for (const zoom of [4, 8, 12, 16, 22]) {
@@ -111,27 +112,32 @@ describe('Grid live layer: MapLibre layers', () => {
     }
   })
 
-  test('colour branches by loading, switching and energisation', () => {
+  test('colour branches by loading band, switching and energisation', () => {
+    expect([0, 69.9, 70, 89.9, 90, 99.9, 100, 140].map(gridLoadingBand)).toEqual([0, 0, 1, 1, 2, 2, 3, 3])
     for (const theme of themes) {
       const line = spec('branch-line', theme)
       const color = (state: PackLiveFeatureState) => paintAt(line, 'line-color', 8, { kind: 'branch', kv: 420 }, state)
       const expected = theme === 'light'
         ? { normal: '#0f8b8d', watch: '#d99a00', high: '#ea580c', overload: '#d62828', open: '#6b7280', deenergized: '#c3c8cf' }
         : { normal: '#2dd4bf', watch: '#facc15', high: '#fb923c', overload: '#f87171', open: '#9ca3af', deenergized: '#4b5563' }
-      expect(isColor(color(branchState({ loading: 69.9 })), expected.normal)).toBe(true)
-      expect(isColor(color(branchState({ loading: 70 })), expected.watch)).toBe(true)
-      expect(isColor(color(branchState({ loading: 90 })), expected.high)).toBe(true)
-      expect(isColor(color(branchState({ loading: 100 })), expected.overload)).toBe(true)
-      expect(isColor(color(branchState({ closed: false, loading: 100 })), expected.open)).toBe(true)
+      expect(isColor(color(branchState({ loadingBand: gridLoadingBand(69.9) })), expected.normal)).toBe(true)
+      expect(isColor(color(branchState({ loadingBand: gridLoadingBand(70) })), expected.watch)).toBe(true)
+      expect(isColor(color(branchState({ loadingBand: gridLoadingBand(90) })), expected.high)).toBe(true)
+      expect(isColor(color(branchState({ loadingBand: gridLoadingBand(100) })), expected.overload)).toBe(true)
+      expect(isColor(color(branchState({ closed: false, loadingBand: 3 })), expected.open)).toBe(true)
       expect(isColor(color(branchState({ energized: false })), expected.deenergized)).toBe(true)
+      // Only an overloaded branch draws wider.
+      const width = (loadingBand: number) => paintAt(line, 'line-width', 8, { kind: 'branch', kv: 420 }, branchState({ loadingBand })) as number
+      for (const band of [1, 2]) expect(width(band)).toBe(width(0))
+      expect(width(3)).toBeGreaterThan(width(0))
     }
   })
 
   test('draw a tripped branch red and dashed, unlike a grey open one', () => {
     const line = spec('branch-line')
     const dashes = spec('branch-tripped')
-    const tripped = branchState({ closed: false, tripped: true, loading: 0, alarm: true })
-    const open = branchState({ closed: false, loading: 0, alarm: true })
+    const tripped = branchState({ closed: false, tripped: true, alarm: true })
+    const open = branchState({ closed: false, alarm: true })
     expect(isColor(paintAt(line, 'line-color', 8, { kind: 'branch', kv: 420 }, tripped), '#d62828')).toBe(true)
     expect(isColor(paintAt(line, 'line-color', 8, { kind: 'branch', kv: 420 }, open), '#6b7280')).toBe(true)
     // The casing-coloured dashes break only a tripped line, and stay visible with it below z6.
@@ -165,7 +171,7 @@ describe('Grid live layer: MapLibre layers', () => {
 
   test('below z6 show branches of 300 kV and above plus anything in alarm, so an overloaded 132 kV line is red at z5', () => {
     const line = spec('branch-line')
-    const overloaded = branchState({ loading: 104, alarm: true })
+    const overloaded = branchState({ loadingBand: 3, alarm: true })
     expect(paintAt(line, 'line-opacity', 5, { kind: 'branch', kv: 132 }, branchState())).toBe(0)
     expect(paintAt(line, 'line-opacity', 5, { kind: 'branch', kv: 300 }, branchState())).toBe(1)
     expect(paintAt(line, 'line-opacity', 5, { kind: 'branch', kv: 132 }, overloaded)).toBe(1)
@@ -294,6 +300,26 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     expect(drawnAs('branch:curated-follo-lambertseter-47kv-equivalent')).toBe('Network equivalent (not a mapped line)')
     expect(drawnAs(norway.model.branches.find(branch => branch.id.startsWith('branch:transformer-'))!.id)).toBe('Transformer, drawn between its buses')
     expect(state.hoverCard(0)!.fields.find(field => field.key === 'voltage')!.value).toBe('420 kV – 132 kV, equivalent of the sub-transmission between them')
+  })
+
+  test('carry a branch\'s loading band, not its percent, so loading moves within a band re-set no feature-state while the hover card reads the exact percent', () => {
+    const grid = createGridRuntimeInstance({ definition: norway, at })
+    advanceGrid(grid, 0, at)
+    const geometry = gridLiveMapLayer.loadGeometry(wire(grid, 'world.electric-grid.map.geometry'))
+    const raw = wire(grid, 'world.electric-grid.map.state') as { branches: { loadingPercent: number[] } }
+    const before = geometry.presentState(raw)
+    raw.branches.loadingPercent.forEach((loading, fid) => expect(before.featureStates.get(fid)).toMatchObject({ loadingBand: gridLoadingBand(loading) }))
+    expect([...before.featureStates.values()].some(state => 'loading' in state)).toBe(false)
+    // Every branch whose band allows it carries 0.4 points more loading.
+    const shifted = structuredClone(raw)
+    shifted.branches.loadingPercent = raw.branches.loadingPercent.map(loading => gridLoadingBand(loading + 0.4) === gridLoadingBand(loading) ? loading + 0.4 : loading)
+    const moved = shifted.branches.loadingPercent.flatMap((loading, fid) => loading === raw.branches.loadingPercent[fid] ? [] : [fid])
+    expect(moved.length).toBeGreaterThan(raw.branches.loadingPercent.length / 2)
+    const after = geometry.presentState(shifted)
+    for (const [fid, state] of after.featureStates) expect(featureStateChanges(before.featureStates.get(fid), state)).toBeNull()
+    const loadingField = (state: typeof before, fid: number) => state.hoverCard(fid)!.fields.find(field => field.key === 'loading')!.value
+    expect(loadingField(after, moved[0]!)).toStartWith(`${shifted.branches.loadingPercent[moved[0]!]!.toFixed(1)} %`)
+    expect(loadingField(after, moved[0]!)).not.toBe(loadingField(before, moved[0]!))
   })
 
   test('follow switching and trips, and label the most loaded closed branches', () => {
