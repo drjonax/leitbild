@@ -125,6 +125,9 @@ struct Blocks<P> {
     /// One startup evaluation lets the rod owner prepare its algebraic
     /// coordinates on that evaluation's fluid state ([`Joined::prepare_owners`]).
     prepare: Option<Vec<super::block::Transaction>>,
+    /// A root evaluation collects the rod owner's roots on the same fluid
+    /// state ([`Joined::roots`]).
+    rod_roots: Option<Vec<f64>>,
 }
 
 pub struct Joined<P: Properties> {
@@ -252,6 +255,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
         let blocks = Blocks {
             scales,
             prepare: None,
+            rod_roots: None,
             nuclear_rows: vec![s(0.); nuclear.layout().len()],
             solid_rows: vec![s(0.); solids.layout().len()],
             secondary_rows: vec![s(0.); secondary_len],
@@ -498,6 +502,125 @@ impl<P: Properties + WaterProperties> Joined<P> {
         self.counters.residuals += 1;
         self.counters.residual_wall_s += started.elapsed().as_secs_f64();
         self.counters.coupled_wall_s = self.blocks.coupled_wall_s;
+        Ok(())
+    }
+
+    /// Root functions: the secondary owner's, then the rod owner's (on one
+    /// value evaluation's fluid state). Stock IDA cannot retry a root, so
+    /// every failure is fatal.
+    pub fn root_count(&self) -> usize {
+        self.secondary().map_or(0, |b| b.root_count()) + self.rods().map_or(0, |b| b.root_count())
+    }
+    pub fn roots(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        let o = self.blocks.offsets;
+        let ns = self.secondary().map_or(0, |b| b.root_count());
+        let nr = self.rods().map_or(0, |b| b.root_count());
+        if out.len() != ns + nr {
+            return Err(fatal("root layout"));
+        }
+        if let SecondaryPort::Owner(b) = &mut self.blocks.secondary {
+            let x = view(
+                y,
+                yp,
+                None,
+                0.,
+                o.secondary..o.rods,
+                &self.blocks.scales[2].coordinates,
+            )?;
+            b.roots(&self.blocks.properties, t, x, &mut out[..ns])?;
+        }
+        if nr > 0 {
+            self.blocks.rod_roots = Some(vec![0.; nr]);
+            let evaluated = self.evaluate(t, y, yp, None, 0., None);
+            let roots = self.blocks.rod_roots.take().unwrap_or_default();
+            evaluated.map_err(|e| match e {
+                Failure::Recoverable(r) | Failure::Fatal(r) => {
+                    fatal(format!("root evaluation: {r}"))
+                }
+            })?;
+            out[ns..].copy_from_slice(&roots);
+        }
+        Ok(())
+    }
+    /// The owners' transactions at located roots (`directions` per root,
+    /// owners' order): each owner may change its own coordinates of `y`
+    /// (solver scaling here, physical in the owner); energy deposits enter
+    /// their named passive stores once. Consistency is then the caller's
+    /// exact consistent start.
+    pub fn transact(
+        &mut self,
+        t: f64,
+        directions: &[i32],
+        y: &mut [f64],
+    ) -> Result<Vec<super::block::Transaction>, Failure> {
+        let o = self.blocks.offsets;
+        let ns = self.secondary().map_or(0, |b| b.root_count());
+        let mut done = Vec::new();
+        let b = &mut self.blocks;
+        if let SecondaryPort::Owner(owner) = &mut b.secondary
+            && directions[..ns].iter().any(|d| *d != 0)
+        {
+            let scales = &b.scales[2].coordinates;
+            let mut x: Vec<f64> = (o.secondary..o.rods)
+                .zip(scales)
+                .map(|(i, s)| y[i] * s)
+                .collect();
+            done.push(owner.transact(&b.properties, t, &directions[..ns], &mut x)?);
+            for ((i, v), s) in (o.secondary..o.rods).zip(&x).zip(scales) {
+                y[i] = v / s;
+            }
+        }
+        if let RodPort::Owner(owner) = &mut b.rods
+            && directions[ns..].iter().any(|d| *d != 0)
+        {
+            let scales = &b.scales[3].coordinates;
+            let mut x: Vec<f64> = (o.rods..o.end).zip(scales).map(|(i, s)| y[i] * s).collect();
+            done.push(owner.transact(&b.properties, t, &directions[ns..], &mut x)?);
+            for ((i, v), s) in (o.rods..o.end).zip(&x).zip(scales) {
+                y[i] = v / s;
+            }
+        }
+        self.deposit(&done, y)?;
+        Ok(done)
+    }
+    /// A declared command to every composed owner, in order.
+    pub fn command(
+        &mut self,
+        t: f64,
+        y: &mut [f64],
+        command: super::block::Command,
+    ) -> Result<Vec<super::block::Transaction>, Failure> {
+        let mut done = Vec::new();
+        if let Some(b) = self.secondary_mut() {
+            done.push(b.command(t, command)?);
+        }
+        if let Some(b) = self.rods_mut() {
+            done.push(b.command(t, command)?);
+        }
+        self.deposit(&done, y)?;
+        Ok(done)
+    }
+    /// The earliest declared time event of any owner strictly after `t`.
+    pub fn next_time_event(&self, t: f64) -> Option<f64> {
+        [
+            self.secondary().and_then(|b| b.next_time_event(t)),
+            self.rods().and_then(|b| b.next_time_event(t)),
+        ]
+        .into_iter()
+        .flatten()
+        .reduce(f64::min)
+    }
+    fn deposit(&self, done: &[super::block::Transaction], y: &mut [f64]) -> Result<(), Failure> {
+        let o = self.blocks.offsets;
+        for (store, energy) in done.iter().flat_map(|t| &t.deposits) {
+            let i = self
+                .blocks
+                .solids
+                .passive_store(store)
+                .ok_or_else(|| fatal(format!("deposit into unknown passive store {store}")))?;
+            let scale = self.blocks.scales[1].coordinates[i];
+            y[o.solids + i] += energy / scale;
+        }
         Ok(())
     }
 
@@ -1040,6 +1163,10 @@ impl<P: Properties + WaterProperties> Blocks<P> {
         if let RodPort::Owner(b) = rods {
             if let Some(done) = self.prepare.as_mut() {
                 done.push(b.prepare(properties, fluid)?);
+            }
+            if let Some(out) = self.rod_roots.as_mut() {
+                let x = view(y, yp, seed, cj, o.rods..o.end, &scales[3].coordinates)?;
+                b.roots(properties, t, x, fluid, out)?;
             }
             let x = view(y, yp, seed, cj, o.rods..o.end, &scales[3].coordinates)?;
             b.rows(properties, t, x, fluid, receipts, rod_rows)?;

@@ -353,19 +353,18 @@ mod integrated {
         fn nonzeros(&self) -> usize {
             self.rows.len()
         }
-        /// The owners' roots are composed with their events; none yet.
+        /// The owners' root functions, read once at construction.
         fn root_count(&self) -> usize {
-            0
+            self.joined.root_count()
         }
-        fn roots(&mut self, _: f64, _: &[f64], _: &[f64], out: &mut [f64]) -> Result<(), Failure> {
-            if out.is_empty() {
-                Ok(())
-            } else {
-                Err(Failure::Fatal(format!(
-                    "the joined system declares no root functions, not {}",
-                    out.len()
-                )))
-            }
+        fn roots(
+            &mut self,
+            time: f64,
+            y: &[f64],
+            yp: &[f64],
+            out: &mut [f64],
+        ) -> Result<(), Failure> {
+            self.joined.roots(time, y, yp, out).map_err(failure)
         }
         fn residual(
             &mut self,
