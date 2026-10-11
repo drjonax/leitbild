@@ -249,14 +249,14 @@ describe('operator names', () => {
     expect(componentById(graph, 'pressurizer').metadata?.presentation?.embedded).toEqual({ reliefValve: 'PORV', blockValve: 'PORV block', safetyValves: 'Safety valves' })
   })
 
-  test('words for on/off states name an on/off signal of their own component, and leave the Plant identity alone', () => {
+  test('words for on/off states name an on/off signal of their own component', () => {
+    // Being presentation, they leave the Plant's identity alone: the reference PWR's pinned digest (process-plant-graph) holds with them.
     const spec = assemblePwrReferencePlantGraph({ loopCount: 4 })
-    const definition = createPwrReferencePlantDefinition({ id: 'plant:worded', loopCount: 4 })
     const worded = (states: Record<string, { on: string; off: string }>): PlantGraphSpec => ({
       ...spec,
       components: spec.components.map(entry => String(entry.id) === 'core' ? { ...entry, metadata: { ...entry.metadata, presentation: { ...entry.metadata?.presentation, states } } } : entry),
     })
-    expect(compileProcessPlant({ ...definition, graph: worded({ sourceRangeEnergized: { on: 'SR HV on', off: 'SR HV off' } }) } as never).modelDigest).toBe(compileProcessPlant(definition).modelDigest)
+    expect(compilePlantGraph(worded({ sourceRangeEnergized: { on: 'SR HV on', off: 'SR HV off' } }), processPlantComponentRegistry).components.find(entry => String(entry.id) === 'core')!.metadata?.presentation?.states).toEqual({ sourceRangeEnergized: { on: 'SR HV on', off: 'SR HV off' } })
     expect(() => compilePlantGraph(worded({ powerMw: { on: 'at power', off: 'shut down' } }), processPlantComponentRegistry)).toThrow('not one of its on/off signals')
   })
 

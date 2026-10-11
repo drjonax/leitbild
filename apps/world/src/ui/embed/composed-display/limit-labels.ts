@@ -198,9 +198,11 @@ export const mergedText = (texts: ReadonlyArray<string>): string | null => {
   return words[0]!.map((word, index) => (index === at ? joinedName(words.map(list => list[at]!)) : word)).join(' ')
 }
 
-/** One part of a limit line's label: what one or more limits there do, with what an idle one waits for or whose signal it is. */
+/** One part of a limit line's label: what one or more limits there do, with whose signal it is, and what an idle one waits for. */
 export interface LimitLabelPart<T> {
   readonly text: string
+  /** In brackets after it: the modes or conditions it waits for (or acts with); empty where none. */
+  readonly waits: string
   readonly members: ReadonlyArray<T>
   readonly idle: boolean
 }
@@ -230,14 +232,12 @@ export const limitLabelParts = <T extends Pick<ComposedTrendThreshold, 'action' 
     return { member, idle, waits }
   })
   // Limits doing the same that wait on conditions alike but for one word (each generator's own feed flow) read as one: "SG A/B feedwater inflow < 150 kg/s".
-  const groups: Array<{ text: string; idle: boolean; members: T[] }> = []
+  const groups: Array<{ action: string; waits: string; idle: boolean; members: T[] }> = []
   for (const entry of described) {
     const peers = described.filter(other => other.member.action === entry.member.action && other.idle === entry.idle)
-    const merged = mergedText(peers.map(peer => peer.waits))
-    const waits = merged ?? entry.waits
-    const text = `${entry.member.action}${waits === '' ? '' : ` (${waits})`}`
-    const same = groups.find(group => group.text === text && group.idle === entry.idle)
-    if (same === undefined) groups.push({ text, idle: entry.idle, members: [entry.member] })
+    const waits = mergedText(peers.map(peer => peer.waits)) ?? entry.waits
+    const same = groups.find(group => group.action === entry.member.action && group.waits === waits && group.idle === entry.idle)
+    if (same === undefined) groups.push({ action: entry.member.action, waits, idle: entry.idle, members: [entry.member] })
     else same.members.push(entry.member)
   }
   const all = [...new Set(line.members.flatMap(member => member.signals))]
@@ -245,7 +245,8 @@ export const limitLabelParts = <T extends Pick<ComposedTrendThreshold, 'action' 
   const signalsOf = (members: ReadonlyArray<T>): ReadonlyArray<string> => [...new Set(members.flatMap(member => member.signals))]
   const qualified = groups.some(group => signalsOf(group.members).length !== all.length)
   return groups.map((group, index) => ({
-    text: `${index === 0 ? '' : '+ '}${group.text}${qualified && signalsOf(group.members).length !== all.length ? ` (${signalsOf(group.members).map(signal => names.get(signal)!).join(', ')})` : ''}`,
+    text: `${index === 0 ? '' : '+ '}${group.action}${qualified && signalsOf(group.members).length !== all.length ? ` (${signalsOf(group.members).map(signal => names.get(signal)!).join(', ')})` : ''}`,
+    waits: group.waits,
     members: group.members,
     idle: group.idle,
   }))

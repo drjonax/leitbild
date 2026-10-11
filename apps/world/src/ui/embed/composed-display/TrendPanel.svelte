@@ -109,8 +109,19 @@
   const CONTINUED = 8
   const measureLabel = textMeasure(panelFont(10, 700))
   const rowText = (threshold: ComposedTrendThreshold): string => thresholdName(threshold, strip.unit, { withUnit: false })
-  type LabelPart = LimitLabelPart<ComposedTrendThreshold>
-  const labelParts = (line: (typeof lines)[number]): ReadonlyArray<LabelPart> => limitLabelParts(line, lines, mode, gates)
+  // A part's bracket of what it waits for is a part of its own, split at words where it is longer than the gutter.
+  type LabelPart = Omit<LimitLabelPart<ComposedTrendThreshold>, 'waits'>
+  const labelParts = (line: (typeof lines)[number]): ReadonlyArray<LabelPart> => limitLabelParts(line, lines, mode, gates).flatMap(part => [
+    { text: part.text, members: part.members, idle: part.idle },
+    ...(part.waits === '' ? [] : wordRows(`(${part.waits})`, GUTTER_TEXT - CONTINUED).map(text => ({ text, members: part.members, idle: part.idle }))),
+  ])
+  /** Text split at spaces into runs that each fit the room, a word longer than it alone on its run. */
+  const wordRows = (text: string, room: number): ReadonlyArray<string> => text.split(' ').reduce<string[]>((rows, word) => {
+    const last = rows.at(-1)
+    if (last !== undefined && measureLabel(`${last} ${word}`) <= room) rows[rows.length - 1] = `${last} ${word}`
+    else rows.push(word)
+    return rows
+  }, [])
   /** The label's rows: its head with as many whole parts as fit the gutter, then the rest, each row as many as fit; a fold count follows the head's row. */
   const labelRows = (head: string, parts: ReadonlyArray<LabelPart>): ReadonlyArray<ReadonlyArray<LabelPart>> => {
     const rows: Array<Array<LabelPart>> = [[]]

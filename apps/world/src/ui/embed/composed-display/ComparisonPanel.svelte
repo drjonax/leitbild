@@ -92,7 +92,7 @@
   // each action once, one that does not act in the current mode with its
   // modes (limitLabelParts): "LO-LO 20 · AFW START + RX TRIP (Modes 1–2)".
   const headName = (line: (typeof lines)[number]): string =>
-    `${limitOrderName(line.members[0]!)} ${displayValue(line.value, panel.unit)} · ${limitLabelParts(line, lines, mode, gates).map(part => part.text).join(' ')}`
+    `${limitOrderName(line.members[0]!)} ${displayValue(line.value, panel.unit)} · ${limitLabelParts(line, lines, mode, gates).map(part => `${part.text}${part.waits === '' ? '' : ` (${part.waits})`}`).join(' ')}`
   // The limit each value's reading names (trend-reading.ts): what it heads for or is past.
   const namedRuleIds = $derived(new Set(panel.pens.flatMap((pen, index) => {
     const value = values[index]

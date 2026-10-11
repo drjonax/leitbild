@@ -541,11 +541,11 @@ describe('limit labels', () => {
     const onDiesels = (path: string) => path.startsWith('dieselBreaker')
     const texts = (gates: (path: string) => boolean | undefined) => {
       const lines = limitLines(both, { id: 'hotStandby', label: 'Hot standby' }, gates)
-      return limitLabelParts(lines[0]!, lines, { id: 'hotStandby', label: 'Hot standby' }, gates).map(part => part.text)
+      return limitLabelParts(lines[0]!, lines, { id: 'hotStandby', label: 'Hot standby' }, gates).map(part => `${part.text}${part.waits === '' ? '' : ` (${part.waits})`}`)
     }
     expect(texts(onDiesels)).toEqual(['ALM'])
     // Bus A on its diesel, bus B still on offsite power: the two differ, so each names its bus.
-    expect(texts(path => path === 'dieselBreakerA.closedState' || path === 'offsiteBreakerB.closedState')).toEqual(['ALM (A)', '+ ALM (BRK-EDG-B-POS CLOSED, BRK-OFFSITE-B-POS OPEN) (B)'])
+    expect(texts(path => path === 'dieselBreakerA.closedState' || path === 'offsiteBreakerB.closedState')).toEqual(['ALM (A)', '+ ALM (B) (BRK-EDG-B-POS CLOSED, BRK-OFFSITE-B-POS OPEN)'])
     // Names: what tells parallel signals apart, alike ones as one.
     expect(distinguishingNames(['SG-A-LVL-NR', 'SG-B-LVL-NR'])).toEqual(['A', 'B'])
     expect(joinedName(['BRK-EDG-A-POS', 'BRK-EDG-B-POS'])).toBe('BRK-EDG-A/B-POS')
