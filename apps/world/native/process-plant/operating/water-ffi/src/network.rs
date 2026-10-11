@@ -179,8 +179,16 @@ pub use integrated::{Assembly, Integrated, ResidualMemo};
 mod integrated {
     use crate::ida::{Failure, System};
     use leitbild_operating_plant::network::{
-        self, CscOut, DensePattern, Network, Properties, Reuse, SparseJacobian,
+        self, CscOut, DensePattern, Network, Properties, Reuse, SparseJacobian, properties::Need,
     };
+
+    /// Nothing outside the integrated network reads its cells' phase points,
+    /// so every regular cell is inverted for the network rows' own need.
+    fn own_rows_only<P: Properties>(network: &mut Network<P>) {
+        for cell in 0..network.cell_layout.len() {
+            network.set_cell_need(cell, Need::Thermodynamic);
+        }
+    }
 
     fn failure(f: network::Failure) -> Failure {
         match f {
@@ -226,7 +234,8 @@ mod integrated {
         memo: ResidualMemo<P::Caloric>,
     }
     impl<P: Properties> Integrated<P> {
-        pub fn dense(network: Network<P>) -> Self {
+        pub fn dense(mut network: Network<P>) -> Self {
+            own_rows_only(&mut network);
             let reuse = network.reuse();
             Self {
                 network,
@@ -234,7 +243,8 @@ mod integrated {
                 memo: ResidualMemo { key: None, reuse },
             }
         }
-        pub fn colored(network: Network<P>) -> Result<Self, String> {
+        pub fn colored(mut network: Network<P>) -> Result<Self, String> {
+            own_rows_only(&mut network);
             let structure = network.sparse_jacobian().map_err(|e| format!("{e:?}"))?;
             let (pointers, rows) = structure.pattern.to_i64()?;
             let reuse = network.reuse();

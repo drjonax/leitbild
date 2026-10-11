@@ -329,9 +329,14 @@ impl Declared {
             tree_face_bound_pa: 1e-6,
             representation_search: 8,
         };
-        let (network, prepared, _) =
+        let (mut network, prepared, _) =
             prepare::prepare(&self.packet, properties, &point, &rotors, &settings)
                 .expect("hydrostatic preparation");
+        // As the integrated S1 network declares: only its own rows read the
+        // cells' phase points.
+        for cell in 0..network.cell_layout.len() {
+            network.set_cell_need(cell, Need::Thermodynamic);
+        }
         let mut y0 = prepared.y.clone();
         for index in &network.rotor_index {
             y0[*index] = 0.;
