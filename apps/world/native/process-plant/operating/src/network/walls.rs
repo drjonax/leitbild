@@ -29,7 +29,8 @@
 use super::{
     Failure,
     heaters::{
-        Caloric304, ContactBlock, HeaterCase, Heaters, LiquidContact, SegmentRates, zone_point,
+        Caloric304, ContactBlock, HeaterCase, Heaters, LiquidContact, SegmentRates, contact_on_304,
+        zone_point,
     },
     stratified::{Cell, Column, HeaterReceipt, WallElement, WallReceipt, WallWetting},
 };
@@ -117,6 +118,54 @@ pub struct ShellBlock {
     pub insulation: Insulation,
 }
 
+/// The shell of a vessel declared without heads and without an insulation
+/// layer (the PACTEL prescription, gate 3): contiguous lumped 304 bands over
+/// the vessel and a coefficient-only exterior loss to a fixed ambient. Its
+/// wet and film fields mean what they mean in `ShellBlock`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BareShellBlock {
+    #[serde(rename = "grossArea_m2")]
+    pub gross_area_m2: f64,
+    #[serde(rename = "shellThickness_m")]
+    pub shell_thickness_m: f64,
+    /// Bands above the vessel bottom, contiguous over the vessel.
+    #[serde(rename = "shellBands_m")]
+    pub shell_bands_m: Vec<[f64; 2]>,
+    #[serde(rename = "shellMass_kg")]
+    pub shell_mass_kg: f64,
+    #[serde(rename = "wetSensibleCoefficient_W_m2K")]
+    pub wet_sensible_coefficient_w_m2_k: f64,
+    #[serde(rename = "shellFilmDevelopmentLength_m")]
+    pub shell_film_development_length_m: f64,
+    /// Exterior coefficient on the steel outer surface, W/(m² K).
+    #[serde(rename = "exteriorCoefficient_W_m2K")]
+    pub exterior_coefficient_w_m2_k: f64,
+    #[serde(rename = "ambient_K")]
+    pub ambient_k: f64,
+}
+
+/// The exterior path of the compiled walls.
+#[derive(Clone, Copy, Debug)]
+enum Exterior {
+    /// `ld01-pzr-shell`: the insulation's massless series resistance.
+    Insulated(Insulation),
+    /// A bare shell: the outer coefficient alone.
+    Coefficient {
+        coefficient_w_m2_k: f64,
+        ambient_k: f64,
+    },
+}
+
+/// The rods inside the walls' enclosures in one evaluation: the banks, each
+/// segment's steel energy and each bank's delivered power.
+#[derive(Clone, Copy)]
+pub struct Rods<'a> {
+    pub heaters: &'a Heaters,
+    pub metal: &'a [Scalar],
+    pub bank_power_w: &'a [f64],
+}
+
 /// One run's wall sensitivity selection: the shared contact case and the
 /// heads' resistance length, nominal or one of the block's sensitivities.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -161,14 +210,17 @@ pub struct Census {
 #[derive(Clone, Copy, Debug)]
 pub struct ElementRates {
     pub receipt: WallReceipt,
-    /// The steel's energy rate: minus its fluid receipts, its outward
-    /// enclosure exchange and its exterior loss, W.
+    /// The steel's energy rate: its Joule power less its fluid receipts,
+    /// its outward enclosure exchange and its exterior loss, W.
     pub metal_rate: Scalar,
     /// The fluid's energy receipt as the cell books it, W.
     pub fluid_energy_w: Scalar,
     /// Outward enclosure exchange, W.
     pub radiation_w: Scalar,
-    /// Heat to the ambient through the insulation path, W.
+    /// Joule power deposited in the element's steel, W: zero unless the
+    /// vessel's heater is in its wall.
+    pub joule_w: Scalar,
+    /// Heat to the ambient through the exterior path, W.
     pub exterior_w: Scalar,
     pub temperature: Scalar,
     pub wetting: WallWetting,
@@ -242,8 +294,45 @@ pub struct Walls {
     inner_diameter_m: f64,
     caloric: Caloric304,
     contact: ContactBlock,
-    shell: ShellBlock,
-    case: WallCase,
+    wet_sensible_coefficient_w_m2_k: f64,
+    shell_film_development_length_m: f64,
+    exterior: Exterior,
+    contact_case: HeaterCase,
+    /// The heads' vapor resistance length; none for a bare shell.
+    head_film_resistance_length_m: Option<f64>,
+}
+
+/// The shell's lumped bands on the plant datum: each band's share of the
+/// shell mass by length, its inner contact and outer surfaces, and its own
+/// enclosure. Refuses bands that do not ascend contiguously.
+fn shell_bands(
+    bottom_m: f64,
+    bands_m: &[[f64; 2]],
+    shell_mass_kg: f64,
+    radius: f64,
+    outer: f64,
+) -> Result<Vec<Element>, Failure> {
+    let height = bands_m.last().map_or(0., |b| b[1]);
+    let mut elements = Vec::with_capacity(bands_m.len() + 2);
+    for (j, [from, to]) in bands_m.iter().copied().enumerate() {
+        if !(from.is_finite() && to.is_finite() && from < to)
+            || (j > 0 && bands_m[j - 1][1] != from)
+        {
+            return Err(fatal("shell bands must ascend contiguously"));
+        }
+        let dz = to - from;
+        elements.push(Element {
+            element: WallElement::Band {
+                bottom_m: bottom_m + from,
+                top_m: bottom_m + to,
+            },
+            steel_mass_kg: shell_mass_kg * dz / height,
+            contact_area_m2: 2. * std::f64::consts::PI * radius * dz,
+            outer_area_m2: 2. * std::f64::consts::PI * outer * dz,
+            enclosure: Some(j),
+        });
+    }
+    Ok(elements)
 }
 
 impl Walls {
@@ -326,25 +415,13 @@ impl Walls {
                 "shell or head mass or contact area disagrees with its geometry",
             ));
         }
-        let mut elements = Vec::with_capacity(shell.shell_bands_m.len() + 2);
-        for (j, [from, to]) in shell.shell_bands_m.iter().copied().enumerate() {
-            if !(from.is_finite() && to.is_finite() && from < to)
-                || (j > 0 && shell.shell_bands_m[j - 1][1] != from)
-            {
-                return Err(fatal("shell bands must ascend contiguously"));
-            }
-            let dz = to - from;
-            elements.push(Element {
-                element: WallElement::Band {
-                    bottom_m: p.bottom_m + from,
-                    top_m: p.bottom_m + to,
-                },
-                steel_mass_kg: shell.shell_mass_kg * dz / height,
-                contact_area_m2: 2. * std::f64::consts::PI * radius * dz,
-                outer_area_m2: 2. * std::f64::consts::PI * outer * dz,
-                enclosure: Some(j),
-            });
-        }
+        let mut elements = shell_bands(
+            p.bottom_m,
+            &shell.shell_bands_m,
+            shell.shell_mass_kg,
+            radius,
+            outer,
+        )?;
         let bands = elements.len();
         elements.push(Element {
             element: WallElement::BottomHead,
@@ -387,8 +464,83 @@ impl Walls {
             inner_diameter_m: 2. * radius,
             caloric,
             contact,
-            shell,
-            case,
+            wet_sensible_coefficient_w_m2_k: shell.wet_sensible_coefficient_w_m2_k,
+            shell_film_development_length_m: shell.shell_film_development_length_m,
+            exterior: Exterior::Insulated(shell.insulation),
+            contact_case: case.contact,
+            head_film_resistance_length_m: Some(case.head_film_resistance_length_m),
+        })
+    }
+
+    /// Admits a bare shell against a cell without rods (the PACTEL
+    /// prescription): contiguous bands over the vessel, the shell mass
+    /// consistent with the ring and the 304 density, no heads and the
+    /// coefficient-only exterior. Its elements are the bands alone.
+    pub fn bare(
+        cell: &Cell,
+        shell: BareShellBlock,
+        caloric: Caloric304,
+        contact: ContactBlock,
+        case: HeaterCase,
+    ) -> Result<Self, Failure> {
+        caloric.validate()?;
+        contact.validate()?;
+        case.validate(&contact)?;
+        positive_finite(&[
+            ("grossArea_m2", shell.gross_area_m2),
+            ("shellThickness_m", shell.shell_thickness_m),
+            ("shellMass_kg", shell.shell_mass_kg),
+            (
+                "wetSensibleCoefficient_W_m2K",
+                shell.wet_sensible_coefficient_w_m2_k,
+            ),
+            (
+                "shellFilmDevelopmentLength_m",
+                shell.shell_film_development_length_m,
+            ),
+            (
+                "exteriorCoefficient_W_m2K",
+                shell.exterior_coefficient_w_m2_k,
+            ),
+            ("ambient_K", shell.ambient_k),
+        ])?;
+        let p = cell.parameters();
+        let height = p.top_m - p.bottom_m;
+        let (Some(first), Some(last)) = (shell.shell_bands_m.first(), shell.shell_bands_m.last())
+        else {
+            return Err(fatal("the shell declares no bands"));
+        };
+        if first[0] != 0. || last[1] != height {
+            return Err(fatal("shell bands must cover the vessel"));
+        }
+        let radius = (shell.gross_area_m2 / std::f64::consts::PI).sqrt();
+        let outer = radius + shell.shell_thickness_m;
+        let ring = std::f64::consts::PI * (outer * outer - radius * radius);
+        if !agrees(caloric.density_kg_m3 * ring * height, shell.shell_mass_kg) {
+            return Err(fatal("shell mass disagrees with its geometry"));
+        }
+        let elements = shell_bands(
+            p.bottom_m,
+            &shell.shell_bands_m,
+            shell.shell_mass_kg,
+            radius,
+            outer,
+        )?;
+        Ok(Self {
+            bands: elements.len(),
+            elements,
+            rod_band: Vec::new(),
+            inner_diameter_m: 2. * radius,
+            caloric,
+            contact,
+            wet_sensible_coefficient_w_m2_k: shell.wet_sensible_coefficient_w_m2_k,
+            shell_film_development_length_m: shell.shell_film_development_length_m,
+            exterior: Exterior::Coefficient {
+                coefficient_w_m2_k: shell.exterior_coefficient_w_m2_k,
+                ambient_k: shell.ambient_k,
+            },
+            contact_case: case,
+            head_film_resistance_length_m: None,
         })
     }
 
@@ -424,26 +576,35 @@ impl Walls {
         Ok(self.elements.iter().map(|x| x.steel_mass_kg * e).collect())
     }
 
-    /// The element's wet law with the zone's 304 endpoint material: the
-    /// heater's construction with the shell's sensible coefficient, and
-    /// Bromley over the shell's length or the heads' vapor resistance. The
-    /// heater branch uses no diameter; the vessel's inner one is passed.
-    fn law(&self, element: &Element, material: WallMaterial) -> WallLaw {
-        let (w, c) = (&self.contact.wet, &self.case.contact);
-        let film = match element.element {
-            WallElement::Band { .. } => FilmBranch::Vertical {
-                coefficient: w.bromley_coefficient,
-                length_m: self.shell.shell_film_development_length_m,
-                convection_factor: c.film_convection_factor,
-            },
+    /// The bands' film branch: Bromley over the shell's development length.
+    fn band_film(&self) -> FilmBranch {
+        FilmBranch::Vertical {
+            coefficient: self.contact.wet.bromley_coefficient,
+            length_m: self.shell_film_development_length_m,
+            convection_factor: self.contact_case.film_convection_factor,
+        }
+    }
+    /// The element's film branch: the bands' Bromley film, or the heads'
+    /// vapor resistance, which only a shell with heads declares.
+    fn film(&self, element: &Element) -> Result<FilmBranch, Failure> {
+        Ok(match element.element {
+            WallElement::Band { .. } => self.band_film(),
             WallElement::BottomHead | WallElement::TopHead => FilmBranch::Resistance {
-                length_m: self.case.head_film_resistance_length_m,
+                length_m: self
+                    .head_film_resistance_length_m
+                    .ok_or_else(|| fatal("a head element without its resistance length"))?,
             },
-        };
+        })
+    }
+    /// The wet law of a film branch with the zone's 304 endpoint material:
+    /// the heater's construction with the shell's sensible coefficient. The
+    /// heater branch uses no diameter; the vessel's inner one is passed.
+    fn law(&self, film: FilmBranch, material: WallMaterial) -> WallLaw {
+        let (w, c) = (&self.contact.wet, &self.contact_case);
         WallLaw {
             diameter_m: self.inner_diameter_m,
             film: Film::Heater(HeaterFilm {
-                sensible_w_m2_k: self.shell.wet_sensible_coefficient_w_m2_k,
+                sensible_w_m2_k: self.wet_sensible_coefficient_w_m2_k,
                 onset_contact_angle_deg: w.onset_contact_angle_deg,
                 wall_birth_fraction: c.wall_birth_fraction,
                 minimum_film_bounds_k: w.minimum_film_bounds_k,
@@ -469,7 +630,7 @@ impl Walls {
             contact.temperature,
             wall_t,
             s(0.),
-            self.law(element, contact.material()),
+            self.law(self.film(element)?, contact.material()),
             contact.saturation,
             contact.point,
         )
@@ -481,11 +642,23 @@ impl Walls {
         })
     }
 
-    /// The exterior loss through the insulation path, W.
+    /// The exterior loss through the insulation path, or through the outer
+    /// coefficient alone for a bare shell, W.
     pub fn exterior(&self, index: usize, temperature: Scalar) -> Scalar {
-        let i = &self.shell.insulation;
-        let resistance = i.thickness_m / i.conductivity_w_m_k + 1. / i.exterior_coefficient_w_m2_k;
-        s(self.elements[index].outer_area_m2 / resistance) * (temperature - s(i.ambient_k))
+        match self.exterior {
+            Exterior::Insulated(i) => {
+                let resistance =
+                    i.thickness_m / i.conductivity_w_m_k + 1. / i.exterior_coefficient_w_m2_k;
+                s(self.elements[index].outer_area_m2 / resistance) * (temperature - s(i.ambient_k))
+            }
+            Exterior::Coefficient {
+                coefficient_w_m2_k,
+                ambient_k,
+            } => {
+                s(self.elements[index].outer_area_m2 * coefficient_w_m2_k)
+                    * (temperature - s(ambient_k))
+            }
+        }
     }
 
     /// Every rod segment's and wall element's sources from the column, the
@@ -501,11 +674,32 @@ impl Walls {
         wall_metal: &[Scalar],
         props: &P,
     ) -> Result<MetalRates, Failure> {
-        let segments = heaters.segments();
-        if rod_metal.len() != segments.len()
-            || bank_power_w.len() != heaters.banks().len()
-            || wall_metal.len() != self.elements.len()
+        let rods = Rods {
+            heaters,
+            metal: rod_metal,
+            bank_power_w,
+        };
+        self.rates_with(cell, column, Some(rods), wall_metal, None, props)
+    }
+
+    /// `rates` for any metal: the rods when the vessel has them, and Joule
+    /// power deposited in the wall elements' own steel (W per element, in
+    /// `elements` order) when the vessel's heater is in its wall.
+    pub fn rates_with<P: WaterProperties>(
+        &self,
+        cell: &Cell,
+        column: &Column,
+        rods: Option<Rods<'_>>,
+        wall_metal: &[Scalar],
+        wall_joule_w: Option<&[f64]>,
+        props: &P,
+    ) -> Result<MetalRates, Failure> {
+        let segments = rods.map_or(&[][..], |r| r.heaters.segments());
+        if rods.is_some_and(|r| {
+            r.metal.len() != segments.len() || r.bank_power_w.len() != r.heaters.banks().len()
+        }) || wall_metal.len() != self.elements.len()
             || self.rod_band.len() != segments.len()
+            || wall_joule_w.is_some_and(|q| q.len() != self.elements.len())
         {
             return Err(fatal(
                 "steel energies, bank powers and rods must match the compiled walls",
@@ -535,27 +729,33 @@ impl Walls {
                 return Ok(None);
             }
             saturation_calls += 1;
-            heaters.liquid_contact(zone, props).map(Some)
+            match rods {
+                Some(r) => r.heaters.liquid_contact(zone, props).map(Some),
+                None => self.liquid_contact(zone, props).map(Some),
+            }
         };
         let contacts = [
             contact(wets_a, &column.admitted)?,
             contact(wets_r, &column.resident)?,
         ];
 
-        let mut rods = Vec::with_capacity(segments.len());
-        for (j, (g, w)) in segments.iter().zip(&rod_wetting).enumerate() {
-            let out = heaters.segment_rates(
-                j,
-                column,
-                w,
-                rod_metal[j],
-                bank_power_w[g.bank],
-                &contacts,
-                props,
-            )?;
-            saturation_calls += usize::from(out.exposed.is_some());
-            rods.push(out);
+        let mut segment_rates = Vec::with_capacity(segments.len());
+        if let Some(r) = rods {
+            for (j, (g, w)) in segments.iter().zip(&rod_wetting).enumerate() {
+                let out = r.heaters.segment_rates(
+                    j,
+                    column,
+                    w,
+                    r.metal[j],
+                    r.bank_power_w[g.bank],
+                    &contacts,
+                    props,
+                )?;
+                saturation_calls += usize::from(out.exposed.is_some());
+                segment_rates.push(out);
+            }
         }
+        let rods = segment_rates;
 
         let mut walls = Vec::with_capacity(self.elements.len());
         for (k, (e, w)) in self.elements.iter().zip(&wall_wetting).enumerate() {
@@ -617,6 +817,7 @@ impl Walls {
                 metal_rate: s(0.),
                 fluid_energy_w: fluid,
                 radiation_w: s(0.),
+                joule_w: s(wall_joule_w.map_or(0., |q| q[k])),
                 exterior_w: self.exterior(k, t),
                 temperature: t,
                 wetting: *w,
@@ -656,10 +857,11 @@ impl Walls {
             }
         }
         for w in &mut walls {
-            w.metal_rate = finite(
-                -w.fluid_energy_w - w.radiation_w - w.exterior_w,
-                "wall steel rate",
-            )?;
+            let rate = match wall_joule_w {
+                None => -w.fluid_energy_w - w.radiation_w - w.exterior_w,
+                Some(_) => w.joule_w - w.fluid_energy_w - w.radiation_w - w.exterior_w,
+            };
+            w.metal_rate = finite(rate, "wall steel rate")?;
         }
         Ok(MetalRates {
             rods,
@@ -668,6 +870,32 @@ impl Walls {
             contacts,
             saturation_calls,
         })
+    }
+
+    /// A column liquid zone as the walls of a vessel without rods contact
+    /// it: its centroid state, saturation at its own pressure (one call) and
+    /// the self-consistent minimum-film endpoint of the bands' wet law.
+    fn liquid_contact<P: WaterProperties>(
+        &self,
+        zone: &super::stratified::Zone,
+        props: &P,
+    ) -> Result<LiquidContact, Failure> {
+        let saturation = props.saturation(zone.pressure).map_err(|e| {
+            recoverable(format!(
+                "liquid contact saturation at {} Pa: {e}",
+                zone.pressure.value
+            ))
+        })?;
+        let law = |m: WallMaterial| self.law(self.band_film(), m);
+        contact_on_304(
+            &self.caloric,
+            &self.contact,
+            &law,
+            zone.pressure,
+            zone.temperature,
+            zone_point(zone),
+            saturation,
+        )
     }
 
     /// The dry gas law per square metre against the vapor zone, with g's
@@ -689,7 +917,7 @@ impl Walls {
             vapor.pressure,
             vapor.temperature,
             wall_t,
-            x.gas_coefficient_w_m2_k * self.case.contact.gas_coefficient_factor,
+            x.gas_coefficient_w_m2_k * self.contact_case.gas_coefficient_factor,
             x.condensation_speed_m_s,
             Some(|| Ok(point)),
         )

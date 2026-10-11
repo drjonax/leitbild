@@ -433,6 +433,91 @@ fn values(w: WaterPoint) -> WaterPoint {
         enthalpy: s(w.enthalpy.value),
     }
 }
+/// 304 properties at a steel temperature: `k(T)`, density and `cp(T)`.
+pub(crate) fn material_304(
+    caloric: &Caloric304,
+    contact: &ContactBlock,
+    t: Scalar,
+) -> WallMaterial {
+    let k = &contact.conductivity_304;
+    WallMaterial {
+        conductivity: s(k.constant_w_m_k) + s(k.linear_w_m_k2) * t,
+        density: caloric.density_kg_m3,
+        cp: caloric.cp(t),
+    }
+}
+
+/// The self-consistent minimum-film endpoint `Tm = Tmin(304 at Tm)` at
+/// one liquid state. `Tm − Tmin` increases on the selector's bounds,
+/// which bracket it; values are bisected to machine precision and the
+/// direction follows the implicit function. `minimum_film` reads only
+/// the material and the bounds, which every bank shares.
+fn minimum_film_endpoint(
+    caloric: &Caloric304,
+    contact: &ContactBlock,
+    law: &dyn Fn(WallMaterial) -> WallLaw,
+    pressure: Scalar,
+    bulk_t: Scalar,
+    sat: Saturation,
+) -> Result<(Scalar, WallMaterial), Failure> {
+    let failed = |e: &str| recoverable(format!("minimum-film endpoint: {e}"));
+    let at = |t: Scalar, p: Scalar, tl: Scalar, sat: Saturation| {
+        thermal::minimum_film(p, tl, law(material_304(caloric, contact, t)), sat).map_err(failed)
+    };
+    let (pv, tv, sv) = (s(pressure.value), s(bulk_t.value), saturation_values(sat));
+    let residual = |t: f64| at(s(t), pv, tv, sv).map(|f| t - f.value);
+    let [mut low, mut high] = contact.wet.minimum_film_bounds_k;
+    if !(residual(low)? <= 0. && residual(high)? >= 0.) {
+        return Err(failed("the selector bounds do not bracket Tm"));
+    }
+    for _ in 0..64 {
+        let mid = 0.5 * (low + high);
+        if mid <= low || mid >= high {
+            break;
+        }
+        if residual(mid)? > 0. {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    let root = 0.5 * (low + high);
+    let fixed = at(s(root), pressure, bulk_t, sat)?;
+    let seeded = at(Scalar::new(root, 1.), pv, tv, sv)?;
+    let slope = 1. - seeded.direction;
+    if !(slope.is_finite() && slope > 0.) {
+        return Err(failed("singular self-consistent endpoint"));
+    }
+    let tm = Scalar::new(root, fixed.direction / slope);
+    Ok((tm, material_304(caloric, contact, tm)))
+}
+
+/// A liquid contact on 304 steel for any heater-film wet law: the zone's
+/// state with its saturation and the self-consistent minimum-film endpoint.
+/// The rods pass a bank's law and the walls of a vessel without rods their
+/// own; `minimum_film` reads only the material and the shared bounds.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn contact_on_304(
+    caloric: &Caloric304,
+    contact: &ContactBlock,
+    law: &dyn Fn(WallMaterial) -> WallLaw,
+    pressure: Scalar,
+    temperature: Scalar,
+    point: WaterPoint,
+    saturation: Saturation,
+) -> Result<LiquidContact, Failure> {
+    let (minimum_film, material) =
+        minimum_film_endpoint(caloric, contact, law, pressure, temperature, saturation)?;
+    Ok(LiquidContact {
+        pressure,
+        temperature,
+        point,
+        saturation,
+        minimum_film,
+        material,
+    })
+}
+
 fn saturation_values(sat: Saturation) -> Saturation {
     Saturation {
         temperature: s(sat.temperature.value),
@@ -659,16 +744,6 @@ impl Heaters {
             .collect()
     }
 
-    /// 304 properties at a steel temperature: `k(T)`, density and `cp(T)`.
-    fn material(&self, t: Scalar) -> WallMaterial {
-        let k = &self.contact.conductivity_304;
-        WallMaterial {
-            conductivity: s(k.constant_w_m_k) + s(k.linear_w_m_k2) * t,
-            density: self.caloric.density_kg_m3,
-            cp: self.caloric.cp(t),
-        }
-    }
-
     /// The bank's heater wet law with a given steel material.
     fn law(&self, bank: usize, material: WallMaterial) -> WallLaw {
         let (b, w) = (&self.banks[bank], &self.contact.wet);
@@ -690,49 +765,6 @@ impl Heaters {
         }
     }
 
-    /// The self-consistent minimum-film endpoint `Tm = Tmin(304 at Tm)` at
-    /// one liquid state. `Tm − Tmin` increases on the selector's bounds,
-    /// which bracket it; values are bisected to machine precision and the
-    /// direction follows the implicit function. `minimum_film` reads only
-    /// the material and the bounds, which every bank shares.
-    fn minimum_film_endpoint(
-        &self,
-        pressure: Scalar,
-        bulk_t: Scalar,
-        sat: Saturation,
-    ) -> Result<(Scalar, WallMaterial), Failure> {
-        let failed = |e: &str| recoverable(format!("minimum-film endpoint: {e}"));
-        let at = |t: Scalar, p: Scalar, tl: Scalar, sat: Saturation| {
-            thermal::minimum_film(p, tl, self.law(0, self.material(t)), sat).map_err(failed)
-        };
-        let (pv, tv, sv) = (s(pressure.value), s(bulk_t.value), saturation_values(sat));
-        let residual = |t: f64| at(s(t), pv, tv, sv).map(|f| t - f.value);
-        let [mut low, mut high] = self.contact.wet.minimum_film_bounds_k;
-        if !(residual(low)? <= 0. && residual(high)? >= 0.) {
-            return Err(failed("the selector bounds do not bracket Tm"));
-        }
-        for _ in 0..64 {
-            let mid = 0.5 * (low + high);
-            if mid <= low || mid >= high {
-                break;
-            }
-            if residual(mid)? > 0. {
-                high = mid;
-            } else {
-                low = mid;
-            }
-        }
-        let root = 0.5 * (low + high);
-        let fixed = at(s(root), pressure, bulk_t, sat)?;
-        let seeded = at(Scalar::new(root, 1.), pv, tv, sv)?;
-        let slope = 1. - seeded.direction;
-        if !(slope.is_finite() && slope > 0.) {
-            return Err(failed("singular self-consistent endpoint"));
-        }
-        let tm = Scalar::new(root, fixed.direction / slope);
-        Ok((tm, self.material(tm)))
-    }
-
     /// A liquid contact at any state: saturation at its pressure (one call)
     /// and the self-consistent minimum-film endpoint.
     pub fn liquid_contact_at<P: WaterProperties>(
@@ -748,16 +780,16 @@ impl Heaters {
                 pressure.value
             ))
         })?;
-        let (minimum_film, material) =
-            self.minimum_film_endpoint(pressure, temperature, saturation)?;
-        Ok(LiquidContact {
+        let law = |m: WallMaterial| self.law(0, m);
+        contact_on_304(
+            &self.caloric,
+            &self.contact,
+            &law,
             pressure,
             temperature,
             point,
             saturation,
-            minimum_film,
-            material,
-        })
+        )
     }
     /// A column liquid zone as the rods contact it: its centroid pressure
     /// and its own column water point.
