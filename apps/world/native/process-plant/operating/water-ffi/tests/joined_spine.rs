@@ -4,6 +4,8 @@
 //! These are zero-time receipts and NOT-EVIDENCE probes of the joined
 //! residual, not S2 gate runs: S2 is declared separately. A receipt is
 //! written only to a new path, never over an existing file.
+//! The harness needs stock IDA/KLU (`--features ida`).
+#![cfg(feature = "ida")]
 use leitbild_operating_plant::{
     joined::{self, census, nuclear::Nuclear, packet, solids::Solids},
     network::{Network, PzrPreparation, packet::Packet as NetworkPacket},
