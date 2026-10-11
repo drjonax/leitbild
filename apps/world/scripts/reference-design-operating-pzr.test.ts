@@ -8,7 +8,7 @@ const selected={commonPressure_Pa:15e6,liquidTemperature_K:600,vaporTemperature_
   bands_m:[0,1,3,6,9,12],interfacialLength_m:.003,solidRoughness_m:.000045,absorberMassFraction:.001},
   stratified={withdrawalScale_m:.3,admittedPreparationThickness_m:.3,inversionExchangeVelocity_m_s:.01,
     liquidRelaxationTime_s:.3,vaporRelaxationTime_s:.5,relaxationSensitivity:[.5,1,2],bubbleDiameter_m:.004,
-    bubbleVaporCoefficient_W_m2K:1000,bubbleExchangeSensitivity:[.5,1,2],bubbleExchangeDiameterSensitivity_m:.0005,
+    bubbleExchangeSensitivity:[.5,1,2],bubbleExchangeDiameterSensitivity_m:.0005,
     sprayDropDiameter_m:.003,dropDiameterSensitivity_m:[.0015,.003,.006],resolvabilityFactor:1000},
   metastable={pressureRange_Pa:[2000000,16000000],lowerBoundExclusive:true,liquidSuperheatMax_K:2,
     vaporSubcoolingMax_K:1.4,trialMax_K:3,creditedMax_K:.5,liquidTemperatureMax_K:623.15,
@@ -68,20 +68,22 @@ test('missing, misplaced, repeated or malformed owner selections refuse instead 
 })
 
 test('the bulk bubble exchange keys of the stratified block are strict: none is defaulted, reread or loosened',()=>{
-  // Request 4, K1: the exchange reuses bubbleDiameter_m and adds its vapor
-  // side, its factors and its exchange-only diameter.
+  // Request 4, K1: the exchange reuses bubbleDiameter_m and adds its factors
+  // and its exchange-only diameter. The dropped vapor-side coefficient (K1
+  // outcome: the stocks are saturated by construction) is refused.
   const d=pzrSources(),edit=(from:string,to:string)=>({...d,selection:d.selection.replace(from,to)})
   expect(compileOperatingPzr(d,hot).cell.stratified).toEqual(stratifiedSchema.parse(stratified))
-  expect(compileOperatingPzr(d,hot).cell.stratified).toMatchObject({bubbleDiameter_m:.004,bubbleVaporCoefficient_W_m2K:1000,
+  expect(compileOperatingPzr(d,hot).cell.stratified).toMatchObject({bubbleDiameter_m:.004,
     bubbleExchangeSensitivity:[.5,1,2],bubbleExchangeDiameterSensitivity_m:.0005})
-  for(const key of ['"bubbleVaporCoefficient_W_m2K":1000,','"bubbleExchangeSensitivity":[0.5,1,2],','"bubbleExchangeDiameterSensitivity_m":0.0005,'])
+  for(const key of ['"bubbleExchangeSensitivity":[0.5,1,2],','"bubbleExchangeDiameterSensitivity_m":0.0005,'])
     expect(()=>compileOperatingPzr(edit(key,''),hot)).toThrow()
+  expect(()=>compileOperatingPzr(edit('"bubbleDiameter_m":0.004,','"bubbleDiameter_m":0.004,"bubbleVaporCoefficient_W_m2K":1000,'),hot)).toThrow()
   expect(()=>compileOperatingPzr(edit('"bubbleExchangeSensitivity":[0.5,1,2]','"bubbleExchangeSensitivity":[0.5,1.5,2]'),hot)).toThrow('nominal factor 1')
   expect(()=>compileOperatingPzr(edit('"bubbleExchangeSensitivity":[0.5,1,2]','"bubbleExchangeSensitivity":[0.5,1]'),hot)).toThrow()
   expect(()=>compileOperatingPzr(edit('"bubbleExchangeDiameterSensitivity_m":0.0005','"bubbleExchangeDiameterSensitivity_m":0.004'),hot)).toThrow('must differ')
   expect(()=>compileOperatingPzr(edit('"bubbleExchangeDiameterSensitivity_m":0.0005','"bubbleExchangeDiameterSensitivity_m":[0.0005]'),hot)).toThrow()
-  expect(()=>compileOperatingPzr(edit('"bubbleVaporCoefficient_W_m2K":1000','"bubbleVaporCoefficient_W_m2K":0'),hot)).toThrow()
-  expect(()=>compileOperatingPzr(edit('"bubbleVaporCoefficient_W_m2K":1000','"bubbleVaporCoefficient_W_m2K":"1000"'),hot)).toThrow()
+  expect(()=>compileOperatingPzr(edit('"bubbleExchangeDiameterSensitivity_m":0.0005','"bubbleExchangeDiameterSensitivity_m":0'),hot)).toThrow()
+  expect(()=>compileOperatingPzr(edit('"bubbleExchangeDiameterSensitivity_m":0.0005','"bubbleExchangeDiameterSensitivity_m":"0.0005"'),hot)).toThrow()
 })
 
 test('the metastable band is the one H3 range; the superseded two-range block is refused, not read',()=>{
