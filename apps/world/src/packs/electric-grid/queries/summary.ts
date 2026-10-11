@@ -125,7 +125,7 @@ const summaryResultSchema = z.object({
     id: z.string(),
     label: z.string(),
     kind: branchDefinitionSchema.shape.kind,
-    state: z.object({ availability: finite, flowMw: finite, loadingPercent: finite }).strict(),
+    state: z.object({ availability: finite, flowModel: z.enum(['ac', 'dc']).nullable(), flowMw: finite, apparentPowerMva: finite, loadingPercent: finite }).strict(),
   }).strict()).describe(`Most loaded constrained branches, at most ${constrainedBranchRowLimit}; empty when none is constrained.`),
   generators: z.array(z.object({
     id: z.string(),
@@ -198,7 +198,7 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
       id: definition.id,
       label: definition.label,
       kind: definition.kind,
-      state: { availability: state.availability, flowMw: state.flowMw, loadingPercent: state.loadingPercent },
+      state: { availability: state.availability, flowModel: state.flowModel, flowMw: state.flowMw, apparentPowerMva: state.apparentPowerMva, loadingPercent: state.loadingPercent },
     })),
     generators: generators.map(({ definition, state }) => ({
       id: definition.id,

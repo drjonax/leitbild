@@ -117,6 +117,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       // An asset the Operating Point does not list starts as the runtime initialises it: online at capacity.
       availableMw: state?.availableMw ?? generator.capacityMw,
       initialState: state?.state ?? 'online',
+      initialTargetMw: state?.state === 'online' && state.targetMw !== undefined ? state.targetMw : null,
       ...(generator.annualProductionGwh === undefined ? {} : { annualProductionGwh: generator.annualProductionGwh }),
       priceArea: generator.priceArea,
       sourceId: firstSource(generator.provenance),

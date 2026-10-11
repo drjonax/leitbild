@@ -51,8 +51,20 @@ export interface GridBranchState {
   /** open: by operator; tripped: by its protection, open until reset-branch-protection. */
   state: 'closed' | 'open' | 'tripped'
   availability: number
-  /** DC active power flow from the from-bus (MW); the relays and loading act on it. */
+  /**
+   * Where flowMw and apparentPowerMva come from: 'ac' when the branch's island AC load flow
+   * converged, 'dc' (the DC solution) when it did not, null when the branch carries no flow (open,
+   * tripped or de-energised).
+   */
+  flowModel: 'ac' | 'dc' | null
+  /** Active power entering the branch at its from end (MW), positive towards the to-bus. */
   flowMw: number
+  /**
+   * The flow its ratings bound, which loading, relays and alarms act on: the larger end apparent
+   * power (MVA) with flowModel 'ac', |flowMw| with 'dc', 0 without flow.
+   */
+  apparentPowerMva: number
+  /** apparentPowerMva over the derated continuous rating (%). */
   loadingPercent: number
   /** AC voltage at each end (pu); null while the island's AC load flow has not converged; 0 when de-energised. */
   voltageFromPu: number | null
@@ -402,7 +414,9 @@ export const createGridRuntimeInstance = (config: {
     return [branch.id, {
       state: stored?.state ?? initial.state,
       availability: stored?.availability ?? initial.availability,
+      flowModel: null,
       flowMw: 0,
+      apparentPowerMva: 0,
       loadingPercent: 0,
       voltageFromPu: 0,
       voltageToPu: 0,

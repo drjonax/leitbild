@@ -61,14 +61,16 @@ export const gridMapStateResultSchema = z.object({
     id: z.string(),
     energized: z.boolean(),
     frequencyHz: finite.nullable().describe('Island frequency; null when the island is not energised.'),
+    flowModel: z.enum(['ac', 'dc']).nullable().describe('ac: flows from its converged AC load flow; dc: its AC load flow did not converge (DC flows); null: not energised.'),
   }).strict()).describe('Current electrical islands; buses.island indexes this list.'),
   buses: z.object({
     island: z.array(count).describe('Index into islands per bus.'),
     energized: z.array(flag).describe('1 when the bus island is energised.'),
   }).strict(),
   branches: z.object({
-    loadingPercent: z.array(finite).describe('|flow| over the derated rating (%, 0.1 resolution).'),
-    flowMw: z.array(finite).describe('Active power, positive from fromBus to toBus (MW, whole).'),
+    loadingPercent: z.array(finite).describe('Rated flow (AC apparent power, or the DC flow) over the derated rating (%, 0.1 resolution).'),
+    flowMw: z.array(finite).describe('Active power at the from end, positive from fromBus to toBus (MW, whole).'),
+    flowModel: z.array(z.enum(['ac', 'dc']).nullable()).describe('Where each flow comes from: ac, dc (the island\'s AC load flow did not converge) or null (no flow).'),
     closed: z.array(flag),
     availability: z.array(finite).describe('Available fraction of the rating (0.01 resolution).'),
   }).strict(),

@@ -1,17 +1,20 @@
 import { describe, expect, test } from 'bun:test'
 import type { ActorId, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
+import { gridCloseBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridShedLoadCommandKind } from '../src/packs/electric-grid/commands/load.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { nordicFrequencyAutomationRef, norwayGridModelRef, norwaySummerLowOperatingPointRef, norwayWinterPeakOperatingPointRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import { gridElectricalPortsAt } from '../src/packs/electric-grid/electrical-ports.ts'
 import type { CompiledGridDefinition, GridBusDefinition } from '../src/packs/electric-grid/grid-model.ts'
+import { drainGridSignals } from '../src/packs/electric-grid/runtime/grid-signals.ts'
 import { gridAcState } from '../src/packs/electric-grid/runtime/ac-load-flow.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
 import { dispatchGridFromLiveIslands } from '../src/packs/electric-grid/runtime/dispatch.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
+import { gridDcFlowsMw } from '../src/packs/electric-grid/runtime/power-flow.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
-import { gridAutomationSchema } from '../src/packs/electric-grid/schemas/grid-automation.ts'
+import { largestIslandInjectionSumMw, largestKclResidualMw } from './fixtures/grid-invariants.ts'
 import { scenarios } from './fixtures/scenarios.ts'
 import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './fixtures/synthetic-grid.ts'
 
@@ -26,16 +29,6 @@ const norwayAt = (operatingPointRef: string): CompiledGridDefinition => compileG
   id: 'grid:norway', model: { ref: norwayGridModelRef }, operatingPoint: { ref: operatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
 }))
 
-/**
- * Winter runs without branch relays: the runtime's DC flows load Flesaker – Mjøndalen to 118 % of
- * its rating where the AC flow is 106 % (golden powerFlowOverloads), above the thermal element's
- * steady trip level (115.8 %), so its thermal element trips it at the first sample; the flow it
- * shifts trips four more instantaneously (above 150 %) and splits off a 17-bus 132 kV pocket whose
- * units all reach their reactive limits: an AC failure the runtime reports (see the weak-link case
- * below), caused by the DC loading, not by the Operating Point's AC state.
- */
-const withoutBranchProtection = (definition: CompiledGridDefinition): CompiledGridDefinition =>
-  ({ ...definition, automation: gridAutomationSchema.parse({ ...definition.automation, branchProtection: { enabled: false } }) })
 
 /** Golden-list voltage band of the regenerated model (norway-grid-golden.json thresholds). */
 const minimumBusVoltagePu = 0.9
@@ -61,7 +54,7 @@ const expectConvergedEverywhere = (grid: GridRuntimeInstance): void => {
 describe('Grid AC load flow on every tick', () => {
   const cases = [
     { operatingPointRef: norwaySummerLowOperatingPointRef, definition: () => norwayAt(norwaySummerLowOperatingPointRef) },
-    { operatingPointRef: norwayWinterPeakOperatingPointRef, definition: () => withoutBranchProtection(norwayAt(norwayWinterPeakOperatingPointRef)) },
+    { operatingPointRef: norwayWinterPeakOperatingPointRef, definition: () => norwayAt(norwayWinterPeakOperatingPointRef) },
   ]
   for (const { operatingPointRef, definition } of cases) {
     test(`converges in every energised island at ${operatingPointRef} and publishes its voltages and losses`, () => {
@@ -81,6 +74,12 @@ describe('Grid AC load flow on every tick', () => {
           expect(state.lossesMw).toBe(0)
           return
         }
+        // Flow and loading are the AC ones: the from-end power and the larger end apparent power.
+        expect(state.flowModel).toBe('ac')
+        expect(state.flowMw).toBe(ac.branchFromActiveMw[index]!)
+        const apparentMva = Math.max(Math.hypot(ac.branchFromActiveMw[index]!, ac.branchFromReactiveMvar[index]!), Math.hypot(ac.branchToActiveMw[index]!, ac.branchToReactiveMvar[index]!))
+        expect(state.apparentPowerMva).toBe(apparentMva)
+        expect(state.loadingPercent).toBe(apparentMva / (branch.ratingMw * state.availability) * 100)
         // Losses are the AC power entering both ends; voltages and reactive power are the AC ones.
         expect(Math.abs(state.lossesMw - (ac.branchFromActiveMw[index]! + ac.branchToActiveMw[index]!))).toBeLessThan(1e-9 * Math.max(1, state.lossesMw) + 1e-9)
         expect(state.lossesMw).toBeGreaterThanOrEqual(0)
@@ -95,10 +94,27 @@ describe('Grid AC load flow on every tick', () => {
       expect(voltageMinPu!).toBeLessThan(1)
       expect(voltageMaxPu!).toBeGreaterThan(voltageMinPu!)
       const main = grid.projection.islands.find(island => island.energized)!
-      expect(main).toMatchObject({ voltageModel: 'ac-fdlf' })
+      expect(main).toMatchObject({ voltageModel: 'ac-fdlf', flowModel: 'ac' })
       console.info(`${operatingPointRef}: AC losses ${branchLossesMw.toFixed(1)} MW, V ${voltageMinPu}–${voltageMaxPu} pu after 60 s`)
     })
   }
+
+  test('starts the winter peak without a trip: relays act on the AC flows from the Operating Point dispatch', () => {
+    const grid = createGridRuntimeInstance({ definition: norwayAt(norwayWinterPeakOperatingPointRef), at: iso(0) })
+    advanceGrid(grid, 0, iso(0))
+    const signals = [...drainGridSignals(grid)]
+    for (let tick = 1; tick <= 150; tick += 1) {
+      advanceGrid(grid, 2, iso(tick * 2))
+      signals.push(...drainGridSignals(grid))
+    }
+    expect(signals.filter(signal => signal.type === 'electric-grid.protection.tripped')).toEqual([])
+    expect([...grid.branches.values()].filter(state => state.state === 'tripped')).toEqual([])
+    expect([...grid.generators.values()].filter(state => state.state === 'tripped')).toEqual([])
+    // The overloads the Operating Point starts with raise alarms at once; none is above its emergency rating.
+    const active = [...grid.alarms.records.values()].filter(record => record.active)
+    console.info(`winter start, 300 s: ${active.map(record => `${record.assetId} ${record.condition} ${record.value?.toFixed(1)} %`).join('; ')}`)
+    expect(active.every(record => record.scope === 'branch' && (record.condition === 'loading-overload' || record.condition === 'loading-high'))).toBe(true)
+  }, 120_000)
 
   test('reports the AC bus voltage at a connection point', () => {
     const scenario = scenarios.find(candidate => candidate.id === 'halden-power-complex')!
@@ -162,12 +178,14 @@ describe('Grid AC load flow that does not converge', () => {
       expect(grid.busStates.get(busId)).toMatchObject({ energized: true, voltagePu: null, voltageModel: 'not-converged', reactiveInjectionMvar: null })
     }
     expect(grid.branches.get('branch:g-l')).toMatchObject({ voltageFromPu: null, voltageToPu: null, reactiveFromMvar: null, reactiveToMvar: null })
-    // Without an AC solution the island carries the DC loss estimate r·P²/S_base on its branches.
+    // Without an AC solution flows, loading and losses are the DC ones, labelled so.
     const line = grid.branches.get('branch:g-l')!
+    expect(line).toMatchObject({ flowModel: 'dc', flowMw: gridDcFlowsMw(grid)[0]!, apparentPowerMva: Math.abs(gridDcFlowsMw(grid)[0]!) })
+    expect(line.loadingPercent).toBe(line.apparentPowerMva / 5_000 * 100)
     expect(line.lossesMw).toBe(0.01 * line.flowMw * line.flowMw / 100)
     expect(grid.loads.get('load:l')!.voltagePu).toBeNull()
     expect(grid.projection).toMatchObject({ voltageModel: 'ac-fdlf', voltageMinPu: null, voltageMaxPu: null, notConvergedIslandCount: 1 })
-    expect(grid.projection.islands[0]).toMatchObject({ voltageModel: 'not-converged', voltageMinPu: null, voltageMaxPu: null })
+    expect(grid.projection.islands[0]).toMatchObject({ voltageModel: 'not-converged', voltageMinPu: null, voltageMaxPu: null, flowModel: 'dc' })
     const alarm = [...grid.alarms.records.values()].find(record => record.active && record.id.includes('ac-non-convergence'))!
     expect(alarm.message).toContain(island.id)
     // The port stays energised with its frequency, and reports no voltage.
@@ -185,4 +203,97 @@ describe('Grid AC load flow that does not converge', () => {
     expect(grid.alarms.records.get(alarm.id)!.active).toBe(false)
     expect(grid.projection.notConvergedIslandCount).toBe(0)
   })
+})
+
+describe('Nordic boundary ties opening and closing in any order', () => {
+  const command = (grid: GridRuntimeInstance, kind: string, assetId: string, seconds: number) => applyGridCommand(grid, {
+    id: `command:${kind}-${assetId}-${seconds}` as CommandId, simulationRunId: 'run:ties' as SimulationRunId, actorId: 'actor:ties-test' as ActorId,
+    kind, targetObjectIds: [grid.definition.gridId as ObjectId], payload: { assetId }, issuedAt: iso(seconds),
+  })
+
+  test('every later advance succeeds with KCL and island balance intact, and a stranded boundary bus is de-energised', () => {
+    const grid = createGridRuntimeInstance({ definition: norwayAt(norwaySummerLowOperatingPointRef), at: iso(0) })
+    let seconds = 0
+    const advance = (dtSeconds: number): void => {
+      seconds += dtSeconds
+      advanceGrid(grid, dtSeconds, iso(seconds))
+      expect(largestKclResidualMw(grid)).toBeLessThan(1e-6)
+      expect(largestIslandInjectionSumMw(grid)).toBeLessThan(1e-6)
+      expect(grid.diagnostics.energyAudit.lastMaximumIslandMismatchMw).toBeLessThan(1e-6)
+    }
+    advance(0)
+    const nordic = grid.definition.index.externalSystems.find(system => system.synchronous)!
+    const ties = nordic.boundaryBusIds.flatMap(busId => grid.definition.index.branchesByBus.get(busId)!)
+    expect(ties.length).toBe(8)
+    const boundaryOf = (tieId: string): string => nordic.boundaryBusIds.find(busId => grid.definition.index.branchesByBus.get(busId)!.some(branch => branch.id === tieId))!
+    for (const tie of ties) {
+      expect(command(grid, gridOpenBranchCommandKind, tie.id, seconds).ok).toBe(true)
+      advance(0)
+      advance(2)
+      const boundary = boundaryOf(tie.id)
+      const stranded = grid.definition.index.branchesByBus.get(boundary)!.every(branch => grid.branches.get(branch.id)!.state !== 'closed')
+      // Without a closed tie the boundary bus is no longer coupled: no source of its own, so de-energised.
+      if (stranded) expect(grid.busStates.get(boundary)).toMatchObject({ energized: false, voltagePu: 0, frequencyHz: null })
+      expect(command(grid, gridCloseBranchCommandKind, tie.id, seconds).ok).toBe(true)
+      advance(0)
+      advance(2)
+      expect(grid.busStates.get(boundary)!.energized).toBe(true)
+    }
+    for (const tie of ties) expect(command(grid, gridOpenBranchCommandKind, tie.id, seconds).ok).toBe(true)
+    advance(0)
+    for (let tick = 0; tick < 5; tick += 1) advance(2)
+    for (const busId of nordic.boundaryBusIds) expect(grid.busStates.get(busId)!.energized).toBe(false)
+    expect(grid.projection.activeIslandCount).toBeGreaterThan(0)
+    // Closing checks the solved islands, so each close is followed by a zero-length solve, as the adapter does.
+    for (const tie of ties) {
+      expect(command(grid, gridCloseBranchCommandKind, tie.id, seconds).ok).toBe(true)
+      advance(0)
+    }
+    for (let tick = 0; tick < 5; tick += 1) advance(2)
+    for (const busId of nordic.boundaryBusIds) expect(grid.busStates.get(busId)!.energized).toBe(true)
+  }, 120_000)
+})
+
+describe('Halden switchyard after a total trip of its Plants', () => {
+  test('isolating the de-loaded switchyard leaves it de-energised and every advance solves', () => {
+    const scenario = scenarios.find(candidate => candidate.id === 'halden-power-complex')!
+    const definition = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:halden-four-unit', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: norwaySummerLowOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
+    }))
+    const grid = createGridRuntimeInstance({ definition, at: iso(0), connections: scenario.connections })
+    for (const connection of grid.externalConnections.values()) {
+      connection.connected = true
+      connection.systemPresent = true
+      connection.systemActivePowerMw = 1_100
+    }
+    dispatchGridFromLiveIslands(grid, startsAtMs)
+    let seconds = 0
+    const advance = (dtSeconds: number): void => {
+      seconds += dtSeconds
+      advanceGrid(grid, dtSeconds, iso(seconds))
+      expect(largestKclResidualMw(grid)).toBeLessThan(1e-6)
+      expect(largestIslandInjectionSumMw(grid)).toBeLessThan(1e-6)
+      for (const island of grid.islandPlan!.islands) if (island.energized) expect(grid.acOutcomeByIsland.has(island.id)).toBe(true)
+    }
+    advance(0)
+    for (let tick = 0; tick < 5; tick += 1) advance(2)
+    // All four Plants trip, then the six switchyard circuits open.
+    for (const connection of grid.externalConnections.values()) {
+      connection.connected = false
+      connection.systemActivePowerMw = 0
+    }
+    advance(0)
+    const switchyard = 'bus:curated-halden-pwr-switchyard@420'
+    for (const branch of grid.definition.index.branchesByBus.get(switchyard)!) {
+      const result = applyGridCommand(grid, {
+        id: `command:isolate-${branch.id}` as CommandId, simulationRunId: 'run:ac' as SimulationRunId, actorId: 'actor:ac-test' as ActorId,
+        kind: gridOpenBranchCommandKind, targetObjectIds: [grid.definition.gridId as ObjectId], payload: { assetId: branch.id }, issuedAt: iso(seconds),
+      })
+      expect(result.ok).toBe(true)
+      advance(0)
+    }
+    for (let tick = 0; tick < 30; tick += 1) advance(2)
+    expect(grid.busStates.get(switchyard)).toMatchObject({ energized: false, voltagePu: 0, voltageModel: 'de-energised' })
+    expect(gridElectricalPortsAt({ grid, at: iso(seconds) }).every(port => port.state?.energized === false)).toBe(true)
+  }, 120_000)
 })

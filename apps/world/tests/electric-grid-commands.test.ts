@@ -233,7 +233,7 @@ describe('electric grid branch commands', () => {
     const winter = new Map(gridModelV2(norwayGridModelRef).branches.map(branch => [branch.id, branch]))
     const branch = definition.model.branches.find(candidate => candidate.ratingMw < winter.get(candidate.id)!.ratingMw && grid.branches.get(candidate.id)!.flowMw !== 0)!
     expect(branch.emergencyRatingMw).toBeLessThan(winter.get(branch.id)!.emergencyRatingMw)
-    const loadingAt = (ratingMw: number): number => Math.abs(grid.branches.get(branch.id)!.flowMw) / ratingMw * 100
+    const loadingAt = (ratingMw: number): number => grid.branches.get(branch.id)!.apparentPowerMva / ratingMw * 100
     expect(grid.branches.get(branch.id)!.loadingPercent).toBeCloseTo(loadingAt(branch.ratingMw), 9)
     expect(send(gridDerateBranchCommandKind, { assetId: branch.id, availability: 0.5 }).ok).toBe(true)
     expect(grid.branches.get(branch.id)!.loadingPercent).toBeCloseTo(loadingAt(branch.ratingMw * 0.5), 9)

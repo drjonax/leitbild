@@ -442,6 +442,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
         fields: [
           packField('loading', 'Loading', `${percent(result.branches.loadingPercent[position]!)} of ${mw(branch.ratingMw * availability)}`),
           packField('flow', 'Flow', flow === 0 ? '0 MW' : `${mw(Math.abs(flow))}, ${flow > 0 ? from.label : to.label} → ${flow > 0 ? to.label : from.label}`),
+          packField('flow-model', 'Flow model', result.branches.flowModel[position] === 'ac' ? 'AC load flow' : result.branches.flowModel[position] === 'dc' ? 'DC estimate (AC load flow not converged)' : 'No flow'),
           packField('switching', 'Switching', closed ? (availability < 1 ? `Closed, derated to ${Math.round(availability * 100)} %` : 'Closed') : 'Open'),
           packField('energized', 'Energised', busEnergized(branch.fromBus) && busEnergized(branch.toBus) ? 'Yes' : 'No'),
           packField('voltage', 'Voltage', `${branch.kv} kV ${branch.kind.replaceAll('_', ' ')}`),

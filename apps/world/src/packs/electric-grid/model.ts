@@ -42,6 +42,8 @@ export const gridIslandProjectionSchema = z.object({
   reserves: gridReservesByProductSchema,
   /** ac-fdlf: the island's AC load flow converged; not-converged: it did not, and its buses publish no voltage. */
   voltageModel: z.enum(['ac-fdlf', 'not-converged', 'de-energised']),
+  /** Where its branch flows and loading come from: ac when its AC load flow converged, dc when not; null when de-energised. */
+  flowModel: z.enum(['ac', 'dc']).nullable(),
   /** Lowest and highest bus voltage of a converged energised island (pu); null otherwise. */
   voltageMinPu: finiteNumber.positive().nullable(),
   voltageMaxPu: finiteNumber.positive().nullable(),

@@ -8,6 +8,7 @@ import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/pack
 import { compileGridNetwork } from '../src/packs/electric-grid/runtime/network/compiled-network.ts'
 import { createGridIslandSystem, gridBranchFlowMw, gridBranchFlowsMwInto } from '../src/packs/electric-grid/runtime/network/dc-power-flow.ts'
 import { findGridIslands } from '../src/packs/electric-grid/runtime/network/islands.ts'
+import { gridDcFlowsMw } from '../src/packs/electric-grid/runtime/power-flow.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { solveGridAngles, topologyPlanForGrid } from '../src/packs/electric-grid/runtime/topology.ts'
 import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
@@ -122,14 +123,15 @@ const denseReferenceFlowsMw = (model: GridModelDefinition, closed: (branch: Grid
 const maximumDifference = (a: ReadonlyArray<number>, b: ReadonlyArray<number>): number =>
   a.reduce((worst, value, index) => Math.max(worst, Math.abs(value - b[index]!)), 0)
 
-/** Injection minus net branch outflow per bus, from the runtime's solved flows. */
+/** Injection minus net branch outflow per bus, from the runtime's DC solution (published flows are AC where converged). */
 const kclResidualsMw = (grid: GridRuntimeInstance): Map<string, number> => {
   const residuals = new Map([...grid.busStates].map(([busId, state]) => [busId, state.netInjectionMw]))
-  for (const branch of grid.definition.model.branches) {
-    const flowMw = grid.branches.get(branch.id)!.flowMw
+  const flows = gridDcFlowsMw(grid)
+  grid.definition.model.branches.forEach((branch, index) => {
+    const flowMw = flows[index]!
     residuals.set(branch.fromBusId, residuals.get(branch.fromBusId)! - flowMw)
     residuals.set(branch.toBusId, residuals.get(branch.toBusId)! + flowMw)
-  }
+  })
   return residuals
 }
 
@@ -187,7 +189,7 @@ describe('electric-grid sparse network core', () => {
       advanceGrid(grid, 2, at)
       const injections = injectionsOf(grid)
       const dense = denseReferenceFlowsMw(definition.model, isClosed(grid), injections)
-      const runtimeFlows = definition.model.branches.map(branch => grid.branches.get(branch.id)!.flowMw)
+      const runtimeFlows = Array.from(gridDcFlowsMw(grid))
       // Round-off of two factorisations of a 1,000-bus matrix: relative to the largest flow.
       const tolerance = 1e-11 * Math.max(...dense.map(Math.abs))
       expect(maximumDifference(runtimeFlows, dense)).toBeLessThan(tolerance)
@@ -305,7 +307,7 @@ describe('electric-grid sparse network core', () => {
     advanceGrid(grid, 0, at)
     const plan = topologyPlanForGrid(grid)
     const references = new Set(plan.islands.map(island => island.referenceBusId))
-    const largestFlowMw = Math.max(...[...grid.branches.values()].map(state => Math.abs(state.flowMw)))
+    const largestFlowMw = Math.max(...Array.from(gridDcFlowsMw(grid), Math.abs))
     const worst = Math.max(...[...kclResidualsMw(grid)].filter(([busId]) => !references.has(busId)).map(([, residual]) => Math.abs(residual)))
     expect(worst / largestFlowMw).toBeLessThan(1e-12)
   })

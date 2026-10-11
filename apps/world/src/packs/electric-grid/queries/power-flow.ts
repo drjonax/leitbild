@@ -25,8 +25,10 @@ const powerFlowRowSchema = z.object({
   ratingMw: finite,
   state: branchSwitchingStateSchema,
   availability: finite.describe('Available fraction of the rating (derate).'),
-  flowMw: finite.describe('Active power flow to 0.1 MW, positive from the definition\'s fromBusId to toBusId.'),
-  loadingPercent: finite.describe('|flowMw| over ratingMw × availability, to 0.1 %.'),
+  flowModel: z.enum(['ac', 'dc']).nullable().describe('ac: the island\'s converged AC load flow; dc: the DC solution, because its AC load flow did not converge; null: no flow.'),
+  flowMw: finite.describe('Active power entering at the from end to 0.1 MW, positive from the definition\'s fromBusId to toBusId.'),
+  apparentPowerMva: finite.describe('The rated flow to 0.1: larger end apparent power (MVA) with ac, |flowMw| with dc.'),
+  loadingPercent: finite.describe('apparentPowerMva over ratingMw × availability, to 0.1 %.'),
   definition: branchDefinitionSchema.optional(),
 }).strict()
 
@@ -63,7 +65,9 @@ const rowFor = (grid: GridRuntimeInstance, definition: GridBranchDefinition, inc
     ratingMw: definition.ratingMw,
     state: state.state,
     availability: state.availability,
+    flowModel: state.flowModel,
     flowMw: tenths(state.flowMw),
+    apparentPowerMva: tenths(state.apparentPowerMva),
     loadingPercent: tenths(state.loadingPercent),
     ...(includeDefinition ? { definition } : {}),
   }
@@ -87,7 +91,7 @@ const hvdcRowFor = (grid: GridRuntimeInstance, definition: GridHvdcLinkDefinitio
 export const gridPowerFlowQuery = defineGridQuery({
   id: 'world.electric-grid.power-flow.snapshot',
   title: 'Get power-flow snapshot',
-  description: 'Returns a bounded page of compact branch rows: rating, closed/open/tripped, derate, flow (0.1 MW, positive from fromBusId to toBusId) and loading (0.1 % of the derated rating), optionally filtered by minimum loading and island and sorted by loading. Every HVDC link follows in its own rows: deblocked/blocked/tripped, set-point and transfer (positive exports from Norway), losses and loading. Endpoints and electrical parameters come with includeDefinition.',
+  description: 'Returns a bounded page of compact branch rows: rating, closed/open/tripped, derate, flow model (AC where the island\'s load flow converged, else DC), flow (0.1 MW, positive from fromBusId to toBusId), rated flow (MVA in AC) and loading (0.1 % of the derated rating), optionally filtered by minimum loading and island and sorted by loading. Every HVDC link follows in its own rows: deblocked/blocked/tripped, set-point and transfer (positive exports from Norway), losses and loading. Endpoints and electrical parameters come with includeDefinition.',
   searchTerms: ['power flow', 'branch flow', 'loading', 'overload', 'congestion', 'corridor', 'constraint', 'HVDC', 'interconnector', 'kraftflyt', 'belastning', 'overlast', 'flaskehals', 'snitt', 'linje', 'utenlandsforbindelse'],
   input: powerFlowPayloadSchema,
   output: powerFlowResultSchema,

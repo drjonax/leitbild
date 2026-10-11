@@ -154,6 +154,12 @@ export interface GridGeneratorDefinition {
   /** Availability at the Operating Point. */
   readonly availableMw: number
   readonly initialState: GridGeneratorInitialState
+  /**
+   * Set-point at the Operating Point for a unit that starts online (MW): the starting dispatch keeps
+   * this pattern and shares only the island's remaining imbalance; null when the unit has none of
+   * its own (offline, or online without a target), so it shares the residual by its range.
+   */
+  readonly initialTargetMw: number | null
   readonly annualProductionGwh?: number
   readonly priceArea?: string
   readonly sourceId?: string

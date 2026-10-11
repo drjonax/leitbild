@@ -1,4 +1,5 @@
 import type { GridModelDefinition } from '../grid-model.ts'
+import { gridIslandFlowModel } from '../runtime/ac-load-flow.ts'
 import type { GridLoadState, GridRuntimeInstance } from '../runtime/instance.ts'
 import { gridIslandFrequencyHz, solvedGridIslands } from '../runtime/island-lifecycle.ts'
 import { defineGridQuery, gridFor, gridPayloadSchema, type ElectricGridQuery } from './common.ts'
@@ -10,7 +11,7 @@ import { gridMapStateResultSchema, type GridMapStateResult } from './map-schemas
 
 export interface GridMapIslandState {
   /** Stable islands in plan order. */
-  readonly islands: ReadonlyArray<{ readonly id: string; readonly energized: boolean; readonly frequencyHz: number | null }>
+  readonly islands: ReadonlyArray<{ readonly id: string; readonly energized: boolean; readonly frequencyHz: number | null; readonly flowModel: 'ac' | 'dc' | null }>
   /** Index into islands per bus, in model order. */
   readonly busIsland: ReadonlyArray<number>
   /** Grid solve counter; it increases with every solve. */
@@ -20,7 +21,7 @@ export interface GridMapIslandState {
 /** The map's only read of island membership, energisation and frequency: the runtime's stable island state. */
 export const gridMapIslandState = (grid: GridRuntimeInstance): GridMapIslandState => {
   const plan = solvedGridIslands(grid)
-  const islands = plan.islands.map(island => ({ id: island.id, energized: island.energized, frequencyHz: gridIslandFrequencyHz(island) }))
+  const islands = plan.islands.map(island => ({ id: island.id, energized: island.energized, frequencyHz: gridIslandFrequencyHz(island), flowModel: gridIslandFlowModel(grid, island) }))
   // The compiled network numbers buses in model order, and stable islands align with plan islands.
   const busIsland = Array.from(plan.plan.islandIndexOfBus)
   return { islands, busIsland, tick: grid.tick }
@@ -37,10 +38,12 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
   const flowMw = new Array<number>(branchCount)
   const closed = new Array<0 | 1>(branchCount)
   const availability = new Array<number>(branchCount)
+  const flowModel = new Array<'ac' | 'dc' | null>(branchCount)
   model.branches.forEach((branch, position) => {
     const state = grid.branches.get(branch.id)!
     loadingPercent[position] = tenths(state.loadingPercent)
     flowMw[position] = Math.round(state.flowMw)
+    flowModel[position] = state.flowModel
     closed[position] = state.state === 'closed' ? 1 : 0
     availability[position] = hundredths(state.availability)
   })
@@ -56,7 +59,7 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
       island: [...busIsland],
       energized: busIsland.map(position => islands[position]!.energized ? 1 : 0),
     },
-    branches: { loadingPercent, flowMw, closed, availability },
+    branches: { loadingPercent, flowMw, flowModel, closed, availability },
     generators: {
       dispatchMw: generatorStates.map(state => Math.round(state.dispatchMw)),
       state: generatorStates.map(state => state.state),

@@ -5,7 +5,9 @@ import { queueGridSignal } from '../grid-signals.ts'
 import type { GridBranchState, GridRuntimeInstance } from '../instance.ts'
 import type { GridBranchTripElement } from './state.ts'
 
-// Sampled branch relays. At every sample the relay reads the solved flow and updates three elements:
+// Sampled branch relays. At every sample the relay reads the solved flow it is rated for (the AC
+// apparent power where the island's load flow converged, else the DC flow: GridBranchState
+// apparentPowerMva) and updates three elements:
 // - thermal (inverse time): a first-order conductor state θ heats towards (flow / derated rating)²
 //   with the branch kind's time constant τ, θ' = L² + (θ − L²)·e^(−Ts/τ), exact for a flow held over
 //   the sample interval Ts; it trips at the level a branch reaches when it carries its emergency
@@ -23,8 +25,8 @@ export const branchThermalTripLevel = (branch: GridBranchDefinition, settings: E
   return emergencySquared - (emergencySquared - 1) * decay
 }
 
-/** Flow over the derated continuous rating. */
-const loadingRatio = (branch: GridBranchDefinition, state: GridBranchState): number => Math.abs(state.flowMw) / (branch.ratingMw * state.availability)
+/** Rated flow over the derated continuous rating. */
+const loadingRatio = (branch: GridBranchDefinition, state: GridBranchState): number => state.apparentPowerMva / (branch.ratingMw * state.availability)
 
 export interface BranchTripDecision {
   readonly index: number
@@ -34,13 +36,18 @@ export interface BranchTripDecision {
 const instantaneousOperates = (branch: GridBranchDefinition, state: GridBranchState, settings: EnabledBranchProtection): boolean =>
   loadingRatio(branch, state) * 100 > settings.instantaneousPercentOfRating
 
-/** Sets every branch's thermal state to the steady state of its present flow. */
+/**
+ * Sets every branch's thermal state when the relays arm: the steady state of its present flow, but
+ * at most the rated temperature (θ = 1). A Grid starts from a permissible state; a branch it starts
+ * above its rating heats from its rated temperature with its time constant, so its overload alarm
+ * comes at once and its thermal element operates only if the overload is not relieved in time.
+ */
 export const initialiseBranchThermalStates = (grid: GridRuntimeInstance): void => {
   const branches = grid.definition.model.branches
   let index = 0
   for (const state of grid.branches.values()) {
     const ratio = loadingRatio(branches[index]!, state)
-    state.protection.thermalLevel = ratio * ratio
+    state.protection.thermalLevel = Math.min(1, ratio * ratio)
     index += 1
   }
 }
@@ -60,7 +67,7 @@ export const sampleBranchRelays = (grid: GridRuntimeInstance, settings: EnabledB
     const steady = ratio * ratio
     const protection = state.protection
     protection.thermalLevel = steady + (protection.thermalLevel - steady) * Math.exp(-intervalSeconds / settings.thermalTimeConstantSeconds[branch.kind])
-    const aboveEmergency = Math.abs(state.flowMw) > branch.emergencyRatingMw * state.availability
+    const aboveEmergency = state.apparentPowerMva > branch.emergencyRatingMw * state.availability
     protection.overEmergencySinceElapsedMs = state.state === 'closed' && aboveEmergency ? protection.overEmergencySinceElapsedMs ?? elapsedMs : null
     if (state.state === 'closed') {
       const element: GridBranchTripElement | null = instantaneousOperates(branch, state, settings)

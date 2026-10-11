@@ -12,12 +12,12 @@ const mw = (value: number): number => Math.round(value * 10) / 10
 const hz = (value: number): number => Math.round(value * 10_000) / 10_000
 const pu = (value: number): number => Math.round(value * 10_000) / 10_000
 
-/** The island's AC voltage result: converged with its bus voltage range, not converged, or de-energised. */
-const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, busIds: ReadonlyArray<string>): Pick<GridIslandProjection, 'voltageModel' | 'voltageMinPu' | 'voltageMaxPu'> => {
-  if (!island.energized) return { voltageModel: 'de-energised', voltageMinPu: null, voltageMaxPu: null }
+/** The island's AC result: converged with its bus voltage range and AC flows, not converged (DC flows), or de-energised. */
+const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, busIds: ReadonlyArray<string>): Pick<GridIslandProjection, 'voltageModel' | 'voltageMinPu' | 'voltageMaxPu' | 'flowModel'> => {
+  if (!island.energized) return { voltageModel: 'de-energised', voltageMinPu: null, voltageMaxPu: null, flowModel: null }
   const outcome = grid.acOutcomeByIsland.get(island.id)
   if (outcome === undefined) throw new Error(`Grid ${grid.definition.gridId} island ${island.id} is energised but has no AC load-flow outcome`)
-  if (!outcome.converged) return { voltageModel: 'not-converged', voltageMinPu: null, voltageMaxPu: null }
+  if (!outcome.converged) return { voltageModel: 'not-converged', voltageMinPu: null, voltageMaxPu: null, flowModel: 'dc' }
   let minimum = Number.POSITIVE_INFINITY
   let maximum = Number.NEGATIVE_INFINITY
   for (const busId of busIds) {
@@ -25,7 +25,7 @@ const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, busIds: Re
     if (voltage < minimum) minimum = voltage
     if (voltage > maximum) maximum = voltage
   }
-  return { voltageModel: 'ac-fdlf', voltageMinPu: pu(minimum), voltageMaxPu: pu(maximum) }
+  return { voltageModel: 'ac-fdlf', voltageMinPu: pu(minimum), voltageMaxPu: pu(maximum), flowModel: 'ac' }
 }
 
 const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland, alarmCount: number): GridIslandProjection | null => {

@@ -1,6 +1,8 @@
 // A meshed 300 kV corridor for protection and alarm tests: a generator bus G feeds a load bus L
 // over a direct line and two two-line paths (via A and via B). Opening the direct line overloads
-// the A path above its emergency rating and loads the B path near its rating.
+// the A path above its emergency rating and loads the B path near its rating. Reactances of lines
+// of 20–40 km keep the AC flows within 2 % of the DC ones (L's unit holds its voltage); twice
+// these, the A path's reactive losses take L to 0.8 pu and its relays trip at once.
 import type { ActorId, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../../src/core/model/index.ts'
 import type { CompiledGridDefinition, GridBranchDefinition, GridBusDefinition, GridModelDefinition } from '../../src/packs/electric-grid/grid-model.ts'
 import { applyGridCommand } from '../../src/packs/electric-grid/runtime/apply-command.ts'
@@ -21,11 +23,11 @@ export const corridorModel: GridModelDefinition = handBuiltModel({
   description: 'Meshed corridor for protection tests',
   buses: [bus('bus:g', 8), bus('bus:a', 9), bus('bus:b', 9.5), bus('bus:l', 10)],
   branches: [
-    line('branch:g-l', 'bus:g', 'bus:l', 0.1, 600),
-    line('branch:g-a', 'bus:g', 'bus:a', 0.05, 460),
-    line('branch:a-l', 'bus:a', 'bus:l', 0.05, 470),
-    line('branch:g-b', 'bus:g', 'bus:b', 0.1, 300),
-    line('branch:b-l', 'bus:b', 'bus:l', 0.1, 300),
+    line('branch:g-l', 'bus:g', 'bus:l', 0.05, 600),
+    line('branch:g-a', 'bus:g', 'bus:a', 0.025, 460),
+    line('branch:a-l', 'bus:a', 'bus:l', 0.025, 470),
+    line('branch:g-b', 'bus:g', 'bus:b', 0.05, 300),
+    line('branch:b-l', 'bus:b', 'bus:l', 0.05, 300),
   ],
   generators: [
     syntheticHydroUnit({ id: 'generator:g1', label: 'G1', busId: 'bus:g', location: [8, 60], capacityMw: 1400, rampRateMwPerMinute: 300 }),

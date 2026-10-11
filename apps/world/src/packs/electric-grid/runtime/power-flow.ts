@@ -161,6 +161,17 @@ const closeComponentsThroughBoundaries = (
   return closingMw
 }
 
+/**
+ * The DC flows of the Grid's last network solution (MW, model branch order, 0 off the energised
+ * network): the solution the island balances and bus injections close on. Published flows are the
+ * AC ones where an island converged.
+ */
+export const gridDcFlowsMw = (grid: GridRuntimeInstance): Float64Array => {
+  const flows = flowScratch.get(grid)
+  if (flows === undefined) throw new Error(`Grid ${grid.definition.gridId} has not been solved yet`)
+  return flows
+}
+
 const lossScratches = new WeakMap<GridRuntimeInstance, Float64Array>()
 const lossScratch = (grid: GridRuntimeInstance, busCount: number): Float64Array => {
   const cached = lossScratches.get(grid)
@@ -281,18 +292,30 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
     const to = network.branchTo[index]!
     const live = plan.closedBranches[index] === 1 && energisedPlanIsland[islandOf[from]!] === 1
     const acLive = live && acConvergedPlanIsland[islandOf[from]!] === 1
-    const flowMw = live ? flows[index]! : 0
+    const dcFlowMw = live ? flows[index]! : 0
     // Losses carried as load at the branch ends from the next advance on: the AC series loss r·|I|²
     // where the island converged, else the quadratic DC estimate r·P²/S_base.
     const branchLossMw = acLive
       ? acSeriesLossMw(branch, ac.voltagePu[from]!, ac.voltagePu[to]!, ac.angleRad[from]! - ac.angleRad[to]!, network.sBaseMva)
-      : live ? branch.resistancePu * flowMw * flowMw / network.sBaseMva : 0
+      : live ? branch.resistancePu * dcFlowMw * dcFlowMw / network.sBaseMva : 0
     addAt(lossLoad, from, branchLossMw / 2)
     addAt(lossLoad, to, branchLossMw / 2)
     lossesMw += branchLossMw
-    state.flowMw = flowMw
+    // Flow and loading: the AC flows where the island converged (the larger end apparent power is
+    // what the rating bounds), else the DC flow, labelled so.
+    if (acLive) {
+      const fromMw = ac.branchFromActiveMw[index]!
+      const toMw = ac.branchToActiveMw[index]!
+      state.flowModel = 'ac'
+      state.flowMw = fromMw
+      state.apparentPowerMva = Math.max(Math.hypot(fromMw, ac.branchFromReactiveMvar[index]!), Math.hypot(toMw, ac.branchToReactiveMvar[index]!))
+    } else {
+      state.flowModel = live ? 'dc' : null
+      state.flowMw = dcFlowMw
+      state.apparentPowerMva = Math.abs(dcFlowMw)
+    }
     state.lossesMw = branchLossMw
-    state.loadingPercent = Math.abs(flowMw) / (branch.ratingMw * state.availability) * 100
+    state.loadingPercent = state.apparentPowerMva / (branch.ratingMw * state.availability) * 100
     state.frequencyHz = live ? frequencyOfPlanIsland[islandOf[from]!]! : null
     state.voltageFromPu = voltageAt(from)
     state.voltageToPu = voltageAt(to)

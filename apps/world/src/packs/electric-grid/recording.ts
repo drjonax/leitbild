@@ -86,6 +86,12 @@ const operations = [{
 }, {
   signalId: 'grid.maximum-branch-loading', title: 'Maximum branch loading', quantity: 'ratio', unit: '%', key: 'highestBranchLoadingPercent',
 }, {
+  signalId: 'grid.voltage.min', title: 'Lowest bus voltage (converged islands)', quantity: 'voltage', unit: 'pu', key: 'voltageMinPu',
+}, {
+  signalId: 'grid.voltage.max', title: 'Highest bus voltage (converged islands)', quantity: 'voltage', unit: 'pu', key: 'voltageMaxPu',
+}, {
+  signalId: 'grid.dc-flow-islands', title: 'Energised islands on DC flows (AC load flow not converged)', quantity: 'count', unit: '1', key: 'notConvergedIslandCount',
+}, {
   signalId: 'grid.island-count', title: 'Energised islands', quantity: 'count', unit: '1', key: 'activeIslandCount',
 }, {
   signalId: 'grid.active-alarms', title: 'Active alarms', quantity: 'count', unit: '1', key: 'activeAlarmCount',
@@ -101,15 +107,20 @@ const islandSeries = (grid: GridRuntimeInstance, islandId: string): ReadonlyArra
       const current = island()
       return current === undefined ? null : current.energized
     } }),
+    // true: flows from its converged AC load flow; false: DC flows (not converged); no sample while de-energised.
+    series({ grid, signalId: `island.${islandId}.ac-flow`, title: `Island ${islandId} flows from the AC load flow`, valueType: 'boolean', quantity: 'boolean', unit: 'boolean', value: () => {
+      const flowModel = island()?.flowModel ?? null
+      return flowModel === null ? null : flowModel === 'ac'
+    } }),
   ]
 }
 
-// Each island adds its two series when it forms; the estimate counts the main island's.
-const estimatedIslandSeriesCount = 2
+// Each island adds its three series when it forms; the estimate counts the main island's.
+const estimatedIslandSeriesCount = 3
 
 export const gridRecordingSeriesCount = (counts: GridModelAssetCounts, profileId: string): number =>
   operations.length + estimatedIslandSeriesCount + (profileId === 'engineering'
-    ? counts.bus * 2 + counts.branch * 2 + counts.generator + counts.load + counts.storage : 0)
+    ? counts.bus * 2 + counts.branch * 3 + counts.generator + counts.load + counts.storage : 0)
 
 const engineeringSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordingSeries> => [
   ...grid.definition.model.buses.flatMap(bus => {
@@ -124,6 +135,11 @@ const engineeringSeries = (grid: GridRuntimeInstance): ReadonlyArray<GridRecordi
     return [
       series({ grid, signalId: `${branch.id}.flow`, title: `${branch.label} flow`, quantity: 'active-power', unit: 'MW', value: () => state().flowMw }),
       series({ grid, signalId: `${branch.id}.loading`, title: `${branch.label} loading`, quantity: 'ratio', unit: '%', value: () => state().loadingPercent }),
+      // true: flow and loading from the AC load flow; false: the DC flow; no sample without flow.
+      series({ grid, signalId: `${branch.id}.ac-flow`, title: `${branch.label} flow from the AC load flow`, valueType: 'boolean', quantity: 'boolean', unit: 'boolean', value: () => {
+        const flowModel = state().flowModel
+        return flowModel === null ? null : flowModel === 'ac'
+      } }),
     ]
   }),
   ...grid.definition.model.generators.map(generator => series({

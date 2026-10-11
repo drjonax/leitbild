@@ -78,6 +78,7 @@ export const syntheticHydroUnit = (unit: Pick<GridGeneratorDefinition, 'id' | 'l
   rampRateMwPerMinute: unit.capacityMw * 0.22,
   availableMw: unit.capacityMw,
   initialState: 'online',
+  initialTargetMw: null,
   ...unit,
 })
 const voltageClassesKv = [132, 300, 420] as const

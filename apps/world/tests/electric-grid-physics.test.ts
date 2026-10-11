@@ -18,6 +18,8 @@ import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { gridAutomationSchema } from '../src/packs/electric-grid/schemas/grid-automation.ts'
 import { balanceSeparablePart, separableBranch } from './fixtures/grid-split.ts'
 import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './fixtures/synthetic-grid.ts'
+import { gridDcFlowsMw } from '../src/packs/electric-grid/runtime/power-flow.ts'
+import { largestIslandInjectionSumMw, largestKclResidualMw } from './fixtures/grid-invariants.ts'
 import { scenarios } from './fixtures/scenarios.ts'
 
 const start = Date.parse('2026-01-15T10:00:00.000Z')
@@ -60,23 +62,6 @@ const islandOfBus = (grid: GridRuntimeInstance, busId: string): GridIsland => {
 }
 
 /** KCL at every bus from the solved injections and branch flows (MW). */
-const largestKclResidualMw = (grid: GridRuntimeInstance): number => {
-  const residuals = new Map([...grid.busStates].map(([busId, state]) => [busId, state.netInjectionMw]))
-  for (const branch of grid.definition.model.branches) {
-    const flowMw = grid.branches.get(branch.id)!.flowMw
-    residuals.set(branch.fromBusId, residuals.get(branch.fromBusId)! - flowMw)
-    residuals.set(branch.toBusId, residuals.get(branch.toBusId)! + flowMw)
-  }
-  return Math.max(...[...residuals.values()].map(Math.abs))
-}
-
-/** Sum of all injections of each energised island (MW); balance closes by construction. */
-const largestIslandInjectionSumMw = (grid: GridRuntimeInstance): number => {
-  const sums = new Map<string, number>()
-  for (const state of grid.busStates.values()) if (state.energized) sums.set(state.islandId, (sums.get(state.islandId) ?? 0) + state.netInjectionMw)
-  return Math.max(0, ...[...sums.values()].map(Math.abs))
-}
-
 /**
  * The largest online generator of the bus's island that can run at `targetMw` (between its minimum
  * stable generation and its availability); its set-point is moved there and the others carry the
@@ -586,9 +571,13 @@ describe('Halden coupling to the Nordic synchronous area', () => {
     console.info(`Halden 4×1,100 MW, export by area: ${[...byArea].map(([area, value]) => `${area} ${value.toFixed(1)} MW`).join(', ')}`)
     expect(byArea.get('SE3')! / exportMw).toBeGreaterThan(0.8)
     expect(Math.abs(byArea.get('FI')!) / exportMw).toBeLessThan(0.03)
-    // The ties carry exactly what leaves the boundary bus, less half their losses, which it carries as load.
+    // In the DC balance the ties carry exactly what leaves the boundary bus, less half their losses,
+    // which it carries as load.
     const boundary = run.grid.busStates.get(se3Boundary)!
-    expect(ties.reduce((sum, tie) => sum + tie.exportMw, 0)).toBeCloseTo(-boundary.netInjectionMw, 6)
+    const dcFlows = gridDcFlowsMw(run.grid)
+    const dcTieExportMw = run.grid.definition.model.branches.reduce((sum, branch, index) =>
+      branch.toBusId === se3Boundary ? sum + dcFlows[index]! : branch.fromBusId === se3Boundary ? sum - dcFlows[index]! : sum, 0)
+    expect(dcTieExportMw).toBeCloseTo(-boundary.netInjectionMw, 6)
   }, 120_000)
 
   test('a Halden unit trip keeps the nadir at or above 49.0 Hz without load shedding', () => {

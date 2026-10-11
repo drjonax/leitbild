@@ -104,7 +104,7 @@ describe('electric grid branch protection', () => {
     }
     const reference = cascade([1_000])
     console.info(`corridor cascade: ${reference.trips.map(trip => `${trip.assetId} ${trip.element} @${trip.elapsedSeconds} s`).join(', ')}`)
-    // Opening the direct line loads the A path at 131 % of its rating: its thermal element operates,
+    // Opening the direct line loads the A path at 129 % of its rating: its thermal element operates,
     // the B path then carries everything and trips instantaneously, and the separated islands' units
     // trip on RoCoF.
     expect(reference.trips.map(trip => [trip.assetId, trip.element])).toEqual([
@@ -116,7 +116,15 @@ describe('electric grid branch protection', () => {
     const twoSecond = cascade([2_000])
     expect(twoSecond).toEqual(reference)
     expect(cascade([60_000])).toEqual(reference)
-    expect(cascade([1_700, 2_300, 1_950, 2_051, 2_000, 1_999]).trips).toEqual(reference.trips)
+    // Branch relays sample on the fixed grid, so their trips repeat exactly under jitter. A unit's
+    // frequency protection is observed at the next network solution, which a jittered tick end can
+    // bring before the next relay sample: same units and elements, up to one sub-step earlier.
+    const jittered = cascade([1_700, 2_300, 1_950, 2_051, 2_000, 1_999]).trips
+    const branchTrips = (trips: typeof reference.trips) => trips.filter(trip => trip.assetId.startsWith('branch:'))
+    expect(branchTrips(jittered)).toEqual(branchTrips(reference.trips))
+    const unitTrips = (trips: typeof reference.trips) => trips.filter(trip => !trip.assetId.startsWith('branch:'))
+    expect(unitTrips(jittered).map(trip => [trip.assetId, trip.element])).toEqual(unitTrips(reference.trips).map(trip => [trip.assetId, trip.element]))
+    unitTrips(jittered).forEach((trip, index) => expect(Math.abs(trip.elapsedSeconds - unitTrips(reference.trips)[index]!.elapsedSeconds)).toBeLessThanOrEqual(corridorDefinition().automation.simulation.subStepSeconds + 1e-9))
   }, 120_000)
 
   test('an explicit preset field disables branch protection; the loading alarms still report', () => {

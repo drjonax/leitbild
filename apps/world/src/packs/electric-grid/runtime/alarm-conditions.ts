@@ -174,7 +174,9 @@ const branchObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettin
     }
     if (state.state !== 'closed') continue
     const continuousPercent = state.loadingPercent
-    const emergencyPercent = Math.abs(state.flowMw) / (definition.emergencyRatingMw * state.availability) * 100
+    // Loading acts on the rated flow: the AC apparent power, or the DC flow where the island's AC load flow failed.
+    const emergencyPercent = state.apparentPowerMva / (definition.emergencyRatingMw * state.availability) * 100
+    const carried = state.flowModel === 'ac' ? `${Math.round(state.apparentPowerMva).toLocaleString('en-GB')} MVA` : `${mw(state.apparentPowerMva)} (DC flow)`
     // Branches below every band's clear loading produce no observation; their records clear.
     if (continuousPercent < lowestClearPercent && emergencyPercent < lowestClearPercent) continue
     for (const band of settings.branchLoading) {
@@ -190,7 +192,7 @@ const branchObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettin
         islandId,
         raising: loadingPercent >= band.raisePercent,
           title: `Branch loading (${band.id})`,
-        message: `${definition.label} carries ${mw(Math.abs(state.flowMw))}, ${loadingPercent.toFixed(1)} % of its ${band.basis === 'continuous-rating' ? 'continuous' : 'emergency'} rating ${mw(ratingMw)}`,
+        message: `${definition.label} carries ${carried}, ${loadingPercent.toFixed(1)} % of its ${band.basis === 'continuous-rating' ? 'continuous' : 'emergency'} rating ${mw(ratingMw)}`,
         value: loadingPercent,
         limit: band.raisePercent,
         unit: '%',

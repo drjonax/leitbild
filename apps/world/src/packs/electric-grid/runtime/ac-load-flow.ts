@@ -111,6 +111,14 @@ const workFor = (grid: GridRuntimeInstance, plan: GridTopologyPlan): GridAcWork 
   return created
 }
 
+/** Where an island's flows come from: its converged AC load flow, the DC solution when it did not converge, none when de-energised. */
+export const gridIslandFlowModel = (grid: GridRuntimeInstance, island: { readonly id: string; readonly energized: boolean }): 'ac' | 'dc' | null => {
+  if (!island.energized) return null
+  const outcome = grid.acOutcomeByIsland.get(island.id)
+  if (outcome === undefined) throw new Error(`Grid ${grid.definition.gridId} island ${island.id} is energised but has no AC load-flow outcome`)
+  return outcome.converged ? 'ac' : 'dc'
+}
+
 /** The last AC solution of a Grid: voltages, angles and injections per bus, end flows per branch; NaN where none converged. */
 export const gridAcState = (grid: GridRuntimeInstance): AcPowerFlowState | null => work.get(grid)?.state ?? null
 

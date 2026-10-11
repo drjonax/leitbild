@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { gridIslandFlowModel } from '../runtime/ac-load-flow.ts'
 import { hvdcInjectionAtBusesMw } from '../runtime/hvdc.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from '../runtime/instance.ts'
 import { islandFixedInjectionMw, islandMembers } from '../runtime/island-input.ts'
@@ -24,6 +25,7 @@ export const gridIslandSchema = z.object({
   loadCount: count,
   energized: z.boolean().describe('True while a synchronised synchronous generator or a synchronous external system forms the island voltage; storage, converters and Plant connections cannot energise an island.'),
   frequencyHz: finite.nullable().describe('Island frequency; null when the island is not energised.'),
+  flowModel: z.enum(['ac', 'dc']).nullable().describe('ac: branch flows, loading and voltages from the island\'s converged AC load flow; dc: its AC load flow did not converge, so flows and loading are the DC solution\'s and voltages are unknown; null: not energised.'),
   generationMw: finite.describe('Generator output in the island (MW).'),
   storageMw: finite.describe('Net storage output, positive when discharging (MW).'),
   externalExchangeMw: finite.describe('Net power into the island from external systems, HVDC links and Plant connections, positive into the island (MW); 0 while de-energised.'),
@@ -64,6 +66,7 @@ const islandView = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: 
     loadCount: loads.length,
     energized: island.energized,
     frequencyHz: gridIslandFrequencyHz(island),
+    flowModel: gridIslandFlowModel(grid, island),
     generationMw: generators.reduce((sum, generator) => sum + generator.dispatchMw, 0),
     storageMw: structure.storage.reduce((sum, item) => sum + grid.storage.get(item.id)!.dispatchMw, 0),
     externalExchangeMw,

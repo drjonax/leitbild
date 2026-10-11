@@ -28,10 +28,12 @@ const scheduledImportMw = (grid: GridRuntimeInstance, systemId: string): number 
 }
 
 /**
- * Dispatch of one energised island: its online units share the island's residual demand
+ * Dispatch of one energised island: its online units cover the island's residual demand
  * (connected demand + losses − connected-system and HVDC injections − the scheduled exchange with
- * its synchronous external systems) between their minimum stable generation and their
- * availability, in proportion to that range. A synchronous external system takes what the units
+ * its synchronous external systems). Each starts from its Operating Point set-point, held between
+ * its minimum stable generation and its availability (minimum stable generation without one); the
+ * remaining difference is shared in proportion to each unit's room in its direction (headroom up
+ * to availability, or footroom down to minimum stable generation). A synchronous external system takes what the units
  * cannot: the surplus below their minimum as export, the deficit above their capacity as import,
  * within the transfer capability of its ties. An island without one whose
  * units' minimum exceeds the residual takes units offline, smallest first, until it fits (an
@@ -68,14 +70,24 @@ const dispatchIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, islan
       : `has ${residualMw.toFixed(1)} MW of residual demand below its online units' ${floorMw.toFixed(1)} MW minimum stable generation`
     throw new Error(`Grid ${grid.definition.gridId} dispatch is infeasible: island ${island.id} ${need}${externals.length === 0 ? '' : ` and its ties to ${externals.map(system => system.id).join(', ')} carry at most ${limitMw.toFixed(0)} MW`}`)
   }
-  const rangeMw = availableMw - floorMw
-  const share = rangeMw > 0 ? (unitsMw - floorMw) / rangeMw : 0
-  for (const definition of units) {
+  // The Operating Point's pattern, within each unit's operating range: run-of-river measured below
+  // its minimum stable generation runs at that minimum, and the rest of the island takes the difference.
+  const bases = units.map(definition => {
     const state = grid.generators.get(definition.id)!
     const unitMinimumMw = generatorMinimumStableMw(definition)
-    // The same share of every unit's range; at a share of 1 the floating-point sum may exceed availability by an ulp.
-    state.targetMw = Math.min(state.availableMw, unitMinimumMw + share * (state.availableMw - unitMinimumMw))
-  }
+    return definition.initialTargetMw === null ? unitMinimumMw : Math.min(state.availableMw, Math.max(unitMinimumMw, definition.initialTargetMw))
+  })
+  const deltaMw = unitsMw - bases.reduce((sum, base) => sum + base, 0)
+  const rooms = units.map((definition, index) => deltaMw >= 0
+    ? grid.generators.get(definition.id)!.availableMw - bases[index]!
+    : bases[index]! - generatorMinimumStableMw(definition))
+  const roomMw = rooms.reduce((sum, room) => sum + room, 0)
+  units.forEach((definition, index) => {
+    const state = grid.generators.get(definition.id)!
+    const shiftMw = deltaMw === 0 ? 0 : deltaMw * rooms[index]! / roomMw
+    // At full use of the room the floating-point sum may pass availability or the minimum by an ulp.
+    state.targetMw = Math.min(state.availableMw, Math.max(generatorMinimumStableMw(definition), bases[index]! + shiftMw))
+  })
   // The island holds at most one synchronous external system (definitions.ts).
   for (const system of externals) grid.externalSystems.get(system.id)!.scheduledImportMw = exchangeMw
   const allocation = allocateIslandReserves({
