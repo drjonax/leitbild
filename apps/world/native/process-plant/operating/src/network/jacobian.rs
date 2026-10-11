@@ -18,6 +18,56 @@ pub trait ConsistentSystem {
     fn rows_at(&mut self, t: f64, y: &[f64], yp: &[f64]) -> Result<Vec<f64>, Failure>;
     fn pencil_at(&mut self, t: f64, y: &[f64], yp: &[f64])
     -> Result<(Vec<f64>, Vec<f64>), Failure>;
+    /// The coordinates its stock-IDA run constrains to be nonnegative, and
+    /// the declared largest violation, in solver scaling, that a restart may
+    /// place on the bound ([`place_on_bounds`]). None: no placement.
+    fn restart_bounds(&self) -> Option<(Vec<usize>, f64)> {
+        None
+    }
+}
+
+/// One constrained coordinate placed on its bound at a restart.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Placement {
+    pub time: f64,
+    pub coordinate: usize,
+    /// The restart state's value before placement, in solver scaling.
+    pub value: f64,
+}
+
+/// The restart rule for constrained coordinates (sixth P2 case run, lead's
+/// rule under the owner's delegation): a coordinate constrained to be
+/// nonnegative that lies below zero by less than `tolerance`, in solver
+/// scaling, is placed on the bound, exactly zero, and reported. That is
+/// roundoff in an interpolated restart state, not inventory. A larger
+/// violation refuses, Fatal and naming the coordinate.
+pub fn place_on_bounds(
+    t: f64,
+    y: &mut [f64],
+    nonnegative: &[usize],
+    tolerance: f64,
+) -> Result<Vec<Placement>, Failure> {
+    if !(tolerance.is_finite() && tolerance >= 0.) {
+        return Err(Failure::Fatal(format!("restart bound tolerance {tolerance} is not admissible")));
+    }
+    let mut placed = Vec::new();
+    for &i in nonnegative {
+        let v = y[i];
+        if v < 0. {
+            if -v >= tolerance {
+                return Err(Failure::Fatal(format!(
+                    "the restart at t={t} s has coordinate {i} = {v:e} below its bound by more than {tolerance:e}"
+                )));
+            }
+            y[i] = 0.;
+            placed.push(Placement {
+                time: t,
+                coordinate: i,
+                value: v,
+            });
+        }
+    }
+    Ok(placed)
 }
 
 /// Largest magnitude of one class of rows and the first row carrying it.
@@ -43,6 +93,8 @@ fn largest(values: impl Iterator<Item = (usize, f64)>) -> Largest {
 pub struct ConsistentPair {
     /// The constraint projection that preceded the solve, if any.
     pub projection: Option<Projection>,
+    /// Constrained coordinates the start placed on their bounds.
+    pub placements: Vec<Placement>,
     pub constraint: Largest,
     pub residual: Largest,
     pub constraint_rate: Largest,
@@ -120,6 +172,7 @@ pub fn consistent_rates<S: ConsistentSystem>(
         );
         let pair = ConsistentPair {
             projection: None,
+            placements: Vec::new(),
             constraint,
             residual,
             constraint_rate,
@@ -243,8 +296,9 @@ pub fn project_constraints<S: ConsistentSystem>(
     })
 }
 
-/// An event or prepared start: [`project_constraints`], then
-/// [`consistent_rates`] at the projected state.
+/// An event or prepared start: the system's [`ConsistentSystem::restart_bounds`]
+/// placement, [`project_constraints`], then [`consistent_rates`] at the
+/// projected state.
 pub fn consistent_start<S: ConsistentSystem>(
     system: &mut S,
     t: f64,
@@ -254,9 +308,14 @@ pub fn consistent_start<S: ConsistentSystem>(
     bound: f64,
     passes: usize,
 ) -> Result<(Vec<f64>, ConsistentPair), Failure> {
+    let placements = match system.restart_bounds() {
+        Some((nonnegative, tolerance)) => place_on_bounds(t, y, &nonnegative, tolerance)?,
+        None => Vec::new(),
+    };
     let projection = project_constraints(system, t, y, differential, weights, bound, passes)?;
     let (yp, mut pair) = consistent_rates(system, t, y, differential, bound, passes)?;
     pair.projection = Some(projection);
+    pair.placements = placements;
     Ok((yp, pair))
 }
 
