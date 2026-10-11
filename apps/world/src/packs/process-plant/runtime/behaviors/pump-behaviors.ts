@@ -1,8 +1,9 @@
-import { primaryLoopIdForPump } from '../../graph/index.ts'
+import { primaryLoopIdForPump, type CompiledComponent, type VariablePath } from '../../graph/index.ts'
 import {
   componentVariablePath,
   type ComponentBehaviorDefinition,
   type ComponentInitialReconciliationDefinition,
+  type ProcessPlantBehaviorContext,
 } from '../behavior-contract.ts'
 import { approach, clamp, optionalParameterNumber, parameterNumber, relaxToward } from '../component-helpers.ts'
 import { pumpHeadResistanceFlowTarget } from '../physics.ts'
@@ -24,18 +25,30 @@ const reactorCoolantDeliveryFraction = ({ system, component, context }: PumpBeha
   return Math.sqrt(clamp(1 - pressure / Math.max(1e-6, shutoffPressure * speed * speed), 0, 1))
 }
 
+const maxSpeedFraction = 1.2
+
+// A pump whose flow a controller sets runs at the speed that delivers it,
+// and shows that speed as its own; any other runs at its commanded speed.
+const pumpSpeedFraction = (component: CompiledComponent, context: Pick<ProcessPlantBehaviorContext, 'readNumber' | 'write'>): number => {
+  const flowDemandPath = (component.parameters as Readonly<Record<string, unknown>>).flowDemandPath
+  if (typeof flowDemandPath !== 'string') return clamp(context.readNumber(componentVariablePath(component, 'speedFraction')), 0, maxSpeedFraction)
+  const speed = clamp(context.readNumber(flowDemandPath as VariablePath) / parameterNumber(component, 'nominalFlowKgPerS'), 0, maxSpeedFraction)
+  context.write(componentVariablePath(component, 'speedFraction'), speed)
+  return speed
+}
+
 export const pumpBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
     id: 'centrifugal-pump-flow',
     phase: 'solveFluidFlowComponents',
     componentKind: 'centrifugalPump',
-    reads: ['running', 'speedFraction', 'incoming electrical energized?', 'pressurizer.pressureMPa?'],
-    writes: ['runningState', 'flowKgPerS', 'speedRpm', 'demandMw'],
+    reads: ['running', 'speedFraction', 'flow demand?', 'incoming electrical energized?', 'pressurizer.pressureMPa?'],
+    writes: ['runningState', 'flowKgPerS', 'speedRpm', 'demandMw', 'speedFraction'],
     update: (input): void => {
       const { system, component, context } = input
       const running = context.readBoolean(componentVariablePath(component, 'running'))
         && componentHasElectricalPower(system, component, context)
-      const speed = clamp(context.readNumber(componentVariablePath(component, 'speedFraction')), 0, 1.2)
+      const speed = pumpSpeedFraction(component, context)
       context.write(componentVariablePath(component, 'runningState'), running)
       context.write(componentVariablePath(component, 'speedRpm'), running ? speed * optionalParameterNumber(component, 'nominalSpeedRpm', 3600) : 0)
       const targetFlow = running ? parameterNumber(component, 'nominalFlowKgPerS') * speed * reactorCoolantDeliveryFraction(input, speed) : 0
@@ -103,12 +116,12 @@ export const pumpInitialReconciliationDefinitions: ReadonlyArray<ComponentInitia
   {
     id: 'centrifugal-pump-initial-state',
     componentKind: 'centrifugalPump',
-    reads: ['running', 'speedFraction'],
-    writes: ['runningState', 'flowKgPerS', 'speedRpm', 'developedHeadPa', 'demandMw', 'loopFlowTargetKgPerS', 'loopFlowKgPerS'],
+    reads: ['running', 'speedFraction', 'flow demand?'],
+    writes: ['runningState', 'speedFraction', 'flowKgPerS', 'speedRpm', 'developedHeadPa', 'demandMw', 'loopFlowTargetKgPerS', 'loopFlowKgPerS'],
     reconcile: ({ system, component, context }): void => {
       const running = context.readBoolean(componentVariablePath(component, 'running')) && componentHasElectricalPower(system, component, context)
       context.write(componentVariablePath(component, 'runningState'), running)
-      const speed = clamp(context.readNumber(componentVariablePath(component, 'speedFraction')), 0, 1.2)
+      const speed = pumpSpeedFraction(component, context)
       const nominalFlow = parameterNumber(component, 'nominalFlowKgPerS')
       const nominalHead = parameterNumber(component, 'nominalHeadPa')
       const developedHead = running ? nominalHead * speed * speed : 0

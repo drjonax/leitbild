@@ -6,6 +6,7 @@ import {
   createProcessPlantProtectionRunner,
   createProcessPlantRuntime,
   createPwrReferencePlantDefinition,
+  type ProcessPlantIcConfig,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { saturationTemperatureCFromPressureMPa } from '../src/packs/process-plant/runtime/thermophysics.ts'
@@ -17,9 +18,9 @@ import { liquidEnthalpyKjPerKg, saturationPressureMPaFromTemperatureC } from '..
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:primary-th', loopCount: 4 }))
 const loops = ['A', 'B', 'C', 'D'] as const
 
-const started = () => {
+const started = (automation: ProcessPlantIcConfig = plant.automation) => {
   const runtime = createProcessPlantRuntime({ system: plant })
-  const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
+  const protection = createProcessPlantProtectionRunner({ system: plant, protection: automation })
   const read = (path: string): number => Number(runtime.readVariable(path as VariablePath))
   const evaluate = (): void => {
     protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-primary-th' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
@@ -190,19 +191,27 @@ describe('a steam generator tube rupture without charging or letdown', () => {
   }, 60_000)
 })
 
-describe('a pressurizer filling to solid', () => {
+describe('a pressurizer filling toward solid', () => {
   test('compresses its steam smoothly, without its pressure ringing from one solver step to the next', () => {
-    const plantRun = started()
-    plantRun.run(30)
+    // A loss of feedwater at power with every reactor trip but overtemperature
+    // delta-T out of service: the coolant heats up and swells into the
+    // pressurizer until its steam space is small.
+    const plantRun = started({
+      ...plant.automation,
+      rules: plant.automation.rules.filter(rule => rule.id === 'reactor-overtemperature-delta-t-trip'
+        || !rule.effects.some(effect => effect.type === 'writeSignal' && effect.signal.tagId === 'TRIP-BKR-A')),
+    })
+    plantRun.run(5)
     const { read } = plantRun
-    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'letdownValve.positionFraction' as VariablePath, value: 0 })
-    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'chargingPumpB.running' as VariablePath, value: true })
+    for (const command of commandsForProcessPlantAction({ actionId: 'loss-main-feedwater', parameters: {}, graph: plant.graph })) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
     // A small steam space over the whole system's compressible water: the
     // pressure follows the water's growth, step by solver step.
     let previousPressure = read('pressurizer.pressureMPa')
     let largestStepChange = 0
     let highestLevel = 0
-    for (let second = 0; second < 90; second++) {
+    for (let second = 0; second < 170; second++) {
       for (let step = 0; step < 10; step++) {
         plantRun.runtime.tick(100)
         const pressure = read('pressurizer.pressureMPa')
@@ -213,7 +222,78 @@ describe('a pressurizer filling to solid', () => {
       }
       plantRun.evaluate()
     }
-    expect(highestLevel).toBeGreaterThan(97)
+    expect(highestLevel).toBeGreaterThan(95)
     expect(largestStepChange).toBeLessThan(0.05)
+  }, 60_000)
+})
+
+describe('a pressurizer draining below its low-level cutoff', () => {
+  test('cuts off its heaters and isolates letdown at 17 %', () => {
+    const plantRun = started()
+    plantRun.run(30)
+    const { read } = plantRun
+    // A cold-leg leak of about 150 kg/s drains the pressurizer; the pressure
+    // falls with its level and the heaters come on.
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-cold-leg-a.leak.areaFraction' as VariablePath, value: 0.005 })
+    let heatedAbove = false
+    let cutOffAt: number | null = null
+    let heatedBelow = 0
+    plantRun.run(150, () => {
+      const level = read('pressurizer.levelPercent')
+      if (level > 20 && read('pressurizer.demandMw') > 0) heatedAbove = true
+      if (cutOffAt === null && read('pressurizer.heatersCutOff') === 1) cutOffAt = level
+      if (level < 16.5) heatedBelow = Math.max(heatedBelow, read('pressurizer.demandMw'))
+    })
+    expect(heatedAbove).toBe(true)
+    expect(cutOffAt).not.toBeNull()
+    expect(cutOffAt!).toBeGreaterThan(15)
+    expect(cutOffAt!).toBeLessThan(17)
+    expect(heatedBelow).toBe(0)
+    expect(read('pressurizer.heaterPowerMw')).toBeGreaterThan(0)
+    expect(read('vessel.letdownFlowKgPerS')).toBe(0)
+    expect(plantRun.active()).toContain('alarm:pzr-level-low-heaters-off:heaters-off-letdown-isolated')
+  }, 60_000)
+})
+
+describe('pressurizer level control', () => {
+  test('brings the level back to its program after a reactor trip, and holds it there', () => {
+    const plantRun = started()
+    plantRun.run(60)
+    const { read } = plantRun
+    // The program asks for 55 % at full-load Tavg, 25 % at no-load.
+    expect(read('pressurizer.levelProgramPercent')).toBeCloseTo(55, 0)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
+    let lowestLevel = 100
+    let highestCharging = 0
+    plantRun.run(300, () => {
+      lowestLevel = Math.min(lowestLevel, read('pressurizer.levelPercent'))
+      highestCharging = Math.max(highestCharging, read('vessel.chargingFlowKgPerS'))
+    })
+    // The coolant shrinks faster than charging, at its most about 150 gpm,
+    // can make up: the level dips toward the cutoff, which may isolate
+    // letdown, and an operator restores it.
+    expect(highestCharging).toBeGreaterThan(9.5)
+    expect(lowestLevel).toBeGreaterThan(12)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'letdownValve.positionFraction' as VariablePath, value: 1 })
+    plantRun.run(1_500)
+    // The level sits on the no-load end of the program, with charging back in
+    // balance with letdown.
+    expect(read('pressurizer.levelProgramPercent')).toBeLessThan(32)
+    expect(Math.abs(read('pressurizer.levelPercent') - read('pressurizer.levelProgramPercent'))).toBeLessThan(1.5)
+    expect(Math.abs(read('vessel.chargingFlowKgPerS') - read('vessel.letdownFlowKgPerS'))).toBeLessThan(1)
+    expect(read('pressurizer.pressureMPa')).toBeGreaterThan(15.3)
+  }, 60_000)
+
+  test('cuts charging back when letdown is isolated, so the pressurizer does not fill', () => {
+    const plantRun = started()
+    plantRun.run(30)
+    const { read } = plantRun
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'letdownValve.positionFraction' as VariablePath, value: 0 })
+    let highestLevel = 0
+    plantRun.run(600, () => { highestLevel = Math.max(highestLevel, read('pressurizer.levelPercent')) })
+    expect(read('vessel.chargingFlowKgPerS')).toBeLessThan(0.5)
+    expect(highestLevel).toBeLessThan(62)
+    expect(read('pressurizer.pressureMPa')).toBeLessThan(15.8)
+    expect(read('pressurizer.reliefFlowKgPerS')).toBe(0)
   }, 60_000)
 })

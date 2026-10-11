@@ -81,12 +81,18 @@ export const pwrFullPowerParameters = (graph: PlantGraphSpec, authored: Readonly
     nominalElectricMw: thermalMw * Number(t.grossCycleEfficiencyFraction),
   })
   for (const [service, flow] of [['feedwater', steamFlow], ['condensate', steamFlow], ['coolingWater', coolingWaterFlow]] as const) sizePumps(service, flow)
+  const meanTemperature = (thermal.inlet + thermal.outlet) / 2
   for (const component of graph.components) {
     if (component.kind === 'reactorVessel') {
       // The loops hold water at the operating point's mean temperature and pressure.
-      const meanTemperature = (thermal.inlet + thermal.outlet) / 2
       const density = compressedWaterState(meanTemperature, Number(coreParameters.nominalCoolantPressureMPa)).densityKgPerM3
       set(component, { referencePrimaryCoolantTemperatureC: meanTemperature, nominalPrimaryCoolantInventoryKg: density * Number(effective(component).primaryCoolantVolumeM3) })
+    }
+    // The pressurizer's level program reaches its full-load level at the
+    // operating point's mean coolant temperature.
+    if (component.kind === 'pressurizer') {
+      const levelControl = z.record(z.string(), z.unknown()).parse(effective(component).levelControl)
+      set(component, { levelControl: { ...levelControl, fullLoadAverageTemperatureC: meanTemperature } })
     }
     if (component.kind === 'processTank' && graph.connections.some(link => String(link.from).startsWith(`${component.id}.`) && link.service === 'feedwater')) set(component, { makeupFlowKgPerS: 0, maxOutletFlowKgPerS: steamFlow })
     // Letdown reaches the volume control tank at cold-leg temperature, since

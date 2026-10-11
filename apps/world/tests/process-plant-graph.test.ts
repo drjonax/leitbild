@@ -62,8 +62,11 @@ describe('process plant model composition', () => {
     // by the owner as a model-truth change, when reactor coolant breaks were
     // made to discharge at their critical flow, the coolant's moderator void
     // to feed back on reactivity and the pressurizer's compressed water to be
-    // tracked; PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('412b8142497d1b035298d134dac97ca54a89095e82c4236feb34d9e5e4c9bb19')
+    // tracked, and again when the pressurizer was given its level control
+    // (a Tavg level program and charging set to hold it) and its 17 % low-level
+    // cutoff of heaters and letdown; PWR Runs checkpointed before then must be
+    // restarted.
+    expect(system.modelDigest).toBe('2fb91172d26213e885cff84c0c6781c10edbabc9b1fe8a0c034b3ea152ce9c2a')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

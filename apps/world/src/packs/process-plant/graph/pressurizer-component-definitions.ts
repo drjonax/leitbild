@@ -1,7 +1,34 @@
 import { z } from 'zod'
-import type { ComponentDefinition, ComponentKind } from './model.ts'
+import type { CompiledComponent, ComponentDefinition, ComponentKind } from './model.ts'
 import { defineComponent, normalized, variable } from './component-definition-helpers.ts'
 import { aspect, fixedSemantics } from './semantics.ts'
+
+const pressurizerLevelControlSchema = z.object({
+  noLoadAverageTemperatureC: z.number().finite(),
+  noLoadLevelPercent: z.number().finite().min(0).max(100),
+  fullLoadAverageTemperatureC: z.number().finite(),
+  fullLoadLevelPercent: z.number().finite().min(0).max(100),
+  /** Charging flow at the program level: what balances normal letdown. */
+  nominalChargingFlowKgPerS: z.number().finite().nonnegative(),
+  maxChargingFlowKgPerS: z.number().finite().positive(),
+  /** Charging flow added for each percent the level stands below the program, and taken away for each above it. */
+  gainKgPerSPerPercent: z.number().finite().positive(),
+}).strict().refine(control => control.fullLoadAverageTemperatureC > control.noLoadAverageTemperatureC, {
+  message: 'pressurizer level program full-load temperature must be above its no-load temperature',
+})
+
+export type PressurizerLevelControl = z.infer<typeof pressurizerLevelControlSchema>
+
+const levelControlByComponent = new WeakMap<CompiledComponent, PressurizerLevelControl>()
+
+/** A pressurizer's level control, as its parameters declare it. */
+export const pressurizerLevelControl = (component: CompiledComponent): PressurizerLevelControl => {
+  const cached = levelControlByComponent.get(component)
+  if (cached !== undefined) return cached
+  const parsed = pressurizerLevelControlSchema.parse((component.parameters as Readonly<Record<string, unknown>>).levelControl)
+  levelControlByComponent.set(component, parsed)
+  return parsed
+}
 
 export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
   defineComponent({
@@ -37,6 +64,16 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       safetyValveAccumulationFraction: z.number().finite().positive().max(0.1),
       /** Pressure fall below the set pressure at which the safety valves reseat, a fraction of it. */
       safetyValveBlowdownFraction: z.number().finite().positive().max(0.2),
+      /** Level below which the heaters are cut off, so that none runs uncovered: 17 % in a Westinghouse plant. */
+      heaterCutoffLevelPercent: z.number().finite().min(0).max(100),
+      /**
+       * Level control: the level the program sets for the loops' mean
+       * temperature, rising in a straight line from its no-load to its
+       * full-load point so that the level follows the coolant's own swell, and
+       * the proportional controller that sets the charging flow to hold it
+       * there: normal charging on the program, more below it, less above.
+       */
+      levelControl: pressurizerLevelControlSchema,
     }),
     semantics: fixedSemantics({ keyValues: ['pressureMPa', 'levelPercent'],
       aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })],
@@ -91,6 +128,9 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'waterTemperatureC', label: 'Pressurizer water temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'steamTemperatureC', label: 'Pressurizer steam temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'heaterPowerMw', label: 'Pressurizer heater power', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'power', unit: 'MW', limits: { hardRange: { min: 0, max: 30 } } }),
+      variable({ path: 'levelProgramPercent', label: 'Pressurizer level program', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
+      variable({ path: 'chargingFlowDemandKgPerS', label: 'Charging flow demanded by pressurizer level control', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
+      variable({ path: 'heatersCutOff', label: 'Pressurizer heaters cut off on low level', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'demandMw', label: 'Pressurizer electrical demand', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'sprayFlowKgPerS', label: 'Pressurizer spray flow', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'flowRate', unit: 'kg/s', limits: { hardRange: { min: 0, max: 250 } } }),
       variable({ path: 'reliefValvePositionFraction', label: 'Pressurizer relief valve position demand', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),

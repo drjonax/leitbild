@@ -215,6 +215,35 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
       annunciator: pzrAlarm,
     })],
   }),
+  // The low-level bistable at 17 % cuts off every heater, so that none runs
+  // uncovered, and isolates letdown, so that the system keeps its water.
+  // Letdown stays isolated until an operator opens it again.
+  rule({
+    id: 'pzr-level-low-letdown-isolation',
+    label: 'Pressurizer level low letdown isolation',
+    ruleClass: 'normalControl',
+    condition: comparison({ tagId: 'PZR-HTR-LO-LVL' }, '==', true),
+    latch: false,
+    resetWhenClear: true,
+    effects: [write('isolate-letdown', { tagId: 'LET-ISOL' }, 0)],
+  }),
+  rule({
+    id: 'pzr-level-low-heaters-off',
+    label: 'Pressurizer level low, heaters off',
+    ruleClass: 'alarm',
+    condition: comparison({ tagId: 'PZR-HTR-LO-LVL' }, '==', true),
+    clearCondition: comparison({ tagId: 'PZR-HTR-LO-LVL' }, '==', false),
+    clearDelayMs: 1_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'heaters-off-letdown-isolated',
+      title: 'Pressurizer level low: heaters off, letdown isolated',
+      message: 'Pressurizer level is below the 17 % cutoff: every heater is off and letdown is isolated.',
+      severity: 'critical',
+      annunciator: annunciator({ ...pzrAlarm, priority: 'urgent' }),
+    })],
+  }),
   rule({
     id: 'pzr-level-high',
     label: 'Pressurizer level high',

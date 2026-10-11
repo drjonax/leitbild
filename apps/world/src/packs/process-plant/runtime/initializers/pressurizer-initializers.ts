@@ -1,4 +1,5 @@
 import { parameterNumber } from '../component-helpers.ts'
+import { pressurizerLevelControl } from '../../graph/pressurizer-component-definitions.ts'
 import { saturatedWaterSteam } from '../water-properties.ts'
 import type { ComponentInitialValueDefinition } from './model.ts'
 
@@ -26,6 +27,12 @@ export const pressurizerInitialValueDefinitions: ReadonlyArray<ComponentInitialV
       if (localPath === 'waterTemperatureC') return saturation.temperatureC
       if (localPath === 'steamTemperatureC') return saturation.temperatureC
       if (localPath === 'heaterPowerMw') return 0
+      // The level program and the charging it sets start at full load,
+      // where the plant starts; the initial reconciliation fits the program
+      // to the loops' initial temperature.
+      if (localPath === 'levelProgramPercent') return pressurizerLevelControl(component).fullLoadLevelPercent
+      if (localPath === 'chargingFlowDemandKgPerS') return pressurizerLevelControl(component).nominalChargingFlowKgPerS
+      if (localPath === 'heatersCutOff') return nominalLevelFraction * 100 < parameterNumber(component, 'heaterCutoffLevelPercent')
       if (localPath === 'demandMw') return 0
       if (localPath === 'sprayFlowKgPerS') return 0
       if (localPath === 'reliefValvePositionFraction') return 0

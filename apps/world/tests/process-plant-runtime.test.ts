@@ -474,7 +474,9 @@ describe('process plant runtime', () => {
   })
 
   test('CVCS charging carries tank solute into primary coolant and contributes boron feedback', () => {
+    // The charging pump at its own speed, apart from pressurizer level control.
     const system = compiledSystemWithParameters({
+      chargingPump: { flowDemandPath: undefined },
       volumeControlTank: {
         initialSoluteConcentrationPpm: 2500,
         makeupFlowKgPerS: 20,
@@ -1423,9 +1425,11 @@ describe('process plant runtime', () => {
       largestOutsurge = Math.min(largestOutsurge, Number(runtime.readVariable(valueOf('vessel.surgeFlowKgPerS'))))
     }
 
-    // The loops stay full and the pressurizer gives up the water the leak takes.
+    // The loops stay full and the pressurizer gives up the water the leak
+    // takes; level control's charging, at its 10 kg/s most, makes up little.
     expect(largestOutsurge).toBeLessThan(-100)
     expect(Number(runtime.readVariable(valueOf('pressurizer.levelPercent')))).toBeLessThan(initialLevel - 10)
+    expect(Number(runtime.readVariable(valueOf('vessel.chargingFlowKgPerS')))).toBeGreaterThan(9)
     expect(Number(runtime.readVariable(valueOf('vessel.primaryCoolantInventoryKg')))).toBeGreaterThan(initialInventory * 0.97)
     // Only the surge line's lag behind the leak leaves room in the loops.
     expect(Number(runtime.readVariable(valueOf('vessel.loopVoidFraction')))).toBeLessThan(0.002)
@@ -2166,7 +2170,7 @@ describe('process plant runtime', () => {
   test('CVCS concentration is carried through process links into reactor vessel inventory', () => {
     const system = compiledSystemWithParameters({
       volumeControlTank: { initialSoluteConcentrationPpm: 2_400 },
-      chargingPump: { initialSpeedFraction: 1 },
+      chargingPump: { flowDemandPath: undefined },
     })
     const runtime = createProcessPlantRuntime({ system })
     const initialVesselConcentration = runtime.readVariable(valueOf('vessel.boronConcentrationPpm'))

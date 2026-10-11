@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ComponentDefinition, ComponentKind } from './model.ts'
+import { type ComponentDefinition, type ComponentKind, variablePathSchema } from './model.ts'
 import { defineComponent, variable } from './component-definition-helpers.ts'
 import { aspect, fixedSemantics } from './semantics.ts'
 
@@ -34,6 +34,12 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
        * less as that pressure rises, along a parabolic pump curve.
        */
       reactorCoolantShutoffPressureMPa: z.number().finite().positive().optional(),
+      /**
+       * For a pump whose flow a controller sets, as pressurizer level control
+       * sets the charging pump's: the variable holding the flow it is to
+       * deliver. It runs at the speed that delivers it, within its speed range.
+       */
+      flowDemandPath: variablePathSchema.optional(),
     }),
     // A pump runs while it is commanded to run and its motor has power.
     semantics: fixedSemantics({ aspects: [aspect('running', { variable: 'runningState', reading: 'true' }, 'running')], ratedOutflow: [{ port: 'outlet', parameter: 'nominalFlowKgPerS' }] }),

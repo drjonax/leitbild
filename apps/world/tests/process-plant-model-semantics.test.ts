@@ -253,8 +253,8 @@ describe('link flow', () => {
     // the core's 3,400 MW and the reactor coolant pumps' 18 MW raise.
     expect(ratedFlowForLink(graph, linkById('feedwater-control-valve-b-to-sg-b'))).toBeCloseTo(756, 0)
     expect(ratedFlowForLink(graph, linkById('pressurizer-relief-to-tank'))).toBe(componentById(graph, 'pressurizer').semantics.ratedOutflow[0]!.flowKgPerS)
-    // The letdown line carries the vessel's rated letdown.
-    expect(ratedFlowForLink(graph, linkById('letdown-to-vct'))).toBe(90)
+    // The letdown line carries the vessel's rated letdown, about 75 gpm.
+    expect(ratedFlowForLink(graph, linkById('letdown-to-vct'))).toBe(5)
   })
 
   test('a header joins all its ports, so a rating passes through it', () => {

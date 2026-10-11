@@ -1,4 +1,5 @@
 import type { CompiledComponent } from '../../graph/index.ts'
+import { pressurizerLevelControl, type PressurizerLevelControl } from '../../graph/pressurizer-component-definitions.ts'
 import {
   componentVariablePath,
   type ComponentBehaviorDefinition,
@@ -112,6 +113,20 @@ const pressureWaterHolds = (input: {
   return low
 }
 
+/** The level the program sets for the loops' mean temperature. */
+const levelProgramPercent = (control: PressurizerLevelControl, meanTemperatureC: number): number => {
+  const fraction = clamp(
+    (meanTemperatureC - control.noLoadAverageTemperatureC) / (control.fullLoadAverageTemperatureC - control.noLoadAverageTemperatureC),
+    0,
+    1,
+  )
+  return control.noLoadLevelPercent + fraction * (control.fullLoadLevelPercent - control.noLoadLevelPercent)
+}
+
+/** The charging flow level control demands for a level against its program. */
+const chargingFlowDemand = (control: PressurizerLevelControl, programPercent: number, levelPercent: number): number =>
+  clamp(control.nominalChargingFlowKgPerS + control.gainKgPerSPerPercent * (programPercent - levelPercent), 0, control.maxChargingFlowKgPerS)
+
 export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
     id: 'pressurizer-pressure-inventory-state',
@@ -157,6 +172,9 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'safetyValvesLiftFraction',
       'safetyValveFlowKgPerS',
       'compressedWaterVolumeM3',
+      'heatersCutOff',
+      'levelProgramPercent',
+      'chargingFlowDemandKgPerS',
       'demandMw',
     ],
     update: ({ system, component, context }): void => {
@@ -171,9 +189,13 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const saturation = saturatedWaterSteam(pressure)
       const latentHeat = saturation.vapourEnthalpyKjPerKg - saturation.liquidEnthalpyKjPerKg
 
-      const heaterPower = componentHasElectricalPower(system, component, context, 'heaterPower')
+      // Below the low-level cutoff the heaters' breakers open, whatever their
+      // command, so that none runs uncovered.
+      const heatersCutOff = context.readNumber(componentVariablePath(component, 'levelPercent')) < parameterNumber(component, 'heaterCutoffLevelPercent')
+      const heaterPower = !heatersCutOff && componentHasElectricalPower(system, component, context, 'heaterPower')
         ? clamp(context.readNumber(componentVariablePath(component, 'heaterPowerMw')), 0, 50)
         : 0
+      context.write(componentVariablePath(component, 'heatersCutOff'), heatersCutOff)
       context.write(componentVariablePath(component, 'demandMw'), heaterPower)
       const sprayFlow = pressurizerSprayFlowKgPerS(component, context)
       const reliefValvePosition = clamp(context.readNumber(componentVariablePath(component, 'reliefValvePositionFraction')), 0, 1)
@@ -336,7 +358,16 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       context.write(componentVariablePath(component, 'steamVolumeM3'), steamVolume)
       context.write(componentVariablePath(component, 'waterInventoryBalanceResidualKg'), water - currentWater - waterFlows * dt)
       context.write(componentVariablePath(component, 'steamMassBalanceResidualKg'), steam - currentSteam - steamNetFlow * dt)
-      context.write(componentVariablePath(component, 'levelPercent'), clamp(waterVolume / volume * 100, 0, 100))
+      // Level control: the program sets the level for the loops' mean
+      // temperature, and the controller runs normal charging on the program,
+      // more for a level below it and less for one above, within what the
+      // charging can deliver.
+      const level = clamp(waterVolume / volume * 100, 0, 100)
+      const levelControl = pressurizerLevelControl(component)
+      const program = levelProgramPercent(levelControl, (hotLegTemperature + coldLegTemperature) / 2)
+      context.write(componentVariablePath(component, 'levelPercent'), level)
+      context.write(componentVariablePath(component, 'levelProgramPercent'), program)
+      context.write(componentVariablePath(component, 'chargingFlowDemandKgPerS'), chargingFlowDemand(levelControl, program, level))
       context.write(componentVariablePath(component, 'compressedWaterVolumeM3'), compressedWater)
       context.write(componentVariablePath(component, 'pressureMPa'), clamp(nextPressure, 0.1, 22))
     },
@@ -345,10 +376,35 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
 
 export const pressurizerInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
   {
+    id: 'pressurizer-level-program-initial-state',
+    componentKind: 'pressurizer',
+    // The program reads the loops' temperatures once the links are solved.
+    afterLinks: true,
+    reads: ['pressureMPa', 'levelPercent', 'reactorCore.coolantInletTemperatureC', 'reactorCore.coolantOutletTemperatureC'],
+    writes: ['levelProgramPercent', 'chargingFlowDemandKgPerS'],
+    reconcile: ({ system, component, context }): void => {
+      const core = primarySystemReactorCore(system)
+      const meanTemperature = core === null
+        ? saturationTemperatureCFromPressureMPa(context.readNumber(componentVariablePath(component, 'pressureMPa')))
+        : (
+          context.readNumber(componentVariablePath(core, 'coolantInletTemperatureC'))
+          + context.readNumber(componentVariablePath(core, 'coolantOutletTemperatureC'))
+        ) / 2
+      const levelControl = pressurizerLevelControl(component)
+      const program = levelProgramPercent(levelControl, meanTemperature)
+      context.write(componentVariablePath(component, 'levelProgramPercent'), program)
+      context.write(componentVariablePath(component, 'chargingFlowDemandKgPerS'), chargingFlowDemand(
+        levelControl,
+        program,
+        context.readNumber(componentVariablePath(component, 'levelPercent')),
+      ))
+    },
+  },
+  {
     id: 'pressurizer-saturated-initial-state',
     componentKind: 'pressurizer',
     reads: ['pressureMPa', 'levelPercent'],
-    writes: ['waterInventoryKg', 'steamMassKg', 'steamVolumeM3', 'waterTemperatureC', 'steamTemperatureC'],
+    writes: ['waterInventoryKg', 'steamMassKg', 'steamVolumeM3', 'waterTemperatureC', 'steamTemperatureC', 'heatersCutOff'],
     // A pressurizer starts boiling at its initial pressure, so an initial
     // pressure set on its own is a state the plant can hold.
     reconcile: ({ component, context }): void => {
@@ -361,6 +417,7 @@ export const pressurizerInitialReconciliationDefinitions: ReadonlyArray<Componen
       context.write(componentVariablePath(component, 'steamVolumeM3'), volume * (1 - levelFraction))
       context.write(componentVariablePath(component, 'waterTemperatureC'), saturation.temperatureC)
       context.write(componentVariablePath(component, 'steamTemperatureC'), saturation.temperatureC)
+      context.write(componentVariablePath(component, 'heatersCutOff'), levelFraction * 100 < parameterNumber(component, 'heaterCutoffLevelPercent'))
     },
   },
 ]
