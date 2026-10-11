@@ -118,11 +118,11 @@ export interface AnnunciatorState {
   readonly severity: ComposedDisplayAlarm['severity'] | null
   /**
    * What its active alarms and trips do, by their first-out groups' short
-   * labels ("RX TRIP", "SI", "AFW START"), the reactor trip first, then as
-   * the I&C declares them; each first out where this system holds its
-   * group's first-out. Never "TRIP" for an actuation that is not the
-   * reactor trip (QA review of run 22: SI, AFW START and FWI tiles read
-   * "TRIP 1st").
+   * labels ("RX TRIP", "SI", "AFW START"), each first out where this system
+   * holds its group's first-out: those first out first, so a narrow tile
+   * keeps them, then the reactor trip, then as the I&C declares them. Never
+   * "TRIP" for an actuation that is not the reactor trip (QA review of run
+   * 22: SI, AFW START and FWI tiles read "TRIP 1st").
    */
   readonly actions: ReadonlyArray<{ readonly name: string; readonly firstOut: boolean }>
   readonly firstOut: boolean
@@ -137,15 +137,16 @@ export const annunciatorStates = (
   const rules = new Set(system.ruleIds)
   const active = alarms.filter(alarm => alarm.active && rules.has(alarm.ruleId))
   const worst = [...active].sort((left, right) => severityRank[left.severity] - severityRank[right.severity])[0]
-  const named = [...new Set(active.flatMap(alarm => annunciation.groups[alarm.id] ?? []))]
-    .sort((left, right) => annunciation.groupOrder.indexOf(left) - annunciation.groupOrder.indexOf(right))
+  const actions = [...new Set(active.flatMap(alarm => annunciation.groups[alarm.id] ?? []))]
+    .map(name => ({ name, firstOut: active.some(alarm => annunciation.groups[alarm.id] === name && firstOutFlag(alarm, annunciation) !== null) }))
+    .sort((left, right) => Number(right.firstOut) - Number(left.firstOut) || annunciation.groupOrder.indexOf(left.name) - annunciation.groupOrder.indexOf(right.name))
   return {
     id: system.id,
     name: system.name,
     active: active.length,
     unacknowledged: active.filter(alarm => !alarm.acknowledged).length,
     severity: worst?.severity ?? null,
-    actions: named.map(name => ({ name, firstOut: active.some(alarm => annunciation.groups[alarm.id] === name && firstOutFlag(alarm, annunciation) !== null) })),
+    actions,
     firstOut: active.some(alarm => firstOutFlag(alarm, annunciation) !== null),
   }
 })

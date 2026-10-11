@@ -391,15 +391,15 @@ describe('annunciator tiles', () => {
     ], annunciation)
     expect(states.map(state => state.actions)).toEqual([
       [{ name: 'RX TRIP', firstOut: true }],
-      // Safety injection trips the reactor too: the reactor trip is named first, but its first-out lies elsewhere.
-      [{ name: 'RX TRIP', firstOut: false }, { name: 'SI', firstOut: true }],
+      // Safety injection trips the reactor too: its own first-out leads, then the reactor trip, whose first-out lies elsewhere.
+      [{ name: 'SI', firstOut: true }, { name: 'RX TRIP', firstOut: false }],
       // FWI is a group of one: being first among one says nothing.
       [{ name: 'AFW START', firstOut: true }, { name: 'FWI', firstOut: false }],
     ])
-    // As many whole as the tile's width holds, the rest counted; never cut.
+    // As many whole as the tile's width holds, the rest counted, a first-out kept; never cut.
     const room = (characters: number) => (text: string) => text.length <= characters
-    expect(tileActions(states[1]!.actions, room(20))).toBe('RX TRIP · SI 1st')
-    expect(tileActions(states[1]!.actions, room(12))).toBe('RX TRIP +1')
+    expect(tileActions(states[1]!.actions, room(20))).toBe('SI 1st · RX TRIP')
+    expect(tileActions(states[1]!.actions, room(12))).toBe('SI 1st +1')
     expect(tileActions(states[2]!.actions, room(6))).toBe('1st')
     expect(tileActions([], room(20))).toBe('')
   })
