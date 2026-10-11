@@ -255,7 +255,8 @@ Action: Test-only handover.
     const identity = { plantId: 'plant:halden-a1', artifact: 'authored-spec' }
     const index = await read(identity)
     expect(index.status).toBe(200)
-    expect(index.body!.result).toMatchObject({ mode: 'index', hasMore: false })
+    // The four-loop Plant has more components than a default index page of 100 holds.
+    expect(index.body!.result).toMatchObject({ mode: 'index', returned: 100, hasMore: true })
     expect(index.body!.result).not.toHaveProperty('content')
     const files = index.body!.result.sourceFiles as Array<{ path: string; sha256: string }>
     const source = await read({ ...identity, mode: 'source', sourcePath: files[0]!.path, expectedSha256: files[0]!.sha256, lineCount: 2 })
