@@ -83,6 +83,12 @@ export const syntheticHydroUnit = (unit: Pick<GridGeneratorDefinition, 'id' | 'l
 })
 const voltageClassesKv = [132, 300, 420] as const
 
+// The fixture puts 400 MW units on buses of every voltage class, so its intact base case loads
+// 132 kV lines up to 5.4 times a single circuit's rating. Ratings are the class ratings times the
+// smallest whole multiple that leaves every branch of the 10k-bus case below its continuous rating
+// (highest loading 89 %), so the fixture as shipped is a steady grid rather than a relay cascade.
+const ratingMultiple = 6
+
 const branchFor = (index: number, from: GridBusDefinition, to: GridBusDefinition): GridBranchDefinition => {
   const kv = Math.min(from.nominalKv, to.nominalKv)
   // Rough corridor length from degree offsets at ~60° N (km per degree of longitude/latitude).
@@ -97,8 +103,8 @@ const branchFor = (index: number, from: GridBusDefinition, to: GridBusDefinition
     fromBusId: from.id,
     toBusId: to.id,
     nominalKv: kv,
-    ratingMw: kv >= 400 ? 1800 : kv >= 300 ? 900 : 200,
-    emergencyRatingMw: kv >= 400 ? 2100 : kv >= 300 ? 1050 : 240,
+    ratingMw: (kv >= 400 ? 1800 : kv >= 300 ? 900 : 200) * ratingMultiple,
+    emergencyRatingMw: (kv >= 400 ? 2100 : kv >= 300 ? 1050 : 240) * ratingMultiple,
     lengthKm,
     circuits: 1,
     emergencyDurationSeconds: 900,
