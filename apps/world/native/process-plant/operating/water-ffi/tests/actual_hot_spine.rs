@@ -1263,3 +1263,233 @@ fn actual_hot_spine_current_state_receipts_and_complete_direction() {
         "same_stage_value_direction_fingerprints":fingerprints,"same_stage_scalar_count_per_case":snapshots[0].len()})
     );
 }
+
+/// Property query kinds of the hot-spine thermal blocks, timed per call.
+#[derive(Default)]
+struct Timed {
+    /// Per kind (fixed liquid chart, liquid, vapor, saturation, wall
+    /// saturated vapor density) and seed (0 value-only, 1 directional):
+    /// the wall time of every call, in microseconds.
+    calls: RefCell<[[Vec<f64>; 2]; 5]>,
+    keys: RefCell<[BTreeSet<[u64; 4]>; 5]>,
+}
+impl Timed {
+    fn time<T>(&self, kind: usize, key: [f64; 4], f: impl FnOnce() -> T) -> T {
+        let started = std::time::Instant::now();
+        let result = f();
+        let micros = 1e6 * started.elapsed().as_secs_f64();
+        let seeded = usize::from(key[1] != 0. || key[3] != 0.);
+        self.calls.borrow_mut()[kind][seeded].push(micros);
+        self.keys.borrow_mut()[kind].insert(key.map(f64::to_bits));
+        result
+    }
+}
+impl WaterProperties for Timed {
+    fn liquid(&self, p: Scalar, t: Scalar) -> thermal::Result<thermal::WaterPoint> {
+        self.time(1, [p.value, p.direction, t.value, t.direction], || {
+            If97.liquid(p, t)
+        })
+    }
+    fn vapor(&self, p: Scalar, t: Scalar) -> thermal::Result<thermal::WaterPoint> {
+        self.time(2, [p.value, p.direction, t.value, t.direction], || {
+            If97.vapor(p, t)
+        })
+    }
+    fn saturation(&self, p: Scalar) -> thermal::Result<thermal::Saturation> {
+        self.time(3, [p.value, p.direction, 0., 0.], || If97.saturation(p))
+    }
+    fn saturated_vapor_density(&self, t: Scalar) -> thermal::Result<Scalar> {
+        self.time(4, [t.value, t.direction, 0., 0.], || {
+            If97.saturated_vapor_density(t)
+        })
+    }
+}
+impl hs::Properties for Timed {
+    fn fixed_liquid(&self, v: f64, p: Scalar, t: Scalar) -> hs::Result<hs::WaterChart> {
+        self.time(0, [p.value, p.direction, t.value, t.direction], || {
+            hs::Properties::fixed_liquid(&If97, v, p, t)
+        })
+    }
+}
+
+/// Property profile of the hot-spine thermal blocks (Team PERF): a cost
+/// measurement only, not hot-spine evidence. The prepared current state is
+/// evaluated value-only and with the complete-direction seed of the receipt
+/// test above; whole evaluations are timed in thread CPU and every property
+/// query by kind in wall time.
+#[test]
+#[ignore = "requires actual owner-generated LD01_OPERATING_HOT_SPINE_PACKET; cost report only"]
+fn actual_hot_spine_property_profile() {
+    unsafe extern "C" {
+        fn pthread_set_qos_class_self_np(class: u32, priority: i32) -> i32;
+        fn clock_gettime(clock: i32, out: *mut [i64; 2]) -> i32;
+    }
+    let cpu = || {
+        let mut t = [0i64; 2];
+        // SAFETY: one live stack timespec (two i64 fields); the C library
+        // writes it and keeps no pointer. 16/3: CLOCK_THREAD_CPUTIME_ID.
+        let status =
+            unsafe { clock_gettime(if cfg!(target_os = "macos") { 16 } else { 3 }, &mut t) };
+        assert_eq!(status, 0);
+        t[0] as f64 + t[1] as f64 * 1e-9
+    };
+    if cfg!(target_os = "macos") {
+        // SAFETY: plain scalar arguments; QOS_CLASS_USER_INTERACTIVE for
+        // this thread only, which changes no computation.
+        assert_eq!(unsafe { pthread_set_qos_class_self_np(0x21, 0) }, 0);
+    }
+    let path = std::env::var_os("LD01_OPERATING_HOT_SPINE_PACKET")
+        .expect("actual combined packet required");
+    let packet: Value = serde_json::from_reader(std::fs::File::open(path).unwrap()).unwrap();
+    let model = model(&packet);
+    let mut current = Current::from_packet(&packet, &model);
+    current.initialize(&model);
+    let value_only = current.shift(0.);
+    let mut seeded = current.shift(0.);
+    seeded.pressure.direction = 1000.;
+    for p in &mut seeded.local_pressure {
+        p.direction = 1000.;
+    }
+    for t in &mut seeded.water_t {
+        t.direction = 0.1;
+    }
+    for f in &mut seeded.fuel {
+        f.inner.direction = 3.;
+        f.clad_outer.direction = 0.02;
+    }
+    for t in &mut seeded.sg {
+        t.direction = 0.03;
+    }
+    for c in &mut seeded.secondary {
+        c.pressure.direction = 1000.;
+        c.temperature = If97.saturation(c.pressure).unwrap().temperature;
+    }
+    let f = vec![[s(0.); 3]; model.bands.len()];
+    let he = vec![s(0.); model.helium_nr.len()];
+    let passive = vec![s(0.); model.passive_mass.len()];
+    let sg = vec![s(0.); model.sg.len()];
+    let water = vec![s(0.); model.volumes.len()];
+    let zero = vec![s(0.); model.volumes.len()];
+    let evaluate_with = |p: &dyn PropertiesDyn, x: &Current, w: &mut hs::Work| {
+        p.evaluate(&model, x, &f, &he, &passive, &sg, &water, &zero, w)
+    };
+    let mut report = serde_json::Map::new();
+    for (name, x) in [
+        ("value_only", &value_only),
+        ("value_and_direction", &seeded),
+    ] {
+        let mut w = model.workspace().unwrap();
+        let mut best = f64::INFINITY;
+        let mut samples = Vec::new();
+        for _ in 0..7 {
+            let started = cpu();
+            for _ in 0..10 {
+                evaluate_with(&If97, x, &mut w);
+            }
+            let per = (cpu() - started) / 10.;
+            samples.push(per);
+            best = best.min(per);
+        }
+        samples.sort_by(f64::total_cmp);
+        let timed = Timed::default();
+        evaluate_with(&timed, x, &mut w);
+        let calls = timed.calls.into_inner();
+        let keys = timed.keys.into_inner();
+        let mut kinds = serde_json::Map::new();
+        let mut property_us = 0.;
+        for (k, label) in [
+            "fixed_liquid",
+            "liquid",
+            "vapor",
+            "saturation",
+            "wall_saturated_vapor_density",
+        ]
+        .iter()
+        .enumerate()
+        {
+            for (seed, mode) in ["value", "direction"].iter().enumerate() {
+                let mut v = calls[k][seed].clone();
+                if v.is_empty() {
+                    continue;
+                }
+                v.sort_by(f64::total_cmp);
+                let total: f64 = v.iter().sum();
+                property_us += total;
+                kinds.insert(
+                    format!("{label}_{mode}"),
+                    serde_json::json!({"calls": v.len(), "median_us": v[v.len() / 2],
+                        "p95_us": v[((v.len() - 1) as f64 * 0.95).round() as usize], "total_us": total}),
+                );
+            }
+            kinds.insert(
+                format!("{label}_unique_keys"),
+                serde_json::json!(keys[k].len()),
+            );
+        }
+        report.insert(
+            name.into(),
+            serde_json::json!({"evaluate_cpu_us": {"best": 1e6 * best, "median": 1e6 * samples[samples.len() / 2],
+                "p95": 1e6 * samples[((samples.len() - 1) as f64 * 0.95).round() as usize]},
+                "property_wall_us": property_us, "queries": kinds}),
+        );
+    }
+    println!(
+        "{}",
+        serde_json::json!({"kind": "perf-hot-spine-property-profile-NOT-EVIDENCE",
+            "scope": "prepared current state of the actual package, one workspace, 7 x 10 evaluations in thread CPU per mode; queries in wall time from one further evaluation",
+            "profile": report})
+    );
+}
+/// One hot-spine evaluation through either property implementation.
+trait PropertiesDyn {
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate(
+        &self,
+        model: &hs::Model,
+        x: &Current,
+        f: &[[Scalar; 3]],
+        he: &[Scalar],
+        passive: &[Scalar],
+        sg: &[Scalar],
+        water: &[Scalar],
+        zero: &[Scalar],
+        w: &mut hs::Work,
+    );
+}
+impl<P: hs::Properties> PropertiesDyn for P {
+    fn evaluate(
+        &self,
+        model: &hs::Model,
+        x: &Current,
+        f: &[[Scalar; 3]],
+        he: &[Scalar],
+        passive: &[Scalar],
+        sg: &[Scalar],
+        water: &[Scalar],
+        zero: &[Scalar],
+        w: &mut hs::Work,
+    ) {
+        model
+            .evaluate(
+                self,
+                x.state(),
+                hs::Rates {
+                    fuel: f,
+                    helium: he,
+                    passive,
+                    sg,
+                    water_mass: zero,
+                    water,
+                    boron: zero,
+                },
+                hs::External {
+                    mass: zero,
+                    energy: zero,
+                    boron: zero,
+                },
+                w,
+            )
+            .unwrap();
+        std::hint::black_box(&*w);
+    }
+}
