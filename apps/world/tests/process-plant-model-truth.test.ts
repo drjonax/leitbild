@@ -13,6 +13,7 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
+import { processPlantElectricalPortsAt } from '../src/packs/process-plant/electrical-ports.ts'
 import { itemBinding, flapText, framingRules } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { indexSample, itemLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
@@ -958,5 +959,48 @@ describe('the condenser hotwell', () => {
     expect(alarmedAt).not.toBeNull()
     expect(alarmedAt!).toBeLessThan(35)
     expect(alarmedAt!).toBeGreaterThan(25)
+  })
+})
+
+describe('a loss of load', () => {
+  const lossOfLoad = 'trip:turbine-trip-on-loss-of-load:loss-of-load-turbine-trip'
+  // As the simulation adapter writes a dead grid connection: unavailable, no voltage, no frequency.
+  const gridBoundary = (plantRun: ReturnType<typeof started>, live: boolean) => {
+    for (const [path, value] of [['offsiteGrid.available', live], ['offsiteGrid.voltageFraction', live ? 1 : 0], ['offsiteGrid.frequencyHz', live ? 50 : 0]] as const) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: path as VariablePath, value })
+    }
+  }
+  const port = (plantRun: ReturnType<typeof started>) =>
+    processPlantElectricalPortsAt({ plant: { plant, runtime: plantRun.runtime } as never, connected: true, at: '2026-10-11T00:00:00.000Z' as never })[0]!.state!
+
+  test('on a dead grid boundary trips the turbine at once, and so the reactor above P-9, and the generator carries nothing', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    expect(port(plantRun).activePowerMw).toBeGreaterThan(1_000)
+    gridBoundary(plantRun, false)
+    // The turbine trips on the first scan; its shut stop valve trips the reactor on the next.
+    plantRun.run(3_000)
+    expect(plantRun.activeIds()).toEqual(expect.arrayContaining([lossOfLoad, 'trip:reactor-turbine-trip:turbine-trip-reactor-trip']))
+    expect(plantRun.tag('TURB-STOP-POS')).toBe(0)
+    expect(plantRun.tag('GEN-MW')).toBe(0)
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
+    expect(port(plantRun)).toMatchObject({ connected: false, activePowerMw: 0 })
+  })
+
+  test('sealed in, the unit imports its house load when the grid comes back, and never exports', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    gridBoundary(plantRun, false)
+    plantRun.run(60_000)
+    gridBoundary(plantRun, true)
+    for (let second = 1; second <= 30; second += 1) {
+      plantRun.run(1_000)
+      const state = port(plantRun)
+      expect(state.connected, String(second)).toBe(true)
+      expect(state.activePowerMw, String(second)).toBeLessThan(0)
+    }
+    expect(plantRun.tag('TURB-STOP-POS')).toBe(0)
+    expect(plantRun.tag('TURB-LOAD')).toBe(0)
+    expect(plantRun.protection.snapshot().trips.find(lifecycle => lifecycle.id === lossOfLoad)).toMatchObject({ active: true, resettable: true })
   })
 })

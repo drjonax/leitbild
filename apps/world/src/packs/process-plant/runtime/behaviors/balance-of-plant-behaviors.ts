@@ -59,9 +59,10 @@ export const balanceOfPlantBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       context.write(componentVariablePath(component, 'steamAvailabilityFraction'), clamp(inletSteamFlow / Math.max(1, steamDemand), 0, 1))
       context.write(componentVariablePath(component, 'steamFlowKgPerS'), inletSteamFlow)
       context.write(componentVariablePath(component, 'exhaustTemperatureC'), relaxToward(context.readNumber(componentVariablePath(component, 'exhaustTemperatureC')), exhaustTarget, context.dtSeconds, optionalParameterNumber(component, 'electricalTimeConstantS', 5)))
+      // With its load rejected the generator's output breaker is open: it carries nothing at once.
       context.write(
         componentVariablePath(component, 'electricMw'),
-        relaxToward(current, target, context.dtSeconds, optionalParameterNumber(component, 'electricalTimeConstantS', 5)),
+        load === 0 ? 0 : relaxToward(current, target, context.dtSeconds, optionalParameterNumber(component, 'electricalTimeConstantS', 5)),
       )
     },
   },

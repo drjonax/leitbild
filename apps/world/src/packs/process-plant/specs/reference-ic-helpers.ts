@@ -96,6 +96,17 @@ export const reactorTripBreakerWrites = (idPrefix: string): ReadonlyArray<Refere
 ]
 
 /**
+ * A turbine trip: the stop valve shuts and the generator's load is rejected,
+ * its output breaker open, so it carries and exports nothing. Both stay so
+ * until operators reopen the valve and load the generator again; above P-9
+ * the shut stop valve trips the reactor (reference-ic-reactor.ts).
+ */
+export const turbineTripWrites = (idPrefix: string): ReadonlyArray<ReferenceIcEffect> => [
+  write(`${idPrefix}-close-turbine-stop-valve`, { tagId: 'TURB-STOP' }, 0),
+  write(`${idPrefix}-reject-turbine-load`, { tagId: 'TURB-LOAD' }, 0),
+]
+
+/**
  * Feedwater isolation: both main feedwater pumps trip, and every feed
  * regulating valve's isolation signal shuts it against its level controller
  * until the isolation is released (reference-ic-balance-of-plant.ts). The

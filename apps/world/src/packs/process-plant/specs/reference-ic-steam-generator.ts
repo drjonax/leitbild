@@ -1,5 +1,5 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerWrites, rule, trip, turbineTripWrites, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { rcsLeakRateAlarmKgPerS } from './reference-ic-rcs-leakage.ts'
 
@@ -198,8 +198,7 @@ export const steamGeneratorReferenceIcRules = (
           annunciator: sgAction,
         }),
         ...feedwaterIsolationWrites('feedwater-isolation', loops),
-        write('close-turbine-stop-valve', { tagId: 'TURB-STOP' }, 0),
-        write('reject-turbine-load', { tagId: 'TURB-LOAD' }, 0),
+        ...turbineTripWrites('turbine-trip'),
       ],
     }),
     rule({

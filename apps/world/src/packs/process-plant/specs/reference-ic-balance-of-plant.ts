@@ -1,5 +1,5 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, rule, trip, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, rule, trip, turbineTripWrites, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { levelHighHighPercent } from './reference-ic-steam-generator.ts'
 
@@ -143,6 +143,33 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       severity: 'warning',
       annunciator: feedwaterAlarm,
     })],
+  }),
+  // Loss of load: the grid boundary dead while the generator carries load.
+  // A full load rejection is beyond what the steam dumps and the rods take
+  // together (about 50 %), so, as at the reference plant, generator
+  // protection opens the output breaker and the turbine trips at once; above
+  // P-9 the turbine trip trips the reactor. The
+  // trip seals in as every turbine trip does: the stop valve stays shut and
+  // the load rejected until operators reopen and load it again, so a grid
+  // that comes back finds the unit importing its house load, not exporting.
+  rule({
+    id: 'turbine-trip-on-loss-of-load',
+    label: 'Turbine trip on loss of load, grid boundary dead',
+    ruleClass: 'protection',
+    condition: all([
+      comparison({ tagId: 'GRID-AVAIL' }, '==', false),
+      comparison({ tagId: 'GEN-MW' }, '>', 0),
+    ]),
+    effects: [
+      trip({
+        id: 'loss-of-load-turbine-trip',
+        title: 'Turbine trip on loss of load',
+        message: 'The grid boundary is dead while the generator carries load: its output breaker opens and the turbine trips.',
+        actuates: ['turbineTrip'],
+        annunciator: annunciator({ ...turbineAlarm, priority: 'urgent', role: 'automaticAction' }),
+      }),
+      ...turbineTripWrites('loss-of-load'),
+    ],
   }),
   rule({
     id: 'turbine-load-low',
