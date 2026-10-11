@@ -124,6 +124,8 @@ interface CredibilityCase {
   readonly parameters?: Record<string, Record<string, unknown>>
   readonly initialState?: Record<string, unknown>
   readonly actions: (plant: CompiledProcessPlant) => ReadonlyArray<ProcessPlantScheduledAction>
+  /** How long the case runs, where the event takes longer than the common window to play out. */
+  readonly durationMs?: number
 }
 
 type CredibilityTarget = ProcessPlantCredibilityTarget<CaseId, SourceRefId>
@@ -238,6 +240,9 @@ const cases: ReadonlyArray<CredibilityCase> = [
     actions: system => [
       ...tripComponentsMatching(system, 60_000, 'trip-main-feedwater-no-afw-inventory', isMainFeedwaterPump),
     ],
+    // On ANS-5.1 decay heat the generators boil down to their tubes some 14
+    // minutes after the feedwater is lost; they boil dry within the hour.
+    durationMs: 1_200_000,
   },
   {
     id: 'turbine-trip-bypass',
@@ -942,9 +947,11 @@ const configs = (): ReadonlyArray<ProcessPlantMultiPlantConfig> =>
   })
 
 const main = async (): Promise<void> => {
+  const caseDurationMs = (testCase: CredibilityCase): number => testCase.durationMs ?? durationMs
+  const durations = [...new Set(cases.map(caseDurationMs))]
   const runConfigs = configs()
   const started = performance.now()
-  const traces = createProcessPlantMultiPlantTestbed(runConfigs).runFor(durationMs, stepMs)
+  const traces = durations.flatMap(duration => createProcessPlantMultiPlantTestbed(runConfigs.filter((_, index) => caseDurationMs(cases[index]!) === duration)).runFor(duration, stepMs))
   const wallMs = performance.now() - started
   const results = targets.map(target => evaluateProcessPlantCredibilityTarget(processPlantCredibilityTraceForCase(traces, target.caseId), target))
   const caseResults = processPlantCredibilityCaseResultSummaries(cases, results)
@@ -965,7 +972,7 @@ const main = async (): Promise<void> => {
     failedGateTargetCount: failedGateTargets.length,
     failedWatchTargetCount: failedWatchTargets.length,
     wallMs,
-    realtimeFactor: durationMs * cases.length / wallMs,
+    realtimeFactor: cases.reduce((total, testCase) => total + caseDurationMs(testCase), 0) / wallMs,
     graph: firstGraph === undefined
       ? null
       : {
