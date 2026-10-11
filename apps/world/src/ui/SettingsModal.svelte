@@ -2,6 +2,7 @@
   import { Eye, EyeOff, House, Moon, RotateCcw, Sun } from 'lucide-svelte'
   import type { ThemeMode } from './theme.ts'
   import IconButton from './components/IconButton.svelte'
+  import InlineConfirmation from './components/InlineConfirmation.svelte'
   import ModalShell from './components/ModalShell.svelte'
 
   interface Props {
@@ -25,9 +26,19 @@
     toggleWeatherLayer,
     resetScenario,
   }: Props = $props()
+
+  // Resetting replaces the Run's current state, so it asks first. While it
+  // asks, Esc cancels the question instead of closing Settings.
+  let resetRequested = $state(false)
+  let resetToggle = $state<HTMLElement | null>(null)
+
+  const confirmReset = (): void => {
+    resetRequested = false
+    void resetScenario()
+  }
 </script>
 
-<ModalShell title="Settings" {close} size="small">
+<ModalShell title="Settings" {close} closeOnEscape={!resetRequested} size="small">
   <div class="settings-stack">
     <section class="settings-row">
       <div>
@@ -80,13 +91,30 @@
         <strong>Reset</strong>
         <span>Recreate the current scenario from its definition.</span>
       </div>
-      <IconButton
-        label="Reset scenario"
-        title="Reset scenario"
-        icon={RotateCcw}
-        variant="ghost"
-        onClick={() => { void resetScenario() }}
-      />
+      <span class="reset-toggle" bind:this={resetToggle}>
+        <IconButton
+          label="Reset scenario"
+          title="Reset scenario"
+          icon={RotateCcw}
+          variant="ghost"
+          onClick={() => { resetRequested = !resetRequested }}
+        />
+      </span>
     </section>
+    {#if resetRequested}
+      <InlineConfirmation
+        question="Reset this Run to its scenario's start?"
+        confirmLabel="Reset"
+        opener={resetToggle}
+        confirm={confirmReset}
+        cancel={() => { resetRequested = false }}
+      />
+    {/if}
   </div>
 </ModalShell>
+
+<style>
+  .reset-toggle {
+    display: inline-flex;
+  }
+</style>

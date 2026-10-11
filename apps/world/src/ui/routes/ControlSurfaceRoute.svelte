@@ -37,6 +37,7 @@
   import {
     applySimulationRunEventBatchMessage,
   } from '../simulation-run-events.ts'
+  import { beginAction, completeAction, commandFeedbackText, emptyCommandFeedback, failAction, noteAction, settleCommand, type CommandFeedback } from '../command-feedback.ts'
   import { parseDroneMotionFramesRealtimeMessage, type DroneMotionFrame } from '../../packs/drone/realtime.ts'
   import { createMapFeatureLoader } from '../app/map-feature-loader.ts'
   import { installPlacementGlobalEvents } from '../app/placement-global-events.ts'
@@ -54,6 +55,7 @@
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
   import ControlRail from '../ControlRail.svelte'
   import ScenarioGuidance from '../ScenarioGuidance.svelte'
+  import WorldStatusLine from '../WorldStatusLine.svelte'
   import StartupModal from '../StartupModal.svelte'
   import { processPlantIdForObject, type ProcessPlantArtifactKind } from '../process-display/process-display-client.ts'
   import type { DeckRunJoin, DisplayWindowRequest, DisplayWindowTarget } from '../process-display/display-deck.ts'
@@ -150,7 +152,7 @@
   let selectedControllerId = $state<string | null>(null)
   let status = $state('Starting')
   let mapWarnings = $state('')
-  let commandStatus = $state('')
+  let commandFeedback = $state.raw<CommandFeedback>(emptyCommandFeedback)
   const routeMode = 'simulation-run'
   let seenRevisions = $state(new Map<string, number>())
   let expectedRealtimeScenarioId = $state<string | null>(null)
@@ -239,7 +241,7 @@
     packId: 'leitbild-control',
     defaultName: (type) => defaultName(type),
     setCommandStatus: (nextStatus) => {
-      commandStatus = nextStatus
+      commandFeedback = noteAction(commandFeedback, nextStatus)
     },
   })
   const placementMode = $derived(placement.mode)
@@ -487,7 +489,7 @@
       browser: browserDiagnostics(),
       startup: {
         status,
-        commandStatus,
+        commandStatus: commandFeedbackText(commandFeedback.line),
         dismissed: startupDismissed,
         statusModalOpen: startupStatusModalOpen,
         steps: startupSteps,
@@ -1115,25 +1117,23 @@
     clock = body.snapshot.clock
   }
 
-  const sendCommand = async (capabilityId: string, input: unknown): Promise<void> => {
+  const sendCommand = async (capabilityId: string, input: unknown, subject: string): Promise<void> => {
     if (!simulationRunId) return
+    const issued = beginAction(commandFeedback, subject)
+    commandFeedback = issued.feedback
     let body
     try {
       body = await invokeSimulationRunCapability(simulationRunId, { capabilityId, input })
     } catch (err) {
-      commandStatus = err instanceof Error ? err.message : 'command failed'
+      commandFeedback = failAction(commandFeedback, issued.actionId, err instanceof Error ? err.message : String(err))
       return
     }
     if (body.kind !== 'command') {
-      commandStatus = `Capability ${capabilityId} is not a command`
+      commandFeedback = failAction(commandFeedback, issued.actionId, `Capability ${capabilityId} is not a command`)
       return
     }
-    if (!body.result.ok) {
-      commandStatus = `Command rejected: ${body.result.reason ?? 'unknown reason'}`
-      return
-    }
-    commandStatus = 'Command accepted'
-    await syncSimulationRunSnapshot()
+    commandFeedback = settleCommand(commandFeedback, issued.actionId, body.result)
+    if (body.result.ok) await syncSimulationRunSnapshot()
   }
 
   const cancelMapAssignment = (): void => {
@@ -1147,32 +1147,31 @@
     const contribution = activePack.packForObject(controller).mapAssignment
     if (!contribution) return
     if (mode === 'start' && !contribution.canStart(controller, { objects })) {
-      commandStatus = `${controller.label} is not available for a new assignment`
+      commandFeedback = noteAction(commandFeedback, `${controller.label} is not available for a new assignment`)
       return
     }
     placement.cancel()
     mapAssignment = { controllerId: controller.id, mode }
     mapAssignmentPicker = null
     mapAssignmentChoiceIds = []
-    commandStatus = mode === 'start' ? `Choose an incident for ${controller.label}` : `Add a stop to ${controller.label}`
+    commandFeedback = noteAction(commandFeedback, mode === 'start' ? `Choose an incident for ${controller.label}` : `Add a stop to ${controller.label}`)
   }
 
   const submitMapAssignmentTarget = async (target: PackMapAssignmentTarget, choiceIds: ReadonlyArray<string>): Promise<void> => {
     if (choiceIds.length < target.minimumChoices || choiceIds.length > target.maximumChoices) {
-      commandStatus = `Choose ${target.minimumChoices === target.maximumChoices ? target.minimumChoices : `${target.minimumChoices}–${target.maximumChoices}`} patients`
+      commandFeedback = noteAction(commandFeedback, `Choose ${target.minimumChoices === target.maximumChoices ? target.minimumChoices : `${target.minimumChoices}–${target.maximumChoices}`} patients`)
       return
     }
     const command = target.buildCommand(choiceIds)
     cancelMapAssignment()
-    commandStatus = `Assigning ${target.label}`
-    await sendCommand(command.kind, command.payload)
+    await sendCommand(command.kind, command.payload, `Assigning ${target.label}`)
   }
 
   const chooseMapAssignmentTarget = (candidate: OperationalObject, screen: { readonly x: number; readonly y: number }): void => {
     if (!mapAssignment || !mapAssignmentController || !mapAssignmentContribution) return
     const target = mapAssignmentContribution.targetFor(mapAssignmentController, candidate, mapAssignment.mode, { objects })
     if (!target) {
-      commandStatus = `${candidate.label} is not a valid next destination`
+      commandFeedback = noteAction(commandFeedback, `${candidate.label} is not a valid next destination`)
       cancelMapAssignment()
       return
     }
@@ -1216,13 +1215,11 @@
   }
 
   const deleteObject = async (object: OperationalObject): Promise<void> => {
-    commandStatus = `Deleting ${object.label}`
-    await sendCommand(deleteObjectCommandKind, { objectId: object.id })
+    await sendCommand(deleteObjectCommandKind, { objectId: object.id }, `Deleting ${object.label}`)
   }
 
   const createObject = async (draft: CreateDraft): Promise<void> => {
     placement.clearDraft()
-    commandStatus = `Creating ${draft.objectType.label}`
     const pack = requireActivePack()
     if (!pack.creation) throw new Error('active Packs do not support object creation')
     const command = pack.creation.buildCreateObjectCommand(
@@ -1231,21 +1228,20 @@
       draft.geometry,
       draft.parameters,
     )
-    await sendCommand(command.kind, command.payload)
+    await sendCommand(command.kind, command.payload, `Creating ${draft.objectType.label}`)
   }
 
   const setDestination = async (destination: OperationalObject): Promise<void> => {
     const controller = selectedControllerObject
     if (!controller) {
-      commandStatus = 'Select a controller first'
+      commandFeedback = noteAction(commandFeedback, 'Select a controller first')
       return
     }
     if (destination.id === controller.id) return
     const pack = requireActivePack()
     if (!pack.targeting?.isTarget(controller, destination, { objects })) return
-    commandStatus = `Sending ${controller.label} to ${destination.label}`
     const command = pack.targeting.buildSetTargetCommand(controller, destination, { objects })
-    await sendCommand(command.kind, command.payload)
+    await sendCommand(command.kind, command.payload, `Sending ${controller.label} to ${destination.label}`)
   }
 
   const selectObject = (object: OperationalObject): void => {
@@ -1253,7 +1249,7 @@
     const pack = requireActivePack()
     if (pack.targeting?.isController(object)) {
       selectedControllerId = object.id
-      commandStatus = `Selected ${object.label}; click a valid target`
+      commandFeedback = noteAction(commandFeedback, `Selected ${object.label}; click a valid target`)
       return
     }
     const controller = selectedControllerObject
@@ -1316,9 +1312,6 @@
         if (applied.objectUpdate) {
           objects = [...applied.objectUpdate.objects]
           selectedControllerId = applied.objectUpdate.selectedControllerId
-        }
-        if (applied.commandStatusUpdate) {
-          commandStatus = applied.commandStatusUpdate.commandStatus
         }
         if (applied.scenarioUpdate) {
           scenarioState = applied.scenarioUpdate
@@ -1456,7 +1449,8 @@
     scenarioDefinition = null
     activePack = null
     status = 'Resetting'
-    commandStatus = 'Resetting scenario'
+    const reset = beginAction(commandFeedback, 'Resetting scenario')
+    commandFeedback = reset.feedback
     startStep('simulation-run')
     let activeStartupStep: StartupStepId = 'simulation-run'
     try {
@@ -1468,10 +1462,10 @@
           activeStartupStep = id
         },
       })
-      commandStatus = 'Scenario reset'
+      commandFeedback = completeAction(commandFeedback, reset.actionId)
     } catch (err) {
       failStep(activeStartupStep, err)
-      commandStatus = err instanceof Error ? err.message : 'Scenario reset failed'
+      commandFeedback = failAction(commandFeedback, reset.actionId, err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -1632,7 +1626,7 @@
     let active = true
     untrack(() => {
       void session.refreshRuns().catch(error => {
-        if (active) commandStatus = error instanceof Error ? error.message : String(error)
+        if (active) status = error instanceof Error ? error.message : String(error)
       })
     })
     return () => { active = false }
@@ -1776,6 +1770,7 @@
           </div>
         </section>
       {/if}
+      <WorldStatusLine {clock} execution={executionState} feedback={commandFeedback.line} />
       {#if richOperationalUiReady && simulationRunId}
         {#each surfacePanels as panel (panel.id)}
           {@const Panel = surfacePanelComponents[panel.id]}

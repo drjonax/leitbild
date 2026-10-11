@@ -4,6 +4,7 @@
   import type { OperationalObject } from '../core/model/index.ts'
   import type { PackObjectField, PackObjectPresentation, PackObjectStatusPresentation } from '../core/packs/protocol.ts'
   import IconButton from './components/IconButton.svelte'
+  import InlineConfirmation from './components/InlineConfirmation.svelte'
   import StatusIndicator from './components/StatusIndicator.svelte'
   import { processPlantIdForObject, type ProcessPlantArtifactKind } from './process-display/process-display-client.ts'
   import ProcedureRunBadges from './procedures/ProcedureRunBadges.svelte'
@@ -65,6 +66,10 @@
   let detailObjectId: string | null = $state(null)
   let detailHovered = $state(false)
   let detailFocused = $state(false)
+  // Deleting a live object asks first, inside the row.
+  let deleteRequestedFor = $state<string | null>(null)
+  let deleteToggle = $state<HTMLElement | null>(null)
+  const deleteRequested = $derived(deleteRequestedFor === object.id)
 
   const newInfoSummary = $derived(
     presentation.fields.length === 0
@@ -144,6 +149,11 @@
   )
   const droneControlAvailable = $derived(object.packId === 'drone' && openDroneControl !== undefined)
   const droneProfileEditorAvailable = $derived(object.packId === 'drone' && openDroneProfileEditor !== undefined)
+  const confirmDelete = (): void => {
+    deleteRequestedFor = null
+    void deleteObject(object)
+  }
+
   const openProcedureSummary = (summary: ProcedureRunSummary): void => {
     if (openProcedureSystemAt) {
       openProcedureSystemAt(object, summary)
@@ -166,6 +176,7 @@
   onblur={() => { detailFocused = false }}
   onclick={() => selectObject(object)}
   onkeydown={(event) => {
+    if (event.target !== event.currentTarget) return
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     selectObject(object)
@@ -295,14 +306,16 @@
       </span>
     </span>
   </div>
-  <IconButton
-    label="Delete {object.label}"
-    title="Delete {object.label}"
-    icon={X}
-    size={13}
-    variant="bare"
-    onClick={() => deleteObject(object)}
-  />
+  <span class="row-delete-toggle" bind:this={deleteToggle}>
+    <IconButton
+      label="Delete {object.label}"
+      title="Delete {object.label}"
+      icon={X}
+      size={13}
+      variant="bare"
+      onClick={() => { deleteRequestedFor = deleteRequested ? null : object.id }}
+    />
+  </span>
   {#if visibleFields.length > 0}
     <div class="object-row-details">
       {#each visibleFields as field (field.key)}
@@ -322,6 +335,20 @@
   {/if}
 </div>
 
+<!-- Outside the row: a press on the question must not select the row, and a
+     group of buttons must not sit inside the row's role="button". -->
+{#if deleteRequested}
+  <div class="row-delete-confirm">
+    <InlineConfirmation
+      question="Delete {object.label}?"
+      confirmLabel="Delete"
+      opener={deleteToggle}
+      confirm={confirmDelete}
+      cancel={() => { deleteRequestedFor = null }}
+    />
+  </div>
+{/if}
+
 {#if hasNewInfo && newInfoTooltipVisible}
   <div
     class="new-info-tooltip"
@@ -333,3 +360,14 @@
     <span>{newInfoSummary}</span>
   </div>
 {/if}
+
+<style>
+  .row-delete-toggle {
+    display: inline-flex;
+  }
+
+  /* Sits under its row in the rail, indented to the row's label. */
+  .row-delete-confirm {
+    padding: 4px 4px 5px 31px;
+  }
+</style>

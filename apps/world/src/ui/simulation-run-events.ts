@@ -14,10 +14,7 @@ export interface SimulationRunEventPayload {
   readonly guidanceId?: string
   readonly notification?: OperationalNotification
   readonly objectIds?: ReadonlyArray<ObjectId>
-  readonly result?: {
-    readonly ok: boolean
-    readonly reason?: string
-  }
+  readonly result?: CommandResult
   readonly clock?: SimulationClockState
 }
 
@@ -98,27 +95,15 @@ export interface ObjectSelectionUpdate {
   readonly selectedControllerId: string | null
 }
 
-export interface CommandStatusUpdate {
-  readonly commandStatus: string
-}
-
 export interface SimulationRunEventApplication {
   readonly objectUpdate?: ObjectSelectionUpdate
   readonly scenarioUpdate?: ScenarioExecutionState
-  readonly commandStatusUpdate?: CommandStatusUpdate
   readonly clockUpdate?: SimulationClockState
   readonly routesChanged: boolean
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
-
-const isCommandResult = (
-  value: unknown,
-): value is { readonly ok: boolean; readonly reason?: string } => {
-  if (!isRecord(value) || typeof value.ok !== 'boolean') return false
-  return value.reason === undefined || typeof value.reason === 'string'
-}
 
 const isRealtimeCommandResult = (value: unknown): value is CommandResult => {
   if (!isRecord(value) || typeof value.ok !== 'boolean') return false
@@ -138,6 +123,7 @@ const isCapabilityInvocationResponse = (value: unknown): value is CapabilityInvo
 const parseEventPayload = (value: unknown): SimulationRunEventPayload => {
   if (!isRecord(value)) throw new Error('invalid WebSocket event: expected object')
   if (typeof value.type !== 'string') throw new Error('invalid WebSocket event: missing event type')
+  if (value.type === 'command.result' && !isRealtimeCommandResult(value.result)) throw new Error('invalid WebSocket event: command result without a valid result')
   return {
     type: value.type,
     ...(typeof value.at === 'string' ? { at: value.at as IsoTimestamp } : {}),
@@ -148,7 +134,7 @@ const parseEventPayload = (value: unknown): SimulationRunEventPayload => {
     ...(typeof value.guidanceId === 'string' ? { guidanceId: value.guidanceId } : {}),
     ...(isRecord(value.notification) ? { notification: value.notification as unknown as OperationalNotification } : {}),
     ...(Array.isArray(value.objectIds) ? { objectIds: value.objectIds.filter((objectId): objectId is ObjectId => typeof objectId === 'string') } : {}),
-    ...(isCommandResult(value.result) ? { result: value.result } : {}),
+    ...(isRealtimeCommandResult(value.result) ? { result: value.result } : {}),
     ...(isRecord(value.clock) ? { clock: value.clock as unknown as SimulationClockState } : {}),
   }
 }
@@ -328,11 +314,6 @@ export const removeOperationalObject = (
   selectedControllerId: state.selectedControllerId === objectId ? null : state.selectedControllerId,
 })
 
-export const commandStatusForResult = (
-  result: { readonly ok: boolean; readonly reason?: string },
-): string =>
-  result.ok ? 'Command accepted' : `Command rejected: ${result.reason ?? 'unknown reason'}`
-
 const applyObjectEvents = (
   state: ObjectSelectionState,
   events: ReadonlyArray<SimulationRunEventPayload>,
@@ -393,7 +374,6 @@ export const applySimulationRunEventBatchMessage = (
 ): SimulationRunEventApplication => {
   const objectResult = applyObjectEvents(state, message.events)
   const scenarioUpdate = applyScenarioEvents(state.scenarioState, message.events)
-  const commandResultEvent = [...message.events].reverse().find(event => event.type === 'command.result' && event.result)
   const clockEvent = [...message.events].reverse().find(event => event.type === 'clock.updated' && event.clock)
 
   return {
@@ -407,13 +387,6 @@ export const applySimulationRunEventBatchMessage = (
         }
       : {}),
     ...(scenarioUpdate === undefined ? {} : { scenarioUpdate }),
-    ...(commandResultEvent?.result
-      ? {
-          commandStatusUpdate: {
-            commandStatus: commandStatusForResult(commandResultEvent.result),
-          },
-        }
-      : {}),
     ...(clockEvent?.clock ? { clockUpdate: clockEvent.clock } : {}),
   }
 }

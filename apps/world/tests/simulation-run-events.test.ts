@@ -1,10 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import type { SimulationRunId, GeoJsonLineString, IsoTimestamp, ObjectId, SimulationClockState } from '../src/core/model/index.ts'
+import type { CommandId, CommandResult, SimulationRunId, GeoJsonLineString, IsoTimestamp, ObjectId, SimulationClockState } from '../src/core/model/index.ts'
 import { geoPointFromLonLat } from '../src/core/model/index.ts'
 import {
   applySimulationRunEventBatchMessage,
   type SimulationRunEventBatchMessage,
-  commandStatusForResult,
   parseSimulationRunEventBatchMessage,
   parseSimulationRunWebSocketMessage,
   removeOperationalObject,
@@ -200,7 +199,7 @@ describe('simulation run event helpers', () => {
     expect(next.selectedControllerId).toBeNull()
   })
 
-  test('applies supported event-array messages to object and command-status state', () => {
+  test('applies supported event-array messages to object state and rejects a command result without its id', () => {
     const objects = scenarioObjects()
     const object = objects[0]
     if (!object) throw new Error('scenario fixture missing object')
@@ -212,13 +211,19 @@ describe('simulation run event helpers', () => {
     expect(deleted.objectUpdate?.selectedControllerId).toBeNull()
     expect(deleted.routesChanged).toBe(false)
 
-    const rejected = applySimulationRunEventBatchMessage(
-      { objects, selectedControllerId: object.id },
-      eventBatch([{ type: 'command.result', result: { ok: false, reason: 'blocked' } }]),
-    )
-    expect(rejected.commandStatusUpdate?.commandStatus).toBe('Command rejected: blocked')
-    expect(rejected.routesChanged).toBe(false)
-    expect(commandStatusForResult({ ok: true })).toBe('Command accepted')
+    const rejected: CommandResult = { ok: false, commandId: 'command:one' as CommandId, rejectedAt: '2026-01-01T10:00:00.000Z' as IsoTimestamp, reason: 'blocked' }
+    const accepted: CommandResult = { ok: true, commandId: 'command:two' as CommandId, acceptedAt: '2026-01-01T10:00:01.000Z' as IsoTimestamp }
+    const parsed = parseSimulationRunEventBatchMessage(JSON.stringify(eventBatch([
+      { type: 'command.result', result: rejected },
+      { type: 'command.result', result: accepted },
+    ])))
+    if (!parsed) throw new Error('expected an events message')
+    expect(parsed.events.map(event => event.result)).toEqual([rejected, accepted])
+    const applied = applySimulationRunEventBatchMessage({ objects, selectedControllerId: object.id }, parsed)
+    expect(applied.routesChanged).toBe(false)
+    expect(() => parseSimulationRunEventBatchMessage(JSON.stringify(eventBatch([
+      { type: 'command.result', result: { ok: false, reason: 'blocked' } as unknown as CommandResult },
+    ])))).toThrow('command result without a valid result')
   })
 
   test('applies clock update events separately from object updates', () => {

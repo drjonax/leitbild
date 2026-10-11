@@ -5,7 +5,12 @@ import { createSimulationClock, nowIso } from '../src/core/model/time.ts'
 import { createSimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
 import { createSimulationRunStateStore, type SimulationRunStateSnapshot } from '../src/core/simulation-runs/state-store.ts'
 import type { EventLog } from '../src/core/simulation-runs/event-log.ts'
+import { workspaceIdSchema } from '@leitbild/contracts'
+import { dispatchEligibility } from '../src/packs/ambulance/model.ts'
 import { createLocalAmbulancePackRuntimeAdapter } from '../src/packs/ambulance/sim/adapter.ts'
+import { beginAction, commandFeedbackText, emptyCommandFeedback, settleCommand } from '../src/ui/command-feedback.ts'
+import { applySimulationRunEventBatchMessage, parseSimulationRunEventBatchMessage } from '../src/ui/simulation-run-events.ts'
+import type { CapabilityInvocationResponse } from '../src/ui/types.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import type { RoutingAdapter } from '../src/routing/protocol.ts'
 import { worldCoreCapabilities } from '../src/simulation/core-capabilities.ts'
@@ -176,4 +181,57 @@ test('copy admission fences a later installed Ambulance command throughout priva
     const after = await run.checkpointForCopy()
     expect(after.snapshot.objects.find(object => object.id === unitId)?.revision).toBeGreaterThan(before.objects.find(object => object.id === unitId)!.revision)
   } finally { releaseCheckpoint.resolve(); await run.close() }
+})
+
+test('a Run-refused assign from a second screen shows the Pack\'s reason verbatim on that screen only', async () => {
+  const { run, persisted } = await setup()
+  const published: SimulationRunEvent[] = []
+  const unsubscribe = run.subscribe(notification => { published.push(...notification.events) })
+  // The invoke route answers with the Run's reply as JSON; the screen reads that body.
+  const overHttp = async (reply: ReturnType<typeof dispatch>): Promise<CapabilityInvocationResponse> =>
+    JSON.parse(JSON.stringify(await reply)) as CapabilityInvocationResponse
+  try {
+    const before = run.snapshot().objects
+    const objectById = (id: ObjectId, objects = run.snapshot().objects) => objects.find(object => object.id === id)
+    const incidentLabel = objectById(incidentId, before)!.label
+    // Both screens saw the unit free and chose the same incident for it, so
+    // neither screen's own pre-check stops the second assign; the Run does.
+    const first = beginAction(emptyCommandFeedback, `Assigning ${incidentLabel}`)
+    const second = beginAction(emptyCommandFeedback, `Assigning ${incidentLabel}`)
+
+    const firstReply = await overHttp(dispatch(run))
+    const committed = run.snapshot().objects
+    const reasons = dispatchEligibility(objectById(unitId), objectById(incidentId), [objectById(patientId)!], committed)
+    const secondReply = await overHttp(dispatch(run))
+
+    if (firstReply.kind !== 'command' || secondReply.kind !== 'command') throw new Error('expected command replies')
+    expect(firstReply.result.ok).toBe(true)
+    expect(reasons).toContain('Unit is already committed; cancel its current response first')
+    expect(secondReply.result).toMatchObject({ ok: false, reason: reasons.join('; ') })
+    const persistedResults = persisted.flatMap(event => event.type === 'command.result' ? [event.result] : [])
+    expect(persistedResults.map(result => result.commandId)).toEqual([firstReply.result.commandId, secondReply.result.commandId])
+    expect(persistedResults[1]).toEqual(secondReply.result)
+
+    // Each screen settles its line from its own reply only.
+    const firstScreen = settleCommand(first.feedback, first.actionId, firstReply.result)
+    const issuingScreen = settleCommand(second.feedback, second.actionId, secondReply.result)
+    expect(issuingScreen.line).toMatchObject({ tone: 'refused', detail: reasons.join('; '), commandId: secondReply.result.commandId })
+    expect(firstScreen.line).toMatchObject({ tone: 'accepted', commandId: firstReply.result.commandId })
+
+    // Both screens receive the same realtime batch, which carries both results.
+    const batch = parseSimulationRunEventBatchMessage(JSON.stringify({
+      type: 'events', workspaceId: workspaceIdSchema.parse('11111111-1111-4111-8111-111111111111'),
+      simulationRunId: run.id, snapshotSeq: run.snapshot().seq, events: published,
+    }))
+    if (!batch) throw new Error('expected an events message')
+    expect(batch.events.flatMap(event => event.type === 'command.result' && event.result ? [event.result.commandId] : []))
+      .toEqual([firstReply.result.commandId, secondReply.result.commandId])
+    // A screen takes objects, scenario and clock from the batch, never a
+    // command outcome, so the other screen's refusal cannot reach a line.
+    const applied = applySimulationRunEventBatchMessage({ objects: before, selectedControllerId: null }, batch)
+    expect(Object.keys(applied).every(key => ['objectUpdate', 'scenarioUpdate', 'clockUpdate', 'routesChanged'].includes(key))).toBe(true)
+    expect(applied.objectUpdate?.objects.find(object => object.id === unitId)?.revision).toBeGreaterThan(objectById(unitId, before)!.revision)
+    expect(commandFeedbackText(issuingScreen.line)).toBe(`Assigning ${incidentLabel} · refused: ${reasons.join('; ')}`)
+    expect(commandFeedbackText(firstScreen.line)).toBe(`Assigning ${incidentLabel} · accepted`)
+  } finally { unsubscribe(); await run.close() }
 })
