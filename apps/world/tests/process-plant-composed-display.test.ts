@@ -191,8 +191,10 @@ describe('I&C thresholds for composed displays', () => {
   test('every numeric comparison in the four-loop rules is drawn on its signal, but those that only arm a rule', () => {
     // HMI review of run 23 found limits inside combined conditions missed: 43 of 132 comparisons were not drawn.
     // What remains are comparisons that hold at the operating point: P-7, P-8 and P-9 on power, the pressure
-    // controller's normal band and the feedwater isolation's release below 82 % on every generator; and the
-    // turbine-driven AFW pump's 2-of-4 vote at 20 %, which each generator's own AFW START at 20 % names.
+    // controller's normal band and the feedwater isolation's release below 82 % on every generator; the
+    // turbine-driven AFW pump's 2-of-4 vote at 20 %, which each generator's own AFW START at 20 % names; and the
+    // motor-driven pumps' start held on a dead safety bus for the diesel's sequencer, which only holds that AFW
+    // START off.
     const leaves = (condition: (typeof compiled.automation.rules)[number]['condition']): ReadonlyArray<Extract<typeof condition, { type: 'comparison' }>> =>
       condition.type === 'comparison' ? [condition] : condition.type === 'not' ? leaves(condition.condition) : condition.conditions.flatMap(leaves)
     const missed = compiled.automation.rules.filter(rule => rule.enabled).flatMap(rule => leaves(rule.condition)
@@ -216,6 +218,7 @@ describe('I&C thresholds for composed displays', () => {
       'feedwater-isolation-release SG-B-LVL-NR < 82',
       'feedwater-isolation-release SG-C-LVL-NR < 82',
       'feedwater-isolation-release SG-D-LVL-NR < 82',
+      ...['a', 'b'].flatMap(train => ['A', 'B', 'C', 'D'].map(loop => `motor-driven-afw-pump-${train}-dead-bus-hold SG-${loop}-LVL-NR < 20`)),
     ])
   })
 })

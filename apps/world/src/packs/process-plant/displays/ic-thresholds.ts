@@ -413,8 +413,24 @@ const readIcThresholds = (
   const named = thresholds.filter(threshold => threshold.coincidence === undefined
     || !thresholds.some(other => other.coincidence === undefined && other.value === threshold.value && other.direction === threshold.direction
       && `${other.action} ${threshold.coincidence!.required}/${threshold.coincidence!.of}` === threshold.action))
+  // A control rule whose only writes drive back what an alarm or trip acting
+  // at the same value drives holds that action off, under its own gates; it
+  // does not act there itself: the motor-driven AFW pump's start held on a
+  // dead safety bus for its diesel's sequencer, at the low-low level whose
+  // actuation starts it.
+  const ruleById = new Map(plant.automation.rules.map(rule => [rule.id, rule]))
+  const writesOf = (ruleId: string): ReadonlyArray<{ readonly path: VariablePath; readonly value: unknown }> => ruleById.get(ruleId)!.effects
+    .flatMap(effect => effect.type === 'writeSignal' ? [{ path: resolveProcessPlantSignalPath(plant.graph, effect.signal), value: effect.value }] : [])
+  const holding = (threshold: Omit<ComposedDisplayThreshold, 'order'>): boolean => {
+    if (threshold.kind !== 'control') return false
+    const writes = writesOf(threshold.ruleId)
+    const acting = named.filter(other => other.kind !== 'control' && other.value === threshold.value && other.direction === threshold.direction)
+      .flatMap(other => writesOf(other.ruleId))
+    return writes.length > 0 && writes.every(write => acting.some(other => other.path === write.path && other.value !== write.value))
+  }
+  const drawn = named.filter(threshold => !holding(threshold))
   return {
-    thresholds: orderLimits(named).sort((left, right) => left.value - right.value || left.ruleId.localeCompare(right.ruleId)),
+    thresholds: orderLimits(drawn).sort((left, right) => left.value - right.value || left.ruleId.localeCompare(right.ruleId)),
     combinedRules: combinedRules.sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
   }
 }
