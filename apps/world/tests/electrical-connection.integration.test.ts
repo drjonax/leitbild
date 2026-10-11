@@ -10,9 +10,13 @@ import {
   type SimulationRunEvent,
   type SimulationRunId,
 } from '../src/core/model/index.ts'
+import { z } from 'zod'
 import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
+import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
+import { electricGridPackDataSchema } from '../src/packs/electric-grid/model.ts'
 import { electricGridPack } from '../src/packs/electric-grid/pack.ts'
+import { createGridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { createLocalElectricGridPackRuntimeAdapter } from '../src/packs/electric-grid/sim/adapter.ts'
 import { processPlantActionInvokeCommandKind } from '../src/packs/process-plant/commands.ts'
 import { processPlantPack } from '../src/packs/process-plant/pack.ts'
@@ -83,6 +87,23 @@ describe('electrical Pack connection', () => {
     duplicated.connections[1]!.system = { ...duplicated.connections[0]!.system }
     await expect(compileScenarioDefinition(duplicated, packs, { routing: createDirectRoutingAdapter() }))
       .rejects.toThrow('electrical port is connected more than once')
+
+    // Two Plants on one Grid connection point fail at the second connection's network endpoint.
+    const sharedPoint = structuredClone(source)
+    sharedPoint.connections[1]!.network = { ...sharedPoint.connections[0]!.network }
+    const rejection = await compileScenarioDefinition(sharedPoint, packs, { routing: createDirectRoutingAdapter() }).then(() => null, (error: unknown) => error)
+    expect(rejection).toBeInstanceOf(z.ZodError)
+    expect((rejection as z.ZodError).issues.map(issue => [issue.path, issue.message])).toEqual([
+      [['connections', 1, 'network'], 'electrical port is connected more than once: grid:halden-four-unit:unit-1-420kv'],
+    ])
+    // The Grid runtime refuses the same pair if it is ever handed one, instead of keeping the last.
+    const halden = scenarios.find(candidate => candidate.id === source.id)!
+    const gridObject = halden.initialObjects.find(object => object.id === 'grid:halden-four-unit' as ObjectId)!
+    const gridData = electricGridPackDataSchema.parse(gridObject.packData)
+    const gridDefinition = compileGridDefinition({ id: gridObject.id, model: gridData.model, operatingPoint: gridData.operatingPoint, automation: gridData.automation })
+    const pair = [halden.connections[0]!, { ...halden.connections[1]!, network: halden.connections[0]!.network }]
+    expect(() => createGridRuntimeInstance({ definition: gridDefinition, at: halden.world.startsAt, connections: pair }))
+      .toThrow('Grid connection point grid:halden-four-unit:unit-1-420kv is connected by both halden-unit-1-grid and halden-unit-2-grid')
 
     const laterDeletion = structuredClone(source)
     laterDeletion.timeline = { cues: [{

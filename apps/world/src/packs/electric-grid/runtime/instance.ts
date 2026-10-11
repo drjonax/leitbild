@@ -441,17 +441,16 @@ export const createGridRuntimeInstance = (config: {
     return [link.id, { setpointMw, transferMw: stored?.transferMw ?? setpointMw, lossesMw: 0 } satisfies GridHvdcLinkState]
   }))
   const pointsById = new Map(model.connectionPoints.map(point => [point.id, point]))
-  const externalConnections = new Map((config.connections ?? []).flatMap(connection => {
-    if (connection.network.objectId !== definition.gridId) return []
+  const externalConnections = new Map<string, GridExternalConnectionState>()
+  for (const connection of config.connections ?? []) {
+    if (connection.network.objectId !== definition.gridId) continue
     const point = pointsById.get(connection.network.portId)
     if (!point) throw new Error(`Grid connection references unknown network port: ${connection.network.objectId}:${connection.network.portId}`)
-    return [[point.id, {
-      definition: connection,
-      busId: point.busId,
-      systemActivePowerMw: 0,
-      connected: false,
-    } satisfies GridExternalConnectionState] as const]
-  }))
+    // One system per connection point: a second connection would replace the first's exchange.
+    const existing = externalConnections.get(point.id)
+    if (existing) throw new Error(`Grid connection point ${connection.network.objectId}:${point.id} is connected by both ${existing.definition.id} and ${connection.id}`)
+    externalConnections.set(point.id, { definition: connection, busId: point.busId, systemActivePowerMw: 0, connected: false })
+  }
   const grid: GridRuntimeInstance = {
     definition,
     elapsedMs: restored?.elapsedMs ?? 0,
