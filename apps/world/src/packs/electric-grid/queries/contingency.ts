@@ -28,9 +28,10 @@ const screenPayloadSchema = z.object(screeningInput).strict()
 const screenedBranchSchema = z.object({
   assetId: z.string(),
   label: z.string(),
-  flowMw: finite.describe('Post-contingency active power flow, positive from fromBusId to toBusId: the base flow plus the DC outage increment (0.1 MW).'),
-  loadingPercent: finite.describe('Post-contingency |flowMw| over the rating basis × availability (0.1 %). Active power only: on an island whose AC load flow converged, the runtime\'s own branch loading is on apparent power (MVA) and reads higher by the reactive share.'),
-  preContingencyLoadingPercent: finite,
+  flowMw: finite.describe('Post-contingency active power flow at the from end, positive from fromBusId to toBusId: the base flow plus the DC outage increment (0.1 MW).'),
+  loadingPercent: finite.describe('Post-contingency loading on loadingBasis over the rating basis × availability (0.1 %), as the runtime\'s branch loading and alarms judge it.'),
+  preContingencyLoadingPercent: finite.describe('The same branch\'s loading on the same basis before the outage (0.1 %); on the mva basis it equals the runtime\'s loadingPercent.'),
+  loadingBasis: z.enum(['mva', 'mw']).describe('mva: on an island whose AC load flow converged, the larger end apparent power, with each end\'s reactive power held at its base value and the active power moved by the DC increment; mw: |active power| on a DC island.'),
 }).strict()
 
 const partSchema = z.object({

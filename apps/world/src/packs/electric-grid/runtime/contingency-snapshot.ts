@@ -76,6 +76,18 @@ export interface SnapshotContingencies {
   readonly removedForming: Int32Array
 }
 
+/**
+ * Each branch's loading basis (contingency-case.ts CaseLoadingBase): `mva` 1 where its island's AC
+ * load flow converged, judged on the larger end apparent power with the base reactive power held;
+ * else on |active power|.
+ */
+export interface SnapshotLoading {
+  readonly mva: Uint8Array
+  readonly toActiveMw: Float64Array
+  readonly fromReactiveMvar: Float64Array
+  readonly toReactiveMvar: Float64Array
+}
+
 export interface ContingencySnapshot {
   readonly network: SnapshotNetwork
   readonly islands: SnapshotIslands
@@ -89,8 +101,9 @@ export interface ContingencySnapshot {
    */
   readonly injectionsMw: Float64Array
   readonly flowsMw: Float64Array
-  /** Rating basis × availability per branch (MW). */
+  /** Rating basis × availability per branch (MW, or MVA on the apparent-power basis). */
   readonly capacityMw: Float64Array
+  readonly loading: SnapshotLoading
   readonly contingencies: SnapshotContingencies
 }
 
@@ -103,8 +116,8 @@ export const balancingByCode: ReadonlyArray<Balancing> = ['reserves', 'inertia',
 export const recordInteger = { islanding: 0, partCount: 1, worstBranch: 2, violationCount: 3, listedCount: 4, firstPart: 5 } as const
 export const recordIntegerWidth = 9
 /** Float fields of one result record; each part adds imbalance, reserve shortfall and unserved load (MW). */
-export const recordValue = { lostMw: 0, worstFlowMw: 1, firstPart: 2 } as const
-export const recordValueWidth = 8
+export const recordValue = { lostMw: 0, worstFlowMw: 1, worstLoadingPercent: 2, firstPart: 3 } as const
+export const recordValueWidth = 9
 export const maximumRecordParts = 2
 
 /** Per-contingency results in input order. */
@@ -112,9 +125,10 @@ export interface ScreeningRecords {
   readonly count: number
   readonly integers: Int32Array
   readonly values: Float64Array
-  /** Listed overloaded branches and their post-contingency flows (MW), `maximumListedOverloads` slots per contingency. */
+  /** Listed overloaded branches with their post-contingency flows (MW) and loading (%), `maximumListedOverloads` slots per contingency. */
   readonly listedBranches: Int32Array
   readonly listedFlowsMw: Float64Array
+  readonly listedLoadingPercent: Float64Array
 }
 
 export const sharedInt32 = (length: number): Int32Array => new Int32Array(new SharedArrayBuffer(length * Int32Array.BYTES_PER_ELEMENT))
@@ -127,4 +141,5 @@ export const sharedScreeningRecords = (count: number): ScreeningRecords => ({
   values: sharedFloat64(count * recordValueWidth),
   listedBranches: sharedInt32(count * maximumListedOverloads),
   listedFlowsMw: sharedFloat64(count * maximumListedOverloads),
+  listedLoadingPercent: sharedFloat64(count * maximumListedOverloads),
 })

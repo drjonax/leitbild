@@ -27,6 +27,27 @@ export interface IslandBaseFlowModel {
   readonly flowModel: ContingencyBaseFlowModel
 }
 
+/**
+ * What each branch's loading is judged on, as the runtime judges it: on an island whose AC load
+ * flow converged (`mva` 1), the larger end apparent power, with each end's reactive power held at
+ * its base value and the active power moved by the DC increment; elsewhere |active power|.
+ */
+export interface CaseLoadingBase {
+  readonly mva: Uint8Array
+  /** Base active power entering the branch at its to end (MW); with flowsMw it closes the branch's AC series loss. */
+  readonly toActiveMw: Float64Array
+  /** Base reactive power entering at each end (Mvar), held through a contingency. */
+  readonly fromReactiveMvar: Float64Array
+  readonly toReactiveMvar: Float64Array
+}
+
+const emptyLoadingBase = (branchCount: number): CaseLoadingBase => ({
+  mva: new Uint8Array(branchCount),
+  toActiveMw: new Float64Array(branchCount),
+  fromReactiveMvar: new Float64Array(branchCount),
+  toReactiveMvar: new Float64Array(branchCount),
+})
+
 export interface CaseIsland {
   /** Buses ascending; buses[0] is the angle reference. */
   readonly buses: Int32Array
@@ -51,6 +72,7 @@ export interface ContingencyCase {
   readonly dcFlowsMw: Float64Array
   /** The base flow model of each energised island of the live Grid the case derives from. */
   readonly baseFlowModels: ReadonlyArray<IslandBaseFlowModel>
+  readonly loadingBase: CaseLoadingBase
   readonly participation: CaseParticipation
   /** Unit outputs a remedial redispatch set in this case (MW); other units keep their solved output. */
   readonly redispatchedMw: ReadonlyMap<string, number>
@@ -126,13 +148,22 @@ export const liveContingencyCase = (grid: GridRuntimeInstance): ContingencyCase 
   const caseIslands = plan.systems.map((system, index) => caseIsland(system, energisedPlanIsland[plan.components[index]!.islandIndex] === 1))
   const dcFlowsMw = new Float64Array(network.branchCount)
   for (const island of caseIslands) if (island.energised) islandFlowsInto(network, island, plan.anglesRad, dcFlowsMw)
-  // Base flows are the branch states' flows, in the model the runtime declares for their island.
+  // Base flows are the branch states' flows, in the model the runtime declares for their island; an AC
+  // branch's to-end active power is its AC series loss less its from-end flow.
   const flowsMw = new Float64Array(network.branchCount)
+  const loadingBase = emptyLoadingBase(network.branchCount)
   grid.definition.model.branches.forEach((branch, index) => {
     const state = grid.branches.get(branch.id)!
     const expected = plan.closedBranches[index] === 1 ? modelOfPlanIsland[plan.islandIndexOfBus[network.branchFrom[index]!]!]! : null
     if (state.flowModel !== expected) throw new Error(`branch ${branch.id} carries ${state.flowModel ?? 'no'} flow where its island's solution is ${expected ?? 'none'}`)
-    if (expected !== null) flowsMw[index] = state.flowMw
+    if (expected === null) return
+    flowsMw[index] = state.flowMw
+    if (expected === 'dc') return
+    if (state.reactiveFromMvar === null || state.reactiveToMvar === null) throw new Error(`branch ${branch.id} carries AC flow without reactive power at its ends`)
+    loadingBase.mva[index] = 1
+    loadingBase.toActiveMw[index] = state.lossesMw - state.flowMw
+    loadingBase.fromReactiveMvar[index] = state.reactiveFromMvar
+    loadingBase.toReactiveMvar[index] = state.reactiveToMvar
   })
   return {
     grid,
@@ -144,6 +175,7 @@ export const liveContingencyCase = (grid: GridRuntimeInstance): ContingencyCase 
     flowsMw,
     dcFlowsMw,
     baseFlowModels,
+    loadingBase,
     participation: participationFor(grid, network, bus => energisedPlanIsland[plan.islandIndexOfBus[bus]!] === 1),
     redispatchedMw: new Map(),
   }
@@ -183,17 +215,27 @@ export const switchedContingencyCase = (base: ContingencyCase, changes: CaseChan
   const anglesRad = new Float64Array(network.busCount)
   const dcFlowsMw = new Float64Array(network.branchCount)
   const flowsMw = new Float64Array(network.branchCount)
+  const loadingBase = emptyLoadingBase(network.branchCount)
   for (const island of islands) {
     if (!island.energised) continue
     // The case's own factor and solve vectors: nothing here belongs to the live plan.
     solveGridIslandInto(network, island.system, injectionsMw, anglesRad)
     islandFlowsInto(network, island, anglesRad, dcFlowsMw)
-    for (const branch of island.branches) flowsMw[branch] = base.flowsMw[branch]! + (dcFlowsMw[branch]! - base.dcFlowsMw[branch]!)
+    for (const branch of island.branches) {
+      const changeMw = dcFlowsMw[branch]! - base.dcFlowsMw[branch]!
+      flowsMw[branch] = base.flowsMw[branch]! + changeMw
+      // A branch the actions closed has no AC base: it is judged on active power.
+      if (base.loadingBase.mva[branch] !== 1) continue
+      loadingBase.mva[branch] = 1
+      loadingBase.toActiveMw[branch] = base.loadingBase.toActiveMw[branch]! - changeMw
+      loadingBase.fromReactiveMvar[branch] = base.loadingBase.fromReactiveMvar[branch]!
+      loadingBase.toReactiveMvar[branch] = base.loadingBase.toReactiveMvar[branch]!
+    }
   }
   return {
     case: {
       grid: base.grid, network, closed, islandOfBus: found.islandOfBus, islands, injectionsMw, flowsMw, dcFlowsMw,
-      baseFlowModels: base.baseFlowModels, participation, redispatchedMw: changes.redispatchedMw,
+      baseFlowModels: base.baseFlowModels, loadingBase, participation, redispatchedMw: changes.redispatchedMw,
     },
     balances,
   }

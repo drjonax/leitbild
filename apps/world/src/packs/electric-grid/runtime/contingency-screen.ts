@@ -11,7 +11,7 @@ import {
   type GridContingency,
   type ScreeningRecords,
 } from './contingency-snapshot.ts'
-import { loadingPercent, scanBranchLoading, type ContingencyPart } from './contingency.ts'
+import { branchLoadingBasis, branchLoadingPercent, scanBranchLoading, type ContingencyPart, type LoadingBasis } from './contingency.ts'
 import { gridGeneratorIsSynchronised } from './island-input.ts'
 
 export type { ContingencyRatingBasis } from './contingency-capture.ts'
@@ -28,6 +28,8 @@ export interface ScreenedBranch {
   readonly flowMw: number
   readonly loadingPercent: number
   readonly preContingencyLoadingPercent: number
+  /** mva: the larger end apparent power (a converged AC island); mw: |active power|. */
+  readonly loadingBasis: LoadingBasis
 }
 
 export interface ContingencyResult {
@@ -119,16 +121,18 @@ const summaryOf = (config: {
   readonly branchLabels: ReadonlyArray<string>
 }): ScreeningSummary => {
   const { snapshot, records, assets, branchIds, branchLabels } = config
-  const { capacityMw } = snapshot
   const base = snapshot.flowsMw
-  const screened = (branch: number, flowMw: number): ScreenedBranch => ({
+  const screened = (branch: number, flowMw: number, loadingPercent: number): ScreenedBranch => ({
     assetId: branchIds[branch]!,
     label: branchLabels[branch]!,
     flowMw: tenths(flowMw),
-    loadingPercent: tenths(loadingPercent(flowMw, capacityMw[branch]!)),
-    preContingencyLoadingPercent: tenths(loadingPercent(base[branch]!, capacityMw[branch]!)),
+    loadingPercent: tenths(loadingPercent),
+    preContingencyLoadingPercent: tenths(branchLoadingPercent(snapshot, branch, base[branch]!)),
+    loadingBasis: branchLoadingBasis(snapshot, branch),
   })
-  const baseScan = scanBranchLoading(capacityMw, base, new Int32Array(maximumListedOverloads))
+  const baseScan = scanBranchLoading({
+    snapshot, flowsMw: base, outOfService: null, listed: new Int32Array(maximumListedOverloads), listedLoadingPercent: new Float64Array(maximumListedOverloads),
+  })
   let totalViolations = 0
   let islandingCount = 0
   const results = assets.map((asset, position): ContingencyResult => {
@@ -157,9 +161,9 @@ const summaryOf = (config: {
         unservedLoadMw: tenths(part.unservedLoadMw),
       })),
       unservedLoadMw: tenths(parts.reduce((sum, part) => sum + part.unservedLoadMw, 0)),
-      worstBranch: worst < 0 ? null : screened(worst, records.values[values + recordValue.worstFlowMw]!),
+      worstBranch: worst < 0 ? null : screened(worst, records.values[values + recordValue.worstFlowMw]!, records.values[values + recordValue.worstLoadingPercent]!),
       overloadedBranches: Array.from({ length: records.integers[integers + recordInteger.listedCount]! }, (_, index) =>
-        screened(records.listedBranches[slots + index]!, records.listedFlowsMw[slots + index]!)),
+        screened(records.listedBranches[slots + index]!, records.listedFlowsMw[slots + index]!, records.listedLoadingPercent[slots + index]!)),
       violationCount,
     }
   }).sort(bySeverity)
@@ -168,7 +172,7 @@ const summaryOf = (config: {
     violatingCount: results.filter(result => result.violationCount > 0).length,
     islandingCount,
     totalViolations,
-    baseCase: { overloadedCount: baseScan.overloadedCount, worstBranch: baseScan.worst < 0 ? null : screened(baseScan.worst, base[baseScan.worst]!) },
+    baseCase: { overloadedCount: baseScan.overloadedCount, worstBranch: baseScan.worst < 0 ? null : screened(baseScan.worst, base[baseScan.worst]!, baseScan.worstLoadingPercent) },
     results,
   }
 }

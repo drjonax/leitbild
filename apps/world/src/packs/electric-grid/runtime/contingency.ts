@@ -34,8 +34,12 @@ export interface ContingencyOutcome {
 }
 
 export interface ContingencyEngine {
-  /** Writes the post-contingency flow of every branch for the snapshot's contingency at `position` into `flowsMw` (MW). */
-  readonly evaluate: (position: number, flowsMw: Float64Array) => ContingencyOutcome
+  /**
+   * Writes the post-contingency active flow of every branch for the snapshot's contingency at
+   * `position` into `flowsMw` (MW), and marks with 1 in `outOfService` the branches the outage
+   * takes out: the outaged branch and every branch of a part that loses supply.
+   */
+  readonly evaluate: (position: number, flowsMw: Float64Array, outOfService: Uint8Array) => ContingencyOutcome
 }
 
 interface KernelIsland {
@@ -100,11 +104,16 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
     }
   }
 
-  const zeroFlowsOfBuses = (island: KernelIsland, inPart: (bus: number) => boolean, flowsMw: Float64Array): void => {
-    for (const branch of island.branches) if (inPart(branchFrom[branch]!)) flowsMw[branch] = 0
+  const takeOut = (branch: number, flowsMw: Float64Array, outOfService: Uint8Array): void => {
+    flowsMw[branch] = 0
+    outOfService[branch] = 1
   }
 
-  const branchOutage = (branchIndex: number, flowsMw: Float64Array): ContingencyOutcome => {
+  const zeroFlowsOfBuses = (island: KernelIsland, inPart: (bus: number) => boolean, flowsMw: Float64Array, outOfService: Uint8Array): void => {
+    for (const branch of island.branches) if (inPart(branchFrom[branch]!)) takeOut(branch, flowsMw, outOfService)
+  }
+
+  const branchOutage = (branchIndex: number, flowsMw: Float64Array, outOfService: Uint8Array): ContingencyOutcome => {
     const from = branchFrom[branchIndex]!
     const to = branchTo[branchIndex]!
     const island = islands[snapshot.islands.islandOfBus[from]!]!
@@ -124,7 +133,7 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
         const ptdf = (angles[branchFrom[branch]!]! - angles[branchTo[branch]!]!) * branchSusceptancePu[branch]!
         flowsMw[branch] = flowsMw[branch]! + ptdf * scale
       }
-      flowsMw[branchIndex] = 0
+      takeOut(branchIndex, flowsMw, outOfService)
       return { islanding: false, parts: [], lostMw }
     }
     const inChild = (bus: number): boolean => bridges.entry[bus]! >= bridges.entry[child]! && bridges.entry[bus]! <= bridges.exit[child]!
@@ -138,13 +147,13 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
     const parts = [childBuses, otherBuses].map(members => ({ ...rebalancePart({ participation, members, injections: delta, removed: null }), busCount: members.length }))
     for (const bus of island.buses) delta[bus] = delta[bus]! - snapshot.injectionsMw[bus]!
     addCompensation(island, flowsMw)
-    flowsMw[branchIndex] = 0
-    if (parts[0]!.balancing === 'de-energised') zeroFlowsOfBuses(island, inChild, flowsMw)
-    if (parts[1]!.balancing === 'de-energised') zeroFlowsOfBuses(island, bus => !inChild(bus), flowsMw)
+    takeOut(branchIndex, flowsMw, outOfService)
+    if (parts[0]!.balancing === 'de-energised') zeroFlowsOfBuses(island, inChild, flowsMw, outOfService)
+    if (parts[1]!.balancing === 'de-energised') zeroFlowsOfBuses(island, bus => !inChild(bus), flowsMw, outOfService)
     return { islanding: true, parts, lostMw }
   }
 
-  const generatorOutage = (position: number, flowsMw: Float64Array): ContingencyOutcome => {
+  const generatorOutage = (position: number, flowsMw: Float64Array, outOfService: Uint8Array): ContingencyOutcome => {
     const bus = contingencies.bus[position]!
     const island = islands[snapshot.islands.islandOfBus[bus]!]!
     const lostMw = contingencies.unitOutputMw[position]!
@@ -160,7 +169,7 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
     delta[bus] = delta[bus]! - lostMw
     const part = { ...rebalancePart({ participation, members: island.buses, injections: delta, removed }), busCount: island.buses.length }
     if (part.balancing === 'de-energised') {
-      for (const branch of island.branches) flowsMw[branch] = 0
+      for (const branch of island.branches) takeOut(branch, flowsMw, outOfService)
       return { islanding: false, parts: [part], lostMw }
     }
     for (const member of island.buses) delta[member] = delta[member]! - snapshot.injectionsMw[member]!
@@ -169,20 +178,40 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
   }
 
   return {
-    evaluate: (position, flowsMw) => {
+    evaluate: (position, flowsMw, outOfService) => {
       if (!Number.isInteger(position) || position < 0 || position >= contingencies.count) throw new Error(`contingency position ${position} is outside 0..${contingencies.count - 1}`)
+      outOfService.fill(0)
       const branch = contingencies.branch[position]!
-      return branch >= 0 ? branchOutage(branch, flowsMw) : generatorOutage(position, flowsMw)
+      return branch >= 0 ? branchOutage(branch, flowsMw, outOfService) : generatorOutage(position, flowsMw, outOfService)
     },
   }
 }
 
-/** |flow| over capacity in percent. */
-export const loadingPercent = (flowMw: number, capacityMw: number): number => Math.abs(flowMw) / capacityMw * 100
+export type LoadingBasis = 'mva' | 'mw'
+
+/** The basis a branch's loading is judged on. */
+export const branchLoadingBasis = (snapshot: ContingencySnapshot, branch: number): LoadingBasis => snapshot.loading.mva[branch] === 1 ? 'mva' : 'mw'
+
+/**
+ * Loading (%) of a branch in service carrying `flowMw` at its from end, against its capacity. On
+ * the apparent-power basis, as the runtime judges a converged AC island: the active-power change
+ * from the base moves both ends' active power, each end keeps its base reactive power, and the
+ * larger end apparent power counts. Otherwise |flowMw|.
+ */
+export const branchLoadingPercent = (snapshot: ContingencySnapshot, branch: number, flowMw: number): number => {
+  const capacityMw = snapshot.capacityMw[branch]!
+  const { loading } = snapshot
+  if (loading.mva[branch] !== 1) return Math.abs(flowMw) / capacityMw * 100
+  const toMw = loading.toActiveMw[branch]! - (flowMw - snapshot.flowsMw[branch]!)
+  const fromMvar = loading.fromReactiveMvar[branch]!
+  const toMvar = loading.toReactiveMvar[branch]!
+  return Math.sqrt(Math.max(flowMw * flowMw + fromMvar * fromMvar, toMw * toMw + toMvar * toMvar)) / capacityMw * 100
+}
 
 export interface BranchLoadingScan {
   /** Most loaded branch (the first of equals), or -1 without branches. */
   readonly worst: number
+  readonly worstLoadingPercent: number
   /** Branches above 100 %. */
   readonly overloadedCount: number
   /** How many of the most-loaded overloaded branches `listed` holds, most loaded first and equals in index order. */
@@ -190,38 +219,45 @@ export interface BranchLoadingScan {
 }
 
 /**
- * Loading of every branch in one pass: the most loaded branch, the overloaded count, and the
- * `listed.length` most-loaded overloaded branches written to `listed` — the head of a stable sort of
- * the overloaded branches by loading, kept by insertion instead of sorting them all.
+ * Loading of every branch in one pass (0 on a branch out of service): the most loaded branch, the
+ * overloaded count, and the `listed.length` most-loaded overloaded branches written to `listed`
+ * with their loading in `listedLoadingPercent` — the head of a stable sort of the overloaded
+ * branches by loading, kept by insertion instead of sorting them all.
  */
-export const scanBranchLoading = (capacityMw: Float64Array, flowsMw: Float64Array, listed: Int32Array): BranchLoadingScan => {
+export const scanBranchLoading = (config: {
+  readonly snapshot: ContingencySnapshot
+  readonly flowsMw: Float64Array
+  readonly outOfService: Uint8Array | null
+  readonly listed: Int32Array
+  readonly listedLoadingPercent: Float64Array
+}): BranchLoadingScan => {
+  const { snapshot, flowsMw, outOfService, listed, listedLoadingPercent } = config
   const capacity = listed.length
-  const listedLoading = new Float64Array(capacity)
   let worst = -1
-  let worstLoading = -1
+  let worstLoadingPercent = -1
   let overloadedCount = 0
   let listedCount = 0
   for (let branch = 0; branch < flowsMw.length; branch += 1) {
-    const value = loadingPercent(flowsMw[branch]!, capacityMw[branch]!)
-    if (value > worstLoading) {
-      worstLoading = value
+    const value = outOfService !== null && outOfService[branch] === 1 ? 0 : branchLoadingPercent(snapshot, branch, flowsMw[branch]!)
+    if (value > worstLoadingPercent) {
+      worstLoadingPercent = value
       worst = branch
     }
     if (!(value > 100)) continue
     overloadedCount += 1
     // Equal loadings keep index order, so a later branch enters only above the last listed one.
-    if (listedCount === capacity && !(value > listedLoading[capacity - 1]!)) continue
+    if (listedCount === capacity && !(value > listedLoadingPercent[capacity - 1]!)) continue
     let slot = listedCount < capacity ? listedCount : capacity - 1
     if (listedCount < capacity) listedCount += 1
-    while (slot > 0 && listedLoading[slot - 1]! < value) {
+    while (slot > 0 && listedLoadingPercent[slot - 1]! < value) {
       listed[slot] = listed[slot - 1]!
-      listedLoading[slot] = listedLoading[slot - 1]!
+      listedLoadingPercent[slot] = listedLoadingPercent[slot - 1]!
       slot -= 1
     }
     listed[slot] = branch
-    listedLoading[slot] = value
+    listedLoadingPercent[slot] = value
   }
-  return { worst, overloadedCount, listedCount }
+  return { worst, worstLoadingPercent, overloadedCount, listedCount }
 }
 
 /**
@@ -234,12 +270,15 @@ export const screenContingencyRange = (snapshot: ContingencySnapshot, records: S
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > records.count || start > end) throw new Error(`screening range ${start}..${end} is outside 0..${records.count}`)
   const engine = createContingencyEngine(snapshot)
   const flows = new Float64Array(snapshot.network.branchCount)
+  const outOfService = new Uint8Array(snapshot.network.branchCount)
   for (let position = start; position < end; position += 1) {
-    const outcome = engine.evaluate(position, flows)
+    const outcome = engine.evaluate(position, flows, outOfService)
     if (outcome.parts.length > maximumRecordParts) throw new Error(`contingency ${position} has ${outcome.parts.length} parts; records hold ${maximumRecordParts}`)
     const slots = position * maximumListedOverloads
     const listed = records.listedBranches.subarray(slots, slots + maximumListedOverloads)
-    const { worst, overloadedCount, listedCount } = scanBranchLoading(snapshot.capacityMw, flows, listed)
+    const { worst, worstLoadingPercent, overloadedCount, listedCount } = scanBranchLoading({
+      snapshot, flowsMw: flows, outOfService, listed, listedLoadingPercent: records.listedLoadingPercent.subarray(slots, slots + maximumListedOverloads),
+    })
     const integers = position * recordIntegerWidth
     const values = position * recordValueWidth
     records.integers[integers + recordInteger.islanding] = outcome.islanding ? 1 : 0
@@ -249,6 +288,7 @@ export const screenContingencyRange = (snapshot: ContingencySnapshot, records: S
     records.integers[integers + recordInteger.listedCount] = listedCount
     records.values[values + recordValue.lostMw] = outcome.lostMw
     records.values[values + recordValue.worstFlowMw] = worst < 0 ? 0 : flows[worst]!
+    records.values[values + recordValue.worstLoadingPercent] = worstLoadingPercent
     outcome.parts.forEach((part, index) => {
       records.integers[integers + recordInteger.firstPart + 2 * index] = part.busCount
       records.integers[integers + recordInteger.firstPart + 2 * index + 1] = balancingByCode.indexOf(part.balancing)

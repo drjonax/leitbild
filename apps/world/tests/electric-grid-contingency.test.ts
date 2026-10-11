@@ -15,8 +15,8 @@ import { liveContingencyCase, switchedContingencyCase } from '../src/packs/elect
 import { remedialCaseChanges } from '../src/packs/electric-grid/runtime/remedial-actions.ts'
 import { screenRecordsInline } from '../src/packs/electric-grid/runtime/contingency-execution.ts'
 import { screenContingencies, selectContingencies } from '../src/packs/electric-grid/runtime/contingency-screen.ts'
-import type { GridContingency } from '../src/packs/electric-grid/runtime/contingency-snapshot.ts'
-import { createContingencyEngine } from '../src/packs/electric-grid/runtime/contingency.ts'
+import type { ContingencySnapshot, GridContingency } from '../src/packs/electric-grid/runtime/contingency-snapshot.ts'
+import { branchLoadingPercent, createContingencyEngine } from '../src/packs/electric-grid/runtime/contingency.ts'
 import { generatorIsVoltageForming, generatorKineticEnergyMws } from '../src/packs/electric-grid/runtime/generator-dynamics.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { gridGeneratorIsSynchronised } from '../src/packs/electric-grid/runtime/island-input.ts'
@@ -95,10 +95,38 @@ const bruteForceDcFlows = (grid: GridRuntimeInstance, closed: Uint8Array, inject
 const hybridFlows = (base: Float64Array, change: { readonly flows: Float64Array; readonly live: Uint8Array }, dcBase: Float64Array | null): Float64Array =>
   Float64Array.from(change.flows, (flow, branch) => change.live[branch] === 1 ? base[branch]! + flow - (dcBase === null ? 0 : dcBase[branch]!) : 0)
 
-const largestDifference = (a: Float64Array, b: Float64Array): number => a.reduce((largest, value, index) => Math.max(largest, Math.abs(value - b[index]!)), 0)
+const largestDifference = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
+  let largest = 0
+  for (let index = 0; index < a.length; index += 1) largest = Math.max(largest, Math.abs(a[index]! - b[index]!))
+  return largest
+}
+
+/**
+ * Loading (%) the runtime's way, from the Grid's branch states: on a branch carrying AC flow the
+ * larger end apparent power, each end's reactive power held at its base and its active power moved
+ * by the change from the base flow (the to end's base being the AC series loss less the from end's);
+ * |flow| on a DC branch; 0 on a branch out of service.
+ */
+const runtimeWayLoading = (grid: GridRuntimeInstance, flowsMw: Float64Array, inService: Uint8Array): Float64Array =>
+  Float64Array.from(grid.definition.model.branches, (branch, index) => {
+    if (inService[index] !== 1) return 0
+    const state = grid.branches.get(branch.id)!
+    const capacityMw = branch.ratingMw * state.availability
+    if (state.flowModel !== 'ac') return Math.abs(flowsMw[index]!) / capacityMw * 100
+    const changeMw = flowsMw[index]! - state.flowMw
+    const toMw = state.lossesMw - state.flowMw - changeMw
+    return Math.max(Math.hypot(flowsMw[index]!, state.reactiveFromMvar!), Math.hypot(toMw, state.reactiveToMvar!)) / capacityMw * 100
+  })
+
+/** The kernel's loading of every branch after an evaluation. */
+const kernelLoading = (snapshot: ContingencySnapshot, flowsMw: Float64Array, outOfService: Uint8Array): Float64Array =>
+  Float64Array.from(flowsMw, (flow, branch) => outOfService[branch] === 1 ? 0 : branchLoadingPercent(snapshot, branch, flow))
+
+const liveMask = (flows: ArrayLike<number>, outOfService: Uint8Array, closed: Uint8Array): Uint8Array =>
+  Uint8Array.from(flows, (_, branch) => closed[branch] === 1 && outOfService[branch] !== 1 ? 1 : 0)
 
 describe('electric grid N-1 screening', () => {
-  test('post-contingency flows match brute-force re-solves of the hybrid method within 1e-6 MW on every branch, for every branch and unit outage', () => {
+  test('post-contingency flows and loading match brute-force re-solves of the hybrid method on every branch, for every branch and unit outage', () => {
     const grid = solvedNorway()
     const screeningCase = liveContingencyCase(grid)
     const network = screeningCase.network
@@ -112,21 +140,37 @@ describe('electric grid N-1 screening', () => {
       ...selectContingencies(screeningCase, { kind: 'all-branches' }),
       ...units.map((definition): GridContingency => ({ kind: 'generator', generatorId: definition.id })),
     ]
-    const engine = createContingencyEngine(captureContingencySnapshot(screeningCase, contingencies, 'normal'))
+    const snapshot = captureContingencySnapshot(screeningCase, contingencies, 'normal')
+    // Before any outage the loading is the runtime's own, on its own basis.
+    const live = Uint8Array.from(grid.definition.model.branches, branch => grid.branches.get(branch.id)!.flowModel === null ? 0 : 1)
+    const baseLoading = kernelLoading(snapshot, screeningCase.flowsMw, new Uint8Array(network.branchCount))
+    expect(largestDifference(baseLoading, Float64Array.from(grid.definition.model.branches, branch => grid.branches.get(branch.id)!.loadingPercent))).toBeLessThan(1e-9)
+    expect(largestDifference(baseLoading, runtimeWayLoading(grid, screeningCase.flowsMw, live))).toBeLessThan(1e-9)
+    expect(Array.from(snapshot.loading.mva).filter(flag => flag === 1).length).toBeGreaterThan(1_000)
+    const engine = createContingencyEngine(snapshot)
     const flows = new Float64Array(network.branchCount)
+    const outOfService = new Uint8Array(network.branchCount)
     let branchCount = 0
     let islanding = 0
     let largest = 0
+    let largestLoading = 0
+    const check = (expected: { readonly flows: Float64Array; readonly live: Uint8Array }): void => {
+      largest = Math.max(largest, largestDifference(flows, expected.flows))
+      largestLoading = Math.max(largestLoading, largestDifference(kernelLoading(snapshot, flows, outOfService), runtimeWayLoading(grid, expected.flows, expected.live)))
+      // The kernel takes out exactly the branches the re-solve leaves off the energised network.
+      expect(Array.from(liveMask(flows, outOfService, screeningCase.closed))).toEqual(Array.from(expected.live))
+    }
     contingencies.forEach((contingency, position) => {
       if (contingency.kind !== 'branch') return
       const branch = contingency.branchIndex
-      const outcome = engine.evaluate(position, flows)
+      const outcome = engine.evaluate(position, flows, outOfService)
       const closed = screeningCase.closed.slice()
       closed[branch] = 0
-      let expected: Float64Array
+      let resolved: { readonly flows: Float64Array; readonly live: Uint8Array }
       if (outcome.islanding) {
         // A split: each part rebalances its DC injections; the DC change of the re-solve adds to the base.
-        expected = hybridFlows(screeningCase.flowsMw, bruteForceDcFlows(grid, closed, screeningCase.injectionsMw, null), screeningCase.dcFlowsMw)
+        resolved = bruteForceDcFlows(grid, closed, screeningCase.injectionsMw, null)
+        check({ flows: hybridFlows(screeningCase.flowsMw, resolved, screeningCase.dcFlowsMw), live: resolved.live })
         islanding += 1
         // The part cut off absorbs exactly what the branch carried in the DC solution.
         expect(Math.abs(Math.abs(outcome.parts[0]!.imbalanceMw) - Math.abs(screeningCase.dcFlowsMw[branch]!))).toBeLessThan(1e-6)
@@ -135,17 +179,17 @@ describe('electric grid N-1 screening', () => {
         const transfer = new Float64Array(network.busCount)
         transfer[network.branchFrom[branch]!] = screeningCase.flowsMw[branch]!
         transfer[network.branchTo[branch]!] = -screeningCase.flowsMw[branch]!
-        expected = hybridFlows(screeningCase.flowsMw, bruteForceDcFlows(grid, closed, transfer, null), null)
+        resolved = bruteForceDcFlows(grid, closed, transfer, null)
+        check({ flows: hybridFlows(screeningCase.flowsMw, resolved, null), live: resolved.live })
       }
       expect(outcome.lostMw).toBe(screeningCase.flowsMw[branch]!)
-      largest = Math.max(largest, largestDifference(flows, expected))
       branchCount += 1
     })
     let unitCount = 0
     units.forEach((definition, index) => {
       const state = grid.generators.get(definition.id)!
       const bus = network.busIndexById.get(definition.busId)!
-      engine.evaluate(contingencies.length - units.length + index, flows)
+      engine.evaluate(contingencies.length - units.length + index, flows, outOfService)
       const injections = screeningCase.injectionsMw.slice()
       injections[bus] = injections[bus]! - state.dispatchMw
       const removed = {
@@ -155,20 +199,26 @@ describe('electric grid N-1 screening', () => {
         kineticEnergyMws: generatorKineticEnergyMws(definition),
         forming: generatorIsVoltageForming(definition) ? 1 : 0,
       }
-      largest = Math.max(largest, largestDifference(flows, hybridFlows(screeningCase.flowsMw, bruteForceDcFlows(grid, screeningCase.closed, injections, removed), screeningCase.dcFlowsMw)))
+      const resolved = bruteForceDcFlows(grid, screeningCase.closed, injections, removed)
+      check({ flows: hybridFlows(screeningCase.flowsMw, resolved, screeningCase.dcFlowsMw), live: resolved.live })
       unitCount += 1
     })
-    // A remedial case's base flows: the live base plus the DC change of its actions.
-    const meshed = contingencies.find((contingency, position) => contingency.kind === 'branch' && !engine.evaluate(position, flows).islanding)!
+    // A remedial case's base: the live base plus the DC change of its actions, judged on the same basis.
+    const meshed = contingencies.find((contingency, position) => contingency.kind === 'branch' && !engine.evaluate(position, flows, outOfService).islanding)!
     const opened = network.branchIds[(meshed as { branchIndex: number }).branchIndex]!
     const remedial = switchedContingencyCase(screeningCase, remedialCaseChanges(screeningCase, [{ kind: 'open-branch', assetId: opened }])).case
-    largest = Math.max(largest, largestDifference(remedial.flowsMw, hybridFlows(screeningCase.flowsMw, bruteForceDcFlows(grid, remedial.closed, screeningCase.injectionsMw, null), screeningCase.dcFlowsMw)))
+    const resolved = bruteForceDcFlows(grid, remedial.closed, screeningCase.injectionsMw, null)
+    const expectedRemedial = hybridFlows(screeningCase.flowsMw, resolved, screeningCase.dcFlowsMw)
+    largest = Math.max(largest, largestDifference(remedial.flowsMw, expectedRemedial))
+    const remedialSnapshot = captureContingencySnapshot(remedial, [], 'normal')
+    largestLoading = Math.max(largestLoading, largestDifference(kernelLoading(remedialSnapshot, remedial.flowsMw, new Uint8Array(network.branchCount)), runtimeWayLoading(grid, expectedRemedial, resolved.live)))
     expect(remedial.baseFlowModels).toEqual(screeningCase.baseFlowModels)
-    console.info(`N-1 vs brute force (AC base, DC increments): ${branchCount} branch outages (${islanding} islanding), ${unitCount} unit outages, largest difference ${largest.toExponential(2)} MW`)
+    console.info(`N-1 vs brute force (AC base, DC increments): ${branchCount} branch outages (${islanding} islanding), ${unitCount} unit outages, largest difference ${largest.toExponential(2)} MW, ${largestLoading.toExponential(2)} % loading`)
     expect(branchCount).toBeGreaterThan(250)
     expect(islanding).toBeGreaterThan(0)
     expect(largest).toBeLessThan(1e-6)
-  }, 60_000)
+    expect(largestLoading).toBeLessThan(1e-6)
+  }, 120_000)
 
   test('screens 300 contingencies inline within 100 ms of quiet CPU time (reported at the v2 model size too)', async () => {
     const grid = solvedNorway()

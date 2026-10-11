@@ -21,6 +21,12 @@ const sharedCopyInt32 = (source: Int32Array): Int32Array => {
   return copy
 }
 
+const sharedCopyUint8 = (source: Uint8Array): Uint8Array => {
+  const copy = sharedUint8(source.length)
+  copy.set(source)
+  return copy
+}
+
 const sharedCopyFloat64 = (source: Float64Array): Float64Array => {
   const copy = sharedFloat64(source.length)
   copy.set(source)
@@ -236,6 +242,12 @@ export const captureContingencySnapshot = (
     injectionsMw: sharedCopyFloat64(screeningCase.injectionsMw),
     flowsMw: sharedCopyFloat64(screeningCase.flowsMw),
     capacityMw,
+    loading: {
+      mva: sharedCopyUint8(screeningCase.loadingBase.mva),
+      toActiveMw: sharedCopyFloat64(screeningCase.loadingBase.toActiveMw),
+      fromReactiveMvar: sharedCopyFloat64(screeningCase.loadingBase.fromReactiveMvar),
+      toReactiveMvar: sharedCopyFloat64(screeningCase.loadingBase.toReactiveMvar),
+    },
     contingencies: contingenciesOf(screeningCase, contingencies),
   }
 }
