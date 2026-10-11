@@ -235,7 +235,7 @@ describe('electric grid Pack', () => {
     expect(() => createGridRuntimeInstance({ definition: withStorage, at: '2026-01-01T10:00:00.000Z' })).toThrow('storage storage:test has no initial state of charge')
     // Dispatch never caps silently: an island whose units and Nordic ties cannot cover its demand is an explicit error.
     const short = compileGridDefinition(gridDefinitionSchema.parse({
-      id: 'grid:short', model: data.model, operatingPoint: { ...data.operatingPoint, overrides: { loadScale: 2.5 } }, automation: data.automation,
+      id: 'grid:short', model: data.model, operatingPoint: { ...data.operatingPoint, overrides: { loadScale: 4 } }, automation: data.automation,
     }))
     expect(() => createGridRuntimeInstance({ definition: short, at: '2026-01-01T10:00:00.000Z' })).toThrow(/dispatch is infeasible: island .* needs .* MW but its online units can supply .* and its ties to .* carry at most/)
     // Availability scaled below a unit's minimum stable generation cannot start it online.

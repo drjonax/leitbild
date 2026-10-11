@@ -97,7 +97,7 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     nominalFrequencyHz: 50,
     fidelity: transmissionFidelity,
     source: { kind: 'grid-model', file: 'norway-transmission.grid-model.json', geometryFile: 'norway-transmission.geometry.json' },
-    assetCounts: { bus: 1074, branch: 1336, generator: 849, load: 1319, storage: 0, connectionPoint: 0 },
+    assetCounts: { bus: 1000, branch: 1244, generator: 851, load: 3142, storage: 0, connectionPoint: 0 },
     connectionPoints: [],
   }, {
     id: haldenFourUnitGridModelRef,
@@ -106,7 +106,7 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     nominalFrequencyHz: 50,
     fidelity: transmissionFidelity,
     source: { kind: 'grid-model-addition', baseModelRef: norwayGridModelRef, file: 'halden-four-unit.grid-model-addition.json' },
-    assetCounts: { bus: 1075, branch: 1342, generator: 849, load: 1319, storage: 0, connectionPoint: 4 },
+    assetCounts: { bus: 1001, branch: 1250, generator: 851, load: 3142, storage: 0, connectionPoint: 4 },
     connectionPoints: [1, 2, 3, 4].map(haldenUnitBay),
   }],
   operatingPoints: [{

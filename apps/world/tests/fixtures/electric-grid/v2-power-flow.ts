@@ -88,7 +88,7 @@ export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperati
   for (const load of compiled.model.loads) {
     const bus = busIndex.get(load.busId)!
     active[bus] = active[bus]! - load.demandMw
-    reactive[bus] = reactive[bus]! - load.reactiveDemandMvar
+    reactive[bus] = reactive[bus]! - load.demandMw * Math.tan(Math.acos(load.powerFactor))
     solvedDemandMw += load.demandMw
   }
   const states = new Map((operatingPoint.generatorStates ?? []).map(state => [state.assetId, state]))

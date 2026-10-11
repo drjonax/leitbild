@@ -139,8 +139,10 @@ const command = (kind: string, payload: unknown) => ({
 describe('electric grid physics invariants', () => {
   test('closes KCL and every island balance below 1e-6 MW over 24 h', () => {
     // The balance closes by construction whatever the integration step, so this day-long run uses
-    // the Nordic Automation with a 1 s sub-step (the schema's longest) to stay within the test budget.
-    const automation = gridAutomationSchema.parse({ ...nordic, simulation: { subStepSeconds: 1, maximumCatchUpSeconds: 120 } })
+    // the Nordic Automation with a 1 s sub-step (the schema's longest) and without branch relays,
+    // whose every sample is a network solution (1,440 a day per second of sampling interval), to
+    // stay within the test budget; electric-grid-protection.test.ts covers the relays.
+    const automation = gridAutomationSchema.parse({ ...nordic, simulation: { subStepSeconds: 1, maximumCatchUpSeconds: 120 }, branchProtection: { enabled: false } })
     const run = runningGrid({ ...definitionFor('electric-grid.norway.transmission'), automation })
     let largestKcl = 0
     let largestIsland = 0
@@ -557,14 +559,15 @@ describe('Halden coupling to the Nordic synchronous area', () => {
     const ties = se3TieExports(run.grid)
     const island = run.grid.projection.islands.find(candidate => candidate.id === islandOfBus(run.grid, switchyard).id)!
     console.info(`Halden 4×1,100 MW, 1 h: f ${lowestHz.toFixed(4)}–${highestHz.toFixed(4)} Hz; Nordic import ${nordicImportMw(run.grid).toFixed(1)} MW; `
-      + `SE3 ties ${ties.map(tie => `${tie.label} ${tie.exportMw.toFixed(1)} MW`).join(', ')}; island losses ${island.lossesMw} MW of ${island.servedLoadMw} MW served`)
+      + `(schedule ${(-run.grid.definition.operatingPoint.externalExchanges.reduce((sum, exchange) => sum + exchange.scheduledExportMw, 0)).toFixed(1)} MW); SE3 ties ${ties.map(tie => `${tie.label} ${tie.exportMw.toFixed(1)} MW`).join(', ')}; island losses ${island.lossesMw} MW of ${island.servedLoadMw} MW served`)
     expect(lowestHz).toBeGreaterThan(49.9)
     expect(highestHz).toBeLessThan(50.1)
-    // The units' surplus displaces Norwegian hydro: the exchange stays at its 0 MW schedule within the
-    // FCR-N and aFRR the Nordic equivalent activates for the area.
+    // The units' surplus displaces Norwegian hydro: the exchange stays at its measured schedule within
+    // the FCR-N and aFRR the Nordic equivalent activates for the area.
     const nordic = run.grid.definition.index.externalSystems.filter(system => system.synchronous)
     const responseMw = nordic.reduce((sum, system) => sum + system.fcrNMwPerHz! * 0.1 + system.afrrUpMw!, 0)
-    expect(Math.abs(nordicImportMw(run.grid))).toBeLessThan(responseMw)
+    const scheduledExportMw = run.grid.definition.operatingPoint.externalExchanges.reduce((sum, exchange) => sum + exchange.scheduledExportMw, 0)
+    expect(Math.abs(nordicImportMw(run.grid) + scheduledExportMw)).toBeLessThan(responseMw)
     // The ties carry exactly what leaves the boundary bus, less half their losses, which it carries as load.
     const boundary = run.grid.busStates.get(se3Boundary)!
     expect(ties.reduce((sum, tie) => sum + tie.exportMw, 0)).toBeCloseTo(-boundary.netInjectionMw, 6)
