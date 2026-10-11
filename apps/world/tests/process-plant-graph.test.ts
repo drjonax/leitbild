@@ -79,9 +79,10 @@ describe('process plant model composition', () => {
     // and again when the core was given six delayed-neutron groups, decay
     // heat on the ANS-5.1 curve and a scram worth on its trip breakers, and
     // again when its nuclear instruments were given their spans, the power
-    // range and startup rate, and P-6 and P-10; PWR Runs checkpointed before
-    // then must be restarted.
-    expect(system.modelDigest).toBe('8fd49f36613cd0cd96387bed6ad3162e47ce6c14a597b9c8983514c4364b9deb')
+    // range and startup rate, and P-6 and P-10, and again when rod control
+    // was given its Tref program; PWR Runs checkpointed before then must be
+    // restarted.
+    expect(system.modelDigest).toBe('d2066d1ce75bc2f019ed9849b08cf134e3b99847107570b3f8339f654bb437b5')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

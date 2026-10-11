@@ -30,7 +30,7 @@ import {
 import { pressurizerSprayFlowKgPerS } from './pressurizer-behaviors.ts'
 import { primaryBreakFlow } from '../links/primary-break-flow.ts'
 import { intermediateRangeStartupRateDpm, nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
-import { decayHeatGroupCount, delayedNeutronGroupCount, reactorNeutronics } from '../../graph/reactor-component-definitions.ts'
+import { decayHeatGroupCount, delayedNeutronGroupCount, reactorNeutronics, reactorTemperatureProgram } from '../../graph/reactor-component-definitions.ts'
 
 type ReactorBehaviorSystem = Parameters<ComponentBehaviorDefinition['update']>[0]['system']
 type ReactorBehaviorContext = Parameters<ComponentBehaviorDefinition['update']>[0]['context']
@@ -648,6 +648,29 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'meanPrimaryCoolantTemperatureC'), meanPrimaryCoolantTemperature)
       context.write(componentVariablePath(component, 'subcoolingMarginC'), subcoolingMargin)
       context.write(componentVariablePath(component, 'primaryReleaseRadiationMSvPerH'), primaryReleaseRadiation)
+    },
+  },
+  {
+    id: 'reactor-core-temperature-program',
+    // After the vessel's own update, so it compares this step's Tavg.
+    phase: 'updateComponentState',
+    componentKind: 'reactorCore',
+    reads: ['reactorVessel.meanPrimaryCoolantTemperatureC', 'turbine steamFlowKgPerS'],
+    writes: ['referenceAverageTemperatureC', 'averageTemperatureDeviationC'],
+    update: ({ system, component, context }): void => {
+      // Rod control programs Tref from turbine load, as the turbine's
+      // first-stage pressure reads it: its steam flow over its rated flow, from
+      // the no-load to the full-load average coolant temperature.
+      const program = reactorTemperatureProgram(component)
+      const turbineIndex = system.graph.componentIndexById.get(program.turbine as never)
+      if (turbineIndex === undefined) throw new Error(`reactor core ${component.id} programs Tref from turbine ${program.turbine}, which is not a component of the Plant`)
+      const turbine = system.graph.components[turbineIndex]!
+      const vessel = primarySystemReactorVessel(system)
+      if (vessel === null) throw new Error(`reactor core ${component.id} needs a reactor vessel to compare its average coolant temperature with Tref`)
+      const load = clamp(context.readNumber(componentVariablePath(turbine, 'steamFlowKgPerS')) / parameterNumber(turbine, 'nominalSteamFlowKgPerS'), 0, 1)
+      const reference = program.noLoadAverageTemperatureC + load * (program.fullLoadAverageTemperatureC - program.noLoadAverageTemperatureC)
+      context.write(componentVariablePath(component, 'referenceAverageTemperatureC'), reference)
+      context.write(componentVariablePath(component, 'averageTemperatureDeviationC'), context.readNumber(componentVariablePath(vessel, 'meanPrimaryCoolantTemperatureC')) - reference)
     },
   },
 ]

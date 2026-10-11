@@ -93,6 +93,9 @@ describe('at steady full power', () => {
     expect(tag('P-10')).toBe(true)
     expect(tag('NIS-SR-HV')).toBe(false)
     expect(tag('NIS-SR')).toBe(0)
+    // Tavg sits on its program: Tref at full load.
+    expect(Number(tag('TREF'))).toBeCloseTo(305.7, 1)
+    expect(Math.abs(Number(tag('TAVG-TREF')))).toBeLessThan(0.1)
   })
 })
 

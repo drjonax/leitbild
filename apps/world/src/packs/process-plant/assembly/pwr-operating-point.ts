@@ -88,8 +88,12 @@ export const pwrFullPowerParameters = (graph: PlantGraphSpec, authored: Readonly
       const density = compressedWaterState(meanTemperature, Number(coreParameters.nominalCoolantPressureMPa)).densityKgPerM3
       set(component, { referencePrimaryCoolantTemperatureC: meanTemperature, nominalPrimaryCoolantInventoryKg: density * Number(effective(component).primaryCoolantVolumeM3) })
     }
-    // The pressurizer's level program reaches its full-load level at the
-    // operating point's mean coolant temperature.
+    // Rod control's Tref program, and the pressurizer's level program, reach
+    // their full-load ends at the operating point's mean coolant temperature.
+    if (component.kind === 'reactorCore') {
+      const temperatureProgram = z.record(z.string(), z.unknown()).parse(effective(component).temperatureProgram)
+      set(component, { ...result[component.id], temperatureProgram: { ...temperatureProgram, fullLoadAverageTemperatureC: meanTemperature } })
+    }
     if (component.kind === 'pressurizer') {
       const levelControl = z.record(z.string(), z.unknown()).parse(effective(component).levelControl)
       set(component, { levelControl: { ...levelControl, fullLoadAverageTemperatureC: meanTemperature } })

@@ -74,6 +74,30 @@ const scramSchema = z.object({
   reactorTripBreakers: z.array(idSchema).min(1),
 }).strict()
 
+const temperatureProgramSchema = z.object({
+  /** The average coolant temperature the program asks for with the turbine unloaded. */
+  noLoadAverageTemperatureC: z.number().finite(),
+  /** The average coolant temperature the program asks for at full turbine load. */
+  fullLoadAverageTemperatureC: z.number().finite(),
+  /** The turbine whose load, its steam flow over its rated flow as its first-stage pressure reads it, sets the program. */
+  turbine: idSchema,
+}).strict().refine(program => program.fullLoadAverageTemperatureC > program.noLoadAverageTemperatureC, {
+  message: 'average temperature program full-load temperature must be above its no-load temperature',
+})
+
+export type ReactorTemperatureProgram = z.infer<typeof temperatureProgramSchema>
+
+const temperatureProgramByComponent = new WeakMap<CompiledComponent, ReactorTemperatureProgram>()
+
+/** A core's average temperature program, Tref against turbine load, as its parameters declare it. */
+export const reactorTemperatureProgram = (component: CompiledComponent): ReactorTemperatureProgram => {
+  const cached = temperatureProgramByComponent.get(component)
+  if (cached !== undefined) return cached
+  const parsed = temperatureProgramSchema.parse((component.parameters as Readonly<Record<string, unknown>>).temperatureProgram)
+  temperatureProgramByComponent.set(component, parsed)
+  return parsed
+}
+
 const reactorNeutronicsSchema = z.object({
   delayedNeutrons: delayedNeutronsSchema,
   decayHeatGroups: decayHeatGroupsSchema,
@@ -135,6 +159,8 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       decayHeatGroups: decayHeatGroupsSchema,
       /** What the reactor trip does to the core. */
       scram: scramSchema,
+      /** The rod control's reference average coolant temperature, Tref, programmed from turbine load. */
+      temperatureProgram: temperatureProgramSchema,
       referenceCoolantOutletTemperatureC: z.number().finite().optional(),
       referenceFuelTemperatureC: z.number().finite().optional(),
       coolantTemperatureFeedbackPcmPerC: z.number().finite().optional(),
@@ -214,6 +240,8 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'aboveP10', label: 'P-10 power range above setpoint', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'intermediateRangeStartupRateDpm', label: 'Intermediate-range startup rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'startupRate', unit: 'DPM', limits: { hardRange: nuclearInstrumentSpans.intermediateRangeStartupRateDpm } }),
       variable({ path: 'aboveP6', label: 'P-6 intermediate range above setpoint', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'referenceAverageTemperatureC', label: 'Reference average coolant temperature', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
+      variable({ path: 'averageTemperatureDeviationC', label: 'Average coolant temperature deviation from reference', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
     ],
   }),
   defineComponent({

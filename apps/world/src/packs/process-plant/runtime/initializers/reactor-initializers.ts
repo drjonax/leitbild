@@ -1,5 +1,5 @@
 import { primaryLoopIdForPump } from '../../graph/index.ts'
-import { reactorNeutronics } from '../../graph/reactor-component-definitions.ts'
+import { reactorNeutronics, reactorTemperatureProgram } from '../../graph/reactor-component-definitions.ts'
 import { clamp, optionalParameterBoolean, optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
 import type { ComponentInitialValueDefinition } from './model.ts'
 import { reactorInitialThermalState } from '../../reactor-initial-conditions.ts'
@@ -31,6 +31,12 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'boronFeedbackPcm') return 0
       if (localPath === 'voidFeedbackPcm') return 0
       if (localPath === 'effectiveReactivityPcm') return 0
+      // At a steady initial state the turbine carries the core's power, so its
+      // load sets Tref where the initial power puts it.
+      const program = reactorTemperatureProgram(component)
+      const initialReference = program.noLoadAverageTemperatureC + clamp(initialPowerFraction, 0, 1) * (program.fullLoadAverageTemperatureC - program.noLoadAverageTemperatureC)
+      if (localPath === 'referenceAverageTemperatureC') return initialReference
+      if (localPath === 'averageTemperatureDeviationC') return (initialCoolantInlet + initialCoolantOutlet) / 2 - initialReference
       if (localPath === 'rodInsertionFraction') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1))
       if (localPath === 'powerRangePercent') return nuclearInstrumentationReading(component, initialFissionPower).powerRangePercent
       if (localPath === 'aboveP10') return nuclearInstrumentationReading(component, initialFissionPower).aboveP10

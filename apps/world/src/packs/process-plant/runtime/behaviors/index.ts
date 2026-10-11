@@ -59,6 +59,7 @@ export const componentBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefini
   behaviorDefinitionById('reactor-core-power-state'),
   // The loops' inventory sets the surge the pressurizer then takes.
   behaviorDefinitionById('reactor-vessel-primary-inventory-state'),
+  behaviorDefinitionById('reactor-core-temperature-program'),
   behaviorDefinitionById('pressurizer-pressure-inventory-state'),
   behaviorDefinitionById('process-tank-inventory-state'),
   behaviorDefinitionById('reactor-core-coolant-temperature-state'),

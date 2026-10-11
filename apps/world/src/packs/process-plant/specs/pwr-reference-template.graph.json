@@ -38,6 +38,11 @@
           { "fractionOfFissionPower": 0.0027, "timeConstantS": 100000 },
           { "fractionOfFissionPower": 0.0036, "timeConstantS": 1000000 }
         ],
+        "temperatureProgram": {
+          "noLoadAverageTemperatureC": 291.7,
+          "fullLoadAverageTemperatureC": 305.7,
+          "turbine": "turbine"
+        },
         "scram": {
           "reactivityPcm": 4000,
           "insertionTimeS": 2.7,
@@ -167,6 +172,18 @@
           "externalRefs": [
             "rcs.core_exit.thermocouple.avg"
           ]
+        },
+        {
+          "path": "referenceAverageTemperatureC",
+          "tagId": "TREF",
+          "equipmentId": "rod-control-system",
+          "description": "Reference average coolant temperature (Tref), programmed from turbine load as its steam flow reads it, 291.7 °C unloaded to the full-load Tavg"
+        },
+        {
+          "path": "averageTemperatureDeviationC",
+          "tagId": "TAVG-TREF",
+          "equipmentId": "rod-control-system",
+          "description": "Average coolant temperature (TAVG) minus its reference (TREF); the deviation rod control would act on"
         }
       ],
       "metadata": {
@@ -11241,6 +11258,8 @@
     "core.temperatureFeedbackPcm",
     "core.effectiveReactivityPcm",
     "core.rodInsertionFraction",
+    "core.referenceAverageTemperatureC",
+    "core.averageTemperatureDeviationC",
     "core.powerRangePercent",
     "core.aboveP10",
     "core.sourceRangeCountRateCps",
