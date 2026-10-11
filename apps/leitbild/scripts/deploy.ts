@@ -3,7 +3,8 @@
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readlink, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
-import { publishKnowledge, validateKnowledgeSources } from '@leitbild/knowledge/publish'
+import { validateKnowledgeSources } from '@leitbild/knowledge/publish'
+import { publishPlatformKnowledge } from '../../../scripts/publish-platform-knowledge.ts'
 import type { KnowledgeSnapshot } from '@leitbild/knowledge'
 
 const APP_ID = 'leitbild-platform'
@@ -242,7 +243,7 @@ const createArtifact = async () => {
   ])
   const rootEntries: ArtifactEntry[] = ['package.json', 'bun.lock', 'LICENSE', 'NOTICE.md'].map(path => ({ source: join(WORKSPACE_ROOT, path), target: path }))
   const knowledgeRepository = process.env.LEITBILD_KNOWLEDGE_REPOSITORY ?? resolve(WORKSPACE_ROOT, '../Leitbild-wiki')
-  const knowledge = await publishKnowledge(knowledgeRepository, WORKSPACE_ROOT)
+  const knowledge = await publishPlatformKnowledge(knowledgeRepository, WORKSPACE_ROOT)
   const knowledgeFile = join(tempRoot, 'knowledge-snapshot.json')
   await writeFile(knowledgeFile, JSON.stringify(knowledge))
   const knowledgeEntries: ArtifactEntry[] = [{ source: knowledgeFile, target: 'knowledge/snapshot.json' }]

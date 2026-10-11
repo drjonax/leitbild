@@ -150,7 +150,7 @@ export const processPlantPack: WorldPack = {
       return sum + recordedPlantVariables(plant, profileId).length
     }, 0),
   },
-  knowledge: { wikiRefs: [{ name: 'Process plant knowledge', url: '/wiki?path=packs%2Fprocess-plant%2Findex.md' }] },
+  knowledge: { wikiRefs: [{ name: 'Process plant knowledge', url: '/wiki?path=world%2Fpacks%2Fprocess-plant%2Findex.md' }] },
   scenario: {
     itemSchemas: { plant: processPlantScenarioItemSchema },
     expandItem: (spec, context) => {
