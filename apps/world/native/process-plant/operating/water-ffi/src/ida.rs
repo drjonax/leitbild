@@ -499,7 +499,8 @@ impl<S: System> Ida<S> {
     }
     /// Options configure the next integration segment only. Stock reads the
     /// Newton coefficient at its first step and cannot safely lower an active
-    /// BDF order, so every option is refused once `advance` has started.
+    /// BDF order, so every option is refused once `advance` has started; only
+    /// `remove_max_step` may lift a step bound mid-segment.
     fn configurable(&self, option: &str) -> Result<()> {
         if self.failed {
             Err("IDA handle is fail-stopped".into())
@@ -527,6 +528,19 @@ impl<S: System> Ida<S> {
             return Err(format!("IDA maximum step {step} must be positive"));
         }
         let code = unsafe { operating_ida_max_step(self.handle.as_ptr(), step) };
+        self.check(code)
+    }
+    /// Remove the IDASetMaxStep bound, also between advances of an active
+    /// segment: the end of a capped window continues the same history with no
+    /// reinitialization. Stock reads the bound at every step-size selection,
+    /// so the removal applies from the next one. Setting or lowering a bound
+    /// stays refused once `advance` has started (`set_max_step`), because
+    /// stock would not re-limit the step it has already selected.
+    pub fn remove_max_step(&mut self) -> Result<()> {
+        if self.failed {
+            return Err("IDA handle is fail-stopped".into());
+        }
+        let code = unsafe { operating_ida_max_step(self.handle.as_ptr(), f64::INFINITY) };
         self.check(code)
     }
     /// IDASetLinearSolutionScaling for the matrix-based KLU solver (stock

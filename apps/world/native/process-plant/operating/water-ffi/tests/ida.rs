@@ -389,6 +389,56 @@ fn maximum_order_and_step_caps_are_observed_in_stock_statistics() {
     assert!(steps >= 1000);
 }
 
+#[test]
+fn removing_the_step_bound_continues_the_active_history_unbounded() {
+    let mut y = [1., 2.];
+    let mut yp = [-1., -2.];
+    // Tolerances whose natural BDF2 step exceeds the 10 ms cap.
+    let mut ida = start(decay(), &y, &yp, 1e-5, 1e-7);
+    ida.set_max_order(2).unwrap();
+    ida.set_max_step(0.01).unwrap();
+    ida.stop_at(1.).unwrap();
+    let mut capped = 0_f64;
+    for i in 1..=10 {
+        let t = f64::from(i) / 10.;
+        assert_eq!(
+            ida.advance(t, &mut y, &mut yp).unwrap(),
+            Advance::Reached(t)
+        );
+        let stats = ida.stats().unwrap();
+        capped = capped.max(stats.last_step).max(stats.current_step);
+    }
+    assert!(capped <= 0.01 * (1. + 1e-12), "capped step {capped}");
+    let window = ida.stats().unwrap();
+    assert!(window.steps >= 100, "{} steps under the cap", window.steps);
+    // Setting or lowering a bound mid-segment stays refused; removing it is
+    // admitted and leaves the handle usable.
+    let error = ida.set_max_step(0.5).unwrap_err();
+    assert!(error.contains("construction or reinitializ"), "{error}");
+    ida.remove_max_step().unwrap();
+    ida.stop_at(10.).unwrap();
+    let mut longest = 0_f64;
+    for i in 11..=100 {
+        let t = f64::from(i) / 10.;
+        assert_eq!(
+            ida.advance(t, &mut y, &mut yp).unwrap(),
+            Advance::Reached(t)
+        );
+        longest = longest.max(ida.stats().unwrap().last_step);
+    }
+    let after = ida.stats().unwrap();
+    // The same history continues: counters are not restarted, steps grow
+    // past the lifted cap, and the 9 s need far fewer than the 900 capped.
+    assert!(longest > 0.01, "longest step after removal {longest}");
+    assert!(after.steps > window.steps);
+    assert!(
+        after.steps - window.steps < 900,
+        "{}",
+        after.steps - window.steps
+    );
+    assert!((y[0] - (-10_f64).exp()).abs() < 1e-6, "{}", y[0]);
+}
+
 /// Decay with three root functions: a falling state crossing y0 = 0.5, a
 /// rising time crossing t = 0.3 and an algebraic function that never crosses.
 struct Crossings(Decay);
