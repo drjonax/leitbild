@@ -32,9 +32,9 @@ import {
   windSnapshotSchema,
   type BuildFile,
   type NorwayModelBuildInputs,
-} from '../../src/packs/electric-grid/build/inputs.ts'
-import { jsonLines } from '../../src/packs/electric-grid/build/json-lines.ts'
-import { buildNorwayGridModel } from '../../src/packs/electric-grid/build/norway-model.ts'
+} from '../../src/packs/electric-grid/model-build/inputs.ts'
+import { jsonLines } from '../../src/packs/electric-grid/model-build/json-lines.ts'
+import { buildNorwayGridModel } from '../../src/packs/electric-grid/model-build/norway-model.ts'
 import { gridGoldenSchema } from '../../src/packs/electric-grid/schemas/grid-golden.ts'
 import type { z } from 'zod'
 

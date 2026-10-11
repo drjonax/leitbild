@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { allocateByPopulation } from '../src/packs/electric-grid/build/population-weights.ts'
-import type { Station, StationIndex } from '../src/packs/electric-grid/build/stations.ts'
+import { allocateByPopulation } from '../src/packs/electric-grid/model-build/population-weights.ts'
+import type { Station, StationIndex } from '../src/packs/electric-grid/model-build/stations.ts'
 
 const station = (stationId: string, location: readonly [number, number], priceArea: Station['priceArea'], kind: Station['kind'] = 'substation'): Station => ({
   stationId, kind, label: stationId, location, priceArea, buses: [], featureIds: [],
