@@ -11,6 +11,7 @@ export type GridRuntimes = ReadonlyMap<string, GridRuntimeInstance>
 /** One read-only Electric Grid query Capability and the handler answering it. */
 export interface ElectricGridQuery {
   readonly capability: SimulationCapability
+  /** The answer, or a Promise of it from a query that finishes on worker threads. */
   readonly answer: (rawInput: unknown, grids: GridRuntimes) => unknown
 }
 

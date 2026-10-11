@@ -33,12 +33,19 @@ export const electricGridQueryKinds: ReadonlyArray<string> = electricGridQueries
 
 export const electricGridQueryCapabilities: ReadonlyArray<SimulationCapability> = electricGridQueries.map(query => query.capability)
 
-/** Answers one query with a deep copy, so callers never alias live runtime state. */
+const clonedWhenSettled = async (answer: Promise<unknown>): Promise<unknown> => structuredClone(await answer)
+
+/**
+ * Answers one query with a deep copy, so callers never alias live runtime state. A query that
+ * finishes on worker threads (N-1 screening) answers with a Promise of its copy; every other
+ * query answers synchronously.
+ */
 export const answerElectricGridQuery = (config: {
   readonly request: PackRuntimeQuery
   readonly grids: GridRuntimes
 }): unknown => {
   const query = queryById.get(config.request.capabilityId)
   if (!query) throw new Error(`unsupported Electric Grid query Capability: ${config.request.capabilityId}`)
-  return structuredClone(query.answer(config.request.input, config.grids))
+  const answer = query.answer(config.request.input, config.grids)
+  return answer instanceof Promise ? clonedWhenSettled(answer) : structuredClone(answer)
 }
