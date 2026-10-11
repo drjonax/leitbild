@@ -76,6 +76,11 @@ export interface GridModelV2AuditInput {
     readonly attachmentKm: number
     readonly provenance: ProvenanceInput
   }>
+  readonly shunts: ReadonlyArray<{
+    readonly id: string
+    readonly busId: string
+    readonly provenance: ProvenanceInput
+  }>
 }
 
 const generatorFamilies: Readonly<Record<GridModelV2AuditInput['generators'][number]['kind'], AuditGeneratorFamily>> = {
@@ -226,5 +231,6 @@ export const auditGraphFromGridModelV2 = (model: GridModelV2AuditInput, referenc
       attachmentKm: load.attachmentKm,
       curationIds: curationIdsOf(load.provenance),
     })),
+    shunts: model.shunts.map(shunt => ({ id: shunt.id, busId: shunt.busId, curationIds: curationIdsOf(shunt.provenance) })),
   }
 }

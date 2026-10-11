@@ -84,6 +84,12 @@ export interface AuditLoad {
   readonly curationIds: ReadonlyArray<string>
 }
 
+export interface AuditShunt {
+  readonly id: string
+  readonly busId: string
+  readonly curationIds: ReadonlyArray<string>
+}
+
 export interface AuditGraph {
   readonly modelId: string
   readonly modelKind: 'grid-model-v1' | 'grid-model-v2'
@@ -99,6 +105,8 @@ export interface AuditGraph {
   readonly hvdcLinks: ReadonlyArray<AuditHvdcLink>
   readonly generators: ReadonlyArray<AuditGenerator>
   readonly loads: ReadonlyArray<AuditLoad>
+  /** Shunt devices; absent when the model carries none (v1). */
+  readonly shunts?: ReadonlyArray<AuditShunt>
 }
 
 export const osmIdPattern = /^(node|way|relation)\/[1-9][0-9]*$/

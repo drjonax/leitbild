@@ -470,6 +470,7 @@ describe('model adapters', () => {
     hvdcLinks: [],
     generators: [{ id: 'generator:nve-hydro-1', label: 'G', kind: 'hydro-pumped', busId: 'bus:osm-relation-2@420', capacityMw: 10, priceArea: 'NO1', attachmentKm: 2, provenance: { sources: ['nve', 'curation:g-route'] } }],
     loads: [{ id: 'load:0301-private-osm-way-1', label: 'L', kind: 'private', busId: 'bus:osm-way-1@420', referenceDemandMw: 5, priceArea: 'NO1', attachmentKm: 3, provenance: { sources: ['elhub'] } }],
+    shunts: [],
   })
 
   test('map a v2 model, reading curation ids from provenance', () => {
@@ -572,7 +573,7 @@ describe('repository golden list and curations', () => {
     expect({
       stations: golden.stations.length, substations: golden.substations.length, corridors: golden.corridors.length,
       interconnectors: golden.interconnectors.length, radial: golden.radialAllowList.length, curations: curations.features.length,
-    }).toEqual({ stations: 130, substations: 37, corridors: 25, interconnectors: 14, radial: 77, curations: 20 })
+    }).toEqual({ stations: 130, substations: 37, corridors: 25, interconnectors: 14, radial: 77, curations: 21 })
     const entries = [...golden.stations, ...golden.substations, ...golden.corridors, ...golden.excludedCorridors, ...golden.interconnectors, ...golden.radialAllowList]
     expect(entries.every(entry => entry.evidence.length > 0 && entry.evidence.every(item => item.url.startsWith('https://')))).toBe(true)
   })

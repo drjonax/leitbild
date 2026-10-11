@@ -100,6 +100,17 @@ const propertiesSchema = z.discriminatedUnion('kind', [
     municipalityNr: z.string().regex(/^\d{4}$/), substationOsmId: osmId, voltageKv: kv,
     routeKm: z.number().finite().nonnegative(),
   }).strict(),
+  /**
+   * A reactive compensation device in service that open data does not map (Statnett concession
+   * documents): it replaces the rule-inferred shunt of that bus. Negative MVAr absorbs (reactor).
+   */
+  z.object({
+    kind: z.literal('add-shunt-device'), ...common,
+    substationOsmId: osmId, voltageKv: kv,
+    device: z.enum(['shunt-reactor', 'capacitor-bank']),
+    mvarAtNominalVoltage: z.number().finite().refine(value => value !== 0, 'must not be 0'),
+    switchable: z.boolean(),
+  }).strict().refine(properties => (properties.device === 'shunt-reactor') === (properties.mvarAtNominalVoltage < 0), 'a shunt reactor absorbs (negative MVAr), a capacitor bank supplies (positive)'),
 ])
 
 const featureSchema = z.object({
@@ -128,6 +139,7 @@ const allowedExpiry: Record<CurationFeature['properties']['kind'], {
   'offshore-load': { required: ['review-by'], allowed: ['review-by'] },
   'attach-via-regional-grid': { required: ['review-by'], allowed: ['review-by'] },
   'attach-load-via-regional-grid': { required: ['review-by'], allowed: ['review-by'] },
+  'add-shunt-device': { required: ['review-by'], allowed: ['review-by'] },
 }
 
 const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray<string> => {
@@ -142,6 +154,7 @@ const primaryOsmIds = (properties: CurationFeature['properties']): ReadonlyArray
     case 'offshore-load': return []
     case 'attach-via-regional-grid': return [properties.substationOsmId]
     case 'attach-load-via-regional-grid': return [properties.substationOsmId]
+    case 'add-shunt-device': return [properties.substationOsmId]
   }
 }
 

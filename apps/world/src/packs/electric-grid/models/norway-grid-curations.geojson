@@ -1095,6 +1095,55 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "skillemoen-variable-reactor",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          23.216037,
+          69.905141
+        ]
+      },
+      "properties": {
+        "kind": "add-shunt-device",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/883151328"
+        ],
+        "substationOsmId": "way/883151328",
+        "voltageKv": 420,
+        "device": "shunt-reactor",
+        "mvarAtNominalVoltage": -70,
+        "switchable": true,
+        "reason": "Skillemoen 420 kV has a variable shunt reactor of 70–150 MVAr on the line towards Balsfjord (in service with the station, December 2020); the model sets it at its 70 MVAr minimum for the reference hours (tap position not published) instead of the rule-inferred 23 MVAr. The ±250 MVAr STATCOM at Skillemoen is not modelled: Grid Model v2 has no controllable reactive device, and at both reference hours Skillemoen stays at 0.99–1.00 pu without it.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-nord/balsfjord-skaidi/bakgrunn-for-vedtak.pdf",
+            "ref": "NVE, Bakgrunn for vedtak (2015-06-30), p. 12",
+            "note": "variable shunt reactor 70–150 MVAr at Skillemoen, 420 kV"
+          },
+          {
+            "url": "https://norconsult.com/projects/skillemoen-substation",
+            "ref": "Norconsult, Skillemoen substation",
+            "note": "station energised December 2020"
+          },
+          {
+            "url": "https://www.hitachienergy.com/news-and-events/features/2021/04/no-siste-brikke-p-plass-i-statcom-leveransen-til-skillemoen",
+            "ref": "Hitachi Energy (2021-04-09)",
+            "note": "±250 MVAr STATCOM (SVC Light) at Skillemoen"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
     }
   ]
 }

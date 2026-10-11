@@ -197,14 +197,42 @@ export const toGridTransformer = (branch: TopologyBranch, lines: ReadonlyArray<G
   }
 }
 
-/** Shunt reactors per ≥300 kV bus, absorbing a share of the charging of its connected lines (shuntRule). */
-export const inferShunts = (buses: ReadonlyArray<GridBusV2>, lines: ReadonlyArray<GridBranchV2>, osmSourceId: string): ReadonlyArray<GridShuntV2> => {
+/** A curated reactive device in service (add-shunt-device), by the bus it is connected to. */
+export interface CuratedShunt {
+  readonly curationId: string
+  readonly busId: string
+  readonly device: 'shunt-reactor' | 'capacitor-bank'
+  readonly mvarAtNominalVoltage: number
+  readonly switchable: boolean
+  readonly reason: string
+}
+
+/**
+ * Shunt reactors per ≥300 kV bus, absorbing a share of the charging of its connected lines
+ * (shuntRule); a bus with a curated device in service carries that device instead.
+ */
+export const inferShunts = (buses: ReadonlyArray<GridBusV2>, lines: ReadonlyArray<GridBranchV2>, osmSourceId: string, curated: ReadonlyArray<CuratedShunt>): ReadonlyArray<GridShuntV2> => {
   const chargingMvar = new Map<string, number>()
   for (const line of lines) {
     if (line.kind === 'transformer' || line.nominalKv < shuntRule.minimumKv) continue
     for (const busId of [line.fromBusId, line.toBusId]) chargingMvar.set(busId, (chargingMvar.get(busId) ?? 0) + line.chargingSusceptancePu * sBaseMva / 2)
   }
+  const curatedOf = new Map<string, CuratedShunt[]>()
+  for (const device of curated) {
+    if (!buses.some(bus => bus.id === device.busId)) throw new Error(`${device.curationId}: bus ${device.busId} is not in the model`)
+    curatedOf.set(device.busId, [...(curatedOf.get(device.busId) ?? []), device])
+  }
   return buses.flatMap((bus): GridShuntV2[] => {
+    const devices = curatedOf.get(bus.id)
+    if (devices !== undefined) {
+      return devices.map((device, index): GridShuntV2 => ({
+        id: `shunt:${bus.id.slice('bus:'.length)}-${index + 1}`,
+        busId: bus.id,
+        mvarAtNominalVoltage: device.mvarAtNominalVoltage,
+        switchable: device.switchable,
+        provenance: { sources: [device.curationId], method: 'curated', confidence: 'medium', note: `${device.device} in service: ${device.reason}` },
+      }))
+    }
     if (bus.kind === 'boundary' || bus.nominalKv < shuntRule.minimumKv) return []
     const reactorMvar = Math.round(shuntRule.compensatedShare * (chargingMvar.get(bus.id) ?? 0))
     if (reactorMvar < shuntRule.minimumMvar) return []

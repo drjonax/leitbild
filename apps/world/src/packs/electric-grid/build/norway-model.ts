@@ -219,7 +219,15 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     externalSystems: buildExternalSystems({ boundaries: topology.boundaries, table: inputs.interconnectors.data, sourceIds: ids, synchronousCase: 'winterPeak' }),
     generators,
     loads,
-    shunts: inferShunts(buses, lines, ids.osm),
+    shunts: inferShunts(buses, lines, ids.osm, curations.features.flatMap(feature => {
+      const properties = feature.properties
+      if (properties.kind !== 'add-shunt-device') return []
+      const station = stations.byFeatureId(properties.substationOsmId)
+      if (station === undefined) throw new Error(`${curationSourceId(feature)}: ${properties.substationOsmId} is not a station of the model`)
+      const bus = station.buses.find(candidate => candidate.nominalKv === properties.voltageKv)
+      if (bus === undefined) throw new Error(`${curationSourceId(feature)}: ${station.label} has no ${properties.voltageKv} kV bus`)
+      return [{ curationId: curationSourceId(feature), busId: bus.id, device: properties.device, mvarAtNominalVoltage: properties.mvarAtNominalVoltage, switchable: properties.switchable, reason: properties.reason }]
+    })),
     storage: [] as [],
     connectionPoints: [],
   }

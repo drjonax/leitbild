@@ -12,6 +12,7 @@ const referencedCurationIds = (context: AuditContext): ReadonlySet<string> => ne
   ...context.graph.hvdcLinks.flatMap(link => link.curationIds),
   ...context.graph.generators.flatMap(generator => generator.curationIds),
   ...context.graph.loads.flatMap(load => load.curationIds),
+  ...(context.graph.shunts ?? []).flatMap(shunt => shunt.curationIds),
 ])
 
 const levelBuses = (context: AuditContext, osmId: string, voltageKv: number) => {
