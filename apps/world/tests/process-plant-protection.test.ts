@@ -156,7 +156,7 @@ describe('the relief path read by its instruments', () => {
     expect(Number(plantRun.tag('PORV-456A-TEMP'))).toBeGreaterThan(100)
     plantRun.run(900_000)
     expect(Number(plantRun.tag('PORV-456A-TEMP'))).toBeLessThan(70)
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 })
 
 describe('pressurizer code safety valves', () => {
@@ -705,7 +705,7 @@ describe('feedwater isolation', () => {
     const effects = plant.automation.rules.find(rule => rule.id === 'safety-injection-containment-pressure-high-1')!.effects
     const writes = effects.flatMap(effect => effect.type === 'writeSignal' ? [`${'path' in effect.signal ? effect.signal.path : effect.signal.tagId}=${effect.value}`] : [])
     expect(writes).toEqual(expect.arrayContaining(['MFW-PUMP-A-RUN=false', 'MFW-PUMP-B-RUN=false', ...loops.map(loop => `feedwaterControlValve${loop}.isolationSignal=true`)]))
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('on P-14 high-high level shuts the feed regulating valves as it trips the pumps', () => {
     const effects = plant.automation.rules.find(rule => rule.id === 'sg-c-level-high-high-feedwater-isolation')!.effects
