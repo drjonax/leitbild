@@ -709,3 +709,90 @@ fn joined_solid_scopes() {
             "closed_scope_of_one_half (bands, plenum, passive, helium) -> halves": sizes.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()})
     );
 }
+
+/// Diagnostic: the block pattern's densest rows and columns, and stock KLU
+/// on the same matrix with its `k` densest coordinates bordered out (their
+/// rows and columns replaced by the unit diagonal), the remainder a
+/// bordered solve would factor. A measurement for the linear-solver
+/// decision; nothing here changes the solver.
+#[test]
+#[ignore = "diagnostic of the block pattern's dense lines and their KLU fill"]
+fn joined_dense_lines() {
+    use leitbild_operating_plant::{
+        joined::blocks::{Classes, JoinedJacobian, jacobian_blocks},
+        sparse::Pattern,
+    };
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, true);
+    let n = joined.dimension();
+    let o = joined.offsets();
+    let zero = vec![0.; n];
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let p = &structure.pattern;
+    let mut values = vec![0.; p.nonzeros()];
+    jacobian_blocks(
+        &mut joined,
+        &structure,
+        0.,
+        20.,
+        &y,
+        &zero,
+        &mut values,
+        Classes::ALL,
+    )
+    .expect("block assembly");
+    let mut row_count = vec![0usize; n];
+    for &r in p.indices() {
+        row_count[r] += 1;
+    }
+    let col_count: Vec<usize> = (0..n).map(|j| p.column(j).len()).collect();
+    let block = |i: usize| match i {
+        i if i < o.nuclear => "network",
+        i if i < o.solids => "nuclear",
+        i if i < o.secondary => "solids",
+        i if i < o.rods => "secondary",
+        _ => "rods",
+    };
+    let mut lines: Vec<(usize, usize)> = (0..n).map(|i| (row_count[i] + col_count[i], i)).collect();
+    lines.sort_unstable_by(|a, b| b.cmp(a));
+    let top: Vec<Value> = lines
+        .iter()
+        .take(40)
+        .map(|(c, i)| json!({"coordinate": i, "block": block(*i), "row_nnz": row_count[*i], "column_nnz": col_count[*i], "sum": c}))
+        .collect();
+    let mut bordered = Vec::new();
+    for k in [0usize, 24, 48, 100] {
+        let out: std::collections::BTreeSet<usize> = lines.iter().take(k).map(|l| l.1).collect();
+        let mut columns = vec![Vec::new(); n];
+        let mut v = Vec::new();
+        for (j, column) in columns.iter_mut().enumerate() {
+            if out.contains(&j) {
+                column.push(j);
+                v.push(1.);
+                continue;
+            }
+            for (row, value) in stored_column(p, &values, j) {
+                if !out.contains(&row) {
+                    column.push(row);
+                    v.push(value);
+                }
+            }
+        }
+        let q = Pattern::from_columns(n, &columns).unwrap();
+        let (pointers, rows) = q.to_i64().unwrap();
+        let colamd = klu_profile(&pointers, &rows, &[v.clone()], 3);
+        let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+        bordered.push(json!({"bordered_out": k, "nonzeros": q.nonzeros(),
+            "colamd": {"refactor_ms": colamd["refactor_ms"], "lnz_plus_unz": colamd["lnz_plus_unz"]},
+            "amd": {"refactor_ms": amd["refactor_ms"], "lnz_plus_unz": amd["lnz_plus_unz"]}}));
+    }
+    println!(
+        "{}",
+        json!({"kind": "joined-dense-lines-NOT-EVIDENCE", "dimension": n, "offsets": o,
+            "nonzeros": p.nonzeros(), "densest": top, "bordered": bordered})
+    );
+}
