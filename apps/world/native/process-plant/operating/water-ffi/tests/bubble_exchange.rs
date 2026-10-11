@@ -8,15 +8,19 @@
 //! blocks; the roof pressure is the S1 packet's declared operating point.
 use leitbild_operating_plant::{
     network::{
-        Failure, Properties,
+        CscOut, Failure, Network, Properties, PzrPreparation, RotorState,
+        packet::Packet,
         stratified::{
             self as st, Boundary, Case, Cell, Coordinates, ExchangeCase, Heat, Parameters, Receipt,
             bubble_exchange, ranz_marshall, terminal_velocity,
         },
     },
+    rotor::{Shaft, SpeedRequest, Support},
+    sparse::compare_with_dense,
     thermal::Scalar,
 };
 use leitbild_operating_water::If97;
+use serde_json::json;
 
 const ROOF_PA: f64 = 14_864_186.805_5;
 const LEVEL_M: f64 = 6.0;
@@ -725,4 +729,296 @@ fn seeded_directions_match_central_differences_with_the_exchange_active() {
         );
     }
     println!("worst relative direction error: rows {worst:e}, exchange {worst_exchange:e}");
+}
+
+/// The fixture's stratified block against a wiki checkout's strict block,
+/// which the exchange's keys extend.
+#[test]
+#[ignore = "requires LD01_WIKI_DIR, a Leitbild wiki checkout"]
+fn the_embedded_stratified_block_equals_the_wiki_strict_block() {
+    let root = std::env::var_os("LD01_WIKI_DIR").expect("LD01_WIKI_DIR");
+    let page = std::fs::read_to_string(std::path::Path::new(&root).join(
+        "world/packs/process-plant/reference-designs/ld-01/systems/primary-coolant/pressurizer-thermal-state.md",
+    ))
+    .unwrap();
+    let fence = "```ld01-pzr-stratified\n";
+    let start = page.find(fence).expect("ld01-pzr-stratified") + fence.len();
+    let end = start + page[start..].find("```").unwrap();
+    let wiki: serde_json::Value = serde_json::from_str(&page[start..end]).unwrap();
+    let section: serde_json::Value = serde_json::from_str(&section()).unwrap();
+    assert_eq!(section["stratified"], wiki);
+}
+
+// ---- The network with the actual S1 packet (opt-in). ----
+
+const PZR: PzrPreparation = PzrPreparation {
+    pressure_tolerance_pa: 1e-6,
+    max_passes: 50,
+};
+
+/// The network from the packet with its rotors running, and a state with
+/// the exchange active: the prepared coordinates with 20 kg of bubbles in R
+/// 1 K below this state's own `Tsat(p_s)`, a small insurge on the port face
+/// and moving PZR volumes and roof pressure.
+fn network_with_bubbles() -> (Network<If97>, Vec<f64>, Vec<f64>, String) {
+    let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
+    let packet: Packet = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let (mut network, prepared) = Network::new(&packet, If97, &PZR).unwrap();
+    for r in 0..network.rotor_count() {
+        network.set_rotor_state(
+            r,
+            RotorState {
+                support: Support::Supported(SpeedRequest::Nominal),
+                shaft: Shaft::Free,
+            },
+        );
+    }
+    network
+        .select_leading_receipts(&prepared.y, &prepared.yp)
+        .unwrap();
+    let base = network.pzr.base;
+    let scales = network.scales()[network.pzr.coordinates()].to_vec();
+    let scale = |o: usize| scales[o];
+    let mut y = prepared.y.clone();
+    let mut yp = prepared.yp.clone();
+    let sat = network
+        .pzr_column()
+        .unwrap()
+        .interface_saturation
+        .vapor
+        .density
+        .value;
+    let bubbles = 20.;
+    y[base + st::BUBBLE_MASS] = bubbles / scale(st::BUBBLE_MASS);
+    y[base + st::BUBBLE_VOLUME] = bubbles / sat / scale(st::BUBBLE_VOLUME);
+    let port = network
+        .face_layout
+        .iter()
+        .find(|l| l.face == network.pzr.port_face && l.phase == 0)
+        .unwrap()
+        .index;
+    y[port] = 0.01;
+    for (o, rate) in [
+        (st::ROOF_PRESSURE, 1e3),
+        (st::VAPOR_VOLUME, -0.01),
+        (st::ADMITTED_VOLUME, 0.002),
+        (st::RESIDENT_VOLUME, 0.008),
+    ] {
+        yp[base + o] = rate / scale(o);
+    }
+    network.evaluate(0., &y, &yp, None, 0., None).unwrap();
+    let c = *network.pzr_column().unwrap();
+    let u = If97
+        .forward(
+            false,
+            c.resident.pressure.value,
+            c.interface_saturation.temperature.value - 1.,
+        )
+        .unwrap()
+        .internal_energy_j_kg;
+    y[base + st::RESIDENT_ENERGY] = c.resident.mass.value * u / scale(st::RESIDENT_ENERGY);
+    network.evaluate(0., &y, &yp, None, 0., None).unwrap();
+    let x = network.pzr_evaluation().unwrap().flows.bubble_exchange;
+    assert!(x.condensation.value > 1., "{x:?}");
+    (network, y, yp, path)
+}
+
+#[test]
+#[ignore = "requires the actual S1 packet and maintained IF97"]
+fn the_colored_jacobian_matches_central_differences_with_the_exchange_active() {
+    let (mut network, y, yp, path) = network_with_bubbles();
+    let n = y.len();
+    let cj = 2.1;
+    let structure = network.sparse_jacobian().unwrap();
+    let mut values = vec![0.; structure.pattern.nonzeros()];
+    network
+        .jacobian_colored(0., cj, &y, &yp, &structure, &mut values)
+        .unwrap();
+    // The production colored assembly is the dense seeded one, bit for bit.
+    let (mut dense, mut rows, mut pointers) =
+        (vec![0.; n * n], vec![0i64; n * n], vec![0i64; n + 1]);
+    network
+        .jacobian_dense(
+            0.,
+            cj,
+            &y,
+            &yp,
+            CscOut {
+                data: &mut dense,
+                rows: &mut rows,
+                pointers: &mut pointers,
+            },
+        )
+        .unwrap();
+    let bitwise = compare_with_dense(&structure.pattern, &values, &dense).unwrap();
+    assert!(bitwise.is_bitwise_exact(), "{bitwise:?}");
+    // Every row of the PZR block's columns and the port face's liquid
+    // impulse against two central differences of the network residual.
+    let port = network
+        .face_layout
+        .iter()
+        .find(|l| l.face == network.pzr.port_face && l.phase == 0)
+        .unwrap()
+        .index;
+    let columns: Vec<usize> = network.pzr.coordinates().chain([port]).collect();
+    let mut residual = |y: &[f64], yp: &[f64]| -> Vec<f64> {
+        network.evaluate(0., y, yp, None, 0., None).unwrap();
+        network.rows().iter().map(|r| r.value).collect()
+    };
+    let (mut worst, mut checked) = (0_f64, 0usize);
+    for &j in &columns {
+        let mut difference = |h: f64| {
+            let shift = |sign: f64| {
+                let mut ys = y.clone();
+                let mut yps = yp.clone();
+                ys[j] += sign * h;
+                yps[j] += sign * h * cj;
+                (ys, yps)
+            };
+            let (plus, minus) = (shift(1.), shift(-1.));
+            let (a, b) = (residual(&plus.0, &plus.1), residual(&minus.0, &minus.1));
+            a.iter()
+                .zip(&b)
+                .map(|(p, m)| (p - m) / (2. * h))
+                .collect::<Vec<f64>>()
+        };
+        let (coarse, fine) = (difference(1e-4), difference(5e-5));
+        for i in 0..n {
+            let an = structure.pattern.position(i, j).map_or(0., |k| values[k]);
+            let fd = fine[i];
+            let spread = (coarse[i] - fine[i]).abs();
+            let size = an.abs().max(fd.abs());
+            let error = (an - fd).abs();
+            if size > 1e-6 {
+                worst = worst.max(error / size);
+            }
+            checked += 1;
+            assert!(
+                error <= 3. * spread + 2e-6 * size + 1e-9,
+                "row {i} column {j}: colored {an:e}, difference {fd:e}, spread {spread:e}"
+            );
+        }
+    }
+    println!(
+        "{}",
+        json!({"kind":"colored-jacobian-against-central-differences-with-the-bulk-exchange","packet":path,"unknowns":n,"columns":columns.len(),"entries_checked":checked,"worst_relative_error_above_1e-6":worst,"colors":structure.coloring.count()})
+    );
+}
+
+#[test]
+#[ignore = "requires the actual S1 packet and maintained IF97"]
+fn the_network_energy_pairs_with_the_exchange_active() {
+    let (network, y, yp, path) = network_with_bubbles();
+    let evaluation = network.pzr_evaluation().unwrap();
+    let b = &evaluation.balance;
+    assert!(
+        (b.energy_w.value - b.receipt_energy_w.value).abs()
+            <= 1e-12 * b.receipt_energy_w.value.abs().max(1e10)
+    );
+    assert!((b.mass_kg_s.value - b.receipt_mass_kg_s.value).abs() <= 1e-12 * 1e3);
+    let budget = network.current_budget(&y, &yp);
+    let fluid = budget["fluid_energy_minus_shaft_w"].as_f64().unwrap();
+    let terms = budget["fluid_energy_receipt_abs_sum_w"].as_f64().unwrap();
+    assert!(fluid.abs() <= 1e-9 * (1. + terms), "{budget}");
+    println!(
+        "{}",
+        json!({"kind":"network-energy-pairing-with-the-bulk-exchange","packet":path,"condensation_kg_s":evaluation.flows.bubble_exchange.condensation.value,"fluid_energy_minus_shaft_w":fluid,"terms_abs_w":terms,"pzr":budget["pzr"]})
+    );
+}
+
+#[cfg(target_os = "macos")]
+mod cost {
+    #[repr(C)]
+    struct Timespec {
+        seconds: i64,
+        nanoseconds: i64,
+    }
+    unsafe extern "C" {
+        fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
+        fn pthread_set_qos_class_self_np(class: u32, priority: i32) -> i32;
+    }
+    /// CLOCK_THREAD_CPUTIME_ID on macOS.
+    pub fn thread_cpu_s() -> f64 {
+        let mut t = Timespec {
+            seconds: 0,
+            nanoseconds: 0,
+        };
+        // SAFETY: one live stack Timespec matching the C layout; the C
+        // library writes it and keeps no pointer.
+        let status = unsafe { clock_gettime(16, &mut t) };
+        assert_eq!(status, 0, "thread CPU clock unavailable");
+        t.seconds as f64 + t.nanoseconds as f64 * 1e-9
+    }
+    /// QOS_CLASS_USER_INTERACTIVE, so that core placement does not enter.
+    pub fn prefer_performance_core() {
+        // SAFETY: plain scalar arguments; affects only this thread's
+        // scheduling.
+        let status = unsafe { pthread_set_qos_class_self_np(0x21, 0) };
+        assert_eq!(status, 0, "thread QoS unavailable");
+    }
+}
+
+/// Residual cost on the S1 packet, a report only: thread CPU per network
+/// residual at the prepared state and at a PZR state with 5 kg of bubbles in
+/// R subcooled by 1 K below `Tsat(p_s)`, best of five batches of 2000 calls.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "cost report only; requires the S1 packet and maintained IF97"]
+fn s1_packet_residual_cost_report() {
+    cost::prefer_performance_core();
+    let path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET").unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let packet: Packet = serde_json::from_slice(&bytes).unwrap();
+    let (mut network, prepared) = Network::new(&packet, If97, &PZR).unwrap();
+    for r in 0..network.rotor_count() {
+        network.set_rotor_state(
+            r,
+            RotorState {
+                support: Support::Supported(SpeedRequest::Nominal),
+                shaft: Shaft::Free,
+            },
+        );
+    }
+    network
+        .select_leading_receipts(&prepared.y, &prepared.yp)
+        .unwrap();
+    network
+        .evaluate(0., &prepared.y, &prepared.yp, None, 0., None)
+        .unwrap();
+    let column = *network.pzr_column().unwrap();
+    let base = network.pzr.base;
+    let scale = |o: usize| network.scales()[base + o];
+    let mut active = prepared.y.clone();
+    let tsat = column.interface_saturation.temperature.value;
+    let resident = column.resident;
+    let u = If97
+        .forward(false, resident.pressure.value, tsat - 1.)
+        .unwrap()
+        .internal_energy_j_kg;
+    active[base + st::RESIDENT_ENERGY] = resident.mass.value * u / scale(st::RESIDENT_ENERGY);
+    let bubbles = 5.;
+    active[base + st::BUBBLE_MASS] = bubbles / scale(st::BUBBLE_MASS);
+    active[base + st::BUBBLE_VOLUME] =
+        bubbles / column.interface_saturation.vapor.density.value / scale(st::BUBBLE_VOLUME);
+    let mut report = Vec::new();
+    for (name, y) in [
+        ("prepared", &prepared.y),
+        ("bubbles in subcooled R", &active),
+    ] {
+        let mut best = f64::INFINITY;
+        for _ in 0..5 {
+            let started = cost::thread_cpu_s();
+            for _ in 0..2000 {
+                network
+                    .evaluate(0., y, &prepared.yp, None, 0., None)
+                    .unwrap();
+            }
+            best = best.min((cost::thread_cpu_s() - started) / 2000.);
+        }
+        report.push(json!({"state":name,"residual_us":1e6*best}));
+    }
+    println!(
+        "{}",
+        json!({"kind":"s1-packet-residual-cost-NOT-EVIDENCE","clock":"CLOCK_THREAD_CPUTIME_ID","packet":path,"unknowns":network.dimension(),"batches":5,"calls_per_batch":2000,"states":report})
+    );
 }
