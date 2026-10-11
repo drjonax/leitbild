@@ -328,6 +328,18 @@ pub trait Secondary<P> {
     /// end of the STOP ramp), or `None`. The harness stops there and restarts
     /// by the exact consistent start.
     fn next_time_event(&self, t: f64) -> Option<f64>;
+    /// The transaction of this owner's own declared time event when one is
+    /// due exactly at `t` and not yet transacted, `None` otherwise. It is
+    /// called at every time-event stop and after every command, because a
+    /// root that is exactly zero at a restart never reports a crossing. Like
+    /// `transact`, it changes own coordinates only by conserving
+    /// transactions.
+    fn time_event(
+        &mut self,
+        properties: &P,
+        t: f64,
+        y: &mut [f64],
+    ) -> Result<Option<Transaction>, Failure>;
 }
 
 /// The rod bodies (spider and bodies, H7), their guide passages (F1 (a),
@@ -381,6 +393,15 @@ pub trait Rods<P> {
     /// The earliest declared time event strictly after `t` (for example the
     /// holding circuit's opening after its declared delay), or `None`.
     fn next_time_event(&self, t: f64) -> Option<f64>;
+    /// As [`Secondary::time_event`]: the transaction of a time event due
+    /// exactly at `t` (the holding circuit's opening releases every held
+    /// cluster that is not stuck), `None` otherwise.
+    fn time_event(
+        &mut self,
+        properties: &P,
+        t: f64,
+        y: &mut [f64],
+    ) -> Result<Option<Transaction>, Failure>;
     /// Startup only: solve the owner's algebraic coordinates at the composed
     /// fluid state (the guide passages' steady currents), after which
     /// `prepared()` holds them. No differential coordinate changes.

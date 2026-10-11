@@ -972,6 +972,19 @@ impl<P> Rods<P> for RodBlock {
     fn next_time_event(&self, t: f64) -> Option<f64> {
         self.holding_open_at.filter(|open| *open > t)
     }
+    fn time_event(&mut self, p: &P, t: f64, y: &mut [f64]) -> Result<Option<Transaction>, Failure> {
+        // The holding circuit opens at `t`: every held cluster that is not
+        // stuck releases here, since its release root (t - open) is exactly
+        // zero at the stop and would never report a crossing. A release the
+        // root already transacted left no held cluster: nothing is due.
+        let directions: Vec<i32> = (0..self.clusters.len())
+            .map(|c| i32::from(self.modes[c] == Mode::Held && !self.failed_release[c]))
+            .collect();
+        if self.holding_open_at != Some(t) || directions.iter().all(|d| *d == 0) {
+            return Ok(None);
+        }
+        Rods::<P>::transact(self, p, t, &directions, y).map(Some)
+    }
     fn prepare(&mut self, _: &P, fluid: &Fluid<'_>) -> Result<Transaction, Failure> {
         let currents = self.prepare_currents(fluid)?;
         Ok(Transaction {
