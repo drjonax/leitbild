@@ -111,6 +111,7 @@ const operatingPointJson = () => ({
   title: 'Winter peak',
   description: 'Fixture Operating Point exercising every per-asset field.',
   compatibleModelRefs: ['electric-grid.test.v2-fixture'],
+  demand: { season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00' },
   loadScale: 1.1,
   priceAreaDemandScale: { NO1: 1.05 },
   generatorStates: [
@@ -168,5 +169,14 @@ describe('Grid Operating Point v2', () => {
     expect(rejection).toContain('$.hvdcSchedules[0].points[1].localTime: must follow 00:00')
     expect(rejection).toContain('$.branchStates[0].availability')
     expect(message(() => validateOperatingPoint({ ...operatingPointJson(), loadScale: undefined }))).toContain('$.loadScale')
+  })
+
+  test('requires the season and the whole hour whose measured demand it sets', () => {
+    expect(validateOperatingPoint(operatingPointJson()).demand).toEqual({ season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00' })
+    expect(message(() => validateOperatingPoint({ ...operatingPointJson(), demand: undefined }))).toContain('$.demand')
+    expect(message(() => validateOperatingPoint({ ...operatingPointJson(), demand: { season: 'autumn', referenceHour: '2026-01-15T17:00:00+01:00' } }))).toContain('$.demand.season')
+    const halfHour = message(() => validateOperatingPoint({ ...operatingPointJson(), demand: { season: 'winter', referenceHour: '2026-01-15T17:30:00+01:00' } }))
+    expect(halfHour).toContain('$.demand.referenceHour: must be an ISO timestamp on a whole hour with an offset')
+    expect(message(() => validateOperatingPoint({ ...operatingPointJson(), demand: { season: 'winter', referenceHour: '2026-01-15T17:00:00' } }))).toContain('$.demand.referenceHour')
   })
 })

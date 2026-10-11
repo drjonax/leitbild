@@ -1,4 +1,4 @@
-import type { GridConnectionPointDefinition, GridDemandSeason, GridModelFidelity } from './grid-model.ts'
+import type { GridConnectionPointDefinition, GridModelFidelity } from './grid-model.ts'
 
 // The one Electric Grid Definition catalog. Authoring, scenario expansion, recording estimates
 // and the catalog query read it without loading or compiling a model: it does no filesystem
@@ -57,23 +57,12 @@ export interface GridLoadProfilesCatalogEntry {
   readonly source: { readonly kind: 'load-profiles'; readonly file: string }
 }
 
-/**
- * The measured hour whose demand an Operating Point sets, and the profile season its loads follow
- * from there. Operating Point v2 does not carry them yet; the catalog declares them.
- */
-export interface GridOperatingPointDemandHour {
-  readonly season: GridDemandSeason
-  /** A whole Europe/Oslo hour in the season's profile week, ISO 8601 with its offset. */
-  readonly referenceHour: string
-}
-
 /** An Operating Point v2 file in models/; its id and title must match the entry (the loader checks). */
 export interface GridOperatingPointCatalogEntry {
   readonly id: string
   readonly title: string
   readonly description: string
   readonly compatibleModelRefs: ReadonlyArray<string>
-  readonly demand: GridOperatingPointDemandHour
   readonly source: { readonly kind: 'operating-point'; readonly file: string }
 }
 
@@ -149,16 +138,12 @@ export const electricGridDefinitionCatalog: GridDefinitionCatalog = {
     title: 'Winter weekday peak',
     description: 'Elhub-metered demand of the winter weekday reference hour with registry-based unit commitment and the Nordic remainder at winter-peak inertia.',
     compatibleModelRefs: norwayModels,
-    // The Model's reference hour, a Monday (norway-winter-weekday-peak.operating-point.json description).
-    demand: { season: 'winter', referenceHour: '2026-01-12T08:00:00+01:00' },
     source: { kind: 'operating-point', file: 'norway-winter-weekday-peak.operating-point.json' },
   }, {
     id: norwaySummerLowOperatingPointRef,
     title: 'Summer night low',
     description: 'Elhub-metered demand of the summer night low hour with registry-based unit commitment and the Nordic remainder at summer-low inertia.',
     compatibleModelRefs: norwayModels,
-    // Elhub's summer low hour, a Sunday (norway-summer-night-low.operating-point.json description).
-    demand: { season: 'summer', referenceHour: '2026-07-12T06:00:00+02:00' },
     source: { kind: 'operating-point', file: 'norway-summer-night-low.operating-point.json' },
   }],
   // Frequency-control presets; titles and descriptions must match the preset files (the loader checks).

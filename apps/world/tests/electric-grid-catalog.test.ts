@@ -6,7 +6,7 @@ import {
   type GridModelCatalogEntry,
 } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition, createGridDefinitionCompiler, gridAutomationFileReader, gridModelFileReader } from '../src/packs/electric-grid/definitions.ts'
-import { v2FixtureDemand } from './fixtures/electric-grid/load-profiles.ts'
+import { v2FixtureLoadProfiles } from './fixtures/electric-grid/load-profiles.ts'
 
 const worldRoot = resolve(import.meta.dir, '..')
 
@@ -27,7 +27,7 @@ const fixtureBase: GridModelCatalogEntry = {
   nominalFrequencyHz: 50,
   fidelity: fixtureFidelity,
   source: { kind: 'grid-model', file: '../grid-model-v2.fixture.json', geometryFile: 'none.geometry.json' },
-  loadProfilesRef: v2FixtureDemand.profiles.id,
+  loadProfilesRef: v2FixtureLoadProfiles.id,
   assetCounts: { bus: 7, branch: 5, generator: 3, load: 2, storage: 0, connectionPoint: 1, hvdcTerminal: 1 },
   connectionPoints: [{ id: 'test-plant-unit-1', label: 'Test plant unit 1 bay', busId: 'bus:curated-test-plant-switchyard@420', nominalKv: 420, maximumExportMw: 100, maximumImportMw: 1100 }],
 }
@@ -54,13 +54,12 @@ const fixturePeak = 'electric-grid.test.v2-fixture-peak'
 const fixtureProfilesFile = 'v2-fixture.load-profiles.json'
 const fixtureCatalog = (models: ReadonlyArray<GridModelCatalogEntry>): GridDefinitionCatalog => ({
   models,
-  loadProfiles: [{ id: v2FixtureDemand.profiles.id, modelRef: fixtureBase.id, source: { kind: 'load-profiles', file: fixtureProfilesFile } }],
+  loadProfiles: [{ id: v2FixtureLoadProfiles.id, modelRef: fixtureBase.id, source: { kind: 'load-profiles', file: fixtureProfilesFile } }],
   operatingPoints: [{
     id: fixturePeak,
     title: 'Fixture peak',
     description: 'Fixture peak hour.',
     compatibleModelRefs: models.map(model => model.id),
-    demand: { season: v2FixtureDemand.season, referenceHour: v2FixtureDemand.referenceHour },
     source: { kind: 'operating-point', file: 'v2-fixture-peak.operating-point.json' },
   }],
   automations: electricGridDefinitionCatalog.automations.map(automation => ({ ...automation, compatibleModelRefs: models.map(model => model.id) })),
@@ -68,7 +67,7 @@ const fixtureCatalog = (models: ReadonlyArray<GridModelCatalogEntry>): GridDefin
 /** The fixture directory's files, and the fixture Load Profiles under their catalog file name. */
 const fixtureReader = (): ((file: string) => unknown) => {
   const read = gridModelFileReader(new URL('./fixtures/electric-grid/', import.meta.url))
-  return file => file === fixtureProfilesFile ? v2FixtureDemand.profiles : read(file)
+  return file => file === fixtureProfilesFile ? v2FixtureLoadProfiles : read(file)
 }
 const fixtureCompiler = () => {
   const reads: string[] = []

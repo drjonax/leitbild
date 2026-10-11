@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { norwayGridModelRef } from '../src/packs/electric-grid/definition-refs.ts'
-import { gridOperatingPointDemand } from '../src/packs/electric-grid/definitions.ts'
+import { gridLoadProfiles } from '../src/packs/electric-grid/definitions.ts'
 import { gridGoldenSchema } from '../src/packs/electric-grid/schemas/grid-golden.ts'
 import { validateGridModel } from '../src/packs/electric-grid/schemas/grid-model.ts'
 import { gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
@@ -26,7 +26,7 @@ const solveOptions = { tolerancePu: 1e-6, maximumIterations: 100 }
 
 for (const file of ['norway-winter-weekday-peak.operating-point.json', 'norway-summer-night-low.operating-point.json']) {
   const operatingPoint = validateGridOperatingPoint(await load(file), file, targets)
-  const flow = solveV2PowerFlow(model, operatingPoint, gridOperatingPointDemand(operatingPoint.id, norwayGridModelRef), solveOptions)
+  const flow = solveV2PowerFlow(model, operatingPoint, gridLoadProfiles(norwayGridModelRef), solveOptions)
   const rows = flow.branches.map((branch, index) => ({ branch, mva: branchLoadingMva(flow, index), ...flow.ratings[index]! }))
   const explained = new Map(golden.powerFlowOverloads.filter(entry => entry.operatingPointId === operatingPoint.id).map(entry => [entry.branchId, entry]))
 

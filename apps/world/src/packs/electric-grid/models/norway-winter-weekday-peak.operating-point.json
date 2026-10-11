@@ -7,6 +7,7 @@
     "electric-grid.norway.transmission",
     "electric-grid.halden.four-unit"
   ],
+  "demand": {"season":"winter","referenceHour":"2026-01-12T08:00:00+01:00"},
   "loadScale": 1,
   "generatorStates": [
     {"assetId":"generator:aggregate-osm-node-5981385036@132-hydro-run-of-river","state":"online","availableMw":0.06,"targetMw":0.013},

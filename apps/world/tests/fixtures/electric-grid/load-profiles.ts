@@ -1,4 +1,3 @@
-import type { GridOperatingPointDemand } from '../../../src/packs/electric-grid/models/compile-v2.ts'
 import { municipalityLoadGroups, priceAreas } from '../../../src/packs/electric-grid/schemas/grid-ids.ts'
 import { validateGridLoadProfiles, type GridLoadProfiles } from '../../../src/packs/electric-grid/schemas/grid-load-profile.ts'
 
@@ -34,9 +33,9 @@ export const fixtureLoadProfiles = (config: { readonly id: string; readonly mode
   },
 }, `fixture ${config.id}`)
 
-/** The v2 test fixture model (tests/fixtures/grid-model-v2.fixture.json) at its reference hour, a winter Thursday 17:00. */
-export const v2FixtureDemand: GridOperatingPointDemand = {
-  profiles: fixtureLoadProfiles({ id: 'electric-grid.test.v2-fixture.load-profiles', modelId: 'electric-grid.test.v2-fixture', referenceHour: '2026-01-15T17:00:00+01:00' }),
-  season: 'winter',
-  referenceHour: '2026-01-15T17:00:00+01:00',
-}
+/** The v2 test fixture model's (tests/fixtures/grid-model-v2.fixture.json) reference hour, a winter Thursday 17:00. */
+export const v2FixtureReferenceHour = '2026-01-15T17:00:00+01:00'
+/** The Load Profiles of the v2 test fixture model. */
+export const v2FixtureLoadProfiles: GridLoadProfiles = fixtureLoadProfiles({ id: 'electric-grid.test.v2-fixture.load-profiles', modelId: 'electric-grid.test.v2-fixture', referenceHour: v2FixtureReferenceHour })
+/** The demand of an Operating Point of the v2 test fixture model at its reference hour. */
+export const v2FixtureDemand = { season: 'winter', referenceHour: v2FixtureReferenceHour } as const

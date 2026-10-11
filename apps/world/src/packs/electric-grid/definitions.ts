@@ -19,7 +19,7 @@ import type {
   GridModelDefinition,
   GridOperatingPointDefinition,
 } from './grid-model.ts'
-import { compileGridModelV2, type GridOperatingPointDemand } from './models/compile-v2.ts'
+import { compileGridModelV2 } from './models/compile-v2.ts'
 import { localDayType, localHourOfDay, osloLocalMs } from './runtime/demand-profiles.ts'
 import { gridAutomationSchema, type GridAutomation } from './schemas/grid-automation.ts'
 import { validateGridLoadProfiles, type GridLoadProfiles } from './schemas/grid-load-profile.ts'
@@ -379,8 +379,8 @@ export const operatingPointWithOverrides = (operatingPoint: GridOperatingPointV2
 export interface GridDefinitionCompiler {
   readonly compileModel: (ref: string) => GridModelV2
   readonly compileAutomation: (ref: string) => GridAutomation
-  /** The measured profiles and hour an Operating Point's demand follows on a Model. */
-  readonly operatingPointDemand: (operatingPointRef: string, modelRef: string) => GridOperatingPointDemand
+  /** The Grid Load Profiles a Model's loads follow, in the season each Operating Point names. */
+  readonly loadProfiles: (modelRef: string) => GridLoadProfiles
   readonly compile: (definition: GridDefinition) => CompiledGridDefinition
 }
 
@@ -493,10 +493,7 @@ export const createGridDefinitionCompiler = (config: {
     return profiles
   }
 
-  const operatingPointDemand = (operatingPointRef: string, modelRef: string): GridOperatingPointDemand => {
-    const { demand } = operatingPointEntry(operatingPointRef)
-    return { profiles: loadProfilesFor(modelEntry(modelRef), compileModel(modelRef)), season: demand.season, referenceHour: demand.referenceHour }
-  }
+  const loadProfiles = (modelRef: string): GridLoadProfiles => loadProfilesFor(modelEntry(modelRef), compileModel(modelRef))
 
   const loadOperatingPoint = (ref: string, modelRef: string, model: GridModelV2): GridOperatingPointV2 => {
     const key = `${ref}\u0000${modelRef}`
@@ -534,7 +531,7 @@ export const createGridDefinitionCompiler = (config: {
     let compiled = compiledModels.get(key)
     if (compiled === undefined) {
       const operatingPoint = operatingPointWithOverrides(loadOperatingPoint(definition.operatingPoint.ref, definition.model.ref, v2), overrides)
-      const runtime = compileGridModelV2(v2, operatingPoint, operatingPointDemand(definition.operatingPoint.ref, definition.model.ref), {
+      const runtime = compileGridModelV2(v2, operatingPoint, loadProfiles(definition.model.ref), {
         generationAvailabilityScale: overrides.generationAvailabilityScale,
         storageStateOfCharge: overrides.storageStateOfCharge,
       })
@@ -557,7 +554,7 @@ export const createGridDefinitionCompiler = (config: {
     }
   }
 
-  return { compileModel, compileAutomation, operatingPointDemand, compile }
+  return { compileModel, compileAutomation, loadProfiles, compile }
 }
 
 /** Reads the built-in frequency-control presets in automations/. */
@@ -577,6 +574,5 @@ export const gridAutomationPreset = (ref: string): GridAutomation => builtinComp
 /** A built-in Grid Model v2 by catalog id (composed when it is an addition), read and validated on first use. */
 export const gridModelV2 = (ref: string): GridModelV2 => builtinCompiler.compileModel(ref)
 
-/** The measured profiles and hour a built-in Operating Point's demand follows on a built-in Model. */
-export const gridOperatingPointDemand = (operatingPointRef: string, modelRef: string): GridOperatingPointDemand =>
-  builtinCompiler.operatingPointDemand(operatingPointRef, modelRef)
+/** The Grid Load Profiles a built-in Model's loads follow. */
+export const gridLoadProfiles = (modelRef: string): GridLoadProfiles => builtinCompiler.loadProfiles(modelRef)

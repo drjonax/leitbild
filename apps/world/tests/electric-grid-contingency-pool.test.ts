@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { IsoTimestamp } from '../src/core/model/index.ts'
-import { norwayGridModelRef, norwayWinterPeakOperatingPointRef } from '../src/packs/electric-grid/definition-refs.ts'
-import { gridOperatingPointDemand } from '../src/packs/electric-grid/definitions.ts'
+import { norwayGridModelRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { gridLoadProfiles } from '../src/packs/electric-grid/definitions.ts'
 import type { CompiledGridDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
 import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
@@ -55,7 +55,7 @@ const v2Grid = async (): Promise<GridRuntimeInstance> => {
   const directory = join(import.meta.dir, '../src/packs/electric-grid/models')
   const generated = validateGridModel(JSON.parse(await readFile(join(directory, 'norway-transmission.grid-model.json'), 'utf8')), 'v2')
   const winter = validateGridOperatingPoint(JSON.parse(await readFile(join(directory, 'norway-winter-weekday-peak.operating-point.json'), 'utf8')), 'winter', gridOperatingPointTargetsForModel(generated))
-  return solved(gridDefinitionForModel(compileGridModelV2(generated, winter, gridOperatingPointDemand(norwayWinterPeakOperatingPointRef, norwayGridModelRef)).model))
+  return solved(gridDefinitionForModel(compileGridModelV2(generated, winter, gridLoadProfiles(norwayGridModelRef)).model))
 }
 
 /** The synthetic grid intact: with branch relays its random dispatch would trip a fifth of it at once. */

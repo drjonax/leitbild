@@ -3,7 +3,6 @@ import type {
   GridBusDefinition,
   GridDemandGroup,
   GridDemandProfileDefinition,
-  GridDemandSeason,
   GridExternalSystemDefinition,
   GridGenerationKind,
   GridGeneratorDefinition,
@@ -56,25 +55,17 @@ const demandGroups: Readonly<Record<GridLoadV2['kind'], GridDemandGroup>> = {
   'data-center': 'industry',
 }
 
-/** The measured season and hour of an Operating Point's demand: its loads follow that season's Elhub profiles, exactly 1 at its hour. */
-export interface GridOperatingPointDemand {
-  readonly profiles: GridLoadProfiles
-  readonly season: GridDemandSeason
-  /** The whole Europe/Oslo hour whose demand the Operating Point sets, ISO 8601 with its offset. */
-  readonly referenceHour: string
-}
-
 const profileKey = (load: GridLoadV2): string => `${load.priceArea}\u0000${demandGroups[load.kind]}`
 
 const localDate = (localMs: number): string => new Date(Math.floor(localMs / 86_400_000) * 86_400_000).toISOString().slice(0, 10)
 
 /**
- * One profile per price area and Elhub group the loads use: the season's mean weekday and weekend
- * day, each hour divided by the Operating Point hour's value of the same series, so the profile is
- * 1 at that hour and the Operating Point's demand holds there.
+ * One profile per price area and Elhub group the loads use: the Operating Point season's mean
+ * weekday and weekend day, each hour divided by the Operating Point hour's value of the same
+ * series, so the profile is 1 at that hour and the Operating Point's demand holds there.
  */
-const demandProfilesFor = (model: GridModelV2, operatingPoint: GridOperatingPointV2, demand: GridOperatingPointDemand): ReadonlyMap<string, GridDemandProfileDefinition> => {
-  const { profiles, season, referenceHour } = demand
+const demandProfilesFor = (model: GridModelV2, operatingPoint: GridOperatingPointV2, profiles: GridLoadProfiles): ReadonlyMap<string, GridDemandProfileDefinition> => {
+  const { season, referenceHour } = operatingPoint.demand
   const week = profiles.seasons[season]
   const localMs = osloLocalMs(Date.parse(referenceHour))
   const hour = localHourOfDay(localMs)
@@ -133,9 +124,10 @@ export interface RuntimeScales {
   readonly storageStateOfCharge?: number | undefined
 }
 
-export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOperatingPointV2, demand: GridOperatingPointDemand, scales: RuntimeScales = {}): CompiledV2 => {
+/** `profiles` are the Grid Load Profiles of the model, in whose Operating Point season its loads follow them. */
+export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOperatingPointV2, profiles: GridLoadProfiles, scales: RuntimeScales = {}): CompiledV2 => {
   if (!operatingPoint.compatibleModelRefs.includes(model.id)) throw new Error(`Operating Point ${operatingPoint.id} is not compatible with ${model.id}`)
-  const demandProfiles = demandProfilesFor(model, operatingPoint, demand)
+  const demandProfiles = demandProfilesFor(model, operatingPoint, profiles)
   const states = new Map((operatingPoint.generatorStates ?? []).map(state => [state.assetId, state]))
   const areaScale = operatingPoint.priceAreaDemandScale ?? {}
   const firstSource = (provenance: GridProvenance): string => provenance.sources[0]!

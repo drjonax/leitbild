@@ -10,7 +10,7 @@ import {
   norwaySummerLowOperatingPointRef,
   norwayWinterPeakOperatingPointRef,
 } from '../src/packs/electric-grid/definition-refs.ts'
-import { compileGridDefinition, compileGridModelIndex, createGridDefinitionCompiler, gridAutomationFileReader, gridModelFileReader, gridModelV2, gridOperatingPointDemand } from '../src/packs/electric-grid/definitions.ts'
+import { compileGridDefinition, compileGridModelIndex, createGridDefinitionCompiler, gridAutomationFileReader, gridModelFileReader, gridModelV2, gridLoadProfiles } from '../src/packs/electric-grid/definitions.ts'
 import type { CompiledGridDefinition, GridDemandProfileDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
 import { gridAssetGetQuery } from '../src/packs/electric-grid/queries/assets.ts'
@@ -83,6 +83,9 @@ const elhubTotalMw = (config: {
 
 describe('Electric Grid demand profiles', () => {
   test('each load follows the Elhub series of its price area and group in the Operating Point season', () => {
+    // Each Operating Point file names its season and measured hour.
+    expect(winterPoint.demand).toEqual({ season: 'winter', referenceHour: '2026-01-12T08:00:00+01:00' })
+    expect(summerPoint.demand).toEqual({ season: 'summer', referenceHour: '2026-07-12T06:00:00+02:00' })
     const v2ById = new Map(v2.loads.map(load => [load.id, load]))
     const profileById = new Map(winter.model.demandProfiles.map(profile => [profile.id, profile]))
     expect(winter.model.demandProfiles.map(profile => profile.id)).toHaveLength(15)
@@ -96,7 +99,7 @@ describe('Electric Grid demand profiles', () => {
     const sites = winter.model.loads.filter(load => v2ById.get(load.id)!.kind.endsWith('-site'))
     expect(sites).toHaveLength(37)
     for (const site of sites) expect(site.demandProfileId).toBe(`demand-profile:winter-${v2ById.get(site.id)!.priceArea.toLowerCase()}-industry`)
-    expect(summer.model.demandProfiles.every(profile => profile.series!.season === 'summer' && profile.series!.referenceHour === '2026-07-12T06:00:00+02:00')).toBe(true)
+    expect(summer.model.demandProfiles.every(profile => profile.series!.season === summerPoint.demand.season && profile.series!.referenceHour === summerPoint.demand.referenceHour)).toBe(true)
     // The Halden addition adds no load: its loads are Norway's with the same profiles.
     const halden = definitionFor(norwayWinterPeakOperatingPointRef, haldenFourUnitGridModelRef)
     expect(halden.model.demandProfiles).toEqual(winter.model.demandProfiles)
@@ -206,10 +209,11 @@ describe('Electric Grid demand profiles', () => {
   })
 
   test('refuses an Operating Point hour outside its season week and a measured profile that is not 1 at its hour', () => {
-    const demand = gridOperatingPointDemand(norwayWinterPeakOperatingPointRef, norwayGridModelRef)
-    expect(() => compileGridModelV2(gridModelV2(norwayGridModelRef), winterPoint, { ...demand, referenceHour: '2026-01-20T08:00:00+01:00' }))
+    const loadProfiles = gridLoadProfiles(norwayGridModelRef)
+    const atHour = (referenceHour: string) => ({ ...winterPoint, demand: { ...winterPoint.demand, referenceHour } })
+    expect(() => compileGridModelV2(gridModelV2(norwayGridModelRef), atHour('2026-01-20T08:00:00+01:00'), loadProfiles))
       .toThrow('lies outside the winter profile week 2026-01-12–2026-01-19')
-    expect(() => compileGridModelV2(gridModelV2(norwayGridModelRef), winterPoint, { ...demand, referenceHour: '2026-01-12T08:30:00+01:00' }))
+    expect(() => compileGridModelV2(gridModelV2(norwayGridModelRef), atHour('2026-01-12T08:30:00+01:00'), loadProfiles))
       .toThrow('is not a whole Europe/Oslo hour')
     const [profile, ...others] = winter.model.demandProfiles
     const shifted = { ...profile!, weekday: profile!.weekday.map(value => value * 1.01) }

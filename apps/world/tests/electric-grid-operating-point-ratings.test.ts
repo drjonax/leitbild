@@ -10,6 +10,7 @@ const operatingPoint = (branchRatings: ReadonlyArray<Record<string, unknown>>): 
   title: 'Summer',
   description: 'Summer ratings',
   compatibleModelRefs: [model.id],
+  demand: { season: 'summer', referenceHour: '2026-07-12T06:00:00+02:00' },
   loadScale: 1,
   branchRatings,
 })

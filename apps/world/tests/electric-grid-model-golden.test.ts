@@ -5,8 +5,8 @@ import type { AuditCheck, GridAuditReport } from '../src/packs/electric-grid/aud
 import { auditGridTopology } from '../src/packs/electric-grid/audit/grid-audit.ts'
 import { auditGraphFromGridModelV2 } from '../src/packs/electric-grid/audit/v2-adapter.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
-import { gridOperatingPointDemand } from '../src/packs/electric-grid/definitions.ts'
-import { norwayGridModelRef, norwayWinterPeakOperatingPointRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { gridLoadProfiles } from '../src/packs/electric-grid/definitions.ts'
+import { norwayGridModelRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { loadGridGeometryArtifact } from '../src/packs/electric-grid/queries/map-geometry.ts'
 import { gridCurationCollectionSchema } from '../src/packs/electric-grid/schemas/grid-curation.ts'
 import { gridGoldenSchema } from '../src/packs/electric-grid/schemas/grid-golden.ts'
@@ -85,7 +85,7 @@ describe('generated Norway companions', () => {
   test('give every branch and HVDC link a path the live map accepts, mapped for all but the ledgered lines', async () => {
     const text = await readFile(join(models, 'norway-transmission.geometry.json'), 'utf8')
     const winter = validateGridOperatingPoint(await load('norway-winter-weekday-peak.operating-point.json'), 'winter', gridOperatingPointTargetsForModel(model))
-    const runtime = compileGridModelV2(model, winter, gridOperatingPointDemand(norwayWinterPeakOperatingPointRef, norwayGridModelRef)).model
+    const runtime = compileGridModelV2(model, winter, gridLoadProfiles(norwayGridModelRef)).model
     const busLocation = new Map(model.buses.map(bus => [bus.id, bus.location]))
     // The live map's loader checks model and build ids, coverage and from→to orientation.
     const paths = loadGridGeometryArtifact({

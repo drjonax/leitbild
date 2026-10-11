@@ -11,6 +11,10 @@
   "electric-grid.test.chained",
   "electric-grid.test.fixture-addition-drift"
  ],
+ "demand": {
+  "season": "winter",
+  "referenceHour": "2026-01-15T17:00:00+01:00"
+ },
  "loadScale": 1,
  "generatorStates": [
   {

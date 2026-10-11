@@ -1,4 +1,4 @@
-import { compileGridModelV2, type GridOperatingPointDemand } from '../../../src/packs/electric-grid/models/compile-v2.ts'
+import { compileGridModelV2 } from '../../../src/packs/electric-grid/models/compile-v2.ts'
 import { createAcNetwork, type AcNetwork } from '../../../src/packs/electric-grid/runtime/network/ac-network.ts'
 import {
   createAcIslandSystem,
@@ -8,6 +8,7 @@ import {
   type AcPowerFlowState,
 } from '../../../src/packs/electric-grid/runtime/network/fdlf.ts'
 import type { GridModelV2 } from '../../../src/packs/electric-grid/schemas/grid-model.ts'
+import type { GridLoadProfiles } from '../../../src/packs/electric-grid/schemas/grid-load-profile.ts'
 import type { GridOperatingPointV2 } from '../../../src/packs/electric-grid/schemas/grid-operating-point.ts'
 
 // AC load flow of a generated Grid Model v2 at one Operating Point, per energised island, with
@@ -52,8 +53,8 @@ const scheduledAt = <Point,>(points: ReadonlyArray<Point>): Point => {
   return points[0]!
 }
 
-export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperatingPointV2, demand: GridOperatingPointDemand, options: { readonly tolerancePu: number; readonly maximumIterations: number }): V2PowerFlow => {
-  const compiled = compileGridModelV2(model, operatingPoint, demand)
+export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperatingPointV2, profiles: GridLoadProfiles, options: { readonly tolerancePu: number; readonly maximumIterations: number }): V2PowerFlow => {
+  const compiled = compileGridModelV2(model, operatingPoint, profiles)
   const busIndex = new Map(model.buses.map((bus, index) => [bus.id, index]))
   const open = new Set((operatingPoint.branchStates ?? []).filter(state => state.state === 'open').map(state => state.assetId))
   const availability = new Map((operatingPoint.branchStates ?? []).flatMap(state => state.availability === undefined ? [] : [[state.assetId, state.availability] as const]))

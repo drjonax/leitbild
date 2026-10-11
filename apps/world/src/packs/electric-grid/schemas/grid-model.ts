@@ -323,7 +323,7 @@ export const gridSourceInputSchema = z.object({
 export type GridSourceInput = z.infer<typeof gridSourceInputSchema>
 
 /** An ISO timestamp on a whole hour with an explicit offset. */
-const isoHour = z.string()
+export const gridIsoHourSchema = z.string()
   .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:00(?::00(?:\.0+)?)?(?:Z|[+-]\d{2}:\d{2})$/, 'must be an ISO timestamp on a whole hour with an offset')
   .refine(value => Number.isFinite(Date.parse(value)), 'must be a valid timestamp')
 
@@ -340,7 +340,7 @@ export const gridModelSchema = z.object({
    * load flow ('ac-fdlf'), frequency by one swing equation per synchronous island.
    */
   fidelity: z.object({ powerFlow: z.literal('ac-fdlf-or-dc'), voltage: z.literal('ac-fdlf'), frequency: z.literal('island-swing') }).strict(),
-  referenceHour: isoHour,
+  referenceHour: gridIsoHourSchema,
   sourceBuild: z.object({
     /** Deterministic from the inputs; never wall-clock. */
     id: z.string().regex(/^\S+$/),

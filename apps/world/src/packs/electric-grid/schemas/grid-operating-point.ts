@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { gridDataError, parseGridData, type GridDataIssue } from './data-issues.ts'
 import { gridIdPatterns, priceAreaSchema, type PriceArea } from './grid-ids.ts'
-import { gridProvenanceSchema, type GridModelV2 } from './grid-model.ts'
+import { gridIsoHourSchema, gridProvenanceSchema, type GridModelV2 } from './grid-model.ts'
 
 // Operating Point v2: the initial condition of a Grid Model, keyed by stable asset ids.
 // Demand is referenceDemandMw × loadScale × priceAreaDemandScale[area]. Absent per-asset
@@ -115,12 +115,23 @@ export const refineGridOperatingPointState = (state: GridOperatingPointState, co
   }
 }
 
+/**
+ * The measured hour whose demand the Operating Point sets, and the season of the load profiles its
+ * loads follow from there: each profile is exactly 1 at that hour.
+ */
+export const gridOperatingPointDemandSchema = z.object({
+  season: z.enum(['winter', 'summer']),
+  /** A whole Europe/Oslo hour inside the season's profile week, ISO 8601 with its offset. */
+  referenceHour: gridIsoHourSchema,
+}).strict()
+
 export const gridOperatingPointSchema = z.object({
   schemaVersion: z.literal(2),
   id: z.string().regex(gridIdPatterns.definitionRef, 'must be an electric-grid definition ref'),
   title: z.string().min(1),
   description: z.string().min(1),
   compatibleModelRefs: z.array(z.string().regex(gridIdPatterns.definitionRef)).min(1),
+  demand: gridOperatingPointDemandSchema,
   ...gridOperatingPointStateShape,
   branchRatings: z.array(gridBranchRatingSchema).optional(),
 }).strict().superRefine((operatingPoint, context) => {
