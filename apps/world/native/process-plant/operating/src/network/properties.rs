@@ -418,6 +418,143 @@ pub fn inverse_for<P: Properties>(
     }
 }
 
+/// One computation's property boundary over several passes of the same
+/// computation (the seeded passes of one partials evaluation): every query
+/// at bit-identical inputs is answered once. A caloric point is held by its
+/// exact inputs and need; a caloric saturation tuple by its exact pressure,
+/// and a value-only request (direction exactly +0.0) at a held pressure takes
+/// the held tuple with its directions set to +0.0, which is what the
+/// maintained tuple computes for that seed (its exact directions are
+/// products of the +0.0 seed with finite positive slope, compressibility and
+/// cp at saturation). Created for one computation and dropped with it.
+pub struct Shared<'a, P: Properties> {
+    inner: &'a P,
+    caloric: std::cell::RefCell<Vec<HeldCaloric<P::Caloric>>>,
+    saturation: std::cell::RefCell<Vec<(u64, u64, Saturation)>>,
+}
+/// A shared caloric point: (vapor, p bits, target bits, enthalpy), its need
+/// and the point.
+type HeldCaloric<C> = ((bool, u64, u64, bool), Need, C);
+impl<'a, P: Properties> Shared<'a, P> {
+    pub fn new(inner: &'a P) -> Self {
+        Self {
+            inner,
+            caloric: Default::default(),
+            saturation: Default::default(),
+        }
+    }
+}
+/// A caloric tuple at the same values with every evaluated direction +0.0;
+/// unevaluated (NaN) fields stay NaN.
+fn value_only(sat: Saturation) -> Saturation {
+    let zero = |x: Scalar| {
+        if x.value.is_nan() {
+            x
+        } else {
+            Scalar::new(x.value, 0.)
+        }
+    };
+    let point = |w: crate::thermal::WaterPoint| crate::thermal::WaterPoint {
+        density: zero(w.density),
+        viscosity: zero(w.viscosity),
+        conductivity: zero(w.conductivity),
+        cp: zero(w.cp),
+        expansion: zero(w.expansion),
+        enthalpy: zero(w.enthalpy),
+    };
+    Saturation {
+        temperature: zero(sat.temperature),
+        liquid: point(sat.liquid),
+        vapor: point(sat.vapor),
+        surface_tension: zero(sat.surface_tension),
+    }
+}
+impl<P: Properties> Properties for Shared<'_, P> {
+    type Caloric = P::Caloric;
+    fn forward(&self, vapor: bool, pressure_pa: f64, temperature_k: f64) -> Result<Water, String> {
+        self.inner.forward(vapor, pressure_pa, temperature_k)
+    }
+    fn caloric(
+        &self,
+        vapor: bool,
+        pressure_pa: f64,
+        target: f64,
+        enthalpy: bool,
+    ) -> Result<P::Caloric, String> {
+        self.caloric_for(vapor, pressure_pa, target, enthalpy, Need::Complete)
+    }
+    fn caloric_for(
+        &self,
+        vapor: bool,
+        pressure_pa: f64,
+        target: f64,
+        enthalpy: bool,
+        need: Need,
+    ) -> Result<P::Caloric, String> {
+        let key = (vapor, pressure_pa.to_bits(), target.to_bits(), enthalpy);
+        if let Some((_, _, point)) = self
+            .caloric
+            .borrow()
+            .iter()
+            .find(|(k, held, _)| *k == key && *held >= need)
+        {
+            return Ok(*point);
+        }
+        let point = self
+            .inner
+            .caloric_for(vapor, pressure_pa, target, enthalpy, need)?;
+        let mut held = self.caloric.borrow_mut();
+        held.retain(|(k, _, _)| *k != key);
+        held.push((key, need, point));
+        Ok(point)
+    }
+    fn complete(&self, point: &P::Caloric) -> Result<P::Caloric, String> {
+        self.inner.complete(point)
+    }
+    fn values(&self, point: &P::Caloric) -> Water {
+        self.inner.values(point)
+    }
+    fn direction(&self, point: &P::Caloric, dp: f64, dtarget: f64) -> Result<Water, String> {
+        self.inner.direction(point, dp, dtarget)
+    }
+    fn partials(&self, point: &P::Caloric) -> Result<Partials, String> {
+        self.inner.partials(point)
+    }
+    fn thermodynamic_partials(&self, point: &P::Caloric) -> Result<ThermodynamicPartials, String> {
+        self.inner.thermodynamic_partials(point)
+    }
+    fn saturation(&self, pressure: Scalar) -> Result<Saturation, String> {
+        self.inner.saturation(pressure)
+    }
+    fn saturation_caloric(&self, pressure: Scalar) -> Result<Saturation, String> {
+        let (value, direction) = (pressure.value.to_bits(), pressure.direction.to_bits());
+        if let Some((_, held, sat)) = self
+            .saturation
+            .borrow()
+            .iter()
+            .find(|(p, _, _)| *p == value)
+        {
+            if *held == direction {
+                return Ok(*sat);
+            }
+            if direction == 0 {
+                return Ok(value_only(*sat));
+            }
+        }
+        let sat = self.inner.saturation_caloric(pressure)?;
+        let mut held = self.saturation.borrow_mut();
+        held.retain(|(p, _, _)| *p != value);
+        held.push((value, direction, sat));
+        Ok(sat)
+    }
+    fn metastable_band(&self) -> Result<MetastableBand, String> {
+        self.inner.metastable_band()
+    }
+    fn band(&self, point: &P::Caloric) -> BandReport {
+        self.inner.band(point)
+    }
+}
+
 /// Saturation at a local pressure; value-only calls may reuse exact points.
 pub fn saturation<P: Properties>(
     properties: &P,

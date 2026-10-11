@@ -866,3 +866,37 @@ fn thermodynamic_partials_are_the_exact_fields_of_partials() {
     }
     assert!(compared > 80_000, "{compared}");
 }
+
+/// What `properties::Shared` relies on: the caloric saturation tuple at a
+/// +0.0 pressure seed is the tuple at any finite seed with its directions
+/// set to +0.0, bit for bit, over a dense pressure sweep.
+#[test]
+fn value_only_caloric_saturation_is_a_held_tuple_with_zero_directions() {
+    let mut state = 0x5EED_0004;
+    let mut checked = 0;
+    for i in 0..20_000 {
+        let p = if i < 10_000 {
+            1e5 * 160f64.powf(f64::from(i) / 9_999.)
+        } else {
+            1e5 + (16e6 - 1e5) * unit(&mut state)
+        };
+        let Ok(zero) = If97.saturation_caloric(Scalar::new(p, 0.)) else {
+            continue;
+        };
+        for dp in [1., -1., 0.98, 1e4, -3e4, 1e-300, -0.] {
+            let seeded = If97.saturation_caloric(Scalar::new(p, dp)).unwrap();
+            for (a, b) in [
+                (zero.temperature, seeded.temperature),
+                (zero.liquid.density, seeded.liquid.density),
+                (zero.liquid.enthalpy, seeded.liquid.enthalpy),
+                (zero.vapor.density, seeded.vapor.density),
+                (zero.vapor.enthalpy, seeded.vapor.enthalpy),
+            ] {
+                assert_eq!(a.value.to_bits(), b.value.to_bits(), "p={p:e}");
+                assert_eq!(a.direction.to_bits(), 0, "p={p:e}: +0.0 direction");
+            }
+        }
+        checked += 1;
+    }
+    assert!(checked > 19_000, "{checked}");
+}
