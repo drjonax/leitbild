@@ -312,7 +312,7 @@ describe('evaluation required view (display requests)', () => {
   })
 })
 
-describe('evaluation answer-display consistency', () => {
+describe('evaluation structured evidence boundary (not prose certification)', () => {
   // Run 19 rcp-trip: the answer cited a loop flow its display did not show.
   const fenced = (text: string): string => `${text}\n\n\`\`\`leitbild-view\nview call_0_0/compose\n\`\`\``
   const inconsistent = fenced('Core cooling is not confirmed. All four RCP loops were at about 401 kg/s; CET-AVG is 302.4 °C.')
@@ -343,20 +343,36 @@ describe('evaluation answer-display consistency', () => {
     return { calls, result }
   }
 
-  test('an answer citing what its display does not show is corrected once, naming each issue', async () => {
+  test('free prose does not trigger a speculative whole-answer correction call', async () => {
     const { calls, result } = await run([inconsistent, corrected])
-    expect(calls).toHaveLength(3)
-    const correction = calls[2]!.messages.at(-1)!.content
-    expect(correction).toContain('- It cites 401 kg/s, but the display shows no value in kg/s.')
-    expect(correction).toContain('mark one "(not shown)"')
-    expect(correction).not.toMatch(/\b(?:below|above) the answer\b/)
-    expect(result.decision.response).toEqual({ action: 'respond', content: corrected })
+    expect(calls).toHaveLength(2)
+    expect(result.decision.response).toEqual({ action: 'respond', content: inconsistent })
   })
 
-  test('a second disagreement is posted as it is: one correction per answer', async () => {
-    const { calls, result } = await run([inconsistent, inconsistent])
-    expect(calls).toHaveLength(3)
-    expect(result.decision.response).toEqual({ action: 'respond', content: inconsistent })
+  test('equivalent physical units do not incur a false correction', async () => {
+    const answer = fenced('Pressurizer pressure is 15.5 MPa.')
+    const { calls, result } = await run([answer], { viewContent: { ...viewContent, items: [
+      { names: ['Pressurizer pressure'], values: [{ value: 15500, unit: 'kPa' }], limits: [], history: false },
+    ] } })
+    expect(calls).toHaveLength(2)
+    expect(result.decision.response).toEqual({ action: 'respond', content: answer })
+  })
+
+  test('swapped subjects and false current claims remain model quality cases, not certified prose', async () => {
+    for (const answer of [fenced('Hot leg temperature is 290 °C. Cold leg temperature is 300 °C.'), fenced('Steam generator level is currently 99 percent.')]) {
+      const { calls, result } = await run([answer], { viewContent: { ...viewContent, items: [
+        { names: ['Hot leg temperature'], values: [{ value: 300, unit: '°C' }], limits: [], history: false },
+        { names: ['Cold leg temperature'], values: [{ value: 290, unit: '°C' }], limits: [], history: false },
+        { names: ['Steam generator level'], values: [{ value: 55, unit: '%' }], limits: [], history: true },
+      ] } })
+      expect(calls).toHaveLength(2)
+      expect(result.decision.response).toEqual({ action: 'respond', content: answer })
+    }
+  })
+
+  test('malformed structured display evidence still fails loudly', async () => {
+    const { result } = await run([corrected], { viewContent: { items: 'not-an-array' } })
+    expect(result.decision.response.action).toBe('error')
   })
 
   test('an answer agreeing with its display, or a view without published content, costs no extra call', async () => {
