@@ -128,7 +128,7 @@ describe('a stuck-open PORV', () => {
     expect(read('vessel.loopVoidFraction')).toBeGreaterThan(0.05)
     expect(read('pressurizer.levelPercent')).toBeGreaterThan(90)
     expect(read('pressurizer.reliefFlowKgPerS')).toBeGreaterThan(20)
-  }, 60_000)
+  })
 
   test('passes water at its liquid rating once the pressurizer is solid, which the inventory balance counts', () => {
     const plantRun = started()
@@ -145,7 +145,7 @@ describe('a stuck-open PORV', () => {
     expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeGreaterThan(2.5)
     expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeLessThan(3.5)
     expect(Math.abs(read('rcsInventoryBalance.leakRateKgPerS'))).toBeLessThan(0.063)
-  }, 60_000)
+  })
 })
 
 describe('a reactor trip', () => {
@@ -172,7 +172,7 @@ describe('a reactor trip', () => {
     // The outsurge flashes the pressurizer water, which holds the pressure up.
     expect(lowestPressure).toBeGreaterThan(13)
     expect(read('vessel.loopVoidFraction')).toBeLessThan(1e-6)
-  }, 60_000)
+  })
 })
 
 describe('a steam generator tube rupture without charging or letdown', () => {
@@ -205,7 +205,7 @@ describe('a steam generator tube rupture without charging or letdown', () => {
     expect(read('pressurizer.pressureMPa')).toBeGreaterThan(read('sgA.pressureMPa'))
     expect(Math.abs(read('vessel.safetyInjectionFlowKgPerS') - read('vessel.tubeLeakFlowKgPerS'))).toBeLessThan(10)
     expect(read('vessel.loopVoidFraction')).toBeLessThan(0.01)
-  }, 60_000)
+  })
 })
 
 describe('a pressurizer filling toward solid', () => {
@@ -241,7 +241,7 @@ describe('a pressurizer filling toward solid', () => {
     }
     expect(highestLevel).toBeGreaterThan(95)
     expect(largestStepChange).toBeLessThan(0.05)
-  }, 60_000)
+  })
 })
 
 describe('a pressurizer draining below its low-level cutoff', () => {
@@ -269,7 +269,7 @@ describe('a pressurizer draining below its low-level cutoff', () => {
     expect(read('pressurizer.heaterPowerMw')).toBeGreaterThan(0)
     expect(read('vessel.letdownFlowKgPerS')).toBe(0)
     expect(plantRun.active()).toContain('alarm:pzr-level-low-heaters-off:heaters-off-letdown-isolated')
-  }, 60_000)
+  })
 })
 
 describe('pressurizer level control', () => {
@@ -299,7 +299,7 @@ describe('pressurizer level control', () => {
     expect(Math.abs(read('pressurizer.levelPercent') - read('pressurizer.levelProgramPercent'))).toBeLessThan(1.5)
     expect(Math.abs(read('vessel.chargingFlowKgPerS') - read('vessel.letdownFlowKgPerS'))).toBeLessThan(1)
     expect(read('pressurizer.pressureMPa')).toBeGreaterThan(15.3)
-  }, 60_000)
+  })
 
   test('cuts charging back when letdown is isolated, so the pressurizer does not fill', () => {
     const plantRun = started()
@@ -312,7 +312,7 @@ describe('pressurizer level control', () => {
     expect(highestLevel).toBeLessThan(62)
     expect(read('pressurizer.pressureMPa')).toBeLessThan(15.8)
     expect(read('pressurizer.reliefFlowKgPerS')).toBe(0)
-  }, 60_000)
+  })
 })
 
 describe('after a loss of offsite power', () => {
@@ -342,5 +342,5 @@ describe('after a loss of offsite power', () => {
     // ... and what passes is what the opening and the pressure drive through
     // a valve rated 21 kg/s per square-root MPa.
     expect(reliefFlow).toBeCloseTo(21 * opening * Math.sqrt(pressure - 0.101325), 0)
-  }, 60_000)
+  })
 })
