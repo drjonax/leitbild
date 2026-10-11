@@ -22,7 +22,7 @@ import {
 } from '../src/packs/electric-grid/commands/load.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
-import { compileGridDefinition, compileGridModelIndex } from '../src/packs/electric-grid/definitions.ts'
+import { compileGridDefinition, compileGridModelIndex, gridModelV2 } from '../src/packs/electric-grid/definitions.ts'
 import type { CompiledGridDefinition, GridGeneratorDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
@@ -226,6 +226,19 @@ describe('electric grid generator commands', () => {
 })
 
 describe('electric grid branch commands', () => {
+  test('derates a branch from its summer rating and clears back to it, never to the winter rating', () => {
+    const { grid, send } = harness()
+    const winter = new Map(gridModelV2(norwayGridModelRef).branches.map(branch => [branch.id, branch]))
+    const branch = definition.model.branches.find(candidate => candidate.ratingMw < winter.get(candidate.id)!.ratingMw && grid.branches.get(candidate.id)!.flowMw !== 0)!
+    expect(branch.emergencyRatingMw).toBeLessThan(winter.get(branch.id)!.emergencyRatingMw)
+    const loadingAt = (ratingMw: number): number => Math.abs(grid.branches.get(branch.id)!.flowMw) / ratingMw * 100
+    expect(grid.branches.get(branch.id)!.loadingPercent).toBeCloseTo(loadingAt(branch.ratingMw), 9)
+    expect(send(gridDerateBranchCommandKind, { assetId: branch.id, availability: 0.5 }).ok).toBe(true)
+    expect(grid.branches.get(branch.id)!.loadingPercent).toBeCloseTo(loadingAt(branch.ratingMw * 0.5), 9)
+    expect(send(gridClearDerateCommandKind, { assetId: branch.id }).ok).toBe(true)
+    expect(grid.branches.get(branch.id)!.loadingPercent).toBeCloseTo(loadingAt(branch.ratingMw), 9)
+  })
+
   test('rejects switching that changes nothing', () => {
     const { grid, send } = harness()
     const branchId = definition.operatingPoint.branchStates.find(entry => entry.state === 'closed' && entry.availability === 1)!.branchId
