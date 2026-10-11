@@ -1,4 +1,5 @@
-import { caseGeneratorOutputMw, type CaseParticipation, type ContingencyCase, type CaseChanges } from './contingency-case.ts'
+import type { CaseParticipation } from './contingency-balance.ts'
+import { caseGeneratorOutputMw, type ContingencyCase, type CaseChanges } from './contingency-case.ts'
 import { manualShedRejection } from './load-shedding.ts'
 import { generatorMinimumStableMw } from './unit-commitment.ts'
 

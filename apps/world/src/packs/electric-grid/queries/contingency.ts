@@ -1,7 +1,9 @@
 import { z } from 'zod'
 import { rejectCapabilityInput } from '../../../simulation/capability-rejection.ts'
 import { liveContingencyCase, switchedContingencyCase, type ContingencyCase } from '../runtime/contingency-case.ts'
-import { screenContingencies, selectContingencies, type ContingencySelection, type ScreeningSummary } from '../runtime/contingency-screen.ts'
+import { screenRecordsInline } from '../runtime/contingency-execution.ts'
+import { screenContingencies, selectContingencies, type ContingencyRecordScreen, type ContingencySelection, type ScreeningSummary } from '../runtime/contingency-screen.ts'
+import type { GridContingency } from '../runtime/contingency-snapshot.ts'
 import { remedialCaseChanges } from '../runtime/remedial-actions.ts'
 import { defineGridQuery, gridFor } from './common.ts'
 
@@ -83,8 +85,15 @@ const validated = <T>(step: () => T): T => {
   }
 }
 
-const screen = (screeningCase: ContingencyCase, selection: ContingencySelection, ratingBasis: 'normal' | 'emergency'): ScreeningSummary =>
-  screenContingencies(screeningCase, validated(() => selectContingencies(screeningCase, selection)), ratingBasis)
+const recordScreen: ContingencyRecordScreen = async snapshot => screenRecordsInline(snapshot)
+
+/** The selected outages of a case; a selection the case cannot screen is the caller's input, rejected. */
+const selected = (screeningCase: ContingencyCase, selection: ContingencySelection): ReadonlyArray<GridContingency> =>
+  validated(() => selectContingencies(screeningCase, selection))
+
+/** Captures the case and its outages before it returns; the screening itself may finish on worker threads. */
+const screen = (screeningCase: ContingencyCase, contingencies: ReadonlyArray<GridContingency>, ratingBasis: 'normal' | 'emergency'): Promise<ScreeningSummary> =>
+  screenContingencies({ screeningCase, contingencies, ratingBasis, screen: recordScreen })
 
 const summaryOf = (summary: ScreeningSummary): z.infer<typeof summarySchema> => ({
   screenedCount: summary.screenedCount,
@@ -101,12 +110,14 @@ export const gridContingencyScreenQuery = defineGridQuery({
   searchTerms: ['N-1', 'contingency', 'contingency analysis', 'security assessment', 'outage', 'LODF', 'PTDF', 'overload', 'islanding', 'what if', 'n-1', 'utfall', 'sikkerhetsvurdering', 'driftssikkerhet', 'overlast', 'øydrift'],
   input: screenPayloadSchema,
   output: screenResultSchema,
-  answer: (payload, grids) => {
+  answer: async (payload, grids) => {
     const grid = gridFor(grids, payload.gridId)
-    const summary = screen(liveContingencyCase(grid), selectionFor(payload), payload.ratingBasis)
+    const revision = grid.tick
+    const live = liveContingencyCase(grid)
+    const summary = await screen(live, selected(live, selectionFor(payload)), payload.ratingBasis)
     return {
       gridId: payload.gridId,
-      revision: grid.tick,
+      revision,
       ratingBasis: payload.ratingBasis,
       ...summaryOf(summary),
       results: summary.results.slice(0, payload.limit),
@@ -143,17 +154,23 @@ export const gridRemedialActionsEvaluateQuery = defineGridQuery({
   searchTerms: ['remedial action', 'corrective action', 'redispatch', 'countertrade', 'N-1', 'what if', 'switching plan', 'congestion relief', 'avhjelpende tiltak', 'omfordeling', 'spesialregulering', 'koblingsplan', 'n-1'],
   input: remedialPayloadSchema,
   output: remedialResultSchema,
-  answer: (payload, grids) => {
+  answer: async (payload, grids) => {
     const grid = gridFor(grids, payload.gridId)
+    const revision = grid.tick
     const selection = selectionFor(payload)
     const live = liveContingencyCase(grid)
-    const before = screen(live, selection, payload.ratingBasis)
+    const beforeContingencies = selected(live, selection)
     const remedial = switchedContingencyCase(live, validated(() => remedialCaseChanges(live, payload.actions)))
-    const after = screen(remedial.case, selection, payload.ratingBasis)
+    const afterContingencies = selected(remedial.case, selection)
+    // Both screenings capture their case before the first await, then share the worker pool.
+    const [before, after] = await Promise.all([
+      screen(live, beforeContingencies, payload.ratingBasis),
+      screen(remedial.case, afterContingencies, payload.ratingBasis),
+    ])
     const tenths = (value: number): number => Math.round(value * 10) / 10
     return {
       gridId: payload.gridId,
-      revision: grid.tick,
+      revision,
       ratingBasis: payload.ratingBasis,
       actionBalances: remedial.balances.map(part => ({
         busCount: part.busCount,

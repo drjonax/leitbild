@@ -1,8 +1,20 @@
+import { captureContingencySnapshot, type ContingencyRatingBasis } from './contingency-capture.ts'
 import { caseGeneratorOutputMw, type ContingencyCase } from './contingency-case.ts'
-import { createContingencyEngine, type ContingencyPart, type GridContingency } from './contingency.ts'
+import {
+  balancingByCode,
+  maximumListedOverloads,
+  recordInteger,
+  recordIntegerWidth,
+  recordValue,
+  recordValueWidth,
+  type ContingencySnapshot,
+  type GridContingency,
+  type ScreeningRecords,
+} from './contingency-snapshot.ts'
+import { loadingPercent, scanBranchLoading, type ContingencyPart } from './contingency.ts'
 import { gridGeneratorIsSynchronised } from './island-input.ts'
 
-export type ContingencyRatingBasis = 'normal' | 'emergency'
+export type { ContingencyRatingBasis } from './contingency-capture.ts'
 
 /** Which outages to screen: every branch in service, the largest units by output, or named assets. */
 export type ContingencySelection =
@@ -40,7 +52,8 @@ export interface ScreeningSummary {
   readonly results: ReadonlyArray<ContingencyResult>
 }
 
-const maximumListedOverloads = 20
+/** Produces the records of every contingency of a snapshot, inline or on worker threads (contingency-pool.ts). */
+export type ContingencyRecordScreen = (snapshot: ContingencySnapshot) => Promise<ScreeningRecords>
 
 /** The selected outages, each checked in service; a branch or unit that is not fails the screening explicitly. */
 export const selectContingencies = (screeningCase: ContingencyCase, selection: ContingencySelection): ReadonlyArray<GridContingency> => {
@@ -91,62 +104,63 @@ const bySeverity = (left: ContingencyResult, right: ContingencyResult): number =
   || right.unservedLoadMw - left.unservedLoadMw
   || (left.contingency.assetId < right.contingency.assetId ? -1 : left.contingency.assetId > right.contingency.assetId ? 1 : 0)
 
-/** Screens the outages on the case: post-outage loading of every branch against the rating basis. */
-export const screenContingencies = (screeningCase: ContingencyCase, contingencies: ReadonlyArray<GridContingency>, ratingBasis: ContingencyRatingBasis): ScreeningSummary => {
-  const { network, grid } = screeningCase
-  const model = grid.definition.model
-  const engine = createContingencyEngine(screeningCase)
-  const capacityMw = Float64Array.from(model.branches, branch =>
-    (ratingBasis === 'normal' ? branch.ratingMw : branch.emergencyRatingMw) * grid.branches.get(branch.id)!.availability)
-  const loading = (flowMw: number, branch: number): number => Math.abs(flowMw) / capacityMw[branch]! * 100
-  const base = screeningCase.flowsMw
+interface ScreenedAsset {
+  readonly assetId: string
+  readonly kind: 'branch' | 'generator'
+  readonly label: string
+}
+
+/** Results from the kernel's records: the same records give the same summary, whichever thread wrote them. */
+const summaryOf = (config: {
+  readonly snapshot: ContingencySnapshot
+  readonly records: ScreeningRecords
+  readonly assets: ReadonlyArray<ScreenedAsset>
+  readonly branchIds: ReadonlyArray<string>
+  readonly branchLabels: ReadonlyArray<string>
+}): ScreeningSummary => {
+  const { snapshot, records, assets, branchIds, branchLabels } = config
+  const { capacityMw } = snapshot
+  const base = snapshot.flowsMw
   const screened = (branch: number, flowMw: number): ScreenedBranch => ({
-    assetId: network.branchIds[branch]!,
-    label: model.branches[branch]!.label,
+    assetId: branchIds[branch]!,
+    label: branchLabels[branch]!,
     flowMw: tenths(flowMw),
-    loadingPercent: tenths(loading(flowMw, branch)),
-    preContingencyLoadingPercent: tenths(loading(base[branch]!, branch)),
+    loadingPercent: tenths(loadingPercent(flowMw, capacityMw[branch]!)),
+    preContingencyLoadingPercent: tenths(loadingPercent(base[branch]!, capacityMw[branch]!)),
   })
-  const worstOf = (flows: Float64Array): { readonly worst: number; readonly overloaded: number[] } => {
-    let worst = -1
-    let worstLoading = -1
-    const overloaded: number[] = []
-    for (let branch = 0; branch < network.branchCount; branch += 1) {
-      const value = loading(flows[branch]!, branch)
-      if (value > worstLoading) {
-        worstLoading = value
-        worst = branch
-      }
-      if (value > 100) overloaded.push(branch)
-    }
-    return { worst, overloaded }
-  }
-  const baseWorst = worstOf(base)
-  const flows = new Float64Array(network.branchCount)
+  const baseScan = scanBranchLoading(capacityMw, base, new Int32Array(maximumListedOverloads))
   let totalViolations = 0
   let islandingCount = 0
-  const results = contingencies.map((contingency): ContingencyResult => {
-    const outcome = engine.evaluate(contingency, flows)
-    const { worst, overloaded } = worstOf(flows)
-    totalViolations += overloaded.length
-    if (outcome.islanding) islandingCount += 1
-    const assetId = contingency.kind === 'branch' ? network.branchIds[contingency.branchIndex]! : contingency.generatorId
+  const results = assets.map((asset, position): ContingencyResult => {
+    const integers = position * recordIntegerWidth
+    const values = position * recordValueWidth
+    const islanding = records.integers[integers + recordInteger.islanding] === 1
+    const violationCount = records.integers[integers + recordInteger.violationCount]!
+    const worst = records.integers[integers + recordInteger.worstBranch]!
+    totalViolations += violationCount
+    if (islanding) islandingCount += 1
+    const parts = Array.from({ length: records.integers[integers + recordInteger.partCount]! }, (_, index): ContingencyPart => ({
+      balancing: balancingByCode[records.integers[integers + recordInteger.firstPart + 2 * index + 1]!]!,
+      imbalanceMw: records.values[values + recordValue.firstPart + 3 * index]!,
+      reserveShortfallMw: records.values[values + recordValue.firstPart + 3 * index + 1]!,
+      unservedLoadMw: records.values[values + recordValue.firstPart + 3 * index + 2]!,
+      busCount: records.integers[integers + recordInteger.firstPart + 2 * index]!,
+    }))
+    const slots = position * maximumListedOverloads
     return {
-      contingency: { assetId, kind: contingency.kind, label: grid.definition.index.assetById.get(assetId)!.label, lostMw: tenths(outcome.lostMw) },
-      islanding: outcome.islanding,
-      affectedIslands: outcome.parts.map(part => ({
+      contingency: { assetId: asset.assetId, kind: asset.kind, label: asset.label, lostMw: tenths(records.values[values + recordValue.lostMw]!) },
+      islanding,
+      affectedIslands: parts.map(part => ({
         ...part,
         imbalanceMw: tenths(part.imbalanceMw),
         reserveShortfallMw: tenths(part.reserveShortfallMw),
         unservedLoadMw: tenths(part.unservedLoadMw),
       })),
-      unservedLoadMw: tenths(outcome.parts.reduce((sum, part) => sum + part.unservedLoadMw, 0)),
-      worstBranch: worst < 0 ? null : screened(worst, flows[worst]!),
-      overloadedBranches: overloaded
-        .sort((a, b) => loading(flows[b]!, b) - loading(flows[a]!, a))
-        .slice(0, maximumListedOverloads)
-        .map(branch => screened(branch, flows[branch]!)),
-      violationCount: overloaded.length,
+      unservedLoadMw: tenths(parts.reduce((sum, part) => sum + part.unservedLoadMw, 0)),
+      worstBranch: worst < 0 ? null : screened(worst, records.values[values + recordValue.worstFlowMw]!),
+      overloadedBranches: Array.from({ length: records.integers[integers + recordInteger.listedCount]! }, (_, index) =>
+        screened(records.listedBranches[slots + index]!, records.listedFlowsMw[slots + index]!)),
+      violationCount,
     }
   }).sort(bySeverity)
   return {
@@ -154,7 +168,30 @@ export const screenContingencies = (screeningCase: ContingencyCase, contingencie
     violatingCount: results.filter(result => result.violationCount > 0).length,
     islandingCount,
     totalViolations,
-    baseCase: { overloadedCount: baseWorst.overloaded.length, worstBranch: baseWorst.worst < 0 ? null : screened(baseWorst.worst, base[baseWorst.worst]!) },
+    baseCase: { overloadedCount: baseScan.overloadedCount, worstBranch: baseScan.worst < 0 ? null : screened(baseScan.worst, base[baseScan.worst]!) },
     results,
   }
+}
+
+/**
+ * Screens the outages on the case: post-outage loading of every branch against the rating basis.
+ * Everything the screening reads from the Grid is captured before the first await, so the result
+ * describes the case as it was at the call, however the Grid advances meanwhile.
+ */
+export const screenContingencies = async (config: {
+  readonly screeningCase: ContingencyCase
+  readonly contingencies: ReadonlyArray<GridContingency>
+  readonly ratingBasis: ContingencyRatingBasis
+  readonly screen: ContingencyRecordScreen
+}): Promise<ScreeningSummary> => {
+  const { screeningCase, contingencies } = config
+  const { network, grid } = screeningCase
+  const snapshot = captureContingencySnapshot(screeningCase, contingencies, config.ratingBasis)
+  const assets = contingencies.map((contingency): ScreenedAsset => {
+    const assetId = contingency.kind === 'branch' ? network.branchIds[contingency.branchIndex]! : contingency.generatorId
+    return { assetId, kind: contingency.kind, label: grid.definition.index.assetById.get(assetId)!.label }
+  })
+  const branchLabels = grid.definition.model.branches.map(branch => branch.label)
+  const records = await config.screen(snapshot)
+  return summaryOf({ snapshot, records, assets, branchIds: network.branchIds, branchLabels })
 }
