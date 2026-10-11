@@ -1,6 +1,7 @@
 import { recordingSeriesIdFor } from '../../../core/model/index.ts'
 import { linkCarrier, nextLinks, previousLinks, type ProcessSignalBinding, type VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
+import { safetyFunctionSignals } from '../safety-functions.ts'
 import { actionEquipment, actionFlows, actionFlowsInto, actionStates, actsIn, automaticActions, branchFlows, conditionBindings, feeds, throughputDownstream, type AutomaticAction } from './actuations.ts'
 import { composedPanelPens, rankedAsRead, type CompiledComposedDisplay, type ComposedDisplayReading } from './compose.ts'
 import { COMPOSED_EVIDENCE_MAX, COMPOSED_EVIDENCE_MAX_ROWS, type DisplayEvidence, type DisplayEvidenceKind } from './composition.ts'
@@ -75,7 +76,8 @@ const joined = (names: ReadonlyArray<string>): string => names.length < 2 ? name
  *   question's primary values alarm in (the subcooling margin beside a
  *   falling pressurizer pressure after a trip): what the overview leads
  *   with, and of the rest what the display would lead with as off normal,
- *   heading for a limit or past one, most telling first;
+ *   heading for a limit or past one, most telling first, the values a
+ *   critical safety function judges before those only an alarm judges;
  * - flow: along a drawn line-up, the header flow each drawn header carries,
  *   and to each destination, and each drawn pump feeds.
  * Equipment a drawing shows says its own command and state, so it is never a
@@ -416,11 +418,16 @@ export const displayEvidence = (
   // shortest time to a limit from the Run's history, past a trip limit, past an alarm limit, the nearest. What the
   // overview leads with is added; a value it has no room for only off normal (heading for a limit, or past one):
   // containment pressure standing at normal 7 kPa below its alarm is not, a subcooling margin falling towards its
-  // alarm is. Only a value with a limit in force can be off normal, so only those and the leads are read.
+  // alarm is. Only a value with a limit in force can be off normal, so only those and the leads are read. A value a
+  // critical safety function judges comes before one only an alarm judges, however soon that alarm comes: with
+  // the PORV stuck open, the subcooling margin core cooling is judged by before the relief tank filling towards
+  // its high-level alarm.
   const limited = (path: VariablePath): boolean => limitsInForce(icThresholdsForSignal(plant, path).thresholds, now.mode, gateStatesOf(gate => now.read(gate as VariablePath))).length > 0
   const watched = [...candidates, ...ends].filter(path => systemsOf(path).some(name => asked.has(name)) && readable(path) && !shown.has(String(path))
     && (leads.has(path) || limited(path)))
-  for (const { path, offNormal } of rankedAsRead(system, watched, now, recordedSeriesIds)) {
+  const judged = safetyFunctionSignals(plant)
+  const ranked = rankedAsRead(system, watched, now, recordedSeriesIds)
+  for (const { path, offNormal } of [...ranked.filter(entry => judged.has(entry.path)), ...ranked.filter(entry => !judged.has(entry.path))]) {
     if (leads.has(path)) add(path, 'mode', `what the unit leads with in ${modeLabel}`)
     else if (offNormal) add(path, 'mode', `what the unit watches in ${modeLabel}`)
   }

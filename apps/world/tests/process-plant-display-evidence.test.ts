@@ -156,15 +156,37 @@ describe('what World adds to a composed display', () => {
       { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('pressurizer.reliefFlowKgPerS'), signal('PORV-456A-POS'), signal('SUB-MARGIN')] },
       { kind: 'alarms', scope: 'related' },
     ])
+    // The display trends the subcooling margin itself; the relief tank taking the PORV's discharge, its pressure
+    // and level heading for their alarms, is watched and added after the line's isolation.
     expect(listed(evidence)).toEqual([
       ['pressurizer.reliefValvePositionFraction', 'cause'],
       ['pressurizer.blockValveEffectivePositionFraction', 'isolation'],
       ['pressurizer.blockValvePositionFraction', 'isolation'],
+      ['pressurizerReliefTank.pressureMPa', 'mode'],
+      ['pressurizerReliefTank.levelPercent', 'mode'],
     ])
     expect(evidence[0]!.note).toMatch(/^35\.0 % since 10:00:0\d; demand 0 % throughout$/)
     expect(evidence[1]!.reason).toBe('PORV block isolates the PORV\'s line')
     expect(read('pressurizer.blockValveEffectivePositionFraction')).toBe(1)
     expect(rowsOf(display)[1]).toEqual({ kind: 'isolation', name: '', items: ['MOV-8000A-POS', 'MOV-8000A'] })
+    expect(rowsOf(display)[2]).toEqual({ kind: 'mode', name: '', items: ['PRT-PRESS', 'PRT-LVL'] })
+    expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
+  }, PLANT_HANG_GUARD_MS)
+
+  test('PORV open after the trip, as run 22 composed it: the subcooling margin a critical safety function judges keeps the last row, before the relief tank only alarms judge', () => {
+    // Run 22's composition three minutes in: its readouts leave the added rows room for four. The relief tank's
+    // level and pressure head for their alarms sooner than the subcooling margin, but core cooling is judged by the
+    // margin, the decisive value of a pressurizer steam-space leak, so it takes the last row.
+    const { compose, read } = situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 3)
+    const { evidence, display, result } = compose('Unit 2 pressurizer depressurization', ['PT-455', 'PORV-456A', 'PZR-LVL'], [
+      { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('pressurizer.reliefFlowKgPerS'), signal('PZR-LVL', 'counter-evidence')] },
+      { kind: 'readouts', signals: [signal('PORV-456A-POS', 'primary'), signal('PORV-456A'), signal('MOV-8000A-POS')] },
+      { kind: 'alarms', scope: 'related' },
+    ])
+    expect(rowsOf(display).map(row => row.kind)).toEqual(['delivers', 'trip', 'program', 'mode'])
+    expect(rowsOf(display).at(-1)).toEqual({ kind: 'mode', name: '', items: ['SUB-MARGIN'] })
+    expect(listed(evidence).map(([path]) => path)).not.toContain('pressurizerReliefTank.levelPercent')
+    expect(Number(read('pressurizerReliefTank.levelPercent'))).toBeGreaterThan(75)
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
   }, PLANT_HANG_GUARD_MS)
 

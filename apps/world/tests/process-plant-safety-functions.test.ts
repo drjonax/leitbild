@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { answerProcessPlantQuery, commandsForProcessPlantAction, compileProcessPlant, createProcessPlantRampRunner, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, type ProcessPlantRuntime } from '../src/packs/process-plant/runtime/index.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
-import { evaluateSafetyFunctions, type SafetyFunctionEvaluation } from '../src/packs/process-plant/safety-functions.ts'
+import { evaluateSafetyFunctions, safetyFunctionSignals, type SafetyFunctionEvaluation } from '../src/packs/process-plant/safety-functions.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
@@ -43,6 +43,11 @@ describe('critical safety function status trees', () => {
     expect(plant.automation.safetyFunctions.every(safetyFunction => safetyFunction.basis.includes('reference-model criteria'))).toBe(true)
     const declared = plant.automation.safetyFunctions[0]!
     expect(() => processPlantIcConfigSchema.parse({ ...plant.automation, safetyFunctions: [declared, declared] })).toThrow('safety function subcriticality is declared twice')
+    // What the trees and checks judge, which a display short of room keeps before what only an alarm judges; not
+    // what only says when a tree is judged (the trip breakers), nor what no tree reads (the relief tank).
+    const judgedSignals = safetyFunctionSignals(plant)
+    for (const path of ['vessel.subcoolingMarginC', 'core.coreExitTemperatureC', 'pressurizer.levelPercent', 'sgA.feedwaterFlowKgPerS', 'containment.pressureMPa']) expect(judgedSignals.has(path as never), path).toBe(true)
+    for (const path of ['reactorTripBreakerA.closedState', 'pressurizerReliefTank.levelPercent', 'pressurizerReliefTank.pressureMPa']) expect(judgedSignals.has(path as never), path).toBe(false)
   })
 
   test('at full power every tree reads green but subcriticality, which is judged once a trip is demanded', () => {

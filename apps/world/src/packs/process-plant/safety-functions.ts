@@ -7,6 +7,7 @@ import type {
   ProcessPlantIcStatusTreeNode,
   ProcessPlantRuntime,
 } from './runtime/index.ts'
+import type { VariablePath } from './graph/index.ts'
 import { findProcessPlantSignalBinding, type ProcessPlantSignalReference } from './signals.ts'
 
 // Critical safety function status: each function the Plant's I&C declares
@@ -195,3 +196,35 @@ export const evaluateSafetyFunction = (config: {
 /** Every critical safety function the Plant declares, judged now, in declaration order. */
 export const evaluateSafetyFunctions = (system: CompiledProcessPlant, runtime: ProcessPlantRuntime): ReadonlyArray<SafetyFunctionEvaluation> =>
   system.automation.safetyFunctions.map(safetyFunction => evaluateSafetyFunction({ system, runtime, safetyFunction }))
+
+/**
+ * The signals the Plant's critical safety functions judge: those their status
+ * trees and checks compare, not those that only say when a function or check
+ * is judged. A value a function judges says more about the Plant than one only
+ * an alarm judges, so a display short of room keeps it first.
+ */
+export const safetyFunctionSignals = (system: CompiledProcessPlant): ReadonlySet<VariablePath> => {
+  const paths = new Set<VariablePath>()
+  const visit = (condition: ProcessPlantIcSafetyFunctionCondition): void => {
+    if (condition.type === 'all' || condition.type === 'any') {
+      for (const child of condition.conditions) visit(child)
+      return
+    }
+    const references = condition.type === 'comparison' ? [condition.signal] : condition.type === 'total' ? condition.signals : [condition.signal, condition.minus]
+    for (const reference of references) {
+      const binding = findProcessPlantSignalBinding(system.graph, reference)
+      if (binding !== undefined) paths.add(binding.path)
+    }
+  }
+  const walk = (node: ProcessPlantIcStatusTreeNode): void => {
+    if (!('question' in node)) return
+    visit(node.condition)
+    walk(node.yes)
+    walk(node.no)
+  }
+  for (const safetyFunction of system.automation.safetyFunctions) {
+    walk(safetyFunction.tree)
+    for (const check of safetyFunction.checks) visit(check.condition)
+  }
+  return paths
+}
