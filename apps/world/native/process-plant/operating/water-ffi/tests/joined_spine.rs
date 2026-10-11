@@ -537,9 +537,110 @@ fn z1_composed_residual_at_the_hot_reference() {
             .unwrap();
     }
     let seeded_s = (z1::cpu_s() - timer) / calls as f64;
+    // The exact consistent start of the composed coordinates at t = 0.
+    let classes = z1::classes(&gates);
+    let n_net = joined.offsets().nuclear;
+    let mut atol = joined
+        .network
+        .absolute_tolerances(&y[..n_net], classes)
+        .unwrap();
+    // G12: S1's scaled 1e-8 absolute floor for every new coordinate class.
+    atol.resize(y.len(), classes.stock_scaled);
+    let weights: Vec<f64> = y
+        .iter()
+        .zip(&atol)
+        .map(|(v, a)| 1. / (classes.relative * v.abs() + a))
+        .collect();
+    let (pattern_nnz, colors) = {
+        let (p, c) = joined.structure().unwrap();
+        (p.nonzeros(), c.count())
+    };
+    let bound = 1e-12;
+    let timer = z1::cpu_s();
+    let start = leitbild_operating_water::joined::consistent_start(
+        &mut joined,
+        0.,
+        &mut y,
+        &ids,
+        &weights,
+        bound,
+        3,
+    );
+    let start_cpu_s = z1::cpu_s() - timer;
+    let start_receipt = match &start {
+        Ok((yp, r)) => {
+            joined.evaluate(0., &y, yp, None, 0., None).unwrap();
+            let after = z1::by_class(&joined);
+            // Initial rates by class, physical: max |y' scale| and its label.
+            let mut rates: std::collections::BTreeMap<String, (f64, String)> = Default::default();
+            let mut k = 0;
+            for (owner, layout) in joined.layouts() {
+                for i in 0..layout.len() {
+                    let v = yp[k] * layout.scales[i];
+                    let e = rates
+                        .entry(format!("{owner}/{:?}", layout.classes[i]))
+                        .or_insert((0., String::new()));
+                    if v.abs() > e.0 {
+                        *e = (v.abs(), layout.labels[i].clone());
+                    }
+                    k += 1;
+                }
+            }
+            json!({"bound": r.bound, "constraint_before": [r.constraint_before.value, r.constraint_before.row],
+                "constraint_after": [r.constraint_after.value, r.constraint_after.row], "projection_passes": r.projection_passes,
+                "correction": [r.correction.value, r.correction.row], "correction_wrms": r.correction_wrms,
+                "residual": [r.residual.value, r.residual.row], "constraint_rate": [r.constraint_rate.value, r.constraint_rate.row], "rate_passes": r.rate_passes,
+                "jacobian_cpu_wall_s": r.jacobian_s, "klu_factor_wall_s": r.factor_s, "klu_solve_wall_s": r.solve_s,
+                "rows_by_class_after": after,
+                "initial_rate_max_physical": rates.into_iter().map(|(k,(v,l))| (k, json!({"max_abs": v, "at": l}))).collect::<serde_json::Map<String, Value>>()})
+        }
+        Err(e) => json!({"refused": format!("{e:?}")}),
+    };
+    // Random-direction check of the colored Jacobian (cj = 1): the assembled
+    // matrix times d against one seeded evaluation in direction d.
+    let yp_now = start
+        .as_ref()
+        .map(|(yp, _)| yp.clone())
+        .unwrap_or(zero.clone());
+    let mut values = vec![0.; pattern_nnz];
+    joined.jacobian(0., 1., &y, &yp_now, &mut values).unwrap();
+    let (pointers, indices) = {
+        let (p, _) = joined.structure().unwrap();
+        (p.pointers().to_vec(), p.indices().to_vec())
+    };
+    let mut state = 0x9e3779b97f4a7c15u64;
+    let mut random = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+    };
+    let mut direction_checks = Vec::new();
+    for _ in 0..3 {
+        let d: Vec<f64> = (0..y.len()).map(|_| random()).collect();
+        let mut product = vec![0.; y.len()];
+        for j in 0..y.len() {
+            for q in pointers[j]..pointers[j + 1] {
+                product[indices[q]] += values[q] * d[j];
+            }
+        }
+        joined
+            .evaluate(0., &y, &yp_now, Some(&d), 1., None)
+            .unwrap();
+        let (mut worst, mut norm) = (0_f64, 0_f64);
+        for (r, p) in joined.rows().iter().zip(&product) {
+            worst = worst.max((r.direction - p).abs());
+            norm = norm.max(r.direction.abs());
+        }
+        direction_checks.push(json!({"max_abs_difference": worst, "max_abs_direction": norm, "relative": worst / norm}));
+    }
     let receipt = json!({
         "kind": "s2-z1-part1-composed-residual",
-        "status": "NOT-EVIDENCE zero-time receipt; S2 is not declared. Part 1 of Z1: the SG secondary and rod owners are pending, so their ports hold the packet's prepared views (6 MPa, Tsat, 72 m3, steam present) and travel (2.8 m), with no guide passage and no exact consistent start yet",
+        "pattern": {"nonzeros": pattern_nnz, "colors": colors},
+        "consistent_start": start_receipt,
+        "consistent_start_cpu_s": start_cpu_s,
+        "colored_jacobian_random_directions": direction_checks,
+        "status": "NOT-EVIDENCE zero-time receipt; S2 is not declared. Part 1 of Z1: the SG secondary and rod owners are pending, so their ports hold the packet's prepared views (6 MPa, Tsat, 72 m3, steam present) and travel (2.8 m, compiled volumes, no guide passage). The exact consistent start is of the composed coordinates at t = 0 with those ports held; the PZR boundary is closed (shell metal and relief pending, heaters at zero by G6)",
         "packet": path,
         "packet_sha256": sha256(&bytes),
         "provenance": provenance(),

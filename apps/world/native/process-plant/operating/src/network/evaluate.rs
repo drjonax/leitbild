@@ -9,7 +9,7 @@
 //! gives the port view the port face reads, and its rows take the port
 //! receipts.
 use super::{
-    Failure, Network, PZR_COORDINATES, Properties,
+    CellVolume, Failure, Network, PZR_COORDINATES, Properties,
     properties::{self as props, Reuse, Water},
     rec, s, selected_phase, stratified,
 };
@@ -101,8 +101,31 @@ impl<P: Properties> Network<P> {
         yp: &[f64],
         seed: Option<&[f64]>,
         cj: f64,
+        reuse: Option<&mut Reuse<P::Caloric>>,
+        coupling: Option<&mut dyn super::Coupling>,
+    ) -> Result<(), Failure> {
+        self.evaluate_joined(t, y, yp, seed, cj, reuse, coupling, &[])
+    }
+
+    /// [`Network::evaluate_coupled`] with the moving bodies' cell volumes:
+    /// `volumes` is empty (every cell at its compiled volume) or holds one
+    /// [`CellVolume`] per regular cell, value and direction. A listed volume
+    /// is the cell's in the EOS row, its phase fractions and its face
+    /// inertance, and the phase elimination closes on `sum V_k' = V'`, so the
+    /// fluid pays the boundary work `-p V'` once. A cell listed exactly at
+    /// its compiled volume and at rest (value and direction) is fixed and
+    /// evaluates bitwise as [`Network::evaluate_coupled`].
+    #[allow(clippy::too_many_arguments)] // The network's stage inputs and its two ports.
+    pub fn evaluate_joined(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+        seed: Option<&[f64]>,
+        cj: f64,
         mut reuse: Option<&mut Reuse<P::Caloric>>,
         coupling: Option<&mut dyn super::Coupling>,
+        volumes: &[CellVolume],
     ) -> Result<(), Failure> {
         if let Some((started, seconds)) = self.wall_budget
             && started.elapsed().as_secs_f64() > seconds
@@ -114,6 +137,37 @@ impl<P: Properties> Network<P> {
         let started = Instant::now();
         self.counters.evaluations += 1;
         let n = self.pzr.cell;
+        if !volumes.is_empty() && volumes.len() != n {
+            return Err(Failure::Fatal(format!(
+                "{} cell volumes for {n} regular cells",
+                volumes.len()
+            )));
+        }
+        for node in 0..n {
+            self.cell_volume[node] = s(self.volumes[node]);
+            self.cell_volume_rate[node] = None;
+            let Some(c) = volumes.get(node) else {
+                continue;
+            };
+            let (v, r) = (c.volume_m3, c.rate_m3_s);
+            if ![v.value, v.direction, r.value, r.direction]
+                .iter()
+                .all(|x| x.is_finite())
+                || v.value <= 0.
+            {
+                return Err(Failure::Recoverable(format!(
+                    "cell {node}: moving volume {v:?} and rate {r:?} are not a finite positive volume"
+                )));
+            }
+            let fixed = v.value == self.volumes[node]
+                && v.direction == 0.
+                && r.value == 0.
+                && r.direction == 0.;
+            if !fixed {
+                self.cell_volume[node] = v;
+                self.cell_volume_rate[node] = Some(r);
+            }
+        }
         self.receipts.fill([[s(0.); 3]; 2]);
         self.shaft_power = s(0.);
         let mut points: Vec<[Point; 2]> = vec![[None; 2]; n];
@@ -154,8 +208,10 @@ impl<P: Properties> Network<P> {
                     volume[k] = mass / rec(q.density_kg_m3, dq.density_kg_m3);
                 }
             }
-            self.rows[l.base] =
-                (volume[0] + volume[1] - s(self.volumes[node])) / s(self.volumes[node]);
+            // The row keeps the compiled volume as its scale; a fixed cell's
+            // current volume is that same value, so its row is unchanged.
+            let cell_volume = self.cell_volume[node];
+            self.rows[l.base] = (volume[0] + volume[1] - cell_volume) / s(self.volumes[node]);
             for k in 0..2 {
                 let mass = self.get(y, seed, l.mass[k]);
                 if !selected_phase(mass) {
@@ -165,9 +221,9 @@ impl<P: Properties> Network<P> {
                     continue;
                 };
                 let fraction = if k == l.phase {
-                    s(1.) - volume[1 - k] / s(self.volumes[node])
+                    s(1.) - volume[1 - k] / cell_volume
                 } else {
-                    volume[k] / s(self.volumes[node])
+                    volume[k] / cell_volume
                 };
                 let boron_concentration = if k == 0 {
                     if mass.value != 0. {
@@ -203,14 +259,14 @@ impl<P: Properties> Network<P> {
                 })
                 .collect()
         });
-        let volumes = &self.volumes[..n];
+        let volumes = &self.cell_volume[..n];
         let pre_source_mass_rate = vec![s(0.); n];
         self.charts.fill([None; 2]);
         for l in &self.face_layout {
             let pi = self.get(y, seed, l.index);
             let f = &self.faces[l.face];
             let inertance = f.supports.iter().fold(s(0.), |sum, support| {
-                sum + phase_mass[l.phase][support.region] / s(self.volumes[support.region])
+                sum + phase_mass[l.phase][support.region] / volumes[support.region]
                     * s(support.inverse_area_length_per_m)
             });
             if inertance.value == 0.
@@ -383,8 +439,19 @@ impl<P: Properties> Network<P> {
         phase_mass: &[Vec<thermal::Scalar>; 2],
     ) -> Result<(), Failure> {
         let n = self.pzr.cell;
-        let phase_mass_rate: [Vec<thermal::Scalar>; 2] =
-            std::array::from_fn(|k| (0..n).map(|node| self.receipts[node][k][0]).collect());
+        // The inertance weight is the phase density M/V: a moving cell's rate
+        // numerator is M' - M V'/V, a fixed cell's M'.
+        let phase_mass_rate: [Vec<thermal::Scalar>; 2] = std::array::from_fn(|k| {
+            (0..n)
+                .map(|node| {
+                    let receipt = self.receipts[node][k][0];
+                    match self.cell_volume_rate[node] {
+                        None => receipt,
+                        Some(rate) => receipt - phase_mass[k][node] * rate / self.cell_volume[node],
+                    }
+                })
+                .collect()
+        });
         for li in 0..self.face_layout.len() {
             let l = self.face_layout[li];
             let current = self.charts[l.face][l.phase]
@@ -406,7 +473,7 @@ impl<P: Properties> Network<P> {
                 &self.faces[l.face],
                 &phase_mass[l.phase],
                 &phase_mass_rate[l.phase],
-                &self.volumes[..n],
+                &self.cell_volume[..n],
                 pi,
                 force + current.pressure_gravity_pa,
                 flow::ColdOnset::ProvenRest,
@@ -488,8 +555,11 @@ impl<P: Properties> Network<P> {
                     u_t: rec(q.cp_j_kg_k, dq.cp_j_kg_k) - pressure * alpha / rho,
                 });
             }
-            let rates = phase::current_rates(pressure, therm, md, hd)
-                .map_err(|e| Failure::Recoverable(e.to_string()))?;
+            let rates = match self.cell_volume_rate[node] {
+                None => phase::current_rates(pressure, therm, md, hd),
+                Some(rate) => phase::current_rates_with_boundary(pressure, therm, md, hd, rate),
+            }
+            .map_err(|e| Failure::Recoverable(e.to_string()))?;
             for (k, mass_rate) in md.iter().enumerate() {
                 self.rows[l.mass[k]] =
                     (self.rate(yp, seed, cj, l.mass[k]) - *mass_rate) / s(self.scales[l.mass[k]]);

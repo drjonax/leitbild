@@ -704,6 +704,8 @@ impl leitbild_operating_plant::hot_spine::Properties for If97 {
 #[cfg(feature = "ida")]
 pub mod ida;
 #[cfg(feature = "ida")]
+pub mod joined;
+#[cfg(feature = "ida")]
 pub mod klu;
 pub mod network;
 #[cfg(target_os = "macos")]
