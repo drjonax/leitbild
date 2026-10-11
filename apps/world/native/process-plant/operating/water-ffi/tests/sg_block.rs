@@ -155,8 +155,37 @@ fn rows_close_mass_and_energy_and_the_trip_ramps_the_demand() {
         "{stored} vs {boundary}"
     );
     // TRIP at t = 1 s: the demand ramps linearly over 0.3 s and stays zero.
+    assert_eq!(Secondary::<If97>::next_time_event(&sys.secondary, 0.), None);
     let tx = Secondary::<If97>::command(&mut sys.secondary, 1., Command::TurbineTrip).unwrap();
     assert_eq!(tx.receipt["rampEnd_s"], json!(1.3));
+    // The ramp end is the owner's one time event: declared after the TRIP,
+    // transacted only exactly at it, changing no coordinate, harmless if
+    // repeated.
+    assert_eq!(
+        Secondary::<If97>::next_time_event(&sys.secondary, 1.),
+        Some(1.3)
+    );
+    assert_eq!(
+        Secondary::<If97>::next_time_event(&sys.secondary, 1.3),
+        None
+    );
+    let ns = sys.secondary_len;
+    let mut own: Vec<f64> = (0..ns).map(|i| y[i] * sys.scales[i]).collect();
+    let before = own.clone();
+    assert!(
+        Secondary::<If97>::time_event(&mut sys.secondary, &If97, 1.2, &mut own)
+            .unwrap()
+            .is_none()
+    );
+    for _ in 0..2 {
+        let tx = Secondary::<If97>::time_event(&mut sys.secondary, &If97, 1.3, &mut own)
+            .unwrap()
+            .expect("the STOP ramp end at 1.3 s");
+        assert_eq!(tx.receipt["event"], json!("STOP ramp end"));
+        assert_eq!(tx.receipt["stateChanged"], json!(false));
+        assert!(tx.deposits.is_empty());
+    }
+    assert_eq!(own, before);
     for (t, fraction) in [(0.5, 1.), (1., 1.), (1.15, 0.5), (1.3, 0.), (2., 0.)] {
         assert!(
             (sys.secondary.steam_fraction(t) - fraction).abs() < 1e-12,
