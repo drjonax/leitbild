@@ -87,9 +87,7 @@ unsafe extern "C" {
         stable_branch: *mut i32,
         stable_temperature_k: *mut f64,
         trial_temperature_k: *mut f64,
-        saturation_branch: *mut i32,
     ) -> i32;
-    fn ld01_water_eq18_reference(temperature_k: f64, pressure_pa: f64, output: *mut f64) -> i32;
     fn ld01_water_metastable_band(output: *mut MetastableBand) -> i32;
     fn ld01_water_surface(
         temperature: f64,
@@ -106,21 +104,13 @@ unsafe extern "C" {
 }
 
 pub fn point(branch: Branch, pressure_pa: f64, temperature_k: f64) -> Result<WaterPoint, Error> {
-    native_point(branch as i32, pressure_pa, temperature_k)
-}
-
-/// The native branch code of the vapor branch's metastable equation at
-/// saturation inside a band range: a caloric-inverse bracket end only.
-const METASTABLE_SATURATED_VAPOR: i32 = 5;
-
-fn native_point(code: i32, pressure_pa: f64, temperature_k: f64) -> Result<WaterPoint, Error> {
     let mut output = WaterPoint::default();
     // SAFETY: repr(C) contains only C int/doubles in declared order. Pointer
     // refers to a unique live stack allocation; C writes its complete tuple on
-    // success, keeps no pointer, and catches every C++ exception. The code is
-    // one of the four public branches or the private bracket-end code 5.
-    // No buffer or allocator crosses.
-    let status = unsafe { ld01_water_point(code, pressure_pa, temperature_k, &mut output) };
+    // success, keeps no pointer, and catches every C++ exception. The enum has
+    // only the four supported ABI discriminants. No buffer or allocator crosses.
+    let status =
+        unsafe { ld01_water_point(branch as i32, pressure_pa, temperature_k, &mut output) };
     match status {
         0 => Ok(output),
         1 => Err(Error::Domain),
@@ -135,12 +125,17 @@ fn native_point(code: i32, pressure_pa: f64, temperature_k: f64) -> Result<Water
 /// rho/u/h/cp/alpha, the fields that inverse reads. Entropy, cv, sound speed,
 /// compressibility, transport and the p-only saturation slope are not
 /// evaluated; their fields are NaN. Never returned to a caller.
-fn caloric_state(code: i32, pressure_pa: f64, temperature_k: f64) -> Result<WaterPoint, Error> {
+fn caloric_state(
+    branch: Branch,
+    pressure_pa: f64,
+    temperature_k: f64,
+) -> Result<WaterPoint, Error> {
     let mut output = WaterPoint::default();
     // SAFETY: the same C-layout contract as `point`: a unique live stack
     // allocation, completely written on success and retained nowhere; the
     // native function catches every C++ exception.
-    let status = unsafe { ld01_water_caloric(code, pressure_pa, temperature_k, &mut output) };
+    let status =
+        unsafe { ld01_water_caloric(branch as i32, pressure_pa, temperature_k, &mut output) };
     match status {
         0 => Ok(output),
         1 => Err(Error::Domain),
@@ -294,20 +289,15 @@ impl Caloric {
         }
     }
 }
-/// One end of an inverse bracket: the native branch code and temperature it
-/// is evaluated at.
-type End = (i32, f64);
+/// One end of an inverse bracket: the branch and temperature it is evaluated at.
+type End = (Branch, f64);
 
-/// The native branch ends at `p` (see `ld01_water_bracket`).
-struct Ends {
-    stable: End,
-    trial: Option<f64>,
-    saturation: i32,
-}
-
-fn branch_ends(branch: Branch, p: f64) -> Result<Ends, Error> {
-    let (mut stable_branch, mut stable_t, mut trial_t, mut saturation) = (0, 0., 0., 0);
-    // SAFETY: four unique live scalar outputs, written on success and
+/// The native branch ends at `p`: the stable end (the saturated endpoint, or
+/// region 1 at its temperature limit where saturation lies above it) and the
+/// trial end of the bounded metastable band, if the branch has one at `p`.
+fn branch_ends(branch: Branch, p: f64) -> Result<(End, Option<f64>), Error> {
+    let (mut stable_branch, mut stable_t, mut trial_t) = (0, 0., 0.);
+    // SAFETY: three unique live scalar outputs, written on success and
     // retained nowhere; the native function catches every C++ exception.
     let status = unsafe {
         ld01_water_bracket(
@@ -316,7 +306,6 @@ fn branch_ends(branch: Branch, p: f64) -> Result<Ends, Error> {
             &mut stable_branch,
             &mut stable_t,
             &mut trial_t,
-            &mut saturation,
         )
     };
     match status {
@@ -325,16 +314,13 @@ fn branch_ends(branch: Branch, p: f64) -> Result<Ends, Error> {
         2 => return Err(Error::AbiArgument),
         _ => return Err(Error::NativeFailure),
     }
-    if ![0, 2, 3].contains(&stable_branch)
-        || ![0, 2, 3, METASTABLE_SATURATED_VAPOR].contains(&saturation)
-    {
-        return Err(Error::NativeFailure);
-    }
-    Ok(Ends {
-        stable: (stable_branch, stable_t),
-        trial: (!trial_t.is_nan()).then_some(trial_t),
-        saturation,
-    })
+    let stable = match stable_branch {
+        0 => Branch::Liquid,
+        2 => Branch::SaturatedLiquid,
+        3 => Branch::SaturatedVapor,
+        _ => return Err(Error::NativeFailure),
+    };
+    Ok(((stable, stable_t), (!trial_t.is_nan()).then_some(trial_t)))
 }
 
 fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<WaterPoint, Error> {
@@ -346,11 +332,10 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
     }
     // These are the normative IF97 R1/R2 temperature bounds already selected
     // by this boundary. Pressure/domain admission remains in the native EOS.
-    let ends = branch_ends(branch, p)?;
-    let code = branch as i32;
+    let (stable, trial) = branch_ends(branch, p)?;
     let (low_end, high_end) = match branch {
-        Branch::Liquid => ((code, 273.15), ends.stable),
-        _ => (ends.stable, (code, 1073.15)),
+        Branch::Liquid => ((branch, 273.15), stable),
+        _ => (stable, (branch, 1073.15)),
     };
     // Brackets and iterates read only the caloric state. The returned state is
     // the complete forward point at the selected temperature, so the iteration
@@ -358,50 +343,37 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
     let low = caloric_state(low_end.0, p, low_end.1)?;
     let high = caloric_state(high_end.0, p, high_end.1)?;
     // Beyond the stable end the target can only be a metastable state of the
-    // requested branch: it is bracketed by the metastable equation's own
-    // saturation state and the trial end, and a target beyond the trial end is
-    // refused, never clamped. On Eq. (18) the saturation state is that
-    // equation's, not the Eq. (15) endpoint; a target between the two lies on
-    // neither branch and is refused.
+    // requested branch: it is bracketed by that end and the trial end, and a
+    // target beyond the trial end is refused, never clamped.
     match branch {
         Branch::Liquid if target > kind.value(high) => {
-            let trial = ends.trial.ok_or(Error::TrialBand)?;
-            let top = caloric_state(code, p, trial)?;
+            let trial = trial.ok_or(Error::TrialBand)?;
+            let top = caloric_state(branch, p, trial)?;
             if target > kind.value(top) {
                 return Err(Error::TrialBand);
             }
             return newton(
-                code,
+                branch,
                 p,
                 target,
                 kind,
                 (high_end, high),
-                ((code, trial), top),
+                ((branch, trial), top),
             );
         }
         Branch::Vapor if target < kind.value(low) => {
-            let trial = ends.trial.ok_or(Error::TrialBand)?;
-            let bottom = caloric_state(code, p, trial)?;
+            let trial = trial.ok_or(Error::TrialBand)?;
+            let bottom = caloric_state(branch, p, trial)?;
             if target < kind.value(bottom) {
                 return Err(Error::TrialBand);
             }
-            let (saturation_end, saturation) = if ends.saturation == METASTABLE_SATURATED_VAPOR {
-                let end = (ends.saturation, 0.);
-                let state = caloric_state(end.0, p, end.1)?;
-                if target >= kind.value(state) {
-                    return Err(Error::TrialBand);
-                }
-                (end, state)
-            } else {
-                (low_end, low)
-            };
             return newton(
-                code,
+                branch,
                 p,
                 target,
                 kind,
-                ((code, trial), bottom),
-                (saturation_end, saturation),
+                ((branch, trial), bottom),
+                (low_end, low),
             );
         }
         _ => {}
@@ -409,12 +381,12 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
     if target < kind.value(low) || target > kind.value(high) {
         return Err(Error::Domain);
     }
-    newton(code, p, target, kind, (low_end, low), (high_end, high))
+    newton(branch, p, target, kind, (low_end, low), (high_end, high))
 }
 
 /// Safeguarded Newton inside one bracket whose ends were evaluated as given.
 fn newton(
-    code: i32,
+    branch: Branch,
     p: f64,
     target: f64,
     kind: Caloric,
@@ -422,10 +394,10 @@ fn newton(
     (high_end, mut high): (End, WaterPoint),
 ) -> Result<WaterPoint, Error> {
     if target == kind.value(low) {
-        return native_point(low_end.0, p, low_end.1);
+        return point(low_end.0, p, low_end.1);
     }
     if target == kind.value(high) {
-        return native_point(high_end.0, p, high_end.1);
+        return point(high_end.0, p, high_end.1);
     }
     let mut t = low.temperature_k
         + (high.temperature_k - low.temperature_k) * (target - kind.value(low))
@@ -434,7 +406,7 @@ fn newton(
     // only a root-finding safeguard, never a replacement EOS value or state.
     // The bound is a numerical termination guard, not a simulation timestep.
     for _ in 0..64 {
-        let q = caloric_state(code, p, t)?;
+        let q = caloric_state(branch, p, t)?;
         let defect = kind.value(q) - target;
         let (_, ut) = kind.partials(q);
         if !ut.is_finite() || ut <= 0. {
@@ -444,7 +416,7 @@ fn newton(
         // An arbitrary EOS datum can make target U zero without making the
         // attainable numerical precision or the heat capacity zero.
         if defect.abs() <= 2e-12 * target.abs().max(ut * q.temperature_k).max(1.) {
-            return native_point(code, p, t);
+            return point(branch, p, t);
         }
         if defect < 0. {
             low = q;
@@ -461,41 +433,21 @@ fn newton(
     Err(Error::NativeFailure)
 }
 
-/// One pressure range of the compiled band. `vapor_equation` is the IF97
-/// equation of its metastable vapor: 15 (Eq. 15) or 18 (Eq. 18).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-#[repr(C)]
-pub struct BandRange {
-    pub pressure_low_pa: f64,
-    pub pressure_high_pa: f64,
-    pub liquid_superheat_max_k: f64,
-    pub vapor_subcooling_max_k: f64,
-    pub lower_bound_exclusive: i32,
-    pub vapor_equation: i32,
-}
-impl BandRange {
-    /// Whether `p` lies in this range (upper bound inclusive).
-    pub fn contains(&self, p: f64) -> bool {
-        (if self.lower_bound_exclusive != 0 {
-            p > self.pressure_low_pa
-        } else {
-            p >= self.pressure_low_pa
-        }) && p <= self.pressure_high_pa
-    }
-}
-
 /// The artifact's compiled `ld01-metastable-band` values, as the native
-/// boundary applies them: the top-level range first, then `lowPressureBand`.
+/// boundary applies them.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct MetastableBand {
+    pub pressure_low_pa: f64,
+    pub pressure_high_pa: f64,
     pub trial_max_k: f64,
+    pub liquid_superheat_max_k: f64,
+    pub vapor_subcooling_max_k: f64,
     pub credited_max_k: f64,
     pub liquid_temperature_max_k: f64,
     pub liquid_pressure_ceiling_pa: f64,
     pub vapor_pressure_ceiling_pa: f64,
-    pub range_count: i32,
-    pub ranges: [BandRange; 2],
+    pub lower_bound_exclusive: i32,
 }
 impl MetastableBand {
     pub fn compiled() -> Self {
@@ -504,27 +456,7 @@ impl MetastableBand {
         // native function only copies its compiled constants into it.
         let status = unsafe { ld01_water_metastable_band(&mut band) };
         assert_eq!(status, 0, "compiled metastable band unavailable");
-        assert_eq!(band.range_count, 2, "compiled band has two ranges");
         band
-    }
-    /// The range holding `p`, if any.
-    pub fn range_at(&self, p: f64) -> Option<&BandRange> {
-        self.ranges.iter().find(|r| r.contains(p))
-    }
-}
-
-/// IF97 Eq. (18)'s bare v, h, u, s, cp and w at (T, p) with no admission, for
-/// verification against IF97 Table 18 only; never a property query.
-pub fn eq18_reference(temperature_k: f64, pressure_pa: f64) -> Result<[f64; 6], Error> {
-    let mut out = [0.; 6];
-    // SAFETY: six unique live output doubles, written on success; the native
-    // function keeps no pointer and catches every C++ exception.
-    let status = unsafe { ld01_water_eq18_reference(temperature_k, pressure_pa, out.as_mut_ptr()) };
-    match status {
-        0 => Ok(out),
-        1 => Err(Error::Domain),
-        2 => Err(Error::AbiArgument),
-        _ => Err(Error::NativeFailure),
     }
 }
 
@@ -545,19 +477,16 @@ pub struct BandReport {
     pub band: Band,
 }
 
-/// Band check of an ACCEPTED state on its requested branch, against the band
-/// range holding its pressure: liquid superheat at most that range's
-/// `liquidSuperheatMax_K`, vapor subcooling at most its
-/// `vaporSubcoolingMax_K`; a metastable departure outside every range is
-/// beyond the band. It classifies and reports; it never clamps, refuses or
-/// enters a residual.
+/// Band check of an ACCEPTED state on its requested branch: liquid superheat
+/// at most `liquidSuperheatMax_K`, vapor subcooling at most
+/// `vaporSubcoolingMax_K`. It classifies and reports; it never clamps, refuses
+/// or enters a residual.
 pub fn band_check(branch: Branch, point: &WaterPoint) -> BandReport {
     let band = MetastableBand::compiled();
     let departure = point.saturation_departure_k;
-    let range = band.range_at(point.pressure_pa);
     let (metastable, limit) = match branch {
-        Branch::Liquid => (departure, range.map_or(0., |r| r.liquid_superheat_max_k)),
-        Branch::Vapor => (-departure, range.map_or(0., |r| r.vapor_subcooling_max_k)),
+        Branch::Liquid => (departure, band.liquid_superheat_max_k),
+        Branch::Vapor => (-departure, band.vapor_subcooling_max_k),
         Branch::SaturatedLiquid | Branch::SaturatedVapor => (0., 0.),
     };
     let band = if metastable <= 0. {

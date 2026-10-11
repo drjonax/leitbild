@@ -137,10 +137,9 @@ test('actual five-piece surge splits at8m with disjoint inertia, head, elbow and
       source: 'LD01.HOT.A', receiver: 'LD01.PZR', sourceElevation_m: 2.5, receiverElevation_m: 6.5,
       developedLength_m: 16, firstStraight_m: 6, bendRadius_m: .45, internalDiameter_m: .3, wallThickness_m: .025,
       steelDensity_kg_m3: 7920, roughness_m: .0000015, entryLoss: .5, elbowLoss: .2, exitLoss: 1 }),
-    properties: '## Bounded metastable admission\n\n' + record('ld01-metastable-band', { pressureRange_Pa: [1e7, 1.6e7], lowerBoundExclusive: true,
+    properties: '## Bounded metastable admission\n\n' + record('ld01-metastable-band', { pressureRange_Pa: [2e6, 1.6e7], lowerBoundExclusive: true,
       liquidSuperheatMax_K: 2, vaporSubcoolingMax_K: 1.4, trialMax_K: 3, creditedMax_K: .5, liquidTemperatureMax_K: 623.15,
-      liquidPressureCeiling_Pa: 1.7e7, vaporPressureCeiling_Pa: 1.6e7, lowPressureBand: { pressureRange_Pa: [5.9e6, 1e7],
-        lowerBoundExclusive: true, liquidSuperheatMax_K: 2, vaporSubcoolingMax_K: 1.1, vaporEquation: 'IF97 Eq. (18)' } }),
+      liquidPressureCeiling_Pa: 1.7e7, vaporPressureCeiling_Pa: 1.6e7 }),
     measurements: '### PZR electronic differential level\n\n' + record('ld01-pzr-taps', { pt1Elevation_m: 18.5, ltLowElevation_m: 6.5, ltHighElevation_m: 18.5 }) + '\n' },
   { id: 'HOT.A', volume_m3: 15, mainFlowArea_m2: Math.PI / 4, elevation_m: 2.5 })
   const h = compileOperatingSurgeHydraulics(pzr), A = Math.PI * .3 ** 2 / 4
