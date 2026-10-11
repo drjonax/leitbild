@@ -107,6 +107,9 @@ describe('how a trend reads now', () => {
     const text = readingStateText(level, 'percent', 0.075)
     expect(text).toStartWith('past LO 35 % · ALM · rising, ')
     expect(text).not.toContain('recover')
+    // Turned only just: no time back across it, and never "rising, reversing" (QA review of run 22's PT-455 after the RCP trip).
+    const turned = seconds(120, second => second < 100 ? 14.6 - second * 0.008 : 13.8 + (second - 100) * 0.01)
+    expect(readingStateText(read(turned, turned.at(-1)!.v), 'MPa')).toBe('past LO 14.8 MPa · ALM · rising, just reversed')
   })
 
   test('a margin names every action at the limit it names, the most severe first', () => {

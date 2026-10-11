@@ -462,7 +462,8 @@ const NEAR_FRACTION = 0.25
  * · ≈2 min", "past LO-LO 20 % · AFW START", "past LO 35 % · ALM · rising,
  * back above it in ≈2 min", "no LO limit in force". A value moving back
  * across a limit it is past is said to rise or fall, with the time back
- * across it where the tendency gives one, never to recover: a pressurizer
+ * across it where the tendency gives one, else why not ("rising, slowing",
+ * "rising, just reversed"), never to recover: a pressurizer
  * level rising while a relief valve discharges is no recovery (evaluation
  * run 22's "recovering, not projected").
  */
@@ -472,7 +473,8 @@ export const limitStateText = (state: LimitState, unit: string, resolution: numb
     const back = state.back
     if (back === null) return marginText(state.margin, unit, resolution)
     const across = `back ${state.margin.threshold.direction === 'low' ? 'above' : 'below'} it`
-    const when = back.eta === NOT_PROJECTED ? 'not projected' : back.eta === '' || isProjectedTime(back.eta) ? `${across} in ${back.eta === '' ? 'over 30 min' : back.eta}` : back.eta
+    // Moving back after a reversal, it has "just reversed": "rising, reversing" would read as turning away again.
+    const when = back.eta === NOT_PROJECTED ? 'not projected' : back.eta === '' || isProjectedTime(back.eta) ? `${across} in ${back.eta === '' ? 'over 30 min' : back.eta}` : back.eta === 'reversing' ? 'just reversed' : back.eta
     return `${marginText(state.margin, unit, resolution)} · ${back.travel}, ${when}`
   }
   if (state.kind === 'clear') return `no ${state.direction === 'low' ? 'LO' : 'HI'} limit in force`
