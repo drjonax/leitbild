@@ -15,6 +15,7 @@ import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-comma
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { runtimeStateForElectricGrids } from '../src/packs/electric-grid/sim/runtime-state.ts'
+import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
 import { gridDefinitionForModel, syntheticGridDefinition } from './fixtures/synthetic-grid.ts'
 
 const at = '2026-01-01T10:00:00.000Z' as IsoTimestamp
@@ -42,15 +43,11 @@ const ask = <Result>(grid: GridRuntimeInstance, id: string): Result => capabilit
   grids: new Map([[grid.definition.gridId, grid]]),
 })) as Result
 
-const medianMs = (run: () => unknown, samples: number): number => {
+/** Within `quietMs` of a quiet machine's CPU time, judged against the shared reference computation (see cpu-cost.ts). */
+const withinQuietBudget = (run: () => unknown, quietMs: number, rounds: number): void => {
   for (let warm = 0; warm < 5; warm += 1) run()
-  const times: number[] = []
-  for (let sample = 0; sample < samples; sample += 1) {
-    const startedAt = performance.now()
-    run()
-    times.push(performance.now() - startedAt)
-  }
-  return times.sort((left, right) => left - right)[Math.floor(samples / 2)]!
+  const [references] = costsInReferences([run], rounds)
+  expect(references!).toBeLessThan(quietMs / referenceQuietMs)
 }
 
 const command = (grid: GridRuntimeInstance, kind: string, payload: Readonly<Record<string, unknown>>) => {
@@ -177,8 +174,8 @@ describe('Grid map query Capabilities', () => {
     // revision (37 KB, 7 KB gzip). Per load they were 1,248 KB and 62 KB.
     expect(geometryBytes).toBeLessThanOrEqual(1_200_000)
     expect(stateBytes).toBeLessThanOrEqual(60_000)
-    // Budget 2 ms: the Pack answer plus the Host's output validation and serialisation.
-    expect(medianMs(() => JSON.stringify(ask(grid, stateId)), 60)).toBeLessThan(2)
+    // Budget 2 quiet ms: the Pack answer plus the Host's output validation and serialisation.
+    withinQuietBudget(() => JSON.stringify(ask(grid, stateId)), 2, 60)
   })
 
   test('answer state for a synthetic 3,500-branch Grid within 15 ms', () => {
@@ -190,7 +187,7 @@ describe('Grid map query Capabilities', () => {
     const stateQuery = createGridMapStateQuery(geometryFor)
     const grids = new Map([[grid.definition.gridId, grid]])
     const answer = () => JSON.stringify(stateQuery.capability.output.parse(structuredClone(stateQuery.answer({ gridId: grid.definition.gridId }, grids))))
-    expect(medianMs(answer, 20)).toBeLessThan(15)
+    withinQuietBudget(answer, 15, 20)
   })
 })
 
