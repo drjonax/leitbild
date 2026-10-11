@@ -471,16 +471,52 @@ mod z1 {
 #[test]
 #[ignore = "requires the actual compiled spine packet, the wiki, maintained IF97 and stock IDA/KLU"]
 fn z1_composed_residual_at_the_hot_reference() {
-    use leitbild_operating_plant::{initialization::SurfacePolicy, joined::operator::Joined};
+    z1_probe(false);
+}
+
+#[test]
+#[ignore = "requires the actual compiled joined packet, the wiki, maintained IF97 and stock IDA/KLU"]
+fn z1_full_composition_at_the_hot_reference() {
+    z1_probe(true);
+}
+
+/// Z1 at the hot reference: the composed state of memo §3 (A)-(C), its
+/// residual by class, the exact consistent start and its cost. `full`
+/// composes the SG secondary and rod owners from the joined packet's
+/// sections; otherwise their ports hold the packet's prepared views.
+fn z1_probe(full: bool) {
+    use leitbild_operating_plant::{
+        initialization::SurfacePolicy,
+        joined::operator::{Joined, RodPort, SecondaryPort},
+        rods::{RodBlock, Section as RodSection},
+        sg::{packet::Section as SecondarySection, secondary::Secondaries},
+        thermal::{Scalar, WaterProperties},
+    };
     let started = z1::cpu_s();
     let (path, bytes) = packet_bytes();
     let network_packet: NetworkPacket = serde_json::from_slice(&bytes).expect("network packet");
     let joined_packet: packet::Packet = serde_json::from_slice(&bytes).expect("joined packet");
+    let raw: Value = serde_json::from_slice(&bytes).expect("packet json");
     let gates = z1::s1_gates();
     let (flows, momenta, s1) = z1::s1_settled_flows(&network_packet, &gates);
     let (network, y_network, network_ids, flowing) =
         z1::composed(&network_packet, &flows, &momenta);
-    let (secondary, rods) = z1::prepared_ports(&joined_packet);
+    let (secondary, rods) = if full {
+        let section: SecondarySection =
+            serde_json::from_value(raw["secondary"].clone()).expect("secondary section");
+        let rods: RodSection = serde_json::from_value(raw["rods"].clone()).expect("rods section");
+        (
+            SecondaryPort::Owner(Box::new(
+                Secondaries::new(&section, &joined_packet.thermal.secondaries, &If97)
+                    .expect("SG secondary owner"),
+            )),
+            RodPort::Owner(Box::new(
+                RodBlock::from_packet(&rods, &network_packet).expect("rod owner"),
+            )),
+        )
+    } else {
+        z1::prepared_ports(&joined_packet)
+    };
     let mut joined = Joined::new(
         network,
         &network_packet,
@@ -493,6 +529,14 @@ fn z1_composed_residual_at_the_hot_reference() {
     let mut y = joined.prepared(&y_network).unwrap();
     let ids = joined.differential(&network_ids);
     let zero = vec![0.; y.len()];
+    let owners_prepared = if full {
+        let done = joined
+            .prepare_owners(0., &mut y)
+            .expect("owner preparation");
+        json!(done.iter().map(|t| t.receipt.clone()).collect::<Vec<_>>())
+    } else {
+        Value::Null
+    };
     joined
         .evaluate(0., &y, &zero, None, 0., None)
         .expect("prepared residual");
@@ -634,13 +678,60 @@ fn z1_composed_residual_at_the_hot_reference() {
         }
         direction_checks.push(json!({"max_abs_difference": worst, "max_abs_direction": norm, "relative": worst / norm}));
     }
+    // G17: the duty the constant A/B steam demand implies against the
+    // prepared history's release, at the prepared SG pressure and at Z2's
+    // emergent 6.3631 MPa, and the RCP heat composed.
+    let g17 = if full {
+        let feed = &raw["secondary"]["feed"];
+        let fp = feed["pressure_Pa"].as_f64().unwrap();
+        let ft = feed["temperature_K"].as_f64().unwrap();
+        let h_feed = WaterProperties::liquid(&If97, Scalar::constant(fp), Scalar::constant(ft))
+            .unwrap()
+            .enthalpy
+            .value;
+        let demand: Vec<f64> = raw["secondary"]["steamGenerators"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["steamDemand_kg_s"].as_f64().unwrap())
+            .collect();
+        let duty = |p: f64| {
+            let hg = WaterProperties::saturation(&If97, Scalar::constant(p))
+                .unwrap()
+                .vapor
+                .enthalpy
+                .value;
+            demand.iter().map(|m| m * (hg - h_feed)).sum::<f64>()
+        };
+        let released = joined.heats().nuclear.released_w.value;
+        let shaft = budget["once_paid_shaft_power_w"].as_f64().unwrap();
+        let prepared_p = joined_packet.thermal.secondaries[0].pressure_pa;
+        let at = |p: f64| {
+            let d = duty(p);
+            json!({"sg_pressure_pa": p, "sg_demand_duty_w": d, "implied_core_power_w": d - shaft,
+                "relative_to_history_release": (d - shaft) / released - 1.})
+        };
+        json!({"history_prepared_release_w": released, "rcp_once_paid_shaft_power_w": shaft,
+            "feed_enthalpy_j_kg": h_feed, "steam_demand_kg_s": demand,
+            "at_prepared_sg_pressure": at(prepared_p), "at_z2_emergent_sg_pressure": at(6.3631e6),
+            "other_heat": "PZR boundary closed (no heater, wall loss or relief composed); no other sink or source in the composition",
+            "confirmed_above": 2e-3})
+    } else {
+        Value::Null
+    };
     let receipt = json!({
-        "kind": "s2-z1-part1-composed-residual",
+        "kind": if full { "s2-z1-full-composition" } else { "s2-z1-part1-composed-residual" },
+        "owners_prepared": owners_prepared,
+        "g17_power_basis": g17,
         "pattern": {"nonzeros": pattern_nnz, "colors": colors},
         "consistent_start": start_receipt,
         "consistent_start_cpu_s": start_cpu_s,
         "colored_jacobian_random_directions": direction_checks,
-        "status": "NOT-EVIDENCE zero-time receipt; S2 is not declared. Part 1 of Z1: the SG secondary and rod owners are pending, so their ports hold the packet's prepared views (6 MPa, Tsat, 72 m3, steam present) and travel (2.8 m, compiled volumes, no guide passage). The exact consistent start is of the composed coordinates at t = 0 with those ports held; the PZR boundary is closed (shell metal and relief pending, heaters at zero by G6)",
+        "status": if full {
+            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Z1 on the full composition: network, nuclear, solids, the SG secondary owner and the rod owner with its guide currents prepared at the composed state. The PZR boundary is closed: shell metal and relief pending (G6), heaters at zero by G6"
+        } else {
+            "NOT-EVIDENCE zero-time receipt; S2 is not declared. Part 1 of Z1: the SG secondary and rod owners are pending, so their ports hold the packet's prepared views (6 MPa, Tsat, 72 m3, steam present) and travel (2.8 m, compiled volumes, no guide passage). The exact consistent start is of the composed coordinates at t = 0 with those ports held; the PZR boundary is closed (shell metal and relief pending, heaters at zero by G6)"
+        },
         "packet": path,
         "packet_sha256": sha256(&bytes),
         "provenance": provenance(),
