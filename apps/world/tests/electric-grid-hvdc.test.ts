@@ -19,6 +19,7 @@ import { electricGridRuntimeStateSchema, restoredGridRuntimeStateFor, runtimeSta
 import { isoAt, steppedGrid, tripSignals, type SteppedGrid } from './fixtures/grid-corridor.ts'
 import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
 import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './fixtures/synthetic-grid.ts'
+import { largestIslandInjectionSumMw, largestKclResidualMw } from './fixtures/grid-invariants.ts'
 
 // A Norwegian 420 kV bus tied to the Nordic equivalent at SE3 with four hydro units, a radial
 // converter bus west of it, and two links to Germany: one with NordLink's rating, losses and ramp
@@ -41,7 +42,8 @@ const model: GridModelDefinition = handBuiltModel({
   externalSystems: [
     {
       id: 'external:nordic-remainder', label: 'Nordic remainder', area: 'nordic-remainder', synchronous: true, boundaryBusIds: ['bus:boundary-SE3@420'],
-      inertiaGws: 171, loadMw: 43_100, fcrNMwPerHz: 3_720, fcrDUpMw: 899, fcrDDownMw: 868, afrrUpMw: 138, afrrDownMw: 138, provenance,
+      inertiaGws: 171, loadMw: 43_100, fcrNMwPerHz: 3_720, fcrDUpMw: 899, fcrDDownMw: 868, afrrUpMw: 138, afrrDownMw: 138,
+      areaParticipation: [{ area: 'SE3', share: 1, boundaryBusIds: ['bus:boundary-SE3@420'] }], provenance,
     },
     { id: 'external:DE', label: 'Germany', area: 'DE', synchronous: false, boundaryBusIds: ['bus:boundary-DE'], provenance },
   ],
@@ -63,24 +65,6 @@ const reasonOf = (result: { readonly ok: boolean; readonly reason?: string }): s
   return result.reason!
 }
 const hvdcTransitions = (run: SteppedGrid) => run.signals.filter(signal => signal.type.startsWith('electric-grid.hvdc.')).map(signal => signal.type)
-
-/** Sum of all injections of each energised island (MW); balance closes by construction. */
-const largestIslandInjectionSumMw = (grid: GridRuntimeInstance): number => {
-  const sums = new Map<string, number>()
-  for (const state of grid.busStates.values()) if (state.energized) sums.set(state.islandId, (sums.get(state.islandId) ?? 0) + state.netInjectionMw)
-  return Math.max(0, ...[...sums.values()].map(Math.abs))
-}
-
-/** KCL at every bus from the solved injections and branch flows (MW). */
-const largestKclResidualMw = (grid: GridRuntimeInstance): number => {
-  const residuals = new Map([...grid.busStates].map(([busId, state]) => [busId, state.netInjectionMw]))
-  for (const branch of grid.definition.model.branches) {
-    const flowMw = grid.branches.get(branch.id)!.flowMw
-    residuals.set(branch.fromBusId, residuals.get(branch.fromBusId)! - flowMw)
-    residuals.set(branch.toBusId, residuals.get(branch.toBusId)! + flowMw)
-  }
-  return Math.max(...[...residuals.values()].map(Math.abs))
-}
 
 const queryCapability = (id: string) => electricGridQueryCapabilities.find(capability => capability.id === id)!
 /** Answers a query the way the Host does: the Pack answer, then the published output schema. */
