@@ -4,6 +4,7 @@ import { gridAssetGetQuery, gridAssetSearchQuery } from './assets.ts'
 import { gridCatalogQuery } from './catalog.ts'
 import type { ElectricGridQuery, GridRuntimes } from './common.ts'
 import { gridConnectionPointsQuery } from './connection-points.ts'
+import { gridContingencyScreenQuery, gridRemedialActionsEvaluateQuery } from './contingency.ts'
 import { gridIslandsQuery } from './islands.ts'
 import { gridMapGeometryQuery } from './map-geometry.ts'
 import { gridMapStateQuery } from './map-state.ts'
@@ -19,6 +20,8 @@ const electricGridQueries: ReadonlyArray<ElectricGridQuery> = [
   gridAssetSearchQuery,
   gridAssetGetQuery,
   gridPowerFlowQuery,
+  gridContingencyScreenQuery,
+  gridRemedialActionsEvaluateQuery,
   gridConnectionPointsQuery,
   gridMapGeometryQuery,
   gridMapStateQuery,
