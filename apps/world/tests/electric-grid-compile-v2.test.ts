@@ -75,8 +75,10 @@ describe('Grid Model v2 → runtime model', () => {
     expect(mapped.find(entry => entry.area === 'SE3')!.boundaryBusIds).toEqual(['bus:boundary-SE3@132', 'bus:boundary-SE3@420'])
     expect(mapped.flatMap(entry => entry.boundaryBusIds).sort()).toEqual([...nordic.boundaryBusIds].sort())
     expect(model.externalSystems.filter(system => !system.synchronous).map(system => system.id).sort()).toEqual(['external:DE', 'external:DK1', 'external:GB', 'external:NL'])
+    // Every price area and group at the Operating Point's demand.
     const demandMw = model.loads.reduce((sum, load) => sum + load.demandMw, 0) * winter.loadScale
-    expect(demandMw).toBeCloseTo(generated.loads.reduce((sum, load) => sum + load.referenceDemandMw, 0) * winter.loadScale, 6)
+    const operatingPointMw = Object.values(winter.demand.priceAreaGroupMw).flatMap(groups => Object.values(groups!)).reduce((sum, value) => sum + value, 0)
+    expect(demandMw).toBeCloseTo(operatingPointMw * winter.loadScale, 6)
     // The runtime loader accepts the mapped model.
     const index = compileGridModelIndex(model)
     expect(index.busById.size).toBe(generated.buses.length)
@@ -100,6 +102,16 @@ describe('Grid Model v2 → runtime model', () => {
     expect(equivalent(summer).loadMw).toBeLessThan(equivalent(winter).loadMw!)
     expect(() => validateGridOperatingPoint({ ...summer, externalSystemStates: [{ ...summer.externalSystemStates![0]!, assetId: 'external:DE' }] }, 'summer', targets))
       .toThrow('$.externalSystemStates[0].assetId: external:DE is not synchronous')
+  })
+
+  test('shares each price area and group\'s Operating Point demand over its loads by their reference demand', () => {
+    const demand = { ...v2FixtureDemand, priceAreaGroupMw: { NO1: { private: 600 }, NO2: { industry: 200 } } }
+    const { model } = compileGridModelV2(fixture, { ...fixturePoint, demand }, v2FixtureLoadProfiles)
+    // NO1 private at 600 of its 800 MW reference, then the Scenario's NO1 scale of 0.5.
+    expect(model.loads.find(load => load.id === 'load:0301-private-osm-way-60495669')!.demandMw).toBeCloseTo(600 * 0.5, 9)
+    expect(model.loads.find(load => load.id === 'load:site-test-smelter')!.demandMw).toBeCloseTo(200, 9)
+    expect(() => compileGridModelV2(fixture, { ...fixturePoint, demand: { ...demand, priceAreaGroupMw: { NO1: { private: 600 } } } }, v2FixtureLoadProfiles))
+      .toThrow('Operating Point electric-grid.test.v2-fixture.peak sets no demand for the NO2 industry loads of electric-grid.test.v2-fixture')
   })
 
   test('refuses an Operating Point for another model and schedules the runtime does not follow', () => {

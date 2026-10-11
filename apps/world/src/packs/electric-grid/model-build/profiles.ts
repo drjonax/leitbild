@@ -36,6 +36,33 @@ const composedSeries = (week: WeekProfileSnapshot): GroupSeries => {
     week.hoursUtc.map((_, index) => composition[group].reduce<number>((sum, part) => sum + series(area, part)[index]!, 0))))
 }
 
+/** Elhub's metered demand of each price area and group in one hour of the week, MW. */
+export type PriceAreaGroupMw = Readonly<Record<PriceArea, Readonly<Record<Group, number>>>>
+
+/**
+ * The metered demand of each price area and group in the week's hour starting `hour.startUtc`.
+ * The hour's price-area totals, from the reference-hour snapshot, must be the groups' sums.
+ */
+export const priceAreaGroupMwAt = (week: WeekProfileSnapshot, hour: { readonly startUtc: string; readonly byAreaMw: Readonly<Record<PriceArea, number>> }): PriceAreaGroupMw => {
+  const index = week.hoursUtc.findIndex(utc => Date.parse(utc) === Date.parse(hour.startUtc))
+  if (index < 0) throw new Error(`Elhub week ${week.week.startDate}: no hour starting ${hour.startUtc}`)
+  const series = composedSeries(week)
+  return recordOf(priceAreas, area => {
+    const groups = recordOf(municipalityLoadGroups, group => roundTo(series[area][group][index]!, 3))
+    const totalMw = municipalityLoadGroups.reduce((sum, group) => sum + groups[group], 0)
+    const areaMw = hour.byAreaMw[area]
+    // The reference-hour snapshot gives area totals to 0.1 MW.
+    if (Math.abs(totalMw - areaMw) > 0.05 + 1e-9) throw new Error(`Elhub ${area} at ${hour.startUtc}: its groups sum to ${roundTo(totalMw, 3)} MW, its area total is ${areaMw} MW`)
+    return groups
+  })
+}
+
+/** The Elhub dataset both weeks come from. */
+export const meteredDemandSourceId = (winter: WeekProfileSnapshot, summer: WeekProfileSnapshot): string => {
+  if (winter.source.sourceId !== summer.source.sourceId) throw new Error(`the Elhub winter week is ${winter.source.sourceId}, the summer week ${summer.source.sourceId}`)
+  return winter.source.sourceId
+}
+
 const dayProfile = (week: WeekProfileSnapshot, values: ReadonlyArray<number>, weekend: boolean, reference: number): ReadonlyArray<number> => {
   const sums = new Array<number>(24).fill(0)
   const counts = new Array<number>(24).fill(0)

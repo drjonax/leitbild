@@ -111,7 +111,7 @@ const operatingPointJson = () => ({
   title: 'Winter peak',
   description: 'Fixture Operating Point exercising every per-asset field.',
   compatibleModelRefs: ['electric-grid.test.v2-fixture'],
-  demand: { season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00' },
+  demand: { season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00', priceAreaGroupMw: { NO1: { private: 760 }, NO2: { industry: 250 } } },
   loadScale: 1.1,
   priceAreaDemandScale: { NO1: 1.05 },
   generatorStates: [
@@ -171,12 +171,19 @@ describe('Grid Operating Point v2', () => {
     expect(message(() => validateOperatingPoint({ ...operatingPointJson(), loadScale: undefined }))).toContain('$.loadScale')
   })
 
-  test('requires the season and the whole hour whose measured demand it sets', () => {
-    expect(validateOperatingPoint(operatingPointJson()).demand).toEqual({ season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00' })
+  test('requires the season, the whole hour and the demand of every price area and group with loads', () => {
+    const demand = operatingPointJson().demand
+    expect(validateOperatingPoint(operatingPointJson()).demand).toEqual({ season: 'winter', referenceHour: '2026-01-15T17:00:00+01:00', priceAreaGroupMw: { NO1: { private: 760 }, NO2: { industry: 250 } } })
+    const withDemand = (changed: Record<string, unknown>) => message(() => validateOperatingPoint({ ...operatingPointJson(), demand: { ...demand, ...changed } }))
     expect(message(() => validateOperatingPoint({ ...operatingPointJson(), demand: undefined }))).toContain('$.demand')
-    expect(message(() => validateOperatingPoint({ ...operatingPointJson(), demand: { season: 'autumn', referenceHour: '2026-01-15T17:00:00+01:00' } }))).toContain('$.demand.season')
-    const halfHour = message(() => validateOperatingPoint({ ...operatingPointJson(), demand: { season: 'winter', referenceHour: '2026-01-15T17:30:00+01:00' } }))
-    expect(halfHour).toContain('$.demand.referenceHour: must be an ISO timestamp on a whole hour with an offset')
-    expect(message(() => validateOperatingPoint({ ...operatingPointJson(), demand: { season: 'winter', referenceHour: '2026-01-15T17:00:00' } }))).toContain('$.demand.referenceHour')
+    expect(withDemand({ season: 'autumn' })).toContain('$.demand.season')
+    expect(withDemand({ referenceHour: '2026-01-15T17:30:00+01:00' })).toContain('$.demand.referenceHour: must be an ISO timestamp on a whole hour with an offset')
+    expect(withDemand({ referenceHour: '2026-01-15T17:00:00' })).toContain('$.demand.referenceHour')
+    // The fixture model has NO1 private and NO2 industry (site) loads only.
+    expect(withDemand({ priceAreaGroupMw: { NO1: { private: 760 } } })).toContain('$.demand.priceAreaGroupMw.NO2.industry: required: the model has NO2 industry loads')
+    const extra = withDemand({ priceAreaGroupMw: { ...demand.priceAreaGroupMw, NO1: { private: 760, business: 10 }, NO3: { industry: 5 } } })
+    expect(extra).toContain('$.demand.priceAreaGroupMw.NO1.business: the model has no NO1 business loads')
+    expect(extra).toContain('$.demand.priceAreaGroupMw.NO3.industry: the model has no NO3 industry loads')
+    expect(withDemand({ priceAreaGroupMw: { ...demand.priceAreaGroupMw, NO1: { private: 0 } } })).toContain('$.demand.priceAreaGroupMw.NO1.private')
   })
 })

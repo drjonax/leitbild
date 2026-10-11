@@ -1,11 +1,12 @@
 import { z } from 'zod'
 import { gridDataError, parseGridData, type GridDataIssue } from './data-issues.ts'
-import { gridIdPatterns, priceAreaSchema, type PriceArea } from './grid-ids.ts'
+import { gridIdPatterns, loadDemandGroups, municipalityLoadGroups, priceAreaSchema, type MunicipalityLoadGroup, type PriceArea } from './grid-ids.ts'
 import { gridIsoHourSchema, gridProvenanceSchema, type GridModelV2 } from './grid-model.ts'
 
 // Operating Point v2: the initial condition of a Grid Model, keyed by stable asset ids.
-// Demand is referenceDemandMw × loadScale × priceAreaDemandScale[area]. Absent per-asset
-// entries leave that asset as the model and runtime initialise it.
+// The demand of each price area and Elhub group (demand.priceAreaGroupMw) is shared by its loads
+// in proportion to their referenceDemandMw; loadScale and priceAreaDemandScale[area] multiply it.
+// Absent per-asset entries leave that asset as the model and runtime initialise it.
 
 const positive = z.number().finite().positive()
 const nonNegative = z.number().finite().nonnegative()
@@ -116,13 +117,16 @@ export const refineGridOperatingPointState = (state: GridOperatingPointState, co
 }
 
 /**
- * The measured hour whose demand the Operating Point sets, and the season of the load profiles its
- * loads follow from there: each profile is exactly 1 at that hour.
+ * The measured hour whose demand the Operating Point sets, the demand of each price area and Elhub
+ * group in it, and the season of the load profiles its loads follow from there: each profile is
+ * exactly 1 at that hour.
  */
 export const gridOperatingPointDemandSchema = z.object({
   season: z.enum(['winter', 'summer']),
   /** A whole Europe/Oslo hour inside the season's profile week, ISO 8601 with its offset. */
   referenceHour: gridIsoHourSchema,
+  /** Demand of each price area and Elhub group at that hour (MW): an entry for every area and group the model has loads in. */
+  priceAreaGroupMw: z.partialRecord(priceAreaSchema, z.partialRecord(z.enum(municipalityLoadGroups), positive)),
 }).strict()
 
 export const gridOperatingPointSchema = z.object({
@@ -151,6 +155,18 @@ export interface GridOperatingPointTargets {
   readonly hvdcLinks: ReadonlyMap<string, { readonly ratingMw: number }>
   readonly externalSystems: ReadonlyMap<string, { readonly synchronous: boolean }>
   readonly loadPriceAreas: ReadonlySet<string>
+  /** The Elhub groups the model has loads of, per price area. */
+  readonly loadGroupsByPriceArea: ReadonlyMap<string, ReadonlySet<MunicipalityLoadGroup>>
+}
+
+const loadGroupsByPriceArea = (model: GridModelV2): ReadonlyMap<string, ReadonlySet<MunicipalityLoadGroup>> => {
+  const groups = new Map<string, Set<MunicipalityLoadGroup>>()
+  for (const load of model.loads) {
+    const area = groups.get(load.priceArea) ?? new Set<MunicipalityLoadGroup>()
+    area.add(loadDemandGroups[load.kind])
+    groups.set(load.priceArea, area)
+  }
+  return groups
 }
 
 export const gridOperatingPointTargetsForModel = (model: GridModelV2): GridOperatingPointTargets => ({
@@ -159,7 +175,26 @@ export const gridOperatingPointTargetsForModel = (model: GridModelV2): GridOpera
   hvdcLinks: new Map(model.hvdcLinks.map(link => [link.id, link])),
   externalSystems: new Map(model.externalSystems.map(system => [system.id, system])),
   loadPriceAreas: new Set(model.loads.map(load => load.priceArea)),
+  loadGroupsByPriceArea: loadGroupsByPriceArea(model),
 })
+
+/** Issues of an Operating Point's demand against one model: one entry for exactly each price area and group with loads. */
+const demandIssues = (demand: GridOperatingPointV2['demand'], targets: GridOperatingPointTargets): ReadonlyArray<GridDataIssue> => {
+  const issues: GridDataIssue[] = []
+  const path = ['demand', 'priceAreaGroupMw'] as const
+  for (const [area, groups] of targets.loadGroupsByPriceArea) {
+    const entries = demand.priceAreaGroupMw[area as PriceArea]
+    for (const group of municipalityLoadGroups) {
+      if (groups.has(group) && entries?.[group] === undefined) issues.push({ path: [...path, area, group], message: `required: the model has ${area} ${group} loads` })
+    }
+  }
+  for (const [area, entries] of Object.entries(demand.priceAreaGroupMw)) {
+    for (const group of Object.keys(entries ?? {})) {
+      if (!targets.loadGroupsByPriceArea.get(area)?.has(group as MunicipalityLoadGroup)) issues.push({ path: [...path, area, group], message: `the model has no ${area} ${group} loads` })
+    }
+  }
+  return issues
+}
 
 /** Issues of an Operating Point state against one model, with paths relative to the state. */
 export const gridOperatingPointStateIssues = (state: GridOperatingPointState, targets: GridOperatingPointTargets): ReadonlyArray<GridDataIssue> => {
@@ -201,6 +236,7 @@ export const gridOperatingPointStateIssues = (state: GridOperatingPointState, ta
 export const validateGridOperatingPoint = (json: unknown, source: string, targets: GridOperatingPointTargets): GridOperatingPointV2 => {
   const operatingPoint = parseGridData(gridOperatingPointSchema, json, source, 'Grid Operating Point v2')
   const issues = [
+    ...demandIssues(operatingPoint.demand, targets),
     ...gridOperatingPointStateIssues(operatingPoint, targets),
     ...(operatingPoint.branchRatings ?? []).flatMap((entry, index): GridDataIssue[] =>
       targets.branches.has(entry.assetId) ? [] : [{ path: ['branchRatings', index, 'assetId'], message: `unknown branch ${entry.assetId}` }]),

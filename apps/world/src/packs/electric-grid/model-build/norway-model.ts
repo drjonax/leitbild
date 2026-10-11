@@ -27,7 +27,7 @@ import { knownGaps, type KnownGap } from './known-gaps.ts'
 import { allocateByPopulation } from './population-weights.ts'
 import { inferShunts, mainNetwork, toGridBus, toGridLine, toGridTransformer } from './network.ts'
 import { buildOperatingPoints, dispatchRule } from './operating-points.ts'
-import { buildLoadProfiles } from './profiles.ts'
+import { buildLoadProfiles, meteredDemandSourceId, priceAreaGroupMwAt } from './profiles.ts'
 import { readSidecarFeatures } from './sidecar-features.ts'
 import { modelSources, sha256Hex, sourceBuildId } from './sources.ts'
 import { createStationIndex } from './stations.ts'
@@ -263,7 +263,11 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   const operatingPoints = buildOperatingPoints({
     model,
     compatibleModelRefs: [norwayModelId, haldenAdditionId],
-    summerAreaMw: summerHour.priceAreas.byAreaMw as Record<PriceArea, number>,
+    meteredDemand: {
+      winter: priceAreaGroupMwAt(inputs.winterWeek.data, winterHour.priceAreas),
+      summer: priceAreaGroupMwAt(inputs.summerWeek.data, summerHour.priceAreas),
+      sourceId: meteredDemandSourceId(inputs.winterWeek.data, inputs.summerWeek.data),
+    },
     summerHour: summerHour.priceAreas.startTime,
     summerStartUtc: summerHour.priceAreas.startUtc,
     winterStartUtc: winterHour.priceAreas.startUtc,

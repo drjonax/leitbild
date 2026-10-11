@@ -13,7 +13,15 @@
  ],
  "demand": {
   "season": "winter",
-  "referenceHour": "2026-01-15T17:00:00+01:00"
+  "referenceHour": "2026-01-15T17:00:00+01:00",
+  "priceAreaGroupMw": {
+   "NO1": {
+    "private": 800
+   },
+   "NO2": {
+    "industry": 250
+   }
+  }
  },
  "loadScale": 1,
  "generatorStates": [

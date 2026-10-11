@@ -1,13 +1,16 @@
-import { priceAreas, type PriceArea } from '../schemas/grid-ids.ts'
+import { loadDemandGroups, municipalityLoadGroups, priceAreas } from '../schemas/grid-ids.ts'
 import type { GridGeneratorV2, GridModelV2 } from '../schemas/grid-model.ts'
 import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
 import type { GridReferenceHourDispatch } from '../schemas/grid-reference-dispatch.ts'
 import { compareText } from '../topology/ids.ts'
 import { ambientRatingRule, emergencyRule } from './electrical.ts'
 import { roundTo } from './geo.ts'
+import type { PriceAreaGroupMw } from './profiles.ts'
 
-// Initial operating points of the Norway model, dispatched to the measured national production
-// and exchange of their reference hour (models/norway-reference-dispatch.json, ENTSO-E data):
+// Initial operating points of the Norway model. Each sets every price area and Elhub group to its
+// metered demand in the Operating Point's hour, which the group's loads share in proportion to
+// their reference demand. Each is dispatched to the measured national production and exchange of
+// its hour (models/norway-reference-dispatch.json, ENTSO-E data):
 // - HVDC links carry the measured flow of their neighbour country (several links to one country
 //   share it in proportion to rating); the Nordic remainder takes the Swedish and Finnish exchange.
 // - Wind farms, run-of-river hydro and thermal units each produce the national measured output of
@@ -266,10 +269,32 @@ const summerBranchRatings = (model: GridModelV2, summerRatingMw: ReadonlyMap<str
 
 type ExternalSystemState = NonNullable<GridOperatingPointV2['externalSystemStates']>[number]
 
+/** The Operating Point demand of each load: its share of its price area and group's metered demand. */
+const loadDemandAt = (model: GridModelV2, metered: PriceAreaGroupMw): ((load: GridModelV2['loads'][number]) => number) => {
+  const referenceMw = new Map<string, number>()
+  const key = (load: GridModelV2['loads'][number]): string => `${load.priceArea}|${loadDemandGroups[load.kind]}`
+  for (const load of model.loads) referenceMw.set(key(load), (referenceMw.get(key(load)) ?? 0) + load.referenceDemandMw)
+  return load => load.referenceDemandMw * metered[load.priceArea][loadDemandGroups[load.kind]] / referenceMw.get(key(load))!
+}
+
+const nationalMw = (metered: PriceAreaGroupMw): number =>
+  priceAreas.reduce((sum, area) => sum + municipalityLoadGroups.reduce((areaSum, group) => areaSum + metered[area][group], 0), 0)
+
+/** The Operating Point's demand entry: the metered demand of each price area and group the model has loads in, in area then group order. */
+const demandOf = (model: GridModelV2, season: 'winter' | 'summer', referenceHour: string, metered: PriceAreaGroupMw): GridOperatingPointV2['demand'] => {
+  const used = new Set(model.loads.map(load => `${load.priceArea}|${loadDemandGroups[load.kind]}`))
+  const priceAreaGroupMw = Object.fromEntries(priceAreas.flatMap(area => {
+    const groups = municipalityLoadGroups.filter(group => used.has(`${area}|${group}`))
+    return groups.length === 0 ? [] : [[area, Object.fromEntries(groups.map(group => [group, metered[area][group]]))]]
+  }))
+  return { season, referenceHour, priceAreaGroupMw }
+}
+
 export const buildOperatingPoints = (config: {
   readonly model: GridModelV2
   readonly compatibleModelRefs: ReadonlyArray<string>
-  readonly summerAreaMw: Readonly<Record<PriceArea, number>>
+  /** Elhub's metered demand of each price area and group in each Operating Point's hour, and its source id. */
+  readonly meteredDemand: { readonly winter: PriceAreaGroupMw; readonly summer: PriceAreaGroupMw; readonly sourceId: string }
   readonly summerHour: string
   readonly summerStartUtc: string
   readonly winterStartUtc: string
@@ -285,8 +310,10 @@ export const buildOperatingPoints = (config: {
   }
   sameHour('winterPeak', config.dispatch.winterPeak, config.winterStartUtc)
   sameHour('summerLow', config.dispatch.summerLow, config.summerStartUtc)
-  const areaMw = (area: PriceArea): number => model.loads.filter(load => load.priceArea === area).reduce((sum, load) => sum + load.referenceDemandMw, 0)
-  const summerScale = Object.fromEntries(priceAreas.map(area => [area, roundTo(config.summerAreaMw[area] / areaMw(area), 6)])) as Record<PriceArea, number>
+  const { meteredDemand } = config
+  const winterDemandMw = loadDemandAt(model, meteredDemand.winter)
+  const summerDemandMw = loadDemandAt(model, meteredDemand.summer)
+  const demandText = (metered: PriceAreaGroupMw): string => `each price area and Elhub group at its metered demand (${meteredDemand.sourceId}; national ${roundTo(nationalMw(metered), 0)} MW), shared by its loads in proportion to their reference demand`
   const winterSchedules = referenceSchedules(model, config.dispatch.winterPeak)
   const summerSchedules = referenceSchedules(model, config.dispatch.summerLow)
   return {
@@ -294,11 +321,11 @@ export const buildOperatingPoints = (config: {
       schemaVersion: 2,
       id: 'electric-grid.norway.winter-weekday-peak',
       title: 'Winter weekday peak',
-      description: `Elhub reference hour ${model.referenceHour} (national ${roundTo(priceAreas.reduce((sum, area) => sum + areaMw(area), 0), 0)} MW located demand). ${describeHour(config.dispatch.winterPeak, winterSchedules)} The Nordic remainder is at its winter-peak inertia and load.`,
+      description: `Elhub reference hour ${model.referenceHour}: ${demandText(meteredDemand.winter)}. ${describeHour(config.dispatch.winterPeak, winterSchedules)} The Nordic remainder is at its winter-peak inertia and load.`,
       compatibleModelRefs: [...config.compatibleModelRefs],
-      demand: { season: 'winter', referenceHour: model.referenceHour },
+      demand: demandOf(model, 'winter', model.referenceHour, meteredDemand.winter),
       loadScale: 1,
-      generatorStates: [...dispatchGenerators(model, load => load.referenceDemandMw, config.dispatch.winterPeak, winterSchedules)],
+      generatorStates: [...dispatchGenerators(model, winterDemandMw, config.dispatch.winterPeak, winterSchedules)],
       hvdcSchedules: [...winterSchedules.hvdc],
       externalExchangeSchedules: [...winterSchedules.exchange],
       externalSystemStates: [...config.externalSystemStates.winter],
@@ -307,12 +334,11 @@ export const buildOperatingPoints = (config: {
       schemaVersion: 2,
       id: 'electric-grid.norway.summer-night-low',
       title: 'Summer night low',
-      description: `Elhub summer low hour ${config.summerHour}: each price area's demand scaled to its metered total. ${describeHour(config.dispatch.summerLow, summerSchedules)} branchRatings rate overhead lines at ${ambientRatingRule.summerAirC} °C air (rule ${ambientRatingRule.id}). The Nordic remainder is at its summer-low inertia and load.`,
+      description: `Elhub summer low hour ${config.summerHour}: ${demandText(meteredDemand.summer)}. ${describeHour(config.dispatch.summerLow, summerSchedules)} branchRatings rate overhead lines at ${ambientRatingRule.summerAirC} °C air (rule ${ambientRatingRule.id}). The Nordic remainder is at its summer-low inertia and load.`,
       compatibleModelRefs: [...config.compatibleModelRefs],
-      demand: { season: 'summer', referenceHour: config.summerHour },
+      demand: demandOf(model, 'summer', config.summerHour, meteredDemand.summer),
       loadScale: 1,
-      priceAreaDemandScale: summerScale,
-      generatorStates: [...dispatchGenerators(model, load => load.referenceDemandMw * summerScale[load.priceArea], config.dispatch.summerLow, summerSchedules)],
+      generatorStates: [...dispatchGenerators(model, summerDemandMw, config.dispatch.summerLow, summerSchedules)],
       hvdcSchedules: [...summerSchedules.hvdc],
       externalExchangeSchedules: [...summerSchedules.exchange],
       branchRatings: [...summerBranchRatings(model, config.summerLineRatingMw)],

@@ -22,7 +22,8 @@ import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/pack
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { validateGridLoadProfiles, type GridLoadProfiles } from '../src/packs/electric-grid/schemas/grid-load-profile.ts'
 import { validateGridModel, type GridModelV2 } from '../src/packs/electric-grid/schemas/grid-model.ts'
-import { gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
+import type { PriceArea } from '../src/packs/electric-grid/schemas/grid-ids.ts'
+import { gridOperatingPointTargetsForModel, validateGridOperatingPoint, type GridOperatingPointV2 } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
 
 // The Grid's daily demand follows Elhub's measured price-area profiles (models/norway-load-profiles.json):
 // each load the series of its price area and municipality group (major sites: the industry group),
@@ -49,43 +50,49 @@ const demandAt = (grid: GridRuntimeInstance, at: string): number => {
 }
 
 type Group = 'private' | 'business' | 'industry'
+type DayType = 'weekday' | 'weekend'
 const groupOf = (kind: GridModelV2['loads'][number]['kind']): Group => kind === 'private' || kind === 'business' ? kind : 'industry'
 
-/** Reference MW of each price area × group, from the model file. */
-const referenceMw = new Map<string, number>()
-for (const load of v2.loads) {
-  const key = `${load.priceArea}/${groupOf(load.kind)}`
-  referenceMw.set(key, (referenceMw.get(key) ?? 0) + load.referenceDemandMw)
+/** The Operating Point's demand of each price area × group (MW). */
+const cellsOf = (point: GridOperatingPointV2): ReadonlyArray<{ readonly area: PriceArea; readonly group: Group; readonly mw: number }> =>
+  (Object.entries(point.demand.priceAreaGroupMw) as Array<[PriceArea, Partial<Record<Group, number>>]>)
+    .flatMap(([area, groups]) => (Object.entries(groups) as Array<[Group, number]>).map(([group, mw]) => ({ area, group, mw })))
+
+/** A profile series at local `hour` (fractional, linear between hours) of one day type. */
+const seriesAt = (season: 'winter' | 'summer', dayType: DayType, area: PriceArea, group: Group, hour: number): number => {
+  const series = profiles.seasons[season][dayType][area][group]
+  const whole = Math.floor(hour)
+  return series[whole]! + (series[(whole + 1) % 24]! - series[whole]!) * (hour - whole)
 }
 
 /**
- * Σ over price area × group of its Operating Point MW × the series at local `hour` (fractional,
- * linear between hours) of `dayType`, divided by the series at the Operating Point's hour.
+ * Σ over price area × group of the Operating Point's MW × the Elhub series at local `hour` of
+ * `dayType`, divided by the series at the Operating Point's hour.
  */
 const elhubTotalMw = (config: {
-  readonly season: 'winter' | 'summer'
-  readonly dayType: 'weekday' | 'weekend'
+  readonly point: GridOperatingPointV2
+  readonly dayType: DayType
   readonly hour: number
-  readonly reference: { readonly dayType: 'weekday' | 'weekend'; readonly hour: number }
-  readonly areaScale?: Readonly<Record<string, number>>
+  readonly reference: { readonly dayType: DayType; readonly hour: number }
 }): number => {
-  const week = profiles.seasons[config.season]
-  let total = 0
-  for (const [key, mw] of referenceMw) {
-    const [area, group] = key.split('/') as [keyof typeof week.weekday, Group]
-    const series = week[config.dayType][area][group]
-    const whole = Math.floor(config.hour)
-    const value = series[whole]! + (series[(whole + 1) % 24]! - series[whole]!) * (config.hour - whole)
-    total += mw * (config.areaScale?.[area] ?? 1) * value / week[config.reference.dayType][area][group][config.reference.hour]!
-  }
-  return total
+  const season = config.point.demand.season
+  return cellsOf(config.point).reduce((total, { area, group, mw }) =>
+    total + mw * seriesAt(season, config.dayType, area, group, config.hour) / seriesAt(season, config.reference.dayType, area, group, config.reference.hour), 0)
 }
+
+/**
+ * Elhub's mean-day demand of a season and day type at local `hour` (MW): a profile value is the
+ * measured mean MW of its area and group divided by its MW at the profiles' reference hour, where
+ * the winter Operating Point sets each area and group to its metered MW.
+ */
+const elhubMeanMw = (season: 'winter' | 'summer', dayType: DayType, hour: number): number =>
+  cellsOf(winterPoint).reduce((total, { area, group, mw }) => total + mw * seriesAt(season, dayType, area, group, hour), 0)
 
 describe('Electric Grid demand profiles', () => {
   test('each load follows the Elhub series of its price area and group in the Operating Point season', () => {
     // Each Operating Point file names its season and measured hour.
-    expect(winterPoint.demand).toEqual({ season: 'winter', referenceHour: '2026-01-12T08:00:00+01:00' })
-    expect(summerPoint.demand).toEqual({ season: 'summer', referenceHour: '2026-07-12T06:00:00+02:00' })
+    expect(winterPoint.demand).toMatchObject({ season: 'winter', referenceHour: '2026-01-12T08:00:00+01:00' })
+    expect(summerPoint.demand).toMatchObject({ season: 'summer', referenceHour: '2026-07-12T06:00:00+02:00' })
     const v2ById = new Map(v2.loads.map(load => [load.id, load]))
     const profileById = new Map(winter.model.demandProfiles.map(profile => [profile.id, profile]))
     expect(winter.model.demandProfiles.map(profile => profile.id)).toHaveLength(15)
@@ -115,7 +122,8 @@ describe('Electric Grid demand profiles', () => {
         expect(loads.demandMw[load]).toBe(loads.nominalDemandMw[load]!)
       }
     }
-    expect(Math.round(totalDemandMw(createGridRuntimeInstance({ definition: winter, at: '2026-01-12T07:00:00.000Z' })))).toBe(22_868)
+    expect(Math.round(totalDemandMw(createGridRuntimeInstance({ definition: winter, at: '2026-01-12T07:00:00.000Z' })))).toBe(22_883)
+    expect(Math.round(totalDemandMw(createGridRuntimeInstance({ definition: summer, at: '2026-07-12T04:00:00.000Z' })))).toBe(10_493)
   })
 
   test('tracks the Elhub winter weekday series over the day, linear between hours', () => {
@@ -124,13 +132,46 @@ describe('Electric Grid demand profiles', () => {
     // Monday 2026-01-12 (CET, UTC+1), every half hour.
     for (let step = 0; step < 48; step += 1) {
       const at = new Date(Date.parse('2026-01-11T23:00:00.000Z') + step * 1_800_000).toISOString()
-      const expected = elhubTotalMw({ season: 'winter', dayType: 'weekday', hour: step / 2, reference })
+      const expected = elhubTotalMw({ point: winterPoint, dayType: 'weekday', hour: step / 2, reference })
       expect(Math.abs(demandAt(grid, at) - expected)).toBeLessThan(1e-6 * expected)
     }
     // Measured shape: below the reference hour at night, midday and evening.
-    expect(Math.round(demandAt(grid, '2026-01-12T02:00:00.000Z'))).toBe(19_926)
-    expect(Math.round(demandAt(grid, '2026-01-12T11:00:00.000Z'))).toBe(22_595)
-    expect(Math.round(demandAt(grid, '2026-01-12T17:00:00.000Z'))).toBe(22_579)
+    expect(Math.round(demandAt(grid, '2026-01-12T02:00:00.000Z'))).toBe(19_941)
+    expect(Math.round(demandAt(grid, '2026-01-12T11:00:00.000Z'))).toBe(22_611)
+    expect(Math.round(demandAt(grid, '2026-01-12T17:00:00.000Z'))).toBe(22_596)
+  })
+
+  test('sets each price area and group to its metered demand, so the summer day follows Elhub\'s measured mix on both day types', () => {
+    // Elhub's price-area totals at the Operating Points' hours (model-and-data: the reference hours).
+    const areaTotals = (point: GridOperatingPointV2) => {
+      const totals: Partial<Record<PriceArea, number>> = {}
+      for (const { area, mw } of cellsOf(point)) totals[area] = (totals[area] ?? 0) + mw
+      return Object.fromEntries(Object.entries(totals).map(([area, mw]) => [area, Math.round(mw * 10) / 10]))
+    }
+    expect(areaTotals(winterPoint)).toEqual({ NO1: 7238.7, NO2: 5817.4, NO3: 4262.9, NO4: 3047.1, NO5: 2516.8 })
+    expect(areaTotals(summerPoint)).toEqual({ NO1: 1811.8, NO2: 3044.1, NO3: 2470.3, NO4: 1674.8, NO5: 1491.9 })
+    expect(Date.parse(profiles.referenceHour)).toBe(Date.parse(winterPoint.demand.referenceHour))
+    const grid = createGridRuntimeInstance({ definition: summer, at: '2026-07-12T04:00:00.000Z' })
+    const reference = { dayType: 'weekend', hour: 6 } as const
+    const ratios: number[] = []
+    // Sunday 2026-07-12 and Monday 2026-07-13 (CEST, UTC+2), every half hour from 00:00 to 23:00.
+    for (const [midnight, dayType] of [['2026-07-11T22:00:00.000Z', 'weekend'], ['2026-07-12T22:00:00.000Z', 'weekday']] as const) {
+      for (let step = 0; step <= 46; step += 1) {
+        const modelMw = demandAt(grid, new Date(Date.parse(midnight) + step * 1_800_000).toISOString())
+        expect(grid.demandSample.dayType).toBe(dayType)
+        const expected = elhubTotalMw({ point: summerPoint, dayType, hour: step / 2, reference })
+        expect(Math.abs(modelMw - expected)).toBeLessThan(1e-6 * expected)
+        ratios.push(modelMw / elhubMeanMw('summer', dayType, step / 2))
+      }
+    }
+    // One ratio to Elhub's mean summer day at every hour of both day types, to within 0.3 %: the
+    // measured Sunday 06:00 against the Saturday–Sunday mean at 06:00 (with winter's mix scaled
+    // per price area, Sunday 18:00 was 6.8 % above that mean).
+    expect(Math.max(...ratios) / Math.min(...ratios)).toBeLessThan(1.003)
+    expect(ratios[12]!).toBeCloseTo(10_492.8 / elhubMeanMw('summer', 'weekend', 6), 4)
+    expect(ratios[12]!).toBeGreaterThan(0.99)
+    // Sunday 12:00, 18:00 and 23:00 CEST.
+    expect(['10', '16', '21'].map(utcHour => Math.round(demandAt(grid, `2026-07-12T${utcHour}:00:00.000Z`)))).toEqual([12_016, 11_993, 11_486])
   })
 
   test('takes the weekend profile on Saturday and Sunday and moves into the next day type after 23:00', () => {
@@ -138,12 +179,12 @@ describe('Electric Grid demand profiles', () => {
     const reference = { dayType: 'weekday', hour: 8 } as const
     const saturday = demandAt(grid, '2026-01-17T07:00:00.000Z')
     expect(grid.demandSample.dayType).toBe('weekend')
-    expect(Math.abs(saturday - elhubTotalMw({ season: 'winter', dayType: 'weekend', hour: 8, reference }))).toBeLessThan(1e-6 * saturday)
+    expect(Math.abs(saturday - elhubTotalMw({ point: winterPoint, dayType: 'weekend', hour: 8, reference }))).toBeLessThan(1e-6 * saturday)
     expect(saturday).toBeLessThan(0.85 * demandAt(grid, '2026-01-16T07:00:00.000Z'))
     expect(grid.demandSample.dayType).toBe('weekday')
     // Friday 23:30 lies halfway between Friday's 23:00 and Saturday's 00:00.
-    const friday23 = elhubTotalMw({ season: 'winter', dayType: 'weekday', hour: 23, reference })
-    const saturday0 = elhubTotalMw({ season: 'winter', dayType: 'weekend', hour: 0, reference })
+    const friday23 = elhubTotalMw({ point: winterPoint, dayType: 'weekday', hour: 23, reference })
+    const saturday0 = elhubTotalMw({ point: winterPoint, dayType: 'weekend', hour: 0, reference })
     expect(Math.abs(demandAt(grid, '2026-01-16T22:30:00.000Z') - (friday23 + saturday0) / 2)).toBeLessThan(1e-6 * friday23)
   })
 
@@ -164,7 +205,7 @@ describe('Electric Grid demand profiles', () => {
     // The summer Operating Point's hour is 06:00 CEST.
     const grid = createGridRuntimeInstance({ definition: summer, at: '2026-07-12T04:00:00.000Z' })
     expect(Math.round(totalDemandMw(grid))).toBe(10_493)
-    const sundayNoon = elhubTotalMw({ season: 'summer', dayType: 'weekend', hour: 12, reference: { dayType: 'weekend', hour: 6 }, areaScale: summerPoint.priceAreaDemandScale! })
+    const sundayNoon = elhubTotalMw({ point: summerPoint, dayType: 'weekend', hour: 12, reference: { dayType: 'weekend', hour: 6 } })
     expect(Math.abs(demandAt(grid, '2026-07-12T10:00:00.000Z') - sundayNoon)).toBeLessThan(1e-6 * sundayNoon)
   })
 

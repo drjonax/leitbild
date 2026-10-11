@@ -1,7 +1,6 @@
 import type {
   GridBranchDefinition,
   GridBusDefinition,
-  GridDemandGroup,
   GridDemandProfileDefinition,
   GridExternalSystemDefinition,
   GridGenerationKind,
@@ -13,7 +12,7 @@ import type {
   GridShuntDefinition,
 } from '../grid-model.ts'
 import { localDayType, localHourOfDay, osloLocalMs } from '../runtime/demand-profiles.ts'
-import { municipalityLoadGroups, priceAreas } from '../schemas/grid-ids.ts'
+import { loadDemandGroups, municipalityLoadGroups, priceAreas } from '../schemas/grid-ids.ts'
 import type { GridLoadProfiles } from '../schemas/grid-load-profile.ts'
 import type { GridLoadV2, GridModelV2, GridProvenance } from '../schemas/grid-model.ts'
 import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
@@ -43,19 +42,28 @@ const loadKinds: Readonly<Record<GridLoadV2['kind'], GridLoadKind>> = {
   'data-center': 'data_center',
 }
 
-// Elhub meters each municipality group as itself, and the major sites inside their municipality's
-// industry group (norway-load-profiles.json siteLoads; model-build/loads.ts takes each site's
-// demand out of that group).
-const demandGroups: Readonly<Record<GridLoadV2['kind'], GridDemandGroup>> = {
-  private: 'private',
-  business: 'business',
-  industry: 'industry',
-  'industry-site': 'industry',
-  'petroleum-site': 'industry',
-  'data-center': 'industry',
-}
+const profileKey = (load: GridLoadV2): string => `${load.priceArea}\u0000${loadDemandGroups[load.kind]}`
 
-const profileKey = (load: GridLoadV2): string => `${load.priceArea}\u0000${demandGroups[load.kind]}`
+/**
+ * Each load's share of its price area and Elhub group's Operating Point demand: the area and
+ * group's demand × its referenceDemandMw / the referenceDemandMw of all the model's loads in it.
+ */
+const operatingPointDemandMw = (model: GridModelV2, operatingPoint: GridOperatingPointV2): ((load: GridLoadV2) => number) => {
+  const referenceMw = new Map<string, number>()
+  for (const load of model.loads) referenceMw.set(profileKey(load), (referenceMw.get(profileKey(load)) ?? 0) + load.referenceDemandMw)
+  const scale = new Map<string, number>()
+  for (const load of model.loads) {
+    const key = profileKey(load)
+    if (scale.has(key)) continue
+    const group = loadDemandGroups[load.kind]
+    const demandMw = operatingPoint.demand.priceAreaGroupMw[load.priceArea]?.[group]
+    if (demandMw === undefined) throw new Error(`Operating Point ${operatingPoint.id} sets no demand for the ${load.priceArea} ${group} loads of ${model.id}`)
+    const sharedMw = referenceMw.get(key)!
+    if (!(sharedMw > 0)) throw new Error(`Operating Point ${operatingPoint.id}: the ${load.priceArea} ${group} loads of ${model.id} have no reference demand to share ${demandMw} MW by`)
+    scale.set(key, demandMw / sharedMw)
+  }
+  return load => load.referenceDemandMw * scale.get(profileKey(load))!
+}
 
 const localDate = (localMs: number): string => new Date(Math.floor(localMs / 86_400_000) * 86_400_000).toISOString().slice(0, 10)
 
@@ -130,6 +138,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
   const demandProfiles = demandProfilesFor(model, operatingPoint, profiles)
   const states = new Map((operatingPoint.generatorStates ?? []).map(state => [state.assetId, state]))
   const areaScale = operatingPoint.priceAreaDemandScale ?? {}
+  const demandAtOperatingPoint = operatingPointDemandMw(model, operatingPoint)
   const firstSource = (provenance: GridProvenance): string => provenance.sources[0]!
   const buses: GridBusDefinition[] = model.buses.map(bus => ({
     id: bus.id,
@@ -191,7 +200,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
     }
   })
   const loads: GridLoadDefinition[] = model.loads.map(load => {
-    const demandMw = load.referenceDemandMw * (areaScale[load.priceArea] ?? 1)
+    const demandMw = demandAtOperatingPoint(load) * (areaScale[load.priceArea] ?? 1)
     return {
       id: load.id,
       label: load.label,

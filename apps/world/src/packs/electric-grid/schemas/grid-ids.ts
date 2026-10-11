@@ -19,7 +19,21 @@ export const generatorKinds = ['hydro-reservoir', 'hydro-run-of-river', 'hydro-p
  * splits over the substations it is attached to: `load:<municipalityNr>-<group>-<substation>`.
  */
 export const municipalityLoadGroups = ['private', 'business', 'industry'] as const
+export type MunicipalityLoadGroup = typeof municipalityLoadGroups[number]
 export const siteLoadKinds = ['industry-site', 'petroleum-site', 'data-center'] as const
+
+/**
+ * The Elhub group whose metered demand a load is part of: Elhub meters a major site in its
+ * municipality's industry group (model-build/loads.ts takes each site's demand out of that group).
+ */
+export const loadDemandGroups: Readonly<Record<MunicipalityLoadGroup | typeof siteLoadKinds[number], MunicipalityLoadGroup>> = {
+  private: 'private',
+  business: 'business',
+  industry: 'industry',
+  'industry-site': 'industry',
+  'petroleum-site': 'industry',
+  'data-center': 'industry',
+}
 
 const slug = '[a-z0-9]+(?:-[a-z0-9]+)*'
 const kv = '[1-9]\\d*(?:\\.\\d+)?'
