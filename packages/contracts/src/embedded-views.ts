@@ -93,6 +93,19 @@ export const embeddedViewContentSchema = z.object({
     item: z.number().int().nonnegative(),
     reason: z.string().min(1).max(300),
   }).strict().nullable(),
+  /**
+   * Statuses the view shows that its publisher judges from what it reads (a
+   * plant's critical safety functions), each with the criteria answered on
+   * the way to it and the values and thresholds compared there; absent where
+   * the view shows none.
+   */
+  statuses: z.array(z.object({
+    names: z.array(z.string().min(1).max(200)).min(1).max(8),
+    /** As the view words it: "YELLOW · FR-H.5", "NOT JUDGED". */
+    status: z.string().min(1).max(64),
+    path: z.string().min(1).max(1_500),
+    values: z.array(viewQuantitySchema).max(48),
+  }).strict()).max(16).optional(),
 }).strict().superRefine((content, ctx) => {
   if (content.lead !== null && content.lead.item >= content.items.length) {
     ctx.addIssue({ code: 'custom', path: ['lead', 'item'], message: 'The lead must be one of the items' })

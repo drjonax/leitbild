@@ -151,20 +151,26 @@ const VIEW_WORDS = ['display', 'view', 'panel', 'mimic', 'drawing', 'diagram', '
 const TREND_WORDS = ['trend', 'rate', 'slope', 'direction', 'response', 'recovery', 'change', 'behavior', 'behaviour', 'rise', 'fall', 'drop', 'increase', 'decrease', 'history', 'curve']
 const LIMIT_WORDS = ['limit', 'threshold', 'margin', 'setpoint', 'set', 'point']
 const DRAWING_WORDS = ['lineup', 'line', 'up', 'path', 'route', 'alignment', 'state', 'status', 'supply', 'connection']
+const STATUS_WORDS = ['status', 'colour', 'color', 'branch', 'tree', 'function']
 
 const shownWords = (view: EmbeddedViewContent): ReadonlySet<string> => new Set([
   ...view.items.flatMap(item => [...item.names, item.state ?? ''].flatMap(wordsOf)),
+  ...(view.statuses ?? []).flatMap(status => [...status.names, status.status].flatMap(wordsOf)),
   ...VIEW_WORDS,
   ...(view.span !== null || view.items.some(item => item.history) ? TREND_WORDS : []),
   ...(view.items.some(item => item.limits.length > 0) ? LIMIT_WORDS : []),
   ...(view.items.some(item => item.state !== undefined) ? DRAWING_WORDS : []),
+  ...((view.statuses ?? []).length > 0 ? STATUS_WORDS : []),
 ])
 
 // --- Checks -----------------------------------------------------------------
 
 // Quantities the display shows: what it reads now, the limits it marks, how
-// far one is from another, and those written in a drawn state ("35 % open").
-const shownQuantities = (view: EmbeddedViewContent) => view.items.map(item => {
+// far one is from another, those written in a drawn state ("35 % open"), and
+// the values and thresholds behind a status it shows.
+const statusItem = (status: NonNullable<EmbeddedViewContent['statuses']>[number]): Item =>
+  ({ names: [...status.names], values: [...status.values], limits: [], history: false })
+const shownQuantities = (view: EmbeddedViewContent) => [...view.items, ...(view.statuses ?? []).map(statusItem)].map(item => {
   const readings = [...item.values, ...quantitiesIn(item.state ?? '').map(({ value, unit }) => ({ value, unit }))]
   const marked = [...readings, ...item.limits]
   return {
@@ -319,7 +325,7 @@ const decimalsOf = (written: string): number => written.match(/\.(\d+)/)?.[1]?.l
  * for, such as a margin worked out between two of them.
  */
 const precisionIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewContent): ReadonlyArray<string> => {
-  const written = view.items.flatMap(item => [...item.values, ...item.limits])
+  const written = [...view.items.flatMap(item => [...item.values, ...item.limits]), ...(view.statuses ?? []).flatMap(status => status.values)]
   const derived = shownQuantities(view).flatMap(item => item.quantities.filter(quantity => !written.some(shown => shown.value === quantity.value && canonicalUnit(shown.unit) === quantity.unit)))
   return sentences.flatMap(sentence => NOT_SHOWN.test(sentence) ? [] : quantitiesIn(sentence).flatMap(cited => {
     if (cited.unit === '%' && derivedPercent(sentence, cited.index)) return []

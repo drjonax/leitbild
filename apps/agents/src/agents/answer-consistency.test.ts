@@ -329,6 +329,25 @@ describe('answers that cite more finely than their display writes, or name anoth
     ])
   })
 
+  test('a critical safety function status the display shows: its words and values count as shown', () => {
+    const heatSink = {
+      names: ['Heat sink', 'Heat sink critical safety function', 'HEAT SINK'],
+      status: 'YELLOW · FR-H.5',
+      path: 'Narrow-range level above 10 % in at least one steam generator: no (SG-A-LVL-NR 0 %) → Total feed flow to the steam generators at least 27.8 kg/s (440 gpm): yes (total 114 kg/s)',
+      values: [{ value: 0, unit: '%', decimals: 0 }, { value: 114.04, unit: 'kg/s', decimals: 0 }, { value: 27.8, unit: 'kg/s', decimals: 1 }],
+    }
+    const answer = 'Heat sink is YELLOW (FR-H.5), not red: total feed is 114 kg/s, above the 27.8 kg/s minimum, while shrink holds narrow-range level below span. Watch the heat sink status.' + FENCE
+    expect(answerViewIssues(answer, view([], { statuses: [heatSink] }))).toEqual([])
+    expect(answerViewIssues(answer, view([]))).toEqual([
+      'It cites 114 kg/s, but the display shows no value in kg/s.',
+      'It cites 27.8 kg/s, but the display shows no value in kg/s.',
+      'It says to watch "the heat sink status", which the display does not show.',
+    ])
+    expect(answerViewIssues('Total feed is 114.04 kg/s.' + FENCE, view([], { statuses: [heatSink] }))).toEqual([
+      'It cites 114.04 kg/s, more precisely than the display shows it (114 kg/s): cite it as the display does.',
+    ])
+  })
+
   test('rcp-trip: a lead the answer names that is not the one the display leads with', () => {
     const answer = '**Core cooling is not yet confirmed to be holding.** On the paused Unit 2 Run at sim 10:01:00, the display leads with pressurizer pressure at 13.8 MPa, past **LO 14.8 MPa · ALM**. Core-exit temperature is 297 °C and rising, while RCS subcooling margin is 38.3 °C and falling.' + FENCE
     const items = [

@@ -604,7 +604,7 @@ describe('composed display panels', () => {
     const alarms = view.display.panels[1] as { kind: string; ruleIds: string[] }
     expect(alarms.ruleIds).toEqual(expect.arrayContaining(['sg-b-feedwater-low', 'sg-b-level-low', 'sg-b-level-low-low-afw-actuation']))
     expect(alarms.ruleIds.every(ruleId => !ruleId.startsWith('sg-a-'))).toBe(true)
-    expect(composed.shows.at(-1)).toContain(`${alarms.ruleIds.length} I&C rules acting on the displayed signals and their equipment`)
+    expect(composed.shows.some(line => line.includes(`${alarms.ruleIds.length} I&C rules acting on the displayed signals and their equipment`))).toBe(true)
     const pressurizer = composeView([
       { kind: 'trend', horizon: '2m', signals: [{ ref: 'PT-455', role: 'primary' }] },
       { kind: 'alarms', scope: 'related' },
@@ -679,6 +679,27 @@ describe('world.process-plant.display.view and sample', () => {
     expect((sample as unknown as { mode: unknown }).mode).toEqual({ id: 'powerOperation', label: 'Power operation' })
     expect(typeof sample.values[0]!.value).toBe('number')
     expect(rejectionOf(() => ask('world.process-plant.display.sample', { plantId: compiled.id, paths: ['nowhere.value' as VariablePath] }))).toContain('signal path not found')
+  })
+
+  test('the header judges the critical safety functions the Plant declares, and the compose result gives them for an answer to cite', () => {
+    const pressure = compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path
+    const sample = ask('world.process-plant.display.sample', { plantId: compiled.id, paths: [pressure] }) as { safetyFunctions: ReadonlyArray<{ shortLabel: string; status: string; text: string }> }
+    expect(() => processPlantCapabilities.find(capability => capability.id === 'world.process-plant.display.sample')!.output.parse(sample)).not.toThrow()
+    // At power subcriticality is not judged; the others read green, each chip's tree path behind it.
+    expect(sample.safetyFunctions.map(chip => [chip.shortLabel, chip.status])).toEqual([
+      ['SUBCRIT', 'not-monitored'], ['CORE COOL', 'green'], ['HEAT SINK', 'green'], ['INTEGRITY', 'green'], ['CTMT', 'green'], ['INVENTORY', 'green'],
+    ])
+    expect(sample.safetyFunctions[1]!.text).toContain('Core-exit temperature below 649 °C (1,200 °F): yes (CET-AVG 325 °C)')
+    expect(sample.safetyFunctions[1]!.text).toEndWith('reference-model criteria; not a qualified plant procedure.')
+    const result = ask('world.process-plant.display.compose', composition([{ ref: 'PT-455', role: 'primary' }])) as { shows: ReadonlyArray<string>; viewContent: unknown }
+    const content = embeddedViewContentSchema.parse(result.viewContent)
+    expect(content.statuses!.map(status => [status.names[0], status.status])).toEqual([
+      ['Subcriticality', 'NOT JUDGED'], ['Core cooling', 'GREEN'], ['Heat sink', 'GREEN'], ['RCS integrity', 'GREEN'], ['Containment', 'GREEN'], ['RCS inventory', 'GREEN'],
+    ])
+    // The values read and the thresholds compared, as the display shows them.
+    expect(content.statuses![2]!.values).toEqual(expect.arrayContaining([{ value: 55, unit: '%', decimals: 1 }, { value: 10, unit: '%', decimals: 0 }, { value: 8.27, unit: 'MPa', decimals: 2 }]))
+    expect(content.statuses![2]!.path).toStartWith('Narrow-range level above 10 % in at least one steam generator: yes (SG-A-LVL-NR 55.0 %')
+    expect(result.shows.at(-1)).toBe('Critical safety function status (reference-model status trees, not qualified plant procedures): Subcriticality NOT JUDGED · Core cooling GREEN · Heat sink GREEN · RCS integrity GREEN · Containment GREEN · RCS inventory GREEN')
   })
 
   test('a guessed Plant id is refused with the live ids, so one call corrects it', () => {

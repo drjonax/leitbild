@@ -42,6 +42,8 @@ import { indexSample, itemLook } from '../displays/mimic/evaluate.ts'
 import { valueRowReading } from '../displays/mimic/rows.ts'
 import { mimicItemId } from '../displays/mimic/bindings.ts'
 import { trendPoints, type PlantModeNow } from '../displays/trend-reading.ts'
+import { evaluateSafetyFunctions } from '../safety-functions.ts'
+import { safetyFunctionChip, safetyFunctionShows, safetyFunctionStatuses } from '../displays/safety-function-content.ts'
 
 export const processPlantComposedDisplayQueryKinds = [
   'world.process-plant.display.compose',
@@ -164,6 +166,8 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
     })
     const now = indexSample(mimics.flatMap(mimic => mimic.paths).map(path => ({ path, ...sample(path) })))
     const opened = readComposedDisplay(display, opening)
+    // The critical safety functions its header shows, judged as it opens.
+    const safetyFunctions = evaluateSafetyFunctions(system.plant, system.runtime)
     // Elapsed age sizes the trend axis (rounded up, minimum one minute); it
     // does not establish how much Historian data exists within that axis.
     const historyMs = system.runtime.elapsedMs()
@@ -195,19 +199,22 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       // The display header's clock, so the answer gives times as the display does.
       simulationClock: simulationClock(Date.parse(simulationTime)),
       signals: composedDisplaySignals(display),
-      shows: composedDisplayShows(display, historyMs),
+      shows: [...composedDisplayShows(display, historyMs), ...safetyFunctionShows(safetyFunctions)],
       margins: composedDisplayMargins(opened),
       warnings: composedDisplayWarnings(display),
       // What the mimic draws now, so the answer states equipment exactly as the operator sees it.
       equipment: drawn.map(({ id, label, state }) => ({ id, label, state })),
       // What the view shows, for Agents to check the answer that presents it against.
-      viewContent: embeddedViewContentSchema.parse(composedDisplayContent(display, opened, historyMs, drawn.map(item => ({
-        names: [...new Set([item.label, item.id, ...item.values.map(value => value.label)])],
-        values: item.values.map(value => value.quantity),
-        limits: [],
-        history: false,
-        state: item.state,
-      })))),
+      viewContent: embeddedViewContentSchema.parse({
+        ...composedDisplayContent(display, opened, historyMs, drawn.map(item => ({
+          names: [...new Set([item.label, item.id, ...item.values.map(value => value.label)])],
+          values: item.values.map(value => value.quantity),
+          limits: [],
+          history: false,
+          state: item.state,
+        }))),
+        ...(safetyFunctions.length === 0 ? {} : { statuses: safetyFunctionStatuses(safetyFunctions) }),
+      }),
     }
   }
 
@@ -260,7 +267,7 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
         state: JSON.stringify(overviewDisplayStateSchema.parse({ overview: { plantId: display.plantId } })),
       }),
       simulationClock: simulationClock(Date.parse(simulationTime)),
-      shows: composedDisplayShows(display, system.runtime.elapsedMs()),
+      shows: [...composedDisplayShows(display, system.runtime.elapsedMs()), ...safetyFunctionShows(evaluateSafetyFunctions(system.plant, system.runtime))],
       equipment: mimics.flatMap(mimic => mimic.items
         .map(item => ({ id: mimicItemId(system.plant.graph, item.binding.item), label: item.binding.label, state: itemLook(item.binding, now).words || 'no state drawn' }))),
     }
@@ -307,11 +314,13 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
   const alarms = payload.alarms ? annunciated(system) : undefined
   if (payload.alarms && alarms === undefined) return rejectCapabilityTarget(`Process Plant ${payload.plantId} has no configured alarms`)
   const mode = modeNow(system)
+  const safetyFunctions = evaluateSafetyFunctions(system.plant, system.runtime)
   return {
     plantId: payload.plantId,
     simulationTime,
     plantElapsedMs: system.runtime.elapsedMs(),
     ...(mode === undefined ? {} : { mode }),
+    ...(safetyFunctions.length === 0 ? {} : { safetyFunctions: safetyFunctions.map(safetyFunctionChip) }),
     ...(alarms === undefined ? {} : {
       alarms: alarms
         .map(lifecycle => ({

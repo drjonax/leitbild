@@ -13,6 +13,7 @@
   import ComparisonPanel from './ComparisonPanel.svelte'
   import PenLegend from './PenLegend.svelte'
   import ReadoutsPanel from './ReadoutsPanel.svelte'
+  import SafetyFunctionChips from './SafetyFunctionChips.svelte'
   import MimicPanel from './mimic/MimicPanel.svelte'
   import TrendPanel from './TrendPanel.svelte'
   import { actuatedNames, agoText, alarmAge, bannerTrip, sampledGates } from './panel-presenters.ts'
@@ -257,12 +258,17 @@
       <!-- The operating mode the Plant's I&C declares, read each sample; plain text, as a normal state is. -->
       <span class="mode" title="Operating mode: the first of the Plant's declared modes that holds">{snapshot.latest.mode === null ? 'No declared mode holds' : snapshot.latest.mode.label}</span>
     {/if}
+    {#if overview && snapshot?.latest?.safetyFunctions !== undefined}<SafetyFunctionChips functions={snapshot.latest.safetyFunctions} />{/if}
     <span class={`chip ${stateChip.tone}`}>{stateChip.text}</span>
     {#if Number.isFinite(now)}<span class="clock">sim {simulationClock(now)}</span>{/if}
   </header>
   {#if advice !== null}
     <!-- Provenance: which unit and which Run the view is about. -->
-    <p class="unit" title={`${view?.plantLabel ?? plantId}${snapshot?.runTitle === undefined ? '' : ` · Run: ${snapshot.runTitle}`}`}>{view?.plantLabel ?? plantId}{#if snapshot?.runTitle !== undefined}{' · '}Run: {snapshot.runTitle}{/if}</p>
+    <!-- Provenance, and on the same line the critical safety functions the Plant declares. -->
+    <div class="provenance">
+      <p class="unit" title={`${view?.plantLabel ?? plantId}${snapshot?.runTitle === undefined ? '' : ` · Run: ${snapshot.runTitle}`}`}>{view?.plantLabel ?? plantId}{#if snapshot?.runTitle !== undefined}{' · '}Run: {snapshot.runTitle}{/if}</p>
+      {#if snapshot?.latest?.safetyFunctions !== undefined}<SafetyFunctionChips functions={snapshot.latest.safetyFunctions} />{/if}
+    </div>
     <p class="caption" title={`${advice.composition.question} — ${advice.composition.need}`}>
       <strong>Why this view:</strong> {advice.composition.question} <span class="need">{advice.composition.need}</span>
     </p>
@@ -354,6 +360,8 @@
   h1 { margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto; }
   .unit, .clock { font-size: 11.5px; color: var(--element-neutral-color); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .unit { margin: -2px 0 0; overflow: hidden; text-overflow: ellipsis; }
+  .provenance { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .provenance .unit { flex: 1 1 auto; min-width: 0; margin: 0; }
   .mode { flex: none; font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 3px; border: 1px solid var(--border-outline-color); color: var(--element-active-color); white-space: nowrap; }
   .chip { font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--border-outline-color); white-space: nowrap; }
   .chip.live { color: var(--element-active-color); }

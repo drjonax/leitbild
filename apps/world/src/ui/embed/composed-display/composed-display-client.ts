@@ -1,4 +1,5 @@
 import type { SimulationRunId } from '../../../core/model/index.ts'
+import type { SafetyFunctionChip } from '../../../packs/process-plant/displays/safety-function-content.ts'
 import type { CompiledComposedDisplay } from '../../../packs/process-plant/displays/compose.ts'
 import { querySimulationRunCapability } from '../../simulation-run-client.ts'
 import { workspaceApiPath } from '../../workspace-context.ts'
@@ -56,6 +57,8 @@ export interface ComposedDisplaySample {
   readonly plantElapsedMs: number
   /** Present where the Plant declares operating modes: the one it is in, or null where none holds. */
   readonly mode?: { readonly id: string; readonly label: string } | null
+  /** Present where the Plant declares critical safety functions: each one's status, in declaration order. */
+  readonly safetyFunctions?: ReadonlyArray<SafetyFunctionChip>
   /** Present when the sample asked for alarms. */
   readonly alarms?: ReadonlyArray<ComposedDisplayAlarm>
   readonly values: ReadonlyArray<{
