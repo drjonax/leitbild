@@ -6,6 +6,7 @@ import {
   boundaryTieCapacityMw,
   externalKineticEnergyMws,
   gridGeneratorIsSynchronised,
+  islandAssetStates,
   islandFixedInjectionMw,
   islandLossesMw,
   islandMembers,
@@ -59,31 +60,32 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
   const structure = plans.plan.islands[island.planIndex]!
   const network = plans.plan.network
   const members = islandMembers(grid, structure)
+  const states = islandAssetStates(grid, structure)
   const frequencyHz = island.frequency!.frequencyHz!
   const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
   const busIndex = (busId: string): number => network.busIndexById.get(busId)!
   let mechanicalMw = 0
   let kineticEnergyMws = 0
-  for (const definition of structure.generators) {
-    const state = grid.generators.get(definition.id)!
-    if (!gridGeneratorIsSynchronised(state)) continue
+  structure.generators.forEach((definition, index) => {
+    const state = states.generators[index]!
+    if (!gridGeneratorIsSynchronised(state)) return
     mechanicalMw += state.scheduledMw + state.fcrMw + state.afrrMw + state.mfrrMw
     kineticEnergyMws += generatorKineticEnergyMws(definition)
-  }
-  for (const definition of structure.storage) mechanicalMw += grid.storage.get(definition.id)!.dispatchMw
+  })
+  for (const state of states.storage) mechanicalMw += state.dispatchMw
   const externals = members.externals
   for (const system of externals) {
     mechanicalMw += grid.externalSystems.get(system.id)!.mechanicalMw
     kineticEnergyMws += externalKineticEnergyMws(system)
   }
   const fixedMw = islandFixedInjectionMw(grid, structure)
-  const servedMw = structure.loads.reduce((sum, load) => sum + grid.loads.get(load.id)!.servedMw, 0)
+  const servedMw = states.loads.reduce((sum, state) => sum + state.servedMw, 0)
   const lossesMw = islandLossesMw(grid, structure)
   const acceleratingMw = mechanicalMw + fixedMw - servedMw - lossesMw
   if (!(kineticEnergyMws > 0)) throw new Error(`energised island ${island.id} has no synchronous kinetic energy`)
   let suppliedMw = fixedMw
   structure.generators.forEach((definition, index) => {
-    const state = grid.generators.get(definition.id)!
+    const state = states.generators[index]!
     state.frequencyHz = frequencyHz
     if (!gridGeneratorIsSynchronised(state)) {
       state.dispatchMw = 0
@@ -94,8 +96,7 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
     addAt(injections, members.generatorBuses[index]!, state.dispatchMw)
     suppliedMw += state.dispatchMw
   })
-  structure.storage.forEach((definition, index) => {
-    const state = grid.storage.get(definition.id)!
+  states.storage.forEach((state, index) => {
     state.frequencyHz = frequencyHz
     state.voltagePu = 1
     addAt(injections, members.storageBuses[index]!, state.dispatchMw)
@@ -110,8 +111,7 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
     if (structure.busSet.has(link.fromBusId)) addAt(injections, busIndex(link.fromBusId), terminals.fromMw)
     if (structure.busSet.has(link.toBusId)) addAt(injections, busIndex(link.toBusId), terminals.toMw)
   }
-  structure.loads.forEach((definition, index) => {
-    const state = grid.loads.get(definition.id)!
+  states.loads.forEach((state, index) => {
     addAt(injections, members.loadBuses[index]!, -state.servedMw)
     completeLiveGridLoad(state, frequencyHz, nominalHz)
   })

@@ -1,7 +1,7 @@
 import { resetIslandGeneratorProtection, type FrequencyAction } from './frequency/island-state.ts'
 import { advanceIslandFrequency, type IslandFrequencyAdvance } from './frequency/island.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from './instance.ts'
-import { gridGeneratorIsSynchronised, islandFrequencyInput } from './island-input.ts'
+import { gridGeneratorIsSynchronised, islandAssetStates, islandFrequencyInput, type IslandAssetStates } from './island-input.ts'
 
 // Enough recent actions for an operator or Agent to see a cascade; older ones are in the journal.
 const retainedFrequencyEvents = 200
@@ -29,15 +29,18 @@ const recordActions = (grid: GridRuntimeInstance, islandId: string, actions: Rea
   if (grid.frequencyEvents.length > retainedFrequencyEvents) grid.frequencyEvents.splice(0, grid.frequencyEvents.length - retainedFrequencyEvents)
 }
 
-/** Writes one advance's mechanical outputs and latches into the Grid asset states; electrical outputs follow in the network solve. */
-const applyAdvance = (grid: GridRuntimeInstance, island: GridIsland, advance: IslandFrequencyAdvance): void => {
-  for (const unit of advance.units) {
-    const state = grid.generators.get(unit.id)!
+/**
+ * Writes one advance's mechanical outputs and latches into the Grid asset states; electrical outputs
+ * follow in the network solve. The advance lists units and loads in the island's order.
+ */
+const applyAdvance = (grid: GridRuntimeInstance, island: GridIsland, states: IslandAssetStates, advance: IslandFrequencyAdvance): void => {
+  advance.units.forEach((unit, index) => {
+    const state = states.generators[index]!
     state.scheduledMw = unit.synchronised ? unit.scheduledMw : 0
     state.fcrMw = unit.synchronised ? unit.fcrNMw + unit.fcrDMw : 0
     state.afrrMw = unit.synchronised ? unit.afrrMw : 0
     state.mfrrMw = unit.synchronised ? unit.mfrrMw : 0
-  }
+  })
   for (const action of advance.actions) {
     if (action.kind !== 'generator-trip') continue
     const state = grid.generators.get(action.unitId)!
@@ -54,11 +57,11 @@ const applyAdvance = (grid: GridRuntimeInstance, island: GridIsland, advance: Is
     state.stateOfChargeFraction = item.stateOfChargeFraction
     state.state = storageStateFor(item.operatingState)
   }
-  for (const load of advance.loads) {
-    const state = grid.loads.get(load.id)!
+  advance.loads.forEach((load, index) => {
+    const state = states.loads[index]!
     state.servedMw = load.servedMw
     state.lfddShedMw = load.lfddShedMw
-  }
+  })
   for (const external of advance.externals) {
     const state = grid.externalSystems.get(external.id)!
     state.mechanicalMw = external.mechanicalMw
@@ -103,6 +106,6 @@ export const advanceGridFrequencyControl = (grid: GridRuntimeInstance, islands: 
     const structure = islands.plan.islands[island.planIndex]!
     const advance = advanceIslandFrequency(grid.definition.automation, island.frequency!, islandFrequencyInput(grid, structure, island.id), seconds)
     recordActions(grid, island.id, advance.actions)
-    applyAdvance(grid, island, advance)
+    applyAdvance(grid, island, islandAssetStates(grid, structure), advance)
   }
 }

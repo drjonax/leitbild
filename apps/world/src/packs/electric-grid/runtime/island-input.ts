@@ -2,7 +2,7 @@ import type { GridExternalSystemDefinition } from '../grid-model.ts'
 import type { ExternalFrequencyEquivalent, FrequencyStorageUnit, IslandFrequencyInput } from './frequency/types.ts'
 import { frequencyUnitFor, generatorIsVoltageForming, generatorKineticEnergyMws } from './generator-dynamics.ts'
 import { hvdcInjectionAtBusesMw } from './hvdc.ts'
-import type { GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
+import type { GridGeneratorState, GridLoadState, GridRuntimeInstance, GridStorageState, GridTopologyIsland } from './instance.ts'
 import { connectedGridLoadMw } from './load-service.ts'
 import { generatorIsSynchronised, generatorMinimumStableMw } from './unit-commitment.ts'
 import { noReserves } from './frequency/governors.ts'
@@ -43,6 +43,37 @@ export const islandMembers = (grid: GridRuntimeInstance, island: GridTopologyIsl
   }
   membersByIsland.set(island, members)
   return members
+}
+
+/** The runtime states of a structural island's generators, loads and storage, aligned with its lists. */
+export interface IslandAssetStates {
+  readonly generators: ReadonlyArray<GridGeneratorState>
+  readonly loads: ReadonlyArray<GridLoadState>
+  readonly storage: ReadonlyArray<GridStorageState>
+  /** Reactive demand per MW served of each load: tan(acos(power factor)). */
+  readonly loadReactivePerMw: Float64Array
+}
+
+// A Grid's asset state objects live as long as the Grid and are updated in place, so the lookups
+// of one structural island are made once (per Grid: structures are model-derived and may be shared).
+const assetStatesByGrid = new WeakMap<GridRuntimeInstance, WeakMap<GridTopologyIsland, IslandAssetStates>>()
+
+export const islandAssetStates = (grid: GridRuntimeInstance, island: GridTopologyIsland): IslandAssetStates => {
+  let byIsland = assetStatesByGrid.get(grid)
+  if (byIsland === undefined) {
+    byIsland = new WeakMap()
+    assetStatesByGrid.set(grid, byIsland)
+  }
+  const cached = byIsland.get(island)
+  if (cached !== undefined) return cached
+  const states: IslandAssetStates = {
+    generators: island.generators.map(definition => grid.generators.get(definition.id)!),
+    loads: island.loads.map(definition => grid.loads.get(definition.id)!),
+    storage: island.storage.map(definition => grid.storage.get(definition.id)!),
+    loadReactivePerMw: Float64Array.from(island.loads, definition => Math.tan(Math.acos(definition.powerFactor))),
+  }
+  byIsland.set(island, states)
+  return states
 }
 
 /** Rating of the closed AC ties at a boundary bus, derated by their availability (MW). */
@@ -128,10 +159,12 @@ export const storageFrequencyUnit = (definition: { readonly id: string; readonly
 })
 
 /** The frequency library's view of one energised island for the next advance. */
-export const islandFrequencyInput = (grid: GridRuntimeInstance, island: GridTopologyIsland, islandId: string): IslandFrequencyInput => ({
+export const islandFrequencyInput = (grid: GridRuntimeInstance, island: GridTopologyIsland, islandId: string): IslandFrequencyInput => {
+  const states = islandAssetStates(grid, island)
+  return {
   islandId,
-  units: island.generators.map(definition => {
-    const state = grid.generators.get(definition.id)!
+  units: island.generators.map((definition, index) => {
+    const state = states.generators[index]!
     // Only an online unit runs between its minimum stable generation and its availability; a
     // stopping unit unloads to 0 MW and holds no reserve; an unsynchronised unit has no operating range.
     const online = state.state === 'online'
@@ -145,13 +178,14 @@ export const islandFrequencyInput = (grid: GridRuntimeInstance, island: GridTopo
     })
   }),
   storage: island.storage.map(storageFrequencyUnit),
-  loads: island.loads.map(definition => ({
+  loads: island.loads.map((definition, index) => ({
     id: definition.id,
     priority: definition.priority,
-    demandMw: connectedGridLoadMw(grid.loads.get(definition.id)!),
+    demandMw: connectedGridLoadMw(states.loads[index]!),
     protectedMw: definition.criticalMw,
   })),
   externals: islandMembers(grid, island).externals.map(system => externalFrequencyEquivalent(grid, system)),
   lossesMw: islandLossesMw(grid, island),
   fixedInjectionMw: islandFixedInjectionMw(grid, island),
-})
+  }
+}

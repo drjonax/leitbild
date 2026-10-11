@@ -98,6 +98,263 @@ const mfrrEnergyMws = (ramp: MfrrUnitRamp, t0: number, t1: number, timing: MfrrT
   return before + during + after
 }
 
+/**
+ * The synchronised units of one advance as typed arrays: parameters, working state, the per-unit
+ * scratch of a sub-step, and the sub-step's sums. The sub-step kernels below run on them as small
+ * module-level functions, which the JIT optimises where the large advance function stays slow
+ * (Norway: about 850 units over 20 sub-steps per 2 s tick).
+ */
+interface UnitArrays {
+  readonly count: number
+  readonly targetMw: Float64Array
+  readonly rampMwPerSecond: Float64Array
+  readonly minimumMw: Float64Array
+  readonly maximumMw: Float64Array
+  readonly fcrNReserveMw: Float64Array
+  readonly fcrDUpReserveMw: Float64Array
+  readonly fcrDDownReserveMw: Float64Array
+  readonly scheduledMw: Float64Array
+  readonly afrrMw: Float64Array
+  readonly fcrNMw: Float64Array
+  readonly fcrDUpMw: Float64Array
+  readonly fcrDDownMw: Float64Array
+  /** Scratch of one sub-step: scheduled end, FCR starting outputs and caps. */
+  readonly scheduledEnd: Float64Array
+  readonly nStart: Float64Array
+  readonly nUp: Float64Array
+  readonly nDown: Float64Array
+  readonly dUpStart: Float64Array
+  readonly dUpCap: Float64Array
+  readonly dDownStart: Float64Array
+  readonly dDownCap: Float64Array
+  /** Fixed energy (MWs) and the FCR-N, FCR-D up and FCR-D down starting outputs and caps summed over the units. */
+  readonly sums: Float64Array
+  /** True while the arrays hold working state the objects do not have yet. */
+  ahead: boolean
+}
+
+const createUnitArrays = (count: number): UnitArrays => ({
+  count,
+  targetMw: new Float64Array(count),
+  rampMwPerSecond: new Float64Array(count),
+  minimumMw: new Float64Array(count),
+  maximumMw: new Float64Array(count),
+  fcrNReserveMw: new Float64Array(count),
+  fcrDUpReserveMw: new Float64Array(count),
+  fcrDDownReserveMw: new Float64Array(count),
+  scheduledMw: new Float64Array(count),
+  afrrMw: new Float64Array(count),
+  fcrNMw: new Float64Array(count),
+  fcrDUpMw: new Float64Array(count),
+  fcrDDownMw: new Float64Array(count),
+  scheduledEnd: new Float64Array(count),
+  nStart: new Float64Array(count),
+  nUp: new Float64Array(count),
+  nDown: new Float64Array(count),
+  dUpStart: new Float64Array(count),
+  dUpCap: new Float64Array(count),
+  dDownStart: new Float64Array(count),
+  dDownCap: new Float64Array(count),
+  sums: new Float64Array(8),
+  ahead: false,
+})
+
+/** Reads the synchronised units and their working states into the arrays. */
+const loadUnitArraysFrom = (arrays: UnitArrays, units: ReadonlyArray<FrequencyUnit>, states: ReadonlyArray<WorkingUnitState>): void => {
+  for (let index = 0; index < arrays.count; index += 1) {
+    const unit = units[index]!
+    const current = states[index]!
+    arrays.targetMw[index] = unit.targetMw
+    arrays.rampMwPerSecond[index] = unit.rampRateMwPerSecond
+    arrays.minimumMw[index] = unit.minimumMw
+    arrays.maximumMw[index] = unit.maximumMw
+    arrays.fcrNReserveMw[index] = unit.reserves.fcrNMw
+    arrays.fcrDUpReserveMw[index] = unit.reserves.fcrDUpMw
+    arrays.fcrDDownReserveMw[index] = unit.reserves.fcrDDownMw
+    arrays.scheduledMw[index] = current.scheduledMw
+    arrays.afrrMw[index] = current.afrrMw
+    arrays.fcrNMw[index] = current.fcrNMw
+    arrays.fcrDUpMw[index] = current.fcrDUpMw
+    arrays.fcrDDownMw[index] = current.fcrDDownMw
+  }
+  arrays.ahead = false
+}
+
+/** Writes the arrays' working state back into the working state objects. */
+const flushUnitArraysInto = (arrays: UnitArrays, states: ReadonlyArray<WorkingUnitState>): void => {
+  if (!arrays.ahead) return
+  for (let index = 0; index < arrays.count; index += 1) {
+    const current = states[index]!
+    current.scheduledMw = arrays.scheduledMw[index]!
+    current.afrrMw = arrays.afrrMw[index]!
+    current.fcrNMw = arrays.fcrNMw[index]!
+    current.fcrDUpMw = arrays.fcrDUpMw[index]!
+    current.fcrDDownMw = arrays.fcrDDownMw[index]!
+  }
+  arrays.ahead = false
+}
+
+/**
+ * First half of a sub-step for every synchronised unit: the set-point ramp and its exact energy,
+ * delivered mFRR within the output band, aFRR held within the room both leave, and the FCR-N and
+ * FCR-D caps from the remaining headroom. Accumulates onto `fixedEnergyMws` in unit order.
+ */
+const planUnitSubStep = (arrays: UnitArrays, states: ReadonlyArray<WorkingUnitState>, step: {
+  readonly stepSeconds: number
+  readonly t0: number
+  readonly t1: number
+  readonly mfrrEnabled: boolean
+  readonly mfrrTimes: MfrrTiming
+  readonly fixedEnergyMws: number
+}): void => {
+  const { stepSeconds, t0, t1, mfrrEnabled, mfrrTimes } = step
+  const { scheduledEnd, nStart, nUp, nDown, dUpStart, dUpCap, dDownStart, dDownCap } = arrays
+  let fixedEnergyMws = step.fixedEnergyMws
+  let nStartSum = 0
+  let nUpSum = 0
+  let nDownSum = 0
+  let dUpStartSum = 0
+  let dUpSum = 0
+  let dDownStartSum = 0
+  let dDownSum = 0
+  arrays.ahead = true
+  for (let index = 0; index < arrays.count; index += 1) {
+    const minimumMw = arrays.minimumMw[index]!
+    const maximumMw = arrays.maximumMw[index]!
+    // Set-point follows the target at the ramp rate; its energy is the exact integral of that ramp.
+    const fromMw = arrays.scheduledMw[index]!
+    const targetMw = arrays.targetMw[index]!
+    let endMw = targetMw
+    let scheduledEnergyMws = targetMw * stepSeconds
+    if (fromMw !== targetMw) {
+      const rampRateMwPerSecond = arrays.rampMwPerSecond[index]!
+      const reachSeconds = Math.abs(targetMw - fromMw) / rampRateMwPerSecond
+      if (reachSeconds >= stepSeconds) {
+        endMw = fromMw + Math.sign(targetMw - fromMw) * rampRateMwPerSecond * stepSeconds
+        scheduledEnergyMws = (fromMw + endMw) / 2 * stepSeconds
+      } else {
+        scheduledEnergyMws = (fromMw + targetMw) / 2 * reachSeconds + targetMw * (stepSeconds - reachSeconds)
+      }
+    }
+    scheduledEnd[index] = endMw
+    // Output band at both ends of the sub-step (bandLowMw, bandHighMw).
+    const lowStartMw = Math.min(minimumMw, fromMw)
+    const highStartMw = Math.max(maximumMw, fromMw)
+    const lowEndMw = Math.min(minimumMw, endMw)
+    const highEndMw = Math.max(maximumMw, endMw)
+    let mfrrStartMw = 0
+    let mfrrEndMw = 0
+    let mfrrEnergyMw = 0
+    if (mfrrEnabled) {
+      const ramp = states[index]!.mfrr
+      if (ramp.fromMw === ramp.toMw) {
+        mfrrStartMw = ramp.toMw
+        mfrrEndMw = ramp.toMw
+        mfrrEnergyMw = ramp.toMw * stepSeconds
+      } else {
+        mfrrStartMw = mfrrOutputMw(ramp, t0, mfrrTimes)
+        mfrrEndMw = mfrrOutputMw(ramp, t1, mfrrTimes)
+        mfrrEnergyMw = mfrrEnergyMws(ramp, t0, t1, mfrrTimes)
+      }
+      // deliveredMfrrMw at each end.
+      const deliveredStartMw = Math.min(highStartMw - fromMw, Math.max(lowStartMw - fromMw, mfrrStartMw))
+      const deliveredEndMw = Math.min(highEndMw - endMw, Math.max(lowEndMw - endMw, mfrrEndMw))
+      if (deliveredStartMw !== mfrrStartMw || deliveredEndMw !== mfrrEndMw) {
+        // Where the band binds, delivered mFRR is taken linear across the sub-step.
+        mfrrStartMw = deliveredStartMw
+        mfrrEndMw = deliveredEndMw
+        mfrrEnergyMw = (deliveredStartMw + deliveredEndMw) / 2 * stepSeconds
+      }
+    }
+    // aFRR follows its share only within the room set-point and mFRR leave in the band at both
+    // ends of the sub-step; 0 always fits, since set-point plus mFRR lies in the band.
+    const afrrLowMw = Math.max(lowStartMw - fromMw - mfrrStartMw, lowEndMw - endMw - mfrrEndMw)
+    const afrrHighMw = Math.min(highStartMw - fromMw - mfrrStartMw, highEndMw - endMw - mfrrEndMw)
+    let afrrMw = arrays.afrrMw[index]!
+    if (afrrMw > afrrHighMw) afrrMw = afrrHighMw
+    else if (afrrMw < afrrLowMw) afrrMw = afrrLowMw
+    arrays.afrrMw[index] = afrrMw
+    fixedEnergyMws += scheduledEnergyMws + afrrMw * stepSeconds + mfrrEnergyMw
+    const baseStartMw = fromMw + afrrMw + mfrrStartMw
+    const baseEndMw = endMw + afrrMw + mfrrEndMw
+    // Headroom split between FCR-N and FCR-D, FCR-N first (see unitFcrCaps).
+    const upRoom = Math.max(0, maximumMw - Math.max(baseStartMw, baseEndMw))
+    const downRoom = Math.max(0, Math.min(baseStartMw, baseEndMw) - minimumMw)
+    const fcrNReserveMw = arrays.fcrNReserveMw[index]!
+    const capNUp = Math.min(fcrNReserveMw, upRoom)
+    const capNDown = Math.min(fcrNReserveMw, downRoom)
+    if (fcrNReserveMw > 0) {
+      const startMw = limited(arrays.fcrNMw[index]!, capNUp, capNDown)
+      nStart[index] = startMw
+      nUp[index] = capNUp
+      nDown[index] = capNDown
+      nStartSum += startMw
+      nUpSum += capNUp
+      nDownSum += capNDown
+    }
+    const fcrDUpReserveMw = arrays.fcrDUpReserveMw[index]!
+    if (fcrDUpReserveMw > 0) {
+      const cap = Math.min(fcrDUpReserveMw, upRoom - capNUp)
+      const startMw = limited(arrays.fcrDUpMw[index]!, cap, 0)
+      dUpStart[index] = startMw
+      dUpCap[index] = cap
+      dUpStartSum += startMw
+      dUpSum += cap
+    }
+    const fcrDDownReserveMw = arrays.fcrDDownReserveMw[index]!
+    if (fcrDDownReserveMw > 0) {
+      const cap = Math.min(fcrDDownReserveMw, downRoom - capNDown)
+      const startMw = limited(arrays.fcrDDownMw[index]!, 0, cap)
+      dDownStart[index] = startMw
+      dDownCap[index] = cap
+      dDownStartSum += startMw
+      dDownSum += cap
+    }
+  }
+  const sums = arrays.sums
+  sums[0] = fixedEnergyMws
+  sums[1] = nStartSum
+  sums[2] = nUpSum
+  sums[3] = nDownSum
+  sums[4] = dUpStartSum
+  sums[5] = dUpSum
+  sums[6] = dDownStartSum
+  sums[7] = dDownSum
+}
+
+interface LagUpdate { readonly decay: number; readonly weight: number }
+
+/** A first-order lag's exact output after a sub-step whose target moves linearly from target0 to target1. */
+const laggedMw = (startMw: number, target0: number, target1: number, lag: LagUpdate): number =>
+  target0 + (startMw - target0) * lag.decay + (target1 - target0) * lag.weight
+
+/** Second half of a sub-step: set-points at their ramp end, FCR outputs after their lags towards the activation at both ends. */
+const completeUnitSubStep = (arrays: UnitArrays, step: {
+  readonly aN0: number
+  readonly aN1: number
+  readonly aDUp0: number
+  readonly aDUp1: number
+  readonly aDDown0: number
+  readonly aDDown1: number
+  readonly nLag: LagUpdate
+  readonly dUpLag: LagUpdate
+  readonly dDownLag: LagUpdate
+}): void => {
+  const { aN0, aN1, aDUp0, aDUp1, aDDown0, aDDown1, nLag, dUpLag, dDownLag } = step
+  const { scheduledEnd, nStart, nUp, nDown, dUpStart, dUpCap, dDownStart, dDownCap } = arrays
+  arrays.ahead = true
+  for (let index = 0; index < arrays.count; index += 1) {
+    arrays.scheduledMw[index] = scheduledEnd[index]!
+    if (arrays.fcrNReserveMw[index]! > 0) {
+      const up = nUp[index]!
+      const down = nDown[index]!
+      arrays.fcrNMw[index] = laggedMw(nStart[index]!, aN0 * (aN0 >= 0 ? up : down), aN1 * (aN1 >= 0 ? up : down), nLag)
+    }
+    if (arrays.fcrDUpReserveMw[index]! > 0) arrays.fcrDUpMw[index] = laggedMw(dUpStart[index]!, aDUp0 * dUpCap[index]!, aDUp1 * dUpCap[index]!, dUpLag)
+    if (arrays.fcrDDownReserveMw[index]! > 0) arrays.fcrDDownMw[index] = laggedMw(dDownStart[index]!, aDDown0 * dDownCap[index]!, aDDown1 * dDownCap[index]!, dDownLag)
+  }
+}
+
 const outOfService = (unit: UnitFrequencyState): UnitFrequencyState =>
   ({ ...unit, scheduledMw: 0, fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrMw: 0, mfrr: idleMfrrRamp })
 
@@ -169,25 +426,13 @@ export const advanceIslandFrequency = (
   // True while every synchronised unit's protection relays sit at zero with no trip.
   let relaysAtRest = activeStates.every(state => protectionAtRest(state.protection))
   let servedNominalMw = servedAtNominalMw(input, lfddShedFractionByLoad(lfdd))
-  // Per-unit scratch for one sub-step: scheduled end, FCR starting outputs and caps.
-  let scheduledEnd = new Float64Array(active.length)
-  let nStart = new Float64Array(active.length)
-  let nUp = new Float64Array(active.length)
-  let nDown = new Float64Array(active.length)
-  let dUpStart = new Float64Array(active.length)
-  let dUpCap = new Float64Array(active.length)
-  let dDownStart = new Float64Array(active.length)
-  let dDownCap = new Float64Array(active.length)
-  const resizeScratch = (): void => {
-    scheduledEnd = new Float64Array(active.length)
-    nStart = new Float64Array(active.length)
-    nUp = new Float64Array(active.length)
-    nDown = new Float64Array(active.length)
-    dUpStart = new Float64Array(active.length)
-    dUpCap = new Float64Array(active.length)
-    dDownStart = new Float64Array(active.length)
-    dDownCap = new Float64Array(active.length)
-  }
+  // The synchronised units as typed arrays for the sub-step kernels; the working state objects
+  // are brought up to date (flush) before anything else reads them and reloaded after anything writes them.
+  let arrays = createUnitArrays(active.length)
+  const resizeScratch = (): void => { arrays = createUnitArrays(active.length) }
+  const loadUnitArrays = (): void => loadUnitArraysFrom(arrays, active, activeStates)
+  const flushUnitArrays = (): void => flushUnitArraysInto(arrays, activeStates)
+  loadUnitArrays()
   const fcrNConfig = automation.fcrN
   const fcrDUpConfig = automation.fcrD.up
   const fcrDDownConfig = automation.fcrD.down
@@ -205,102 +450,28 @@ export const advanceIslandFrequency = (
 
     if (automation.afrr.enabled && agc) {
       while (t0 + stepTolerance >= agc.nextCycleAtSeconds) {
+        flushUnitArrays()
         const cycle = runRestorationCycle({ automation, afrr: automation.afrr, agc, mfrr, units, unitStates, storageStates, externalStates, input, lfdd, frequencyHz: f0, nowSeconds: t0, mfrrAt })
         agc = cycle.agc
         mfrr = cycle.mfrr
         if (cycle.action) actions.push(cycle.action)
+        loadUnitArrays()
       }
     }
 
     const elements: ResponseElement[] = []
     const applyElement: Array<(outputMw: number, energyMws: number) => void> = []
     let fixedEnergyMws = (input.fixedInjectionMw - input.lossesMw) * stepSeconds
-    let nStartSum = 0
-    let nUpSum = 0
-    let nDownSum = 0
-    let dUpStartSum = 0
-    let dUpSum = 0
-    let dDownStartSum = 0
-    let dDownSum = 0
-    for (let index = 0; index < active.length; index += 1) {
-      const unit = active[index]!
-      const current = activeStates[index]!
-      // Set-point follows the target at the ramp rate; its energy is the exact integral of that ramp.
-      const fromMw = current.scheduledMw
-      const targetMw = unit.targetMw
-      let endMw = targetMw
-      let scheduledEnergyMws = targetMw * stepSeconds
-      if (fromMw !== targetMw) {
-        const reachSeconds = Math.abs(targetMw - fromMw) / unit.rampRateMwPerSecond
-        if (reachSeconds >= stepSeconds) {
-          endMw = fromMw + Math.sign(targetMw - fromMw) * unit.rampRateMwPerSecond * stepSeconds
-          scheduledEnergyMws = (fromMw + endMw) / 2 * stepSeconds
-        } else {
-          scheduledEnergyMws = (fromMw + targetMw) / 2 * reachSeconds + targetMw * (stepSeconds - reachSeconds)
-        }
-      }
-      scheduledEnd[index] = endMw
-      const ramp = current.mfrr
-      let mfrrStartMw = 0
-      let mfrrEndMw = 0
-      let mfrrEnergyMw = 0
-      if (mfrrEnabled) {
-        if (ramp.fromMw === ramp.toMw) {
-          mfrrStartMw = ramp.toMw
-          mfrrEndMw = ramp.toMw
-          mfrrEnergyMw = ramp.toMw * stepSeconds
-        } else {
-          mfrrStartMw = mfrrOutputMw(ramp, t0, mfrrTimes)
-          mfrrEndMw = mfrrOutputMw(ramp, t1, mfrrTimes)
-          mfrrEnergyMw = mfrrEnergyMws(ramp, t0, t1, mfrrTimes)
-        }
-        const deliveredStartMw = deliveredMfrrMw(unit, fromMw, mfrrStartMw)
-        const deliveredEndMw = deliveredMfrrMw(unit, endMw, mfrrEndMw)
-        if (deliveredStartMw !== mfrrStartMw || deliveredEndMw !== mfrrEndMw) {
-          // Where the band binds, delivered mFRR is taken linear across the sub-step.
-          mfrrStartMw = deliveredStartMw
-          mfrrEndMw = deliveredEndMw
-          mfrrEnergyMw = (deliveredStartMw + deliveredEndMw) / 2 * stepSeconds
-        }
-      }
-      // aFRR follows its share only within the room set-point and mFRR leave in the band at both
-      // ends of the sub-step; 0 always fits, since set-point plus mFRR lies in the band.
-      const afrrLowMw = Math.max(bandLowMw(unit, fromMw) - fromMw - mfrrStartMw, bandLowMw(unit, endMw) - endMw - mfrrEndMw)
-      const afrrHighMw = Math.min(bandHighMw(unit, fromMw) - fromMw - mfrrStartMw, bandHighMw(unit, endMw) - endMw - mfrrEndMw)
-      if (current.afrrMw > afrrHighMw) current.afrrMw = afrrHighMw
-      else if (current.afrrMw < afrrLowMw) current.afrrMw = afrrLowMw
-      fixedEnergyMws += scheduledEnergyMws + current.afrrMw * stepSeconds + mfrrEnergyMw
-      const baseStartMw = fromMw + current.afrrMw + mfrrStartMw
-      const baseEndMw = endMw + current.afrrMw + mfrrEndMw
-      // Headroom split between FCR-N and FCR-D, FCR-N first (see unitFcrCaps).
-      const upRoom = Math.max(0, unit.maximumMw - Math.max(baseStartMw, baseEndMw))
-      const downRoom = Math.max(0, Math.min(baseStartMw, baseEndMw) - unit.minimumMw)
-      const reserves = unit.reserves
-      const capNUp = Math.min(reserves.fcrNMw, upRoom)
-      const capNDown = Math.min(reserves.fcrNMw, downRoom)
-      if (reserves.fcrNMw > 0) {
-        nStart[index] = limited(current.fcrNMw, capNUp, capNDown)
-        nUp[index] = capNUp
-        nDown[index] = capNDown
-        nStartSum += nStart[index]!
-        nUpSum += capNUp
-        nDownSum += capNDown
-      }
-      if (reserves.fcrDUpMw > 0) {
-        const cap = Math.min(reserves.fcrDUpMw, upRoom - capNUp)
-        dUpStart[index] = limited(current.fcrDUpMw, cap, 0)
-        dUpCap[index] = cap
-        dUpStartSum += dUpStart[index]!
-        dUpSum += cap
-      }
-      if (reserves.fcrDDownMw > 0) {
-        const cap = Math.min(reserves.fcrDDownMw, downRoom - capNDown)
-        dDownStart[index] = limited(current.fcrDDownMw, 0, cap)
-        dDownCap[index] = cap
-        dDownStartSum += dDownStart[index]!
-        dDownSum += cap
-      }
-    }
+    planUnitSubStep(arrays, activeStates, { stepSeconds, t0, t1, mfrrEnabled, mfrrTimes, fixedEnergyMws })
+    const sums = arrays.sums
+    fixedEnergyMws = sums[0]!
+    let nStartSum = sums[1]!
+    let nUpSum = sums[2]!
+    let nDownSum = sums[3]!
+    let dUpStartSum = sums[4]!
+    let dUpSum = sums[5]!
+    let dDownStartSum = sums[6]!
+    let dDownSum = sums[7]!
     const storagePlans = input.storage.map(unit => {
       if (!unit.connected) return null
       const plan = planStorageSubStep(automation.storage, automation.fcrD, unit, storageStates.get(unit.id)!, {
@@ -391,18 +562,7 @@ export const advanceIslandFrequency = (
     const aDDown1 = -fcrDDownActivation(f1, fcrDDownConfig)
     const lagged = (startMw: number, target0: number, target1: number, lag: { readonly decay: number; readonly weight: number }): number =>
       target0 + (startMw - target0) * lag.decay + (target1 - target0) * lag.weight
-    for (let index = 0; index < active.length; index += 1) {
-      const current = activeStates[index]!
-      const reserves = active[index]!.reserves
-      current.scheduledMw = scheduledEnd[index]!
-      if (reserves.fcrNMw > 0) {
-        const up = nUp[index]!
-        const down = nDown[index]!
-        current.fcrNMw = lagged(nStart[index]!, aN0 * (aN0 >= 0 ? up : down), aN1 * (aN1 >= 0 ? up : down), nLag)
-      }
-      if (reserves.fcrDUpMw > 0) current.fcrDUpMw = lagged(dUpStart[index]!, aDUp0 * dUpCap[index]!, aDUp1 * dUpCap[index]!, dUpLag)
-      if (reserves.fcrDDownMw > 0) current.fcrDDownMw = lagged(dDownStart[index]!, aDDown0 * dDownCap[index]!, aDDown1 * dDownCap[index]!, dDownLag)
-    }
+    completeUnitSubStep(arrays, { aN0, aN1, aDUp0, aDUp1, aDDown0, aDDown1, nLag, dUpLag, dDownLag })
     for (const external of input.externals) {
       const current = externalStates.get(external.id)!
       const reserves = external.reserves
@@ -437,6 +597,7 @@ export const advanceIslandFrequency = (
       const cause = frequencyHz <= nominalHz * 0.9 ? 'under-frequency' as const : 'over-frequency' as const
       const elements = cause === 'under-frequency' ? automation.generatorProtection.underFrequency : automation.generatorProtection.overFrequency
       const element = [...elements].sort((a, b) => a.delaySeconds - b.delaySeconds)[0]!
+      flushUnitArrays()
       for (const unit of active) {
         const current = unitStates.get(unit.id)!
         Object.assign(current, outOfService(current))
@@ -475,6 +636,7 @@ export const advanceIslandFrequency = (
       if (!protectionAtRest(protection)) relaysAtRest = false
       if (protection.trip) {
         tripped.add(unit.id)
+        flushUnitArrays()
         Object.assign(current, outOfService(current))
         actions.push({ kind: 'generator-trip', unitId: unit.id, atSeconds: t1, elementId: protection.trip.elementId, cause: protection.trip.cause })
       }
@@ -483,6 +645,7 @@ export const advanceIslandFrequency = (
       units = units.map(unit => tripped.has(unit.id) ? { ...unit, synchronised: false } : unit)
       collectActive()
       resizeScratch()
+      loadUnitArrays()
       kineticEnergyMws = islandKineticEnergyMws(units, input.externals)
     }
 
@@ -492,6 +655,7 @@ export const advanceIslandFrequency = (
     if (lfddStep.operations.length > 0) servedNominalMw = servedAtNominalMw(input, lfddShedFractionByLoad(lfdd))
   }
 
+  flushUnitArrays()
   const shedFractions = lfddShedFractionByLoad(lfdd)
   const finalFrequencyHz = collapsed ? null : frequencyHz
   const selfRegulation = finalFrequencyHz === null ? 0 : 1 + dampingPerHz * (finalFrequencyHz - nominalHz)
@@ -540,7 +704,8 @@ export const advanceIslandFrequency = (
       elapsedSeconds,
       frequencyHz: finalFrequencyHz,
       rocofHzPerSecond: collapsed ? 0 : rocofHzPerSecond,
-      units: Object.fromEntries([...unitStates].map(([unitId, unit]) => [unitId, { ...unit }])),
+      // The working states are this advance's own copies: they become the new state as they are.
+      units: Object.fromEntries(unitStates),
       storage: Object.fromEntries(storageStates),
       externals: Object.fromEntries(externalStates),
       agc,

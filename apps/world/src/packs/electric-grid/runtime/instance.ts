@@ -105,7 +105,7 @@ export interface GridLoadState {
   unservedMw: number
   /** Total shed demand: curtailedMw + lfddShedMw. */
   shedMw: number
-  shedCauses: Array<GridLoadShedCause>
+  shedCauses: ReadonlyArray<GridLoadShedCause>
   servedMw: number
   frequencyHz: number | null
   voltagePu: number

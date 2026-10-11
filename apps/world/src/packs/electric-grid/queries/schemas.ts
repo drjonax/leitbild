@@ -178,7 +178,7 @@ export const loadStateSchema = z.object({
   outageMw: finite.describe('Demand lost because the load\'s island is de-energised (MW).'),
   unservedMw: finite.describe('Demand not served: curtailedMw + lfddShedMw + outageMw (MW).'),
   shedMw: finite.describe('Total shed demand: curtailedMw + lfddShedMw (MW).'),
-  shedCauses: z.array(loadShedCauseSchema),
+  shedCauses: z.array(loadShedCauseSchema).readonly(),
   frequencyHz: islandFrequencyHz,
   voltagePu: finite,
   serviceState: loadServiceStateSchema,

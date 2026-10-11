@@ -14,10 +14,13 @@ export const curtailGridLoad = (state: GridLoadState, load: GridLoadDefinition):
 /** Demand still connected after manual curtailment: what frequency control and LFDD act on. */
 export const connectedGridLoadMw = (state: GridLoadState): number => state.demandMw - state.curtailedMw
 
-const shedCausesFor = (state: GridLoadState): Array<GridLoadShedCause> => [
-  ...(state.curtailedMw > 0 ? ['manual' as const] : []),
-  ...(state.lfddShedMw > 0 ? ['lfdd' as const] : []),
+// The four possible cause lists, shared: every live load is completed on every network solution.
+const shedCauseLists: ReadonlyArray<ReadonlyArray<GridLoadShedCause>> = [
+  Object.freeze([]), Object.freeze(['manual' as const]), Object.freeze(['lfdd' as const]), Object.freeze(['manual' as const, 'lfdd' as const]),
 ]
+
+const shedCausesFor = (state: GridLoadState): ReadonlyArray<GridLoadShedCause> =>
+  shedCauseLists[(state.curtailedMw > 0 ? 1 : 0) + (state.lfddShedMw > 0 ? 2 : 0)]!
 
 /** Closes a live load's service for this tick from its served and LFDD-shed demand. */
 export const completeLiveGridLoad = (state: GridLoadState, frequencyHz: number, nominalFrequencyHz: number): void => {

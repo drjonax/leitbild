@@ -2,7 +2,7 @@ import type { IsoTimestamp } from '../../../core/model/index.ts'
 import type { GridIslandProjection } from '../model.ts'
 import { gridAlarmCounts } from './alarms.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from './instance.ts'
-import { externalFrequencyEquivalent, gridGeneratorIsSynchronised, islandFixedInjectionMw, islandMembers } from './island-input.ts'
+import { externalFrequencyEquivalent, gridGeneratorIsSynchronised, islandAssetStates, islandFixedInjectionMw, islandMembers } from './island-input.ts'
 
 // Status turns "working" when the headline island is 50 mHz off nominal: half the standard range.
 const workingDeviationHz = 0.05
@@ -16,21 +16,28 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
   const members = islandMembers(grid, structure)
   if (structure.generators.length + structure.loads.length + structure.storage.length + members.externals.length + members.connectionPointIds.length === 0) return null
   const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
-  const generationMw = structure.generators.reduce((sum, definition) => sum + grid.generators.get(definition.id)!.dispatchMw, 0)
-    + structure.storage.reduce((sum, definition) => sum + grid.storage.get(definition.id)!.dispatchMw, 0)
+  const states = islandAssetStates(grid, structure)
+  const generationMw = states.generators.reduce((sum, state) => sum + state.dispatchMw, 0)
+    + states.storage.reduce((sum, state) => sum + state.dispatchMw, 0)
   const importMw = island.energized
     ? members.externals.reduce((sum, system) => sum + grid.externalSystems.get(system.id)!.importMw, 0) + islandFixedInjectionMw(grid, structure)
     : 0
-  const loadMw = structure.loads.reduce((sum, definition) => sum + grid.loads.get(definition.id)!.demandMw, 0)
-  const servedLoadMw = structure.loads.reduce((sum, definition) => sum + grid.loads.get(definition.id)!.servedMw, 0)
+  const loadMw = states.loads.reduce((sum, state) => sum + state.demandMw, 0)
+  const servedLoadMw = states.loads.reduce((sum, state) => sum + state.servedMw, 0)
   let lossesMw = 0
   for (const bus of members.busIndices) lossesMw += grid.lossLoadByBusMw[bus]!
   const reserves = { fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrUpMw: 0, afrrDownMw: 0, mfrrUpMw: 0, mfrrDownMw: 0 }
   if (island.energized) {
-    for (const definition of structure.generators) {
-      const state = grid.generators.get(definition.id)!
+    for (const state of states.generators) {
       if (!gridGeneratorIsSynchronised(state)) continue
-      for (const key of Object.keys(reserves) as Array<keyof typeof reserves>) reserves[key] += state.reserves[key]
+      const allocated = state.reserves
+      reserves.fcrNMw += allocated.fcrNMw
+      reserves.fcrDUpMw += allocated.fcrDUpMw
+      reserves.fcrDDownMw += allocated.fcrDDownMw
+      reserves.afrrUpMw += allocated.afrrUpMw
+      reserves.afrrDownMw += allocated.afrrDownMw
+      reserves.mfrrUpMw += allocated.mfrrUpMw
+      reserves.mfrrDownMw += allocated.mfrrDownMw
     }
     for (const system of members.externals) {
       const external = externalFrequencyEquivalent(grid, system).reserves
