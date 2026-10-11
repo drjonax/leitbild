@@ -169,6 +169,7 @@ const contingenciesOf = (screeningCase: ContingencyCase, selected: ReadonlyArray
   const resolved: SnapshotContingencies = {
     count,
     branch: sharedInt32(count).fill(-1),
+    circuitsLost: sharedInt32(count),
     bus: sharedInt32(count).fill(-1),
     unitOutputMw: sharedFloat64(count),
     removedUpMw: sharedFloat64(count),
@@ -183,7 +184,12 @@ const contingenciesOf = (screeningCase: ContingencyCase, selected: ReadonlyArray
       if (screeningCase.closed[index] !== 1 || !energisedBus(network.branchFrom[index]!)) {
         throw new Error(`branch ${network.branchIds[index]!} is not in service (open, tripped or de-energised)`)
       }
+      const circuits = grid.definition.model.branches[index]!.circuits
+      if (!Number.isInteger(contingency.circuitsLost) || contingency.circuitsLost < 1 || contingency.circuitsLost > circuits) {
+        throw new Error(`branch ${network.branchIds[index]!} has ${circuits} circuit(s); an outage of ${contingency.circuitsLost} is not one of 1 to ${circuits}`)
+      }
       resolved.branch[position] = index
+      resolved.circuitsLost[position] = contingency.circuitsLost
       return
     }
     const entry = grid.definition.index.assetById.get(contingency.generatorId)
@@ -229,6 +235,7 @@ export const captureContingencySnapshot = (
       branchFrom: sharedCopyInt32(network.branchFrom),
       branchTo: sharedCopyInt32(network.branchTo),
       branchSusceptancePu: sharedCopyFloat64(network.branchSusceptancePu),
+      branchCircuits: sharedCopyInt32(Int32Array.from(grid.definition.model.branches, branch => branch.circuits)),
       norwegianBus: sharedCopyUint8(gridTablesFor(grid.definition).norwegianBus),
     },
     islands,

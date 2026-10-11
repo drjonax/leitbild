@@ -7,9 +7,13 @@ import type { Balancing, CaseParticipation } from './contingency-balance.ts'
 // threads merge by position. This module only declares the layout; contingency-capture.ts fills
 // a snapshot from a case.
 
-/** An outage to screen: a branch by network index, or a generator by asset id. */
+/**
+ * An outage to screen: `circuitsLost` of the circuits of a branch by network index, or a generator
+ * by asset id. A Model branch of n circuits holds n identical parallel circuits (or transformer
+ * units); losing m < n of them leaves it in service with (n − m)/n of its admittance and ratings.
+ */
 export type GridContingency =
-  | { readonly kind: 'branch'; readonly branchIndex: number }
+  | { readonly kind: 'branch'; readonly branchIndex: number; readonly circuitsLost: number }
   | { readonly kind: 'generator'; readonly generatorId: string }
 
 export interface SnapshotNetwork {
@@ -18,8 +22,10 @@ export interface SnapshotNetwork {
   readonly branchCount: number
   readonly branchFrom: Int32Array
   readonly branchTo: Int32Array
-  /** Series susceptance 1/x (pu on sBaseMva). */
+  /** Series susceptance 1/x (pu on sBaseMva) of all the branch's circuits in parallel. */
   readonly branchSusceptancePu: Float64Array
+  /** Parallel circuits (or transformer units) per branch. */
+  readonly branchCircuits: Int32Array
   /** 1 on a bus of the Norwegian network, 0 on a boundary bus of an external system (GridTables.norwegianBus). */
   readonly norwegianBus: Uint8Array
 }
@@ -68,6 +74,8 @@ export interface SnapshotContingencies {
   readonly count: number
   /** Branch index, or -1 for a unit. */
   readonly branch: Int32Array
+  /** Circuits of the branch the outage takes out (1 to its circuits), or 0 for a unit. */
+  readonly circuitsLost: Int32Array
   /** The unit's bus, or -1 for a branch. */
   readonly bus: Int32Array
   /** The unit's output (MW); a branch's pre-contingency flow is in `flowsMw`. */

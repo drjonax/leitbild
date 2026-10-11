@@ -116,7 +116,11 @@ export const instantaneousBranchTrips = (grid: GridRuntimeInstance, settings: En
   return trips ?? noTrips
 }
 
-/** Opens the tripped branches' breakers by protection and queues one protection event per trip. */
+/**
+ * Opens the tripped branches' breakers by protection and queues one protection event per trip. The
+ * runtime switches a Model branch, not its circuits: a trip of a branch of n parallel circuits
+ * opens all of them, although N-1 screening (contingency.ts) takes out one circuit by default.
+ */
 export const applyBranchTrips = (grid: GridRuntimeInstance, trips: ReadonlyArray<BranchTripDecision>, at: IsoTimestamp, elapsedMs: number): void => {
   const branches = grid.definition.model.branches
   const arrays = grid.arrays.branches

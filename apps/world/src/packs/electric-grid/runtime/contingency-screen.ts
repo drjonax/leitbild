@@ -16,6 +16,19 @@ import { gridGeneratorIsSynchronised } from './island-input.ts'
 
 export type { ContingencyRatingBasis } from './contingency-capture.ts'
 
+/**
+ * What a branch outage takes out. `circuit`: one circuit (or transformer unit) of a branch the Model
+ * holds as n identical parallel circuits — the loss of one element, N-1 — leaving the branch in
+ * service with (n − 1)/n of its admittance and of its continuous and emergency ratings; a
+ * single-circuit branch is lost whole. `branch`: every circuit of the branch at once, for a
+ * multi-circuit branch an exceptional N-k loss (a double-circuit line on common towers, a busbar
+ * fault taking all parallel transformer units).
+ */
+export type BranchOutageScope = 'circuit' | 'branch'
+
+/** ordinary: the loss of one element, a branch circuit or a unit; exceptional: several circuits of one branch at once (SO GL Art. 3). */
+export type ContingencyCategory = 'ordinary' | 'exceptional'
+
 /** Which outages to screen: every branch in service, the largest units by output, or named assets. */
 export type ContingencySelection =
   | { readonly kind: 'all-branches' }
@@ -32,8 +45,21 @@ export interface ScreenedBranch {
   readonly loadingBasis: LoadingBasis
 }
 
+/** What an outage took out: `circuitsLost` of a branch's `circuits`, or a unit. */
+export type ScreenedContingency =
+  | {
+    readonly assetId: string
+    readonly kind: 'branch'
+    readonly label: string
+    readonly lostMw: number
+    readonly circuits: number
+    readonly circuitsLost: number
+    readonly category: ContingencyCategory
+  }
+  | { readonly assetId: string; readonly kind: 'generator'; readonly label: string; readonly lostMw: number; readonly category: 'ordinary' }
+
 export interface ContingencyResult {
-  readonly contingency: { readonly assetId: string; readonly kind: 'branch' | 'generator'; readonly label: string; readonly lostMw: number }
+  readonly contingency: ScreenedContingency
   readonly islanding: boolean
   readonly affectedIslands: ReadonlyArray<ContingencyPart>
   readonly unservedLoadMw: number
@@ -57,9 +83,14 @@ export interface ScreeningSummary {
 /** Produces the records of every contingency of a snapshot, inline or on worker threads (contingency-pool.ts). */
 export type ContingencyRecordScreen = (snapshot: ContingencySnapshot) => Promise<ScreeningRecords>
 
-/** The selected outages, each checked in service; a branch or unit that is not fails the screening explicitly. */
-export const selectContingencies = (screeningCase: ContingencyCase, selection: ContingencySelection): ReadonlyArray<GridContingency> => {
+/**
+ * The selected outages, each checked in service; a branch or unit that is not fails the screening
+ * explicitly. Each branch outage takes out what `branchOutage` names.
+ */
+export const selectContingencies = (screeningCase: ContingencyCase, selection: ContingencySelection, branchOutage: BranchOutageScope): ReadonlyArray<GridContingency> => {
   const { network, grid } = screeningCase
+  const branchContingency = (index: number): GridContingency =>
+    ({ kind: 'branch', branchIndex: index, circuitsLost: branchOutage === 'circuit' ? 1 : grid.definition.model.branches[index]!.circuits })
   const branchInService = (index: number): boolean =>
     screeningCase.closed[index] === 1 && screeningCase.islands[screeningCase.islandOfBus[network.branchFrom[index]!]!]!.energised
   const generatorInService = (generatorId: string): boolean => {
@@ -70,7 +101,7 @@ export const selectContingencies = (screeningCase: ContingencyCase, selection: C
   }
   if (selection.kind === 'all-branches') {
     const contingencies: GridContingency[] = []
-    for (let index = 0; index < network.branchCount; index += 1) if (branchInService(index)) contingencies.push({ kind: 'branch', branchIndex: index })
+    for (let index = 0; index < network.branchCount; index += 1) if (branchInService(index)) contingencies.push(branchContingency(index))
     return contingencies
   }
   if (selection.kind === 'largest-generators') {
@@ -87,7 +118,7 @@ export const selectContingencies = (screeningCase: ContingencyCase, selection: C
     if (entry?.kind === 'branch') {
       const index = network.branchIds.indexOf(assetId)
       if (!branchInService(index)) throw new Error(`contingency branch ${assetId} is not in service (open, tripped or in a de-energised island)`)
-      return { kind: 'branch', branchIndex: index }
+      return branchContingency(index)
     }
     if (entry?.kind === 'generator') {
       if (!generatorInService(assetId)) throw new Error(`contingency generator ${assetId} is not synchronised to an energised island`)
@@ -106,11 +137,8 @@ const bySeverity = (left: ContingencyResult, right: ContingencyResult): number =
   || right.unservedLoadMw - left.unservedLoadMw
   || (left.contingency.assetId < right.contingency.assetId ? -1 : left.contingency.assetId > right.contingency.assetId ? 1 : 0)
 
-interface ScreenedAsset {
-  readonly assetId: string
-  readonly kind: 'branch' | 'generator'
-  readonly label: string
-}
+type ScreenedAsset = DistributiveOmit<ScreenedContingency, 'lostMw'>
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
 /** Results from the kernel's records: the same records give the same summary, whichever thread wrote them. */
 const summaryOf = (config: {
@@ -131,7 +159,7 @@ const summaryOf = (config: {
     loadingBasis: branchLoadingBasis(snapshot, branch),
   })
   const baseScan = scanBranchLoading({
-    snapshot, flowsMw: base, outOfService: null, listed: new Int32Array(maximumListedOverloads), listedLoadingPercent: new Float64Array(maximumListedOverloads),
+    snapshot, flowsMw: base, outOfService: null, deratedBranch: -1, remainingShare: 1, listed: new Int32Array(maximumListedOverloads), listedLoadingPercent: new Float64Array(maximumListedOverloads),
   })
   let totalViolations = 0
   let islandingCount = 0
@@ -152,7 +180,7 @@ const summaryOf = (config: {
     }))
     const slots = position * maximumListedOverloads
     return {
-      contingency: { assetId: asset.assetId, kind: asset.kind, label: asset.label, lostMw: tenths(records.values[values + recordValue.lostMw]!) },
+      contingency: { ...asset, lostMw: tenths(records.values[values + recordValue.lostMw]!) },
       islanding,
       affectedIslands: parts.map(part => ({
         ...part,
@@ -192,8 +220,19 @@ export const screenContingencies = async (config: {
   const { network, grid } = screeningCase
   const snapshot = captureContingencySnapshot(screeningCase, contingencies, config.ratingBasis)
   const assets = contingencies.map((contingency): ScreenedAsset => {
-    const assetId = contingency.kind === 'branch' ? network.branchIds[contingency.branchIndex]! : contingency.generatorId
-    return { assetId, kind: contingency.kind, label: grid.definition.index.assetById.get(assetId)!.label }
+    if (contingency.kind === 'generator') {
+      const assetId = contingency.generatorId
+      return { assetId, kind: 'generator', label: grid.definition.index.assetById.get(assetId)!.label, category: 'ordinary' }
+    }
+    const branch = grid.definition.model.branches[contingency.branchIndex]!
+    return {
+      assetId: branch.id,
+      kind: 'branch',
+      label: branch.label,
+      circuits: branch.circuits,
+      circuitsLost: contingency.circuitsLost,
+      category: contingency.circuitsLost > 1 ? 'exceptional' : 'ordinary',
+    }
   })
   const branchLabels = grid.definition.model.branches.map(branch => branch.label)
   const records = await config.screen(snapshot)

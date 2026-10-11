@@ -38,6 +38,34 @@ export const corridorModel: GridModelDefinition = handBuiltModel({
 
 export const corridorDefinition = (): CompiledGridDefinition => gridDefinitionForModel(corridorModel)
 
+/**
+ * A 300 kV corridor of a parallel-circuit line G–L beside a single-circuit path via M (both legs
+ * 500 MW continuous, 600 MW emergency): with two circuits the line carries three quarters of G's
+ * export, and losing both puts it all on the path, beyond its emergency rating, while losing one
+ * leaves the other circuit and the path within theirs. `circuits` identical circuits of 500 / 600 MW
+ * and reactance 0.03 pu each are one Model branch, parameters for all of them in parallel, so the
+ * one-circuit variant is the two-circuit corridor after a one-circuit outage.
+ */
+export const parallelCircuitCorridorModel = (circuits: number): GridModelDefinition => handBuiltModel({
+  id: `test-parallel-circuit-corridor-${circuits}`,
+  title: 'Test parallel-circuit corridor',
+  description: 'A parallel-circuit line beside a single-circuit path',
+  buses: [bus('bus:g', 8), bus('bus:m', 9), bus('bus:l', 10)],
+  branches: [
+    testLine({
+      id: 'branch:g-l', fromBusId: 'bus:g', toBusId: 'bus:l', nominalKv: 300, circuits,
+      ratingMw: 500 * circuits, emergencyRatingMw: 600 * circuits, emergencyDurationSeconds: 900, reactancePu: 0.03 / circuits, resistancePu: 0.0015 / circuits,
+    }),
+    line('branch:g-m', 'bus:g', 'bus:m', 0.0225, 500),
+    line('branch:m-l', 'bus:m', 'bus:l', 0.0225, 500),
+  ],
+  generators: [
+    syntheticHydroUnit({ id: 'generator:g1', label: 'G1', busId: 'bus:g', location: [8, 60], capacityMw: 1400, rampRateMwPerMinute: 300 }),
+    syntheticHydroUnit({ id: 'generator:l1', label: 'L1', busId: 'bus:l', location: [10, 60], capacityMw: 400, availableMw: 200, rampRateMwPerMinute: 100 }),
+  ],
+  loads: [testLoad({ id: 'load:l', label: 'Load L', busId: 'bus:l', location: [10, 60], demandMw: 900 })],
+})
+
 const startsAtMs = Date.parse('2026-01-15T10:00:00.000Z')
 export const isoAt = (milliseconds: number): IsoTimestamp => new Date(startsAtMs + milliseconds).toISOString() as IsoTimestamp
 

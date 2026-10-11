@@ -14,12 +14,14 @@ import { solveSparseCholesky, type SparseCholeskyFactor } from './network/sparse
 
 // N-1 screening kernel on a contingency snapshot. A branch outage that keeps its island connected
 // moves its flow by line outage distribution factors, LODF(l,k) = PTDF(l,k) / (1 − PTDF(k,k)), from
-// one solve with the island's factor. An outage that splits an island (a bridge), one that separates
-// a boundary bus (a bridge cutting off only boundary buses, which is no split), and a generator
-// outage, change injections: each resulting part rebalances by its reserve participation and the
-// flow change is one compensating solve on the intact factor. Both equal a re-solve of the changed
-// network. The kernel reads only the snapshot and writes only its own vectors and the records, so
-// it runs the same on the main thread and in a worker thread.
+// one solve with the island's factor. Losing some of a multi-circuit branch's circuits is the same
+// rank-one change scaled to the share lost, and the branch stays in service on the rest. An outage
+// that splits an island (a bridge), one that separates a boundary bus (a bridge cutting off only
+// boundary buses, which is no split), and a generator outage, change injections: each resulting
+// part rebalances by its reserve participation and the flow change is one compensating solve on the
+// intact factor. All equal a re-solve of the changed network. The kernel reads only the snapshot
+// and writes only its own vectors and the records, so it runs the same on the main thread and in a
+// worker thread.
 
 export interface ContingencyPart extends PartBalance {
   readonly busCount: number
@@ -30,15 +32,20 @@ export interface ContingencyOutcome {
   readonly islanding: boolean
   /** The parts that had to rebalance or lost supply. */
   readonly parts: ReadonlyArray<ContingencyPart>
-  /** Pre-contingency flow of the branch or output of the unit (MW). */
+  /** Pre-contingency flow of the circuits lost (all of the branch's, or their share of it) or output of the unit (MW). */
   readonly lostMw: number
+  /** The branch a partial outage leaves in service on its remaining circuits, or -1. */
+  readonly deratedBranch: number
+  /** The share of that branch's circuits that remain in service, (n − m)/n; 1 without one. */
+  readonly remainingShare: number
 }
 
 export interface ContingencyEngine {
   /**
    * Writes the post-contingency active flow of every branch for the snapshot's contingency at
    * `position` into `flowsMw` (MW), and marks with 1 in `outOfService` the branches the outage
-   * takes out: the outaged branch and every branch of a part that loses supply.
+   * takes out: the outaged branch and every branch of a part that loses supply. A partial outage
+   * (some of a branch's circuits) takes out no branch: it names the branch in `deratedBranch`.
    */
   readonly evaluate: (position: number, flowsMw: Float64Array, outOfService: Uint8Array) => ContingencyOutcome
 }
@@ -114,6 +121,46 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
     for (const branch of island.branches) if (inPart(branchFrom[branch]!)) takeOut(branch, flowsMw, outOfService)
   }
 
+  /** The PTDF column of a branch into `angles`: B·x = e_from − e_to (unit transfer), solved on its island's factor. */
+  const solveTransfer = (island: KernelIsland, from: number, to: number): void => {
+    for (const bus of island.buses) values[bus] = 0
+    values[from] = 1
+    values[to] = -1
+    solveIsland(island, values, angles)
+  }
+
+  /** PTDF of a branch for the transfer `angles` holds. */
+  const ptdfOf = (branch: number): number => (angles[branchFrom[branch]!]! - angles[branchTo[branch]!]!) * branchSusceptancePu[branch]!
+
+  /**
+   * Losing m of a branch's n identical circuits removes the share α = m/n of its susceptance b, the
+   * rank-one change ΔB = −α·b·a·aᵀ (a = e_from − e_to). By Sherman–Morrison the base flow of the
+   * lost circuits, α·f, moves onto every other branch l by the fractional outage distribution factor
+   * PTDF(l,k) / (1 − α·PTDF(k,k)), and the remaining circuits carry (1 − α)·f / (1 − α·PTDF(k,k));
+   * at α = 1 this is the LODF of a full outage. The branch stays closed, so nothing splits or
+   * rebalances: across a bridge (PTDF(k,k) = 1) the remaining circuits carry the whole flow.
+   */
+  const circuitOutage = (branchIndex: number, circuitsLost: number, circuits: number, flowsMw: Float64Array): ContingencyOutcome => {
+    const flowMw = snapshot.flowsMw[branchIndex]!
+    const lostShare = circuitsLost / circuits
+    const remainingShare = (circuits - circuitsLost) / circuits
+    const lostMw = flowMw * lostShare
+    flowsMw.set(snapshot.flowsMw)
+    if (bridges.childOf[branchIndex]! >= 0) return { islanding: false, parts: [], lostMw, deratedBranch: branchIndex, remainingShare }
+    const from = branchFrom[branchIndex]!
+    const to = branchTo[branchIndex]!
+    const island = islands[snapshot.islands.islandOfBus[from]!]!
+    solveTransfer(island, from, to)
+    const denominator = 1 - lostShare * ptdfOf(branchIndex)
+    const scale = lostMw / denominator
+    for (const branch of island.branches) {
+      if (branch === branchIndex) continue
+      flowsMw[branch] = flowsMw[branch]! + ptdfOf(branch) * scale
+    }
+    flowsMw[branchIndex] = remainingShare * flowMw / denominator
+    return { islanding: false, parts: [], lostMw, deratedBranch: branchIndex, remainingShare }
+  }
+
   const branchOutage = (branchIndex: number, flowsMw: Float64Array, outOfService: Uint8Array): ContingencyOutcome => {
     const from = branchFrom[branchIndex]!
     const to = branchTo[branchIndex]!
@@ -122,20 +169,15 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
     flowsMw.set(snapshot.flowsMw)
     const child = bridges.childOf[branchIndex]!
     if (child < 0) {
-      // PTDF column of the outaged branch: B·x = e_from − e_to (unit transfer).
-      for (const bus of island.buses) values[bus] = 0
-      values[from] = 1
-      values[to] = -1
-      solveIsland(island, values, angles)
-      const selfPtdf = (angles[from]! - angles[to]!) * branchSusceptancePu[branchIndex]!
+      solveTransfer(island, from, to)
+      const selfPtdf = ptdfOf(branchIndex)
       const scale = lostMw / (1 - selfPtdf)
       for (const branch of island.branches) {
         if (branch === branchIndex) continue
-        const ptdf = (angles[branchFrom[branch]!]! - angles[branchTo[branch]!]!) * branchSusceptancePu[branch]!
-        flowsMw[branch] = flowsMw[branch]! + ptdf * scale
+        flowsMw[branch] = flowsMw[branch]! + ptdfOf(branch) * scale
       }
       takeOut(branchIndex, flowsMw, outOfService)
-      return { islanding: false, parts: [], lostMw }
+      return { islanding: false, parts: [], lostMw, deratedBranch: -1, remainingShare: 1 }
     }
     const inChild = (bus: number): boolean => bridges.entry[bus]! >= bridges.entry[child]! && bridges.entry[bus]! <= bridges.exit[child]!
     const childBuses: number[] = []
@@ -158,7 +200,7 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
       const separatedBus = (bus: number): boolean => separated.includes(bus)
       zeroFlowsOfBuses(island, separatedBus, flowsMw, outOfService)
       if (part.balancing === 'de-energised') zeroFlowsOfBuses(island, bus => !separatedBus(bus), flowsMw, outOfService)
-      return { islanding: false, parts: [part], lostMw }
+      return { islanding: false, parts: [part], lostMw, deratedBranch: -1, remainingShare: 1 }
     }
     const parts = [childBuses, otherBuses].map(members => ({ ...rebalancePart({ participation, members, injections: delta, removed: null }), busCount: members.length }))
     for (const bus of island.buses) delta[bus] = delta[bus]! - snapshot.injectionsMw[bus]!
@@ -166,7 +208,7 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
     takeOut(branchIndex, flowsMw, outOfService)
     if (parts[0]!.balancing === 'de-energised') zeroFlowsOfBuses(island, inChild, flowsMw, outOfService)
     if (parts[1]!.balancing === 'de-energised') zeroFlowsOfBuses(island, bus => !inChild(bus), flowsMw, outOfService)
-    return { islanding: true, parts, lostMw }
+    return { islanding: true, parts, lostMw, deratedBranch: -1, remainingShare: 1 }
   }
 
   const generatorOutage = (position: number, flowsMw: Float64Array, outOfService: Uint8Array): ContingencyOutcome => {
@@ -186,11 +228,11 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
     const part = { ...rebalancePart({ participation, members: island.buses, injections: delta, removed }), busCount: island.buses.length }
     if (part.balancing === 'de-energised') {
       for (const branch of island.branches) takeOut(branch, flowsMw, outOfService)
-      return { islanding: false, parts: [part], lostMw }
+      return { islanding: false, parts: [part], lostMw, deratedBranch: -1, remainingShare: 1 }
     }
     for (const member of island.buses) delta[member] = delta[member]! - snapshot.injectionsMw[member]!
     addCompensation(island, flowsMw)
-    return { islanding: false, parts: [part], lostMw }
+    return { islanding: false, parts: [part], lostMw, deratedBranch: -1, remainingShare: 1 }
   }
 
   return {
@@ -198,7 +240,10 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
       if (!Number.isInteger(position) || position < 0 || position >= contingencies.count) throw new Error(`contingency position ${position} is outside 0..${contingencies.count - 1}`)
       outOfService.fill(0)
       const branch = contingencies.branch[position]!
-      return branch >= 0 ? branchOutage(branch, flowsMw, outOfService) : generatorOutage(position, flowsMw, outOfService)
+      if (branch < 0) return generatorOutage(position, flowsMw, outOfService)
+      const circuitsLost = contingencies.circuitsLost[position]!
+      const circuits = network.branchCircuits[branch]!
+      return circuitsLost < circuits ? circuitOutage(branch, circuitsLost, circuits, flowsMw) : branchOutage(branch, flowsMw, outOfService)
     },
   }
 }
@@ -224,6 +269,15 @@ export const branchLoadingPercent = (snapshot: ContingencySnapshot, branch: numb
   return Math.sqrt(Math.max(flowMw * flowMw + fromMvar * fromMvar, toMw * toMw + toMvar * toMvar)) / capacityMw * 100
 }
 
+/**
+ * Loading (%) of the circuits of a branch that stay in service after a partial outage, carrying
+ * `flowMw` together, against `remainingShare` of the branch's capacity. Identical parallel circuits
+ * share active and reactive power equally and each remaining circuit keeps its base reactive power,
+ * so they are loaded as the whole branch would be at flowMw / remainingShare.
+ */
+export const remainingCircuitsLoadingPercent = (snapshot: ContingencySnapshot, branch: number, flowMw: number, remainingShare: number): number =>
+  branchLoadingPercent(snapshot, branch, flowMw / remainingShare)
+
 export interface BranchLoadingScan {
   /** Most loaded branch (the first of equals), or -1 without branches. */
   readonly worst: number
@@ -235,7 +289,8 @@ export interface BranchLoadingScan {
 }
 
 /**
- * Loading of every branch in one pass (0 on a branch out of service): the most loaded branch, the
+ * Loading of every branch in one pass (0 on a branch out of service; on `deratedBranch`, of its
+ * remaining circuits, `remainingShare` of them): the most loaded branch, the
  * overloaded count, and the `listed.length` most-loaded overloaded branches written to `listed`
  * with their loading in `listedLoadingPercent` — the head of a stable sort of the overloaded
  * branches by loading, kept by insertion instead of sorting them all.
@@ -244,17 +299,22 @@ export const scanBranchLoading = (config: {
   readonly snapshot: ContingencySnapshot
   readonly flowsMw: Float64Array
   readonly outOfService: Uint8Array | null
+  /** A branch left in service on part of its circuits (-1: none), and the share that remains. */
+  readonly deratedBranch: number
+  readonly remainingShare: number
   readonly listed: Int32Array
   readonly listedLoadingPercent: Float64Array
 }): BranchLoadingScan => {
-  const { snapshot, flowsMw, outOfService, listed, listedLoadingPercent } = config
+  const { snapshot, flowsMw, outOfService, deratedBranch, remainingShare, listed, listedLoadingPercent } = config
   const capacity = listed.length
   let worst = -1
   let worstLoadingPercent = -1
   let overloadedCount = 0
   let listedCount = 0
   for (let branch = 0; branch < flowsMw.length; branch += 1) {
-    const value = outOfService !== null && outOfService[branch] === 1 ? 0 : branchLoadingPercent(snapshot, branch, flowsMw[branch]!)
+    const value = outOfService !== null && outOfService[branch] === 1
+      ? 0
+      : branch === deratedBranch ? remainingCircuitsLoadingPercent(snapshot, branch, flowsMw[branch]!, remainingShare) : branchLoadingPercent(snapshot, branch, flowsMw[branch]!)
     if (value > worstLoadingPercent) {
       worstLoadingPercent = value
       worst = branch
@@ -293,7 +353,13 @@ export const screenContingencyRange = (snapshot: ContingencySnapshot, records: S
     const slots = position * maximumListedOverloads
     const listed = records.listedBranches.subarray(slots, slots + maximumListedOverloads)
     const { worst, worstLoadingPercent, overloadedCount, listedCount } = scanBranchLoading({
-      snapshot, flowsMw: flows, outOfService, listed, listedLoadingPercent: records.listedLoadingPercent.subarray(slots, slots + maximumListedOverloads),
+      snapshot,
+      flowsMw: flows,
+      outOfService,
+      deratedBranch: outcome.deratedBranch,
+      remainingShare: outcome.remainingShare,
+      listed,
+      listedLoadingPercent: records.listedLoadingPercent.subarray(slots, slots + maximumListedOverloads),
     })
     const integers = position * recordIntegerWidth
     const values = position * recordValueWidth

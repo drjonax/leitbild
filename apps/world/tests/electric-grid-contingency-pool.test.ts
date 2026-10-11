@@ -20,7 +20,7 @@ import {
   sizedContingencyScreen,
 } from '../src/packs/electric-grid/runtime/contingency-execution.ts'
 import { contingencyPoolConfigFromEnv, createContingencyPool, type ContingencyPool } from '../src/packs/electric-grid/runtime/contingency-pool.ts'
-import { screenContingencies, selectContingencies, type ContingencySelection, type ScreeningSummary } from '../src/packs/electric-grid/runtime/contingency-screen.ts'
+import { screenContingencies, selectContingencies, type BranchOutageScope, type ContingencySelection, type ScreeningSummary } from '../src/packs/electric-grid/runtime/contingency-screen.ts'
 import { sharedScreeningRecords, type ContingencySnapshot, type GridContingency } from '../src/packs/electric-grid/runtime/contingency-snapshot.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
@@ -115,17 +115,24 @@ describe('electric grid N-1 worker pool', () => {
     // AC base flows with DC increments.
     expect(live.baseFlowModels.map(island => island.flowModel)).toEqual(['ac'])
     const pool = poolOf(3)
-    const selections: ReadonlyArray<ContingencySelection> = [{ kind: 'all-branches' }, { kind: 'largest-generators', count: 100 }]
-    for (const selection of selections) {
+    // One circuit of each multi-circuit branch, every circuit of each branch, and the largest units.
+    const selections: ReadonlyArray<readonly [ContingencySelection, BranchOutageScope]> = [
+      [{ kind: 'all-branches' }, 'circuit'],
+      [{ kind: 'all-branches' }, 'branch'],
+      [{ kind: 'largest-generators', count: 100 }, 'circuit'],
+    ]
+    for (const [selection, branchOutage] of selections) {
       for (const ratingBasis of ['normal', 'emergency'] as const) {
-        const contingencies = selectContingencies(live, selection)
+        const contingencies = selectContingencies(live, selection, branchOutage)
         const alone = JSON.stringify(await screened(live, contingencies, ratingBasis, inline))
         const parallel = JSON.stringify(await screened(live, contingencies, ratingBasis, onPool(pool)))
         expect(parallel).toBe(alone)
+        // Deterministic: the same case screens to the same bytes again.
+        expect(JSON.stringify(await screened(live, contingencies, ratingBasis, onPool(pool)))).toBe(alone)
       }
     }
     // The query takes the pool by the size rule and answers with the same results.
-    const all = selectContingencies(live, { kind: 'all-branches' })
+    const all = selectContingencies(live, { kind: 'all-branches' }, 'circuit')
     expect(contingencyExecution(captureContingencySnapshot(live, all, 'normal'), 3)).toBe('pool')
     const answer = await answerElectricGridQuery({
       request: { capabilityId: 'world.electric-grid.contingency.screen', input: { gridId: grid.definition.gridId, contingencies: 'all-branches', limit: 500 } },
@@ -148,10 +155,10 @@ describe('electric grid N-1 worker pool', () => {
     // Its AC load flow converges at the fixture's declared demand (1.0 at 08:00), so the base flows are AC.
     expect(live.baseFlowModels.map(island => island.flowModel)).toEqual(['ac'])
     const pool = poolOf(3)
-    const branches = selectContingencies(live, { kind: 'all-branches' })
+    const branches = selectContingencies(live, { kind: 'all-branches' }, 'circuit')
     expect(branches.length).toBe(14_000)
     // Every fourth branch across the grid (meshed and bridges) and the 50 largest units.
-    const contingencies = [...branches.filter((_, index) => index % 4 === 0), ...selectContingencies(live, { kind: 'largest-generators', count: 50 })]
+    const contingencies = [...branches.filter((_, index) => index % 4 === 0), ...selectContingencies(live, { kind: 'largest-generators', count: 50 }, 'circuit')]
     const snapshot = captureContingencySnapshot(live, contingencies, 'normal')
     expect(Array.from(snapshot.bridges.childOf).some(child => child >= 0)).toBe(true)
     let alone = ''
@@ -183,7 +190,7 @@ describe('electric grid N-1 worker pool', () => {
     const plan = grid.topologyPlan
     const before = state()
     const live = liveContingencyCase(grid)
-    const snapshot = captureContingencySnapshot(live, selectContingencies(live, { kind: 'all-branches' }), 'emergency')
+    const snapshot = captureContingencySnapshot(live, selectContingencies(live, { kind: 'all-branches' }, 'circuit'), 'emergency')
     const digest = snapshotDigest(snapshot)
     const records = await screenRecordsOnPool(snapshot, poolOf(3))
     expect(records.count).toBe(snapshot.contingencies.count)
@@ -196,11 +203,11 @@ describe('electric grid N-1 worker pool', () => {
     const run = steppedGrid(corridorDefinition())
     run.advanceTo(10_000)
     const corridor = liveContingencyCase(run.grid)
-    const small = captureContingencySnapshot(corridor, selectContingencies(corridor, { kind: 'all-branches' }), 'normal')
+    const small = captureContingencySnapshot(corridor, selectContingencies(corridor, { kind: 'all-branches' }, 'circuit'), 'normal')
     expect(screeningWorkUnits(small)).toBeLessThan(inlineScreeningWorkUnits)
     expect(contingencyExecution(small, 4)).toBe('inline')
     const synthetic = liveContingencyCase(intactSynthetic(2_000))
-    const large = captureContingencySnapshot(synthetic, selectContingencies(synthetic, { kind: 'all-branches' }), 'normal')
+    const large = captureContingencySnapshot(synthetic, selectContingencies(synthetic, { kind: 'all-branches' }, 'circuit'), 'normal')
     expect(contingencyExecution(large, 4)).toBe('pool')
     // A host without a spare core, or LEITBILD_GRID_N1_MAX_WORKERS=0, screens everything inline.
     expect(contingencyExecution(large, 0)).toBe('inline')
@@ -227,10 +234,10 @@ describe('electric grid N-1 worker pool', () => {
     const run = steppedGrid(corridorDefinition())
     run.advanceTo(10_000)
     const corridor = liveContingencyCase(run.grid)
-    await screened(corridor, selectContingencies(corridor, { kind: 'all-branches' }), 'normal', sizedContingencyScreen(() => pool))
+    await screened(corridor, selectContingencies(corridor, { kind: 'all-branches' }, 'circuit'), 'normal', sizedContingencyScreen(() => pool))
     expect(pool.liveWorkerCount()).toBe(0)
     const synthetic = liveContingencyCase(intactSynthetic(2_000))
-    await screened(synthetic, selectContingencies(synthetic, { kind: 'all-branches' }), 'normal', sizedContingencyScreen(() => pool))
+    await screened(synthetic, selectContingencies(synthetic, { kind: 'all-branches' }, 'circuit'), 'normal', sizedContingencyScreen(() => pool))
     expect(pool.liveWorkerCount()).toBe(2)
   }, 60_000)
 
@@ -256,7 +263,7 @@ describe('electric grid N-1 worker pool', () => {
   test('idle workers are terminated after the idle time, and the next screening starts new ones', async () => {
     const pool = poolOf(2, 100)
     const synthetic = liveContingencyCase(intactSynthetic(1_000))
-    const snapshot = captureContingencySnapshot(synthetic, selectContingencies(synthetic, { kind: 'all-branches' }), 'normal')
+    const snapshot = captureContingencySnapshot(synthetic, selectContingencies(synthetic, { kind: 'all-branches' }, 'circuit'), 'normal')
     // The idle timer starts with the last chunk's reply, which also resolves the screening.
     const first = await screenRecordsOnPool(snapshot, pool)
     const idleFrom = performance.now()
@@ -275,7 +282,7 @@ describe('electric grid N-1 worker pool', () => {
     const run = steppedGrid(corridorDefinition())
     run.advanceTo(10_000)
     const corridor = liveContingencyCase(run.grid)
-    const contingencies = selectContingencies(corridor, { kind: 'all-branches' })
+    const contingencies = selectContingencies(corridor, { kind: 'all-branches' }, 'circuit')
     const snapshot = captureContingencySnapshot(corridor, contingencies, 'normal')
     const pool = poolOf(2)
     // The kernel throws in the worker: the worker replies with the reason and stays alive.
@@ -300,7 +307,7 @@ describe('electric grid N-1 worker pool', () => {
     // A closed pool fails what it was running and accepts nothing more.
     const closing = poolOf(1)
     const synthetic = liveContingencyCase(intactSynthetic(1_000))
-    const pending = screened(synthetic, selectContingencies(synthetic, { kind: 'all-branches' }), 'normal', onPool(closing))
+    const pending = screened(synthetic, selectContingencies(synthetic, { kind: 'all-branches' }, 'circuit'), 'normal', onPool(closing))
     closing.close()
     await expect(pending).rejects.toThrow('the N-1 worker pool was closed during the screening')
     await expect(closing.screen(snapshot, sharedScreeningRecords(contingencies.length), [{ start: 0, end: 1 }])).rejects.toThrow('the N-1 worker pool is closed')
