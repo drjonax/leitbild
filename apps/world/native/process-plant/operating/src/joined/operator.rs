@@ -122,6 +122,9 @@ struct Blocks<P> {
     coupled_wall_s: f64,
     /// Nuclear, solids, secondary and rods, in that order.
     scales: [Scales; 4],
+    /// One startup evaluation lets the rod owner prepare its algebraic
+    /// coordinates on that evaluation's fluid state ([`Joined::prepare_owners`]).
+    prepare: Option<Vec<super::block::Transaction>>,
 }
 
 pub struct Joined<P: Properties> {
@@ -248,6 +251,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
         ];
         let blocks = Blocks {
             scales,
+            prepare: None,
             nuclear_rows: vec![s(0.); nuclear.layout().len()],
             solid_rows: vec![s(0.); solids.layout().len()],
             secondary_rows: vec![s(0.); secondary_len],
@@ -486,6 +490,41 @@ impl<P: Properties + WaterProperties> Joined<P> {
         self.counters.residual_wall_s += started.elapsed().as_secs_f64();
         self.counters.coupled_wall_s = self.blocks.coupled_wall_s;
         Ok(())
+    }
+
+    /// Startup only: let the composed owners prepare their algebraic
+    /// coordinates on the fluid state of one value evaluation at `(t, y, 0)`
+    /// (the rods' steady guide currents), then write their prepared
+    /// coordinates into `y`. No differential coordinate of any block moves.
+    pub fn prepare_owners(
+        &mut self,
+        t: f64,
+        y: &mut [f64],
+    ) -> Result<Vec<super::block::Transaction>, Failure> {
+        let zero = vec![0.; y.len()];
+        self.blocks.prepare = Some(Vec::new());
+        let evaluated = self.evaluate(t, y, &zero, None, 0., None);
+        let done = self.blocks.prepare.take().unwrap_or_default();
+        evaluated?;
+        let o = self.blocks.offsets;
+        if let RodPort::Owner(b) = &self.blocks.rods {
+            let ids = b.differential();
+            for (i, (v, scale)) in b
+                .prepared()
+                .iter()
+                .zip(&self.blocks.scales[3].coordinates)
+                .enumerate()
+            {
+                let new = v / scale;
+                if ids[i] != 0. && new != y[o.rods + i] {
+                    return Err(fatal(format!(
+                        "the rod owner's preparation moved differential coordinate {i}"
+                    )));
+                }
+                y[o.rods + i] = new;
+            }
+        }
+        Ok(done)
     }
 
     /// Memo §3 (C): the fixed-stock surface initializer at the state's own
@@ -990,6 +1029,9 @@ impl<P: Properties + WaterProperties> Blocks<P> {
             &mut heats.solids,
         )?;
         if let RodPort::Owner(b) = rods {
+            if let Some(done) = self.prepare.as_mut() {
+                done.push(b.prepare(properties, fluid)?);
+            }
             let x = view(y, yp, seed, cj, o.rods..o.end, &scales[3].coordinates)?;
             b.rows(properties, t, x, fluid, receipts, rod_rows)?;
         }

@@ -870,6 +870,13 @@ impl<P> Rods<P> for RodBlock {
     fn next_time_event(&self, t: f64) -> Option<f64> {
         self.holding_open_at.filter(|open| *open > t)
     }
+    fn prepare(&mut self, _: &P, fluid: &Fluid<'_>) -> Result<Transaction, Failure> {
+        let currents = self.prepare_currents(fluid)?;
+        Ok(Transaction {
+            deposits: Vec::new(),
+            receipt: json!({"prepared_guide_currents_kg_s": currents}),
+        })
+    }
     fn clusters(&self) -> usize {
         self.clusters.len()
     }
@@ -1117,6 +1124,7 @@ impl<P> Rods<P> for RodBlock {
     }
     fn command(&mut self, t: f64, command: Command) -> Result<Transaction, Failure> {
         match command {
+            Command::ManualReactorTrip => self.open_holding_circuit(t),
             Command::TurbineTrip => {
                 let open = t + self.holding_delay;
                 if self.holding_open_at.is_some() {
