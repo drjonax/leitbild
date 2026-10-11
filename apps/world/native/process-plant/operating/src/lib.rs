@@ -20,6 +20,7 @@ pub mod pressure;
 pub mod pzr;
 pub mod pzr_field;
 pub mod rotor;
+pub mod sg;
 pub mod source_feedback;
 pub mod sparse;
 pub mod surge;
