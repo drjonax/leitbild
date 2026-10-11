@@ -16,6 +16,13 @@
     gridTripGeneratorCommandKind,
   } from '../../packs/electric-grid/commands/generator.ts'
   import {
+    gridBlockHvdcCommandKind,
+    gridDeblockHvdcCommandKind,
+    gridResetHvdcTripCommandKind,
+    gridSetHvdcSetpointCommandKind,
+    gridTripHvdcCommandKind,
+  } from '../../packs/electric-grid/commands/hvdc.ts'
+  import {
     gridRestoreLoadCommandKind,
     gridSetEvChargingDemandCommandKind,
     gridShedLoadCommandKind,
@@ -25,7 +32,7 @@
   import { untrack } from 'svelte'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
 
-  type AssetKind = 'bus' | 'branch' | 'generator' | 'load' | 'storage'
+  type AssetKind = 'bus' | 'branch' | 'generator' | 'load' | 'storage' | 'hvdc'
   type MapTarget =
     | { readonly kind: 'point'; readonly center: readonly [number, number] }
     | { readonly kind: 'bounds'; readonly bounds: readonly [readonly [number, number], readonly [number, number]] }
@@ -65,6 +72,7 @@
     { value: 'generator', label: 'Generation' },
     { value: 'load', label: 'Consumers' },
     { value: 'storage', label: 'Storage' },
+    { value: 'hvdc', label: 'HVDC links' },
   ]
 
   let kind = $state<AssetKind | 'all'>('all')
@@ -148,6 +156,7 @@
     gridDerateBranchCommandKind,
     gridShedLoadCommandKind,
     gridSetEvChargingDemandCommandKind,
+    gridSetHvdcSetpointCommandKind,
   ].includes(operationId)
 
   const operationLabel = (operationId: string): string => ({
@@ -164,6 +173,11 @@
     [gridShedLoadCommandKind]: 'Shed load',
     [gridRestoreLoadCommandKind]: 'Restore load',
     [gridSetEvChargingDemandCommandKind]: 'Set EV demand',
+    [gridSetHvdcSetpointCommandKind]: 'Set transfer',
+    [gridBlockHvdcCommandKind]: 'Block',
+    [gridDeblockHvdcCommandKind]: 'Deblock',
+    [gridTripHvdcCommandKind]: 'Trip',
+    [gridResetHvdcTripCommandKind]: 'Reset trip',
   }[operationId] ?? operationId)
 
   const valueLabel = (operationId: string): string => operationId === gridDerateBranchCommandKind
@@ -174,7 +188,9 @@
         ? 'Demand (MW)'
         : operationId === gridSetGeneratorAvailabilityCommandKind
           ? 'Available capacity (MW)'
-          : 'Target (MW)'
+          : operationId === gridSetHvdcSetpointCommandKind
+            ? 'Set-point (MW, positive exports)'
+            : 'Target (MW)'
 
   const defaultValueFor = (operationId: string): string => {
     if (!detail) return ''
@@ -183,6 +199,7 @@
     if (operationId === gridDispatchGeneratorCommandKind) return String(detail.state?.targetMw ?? 0)
     if (operationId === gridSetGeneratorAvailabilityCommandKind) return String(detail.state?.availableMw ?? 0)
     if (operationId === gridSetEvChargingDemandCommandKind) return String(detail.state?.nominalDemandMw ?? 0)
+    if (operationId === gridSetHvdcSetpointCommandKind) return String(detail.state?.setpointMw ?? 0)
     return ''
   }
 
@@ -193,6 +210,7 @@
     if (operationId === gridDerateBranchCommandKind) return { ...base, availability: value }
     if (operationId === gridShedLoadCommandKind) return { ...base, targetDemandMw: value }
     if (operationId === gridSetEvChargingDemandCommandKind) return { ...base, demandMw: value }
+    if (operationId === gridSetHvdcSetpointCommandKind) return { ...base, setpointMw: value }
     return base
   }
 
@@ -281,6 +299,13 @@
       field('Priority', formatted(valueOf(definition, 'priority'))),
       field('Interruptible', formatted(valueOf(definition, 'interruptibleMw'), 'MW', 1)),
       field('Bus', formatted(valueOf(definition, 'busId'))),
+    ]
+    if (asset.kind === 'hvdc') return [
+      field('State', formatted(valueOf(state, 'state'))),
+      field('Transfer', `${formatted(valueOf(state, 'transferMw'), 'MW')} → set-point ${formatted(valueOf(state, 'setpointMw'), 'MW')} (positive exports)`),
+      field('Losses', formatted(valueOf(state, 'lossesMw'), 'MW', 1)),
+      field('Rating', `±${formatted(valueOf(definition, 'ratingMw'), 'MW')} · ramp ${formatted(valueOf(definition, 'rampMwPerMinute'), 'MW/min')}`),
+      field('From → to', `${formatted(valueOf(definition, 'fromBusId'))} → ${formatted(valueOf(definition, 'toBusId'))}`),
     ]
     if (asset.kind === 'bus') return [
       field('Voltage', state === undefined ? 'Not solved' : valueOf(state, 'voltageModel') === 'not-converged' ? 'Unknown: AC load flow did not converge' : formatted(valueOf(state, 'voltagePu'), 'pu', 3)),
