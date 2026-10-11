@@ -9,6 +9,8 @@
     "packages/*"
   ],
   "scripts": {
+    "dev:stack": "bun --no-env-file run scripts/local-stack.ts",
+    "dev:smoke": "bun --no-env-file run scripts/local-stack.ts --smoke --port=0",
     "knowledge:publish": "bun run scripts/publish-knowledge.ts",
     "check:knowledge": "bun run --cwd packages/knowledge check",
     "test:knowledge": "bun run --cwd packages/knowledge test",
