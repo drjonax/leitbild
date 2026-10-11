@@ -1079,6 +1079,222 @@ fn jacobian_attribution(
     json!({"jacobians": c.jacobians, "wall_s_per_jacobian": c.jacobian_wall_s / n, "by_kind": per})
 }
 
+#[test]
+#[ignore = "NOT-EVIDENCE probe: requires the joined packet, the wiki, IF97 and stock IDA/KLU"]
+fn reactivity_decomposition_at_the_prepared_and_settled_states() {
+    use leitbild_operating_plant::{
+        joined::nuclear::FeedbackInputs,
+        network::Properties,
+        source_feedback::{Conditions, ReactivityTerms},
+        thermal::Scalar,
+    };
+    use leitbild_operating_water::{
+        ida::{Ida, Initial},
+        joined::{Integrated, Restart},
+    };
+    let started = z1::cpu_s();
+    let Started {
+        mut joined,
+        y,
+        yp,
+        ids,
+        atol,
+        rtol,
+        receipt: preparation,
+        ..
+    } = started_full_composition();
+    let settle_s: f64 = std::env::var("LD01_SETTLING_CAP_S").map_or(600., |v| v.parse().unwrap());
+    joined.evaluate(0., &y, &yp, None, 0., None).unwrap();
+    let inputs0 = joined.nuclear().feedback_inputs();
+    let travel0: Vec<Scalar> = joined.travel().to_vec();
+    // The same settling as probe 4: BDF order 2 on the block Jacobian, the
+    // stock coefficient with dcj 0.1 and G13's first step.
+    let nonnegative = joined.network.nonnegative_stocks();
+    let mut ida = Ida::new(
+        Integrated::with_blocks(joined, 0., &y).unwrap(),
+        Initial {
+            time: 0.,
+            y: &y,
+            yp: &yp,
+            differential: &ids,
+            absolute_tolerance: &atol,
+            relative_tolerance: rtol,
+        },
+    )
+    .unwrap();
+    ida.set_max_order(2).unwrap();
+    ida.constrain_nonnegative(&nonnegative).unwrap();
+    Restart {
+        newton_coefficient: NEWTON_COEFFICIENT,
+        delta_cj_lsetup: DELTA_CJ_LSETUP,
+        first_step_s: FIRST_STEP_S,
+        start_bound: 1e-12,
+        start_passes: 2,
+        bound_placement: 1e-12,
+    }
+    .configure(&mut ida)
+    .unwrap();
+    ida.stop_at(settle_s).unwrap();
+    let (mut ys, mut yps) = (y.clone(), yp.clone());
+    let mut t = 0.;
+    while t < settle_s {
+        t = ida
+            .advance((t + ADVANCE_CHUNK_S).min(settle_s), &mut ys, &mut yps)
+            .unwrap()
+            .reached()
+            .unwrap();
+    }
+    let joined = &mut ida.system_mut().joined;
+    joined.evaluate(t, &ys, &yps, None, 0., None).unwrap();
+    let inputs1 = joined.nuclear().feedback_inputs();
+    let travel1: Vec<Scalar> = joined.travel().to_vec();
+    let model = joined.nuclear().feedback();
+    let terms = |i: &FeedbackInputs, travel: &[Scalar]| -> Vec<ReactivityTerms> {
+        let c = |v: &[f64]| -> Vec<Scalar> { v.iter().map(|x| Scalar::constant(*x)).collect() };
+        let (f, d, b, p, m) = (
+            c(&i.fuel_temperature_k),
+            c(&i.water_density_kg_m3),
+            c(&i.boron_ppm_eq),
+            c(&i.pressure_pa),
+            c(&i.moderator_temperature_k),
+        );
+        let (fi, xe, sm, op) = (
+            c(&i.fissile_atoms),
+            c(&i.xenon_atoms),
+            c(&i.samarium_atoms),
+            c(&i.capture_loss_change_m2),
+        );
+        let mut out = vec![ReactivityTerms::default(); i.neutrons.len()];
+        model
+            .reactivity_terms(
+                Conditions {
+                    fuel_temperature_k: &f,
+                    water_density_kg_m3: &d,
+                    boron_ppm_eq: &b,
+                    pressure_pa: &p,
+                    moderator_temperature_k: &m,
+                    fissile_atoms: &fi,
+                    xenon_atoms: &xe,
+                    samarium_atoms: &sm,
+                    capture_loss_change_m2: &op,
+                    achieved_rod_travel_m: travel,
+                    capsule_age_s: Scalar::constant(0.),
+                },
+                &mut out,
+            )
+            .unwrap();
+        out
+    };
+    // State A: the prepared coolant with the settled fuel; state B: settled.
+    let mut prepared_with_settled_fuel = inputs0.clone();
+    prepared_with_settled_fuel.fuel_temperature_k = inputs1.fuel_temperature_k.clone();
+    // The settled liquid's density at the prepared pressure: the moderator
+    // temperature part; the rest of the density change is the pressure part.
+    let mut thermal_only = inputs0.clone();
+    thermal_only.water_density_kg_m3 = inputs0
+        .pressure_pa
+        .iter()
+        .zip(&inputs1.moderator_temperature_k)
+        .map(|(p, t)| If97.forward(false, *p, *t).unwrap().density_kg_m3)
+        .collect();
+    let base0: Vec<f64> = inputs0
+        .pressure_pa
+        .iter()
+        .zip(&inputs0.moderator_temperature_k)
+        .map(|(p, t)| If97.forward(false, *p, *t).unwrap().density_kg_m3)
+        .collect();
+    let mut eos0 = inputs0.clone();
+    eos0.water_density_kg_m3 = base0;
+    let t0 = terms(&inputs0, &travel0);
+    let ta = terms(&prepared_with_settled_fuel, &travel0);
+    let tb = terms(&inputs1, &travel1);
+    let tt = terms(&thermal_only, &travel0);
+    let te = terms(&eos0, &travel0);
+    // Region weights: the neutron population, and its square (first-order
+    // perturbation with a self-adjoint approximation), at each state.
+    let weigh = |n: &[f64], power: i32| -> Vec<f64> {
+        let w: Vec<f64> = n.iter().map(|v| v.powi(power)).collect();
+        let total: f64 = w.iter().sum();
+        w.iter().map(|v| v / total).collect()
+    };
+    let pcm = 1e5;
+    let summary = |name: &str, f: &dyn Fn(usize) -> f64, n: &[f64]| -> Value {
+        let per: Vec<f64> = (0..n.len()).map(|i| f(i) * pcm).collect();
+        let avg = |p: i32| per.iter().zip(weigh(n, p)).map(|(v, w)| v * w).sum::<f64>();
+        json!({"term": name, "pcm_population_weighted": avg(1), "pcm_population_squared_weighted": avg(2),
+            "pcm_min": per.iter().cloned().fold(f64::INFINITY, f64::min), "pcm_max": per.iter().cloned().fold(f64::NEG_INFINITY, f64::max)})
+    };
+    let n0 = &inputs0.neutrons;
+    let n1 = &inputs1.neutrons;
+    let d = |a: &[ReactivityTerms],
+             b: &[ReactivityTerms],
+             g: fn(&ReactivityTerms) -> f64,
+             i: usize| g(&b[i]) - g(&a[i]);
+    let moderator = |r: &ReactivityTerms| r.water_density + r.boron;
+    let state_a = vec![
+        summary("doppler", &|i| d(&t0, &ta, |r| r.doppler, i), n0),
+        summary("total", &|i| ta[i].total() - t0[i].total(), n0),
+    ];
+    let state_b = vec![
+        summary("doppler", &|i| d(&t0, &tb, |r| r.doppler, i), n1),
+        summary(
+            "moderator_density_temperature (water and boron)",
+            &|i| d(&te, &tt, moderator, i),
+            n1,
+        ),
+        summary(
+            "moderator_density_pressure_and_rest (water and boron)",
+            &|i| moderator(&tb[i]) - moderator(&t0[i]) - (moderator(&tt[i]) - moderator(&te[i])),
+            n1,
+        ),
+        summary(
+            "moderator_density_total (water and boron)",
+            &|i| d(&t0, &tb, moderator, i),
+            n1,
+        ),
+        summary("rods", &|i| d(&t0, &tb, |r| r.rods, i), n1),
+        summary("fissile", &|i| d(&t0, &tb, |r| r.fissile, i), n1),
+        summary("xenon", &|i| d(&t0, &tb, |r| r.xenon, i), n1),
+        summary("samarium", &|i| d(&t0, &tb, |r| r.samarium, i), n1),
+        summary(
+            "nonpoison_capture",
+            &|i| d(&t0, &tb, |r| r.nonpoison_capture, i),
+            n1,
+        ),
+        summary("total_change", &|i| tb[i].total() - t0[i].total(), n1),
+        summary("total_at_state", &|i| tb[i].total(), n1),
+    ];
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let receipt = json!({
+        "kind": "s2-reactivity-decomposition",
+        "status": "NOT-EVIDENCE probe for G18's condition; terms are source_feedback::Model::reactivity_terms, the same formulas as evaluate",
+        "preparation": preparation,
+        "settled_s": t,
+        "configuration": {"maxOrder": 2, "newtonCoefficient": NEWTON_COEFFICIENT, "deltaCjLSetup": DELTA_CJ_LSETUP, "firstStep_s": FIRST_STEP_S, "jacobian": "block"},
+        "states": {
+            "prepared": {"fuel_feedback_k_mean": mean(&inputs0.fuel_temperature_k), "moderator_k_mean": mean(&inputs0.moderator_temperature_k), "pressure_pa_mean": mean(&inputs0.pressure_pa), "density_mean": mean(&inputs0.water_density_kg_m3), "reactivity_total_pcm_population_weighted": summary("t", &|i| t0[i].total(), n0)["pcm_population_weighted"]},
+            "settled": {"fuel_feedback_k_mean": mean(&inputs1.fuel_temperature_k), "fuel_feedback_k_min": inputs1.fuel_temperature_k.iter().cloned().fold(f64::INFINITY, f64::min), "fuel_feedback_k_max": inputs1.fuel_temperature_k.iter().cloned().fold(f64::NEG_INFINITY, f64::max), "moderator_k_mean": mean(&inputs1.moderator_temperature_k), "pressure_pa_mean": mean(&inputs1.pressure_pa), "density_mean": mean(&inputs1.water_density_kg_m3)},
+        },
+        "prepared_coolant_with_settled_fuel_minus_prepared": state_a,
+        "settled_minus_prepared": state_b,
+        "region_terms_pcm": {"prepared": t0.iter().map(|r| json!(r)).collect::<Vec<_>>(), "settled": tb.iter().map(|r| json!(r)).collect::<Vec<_>>()},
+        "cpu_s": z1::cpu_s() - started,
+    });
+    if let Some(path) = std::env::var_os("LD01_SETTLED_STATE_OUT") {
+        assert!(!Path::new(&path).exists(), "states are never overwritten");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(
+                &json!({"t_s": t, "y": ys, "yp": yps, "packet": preparation["packet"]}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    write_receipt(&receipt);
+    println!("{}", serde_json::to_string(&json!({"a": receipt["prepared_coolant_with_settled_fuel_minus_prepared"], "b": receipt["settled_minus_prepared"], "states": receipt["states"]})).unwrap());
+}
+
 /// S2's Newton configuration (claude/ld01-wiki c968921, "Configuration
 /// superseded the same day"): stock's own 0.33 Newton coefficient and an
 /// iteration-matrix refresh when cj changes by 10% (IDASetDeltaCjLSetup).
