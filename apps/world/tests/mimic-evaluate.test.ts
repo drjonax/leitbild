@@ -52,6 +52,15 @@ describe('mimic state of one sample', () => {
     expect(itemLook(porv, sample({ 'r.flow': 0, 'r.command': 1 })).mismatch).toBe('CMD 100 %')
   })
 
+  test('an isolation valve a check valve backs reads no flow as no flow, not as shut', () => {
+    // An accumulator at power: its discharge isolation valve open, its check valve held shut by the reactor coolant
+    // system's higher pressure (evaluation run 23's SI line-up to loop C, once it drew accumulator C).
+    const isolation = item({ aspect: 'position', command: 'a.open' as never, throughput: { path: 'a.flow' as never, noFlowBelow: 0.2, heldBack: true } })
+    expect(itemLook(isolation, sample({ 'a.flow': 0, 'a.open': true }))).toEqual({ state: { kind: 'notPassing', flow: 0 }, notMeasured: true, mismatch: null, words: 'position not measured; no flow' })
+    // Passing while demanded shut is open whatever holds the flow back.
+    expect(itemLook(isolation, sample({ 'a.flow': 40, 'a.open': false })).mismatch).toBe('CMD SHUT')
+  })
+
   test('equipment that does not follow its command stands out as abnormal, and in its alarm\'s colour only while an alarm of its own is active', () => {
     // FCV B failed at 35 % while commanded 100 %: the cause of the runback, before any alarm it leads to.
     const stuck = itemLook(valve, sample({ 'v.effective': 0.35, 'v.command': 1 }))

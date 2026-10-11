@@ -236,12 +236,13 @@ describe('mimic presentation and bindings', () => {
     })
     expect(porv.frames).toEqual([{ ruleId: 'pzr-relief-flow-high', flap: 'F HI · ALM', flapShort: 'F HI' }])
     // An accumulator's discharge isolation valve opens on its command at once; the model solves no separate position.
+    // The check valve on the same outlet can hold its flow back, so no flow does not say it is shut.
     const accumulator = graph.componentIndexById.get('safetyAccumulatorA' as never)!
     const isolation = itemBinding(plant, { kind: 'device', component: accumulator, device: 'dischargeIsolationValve' }, 'position', framed)
     expect(isolation.state).toEqual({
       aspect: 'position',
       command: 'safetyAccumulatorA.dischargeIsolationOpen' as never,
-      throughput: { path: 'safetyAccumulatorA.outletFlowKgPerS' as never, noFlowBelow: null },
+      throughput: { path: 'safetyAccumulatorA.outletFlowKgPerS' as never, noFlowBelow: null, heldBack: true },
     })
     for (const component of graph.components) {
       for (const aspect of component.semantics.aspects) {

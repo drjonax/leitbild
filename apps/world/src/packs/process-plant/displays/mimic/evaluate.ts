@@ -96,7 +96,9 @@ export const itemLook = (binding: MimicItemBinding, index: SampleIndex): ItemLoo
       const flow = numberAt(index, state.throughput?.path)
       if (flow === null) return unknown(true)
       const passing = Math.abs(flow) >= (state.throughput?.noFlowBelow ?? 0) && flow !== 0
-      const mismatch = command === null ? null : passing && command.open === false ? command.text : !passing && command.open === true ? command.text : null
+      // Passing while demanded shut, it is open; not passing while demanded open, it is shut, unless a non-return
+      // device on its line holds the flow back (an accumulator below the reactor coolant system's pressure).
+      const mismatch = command === null ? null : passing && command.open === false ? command.text : !passing && command.open === true && state.throughput?.heldBack !== true ? command.text : null
       return {
         state: { kind: passing ? 'passing' : 'notPassing', flow },
         notMeasured: true,

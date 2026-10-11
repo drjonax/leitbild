@@ -8,7 +8,7 @@ import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type Mim
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { MimicProfile } from './profiles.ts'
 import { COUNT_WORDS, itemRows, WIDER_RANGE, type MimicRow } from './rows.ts'
-import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
+import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
 import { openBridgeDevice, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
 // Intent (or a scope World resolved itself) → items with their bindings → a
@@ -546,9 +546,23 @@ const compileScope = (plant: CompiledProcessPlant, intent: MimicIntent | null, s
   return { ok: true, mimic: assemble(plant, intent, budget.profile, scope, planned, layout) }
 }
 
+/**
+ * An intent drawn with its parallel supplies (withParallelSupplies), the most
+ * of them that stays legible in the budget: drawn, else stopping the drawing
+ * at the port they join, else as asked; so a line-up shows a source that
+ * feeds what it ends at wherever there is room (evaluation run 23: safety
+ * injection to loop C without accumulator C). The auxiliary feed beside the
+ * main feed to all four steam generators draws legibly neither way.
+ */
 const compileWithin = (plant: CompiledProcessPlant, intent: MimicIntent, budget: MimicBudget): Attempted => {
   const resolved = resolveMimicScope(plant.graph, intent)
   if (!resolved.ok) return { ok: false, issues: resolved.issues }
+  const scopes = [withParallelSupplies(plant.graph, resolved.scope, 'drawn'), withParallelSupplies(plant.graph, resolved.scope, 'stubbed')]
+    .filter((scope): scope is MimicScope => scope !== null)
+  for (const scope of scopes) {
+    const supplied = compileScope(plant, intent, scope, budget)
+    if (supplied.ok) return supplied
+  }
   return compileScope(plant, intent, resolved.scope, budget)
 }
 

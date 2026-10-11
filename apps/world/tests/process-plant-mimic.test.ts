@@ -205,6 +205,22 @@ describe('every intent over the reference Plant draws or is refused with a reaso
     }
   })
 
+  test('a line-up draws what else feeds the port it ends at once through, where that stays legible', () => {
+    // Evaluation run 23: the safety injection line-up to loop C drew no accumulator, though accumulator C injects
+    // into cold leg C beside the SI header. The reactor coolant pump that also enters it is part of the loop through
+    // the core, not a supply.
+    const si = generated(system, { services: ['safetyInjection'], loops: ['C'] })
+    const labels = si.items.map(item => item.binding.label)
+    expect(labels).toEqual(expect.arrayContaining(['RWST', 'HHSI A', 'HHSI B', 'SI header', 'ACC C', 'ACC C discharge isolation valve', 'ACC C check valve']))
+    expect(labels).not.toContain('RCP C')
+    expect(si.summary.carriers).toEqual(['primaryInjection', 'safetyInjection'])
+    // The auxiliary feed beside the main feed into all four steam generators draws legibly neither drawn nor
+    // stopped at their inlets: the drawing is as asked.
+    const feed = generated(system, { services: ['feedwater'] })
+    expect(feed.summary.carriers).toEqual(['feedwater'])
+    expect(feed.items.map(item => item.binding.label)).not.toContain('AFW valve A')
+  })
+
   test('a system whose lines skip a layer draws them with one jog: charging', () => {
     for (const intent of [{ services: ['charging'] }, { to: ['core'], services: ['charging'] }]) {
       const mimic = generated(system, intent)

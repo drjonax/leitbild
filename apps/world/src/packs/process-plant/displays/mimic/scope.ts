@@ -372,6 +372,55 @@ export const resolveMimicScope = (graph: CompiledPlantGraph, intent: MimicIntent
 }
 
 /**
+ * A drawing's parallel supplies: where its flow ends, at a port of equipment
+ * no drawn line leaves (the core's cold leg C, a steam generator's feed
+ * inlet), every other line into that port from equipment that feeds it once
+ * through (a safety injection accumulator, an auxiliary feed valve), not as
+ * part of a loop through it (a reactor coolant pump). Null where there are
+ * none. `drawn` draws each from the equipment its line branches from (the
+ * auxiliary feed header), through the valves in series on it, and stops the
+ * drawing at what feeds that; `stubbed` only stops the drawing at the port,
+ * naming them.
+ */
+export const withParallelSupplies = (graph: CompiledPlantGraph, scope: MimicScope, style: 'drawn' | 'stubbed'): MimicScope | null => {
+  const drawnLinks = new Set(scope.links)
+  const fluid = graph.links.filter(link => link.kind === 'fluidFlow')
+  const fluidCarriers = new Set(fluid.map(linkCarrier))
+  const ends = scope.components.filter(component => !(graph.outgoingLinksByComponent[component] ?? []).some(index => drawnLinks.has(index) && graph.links[index]!.kind === 'fluidFlow'))
+  const supplies = ends.flatMap(end => {
+    const ports = new Set((graph.incomingLinksByComponent[end] ?? []).filter(index => drawnLinks.has(index) && graph.links[index]!.kind === 'fluidFlow').map(index => String(graph.links[index]!.toPortName)))
+    if (ports.size === 0) return []
+    const looping = new Set([...downstreamLinks(graph, [end], fluidCarriers)].map(index => graph.links[index]!.toComponentIndex))
+    return (graph.incomingLinksByComponent[end] ?? []).map(index => graph.links[index]!)
+      .filter(link => link.kind === 'fluidFlow' && !drawnLinks.has(link.index) && ports.has(String(link.toPortName)) && !looping.has(link.fromComponentIndex))
+  })
+  if (supplies.length === 0) return null
+  const carriers = new Set(supplies.map(linkCarrier))
+  if (style === 'stubbed') {
+    const supplied = new Set(supplies.map(link => link.index))
+    const stops = drawingStops(graph, [...new Set(supplies.map(link => link.toComponentIndex))], drawnLinks, carriers, link => !supplied.has(link.index))
+    return { ...scope, stubs: [...scope.stubs, ...stops] }
+  }
+  // Upstream through what only passes the flow on (one line in, one out), to where the supply's line branches.
+  const lines = supplies.flatMap(supply => {
+    const line = [supply]
+    for (let step = 0; step < MIMIC_REACH_LINKS; step += 1) {
+      const source = line.at(-1)!.fromComponentIndex
+      const into = (graph.incomingLinksByComponent[source] ?? []).map(index => graph.links[index]!).filter(link => linkCarrier(link) === linkCarrier(supply))
+      const out = (graph.outgoingLinksByComponent[source] ?? []).map(index => graph.links[index]!).filter(link => linkCarrier(link) === linkCarrier(supply))
+      if (into.length !== 1 || out.length !== 1) break
+      line.push(into[0]!)
+    }
+    return line
+  })
+  const added = sorted(lines.map(link => link.fromComponentIndex)).filter(component => !scope.components.includes(component))
+  const links = sorted([...scope.links, ...lines.map(link => link.index)])
+  const components = sorted([...scope.components, ...added])
+  const stops = drawingStops(graph, added, new Set(links), carriers, () => false)
+  return { ...scope, components, links, stubs: [...scope.stubs, ...stops], carriers: [...new Set([...scope.carriers, ...carriers])].sort() }
+}
+
+/**
  * The services items carry, the ones they do their work in first: those on a
  * port circuit their energy role names (a core's coolant), then by how many
  * of their links each takes. What a drawing narrowed to one service starts

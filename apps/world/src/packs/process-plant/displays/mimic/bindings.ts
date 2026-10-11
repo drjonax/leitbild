@@ -41,8 +41,12 @@ export interface MimicStateBinding {
   /** The solved signal; absent when the model computes none, so the state reads "not measured". */
   readonly state?: { readonly path: VariablePath; readonly reading: AspectReading; readonly noFlowBelow?: number | null }
   readonly command?: VariablePath
-  /** What passes the item, judging it where its own state is not solved. */
-  readonly throughput?: { readonly path: VariablePath; readonly noFlowBelow: number | null }
+  /**
+   * What passes the item, judging it where its own state is not solved.
+   * `heldBack`: a non-return device on the same line can hold the flow back
+   * (an accumulator's check valve), so no flow does not say the item is shut.
+   */
+  readonly throughput?: { readonly path: VariablePath; readonly noFlowBelow: number | null; readonly heldBack?: true }
 }
 
 /**
@@ -246,7 +250,7 @@ export const framingRules = (plant: CompiledProcessPlant): ReadonlyMap<string, R
   return framed
 }
 
-const stateBinding = (aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null): MimicStateBinding | null => {
+const stateBinding = (aspects: ReadonlyArray<CompiledStateAspect>, aspect: StateAspect | null, flow: (path: VariablePath) => number | null, heldBack = false): MimicStateBinding | null => {
   if (aspect === null) return null
   const declared = aspectOf(aspects, aspect)
   if (declared === undefined) return null
@@ -259,7 +263,7 @@ const stateBinding = (aspects: ReadonlyArray<CompiledStateAspect>, aspect: State
     ...(state === undefined ? {} : { state }),
     ...(declared.command === undefined ? {} : { command: declared.command }),
     // A state the model does not solve is judged by what passes the item.
-    ...(declared.state !== undefined || throughput === undefined ? {} : { throughput: { path: throughput.path, noFlowBelow: flow(throughput.path) } }),
+    ...(declared.state !== undefined || throughput === undefined ? {} : { throughput: { path: throughput.path, noFlowBelow: flow(throughput.path), ...(heldBack ? { heldBack: true as const } : {}) } }),
   }
 }
 
@@ -295,7 +299,8 @@ export const itemBinding = (
   // A device's no-flow band is its host outlet's rating; a component's, its largest rated outflow.
   const ratings = component.semantics.ratedOutflow.filter(rating => device === undefined || rating.port === device.port).map(rating => rating.flowKgPerS)
   const rated = ratings.length === 0 ? null : Math.max(...ratings)
-  const state = stateBinding(device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION)
+  const heldBack = device !== undefined && component.semantics.embedded.some(other => other.id !== device.id && other.port === device.port && other.function === 'nonReturn')
+  const state = stateBinding(device?.aspects ?? component.semantics.aspects, aspect, () => rated === null ? null : rated * NO_FLOW_FRACTION, heldBack)
   const drawnState = state?.state?.path
   return {
     item,
