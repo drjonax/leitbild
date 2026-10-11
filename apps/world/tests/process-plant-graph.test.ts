@@ -100,9 +100,10 @@ describe('process plant model composition', () => {
     // their kilovolts, and each safety train its load sequencer and the
     // loads it sequences, and again when the pressurizer relief tank became
     // a nitrogen-blanketed quench tank and the relief lines gained their
-    // tailpipe temperatures and the PORV its acoustic flow monitor; PWR Runs
-    // checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('42d44633da8662692fdd45c0e174e55e0ef26ab3906cf454da56859f28aef238')
+    // tailpipe temperatures and the PORV its acoustic flow monitor, its
+    // readings their normal bands; PWR Runs checkpointed before then must be
+    // restarted.
+    expect(system.modelDigest).toBe('1966a9edbdd8bbe79c167ea782e3c16b51199d82853c7a0f84ee35f11691a904')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

@@ -406,7 +406,7 @@
         },
         {
           "path": "reliefValveFlowing",
-          "tagId": "PORV-456A-FLOW",
+          "tagId": "PORV-456A-ACOUSTIC",
           "equipmentId": "pressurizer",
           "description": "Pressurizer PORV 456A acoustic flow monitor: flow through the valve, from 0.5 kg/s"
         },
@@ -462,19 +462,37 @@
           "path": "pressureMPa",
           "tagId": "PRT-PRESS",
           "equipmentId": "pressurizerReliefTank",
-          "description": "Pressurizer relief tank pressure, absolute: its nitrogen blanket at 0.12 MPa (3 psig) normally; the rupture disk bursts at 0.79 MPa (100 psig)"
+          "description": "Pressurizer relief tank pressure, absolute: its nitrogen blanket at 0.12 MPa (3 psig) normally; the rupture disk bursts at 0.79 MPa (100 psig)",
+          "limits": {
+            "normalRange": {
+              "min": 0.11,
+              "max": 0.15
+            }
+          }
         },
         {
           "path": "temperatureC",
           "tagId": "PRT-TEMP",
           "equipmentId": "pressurizerReliefTank",
-          "description": "Pressurizer relief tank water temperature"
+          "description": "Pressurizer relief tank water temperature",
+          "limits": {
+            "normalRange": {
+              "min": 15,
+              "max": 45
+            }
+          }
         },
         {
           "path": "levelPercent",
           "tagId": "PRT-LVL",
           "equipmentId": "pressurizerReliefTank",
-          "description": "Pressurizer relief tank level, 72 % normally"
+          "description": "Pressurizer relief tank level, 72 % normally",
+          "limits": {
+            "normalRange": {
+              "min": 65,
+              "max": 78
+            }
+          }
         },
         {
           "path": "ruptureDiskBurst",

@@ -121,7 +121,7 @@ describe('the relief path read by its instruments', () => {
     const plantRun = started()
     plantRun.run(60_000)
     // A tight relief path: the tailpipe at the containment's air, the tank on its 3 psig blanket at 35 °C and 72 %.
-    expect(plantRun.tag('PORV-456A-FLOW')).toBe(false)
+    expect(plantRun.tag('PORV-456A-ACOUSTIC')).toBe(false)
     expect(Number(plantRun.tag('PORV-456A-TEMP'))).toBeCloseTo(Number(plantRun.read('containment.temperatureC')), 1)
     expect(Number(plantRun.tag('PRT-PRESS'))).toBeCloseTo(0.122, 3)
     expect(Number(plantRun.tag('PRT-TEMP'))).toBeCloseTo(35, 1)
@@ -152,7 +152,7 @@ describe('the relief path read by its instruments', () => {
     // Isolated by its block valve, the PORV's monitor reads no flow at once while its tailpipe cools over minutes.
     plantRun.act('pressurizer-porv-block-valve-close')
     plantRun.run(20_000)
-    expect(plantRun.tag('PORV-456A-FLOW')).toBe(false)
+    expect(plantRun.tag('PORV-456A-ACOUSTIC')).toBe(false)
     expect(Number(plantRun.tag('PORV-456A-TEMP'))).toBeGreaterThan(100)
     plantRun.run(900_000)
     expect(Number(plantRun.tag('PORV-456A-TEMP'))).toBeLessThan(70)

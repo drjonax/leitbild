@@ -303,9 +303,10 @@ describe('world.process-plant.display.compose', () => {
 
   test('suggests signals by the words of a guessed name, tagged instruments first', () => {
     const suggestions = (ref: string): string => rejectionOf(() => ask('world.process-plant.display.compose', composition([{ ref, role: 'primary' }]))).split('Did you mean: ')[1] ?? ''
-    // The tagged auxiliary feedwater flow to steam generator A first, then main feedwater's lines to it.
+    // The tagged auxiliary feedwater flow to steam generator A first, then main feedwater's. (A tagged instrument
+    // naming an A and a flow, the PORV 456A's acoustic monitor, now takes the place of main feedwater's branch A line.)
     expect(suggestions('FW-A-FLOW')).toStartWith('AFW-A-FLOW (Auxiliary feedwater to steam generator A flow, kg/s)')
-    expect(suggestions('FW-A-FLOW')).toContain('feedwater-header-to-control-valve-a.flowKgPerS (Feedwater header branch A flow, kg/s)')
+    expect(suggestions('FW-A-FLOW')).toContain('mainFeedwaterPumpA.flowKgPerS (Flow, kg/s)')
     expect(suggestions('PZR-PRESS')).toStartWith('PT-455 (Pressurizer pressure, MPa)')
     expect(suggestions('dieselGenA.running')).toStartWith('EDG-A-RUN (Diesel running, boolean)')
     expect(suggestions('SG1-LVL')).toStartWith('SG-A-LVL-NR (Steam generator narrow-range level, percent)')
@@ -326,11 +327,13 @@ describe('world.process-plant.display.compose', () => {
   })
 
   test('a line flow the I&C judges on the equipment it passes is refused with the judged signal', () => {
-    // The PORV is bundled in the pressurizer on its relief outlet; its alarm acts on the pressurizer's relief flow, not the line's.
+    // An accumulator's discharge isolation valve is bundled in it on its outlet; its injecting alarm acts on the
+    // accumulator's outlet flow, not the line's. (The PORV's relief flow is judged by no rule: its alarm is on its
+    // acoustic flow monitor, the instrument a plant reads it by.)
     const readouts = (ref: string) => ({ ...composition([{ ref, role: 'primary' }]), panels: [{ kind: 'readouts', signals: [{ ref, role: 'primary' }, { ref: 'PT-455', role: 'context' }] }] })
-    expect(rejectionOf(() => ask('world.process-plant.display.compose', readouts('pressurizer-relief-to-tank.flowKgPerS'))))
-      .toContain('show pressurizer.reliefFlowKgPerS (Pressurizer relief flow, HI 1 kg/s · ALM) instead')
-    expect(() => ask('world.process-plant.display.compose', readouts('pressurizer.reliefFlowKgPerS'))).not.toThrow()
+    expect(rejectionOf(() => ask('world.process-plant.display.compose', readouts('safety-accumulator-a-to-cold-leg-a.flowKgPerS'))))
+      .toContain('show safetyAccumulatorA.outletFlowKgPerS (Accumulator outlet flow, HI 1 kg/s · ALM) instead')
+    expect(() => ask('world.process-plant.display.compose', readouts('safetyAccumulatorA.outletFlowKgPerS'))).not.toThrow()
     // A line that shares its port carries only part of the judged flow, a reading of its own: run 22 refused
     // "is AFW reaching every SG?" its evidence, the auxiliary feed line into each generator.
     expect(() => ask('world.process-plant.display.compose', readouts('feedwater-control-valve-b-to-sg-b.flowKgPerS'))).not.toThrow()
@@ -610,7 +613,8 @@ describe('composed display panels', () => {
       { kind: 'trend', horizon: '2m', signals: [{ ref: 'PT-455', role: 'primary' }] },
       { kind: 'alarms', scope: 'related' },
     ]).view.display.panels.find(panel => panel.kind === 'alarms') as { ruleIds: string[] }
-    expect(pressurizer.ruleIds.some(ruleId => ruleId.includes('relief'))).toBe(true)
+    // The pressurizer's equipment includes its PORV, read by its acoustic monitor and tailpipe.
+    expect(pressurizer.ruleIds).toEqual(expect.arrayContaining(['pzr-porv-flow', 'pzr-porv-tailpipe-temperature-high']))
   })
 })
 
