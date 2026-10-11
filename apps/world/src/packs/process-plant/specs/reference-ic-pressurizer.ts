@@ -182,8 +182,15 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     signal: { tagId: 'PT-455' },
     low: {
       threshold: 15.35,
+      // A Westinghouse four-loop pressurizer has about 1.8 MW of heaters: a
+      // proportional group of about 0.4 MW, full on 0.1 MPa below normal
+      // pressure, and backup groups of about 1.4 MW on below that. Here
+      // both are full on below the band and off within it: the model's
+      // pressurizer loses no heat to its surroundings or to spray bypass, so
+      // it holds its pressure with no heater on and needs no group modulating
+      // across the band to make up a standing loss.
       effects: [
-        write('energize-heaters', { tagId: 'PZR-HTR' }, 12),
+        write('energize-heaters', { tagId: 'PZR-HTR' }, 0.4),
         write('energize-backup-heaters', { tagId: 'PZR-HTR-BU' }, true),
         write('stop-spray', { tagId: 'PZR-SPRAY' }, 0),
       ],

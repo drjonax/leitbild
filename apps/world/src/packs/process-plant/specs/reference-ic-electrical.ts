@@ -109,7 +109,7 @@ const afwLineUpPositionFraction = 1
 // The pressurizer's backup heaters hang on safety bus A through their own
 // breaker, so the diesel carries them when offsite power is lost. Their
 // breaker opens when the bus goes dead, as its undervoltage relay sheds it, so
-// the 1.5 MW group does not come back in the block of loads that return as the
+// the 1.4 MW group does not come back in the block of loads that return as the
 // diesel picks the bus up; the sequencer's last step closes it once the
 // diesel has taken that block and the motor-driven AFW pump, and the pressure
 // control's command decides whether they heat.

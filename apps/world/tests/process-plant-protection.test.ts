@@ -70,14 +70,16 @@ const started = (automation: ProcessPlantIcConfig = plant.automation) => {
 
 describe('high pressurizer pressure', () => {
   test('trips the reactor when nothing relieves or sprays the pressure down', () => {
-    // Pressure control and the PORV's opening left out, the PORV isolated by its block valve, and the heaters full on.
+    // Pressure control and the PORV's opening left out, the PORV isolated by its block valve, and the heaters full
+    // on: the 0.4 MW proportional group and the 1.4 MW backup group take some seven minutes to get there.
     const automation = withOnlyReactorTrips(['pzr-pressure-high-reactor-trip'])
     const plantRun = started({ ...automation, rules: automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-') || rule.id === 'pzr-pressure-high-reactor-trip') })
     plantRun.run(5_000)
     plantRun.act('pressurizer-porv-block-valve-close')
     plantRun.run(12_000)
-    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 30 })
-    expect(plantRun.secondsUntil('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip', 120)).not.toBeNull()
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 0.4 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.backupHeatersOn' as VariablePath, value: true })
+    expect(plantRun.secondsUntil('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip', 900)).not.toBeNull()
     expect(Number(plantRun.tag('PT-455'))).toBeGreaterThan(16.55)
     plantRun.run(10_000)
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
@@ -87,10 +89,12 @@ describe('high pressurizer pressure', () => {
 
 describe('the pressurizer PORV on high pressure', () => {
   test('opens at 16.18 MPa on every rise, reseats below 15.85 MPa, and holds the pressure below the reactor trip', () => {
-    // No spray, and the heaters full on: the pressure rises until the PORV relieves it, again and again.
+    // No spray, and the plant's heaters full on (the 0.4 MW proportional and 1.4 MW backup groups): the pressure
+    // rises until the PORV relieves it, again and again, first after some six minutes and then every three or so.
     const plantRun = started({ ...plant.automation, rules: plant.automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-high-demand') && !rule.id.startsWith('pzr-pressure-normal-band') && !rule.id.startsWith('pzr-pressure-low-demand')) })
     plantRun.run(5_000)
-    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 12 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 0.4 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.backupHeatersOn' as VariablePath, value: true })
     let openings = 0
     let wasOpen = false
     let peak = 0
@@ -111,19 +115,21 @@ describe('the pressurizer PORV on high pressure', () => {
 
 describe('pressurizer code safety valves', () => {
   test('with the PORV blocked, they hold an overpressure near their 17.24 MPa set pressure, discharging to the relief tank', () => {
-    // The same overpressure: no spray, no PORV opening, the PORV isolated and the heaters full on. Full on is the
-    // 12 MW the pressure control energizes: more boils the pressurizer dry, which the valves do not test.
-    const automation = withOnlyReactorTrips(['pzr-pressure-high-reactor-trip'])
-    const plantRun = started({ ...automation, rules: automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-') || rule.id === 'pzr-pressure-high-reactor-trip') })
+    // The same overpressure: no spray, no PORV opening, the PORV isolated and the heaters full on, the 0.4 MW
+    // proportional group and the 1.4 MW backup group the pressure control energizes. With no reactor trip either,
+    // so that the coolant does not shrink away from the heaters, they take some fifteen minutes to lift the valves.
+    const automation = withOnlyReactorTrips([])
+    const plantRun = started({ ...automation, rules: automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-')) })
     plantRun.run(5_000)
     plantRun.act('pressurizer-porv-block-valve-close')
     plantRun.run(12_000)
-    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 12 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 0.4 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.backupHeatersOn' as VariablePath, value: true })
     const tankBefore = Number(plantRun.read('pressurizerReliefTank.inventoryKg'))
     let peak = 0
     let liftedAt: number | null = null
     let dischargePeak = 0
-    for (let second = 1; second <= 450; second += 1) {
+    for (let second = 1; second <= 1_200; second += 1) {
       // Sampled once a second, the lift shows from the pressure the second starts from: the solver's steps within
       // it lift the valves on reaching set pressure, and their discharge lowers it again.
       const startingPressure = Number(plantRun.tag('PT-455'))
@@ -139,7 +145,8 @@ describe('pressurizer code safety valves', () => {
     expect(peak).toBeLessThan(17.24 * 1.03)
     expect(plantRun.tag('MOV-8000A-POS')).toBe(0)
     expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBe(0)
-    // What they discharge, the steam the heaters raise, about 11 kg/s, reaches the relief tank through the relief header.
+    // What they discharge, a burst as they pop and then the steam the heaters raise, under 2 kg/s, reaches the
+    // relief tank through the relief header.
     expect(dischargePeak).toBeGreaterThan(8)
     expect(Number(plantRun.read('pressurizerReliefTank.inventoryKg'))).toBeGreaterThan(tankBefore + 1_000)
     expect(plantRun.protection.snapshot().alarms.find(lifecycle => lifecycle.id === 'alarm:pzr-safety-valve-open:safety-valve-open')!.occurrenceCount).toBeGreaterThan(0)
@@ -379,12 +386,12 @@ describe('the PORV block valve', () => {
     plantRun.run(2_000)
     const loads = () => ({ safety: Number(plantRun.read('safetyBusA.servedLoadMw')), unit: Number(plantRun.read('unitBusA.servedLoadMw')) })
     const before = loads()
-    // Without the I&C, so no pressure controller takes the heaters back.
-    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 1.8 })
+    // Without the I&C, so no pressure controller takes the heaters back. The control group is rated 0.4 MW.
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 0.4 })
     for (let second = 0; second < 3; second += 1) plantRun.runtime.tick(1_000)
     const after = loads()
     expect(after.safety).toBeCloseTo(before.safety, 3)
-    expect(after.unit - before.unit).toBeCloseTo(1.8, 1)
+    expect(after.unit - before.unit).toBeCloseTo(0.4, 2)
   })
 })
 
@@ -513,16 +520,17 @@ describe('blocking low-pressure safety injection below P-11', () => {
     // The pushbutton springs back; the block is the logic's memory.
     expect(plantRun.tag('SI-BLOCK')).toBe(false)
     expect(plantRun.activeIds()).toContain('alarm:safety-injection-blocked:blocked')
-    // Well below the 12.7 MPa SI set point, SI stays blocked.
-    plantRun.run(90_000)
-    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(12)
+    // Below the 12.7 MPa SI set point, SI stays blocked.
+    for (let second = 0; second < 120 && Number(plantRun.tag('PT-455')) >= 12.5; second += 1) plantRun.step()
+    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(12.5)
     expect(plantRun.activeIds()).not.toContain(siActuated)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(false)
 
-    // Repressurized past P-11, the block resets by itself, and SI is armed again.
+    // Repressurized past P-11, the block resets by itself, and SI is armed again. The heaters' 1.8 MW take some
+    // six minutes to raise the pressure the 0.8 MPa back to P-11.
     expect(plantRun.operate('PORV-456A', 0).accepted).toBe(true)
     let resetAt: number | null = null
-    for (let second = 0; second < 300 && resetAt === null; second += 1) {
+    for (let second = 0; second < 900 && resetAt === null; second += 1) {
       plantRun.step()
       if (plantRun.tag('SI-BLOCKED') === false) resetAt = Number(plantRun.tag('PT-455'))
     }

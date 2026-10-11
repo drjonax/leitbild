@@ -9,6 +9,7 @@ import {
   type ProcessPlantIcConfig,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
+import { validateProcessPlantControlWrite } from '../src/packs/process-plant/control-write-validation.ts'
 import { saturationTemperatureCFromPressureMPa } from '../src/packs/process-plant/runtime/thermophysics.ts'
 import { liquidEnthalpyKjPerKg, saturationPressureMPaFromTemperatureC } from '../src/packs/process-plant/runtime/water-properties.ts'
 
@@ -141,6 +142,35 @@ describe('a stuck-open PORV', () => {
     expect(read('vessel.safetyInjectionFlowKgPerS')).toBeGreaterThan(40)
   })
 
+  test('35 % open outruns the heaters: the reactor trips, SI comes in and the pressure falls to about 10.6 MPa in five minutes', () => {
+    const plantRun = started()
+    plantRun.run(60)
+    for (const command of commandsForProcessPlantAction({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 }, graph: plant.graph })) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    const { read } = plantRun
+    const firstIn = new Map<string, number>()
+    let second = 0
+    plantRun.run(300, () => {
+      second += 1
+      for (const id of plantRun.active()) if (!firstIn.has(id)) firstIn.set(id, second)
+    })
+    // About 9 kg/s of steam against 1.8 MW of heaters: the pressure falls about 0.55 MPa a minute until the
+    // falling pressure brings the overtemperature delta-T set point onto the loop delta-T, about two minutes in;
+    // the trip's shrink takes it to the 12.7 MPa SI set point some 15 s later.
+    const otdt = firstIn.get('trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip')
+    const si = firstIn.get('trip:safety-injection-low-pzr-pressure:safety-injection')
+    expect(otdt).toBeGreaterThan(90)
+    expect(otdt).toBeLessThan(160)
+    expect(si).toBeGreaterThan(otdt!)
+    expect(si).toBeLessThan(otdt! + 40)
+    expect(read('pressurizer.pressureMPa')).toBeGreaterThan(10)
+    expect(read('pressurizer.pressureMPa')).toBeLessThan(11.2)
+    // The PORV then passes about 6 kg/s, a quarter of its rating at a third open and two thirds of the pressure.
+    expect(read('pressurizer.reliefFlowKgPerS')).toBeGreaterThan(5.5)
+    expect(read('pressurizer.reliefFlowKgPerS')).toBeLessThan(6.6)
+  })
+
   test('passes water at its liquid rating once the pressurizer is solid, which the inventory balance counts', () => {
     const plantRun = started()
     plantRun.run(5)
@@ -163,6 +193,36 @@ describe('a stuck-open PORV', () => {
     expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeGreaterThan(2.5)
     expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeLessThan(3.5)
     expect(Math.abs(read('rcsInventoryBalance.leakRateKgPerS'))).toBeLessThan(0.063)
+  })
+})
+
+describe('the pressurizer heaters', () => {
+  test('are rated like a Westinghouse four-loop pressurizer\'s: 0.4 MW proportional and 1.4 MW backup, 1.8 MW in all', () => {
+    const pressurizer = plant.graph.components.find(component => component.id === 'pressurizer')!
+    const controlGroup = plant.graph.signalBindingByPath.get('pressurizer.heaterPowerMw' as VariablePath)!
+    expect(controlGroup.limits?.hardRange).toEqual({ min: 0, max: 0.4 })
+    expect((pressurizer.parameters as Readonly<Record<string, unknown>>).backupHeaterCapacityMw).toBe(1.4)
+    // The pressure control energizes the control group at its rating, no more.
+    const energized = plant.automation.rules.flatMap(rule => rule.effects).filter(effect => effect.type === 'writeSignal' && effect.signal.tagId === 'PZR-HTR' && effect.value !== 0)
+    expect(energized.map(effect => effect.type === 'writeSignal' ? effect.value : null)).toEqual([0.4])
+    // An operator can ask no more of the group than it has.
+    const runtime = createProcessPlantRuntime({ system: plant })
+    expect(validateProcessPlantControlWrite({ system: plant, runtime, payload: { plantId: plant.id, tagId: 'PZR-HTR', value: 12 } as never }).accepted).toBe(false)
+    expect(validateProcessPlantControlWrite({ system: plant, runtime, payload: { plantId: plant.id, tagId: 'PZR-HTR', value: 0.4 } as never }).accepted).toBe(true)
+  })
+
+  test('hold 15.5 MPa at steady full power with every group off', () => {
+    const plantRun = started()
+    let lowest = Infinity
+    let highest = -Infinity
+    plantRun.run(600, () => {
+      lowest = Math.min(lowest, plantRun.read('pressurizer.pressureMPa'))
+      highest = Math.max(highest, plantRun.read('pressurizer.pressureMPa'))
+    })
+    expect(lowest).toBeGreaterThan(15.45)
+    expect(highest).toBeLessThan(15.55)
+    expect(plantRun.read('pressurizer.demandMw')).toBe(0)
+    expect(plantRun.read('pressurizer.backupHeaterDemandMw')).toBe(0)
   })
 })
 

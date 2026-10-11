@@ -1341,7 +1341,9 @@ describe('process plant runtime', () => {
       runtime.tick(100)
       baseline.tick(100)
     }
-    runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.heaterPowerMw'), value: 20 })
+    // Both heater groups full on: the 0.4 MW proportional group and the 1.4 MW backup group.
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.heaterPowerMw'), value: 0.4 })
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.backupHeatersOn'), value: true })
     for (let index = 0; index < 320; index += 1) {
       runtime.tick(100)
       baseline.tick(100)
@@ -1350,6 +1352,7 @@ describe('process plant runtime', () => {
     expect(heatedPressure).toBeGreaterThan(Number(baseline.readVariable(valueOf('pressurizer.pressureMPa'))))
 
     runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.heaterPowerMw'), value: 0 })
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.backupHeatersOn'), value: false })
     runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.reliefValvePositionFraction'), value: 1 })
     for (let index = 0; index < 120; index += 1) runtime.tick(100)
 
@@ -1362,7 +1365,7 @@ describe('process plant runtime', () => {
     const runtime = createProcessPlantRuntime({ system: compiledSystem() })
     const dtSeconds = 0.1
 
-    runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.heaterPowerMw'), value: 15 })
+    runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.heaterPowerMw'), value: 0.4 })
     runtime.writeCommand({ type: 'setVariable', path: valueOf('pressurizer.sprayFlowKgPerS'), value: 80 })
     for (let index = 0; index < 20; index += 1) runtime.tick(100)
 
