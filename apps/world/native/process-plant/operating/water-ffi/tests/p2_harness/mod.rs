@@ -78,6 +78,10 @@ pub fn thread_cpu_s() -> f64 {
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
 }
+/// The integrator's ledger (request 4, K2): stock IDAS quadratures of
+/// mass, port energy, boron, Joule, exterior loss, hydrostatic remainder and
+/// the transit drifts of b, d and b_A.
+pub const LEDGER: usize = 9;
 fn ida_failure(f: CellFailure) -> Failure {
     match f {
         CellFailure::Recoverable(r) => Failure::Recoverable(r),
@@ -232,6 +236,10 @@ pub enum Root {
     Travel,
     /// A steel coordinate reaching the 304 domain's maximum temperature.
     SteelLimit(usize),
+    /// Gate 5's instantaneous LT indication falling through the cutout's
+    /// switching level: from here the lagged, sampled indication can first
+    /// satisfy the low-level predicate, so the run stops at every sample.
+    LowLevel,
 }
 impl Root {
     pub fn label(&self) -> String {
@@ -243,6 +251,7 @@ impl Root {
             Root::Demand => "relief demand threshold".into(),
             Root::Travel => "relief end of travel".into(),
             Root::SteelLimit(i) => format!("steel coordinate {i} at the 304 domain maximum"),
+            Root::LowLevel => "LT indication at the cutout's switching level".into(),
         }
     }
 }
@@ -254,6 +263,8 @@ pub struct Counters {
     pub residual_wall_s: f64,
     pub jacobian_wall_s: f64,
     pub root_calls: u64,
+    /// Ledger integrand evaluations (stock IDAS quadratures).
+    pub quadratures: u64,
 }
 
 /// The cell as one stock-IDA system.
@@ -269,6 +280,11 @@ pub struct CellSystem {
     pub metal: Option<Metal>,
     /// Roots that are always active: free-area edges and structural limits.
     pub fixed_roots: Vec<Root>,
+    /// Gate 5's cutout while its switching level is still watched by root.
+    pub cutout_watch: Option<Cutout>,
+    /// The restart rule's nonnegative coordinates and their tolerance in
+    /// solver scaling (sixth case run), handed to the shared consistent start.
+    pub restart_bounds: Option<(Vec<usize>, f64)>,
     pub counters: Counters,
 }
 
@@ -300,6 +316,46 @@ impl Evaluated {
 }
 
 impl CellSystem {
+    /// The integrator's ledger integrands (request 4, K2), from the same
+    /// evaluation the residual makes: the cell's mass, port-energy and boron
+    /// receipts, the Joule delivery, the exterior loss, the hydrostatic
+    /// remainder and the two transit drifts. Port energy is the cell's energy
+    /// receipt less what the metal hands the fluid.
+    pub fn ledger_rates(
+        &self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+    ) -> Result<[f64; LEDGER], CellFailure> {
+        let e = self.evaluate(t, y, yp, None, None)?;
+        let b = &e.ev.balance;
+        let (joule, exterior, fluid) = match &e.metal {
+            Some(r) => (
+                e.bank_powers_w.iter().sum::<f64>(),
+                r.walls.iter().map(|w| w.exterior_w.value).sum::<f64>(),
+                r.rods.iter().map(|g| g.fluid_energy_w.value).sum::<f64>()
+                    + r.walls.iter().map(|w| w.fluid_energy_w.value).sum::<f64>(),
+            ),
+            None => (0., 0., 0.),
+        };
+        let f = &e.ev.flows;
+        let drift = [
+            f.transit_drift[0].value,
+            f.transit_drift[1].value,
+            f.admitted_transit_drift.value,
+        ];
+        Ok([
+            b.receipt_mass_kg_s.value,
+            b.receipt_energy_w.value - fluid,
+            b.receipt_boron_kg_s.value,
+            joule,
+            exterior,
+            b.volume_work_w.value,
+            drift[0],
+            drift[1],
+            drift[2],
+        ])
+    }
     pub fn n(&self) -> usize {
         self.scales.len()
     }
@@ -331,6 +387,9 @@ impl CellSystem {
         if let Some(m) = &self.metal {
             let base = self.metal_base();
             roots.extend((base..base + m.count()).map(Root::SteelLimit));
+        }
+        if self.cutout_watch.is_some() {
+            roots.push(Root::LowLevel);
         }
         if let Some(r) = self.relief.as_ref().filter(|r| r.armed) {
             roots.push(Root::Demand);
@@ -529,6 +588,17 @@ impl CellSystem {
             mixture - bottom,
         ]
     }
+    /// The cutout's calibrated LT indication from the column's tap
+    /// pressures at the coordinates, unlagged and unquantized.
+    fn lt_indication_m(&self, y: &[f64], c: &Cutout) -> Result<f64, String> {
+        let xv: Vec<Scalar> = (0..st::COORDINATES)
+            .map(|i| Scalar::new(y[i] * self.scales[i], 0.))
+            .collect();
+        let x = Coordinates::from_slice(&xv).map_err(|f| text(&f))?;
+        let column = self.cell.column(&If97, &x, None).map_err(|f| text(&f))?;
+        let taps = self.cell.taps(&If97, &column).map_err(|f| text(&f))?;
+        Ok(c.level(taps.level_difference_pa.value))
+    }
     pub fn root_values(&self, y: &[f64], roots: &[Root], out: &mut [f64]) -> Result<(), String> {
         let v = |i: usize| y[i] * self.scales[i];
         let mixture = self
@@ -552,6 +622,14 @@ impl CellSystem {
                 Root::SteelLimit(i) => {
                     let m = self.metal.as_ref().ok_or("steel root without metal")?;
                     v(*i) - m.limit_energy_j[*i - self.metal_base()]
+                }
+                Root::LowLevel => {
+                    let c = self
+                        .cutout_watch
+                        .ok_or("low-level root without a watched cutout")?;
+                    // The predicate is `round(level/q) <= round(setting/q)`,
+                    // which first holds below setting + q/2.
+                    self.lt_indication_m(y, &c)? - (c.setting_m + 0.5 * c.quantum_m)
                 }
                 Root::Demand | Root::Travel => {
                     let r = self
@@ -586,6 +664,9 @@ impl ConsistentSystem for CellSystem {
     fn system_dimension(&self) -> usize {
         self.n()
     }
+    fn restart_bounds(&self) -> Option<(Vec<usize>, f64)> {
+        self.restart_bounds.clone()
+    }
     fn rows_at(&mut self, t: f64, y: &[f64], yp: &[f64]) -> Result<Vec<f64>, CellFailure> {
         let e = self.evaluate(t, y, yp, None, None)?;
         Ok((0..self.n()).map(|i| e.row(i).value).collect())
@@ -615,8 +696,14 @@ impl ConsistentSystem for CellSystem {
 pub struct Segment {
     pub system: CellSystem,
     pub roots: Vec<Root>,
-    /// Start of this handle's segment.
+    /// Start of this handle's segment and its ledger there.
     pub started_s: f64,
+    pub started_q: [f64; LEDGER],
+    /// The ledger integrand's refusal of a converged step, if any: the
+    /// reason, the step's time and its state.
+    pub ledger_refusal: Option<(String, f64, Vec<f64>)>,
+    /// False in the no-ledger smoke diagnostic: no quadratures are set up.
+    pub ledger: bool,
 }
 impl System for Segment {
     fn dimension(&self) -> usize {
@@ -678,6 +765,54 @@ impl System for Segment {
             .root_values(y, &self.roots, out)
             .map_err(Failure::Fatal)
     }
+    fn quadrature_count(&self) -> usize {
+        LEDGER
+    }
+    /// Stock IDAS calls this at each converged step, a state the residual
+    /// has not evaluated. A refusal there is fatal and recorded as the
+    /// ledger's own: a recoverable one would make IDAS retry the step and
+    /// change the trajectory the residual alone would take.
+    fn quadrature(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), Failure> {
+        self.system.counters.quadratures += 1;
+        match self.system.ledger_rates(t, y, yp) {
+            Ok(q) => {
+                out.copy_from_slice(&q);
+                Ok(())
+            }
+            Err(f) => {
+                let reason = format!(
+                    "ledger integrand refused the converged step at t={t} s ({})",
+                    text(&f)
+                );
+                self.ledger_refusal = Some((reason.clone(), t, y.to_vec()));
+                Err(Failure::Fatal(reason))
+            }
+        }
+    }
+}
+
+/// The integrator's ledger at `t`: the handle's start value before its
+/// first advance, otherwise stock IDAGetQuad at the last returned time,
+/// which must be `t`.
+fn ledger_at(ida: &Ida<Segment>, t: f64) -> Result<[f64; LEDGER], String> {
+    let segment = ida.system();
+    if t == segment.started_s || !segment.ledger {
+        return Ok(segment.started_q);
+    }
+    let mut q = [0.; LEDGER];
+    let returned = ida.quadratures(&mut q)?;
+    if returned != t {
+        return Err(format!(
+            "ledger read at {t} s, but the last return was {returned} s"
+        ));
+    }
+    Ok(q)
 }
 
 /// One accepted-state sample, physical units.
@@ -694,7 +829,8 @@ pub struct Sample {
     pub boundary_elevation_m: f64,
     pub admitted_thickness_m: f64,
     pub withdrawal_fraction: f64,
-    pub masses: [f64; 5],
+    /// g, A, R, b, d and b_A, kg.
+    pub masses: [f64; 6],
     pub drop_boron_kg: f64,
     pub temperatures_k: [f64; 3],
     pub departure_k: [f64; 3],
@@ -710,6 +846,14 @@ pub struct Sample {
     pub spray_condensation_kg_s: f64,
     pub flashing_kg_s: [f64; 2],
     pub vapor_condensation_kg_s: f64,
+    /// The bulk bubble exchange (request 4, K1): `W_x`, the bubble stock
+    /// condensed into R, kg/s, and its Weber number for the domain disclosure.
+    pub bubble_condensation_kg_s: f64,
+    pub bubble_exchange_weber: f64,
+    /// Zone A's stock (amendment 6): its condensation `W_xA` into A and the
+    /// survivors crossing into b at the A–R boundary, kg/s.
+    pub admitted_bubble_condensation_kg_s: f64,
+    pub bubble_crossing_kg_s: f64,
     pub interface_evaporation_kg_s: f64,
     pub inversion_kg_s: f64,
     pub conduction_w: f64,
@@ -724,10 +868,13 @@ pub struct Sample {
     pub relief_enthalpy_w: f64,
     pub receipt: [f64; 3],
     pub volume_work_w: f64,
-    pub transit_drift_w: [f64; 2],
+    /// Saturation drift heat of b (paid by R), d (by g) and b_A (by A), W.
+    pub transit_drift_w: [f64; 3],
     /// Instantaneous identities: internal totals minus receipts.
     pub identity: [f64; 3],
     pub inventory: [f64; 3],
+    /// The integrator's ledger at this time: the quadratures since t = 0.
+    pub ledger_q: [f64; LEDGER],
     /// Inventory energy minus `p_s (V_b + V_d)`: zone and transit internal energy.
     pub internal_energy_j: f64,
     /// Solver tolerance of the mass, energy and boron totals at this state.
@@ -784,6 +931,7 @@ pub fn sample(
         x.resident_mass.value,
         x.bubble_mass.value,
         x.drop_mass.value,
+        x.admitted_bubble_mass.value,
     ];
     let sc = &system.scales;
     let tol = |idx: &[usize]| -> f64 {
@@ -879,6 +1027,10 @@ pub fn sample(
         spray_condensation_kg_s: f.spray_condensation.value,
         flashing_kg_s: [f.admitted_flashing.value, f.resident_flashing.value],
         vapor_condensation_kg_s: f.vapor_condensation.value,
+        bubble_condensation_kg_s: f.bubble_exchange.condensation.value,
+        bubble_exchange_weber: f.bubble_exchange.weber.value,
+        admitted_bubble_condensation_kg_s: f.admitted_bubble_exchange.condensation.value,
+        bubble_crossing_kg_s: f.bubble_crossing.value,
         interface_evaporation_kg_s: -f.interface.liquid.mass.value,
         inversion_kg_s: f.inversion.value,
         conduction_w: f.conduction.value,
@@ -899,13 +1051,18 @@ pub fn sample(
             b.receipt_boron_kg_s.value,
         ],
         volume_work_w: b.volume_work_w.value,
-        transit_drift_w: f.transit_drift.map(|q| q.value),
+        transit_drift_w: [
+            f.transit_drift[0].value,
+            f.transit_drift[1].value,
+            f.admitted_transit_drift.value,
+        ],
         identity: [
             b.mass_kg_s.value - b.receipt_mass_kg_s.value,
             b.energy_w.value - b.receipt_energy_w.value,
             b.boron_kg_s.value - b.receipt_boron_kg_s.value,
         ],
         inventory: [inv.mass_kg.value, inv.energy_j.value, inv.boron_kg.value],
+        ledger_q: [0.; LEDGER],
         internal_energy_j: inv.energy_j.value
             - c.interface_pressure.value
                 * (x.bubble_volume.value + x.drop_volume.value + x.admitted_bubble_volume.value),
@@ -968,6 +1125,10 @@ pub struct RunSpec {
     pub lift_root_bound: f64,
     /// Stock IDA's first step after every event restart (request 4, K4).
     pub event_restart_first_step_s: f64,
+    /// The integrator's ledger (K2); false only in a smoke diagnostic.
+    pub ledger: bool,
+    /// The restart rule's largest placed violation, in solver scaling.
+    pub restart_bound_tolerance: f64,
     /// The low-level heater cutout chain (gate 5).
     pub cutout: Option<Cutout>,
 }
@@ -1048,6 +1209,13 @@ pub enum End {
     Failure {
         reason: String,
     },
+    /// The ledger's integrand refused a converged step the residual never
+    /// evaluated (request 4, K2). The run stops there rather than letting
+    /// stock IDAS retry, which would change the trajectory; this is not a
+    /// physics stop.
+    LedgerFailure {
+        reason: String,
+    },
 }
 
 pub struct Run {
@@ -1066,6 +1234,8 @@ pub struct Run {
     /// The cutout chain's record follows the handle counters.
     /// Every integrator handle's own stock counters, in order.
     pub handle_stats: Vec<Value>,
+    /// The no-ledger smoke diagnostic ran this run.
+    pub ledger_disabled: bool,
     /// Smoke diagnostic only: each accepted step's end inside the probed
     /// window, `[t_n, h, order, steps, inventory_kg, mass_receipt_kg_s, handle]`.
     pub step_probe: Vec<Value>,
@@ -1086,15 +1256,35 @@ pub struct Run {
     pub reached_s: f64,
 }
 
+/// What a new handle starts with besides its state: its stop boundary, the
+/// first step of an event restart (K4) and the ledger carried so far (K2).
+struct HandleStart {
+    stop: f64,
+    first_step: Option<f64>,
+    ledger: [f64; LEDGER],
+}
+
 fn new_handle(
     system: CellSystem,
     t: f64,
     y: &[f64],
     yp: &[f64],
     spec: &RunSpec,
-    stop: f64,
-    first_step: Option<f64>,
+    start: HandleStart,
 ) -> Result<Ida<Segment>, String> {
+    let HandleStart {
+        stop,
+        first_step,
+        ledger: q0,
+    } = start;
+    // Stock IDA refuses a start outside its nonnegativity constraints; name
+    // the coordinate instead of passing on a bare status.
+    if let Some(&i) = spec.nonnegative.iter().find(|&&i| y[i] < 0.) {
+        return Err(format!(
+            "the start at t={t} s has coordinate {i} = {:e} (scaled) below its nonnegativity constraint",
+            y[i]
+        ));
+    }
     let ids = system.differential();
     let roots = system.roots_active();
     let mut ida = Ida::new(
@@ -1102,6 +1292,9 @@ fn new_handle(
             system,
             roots,
             started_s: t,
+            started_q: q0,
+            ledger_refusal: None,
+            ledger: spec.ledger,
         },
         Initial {
             time: t,
@@ -1116,6 +1309,9 @@ fn new_handle(
     ida.constrain_nonnegative(&spec.nonnegative)?;
     if let Some(h) = first_step {
         ida.set_init_step(h)?;
+    }
+    if spec.ledger {
+        ida.initialize_quadratures(&q0)?;
     }
     ida.stop_at(stop)?;
     Ok(ida)
@@ -1250,6 +1446,7 @@ fn absorb(out: &mut Run, totals: &mut Totals, ida: &Ida<Segment>) {
     out.counters.residual_wall_s += c.residual_wall_s;
     out.counters.jacobian_wall_s += c.jacobian_wall_s;
     out.counters.root_calls += c.root_calls;
+    out.counters.quadratures += c.quadratures;
 }
 
 /// Integrate one declared run from the prepared state `y0` at rest.
@@ -1272,6 +1469,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
         resolvability: Vec::new(),
         uncredited: Vec::new(),
         handle_stats: Vec::new(),
+        ledger_disabled: !spec.ledger,
         step_probe: Vec::new(),
         cutout: None,
         observations: Vec::new(),
@@ -1311,6 +1509,9 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     let mut acquired = Acquired::default();
     let mut diagnostic = 0.;
     let mut totals = Totals::default();
+    // Gate 5's cutout: its switching level is watched by root from t = 0.
+    system.cutout_watch = spec.cutout;
+    system.restart_bounds = Some((spec.nonnegative.clone(), spec.restart_bound_tolerance));
     match start(&mut system, t, &mut y, spec) {
         Ok((rates, pair)) => {
             yp = rates;
@@ -1331,7 +1532,18 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             return out;
         }
     }
-    let mut ida = match new_handle(system, t, &y, &yp, spec, next_stop(&pending, t), None) {
+    let mut ida = match new_handle(
+        system,
+        t,
+        &y,
+        &yp,
+        spec,
+        HandleStart {
+            stop: next_stop(&pending, t),
+            first_step: None,
+            ledger: [0.; LEDGER],
+        },
+    ) {
         Ok(h) => h,
         Err(e) => {
             finish(
@@ -1360,6 +1572,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
      -> Result<Sample, String> {
         let d = cpu_s();
         let mut smp = sample(&ida.system().system, t, y, yp, &spec.atol, spec.rtol)?;
+        smp.ledger_q = ledger_at(ida, t)?;
         if let Ok(stats) = ida.stats() {
             smp.steps = totals.steps + stats.steps;
             smp.error_failures = totals.error_failures + stats.error_failures;
@@ -1450,6 +1663,21 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     };
     out.observations.push(ida.system().system.observe(t, &y));
     let ratio = (spec.output_s / spec.observation_s).round() as u64;
+    // Once the low-level root has armed the cutout and until it causes the
+    // isolator, the run stops at every regular sample, where the declared
+    // acquisition is evaluated: the isolator's stop, 0.05 s after a sample,
+    // is then never behind the integrator.
+    let mut watching = false;
+    let mut armed_at: Option<f64> = None;
+    let stop_after = |pending: &[(f64, Pending)], t: f64, watching: bool| -> f64 {
+        let stop = next_stop(pending, t);
+        if watching {
+            let index = ((t / spec.observation_s + 1e-6).floor() as u64 / ratio + 1) * ratio;
+            stop.min(index as f64 * spec.observation_s)
+        } else {
+            stop
+        }
+    };
     assert!(
         ratio >= 1 && (ratio as f64 * spec.observation_s - spec.output_s).abs() <= 1e-12,
         "the output interval must be a whole number of observations"
@@ -1503,13 +1731,16 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     // ("from_s,to_s"), read after every advance. It only reads the
     // integrator's current state.
     let probe: Option<(f64, f64)> = std::env::var("LD01_P2_STEP_PROBE").ok().map(|w| {
-        let v: Vec<f64> = w.split(',').map(|x| x.parse().expect("probe window")).collect();
+        let v: Vec<f64> = w
+            .split(',')
+            .map(|x| x.parse().expect("probe window"))
+            .collect();
         (v[0], v[1])
     });
     let mut probed = f64::NEG_INFINITY;
     loop {
         let next_output = k as f64 * spec.observation_s;
-        let stop = next_stop(&pending, t);
+        let stop = stop_after(&pending, t, watching);
         let target = next_output.min(stop).min(spec.duration_s);
         // Stock IDA's first step is 0.001 of the distance to its first
         // target. A handle's first target is therefore the next regular
@@ -1553,7 +1784,15 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                 && let Ok(smp) = sample(&ida.system().system, tn, &ya, &ypa, &spec.atol, spec.rtol)
             {
                 probed = tn;
-                out.step_probe.push(json!([tn, st.last_step, st.last_order, st.steps, smp.inventory[0], smp.receipt[0], out.handles]));
+                out.step_probe.push(json!([
+                    tn,
+                    st.last_step,
+                    st.last_order,
+                    st.steps,
+                    smp.inventory[0],
+                    smp.receipt[0],
+                    out.handles
+                ]));
             }
         }
         // A pure observation: record it and continue without a sample.
@@ -1612,11 +1851,16 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                 if end.is_none()
                     && regular
                     && let Some(open) = acquire(&mut out, &mut acquired, &mut pending, t)
-                    && let Err(e) = ida.stop_at(next_stop(&pending, t))
                 {
-                    end = Some(End::Failure {
-                        reason: format!("isolator stop at {open} s: {e}"),
-                    });
+                    watching = false;
+                    if let Some(c) = out.cutout.as_mut() {
+                        c["armed_by_root_s"] = json!(armed_at);
+                    }
+                    if let Err(e) = ida.stop_at(stop_after(&pending, t, watching)) {
+                        end = Some(End::Failure {
+                            reason: format!("isolator stop at {open} s: {e}"),
+                        });
+                    }
                 }
                 if end.is_none() {
                     if t >= spec.duration_s {
@@ -1638,10 +1882,12 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                 }
                             }
                         }
+                        let ledger = ledger_at(&ida, t);
                         absorb(&mut out, &mut totals, &ida);
                         next.counters = Counters::default();
-                        match start(&mut next, t, &mut y, spec) {
-                            Ok((rates, pair)) => {
+                        match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q)))
+                        {
+                            Ok(((rates, pair), q)) => {
                                 yp = rates;
                                 out.initializations.push(pair);
                                 match new_handle(
@@ -1650,8 +1896,11 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                     &y,
                                     &yp,
                                     spec,
-                                    next_stop(&pending, t),
-                                    Some(spec.event_restart_first_step_s),
+                                    HandleStart {
+                                        stop: stop_after(&pending, t, watching),
+                                        first_step: Some(spec.event_restart_first_step_s),
+                                        ledger: q,
+                                    },
                                 ) {
                                     Ok(h) => {
                                         ida = h;
@@ -1671,7 +1920,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                             }
                         }
                     } else if t >= stop
-                        && let Err(e) = ida.stop_at(next_stop(&pending, t))
+                        && let Err(e) = ida.stop_at(stop_after(&pending, t, watching))
                     {
                         end = Some(End::Failure {
                             reason: format!("stop boundary: {e}"),
@@ -1764,7 +2013,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                 ),
                             });
                         }
-                        Root::Demand | Root::Travel => {}
+                        Root::Demand | Root::Travel | Root::LowLevel => {}
                     }
                 }
                 if end.is_none() && (demand.is_some() || travel) {
@@ -1829,10 +2078,12 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                             "lift_before":r.lift_before,"lift_after":r.lift_after,"defect":r.defect})),
                         "lift_rate_per_s":rate});
                     if end.is_none() {
+                        let ledger = ledger_at(&ida, t);
                         absorb(&mut out, &mut totals, &ida);
                         next.counters = Counters::default();
-                        match start(&mut next, t, &mut y, spec) {
-                            Ok((rates, pair)) => {
+                        match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q)))
+                        {
+                            Ok(((rates, pair), q)) => {
                                 yp = rates;
                                 event["consistent_pair"] = pair["pair"].clone();
                                 out.initializations.push(pair);
@@ -1842,8 +2093,11 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                     &y,
                                     &yp,
                                     spec,
-                                    next_stop(&pending, t),
-                                    Some(spec.event_restart_first_step_s),
+                                    HandleStart {
+                                        stop: stop_after(&pending, t, watching),
+                                        first_step: Some(spec.event_restart_first_step_s),
+                                        ledger: q,
+                                    },
                                 ) {
                                     Ok(h) => {
                                         ida = h;
@@ -1865,6 +2119,50 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                     }
                     out.relief_events.push(event);
                 }
+                // The cutout's switching level crossed downward: restart here
+                // without the root and stop at every sample from now on.
+                if end.is_none() && fired.iter().any(|(r, d)| *r == Root::LowLevel && *d < 0) {
+                    let mut next = ida.system().system.clone();
+                    next.cutout_watch = None;
+                    watching = acquired.cause.is_none();
+                    armed_at = Some(t);
+                    let ledger = ledger_at(&ida, t);
+                    absorb(&mut out, &mut totals, &ida);
+                    next.counters = Counters::default();
+                    match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q))) {
+                        Ok(((rates, pair), q)) => {
+                            yp = rates;
+                            out.initializations.push(pair);
+                            match new_handle(
+                                next,
+                                t,
+                                &y,
+                                &yp,
+                                spec,
+                                HandleStart {
+                                    stop: stop_after(&pending, t, watching),
+                                    first_step: Some(spec.event_restart_first_step_s),
+                                    ledger: q,
+                                },
+                            ) {
+                                Ok(h) => {
+                                    ida = h;
+                                    out.handles += 1;
+                                }
+                                Err(e) => {
+                                    end = Some(End::Failure {
+                                        reason: format!("cutout arming handle at t={t} s: {e}"),
+                                    })
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            end = Some(End::Failure {
+                                reason: format!("cutout arming start at t={t} s: {e}"),
+                            })
+                        }
+                    }
+                }
                 if end.is_none()
                     && let Some(smp) = &smp
                     && let Some((rule, reason)) = stop_rules(smp, spec, admitted_atol_kg)
@@ -1878,13 +2176,80 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                     "IDA stopped at t={} s: {e}",
                     ida.stats().map_or(t, |s| s.internal_time)
                 );
-                Some(if spec.limit {
-                    End::Limit {
-                        label: classify_limit(&reason),
-                    }
-                } else {
-                    End::Failure { reason }
-                })
+                Some(
+                    if let Some((refusal, tr, yr)) = ida.system().ledger_refusal.clone() {
+                        // Sixth case run's rule: a declared limit root that has
+                        // crossed at the refused step ends the run at that limit;
+                        // the ledger is reported to the last accepted step.
+                        let segment = ida.system();
+                        let mut at_refused = vec![0.; segment.roots.len()];
+                        let mut at_last = vec![0.; segment.roots.len()];
+                        let crossed = if segment
+                            .system
+                            .root_values(&yr, &segment.roots, &mut at_refused)
+                            .is_ok()
+                            && segment
+                                .system
+                                .root_values(&y, &segment.roots, &mut at_last)
+                                .is_ok()
+                        {
+                            segment
+                                .roots
+                                .iter()
+                                .zip(at_last.iter().zip(&at_refused))
+                                .find(|(r, (before, after))| {
+                                    matches!(
+                                        r,
+                                        Root::ZoneMass(_) | Root::MixtureTop | Root::SteelLimit(_)
+                                    ) && (**after == 0. || before.signum() != after.signum())
+                                })
+                                .map(|(r, _)| *r)
+                        } else {
+                            None
+                        };
+                        let mut ya = vec![0.; n];
+                        let mut ypa = vec![0.; n];
+                        let mut q = [0.; LEDGER];
+                        if let Ok(tn) = ida.current_state(&mut ya, &mut ypa)
+                            && tn > t
+                            && ida.quadratures_at(tn, &mut q).is_ok()
+                            && let Ok(mut smp) =
+                                sample(&ida.system().system, tn, &ya, &ypa, &spec.atol, spec.rtol)
+                        {
+                            smp.ledger_q = q;
+                            smp.event = Some("last accepted step before the ledger refusal".into());
+                            out.samples.push(smp);
+                            t = tn;
+                            y = ya;
+                            yp = ypa;
+                        }
+                        let at = format!("crossed at the step the ledger refused at t={tr} s");
+                        match crossed {
+                            Some(root @ Root::SteelLimit(_)) => End::Limit {
+                                label: format!(
+                                    "steel-range applicability limit: {} ({at})",
+                                    root.label()
+                                ),
+                            },
+                            Some(root) if spec.limit => End::Limit {
+                                label: format!("structural event: {} ({at})", root.label()),
+                            },
+                            Some(root) => End::StopRule {
+                                rule: 3,
+                                reason: format!("PZR structural event: {} ({at})", root.label()),
+                            },
+                            None => End::LedgerFailure {
+                                reason: format!("{refusal}; {reason}"),
+                            },
+                        }
+                    } else if spec.limit {
+                        End::Limit {
+                            label: classify_limit(&reason),
+                        }
+                    } else {
+                        End::Failure { reason }
+                    },
+                )
             }
         };
         if let Some(end) = end {
@@ -1963,9 +2328,9 @@ fn classify_limit(reason: &str) -> String {
 }
 
 pub fn sample_json(s: &Sample) -> Value {
-    json!({"t":s.t,"event":s.event,"pt1_pa":s.pt1_pa,"p_s_pa":s.interface_pa,"p_bottom_pa":s.bottom_pa,"lt_dp_pa":s.lt_dp_pa,
+    let mut j = json!({"t":s.t,"event":s.event,"pt1_pa":s.pt1_pa,"p_s_pa":s.interface_pa,"p_bottom_pa":s.bottom_pa,"lt_dp_pa":s.lt_dp_pa,
         "mixture_level_m":s.mixture_level_m,"collapsed_level_m":s.collapsed_level_m,"z_ar_m":s.boundary_elevation_m,"delta_a_m":s.admitted_thickness_m,"phi":s.withdrawal_fraction,
-        "mass_kg":{"g":s.masses[0],"A":s.masses[1],"R":s.masses[2],"b":s.masses[3],"d":s.masses[4]},"drop_boron_kg":s.drop_boron_kg,
+        "mass_kg":{"g":s.masses[0],"A":s.masses[1],"R":s.masses[2],"b":s.masses[3],"d":s.masses[4],"bA":s.masses[5]},"drop_boron_kg":s.drop_boron_kg,
         "temperature_k":{"g":s.temperatures_k[0],"A":s.temperatures_k[1],"R":s.temperatures_k[2]},
         "departure_k":{"g":s.departure_k[0],"A":s.departure_k[1],"R":s.departure_k[2]},
         "drop_velocity_m_s":s.drop_velocity_m_s,"bubble_velocity_m_s":s.bubble_velocity_m_s,"gap_margin":s.gap_margin,
@@ -1977,24 +2342,49 @@ pub fn sample_json(s: &Sample) -> Value {
         "metal":{"energy_j":s.metal_energy_j,"joule_w":s.joule_w,"exterior_w":s.exterior_w,"fluid_receipts_w":s.metal_fluid_w,"identity_w":s.metal_identity_w,
             "rod_temperature_k":s.rod_temperature_k,"wall_temperature_k":s.wall_temperature_k,"bank_wet_fraction":s.bank_wet_fraction,"bank_exposed_m":s.bank_exposed_m,"isolated":s.isolated},
         "lt":{"dp_acquired_pa":s.lt_dp_acquired_pa,"indication_m":s.lt_indication_m},
-        "steps":s.steps,"last_step_s":s.last_step_s,"order":s.order,"error_test_failures":s.error_failures,"convergence_failures":s.convergence_failures})
+        "steps":s.steps,"last_step_s":s.last_step_s,"order":s.order,"error_test_failures":s.error_failures,"convergence_failures":s.convergence_failures});
+    j["bubble_exchange"] = json!({"condensation_kg_s":s.bubble_condensation_kg_s,"weber":s.bubble_exchange_weber,
+        "admitted_condensation_kg_s":s.admitted_bubble_condensation_kg_s,"crossing_kg_s":s.bubble_crossing_kg_s});
+    j
 }
 
-/// Conservation ledger over the samples: inventory change against the
-/// trapezoidal integral of the receipts on outputs, events and breakpoints.
-pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value {
+/// Conservation ledgers over the samples (request 4, K2). The gated one is
+/// the integrator's: inventory change against the stock IDAS quadratures of
+/// the residual's own boundary terms, which follow the accepted steps, so it
+/// drifts only by Newton residual and roundoff. The trapezoid of the sampled
+/// receipts over outputs, events and breakpoints is reported beside it, with
+/// its difference from the quadratures. Energy is fluid internal energy
+/// (zones plus transit at u_sat) plus steel energy, against port receipts
+/// plus electrical delivery minus exterior loss minus the hydrostatic
+/// remainder; the transit drifts are reported.
+pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>, bound: f64) -> Value {
     let samples = &run.samples;
     let Some(first) = samples.first() else {
         return json!(null);
+    };
+    // Quadrature totals since the first sample: mass, energy, boron.
+    let quad = |x: &Sample| {
+        let d: Vec<f64> = (0..LEDGER)
+            .map(|i| x.ledger_q[i] - first.ledger_q[i])
+            .collect();
+        [d[0], d[1] + d[3] - d[4] - d[5], d[2]]
+    };
+    let held = |x: &Sample| {
+        [
+            x.inventory[0] - first.inventory[0],
+            (x.internal_energy_j + x.metal_energy_j)
+                - (first.internal_energy_j + first.metal_energy_j),
+            x.inventory[2] - first.inventory[2],
+        ]
     };
     let mut integral = [0.; 3];
     let mut work = 0.;
     let mut joule = 0.;
     let mut exterior = 0.;
-    let mut drift = [0.; 2];
+    let mut drift = [0.; 3];
     let mut relief = [0.; 3];
-    let mut worst = [0.; 3];
-    let mut worst_ratio = [0.; 3];
+    let mut worst = [[0.; 3]; 2];
+    let mut worst_ratio = [[0.; 3]; 2];
     let mut identity = [0_f64; 3];
     let mut previous = first;
     for s in samples.iter().skip(1) {
@@ -2011,7 +2401,7 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
         work += 0.5 * dt * (s.volume_work_w + previous.volume_work_w);
         joule += 0.5 * dt * (s.joule_w + previous.joule_w);
         exterior += 0.5 * dt * (s.exterior_w + previous.exterior_w);
-        for i in 0..2 {
+        for i in 0..3 {
             drift[i] += 0.5 * dt * (s.transit_drift_w[i] + previous.transit_drift_w[i]);
         }
         relief[0] += 0.5
@@ -2022,21 +2412,18 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
                 + previous.relief_drop_kg_s);
         relief[1] += 0.5 * dt * (s.relief_enthalpy_w + previous.relief_enthalpy_w);
         relief[2] += 0.5 * dt * (s.relief_boron_kg_s + previous.relief_boron_kg_s);
-        let closure = [
-            s.inventory[0] - first.inventory[0] - integral[0],
-            (s.internal_energy_j + s.metal_energy_j
-                - first.internal_energy_j
-                - first.metal_energy_j)
-                - (integral[1] + joule - exterior - work),
-            s.inventory[2] - first.inventory[2] - integral[2],
+        let h = held(s);
+        let q = quad(s);
+        let trapezoid = [
+            integral[0],
+            integral[1] + joule - exterior - work,
+            integral[2],
         ];
         for i in 0..3 {
-            if closure[i].abs() > worst[i] {
-                worst[i] = closure[i].abs();
-            }
-            let ratio = closure[i].abs() / s.tolerance[i];
-            if ratio > worst_ratio[i] {
-                worst_ratio[i] = ratio;
+            for (k, receipts) in [q, trapezoid].iter().enumerate() {
+                let closure = (h[i] - receipts[i]).abs();
+                worst[k][i] = f64::max(worst[k][i], closure);
+                worst_ratio[k][i] = f64::max(worst_ratio[k][i], closure / s.tolerance[i]);
             }
             identity[i] = identity[i].max(s.identity[i].abs());
         }
@@ -2048,20 +2435,28 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
     // breakpoints must reproduce them.
     let exact_surge = surge.map(|tb| tb.integral(t));
     let exact_spray = spray.map(|tb| tb.integral(t));
-    let final_closure = [
-        last.inventory[0] - first.inventory[0] - integral[0],
-        (last.internal_energy_j + last.metal_energy_j
-            - first.internal_energy_j
-            - first.metal_energy_j)
-            - (integral[1] + joule - exterior - work),
-        last.inventory[2] - first.inventory[2] - integral[2],
+    let h = held(last);
+    let q = quad(last);
+    let lq: Vec<f64> = (0..LEDGER)
+        .map(|i| last.ledger_q[i] - first.ledger_q[i])
+        .collect();
+    let trapezoid = [
+        integral[0],
+        integral[1] + joule - exterior - work,
+        integral[2],
     ];
-    json!({"t_s":t,"method":"inventory change minus the trapezoidal integral of the port receipts over outputs, root events and breakpoints; energy as fluid internal energy (zones plus transit at u_sat) plus steel energy, against port receipts plus electrical delivery minus exterior loss minus the hydrostatic remainder",
-        "mass":{"inventory_change_kg":last.inventory[0]-first.inventory[0],"receipts_kg":integral[0],"closure_kg":final_closure[0],"max_abs_closure_kg":worst[0],"max_closure_over_solver_tolerance":worst_ratio[0],"solver_tolerance_kg":last.tolerance[0],"within_solver_tolerance":worst_ratio[0] <= 1.,"max_instantaneous_identity_kg_s":identity[0]},
+    json!({"t_s":t,"bound_solver_tolerances":bound,"method":"gated: inventory change minus the stock IDAS quadratures of the residual's boundary terms (request 4, K2); reported: minus the trapezoid of the sampled receipts over outputs, root events and breakpoints. Energy as fluid internal energy (zones plus transit at u_sat) plus steel energy, against port receipts plus electrical delivery minus exterior loss minus the hydrostatic remainder",
+        "mass":{"inventory_change_kg":h[0],"receipts_kg":q[0],"closure_kg":h[0]-q[0],"max_abs_closure_kg":worst[0][0],"max_closure_over_solver_tolerance":worst_ratio[0][0],"solver_tolerance_kg":last.tolerance[0],"within_solver_tolerance":worst_ratio[0][0] <= bound,"max_instantaneous_identity_kg_s":identity[0]},
         "energy":{"internal_energy_change_j":last.internal_energy_j-first.internal_energy_j,"metal_energy_change_j":last.metal_energy_j-first.metal_energy_j,
             "rod_energy_change_j":last.rod_energy_j-first.rod_energy_j,"wall_energy_change_j":(last.metal_energy_j-last.rod_energy_j)-(first.metal_energy_j-first.rod_energy_j),
-            "electrical_j":joule,"exterior_loss_j":exterior,"port_receipts_j":integral[1],"hydrostatic_remainder_j":work,"transit_drift_j":{"bubbles_paid_by_R":drift[0],"drops_paid_by_g":drift[1]},"closure_j":final_closure[1],"max_abs_closure_j":worst[1],"max_closure_over_solver_tolerance":worst_ratio[1],"solver_tolerance_j":last.tolerance[1],"max_instantaneous_identity_w":identity[1]},
-        "boron":{"inventory_change_kg":last.inventory[2]-first.inventory[2],"receipts_kg":integral[2],"closure_kg":final_closure[2],"max_abs_closure_kg":worst[2],"max_closure_over_solver_tolerance":worst_ratio[2],"solver_tolerance_kg":last.tolerance[2],"within_solver_tolerance":worst_ratio[2] <= 1.,"max_instantaneous_identity_kg_s":identity[2]},
+            "electrical_j":lq[3],"exterior_loss_j":lq[4],"port_receipts_j":lq[1],"hydrostatic_remainder_j":lq[5],"transit_drift_j":{"bubbles_paid_by_R":lq[6],"drops_paid_by_g":lq[7],"admitted_bubbles_paid_by_A":lq[8]},
+            "closure_j":h[1]-q[1],"max_abs_closure_j":worst[0][1],"max_closure_over_solver_tolerance":worst_ratio[0][1],"within_solver_tolerance":worst_ratio[0][1] <= bound,"solver_tolerance_j":last.tolerance[1],"max_instantaneous_identity_w":identity[1]},
+        "boron":{"inventory_change_kg":h[2],"receipts_kg":q[2],"closure_kg":h[2]-q[2],"max_abs_closure_kg":worst[0][2],"max_closure_over_solver_tolerance":worst_ratio[0][2],"solver_tolerance_kg":last.tolerance[2],"within_solver_tolerance":worst_ratio[0][2] <= bound,"max_instantaneous_identity_kg_s":identity[2]},
+        "trapezoid":{
+            "mass":{"receipts_kg":trapezoid[0],"closure_kg":h[0]-trapezoid[0],"max_abs_closure_kg":worst[1][0],"max_closure_over_solver_tolerance":worst_ratio[1][0],"minus_quadrature_kg":trapezoid[0]-q[0]},
+            "energy":{"electrical_j":joule,"exterior_loss_j":exterior,"port_receipts_j":integral[1],"hydrostatic_remainder_j":work,"transit_drift_j":{"bubbles_paid_by_R":drift[0],"drops_paid_by_g":drift[1],"admitted_bubbles_paid_by_A":drift[2]},
+                "closure_j":h[1]-trapezoid[1],"max_abs_closure_j":worst[1][1],"max_closure_over_solver_tolerance":worst_ratio[1][1],"minus_quadrature_j":trapezoid[1]-q[1]},
+            "boron":{"receipts_kg":trapezoid[2],"closure_kg":h[2]-trapezoid[2],"max_abs_closure_kg":worst[1][2],"max_closure_over_solver_tolerance":worst_ratio[1][2],"minus_quadrature_kg":trapezoid[2]-q[2]}},
         "relief_out":{"mass_kg":relief[0],"enthalpy_j":relief[1],"boron_kg":relief[2]},
         "recorded_tables_exact":{"surge_kg":exact_surge,"spray_kg":exact_spray}})
 }
@@ -2097,6 +2492,7 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
         End::CpuCap => json!({"kind":"run CPU cap reached"}),
         End::SetBound => json!({"kind":"set CPU bound reached"}),
         End::Failure { reason } => json!({"kind":"failure","reason":reason}),
+        End::LedgerFailure { reason } => json!({"kind":"ledger failure","reason":reason}),
     };
     let series: Vec<Value> = run
         .samples
@@ -2122,12 +2518,13 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
         .fold((f64::INFINITY, 0.), |b, x| if x.0 < b.0 { x } else { b });
     json!({"label":run.label,"end":end,"reached_s":run.reached_s,"totals":run.totals.json(),"handles":run.handles,
         "cpu_s":run.cpu_s,"thread_cpu_s":run.thread_cpu_s,"diagnostic_cpu_s":run.diagnostic_cpu_s,"solver_cpu_s":run.cpu_s-run.diagnostic_cpu_s,"wall_s":run.wall_s,
-        "harness_counters":{"residual_calls":run.counters.residuals,"jacobian_calls":run.counters.jacobians,"residual_wall_s":run.counters.residual_wall_s,"jacobian_wall_s":run.counters.jacobian_wall_s,"root_calls":run.counters.root_calls},
+        "harness_counters":{"residual_calls":run.counters.residuals,"jacobian_calls":run.counters.jacobians,"residual_wall_s":run.counters.residual_wall_s,"jacobian_wall_s":run.counters.jacobian_wall_s,"root_calls":run.counters.root_calls,"quadrature_calls":run.counters.quadratures},
         "consistent_pairs":run.initializations,"max_abs_scaled_row_at_samples":max_row,
         "metastable_peaks":Value::Object(peaks),"accepted_step_checks":run.accepted_checks,
         "min_drag_gap_margin":min_gap,"min_admitted_mass_kg":{"value":min_a.0,"at_s":min_a.1},
         "relief_events":run.relief_events,"area_step_crossings":run.area_crossings,"structural_events":run.structural,
         "credited_departure_overruns":run.uncredited,"resolvability_reports":run.resolvability,
-        "handle_stats":run.handle_stats,"step_probe":run.step_probe,"cutout":run.cutout,"observations":run.observations.len(),
+        "handle_stats":run.handle_stats,"ledger_disabled_for_diagnosis":run.ledger_disabled,
+        "restart_placements":run.initializations.iter().flat_map(|i| i["pair"]["placements"].as_array().cloned().unwrap_or_default()).collect::<Vec<_>>(),"step_probe":run.step_probe,"cutout":run.cutout,"observations":run.observations.len(),
         "samples":run.samples.len(),"series":series})
 }

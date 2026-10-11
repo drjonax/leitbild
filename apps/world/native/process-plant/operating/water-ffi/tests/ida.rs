@@ -748,3 +748,110 @@ fn a_seized_coordinate_becomes_algebraic_at_reinitialization() {
     let error = ida.set_differential(&[1., 1., 0.]).unwrap_err();
     assert!(error.contains("construction or reinitializ"), "{error}");
 }
+
+#[test]
+fn an_explicit_first_step_is_admitted_before_a_segment_and_refused_after() {
+    let mut y = [1., 2.];
+    let mut yp = [-1., 0.];
+    let mut ida = new(decay(), &y, &yp);
+    assert!(ida.set_init_step(0.).is_err());
+    assert!(ida.set_init_step(f64::NAN).is_err());
+    ida.set_init_step(1e-4).unwrap();
+    ida.advance(1., &mut y, &mut yp).unwrap().reached().unwrap();
+    assert!((y[0] - (-1f64).exp()).abs() < 1e-6);
+    assert!(ida.set_init_step(1e-4).is_err());
+}
+
+/// IDAS quadratures excluded from the error test: `q' = y0` integrates the
+/// decay exactly, and the state trajectory equals the one without them.
+#[cfg(feature = "quadratures")]
+struct Ledgered(Decay);
+#[cfg(feature = "quadratures")]
+impl System for Ledgered {
+    fn dimension(&self) -> usize {
+        self.0.dimension()
+    }
+    fn nonzeros(&self) -> usize {
+        self.0.nonzeros()
+    }
+    fn root_count(&self) -> usize {
+        0
+    }
+    fn roots(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        self.0.roots(t, y, yp, out)
+    }
+    fn residual(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        self.0.residual(t, y, yp, out)
+    }
+    fn jacobian(
+        &mut self,
+        t: f64,
+        cj: f64,
+        y: &[f64],
+        yp: &[f64],
+        data: &mut [f64],
+        rows: &mut [i64],
+        pointers: &mut [i64],
+    ) -> Result<(), Failure> {
+        self.0.jacobian(t, cj, y, yp, data, rows, pointers)
+    }
+    fn quadrature_count(&self) -> usize {
+        1
+    }
+    fn quadrature(&mut self, _: f64, y: &[f64], _: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        out[0] = y[0];
+        Ok(())
+    }
+}
+#[cfg(feature = "quadratures")]
+#[test]
+fn idas_quadratures_follow_the_steps_and_leave_the_trajectory_unchanged() {
+    let (y0, yp0) = ([1., 2.], [-1., 0.]);
+    let (mut y, mut yp) = (y0, yp0);
+    let mut plain = new(decay(), &y, &yp);
+    plain
+        .advance(2., &mut y, &mut yp)
+        .unwrap()
+        .reached()
+        .unwrap();
+    let (mut z, mut zp) = (y0, yp0);
+    let mut ledgered = Ida::new(
+        Ledgered(decay()),
+        Initial {
+            time: 0.,
+            y: &z,
+            yp: &zp,
+            differential: &[1., 0.],
+            absolute_tolerance: &[1e-10; 2],
+            relative_tolerance: 1e-8,
+        },
+    )
+    .unwrap();
+    assert!(leitbild_operating_water::ida::quadratures_linked());
+    assert!(ledgered.initialize_quadratures(&[0., 0.]).is_err());
+    ledgered.initialize_quadratures(&[0.5]).unwrap();
+    assert!(ledgered.initialize_quadratures(&[0.5]).is_err());
+    ledgered
+        .advance(2., &mut z, &mut zp)
+        .unwrap()
+        .reached()
+        .unwrap();
+    assert_eq!(y.map(f64::to_bits), z.map(f64::to_bits));
+    let mut q = [0.];
+    assert_eq!(ledgered.quadratures(&mut q).unwrap(), 2.);
+    // The integrator's own quadrature of its own y0: 1 - y0(2) plus the start.
+    assert!((q[0] - (0.5 + 1. - z[0])).abs() < 1e-7);
+    assert!(ledgered.quadratures(&mut [0., 0.]).is_err());
+    assert!(plain.quadratures(&mut q).is_err());
+}
+
+#[cfg(not(feature = "quadratures"))]
+#[test]
+fn stock_ida_refuses_a_ledger_rather_than_emulating_one() {
+    assert!(!leitbild_operating_water::ida::quadratures_linked());
+    let (y, yp) = ([1., 2.], [-1., 0.]);
+    let mut ida = new(decay(), &y, &yp);
+    let error = ida.initialize_quadratures(&[0.]).unwrap_err();
+    assert!(error.contains("stock IDA has no quadratures"), "{error}");
+    assert!(ida.quadratures(&mut [0.]).is_err());
+}

@@ -24,7 +24,7 @@ use leitbild_operating_plant::{
         heaters::{BanksBlock, Caloric304, ContactBlock, HeaterCase, Heaters},
         properties as props,
         stratified::{
-            self as st, Case, Cell, Parameters, PortKind, ReliefDevice, ReliefMotion,
+            self as st, Case, Cell, ExchangeCase, Parameters, PortKind, ReliefDevice, ReliefMotion,
             SensitivityFamilies,
         },
         walls::{ShellBlock, WallCase, Walls},
@@ -37,8 +37,8 @@ use leitbild_operating_water::{
     ida::{Advance, Failure, Ida, Initial, System},
 };
 use p2_harness::{
-    CellSystem, Counters, Cutout, End, Flow, Metal, Relief, Root, Run, RunSpec,
-    Table, cpu_s, ledger, run, run_json, thread_cpu_s,
+    CellSystem, Counters, Cutout, End, Flow, Metal, Relief, Root, Run, RunSpec, Table, cpu_s,
+    ledger, run, run_json, thread_cpu_s,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -79,6 +79,13 @@ const REPRESENTATION_SEARCH: usize = 8;
 /// start, at t = 0 and at every event, holds every scaled row to it.
 const CONSISTENT_ROW_BOUND: f64 = 1e-12;
 const CONSISTENT_PASSES: usize = 2;
+/// The cell's nonnegative stocks, IDA-constrained and bound at a restart.
+const NONNEGATIVE: [(usize, &str); 4] = [
+    (st::BUBBLE_MASS, "M_b"),
+    (st::DROP_MASS, "M_d"),
+    (st::DROP_BORON, "B_d"),
+    (st::ADMITTED_BUBBLE_MASS, "M_bA"),
+];
 
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
@@ -238,6 +245,11 @@ struct CaseSet {
     /// Stock IDA's first step after every event restart (request 4, K4).
     #[serde(rename = "eventRestartFirstStep_s")]
     event_restart_first_step_s: f64,
+    /// Closure bound on the integrator's ledger, in solver tolerances (K2).
+    quadrature_closure_factor: f64,
+    /// Largest constraint violation, in solver scaling, a restart may place
+    /// on its bound (sixth case run).
+    restart_bound_tolerance: f64,
     cases: Vec<Entry>,
 }
 
@@ -264,6 +276,13 @@ struct Context {
 }
 impl Context {
     fn load() -> Self {
+        // The cases gate on the integrator's own ledger (request 4, K2): a
+        // binary that links stock IDA refuses here instead of running
+        // without it.
+        assert!(
+            leitbild_operating_water::ida::quadratures_linked(),
+            "the P2 cases gate on the IDAS quadrature ledger: build with --features quadratures against the stock IDAS prefix"
+        );
         let packet_path = std::env::var("LD01_OPERATING_HOT_SPINE_PACKET")
             .expect("LD01_OPERATING_HOT_SPINE_PACKET names the P2 packet");
         let wiki = std::env::var("LD01_WIKI_ROOT").expect("LD01_WIKI_ROOT names the wiki worktree");
@@ -305,15 +324,29 @@ impl Context {
             &std::fs::read(format!("{water}/water-build.json")).expect("the water build's receipt"),
         )
         .expect("water-build.json");
-        let library = std::fs::read(format!("{water}/libld01_operating_water.a"))
-            .expect("the water library");
-        let water_build = json!({"directory":water,"library_sha256":sha256(&library),"receipt":water_receipt});
+        let library =
+            std::fs::read(format!("{water}/libld01_operating_water.a")).expect("the water library");
+        let water_build =
+            json!({"directory":water,"library_sha256":sha256(&library),"receipt":water_receipt});
+        // The stock IDAS build the quadrature ledger links (request 4, K2):
+        // its library hash as found and its build receipt beside the prefix.
+        let sundials = std::env::var("LD01_OPERATING_SUNDIALS_PREFIX")
+            .expect("LD01_OPERATING_SUNDIALS_PREFIX names the stock IDAS build");
+        let idas = std::fs::read(format!("{sundials}/lib/libsundials_idas.dylib"))
+            .expect("the stock IDAS library");
+        let idas_receipt: Value = serde_json::from_slice(
+            &std::fs::read(format!("{sundials}/../build-receipt.json"))
+                .expect("the IDAS build receipt beside its prefix"),
+        )
+        .expect("build-receipt.json");
+        let sundials_build =
+            json!({"prefix":sundials,"idas_library_sha256":sha256(&idas),"receipt":idas_receipt});
         let app = std::env::current_dir().unwrap().display().to_string();
         let provenance = json!({
             "app_commit":sh(&["rev-parse","HEAD"],&app),"app_dirty":!sh(&["status","--porcelain"],&app).is_empty(),
             "wiki_root":wiki,"wiki_commit":sh(&["rev-parse","HEAD"],&wiki),"wiki_dirty":!sh(&["status","--porcelain"],&wiki).is_empty(),
             "blocks_read_from":"wiki HEAD",
-            "packet":packet_path,"packet_sha256":sha256(&bytes),"packet_composition":composition,"water_build":water_build,
+            "packet":packet_path,"packet_sha256":sha256(&bytes),"packet_composition":composition,"water_build":water_build,"sundials_build":sundials_build,
             "case_block":cases_block.provenance(),"gates_block":gates.provenance(),"accuracy_block":budgets.provenance(),
             "transport_block":transport.provenance(),"heater_banks_block":banks_block.provenance(),"heater_contact_block":contact_block.provenance(),
             "caloric_304_block":caloric_block.provenance(),"shell_block":shell_block.provenance()});
@@ -381,6 +414,11 @@ struct Variant {
     bubble_diameter_m: f64,
     /// Gate 5's segment refinement: every heater segment halved.
     halved_segments: bool,
+    /// The bulk bubble exchange's sensitivity selection (request 4, K1).
+    exchange: ExchangeCase,
+    /// The heater contact's wall birth fraction χ (nominal or its declared
+    /// sensitivity), shared by the rods and the shell's wet contact.
+    wall_birth_fraction: f64,
 }
 
 /// The heater banks block, with every segment halved for the refinement.
@@ -403,22 +441,23 @@ fn banks(ctx: &Context, halved: bool) -> BanksBlock {
 
 /// The PZR metal from its blocks: the rods (nominal contact case) and the
 /// shell and heads, with the case's recorded heater request when declared.
-fn metal(ctx: &Context, entry: &Entry, cell: &Cell, halved: bool) -> Metal {
-    let heaters = Heaters::new(
-        cell,
-        &banks(ctx, halved),
-        ctx.caloric,
-        ctx.contact,
-        HeaterCase::nominal(&ctx.contact),
-    )
-    .expect("heaters");
+fn metal(ctx: &Context, entry: &Entry, cell: &Cell, halved: bool, chi: f64) -> Metal {
+    let contact = HeaterCase {
+        wall_birth_fraction: chi,
+        ..HeaterCase::nominal(&ctx.contact)
+    };
+    let heaters = Heaters::new(cell, &banks(ctx, halved), ctx.caloric, ctx.contact, contact)
+        .expect("heaters");
     let walls = Walls::new(
         cell,
         &heaters,
         ctx.shell.clone(),
         ctx.caloric,
         ctx.contact,
-        WallCase::nominal(&ctx.contact, &ctx.shell),
+        WallCase {
+            contact,
+            ..WallCase::nominal(&ctx.contact, &ctx.shell)
+        },
     )
     .expect("walls");
     let maximum = ctx
@@ -548,7 +587,13 @@ fn prepare(ctx: &Context, entry: &Entry, halved: bool) -> Prepared {
     if entry.relief == Some(true) {
         y0.push(0.);
     }
-    let m = metal(ctx, entry, &cell, halved);
+    let m = metal(
+        ctx,
+        entry,
+        &cell,
+        halved,
+        ctx.contact.wet.wall_birth_fraction,
+    );
     let temperature = preparation.saturation_temperature_k;
     let mut steel = m
         .heaters
@@ -594,8 +639,9 @@ fn system(ctx: &Context, entry: &Entry, prepared: &Prepared, v: Variant) -> Cell
         },
         Some(&ctx.set.sensitivity_families),
     )
+    .and_then(|c| c.with_exchange(v.exchange))
     .expect("cell variant");
-    let metal = metal(ctx, entry, &cell, v.halved_segments);
+    let metal = metal(ctx, entry, &cell, v.halved_segments, v.wall_birth_fraction);
     let port = |kind: PortKind| p.ports.iter().position(|q| q.kind == kind);
     let c = p.absorber_mass_fraction;
     let surge = entry.surge.as_ref().map(|tb| Flow {
@@ -642,6 +688,8 @@ fn system(ctx: &Context, entry: &Entry, prepared: &Prepared, v: Variant) -> Cell
         relief,
         metal: Some(metal),
         fixed_roots,
+        cutout_watch: None,
+        restart_bounds: None,
         counters: Counters::default(),
     }
 }
@@ -665,6 +713,8 @@ fn variants(ctx: &Context, entry: &Entry) -> Vec<(String, Variant, bool)> {
         drop_diameter_m: x.spray_drop_diameter_m,
         bubble_diameter_m: x.bubble_diameter_m,
         halved_segments: false,
+        exchange: ExchangeCase::nominal(),
+        wall_birth_fraction: ctx.contact.wet.wall_birth_fraction,
     };
     let f = &ctx.set.sensitivity_families;
     let mut out = vec![("nominal".to_string(), nominal, false)];
@@ -723,6 +773,48 @@ fn variants(ctx: &Context, entry: &Entry) -> Vec<(String, Variant, bool)> {
                         false,
                     ));
                 }
+            }
+            // Request 4, K1: the values are their owners' strict keys,
+            // `ld01-pzr-stratified` and the heater contact block.
+            "bubbleExchange" => {
+                for factor in x.bubble_exchange_sensitivity.iter().filter(|f| **f != 1.) {
+                    out.push((
+                        format!("bubble exchange x{factor}"),
+                        Variant {
+                            exchange: ExchangeCase {
+                                factor: *factor,
+                                diameter_m: None,
+                            },
+                            ..nominal
+                        },
+                        false,
+                    ));
+                }
+            }
+            "bubbleExchangeDiameter" => {
+                let d = x.bubble_exchange_diameter_sensitivity_m;
+                out.push((
+                    format!("exchange diameter {d} m"),
+                    Variant {
+                        exchange: ExchangeCase {
+                            factor: 1.,
+                            diameter_m: Some(d),
+                        },
+                        ..nominal
+                    },
+                    false,
+                ));
+            }
+            "wallBirth" => {
+                let chi = ctx.contact.wet.wall_birth_fraction_sensitivity;
+                out.push((
+                    format!("wall birth chi {chi}"),
+                    Variant {
+                        wall_birth_fraction: chi,
+                        ..nominal
+                    },
+                    false,
+                ));
             }
             other => panic!("undeclared sensitivity family {other}"),
         }
@@ -978,10 +1070,16 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         _ => ((duration / ctx.output_s()) / 300.).ceil() as usize,
     };
     let mut runs: Vec<(String, Variant, bool, Run)> = Vec::new();
+    let mut loads = serde_json::Map::new();
     let mut declared_runs = variants(ctx, entry);
     if smoke.is_some() {
-        // A smoke run exercises the harness only: the nominal variant.
-        declared_runs.truncate(1);
+        // A smoke run exercises the harness only: the nominal variant, or the
+        // one named in LD01_P2_SMOKE_VARIANT.
+        match std::env::var("LD01_P2_SMOKE_VARIANT") {
+            Ok(name) => declared_runs.retain(|(label, _, _)| *label == name || label == "nominal"),
+            Err(_) => declared_runs.truncate(1),
+        }
+        assert!(!declared_runs.is_empty(), "no such smoke variant");
     }
     for (label, v, refined) in declared_runs {
         if cpu_s() >= deadline {
@@ -1008,12 +1106,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             output_s: ctx.output_s(),
             observation_s: ctx.gates.f64(&["comparison", "observation_s"]),
             breakpoints: breakpoints(entry),
-            nonnegative: vec![
-                st::BUBBLE_MASS,
-                st::DROP_MASS,
-                st::DROP_BORON,
-                st::ADMITTED_BUBBLE_MASS,
-            ],
+            nonnegative: NONNEGATIVE.iter().map(|c| c.0).collect(),
             cpu_cap_s: cap,
             set_deadline_cpu_s: deadline,
             credited,
@@ -1023,14 +1116,21 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             consistent_passes: CONSISTENT_PASSES,
             lift_root_bound: ctx.lift_root_bound(),
             event_restart_first_step_s: ctx.set.event_restart_first_step_s,
+            restart_bound_tolerance: ctx.set.restart_bound_tolerance,
+            // Diagnostic only: a smoke may run without the ledger, to see
+            // whether the residual alone completes a run the ledger stopped.
+            ledger: !(smoke.is_some() && std::env::var("LD01_P2_DIAG_WITHOUT_LEDGER").is_ok()),
             cutout,
         };
         let sys = system(ctx, entry, prepared, v);
+        let load_start = load_average();
         let r = run(sys, &prepared.y0, &spec);
+        let load_end = load_average();
         println!(
-            "{} {}: end {:?} at {} s, {} steps, {:.2} CPU-s",
-            entry.id, label, r.end, r.reached_s, r.totals.steps, r.cpu_s
+            "{} {}: end {:?} at {} s, {} steps, {:.2} CPU-s, load {:?} -> {:?}",
+            entry.id, label, r.end, r.reached_s, r.totals.steps, r.cpu_s, load_start, load_end
         );
+        loads.insert(label.clone(), json!({"start":load_start,"end":load_end}));
         runs.push((label, v, refined, r));
     }
     let surge = entry.surge.as_ref().map(|t| Table::new(t.clone()).unwrap());
@@ -1039,9 +1139,16 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
     let mut ledgers = serde_json::Map::new();
     for (label, v, refined, r) in &runs {
         let mut j = run_json(r, stride);
-        j["variant"] = json!({"relaxation_factor":v.relaxation_factor,"spray_drop_diameter_m":v.drop_diameter_m,"bubble_diameter_m":v.bubble_diameter_m,"halved_segments":v.halved_segments,"refined":refined});
+        j["variant"] = json!({"relaxation_factor":v.relaxation_factor,"spray_drop_diameter_m":v.drop_diameter_m,"bubble_diameter_m":v.bubble_diameter_m,"halved_segments":v.halved_segments,
+            "bubble_exchange_factor":v.exchange.factor,"bubble_exchange_diameter_m":v.exchange.diameter_m,"wall_birth_fraction":v.wall_birth_fraction,"refined":refined});
         j["cpu_cap_s"] = json!(cap);
-        let l = ledger(r, surge.as_ref(), spray.as_ref());
+        j["load_average"] = loads[label.as_str()].clone();
+        let l = ledger(
+            r,
+            surge.as_ref(),
+            spray.as_ref(),
+            ctx.set.quadrature_closure_factor,
+        );
         j["conservation"] = l.clone();
         j["area_step_rejections"] = json!(crossing_rejections(r));
         ledgers.insert(label.clone(), l);
@@ -1060,7 +1167,12 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         }
     }
     let conservation_ok = |r: &Run| {
-        let l = ledger(r, surge.as_ref(), spray.as_ref());
+        let l = ledger(
+            r,
+            surge.as_ref(),
+            spray.as_ref(),
+            ctx.set.quadrature_closure_factor,
+        );
         l["mass"]["within_solver_tolerance"].as_bool() == Some(true)
             && l["boron"]["within_solver_tolerance"].as_bool() == Some(true)
     };
@@ -1158,7 +1270,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
                     "hydrostatic_remainder_j":l["energy"]["hydrostatic_remainder_j"],"closure_j":l["energy"]["closure_j"],"max_closure_over_solver_tolerance":l["energy"]["max_closure_over_solver_tolerance"]},
                 "quasi_steady_inversion_k":inversion,"selection_inversion_k":0.072,
                 "rod_temperature_max_k":rod_max,"steel_limit_reached":steel_limit(nominal),
-                "ranges":{"pt1_pa":extreme(|s|s.pt1_pa),"inversion_exchange_kg_s":extreme(|s|s.inversion_kg_s),"bubble_stock_kg":extreme(|s|s.masses[3]),
+                "ranges":{"pt1_pa":extreme(|s|s.pt1_pa),"inversion_exchange_kg_s":extreme(|s|s.inversion_kg_s),"bubble_stock_kg":extreme(|s|s.masses[3]),"admitted_bubble_stock_kg":extreme(|s|s.masses[5]),
                     "swell_m":extreme(|s|s.mixture_level_m - s.collapsed_level_m),"mixture_level_m":extreme(|s|s.mixture_level_m),"collapsed_level_m":extreme(|s|s.collapsed_level_m),
                     "flashing_kg_s":extreme(|s|s.flashing_kg_s[0] + s.flashing_kg_s[1]),"joule_w":extreme(|s|s.joule_w),"exterior_w":extreme(|s|s.exterior_w),
                     "metal_identity_w":extreme(|s|s.metal_identity_w)}}));
@@ -1314,7 +1426,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             "event_restart_first_step_s":ctx.set.event_restart_first_step_s,"pt1_exclusion_around_event_s":armed.then_some(judgement.pt1_exclusion_around_event_s),
             "cutout_settings_source":cutout.map(|_| "transcribed from prose (safety LD01.PROT.PZR.LOW_LEVEL, heater isolator, electronic differential level); no strict block declares them"),
             "observation_s":ctx.gates.f64(&["comparison", "observation_s"]),"cutoff_hz":ctx.budgets.f64(&["uncreditedAbove_Hz"]),
-            "output_interval_s":ctx.output_s(),"breakpoints":breakpoints(entry),"run_cpu_cap_s":cap,"nonnegative_constraints":["M_b","M_d","B_d"],
+            "output_interval_s":ctx.output_s(),"breakpoints":breakpoints(entry),"run_cpu_cap_s":cap,"nonnegative_constraints":NONNEGATIVE.iter().map(|c| json!({"coordinate":c.0,"stock":c.1})).collect::<Vec<_>>(),"restart_bound_tolerance_scaled":ctx.set.restart_bound_tolerance,
             "ports":p.ports.iter().map(|q| json!({"id":q.id,"kind":format!("{:?}",q.kind),"elevation_m":q.elevation_m,"face":q.face,"bore_m":q.bore_m,"relief":q.relief.map(|d| json!({"opening_Pa":d.opening_pa,"reseat_Pa":d.reseat_pa,"fullStrokes_per_s":d.full_strokes_per_s,"effectiveAreaPerLift_m2":d.effective_area_per_lift_m2}))})).collect::<Vec<_>>(),
             "sources":{"surge_enthalpy_j_kg":enthalpy(&ctx.set.sources.surge),"spray_enthalpy_j_kg":enthalpy(&ctx.set.sources.spray),"absorber_mass_fraction":p.absorber_mass_fraction},
             "relief_back_pressure_pa":ctx.set.relief_back_pressure_pa},
@@ -1346,6 +1458,7 @@ fn skipped(label: &str) -> Run {
         resolvability: Vec::new(),
         uncredited: Vec::new(),
         handle_stats: Vec::new(),
+        ledger_disabled: false,
         step_probe: Vec::new(),
         cutout: None,
         observations: Vec::new(),
