@@ -35,6 +35,9 @@ const highPressureReactorTripMPa = 16.55
 const lowPressureAlarmMPa = 14.8
 const lowPressureReactorTripMPa = 13.8
 
+/** The level control's low deviation alarm, below the level program. */
+const levelDeviationAlarmPercent = 5
+
 export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
     id: 'pzr-pressure-low',
@@ -225,20 +228,24 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
       ],
     },
   }),
+  // The low-level alarm is the level control's low deviation: level more than
+  // 5 % below its program, as Westinghouse plants set it. A fixed limit would
+  // stand after every trip, where the program itself falls to its 25 %
+  // no-load level.
   rule({
-    id: 'pzr-level-low',
-    label: 'Pressurizer level low',
+    id: 'pzr-level-deviation-low',
+    label: 'Pressurizer level low deviation from program',
     ruleClass: 'alarm',
-    condition: comparison({ tagId: 'PZR-LVL' }, '<', 35),
-    clearCondition: comparison({ tagId: 'PZR-LVL' }, '>', 40),
+    condition: comparison({ tagId: 'PZR-LVL-DEV' }, '<', -levelDeviationAlarmPercent),
+    clearCondition: comparison({ tagId: 'PZR-LVL-DEV' }, '>', -levelDeviationAlarmPercent + 1),
     clearDelayMs: 1_000,
     delayMs: 1_000,
     latch: false,
     resetWhenClear: true,
     effects: [alarm({
-      id: 'level-low',
-      title: 'Pressurizer level low',
-      message: 'Pressurizer level is below the reference low-level threshold.',
+      id: 'level-deviation-low',
+      title: 'Pressurizer level low deviation',
+      message: `Pressurizer level is more than ${levelDeviationAlarmPercent} % below its program, the level the loops' average temperature sets.`,
       severity: 'warning',
       annunciator: pzrAlarm,
     })],

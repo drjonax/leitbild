@@ -692,3 +692,44 @@ describe('containment pressure', () => {
     expect(Number(plantRun.tag('CTMT-PR'))).toBeLessThan(sprayed)
   }, 120_000)
 })
+
+describe('pressurizer low level', () => {
+  const deviation = 'alarm:pzr-level-deviation-low:level-deviation-low'
+  const cutoff = 'alarm:pzr-level-low-heaters-off:heaters-off-letdown-isolated'
+
+  test('alarms on the level control\'s low deviation, 5 % below its program, not at a fixed level', () => {
+    const path = resolveProcessPlantSignalBinding(graph, { tagId: 'PZR-LVL-DEV' as never }).path
+    expect(icThresholdsForSignal(plant, path).thresholds.map(threshold => [threshold.value, threshold.kind, threshold.direction])).toEqual([[-5, 'alarm', 'low']])
+    const level = resolveProcessPlantSignalBinding(graph, { tagId: 'PZR-LVL' as never }).path
+    expect(icThresholdsForSignal(plant, level).thresholds.map(threshold => threshold.value)).toEqual([75])
+  })
+
+  test('stays clear after a trip, where the level falls with its program to no load', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('turbine-trip')
+    let lowestLevel = 100
+    let lowestDeviation = 0
+    for (let second = 0; second < 300; second += 1) {
+      plantRun.step()
+      lowestLevel = Math.min(lowestLevel, Number(plantRun.tag('PZR-LVL')))
+      lowestDeviation = Math.min(lowestDeviation, Number(plantRun.tag('PZR-LVL-DEV')))
+      expect(plantRun.activeIds()).not.toContain(deviation)
+    }
+    // The level fell below the old fixed 35 % limit, but never 5 % below the 25 % no-load program.
+    expect(lowestLevel).toBeLessThan(35)
+    expect(lowestDeviation).toBeGreaterThan(-5)
+    expect(Number(plantRun.tag('PZR-LVL-PGM'))).toBeLessThan(30)
+  }, 120_000)
+
+  test('alarms as a leak drains the pressurizer, before the 17 % cutoff of heaters and letdown', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-cold-leg-a.leak.areaFraction' as VariablePath, value: 0.005 })
+    const deviationAt = plantRun.secondsUntil(deviation, 150)
+    expect(deviationAt).not.toBeNull()
+    expect(Number(plantRun.tag('PZR-LVL-DEV'))).toBeLessThan(-5)
+    expect(plantRun.activeIds()).not.toContain(cutoff)
+    expect(plantRun.secondsUntil(cutoff, 150)).not.toBeNull()
+  }, 120_000)
+})

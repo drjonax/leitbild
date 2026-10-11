@@ -255,7 +255,7 @@ describe('mimic presentation and bindings', () => {
     const frames = (id: string, aspect: 'level' | 'running') => itemBinding(plant, { kind: 'component', component: graph.componentIndexById.get(id as never)! }, aspect, framed).frames
     const flaps = (id: string, aspect: 'level' | 'running') => Object.fromEntries(frames(id, aspect).map(frame => [frame.ruleId, frame.flap]))
     // A limit that on/off states only gate frames the item its limit is on, as its trend draws it: SI on low pressurizer pressure (run 22's porv-path badge read "P LO" beside a red SI chip).
-    expect(flaps('pressurizer', 'level')).toMatchObject({ 'pzr-pressure-low': 'P LO · ALM', 'safety-injection-low-pzr-pressure': 'P LO-LO · SI', 'pzr-level-low': 'LO · ALM' })
+    expect(flaps('pressurizer', 'level')).toMatchObject({ 'pzr-pressure-low': 'P LO · ALM', 'safety-injection-low-pzr-pressure': 'P LO-LO · SI', 'pzr-level-deviation-low': 'L LO · ALM' })
     // The AFW start and the reactor trip at 20 % are both LO-LO, each named by what it does, never both "TRIP".
     expect(flaps('sgB', 'level')).toMatchObject({ 'sg-b-level-low': 'LO · ALM', 'sg-b-level-low-low-reactor-trip': 'LO-LO · RX TRIP', 'sg-b-pressure-high': 'P HI · ALM', 'sg-b-feedwater-low': 'LO & F LO · ALM' })
     expect(flaps('sgB', 'level')['sg-b-level-low-low-afw-actuation']).toStartWith('LO-LO · ')

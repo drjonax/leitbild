@@ -177,6 +177,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'heatersCutOff',
       'backupHeaterDemandMw',
       'levelProgramPercent',
+      'levelDeviationPercent',
       'chargingFlowDemandKgPerS',
       'demandMw',
     ],
@@ -386,6 +387,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const program = levelProgramPercent(levelControl, (hotLegTemperature + coldLegTemperature) / 2)
       context.write(componentVariablePath(component, 'levelPercent'), level)
       context.write(componentVariablePath(component, 'levelProgramPercent'), program)
+      context.write(componentVariablePath(component, 'levelDeviationPercent'), level - program)
       context.write(componentVariablePath(component, 'chargingFlowDemandKgPerS'), chargingFlowDemand(levelControl, program, level))
       context.write(componentVariablePath(component, 'compressedWaterVolumeM3'), compressedWater)
       context.write(componentVariablePath(component, 'pressureMPa'), clamp(nextPressure, 0.1, 22))
@@ -400,7 +402,7 @@ export const pressurizerInitialReconciliationDefinitions: ReadonlyArray<Componen
     // The program reads the loops' temperatures once the links are solved.
     afterLinks: true,
     reads: ['pressureMPa', 'levelPercent', 'reactorCore.coolantInletTemperatureC', 'reactorCore.coolantOutletTemperatureC'],
-    writes: ['levelProgramPercent', 'chargingFlowDemandKgPerS'],
+    writes: ['levelProgramPercent', 'levelDeviationPercent', 'chargingFlowDemandKgPerS'],
     reconcile: ({ system, component, context }): void => {
       const core = primarySystemReactorCore(system)
       const meanTemperature = core === null
@@ -411,12 +413,10 @@ export const pressurizerInitialReconciliationDefinitions: ReadonlyArray<Componen
         ) / 2
       const levelControl = pressurizerLevelControl(component)
       const program = levelProgramPercent(levelControl, meanTemperature)
+      const level = context.readNumber(componentVariablePath(component, 'levelPercent'))
       context.write(componentVariablePath(component, 'levelProgramPercent'), program)
-      context.write(componentVariablePath(component, 'chargingFlowDemandKgPerS'), chargingFlowDemand(
-        levelControl,
-        program,
-        context.readNumber(componentVariablePath(component, 'levelPercent')),
-      ))
+      context.write(componentVariablePath(component, 'levelDeviationPercent'), level - program)
+      context.write(componentVariablePath(component, 'chargingFlowDemandKgPerS'), chargingFlowDemand(levelControl, program, level))
     },
   },
   {

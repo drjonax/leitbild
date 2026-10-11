@@ -274,6 +274,12 @@
           "description": "Pressurizer level program: the level set for the loops' mean temperature, 25 % at no load to 55 % at full load"
         },
         {
+          "path": "levelDeviationPercent",
+          "tagId": "PZR-LVL-DEV",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer level deviation from its program: level minus program, the level control's error"
+        },
+        {
           "path": "chargingFlowDemandKgPerS",
           "tagId": "CHG-FLOW-SP",
           "equipmentId": "pressurizer",

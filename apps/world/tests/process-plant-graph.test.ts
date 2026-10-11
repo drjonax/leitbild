@@ -72,9 +72,12 @@ describe('process plant model composition', () => {
     // instruments declared the 0 to 100 % span their indication saturates at,
     // and again when the reactor coolant loops were given their hydraulics
     // (flywheel coastdown, a vessel pressure drop the loops share, reverse
-    // flow in an idle loop and natural circulation by buoyancy);
+    // flow in an idle loop and natural circulation by buoyancy), and again,
+    // as a model-truth change, when the pressurizer's level deviation from
+    // its program was given its tag (PZR-LVL-DEV), so its low-deviation alarm
+    // replaces the fixed 35 % low-level alarm that stood after every trip;
     // PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('fffb95b75dea510b8a22efb72aed2bc3f5ceb8747c6fbe7bbbc8fec71f5283aa')
+    expect(system.modelDigest).toBe('216f30992f3779d7df9bdb7c2e2fe18bbd710f0d62f3b2998ec9f0a2d4492af1')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
