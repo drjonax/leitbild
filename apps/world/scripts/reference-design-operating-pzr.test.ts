@@ -1,5 +1,5 @@
 import {expect,test} from 'bun:test'
-import {compileOperatingPzr,ownedBlock,parseOperatingPzr,parsePzrTaps,prepareOperatingPzr,type PzrSources} from './reference-design-operating-pzr'
+import {compileOperatingPzr,metastableSchema,ownedBlock,parseOperatingPzr,parsePzrTaps,prepareOperatingPzr,type PzrSources} from './reference-design-operating-pzr'
 import {prepareOperatingFluid} from './reference-design-operating-fluid'
 
 // Test-only owner texts: the selections' shapes, not plant evidence. Bracketed
@@ -9,10 +9,9 @@ const selected={commonPressure_Pa:15e6,liquidTemperature_K:600,vaporTemperature_
   stratified={withdrawalScale_m:.3,admittedPreparationThickness_m:.3,inversionExchangeVelocity_m_s:.01,
     liquidRelaxationTime_s:.3,vaporRelaxationTime_s:.5,relaxationSensitivity:[.5,1,2],bubbleDiameter_m:.004,
     sprayDropDiameter_m:.003,dropDiameterSensitivity_m:[.0015,.003,.006],resolvabilityFactor:1000},
-  metastable={pressureRange_Pa:[10000000,16000000],lowerBoundExclusive:true,liquidSuperheatMax_K:2,
+  metastable={pressureRange_Pa:[2000000,16000000],lowerBoundExclusive:true,liquidSuperheatMax_K:2,
     vaporSubcoolingMax_K:1.4,trialMax_K:3,creditedMax_K:.5,liquidTemperatureMax_K:623.15,
-    liquidPressureCeiling_Pa:17000000,vaporPressureCeiling_Pa:16000000,
-    lowPressureBand:{pressureRange_Pa:[5900000,10000000],lowerBoundExclusive:true,liquidSuperheatMax_K:2,vaporSubcoolingMax_K:1.1,vaporEquation:'IF97 Eq. (18)'}},
+    liquidPressureCeiling_Pa:17000000,vaporPressureCeiling_Pa:16000000},
   fence=(name:string,value:unknown)=>'```'+name+'\n'+JSON.stringify(value)+'\n```',
   route={source:'LD01.HOT.A',receiver:'LD01.PZR',sourceElevation_m:2.5,receiverElevation_m:6.5,
     developedLength_m:16,firstStraight_m:6,bendRadius_m:.45,internalDiameter_m:.3,wallThickness_m:.025,
@@ -65,6 +64,18 @@ test('missing, misplaced, repeated or malformed owner selections refuse instead 
   expect(()=>compileOperatingPzr(d,{...hot,elevation_m:3})).toThrow('envelope')
   expect(ownedBlock(d.selection,'Stratified PZR cell','ld01-pzr-stratified')).toEqual(stratified)
   expect(parsePzrTaps(d.measurements).map(t=>t.id)).toEqual(['PT1','LT.LOW','LT.HIGH'])
+})
+
+test('the metastable band is the one H3 range; the superseded two-range block is refused, not read',()=>{
+  // Owner decision request 3, H3: one band, 2 < p <= 16 MPa.
+  const h3='{"pressureRange_Pa":[2000000,16000000],"lowerBoundExclusive":true,"liquidSuperheatMax_K":2.0,"vaporSubcoolingMax_K":1.4,"trialMax_K":3.0,"creditedMax_K":0.5,"liquidTemperatureMax_K":623.15,"liquidPressureCeiling_Pa":17000000,"vaporPressureCeiling_Pa":16000000}'
+  // Request 2, G2 (a): the 10-16 MPa range plus lowPressureBand on Eq. (18).
+  const g2='{"pressureRange_Pa":[10000000,16000000],"lowerBoundExclusive":true,"liquidSuperheatMax_K":2.0,"vaporSubcoolingMax_K":1.4,"trialMax_K":3.0,"creditedMax_K":0.5,"liquidTemperatureMax_K":623.15,"liquidPressureCeiling_Pa":17000000,"vaporPressureCeiling_Pa":16000000,"lowPressureBand":{"pressureRange_Pa":[5900000,10000000],"lowerBoundExclusive":true,"liquidSuperheatMax_K":2.0,"vaporSubcoolingMax_K":1.1,"vaporEquation":"IF97 Eq. (18)"}}'
+  expect(metastableSchema.parse(JSON.parse(h3))).toEqual(JSON.parse(h3))
+  expect(()=>metastableSchema.parse(JSON.parse(g2))).toThrow('lowPressureBand')
+  const page=(block:string)=>({...pzrSources(),properties:'# Properties\n\n## Bounded metastable admission\n\n```ld01-metastable-band\n'+block+'\n```\n'})
+  expect(compileOperatingPzr(page(h3),hot).cell.metastable).toEqual(JSON.parse(h3))
+  expect(()=>compileOperatingPzr(page(g2),hot)).toThrow('lowPressureBand')
 })
 
 const wiki=process.env.LD01_WIKI_ROOT,if97=process.env.LD01_IF97_DIRECTORY

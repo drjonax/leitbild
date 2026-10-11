@@ -220,8 +220,6 @@ pub struct Metastable {
     pub liquid_pressure_ceiling_pa: f64,
     #[serde(rename = "vaporPressureCeiling_Pa")]
     pub vapor_pressure_ceiling_pa: f64,
-    #[serde(rename = "lowPressureBand")]
-    pub low_pressure_band: super::properties::LowPressureBand,
 }
 
 /// The packet's `pzr.cell` section, embedded unchanged.
@@ -365,20 +363,7 @@ impl Parameters {
             ("liquidPressureCeiling_Pa", m.liquid_pressure_ceiling_pa),
             ("vaporPressureCeiling_Pa", m.vapor_pressure_ceiling_pa),
         ])?;
-        let l = &m.low_pressure_band;
-        positive_finite(&[
-            (
-                "lowPressureBand.liquidSuperheatMax_K",
-                l.liquid_superheat_max_k,
-            ),
-            (
-                "lowPressureBand.vaporSubcoolingMax_K",
-                l.vapor_subcooling_max_k,
-            ),
-        ])?;
-        if !(m.pressure_range_pa[0] > 0. && m.pressure_range_pa[0] < m.pressure_range_pa[1])
-            || !(l.pressure_range_pa[0] > 0. && l.pressure_range_pa[0] < l.pressure_range_pa[1])
-        {
+        if !(m.pressure_range_pa[0] > 0. && m.pressure_range_pa[0] < m.pressure_range_pa[1]) {
             return Err(fatal("invalid metastable pressure range"));
         }
         if !(self.absorber_mass_fraction.is_finite() && self.absorber_mass_fraction >= 0.) {
@@ -2631,13 +2616,21 @@ impl Cell {
             let t = zone.temperature.value;
             let departure_k = t - tsat;
             let metastable_k = if vapor { -departure_k } else { departure_k };
-            // The range holding the zone pressure sets the admitted limit.
-            let limits = super::properties::MetastableBand::from(band).limits_at(pressure);
+            let in_range = pressure <= band.pressure_range_pa[1]
+                && if band.lower_bound_exclusive {
+                    pressure > band.pressure_range_pa[0]
+                } else {
+                    pressure >= band.pressure_range_pa[0]
+                };
+            let limit = if vapor {
+                band.vapor_subcooling_max_k
+            } else {
+                band.liquid_superheat_max_k
+            };
             let within_band = metastable_k <= 0.
-                || limits.is_some_and(|(liquid, vapor_limit)| {
-                    metastable_k <= if vapor { vapor_limit } else { liquid }
-                        && (vapor || t <= band.liquid_temperature_max_k)
-                });
+                || (in_range
+                    && metastable_k <= limit
+                    && (vapor || t <= band.liquid_temperature_max_k));
             Ok(Departure {
                 pressure_pa: pressure,
                 temperature_k: t,

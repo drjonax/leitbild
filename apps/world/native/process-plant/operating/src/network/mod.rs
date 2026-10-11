@@ -33,9 +33,7 @@ pub use jacobian::{
     ConsistentPair, ConsistentSystem, CscOut, DensePattern, Largest, Projection, SparseJacobian,
     consistent_rates, consistent_start, project_constraints,
 };
-pub use properties::{
-    Band, BandReport, LowPressureBand, MetastableBand, Properties, Reuse, VaporEquation, Water,
-};
+pub use properties::{Band, BandReport, MetastableBand, Properties, Reuse, Water};
 pub use tolerance::ToleranceClasses;
 
 use crate::{
