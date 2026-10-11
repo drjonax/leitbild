@@ -46,8 +46,6 @@ export interface GridGeneratorTripRecord {
   readonly elementId: string | null
 }
 
-export const idleBranchProtection = (): GridBranchProtectionState => ({ thermalLevel: 0, overEmergencySinceElapsedMs: null, trip: null })
-
 export const createGridProtectionState = (restored?: {
   readonly lastSampleElapsedMs: number | null
   readonly thermalInitialised: boolean

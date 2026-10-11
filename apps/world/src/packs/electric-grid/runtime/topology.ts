@@ -3,6 +3,7 @@ import type { GridRuntimeInstance, GridTopologyComponent, GridTopologyIsland, Gr
 import { compiledGridNetworkFor, type CompiledGridNetwork } from './network/compiled-network.ts'
 import { createGridIslandSystem, solveGridIslandInto, type GridIslandSystem } from './network/dc-power-flow.ts'
 import { findGridIslands } from './network/islands.ts'
+import { branchClosed } from './state/arrays.ts'
 import { gridTablesFor, type GridIndexByBus, type GridTables } from './state/tables.ts'
 
 /** One AC component structure (its buses and closed branches) with the DC factor built from it. */
@@ -41,30 +42,17 @@ const sameIndices = (a: Int32Array, b: Int32Array): boolean => {
 const cachedIsland = (cache: ReadonlyMap<number, ReadonlyArray<CachedIsland>>, hash: number, buses: Int32Array, branches: Int32Array): CachedIsland | undefined =>
   cache.get(hash)?.find(entry => sameIndices(entry.buses, buses) && sameIndices(entry.branches, branches))
 
-/** Branch states are keyed in model order; any other order means the runtime state no longer matches its Model. */
-const branchStateOrderError = (grid: GridRuntimeInstance, detail: string): Error =>
-  new Error(`Grid ${grid.definition.gridId} branch states do not follow its Model's branch order: ${detail}`)
-
-const closedBranchFlags = (grid: GridRuntimeInstance, network: CompiledGridNetwork): Uint8Array => {
-  const closed = new Uint8Array(network.branchCount)
-  let index = 0
-  for (const [id, state] of grid.branches) {
-    if (id !== network.branchIds[index]) throw branchStateOrderError(grid, `found ${id} at position ${index}`)
-    closed[index] = state.state === 'closed' ? 1 : 0
-    index += 1
-  }
-  if (index !== network.branchCount) throw branchStateOrderError(grid, `${index} states for ${network.branchCount} branches`)
+/** Closed flag (1) per branch from the branch states. */
+const closedBranchFlags = (grid: GridRuntimeInstance): Uint8Array => {
+  const status = grid.arrays.branches.status
+  const closed = new Uint8Array(status.length)
+  for (let index = 0; index < status.length; index += 1) closed[index] = status[index] === branchClosed ? 1 : 0
   return closed
 }
 
-const closedBranchesChanged = (grid: GridRuntimeInstance, network: CompiledGridNetwork, closed: Uint8Array): boolean => {
-  let index = 0
-  for (const [id, state] of grid.branches) {
-    if (id !== network.branchIds[index]) throw branchStateOrderError(grid, `found ${id} at position ${index}`)
-    if ((state.state === 'closed' ? 1 : 0) !== closed[index]) return true
-    index += 1
-  }
-  if (index !== network.branchCount) throw branchStateOrderError(grid, `${index} states for ${network.branchCount} branches`)
+const closedBranchesChanged = (grid: GridRuntimeInstance, closed: Uint8Array): boolean => {
+  const status = grid.arrays.branches.status
+  for (let index = 0; index < status.length; index += 1) if ((status[index] === branchClosed ? 1 : 0) !== closed[index]) return true
   return false
 }
 
@@ -314,9 +302,9 @@ const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwo
 export const topologyPlanForGrid = (grid: GridRuntimeInstance): GridTopologyPlan => {
   const network = compiledGridNetworkFor(grid.definition.model)
   const cached = grid.topologyPlan
-  if (cached !== null && cached.network === network && !closedBranchesChanged(grid, network, cached.closedBranches)) return cached
+  if (cached !== null && cached.network === network && !closedBranchesChanged(grid, cached.closedBranches)) return cached
   const startedAtMs = performance.now()
-  const plan = buildTopologyPlan(grid, network, closedBranchFlags(grid, network))
+  const plan = buildTopologyPlan(grid, network, closedBranchFlags(grid))
   grid.topologyPlan = plan
   grid.diagnostics.topologyRebuildCount += 1
   grid.diagnostics.lastTopologyRebuildDurationMs = performance.now() - startedAtMs

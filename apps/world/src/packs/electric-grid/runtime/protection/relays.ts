@@ -2,7 +2,8 @@ import type { IsoTimestamp } from '../../../../core/model/index.ts'
 import type { GridBranchDefinition } from '../../grid-model.ts'
 import type { GridBranchProtectionSettings } from '../../schemas/grid-protection-automation.ts'
 import { queueGridSignal } from '../grid-signals.ts'
-import type { GridBranchState, GridRuntimeInstance } from '../instance.ts'
+import type { GridRuntimeInstance } from '../instance.ts'
+import { branchClosed, branchTripped, type GridBranchArrays } from '../state/arrays.ts'
 import type { GridBranchTripElement } from './state.ts'
 
 // Sampled branch relays. At every sample the relay reads the solved flow it is rated for (the AC
@@ -25,16 +26,36 @@ export const branchThermalTripLevel = (branch: GridBranchDefinition, settings: E
   return emergencySquared - (emergencySquared - 1) * decay
 }
 
-/** Rated flow over the derated continuous rating. */
-const loadingRatio = (branch: GridBranchDefinition, state: GridBranchState): number => state.apparentPowerMva / (branch.ratingMw * state.availability)
-
 export interface BranchTripDecision {
   readonly index: number
   readonly element: GridBranchTripElement
 }
 
-const instantaneousOperates = (branch: GridBranchDefinition, state: GridBranchState, settings: EnabledBranchProtection): boolean =>
-  loadingRatio(branch, state) * 100 > settings.instantaneousPercentOfRating
+const noTrips: ReadonlyArray<BranchTripDecision> = Object.freeze([])
+
+/** Rated flow over the derated continuous rating. */
+const loadingRatio = (branch: GridBranchDefinition, arrays: GridBranchArrays, index: number): number =>
+  arrays.apparentPowerMva[index]! / (branch.ratingMw * arrays.availability[index]!)
+
+const instantaneousOperates = (branch: GridBranchDefinition, arrays: GridBranchArrays, index: number, settings: EnabledBranchProtection): boolean =>
+  loadingRatio(branch, arrays, index) * 100 > settings.instantaneousPercentOfRating
+
+const tripLevels = new WeakMap<EnabledBranchProtection, WeakMap<ReadonlyArray<GridBranchDefinition>, Float64Array>>()
+
+/** branchThermalTripLevel of every branch, computed once per Model and protection settings. */
+const thermalTripLevels = (branches: ReadonlyArray<GridBranchDefinition>, settings: EnabledBranchProtection): Float64Array => {
+  let bySettings = tripLevels.get(settings)
+  if (bySettings === undefined) {
+    bySettings = new WeakMap()
+    tripLevels.set(settings, bySettings)
+  }
+  let levels = bySettings.get(branches)
+  if (levels === undefined) {
+    levels = Float64Array.from(branches, branch => branchThermalTripLevel(branch, settings))
+    bySettings.set(branches, levels)
+  }
+  return levels
+}
 
 /**
  * Sets every branch's thermal state when the relays arm: the steady state of its present flow, but
@@ -44,11 +65,10 @@ const instantaneousOperates = (branch: GridBranchDefinition, state: GridBranchSt
  */
 export const initialiseBranchThermalStates = (grid: GridRuntimeInstance): void => {
   const branches = grid.definition.model.branches
-  let index = 0
-  for (const state of grid.branches.values()) {
-    const ratio = loadingRatio(branches[index]!, state)
-    state.protection.thermalLevel = Math.min(1, ratio * ratio)
-    index += 1
+  const arrays = grid.arrays.branches
+  for (let index = 0; index < branches.length; index += 1) {
+    const ratio = loadingRatio(branches[index]!, arrays, index)
+    arrays.thermalLevel[index] = Math.min(1, ratio * ratio)
   }
 }
 
@@ -59,52 +79,55 @@ export const initialiseBranchThermalStates = (grid: GridRuntimeInstance): void =
  */
 export const sampleBranchRelays = (grid: GridRuntimeInstance, settings: EnabledBranchProtection, elapsedMs: number, intervalSeconds: number): ReadonlyArray<BranchTripDecision> => {
   const branches = grid.definition.model.branches
-  const trips: BranchTripDecision[] = []
-  let index = 0
-  for (const state of grid.branches.values()) {
+  const arrays = grid.arrays.branches
+  const levels = thermalTripLevels(branches, settings)
+  let trips: BranchTripDecision[] | null = null
+  for (let index = 0; index < branches.length; index += 1) {
     const branch = branches[index]!
-    const ratio = loadingRatio(branch, state)
+    const ratio = loadingRatio(branch, arrays, index)
     const steady = ratio * ratio
-    const protection = state.protection
-    protection.thermalLevel = steady + (protection.thermalLevel - steady) * Math.exp(-intervalSeconds / settings.thermalTimeConstantSeconds[branch.kind])
-    const aboveEmergency = state.apparentPowerMva > branch.emergencyRatingMw * state.availability
-    protection.overEmergencySinceElapsedMs = state.state === 'closed' && aboveEmergency ? protection.overEmergencySinceElapsedMs ?? elapsedMs : null
-    if (state.state === 'closed') {
-      const element: GridBranchTripElement | null = instantaneousOperates(branch, state, settings)
-        ? 'instantaneous'
-        : protection.overEmergencySinceElapsedMs !== null && elapsedMs - protection.overEmergencySinceElapsedMs >= branch.emergencyDurationSeconds * 1_000
-          ? 'emergency-duration'
-          : protection.thermalLevel >= branchThermalTripLevel(branch, settings) ? 'thermal' : null
-      if (element !== null) trips.push({ index, element })
-    }
-    index += 1
+    const thermalLevel = steady + (arrays.thermalLevel[index]! - steady) * Math.exp(-intervalSeconds / settings.thermalTimeConstantSeconds[branch.kind])
+    arrays.thermalLevel[index] = thermalLevel
+    const closed = arrays.status[index] === branchClosed
+    const aboveEmergency = arrays.apparentPowerMva[index]! > branch.emergencyRatingMw * arrays.availability[index]!
+    const since = arrays.overEmergencySinceElapsedMs[index]!
+    // NaN codes "not above the emergency rating" (null).
+    const overEmergencySinceMs = closed && aboveEmergency ? (since === since ? since : elapsedMs) : Number.NaN
+    arrays.overEmergencySinceElapsedMs[index] = overEmergencySinceMs
+    if (!closed) continue
+    const element: GridBranchTripElement | null = instantaneousOperates(branch, arrays, index, settings)
+      ? 'instantaneous'
+      : overEmergencySinceMs === overEmergencySinceMs && elapsedMs - overEmergencySinceMs >= branch.emergencyDurationSeconds * 1_000
+        ? 'emergency-duration'
+        : thermalLevel >= levels[index]! ? 'thermal' : null
+    if (element !== null) (trips ??= []).push({ index, element })
   }
-  return trips
+  return trips ?? noTrips
 }
 
 /** Closed branches whose instantaneous element operates on the present flows (a cascade within one instant). */
 export const instantaneousBranchTrips = (grid: GridRuntimeInstance, settings: EnabledBranchProtection): ReadonlyArray<BranchTripDecision> => {
   const branches = grid.definition.model.branches
-  const trips: BranchTripDecision[] = []
-  let index = 0
-  for (const state of grid.branches.values()) {
-    if (state.state === 'closed' && instantaneousOperates(branches[index]!, state, settings)) trips.push({ index, element: 'instantaneous' })
-    index += 1
+  const arrays = grid.arrays.branches
+  let trips: BranchTripDecision[] | null = null
+  for (let index = 0; index < branches.length; index += 1) {
+    if (arrays.status[index] === branchClosed && instantaneousOperates(branches[index]!, arrays, index, settings)) (trips ??= []).push({ index, element: 'instantaneous' })
   }
-  return trips
+  return trips ?? noTrips
 }
 
 /** Opens the tripped branches' breakers by protection and queues one protection event per trip. */
 export const applyBranchTrips = (grid: GridRuntimeInstance, trips: ReadonlyArray<BranchTripDecision>, at: IsoTimestamp, elapsedMs: number): void => {
   const branches = grid.definition.model.branches
-  const states = [...grid.branches.values()]
+  const arrays = grid.arrays.branches
   for (const trip of trips) {
     const branch = branches[trip.index]!
-    const state = states[trip.index]!
-    const loadingPercent = loadingRatio(branch, state) * 100
-    state.state = 'tripped'
-    state.protection.trip = { element: trip.element, at, atElapsedMs: elapsedMs, flowMw: state.flowMw, loadingPercent, thermalLevel: state.protection.thermalLevel }
-    state.protection.overEmergencySinceElapsedMs = null
+    const loadingPercent = loadingRatio(branch, arrays, trip.index) * 100
+    const flowMw = arrays.flowMw[trip.index]!
+    const thermalLevel = arrays.thermalLevel[trip.index]!
+    arrays.status[trip.index] = branchTripped
+    arrays.trip[trip.index] = { element: trip.element, at, atElapsedMs: elapsedMs, flowMw, loadingPercent, thermalLevel }
+    arrays.overEmergencySinceElapsedMs[trip.index] = Number.NaN
     queueGridSignal(grid, {
       type: 'electric-grid.protection.tripped',
       severity: 'critical',
@@ -115,9 +138,9 @@ export const applyBranchTrips = (grid: GridRuntimeInstance, trips: ReadonlyArray
         assetKind: 'branch',
         label: branch.label,
         element: trip.element,
-        flowMw: state.flowMw,
+        flowMw,
         loadingPercent,
-        thermalLevel: state.protection.thermalLevel,
+        thermalLevel,
         islandId: grid.busStates.get(branch.fromBusId)!.islandId,
         simulationTime: at,
         elapsedSeconds: elapsedMs / 1_000,

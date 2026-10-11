@@ -2,6 +2,8 @@ import type { ReserveRequirement } from '../schemas/grid-automation.ts'
 import type { GridAlarmSettings, GridAlarmTiming } from '../schemas/grid-protection-automation.ts'
 import { gridAlarmId, type GridAlarmObservation, type GridAlarmState } from './alarms.ts'
 import { hvdcTripReason } from './hvdc.ts'
+import { branchClosed, branchTripped, flowModelAc } from './state/arrays.ts'
+import { gridTablesFor } from './state/tables.ts'
 import { synchronousAreaRequirementMw } from './reserve-allocation.ts'
 import type { FrequencyReserveAllocation } from './frequency/types.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
@@ -151,11 +153,17 @@ const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAl
 
 const branchObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings, emit: Emit): void => {
   const lowestClearPercent = Math.min(...settings.branchLoading.map(band => band.clearPercent))
-  for (const definition of grid.definition.model.branches) {
-    const state = grid.branches.get(definition.id)!
-    const islandId = grid.busStates.get(definition.fromBusId)!.islandId
-    if (state.state === 'tripped') {
-      const trip = state.protection.trip!
+  const branches = grid.definition.model.branches
+  const arrays = grid.arrays.branches
+  const buses = grid.arrays.buses
+  const branchFrom = gridTablesFor(grid.definition).network.branchFrom
+  for (let index = 0; index < branches.length; index += 1) {
+    const definition = branches[index]!
+    const status = arrays.status[index]!
+    if (status !== branchTripped && status !== branchClosed) continue
+    const islandId = buses.solvedIslandIds[buses.solvedIsland[branchFrom[index]!]!]!
+    if (status === branchTripped) {
+      const trip = arrays.trip[index]!
       emit({
         id: gridAlarmId('branch', definition.id, 'tripped'),
         scope: 'branch',
@@ -172,16 +180,17 @@ const branchObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettin
       })
       continue
     }
-    if (state.state !== 'closed') continue
-    const continuousPercent = state.loadingPercent
+    const continuousPercent = arrays.loadingPercent[index]!
+    const apparentPowerMva = arrays.apparentPowerMva[index]!
+    const availability = arrays.availability[index]!
     // Loading acts on the rated flow: the AC apparent power, or the DC flow where the island's AC load flow failed.
-    const emergencyPercent = state.apparentPowerMva / (definition.emergencyRatingMw * state.availability) * 100
+    const emergencyPercent = apparentPowerMva / (definition.emergencyRatingMw * availability) * 100
     // Branches below every band's clear loading produce no observation; their records clear.
     if (continuousPercent < lowestClearPercent && emergencyPercent < lowestClearPercent) continue
     for (const band of settings.branchLoading) {
       const loadingPercent = band.basis === 'continuous-rating' ? continuousPercent : emergencyPercent
       if (loadingPercent < band.clearPercent) continue
-      const ratingMw = (band.basis === 'continuous-rating' ? definition.ratingMw : definition.emergencyRatingMw) * state.availability
+      const ratingMw = (band.basis === 'continuous-rating' ? definition.ratingMw : definition.emergencyRatingMw) * availability
       emit({
         id: gridAlarmId('branch', definition.id, `loading-${band.id}`),
         scope: 'branch',
@@ -191,7 +200,7 @@ const branchObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettin
         islandId,
         raising: loadingPercent >= band.raisePercent,
           title: `Branch loading (${band.id})`,
-        message: `${definition.label} carries ${state.flowModel === 'ac' ? `${state.apparentPowerMva.toFixed(1)} MVA` : `${mw(state.apparentPowerMva)} (DC flow)`}, ${loadingPercent.toFixed(1)} % of its ${band.basis === 'continuous-rating' ? 'continuous' : 'emergency'} rating ${mw(ratingMw)}`,
+        message: `${definition.label} carries ${arrays.flowModel[index] === flowModelAc ? `${apparentPowerMva.toFixed(1)} MVA` : `${mw(apparentPowerMva)} (DC flow)`}, ${loadingPercent.toFixed(1)} % of its ${band.basis === 'continuous-rating' ? 'continuous' : 'emergency'} rating ${mw(ratingMw)}`,
         value: loadingPercent,
         limit: band.raisePercent,
         unit: '%',

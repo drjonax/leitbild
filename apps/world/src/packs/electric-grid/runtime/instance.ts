@@ -19,7 +19,9 @@ import { upwardReserveMw } from './reserve-allocation.ts'
 import type { CompiledGridNetwork } from './network/compiled-network.ts'
 import { createGridAlarmState, type GridAlarmState, type PersistedGridAlarmState } from './alarms.ts'
 import type { GridRuntimeSignal } from './grid-signals.ts'
-import { createGridProtectionState, idleBranchProtection, type GridBranchProtectionState, type GridGeneratorTripRecord, type GridProtectionState } from './protection/state.ts'
+import { createGridProtectionState, type GridBranchProtectionState, type GridGeneratorTripRecord, type GridProtectionState } from './protection/state.ts'
+import { branchStatusCodes, codeOf, createGridStateArrays, storedNullable, type GridStateArrays } from './state/arrays.ts'
+import { branchStateViews } from './state/views.ts'
 import type { GridIslandSystem } from './network/dc-power-flow.ts'
 
 /**
@@ -29,22 +31,23 @@ import type { GridIslandSystem } from './network/dc-power-flow.ts'
  */
 export type GridVoltageModel = 'ac-fdlf' | 'not-converged' | 'de-energised'
 
+/** A bus at the last network solution: a read-only view of the bus arrays (state/views.ts). */
 export interface GridBusState {
   readonly busId: string
   /** Stable id of the island holding the bus. */
-  islandId: string
-  energized: boolean
+  readonly islandId: string
+  readonly energized: boolean
   /** AC voltage magnitude (pu); null while the island's AC load flow has not converged; 0 when de-energised. */
-  voltagePu: number | null
-  voltageModel: GridVoltageModel
+  readonly voltagePu: number | null
+  readonly voltageModel: GridVoltageModel
   /** Net reactive injection of the bus's sources in the AC solution (Mvar: generation − demand, shunts are network); null unless converged; 0 when de-energised. */
-  reactiveInjectionMvar: number | null
+  readonly reactiveInjectionMvar: number | null
   /** Island frequency; null when the bus is de-energised. */
-  frequencyHz: number | null
+  readonly frequencyHz: number | null
   /** DC voltage angle (rad), relative to the bus's AC component reference. */
-  angleRad: number
+  readonly angleRad: number
   /** Net active injection of the DC balance (MW), including the bus's share of branch losses. */
-  netInjectionMw: number
+  readonly netInjectionMw: number
 }
 
 export interface GridBranchState {
@@ -320,6 +323,8 @@ export interface GridRuntimeInstance {
   readonly definition: CompiledGridDefinition
   elapsedMs: number
   tick: number
+  /** The per-tick state the runtime works on, by model index (state/arrays.ts); the Maps below are views of it by id. */
+  readonly arrays: GridStateArrays
   readonly branches: Map<string, GridBranchState>
   readonly generators: Map<string, GridGeneratorState>
   readonly loads: Map<string, GridLoadState>
@@ -421,25 +426,22 @@ export const createGridRuntimeInstance = (config: {
   const restoredHvdc = restored ? requireRestored(restored.hvdcLinks, index.hvdcLinks.map(item => item.id), 'HVDC links') : null
   if (restored && restored.lossLoadByBusMw.length !== model.buses.length) throw new Error('stored Grid runtime state has a loss vector of the wrong length')
   const initialBranchStates = new Map(operatingPoint.branchStates.map(entry => [entry.branchId, entry]))
-  const branches = new Map(model.branches.map(branch => {
+  const arrays = createGridStateArrays(model.buses.length, model.branches.length)
+  // Before the first solution a branch carries no flow: no flow model, 0 MW, 0 pu at both ends,
+  // no reactive power or frequency. Its relays start idle unless restored.
+  model.branches.forEach((branch, index) => {
     const stored = restoredBranches?.get(branch.id)
     const initial = requiredValue(initialBranchStates, branch.id, 'initial branch state')
-    return [branch.id, {
-      state: stored?.state ?? initial.state,
-      availability: stored?.availability ?? initial.availability,
-      flowModel: null,
-      flowMw: 0,
-      apparentPowerMva: 0,
-      loadingPercent: 0,
-      voltageFromPu: 0,
-      voltageToPu: 0,
-      reactiveFromMvar: null,
-      reactiveToMvar: null,
-      frequencyHz: null,
-      lossesMw: 0,
-      protection: stored === undefined ? idleBranchProtection() : { ...stored.protection },
-    } satisfies GridBranchState]
-  }))
+    const branchArrays = arrays.branches
+    branchArrays.status[index] = codeOf(branchStatusCodes, stored?.state ?? initial.state, `branch ${branch.id} state`)
+    branchArrays.availability[index] = stored?.availability ?? initial.availability
+    if (stored !== undefined) {
+      branchArrays.thermalLevel[index] = stored.protection.thermalLevel
+      branchArrays.overEmergencySinceElapsedMs[index] = storedNullable(stored.protection.overEmergencySinceElapsedMs, `branch ${branch.id} overEmergencySinceElapsedMs`)
+      branchArrays.trip[index] = stored.protection.trip
+    }
+  })
+  const branches = branchStateViews(model.branches.map(branch => branch.id), arrays.branches)
   const generators = new Map(model.generators.map(generator => {
     const stored = restoredGenerators?.get(generator.id)
     const availableMw = stored?.availableMw ?? Math.min(generator.capacityMw, generator.availableMw * operatingPoint.generationAvailabilityScale)
@@ -539,6 +541,7 @@ export const createGridRuntimeInstance = (config: {
     definition,
     elapsedMs: restored?.elapsedMs ?? 0,
     tick: restored?.tick ?? 0,
+    arrays,
     branches,
     generators,
     loads,

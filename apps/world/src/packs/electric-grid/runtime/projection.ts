@@ -3,6 +3,7 @@ import type { GridIslandProjection } from '../model.ts'
 import { gridAlarmCounts } from './alarms.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from './instance.ts'
 import { externalFrequencyEquivalent, gridGeneratorIsSynchronised, islandAssetStates, islandFixedInjectionMw, islandMembers } from './island-input.ts'
+import { publishedNullable } from './state/arrays.ts'
 
 // Status turns "working" when the headline island is 50 mHz off nominal: half the standard range.
 const workingDeviationHz = 0.05
@@ -13,15 +14,16 @@ const hz = (value: number): number => Math.round(value * 10_000) / 10_000
 const pu = (value: number): number => Math.round(value * 10_000) / 10_000
 
 /** The island's AC result: converged with its bus voltage range and AC flows, not converged (DC flows), or de-energised. */
-const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, busIds: ReadonlyArray<string>): Pick<GridIslandProjection, 'voltageModel' | 'voltageMinPu' | 'voltageMaxPu' | 'flowModel'> => {
+const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, buses: Int32Array): Pick<GridIslandProjection, 'voltageModel' | 'voltageMinPu' | 'voltageMaxPu' | 'flowModel'> => {
   if (!island.energized) return { voltageModel: 'de-energised', voltageMinPu: null, voltageMaxPu: null, flowModel: null }
   const outcome = grid.acOutcomeByIsland.get(island.id)
   if (outcome === undefined) throw new Error(`Grid ${grid.definition.gridId} island ${island.id} is energised but has no AC load-flow outcome`)
   if (!outcome.converged) return { voltageModel: 'not-converged', voltageMinPu: null, voltageMaxPu: null, flowModel: 'dc' }
   let minimum = Number.POSITIVE_INFINITY
   let maximum = Number.NEGATIVE_INFINITY
-  for (const busId of busIds) {
-    const voltage = grid.busStates.get(busId)!.voltagePu!
+  const voltages = grid.arrays.buses.voltagePu
+  for (const bus of buses) {
+    const voltage = publishedNullable(voltages[bus]!)!
     if (voltage < minimum) minimum = voltage
     if (voltage > maximum) maximum = voltage
   }
@@ -81,7 +83,7 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
       fcrNMw: mw(reserves.fcrNMw), fcrDUpMw: mw(reserves.fcrDUpMw), fcrDDownMw: mw(reserves.fcrDDownMw),
       afrrUpMw: mw(reserves.afrrUpMw), afrrDownMw: mw(reserves.afrrDownMw), mfrrUpMw: mw(reserves.mfrrUpMw), mfrrDownMw: mw(reserves.mfrrDownMw),
     },
-    ...islandVoltage(grid, island, structure.buses),
+    ...islandVoltage(grid, island, structure.busIndices),
     alarmCount,
   }
 }
@@ -125,9 +127,11 @@ export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIsland
     unservedMw += state.unservedMw
   }
   let lossesMw = 0
-  for (const state of grid.branches.values()) lossesMw += state.lossesMw
+  const branchArrays = grid.arrays.branches
+  for (let index = 0; index < branchArrays.lossesMw.length; index += 1) lossesMw += branchArrays.lossesMw[index]!
   for (const state of grid.hvdcLinks.values()) lossesMw += state.lossesMw
-  const highestBranchLoadingPercent = [...grid.branches.values()].reduce((highest, item) => Math.max(highest, item.loadingPercent), 0)
+  let highestBranchLoadingPercent = 0
+  for (let index = 0; index < branchArrays.loadingPercent.length; index += 1) highestBranchLoadingPercent = Math.max(highestBranchLoadingPercent, branchArrays.loadingPercent[index]!)
   const activeAlarmCount = alarms.active
   const statusTone = activeAlarmCount > 0
     ? 'error' as const

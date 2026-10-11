@@ -6,6 +6,7 @@ import type { GridGeneratorState, GridLoadState, GridRuntimeInstance, GridStorag
 import { connectedGridLoadMw } from './load-service.ts'
 import { generatorIsSynchronised, generatorMinimumStableMw } from './unit-commitment.ts'
 import { noReserves } from './frequency/governors.ts'
+import { branchClosed } from './state/arrays.ts'
 import { gridTablesFor } from './state/tables.ts'
 
 // Converter, cable and transformer losses of a battery in each direction: √0.85, from the 85 %
@@ -101,11 +102,19 @@ export const externalBoundaryShares = (grid: GridRuntimeInstance, system: GridEx
 }
 
 /** Rating of the closed AC ties at a boundary bus, derated by their availability (MW). */
-export const boundaryTieCapacityMw = (grid: GridRuntimeInstance, boundaryBusId: string): number =>
-  (grid.definition.index.branchesByBus.get(boundaryBusId) ?? []).reduce((sum, branch) => {
-    const state = grid.branches.get(branch.id)!
-    return sum + (state.state === 'closed' ? branch.ratingMw * state.availability : 0)
-  }, 0)
+export const boundaryTieCapacityMw = (grid: GridRuntimeInstance, boundaryBusId: string): number => {
+  const tables = gridTablesFor(grid.definition)
+  const bus = tables.network.busIndexById.get(boundaryBusId)
+  if (bus === undefined) throw new Error(`unknown Grid bus ${boundaryBusId}`)
+  const branches = grid.definition.model.branches
+  const arrays = grid.arrays.branches
+  let capacityMw = 0
+  for (let entry = tables.branchesOfBus.start[bus]!; entry < tables.branchesOfBus.start[bus + 1]!; entry += 1) {
+    const branch = tables.branchesOfBus.items[entry]!
+    capacityMw += arrays.status[branch] === branchClosed ? branches[branch]!.ratingMw * arrays.availability[branch]! : 0
+  }
+  return capacityMw
+}
 
 /** Synchronised units: online, or stopping until its breaker opens at 0 MW (unit-commitment.ts). */
 export const gridGeneratorIsSynchronised = generatorIsSynchronised

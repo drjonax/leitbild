@@ -3,7 +3,7 @@ import { noteGridAcSolution } from './alarms.ts'
 import { generatorKineticEnergyMws } from './generator-dynamics.ts'
 import { hvdcTerminalInjectionsMw } from './hvdc.ts'
 import type { GridBranchDefinition, GridExternalSystemDefinition } from '../grid-model.ts'
-import type { GridBusState, GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
+import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import {
   externalBoundaryShares,
   externalKineticEnergyMws,
@@ -15,6 +15,8 @@ import {
 } from './island-input.ts'
 import { completeDeadGridLoad, completeLiveGridLoad } from './load-service.ts'
 import { gridBranchFlowsMwInto } from './network/dc-power-flow.ts'
+import { islandScratch, flowModelAc, flowModelDc, flowModelNone, publishedNullable, voltageModelAc, voltageModelDeEnergised, voltageModelNotConverged } from './state/arrays.ts'
+import { busStateViews } from './state/views.ts'
 import { solvePlanInto } from './topology.ts'
 
 /** The largest island injection sum the balance tolerates (MW); the balance closes by construction. */
@@ -209,7 +211,8 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   grid.tick += 1
   const injections = plan.injectionsMw
   injections.fill(0)
-  const solve = new Uint8Array(plan.islands.length)
+  const scratch = islandScratch(grid.arrays, plan.islands.length)
+  const solve = scratch.solve
   let suppliedMw = 0
   let servedMw = 0
   for (const system of grid.externalSystems.values()) {
@@ -250,12 +253,12 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   const acOutcomes = solveGridAcLoadFlow(grid, islands)
   const ac = gridAcState(grid)!
   grid.acOutcomeByIsland.clear()
-  const acConvergedPlanIsland = new Uint8Array(plan.islands.length)
+  const acConverged = scratch.acConverged
   for (const island of islands.islands) {
     const outcome = acOutcomes.get(island.planIndex)
     if (outcome === undefined) continue
     grid.acOutcomeByIsland.set(island.id, outcome)
-    if (outcome.converged) acConvergedPlanIsland[island.planIndex] = 1
+    if (outcome.converged) acConverged[island.planIndex] = 1
     noteGridAcSolution(grid, island.id, outcome.converged ? { converged: true } : { converged: false, reason: `${outcome.failure.reason}: ${outcome.failure.detail}` })
   }
   // An island that de-energised or merged has no load flow any more, so no non-convergence either.
@@ -269,28 +272,28 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   lossLoad.fill(0)
   let lossesMw = 0
   const islandOf = plan.islandIndexOfBus
-  const energisedPlanIsland = new Uint8Array(plan.islands.length)
-  for (const island of islands.islands) energisedPlanIsland[island.planIndex] = island.energized ? 1 : 0
-  const frequencyOfPlanIsland: Array<number | null> = new Array(plan.islands.length).fill(null)
-  const idOfPlanIsland: string[] = new Array(plan.islands.length)
+  const energised = scratch.energised
+  const frequencyOfIsland = scratch.frequencyHz
+  const busArrays = grid.arrays.buses
+  const solvedIds = busArrays.solvedIslandIds
+  solvedIds.length = plan.islands.length
   for (const island of islands.islands) {
-    frequencyOfPlanIsland[island.planIndex] = island.energized ? island.frequency!.frequencyHz : null
-    idOfPlanIsland[island.planIndex] = island.id
+    energised[island.planIndex] = island.energized ? 1 : 0
+    // NaN codes null: an energised island always carries a frequency (gridIslandFrequencyHz).
+    const frequencyHz = island.energized ? island.frequency!.frequencyHz : null
+    frequencyOfIsland[island.planIndex] = frequencyHz === null ? Number.NaN : frequencyHz
+    solvedIds[island.planIndex] = island.id
   }
-  /** A bus voltage: the AC result when its island converged, unknown (null) when it did not, 0 when de-energised. */
-  const voltageAt = (bus: number): number | null => {
-    const planIndex = islandOf[bus]!
-    if (energisedPlanIsland[planIndex] !== 1) return 0
-    return acConvergedPlanIsland[planIndex] === 1 ? ac.voltagePu[bus]! : null
-  }
-  // Branch states are kept in model order (topology.ts checks it), so they are walked alongside the model.
-  let index = 0
-  for (const state of grid.branches.values()) {
+  // Branch quantities in model order. Voltages: the AC result where the island converged, unknown
+  // (NaN, published as null) where it did not, 0 when de-energised.
+  const branchArrays = grid.arrays.branches
+  for (let index = 0; index < network.branchCount; index += 1) {
     const branch = model.branches[index]!
     const from = network.branchFrom[index]!
     const to = network.branchTo[index]!
-    const live = plan.closedBranches[index] === 1 && energisedPlanIsland[islandOf[from]!] === 1
-    const acLive = live && acConvergedPlanIsland[islandOf[from]!] === 1
+    const island = islandOf[from]!
+    const live = plan.closedBranches[index] === 1 && energised[island] === 1
+    const acLive = live && acConverged[island] === 1
     const dcFlowMw = live ? flows[index]! : 0
     // Losses carried as load at the branch ends from the next advance on: the AC series loss r·|I|²
     // where the island converged, else the quadratic DC estimate r·P²/S_base.
@@ -302,55 +305,51 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
     lossesMw += branchLossMw
     // Flow and loading: the AC flows where the island converged (the larger end apparent power is
     // what the rating bounds), else the DC flow, labelled so.
+    let apparentPowerMva: number
     if (acLive) {
       const fromMw = ac.branchFromActiveMw[index]!
       const toMw = ac.branchToActiveMw[index]!
-      state.flowModel = 'ac'
-      state.flowMw = fromMw
-      state.apparentPowerMva = Math.max(Math.hypot(fromMw, ac.branchFromReactiveMvar[index]!), Math.hypot(toMw, ac.branchToReactiveMvar[index]!))
+      branchArrays.flowModel[index] = flowModelAc
+      branchArrays.flowMw[index] = fromMw
+      apparentPowerMva = Math.max(Math.hypot(fromMw, ac.branchFromReactiveMvar[index]!), Math.hypot(toMw, ac.branchToReactiveMvar[index]!))
     } else {
-      state.flowModel = live ? 'dc' : null
-      state.flowMw = dcFlowMw
-      state.apparentPowerMva = Math.abs(dcFlowMw)
+      branchArrays.flowModel[index] = live ? flowModelDc : flowModelNone
+      branchArrays.flowMw[index] = dcFlowMw
+      apparentPowerMva = Math.abs(dcFlowMw)
     }
-    state.lossesMw = branchLossMw
-    state.loadingPercent = state.apparentPowerMva / (branch.ratingMw * state.availability) * 100
-    state.frequencyHz = live ? frequencyOfPlanIsland[islandOf[from]!]! : null
-    state.voltageFromPu = voltageAt(from)
-    state.voltageToPu = voltageAt(to)
-    state.reactiveFromMvar = acLive ? ac.branchFromReactiveMvar[index]! : null
-    state.reactiveToMvar = acLive ? ac.branchToReactiveMvar[index]! : null
-    index += 1
+    branchArrays.apparentPowerMva[index] = apparentPowerMva
+    branchArrays.lossesMw[index] = branchLossMw
+    branchArrays.loadingPercent[index] = apparentPowerMva / (branch.ratingMw * branchArrays.availability[index]!) * 100
+    branchArrays.frequencyHz[index] = live ? frequencyOfIsland[island]! : Number.NaN
+    branchArrays.voltageFromPu[index] = energised[island] !== 1 ? 0 : acConverged[island] === 1 ? ac.voltagePu[from]! : Number.NaN
+    const toIsland = islandOf[to]!
+    branchArrays.voltageToPu[index] = energised[toIsland] !== 1 ? 0 : acConverged[toIsland] === 1 ? ac.voltagePu[to]! : Number.NaN
+    branchArrays.reactiveFromMvar[index] = acLive ? ac.branchFromReactiveMvar[index]! : Number.NaN
+    branchArrays.reactiveToMvar[index] = acLive ? ac.branchToReactiveMvar[index]! : Number.NaN
   }
   for (const link of grid.definition.index.hvdcLinks) lossesMw += grid.hvdcLinks.get(link.id)!.lossesMw
 
-  const busStates = grid.busStates
+  if (grid.busStates.size === 0) for (const [busId, state] of busStateViews(network.busIds, busArrays)) grid.busStates.set(busId, state)
   for (let bus = 0; bus < network.busCount; bus += 1) {
     const planIndex = islandOf[bus]!
-    const energized = energisedPlanIsland[planIndex] === 1
-    const converged = acConvergedPlanIsland[planIndex] === 1
-    const busId = network.busIds[bus]!
-    let state = busStates.get(busId)
-    if (!state) {
-      state = { busId, islandId: '', energized: false, voltagePu: 0, voltageModel: 'de-energised', reactiveInjectionMvar: 0, frequencyHz: null, angleRad: 0, netInjectionMw: 0 } satisfies GridBusState
-      busStates.set(busId, state)
-    }
-    state.islandId = idOfPlanIsland[planIndex]!
-    state.energized = energized
-    state.voltagePu = voltageAt(bus)
-    state.voltageModel = !energized ? 'de-energised' : converged ? 'ac-fdlf' : 'not-converged'
-    state.reactiveInjectionMvar = !energized ? 0 : converged ? ac.reactiveInjectionMvar[bus]! : null
-    state.frequencyHz = energized ? frequencyOfPlanIsland[planIndex]! : null
-    state.angleRad = plan.anglesRad[bus]!
-    state.netInjectionMw = injections[bus]!
+    const energized = energised[planIndex] === 1
+    const converged = acConverged[planIndex] === 1
+    busArrays.solvedIsland[bus] = planIndex
+    busArrays.energized[bus] = energized ? 1 : 0
+    busArrays.voltagePu[bus] = !energized ? 0 : converged ? ac.voltagePu[bus]! : Number.NaN
+    busArrays.voltageModel[bus] = !energized ? voltageModelDeEnergised : converged ? voltageModelAc : voltageModelNotConverged
+    busArrays.reactiveInjectionMvar[bus] = !energized ? 0 : converged ? ac.reactiveInjectionMvar[bus]! : Number.NaN
+    busArrays.frequencyHz[bus] = energized ? frequencyOfIsland[planIndex]! : Number.NaN
   }
+  busArrays.angleRad.set(plan.anglesRad)
+  busArrays.netInjectionMw.set(injections)
   for (const island of islands.islands) {
     if (!island.energized) continue
     const structure = plan.islands[island.planIndex]!
     const members = islandMembers(grid, structure)
     const states = islandAssetStates(grid, structure)
-    states.loads.forEach((state, position) => { state.voltagePu = voltageAt(members.loadBuses[position]!) })
-    states.storage.forEach((state, position) => { state.voltagePu = voltageAt(members.storageBuses[position]!) })
+    states.loads.forEach((state, position) => { state.voltagePu = publishedNullable(busArrays.voltagePu[members.loadBuses[position]!]!) })
+    states.storage.forEach((state, position) => { state.voltagePu = publishedNullable(busArrays.voltagePu[members.storageBuses[position]!]!) })
   }
 
   const audit = grid.diagnostics.energyAudit
