@@ -3,8 +3,8 @@
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-  import { drawnLook, itemTreatment, pipeStatesLook, rowText, type MimicRow } from '../../../../packs/process-plant/displays/mimic/rows.ts'
-  import { displayValue, formatQuantity, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
+  import { drawnLook, itemTreatment, pipeStatesLook, rowText, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
   import { alertTypeOf } from '../panel-presenters.ts'
   import { limitInForce } from '../../../../packs/process-plant/displays/trend-reading.ts'
@@ -97,10 +97,6 @@
     return text === '' ? [] : [{ type: 'state' as const, text, emphasis: text !== 'RUN' }]
   })
 
-  const valueOf = (row: Extract<MimicRow, { kind: 'value' }>): number | null => {
-    const entry = index.get(row.path)
-    return entry !== undefined && typeof entry.value === 'number' && entry.quality !== 'outside-hard-range' ? displayValue(entry.value, row.unit) : null
-  }
 
   // A pipe drawn for grouped equipment's parallel pipes carries flow while any
   // of them does; a stub reads as every line it stands for.
@@ -179,10 +175,17 @@
     return { update: apply, destroy: () => element.remove() }
   }
 
-  const readout = (host: HTMLElement, params: { ob: Ob; value: number | null; unit: string }) => {
+  // A value row's readout block, before its unit (and after WR where the row reads its wider instrument); at an
+  // end of the span it reads, "<0" in low-integrity style, as a readout shows a reading off its span.
+  const readout = (host: HTMLElement, params: { ob: Ob; reading: ReturnType<typeof valueRowReading>; unit: string }) => {
     const element = params.ob.createReadoutBlock()
-    host.prepend(element)
-    const apply = (next: typeof params) => next.ob.updateReadoutBlock(element, next.value, next.value === null ? 1 : valueDigits(next.value), 3)
+    host.insertBefore(element, host.lastElementChild)
+    const apply = (next: typeof params) => {
+      const reading = next.reading
+      const value = reading === null ? null : displayValue(reading.value, next.unit)
+      // The wider instrument in whole units (compile-mimic.ts valueRowSize).
+      next.ob.updateReadoutBlock(element, value, value === null ? 1 : reading?.wider === true ? 0 : valueDigits(value), 3, reading === null || reading.end === null ? null : readingValueText(reading.value, next.unit, null, reading.span))
+    }
     apply(params)
     return { update: apply, destroy: () => element.remove() }
   }
@@ -261,7 +264,8 @@
                 <span class="tag">{item.binding.label}</span>
                 {#each item.rows as row, at (at)}
                   {#if row.kind === 'value'}
-                    <span class="value-row" use:readout={{ ob, value: valueOf(row), unit: row.unit }}><span class="unit">{unitLabel(row.unit)}</span></span>
+                    {@const reading = valueRowReading(row, index)}
+                    <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
                   {:else}
                     {@const text = rowText(row, look, index, format)}
                     {#if text !== ''}<span class="state-row" class:emphasis={row.kind === 'mismatch'}>{text}</span>{/if}

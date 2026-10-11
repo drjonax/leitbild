@@ -45,13 +45,27 @@ export interface MimicStateBinding {
   readonly throughput?: { readonly path: VariablePath; readonly noFlowBelow: number | null }
 }
 
+/**
+ * A value an operator reads on an item: with its unit, the span its
+ * instrument indicates over (a reading at an end of it says only that the
+ * quantity is there or beyond), and the instrument the equipment declares
+ * reads the same quantity over a wider span (a steam generator's wide-range
+ * level beside its narrow range), with that one's span.
+ */
+export interface MimicValueBinding {
+  readonly path: VariablePath
+  readonly unit: string
+  readonly span?: { readonly min: number; readonly max: number }
+  readonly wider?: { readonly path: VariablePath; readonly span: { readonly min: number; readonly max: number } }
+}
+
 export interface MimicItemBinding {
   readonly item: MimicItem
   /** The operator's short name. */
   readonly label: string
   readonly state: MimicStateBinding | null
   /** The values an operator reads first on it. */
-  readonly values: ReadonlyArray<{ readonly path: VariablePath; readonly unit: string }>
+  readonly values: ReadonlyArray<MimicValueBinding>
   /** I&C alarm and trip limits on its level, marked on the vessel. */
   readonly limits: ReadonlyArray<{ readonly value: number; readonly kind: 'alarm' | 'trip'; readonly name: string }>
   /**
@@ -255,6 +269,20 @@ const levelLimits = (plant: CompiledProcessPlant, state: MimicStateBinding | nul
       .filter((threshold): threshold is typeof threshold & { kind: 'alarm' | 'trip' } => threshold.kind !== 'control')
       .map(threshold => ({ value: threshold.value, kind: threshold.kind, name: thresholdName(threshold, 'percent') }))
 
+const valueBinding = (graph: CompiledPlantGraph, component: CompiledComponent, path: VariablePath): MimicValueBinding => {
+  const signal = graph.signalBindingByPath.get(path)!
+  const span = signal.limits?.instrumentSpan
+  // The compiler holds both instruments of a declared wider range to their spans.
+  const wider = component.semantics.widerRanges.find(range => range.reading === path)?.wider
+  const widerSignal = wider === undefined ? undefined : graph.signalBindingByPath.get(wider)
+  return {
+    path,
+    unit: signal.unit,
+    ...(span === undefined ? {} : { span }),
+    ...(widerSignal === undefined || !widerSignal.published ? {} : { wider: { path: widerSignal.path, span: widerSignal.limits!.instrumentSpan! } }),
+  }
+}
+
 export const itemBinding = (
   plant: CompiledProcessPlant,
   item: MimicItem,
@@ -273,7 +301,7 @@ export const itemBinding = (
     item,
     label: device === undefined ? labelOf(component) : deviceLabel(component, device),
     state,
-    values: device === undefined ? component.semantics.keyValues.map(path => ({ path, unit: graph.signalBindingByPath.get(path)!.unit })) : [],
+    values: device === undefined ? component.semantics.keyValues.map(path => valueBinding(graph, component, path)) : [],
     limits: levelLimits(plant, state),
     frames: (framed.get(mimicItemKey(item)) ?? []).map(rule => ({ ruleId: rule.id, ...flapText(plant, rule, drawnState), ...(rule.modes === undefined ? {} : { modeIds: [...rule.modes] }) })),
   }

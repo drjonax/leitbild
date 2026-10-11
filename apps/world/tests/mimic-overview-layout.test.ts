@@ -17,7 +17,7 @@ import { principalCircuits } from '../src/packs/process-plant/displays/mimic/pri
 import { overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { overviewKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
 import { drawnLook, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
-import { openBridgeDevice } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
+import { openBridgeDevice, readoutBlockWidth, textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
 
 // The unit overview: the principal circuits the energy rule finds, drawn by
@@ -224,6 +224,26 @@ describe('the unit overview of the principal circuits', () => {
     expect(texts(at(1, 0))).toEqual(['OPEN', 'CMD', 'SHUT'])
     expect(texts(at(0.35, 1))).toEqual(['35 %', 'CMD', '100 %'])
     expect(texts(indexSample([]))).toEqual(['POS ?', '', ''])
+  })
+
+  test('a steam generator writes its wide-range level, in whole percent, where its narrow range is off its span', () => {
+    // Run 22 QA: four steam generators read "0 %" after a loss of feed, below their narrow range's span; the heat
+    // sink could not be read on the overview.
+    const mimic = overview(plantOf(4), budgetFor(4))
+    const sg = mimic.items.find(item => item.binding.label === 'SG B')!
+    const level = sg.rows[0]!
+    expect(level).toEqual({ kind: 'value', path: 'sgB.levelPercent', unit: 'percent', required: true, span: { min: 0, max: 100 }, wider: { path: 'sgB.wideRangeLevelPercent', span: { min: 0, max: 100 } } })
+    // The drawing samples the wide range too.
+    expect(mimic.paths).toContain('sgB.wideRangeLevelPercent' as never)
+    const at = (narrow: number, wide?: number) => indexSample([{ path: 'sgB.levelPercent', value: narrow, quality: 'good' }, ...(wide === undefined ? [] : [{ path: 'sgB.wideRangeLevelPercent', value: wide, quality: 'good' as const }])])
+    const text = (index: ReturnType<typeof indexSample>) => rowText(level, drawnLook(sg.binding, sg.rows, index), index, (value, unit) => `${value} ${unit}`)
+    expect(text(at(17.7, 60))).toBe('17.7 percent')
+    expect(text(at(0, 24.02))).toBe('WR 24 %')
+    expect(text(at(0, 0))).toBe('WR <0 %')
+    // Without the wide range read, the end of the span, never a value the level may be far below.
+    expect(text(at(0))).toBe('<0 %')
+    // Within the room its pressure row takes: the drawing does not grow for it.
+    expect(sg.text!.width).toBe(readoutBlockWidth(3, 1) + textWidth('unit', 'MPa') + openBridgeDevice.valueRowPadding)
   })
 
   test('stubs name alike far ends once with a count, and a lone far end in full', () => {

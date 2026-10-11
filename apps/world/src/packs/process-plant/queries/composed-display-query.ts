@@ -39,6 +39,7 @@ import { displayEvidence } from '../displays/evidence.ts'
 import { requirePlant } from './common.ts'
 import { simulationClock } from '../displays/display-text.ts'
 import { indexSample, itemLook } from '../displays/mimic/evaluate.ts'
+import { valueRowReading } from '../displays/mimic/rows.ts'
 import { mimicItemId } from '../displays/mimic/bindings.ts'
 import { trendPoints, type PlantModeNow } from '../displays/trend-reading.ts'
 
@@ -169,11 +170,13 @@ export const answerProcessPlantComposedDisplayQuery = (config: {
       id: mimicItemId(system.plant.graph, item.binding.item),
       label: item.binding.label,
       state: itemLook(item.binding, now).words || 'no state drawn',
-      // The values written beside it, and what they measure.
+      // The values written beside it, and what they measure: the wider instrument's where a reading is off its span.
       values: item.rows.flatMap(row => {
         if (row.kind !== 'value') return []
-        const snapshot = system.runtime.readVariableSnapshot(row.path as VariablePath)
-        return typeof snapshot.value === 'number' ? shownQuantity(snapshot.value, row.unit).map(quantity => ({ quantity, label: snapshot.label })) : []
+        const reading = valueRowReading(row, now)
+        if (reading === null) return []
+        const label = system.runtime.readVariableSnapshot(reading.path as VariablePath).label
+        return shownQuantity(reading.value, row.unit).map(quantity => ({ quantity, label }))
       }),
     })))
     return {

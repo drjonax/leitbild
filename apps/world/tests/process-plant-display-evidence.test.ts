@@ -238,6 +238,22 @@ describe('what World adds to a composed display', () => {
     expect(offsite.read('auxFeedwaterHeader.outletFlowKgPerS')).toBeGreaterThan(50)
   }, 60_000)
 
+  test('a chat drawing that writes a narrow-range level at the end of its span adds the wide-range level', () => {
+    // A chat mimic has no room for the wide range beside the value: it writes "<0 %", and World adds the wide range.
+    const lossOfFeed = situation({ actionId: 'loss-main-feedwater' }, 2)
+    const { evidence, display } = lossOfFeed.compose('Main feedwater to steam generators', ['feedwaterHeader'], [
+      { kind: 'mimic', services: ['feedwater'], to: ['sgA', 'sgB', 'sgC', 'sgD'], reach: 3 },
+      { kind: 'alarms', scope: 'related' },
+    ])
+    expect(lossOfFeed.read('sgB.levelPercent')).toBe(0)
+    const mimic = display.panels.find(panel => panel.kind === 'mimic')!
+    if (mimic.kind !== 'mimic') throw new Error('expected the mimic')
+    const sg = mimic.mimic.items.find(item => item.binding.label === 'SG B')!
+    expect(sg.rows.find(row => row.kind === 'value' && row.path === 'sgB.levelPercent')).toEqual({ kind: 'value', path: 'sgB.levelPercent', unit: 'percent', required: true, span: { min: 0, max: 100 } })
+    for (const loop of ['A', 'B', 'C', 'D']) expect(listed(evidence)).toContainEqual([`sg${loop}.wideRangeLevelPercent`, 'wider'])
+    expect(evidence.find(entry => entry.path === 'sgB.wideRangeLevelPercent')!.reason).toBe('SG B reads below the span of SG-B-LVL-NR: the same quantity on the instrument with the wider span')
+  }, 60_000)
+
   test('a normal plant gets nothing added: a steady level, power and temperature at power', () => {
     const power = atPower()
     for (const panels of [

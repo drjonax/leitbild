@@ -26,6 +26,13 @@ export interface MimicProfile {
    */
   readonly valves: 'symbols' | 'markers'
   /**
+   * A value whose instrument reads at an end of its span: it reads that end
+   * ("<0 %"), or, where the equipment declares an instrument that reads the
+   * same quantity over a wider span, that one in whole units ("WR 24 %"),
+   * which needs the room of a mark beside the value.
+   */
+  readonly offSpan: 'end' | 'wider'
+  /**
    * Identical parallel equipment (same kind, same neighbours on both sides,
    * same ports): one symbol each, or one symbol for all of them that counts
    * how many are running ("RUN 1/2").
@@ -99,6 +106,8 @@ export const chatMimicProfile: MimicProfile = {
   },
   readoutSize: 'small',
   valves: 'symbols',
+  // A chat column has no room for the mark; the display World composes adds the wider reading as evidence.
+  offSpan: 'end',
   parallel: 'each',
   stubLabels: 'names',
   commands: 'inline',
@@ -123,6 +132,7 @@ export const overviewMimicProfile: MimicProfile = {
   },
   readoutSize: 'regular',
   valves: 'markers',
+  offSpan: 'wider',
   parallel: 'grouped',
   stubLabels: 'groups',
   commands: 'stacked',

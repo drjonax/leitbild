@@ -238,8 +238,15 @@ export const createReadoutBlock = (): HTMLElement & Props => {
   return block
 }
 
-export const updateReadoutBlock = (block: HTMLElement & Props, value: number | null, fractionDigits: number, maxDigits: number): void => {
-  block.value = value
+/**
+ * A readout block's value: a number, or at an end of its instrument's span
+ * the text that says only where the quantity is ("<0"), in OpenBridge's
+ * low-integrity style, as a readout shows it.
+ */
+export const updateReadoutBlock = (block: HTMLElement & Props, value: number | null, fractionDigits: number, maxDigits: number, offScale: string | null = null): void => {
+  block.valueType = offScale === null ? 'number' : 'text'
+  block.value = offScale ?? value
+  block.dataQuality = offScale === null ? undefined : 'low-integrity'
   block.fractionDigits = fractionDigits
   block.maxDigits = maxDigits
 }

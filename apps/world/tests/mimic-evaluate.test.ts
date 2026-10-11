@@ -24,7 +24,7 @@ describe('mimic state of one sample', () => {
 
   test('a pump writes RUN as it writes STOP, so its icon\'s fill is never all that tells them apart', () => {
     const presentation = { element: 'device' } as never
-    const rows = (stacked: boolean) => itemRows(pump, presentation, { marker: false, members: [], commands: stacked ? 'stacked' : 'inline' })
+    const rows = (stacked: boolean) => itemRows(pump, presentation, { marker: false, members: [], commands: stacked ? 'stacked' : 'inline', offSpan: 'end' })
     for (const stacked of [false, true]) {
       const state = rows(stacked)[0]!
       expect(state.kind === 'state' && state.texts.includes('RUN') && state.texts.includes('STOP')).toBe(true)
@@ -63,7 +63,7 @@ describe('mimic state of one sample', () => {
     expect(itemTreatment(itemLook(valve, sample({})), false)).toBe('normal')
     // A group stands out while any member disagrees.
     const second = item({ aspect: 'running', state: { path: 'q.speedRpm' as never, reading: 'aboveZero' }, command: 'q.running' as never })
-    const rows = itemRows(pump, { element: 'device', icon: 'pump', aspect: 'running' }, { marker: false, members: [pump, second], commands: 'stacked' })
+    const rows = itemRows(pump, { element: 'device', icon: 'pump', aspect: 'running' }, { marker: false, members: [pump, second], commands: 'stacked', offSpan: 'end' })
     expect(itemTreatment(drawnLook(pump, rows, sample({ 'p.speedRpm': 1200, 'p.running': true, 'q.speedRpm': 0, 'q.running': true })), false)).toBe('abnormal')
     expect(itemTreatment(drawnLook(pump, rows, sample({ 'p.speedRpm': 1200, 'p.running': true, 'q.speedRpm': 0, 'q.running': false })), false)).toBe('normal')
   })

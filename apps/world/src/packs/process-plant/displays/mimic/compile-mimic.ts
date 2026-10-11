@@ -7,7 +7,7 @@ import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutR
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { MimicProfile } from './profiles.ts'
-import { COUNT_WORDS, itemRows, type MimicRow } from './rows.ts'
+import { COUNT_WORDS, itemRows, WIDER_RANGE, type MimicRow } from './rows.ts'
 import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
 import { openBridgeDevice, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
@@ -61,6 +61,15 @@ const laneOf = (component: CompiledComponent, orders: ReadonlyMap<string, number
 const valueRowWidth = (unit: string, fractionDigits: number): number =>
   readoutBlockWidth(3, fractionDigits) + (unitLabel(unit) === '' ? 0 : textWidth('unit', unitLabel(unit))) + openBridgeDevice.valueRowPadding
 
+/**
+ * A value row that may read its wider instrument says so before the value, in
+ * whole units ("WR 24 %"), so it takes no more room than the row's own
+ * reading where the item's other rows are as wide (a steam generator's
+ * pressure in MPa).
+ */
+const valueRowSize = (row: Extract<MimicRow, { kind: 'value' }>, own: number, value: (fractionDigits: number) => number): number =>
+  row.wider === undefined ? own : Math.max(own, textWidth('unit', WIDER_RANGE) + openBridgeDevice.valueRowGap + value(0))
+
 const stateRowWidth = (texts: ReadonlyArray<string>): number =>
   Math.max(...texts.map(text => textWidth('stateRow', text))) + openBridgeDevice.stateRowPadding
 
@@ -73,17 +82,18 @@ const rowWords = (row: MimicRow): ReadonlyArray<string> =>
 const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['readoutSize']): { readonly width: number; readonly height: number } => {
   if (!device || readoutSize === 'regular') {
     const digits = device ? 0 : 1
-    if (row.kind === 'value') return { width: valueRowWidth(row.unit, digits), height: openBridgeDevice.row }
+    if (row.kind === 'value') return { width: valueRowSize(row, valueRowWidth(row.unit, digits), fraction => valueRowWidth(row.unit, fraction)), height: openBridgeDevice.row }
     if (row.kind === 'position') return { width: Math.max(valueRowWidth('fraction', digits), stateRowWidth(['POS ?'])), height: openBridgeDevice.row }
     return { width: stateRowWidth(rowWords(row)), height: openBridgeDevice.row }
   }
-  if (row.kind === 'value') return { width: smallValueRowWidth(unitLabel(row.unit)), height: openBridgeDevice.smallValueRow }
+  if (row.kind === 'value') return { width: valueRowSize(row, smallValueRowWidth(unitLabel(row.unit)), () => smallValueRowWidth(unitLabel(row.unit))), height: openBridgeDevice.smallValueRow }
   if (row.kind === 'position') return { width: Math.max(smallValueRowWidth('%'), smallStateRowWidth('POS ?')), height: openBridgeDevice.smallValueRow }
   return { width: Math.max(...rowWords(row).map(smallStateRowWidth)), height: openBridgeDevice.smallStateRow }
 }
 
 const rowTexts = (row: MimicRow): ReadonlyArray<{ readonly style: OpenBridgeTextStyle; readonly text: string }> =>
-  row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }] : rowWords(row).map(text => ({ style: 'stateRow' as const, text }))
+  row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }, ...(row.wider === undefined ? [] : [{ style: 'unit' as const, text: WIDER_RANGE }])]
+    : rowWords(row).map(text => ({ style: 'stateRow' as const, text }))
 
 const isDevice = (presentation: MimicPresentation): boolean => presentation.element === 'device'
 const isVessel = (presentation: MimicPresentation): boolean => presentation.element === 'tank' || presentation.element === 'heat-exchanger'
@@ -298,7 +308,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     for (const member of group) componentRank.set(member, rank)
     const lane = laneOf(component, loopOrder)
     addItem(
-      { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands }), marker, tagged: !marker || lane === undefined, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
+      { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands, offSpan: profile.offSpan }), marker, tagged: !marker || lane === undefined, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
       ports.map(port => ({ id: port, direction: portDirection(component, port), rank: port })),
     )
   }
@@ -336,7 +346,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
           const lane = laneOf(host, loopOrder)
           const marker = profile.valves === 'markers' && isValve(presentation)
           addItem(
-            { id, item: { kind: 'device', component: host.index, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands }), marker, tagged: !marker || lane === undefined, role: 'device', rank: `${componentRank.get(host.index)}|${device.id}`, ...(lane === undefined ? {} : { lane }), components: [host.index] },
+            { id, item: { kind: 'device', component: host.index, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands, offSpan: profile.offSpan }), marker, tagged: !marker || lane === undefined, role: 'device', rank: `${componentRank.get(host.index)}|${device.id}`, ...(lane === undefined ? {} : { lane }), components: [host.index] },
             [{ id: 'in', direction: 'in', rank: 'in' }, { id: 'out', direction: 'out', rank: 'out' }],
           )
         }
@@ -399,7 +409,7 @@ const orientationOf = (node: PlacedNode): 'horizontal' | 'vertical' =>
   Object.values(node.ports).some(port => port.face === 'left' || port.face === 'right') ? 'horizontal' : 'vertical'
 
 const rowPaths = (row: MimicRow): ReadonlyArray<VariablePath> => {
-  if (row.kind === 'value') return [row.path as VariablePath]
+  if (row.kind === 'value') return [row.path as VariablePath, ...(row.wider === undefined ? [] : [row.wider.path as VariablePath])]
   if (row.kind !== 'count') return []
   return row.members.flatMap(member => [
     ...(member.state?.state === undefined ? [] : [member.state.state.path]),

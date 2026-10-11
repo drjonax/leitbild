@@ -3,7 +3,7 @@ import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
 import { actionEquipment, actionFlows, actionFlowsInto, actsIn, automaticActions, conditionBindings, feeds, throughputDownstream, type AutomaticAction } from './actuations.ts'
 import { composedPanelPens, rankedAsRead, type CompiledComposedDisplay, type ComposedDisplayPen, type ComposedDisplayReading } from './compose.ts'
 import { COMPOSED_EVIDENCE_MAX, type DisplayEvidence, type DisplayEvidenceKind } from './composition.ts'
-import { isPast } from './display-text.ts'
+import { isPast, offScale } from './display-text.ts'
 import { icThresholdsForSignal } from './ic-thresholds.ts'
 import { itemBinding, type MimicItem } from './mimic/bindings.ts'
 import { itemLook, type SampleIndex } from './mimic/evaluate.ts'
@@ -36,8 +36,9 @@ const shortLabel = (system: ProcessPlantRuntimeInstance, component: number): str
  *   it, whose state does not follow its command (a feed valve stuck at 35 %
  *   while demanded open), as its state and its command;
  * - wider: for a shown reading at an end of its instrument's span (a
- *   narrow-range level at 0 %), the same quantity on the instrument the
- *   equipment declares reads it over a wider span (its wide-range level);
+ *   narrow-range level at 0 %), or a value a chat drawing writes there, the
+ *   same quantity on the instrument the equipment declares reads it over a
+ *   wider span (its wide-range level);
  * - delivers and isolates: what an automatic action acting in the mode
  *   delivers or isolates (the header flow its pumps feed, or the flow it
  *   starts or shuts off into the one piece of shown equipment it feeds),
@@ -130,6 +131,15 @@ export const displayEvidence = (
     if (binding.owner.type !== 'component') continue
     for (const range of graph.components[binding.owner.componentIndex]!.semantics.widerRanges) {
       if (range.reading === entry.pen.path) add(range.wider, 'wider', `${entry.pen.name} reads ${entry.reading.offScale} its span: the same quantity on the instrument with the wider span`)
+    }
+  }
+  // So does a value a drawing writes at an end of its span where its profile has no room for the wider reading.
+  for (const item of mimics.flatMap(mimic => mimic.items)) {
+    for (const value of item.binding.values) {
+      const drawn = item.rows.some(row => row.kind === 'value' && row.path === value.path && row.wider === undefined)
+      const read = sample(value.path).value
+      const end = typeof read === 'number' ? offScale(read, value.span) : null
+      if (drawn && end !== null && value.wider !== undefined) add(value.wider.path, 'wider', `${item.binding.label} reads ${end} the span of ${bindingOf(value.path).tagId ?? bindingOf(value.path).label}: the same quantity on the instrument with the wider span`)
     }
   }
 
