@@ -65,6 +65,7 @@ unsafe extern "C" {
         temperature_k: f64,
         output: *mut WaterPoint,
     ) -> i32;
+    fn ld01_water_complete(caloric: *const WaterPoint, output: *mut WaterPoint) -> i32;
     fn ld01_water_direction(
         branch: i32,
         pressure_pa: f64,
@@ -124,7 +125,8 @@ pub fn point(branch: Branch, pressure_pa: f64, temperature_k: f64) -> Result<Wat
 /// iterates only: the same branch, domain and region checks and bit-identical
 /// rho/u/h/cp/alpha, the fields that inverse reads. Entropy, cv, sound speed,
 /// compressibility, transport and the p-only saturation slope are not
-/// evaluated; their fields are NaN. Never returned to a caller.
+/// evaluated; their fields are NaN. Never returned to a caller: the inverse
+/// returns `complete` of the selected state.
 fn caloric_state(
     branch: Branch,
     pressure_pa: f64,
@@ -141,6 +143,24 @@ fn caloric_state(
         1 => Err(Error::Domain),
         2 => Err(Error::AbiArgument),
         4 => Err(Error::TrialBand),
+        _ => Err(Error::NativeFailure),
+    }
+}
+
+/// `point(branch, p, T)` from `caloric_state(branch, p, T)`'s own output,
+/// without evaluating its caloric fields again: the native boundary adds
+/// cv, compressibility, transport and the saturation slope to the held
+/// state. Only a state this boundary's `caloric_state` returned is passed.
+fn complete(caloric: &WaterPoint) -> Result<WaterPoint, Error> {
+    let mut output = WaterPoint::default();
+    // SAFETY: `caloric` is a live shared C-layout tuple that C only reads
+    // during the call; `output` is a unique live stack allocation written
+    // completely on success. Nothing is retained; C catches every exception.
+    let status = unsafe { ld01_water_complete(caloric, &mut output) };
+    match status {
+        0 => Ok(output),
+        1 => Err(Error::Domain),
+        2 => Err(Error::AbiArgument),
         _ => Err(Error::NativeFailure),
     }
 }
@@ -338,8 +358,9 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
         _ => (stable, (branch, 1073.15)),
     };
     // Brackets and iterates read only the caloric state. The returned state is
-    // the complete forward point at the selected temperature, so the iteration
-    // path and every returned field are those of full-point queries.
+    // the complete forward point at the selected temperature, completed from
+    // the caloric state already evaluated there, so the iteration path and
+    // every returned field are those of full-point queries.
     let low = caloric_state(low_end.0, p, low_end.1)?;
     let high = caloric_state(high_end.0, p, high_end.1)?;
     // Beyond the stable end the target can only be a metastable state of the
@@ -385,19 +406,21 @@ fn invert_caloric(branch: Branch, p: f64, target: f64, kind: Caloric) -> Result<
 }
 
 /// Safeguarded Newton inside one bracket whose ends were evaluated as given.
+/// The returned point is the complete forward point at the selected end or
+/// temperature, completed from the caloric state evaluated there.
 fn newton(
     branch: Branch,
     p: f64,
     target: f64,
     kind: Caloric,
-    (low_end, mut low): (End, WaterPoint),
-    (high_end, mut high): (End, WaterPoint),
+    (_, mut low): (End, WaterPoint),
+    (_, mut high): (End, WaterPoint),
 ) -> Result<WaterPoint, Error> {
     if target == kind.value(low) {
-        return point(low_end.0, p, low_end.1);
+        return complete(&low);
     }
     if target == kind.value(high) {
-        return point(high_end.0, p, high_end.1);
+        return complete(&high);
     }
     let mut t = low.temperature_k
         + (high.temperature_k - low.temperature_k) * (target - kind.value(low))
@@ -416,7 +439,7 @@ fn newton(
         // An arbitrary EOS datum can make target U zero without making the
         // attainable numerical precision or the heat capacity zero.
         if defect.abs() <= 2e-12 * target.abs().max(ut * q.temperature_k).max(1.) {
-            return point(branch, p, t);
+            return complete(&q);
         }
         if defect < 0. {
             low = q;

@@ -189,6 +189,37 @@ int ld01_water_caloric(int branch,double p,double T,OperatingWaterPoint* out) no
  catch(const std::exception&){return 3;}
  catch(...){return 3;}
 }
+// ld01_water_point's complete tuple from the caloric state that
+// ld01_water_caloric returned for the SAME (branch,p,T): that state already
+// holds its region, p, T, rho, u, h, cp, alpha and departure bit for bit, so
+// only cv, kappa, viscosity, conductivity and the saturation slope are added,
+// by gibbs()'s member calls on the same arguments and water_point_at's slope
+// check. Entropy and sound speed, which no returned tuple carries, are not
+// evaluated. Region 1 and 2 only, as every admitted caloric state is.
+int ld01_water_complete(const OperatingWaterPoint* caloric,OperatingWaterPoint* out) noexcept {
+ if(!caloric||!out)return 2;
+ try {
+  const OperatingWaterPoint& c=*caloric;
+  const auto at=[&](const auto& r){
+   const double cv=r.cvmass(c.T,c.p),kappa=r.drhodp(c.T,c.p)/c.rho,mu=r.visc(c.T,c.rho);
+   const double conductivity=r.tcond(c.T,c.p,c.rho);
+   const std::array<double,4> fields{{cv,kappa,mu,conductivity}};
+   require(std::all_of(fields.begin(),fields.end(),[](double value){return std::isfinite(value);}),
+    "Nonfinite field in returned native tuple");
+   const double slope=saturation_slope(c.p);
+   require(std::isfinite(slope)&&slope>0,"Invalid saturation derivative");
+   *out={c.region,c.p,c.T,c.rho,c.u,c.h,c.cp,cv,c.alpha,kappa,mu,conductivity,slope,c.saturation_departure};
+   return 0;
+  };
+  switch(c.region){
+   case 1:return at(r1);
+   case 2:return at(r2);
+   default:return 2;
+  }
+ }catch(const std::domain_error&){return 1;}
+ catch(const std::exception&){return 3;}
+ catch(...){return 3;}
+}
 // Thermodynamic rho/u/h tangents use Gibbs identities. Upstream does not expose
 // third/transport derivatives: cp/alpha/kappa/mu/k use same-branch, second-order
 // local coefficient probes. These are disclosed inexact Newton coefficients,
