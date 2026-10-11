@@ -3,10 +3,12 @@ import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { componentVariablePath, processLinkVariablePath } from '../behavior-contract.ts'
 import { clamp } from '../component-helpers.ts'
 import { downstreamDemandPathsForLink } from '../topology-cache.ts'
+import { headerPressureBalance, isPressureBalancedHeader } from '../behaviors/junction/header-pressure-balance.ts'
 
 export type LinkBehaviorReadContext = {
   readonly has: (path: VariablePath) => boolean
   readonly readNumber: (path: VariablePath) => number
+  readonly readBoolean: (path: VariablePath) => boolean
   readonly readOptionalNumber: (path: VariablePath, defaultValue: number) => number
 }
 
@@ -51,6 +53,8 @@ export const componentValveCapacityForInboundLink = (
 ): number => {
   const toComponent = system.graph.components[link.toComponentIndex]
   if (toComponent?.kind !== 'processValve' && toComponent?.kind !== 'steamValve') return Number.POSITIVE_INFINITY
+  // A pressure-balanced header's branch takes what the balance gives it, which its valve's coefficient already sets.
+  if (isPressureBalancedHeader(system.graph.components[link.fromComponentIndex])) return Number.POSITIVE_INFINITY
   const parameters = toComponent.parameters
   if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) return Number.POSITIVE_INFINITY
   const cv = (parameters as Record<string, unknown>).cvKgPerSPerSqrtMPa
@@ -212,6 +216,13 @@ export const distributeFlowFromComponent = (
   context: LinkBehaviorReadContext,
   availableFlowKgPerS: number,
 ): number => {
+  // A pressure-balanced header shares what its pumps deliver as its branches take it at its pressure.
+  const fromComponent = system.graph.components[link.fromComponentIndex]
+  if (isPressureBalancedHeader(fromComponent)) {
+    const branchFlows = headerPressureBalance(system, fromComponent, context).branchFlowKgPerS
+    const totalBranchFlow = [...branchFlows.values()].reduce((total, flow) => total + flow, 0)
+    return totalBranchFlow <= 0 ? 0 : availableFlowKgPerS * (branchFlows.get(link.index) ?? 0) / totalBranchFlow
+  }
   const totalDemandWeight = outgoingDemandWeightTotal(system, link.fromComponentIndex, link.service, context)
   if (totalDemandWeight <= 0) return 0
   return availableFlowKgPerS * outgoingDemandWeight(system, link, context) / totalDemandWeight

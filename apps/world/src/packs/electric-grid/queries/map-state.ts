@@ -12,7 +12,7 @@ import { gridMapStateResultSchema, type GridMapStateResult } from './map-schemas
 export interface GridMapIslandState {
   /** Stable islands in plan order. */
   readonly islands: ReadonlyArray<{ readonly id: string; readonly energized: boolean; readonly frequencyHz: number | null; readonly flowModel: 'ac' | 'dc' | null }>
-  /** Index into islands per bus, in model order; null at an HVDC terminal, which lies in no island. */
+  /** Index into islands per bus, in model order; null at an HVDC terminal and a separated boundary bus, which lie in no island. */
   readonly busIsland: ReadonlyArray<number | null>
   /** Grid solve counter; it increases with every solve. */
   readonly tick: number
@@ -60,7 +60,8 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
     islands: [...islands],
     buses: {
       island: [...busIsland],
-      energized: busIsland.map(position => position !== null && islands[position]!.energized ? 1 : 0),
+      // A separated boundary bus lies in no island but its external system holds it energised.
+      energized: busIsland.map((position, bus) => position === null ? grid.arrays.buses.energized[bus] === 1 ? 1 : 0 : islands[position]!.energized ? 1 : 0),
     },
     branches: { loadingPercent, flowMw, flowModel, closed, tripped, availability },
     generators: {

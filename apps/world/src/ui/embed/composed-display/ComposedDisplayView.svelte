@@ -15,7 +15,7 @@
   import ReadoutsPanel from './ReadoutsPanel.svelte'
   import MimicPanel from './mimic/MimicPanel.svelte'
   import TrendPanel from './TrendPanel.svelte'
-  import { agoText, alarmAge } from './panel-presenters.ts'
+  import { actuatedNames, agoText, alarmAge, bannerTrip, sampledGates } from './panel-presenters.ts'
   import { trendWindowMs } from './trend-geometry.ts'
 
   let { envelope }: { envelope: EmbeddedViewEnvelope } = $props()
@@ -186,9 +186,18 @@
   // Recorded history cannot reach before the Run started; trends say so.
   const runStartedAt = $derived(snapshot?.latest === undefined ? null : Date.parse(snapshot.latest.simulationTime) - snapshot.latest.plantElapsedMs)
   const activeRuleIds = $derived(new Set((snapshot?.latest?.alarms ?? []).filter(alarm => alarm.active).map(alarm => alarm.ruleId)))
-  // A protection trip changes the plant state; it leads the notice line.
-  const activeTrip = $derived((snapshot?.latest?.alarms ?? []).filter(alarm => alarm.active && alarm.kind === 'trip')
-    .sort((left, right) => (left.firstActiveElapsedMs ?? 0) - (right.firstActiveElapsedMs ?? 0))[0])
+  // The reactor trip changes the plant state: its first-out leads the notice
+  // line. The other automatic actuations active (AFW, SI, FWI) follow apart
+  // from it, never in its place (displayAnnunciation).
+  const annunciation = $derived(view?.display.annunciation)
+  const activeTrip = $derived(annunciation === undefined ? undefined : bannerTrip(snapshot?.latest?.alarms ?? [], annunciation))
+  const actuated = $derived(annunciation === undefined ? [] : actuatedNames(snapshot?.latest?.alarms ?? [], annunciation))
+  // The reactor trip's group is declared wherever the banner names a trip (bannerTrip).
+  const tripName = $derived(annunciation?.reactorTrip?.name ?? '')
+  const bannerTitle = $derived([
+    activeTrip === undefined ? '' : `${tripName} first out: ${activeTrip.title}`,
+    actuated.length === 0 ? '' : `Actuated: ${actuated.join(', ')}`,
+  ].filter(line => line !== '').join('\n'))
 
   // A unit overview fills its window. Where the window is wide enough its
   // drawing takes the window's height, beside a column of lead values over
@@ -207,7 +216,7 @@
 
 {#snippet notice()}
   <!-- One reserved notice line; the most consequential notice wins. Advice can go stale; an overview cannot. -->
-  <p class="banner" class:quiet={!adviceStale && activeTrip === undefined && openError === null} class:trip={activeTrip !== undefined && !adviceStale && openError === null} title={openError ?? undefined}>
+  <p class="banner" class:quiet={!adviceStale && activeTrip === undefined && actuated.length === 0 && openError === null} class:trip={(activeTrip !== undefined || actuated.length > 0) && !adviceStale && openError === null} title={openError ?? (bannerTitle === '' ? undefined : bannerTitle)}>
     {#if advice !== null && snapshot?.resetSinceAdvice}
       The Run was reset after this advice. The advice may no longer apply.
     {:else if adviceView?.modelChanged}
@@ -216,8 +225,9 @@
       The equipment drawing changed after this advice was composed.
     {:else if openError !== null}
       {openError}
-    {:else if activeTrip !== undefined && snapshot?.latest !== undefined}
-      TRIP · {activeTrip.title} · {alarmAge(snapshot.latest.plantElapsedMs, activeTrip.firstActiveElapsedMs)} ago
+    {:else if (activeTrip !== undefined || actuated.length > 0) && snapshot?.latest !== undefined}
+      {#if activeTrip !== undefined}<span class="tripped">{tripName} · {activeTrip.title} · {alarmAge(snapshot.latest.plantElapsedMs, activeTrip.firstActiveElapsedMs)} ago</span>{/if}
+      {#if actuated.length > 0}<span class="actuated">ACTUATED: {actuated.join(' · ')}</span>{/if}
     {:else if snapshot?.phase.kind === 'suspended'}
       Updates paused after 15 minutes without interaction. <button type="button" onclick={() => session?.resume()}>Resume</button>
     {:else if snapshot?.phase.kind === 'live' && snapshot.sampleError !== null}
@@ -283,8 +293,8 @@
           {#if panel.kind === 'readouts'}
             <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} column history={snapshot} />
           {:else if panel.kind === 'alarms'}
-            {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} selected={systemFilter} select={selectSystem} />{/if}
-            <AlarmsPanel {panel} latest={snapshot.latest} fill only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />
+            {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} annunciation={view.display.annunciation} selected={systemFilter} select={selectSystem} />{/if}
+            <AlarmsPanel {panel} latest={snapshot.latest} annunciation={view.display.annunciation} fill only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />
           {/if}
         {/each}
         {@render footerLine()}
@@ -312,6 +322,7 @@
                 timeAxis={stripIndex === panel.strips.length - 1}
                 adviceLabel={stripIndex === 0}
                 mode={snapshot.latest?.mode}
+                gates={sampledGates(snapshot.latest)}
                 {activeRuleIds}
               />
               <PenLegend pens={strip.pens} horizonMs={panel.horizonMs} latest={snapshot.latest} series={snapshot.series} historyMissing={snapshot.historyMissing} {activeRuleIds} />
@@ -327,8 +338,8 @@
         {:else if panel.kind === 'mimic'}
           <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} />
         {:else}
-          {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} selected={systemFilter} select={selectSystem} />{/if}
-          <AlarmsPanel {panel} latest={snapshot.latest} only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />
+          {#if systems.length > 0 && tileWidth !== undefined}<AnnunciatorTiles {systems} {tileWidth} latest={snapshot.latest} annunciation={view.display.annunciation} selected={systemFilter} select={selectSystem} />{/if}
+          <AlarmsPanel {panel} latest={snapshot.latest} annunciation={view.display.annunciation} only={narrowedTo === null ? null : { ...narrowedTo, drawn: highlight !== null }} showAll={() => selectSystem(null)} />
         {/if}
       {/each}
     </div>
@@ -355,7 +366,11 @@
   /* A block, not a flex box: an ellipsis only shortens a block's own text, so a long trip title ends in "…" rather than mid-word. */
   .banner { margin: 0; height: 22px; line-height: 22px; padding: 0 8px; display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--container-section-color); border-left: 3px solid var(--alert-caution-color); }
   .banner.quiet { background: none; border-left-color: transparent; color: var(--element-neutral-color); padding-left: 0; }
-  .banner.trip { border-left-color: var(--alert-alarm-color); font-weight: 600; }
+  /* The reactor trip and the actuations each keep a part of the line, each shortened on its own; the trip keeps its whole name first. */
+  .banner.trip { display: flex; gap: 14px; border-left-color: var(--alert-alarm-color); font-weight: 600; }
+  .banner.trip > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tripped { flex: 0 0 auto; max-width: 70%; }
+  .actuated { flex: 1 1 0; }
   .status { margin: 8px 0; color: var(--element-neutral-color); }
   .status p { margin: 4px 0; }
   .hint { font-size: 11.5px; }

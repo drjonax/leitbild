@@ -1,4 +1,4 @@
-import { compileGridModelV2 } from '../../../src/packs/electric-grid/models/compile-v2.ts'
+import { compileGridModelV2, type GridOperatingPointDemand } from '../../../src/packs/electric-grid/models/compile-v2.ts'
 import { createAcNetwork, type AcNetwork } from '../../../src/packs/electric-grid/runtime/network/ac-network.ts'
 import {
   createAcIslandSystem,
@@ -52,8 +52,8 @@ const scheduledAt = <Point,>(points: ReadonlyArray<Point>): Point => {
   return points[0]!
 }
 
-export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperatingPointV2, options: { readonly tolerancePu: number; readonly maximumIterations: number }): V2PowerFlow => {
-  const compiled = compileGridModelV2(model, operatingPoint)
+export const solveV2PowerFlow = (model: GridModelV2, operatingPoint: GridOperatingPointV2, demand: GridOperatingPointDemand, options: { readonly tolerancePu: number; readonly maximumIterations: number }): V2PowerFlow => {
+  const compiled = compileGridModelV2(model, operatingPoint, demand)
   const busIndex = new Map(model.buses.map((bus, index) => [bus.id, index]))
   const open = new Set((operatingPoint.branchStates ?? []).filter(state => state.state === 'open').map(state => state.assetId))
   const availability = new Map((operatingPoint.branchStates ?? []).flatMap(state => state.availability === undefined ? [] : [[state.assetId, state.availability] as const]))

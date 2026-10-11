@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { idSchema } from '../../../core/model/index.ts'
-import type { ComponentDefinition, ComponentKind } from './model.ts'
+import type { CompiledComponent, ComponentDefinition, ComponentKind } from './model.ts'
 import { defineComponent, normalized, variable } from './component-definition-helpers.ts'
 import { aspect, fixedSemantics } from './semantics.ts'
 
@@ -9,6 +9,113 @@ const primaryLoopIdsFrom = (parameters: unknown): ReadonlyArray<string> => {
     primaryLoopIds: z.array(idSchema).min(1).max(64).optional(),
   }).passthrough().parse(parameters)
   return parsed.primaryLoopIds ?? []
+}
+
+/**
+ * What the ex-core nuclear instruments can indicate, declared as their
+ * instrument spans so displays tell a pinned reading from a value; a reading
+ * beyond pins at the end of its span: the power range 0 to 120 % of rated power, the
+ * intermediate range's compensated ion chamber 1e-11 A to 1e-3 A and its
+ * startup-rate meter -0.5 to +5 decades a minute, the source range's
+ * proportional counter up to 1e6 counts a second.
+ */
+export const nuclearInstrumentSpans = {
+  powerRangePercent: { min: 0, max: 120 },
+  intermediateRangeCurrentAmps: { min: 1e-11, max: 1e-3 },
+  intermediateRangeStartupRateDpm: { min: -0.5, max: 5 },
+  sourceRangeCountRateCps: { min: 0, max: 1e6 },
+} as const
+
+// How a core behaves once it is shut down, as its parameters declare it. The
+// reference four-loop core declares:
+// - Keepin's six delayed-neutron groups for thermal fission of U-235, beta
+//   0.0065 (G. R. Keepin, Physics of Nuclear Kinetics, 1965; Lamarsh and
+//   Baratta, Introduction to Nuclear Engineering, Table 7.4);
+// - seven decay-heat groups fitted, within 3 % from 10 s to two days, to the
+//   Wigner-Way fit of the ANS-5.1 curve for a core a year at power,
+//   P / P0 = 0.0622 (t^-0.2 - (t + T)^-0.2): 6 % at shutdown, 3.7 % at 10 s,
+//   2.3 % at 100 s, 1.5 % at ten minutes, 1 % at an hour;
+// - the 4 % dk/k total trip reactivity and 2.7 s drop to dashpot entry that
+//   Westinghouse four-loop safety analyses assume for the falling rods (FSAR
+//   Chapter 15.0, rod cluster control assembly insertion characteristics),
+//   the drop time the standard technical specifications hold each rod to
+//   (NUREG-1431, LCO 3.1.4).
+
+/** Delayed-neutron precursor groups the core's kinetics carries. */
+export const delayedNeutronGroupCount = 6
+/** Fission-product decay-heat groups the core's thermal power carries. */
+export const decayHeatGroupCount = 7
+
+const delayedNeutronsSchema = z.object({
+  /** The share of fission neutrons born delayed, beta. */
+  fraction: z.number().finite().gt(0).lt(0.02),
+  /** Each precursor group's share of the delayed neutrons and its decay constant. */
+  groups: z.array(z.object({
+    relativeYield: z.number().finite().gt(0).lt(1),
+    decayConstantPerS: z.number().finite().positive(),
+  }).strict()).length(delayedNeutronGroupCount),
+}).strict().refine(neutrons => Math.abs(neutrons.groups.reduce((sum, group) => sum + group.relativeYield, 0) - 1) < 1e-6, {
+  message: 'delayed-neutron group yields must add up to 1',
+})
+
+const decayHeatGroupsSchema = z.array(z.object({
+  /** The group's decay heat at equilibrium, as a share of fission power. */
+  fractionOfFissionPower: z.number().finite().gt(0).lt(0.2),
+  timeConstantS: z.number().finite().positive(),
+}).strict()).length(decayHeatGroupCount).refine(groups => groups.reduce((sum, group) => sum + group.fractionOfFissionPower, 0) < 0.2, {
+  message: 'decay heat groups must add up to less than a fifth of fission power',
+})
+
+const scramSchema = z.object({
+  /** The negative reactivity all control rods insert, falling from their at-power positions, once the trip breakers open. */
+  reactivityPcm: z.number().finite().positive(),
+  /** The time the falling rods take to insert it. */
+  insertionTimeS: z.number().finite().positive(),
+  /** The reactor trip breakers in series on the rod drive power: either one open drops the rods. */
+  reactorTripBreakers: z.array(idSchema).min(1),
+}).strict()
+
+const temperatureProgramSchema = z.object({
+  /** The average coolant temperature the program asks for with the turbine unloaded. */
+  noLoadAverageTemperatureC: z.number().finite(),
+  /** The average coolant temperature the program asks for at full turbine load. */
+  fullLoadAverageTemperatureC: z.number().finite(),
+  /** The turbine whose load, its steam flow over its rated flow as its first-stage pressure reads it, sets the program. */
+  turbine: idSchema,
+}).strict().refine(program => program.fullLoadAverageTemperatureC > program.noLoadAverageTemperatureC, {
+  message: 'average temperature program full-load temperature must be above its no-load temperature',
+})
+
+export type ReactorTemperatureProgram = z.infer<typeof temperatureProgramSchema>
+
+const temperatureProgramByComponent = new WeakMap<CompiledComponent, ReactorTemperatureProgram>()
+
+/** A core's average temperature program, Tref against turbine load, as its parameters declare it. */
+export const reactorTemperatureProgram = (component: CompiledComponent): ReactorTemperatureProgram => {
+  const cached = temperatureProgramByComponent.get(component)
+  if (cached !== undefined) return cached
+  const parsed = temperatureProgramSchema.parse((component.parameters as Readonly<Record<string, unknown>>).temperatureProgram)
+  temperatureProgramByComponent.set(component, parsed)
+  return parsed
+}
+
+const reactorNeutronicsSchema = z.object({
+  delayedNeutrons: delayedNeutronsSchema,
+  decayHeatGroups: decayHeatGroupsSchema,
+  scram: scramSchema,
+}).passthrough()
+
+export type ReactorNeutronics = z.infer<typeof reactorNeutronicsSchema>
+
+const neutronicsByComponent = new WeakMap<CompiledComponent, ReactorNeutronics>()
+
+/** A core's delayed neutrons, decay heat and scram, as its parameters declare them. */
+export const reactorNeutronics = (component: CompiledComponent): ReactorNeutronics => {
+  const cached = neutronicsByComponent.get(component)
+  if (cached !== undefined) return cached
+  const parsed = reactorNeutronicsSchema.parse(component.parameters)
+  neutronicsByComponent.set(component, parsed)
+  return parsed
 }
 
 export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
@@ -47,9 +154,14 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       coolantThermalTimeConstantS: z.number().finite().positive().optional(),
       fuelThermalTimeConstantS: z.number().finite().positive().optional(),
       fuelTemperatureRiseAtRatedPowerC: z.number().finite().positive().optional(),
-      /** The share of core thermal power that fission products release later as decay heat, at equilibrium. */
-      decayHeatFractionAtPower: z.number().finite().min(0).max(0.2).optional(),
-      decayHeatTimeConstantS: z.number().finite().positive().optional(),
+      /** Delayed-neutron precursor groups, which set how fission power falls once the core is shut down. */
+      delayedNeutrons: delayedNeutronsSchema,
+      /** Fission-product decay heat as exponential groups; together their share of fission power at equilibrium. */
+      decayHeatGroups: decayHeatGroupsSchema,
+      /** What the reactor trip does to the core. */
+      scram: scramSchema,
+      /** The rod control's reference average coolant temperature, Tref, programmed from turbine load. */
+      temperatureProgram: temperatureProgramSchema,
       referenceCoolantOutletTemperatureC: z.number().finite().optional(),
       referenceFuelTemperatureC: z.number().finite().optional(),
       coolantTemperatureFeedbackPcmPerC: z.number().finite().optional(),
@@ -64,6 +176,11 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       maxPowerRampFractionPerS: z.number().finite().positive().optional(),
       fuelThermalCapacityMjPerC: z.number().finite().positive(),
       nominalPrimaryFlowKgPerS: z.number().finite().positive().optional(),
+      /**
+       * The coolant's pressure drop through the reactor vessel, cold-leg nozzles
+       * to hot-leg nozzles, at nominal primary flow: the path every loop shares.
+       */
+      nominalPressureDropMPa: z.number().finite().positive().optional(),
       /** The share of vessel flow that bypasses the fuel (head, baffle and guide-thimble flow), so carries no core heat. */
       coreBypassFlowFraction: z.number().finite().min(0).max(0.3).optional(),
       /** Design shaft power the running reactor coolant pumps put into the coolant; sizes the initial loop temperatures. */
@@ -73,13 +190,16 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       /** Intermediate-range current at rated power. */
       nominalIntermediateRangeCurrentAmps: z.number().finite().positive().optional(),
       /** P-6: the intermediate-range current above which the source range's high voltage is cut. */
-      sourceRangeCutoffCurrentAmps: z.number().finite().positive().optional(),
+      p6IntermediateRangeCurrentAmps: z.number().finite().positive(),
+      /** P-10: the power-range reading, in percent of rated power, above which the low-power trips may be blocked. */
+      p10PowerRangePercent: z.number().finite().positive().max(100),
       minimumNaturalCirculationCoolingFraction: normalized.optional(),
     }),
     semantics: fixedSemantics({
       keyValues: ['coolantOutletTemperatureC'],
       // Above P-6 the source range's high voltage is cut and it counts nothing.
       meaningfulWhile: [{ flag: 'sourceRangeEnergized', variables: ['sourceRangeCountRateCps'] }],
+      permissives: ['aboveP6', 'aboveP10'],
       energy: [{ role: 'source', circuit: 'coolant', rate: 'totalThermalPowerMw' }],
     }),
     variables: [
@@ -97,8 +217,8 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'effectiveReactivityPcm', label: 'Effective core reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'rodInsertionFraction', label: 'Rod insertion demand', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'sourceRangeEnergized', label: 'Source-range detector high voltage on', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
-      variable({ path: 'sourceRangeCountRateCps', label: 'Source-range neutron count rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'countRate', unit: 'cps' }),
-      variable({ path: 'intermediateRangeCurrentAmps', label: 'Intermediate-range neutron current', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'electricalCurrent', unit: 'amps' }),
+      variable({ path: 'sourceRangeCountRateCps', label: 'Source-range neutron count rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'countRate', unit: 'cps', limits: { hardRange: nuclearInstrumentSpans.sourceRangeCountRateCps, instrumentSpan: nuclearInstrumentSpans.sourceRangeCountRateCps } }),
+      variable({ path: 'intermediateRangeCurrentAmps', label: 'Intermediate-range neutron current', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'electricalCurrent', unit: 'amps', limits: { hardRange: nuclearInstrumentSpans.intermediateRangeCurrentAmps, instrumentSpan: nuclearInstrumentSpans.intermediateRangeCurrentAmps } }),
       variable({ path: 'coolantInletTemperatureC', label: 'Core coolant inlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'coolantOutletTemperatureC', label: 'Core coolant outlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'coreExitTemperatureC', label: 'Core-exit temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
@@ -111,10 +231,19 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'coreCoolingAvailabilityFraction', label: 'Core cooling availability', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', measurand: 'availability', quantity: 'ratio', unit: 'fraction' }),
       variable({ path: 'coreHeatRemovalDeficitMw', label: 'Core heat removal deficit', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'powerDelta', unit: 'MW' }),
       variable({ path: 'fuelHeatupRateCPerS', label: 'Fuel heatup rate', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperatureRate', unit: 'degC/s' }),
-      variable({ path: 'decayHeatMw', label: 'Decay heat', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
+      variable({ path: 'decayHeatMw', label: 'Decay heat', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
+      // Each delayed-neutron precursor group as the fission power it sustains at equilibrium.
+      ...Array.from({ length: delayedNeutronGroupCount }, (_, index) => variable({ path: `delayedNeutronGroup${index + 1}PowerMw`, label: `Delayed-neutron precursor group ${index + 1}`, kind: 'state', discipline: 'nuclear', writable: false, publish: 'internal', quantity: 'power', unit: 'MW' })),
+      ...Array.from({ length: decayHeatGroupCount }, (_, index) => variable({ path: `decayHeatGroup${index + 1}Mw`, label: `Decay heat group ${index + 1}`, kind: 'state', discipline: 'thermal', writable: false, publish: 'internal', quantity: 'power', unit: 'MW' })),
       variable({ path: 'pumpHeatMw', label: 'Reactor coolant pump heat', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'heatToCoolantMw', label: 'Heat to coolant', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'vapourGenerationKgPerS', label: 'Reactor coolant steam generation', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
+      variable({ path: 'powerRangePercent', label: 'Power-range neutron flux', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'power', unit: 'percent', limits: { hardRange: nuclearInstrumentSpans.powerRangePercent, instrumentSpan: nuclearInstrumentSpans.powerRangePercent } }),
+      variable({ path: 'aboveP10', label: 'P-10 power range above setpoint', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'intermediateRangeStartupRateDpm', label: 'Intermediate-range startup rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'startupRate', unit: 'DPM', limits: { hardRange: nuclearInstrumentSpans.intermediateRangeStartupRateDpm, instrumentSpan: nuclearInstrumentSpans.intermediateRangeStartupRateDpm } }),
+      variable({ path: 'aboveP6', label: 'P-6 intermediate range above setpoint', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'referenceAverageTemperatureC', label: 'Reference average coolant temperature', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
+      variable({ path: 'averageTemperatureDeviationC', label: 'Average coolant temperature deviation from reference', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
     ],
   }),
   defineComponent({

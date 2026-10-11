@@ -1,5 +1,6 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import type { PackMapAppearance, PackReferenceDatasetStyle } from '../../core/packs/reference-style.ts'
+import type { MapErrorClaim } from '../map-runtime/types.ts'
 import {
   buildReferenceDatasetLayers,
   type DatasetManifestForLayers,
@@ -13,6 +14,9 @@ import {
 // visibility. When the datasets cannot be read, no longer publish the dataset, or
 // still publish the refused build, the dataset's layers and source are removed
 // and the failure reported, so tiles of a superseded build never stay on screen.
+// The recovery claims each refused tile it answers for from the map's error routing,
+// so a handled promotion raises no reference warning; a 409 for a build it never
+// served or for a source it does not watch stays unclaimed and is warned about.
 
 export interface RecoverableReferenceDataset {
   readonly datasetId: string
@@ -26,6 +30,8 @@ export interface ReferenceBuildRecoveryConfig {
   readonly map: MapLibreMap
   readonly appearance: PackMapAppearance
   readonly datasets: ReadonlyArray<RecoverableReferenceDataset>
+  /** The map's error routing (`MapRuntimeHandle.claimErrors`). */
+  readonly claimErrors: (claim: MapErrorClaim) => () => void
   /** Reads the published datasets afresh, by dataset id; rejects with the reason when it cannot. */
   readonly readPublished: () => Promise<ReadonlyMap<string, DatasetManifestForLayers>>
   readonly onAdopted: (datasetId: string, fromBuildId: string, toBuildId: string) => void
@@ -81,6 +87,8 @@ const withdrawDataset = (map: MapLibreMap, dataset: RecoverableReferenceDataset)
 
 export const watchReferenceBuilds = (config: ReferenceBuildRecoveryConfig): ReferenceBuildRecovery => {
   const current = new Map(config.datasets.map(dataset => [dataset.sourceId, dataset]))
+  const watched = new Map(config.datasets.map(dataset => [dataset.sourceId, dataset.datasetId]))
+  // `<datasetId>@<buildId>` of each build a recovery started from: adopted, in flight or reported failed.
   const attempted = new Set<string>()
   let disposed = false
 
@@ -104,23 +112,26 @@ export const watchReferenceBuilds = (config: ReferenceBuildRecoveryConfig): Refe
     }
   }
 
-  const onError = (event: unknown): void => {
+  const claim = (event: unknown): boolean => {
     const superseded = supersededTileOf(event)
-    if (!superseded) return
+    if (!superseded) return false
+    const datasetId = watched.get(superseded.sourceId)
+    if (datasetId === undefined) return false
+    const key = `${datasetId}@${superseded.buildId}`
+    // Late answers for a build this map already left, or one whose recovery runs or failed.
+    if (attempted.has(key)) return true
     const dataset = current.get(superseded.sourceId)
-    // Late answers for a build this map already left need nothing.
-    if (!dataset || dataset.buildId !== superseded.buildId) return
-    const key = `${dataset.datasetId}@${superseded.buildId}`
-    if (attempted.has(key)) return
+    if (!dataset || dataset.buildId !== superseded.buildId) return false
     attempted.add(key)
     void recover(dataset, superseded.buildId)
+    return true
   }
 
-  config.map.on('error', onError)
+  const release = config.claimErrors(claim)
   return {
     dispose: () => {
       disposed = true
-      config.map.off('error', onError)
+      release()
     },
   }
 }

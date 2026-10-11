@@ -153,6 +153,12 @@ export const processVariableLimitsSchema = z.object({
   normalRange: numericRangeSchema.optional(),
   operatingRange: numericRangeSchema.optional(),
   hardRange: numericRangeSchema.optional(),
+  /**
+   * The span an instrument indicates over: its indication saturates at
+   * either end, so a reading there says only that the measured quantity is
+   * at or beyond that end (a narrow-range level at 0 % may be far below it).
+   */
+  instrumentSpan: numericRangeSchema.optional(),
   alarmLimits: processVariableAlarmLimitSchema.optional(),
 }).strict()
 export type ProcessVariableLimits = z.infer<typeof processVariableLimitsSchema>
@@ -178,6 +184,7 @@ export const processQuantitySchema = z.enum([
   'ratio',
   'reactivity',
   'rotationalSpeed',
+  'startupRate',
   'temperatureDelta',
   'temperature',
   'temperatureRate',
@@ -192,6 +199,7 @@ export const processUnitSchema = z.enum([
   'amps',
   'cps',
   'degC',
+  'DPM',
   'degC/s',
   'fraction',
   'Hz',
@@ -226,7 +234,8 @@ const allowedUnitsByQuantity: Readonly<Record<ProcessQuantity, ReadonlySet<Proce
   head: new Set(['Pa']),
   mass: new Set(['kg']),
   massDelta: new Set(['kg']),
-  power: new Set(['MW']),
+  // A power-range nuclear instrument reads percent of rated thermal power.
+  power: new Set(['MW', 'percent']),
   powerDelta: new Set(['MW']),
   pressure: new Set(['MPa', 'Pa']),
   pressureDelta: new Set(['MPa', 'Pa']),
@@ -234,6 +243,8 @@ const allowedUnitsByQuantity: Readonly<Record<ProcessQuantity, ReadonlySet<Proce
   ratio: new Set(['fraction', 'percent']),
   reactivity: new Set(['pcm']),
   rotationalSpeed: new Set(['rpm']),
+  // Decades per minute: how fast neutron flux rises or falls.
+  startupRate: new Set(['DPM']),
   temperature: new Set(['degC']),
   temperatureDelta: new Set(['degC']),
   temperatureRate: new Set(['degC/s']),

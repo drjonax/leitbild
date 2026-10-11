@@ -17,6 +17,7 @@ import {
   gridTripGeneratorCommandKind,
 } from './generator.ts'
 import { gridFrequencyCommandCapabilities, gridRearmLfddStageCommandKind, gridRestoreLfddStageCommandKind } from './frequency.ts'
+import { gridExternalCommandCapabilities, gridSetExternalExchangeCommandKind } from './external.ts'
 import { gridHvdcCommandCapabilities, gridHvdcCommandKinds } from './hvdc.ts'
 import {
   gridLoadCommandCapabilities,
@@ -45,6 +46,7 @@ export const electricGridCommandKinds = [
   gridResetBranchProtectionCommandKind,
   gridAlarmLifecycleCommandKind,
   ...gridHvdcCommandKinds,
+  gridSetExternalExchangeCommandKind,
 ] as const
 
 export const electricGridCommandCapabilities: ReadonlyArray<SimulationCapability> = [
@@ -55,6 +57,7 @@ export const electricGridCommandCapabilities: ReadonlyArray<SimulationCapability
   ...gridProtectionCommandCapabilities,
   ...gridAlarmCommandCapabilities,
   ...gridHvdcCommandCapabilities,
+  ...gridExternalCommandCapabilities,
 ]
 
 /** Commands that disconnect generation or supply at once; operator surfaces confirm them first. */

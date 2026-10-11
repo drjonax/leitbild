@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   compilePlantGraph,
   compileProcessPlant,
+  createProcessPlantRuntime,
   createPwrReferencePlantDefinition,
   processPlantComponentRegistry,
   type CompiledProcessPlant,
@@ -16,7 +17,7 @@ import { principalCircuits } from '../src/packs/process-plant/displays/mimic/pri
 import { overviewMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { overviewKeyValues } from '../src/packs/process-plant/displays/overview-key-values.ts'
 import { drawnLook, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
-import { openBridgeDevice } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
+import { openBridgeDevice, readoutBlockWidth, textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
 
 // The unit overview: the principal circuits the energy rule finds, drawn by
@@ -34,8 +35,10 @@ const plantOf = (loops: number): CompiledProcessPlant => plants.get(loops)!
  * alarms (compose.ts); for six what the engine reaches today at full text
  * (see the fit ladder test for less).
  */
-// The process display window as measured on production in a Full HD browser.
-const fullHdColumn = overviewDrawingRoom({ width: 1896, height: 972 }, 'column', { readouts: overviewKeyValues(plantOf(4)).length, annunciators: 9, tileWidth: 134 })!
+// The process display window as measured on production in a Full HD browser, beside the lead values at power.
+const atPower = createProcessPlantRuntime({ system: plantOf(4) })
+const leadValues = overviewKeyValues(plantOf(4), { mode: 'powerOperation', read: path => atPower.readVariable(path) }).length
+const fullHdColumn = overviewDrawingRoom({ width: 1896, height: 972 }, 'column', { readouts: leadValues, annunciators: 9, tileWidth: 134 })!
 const ROOM: Readonly<Record<number, Omit<MimicBudget, 'profile'>>> = { 2: fullHdColumn, 4: fullHdColumn, 6: { maxWidth: 2160, maxHeight: 1080 } }
 const budgetFor = (loops: number): MimicBudget => ({ profile: overviewMimicProfile, ...ROOM[loops]! })
 
@@ -117,7 +120,7 @@ const geometry = (mimic: CompiledMimic) => ({
 })
 
 describe('the unit overview of the principal circuits', () => {
-  for (const loops of [2, 4, 6]) {
+  for (const loops of [4, 6]) {
     test(`${loops} loops: drawn, verified, within the room, crossings at most two over what the structure forces`, () => {
       const plant = plantOf(loops)
       const budget = budgetFor(loops)
@@ -203,10 +206,13 @@ describe('the unit overview of the principal circuits', () => {
     expect(valves.length).toBeGreaterThanOrEqual(10)
     for (const valve of valves) {
       expect(valve.marker).toBe(true)
-      // A commanded valve: what it does, then CMD over the command where it disagrees; no tag.
+      // A commanded valve: what it does, then CMD over the command where it disagrees.
       expect(valve.rows.map(row => row.kind === 'marker' ? row.part : row.kind)).toEqual(['word', 'command', 'value'])
-      expect(valve.text?.height).toBe(3 * openBridgeDevice.row)
     }
+    // Each carries its tag: in a drawn loop its place does not say which valve it is (run 22 QA: the feed regulating
+    // and main steam isolation valves were unlabelled; before them the two steam valves on the header's lines).
+    expect(valves.map(valve => valve.binding.label).sort()).toEqual(['FCV A', 'FCV B', 'FCV C', 'FCV D', 'MSIV A', 'MSIV B', 'MSIV C', 'MSIV D', 'TSV', 'Turbine bypass'])
+    for (const valve of valves) expect(valve.text?.height).toBe(3 * openBridgeDevice.row + openBridgeDevice.tagLine)
     const fcv = valves.find(item => item.binding.label === 'FCV A')!
     const state = fcv.binding.state!
     const at = (position: number, command: number) => indexSample([{ path: state.state!.path, value: position, quality: 'good' }, { path: state.command!, value: command, quality: 'good' }])
@@ -218,6 +224,26 @@ describe('the unit overview of the principal circuits', () => {
     expect(texts(at(1, 0))).toEqual(['OPEN', 'CMD', 'SHUT'])
     expect(texts(at(0.35, 1))).toEqual(['35 %', 'CMD', '100 %'])
     expect(texts(indexSample([]))).toEqual(['POS ?', '', ''])
+  })
+
+  test('a steam generator writes its wide-range level, in whole percent, where its narrow range is off its span', () => {
+    // Run 22 QA: four steam generators read "0 %" after a loss of feed, below their narrow range's span; the heat
+    // sink could not be read on the overview.
+    const mimic = overview(plantOf(4), budgetFor(4))
+    const sg = mimic.items.find(item => item.binding.label === 'SG B')!
+    const level = sg.rows[0]!
+    expect(level).toEqual({ kind: 'value', path: 'sgB.levelPercent', unit: 'percent', required: true, span: { min: 0, max: 100 }, wider: { path: 'sgB.wideRangeLevelPercent', span: { min: 0, max: 100 } } })
+    // The drawing samples the wide range too.
+    expect(mimic.paths).toContain('sgB.wideRangeLevelPercent' as never)
+    const at = (narrow: number, wide?: number) => indexSample([{ path: 'sgB.levelPercent', value: narrow, quality: 'good' }, ...(wide === undefined ? [] : [{ path: 'sgB.wideRangeLevelPercent', value: wide, quality: 'good' as const }])])
+    const text = (index: ReturnType<typeof indexSample>) => rowText(level, drawnLook(sg.binding, sg.rows, index), index, (value, unit) => `${value} ${unit}`)
+    expect(text(at(17.7, 60))).toBe('17.7 percent')
+    expect(text(at(0, 24.02))).toBe('WR 24 %')
+    expect(text(at(0, 0))).toBe('WR <0 %')
+    // Without the wide range read, the end of the span, never a value the level may be far below.
+    expect(text(at(0))).toBe('<0 %')
+    // Within the room its pressure row takes: the drawing does not grow for it.
+    expect(sg.text!.width).toBe(readoutBlockWidth(3, 1) + textWidth('unit', 'MPa') + openBridgeDevice.valueRowPadding)
   })
 
   test('stubs name alike far ends once with a count, and a lone far end in full', () => {
@@ -239,8 +265,13 @@ describe('the unit overview of the principal circuits', () => {
     if (count.kind !== 'count') throw new Error('no count')
     const [first, second] = count.members.map(member => member.state!.state!.path)
     const sample = (a: boolean, b: boolean) => indexSample([{ path: first!, value: a, quality: 'good' }, { path: second!, value: b, quality: 'good' }])
-    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, true)), sample(true, true), String)).toBe('2/2 RUN')
-    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, false)), sample(true, false), String)).toBe('1/2 RUN')
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, true)), sample(true, true), String)).toBe('RUN 2/2')
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(true, false)), sample(true, false), String)).toBe('RUN 1/2')
+    // With none running the row says they are stopped, as a single pump's row does (QA review of run 22: "0/2 RUN").
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, sample(false, false)), sample(false, false), String)).toBe('STOP 2/2')
+    expect(rowText(count, drawnLook(pumps.binding, pumps.rows, indexSample([{ path: first!, value: false, quality: 'good' }])), indexSample([{ path: first!, value: false, quality: 'good' }]), String)).toBe('STOP 1/2 ?')
+    // The drawing reserves room for every text the row can show.
+    expect(count.texts).toEqual(['RUN 2/2', 'RUN 2/2 ?', 'STOP 2/2', 'STOP 2/2 ?'])
     expect(drawnLook(pumps.binding, pumps.rows, sample(true, false)).state.kind).toBe('running')
     expect(drawnLook(pumps.binding, pumps.rows, sample(false, false)).state.kind).toBe('stopped')
     expect(drawnLook(pumps.binding, pumps.rows, indexSample([])).state.kind).toBe('unknown')

@@ -3,6 +3,7 @@ import { embeddedViewContentSchema, embeddedViewPublicationSchema } from '@leitb
 import type { IsoTimestamp } from '../src/core/model/index.ts'
 import {
   answerProcessPlantQuery,
+  commandsForProcessPlantAction,
   compileProcessPlant,
   createProcessPlantProtectionRunner,
   createProcessPlantRampRunner,
@@ -14,12 +15,15 @@ import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
-import { formatQuantity, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
+import { formatQuantity, thresholdFullName, thresholdName } from '../src/packs/process-plant/displays/display-text.ts'
 import { composedDisplayStateSchema } from '../src/packs/process-plant/displays/composition.ts'
 import { compileComposedDisplay, composedDisplayShows } from '../src/packs/process-plant/displays/compose.ts'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { createRunHistorian, recordedHistoryOf } from '../src/features/historian/store.ts'
+import { displayAnnunciation } from '../src/packs/process-plant/displays/annunciators.ts'
+import { shorterSignalNames } from '../src/packs/process-plant/displays/signal-names.ts'
+import { actuatedNames, bannerTrip, firstOutFlag } from '../src/ui/embed/composed-display/panel-presenters.ts'
 
 const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:composed-display', loopCount: 4 }))
 const runtime = createProcessPlantRuntime({ system: compiled })
@@ -74,29 +78,35 @@ describe('I&C thresholds for composed displays', () => {
   test('come from single-comparison rules on the exact signal, with qualified modes kept', () => {
     const pressure = compiled.graph.signalBindingByTagId.get('PT-455' as never)!.path
     const { thresholds } = icThresholdsForSignal(compiled, pressure)
-    expect(thresholds.map(threshold => [threshold.value, threshold.kind, threshold.modeLabel ?? null])).toEqual([
+    expect(thresholds.map(threshold => [threshold.value, threshold.kind, threshold.modeLabel ?? null, threshold.modeNames ?? null])).toEqual([
       // Safety injection on low pressure, drawn though a block below P-11 can hold it off: a gate on an on/off state.
-      [12.7, 'trip', 'Power operation or Startup or Hot standby'],
-      [13.8, 'trip', 'Power operation'],
-      [14.8, 'alarm', null],
-      [15.35, 'control', null],
-      [15.65, 'control', null],
-      [15.85, 'control', null],
-      [16, 'alarm', null],
-      [16.18, 'trip', null],
-      [16.35, 'trip', 'Power operation'],
+      [12.7, 'trip', 'Modes 1–3', 'Power operation or Startup or Hot standby'],
+      [13.8, 'trip', 'Mode 1', 'Power operation'],
+      [14.8, 'alarm', null, null],
+      [15.35, 'control', null, null],
+      [15.65, 'control', null, null],
+      [15.85, 'control', null, null],
+      [16, 'alarm', null, null],
+      // The PORV opens below the high-pressure reactor trip, as at the reference plant (2,335 and 2,385 psig), on
+      // pressure control rather than as a protective actuation.
+      [16.18, 'control', null, null],
+      [16.55, 'trip', 'Mode 1', 'Power operation'],
     ])
   })
 
-  test('name a signal\'s further limits of one kind LO-LO and HI-HI', () => {
+  test('name a limit by its order, value and what the I&C declares it does, never "TRIP" for another actuation', () => {
     const names = (tagId: string, unit: string) => icThresholdsForSignal(compiled, compiled.graph.signalBindingByTagId.get(tagId as never)!.path).thresholds
-      .filter(threshold => threshold.kind !== 'control').map(threshold => thresholdName(threshold, unit))
-    expect(names('SUB-MARGIN', 'degC')).toEqual(['LO-LO ALM 0 °C', 'LO ALM 16.7 °C'])
-    // Safety injection actuates below the low-pressure reactor trip, unless blocked below P-11: the low-low
-    // pressurizer pressure SI signal.
-    expect(names('PT-455', 'MPa')).toEqual(['LO-LO TRIP 12.7 MPa', 'LO TRIP 13.8 MPa', 'LO ALM 14.8 MPa', 'HI ALM 16 MPa', 'HI TRIP 16.18 MPa', 'HI-HI TRIP 16.35 MPa'])
-    // Low-low level starts auxiliary feedwater and trips the reactor at the one set point: two trips, neither further.
-    expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO TRIP 20 %', 'LO TRIP 20 %', 'LO ALM 30 %', 'HI ALM 75 %', 'HI TRIP 82 %'])
+      .filter(threshold => threshold.kind !== 'control').map(threshold => thresholdFullName(threshold, unit))
+    expect(names('SUB-MARGIN', 'degC')).toEqual(['LO-LO 0 °C · ALM', 'LO 16.7 °C · ALM'])
+    // Safety injection below the low-pressure reactor trip, unless blocked below P-11, is SI by its own first-out
+    // group, though it trips the reactor too; both pressure reactor trips are RX TRIP. The PORV's opening is
+    // pressure control, not a limit an actuation acts at.
+    expect(names('PT-455', 'MPa')).toEqual(['LO-LO 12.7 MPa · SI (Modes 1–3)', 'LO-LO 13.8 MPa · RX TRIP (Mode 1)', 'LO 14.8 MPa · ALM', 'HI 16 MPa · ALM', 'HI-HI 16.55 MPa · RX TRIP (Mode 1)'])
+    // Low-low level starts auxiliary feedwater and trips the reactor at one set point: two limits of one order, each
+    // named by its group, the reactor trip in modes 1 and 2 only; high-high level isolates feedwater.
+    expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO-LO 20 % · AFW START', 'LO-LO 20 % · RX TRIP (Modes 1–2)', 'LO 30 % · ALM', 'HI 75 % · ALM', 'HI-HI 82 % · FWI'])
+    // Every name keeps the order-then-value shape answers cite.
+    expect(names('SG-A-LVL-NR', 'percent').every(name => /^(LO|HI)(-(LO|HI))? \d+ % · /.test(name))).toBe(true)
   })
 
   test('draw a limit that only on/off states of other signals gate, naming them', () => {
@@ -149,17 +159,18 @@ describe('world.process-plant.display.compose', () => {
     expect(result.issuedAt).toBe(simulationTime)
     const state = composedDisplayStateSchema.parse(JSON.parse(view.state))
     expect(state).toMatchObject({ issuedAt: simulationTime, modelDigest: compiled.modelDigest })
-    expect(result.shows.join('\n')).toContain('"LO ALM 30 %" alarm line: Steam generator B level low · Steam generator A level low, acts below 30 percent for SG-B-LVL-NR, SG-A-LVL-NR')
+    expect(result.shows.join('\n')).toContain('"LO 30 % · ALM" alarm line: Steam generator B level low · Steam generator A level low, acts below 30 percent for SG-B-LVL-NR, SG-A-LVL-NR')
+    expect(result.shows.join('\n')).toContain('"LO-LO 20 % · RX TRIP" automatic action line: Reactor trip on steam generator B low-low level · Reactor trip on steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR (only in Power operation or Startup: Modes 1–2; drawn faint in other modes, even with the value past it)')
     expect((result as unknown as { signals: unknown }).signals).toEqual([
       { ref: 'SG-B-LVL-NR', tagId: 'SG-B-LVL-NR', path: 'sgB.levelPercent', label: 'Steam generator narrow-range level', name: 'SG-B-LVL-NR', unit: 'percent' },
       { ref: 'SG-A-LVL-NR', tagId: 'SG-A-LVL-NR', path: 'sgA.levelPercent', label: 'Steam generator narrow-range level', name: 'SG-A-LVL-NR', unit: 'percent' },
     ])
-    expect(result.shows.join('\n')).toContain('"LO TRIP 20 %" trip line: Steam generator B low-low level · Steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR')
+    expect(result.shows.join('\n')).toContain('"LO-LO 20 % · AFW START" automatic action line: Steam generator B low-low level · Steam generator A low-low level, acts below 20 percent for SG-B-LVL-NR, SG-A-LVL-NR')
     expect((result as unknown as { simulationClock: string }).simulationClock).toBe('21:00:00 UTC')
     const margins = (result as unknown as { margins: ReadonlyArray<string> }).margins
     expect(margins).toHaveLength(2)
     // At the 55 % program the high alarm is nearer than the low one.
-    expect(margins[0]).toMatch(/^SG-[AB]-LVL-NR: [0-9.]+ %, [0-9.]+ percentage points below HI ALM 75 %$/)
+    expect(margins[0]).toMatch(/^SG-[AB]-LVL-NR: [0-9.]+ %, [0-9.]+ percentage points below HI 75 % · ALM$/)
     expect(runtime.checkpoint()).toEqual(before)
   })
 
@@ -223,17 +234,26 @@ describe('world.process-plant.display.compose', () => {
     }, simulationTime, { read: query => { reads.push(query); return recorded.read(query) } }) as { margins: ReadonlyArray<string>; viewContent: unknown }
     historian.close()
     // Per trended signal two bounded reads: what its reading weighs (the last 90 s), and the newest sample before that in the trend's window.
-    expect(reads.map(read => [read.seriesId, read.from, read.to, read.limit])).toEqual([seriesId, recordingSeriesIdFor(compiled.id, level)].flatMap(id => [
+    const trended = [seriesId, recordingSeriesIdFor(compiled.id, level)]
+    expect(reads.slice(0, 4).map(read => [read.seriesId, read.from, read.to, read.limit])).toEqual(trended.flatMap(id => [
       [id, '2026-10-08T20:58:30.000Z', simulationTime, 4_000],
       [id, '2026-10-08T20:50:00.000Z', '2026-10-08T20:58:29.999Z', 1],
     ]))
+    // World then reads, as bounded, the values the unit watches beyond its overview that it may add as off normal.
+    for (const read of reads.slice(4)) {
+      expect(trended).not.toContain(read.seriesId)
+      expect([read.from, read.to, read.limit]).toEqual(read.limit === 1
+        ? ['2026-10-08T20:50:00.000Z', '2026-10-08T20:58:29.999Z', 1]
+        : ['2026-10-08T20:58:30.000Z', simulationTime, 4_000])
+    }
     const margin = now - 14.8
     // The rate as the legend words it (1 MPa/min reads 1.000 just below one).
-    expect(result.margins[0]).toBe(`PT-455: ${formatQuantity(now, 'MPa')}, falling 1.000 MPa/min, ${formatQuantity(margin, 'MPa')} above LO ALM 14.8 MPa · ≈${Math.round(margin * 60)} s`)
+    const resolution = 16.35 * 0.001
+    expect(result.margins[0]).toBe(`PT-455: ${formatQuantity(now, 'MPa', resolution)}, falling 1.000 MPa/min over 30 s, ${formatQuantity(margin, 'MPa', resolution)} above LO 14.8 MPa · ALM · ≈${Math.round(margin * 60)} s`)
     const content = embeddedViewContentSchema.parse(result.viewContent)
     const item = content.items.find(candidate => candidate.names.includes('PT-455'))!
     expect(item.trend).toEqual({ rate: expect.closeTo(-1, 6), unit: 'MPa', direction: 'falling' })
-    expect(item.limitAhead).toEqual({ name: 'LO ALM 14.8 MPa', value: 14.8, unit: 'MPa' })
+    expect(item.limitAhead).toEqual({ name: 'LO 14.8 MPa · ALM', value: 14.8, unit: 'MPa' })
     expect(item.timeToLimitMs).toBe(Math.round(margin * 60_000))
     // The shortest time to a limit leads.
     expect(content.lead).toEqual({ item: content.items.indexOf(item), reason: result.margins[0]! })
@@ -242,7 +262,8 @@ describe('world.process-plant.display.compose', () => {
     expect([levelItem.trend, levelItem.timeToLimitMs]).toEqual([undefined, undefined])
     // Without history the same pressure reads as before: the nearest limit, no direction.
     const unrecorded = ask('world.process-plant.display.compose', composition([{ ref: 'PT-455', role: 'primary' }])) as { margins: ReadonlyArray<string>; viewContent: unknown }
-    expect(unrecorded.margins).toEqual([`PT-455: ${formatQuantity(now, 'MPa')}, ${formatQuantity(16 - now, 'MPa')} below HI ALM 16 MPa`])
+    // World adds what the unit leads with at power in the same annunciator system: the subcooling margin.
+    expect(unrecorded.margins).toEqual([`PT-455: ${formatQuantity(now, 'MPa', resolution)}, ${formatQuantity(16 - now, 'MPa', resolution)} below HI 16 MPa · ALM`, expect.stringMatching(/^SUB-MARGIN: /)])
     expect(embeddedViewContentSchema.parse(unrecorded.viewContent).items[0]!.trend).toBeUndefined()
   })
 
@@ -252,7 +273,8 @@ describe('world.process-plant.display.compose', () => {
       ...composition([{ ref: 'PT-455', role: 'primary' }]),
       panels: [{ kind: 'readouts', signals: [{ ref: 'PT-455', role: 'primary' }, { ref: 'core.totalThermalPowerMw', role: 'context' }] }],
     }) as { margins: ReadonlyArray<string> }
-    expect(result.margins).toEqual([`PT-455: ${formatQuantity(pressure, 'MPa')}, ${formatQuantity(16 - pressure, 'MPa')} below HI ALM 16 MPa`])
+    // The thermal power has no limit to state; the subcooling margin is what World adds (what the unit leads with at power).
+    expect(result.margins).toEqual([`PT-455: ${formatQuantity(pressure, 'MPa', 0.01635)}, ${formatQuantity(16 - pressure, 'MPa', 0.01635)} below HI 16 MPa · ALM`, expect.stringMatching(/^SUB-MARGIN: /)])
   })
 
   test('a recorded signal needs the Run\'s history to be composed', () => {
@@ -278,13 +300,17 @@ describe('world.process-plant.display.compose', () => {
 
   test('suggests signals by the words of a guessed name, tagged instruments first', () => {
     const suggestions = (ref: string): string => rejectionOf(() => ask('world.process-plant.display.compose', composition([{ ref, role: 'primary' }]))).split('Did you mean: ')[1] ?? ''
-    expect(suggestions('FW-A-FLOW')).toContain('sgA.feedwaterFlowKgPerS (Feedwater inflow, kg/s)')
+    // The tagged auxiliary feedwater flow to steam generator A first, then main feedwater's lines to it.
+    expect(suggestions('FW-A-FLOW')).toStartWith('AFW-A-FLOW (Auxiliary feedwater to steam generator A flow, kg/s)')
+    expect(suggestions('FW-A-FLOW')).toContain('feedwater-header-to-control-valve-a.flowKgPerS (Feedwater header branch A flow, kg/s)')
     expect(suggestions('PZR-PRESS')).toStartWith('PT-455 (Pressurizer pressure, MPa)')
     expect(suggestions('dieselGenA.running')).toStartWith('EDG-A-RUN (Diesel running, boolean)')
     expect(suggestions('SG1-LVL')).toStartWith('SG-A-LVL-NR (Steam generator narrow-range level, percent)')
     expect(suggestions('RCS-TAVG')).toStartWith('TAVG (Mean primary coolant temperature, degC)')
-    // Evaluation run 16: "reactor power" is the reactor core's power, never a trip breaker's or a pump's ("per" of kg/s).
-    expect(suggestions('reactor power')).toStartWith('core.powerMw (Core fission power, MW)')
+    // Evaluation run 16: "reactor power" is the reactor core's power, never a trip breaker's or a pump's ("per" of kg/s):
+    // the power-range instruments first, as operators read it, and the core's fission power among the suggestions.
+    expect(suggestions('reactor power')).toStartWith('NIS-PR-AVG (Power-range neutron flux, percent)')
+    expect(suggestions('reactor power')).toContain('core.powerMw (Core fission power, MW)')
   })
 
   test('says when a signal is a command, not a measured state', () => {
@@ -300,7 +326,7 @@ describe('world.process-plant.display.compose', () => {
     // The PORV is bundled in the pressurizer on its relief outlet; its alarm acts on the pressurizer's relief flow, not the line's.
     const readouts = (ref: string) => ({ ...composition([{ ref, role: 'primary' }]), panels: [{ kind: 'readouts', signals: [{ ref, role: 'primary' }, { ref: 'PT-455', role: 'context' }] }] })
     expect(rejectionOf(() => ask('world.process-plant.display.compose', readouts('pressurizer-relief-to-tank.flowKgPerS'))))
-      .toContain('show pressurizer.reliefFlowKgPerS (Pressurizer relief flow, HI ALM 1 kg/s) instead')
+      .toContain('show pressurizer.reliefFlowKgPerS (Pressurizer relief flow, HI 1 kg/s · ALM) instead')
     expect(() => ask('world.process-plant.display.compose', readouts('pressurizer.reliefFlowKgPerS'))).not.toThrow()
     // A line that shares its port carries only part of the judged flow, a reading of its own: run 22 refused
     // "is AFW reaching every SG?" its evidence, the auxiliary feed line into each generator.
@@ -579,7 +605,7 @@ describe('composed display panels', () => {
     const pressurizer = composeView([
       { kind: 'trend', horizon: '2m', signals: [{ ref: 'PT-455', role: 'primary' }] },
       { kind: 'alarms', scope: 'related' },
-    ]).view.display.panels[1] as { ruleIds: string[] }
+    ]).view.display.panels.find(panel => panel.kind === 'alarms') as { ruleIds: string[] }
     expect(pressurizer.ruleIds.some(ruleId => ruleId.includes('relief'))).toBe(true)
   })
 })
@@ -685,7 +711,7 @@ describe('a display shows what its question is about', () => {
   test('equipment asked about but shown nowhere is refused with what of it could be shown', () => {
     // Evaluation run 16: asked whether reactor power was stable, an answer trended another signal.
     const message = rejectionOf(() => ask('world.process-plant.display.compose', display(['core'], [trendOf('SG-B-LVL-NR')])))
-    expect(message).toContain('subjects.0: core (Reactor Core, Core) is what the question is about but no panel shows it: draw it in a mimic or show one of its signals (such as core.powerMw')
+    expect(message).toContain('subjects.0: core (Reactor Core, Core) is what the question is about but no panel shows it: draw it in a mimic or show one of its signals (such as NIS-PR-AVG')
     // Any signal of the equipment shows it.
     expect(() => ask('world.process-plant.display.compose', display(['core'], [trendOf('core.powerMw')]))).not.toThrow()
   })
@@ -714,8 +740,8 @@ describe('a display shows what its question is about', () => {
       .toContain('subjects.0: the auxFeedwater service is what the question is about but no panel shows it')
     // Safety injection to loop C draws shared equipment only; its pipe into cold leg C is loop C.
     const lineup = ask('world.process-plant.display.compose', display(['loop C', 'safetyInjection'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }])) as { shows: ReadonlyArray<string> }
-    // The drawing does not name the leg it enters, so the answer must.
-    expect(lineup.shows).toContain('The pipe drawn into Core enters it at cold leg C; the drawing does not name that port, so say it')
+    // The drawing names the leg it enters on the core, which writes no value of its own there.
+    expect(lineup.shows[0]).toContain('Core · cold leg C (core)')
     // As plants.list names it (probe run 20).
     expect(() => ask('world.process-plant.display.compose', display(['C'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }]))).not.toThrow()
     expect(rejectionOf(() => ask('world.process-plant.display.compose', display(['loop D'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }]))))
@@ -732,5 +758,103 @@ describe('a display shows what its question is about', () => {
     const message = rejectionOf(() => ask('world.process-plant.display.compose', display(['auxiliary feedwater'], [trendOf('core.powerMw')])))
     expect(message).toContain('subjects.0: "auxiliary feedwater" names no signal, equipment, service or loop of this Plant')
     expect(message).toContain('auxFeedwater')
+  })
+})
+
+describe('shorter names for a signal', () => {
+  const shorter = (path: string) => {
+    const binding = compiled.graph.signalBindingByPath.get(path as VariablePath)!
+    const component = compiled.graph.components[binding.owner.type === 'component' ? binding.owner.componentIndex : 0]!
+    return shorterSignalNames(compiled.graph, binding, `${binding.label} · ${component.label}`)
+  }
+
+  test('name the equipment by its short name and drop the words its signals share before any that tell them apart', () => {
+    // QA review of run 22: "Process … outlet flow · …Header" and "Process header outlet flow · …Injection Header".
+    expect(shorter('safetyInjectionHeader.outletFlowKgPerS')).toEqual(['Process header outlet flow · SI header', 'Outlet flow · SI header'])
+    expect(shorter('sgB.feedwaterFlowKgPerS')).toEqual(['Feedwater inflow · SG B', 'Inflow · SG B'])
+    // "flow" alone would not tell the outlet from the inlet: it is never offered.
+    expect(shorter('feedwaterHeader.outletFlowKgPerS')).not.toContain('Flow · MFW header')
+    // A tag is never shortened.
+    const tagged = compiled.graph.signalBindingByTagId.get('SG-A-LVL-NR' as never)!
+    expect(shorterSignalNames(compiled.graph, tagged, 'SG-A-LVL-NR')).toEqual([])
+  })
+})
+
+describe('what a display\'s banner, actuation line and alarm rows name', () => {
+  const annunciation = displayAnnunciation(compiled)
+
+  test('come from the first-out groups and limits the I&C declares, never from ids or titles', () => {
+    // What a rule annunciates, by its alarm row's id.
+    const of = (ids: ReadonlyArray<string>, ruleId: string) => ids.filter(id => id.split(':')[1] === ruleId)
+    const reactorTrips = annunciation.reactorTrip?.ids ?? []
+    expect(annunciation.reactorTrip?.name).toBe('RX TRIP')
+    expect(of(reactorTrips, 'sg-b-level-low-low-reactor-trip')).toHaveLength(1)
+    expect(of(reactorTrips, 'reactor-overtemperature-delta-t-trip')).toHaveLength(1)
+    // The AFW start is an actuation, never the reactor trip. Safety injection annunciates both: its own trip as SI,
+    // and the reactor trip it causes in the reactor trip's group, so that trip can be the banner's first-out.
+    expect(of(reactorTrips, 'sg-b-level-low-low-afw-actuation')).toEqual([])
+    expect(of(reactorTrips, 'safety-injection-low-pzr-pressure')).toEqual(['trip:safety-injection-low-pzr-pressure:reactor-trip'])
+    expect(annunciation.actuations.find(actuation => actuation.name === 'SI')?.ids).toEqual([
+      'trip:safety-injection-low-pzr-pressure:safety-injection',
+      'trip:safety-injection-containment-pressure-high-1:safety-injection',
+    ])
+    // Every actuation is named by its declared group.
+    expect(annunciation.actuations.find(actuation => of(actuation.ids, 'sg-b-level-low-low-afw-actuation').length > 0)?.name).toBe('AFW START')
+    expect(annunciation.actuations.map(actuation => actuation.name)).toEqual(expect.arrayContaining(['AFW START', 'SI', 'FWI', 'TURB TRIP', 'MSI', 'CS']))
+    // Alarm rows are tagged as chips, badges and trend lines name their limits, by what each row annunciates:
+    // the reactor trip safety injection causes is a reactor trip (QA review of run 22 read it "LO-LO · SI").
+    const tagsOf = (ruleId: string) => Object.entries(annunciation.tags).filter(([id]) => id.split(':')[1] === ruleId).map(([, tag]) => tag)
+    expect([
+      tagsOf('sg-b-level-low-low-reactor-trip'),
+      tagsOf('safety-injection-low-pzr-pressure'),
+      tagsOf('pzr-pressure-low'),
+      tagsOf('reactor-overtemperature-delta-t-trip'),
+      tagsOf('loss-of-offsite-power'),
+      tagsOf('safety-bus-a-loss-alarm'),
+    ]).toEqual([['LO-LO · RX TRIP'], ['LO-LO · SI', 'LO-LO · RX TRIP'], ['LO · ALM'], ['RX TRIP'], ['LO-LO · ALM'], ['ALM']])
+    expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('LO-LO · RX TRIP')
+    expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:safety-injection']).toBe('LO-LO · SI')
+    // Every alarm and trip has a tag, and every one naming a group its group's short label for the tiles.
+    const annunciated = compiled.automation.rules.filter(rule => rule.enabled).flatMap(rule => rule.effects.flatMap(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter' ? [{ rule, effect }] : []))
+    expect(annunciated.every(({ rule, effect }) => annunciation.tags[`${effect.type === 'alarm.enter' ? 'alarm' : 'trip'}:${rule.id}:${effect.id}`] !== undefined)).toBe(true)
+    expect(Object.keys(annunciation.tags)).toHaveLength(annunciated.length)
+    expect(annunciation.groups['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('RX TRIP')
+    expect(annunciation.groupOrder[0]).toBe('RX TRIP')
+    // First out is flagged only within a group of more than one: the reactor trip, and SI on low pressurizer
+    // pressure or on containment pressure Hi-1.
+    expect(of(Object.keys(annunciation.firstOutGroups), 'reactor-overtemperature-delta-t-trip').map(id => annunciation.firstOutGroups[id])).toEqual(['RX TRIP'])
+    expect(annunciation.firstOutGroups['trip:safety-injection-low-pzr-pressure:safety-injection']).toBe('SI')
+    expect(annunciation.firstOutGroups['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('RX TRIP')
+  })
+
+  test('a loss of main feedwater leads with the reactor trip\'s first-out, the actuations apart from it', () => {
+    // Evaluation run 22: the banner read "TRIP · Auxiliary feedwater start on main feedwater pump trip"
+    // while the reactor trip's first-out sat in the alarm list.
+    const lost = createProcessPlantRuntime({ system: compiled })
+    const protection = createProcessPlantProtectionRunner({ system: compiled, protection: compiled.automation })
+    const step = () => {
+      lost.tick(1_000)
+      protection.evaluate({ runtime: lost, elapsedMs: lost.elapsedMs(), simulationRunId: 'run-banner' as never, sourceRuntimeId: 'process-plant.local' })
+    }
+    for (let second = 0; second < 5; second += 1) step()
+    for (const command of commandsForProcessPlantAction({ actionId: 'loss-main-feedwater', parameters: {}, graph: compiled.graph })) lost.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    for (let second = 0; second < 120; second += 1) step()
+    const snapshot = protection.snapshot()
+    const alarms = [...snapshot.alarms, ...snapshot.trips].filter(lifecycle => lifecycle.active).map(lifecycle => ({
+      id: lifecycle.id, ruleId: lifecycle.ruleId, kind: lifecycle.kind, title: lifecycle.title, severity: lifecycle.severity,
+      active: lifecycle.active, acknowledged: lifecycle.acknowledged, firstOut: lifecycle.firstOut,
+      ...(lifecycle.firstActiveElapsedMs === undefined ? {} : { firstActiveElapsedMs: lifecycle.firstActiveElapsedMs }),
+    }))
+    // The earliest trip of any kind is the AFW start on the feed pumps' trip; the banner names the reactor trip.
+    const earliest = [...alarms].filter(alarm => alarm.kind === 'trip').sort((left, right) => left.firstActiveElapsedMs! - right.firstActiveElapsedMs!)[0]!
+    expect(earliest.ruleId).toBe('main-feedwater-pumps-tripped-afw-start')
+    const banner = bannerTrip(alarms, annunciation)!
+    expect(banner.ruleId).toMatch(/^sg-[a-d]-level-low-low-reactor-trip$/)
+    expect(banner.firstOut).toBe(true)
+    expect(firstOutFlag(banner, annunciation)).toBe('1st RX TRIP')
+    // The actuations are listed by their declared groups, never as the reactor trip.
+    const actuated = actuatedNames(alarms, annunciation)
+    expect(actuated).toEqual(expect.arrayContaining(['AFW START', 'FWI']))
+    expect(actuated).not.toContain('RX TRIP')
   })
 })

@@ -309,8 +309,8 @@ describe('electric grid physics invariants', () => {
     expect(islandOfBus(run.grid, 'bus:b').frequency!.lfdd.stages[operated[0]!]!.status).toBe('disarmed')
     expect(listedStages().find(stage => stage.id === operated[0])).toMatchObject({ status: 'disarmed', disconnectedMw: 0 })
     run.advance(60)
-    // Demand moves with the daily profile meanwhile, so the comparison holds to 0.1 MW.
-    expect(shed('low') + shed('normal')).toBeCloseTo(shedBeforeMw - stageShedMw, 1)
+    // The fixture's demand is flat, so restoring the stage reconnects exactly its share.
+    expect(shed('low') + shed('normal')).toBeCloseTo(shedBeforeMw - stageShedMw, 6)
     expect(applyGridCommand(run.grid, command(gridRestoreLfddStageCommandKind, { islandId: island.id, stageId: operated[0] })).ok).toBe(false)
     expect(applyGridCommand(run.grid, command(gridRearmLfddStageCommandKind, { islandId: island.id, stageId: operated[0] }))).toEqual({ ok: true })
     expect(islandOfBus(run.grid, 'bus:b').frequency!.lfdd.stages[operated[0]!]!.status).toBe('armed')
@@ -477,7 +477,7 @@ describe('reserves dimensioned per synchronous area', () => {
     for (let step = 0; step < 3; step += 1) run.advance(10)
     // 600 MW Nordic FCR-N less the equivalent's 372 MW leaves 228 MW for four units that offer 20 MW each by droop.
     expect(unitReserves(run).reduce((sum, reserves) => sum + reserves.fcrNMw, 0)).toBeCloseTo(80, 9)
-    const deficit = run.grid.alarms.records.get(gridAlarmId('island', run.grid.busStates.get('bus:a')!.islandId, 'reserve-deficit-fcr-n'))
+    const deficit = run.grid.alarms.records.get(gridAlarmId('island', run.grid.busStates.get('bus:a')!.islandId!, 'reserve-deficit-fcr-n'))
     expect(deficit).toMatchObject({ active: true })
     expect(deficit!.value).toBeCloseTo(600 - 372 - 80, 6)
   })
@@ -521,7 +521,7 @@ describe('synchro-check on closing a loop', () => {
   }
 
   test('reads the angle from the AC load flow where the island converged, and names that basis', async () => {
-    // 130 MW over the long line: 20.7° apart in AC, above the 20° limit, though 18.9° in DC.
+    // 130 MW over the long line: 20.3° apart in AC, above the 20° limit, though 18.6° in DC.
     const { send, acDegrees, dcDegrees, evaluate, converged, limit } = loopRun(130)
     expect(send(gridOpenBranchCommandKind, 'long').ok).toBe(true)
     const shortOnlyDegrees = acDegrees()

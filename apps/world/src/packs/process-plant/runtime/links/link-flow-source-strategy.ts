@@ -49,8 +49,9 @@ export const processLinkFlowSourceFor = (config: {
   }
   const primaryLoopPump = primaryLoopPumpForLink(system.graph, link)
   if (primaryLoopPump !== null) {
+    // A loop's legs carry its flow either way; the pump says which.
     return {
-      flowKgPerS: context.readNumber(componentVariablePath(primaryLoopPump, 'loopFlowKgPerS')),
+      flowKgPerS: context.readNumber(componentVariablePath(primaryLoopPump, 'loopFlowKgPerS')) + context.readNumber(componentVariablePath(primaryLoopPump, 'loopReverseFlowKgPerS')),
       alreadyIncludesPathAvailability: false,
       alreadyIncludesTargetValveDemand: false,
       bypassTargetPumpLimit: true,

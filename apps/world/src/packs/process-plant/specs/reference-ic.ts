@@ -2,6 +2,7 @@ import type { ProcessPlantIcConfig } from '../runtime/index.ts'
 import { primaryLoopIdForPump, type CompiledPlantGraph, type CompiledComponent } from '../graph/index.ts'
 import { accumulatorReferenceIcRules } from './reference-ic-accumulator.ts'
 import { referenceAnnunciatorSystems } from './reference-ic-annunciators.ts'
+import { referenceFirstOutGroups } from './reference-ic-first-out-groups.ts'
 import { referenceOperatingModes } from './reference-ic-modes.ts'
 import { balanceOfPlantReferenceIcRules } from './reference-ic-balance-of-plant.ts'
 import { containmentReferenceIcRules } from './reference-ic-containment.ts'
@@ -11,7 +12,7 @@ import { reactorReferenceIcRules } from './reference-ic-reactor.ts'
 import { reactorCoolantPumpReferenceIcRules } from './reference-ic-rcp.ts'
 import { rcsLeakageReferenceIcRules } from './reference-ic-rcs-leakage.ts'
 import { safetyInjectionReferenceIcRules } from './reference-ic-safety-injection.ts'
-import { steamGeneratorReferenceIcRules } from './reference-ic-steam-generator.ts'
+import { steamGeneratorReferenceIcRules, turbineDrivenAuxiliaryFeedwaterReferenceIcRules } from './reference-ic-steam-generator.ts'
 import { subcoolingReferenceIcRules } from './reference-ic-subcooling.ts'
 import { fourLoopReferenceLetters, type ProcessPlantReferenceLoop } from './reference-loop.ts'
 
@@ -20,16 +21,18 @@ export const pressurizedWaterReactorReferenceIcFor = (
 ): ProcessPlantIcConfig => ({
   operatingModes: [...referenceOperatingModes],
   annunciatorSystems: [...referenceAnnunciatorSystems],
+  firstOutGroups: [...referenceFirstOutGroups],
   rules: [
     ...reactorReferenceIcRules(loops),
     ...pressurizerReferenceIcRules(),
     ...subcoolingReferenceIcRules(),
     ...rcsLeakageReferenceIcRules(),
-    ...loops.flatMap(loop => steamGeneratorReferenceIcRules(loop)),
+    ...loops.flatMap(loop => steamGeneratorReferenceIcRules(loop, loops)),
+    ...turbineDrivenAuxiliaryFeedwaterReferenceIcRules(loops),
     ...loops.flatMap(loop => reactorCoolantPumpReferenceIcRules(loop)),
     ...loops.flatMap(loop => accumulatorReferenceIcRules(loop)),
     ...safetyInjectionReferenceIcRules(),
-    ...containmentReferenceIcRules(),
+    ...containmentReferenceIcRules(loops),
     ...electricalReferenceIcRules(loops),
     ...balanceOfPlantReferenceIcRules(loops),
   ],

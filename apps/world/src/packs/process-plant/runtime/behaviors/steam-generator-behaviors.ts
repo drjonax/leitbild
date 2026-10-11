@@ -9,11 +9,14 @@ import {
 } from '../component-helpers.ts'
 import {
   averageIncomingComponentLinkValue as averageIncomingLinkValue,
+  averageOutgoingComponentLinkValue as averageOutgoingLinkValue,
+  incomingComponentLinks,
   sumOutgoingComponentLinkValue,
 } from '../component-link-helpers.ts'
+import { primaryLoopLegReversed } from '../primary-loop-hydraulics.ts'
 import { inventoryBalanceStep } from '../physics.ts'
 import { primarySystemReactorCore } from '../system-topology.ts'
-import { steamGeneratorNarrowRange, steamGeneratorNarrowRangeLevelPercent, steamGeneratorOperatingLevel } from '../../steam-generator-operating-level.ts'
+import { steamGeneratorLevelOnSpanPercent, steamGeneratorNarrowRange, steamGeneratorOperatingLevel, steamGeneratorWideRange } from '../../steam-generator-operating-level.ts'
 import {
   energyBalanceTemperatureStep,
   heatMwFromWaterFlowAndDeltaT,
@@ -28,6 +31,16 @@ type SteamGeneratorBehaviorInput = Parameters<ComponentBehaviorDefinition['updat
 const primaryCoolantPressureMPa = ({ system, component, context }: SteamGeneratorBehaviorInput): number =>
   averageIncomingLinkValue(system, component, 'pressureMPa', context, link => link.service === 'primaryCoolant')
   ?? parameterNumber(component, 'nominalPressureMPa')
+
+/** The temperature of the reactor coolant entering a generator's tubes: from
+ * its hot leg, or, while the other loops drive its loop backwards, from its
+ * cold side, the downcomer's water coming back through its pump. */
+const enteringPrimaryCoolantTemperatureC = ({ system, component, context }: SteamGeneratorBehaviorInput): number | null => {
+  const reversed = incomingComponentLinks(system, component).some(link => link.service === 'primaryCoolant' && primaryLoopLegReversed(system, link, context))
+  return reversed
+    ? averageOutgoingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
+    : averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
+}
 
 /** Heat the reactor coolant gives up cooling from one temperature to another,
  * from its enthalpy at coolant pressure: hot coolant holds 5.2–6.4 kJ/kg K. */
@@ -49,7 +62,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
     writes: ['heatTransferMw', 'steamFlowKgPerS', 'boilingRateKgPerS', 'tubeCoverageFraction', 'tubeUncoveredFraction', 'availableHeatTransferFraction'],
     update: (input): void => {
       const { system, component, context } = input
-      const primaryWaterTemperature = averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
+      const primaryWaterTemperature = enteringPrimaryCoolantTemperatureC(input)
         ?? context.readNumber(componentVariablePath(component, 'primaryInletTemperatureC'))
       const primaryWaterFlow = averageIncomingLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'primaryCoolant') ?? 0
       const secondaryTemperature = context.readNumber(componentVariablePath(component, 'secondaryTemperatureC'))
@@ -109,8 +122,8 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       const leakFlow = leakFraction * leakCoefficient * Math.sqrt(pressureDelta)
       // The steam-line monitor reads N-16, which fast neutrons make from the
       // coolant's oxygen in the core and which decays with a 7 s half-life:
-      // the leaking coolant carries it in proportion to fission power, so the
-      // reading falls to background within seconds of a reactor trip. The
+      // the leaking coolant carries it in proportion to fission power, so after
+      // a reactor trip the reading falls with it, to background within minutes. The
       // gain is the reading per kg/s of leak at rated power; with no core
       // there are no neutrons and no N-16.
       const core = primarySystemReactorCore(system)
@@ -163,6 +176,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
     writes: [
       'pressureMPa',
       'levelPercent',
+      'wideRangeLevelPercent',
       'collapsedLevelPercent',
       'voidFraction',
       'swellLevelPercent',
@@ -197,7 +211,7 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       const levelPath = componentVariablePath(component, 'levelPercent')
       const heatTransfer = context.readNumber(componentVariablePath(component, 'heatTransferMw'))
       const nominalPressure = parameterNumber(component, 'nominalPressureMPa')
-      const primaryInletTemperature = averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
+      const primaryInletTemperature = enteringPrimaryCoolantTemperatureC(input)
         ?? context.readNumber(componentVariablePath(component, 'primaryInletTemperatureC'))
       const primaryFlow = Math.max(1, averageIncomingLinkValue(system, component, 'flowKgPerS', context, link => link.service === 'primaryCoolant') ?? 1)
       const primaryPressure = primaryCoolantPressureMPa(input)
@@ -297,7 +311,10 @@ export const steamGeneratorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorD
       context.write(componentVariablePath(component, 'swellLevelPercent'), swellLevel)
       // The indicated narrow-range level reads the mixture over its span: a
       // sudden fall in steaming collapses the voids and the level shrinks.
-      context.write(levelPath, steamGeneratorNarrowRangeLevelPercent(steamGeneratorNarrowRange(component.parameters as Record<string, unknown>), collapsedLevel + swellLevel))
+      // Below its span it reads 0 %; the wide range, from about the tube sheet,
+      // reads the same mixture on.
+      context.write(levelPath, steamGeneratorLevelOnSpanPercent(steamGeneratorNarrowRange(component.parameters as Record<string, unknown>), collapsedLevel + swellLevel))
+      context.write(componentVariablePath(component, 'wideRangeLevelPercent'), steamGeneratorLevelOnSpanPercent(steamGeneratorWideRange(component.parameters as Record<string, unknown>), collapsedLevel + swellLevel))
       // Steam piling up in a generator with nowhere to go raises its pressure
       // over the whole range its steam mass may take, so the pressure climbs
       // until a dump, relief or safety valve opens rather than levelling off

@@ -90,7 +90,7 @@ const hvdcLinkStateSchema = z.object({
 
 const alarmRecordSchema = z.object({
   id: z.string().min(1),
-  scope: z.enum(['island', 'branch', 'generator', 'hvdc']),
+  scope: z.enum(['island', 'branch', 'generator', 'hvdc', 'external']),
   assetId: z.string().min(1),
   condition: z.string().min(1),
   priority: z.union([z.literal(1), z.literal(2), z.literal(3)]),
@@ -138,7 +138,7 @@ export const electricGridRuntimeStateSchema = z.object({
     }).strict()),
     loads: z.array(z.object({ id: z.string().min(1), nominalDemandMw: nonNegative, manualDemandLimitMw: nonNegative.nullable(), manualShedEmergency: z.boolean() }).strict()),
     storage: z.array(z.object({ id: z.string().min(1), stateOfChargeFraction: finite.min(0).max(1) }).strict()),
-    externalSystems: z.array(z.object({ id: z.string().min(1), scheduledImportMw: finite }).strict()),
+    externalSystems: z.array(z.object({ id: z.string().min(1), scheduledImportMw: finite, targetImportMw: finite, exchangeVoided: z.boolean() }).strict()),
     hvdcLinks: z.array(hvdcLinkStateSchema),
     islands: z.array(z.object({ id: z.string().min(1), anchorBusId: z.string().min(1), frequency: islandFrequencyStateSchema.nullable() }).strict()),
     lossLoadByBusMw: z.array(nonNegative),
@@ -212,7 +212,7 @@ export const runtimeStateForElectricGrids = (grids: ReadonlyMap<string, GridRunt
         manualShedEmergency: loads.manualShedEmergency[index] === 1,
       })),
       storage: [...grid.storage].map(([id, state]) => ({ id, stateOfChargeFraction: state.stateOfChargeFraction })),
-      externalSystems: [...grid.externalSystems].map(([id, state]) => ({ id, scheduledImportMw: state.scheduledImportMw })),
+      externalSystems: [...grid.externalSystems].map(([id, state]) => ({ id, scheduledImportMw: state.scheduledImportMw, targetImportMw: state.targetImportMw, exchangeVoided: state.exchangeVoided })),
       hvdcLinks: [...grid.hvdcLinks].map(([id, state]) => ({ id, state: state.state, setpointMw: state.setpointMw, transferMw: state.transferMw, trip: state.trip === null ? null : { ...state.trip } })),
       islands: islands.islands.map(island => ({ id: island.id, anchorBusId: island.anchorBusId, frequency: island.frequency === null ? null : structuredClone(island.frequency) as ElectricGridRuntimeState['grids'][number]['islands'][number]['frequency'] })),
       lossLoadByBusMw: Array.from(grid.lossLoadByBusMw),

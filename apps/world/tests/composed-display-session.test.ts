@@ -90,6 +90,32 @@ describe('composed display session', () => {
     expect(last().phase.kind).toBe('live')
   })
 
+  test('samples the on/off states its drawn gated limits require, and no others', async () => {
+    // Safety injection on low pressurizer pressure acts only while SI-BLOCKED reads off: the embed reads that state as World does.
+    const gated = { ruleId: 'si', label: 'SI', kind: 'trip', operator: '<', direction: 'low', value: 12.7, order: 2, action: 'SI', gatedBy: ['SI-BLOCKED off'], gates: [{ path: 'safetyInjectionBlockLogic.blocked', on: false }] }
+    const trend = view.display.panels[0]! as unknown as { strips: ReadonlyArray<{ pens: ReadonlyArray<Record<string, unknown>> }> }
+    const [pressure, other] = trend.strips[0]!.pens
+    const withGate: ComposedDisplayViewResult = {
+      ...view,
+      display: { ...view.display, panels: [{ ...view.display.panels[0]!, strips: [{ ...trend.strips[0]!, pens: [{ ...pressure!, thresholds: [gated] }, other!] }] }] } as unknown as ComposedDisplayViewResult['display'],
+    }
+    const sampled: Array<ReadonlyArray<string>> = []
+    const client: ComposedDisplayClient = {
+      presence: async () => ({ title: 'Run', loaded: true, playback: 'playing', currentSimulationTime: at(0) }),
+      loadRun: async () => {},
+      view: async () => withGate,
+      history: async () => [],
+      sample: async (_run, _plant, paths) => {
+        sampled.push(paths)
+        return { simulationTime: at(0), plantElapsedMs: 0, values: paths.map(path => ({ path, value: path.endsWith('.blocked') ? true : 12.5, quality: 'good' as const })) }
+      },
+    }
+    const { controller } = session(client)
+    await controller.start({ poll: false })
+    expect(sampled).toEqual([['pressurizer.pressureMPa', 'safetyInjectionBlockLogic.blocked', 'x.value']])
+    controller.close()
+  })
+
   test('reports a removed Run explicitly', async () => {
     const { client } = fakeClient({ presence: null })
     const { controller, last } = session(client)

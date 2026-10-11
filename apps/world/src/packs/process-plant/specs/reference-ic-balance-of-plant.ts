@@ -1,6 +1,7 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, reactorTripBreakerOpen, rule, trip, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, rule, trip, turbineTripWrites, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
+import { levelHighHighPercent } from './reference-ic-steam-generator.ts'
 
 const feedwaterAlarm = annunciator({
   system: 'feedwater',
@@ -23,6 +24,28 @@ const feedwaterAction = annunciator({
 // their steaming falls to decay heat and the coolant cools to no-load.
 const lowTavgFeedwaterIsolationC = 295.6
 
+// Feedwater isolation shuts the feed regulating valves and holds them shut
+// against their level controllers (feedwaterIsolationWrites). As in the
+// reference logic, P-4 seals the isolation in: it is released only once both
+// reactor trip breakers are closed again and no steam generator stands at
+// P-14 high-high level, the other isolation the model has. The annunciated
+// trip itself latches until an operator resets it, as every trip does.
+const feedwaterIsolationRelease = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ProcessPlantIcRule => rule({
+  id: 'feedwater-isolation-release',
+  label: 'Feedwater isolation release with the reactor trip breakers closed',
+  ruleClass: 'normalControl',
+  condition: all([
+    comparison({ tagId: 'TRIP-BKR-A-POS' }, '==', true),
+    comparison({ tagId: 'TRIP-BKR-B-POS' }, '==', true),
+    ...loops.map(loop => comparison({ tagId: `SG-${loop}-LVL-NR` }, '<', levelHighHighPercent)),
+  ]),
+  latch: false,
+  resetWhenClear: true,
+  effects: loops.map(loop => write(`release-feed-regulating-valve-${loop.toLowerCase()}`, { path: `feedwaterControlValve${loop}.isolationSignal` }, false)),
+})
+
+const hotwellLevelLowPercent = 35
+
 const turbineAlarm = annunciator({
   system: 'balanceOfPlant',
   equipmentId: 'turbine',
@@ -30,6 +53,87 @@ const turbineAlarm = annunciator({
   priority: 'medium',
   role: 'status',
 })
+
+// Frequency ride-through of the generator on its grid boundary, at the
+// Nordic values of NC RfG Article 13 (Commission Regulation (EU) 2016/631,
+// Table 2) for a 50 Hz grid, the reference plant's nominal frequency.
+// Between 49.0 and 51.0 Hz the unit stays connected without limit. Between
+// 47.5 and 49.0 Hz, and between 51.0 and 51.5 Hz, it stays connected for at
+// least 30 min, the code's minimum, and its frequency relays trip it once a
+// band has held that long. Beyond 47.5 or 51.5 Hz the code asks nothing and
+// the relays trip it after 0.5 s, a definite-time delay that rides through a
+// measuring transient without letting the turbine run on at a frequency its
+// blades and the reactor coolant pumps are not rated for. The relays read
+// the frequency only of a live boundary, a dead one being the loss-of-load
+// trip's. There is no rate-of-change-of-frequency relay, so a frequency
+// swinging at 2 Hz/s inside the bands trips nothing. Each trip is the
+// turbine trip, sealed in, and above P-9 it trips the reactor.
+const frequencyBandMinutesMs = 30 * 60_000
+const frequencyRelayDelayMs = 500
+
+const gridFrequencyRideThrough = (): ReadonlyArray<ProcessPlantIcRule> => {
+  const gridFrequency = { path: 'offsiteGrid.frequencyHz' }
+  const relay = (config: {
+    readonly id: string
+    readonly label: string
+    readonly operator: '<' | '>'
+    readonly hz: number
+    readonly delayMs: number
+    readonly message: string
+  }): ProcessPlantIcRule => rule({
+    id: config.id,
+    label: config.label,
+    ruleClass: 'protection',
+    condition: all([
+      comparison({ tagId: 'GRID-AVAIL' }, '==', true),
+      comparison(gridFrequency, config.operator, config.hz),
+    ]),
+    delayMs: config.delayMs,
+    effects: [
+      trip({
+        id: 'frequency-turbine-trip',
+        title: config.label,
+        message: config.message,
+        annunciator: annunciator({ ...turbineAlarm, firstOutGroup: 'turbine-trip', priority: 'urgent', role: 'automaticAction' }),
+      }),
+      ...turbineTripWrites(config.id),
+    ],
+  })
+  return [
+    relay({
+      id: 'turbine-trip-on-grid-underfrequency',
+      label: 'Turbine trip on grid underfrequency',
+      operator: '<',
+      hz: 47.5,
+      delayMs: frequencyRelayDelayMs,
+      message: 'Grid frequency is below 47.5 Hz, under the band the unit must ride through: the turbine trips.',
+    }),
+    relay({
+      id: 'turbine-trip-on-grid-overfrequency',
+      label: 'Turbine trip on grid overfrequency',
+      operator: '>',
+      hz: 51.5,
+      delayMs: frequencyRelayDelayMs,
+      message: 'Grid frequency is above 51.5 Hz, over the band the unit must ride through: the turbine trips.',
+    }),
+    relay({
+      id: 'turbine-trip-on-sustained-low-grid-frequency',
+      label: 'Turbine trip on 30 min of grid frequency below 49 Hz',
+      operator: '<',
+      hz: 49.0,
+      delayMs: frequencyBandMinutesMs,
+      message: 'Grid frequency has stayed below 49.0 Hz for 30 min, the time the unit must ride through it: the turbine trips.',
+    }),
+    relay({
+      id: 'turbine-trip-on-sustained-high-grid-frequency',
+      label: 'Turbine trip on 30 min of grid frequency above 51 Hz',
+      operator: '>',
+      hz: 51.0,
+      delayMs: frequencyBandMinutesMs,
+      message: 'Grid frequency has stayed above 51.0 Hz for 30 min, the time the unit must ride through it: the turbine trips.',
+    }),
+  ]
+}
 
 export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
@@ -51,21 +155,19 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
     // After a trip from operation: in shutdown the feedwater is not in service.
     modes: ['hotStandby'],
     condition: all([reactorTripBreakerOpen(), comparison({ tagId: 'TAVG' }, '<', lowTavgFeedwaterIsolationC)]),
-    // The model has neither feedwater isolation valves nor a regulating-valve
-    // bypass (the regulating valves follow their level controllers), so the
-    // isolation stops main feedwater by tripping both pumps, as the high-high
-    // level isolation does.
+    // It trips both main feedwater pumps and shuts every feed regulating
+    // valve until the isolation is released (feedwaterIsolationRelease).
     effects: [
       trip({
         id: 'feedwater-isolation',
         title: 'Feedwater isolation on reactor trip, low Tavg',
-        message: `The reactor trip breakers are open (P-4) and average coolant temperature is below ${lowTavgFeedwaterIsolationC} °C (564 °F): main feedwater is isolated.`,
-        annunciator: feedwaterAction,
+        message: `The reactor trip breakers are open (P-4) and average coolant temperature is below ${lowTavgFeedwaterIsolationC} °C (564 °F): the main feedwater pumps trip and the feed regulating valves shut until the trip breakers are closed again.`,
+        annunciator: annunciator({ ...feedwaterAction, firstOutGroup: 'feedwater-isolation' }),
       }),
-      write('trip-main-feedwater-pump-a-on-feedwater-isolation', { tagId: 'MFW-PUMP-A-RUN' }, false),
-      write('trip-main-feedwater-pump-b-on-feedwater-isolation', { tagId: 'MFW-PUMP-B-RUN' }, false),
+      ...feedwaterIsolationWrites('feedwater-isolation', loops),
     ],
   }),
+  feedwaterIsolationRelease(loops),
   rule({
     id: 'main-feedwater-pumps-tripped-afw-start',
     label: 'Auxiliary feedwater start on trip of all main feedwater pumps',
@@ -90,7 +192,7 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
         id: 'afw-start',
         title: 'Auxiliary feedwater start on main feedwater pump trip',
         message: 'Both main feedwater pumps read stopped: the motor-driven auxiliary feedwater pumps start and feed every steam generator.',
-        annunciator: annunciator({ ...feedwaterAction, equipmentId: 'auxFeedwaterHeader' }),
+        annunciator: annunciator({ ...feedwaterAction, equipmentId: 'auxFeedwaterHeader', firstOutGroup: 'auxiliary-feedwater' }),
       }),
       write('start-motor-afw-on-main-feedwater-pump-trip', { path: 'auxFeedwaterPumpMotor.running' }, true),
       write('start-motor-afw-b-on-main-feedwater-pump-trip', { path: 'auxFeedwaterPumpMotorB.running' }, true),
@@ -121,6 +223,34 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       annunciator: feedwaterAlarm,
     })],
   }),
+  // Loss of load: the grid boundary dead while the generator's output
+  // breaker is closed on it. A full load rejection is beyond what the steam
+  // dumps and the rods take together (about 50 %), so, as at the reference
+  // plant, generator protection opens the output breaker and the turbine
+  // trips at once; above P-9 the turbine trip trips the reactor. Both are
+  // on/off states, so no display draws a limit on the generator's output.
+  // The trip seals in as every turbine trip does: the stop valve stays shut and
+  // the load rejected until operators reopen and load it again, so a grid
+  // that comes back finds the unit importing its house load, not exporting.
+  rule({
+    id: 'turbine-trip-on-loss-of-load',
+    label: 'Turbine trip on loss of load, grid boundary dead',
+    ruleClass: 'protection',
+    condition: all([
+      comparison({ tagId: 'GRID-AVAIL' }, '==', false),
+      comparison({ path: 'turbine.outputBreakerClosed' }, '==', true),
+    ]),
+    effects: [
+      trip({
+        id: 'loss-of-load-turbine-trip',
+        title: 'Turbine trip on loss of load',
+        message: 'The grid boundary is dead while the generator\'s output breaker is closed on it: the breaker opens and the turbine trips.',
+        annunciator: annunciator({ ...turbineAlarm, firstOutGroup: 'turbine-trip', priority: 'urgent', role: 'automaticAction' }),
+      }),
+      ...turbineTripWrites('loss-of-load'),
+    ],
+  }),
+  ...gridFrequencyRideThrough(),
   rule({
     id: 'turbine-load-low',
     label: 'Turbine load low',
@@ -173,6 +303,26 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       id: 'backpressure-high',
       title: 'Condenser backpressure high',
       message: 'Condenser backpressure is above the reference operating threshold.',
+      severity: 'warning',
+      annunciator: annunciator({ ...turbineAlarm, equipmentId: 'condenser', priority: 'high', role: 'symptom' }),
+    })],
+  }),
+  // The hotwell's low-level alarm, well below its 55 % normal level and
+  // before the condensate pumps lose their suction.
+  rule({
+    id: 'condenser-hotwell-level-low',
+    label: 'Condenser hotwell level low',
+    ruleClass: 'alarm',
+    condition: comparison({ path: 'condenser.condensateLevelPercent' }, '<', hotwellLevelLowPercent),
+    clearCondition: comparison({ path: 'condenser.condensateLevelPercent' }, '>', hotwellLevelLowPercent + 5),
+    clearDelayMs: 2_000,
+    delayMs: 2_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'hotwell-level-low',
+      title: 'Condenser hotwell level low',
+      message: `Condenser hotwell level is below ${hotwellLevelLowPercent} %: the condensate pumps are drawing it down faster than the condenser refills it.`,
       severity: 'warning',
       annunciator: annunciator({ ...turbineAlarm, equipmentId: 'condenser', priority: 'high', role: 'symptom' }),
     })],

@@ -1,30 +1,36 @@
 <script lang="ts">
+  import type { DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
   import type { ComposedAlarmsPanel } from '../../../packs/process-plant/displays/compose.ts'
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
-  import type { ComposedDisplaySample } from './composed-display-client.ts'
-  import { alarmAge, alertTypeOf, visibleAlarms } from './panel-presenters.ts'
+  import type { ComposedDisplayAlarm, ComposedDisplaySample } from './composed-display-client.ts'
+  import { alarmAge, alertTypeOf, firstOutFlag, visibleAlarms } from './panel-presenters.ts'
 
   // Filling a unit overview's narrow column, the list takes the height left
-  // there: each alarm gets two lines (its whole title, then its flags and
-  // age), and as many show as that height holds. Narrowed to one annunciator
-  // system, the list says so and always ends with what the other systems hold.
-  let { panel, latest, fill = false, only = null, showAll }: {
+  // there: each alarm gets its whole title, over two lines where it needs
+  // them, then its tag, flags and age, and as many show as that height holds.
+  // Narrowed to one annunciator system, the list says so and always ends with
+  // what the other systems hold. Each row is tagged as its limit is named on a
+  // chip, a badge and a trend line ("LO-LO · RX TRIP"), or by what it does.
+  let { panel, latest, annunciation, fill = false, only = null, showAll }: {
     panel: ComposedAlarmsPanel
     latest: ComposedDisplaySample | undefined
+    annunciation: DisplayAnnunciation
     fill?: boolean
     /** `drawn`: whether the drawing beside the list shows anything of the system. */
     only?: { readonly name: string; readonly label: string; readonly ruleIds: ReadonlyArray<string>; readonly drawn: boolean } | null
     showAll?: () => void
   } = $props()
 
-  /** A two-line row and the gap under it, and the title line with its gap (the CSS below). */
-  const TWO_LINE_PITCH = 40
+  /** A stacked row at its tallest (two title lines and its meta line) and the gap under it, and the title line with its gap (the CSS below). */
+  const STACKED_PITCH = 53
   const TITLE = 17
   let height = $state<number>(composedDisplayLayout.alarms)
   // At its least height (composedDisplayLayout.alarms) the column's list holds two alarms.
-  const rows = $derived(fill ? Math.max(2, Math.floor((height - TITLE) / TWO_LINE_PITCH)) : composedDisplayLayout.alarmRows)
+  const rows = $derived(fill ? Math.max(2, Math.floor((height - TITLE) / STACKED_PITCH)) : composedDisplayLayout.alarmRows)
+  // Every alarm and trip has a tag, from what it annunciates; one the display was not compiled with says only its kind.
+  const tagOf = (alarm: ComposedDisplayAlarm): string => annunciation.tags[alarm.id] ?? alarm.kind.toUpperCase()
 
-  const all = $derived(visibleAlarms(latest?.alarms ?? [], panel.scope, panel.ruleIds))
+  const all = $derived(visibleAlarms(latest?.alarms ?? [], panel.scope, panel.ruleIds, annunciation))
   const onlyRules = $derived(only === null ? null : new Set(only.ruleIds))
   const alarms = $derived(onlyRules === null ? all : all.filter(alarm => onlyRules.has(alarm.ruleId)))
   const elsewhere = $derived(onlyRules === null ? [] : all.filter(alarm => !onlyRules.has(alarm.ruleId)))
@@ -49,18 +55,18 @@
     {#if alarms.length === 0}<p class="empty">No active alarm or trip in this system.</p>{/if}
     <ul>
       {#each shown as alarm (alarm.id)}
+        {@const first = firstOutFlag(alarm, annunciation)}
         {#if fill}
-          <li class={`alert-${alertTypeOf(alarm.severity)} two-line`} class:unacknowledged={!alarm.acknowledged} class:cleared={!alarm.active}>
-            <span class="kind">{alarm.kind === 'trip' ? 'TRIP' : 'ALM'}</span>
+          <li class={`alert-${alertTypeOf(alarm.severity)} stacked`} class:unacknowledged={!alarm.acknowledged} class:cleared={!alarm.active}>
             <span class="title" title={alarm.title}>{alarm.title}</span>
-            <span class="meta">{#if !alarm.active}<span class="flag">cleared</span>{/if}{#if alarm.firstOut}<span class="flag">first out</span>{/if}{#if !alarm.acknowledged}<span class="flag">unack</span>{/if}<span class="age">{alarmAge(latest.plantElapsedMs, alarm.firstActiveElapsedMs)}</span></span>
+            <span class="meta"><span class="kind">{tagOf(alarm)}</span><span class="flags">{#if !alarm.active}<span class="flag">cleared</span>{/if}{#if first !== null}<span class="flag">{first}</span>{/if}{#if !alarm.acknowledged}<span class="flag">unack</span>{/if}<span class="age">{alarmAge(latest.plantElapsedMs, alarm.firstActiveElapsedMs)}</span></span></span>
           </li>
         {:else}
           <li class={`alert-${alertTypeOf(alarm.severity)}`} class:unacknowledged={!alarm.acknowledged} class:cleared={!alarm.active}>
-            <span class="kind">{alarm.kind === 'trip' ? 'TRIP' : 'ALM'}</span>
+            <span class="kind">{tagOf(alarm)}</span>
             <span class="title" title={alarm.title}>{alarm.title}</span>
             {#if !alarm.active}<span class="flag">cleared</span>{/if}
-            {#if alarm.firstOut}<span class="flag">first out</span>{/if}
+            {#if first !== null}<span class="flag">{first}</span>{/if}
             {#if !alarm.acknowledged}<span class="flag">unack</span>{/if}
             <span class="age">{alarmAge(latest.plantElapsedMs, alarm.firstActiveElapsedMs)}</span>
           </li>
@@ -78,11 +84,11 @@
 <style>
   .alarms { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
   .alarms.fill { flex: 1 1 auto; }
-  /* Two lines of 17 px (TWO_LINE_PITCH with the list's gap): the title across the row, then kind, flags and age. */
-  li.two-line { display: grid; grid-template-columns: 32px minmax(0, 1fr); grid-template-rows: 17px 17px; column-gap: 8px; align-items: center; height: 38px; }
-  li.two-line .title { grid-row: 1; grid-column: 1 / span 2; }
-  li.two-line .kind { grid-row: 2; grid-column: 1; }
-  li.two-line .meta { grid-row: 2; grid-column: 2; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+  /* At most three lines of 17 px (STACKED_PITCH with the list's gap): the whole title across the row, over two lines where it needs them, never cut; then tag, flags and age. */
+  li.stacked { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 0; height: auto; min-height: 38px; padding-top: 2px; padding-bottom: 2px; }
+  li.stacked .title { white-space: normal; line-height: 17px; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  li.stacked .meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; height: 17px; }
+  li.stacked .flags { display: flex; align-items: center; gap: 8px; }
   h2 { margin: 0; font-size: 11px; font-weight: 600; color: var(--element-neutral-color); text-transform: uppercase; letter-spacing: 0.04em; }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
   li { display: flex; align-items: center; gap: 8px; min-width: 0; height: 21px; padding: 0 6px; border-left: 4px solid var(--border-divider-color); background: var(--container-section-color); font-size: 12px; }
@@ -96,7 +102,8 @@
   h2.narrowed { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--element-active-color); }
   h2.narrowed span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   h2 button { font: inherit; font-size: 11px; text-transform: none; letter-spacing: 0; padding: 0 6px; border: 1px solid var(--border-outline-color); border-radius: 3px; background: var(--container-section-color); color: var(--element-active-color); cursor: pointer; }
-  .kind { font-size: 10.5px; font-weight: 700; width: 32px; flex: none; }
+  /* The tag names the limit or action whole; it is never cut. */
+  .kind { font-size: 10.5px; font-weight: 700; min-width: 32px; flex: none; white-space: nowrap; }
   .title { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .flag { font-size: 10.5px; color: var(--element-neutral-color); flex: none; }
   .age { font-size: 11px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; flex: none; }

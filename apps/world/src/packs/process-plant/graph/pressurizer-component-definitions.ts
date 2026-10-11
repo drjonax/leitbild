@@ -52,7 +52,10 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       nominalLevelPercent: normalized,
       volumeM3: z.number().finite().positive(),
       reliefSetpointMPa: z.number().finite().positive(),
+      /** Rated discharge of the fully open PORV: saturated steam at its rated pressure. A Westinghouse PORV passes about 210,000 lb/h (26.5 kg/s) at 2,335 psig (16.2 MPa). */
       reliefCapacityKgPerS: z.number().finite().nonnegative(),
+      /** Inlet pressure at which the PORV's capacity is rated. Choked steam flow scales with the inlet pressure from there. */
+      reliefRatedPressureMPa: z.number().finite().positive(),
       /** How fast water above saturation flashes to steam. */
       flashingTimeConstantS: z.number().finite().positive(),
       /** How fast steam condenses on water below saturation; slow, as the water stratifies under the interface. */
@@ -61,7 +64,7 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       blockValveStrokeTimeS: z.number().finite().positive(),
       /** Set pressure of the spring-loaded code safety valves, where they pop open. */
       safetyValveSetpointMPa: z.number().finite().positive(),
-      /** Rated discharge of all the code safety valves together, at full lift. */
+      /** Rated discharge of all the code safety valves together: saturated steam at full lift, at set pressure plus accumulation. A four-loop Westinghouse plant's three are rated about 420,000 lb/h (52.9 kg/s) each. */
       safetyValvesCapacityKgPerS: z.number().finite().positive(),
       /** Pressure rise above the set pressure at which the safety valves reach full lift, a fraction of it. */
       safetyValveAccumulationFraction: z.number().finite().positive().max(0.1),
@@ -134,6 +137,8 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'steamTemperatureC', label: 'Pressurizer steam temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'heaterPowerMw', label: 'Pressurizer heater power', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'power', unit: 'MW', limits: { hardRange: { min: 0, max: 30 } } }),
       variable({ path: 'levelProgramPercent', label: 'Pressurizer level program', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent' }),
+      // The level control's error, level minus program: what its deviation alarms read.
+      variable({ path: 'levelDeviationPercent', label: 'Pressurizer level deviation from program', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: -100, max: 100 } } }),
       variable({ path: 'chargingFlowDemandKgPerS', label: 'Charging flow demanded by pressurizer level control', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
       variable({ path: 'backupHeatersOn', label: 'Pressurizer backup heaters on', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'backupHeaterDemandMw', label: 'Pressurizer backup heater electrical demand', kind: 'derived', discipline: 'electrical', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),

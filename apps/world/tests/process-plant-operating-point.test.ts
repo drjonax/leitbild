@@ -44,7 +44,9 @@ describe('authoritative PWR full-power operating point', () => {
       expect(read('turbine.electricMw')).toBeLessThanOrEqual(ratedElectric + 1)
       // The loops hold the inventory they started with: charging matches letdown.
       expect(read('vessel.primaryCoolantInventoryKg') / initialInventory).toBeCloseTo(1, 3)
-      // The operating point initializes real state; it must never clamp power.
+      // The operating point initializes real state; it must never clamp power. The trip breakers drop the rods.
+      runtime.writeCommand({ type: 'setVariable', path: 'reactorTripBreakerA.closed' as VariablePath, value: false })
+      runtime.writeCommand({ type: 'setVariable', path: 'reactorTripBreakerB.closed' as VariablePath, value: false })
       runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
       for (let step = 0; step < 150; step++) runtime.tick(100)
       expect(read('core.powerMw')).toBeLessThan(340)

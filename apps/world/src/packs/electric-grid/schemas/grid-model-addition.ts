@@ -17,7 +17,8 @@ import {
 
 // The only Grid composition fragment: one level, an explicit base Grid Model, additive only.
 // It appends assets to the base collections below; it cannot remove, patch or inherit assets,
-// and adds no storage.
+// and adds no storage. HVDC ramp groups stay the base Model's: an addition neither adds a group
+// nor puts its own links into one.
 
 /** The base collections an addition appends to, in Grid Model v2 order. */
 const additiveCollections = ['buses', 'branches', 'hvdcLinks', 'externalSystems', 'generators', 'loads', 'shunts', 'connectionPoints'] as const
@@ -42,6 +43,7 @@ export const gridModelAdditionSchema = z.object({
   loads: z.array(gridLoadSchema),
   shunts: z.array(gridShuntSchema),
   connectionPoints: z.array(gridConnectionPointSchema),
+  hvdcRampGroups: z.never({ error: 'HVDC ramp groups belong to the base Grid Model; a Model Addition cannot add or change one' }).optional(),
 }).strict().superRefine((addition, context) => {
   if (addition.baseModelRef === addition.id) context.addIssue({ code: 'custom', path: ['baseModelRef'], message: 'an addition cannot be its own base' })
 })

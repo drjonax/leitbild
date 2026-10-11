@@ -37,8 +37,8 @@ export interface MimicDrawnItem {
   /** The rows of its text stack that fit, below its label. */
   readonly rows: ReadonlyArray<MimicRow>
   /**
-   * A compact marker: the valve's icon on its pipe without a tag; its one row
-   * is empty unless the valve says something (rows.ts).
+   * A compact marker: the valve's icon on its pipe; its one row is empty
+   * unless the valve says something (rows.ts).
    */
   readonly marker: boolean
   /** The Plant components it stands for, by id (a group's members, a bundled device's host): what opening it shows. */
@@ -103,12 +103,6 @@ export interface CompiledMimic {
     readonly carriers: ReadonlyArray<string>
     readonly unverifiedFlows: ReadonlyArray<string>
     readonly unmeasuredStates: ReadonlyArray<string>
-    /**
-     * Where a lone pipe enters a hub at one of several alike ports, which the
-     * drawing does not name ("Core", "cold leg C"): the hub's label never
-     * carries it, and the layout reserves no room at the pipe's end.
-     */
-    readonly entries: ReadonlyArray<{ readonly item: string; readonly port: string }>
   }
   /** Geometry hash, independent of ids: a stored display whose drawing changed says so. */
   readonly hash: string

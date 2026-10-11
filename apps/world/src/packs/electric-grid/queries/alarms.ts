@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { GridExternalSystemDefinition } from '../grid-model.ts'
 import { gridAlarmCounts, gridAlarmPhase, gridAlarmShelved, type GridAlarmRecord } from '../runtime/alarms.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
 import { solvedGridIslands } from '../runtime/island-lifecycle.ts'
@@ -22,10 +23,10 @@ const alarmsPayloadSchema = z.object({
 
 const alarmSchema = z.object({
   id: z.string().describe('Stable alarm id <scope>:<asset key>:<condition>, the asset key being the asset id without its own scope prefix (hvdc:nordlink:tripped); the same condition on the same asset always has this id.'),
-  scope: z.enum(['island', 'branch', 'generator', 'hvdc']),
-  assetId: z.string().describe('Island id or Grid Asset id.'),
-  assetLabel: z.string().describe('The asset\'s label; for an island, its reference bus\'s.'),
-  mapAssetId: z.string().nullable().describe('Grid Asset that locates the alarm on the map (world.electric-grid.asset.get): the asset itself, or an island\'s reference bus; null for an island that no longer exists.'),
+  scope: z.enum(['island', 'branch', 'generator', 'hvdc', 'external']),
+  assetId: z.string().describe('Island id, Grid Asset id, or for scope external the external system id (external:nordic-remainder).'),
+  assetLabel: z.string().describe('The asset\'s label; for an island, Island at <its anchor bus\'s label>, the bus world.electric-grid.islands.list names it after.'),
+  mapAssetId: z.string().nullable().describe('Grid Asset that locates the alarm on the map (world.electric-grid.asset.get): the asset itself, an island\'s anchor bus, or an external system\'s boundary bus in its area with the largest participation; null for an island that no longer exists.'),
   condition: z.string(),
   priority,
   title: z.string(),
@@ -64,15 +65,27 @@ const matchesState = (record: GridAlarmRecord, states: ReadonlySet<z.infer<typeo
   return (states.has('active') && record.active) || (states.has('unacknowledged') && !record.acknowledged) || (states.has('cleared') && !record.active)
 }
 
-/** What an alarm names and where the map shows it: an island by its current reference bus. */
+/** Where an external system shows on the map: its first boundary bus in the area of its largest participation, or its first boundary bus. */
+const externalLocationBusId = (system: GridExternalSystemDefinition): string => {
+  const participation = system.areaParticipation
+  if (participation === undefined || participation.length === 0) return system.boundaryBusIds[0]!
+  return participation.reduce((best, entry) => entry.share > best.share ? entry : best).boundaryBusIds[0]!
+}
+
+/** What an alarm names and where the map shows it: an island by its current anchor bus, as islands.list names it. */
 const alarmAsset = (grid: GridRuntimeInstance, record: GridAlarmRecord): { readonly assetLabel: string; readonly mapAssetId: string | null } => {
   const { index } = grid.definition
   if (record.scope === 'island') {
     const islands = solvedGridIslands(grid)
     const island = islands.islands.find(candidate => candidate.id === record.assetId)
     if (island === undefined) return { assetLabel: `Island ${record.assetId} (no longer present)`, mapAssetId: null }
-    const busId = islands.plan.islands[island.planIndex]!.referenceBusId
+    const busId = islands.plan.islands[island.planIndex]!.anchorBusId
     return { assetLabel: `Island at ${index.busById.get(busId)!.label}`, mapAssetId: busId }
+  }
+  if (record.scope === 'external') {
+    const system = index.externalSystems.find(candidate => candidate.id === record.assetId)
+    if (system === undefined) throw new Error(`Grid alarm ${record.id} names unknown external system ${record.assetId}`)
+    return { assetLabel: system.label, mapAssetId: externalLocationBusId(system) }
   }
   const label = record.scope === 'hvdc'
     ? index.hvdcLinks.find(link => link.id === record.assetId)?.label
@@ -116,7 +129,7 @@ const byUrgency = (left: GridAlarmRecord, right: GridAlarmRecord): number =>
 export const gridAlarmsQuery = defineGridQuery({
   id: 'world.electric-grid.alarms.list',
   title: 'List Grid alarms',
-  description: 'Lists persistent Grid alarm records, most urgent first: island frequency bands, de-energised and formed islands, reserve deficits per product, unserved load, LFDD stages, AC non-convergence, branch loading bands, branch, generator and HVDC link trips. An alarm stays active until its condition clears; acknowledgement never clears it. Filter by priority, state and island; acknowledge or shelve with world.electric-grid.alarm.lifecycle.',
+  description: 'Lists persistent Grid alarm records, most urgent first: island frequency bands, de-energised and formed islands, reserve deficits per product, unserved load, LFDD stages, AC non-convergence, branch loading bands, branch, generator and HVDC link trips, and an external exchange voided by separation. An alarm stays active until its condition clears; acknowledgement never clears it. Filter by priority, state and island; acknowledge or shelve with world.electric-grid.alarm.lifecycle.',
   searchTerms: ['alarm', 'alarms', 'alarm list', 'annunciator', 'event list', 'trip', 'overload', 'frequency', 'unacknowledged', 'shelved', 'alarm flood', 'alarm', 'alarmliste', 'hendelser', 'utløst', 'overlast', 'frekvens', 'kvittering'],
   input: alarmsPayloadSchema,
   output: alarmsResultSchema,

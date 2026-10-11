@@ -71,6 +71,13 @@ export interface StateAspectDeclaration {
    * `closedWhileTrue` commands closed while true, as its state reads.
    */
   readonly command?: LocalVariablePath
+  /**
+   * A boolean engineered safety features input that drives a position shut
+   * while it stands, whatever its command demands (feedwater isolation on a
+   * feed regulating valve). An automatic action that sets it moves the
+   * equipment as one that writes its command does.
+   */
+  readonly isolation?: LocalVariablePath
 }
 
 /** Equipment the model bundles inside a component; it sits on the link that leaves one of the component's ports. */
@@ -121,31 +128,48 @@ export interface ComponentSemantics {
    * voltage is on, and reads a zero that measures nothing while it is off.
    */
   readonly meaningfulWhile: ReadonlyArray<{ readonly flag: string; readonly variables: ReadonlyArray<string> }>
+  /**
+   * Permissives the equipment derives from what it measures (a power range
+   * above P-10, a pressurizer pressure below P-11): solved flags that let
+   * protection be blocked or enable it, read by the logic that uses them,
+   * not values a display leads with.
+   */
+  readonly permissives: ReadonlyArray<string>
+  /**
+   * One quantity read by two instruments, the second over a wider span (a
+   * steam generator's narrow-range level and its wide-range level from the
+   * tube sheet): where the first stands at an end of its span, the second
+   * says where the quantity is.
+   */
+  readonly widerRanges: ReadonlyArray<{ readonly reading: string; readonly wider: string }>
   /** What the equipment does with energy, by port circuit. */
   readonly energy: ReadonlyArray<EnergyRole>
 }
 
 /** Declares semantics that do not depend on a component's parameters. */
 export const fixedSemantics = (semantics: Partial<ComponentSemantics>): ((parameters: unknown) => ComponentSemantics) => {
-  const resolved: ComponentSemantics = { aspects: [], embedded: [], ratedOutflow: [], portFlows: [], keyValues: [], meaningfulWhile: [], energy: [], ...semantics }
+  const resolved: ComponentSemantics = { aspects: [], embedded: [], ratedOutflow: [], portFlows: [], keyValues: [], meaningfulWhile: [], permissives: [], widerRanges: [], energy: [], ...semantics }
   return () => resolved
 }
 
-/** A state aspect read from a solved variable, with the command that demands it. */
+/** A state aspect read from a solved variable, with the command that demands it and the isolation input that overrides it. */
 export const aspect = (
   name: StateAspect,
   state: { readonly variable: string; readonly reading: AspectReading } | undefined,
   command?: string,
+  isolation?: string,
 ): StateAspectDeclaration => ({
   aspect: name,
   ...(state === undefined ? {} : { state: { variable: state.variable as LocalVariablePath, reading: state.reading } }),
   ...(command === undefined ? {} : { command: command as LocalVariablePath }),
+  ...(isolation === undefined ? {} : { isolation: isolation as LocalVariablePath }),
 })
 
 export interface CompiledStateAspect {
   readonly aspect: StateAspect
   readonly state?: { readonly path: VariablePath; readonly reading: AspectReading }
   readonly command?: VariablePath
+  readonly isolation?: VariablePath
 }
 
 export interface CompiledEmbeddedDevice {
@@ -165,6 +189,8 @@ export interface CompiledComponentSemantics {
   readonly portFlows: ReadonlyArray<{ readonly port: PortName; readonly path: VariablePath }>
   readonly keyValues: ReadonlyArray<VariablePath>
   readonly meaningfulWhile: ReadonlyArray<{ readonly flag: VariablePath; readonly variables: ReadonlyArray<VariablePath> }>
+  readonly permissives: ReadonlyArray<VariablePath>
+  readonly widerRanges: ReadonlyArray<{ readonly reading: VariablePath; readonly wider: VariablePath }>
   readonly energy: ReadonlyArray<CompiledEnergyRole>
 }
 

@@ -13,7 +13,8 @@ const result = await Bun.build({
   target: 'browser',
   format: 'esm',
   minify: true,
-  naming: 'app.js',
+  splitting: true,
+  naming: { entry: 'app.js', chunk: 'chunk-[hash].js', asset: 'asset-[name]-[hash].[ext]' },
 })
 
 if (!result.success) {

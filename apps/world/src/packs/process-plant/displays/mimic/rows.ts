@@ -2,6 +2,7 @@ import type { MimicFlowBinding, MimicItemBinding } from './bindings.ts'
 import { flowLook, itemLook, powerLook, type FlowLook, type ItemLook, type SampleIndex } from './evaluate.ts'
 import type { MimicPipeState } from './mimic-model.ts'
 import type { MimicPresentation } from './presentation.ts'
+import { displayValue, offScale, readingText, readingValueText, unitLabel } from '../display-text.ts'
 
 // The text rows beside a drawn item, shared by the server (which reserves
 // their room before any sample exists) and the embed (which fills them). A
@@ -10,10 +11,22 @@ import type { MimicPresentation } from './presentation.ts'
 // never dropped to make room.
 
 export type MimicRow =
-  /** A value with its unit, from a key value or a valve's partial opening. */
-  | { readonly kind: 'value'; readonly path: string; readonly unit: string; readonly required: boolean }
+  /**
+   * A key value with its unit, and the span its instrument indicates over: at
+   * an end of it the row reads the instrument that reads the same quantity
+   * over a wider span (`wider`, WR), where the equipment declares one, else
+   * the end itself ("<0 %"), never a value the quantity may be far beyond.
+   */
+  | {
+    readonly kind: 'value'
+    readonly path: string
+    readonly unit: string
+    readonly required: boolean
+    readonly span?: { readonly min: number; readonly max: number }
+    readonly wider?: { readonly path: string; readonly span: { readonly min: number; readonly max: number } }
+  }
   | { readonly kind: 'position'; readonly required: true }
-  /** The state in a word where the symbol alone could be misread: STOP, ?, DEAD, POS ?. */
+  /** The state in a word where the symbol alone could be misread: RUN or STOP, ?, DEAD, POS ?. */
   | { readonly kind: 'state'; readonly texts: ReadonlyArray<string>; readonly required: true }
   /** What passes an item whose position is not computed: PASSING or NO FLOW. */
   | { readonly kind: 'throughput'; readonly texts: ReadonlyArray<string>; readonly required: true }
@@ -31,7 +44,7 @@ export type MimicRow =
    * (`whole`).
    */
   | { readonly kind: 'marker'; readonly part: 'word' | 'command' | 'value' | 'whole'; readonly texts: ReadonlyArray<string>; readonly required: true }
-  /** Grouped parallel equipment: how many members are in the state the group is drawn by ("1/2 RUN"). */
+  /** Grouped parallel equipment: how many members are in the state the group is drawn by ("RUN 1/2"), or, with none in it, how many are in the other ("STOP 2/2"). */
   | { readonly kind: 'count'; readonly members: ReadonlyArray<MimicItemBinding>; readonly word: string; readonly texts: ReadonlyArray<string>; readonly required: true }
 
 const POSITION_COMMANDS = ['CMD SHUT', 'CMD OPEN', 'CMD 100 %', 'CMD 10 %']
@@ -48,11 +61,15 @@ const WIDEST_OPENING = '95 %'
 
 /** The word a group counts its members by, per state aspect; aspects without one are not grouped. */
 export const COUNT_WORDS: Readonly<Partial<Record<string, string>>> = { running: 'RUN', energized: 'LIVE', position: 'OPEN' }
+/** The state word for a member not in the counted state, as a single item's row says it (RUN and STOP, OPEN and SHUT). */
+const OTHER_WORDS: Readonly<Record<string, string>> = { RUN: 'STOP', LIVE: 'DEAD', OPEN: 'SHUT', CLOSED: 'OPEN' }
 
 /** Whether an item's position is a breaker's contacts, closed while its state reads true. */
 const switching = (binding: MimicItemBinding): boolean => binding.state?.state?.reading === 'closedWhileTrue'
 
-const countTexts = (members: number, word: string): ReadonlyArray<string> => [`${members}/${members} ${word}`, `${members}/${members} ${word} ?`]
+// The state word leads, as on a single item, so "0/2 RUN" never reads as running (QA review of run 22).
+const countTexts = (members: number, word: string): ReadonlyArray<string> =>
+  [word, OTHER_WORDS[word]!].flatMap(state => [`${state} ${members}/${members}`, `${state} ${members}/${members} ?`])
 
 /**
  * The rows beside an item. A valve drawn as a marker has the one or two short
@@ -62,7 +79,7 @@ const countTexts = (members: number, word: string): ReadonlyArray<string> => [`$
 export const itemRows = (
   binding: MimicItemBinding,
   presentation: MimicPresentation,
-  options: { readonly marker: boolean; readonly members: ReadonlyArray<MimicItemBinding>; readonly commands: 'inline' | 'stacked' },
+  options: { readonly marker: boolean; readonly members: ReadonlyArray<MimicItemBinding>; readonly commands: 'inline' | 'stacked'; readonly offSpan: 'end' | 'wider' },
 ): ReadonlyArray<MimicRow> => {
   const stacked = options.commands === 'stacked'
   const valuesOf = (commands: ReadonlyArray<string>): ReadonlyArray<string> => commands.map(text => text.slice('CMD '.length))
@@ -93,13 +110,22 @@ export const itemRows = (
     ]
   }
   const state = binding.state
-  const values: ReadonlyArray<MimicRow> = binding.values.map((value, index) => ({ kind: 'value', path: value.path, unit: value.unit, required: index === 0 }))
+  const values: ReadonlyArray<MimicRow> = binding.values.map((value, index) => ({
+    kind: 'value',
+    path: value.path,
+    unit: value.unit,
+    required: index === 0,
+    ...(value.span === undefined ? {} : { span: value.span }),
+    ...(value.wider === undefined || options.offSpan !== 'wider' ? {} : { wider: { path: value.wider.path, span: value.wider.span } }),
+  }))
   if (presentation.element !== 'device' || state === null) return values
+  // Running equipment says RUN in words as stopped equipment says STOP: an
+  // icon's fill alone does not tell the two apart for every reader (HMI review, run 22).
   if (state.aspect === 'running') {
-    if (!stacked) return [{ kind: 'state', texts: ['STOP', '?', ...RUNNING_COMMANDS], required: true }]
+    if (!stacked) return [{ kind: 'state', texts: ['RUN', 'STOP', '?', ...RUNNING_COMMANDS], required: true }]
     // Stacked rows reserve only what the item's bindings let it say: no command, no CMD.
-    if (state.command === undefined) return [{ kind: 'state', texts: ['STOP', '?'], required: true }]
-    return [{ kind: 'state', texts: ['STOP', '?', 'CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(RUNNING_COMMANDS), required: true }]
+    if (state.command === undefined) return [{ kind: 'state', texts: ['RUN', 'STOP', '?'], required: true }]
+    return [{ kind: 'state', texts: ['RUN', 'STOP', '?', 'CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(RUNNING_COMMANDS), required: true }]
   }
   if (state.aspect === 'energized') return [{ kind: 'state', texts: ['DEAD', '?'], required: true }]
   if (switching(binding)) {
@@ -140,14 +166,20 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
     return row.part === 'word' && look.mismatch !== null && opening === '' ? settled : opening
   }
   if (row.kind === 'count') {
+    // RUN 1/2 while any member runs; STOP 2/2 while none does, counting those known stopped.
     const looks = row.members.map(member => itemLook(member, index))
     const counted = looks.filter(member => counts(member, row.word)).length
-    const unknown = looks.some(member => member.state.kind === 'unknown')
-    return `${counted}/${row.members.length} ${row.word}${unknown ? ' ?' : ''}`
+    const unknown = looks.filter(member => member.state.kind === 'unknown').length
+    const known = counted > 0 ? `${row.word} ${counted}` : `${OTHER_WORDS[row.word]!} ${looks.length - unknown}`
+    return `${known}/${row.members.length}${unknown > 0 ? ' ?' : ''}`
   }
   if (row.kind === 'value') {
-    const entry = index.get(row.path)
-    return entry !== undefined && typeof entry.value === 'number' && entry.quality !== 'outside-hard-range' ? format(entry.value, row.unit) : '—'
+    const reading = valueRowReading(row, index)
+    if (reading === null) return '—'
+    if (!reading.wider) return reading.end === null ? format(reading.value, row.unit) : readingText(reading.value, row.unit, null, reading.span)
+    const unit = unitLabel(row.unit)
+    const shown = reading.end === null ? String(Math.round(displayValue(reading.value, row.unit))) : readingValueText(reading.value, row.unit, null, reading.span)
+    return `${WIDER_RANGE} ${shown}${unit === '' ? '' : ` ${unit}`}`
   }
   if (row.kind === 'position') {
     if (look.state.kind === 'unknown') return 'POS ?'
@@ -162,9 +194,39 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
   // The state word, unless the symbol disagrees with its command: then the command, or CMD over it.
   if (look.mismatch !== null && row.texts.includes(look.mismatch)) return look.mismatch
   if (look.mismatch !== null && row.texts.includes('CMD')) return 'CMD'
-  const word = look.state.kind === 'stopped' ? 'STOP' : look.state.kind === 'dead' ? 'DEAD' : look.state.kind === 'unknown' ? '?'
+  const word = look.state.kind === 'running' ? 'RUN' : look.state.kind === 'stopped' ? 'STOP' : look.state.kind === 'dead' ? 'DEAD' : look.state.kind === 'unknown' ? '?'
     : look.state.kind === 'closed' ? 'CLOSED' : look.state.kind === 'open' ? 'OPEN' : ''
   return row.texts.includes(word) ? word : ''
+}
+
+/** What a value row reading the wider instrument says before its value, read in whole units: the wide range. */
+export const WIDER_RANGE = 'WR'
+
+/**
+ * What a value row reads for one sample: its own value; at an end of its
+ * instrument's span, the instrument that reads the same quantity over a wider
+ * span, where it has one (a steam generator's narrow-range level at 0 % reads
+ * its wide range), else the end (`end`: shown "<0 %", in low-integrity style).
+ * Null where the value is not read.
+ */
+export const valueRowReading = (row: Extract<MimicRow, { kind: 'value' }>, index: SampleIndex): {
+  readonly path: string
+  readonly value: number
+  readonly end: 'below' | 'above' | null
+  readonly span: { readonly min: number; readonly max: number } | undefined
+  readonly wider: boolean
+} | null => {
+  const read = (path: string): number | null => {
+    const entry = index.get(path)
+    return entry !== undefined && typeof entry.value === 'number' && entry.quality !== 'outside-hard-range' ? entry.value : null
+  }
+  const value = read(row.path)
+  if (value === null) return null
+  const end = offScale(value, row.span)
+  const wider = end === null || row.wider === undefined ? null : read(row.wider.path)
+  return wider === null || row.wider === undefined
+    ? { path: row.path, value, end, span: row.span, wider: false }
+    : { path: row.wider.path, value: wider, end: offScale(wider, row.wider.span), span: row.wider.span, wider: true }
 }
 
 /** Whether a member's look is in the state its group counts by. */

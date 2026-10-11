@@ -7,6 +7,7 @@ import {
   backgroundAtmosphere,
   precipitationTypeSchema,
   weatherItemSchema,
+  weatherKeyframeSchema,
   weatherPackConfigSchema,
   weatherPackDataSchema,
   weatherSampleSchema,
@@ -89,12 +90,15 @@ export const weatherPack: WorldPack = {
         collections: [
           {
             path: ['keyframes'],
-            label: 'Timed changes (seconds after area creation)',
+            label: 'Keyframe endpoints (seconds after area creation)',
             maxItems: 128,
             defaultItem: { atSeconds: 300 },
             keyframes: { timePath: ['atSeconds'], increment: 300 },
             fields: [
-              number(['atSeconds'], 'At simulation seconds', 300, 0, 31536000),
+              {
+                ...number(['atSeconds'], 'Endpoint time (seconds)', 300, 0, 31536000),
+                description: weatherKeyframeSchema.shape.atSeconds.description!,
+              },
               number(['center', 0], 'Center longitude', 10.7522, -180, 180, 0.001),
               number(['center', 1], 'Center latitude', 59.9139, -80, 80, 0.001),
               number(['semiMajorAxisM'], 'Length radius (m)', 4000, 1, 100000, 100),

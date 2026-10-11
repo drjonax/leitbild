@@ -29,6 +29,7 @@ export const processPlantIcAnnunciatorSchema = z.object({
   system: z.string().min(1).optional(),
   equipmentId: idSchema.optional(),
   group: z.string().min(1).optional(),
+  /** The id of a first-out group the I&C config declares (processPlantIcFirstOutGroupSchema). */
   firstOutGroup: z.string().min(1).optional(),
   priority: processPlantIcAnnunciatorPrioritySchema.default('medium'),
   role: processPlantIcAnnunciatorRoleSchema.default('symptom'),
@@ -198,14 +199,32 @@ export const processPlantIcAnnunciatorSystemSchema = z.object({
 export type ProcessPlantIcAnnunciatorSystem = z.infer<typeof processPlantIcAnnunciatorSystemSchema>
 
 /**
+ * A first-out group: the alarms and trips whose annunciators name it, of
+ * which the first to come in is marked first out. Declared once, as operators
+ * name what its members do ("Reactor trip") and as a display names a limit
+ * acting through it or an actuation it lists ("RX TRIP", "SI"). The reactor
+ * trip's group says so: a display's trip banner leads with its first-out,
+ * and lists the Plant's other automatic actuations apart from it.
+ */
+export const processPlantIcFirstOutGroupSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  shortLabel: z.string().min(1),
+  reactorTrip: z.boolean().default(false),
+}).strict()
+export type ProcessPlantIcFirstOutGroup = z.infer<typeof processPlantIcFirstOutGroupSchema>
+
+/**
  * An operating mode of the Plant ("Power operation"), declared once and named
  * by its id on each rule that acts only in it. The Plant is in the first
  * declared mode whose condition holds, so declaration order resolves overlap;
- * a Plant whose modes cover every state is always in one.
+ * a Plant whose modes cover every state is always in one. Its short label is
+ * how a display names it where the label does not fit ("1": "Modes 1–2").
  */
 export const processPlantIcOperatingModeSchema = z.object({
   id: idSchema,
   label: z.string().min(1),
+  shortLabel: z.string().min(1).optional(),
   condition: processPlantIcConditionSchema,
 }).strict()
 export type ProcessPlantIcOperatingMode = z.infer<typeof processPlantIcOperatingModeSchema>
@@ -213,6 +232,7 @@ export type ProcessPlantIcOperatingMode = z.infer<typeof processPlantIcOperating
 export const processPlantIcConfigSchema = z.object({
   operatingModes: z.array(processPlantIcOperatingModeSchema).default([]),
   annunciatorSystems: z.array(processPlantIcAnnunciatorSystemSchema).default([]),
+  firstOutGroups: z.array(processPlantIcFirstOutGroupSchema).default([]),
   rules: z.array(processPlantIcRuleSchema).default([]),
 }).strict().superRefine((config, ctx) => {
   // A rule names declared modes only, each once.
@@ -248,6 +268,19 @@ export const processPlantIcConfigSchema = z.object({
       named.add(system)
     }
     if (named.size > 1) ctx.addIssue({ code: 'custom', path: ['rules', ruleIndex], message: `${rule.id} annunciates on ${[...named].join(' and ')}; a rule annunciates on one system` })
+  }
+  // A first-out group an annunciator names is declared once, so a display can name what its members do.
+  const groups = new Set<string>()
+  for (const [index, group] of config.firstOutGroups.entries()) {
+    if (groups.has(group.id)) ctx.addIssue({ code: 'custom', path: ['firstOutGroups', index, 'id'], message: `first-out group ${group.id} is declared twice` })
+    groups.add(group.id)
+  }
+  if (groups.size === 0) return
+  for (const [ruleIndex, rule] of config.rules.entries()) {
+    for (const [effectIndex, effect] of rule.effects.entries()) {
+      if (effect.type === 'writeSignal' || effect.annunciator?.firstOutGroup === undefined || groups.has(effect.annunciator.firstOutGroup)) continue
+      ctx.addIssue({ code: 'custom', path: ['rules', ruleIndex, 'effects', effectIndex, 'annunciator', 'firstOutGroup'], message: `${rule.id} names first-out group ${effect.annunciator.firstOutGroup}, which is not declared; declared: ${[...groups].join(', ')}` })
+    }
   }
 })
 export type ProcessPlantIcConfig = z.infer<typeof processPlantIcConfigSchema>

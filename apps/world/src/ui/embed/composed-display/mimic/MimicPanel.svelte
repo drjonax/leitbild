@@ -3,10 +3,11 @@
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-  import { drawnLook, itemTreatment, pipeStatesLook, rowText, type MimicRow } from '../../../../packs/process-plant/displays/mimic/rows.ts'
-  import { displayValue, formatQuantity, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
+  import { drawnLook, itemTreatment, pipeStatesLook, rowText, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
   import { alertTypeOf } from '../panel-presenters.ts'
+  import { limitInForce } from '../../../../packs/process-plant/displays/trend-reading.ts'
   import { chevronSegment, pipeSegments, pipeValue, stubEndSegment } from './pipe-segments.ts'
   import { mimicLegend } from './mimic-legend.ts'
   import { openBridgeDevice } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
@@ -60,9 +61,16 @@
 
   const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
 
-  /** The most severe active alarm framing an item, trips first, with the flap text that says what it watches. */
-  const alertOf = (item: MimicDrawnItem): { readonly status: 'alarm' | 'warning' | 'caution'; readonly label: string; readonly others: number } | null => {
-    const flaps = new Map(item.binding.frames.map(frame => [frame.ruleId, frame.flap]))
+  /**
+   * The most severe active alarm framing an item, trips first, with the flap
+   * text that says what it watches and does: as the trend chip of its signal
+   * picks it, among the rules that act in the Plant's current mode (a reactor
+   * trip latched at power frames nothing in hot standby; the banner and the
+   * alarm list keep it).
+   */
+  const alertOf = (item: MimicDrawnItem): { readonly status: 'alarm' | 'warning' | 'caution'; readonly label: { readonly flap: string; readonly flapShort: string }; readonly others: number } | null => {
+    const inForce = item.binding.frames.filter(frame => latest?.mode === undefined || limitInForce(frame, latest.mode))
+    const flaps = new Map(inForce.map(frame => [frame.ruleId, frame]))
     const active = alarms
       .filter(alarm => flaps.has(alarm.ruleId))
       .sort((left, right) => Number(right.kind === 'trip') - Number(left.kind === 'trip') || severityRank[left.severity] - severityRank[right.severity])
@@ -85,14 +93,10 @@
       return fraction >= 0.05 && fraction <= 0.95 ? [{ type: 'value' as const, value: Math.round(fraction * 100), unit: '%' }] : []
     }
     const text = rowText(row, look, index, format)
-    // Every state word is emphasised: STOP or PASSING is what the operator reads the symbol for.
-    return text === '' ? [] : [{ type: 'state' as const, text, emphasis: true }]
+    // Every state word but RUN is emphasised: STOP or PASSING is what the operator reads the symbol for; RUN, written so the fill is never all that says it, is the normal state (ISA-101).
+    return text === '' ? [] : [{ type: 'state' as const, text, emphasis: text !== 'RUN' }]
   })
 
-  const valueOf = (row: Extract<MimicRow, { kind: 'value' }>): number | null => {
-    const entry = index.get(row.path)
-    return entry !== undefined && typeof entry.value === 'number' && entry.quality !== 'outside-hard-range' ? displayValue(entry.value, row.unit) : null
-  }
 
   // A pipe drawn for grouped equipment's parallel pipes carries flow while any
   // of them does; a stub reads as every line it stands for.
@@ -145,8 +149,7 @@
     const apply = (next: typeof params) => {
       if (next.item.presentation.element !== 'device') return
       next.ob.updateDevice(element, next.item.presentation.icon, next.look, {
-        // A valve marker carries no tag: the line it sits on names it.
-        tag: next.item.marker ? '' : next.item.binding.label,
+        tag: next.item.binding.label,
         orientation: next.item.orientation,
         textSide: next.item.text?.side === 'bottom' ? 'bottom' : 'right',
         rows: next.rows,
@@ -171,10 +174,17 @@
     return { update: apply, destroy: () => element.remove() }
   }
 
-  const readout = (host: HTMLElement, params: { ob: Ob; value: number | null; unit: string }) => {
+  // A value row's readout block, before its unit (and after WR where the row reads its wider instrument); at an
+  // end of the span it reads, "<0" in low-integrity style, as a readout shows a reading off its span.
+  const readout = (host: HTMLElement, params: { ob: Ob; reading: ReturnType<typeof valueRowReading>; unit: string }) => {
     const element = params.ob.createReadoutBlock()
-    host.prepend(element)
-    const apply = (next: typeof params) => next.ob.updateReadoutBlock(element, next.value, next.value === null ? 1 : valueDigits(next.value), 3)
+    host.insertBefore(element, host.lastElementChild)
+    const apply = (next: typeof params) => {
+      const reading = next.reading
+      const value = reading === null ? null : displayValue(reading.value, next.unit)
+      // The wider instrument in whole units (compile-mimic.ts valueRowSize).
+      next.ob.updateReadoutBlock(element, value, value === null ? 1 : reading?.wider === true ? 0 : valueDigits(value), 3, reading === null || reading.end === null ? null : readingValueText(reading.value, next.unit, null, reading.span))
+    }
     apply(params)
     return { update: apply, destroy: () => element.remove() }
   }
@@ -253,7 +263,8 @@
                 <span class="tag">{item.binding.label}</span>
                 {#each item.rows as row, at (at)}
                   {#if row.kind === 'value'}
-                    <span class="value-row" use:readout={{ ob, value: valueOf(row), unit: row.unit }}><span class="unit">{unitLabel(row.unit)}</span></span>
+                    {@const reading = valueRowReading(row, index)}
+                    <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
                   {:else}
                     {@const text = rowText(row, look, index, format)}
                     {#if text !== ''}<span class="state-row" class:emphasis={row.kind === 'mismatch'}>{text}</span>{/if}

@@ -253,7 +253,8 @@ const cases: ReadonlyArray<ValidationCase> = [
     title: 'Pressurizer challenge',
     description: 'Heaters, spray, and relief are exercised through a pressure-control transient.',
     actions: [
-      set('increase-heater', 90_000, 'pressurizer.heaterPowerMw', 30),
+      set('increase-heater', 90_000, 'pressurizer.heaterPowerMw', 0.4),
+      set('backup-heaters-on', 90_000, 'pressurizer.backupHeatersOn', true),
       set('spray-on', 180_000, 'pressurizer.sprayFlowKgPerS', 12),
       set('relief-open', 300_000, 'pressurizer.reliefValvePositionFraction', 0.15),
       set('relief-close', 360_000, 'pressurizer.reliefValvePositionFraction', 0),

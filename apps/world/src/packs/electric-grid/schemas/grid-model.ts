@@ -162,6 +162,21 @@ export const gridHvdcLinkSchema = z.object({
 })
 export type GridHvdcLinkV2 = z.infer<typeof gridHvdcLinkSchema>
 
+/**
+ * A ramp limit several HVDC links share (one market border, or a joint cap on several borders): the
+ * change of their aggregate transfer stays within rampMwPerMinute, each link within its own ramp
+ * too. A link belongs to at most one group; the provenance note states the basis.
+ */
+export const gridHvdcRampGroupSchema = z.object({
+  id: z.string().regex(gridIdPatterns.hvdcRampGroup, 'must be an HVDC ramp group id'),
+  linkIds: z.array(z.string().regex(gridIdPatterns.hvdcLink, 'must be an HVDC link id')).min(2),
+  rampMwPerMinute: positive,
+  provenance: gridProvenanceSchema,
+}).strict().superRefine((group, context) => {
+  requireUnique(context, group.linkIds, 'linkIds')
+})
+export type GridHvdcRampGroupV2 = z.infer<typeof gridHvdcRampGroupSchema>
+
 export const gridExternalSystemSchema = z.object({
   id: z.string().regex(gridIdPatterns.externalSystem, 'must be an external system id'),
   label: text,
@@ -334,6 +349,7 @@ export const gridModelSchema = z.object({
   buses: z.array(gridBusSchema).min(1),
   branches: z.array(gridBranchSchema),
   hvdcLinks: z.array(gridHvdcLinkSchema),
+  hvdcRampGroups: z.array(gridHvdcRampGroupSchema),
   externalSystems: z.array(gridExternalSystemSchema),
   generators: z.array(gridGeneratorSchema),
   loads: z.array(gridLoadSchema),

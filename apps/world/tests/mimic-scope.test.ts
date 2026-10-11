@@ -234,7 +234,7 @@ describe('mimic presentation and bindings', () => {
       state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' },
       command: 'pressurizer.reliefValvePositionFraction' as never,
     })
-    expect(porv.frames).toEqual([{ ruleId: 'pzr-relief-flow-high', flap: 'F HI' }])
+    expect(porv.frames).toEqual([{ ruleId: 'pzr-relief-flow-high', flap: 'F HI · ALM', flapShort: 'F HI' }])
     // An accumulator's discharge isolation valve opens on its command at once; the model solves no separate position.
     const accumulator = graph.componentIndexById.get('safetyAccumulatorA' as never)!
     const isolation = itemBinding(plant, { kind: 'device', component: accumulator, device: 'dischargeIsolationValve' }, 'position', framed)
@@ -250,12 +250,19 @@ describe('mimic presentation and bindings', () => {
     }
   })
 
-  test('flaps say what a rule watches: the drawn level by its limit, other signals by their letter, a run command as NOT RUN', () => {
+  test('flaps say what a rule watches and does, in the words its signal\'s chip uses: the drawn level by its limit, other signals by their letter, a run command as NOT RUN', () => {
     const framed = framingRules(plant)
-    const flaps = (id: string, aspect: 'level' | 'running') => Object.fromEntries(itemBinding(plant, { kind: 'component', component: graph.componentIndexById.get(id as never)! }, aspect, framed).frames.map(frame => [frame.ruleId, frame.flap]))
-    expect(flaps('pressurizer', 'level')).toMatchObject({ 'pzr-pressure-low': 'P LO', 'pzr-pressure-low-reactor-trip': 'P LO-LO', 'pzr-level-low': 'LO' })
-    expect(flaps('sgB', 'level')).toMatchObject({ 'sg-b-level-low': 'LO', 'sg-b-level-low-low-afw-actuation': 'LO-LO', 'sg-b-pressure-high': 'P HI', 'sg-b-feedwater-low': 'LO & F LO' })
-    expect(flaps('rcpA', 'running')).toMatchObject({ 'rcp-a-trip': 'NOT RUN', 'rcp-a-loop-flow-low': 'F LO' })
+    const frames = (id: string, aspect: 'level' | 'running') => itemBinding(plant, { kind: 'component', component: graph.componentIndexById.get(id as never)! }, aspect, framed).frames
+    const flaps = (id: string, aspect: 'level' | 'running') => Object.fromEntries(frames(id, aspect).map(frame => [frame.ruleId, frame.flap]))
+    // A limit that on/off states only gate frames the item its limit is on, as its trend draws it: SI on low pressurizer pressure (run 22's porv-path badge read "P LO" beside a red SI chip).
+    expect(flaps('pressurizer', 'level')).toMatchObject({ 'pzr-pressure-low': 'P LO · ALM', 'safety-injection-low-pzr-pressure': 'P LO-LO · SI', 'pzr-level-deviation-low': 'L LO · ALM' })
+    // The AFW start and the reactor trip at 20 % are both LO-LO, each named by what it does, never both "TRIP".
+    expect(flaps('sgB', 'level')).toMatchObject({ 'sg-b-level-low': 'LO · ALM', 'sg-b-level-low-low-reactor-trip': 'LO-LO · RX TRIP', 'sg-b-pressure-high': 'P HI · ALM', 'sg-b-feedwater-low': 'LO & F LO · ALM' })
+    expect(flaps('sgB', 'level')['sg-b-level-low-low-afw-actuation']).toStartWith('LO-LO · ')
+    expect(flaps('sgB', 'level')['sg-b-level-low-low-afw-actuation']).not.toContain('TRIP')
+    // The frame reserves room for what each watches; the reactor trip of modes 1-2 says when it frames.
+    expect(frames('sgB', 'level').find(frame => frame.ruleId === 'sg-b-level-low-low-reactor-trip')).toEqual({ ruleId: 'sg-b-level-low-low-reactor-trip', flap: 'LO-LO · RX TRIP', flapShort: 'LO-LO', modeIds: ['powerOperation', 'startup'] })
+    expect(flaps('rcpA', 'running')).toMatchObject({ 'rcp-a-trip': 'NOT RUN', 'rcp-a-loop-flow-low': 'F LO · ALM' })
     // A vote across loops frames no single pump; it leads the banner.
     const voted = plant.automation.rules.filter(rule => rule.condition.type === 'vote').map(rule => rule.id)
     expect(voted.length).toBeGreaterThan(0)

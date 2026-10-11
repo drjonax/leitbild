@@ -14,6 +14,7 @@ import type { IslandFrequencyWorkspace } from './frequency/workspace.ts'
 import type { FrequencyReserveAllocation } from './frequency/types.ts'
 import type { GridIslandAcOutcome } from './ac-load-flow.ts'
 import type { GeneratorTripCause } from './frequency/generator-protection.ts'
+import { applyGridDemand, gridDemandSampleAt, type GridDemandSample } from './demand.ts'
 import { dispatchGridFromLiveIslands } from './dispatch.ts'
 import { noReserves } from './frequency/governors.ts'
 import { upwardReserveMw } from './reserve-allocation.ts'
@@ -39,15 +40,17 @@ import { hvdcTerminalStateViews, type GridHvdcTerminalState } from './hvdc-termi
 /**
  * Where a bus voltage comes from. `ac-fdlf`: the island's AC load flow converged and the voltage
  * is its result; `not-converged`: the island is energised but its AC load flow failed, so no
- * voltage is known (never a DC or nominal stand-in); `de-energised`: no source holds the bus (0 pu).
+ * voltage is known (never a DC or nominal stand-in); `de-energised`: no source holds the bus (0 pu);
+ * `external`: a separated boundary bus, held by its synchronous external system at the equivalent's
+ * voltage set-point outside the AC load flow (boundary-separation.ts).
  */
-export type GridVoltageModel = 'ac-fdlf' | 'not-converged' | 'de-energised'
+export type GridVoltageModel = 'ac-fdlf' | 'not-converged' | 'de-energised' | 'external'
 
 /** A bus in an island at the last network solution: a read-only view of the bus arrays (state/views.ts). An HVDC terminal has a GridHvdcTerminalState instead. */
 export interface GridBusState {
   readonly busId: string
-  /** Stable id of the island holding the bus. */
-  readonly islandId: string
+  /** Stable id of the island holding the bus; null for a separated boundary bus, held by its external system in no island (boundary-separation.ts). */
+  readonly islandId: string | null
   readonly energized: boolean
   /** AC voltage magnitude (pu); null while the island's AC load flow has not converged; 0 when de-energised. */
   readonly voltagePu: number | null
@@ -135,6 +138,8 @@ export interface GridLoadState {
   manualDemandLimitMw: number | null
   /** The limit was set as emergency shedding, beyond the load's interruptible demand. */
   manualShedEmergency: boolean
+  /** Daily profile factor at the demand sample: demandMw = max(criticalMw, nominalDemandMw × profileFactor). */
+  readonly profileFactor: number
   /** Demand this tick, profiled, before any shedding. */
   demandMw: number
   /** Demand disconnected by the manual shedding limit. */
@@ -166,8 +171,12 @@ export interface GridStorageState {
 
 /** A synchronous or asynchronous neighbouring system and its live exchange. */
 export interface GridExternalSystemState {
-  /** Scheduled import into Norway (MW; negative exports), set by dispatch. */
+  /** Scheduled import into Norway (MW; negative exports), set by dispatch; it ramps towards targetImportMw (external-exchange.ts). */
   scheduledImportMw: number
+  /** Scheduled import the schedule ramps to: the dispatch's, set-external-exchange's, or 0 after a separation voided it (MW). */
+  targetImportMw: number
+  /** A separation voided the exchange and the schedule is not back at the Operating Point's (boundary-separation.ts). */
+  exchangeVoided: boolean
   /** Power flowing in from the system (MW), including its inertial share and reserves. */
   importMw: number
   /** Activated FCR and aFRR of the system (MW). */
@@ -210,7 +219,7 @@ export interface GridHvdcLinkState {
 /**
  * One AC component: buses joined by closed branches. Its first bus in model order is its DC angle
  * reference; it absorbs nothing, because the component's injections sum to zero by construction.
- * An HVDC terminal (hvdc-terminals.ts) is a component of its own, held by no island.
+ * An HVDC terminal (hvdc-terminals.ts) and a separated boundary bus (boundary-separation.ts) are components held by no island.
  */
 export interface GridTopologyComponent {
   readonly referenceBusId: string
@@ -218,7 +227,7 @@ export interface GridTopologyComponent {
   readonly busIndices: Int32Array
   /** Ids of `busIndices`, computed on first read. */
   readonly buses: ReadonlyArray<string>
-  /** Index of the synchronous island holding the component; −1 for an HVDC terminal. */
+  /** Index of the synchronous island holding the component; −1 for a component without a Norwegian bus (an HVDC terminal or a separated boundary bus). */
   readonly islandIndex: number
 }
 
@@ -265,7 +274,7 @@ export interface GridTopologyPlan {
   readonly network: CompiledGridNetwork
   /** Closed flag (1) per model branch this plan was built from; compared with live branch states every tick. */
   readonly closedBranches: Uint8Array
-  /** Synchronous islands; their ids name the structure, not the stable island identity. HVDC terminals lie in none. */
+  /** Synchronous islands; their ids name the structure, not the stable island identity. HVDC terminals and separated boundary buses lie in none. */
   readonly islands: ReadonlyArray<GridTopologyIsland>
   /** AC components, ordered by their first bus. */
   readonly components: ReadonlyArray<GridTopologyComponent>
@@ -273,7 +282,7 @@ export interface GridTopologyPlan {
   readonly systems: ReadonlyArray<GridIslandSystem>
   /** Structural island id of each bus id in an island, computed on first read; the runtime reads `islandIndexOfBus`. */
   readonly islandIdByBus: ReadonlyMap<string, string>
-  /** Plan island index per bus in model order; −1 at an HVDC terminal. */
+  /** Plan island index per bus in model order; −1 at an HVDC terminal and a separated boundary bus. */
   readonly islandIndexOfBus: Int32Array
   /** Plan component index per bus in model order. */
   readonly componentIndexOfBus: Int32Array
@@ -351,6 +360,8 @@ export interface GridRuntimeInstance {
   readonly branches: Map<string, GridBranchState>
   readonly generators: Map<string, GridGeneratorState>
   readonly loads: Map<string, GridLoadState>
+  /** The demand sample the loads' demand was last set at. */
+  readonly demandSample: GridDemandSample
   readonly storage: Map<string, GridStorageState>
   readonly externalConnections: Map<string, GridExternalConnectionState>
   readonly externalSystems: Map<string, GridExternalSystemState>
@@ -409,7 +420,7 @@ export interface RestoredGridRuntimeState {
   }>
   readonly loads: ReadonlyArray<{ readonly id: string; readonly nominalDemandMw: number; readonly manualDemandLimitMw: number | null; readonly manualShedEmergency: boolean }>
   readonly storage: ReadonlyArray<{ readonly id: string; readonly stateOfChargeFraction: number }>
-  readonly externalSystems: ReadonlyArray<{ readonly id: string; readonly scheduledImportMw: number }>
+  readonly externalSystems: ReadonlyArray<{ readonly id: string; readonly scheduledImportMw: number; readonly targetImportMw: number; readonly exchangeVoided: boolean }>
   readonly hvdcLinks: ReadonlyArray<{ readonly id: string; readonly state: GridHvdcLinkOperatingState; readonly setpointMw: number; readonly transferMw: number; readonly trip: GridHvdcTrip | null }>
   readonly islands: ReadonlyArray<{ readonly id: string; readonly anchorBusId: string; readonly frequency: IslandFrequencyState | null }>
   readonly lossLoadByBusMw: ReadonlyArray<number>
@@ -510,16 +521,22 @@ export const createGridRuntimeInstance = (config: {
     } satisfies GridStorageState]
   }))
   const scheduledExports = new Map(operatingPoint.externalExchanges.map(exchange => [exchange.systemId, exchange.scheduledExportMw]))
-  const externalSystems = new Map(index.externalSystems.map(system => [system.id, {
+  const externalSystems = new Map(index.externalSystems.map(system => {
     // An asynchronous system exchanges only through HVDC links; a synchronous one starts at its scheduled exchange.
-    scheduledImportMw: restoredExternals?.get(system.id)?.scheduledImportMw ?? (system.synchronous ? -requiredValue(scheduledExports, system.id, 'scheduled exchange') : 0),
-    importMw: 0,
-    fcrMw: 0,
-    afrrMw: 0,
-    mechanicalMw: 0,
-    islandId: null,
-    energized: false,
-  } satisfies GridExternalSystemState]))
+    const operatingPointImportMw = system.synchronous ? -requiredValue(scheduledExports, system.id, 'scheduled exchange') : 0
+    const stored = restoredExternals?.get(system.id)
+    return [system.id, {
+      scheduledImportMw: stored?.scheduledImportMw ?? operatingPointImportMw,
+      targetImportMw: stored?.targetImportMw ?? operatingPointImportMw,
+      exchangeVoided: stored?.exchangeVoided ?? false,
+      importMw: 0,
+      fcrMw: 0,
+      afrrMw: 0,
+      mechanicalMw: 0,
+      islandId: null,
+      energized: false,
+    } satisfies GridExternalSystemState] as const
+  }))
   const hvdcSetpoints = new Map(operatingPoint.hvdcSetpoints.map(entry => [entry.linkId, entry.setpointMw]))
   const hvdcLinks = new Map(index.hvdcLinks.map(link => {
     const stored = restoredHvdc?.get(link.id)
@@ -564,6 +581,7 @@ export const createGridRuntimeInstance = (config: {
     branches: branchStateViews(model.branches.map(branch => branch.id), branchArrays),
     generators: generatorStateViews(model.generators.map(generator => generator.id), generatorArrays),
     loads: loadStateViews(model.loads.map(load => load.id), loadArrays),
+    demandSample: gridDemandSampleAt(definition, Date.parse(config.at)),
     storage,
     externalConnections,
     externalSystems,
@@ -593,8 +611,10 @@ export const createGridRuntimeInstance = (config: {
     },
     projection: initialGridProjection(config.at, model.nominalFrequencyHz, restored?.tick ?? 0),
   }
-  // A fresh Grid starts dispatched from its live islands; a restored one keeps its stored set-points.
+  // A fresh Grid starts dispatched from its live islands; a restored one keeps its stored set-points
+  // and takes the demand sample of its restart.
   if (!restored) dispatchGridFromLiveIslands(grid, Date.parse(config.at))
+  else applyGridDemand(grid, Date.parse(config.at))
   return grid
 }
 

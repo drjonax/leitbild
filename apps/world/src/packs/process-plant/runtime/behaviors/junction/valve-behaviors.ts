@@ -8,6 +8,7 @@ import {
   sumProcessLinkValue,
 } from '../../component-link-helpers.ts'
 import { clamp, optionalParameterNumber, optionalParameterString, relaxToward } from '../../component-helpers.ts'
+import { balancedBranchPressures } from './header-pressure-balance.ts'
 
 type ValveMode = 'control' | 'isolation' | 'check' | 'relief' | 'safety' | 'throttle' | 'bypass'
 type ValvePositionControllerDirection = 'direct' | 'reverse'
@@ -129,8 +130,12 @@ const updateValveFlowDiagnostics = (
   const matchingOutgoing = fluidLinksForService(outgoingLinks, service)
   const inletFlow = sumProcessLinkValue(matchingIncoming, 'flowKgPerS', context)
   const outletFlow = sumProcessLinkValue(matchingOutgoing, 'flowKgPerS', context)
-  const upstreamPressure = maxLinkValue(matchingIncoming, 'pressureMPa', context) ?? optionalParameterNumber(component, 'initialPressureMPa', component.kind === 'steamValve' ? 6.9 : 1)
-  const downstreamPressure = minLinkValue(matchingOutgoing, 'pressureMPa', context) ?? upstreamPressure
+  // A valve on a pressure-balanced header's branch drops the header's pressure to its vessel's.
+  const balanced = balancedBranchPressures(system, component, context)
+  const upstreamPressure = balanced?.upstreamMPa
+    ?? maxLinkValue(matchingIncoming, 'pressureMPa', context)
+    ?? optionalParameterNumber(component, 'initialPressureMPa', component.kind === 'steamValve' ? 6.9 : 1)
+  const downstreamPressure = balanced?.downstreamMPa ?? minLinkValue(matchingOutgoing, 'pressureMPa', context) ?? upstreamPressure
   const pressureDrop = Math.max(0, upstreamPressure - downstreamPressure)
   const effectivePosition = clamp(context.readNumber(componentVariablePath(component, 'effectivePositionFraction')), 0, 1)
   const cv = optionalParameterNumber(component, 'cvKgPerSPerSqrtMPa', Number.POSITIVE_INFINITY)
@@ -155,6 +160,12 @@ const updateValvePositionController = (
   const { component, context } = input
   const controller = valvePositionControllerFor(component)
   if (controller === null) return
+  const positionPath = componentVariablePath(component, 'positionFraction')
+  // Under an isolation signal the controller yields: it demands the valve shut until the signal is released.
+  if (context.readBoolean(componentVariablePath(component, 'isolationSignal'))) {
+    context.write(positionPath, 0)
+    return
+  }
   const measured = context.readNumber(controller.measuredPath)
   const error = deadbandedError(measured - controller.setpoint, controller.deadband)
   const action = controller.direction === 'direct' ? error : -error
@@ -163,7 +174,6 @@ const updateValvePositionController = (
   const target = permitted
     ? clamp(controller.biasPositionFraction + controller.gainPerUnit * action, controller.minPositionFraction, controller.maxPositionFraction)
     : controller.minPositionFraction
-  const positionPath = componentVariablePath(component, 'positionFraction')
   context.write(
     positionPath,
     relaxToward(context.readNumber(positionPath), target, context.dtSeconds, controller.timeConstantS),
@@ -174,10 +184,13 @@ const valveControlBehavior = (componentKind: 'processValve' | 'steamValve'): Com
   id: `${componentKind}-effective-position`,
   phase: 'solveFluidFlowComponents',
   componentKind,
-  reads: ['positionFraction', 'positionFailureActive', 'failedPositionFraction', 'incoming:pressureMPa', 'availablePressureDropMPa', 'autoOpenActive'],
+  reads: ['positionFraction', 'positionFailureActive', 'failedPositionFraction', 'isolationSignal', 'incoming:pressureMPa', 'availablePressureDropMPa', 'autoOpenActive'],
   writes: ['demandPositionFraction', 'effectivePositionFraction', 'autoOpenActive'],
   update: ({ system, component, context }): void => {
-    const manualTarget = clamp(context.readNumber(componentVariablePath(component, 'positionFraction')), 0, 1)
+    // An isolation signal shuts the valve whatever its demand; a failed actuator or a self-acting relief still decides.
+    const manualTarget = context.readBoolean(componentVariablePath(component, 'isolationSignal'))
+      ? 0
+      : clamp(context.readNumber(componentVariablePath(component, 'positionFraction')), 0, 1)
     const failureActive = context.readBoolean(componentVariablePath(component, 'positionFailureActive'))
     const failedPosition = clamp(context.readNumber(componentVariablePath(component, 'failedPositionFraction')), 0, 1)
     const mode = optionalParameterString(component, 'valveMode', 'control', valveModes)
@@ -215,7 +228,7 @@ const valvePositionControllerBehavior = (componentKind: 'processValve' | 'steamV
   id: `${componentKind}-position-controller`,
   phase: 'updateControlLogic',
   componentKind,
-  reads: ['positionFraction', 'controller.measuredPath', 'controller.permissive.path?'],
+  reads: ['positionFraction', 'isolationSignal', 'controller.measuredPath', 'controller.permissive.path?'],
   writes: ['positionFraction'],
   update: updateValvePositionController,
 })
@@ -224,7 +237,7 @@ const valveDiagnosticsBehavior = (componentKind: 'processValve' | 'steamValve'):
   id: `${componentKind}-flow-diagnostics`,
   phase: 'updateComponentState',
   componentKind,
-  reads: ['incoming:flowKgPerS', 'outgoing:flowKgPerS', 'incoming:pressureMPa', 'outgoing:pressureMPa', 'effectivePositionFraction'],
+  reads: ['incoming:flowKgPerS', 'outgoing:flowKgPerS', 'incoming:pressureMPa', 'outgoing:pressureMPa', 'effectivePositionFraction', 'pressure-balanced header branch?'],
   writes: ['inletFlowKgPerS', 'outletFlowKgPerS', 'flowBalanceResidualKgPerS', 'availablePressureDropMPa', 'capacityLimitedFlowKgPerS', 'reverseFlowKgPerS', 'leakageFlowKgPerS'],
   update: updateValveFlowDiagnostics,
 })

@@ -11,6 +11,7 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
 import { validateProcessPlantControlWrite } from '../src/packs/process-plant/control-write-validation.ts'
+import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 
 // Reactor protection and safety injection of the four-loop reference PWR,
 // read from the I&C's trips and alarms and the equipment's feedback. Each
@@ -69,36 +70,66 @@ const started = (automation: ProcessPlantIcConfig = plant.automation) => {
 
 describe('high pressurizer pressure', () => {
   test('trips the reactor when nothing relieves or sprays the pressure down', () => {
-    // Pressure control and the PORV's opening left out, the PORV isolated by its block valve, and the heaters full on.
+    // Pressure control and the PORV's opening left out, the PORV isolated by its block valve, and the heaters full
+    // on: the 0.4 MW proportional group and the 1.4 MW backup group take some seven minutes to get there.
     const automation = withOnlyReactorTrips(['pzr-pressure-high-reactor-trip'])
     const plantRun = started({ ...automation, rules: automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-') || rule.id === 'pzr-pressure-high-reactor-trip') })
     plantRun.run(5_000)
     plantRun.act('pressurizer-porv-block-valve-close')
     plantRun.run(12_000)
-    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 30 })
-    expect(plantRun.secondsUntil('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip', 120)).not.toBeNull()
-    expect(Number(plantRun.tag('PT-455'))).toBeGreaterThan(16.35)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 0.4 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.backupHeatersOn' as VariablePath, value: true })
+    expect(plantRun.secondsUntil('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip', 900)).not.toBeNull()
+    expect(Number(plantRun.tag('PT-455'))).toBeGreaterThan(16.55)
     plantRun.run(10_000)
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
     expect(Number(plantRun.read('core.powerMw'))).toBeLessThan(500)
   })
 })
 
+describe('the pressurizer PORV on high pressure', () => {
+  test('opens at 16.18 MPa on every rise, reseats below 15.85 MPa, and holds the pressure below the reactor trip', () => {
+    // No spray, and the plant's heaters full on (the 0.4 MW proportional and 1.4 MW backup groups): the pressure
+    // rises until the PORV relieves it, again and again, first after some six minutes and then every three or so.
+    const plantRun = started({ ...plant.automation, rules: plant.automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-high-demand') && !rule.id.startsWith('pzr-pressure-normal-band') && !rule.id.startsWith('pzr-pressure-low-demand')) })
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 0.4 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.backupHeatersOn' as VariablePath, value: true })
+    let openings = 0
+    let wasOpen = false
+    let peak = 0
+    for (let second = 1; second <= 600; second += 1) {
+      plantRun.step()
+      const open = Number(plantRun.tag('PORV-456A')) > 0
+      if (open && !wasOpen) openings += 1
+      wasOpen = open
+      peak = Math.max(peak, Number(plantRun.tag('PT-455')))
+    }
+    expect(openings).toBeGreaterThan(1)
+    expect(peak).toBeGreaterThan(16.18)
+    expect(peak).toBeLessThan(16.55)
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(true)
+    expect(plantRun.trip('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip')!.occurrenceCount).toBe(0)
+  }, 120_000)
+})
+
 describe('pressurizer code safety valves', () => {
   test('with the PORV blocked, they hold an overpressure near their 17.24 MPa set pressure, discharging to the relief tank', () => {
-    // The same overpressure: no spray, no PORV opening, the PORV isolated and the heaters full on. Full on is the
-    // 12 MW the pressure control energizes: more boils the pressurizer dry, which the valves do not test.
-    const automation = withOnlyReactorTrips(['pzr-pressure-high-reactor-trip'])
-    const plantRun = started({ ...automation, rules: automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-') || rule.id === 'pzr-pressure-high-reactor-trip') })
+    // The same overpressure: no spray, no PORV opening, the PORV isolated and the heaters full on, the 0.4 MW
+    // proportional group and the 1.4 MW backup group the pressure control energizes. With no reactor trip either,
+    // so that the coolant does not shrink away from the heaters, they take some fifteen minutes to lift the valves.
+    const automation = withOnlyReactorTrips([])
+    const plantRun = started({ ...automation, rules: automation.rules.filter(rule => !rule.id.startsWith('pzr-pressure-')) })
     plantRun.run(5_000)
     plantRun.act('pressurizer-porv-block-valve-close')
     plantRun.run(12_000)
-    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 12 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 0.4 })
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.backupHeatersOn' as VariablePath, value: true })
     const tankBefore = Number(plantRun.read('pressurizerReliefTank.inventoryKg'))
     let peak = 0
     let liftedAt: number | null = null
     let dischargePeak = 0
-    for (let second = 1; second <= 450; second += 1) {
+    for (let second = 1; second <= 1_200; second += 1) {
       // Sampled once a second, the lift shows from the pressure the second starts from: the solver's steps within
       // it lift the valves on reaching set pressure, and their discharge lowers it again.
       const startingPressure = Number(plantRun.tag('PT-455'))
@@ -114,7 +145,8 @@ describe('pressurizer code safety valves', () => {
     expect(peak).toBeLessThan(17.24 * 1.03)
     expect(plantRun.tag('MOV-8000A-POS')).toBe(0)
     expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBe(0)
-    // What they discharge, the steam the heaters raise, about 11 kg/s, reaches the relief tank through the relief header.
+    // What they discharge, a burst as they pop and then the steam the heaters raise, under 2 kg/s, reaches the
+    // relief tank through the relief header.
     expect(dischargePeak).toBeGreaterThan(8)
     expect(Number(plantRun.read('pressurizerReliefTank.inventoryKg'))).toBeGreaterThan(tankBefore + 1_000)
     expect(plantRun.protection.snapshot().alarms.find(lifecycle => lifecycle.id === 'alarm:pzr-safety-valve-open:safety-valve-open')!.occurrenceCount).toBeGreaterThan(0)
@@ -302,13 +334,16 @@ describe('the PORV block valve', () => {
     expect(plantRun.tag('MOV-8000A-POS')).toBe(1)
     plantRun.act('pressurizer-relief-open', { positionPercent: 100 })
     plantRun.run(3_000)
-    expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBeGreaterThan(30)
+    // Fully open, it passes about its 26.5 kg/s steam rating.
+    expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBeGreaterThan(20)
     plantRun.act('pressurizer-porv-block-valve-close')
     plantRun.run(5_000)
     // A motor-operated valve: halfway through its stroke it still passes flow.
     expect(Number(plantRun.tag('MOV-8000A-POS'))).toBeGreaterThan(0)
     expect(Number(plantRun.tag('MOV-8000A-POS'))).toBeLessThan(1)
-    expect(plantRun.activeIds()).toContain('alarm:pzr-porv-block-valve-not-open:porv-block-valve-not-open')
+    // Shutting it is the operators' isolation of the PORV, not an abnormal condition: it alarms nothing.
+    expect(plantRun.activeIds().filter(id => id.includes('block-valve'))).toEqual([])
+    expect(plant.automation.rules.filter(rule => JSON.stringify(rule.condition).includes('MOV-8000A'))).toEqual([])
     plantRun.run(10_000)
     expect(plantRun.tag('MOV-8000A')).toBe(0)
     expect(plantRun.tag('MOV-8000A-POS')).toBe(0)
@@ -351,12 +386,12 @@ describe('the PORV block valve', () => {
     plantRun.run(2_000)
     const loads = () => ({ safety: Number(plantRun.read('safetyBusA.servedLoadMw')), unit: Number(plantRun.read('unitBusA.servedLoadMw')) })
     const before = loads()
-    // Without the I&C, so no pressure controller takes the heaters back.
-    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 1.8 })
+    // Without the I&C, so no pressure controller takes the heaters back. The control group is rated 0.4 MW.
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'pressurizer.heaterPowerMw' as VariablePath, value: 0.4 })
     for (let second = 0; second < 3; second += 1) plantRun.runtime.tick(1_000)
     const after = loads()
     expect(after.safety).toBeCloseTo(before.safety, 3)
-    expect(after.unit - before.unit).toBeCloseTo(1.8, 1)
+    expect(after.unit - before.unit).toBeCloseTo(0.4, 2)
   })
 })
 
@@ -402,7 +437,8 @@ describe('steam generator tube leak detection', () => {
     expect(atPower).toBeGreaterThan(1)
     for (const breaker of ['reactorTripBreakerA', 'reactorTripBreakerB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${breaker}.closed` as VariablePath, value: false })
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
-    plantRun.run(60_000)
+    // N-16 falls with the fission power, on its -80 s period: to background within five minutes.
+    plantRun.run(300_000)
     // The leak goes on, but no N-16 rides it on a shut-down core.
     expect(Number(plantRun.read('sgA.primaryToSecondaryLeakKgPerS'))).toBeGreaterThan(1)
     expect(Number(plantRun.tag('SG-A-N16'))).toBeLessThan(0.025)
@@ -416,7 +452,8 @@ describe('steam generator tube leak detection', () => {
     plantRun.run(5_000)
     for (const breaker of ['reactorTripBreakerA', 'reactorTripBreakerB']) plantRun.runtime.writeCommand({ type: 'setVariable', path: `${breaker}.closed` as VariablePath, value: false })
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
-    plantRun.run(60_000)
+    // Five minutes after the trip the fission power is a ten-thousandth of rated.
+    plantRun.run(300_000)
     plantRun.act('steam-generator-tube-leak-a', { leakPercent: 1.2 })
     expect(plantRun.secondsUntil(leakRateHigh, 60)).not.toBeNull()
     plantRun.run(30_000)
@@ -468,8 +505,8 @@ describe('blocking low-pressure safety injection below P-11', () => {
     plantRun.runtime.writeCommand({ type: 'setVariable', path: 'core.rodInsertionFraction' as VariablePath, value: 1 })
     plantRun.run(30_000)
     // The operators depressurize through the PORV and block SI as soon as P-11 comes in. The pressurizer's
-    // saturated water must flash to cool, so the PORV opens to 40 %: at 15 % it took ten minutes to pass 12 MPa.
-    expect(plantRun.operate('PORV-456A', 0.4).accepted).toBe(true)
+    // saturated water must flash to cool, so the PORV opens fully: its 26.5 kg/s outruns the heaters.
+    expect(plantRun.operate('PORV-456A', 1).accepted).toBe(true)
     let blockedAt: number | null = null
     for (let second = 0; second < 120 && blockedAt === null; second += 1) {
       plantRun.step()
@@ -483,23 +520,245 @@ describe('blocking low-pressure safety injection below P-11', () => {
     // The pushbutton springs back; the block is the logic's memory.
     expect(plantRun.tag('SI-BLOCK')).toBe(false)
     expect(plantRun.activeIds()).toContain('alarm:safety-injection-blocked:blocked')
-    plantRun.run(90_000)
-    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(11)
+    // Below the 12.7 MPa SI set point, SI stays blocked.
+    for (let second = 0; second < 120 && Number(plantRun.tag('PT-455')) >= 12.5; second += 1) plantRun.step()
+    expect(Number(plantRun.tag('PT-455'))).toBeLessThan(12.5)
     expect(plantRun.activeIds()).not.toContain(siActuated)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(false)
 
-    // Repressurized past P-11, the block resets by itself, and SI is armed again.
+    // Repressurized past P-11, the block resets by itself, and SI is armed again. The heaters' 1.8 MW take some
+    // six minutes to raise the pressure the 0.8 MPa back to P-11.
     expect(plantRun.operate('PORV-456A', 0).accepted).toBe(true)
     let resetAt: number | null = null
-    for (let second = 0; second < 300 && resetAt === null; second += 1) {
+    for (let second = 0; second < 900 && resetAt === null; second += 1) {
       plantRun.step()
       if (plantRun.tag('SI-BLOCKED') === false) resetAt = Number(plantRun.tag('PT-455'))
     }
     expect(resetAt).not.toBeNull()
     expect(resetAt!).toBeGreaterThanOrEqual(13.3)
-    expect(plantRun.operate('PORV-456A', 0.4).accepted).toBe(true)
+    expect(plantRun.operate('PORV-456A', 1).accepted).toBe(true)
     expect(plantRun.secondsUntil(siActuated, 120)).not.toBeNull()
     plantRun.run(5_000)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
   })
+})
+
+describe('what each trip does', () => {
+  // A display names a limit's action from the first-out group its trip names ("LO-LO 20 · AFW START"), never from a plant name.
+  const groupsOf = (ruleId: string) => plant.automation.rules.find(rule => rule.id === ruleId)!.effects
+    .flatMap(effect => effect.type === 'trip.enter' ? [effect.annunciator?.firstOutGroup] : [])
+
+  test('every trip names a declared first-out group; the reactor trip\'s alone is the reactor trip', () => {
+    const declared = new Map(plant.automation.firstOutGroups.map(group => [group.id, group]))
+    const trips = plant.automation.rules.flatMap(rule => rule.effects.flatMap(effect => effect.type === 'trip.enter' ? [{ rule, effect }] : []))
+    expect(trips.length).toBeGreaterThan(20)
+    for (const { rule, effect } of trips) expect(declared.has(effect.annunciator?.firstOutGroup ?? ''), rule.id).toBe(true)
+    expect([...declared.values()].filter(group => group.reactorTrip).map(group => group.shortLabel)).toEqual(['RX TRIP'])
+    for (const ruleId of ['pzr-pressure-low-reactor-trip', 'pzr-pressure-high-reactor-trip', 'sg-b-level-low-low-reactor-trip', 'reactor-turbine-trip']) {
+      expect(groupsOf(ruleId), ruleId).toEqual(['reactor-trip'])
+    }
+    for (const ruleId of ['sg-b-level-low-low-afw-actuation', 'main-feedwater-pumps-tripped-afw-start', 'loss-of-offsite-power-afw-actuation']) {
+      expect(groupsOf(ruleId), ruleId).toEqual(['auxiliary-feedwater'])
+    }
+    expect(groupsOf('reactor-trip-low-tavg-feedwater-isolation')).toEqual(['feedwater-isolation'])
+    expect(groupsOf('sg-b-level-high-high-feedwater-isolation')).toEqual(['feedwater-isolation'])
+    expect(groupsOf('turbine-trip-on-loss-of-load')).toEqual(['turbine-trip'])
+    expect(declared.get('auxiliary-feedwater')?.shortLabel).toBe('AFW START')
+  })
+
+  test('safety injection annunciates its own actuation first and the reactor trip it causes in the reactor trip\'s group', () => {
+    expect(groupsOf('safety-injection-low-pzr-pressure')).toEqual(['safety-injection', 'reactor-trip'])
+    expect(groupsOf('safety-injection-containment-pressure-high-1')).toEqual(['safety-injection', 'reactor-trip'])
+  })
+
+  test('the PORV\'s opening is pressure control: it annunciates no trip', () => {
+    const relief = plant.automation.rules.find(rule => rule.id === 'pzr-pressure-high-relief')!
+    expect(relief.ruleClass).toBe('normalControl')
+    expect(relief.effects.map(effect => effect.type)).toEqual(['writeSignal'])
+  })
+})
+
+describe('feedwater isolation', () => {
+  const isolation = 'trip:reactor-trip-low-tavg-feedwater-isolation:feedwater-isolation'
+  const loops = ['A', 'B', 'C', 'D']
+
+  test('shuts every feed regulating valve against its level controller while P-4 holds it, though one is stuck', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    // Feed regulating valve B fails at 35 %: steam generator B boils down, the reactor trips on its low-low
+    // level, and P-4 with Tavg below 564 °F isolates feedwater while B's level controller still calls for 100 %.
+    plantRun.act('steam-generator-b-feedwater-runback', { positionPercent: 35 })
+    const seconds = plantRun.secondsUntil(isolation, 150)
+    expect(seconds).not.toBeNull()
+    plantRun.run(2_000)
+    for (const loop of loops) {
+      expect(plantRun.tag(`MFW-${loop}-CV`), loop).toBe(0)
+      expect(plantRun.read(`feedwaterControlValve${loop}.isolationSignal`), loop).toBe(true)
+    }
+    expect(plantRun.tag('MFW-PUMP-A-RUNNING')).toBe(false)
+    expect(plantRun.tag('MFW-PUMP-B-RUNNING')).toBe(false)
+    // 80 s on, with both pumps stopped, the demand still reads shut; the stuck valve stays where it failed.
+    plantRun.run(80_000)
+    for (const loop of loops) expect(plantRun.tag(`MFW-${loop}-CV`), loop).toBe(0)
+    expect(Number(plantRun.tag('MFW-A-CV-POS'))).toBe(0)
+    expect(Number(plantRun.tag('MFW-B-CV-POS'))).toBeCloseTo(0.35, 6)
+    expect(plantRun.trip(isolation)).toMatchObject({ active: true, latched: true })
+  }, 120_000)
+
+  test('is released to the level controllers once both reactor trip breakers close; its trip stands until reset', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('turbine-trip')
+    expect(plantRun.secondsUntil(isolation, 60)).not.toBeNull()
+    plantRun.run(5_000)
+    expect(plantRun.tag('MFW-A-CV')).toBe(0)
+    // Closing one breaker leaves P-4 standing.
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'reactorTripBreakerA.closed' as VariablePath, value: true })
+    plantRun.run(3_000)
+    expect(plantRun.read('feedwaterControlValveA.isolationSignal')).toBe(true)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'reactorTripBreakerB.closed' as VariablePath, value: true })
+    plantRun.run(10_000)
+    for (const loop of loops) expect(plantRun.read(`feedwaterControlValve${loop}.isolationSignal`), loop).toBe(false)
+    // Back on its controller, the valve opens toward what the shrunk level calls for.
+    expect(Number(plantRun.tag('MFW-A-CV'))).toBeGreaterThan(0.5)
+    expect(plantRun.trip(isolation)).toMatchObject({ active: true, resettable: true })
+  }, 120_000)
+
+  test('on P-14 high-high level shuts the feed regulating valves as it trips the pumps', () => {
+    const effects = plant.automation.rules.find(rule => rule.id === 'sg-c-level-high-high-feedwater-isolation')!.effects
+    const writes = effects.flatMap(effect => effect.type === 'writeSignal' ? [`${'path' in effect.signal ? effect.signal.path : effect.signal.tagId}=${effect.value}`] : [])
+    expect(writes).toEqual(expect.arrayContaining([
+      'MFW-PUMP-A-RUN=false',
+      'MFW-PUMP-B-RUN=false',
+      ...loops.map(loop => `feedwaterControlValve${loop}.isolationSignal=true`),
+    ]))
+  })
+})
+
+describe('containment pressure', () => {
+  const entered = (plantRun: ReturnType<typeof started>, ids: ReadonlyArray<string>, seconds: number) => {
+    const at = new Map<string, number>()
+    for (let second = 1; second <= seconds; second += 1) {
+      plantRun.step()
+      for (const id of plantRun.activeIds()) if (ids.includes(id) && !at.has(id)) at.set(id, second)
+    }
+    return at
+  }
+  const alarm = 'alarm:containment-pressure-high:pressure-high'
+  const hi1 = 'trip:safety-injection-containment-pressure-high-1:safety-injection'
+  const lowPressureSi = 'trip:safety-injection-low-pzr-pressure:safety-injection'
+  const hi2 = 'trip:containment-pressure-high-2-steam-line-isolation:steam-line-isolation'
+  const hi3 = 'trip:containment-pressure-high-3-spray:containment-spray'
+
+  test('displays draw the alarm below Hi-1 safety injection, Hi-2 steam line isolation and Hi-3 spray', () => {
+    const pressure = resolveProcessPlantSignalBinding(graph, { tagId: 'CTMT-PR' as never }).path
+    const group = (ruleId: string) => plant.automation.rules.find(rule => rule.id === ruleId)!.effects
+      .flatMap(effect => effect.type === 'trip.enter' ? [effect.annunciator!.firstOutGroup] : [])[0] ?? null
+    expect(icThresholdsForSignal(plant, pressure).thresholds.map(threshold => [threshold.value, threshold.kind, group(threshold.ruleId)])).toEqual([
+      [0.11, 'alarm', null],
+      [0.128, 'trip', 'safety-injection'],
+      [0.147, 'trip', 'steam-line-isolation'],
+      [0.186, 'trip', 'containment-spray'],
+    ])
+    expect(plant.automation.rules.some(rule => rule.id === 'containment-pressure-high-reactor-trip')).toBe(false)
+  })
+
+  test('a small break inside containment alarms, actuates SI on low pressurizer pressure, and Hi-1 follows as the containment fills', () => {
+    // With the pressurizer's real 1.8 MW of heaters the pressure falls to its SI set point first, as in the
+    // reference small-break analyses, where low pressurizer pressure is the credited SI signal: 57 s, Hi-1 at 73 s.
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-hot-leg-a.leak.areaFraction' as VariablePath, value: 0.005 })
+    const at = entered(plantRun, [alarm, hi1, lowPressureSi], 90)
+    expect(at.get(alarm)).toBeLessThan(at.get(lowPressureSi)!)
+    expect(at.get(lowPressureSi)).toBeLessThan(at.get(hi1)!)
+    expect(plantRun.trip(lowPressureSi)!.firstOut).toBe(true)
+    expect(plantRun.trip(hi1)!.firstOut).toBe(false)
+    expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
+  }, 120_000)
+
+  test('a larger break shuts the steam lines on Hi-2 and starts spray on Hi-3, which brings the pressure back down', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-hot-leg-a.leak.areaFraction' as VariablePath, value: 0.02 })
+    const at = entered(plantRun, [alarm, hi1, hi2, hi3], 110)
+    expect([...at.keys()]).toEqual([alarm, hi1, hi2, hi3])
+    for (const loop of ['A', 'B', 'C', 'D']) expect(Number(plantRun.tag(`MSIV-${loop}-POS`)), loop).toBe(0)
+    expect(plantRun.tag('CSPRAY-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('CSPRAY-B-RUNNING')).toBe(true)
+    expect(Number(plantRun.tag('SPRAY-FLOW'))).toBeGreaterThan(300)
+    const sprayed = Number(plantRun.tag('CTMT-PR'))
+    plantRun.run(30_000)
+    expect(Number(plantRun.tag('CTMT-PR'))).toBeLessThan(sprayed)
+  }, 120_000)
+})
+
+describe('pressurizer low level', () => {
+  const deviation = 'alarm:pzr-level-deviation-low:level-deviation-low'
+  const cutoff = 'alarm:pzr-level-low-heaters-off:heaters-off-letdown-isolated'
+
+  test('alarms on the level control\'s low deviation, 5 % below its program, not at a fixed level', () => {
+    const path = resolveProcessPlantSignalBinding(graph, { tagId: 'PZR-LVL-DEV' as never }).path
+    expect(icThresholdsForSignal(plant, path).thresholds.map(threshold => [threshold.value, threshold.kind, threshold.direction])).toEqual([[-5, 'alarm', 'low']])
+    // On the level itself only the 17 % bistable that cuts off the heaters and isolates letdown (as its alarm and
+    // its control action, drawn on the level: run 22 QA read "PZR-LVL 21.2 % · no LO limit in force") and the
+    // high-level alarm.
+    const level = resolveProcessPlantSignalBinding(graph, { tagId: 'PZR-LVL' as never }).path
+    expect(icThresholdsForSignal(plant, level).thresholds.map(threshold => [threshold.value, threshold.kind, threshold.direction])).toEqual([[17, 'alarm', 'low'], [17, 'control', 'low'], [75, 'alarm', 'high']])
+    // The bistable acts where the pressurizer's own heater breakers open.
+    const pressurizer = plant.graph.components.find(component => component.kind === 'pressurizer')!
+    expect((pressurizer.parameters as { heaterCutoffLevelPercent: number }).heaterCutoffLevelPercent).toBe(17)
+  })
+
+  test('stays clear after a trip, where the level falls with its program to no load', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.act('turbine-trip')
+    let lowestLevel = 100
+    let lowestDeviation = 0
+    for (let second = 0; second < 300; second += 1) {
+      plantRun.step()
+      lowestLevel = Math.min(lowestLevel, Number(plantRun.tag('PZR-LVL')))
+      lowestDeviation = Math.min(lowestDeviation, Number(plantRun.tag('PZR-LVL-DEV')))
+      expect(plantRun.activeIds()).not.toContain(deviation)
+    }
+    // The level fell below the old fixed 35 % limit, but never 5 % below the 25 % no-load program.
+    expect(lowestLevel).toBeLessThan(35)
+    expect(lowestDeviation).toBeGreaterThan(-5)
+    expect(Number(plantRun.tag('PZR-LVL-PGM'))).toBeLessThan(30)
+  }, 120_000)
+
+  test('alarms as a leak drains the pressurizer, before the 17 % cutoff of heaters and letdown', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-cold-leg-a.leak.areaFraction' as VariablePath, value: 0.005 })
+    const deviationAt = plantRun.secondsUntil(deviation, 150)
+    expect(deviationAt).not.toBeNull()
+    expect(Number(plantRun.tag('PZR-LVL-DEV'))).toBeLessThan(-5)
+    expect(plantRun.activeIds()).not.toContain(cutoff)
+    expect(plantRun.secondsUntil(cutoff, 150)).not.toBeNull()
+  }, 120_000)
+})
+
+describe('Tavg against Tref', () => {
+  test('alarms in power operation when Tavg stands 1.7 °C off the reference turbine load programs, either way', () => {
+    // Drawn at ±1.7 °C on the deviation, in power operation only.
+    const deviation = resolveProcessPlantSignalBinding(graph, { tagId: 'TAVG-TREF' as never }).path
+    expect(icThresholdsForSignal(plant, deviation).thresholds.map(threshold => [threshold.value, threshold.direction, threshold.kind, threshold.modeIds])).toEqual([
+      [-1.7, 'low', 'alarm', ['powerOperation']],
+      [1.7, 'high', 'alarm', ['powerOperation']],
+    ])
+    // A 10 % turbine load reduction with no automatic rod control: Tref falls 1.4 °C at once and Tavg climbs.
+    const plantRun = started()
+    plantRun.run(10_000)
+    expect(plantRun.tag('TAVG-TREF') as number).toBeCloseTo(0, 1)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: resolveProcessPlantSignalBinding(graph, { tagId: 'TURB-LOAD' as never }).path, value: 0.9 })
+    plantRun.run(20_000)
+    expect(plantRun.tag('TAVG-TREF') as number).toBeGreaterThan(1.3)
+    expect(plantRun.activeIds()).not.toContain('alarm:tavg-tref-deviation-high:tavg-tref-deviation-high')
+    expect(plantRun.secondsUntil('alarm:tavg-tref-deviation-high:tavg-tref-deviation-high', 120)).not.toBeNull()
+    expect(plantRun.tag('TAVG-TREF') as number).toBeGreaterThan(1.7)
+    expect(plantRun.activeIds()).not.toContain('alarm:tavg-tref-deviation-low:tavg-tref-deviation-low')
+  }, 120_000)
 })

@@ -19,14 +19,15 @@ export const processPlantServices = {
   safetyInjection: service('safetyInjection'),
 } as const
 
+// A tank's outflow on these services is throttled by how open the valves on
+// its paths to their terminals stand. Auxiliary feedwater is not among them:
+// its pumps discharge into a pressure-balanced header, which sets their flow.
 const downstreamDemandServices: ReadonlySet<ConnectionService> = new Set([
-  processPlantServices.auxFeedwater,
   processPlantServices.condensate,
   processPlantServices.feedwater,
 ])
 
 const demandTerminalByService: ReadonlyMap<ConnectionService, ReadonlySet<string>> = new Map([
-  [processPlantServices.auxFeedwater, new Set(['steamGenerator'])],
   [processPlantServices.condensate, new Set(['processTank'])],
   [processPlantServices.feedwater, new Set(['steamGenerator'])],
 ])

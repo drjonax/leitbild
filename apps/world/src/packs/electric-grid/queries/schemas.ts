@@ -2,8 +2,10 @@ import { z } from 'zod'
 import type {
   GridBranchDefinition,
   GridBusDefinition,
+  GridDemandProfileDefinition,
   GridGeneratorDefinition,
   GridHvdcLinkDefinition,
+  GridHvdcRampGroupDefinition,
   GridLoadDefinition,
   GridStorageDefinition,
 } from '../grid-model.ts'
@@ -94,12 +96,37 @@ export const loadDefinitionSchema = z.object({
   busId: z.string(),
   location,
   demandMw: finite.describe('Demand at the Operating Point before its load scale (MW).'),
+  demandProfileId: z.string().describe('The Model demand profile the load follows over the day; asset.get gives its series and hour values.'),
   criticalMw: finite.describe('Demand no shedding disconnects (MW).'),
   powerFactor: finite.describe('Reactive demand is P·tan(acos powerFactor), lagging.'),
   priority: z.enum(['critical', 'high', 'normal', 'low']),
   interruptibleMw: finite.describe('Contractually or technically curtailable demand (MW); 0 when unknown.'),
   ...sourceFields,
   provenance: assetProvenanceSchema.optional(),
+}).strict()
+
+export const demandProfileSeriesSchema = z.object({
+  profileSetId: z.string().describe('The Grid Load Profiles set the values come from.'),
+  season: z.enum(['winter', 'summer']).describe('The profile week the Operating Point\'s season selects.'),
+  priceArea: z.string(),
+  group: z.enum(['private', 'business', 'industry'])
+    .describe('Elhub municipality group: private = household + cabin, business = tertiary, industry = primary + secondary. Major sites follow their price area\'s industry group.'),
+  referenceHour: z.string().describe('The Operating Point\'s hour, at which the profile is exactly 1.'),
+}).strict()
+
+export const demandProfileDefinitionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  weekday: z.array(finite).length(24).readonly().describe('Demand relative to the Operating Point\'s at Europe/Oslo local 00:00 … 23:00 of Monday to Friday; linear between hours.'),
+  weekend: z.array(finite).length(24).readonly().describe('The same for Saturday and Sunday; from 23:00 demand moves towards 00:00 of the next date\'s day type.'),
+  series: demandProfileSeriesSchema.nullable().describe('The measured Elhub series the profile follows; null for a profile the Model declares outright.'),
+  provenance: assetProvenanceSchema,
+}).strict()
+
+export const demandSampleSchema = z.object({
+  sampleAt: z.string().describe('The one-minute demand sample the loads\' demand was last set at (UTC).'),
+  localTime: z.string().describe('Its Europe/Oslo local time, HH:MM.'),
+  dayType: z.enum(['weekday', 'weekend']).describe('Day type of its Europe/Oslo local date: Monday to Friday, or Saturday and Sunday.'),
 }).strict()
 
 export const storageDefinitionSchema = z.object({
@@ -120,21 +147,28 @@ export const hvdcLinkDefinitionSchema = z.object({
   toBusId: z.string().describe('Boundary bus of the external system, or another Norwegian converter bus.'),
   ratingMw: finite.describe('Transfer limit either way (MW).'),
   lossPercent: finite.describe('Converter and cable losses in percent of the sent power.'),
-  rampMwPerMinute: finite.describe('Rate at which the transfer follows a set-point change (MW/min).'),
+  rampMwPerMinute: finite.describe('Rate at which the transfer follows a set-point change (MW/min); a link of a ramp group also shares the group\'s limit.'),
   osmWayIds: z.array(z.string()).readonly(),
   provenance: assetProvenanceSchema,
 }).strict()
+
+export const hvdcRampGroupSchema = z.object({
+  id: z.string(),
+  linkIds: z.array(z.string()).readonly().describe('The HVDC links sharing the limit.'),
+  rampMwPerMinute: finite.describe('Limit on the change of the links\' aggregate transfer (MW/min), the market\'s net rule: links ramping in opposite directions offset, and when the net exceeds the limit the moves in its direction are scaled back by one factor. Each link also keeps its own rampMwPerMinute.'),
+  provenance: assetProvenanceSchema,
+}).strict().describe('A ramp limit several HVDC links share (one market border, or a joint cap); the provenance note states its basis.')
 
 const islandFrequencyHz = finite.nullable().describe('Frequency of the island holding the asset; null while it is de-energised (Hz).')
 
 export const busStateSchema = z.object({
   busId: z.string(),
-  islandId: z.string().describe('Stable id of the island holding the bus (world.electric-grid.islands.list).'),
+  islandId: z.string().nullable().describe('Stable id of the island holding the bus (world.electric-grid.islands.list); null for a separated boundary bus: a boundary bus of the synchronous external system whose ties are all open, held by that system in no island.'),
   energized: z.boolean(),
-  voltagePu: finite.nullable().describe('AC load-flow voltage (pu); null while the island\'s AC load flow has not converged; 0 on a de-energised bus.'),
-  voltageModel: z.enum(['ac-fdlf', 'not-converged', 'de-energised']).describe('ac-fdlf: voltagePu is the AC result; not-converged: the island is energised but no voltage is known; de-energised: no source holds the bus.'),
+  voltagePu: finite.nullable().describe('AC load-flow voltage (pu); null while the island\'s AC load flow has not converged; 0 on a de-energised bus; the external system\'s set-point on a separated boundary bus.'),
+  voltageModel: z.enum(['ac-fdlf', 'not-converged', 'de-energised', 'external']).describe('ac-fdlf: voltagePu is the AC result; not-converged: the island is energised but no voltage is known; de-energised: no source holds the bus; external: a separated boundary bus, held by its external system at the equivalent\'s voltage set-point.'),
   reactiveInjectionMvar: finite.nullable().describe('Net reactive injection of the bus\'s sources in the AC solution (Mvar, generation − demand); null unless converged.'),
-  frequencyHz: islandFrequencyHz,
+  frequencyHz: finite.nullable().describe('Frequency of the island holding the bus, or on a separated boundary bus of its external system; null while de-energised (Hz).'),
   angleRad: finite,
   netInjectionMw: finite.describe('Net active power injected at the bus, including its share of branch losses (MW).'),
 }).strict()
@@ -210,6 +244,7 @@ export const loadStateSchema = z.object({
   modelledDemandMw: finite.describe('Demand before the daily profile as the Model and Operating Point set it (MW).'),
   manualDemandLimitMw: finite.nullable().describe('Manual shedding limit from shed-load (MW); null when not shed manually.'),
   manualShedEmergency: z.boolean().describe('The manual limit was set as emergency shedding, beyond the interruptible demand.'),
+  profileFactor: finite.describe('The demand profile\'s factor at the demand sample: demandMw = max(criticalMw, nominalDemandMw × profileFactor).'),
   demandMw: finite.describe('Profiled demand before any shedding (MW).'),
   servedMw: finite.describe('Demand served: demand less curtailment, LFDD shedding and outage, at the island\'s load self-regulation (MW).'),
   curtailedMw: finite.describe('Demand shed manually (MW).'),
@@ -237,7 +272,7 @@ export const hvdcLinkOperatingStateSchema = z.enum(['deblocked', 'blocked', 'tri
 export const hvdcLinkStateSchema = z.object({
   state: hvdcLinkOperatingStateSchema,
   setpointMw: finite.describe('Transfer set-point (MW), positive from fromBusId to toBusId: positive exports from Norway.'),
-  transferMw: finite.describe('Power sent at the sending converter (MW, signed like the set-point); it ramps towards the set-point at rampMwPerMinute.'),
+  transferMw: finite.describe('Power sent at the sending converter (MW, signed like the set-point); it ramps towards the set-point at rampMwPerMinute, within its ramp group\'s shared limit.'),
   lossesMw: finite.describe('Converter and cable losses (MW); the receiving converter delivers |transferMw| − lossesMw.'),
   trip: z.object({
     cause: z.enum(['command', 'ac-voltage-loss']).describe('command: trip-hvdc; ac-voltage-loss: a converter terminal\'s AC bus was de-energised.'),
@@ -252,6 +287,7 @@ export type WireSchemasAcceptRuntimeValues = [
   Accepts<typeof branchDefinitionSchema, GridBranchDefinition>,
   Accepts<typeof generatorDefinitionSchema, GridGeneratorDefinition>,
   Accepts<typeof loadDefinitionSchema, GridLoadDefinition>,
+  Accepts<typeof demandProfileDefinitionSchema, GridDemandProfileDefinition>,
   Accepts<typeof storageDefinitionSchema, GridStorageDefinition>,
   Accepts<typeof busStateSchema, GridBusState>,
   Accepts<typeof hvdcTerminalStateSchema, GridHvdcTerminalState>,
@@ -260,5 +296,6 @@ export type WireSchemasAcceptRuntimeValues = [
   Accepts<typeof loadStateSchema, GridLoadState>,
   Accepts<typeof storageStateSchema, GridStorageState>,
   Accepts<typeof hvdcLinkDefinitionSchema, GridHvdcLinkDefinition>,
+  Accepts<typeof hvdcRampGroupSchema, GridHvdcRampGroupDefinition>,
   Accepts<typeof hvdcLinkStateSchema, GridHvdcLinkState>,
 ]

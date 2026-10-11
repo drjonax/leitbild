@@ -98,6 +98,7 @@
       "provenance": { "sources": ["osm:pbf-power:NO@2026-10-09"], "method": "mapped", "confidence": "high" }
     }
   ],
+  "hvdcRampGroups": [],
   "externalSystems": [
     {
       "id": "external:nordic-remainder", "label": "Nordic remainder", "area": "nordic-remainder", "synchronous": true,

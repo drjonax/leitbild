@@ -482,8 +482,9 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
   geometry.buses.forEach((bus, position) => {
     const energized = busEnergized(position)
     // An HVDC terminal (an asynchronous system's boundary bus) lies outside the modelled AC network and every island: never a dead island.
+    // A separated synchronous boundary bus also lies in no island, but its external system holds it energised: a live bus without island colour.
     const island = result.buses.island[position]!
-    const external = island === null
+    const external = bus.external?.synchronous === false
     featureStates.set(refs.busStart + position, {
       live: true,
       energized,
@@ -579,6 +580,16 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
       const position = fid - refs.busStart
       const bus = geometry.buses[position]!
       const islandPosition = result.buses.island[position]!
+      if (islandPosition === null && bus.external?.synchronous === true) {
+        return {
+          title: bus.label,
+          fields: [
+            packField('external', 'External system', `${bus.external.label}, behind AC ties`),
+            packField('voltage', 'Voltage level', `${bus.kv} kV`),
+            packField('role', 'Connection', 'Separated from Norway: every tie to this boundary bus is open. The external system holds it energised; closing a tie is checked on frequency difference.'),
+          ],
+        }
+      }
       if (islandPosition === null) {
         const links = geometry.hvdcLinks.flatMap((link, linkPosition) => link.toBus === position ? [{ link, linkPosition }] : [])
         return {

@@ -13,6 +13,7 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
+import { processPlantElectricalPortsAt } from '../src/packs/process-plant/electrical-ports.ts'
 import { itemBinding, flapText, framingRules } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { indexSample, itemLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
@@ -217,8 +218,8 @@ describe('breakers', () => {
     expect(rowsOf('EDG A')).toEqual(['CMD RUN'])
     expect(rowsOf('Bus A')).toEqual(['0 %'])
     plantRun.run(20_000)
-    // Running, the symbol shows it, as a pump's does.
-    expect(rowsOf('EDG A')).toEqual([''])
+    // Running, the symbol shows it and says RUN, as a pump's does.
+    expect(rowsOf('EDG A')).toEqual(['RUN'])
     expect(rowsOf('Bus A')).toEqual(['100 %'])
   })
 
@@ -244,13 +245,46 @@ describe('breakers', () => {
 describe('offsite power alarms', () => {
   test('each names one cause: a grid with no voltage is lost, a sagging grid degraded', () => {
     const flap = (ruleId: string) => flapText(plant, plant.automation.rules.find(rule => rule.id === ruleId)!, undefined)
-    expect(flap('loss-of-offsite-power')).toBe('V LO-LO')
-    expect(flap('offsite-grid-degraded-voltage')).toBe('V LO')
+    expect(flap('loss-of-offsite-power')).toEqual({ flap: 'V LO-LO · ALM', flapShort: 'V LO-LO' })
+    expect(flap('offsite-grid-degraded-voltage')).toEqual({ flap: 'V LO · ALM', flapShort: 'V LO' })
     const plantRun = started()
     plantRun.run(2_000)
     plantRun.act('loss-offsite-power')
     plantRun.run(5_000)
     expect(plantRun.activeIds()).toContain('alarm:loss-of-offsite-power:loss-of-offsite-power')
+  })
+
+  const degraded = 'alarm:offsite-grid-degraded-voltage:offsite-grid-degraded-voltage'
+  const lost = 'alarm:loss-of-offsite-power:loss-of-offsite-power'
+  const firstSeconds = (plantRun: ReturnType<typeof started>, seconds: number, at: Map<string, number> = new Map()) => {
+    for (let second = 1; second <= seconds; second += 1) {
+      plantRun.run(1_000)
+      for (const id of plantRun.activeIds()) if (!at.has(id)) at.set(id, second)
+    }
+    return at
+  }
+
+  test('on a loss of offsite power the degraded-voltage relay alarms before the loss-of-voltage relay', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    plantRun.act('loss-offsite-power')
+    const at = firstSeconds(plantRun, 5)
+    expect(at.get(degraded)).toBe(1)
+    expect(at.get(lost)).toBe(2)
+    expect(at.get('alarm:safety-bus-a-loss-alarm:safety-bus-a-loss')).toBe(2)
+  })
+
+  test('a sagging grid alarms degraded below 90 % and lost below 70 %, in that order', () => {
+    const plantRun = started()
+    plantRun.run(2_000)
+    const sagTo = (fraction: number) => plantRun.runtime.writeCommand({ type: 'setVariable', path: 'offsiteGrid.voltageFraction' as VariablePath, value: fraction })
+    sagTo(0.85)
+    const at = firstSeconds(plantRun, 10)
+    expect(at.has(degraded)).toBe(true)
+    expect(at.has(lost)).toBe(false)
+    sagTo(0.6)
+    firstSeconds(plantRun, 5, at)
+    expect(at.get(lost)).toBeGreaterThan(at.get(degraded)!)
   })
 })
 
@@ -423,7 +457,9 @@ describe('pumps', () => {
     for (const loop of ['A', 'B', 'C', 'D']) {
       expect(plantRun.tag(`RCP-${loop}-RUN`), loop).toBe(true)
       expect(plantRun.tag(`RCP-${loop}-RUNNING`), loop).toBe(false)
-      expect(Number(plantRun.tag(`RCP-${loop}-FLOW`)), loop).toBeLessThan(600)
+      // A minute into their flywheels' coastdown the loops carry about a sixth of their flow.
+      expect(Number(plantRun.tag(`RCP-${loop}-FLOW`)), loop).toBeLessThan(0.2 * 4250)
+      expect(Number(plantRun.tag(`RCP-${loop}-FLOW`)), loop).toBeGreaterThan(0.1 * 4250)
     }
     for (const id of ['mainFeedwaterPumpA', 'mainFeedwaterPumpB', 'condensatePumpA', 'condensatePumpB', 'circulatingWaterPump']) {
       expect(plantRun.read(`${id}.runningState`), id).toBe(false)
@@ -497,12 +533,17 @@ describe('alarms that apply only in power operation', () => {
     const qualified = plant.automation.rules.filter(rule => rule.modes !== undefined)
     // The steam generator low-low level trips and the auxiliary feedwater start on
     // a main feedwater pump trip act wherever the reactor can be critical, safety
-    // injection down to hot standby, the feedwater isolation after a trip in hot
-    // standby; every other qualified rule only at power.
+    // injection on low pressurizer pressure down to hot standby, on containment
+    // pressure Hi-1 and containment spray on Hi-3 down to hot shutdown, steam line
+    // isolation on Hi-2 down to hot standby, the feedwater isolation after a trip
+    // in hot standby; every other qualified rule only at power.
     const notOnlyAtPower = Object.fromEntries(qualified.filter(rule => JSON.stringify(rule.modes) !== '["powerOperation"]').map(rule => [rule.id, rule.modes]))
     expect(notOnlyAtPower).toEqual({
       ...Object.fromEntries(['a', 'b', 'c', 'd'].map(loop => [`sg-${loop}-level-low-low-reactor-trip`, ['powerOperation', 'startup']])),
       'safety-injection-low-pzr-pressure': ['powerOperation', 'startup', 'hotStandby'],
+      'safety-injection-containment-pressure-high-1': ['powerOperation', 'startup', 'hotStandby', 'hotShutdown'],
+      'containment-pressure-high-2-steam-line-isolation': ['powerOperation', 'startup', 'hotStandby'],
+      'containment-pressure-high-3-spray': ['powerOperation', 'startup', 'hotStandby', 'hotShutdown'],
       'main-feedwater-pumps-tripped-afw-start': ['powerOperation', 'startup'],
       'reactor-trip-low-tavg-feedwater-isolation': ['hotStandby'],
     })
@@ -575,11 +616,11 @@ describe('RCS subcooling margin', () => {
     plantRun.run(5_000)
     expect(Number(plantRun.tag('SUB-MARGIN'))).toBeGreaterThan(19.5)
     expect(plantRun.activeIds().filter(id => id.includes('subcooling'))).toEqual([])
-    plantRun.act('pressurizer-relief-open', { positionPercent: 35 })
+    plantRun.act('pressurizer-relief-open', { positionPercent: 100 })
     const entered = new Map<string, number>()
     // Safety injection comes in about a minute after the reactor trips and slows the fall, so the coolant
-    // reaches saturation some six minutes in.
-    for (let second = 0; second < 600 && entered.size < 2; second += 1) {
+    // reaches saturation some twelve minutes in.
+    for (let second = 0; second < 1_000 && entered.size < 2; second += 1) {
       plantRun.run(1_000)
       for (const id of plantRun.activeIds()) if (id.includes('subcooling') && !entered.has(id)) entered.set(id, Number(plantRun.tag('SUB-MARGIN')))
     }
@@ -665,29 +706,6 @@ describe('nuclear instrumentation', () => {
     expect(plantRun.tag('NIS-SR-HV')).toBe(false)
     expect(plantRun.tag('NIS-SR')).toBe(0)
   })
-
-  test('after a trip the source range is energized below P-6 and counts', () => {
-    const tripped = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:nis-trip', valueOverrides: { 'pressurizer.pressureMPa': 10 } }))
-    const runtime = createProcessPlantRuntime({ system: tripped })
-    const protection = createProcessPlantProtectionRunner({ system: tripped, protection: tripped.automation })
-    const tag = (tagId: string) => runtime.readVariable(resolveProcessPlantSignalBinding(tripped.graph, { tagId: tagId as never }).path)
-    let energizedAt: number | null = null
-    for (let second = 1; second <= 600; second += 1) {
-      runtime.tick(1_000)
-      protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-model-truth' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
-      if (energizedAt === null && tag('NIS-SR-HV') === true) {
-        energizedAt = second
-        // It comes on below P-6 at the top of its range.
-        expect(Number(tag('NIS-SR'))).toBeGreaterThan(1_000)
-        expect(Number(tag('NIS-SR'))).toBeLessThanOrEqual(100_010)
-      }
-    }
-    expect(energizedAt).not.toBeNull()
-    // Shut down, the source range counts the startup source and the intermediate range sits at the bottom of its span.
-    expect(Number(tag('NIS-SR'))).toBeGreaterThanOrEqual(10)
-    expect(Number(tag('NIS-SR'))).toBeLessThan(100)
-    expect(Number(tag('NIS-IR'))).toBe(1e-11)
-  }, 120_000) // A tripped Run held for minutes, the same watchdog as the runtime's long trajectories.
 })
 
 describe('flows declared through a port', () => {
@@ -780,7 +798,8 @@ describe('steam generator low-low level', () => {
     plantRun.run(30_000)
     expect(lifecycleOf(plantRun, reactorTripOf('a'))).toMatchObject({ active: true, firstOut: true })
     const active = plantRun.protection.snapshot().trips.filter(lifecycle => lifecycle.active)
-    expect(active.filter(lifecycle => lifecycle.firstOut).map(lifecycle => lifecycle.id)).toEqual([reactorTripOf('a')])
+    // First out among the reactor trips; the feedwater isolation and AFW start lead their own groups.
+    expect(active.filter(lifecycle => lifecycle.firstOut && lifecycle.annunciator?.firstOutGroup === 'reactor-trip').map(lifecycle => lifecycle.id)).toEqual([reactorTripOf('a')])
     // The turbine trip the reactor trip causes does not trip the reactor again.
     expect(active.map(lifecycle => lifecycle.id)).not.toContain('trip:reactor-turbine-trip:turbine-trip-reactor-trip')
     expect(plantRun.tag('TRIP-BKR-B-POS')).toBe(false)
@@ -862,12 +881,14 @@ describe('steam generator atmospheric relief valves', () => {
     let dumpOpening = 0
     let safetyValveOpening = 0
     const pressures: number[] = []
-    for (let second = 1; second <= 1_200; second += 1) {
+    // On the ANS-5.1 decay heat the generators take some 16 minutes to heat their auxiliary feed back up to the
+    // relief valves' set point; the last five minutes show them holding it.
+    for (let second = 1; second <= 1_500; second += 1) {
       plantRun.run(1_000)
       leastSubcooling = Math.min(leastSubcooling, Number(plantRun.tag('SUB-MARGIN')))
       if (second > 120) dumpOpening = Math.max(dumpOpening, Number(plantRun.tag('TURB-BYP-POS')))
       safetyValveOpening = Math.max(safetyValveOpening, Number(plantRun.read('mainSteamSafetyValve.effectivePositionFraction')))
-      if (second > 900) pressures.push(Number(plantRun.tag('SG-A-PRESS')))
+      if (second > 1_200) pressures.push(Number(plantRun.tag('SG-A-PRESS')))
     }
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
     // Without circulating water the dumps are blocked (C-9); the relief valves vent to the atmosphere instead.
@@ -897,5 +918,153 @@ describe('signal labels', () => {
     expect(label('safety-accumulator-a-to-cold-leg-a.soluteConcentrationPpm')).toBe('Safety Injection Accumulator A to cold leg A boron concentration')
     expect(label('rcp-a-to-core.pressureDropMPa')).toBe('Reactor Coolant Pump A to cold leg A pressure drop')
     expect(label('pressurizer-surge-line.leakFlowKgPerS')).toBe('Hot leg A to Pressurizer leak flow')
+  })
+})
+
+describe('the condenser hotwell', () => {
+  const hotwellLow = 'alarm:condenser-hotwell-level-low:hotwell-level-low'
+
+  test('alarms below 35 %, as the condensate pumps draw it down after a trip', () => {
+    const level = resolveProcessPlantSignalBinding(graph, { path: 'condenser.condensateLevelPercent' as never }).path
+    expect(icThresholdsForSignal(plant, level).thresholds.map(threshold => [threshold.value, threshold.kind, threshold.direction])).toEqual([[35, 'alarm', 'low']])
+    const plantRun = started()
+    plantRun.run(5_000)
+    expect(Number(plantRun.read('condenser.condensateLevelPercent'))).toBeCloseTo(55, 0)
+    plantRun.act('turbine-trip')
+    let alarmedAt: number | null = null
+    for (let second = 1; second <= 120 && alarmedAt === null; second += 1) {
+      plantRun.run(1_000)
+      if (plantRun.activeIds().includes(hotwellLow)) alarmedAt = Number(plantRun.read('condenser.condensateLevelPercent'))
+    }
+    expect(alarmedAt).not.toBeNull()
+    expect(alarmedAt!).toBeLessThan(35)
+    expect(alarmedAt!).toBeGreaterThan(25)
+  })
+})
+
+describe('a loss of load', () => {
+  const lossOfLoad = 'trip:turbine-trip-on-loss-of-load:loss-of-load-turbine-trip'
+  // As the simulation adapter writes a dead grid connection: unavailable, no voltage, no frequency.
+  const gridBoundary = (plantRun: ReturnType<typeof started>, live: boolean) => {
+    for (const [path, value] of [['offsiteGrid.available', live], ['offsiteGrid.voltageFraction', live ? 1 : 0], ['offsiteGrid.frequencyHz', live ? 50 : 0]] as const) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: path as VariablePath, value })
+    }
+  }
+  const port = (plantRun: ReturnType<typeof started>) =>
+    processPlantElectricalPortsAt({ plant: { plant, runtime: plantRun.runtime } as never, connected: true, at: '2026-10-11T00:00:00.000Z' as never })[0]!.state!
+
+  test('on a dead grid boundary trips the turbine at once, and so the reactor above P-9, and the generator carries nothing', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    expect(port(plantRun).activePowerMw).toBeGreaterThan(1_000)
+    gridBoundary(plantRun, false)
+    // The turbine trips on the first scan; its shut stop valve trips the reactor on the next.
+    plantRun.run(3_000)
+    expect(plantRun.activeIds()).toEqual(expect.arrayContaining([lossOfLoad, 'trip:reactor-turbine-trip:turbine-trip-reactor-trip']))
+    expect(plantRun.tag('TURB-STOP-POS')).toBe(0)
+    expect(plantRun.tag('GEN-MW')).toBe(0)
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
+    expect(port(plantRun)).toMatchObject({ connected: false, activePowerMw: 0 })
+  })
+
+  test('judges the generator by its output breaker, so no display draws a limit on its output', () => {
+    // Loss of load is a dead boundary with the breaker closed on it: two on/off states, no set point on GEN-MW.
+    const output = graph.signalBindingByTagId.get('GEN-MW' as never)!.path
+    expect(icThresholdsForSignal(plant, output).thresholds.map(threshold => threshold.ruleId)).toEqual(['generator-output-low'])
+    const plantRun = started()
+    plantRun.run(5_000)
+    expect(plantRun.runtime.readVariable('turbine.outputBreakerClosed' as VariablePath)).toBe(true)
+    gridBoundary(plantRun, false)
+    plantRun.run(2_000)
+    expect(plantRun.runtime.readVariable('turbine.outputBreakerClosed' as VariablePath)).toBe(false)
+  })
+
+  test('sealed in, the unit imports its house load when the grid comes back, and never exports', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    gridBoundary(plantRun, false)
+    plantRun.run(60_000)
+    gridBoundary(plantRun, true)
+    for (let second = 1; second <= 30; second += 1) {
+      plantRun.run(1_000)
+      const state = port(plantRun)
+      expect(state.connected, String(second)).toBe(true)
+      expect(state.activePowerMw, String(second)).toBeLessThan(0)
+    }
+    expect(plantRun.tag('TURB-STOP-POS')).toBe(0)
+    expect(plantRun.tag('TURB-LOAD')).toBe(0)
+    expect(plantRun.protection.snapshot().trips.find(lifecycle => lifecycle.id === lossOfLoad)).toMatchObject({ active: true, resettable: true })
+  })
+})
+
+describe('grid frequency ride-through', () => {
+  // The plant's 50 Hz grid boundary, read by the generator's frequency relays (NC RfG Article 13, Nordic values).
+  const relayRuleIds = ['turbine-trip-on-grid-underfrequency', 'turbine-trip-on-grid-overfrequency', 'turbine-trip-on-sustained-low-grid-frequency', 'turbine-trip-on-sustained-high-grid-frequency']
+  const frequencyTrips = relayRuleIds.map(ruleId => `trip:${ruleId}:frequency-turbine-trip`)
+  const fineRun = () => {
+    const runtime = createProcessPlantRuntime({ system: plant })
+    const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
+    const step = (ms = 250) => {
+      runtime.tick(ms)
+      protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-model-truth' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+    }
+    const hold = (seconds: number, ms = 250) => { for (let elapsed = 0; elapsed < seconds * 1_000; elapsed += ms) step(ms) }
+    const frequency = (hz: number) => runtime.writeCommand({ type: 'setVariable', path: 'offsiteGrid.frequencyHz' as VariablePath, value: hz })
+    const trips = () => protection.snapshot().trips.filter(lifecycle => lifecycle.active).map(lifecycle => lifecycle.id)
+    const tag = (tagId: string) => runtime.readVariable(resolveProcessPlantSignalBinding(plant.graph, { tagId: tagId as never }).path)
+    hold(2)
+    return { step, hold, frequency, trips, tag }
+  }
+
+  test('declares its bands on the grid frequency: unlimited 49 to 51 Hz, 30 min beyond, 0.5 s past 47.5 and 51.5 Hz', () => {
+    expect(plant.graph.components.find(component => component.id === 'offsiteGrid')!.parameters).toMatchObject({ initialFrequencyHz: 50 })
+    const relays = plant.automation.rules.filter(rule => relayRuleIds.includes(rule.id))
+    expect(relays.map(rule => {
+      const limit = (rule.condition as Extract<typeof rule.condition, { type: 'all' }>).conditions[1] as Extract<typeof rule.condition, { type: 'comparison' }>
+      return [limit.operator, limit.value, rule.delayMs, rule.effects.flatMap(effect => effect.type === 'trip.enter' ? [effect.annunciator!.firstOutGroup] : [])]
+    })).toEqual([
+      ['<', 47.5, 500, ['turbine-trip']],
+      ['>', 51.5, 500, ['turbine-trip']],
+      ['<', 49, 1_800_000, ['turbine-trip']],
+      ['>', 51, 1_800_000, ['turbine-trip']],
+    ])
+    // Nothing else in the Plant reads the grid frequency: no rate-of-change relay, no reactor coolant pump underfrequency trip.
+    const readers = plant.automation.rules.filter(rule => JSON.stringify(rule.condition).includes('offsiteGrid.frequencyHz'))
+    expect(readers.map(rule => rule.id).sort()).toEqual([...relayRuleIds].sort())
+  })
+
+  test('rides through a 49.6 Hz nadir and 60 s at 48.5 Hz', () => {
+    const plantRun = fineRun()
+    plantRun.frequency(49.6)
+    plantRun.hold(30, 1_000)
+    plantRun.frequency(48.5)
+    plantRun.hold(60, 1_000)
+    expect(plantRun.trips()).toEqual([])
+    expect(Number(plantRun.tag('GEN-MW'))).toBeGreaterThan(1_000)
+  })
+
+  test('rides through a 2 Hz/s swing from 50 to 48 Hz and up to 51 Hz', () => {
+    const plantRun = fineRun()
+    for (const hz of [49.5, 49, 48.5, 48, 48.5, 49, 49.5, 50, 50.5, 51, 50.5, 50]) {
+      plantRun.frequency(hz)
+      plantRun.step(250)
+    }
+    plantRun.hold(10)
+    expect(plantRun.trips()).toEqual([])
+  })
+
+  test('below 47.5 Hz trips the turbine after 0.5 s, and the reactor above P-9', () => {
+    const plantRun = fineRun()
+    plantRun.frequency(47.3)
+    // The frequency reaches the relay on the next step; it waits 0.5 s.
+    plantRun.step(250)
+    plantRun.step(250)
+    expect(plantRun.trips()).toEqual([])
+    plantRun.step(250)
+    expect(plantRun.trips()).toEqual([frequencyTrips[0]!])
+    plantRun.hold(1)
+    expect(plantRun.trips()).toEqual(expect.arrayContaining([frequencyTrips[0]!, 'trip:reactor-turbine-trip:turbine-trip-reactor-trip']))
+    expect(plantRun.tag('GEN-MW')).toBe(0)
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
   })
 })

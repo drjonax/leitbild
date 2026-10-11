@@ -37,6 +37,7 @@ type SourceRefId =
   | 'nrc-trace'
   | 'oecd-nea-mslb'
   | 'leitbild-pwr-scope'
+  | 'leitbild-pwr-loop-hydraulics'
 
 interface SourceRef {
   readonly id: SourceRefId
@@ -88,6 +89,12 @@ const sourceRefs: Readonly<Record<SourceRefId, SourceRef>> = {
     url: 'https://harbor.oecd-nea.org/jcms/pl_32205/pressurised-water-reactor-main-steam-line-break-mslb-benchmark',
     note: 'Benchmark pattern for event sequence, setpoints, plant conditions, and trace comparisons.',
   },
+  'leitbild-pwr-loop-hydraulics': {
+    id: 'leitbild-pwr-loop-hydraulics',
+    title: 'Leitbild reference PWR reactor coolant flow after pump trips',
+    url: 'apps/world/tests/process-plant-reactor-coolant-flow.test.ts',
+    note: 'With every pump lost a four-loop plant keeps about 15 % of its flow at 60 s on its flywheels, the flow falling about as 1 / (1 + t / 11 s) (FSAR 15.3.2), and its loops settle into natural circulation of a few percent within minutes, the core exit flat or falling once forced flow has gone, the core rise 10 to 25 °C on decay heat. With one pump lost the other three keep 70 to 75 % of rated core flow and drive the idle loop backwards.',
+  },
   'leitbild-pwr-scope': {
     id: 'leitbild-pwr-scope',
     title: 'Leitbild PWR operational-simulator scope',
@@ -117,6 +124,8 @@ interface CredibilityCase {
   readonly parameters?: Record<string, Record<string, unknown>>
   readonly initialState?: Record<string, unknown>
   readonly actions: (plant: CompiledProcessPlant) => ReadonlyArray<ProcessPlantScheduledAction>
+  /** How long the case runs, where the event takes longer than the common window to play out. */
+  readonly durationMs?: number
 }
 
 type CredibilityTarget = ProcessPlantCredibilityTarget<CaseId, SourceRefId>
@@ -231,6 +240,9 @@ const cases: ReadonlyArray<CredibilityCase> = [
     actions: system => [
       ...tripComponentsMatching(system, 60_000, 'trip-main-feedwater-no-afw-inventory', isMainFeedwaterPump),
     ],
+    // On ANS-5.1 decay heat the generators boil down to their tubes some 14
+    // minutes after the feedwater is lost; they boil dry within the hour.
+    durationMs: 1_200_000,
   },
   {
     id: 'turbine-trip-bypass',
@@ -328,6 +340,10 @@ const telemetryVariables = [
   'sgA.primaryToSecondaryLeakKgPerS',
   'sgA.secondaryRadiationMSvPerH',
   'rcpA.loopFlowKgPerS',
+  'core.averageHotLegFlowKgPerS',
+  'core.coreExitTemperatureC',
+  'core.coolantInletTemperatureC',
+  'vessel.subcoolingMarginC',
   'turbine.electricMw',
   'turbine.loadFraction',
   'turbine.steamAvailabilityFraction',
@@ -754,15 +770,96 @@ const targets: ReadonlyArray<CredibilityTarget> = [
     sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-scope'],
   },
   {
-    id: 'rcp-cooling-availability-response',
+    id: 'rcp-flywheel-flow-at-one-minute',
     caseId: 'all-rcp-trip',
-    label: 'Core cooling availability responds to loss of forced flow',
-    signal: 'core.coreCoolingAvailabilityFraction min after T+120s',
-    expectation: 'Loss of forced primary flow should be visible in core cooling diagnostics.',
-    measure: { kind: 'minAfter', path: variablePath('core.coreCoolingAvailabilityFraction'), afterMs: 120_000 },
-    acceptable: { min: 0.04, max: 0.35 },
+    label: 'The pumps\' flywheels still carry about a sixth of the flow a minute after the trip',
+    signal: 'core.averageHotLegFlowKgPerS at T+150s',
+    expectation: 'A minute into the coastdown a four-loop plant keeps about 15 % of its rated core flow, 10 to 20 % of 17,000 kg/s.',
+    measure: { kind: 'point', path: variablePath('core.averageHotLegFlowKgPerS'), atMs: 150_000 },
+    acceptable: { min: 1_700, max: 3_400 },
     severity: 'gate',
-    sourceRefs: ['nrc-srp-ch15', 'nrc-trace', 'leitbild-pwr-scope'],
+    sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-loop-hydraulics'],
+  },
+  {
+    id: 'rcp-natural-circulation-flow',
+    caseId: 'all-rcp-trip',
+    label: 'Natural circulation carries a few percent of rated flow once the pumps have coasted down',
+    signal: 'core.averageHotLegFlowKgPerS final value',
+    expectation: 'Buoyancy alone drives the loops at 2 to 6.5 % of rated core flow on decay heat, not a fixed flow and not none.',
+    measure: { kind: 'point', path: variablePath('core.averageHotLegFlowKgPerS'), atMs: durationMs },
+    acceptable: { min: 340, max: 1_105 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-loop-hydraulics'],
+  },
+  {
+    id: 'rcp-core-cooling-holds',
+    caseId: 'all-rcp-trip',
+    label: 'Coastdown and natural circulation carry the decay heat within the core\'s rated rise',
+    signal: 'core.coreCoolingAvailabilityFraction min after T+120s',
+    expectation: 'Once the reactor has tripped the flow needed falls with the power; the coasting and naturally circulating flow cools the core in full.',
+    measure: { kind: 'minAfter', path: variablePath('core.coreCoolingAvailabilityFraction'), afterMs: 120_000 },
+    acceptable: { min: 0.99 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-loop-hydraulics'],
+  },
+  {
+    id: 'rcp-core-exit-bounded',
+    caseId: 'all-rcp-trip',
+    label: 'The core exit stays below the full-power hot leg on natural circulation',
+    signal: 'core.coreExitTemperatureC max after T+100s',
+    expectation: 'On decay heat the natural-circulation core rise of 10 to 25 °C keeps the core exit below its full-power reading.',
+    measure: { kind: 'maxAfter', path: variablePath('core.coreExitTemperatureC'), afterMs: 100_000 },
+    acceptable: { max: 320 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-loop-hydraulics'],
+  },
+  // Natural circulation as ES-0.1 verifies it, from five minutes after the trip. Not a flat core exit: with the
+  // ANS-5.1 decay heat the steam generators are still coming back from the trip's overcooling to the steam dumps'
+  // set point, and the cold legs and the core exit follow their saturation temperature up (about 1.4 °C from five
+  // to ten minutes) while the core rise falls.
+  {
+    id: 'rcp-core-rise-not-rising',
+    caseId: 'all-rcp-trip',
+    label: 'The core rise is stable or falling once forced flow has gone',
+    signal: 'core.coreExitTemperatureC above core.coolantInletTemperatureC, delta from T+390s to T+600s',
+    expectation: 'From five minutes after the trip natural circulation carries the falling decay heat at a stable or falling core rise.',
+    measure: { kind: 'deltaAbove', path: variablePath('core.coreExitTemperatureC'), reference: { path: variablePath('core.coolantInletTemperatureC'), as: 'value' }, fromMs: 390_000, toMs: durationMs },
+    acceptable: { min: -20, max: 0.5 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-loop-hydraulics'],
+  },
+  {
+    id: 'rcp-cold-legs-at-steam-generator-saturation',
+    caseId: 'all-rcp-trip',
+    label: 'The cold legs stand at the steam generators\' saturation temperature',
+    signal: 'core.coolantInletTemperatureC apart from the saturation temperature at sgA.pressureMPa, max after T+390s',
+    expectation: 'In natural circulation the steam generators set the cold legs: within a few degrees of their saturation temperature.',
+    measure: { kind: 'maxApartAfter', path: variablePath('core.coolantInletTemperatureC'), reference: { path: variablePath('sgA.pressureMPa'), as: 'saturationTemperatureC' }, afterMs: 390_000 },
+    acceptable: { max: 3 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-loop-hydraulics'],
+  },
+  {
+    id: 'rcp-core-exit-follows-steam-generators',
+    caseId: 'all-rcp-trip',
+    label: 'The core exit rises no further than the steam generators\' saturation temperature',
+    signal: 'core.coreExitTemperatureC above the saturation temperature at sgA.pressureMPa, delta from T+390s to T+600s',
+    expectation: 'A core exit that rises only as its steam generators return to their set point is natural circulation holding; one that gains on them is a heat-up.',
+    measure: { kind: 'deltaAbove', path: variablePath('core.coreExitTemperatureC'), reference: { path: variablePath('sgA.pressureMPa'), as: 'saturationTemperatureC' }, fromMs: 390_000, toMs: durationMs },
+    acceptable: { min: -20, max: 1 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-loop-hydraulics'],
+  },
+  {
+    id: 'rcp-subcooling-held',
+    caseId: 'all-rcp-trip',
+    label: 'Subcooling stays above 30 °C while the steam generators remove the heat',
+    signal: 'vessel.subcoolingMarginC min after T+120s',
+    expectation: 'With the steam generators a heat sink, a natural-circulation core rise on decay heat keeps the coolant at least 30 °C subcooled; the margin falls with the decay heat the core makes.',
+    measure: { kind: 'minAfter', path: variablePath('vessel.subcoolingMarginC'), afterMs: 120_000 },
+    acceptable: { min: 30 },
+    severity: 'watch',
+    sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-loop-hydraulics'],
   },
   {
     id: 'rcp-reactor-trip-power-suppression',
@@ -831,6 +928,17 @@ const targets: ReadonlyArray<CredibilityTarget> = [
     sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-scope'],
   },
   {
+    id: 'loop-natural-circulation-flow',
+    caseId: 'loss-offsite-power',
+    label: 'With the pumps\' buses dead, natural circulation carries the decay heat',
+    signal: 'core.averageHotLegFlowKgPerS final value',
+    expectation: 'Loss of offsite power stops every reactor coolant pump; buoyancy drives the loops at 2 to 6.5 % of rated core flow.',
+    measure: { kind: 'point', path: variablePath('core.averageHotLegFlowKgPerS'), atMs: durationMs },
+    acceptable: { min: 340, max: 1_105 },
+    severity: 'gate',
+    sourceRefs: ['nrc-srp-ch15', 'leitbild-pwr-loop-hydraulics'],
+  },
+  {
     id: 'loop-essential-loads-served',
     caseId: 'loss-offsite-power',
     label: 'Essential plant-control loads remain served after recovery',
@@ -866,9 +974,11 @@ const configs = (): ReadonlyArray<ProcessPlantMultiPlantConfig> =>
   })
 
 const main = async (): Promise<void> => {
+  const caseDurationMs = (testCase: CredibilityCase): number => testCase.durationMs ?? durationMs
+  const durations = [...new Set(cases.map(caseDurationMs))]
   const runConfigs = configs()
   const started = performance.now()
-  const traces = createProcessPlantMultiPlantTestbed(runConfigs).runFor(durationMs, stepMs)
+  const traces = durations.flatMap(duration => createProcessPlantMultiPlantTestbed(runConfigs.filter((_, index) => caseDurationMs(cases[index]!) === duration)).runFor(duration, stepMs))
   const wallMs = performance.now() - started
   const results = targets.map(target => evaluateProcessPlantCredibilityTarget(processPlantCredibilityTraceForCase(traces, target.caseId), target))
   const caseResults = processPlantCredibilityCaseResultSummaries(cases, results)
@@ -889,7 +999,7 @@ const main = async (): Promise<void> => {
     failedGateTargetCount: failedGateTargets.length,
     failedWatchTargetCount: failedWatchTargets.length,
     wallMs,
-    realtimeFactor: durationMs * cases.length / wallMs,
+    realtimeFactor: cases.reduce((total, testCase) => total + caseDurationMs(testCase), 0) / wallMs,
     graph: firstGraph === undefined
       ? null
       : {

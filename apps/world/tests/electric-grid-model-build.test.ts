@@ -3,12 +3,14 @@ import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from 
 import { ambientRatingRule, cableRules, lineParameters, networkEquivalentParameters, overheadRules, reactanceFloorPu, transformerParameters } from '../src/packs/electric-grid/model-build/electrical.ts'
 import { runOfRiverTurbineOf, runOfRiverTurbineRule } from '../src/packs/electric-grid/model-build/generator-rules.ts'
 import { simplifyPath, type LonLat } from '../src/packs/electric-grid/model-build/geo.ts'
+import { buildHvdcRampGroups } from '../src/packs/electric-grid/model-build/interconnectors.ts'
 import { jsonLines } from '../src/packs/electric-grid/model-build/json-lines.ts'
 import { createBuildLedger } from '../src/packs/electric-grid/model-build/ledger.ts'
 import { dispatchGenerators, referenceSchedules } from '../src/packs/electric-grid/model-build/operating-points.ts'
 import { corridorPath } from '../src/packs/electric-grid/model-build/paths.ts'
 import { sourceBuildId } from '../src/packs/electric-grid/model-build/sources.ts'
 import { gridCurationCollectionSchema } from '../src/packs/electric-grid/schemas/grid-curation.ts'
+import { interconnectorTableSchema } from '../src/packs/electric-grid/schemas/grid-interconnector.ts'
 import { validateGridModel } from '../src/packs/electric-grid/schemas/grid-model.ts'
 import type { GridReferenceHourDispatch } from '../src/packs/electric-grid/schemas/grid-reference-dispatch.ts'
 import type { TopologyInput } from '../src/packs/electric-grid/topology/input.ts'
@@ -133,6 +135,30 @@ describe('model build: dispatch', () => {
     const states = new Map(dispatchGenerators(fixture, () => 120, hour, schedules).map(state => [state.assetId, state]))
     expect(states.get('generator:nve-hydro-123')).toMatchObject({ state: 'online', availableMw: 300, targetMw: 100 })
     expect(() => dispatchGenerators(fixture, () => 500, hour, schedules)).toThrow('cannot cover the residual demand')
+  })
+})
+
+const modelsDirectory = new URL('../src/packs/electric-grid/models/', import.meta.url)
+const interconnectorTable = interconnectorTableSchema.parse(await Bun.file(new URL('norway-interconnectors.json', modelsDirectory)).json())
+const norwayModel = validateGridModel(await Bun.file(new URL('norway-transmission.grid-model.json', modelsDirectory)).json(), 'norway-transmission.grid-model.json')
+
+describe('model build: HVDC ramp groups', () => {
+  const table = interconnectorTable
+  const norway = norwayModel
+  const sourceIds = { interconnectors: norway.sourceBuild.inputs.find(input => input.sourceId.startsWith('curated:norway-interconnectors@'))!.sourceId } as Parameters<typeof buildHvdcRampGroups>[0]['sourceIds']
+
+  test('the Norway model carries both shared ramp limits of the interconnector table, as the build derives them', () => {
+    expect(norway.hvdcRampGroups.map(group => [group.id, group.linkIds, group.rampMwPerMinute])).toEqual([
+      ['ramp:no2-continental', ['hvdc:nordlink', 'hvdc:norned'], 50],
+      ['ramp:skagerrak', ['hvdc:skagerrak-1', 'hvdc:skagerrak-2', 'hvdc:skagerrak-3', 'hvdc:skagerrak-4'], 25],
+    ])
+    expect(buildHvdcRampGroups({ table, links: norway.hvdcLinks, sourceIds })).toEqual(norway.hvdcRampGroups)
+    expect(norway.hvdcRampGroups.every(group => group.provenance.note === table.hvdcRampGroups.find(entry => entry.id === group.id)!.basis)).toBe(true)
+  })
+
+  test('fails when a group names a link the model does not carry', () => {
+    expect(() => buildHvdcRampGroups({ table, links: norway.hvdcLinks.filter(link => link.id !== 'hvdc:norned'), sourceIds }))
+      .toThrow('HVDC ramp group ramp:no2-continental names hvdc:norned, which the model does not carry')
   })
 })
 

@@ -7,6 +7,7 @@ import type {
   ProcessPlantMultiPlantSnapshot,
   ProcessPlantTelemetrySeries,
 } from '../../src/packs/process-plant/engineering/index.ts'
+import { saturationTemperatureCFromPressureMPa } from '../../src/packs/process-plant/runtime/thermophysics.ts'
 
 export type ProcessPlantCredibilityMeasurement =
   | {
@@ -30,6 +31,27 @@ export type ProcessPlantCredibilityMeasurement =
       readonly fromMs: number
       readonly toMs: number
     }
+  | {
+      /** The change from fromMs to toMs of a reading above a reference (a core exit over the cold legs, or over its steam generators' saturation temperature). */
+      readonly kind: 'deltaAbove'
+      readonly path: VariablePath
+      readonly reference: ProcessPlantCredibilityReference
+      readonly fromMs: number
+      readonly toMs: number
+    }
+  | {
+      /** The most a reading stands apart from a reference, either way, after afterMs (a cold leg from its steam generators' saturation temperature). */
+      readonly kind: 'maxApartAfter'
+      readonly path: VariablePath
+      readonly reference: ProcessPlantCredibilityReference
+      readonly afterMs: number
+    }
+
+/** What a reading is judged against: another reading, or the saturation temperature at a pressure reading. */
+export interface ProcessPlantCredibilityReference {
+  readonly path: VariablePath
+  readonly as: 'value' | 'saturationTemperatureC'
+}
 
 export interface ProcessPlantCredibilityTargetRange {
   readonly min?: number
@@ -137,6 +159,17 @@ const valuesAfter = (
   return values
 }
 
+const referenceValue = (reference: ProcessPlantCredibilityReference, value: number): number =>
+  reference.as === 'saturationTemperatureC' ? saturationTemperatureCFromPressureMPa(value) : value
+
+/** A reading above its reference at a time: both sampled together. */
+const aboveAt = (
+  telemetry: ReadonlyArray<ProcessPlantTelemetrySeries>,
+  path: VariablePath,
+  reference: ProcessPlantCredibilityReference,
+  elapsedMs: number,
+): number => valueAtOrAfter(telemetry, path, elapsedMs) - referenceValue(reference, valueAtOrAfter(telemetry, reference.path, elapsedMs))
+
 const measureValue = (
   telemetry: ReadonlyArray<ProcessPlantTelemetrySeries>,
   measure: ProcessPlantCredibilityMeasurement,
@@ -144,6 +177,12 @@ const measureValue = (
   if (measure.kind === 'point') return valueAtOrAfter(telemetry, measure.path, measure.atMs)
   if (measure.kind === 'minAfter') return Math.min(...valuesAfter(telemetry, measure.path, measure.afterMs))
   if (measure.kind === 'maxAfter') return Math.max(...valuesAfter(telemetry, measure.path, measure.afterMs))
+  if (measure.kind === 'deltaAbove') return aboveAt(telemetry, measure.path, measure.reference, measure.toMs) - aboveAt(telemetry, measure.path, measure.reference, measure.fromMs)
+  if (measure.kind === 'maxApartAfter') {
+    const times = seriesFor(telemetry, measure.path).points.filter(point => point.elapsedMs >= measure.afterMs).map(point => point.elapsedMs)
+    if (times.length === 0) throw new Error(`missing process plant credibility points for ${measure.path} after ${measure.afterMs}ms`)
+    return Math.max(...times.map(elapsedMs => Math.abs(aboveAt(telemetry, measure.path, measure.reference, elapsedMs))))
+  }
   return valueAtOrAfter(telemetry, measure.path, measure.toMs) - valueAtOrAfter(telemetry, measure.path, measure.fromMs)
 }
 

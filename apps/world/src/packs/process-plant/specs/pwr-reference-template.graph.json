@@ -18,8 +18,39 @@
         "coolantThermalTimeConstantS": 8,
         "fuelThermalTimeConstantS": 20,
         "fuelTemperatureRiseAtRatedPowerC": 140,
-        "decayHeatFractionAtPower": 0.06,
-        "decayHeatTimeConstantS": 900,
+        "delayedNeutrons": {
+          "fraction": 0.0065,
+          "groups": [
+            { "relativeYield": 0.033, "decayConstantPerS": 0.0124 },
+            { "relativeYield": 0.219, "decayConstantPerS": 0.0305 },
+            { "relativeYield": 0.196, "decayConstantPerS": 0.111 },
+            { "relativeYield": 0.395, "decayConstantPerS": 0.301 },
+            { "relativeYield": 0.115, "decayConstantPerS": 1.14 },
+            { "relativeYield": 0.042, "decayConstantPerS": 3.01 }
+          ]
+        },
+        "decayHeatGroups": [
+          { "fractionOfFissionPower": 0.0184, "timeConstantS": 3 },
+          { "fractionOfFissionPower": 0.015, "timeConstantS": 25 },
+          { "fractionOfFissionPower": 0.0095, "timeConstantS": 200 },
+          { "fractionOfFissionPower": 0.0064, "timeConstantS": 1500 },
+          { "fractionOfFissionPower": 0.0044, "timeConstantS": 12000 },
+          { "fractionOfFissionPower": 0.0027, "timeConstantS": 100000 },
+          { "fractionOfFissionPower": 0.0036, "timeConstantS": 1000000 }
+        ],
+        "temperatureProgram": {
+          "noLoadAverageTemperatureC": 291.7,
+          "fullLoadAverageTemperatureC": 305.7,
+          "turbine": "turbine"
+        },
+        "scram": {
+          "reactivityPcm": 4000,
+          "insertionTimeS": 2.7,
+          "reactorTripBreakers": [
+            "reactorTripBreakerA",
+            "reactorTripBreakerB"
+          ]
+        },
         "referenceCoolantOutletTemperatureC": 322,
         "referenceFuelTemperatureC": 441,
         "coolantTemperatureFeedbackPcmPerC": -3,
@@ -33,19 +64,18 @@
         "maxPowerRampFractionPerS": 0.18,
         "fuelThermalCapacityMjPerC": 45000,
         "nominalPrimaryFlowKgPerS": 17000,
+        "nominalPressureDropMPa": 0.35,
         "coreBypassFlowFraction": 0.05,
         "nominalSourceRangeCountRateCps": 100000,
         "nominalIntermediateRangeCurrentAmps": 0.0005,
+        "p6IntermediateRangeCurrentAmps": 1e-10,
+        "p10PowerRangePercent": 10,
         "minimumNaturalCirculationCoolingFraction": 0.08
       },
       "variables": [
         {
           "path": "powerMw",
-          "description": "Core fission power; procedure-facing proxy for power-range nuclear instrumentation average",
-          "externalRefs": [
-            "NIS-PR-AVG",
-            "nis.power_range.avg"
-          ],
+          "description": "Core fission power, which the power-range nuclear instrumentation reads in percent of rated power (NIS-PR-AVG)",
           "capabilities": {
             "procedureRelevant": true
           },
@@ -78,19 +108,22 @@
           }
         },
         {
-          "path": "sourceRangeEnergized",
-          "tagId": "NIS-SR-HV",
+          "path": "powerRangePercent",
+          "tagId": "NIS-PR-AVG",
           "equipmentId": "nuclear-instrumentation",
-          "description": "Source-range detector high voltage on; cut above P-6, an intermediate-range current of 1e-10 A"
+          "description": "Power-range nuclear instrumentation average, neutron flux in percent of rated thermal power over its 0 to 120 % span",
+          "externalRefs": [
+            "nis.power_range.avg"
+          ],
+          "capabilities": {
+            "procedureRelevant": true
+          }
         },
         {
-          "path": "sourceRangeCountRateCps",
-          "tagId": "NIS-SR",
+          "path": "aboveP10",
+          "tagId": "P-10",
           "equipmentId": "nuclear-instrumentation",
-          "description": "Source-range nuclear instrumentation count rate; no counts while its detectors' high voltage is off above P-6 (NIS-SR-HV)",
-          "externalRefs": [
-            "nis.source_range.count_rate"
-          ]
+          "description": "P-10 permissive: power range above 10 % of rated power; it cuts the source-range high voltage"
         },
         {
           "path": "intermediateRangeCurrentAmps",
@@ -102,6 +135,36 @@
           ]
         },
         {
+          "path": "intermediateRangeStartupRateDpm",
+          "tagId": "NIS-IR-SUR",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "Intermediate-range startup rate in decades a minute over its -0.5 to +5 DPM span; about -1/3 DPM, a -80 s period, minutes after a trip",
+          "externalRefs": [
+            "nis.intermediate_range.startup_rate"
+          ]
+        },
+        {
+          "path": "aboveP6",
+          "tagId": "P-6",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "P-6 permissive: intermediate-range current above 1e-10 A; the source-range high voltage is cut while it holds and comes back on when it clears"
+        },
+        {
+          "path": "sourceRangeEnergized",
+          "tagId": "NIS-SR-HV",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "Source-range detector high voltage on; cut above P-6 (NIS-IR above 1e-10 A) and restored below it, some 15 minutes after a trip from power"
+        },
+        {
+          "path": "sourceRangeCountRateCps",
+          "tagId": "NIS-SR",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "Source-range nuclear instrumentation count rate over its span to 1e6 cps; no counts while its detectors' high voltage is off above P-6 (NIS-SR-HV)",
+          "externalRefs": [
+            "nis.source_range.count_rate"
+          ]
+        },
+        {
           "path": "coreExitTemperatureC",
           "tagId": "CET-AVG",
           "equipmentId": "rcs",
@@ -109,6 +172,18 @@
           "externalRefs": [
             "rcs.core_exit.thermocouple.avg"
           ]
+        },
+        {
+          "path": "referenceAverageTemperatureC",
+          "tagId": "TREF",
+          "equipmentId": "rod-control-system",
+          "description": "Reference average coolant temperature (Tref), programmed from turbine load as its steam flow reads it, 291.7 °C unloaded to the full-load Tavg"
+        },
+        {
+          "path": "averageTemperatureDeviationC",
+          "tagId": "TAVG-TREF",
+          "equipmentId": "rod-control-system",
+          "description": "Average coolant temperature (TAVG) minus its reference (TREF); the deviation rod control would act on"
         }
       ],
       "metadata": {
@@ -215,7 +290,8 @@
         "nominalLevelPercent": 0.55,
         "volumeM3": 51,
         "reliefSetpointMPa": 16.2,
-        "reliefCapacityKgPerS": 85,
+        "reliefCapacityKgPerS": 26.5,
+        "reliefRatedPressureMPa": 16.2,
         "flashingTimeConstantS": 1,
         "condensationTimeConstantS": 20,
         "blockValveStrokeTimeS": 10,
@@ -224,7 +300,7 @@
         "safetyValveAccumulationFraction": 0.03,
         "safetyValveBlowdownFraction": 0.05,
         "heaterCutoffLevelPercent": 17,
-        "backupHeaterCapacityMw": 1.5,
+        "backupHeaterCapacityMw": 1.4,
         "levelControl": {
           "noLoadAverageTemperatureC": 291.7,
           "noLoadLevelPercent": 25,
@@ -252,7 +328,13 @@
           "path": "heaterPowerMw",
           "tagId": "PZR-HTR",
           "equipmentId": "pressurizer",
-          "description": "Pressurizer heater power demand"
+          "description": "Pressurizer proportional (control) heater group power demand; the group is rated 0.4 MW",
+          "limits": {
+            "hardRange": {
+              "min": 0,
+              "max": 0.4
+            }
+          }
         },
         {
           "path": "backupHeatersOn",
@@ -271,6 +353,12 @@
           "tagId": "PZR-LVL-PGM",
           "equipmentId": "pressurizer",
           "description": "Pressurizer level program: the level set for the loops' mean temperature, 25 % at no load to 55 % at full load"
+        },
+        {
+          "path": "levelDeviationPercent",
+          "tagId": "PZR-LVL-DEV",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer level deviation from its program: level minus program, the level control's error"
         },
         {
           "path": "chargingFlowDemandKgPerS",
@@ -387,6 +475,8 @@
         "pressureInventoryGainMPaPerFraction": 0.6,
         "narrowRangeLowerFraction": 0.32,
         "narrowRangeUpperFraction": 0.92,
+        "wideRangeLowerFraction": 0,
+        "wideRangeUpperFraction": 0.92,
         "tubeBundleBottomLevelPercent": 0.02,
         "tubeBundleTopLevelPercent": 0.12
       },
@@ -398,6 +488,15 @@
           "description": "Steam generator A narrow-range level",
           "externalRefs": [
             "secondary.sg.a.level_nr"
+          ]
+        },
+        {
+          "path": "wideRangeLevelPercent",
+          "tagId": "SG-A-LVL-WR",
+          "equipmentId": "sgA",
+          "description": "Steam generator A wide-range level, from just above the tube sheet to the narrow range's upper tap above the separators",
+          "externalRefs": [
+            "secondary.sg.a.level_wr"
           ]
         },
         {
@@ -453,6 +552,8 @@
         "pressureInventoryGainMPaPerFraction": 0.6,
         "narrowRangeLowerFraction": 0.32,
         "narrowRangeUpperFraction": 0.92,
+        "wideRangeLowerFraction": 0,
+        "wideRangeUpperFraction": 0.92,
         "tubeBundleBottomLevelPercent": 0.02,
         "tubeBundleTopLevelPercent": 0.12
       },
@@ -464,6 +565,15 @@
           "description": "Steam generator B narrow-range level",
           "externalRefs": [
             "secondary.sg.b.level_nr"
+          ]
+        },
+        {
+          "path": "wideRangeLevelPercent",
+          "tagId": "SG-B-LVL-WR",
+          "equipmentId": "sgB",
+          "description": "Steam generator B wide-range level, from just above the tube sheet to the narrow range's upper tap above the separators",
+          "externalRefs": [
+            "secondary.sg.b.level_wr"
           ]
         },
         {
@@ -519,6 +629,8 @@
         "pressureInventoryGainMPaPerFraction": 0.6,
         "narrowRangeLowerFraction": 0.32,
         "narrowRangeUpperFraction": 0.92,
+        "wideRangeLowerFraction": 0,
+        "wideRangeUpperFraction": 0.92,
         "tubeBundleBottomLevelPercent": 0.02,
         "tubeBundleTopLevelPercent": 0.12
       },
@@ -530,6 +642,15 @@
           "description": "Steam generator C narrow-range level",
           "externalRefs": [
             "secondary.sg.c.level_nr"
+          ]
+        },
+        {
+          "path": "wideRangeLevelPercent",
+          "tagId": "SG-C-LVL-WR",
+          "equipmentId": "sgC",
+          "description": "Steam generator C wide-range level, from just above the tube sheet to the narrow range's upper tap above the separators",
+          "externalRefs": [
+            "secondary.sg.c.level_wr"
           ]
         },
         {
@@ -585,6 +706,8 @@
         "pressureInventoryGainMPaPerFraction": 0.6,
         "narrowRangeLowerFraction": 0.32,
         "narrowRangeUpperFraction": 0.92,
+        "wideRangeLowerFraction": 0,
+        "wideRangeUpperFraction": 0.92,
         "tubeBundleBottomLevelPercent": 0.02,
         "tubeBundleTopLevelPercent": 0.12
       },
@@ -596,6 +719,15 @@
           "description": "Steam generator D narrow-range level",
           "externalRefs": [
             "secondary.sg.d.level_nr"
+          ]
+        },
+        {
+          "path": "wideRangeLevelPercent",
+          "tagId": "SG-D-LVL-WR",
+          "equipmentId": "sgD",
+          "description": "Steam generator D wide-range level, from just above the tube sheet to the narrow range's upper tap above the separators",
+          "externalRefs": [
+            "secondary.sg.d.level_wr"
           ]
         },
         {
@@ -651,6 +783,8 @@
         "pressureInventoryGainMPaPerFraction": 0.6,
         "narrowRangeLowerFraction": 0.32,
         "narrowRangeUpperFraction": 0.92,
+        "wideRangeLowerFraction": 0,
+        "wideRangeUpperFraction": 0.92,
         "tubeBundleBottomLevelPercent": 0.02,
         "tubeBundleTopLevelPercent": 0.12
       },
@@ -662,6 +796,15 @@
           "description": "Steam generator E narrow-range level",
           "externalRefs": [
             "secondary.sg.e.level_nr"
+          ]
+        },
+        {
+          "path": "wideRangeLevelPercent",
+          "tagId": "SG-E-LVL-WR",
+          "equipmentId": "sgE",
+          "description": "Steam generator E wide-range level, from just above the tube sheet to the narrow range's upper tap above the separators",
+          "externalRefs": [
+            "secondary.sg.e.level_wr"
           ]
         },
         {
@@ -717,6 +860,8 @@
         "pressureInventoryGainMPaPerFraction": 0.6,
         "narrowRangeLowerFraction": 0.32,
         "narrowRangeUpperFraction": 0.92,
+        "wideRangeLowerFraction": 0,
+        "wideRangeUpperFraction": 0.92,
         "tubeBundleBottomLevelPercent": 0.02,
         "tubeBundleTopLevelPercent": 0.12
       },
@@ -728,6 +873,15 @@
           "description": "Steam generator F narrow-range level",
           "externalRefs": [
             "secondary.sg.f.level_nr"
+          ]
+        },
+        {
+          "path": "wideRangeLevelPercent",
+          "tagId": "SG-F-LVL-WR",
+          "equipmentId": "sgF",
+          "description": "Steam generator F wide-range level, from just above the tube sheet to the narrow range's upper tap above the separators",
+          "externalRefs": [
+            "secondary.sg.f.level_wr"
           ]
         },
         {
@@ -762,9 +916,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "A",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -811,9 +966,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "B",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -860,9 +1016,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "C",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -909,9 +1066,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "D",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -958,9 +1116,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "E",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -1007,9 +1166,10 @@
         "nominalHeadPa": 650000,
         "primaryLoopId": "F",
         "loopInertiaTimeConstantS": 7,
-        "coastdownTimeConstantS": 18,
+        "coastdownTimeConstantS": 9,
         "loopResistanceCoefficient": 0,
-        "minimumNaturalCirculationFlowKgPerS": 260
+        "shutoffHeadPa": 1040000,
+        "naturalCirculationHeightM": 7.5
       },
       "variables": [
         {
@@ -1409,8 +1569,9 @@
       "kind": "centrifugalPump",
       "label": "Motor-Driven Auxiliary Feedwater Pump",
       "parameters": {
-        "nominalFlowKgPerS": 30,
+        "nominalFlowKgPerS": 27.6,
         "nominalHeadPa": 9000000,
+        "shutoffHeadPa": 11000000,
         "nominalSpeedRpm": 4500,
         "initialRunning": false,
         "flowTimeConstantS": 4,
@@ -1444,8 +1605,9 @@
       "kind": "centrifugalPump",
       "label": "Motor-Driven Auxiliary Feedwater Pump B",
       "parameters": {
-        "nominalFlowKgPerS": 30,
+        "nominalFlowKgPerS": 27.6,
         "nominalHeadPa": 9000000,
+        "shutoffHeadPa": 11000000,
         "flowTimeConstantS": 6,
         "maxFlowRampKgPerS2": 45,
         "initialRunning": false
@@ -1478,8 +1640,9 @@
       "kind": "centrifugalPump",
       "label": "Turbine-Driven Auxiliary Feedwater Pump",
       "parameters": {
-        "nominalFlowKgPerS": 60,
+        "nominalFlowKgPerS": 55.2,
         "nominalHeadPa": 9000000,
+        "shutoffHeadPa": 11000000,
         "initialRunning": false,
         "flowTimeConstantS": 4,
         "maxFlowRampKgPerS2": 90
@@ -1520,7 +1683,9 @@
       "id": "auxFeedwaterHeader",
       "kind": "processHeader",
       "label": "Auxiliary Feedwater Header",
-      "parameters": {},
+      "parameters": {
+        "distributionMode": "pressureBalance"
+      },
       "variables": [
         {
           "path": "outletFlowKgPerS",
@@ -1543,7 +1708,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve A",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1573,7 +1739,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve B",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1603,7 +1770,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve C",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1633,7 +1801,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve D",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1663,7 +1832,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve E",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -1693,7 +1863,8 @@
       "kind": "processValve",
       "label": "Auxiliary Feedwater Valve F",
       "parameters": {
-        "initialPositionFraction": 0
+        "initialPositionFraction": 0,
+        "cvKgPerSPerSqrtMPa": 22.5
       },
       "variables": [
         {
@@ -7977,7 +8148,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-A-FLOW",
+          "equipmentId": "aux-feedwater-valve-a-to-sg-a",
+          "description": "Auxiliary feedwater flow to steam generator A"
         },
         {
           "path": "temperatureC",
@@ -8045,7 +8219,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-B-FLOW",
+          "equipmentId": "aux-feedwater-valve-b-to-sg-b",
+          "description": "Auxiliary feedwater flow to steam generator B"
         },
         {
           "path": "temperatureC",
@@ -8113,7 +8290,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-C-FLOW",
+          "equipmentId": "aux-feedwater-valve-c-to-sg-c",
+          "description": "Auxiliary feedwater flow to steam generator C"
         },
         {
           "path": "temperatureC",
@@ -8249,7 +8429,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-D-FLOW",
+          "equipmentId": "aux-feedwater-valve-d-to-sg-d",
+          "description": "Auxiliary feedwater flow to steam generator D"
         },
         {
           "path": "temperatureC",
@@ -8283,7 +8466,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-E-FLOW",
+          "equipmentId": "aux-feedwater-valve-e-to-sg-e",
+          "description": "Auxiliary feedwater flow to steam generator E"
         },
         {
           "path": "temperatureC",
@@ -8317,7 +8503,10 @@
           "publish": "telemetry",
           "quantity": "flowRate",
           "unit": "kg/s",
-          "initialValue": 85
+          "initialValue": 85,
+          "tagId": "AFW-F-FLOW",
+          "equipmentId": "aux-feedwater-valve-f-to-sg-f",
+          "description": "Auxiliary feedwater flow to steam generator F"
         },
         {
           "path": "temperatureC",
@@ -11135,9 +11324,15 @@
     "core.temperatureFeedbackPcm",
     "core.effectiveReactivityPcm",
     "core.rodInsertionFraction",
+    "core.referenceAverageTemperatureC",
+    "core.averageTemperatureDeviationC",
+    "core.powerRangePercent",
+    "core.aboveP10",
     "core.sourceRangeCountRateCps",
     "core.sourceRangeEnergized",
     "core.intermediateRangeCurrentAmps",
+    "core.intermediateRangeStartupRateDpm",
+    "core.aboveP6",
     "core.fuelTemperatureC",
     "core.fuelLowerTemperatureC",
     "core.fuelMidTemperatureC",
@@ -11174,6 +11369,7 @@
     "pressurizer-relief-to-tank.flowKgPerS",
     "pressurizer-relief-to-tank.temperatureC",
     "sgA.levelPercent",
+    "sgA.wideRangeLevelPercent",
     "sgA.pressureMPa",
     "sgA.primaryInletTemperatureC",
     "sgA.primaryOutletTemperatureC",
@@ -11202,6 +11398,7 @@
     "feedwater-control-valve-a-to-sg-a.flowKgPerS",
     "aux-feedwater-valve-a-to-sg-a.flowKgPerS",
     "sgB.levelPercent",
+    "sgB.wideRangeLevelPercent",
     "sgB.pressureMPa",
     "sgB.primaryInletTemperatureC",
     "sgB.primaryOutletTemperatureC",
@@ -11230,6 +11427,7 @@
     "feedwater-control-valve-b-to-sg-b.flowKgPerS",
     "aux-feedwater-valve-b-to-sg-b.flowKgPerS",
     "sgC.levelPercent",
+    "sgC.wideRangeLevelPercent",
     "sgC.pressureMPa",
     "sgC.primaryInletTemperatureC",
     "sgC.primaryOutletTemperatureC",
@@ -11258,6 +11456,7 @@
     "feedwater-control-valve-c-to-sg-c.flowKgPerS",
     "aux-feedwater-valve-c-to-sg-c.flowKgPerS",
     "sgD.levelPercent",
+    "sgD.wideRangeLevelPercent",
     "sgD.pressureMPa",
     "sgD.primaryInletTemperatureC",
     "sgD.primaryOutletTemperatureC",
@@ -11718,7 +11917,9 @@
     "charging-pump-b-to-cold-leg-b.soluteConcentrationPpm",
     "letdown-to-vct.soluteConcentrationPpm",
     "sgE.levelPercent",
+    "sgE.wideRangeLevelPercent",
     "sgF.levelPercent",
+    "sgF.wideRangeLevelPercent",
     "sgE.pressureMPa",
     "sgF.pressureMPa",
     "sgE.primaryInletTemperatureC",

@@ -1,3 +1,8 @@
+import type { ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
+import { bySeverity } from '../../../packs/process-plant/displays/display-text.ts'
+import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
+import { gatesHold, limitInForce, type GateStates, type PlantModeNow } from '../../../packs/process-plant/displays/trend-reading.ts'
+
 // Where limit labels go: down a trend's right gutter, or along the head of a
 // comparison's scale. Each label sits at its line where it can and is pushed
 // along it, keeping a leader, so labels never overlap. Only where the room is
@@ -82,4 +87,60 @@ export const limitLabelRanks = (limits: ReadonlyArray<RankedLimit>, current: num
   const distance = (limit: RankedLimit): number => current === undefined ? 0 : Math.abs(limit.value - current)
   const ranked = [...limits].sort((left, right) => tier(left) - tier(right) || distance(left) - distance(right))
   return new Map(ranked.map((limit, index) => [limit.key, index]))
+}
+
+/**
+ * How a limit is drawn in the Plant's current mode: acting where the I&C
+ * applies it now; idle (faint, with its modes or the states it waits for)
+ * where it acts only in other modes, or only while on/off states hold that do
+ * not (SI on low pressure while SI-BLOCKED reads on), even with the value
+ * past it and its rule still latched; qualified (dashed) while the mode is
+ * not known yet.
+ */
+export const limitLook = (threshold: Pick<ComposedDisplayThreshold, 'modeIds' | 'gates'>, mode: PlantModeNow, gates: GateStates): 'acting' | 'qualified' | 'idle' =>
+  !gatesHold(threshold, gates) ? 'idle'
+    : threshold.modeIds === undefined ? 'acting' : mode === undefined ? 'qualified' : limitInForce(threshold, mode) ? 'acting' : 'idle'
+
+/**
+ * What an idle limit's second line says it waits for, as briefly as its mode
+ * label: its modes where the mode leaves it idle ("Modes 1–3"), else the
+ * on/off states it requires ("SI-BLOCKED off").
+ */
+export const idleText = (threshold: Pick<ComposedDisplayThreshold, 'modeIds' | 'modeLabel' | 'gatedBy'>, mode: PlantModeNow): string =>
+  threshold.modeIds !== undefined && mode !== undefined && !limitInForce(threshold, mode) ? threshold.modeLabel! : (threshold.gatedBy ?? []).join(', ')
+
+/** The alarm colour a limit's label takes: its rule's severity while the rule is active and the limit acts now. */
+export const limitSeverity = (
+  threshold: Pick<ComposedTrendThreshold, 'modeIds' | 'gates' | 'ruleIds' | 'severity'>,
+  activeRuleIds: ReadonlySet<string>,
+  mode: PlantModeNow,
+  gates: GateStates,
+): string | null =>
+  limitLook(threshold, mode, gates) !== 'idle' && threshold.ruleIds.some(ruleId => activeRuleIds.has(ruleId)) ? threshold.severity ?? 'warning' : null
+
+/** Limits drawn as one line: every limit at one value, each with a label of its own. */
+export interface LimitLine<T> {
+  readonly key: string
+  readonly value: number
+  /** Those that act now first, then the most severe first (bySeverity): the order their label names them in. */
+  readonly members: ReadonlyArray<T>
+  /** As the member most in force: acting, then qualified, then idle. */
+  readonly look: 'acting' | 'qualified' | 'idle'
+  readonly kind: 'trip' | 'alarm'
+}
+
+/**
+ * Coincident limits merged into one line (evaluation run 22 drew two
+ * identical "LO TRIP 20" lines for the reactor trip and the AFW start),
+ * highest value first as they read down a gutter.
+ */
+export const limitLines = <T extends Pick<ComposedTrendThreshold, 'value' | 'kind' | 'severity' | 'reactorTrip' | 'modeIds' | 'gates'>>(thresholds: ReadonlyArray<T>, mode: PlantModeNow, gates: GateStates): ReadonlyArray<LimitLine<T>> => {
+  const rank = { acting: 0, qualified: 1, idle: 2 } as const
+  const values = [...new Set(thresholds.filter(threshold => threshold.kind !== 'control').map(threshold => threshold.value))].sort((left, right) => right - left)
+  return values.map(value => {
+    const members = thresholds.filter(threshold => threshold.kind !== 'control' && threshold.value === value)
+      .sort((left, right) => rank[limitLook(left, mode, gates)] - rank[limitLook(right, mode, gates)] || bySeverity(left, right))
+    const look = members.map(member => limitLook(member, mode, gates)).sort((left, right) => rank[left] - rank[right])[0]!
+    return { key: String(value), value, members, look, kind: members.some(member => member.kind === 'trip') ? 'trip' : 'alarm' }
+  })
 }

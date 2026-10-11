@@ -31,7 +31,8 @@ export const assertProcessPlantValueWithinPhysicalBounds = (
   if (quantity === 'ratio' && variable.descriptor.unit === 'fraction' && (hardRange?.max ?? 1) <= 1 && (value < 0 || value > 1)) {
     throw new Error(`process plant variable ${path} fraction value must be between 0 and 1`)
   }
-  if (quantity === 'ratio' && variable.descriptor.unit === 'percent' && (value < 0 || value > 100)) {
+  // A percent stays within 0 to 100 unless its hard range declares a signed span (a deviation from a program).
+  if (quantity === 'ratio' && variable.descriptor.unit === 'percent' && (hardRange?.min ?? 0) >= 0 && (value < 0 || value > 100)) {
     throw new Error(`process plant variable ${path} percent value must be between 0 and 100`)
   }
   if (

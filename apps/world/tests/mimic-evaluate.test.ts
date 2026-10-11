@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { MimicFlowBinding, MimicItemBinding, MimicStateBinding } from '../src/packs/process-plant/displays/mimic/bindings.ts'
 import { flowLook, indexSample, itemLook, powerLook } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
-import { drawnLook, itemRows, itemTreatment } from '../src/packs/process-plant/displays/mimic/rows.ts'
+import { drawnLook, itemRows, itemTreatment, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
 
 const sample = (values: Record<string, number | boolean>, quality: Record<string, string> = {}) =>
   indexSample(Object.entries(values).map(([path, value]) => ({ path, value, quality: quality[path] ?? 'good' })))
@@ -20,6 +20,20 @@ describe('mimic state of one sample', () => {
     // Loss of power: commanded to run, not turning.
     expect(itemLook(pump, sample({ 'p.speedRpm': 0, 'p.running': true }))).toMatchObject({ state: { kind: 'stopped' }, mismatch: 'CMD RUN', words: 'stopped; commanded to run' })
     expect(itemLook(pump, sample({ 'p.running': true })).state.kind).toBe('unknown')
+  })
+
+  test('a pump writes RUN as it writes STOP, so its icon\'s fill is never all that tells them apart', () => {
+    const presentation = { element: 'device' } as never
+    const rows = (stacked: boolean) => itemRows(pump, presentation, { marker: false, members: [], commands: stacked ? 'stacked' : 'inline', offSpan: 'end' })
+    for (const stacked of [false, true]) {
+      const state = rows(stacked)[0]!
+      expect(state.kind === 'state' && state.texts.includes('RUN') && state.texts.includes('STOP')).toBe(true)
+      const words = (values: Record<string, number | boolean>) => rows(stacked).map(row => rowText(row, itemLook(pump, sample(values)), sample(values), String))
+      expect(words({ 'p.speedRpm': 1200, 'p.running': true })[0]).toBe('RUN')
+      expect(words({ 'p.speedRpm': 0, 'p.running': false })[0]).toBe('STOP')
+      // A run command it does not follow still says so.
+      expect(words({ 'p.speedRpm': 0, 'p.running': true }).join(' ')).toContain('RUN')
+    }
   })
 
   test('a valve sits where it actually is; a stuck one shows the demand it ignores', () => {
@@ -49,7 +63,7 @@ describe('mimic state of one sample', () => {
     expect(itemTreatment(itemLook(valve, sample({})), false)).toBe('normal')
     // A group stands out while any member disagrees.
     const second = item({ aspect: 'running', state: { path: 'q.speedRpm' as never, reading: 'aboveZero' }, command: 'q.running' as never })
-    const rows = itemRows(pump, { element: 'device', icon: 'pump', aspect: 'running' }, { marker: false, members: [pump, second], commands: 'stacked' })
+    const rows = itemRows(pump, { element: 'device', icon: 'pump', aspect: 'running' }, { marker: false, members: [pump, second], commands: 'stacked', offSpan: 'end' })
     expect(itemTreatment(drawnLook(pump, rows, sample({ 'p.speedRpm': 1200, 'p.running': true, 'q.speedRpm': 0, 'q.running': true })), false)).toBe('abnormal')
     expect(itemTreatment(drawnLook(pump, rows, sample({ 'p.speedRpm': 1200, 'p.running': true, 'q.speedRpm': 0, 'q.running': false })), false)).toBe('normal')
   })

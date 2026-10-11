@@ -15,8 +15,9 @@ import {
   sumOutgoingComponentLinkValue,
   sumProcessLinkValueByService as sumLinkValueByService,
 } from '../component-link-helpers.ts'
-import { flowWeightedIncomingLinkValue, sumIncomingLinkValue } from '../links/link-flow-helpers.ts'
-import { reactorKineticsPowerStep } from '../physics.ts'
+import { flowWeightedIncomingLinkValue } from '../links/link-flow-helpers.ts'
+import { primaryLoopLegReversed, reactorCoreNetInflowKgPerS } from '../primary-loop-hydraulics.ts'
+import { decayHeatGroupStep, reactorKineticsPowerStep } from '../physics.ts'
 import { primarySystemPressurizer, primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
 import { saturationTemperatureCFromPressureMPa } from '../thermophysics.ts'
 import {
@@ -28,7 +29,8 @@ import {
 } from '../water-properties.ts'
 import { pressurizerSprayFlowKgPerS } from './pressurizer-behaviors.ts'
 import { primaryBreakFlow } from '../links/primary-break-flow.ts'
-import { nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
+import { intermediateRangeStartupRateDpm, nuclearInstrumentationReading } from '../nuclear-instrumentation.ts'
+import { decayHeatGroupCount, delayedNeutronGroupCount, reactorNeutronics, reactorTemperatureProgram } from '../../graph/reactor-component-definitions.ts'
 
 type ReactorBehaviorSystem = Parameters<ComponentBehaviorDefinition['update']>[0]['system']
 type ReactorBehaviorContext = Parameters<ComponentBehaviorDefinition['update']>[0]['context']
@@ -134,6 +136,19 @@ const combineBoundaryInflows = (inflows: ReadonlyArray<BoundaryInflow>): Boundar
 
 type ReactorBehaviorComponent = ReactorBehaviorSystem['graph']['components'][number]
 
+const delayedNeutronGroupLocalPaths = Array.from({ length: delayedNeutronGroupCount }, (_, index) => `delayedNeutronGroup${index + 1}PowerMw`)
+const decayHeatGroupLocalPaths = Array.from({ length: decayHeatGroupCount }, (_, index) => `decayHeatGroup${index + 1}Mw`)
+const delayedNeutronGroupPaths = (core: ReactorBehaviorComponent) => delayedNeutronGroupLocalPaths.map(localPath => componentVariablePath(core, localPath))
+const decayHeatGroupPaths = (core: ReactorBehaviorComponent) => decayHeatGroupLocalPaths.map(localPath => componentVariablePath(core, localPath))
+
+/** Whether any of the core's reactor trip breakers reads open. */
+const rodDrivePowerLost = (system: ReactorBehaviorSystem, core: ReactorBehaviorComponent, breakerIds: ReadonlyArray<string>, context: ReactorBehaviorContext): boolean =>
+  breakerIds.some(id => {
+    const index = system.graph.componentIndexById.get(id as never)
+    if (index === undefined) throw new Error(`reactor core ${core.id} names reactor trip breaker ${id}, which is not a component of the Plant`)
+    return !context.readBoolean(componentVariablePath(system.graph.components[index]!, 'closedState'))
+  })
+
 /** The steam the reactor coolant system's breaks discharge, at the flow each break link carries. */
 const primaryBreakSteamFlowKgPerS = (system: ReactorBehaviorSystem, context: ReactorBehaviorContext): number => {
   let steam = 0
@@ -199,14 +214,23 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
     id: 'reactor-core-reactivity-control',
     phase: 'updateControlLogic',
     componentKind: 'reactorCore',
-    reads: ['rodInsertionFraction', 'reactivityPcm'],
+    reads: ['rodInsertionFraction', 'reactivityPcm', 'reactor trip breakers closedState'],
     writes: ['promptReactivityPcm', 'reactivityPcm'],
-    update: ({ component, context }): void => {
+    update: ({ system, component, context }): void => {
       if (!hasComponentVariable(component, 'rodInsertionFraction') || !hasComponentVariable(component, 'reactivityPcm')) return
+      const reactivity = context.readNumber(componentVariablePath(component, 'reactivityPcm'))
+      const { scram } = reactorNeutronics(component)
+      // The trip breakers carry the rod drives' power in series: either one
+      // open drops every rod, whatever the rod control demands, and the rods
+      // insert the scram worth in their drop time.
+      if (rodDrivePowerLost(system, component, scram.reactorTripBreakers, context)) {
+        context.write(componentVariablePath(component, 'promptReactivityPcm'), -scram.reactivityPcm)
+        context.write(componentVariablePath(component, 'reactivityPcm'), approach(reactivity, -scram.reactivityPcm, scram.reactivityPcm / scram.insertionTimeS * context.dtSeconds))
+        return
+      }
       const rodInsertion = clamp(context.readNumber(componentVariablePath(component, 'rodInsertionFraction')), 0, 1)
       const criticalRodInsertion = optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - parameterNumber(component, 'initialPowerFraction'), 0, 1))
       const targetReactivity = (criticalRodInsertion - rodInsertion) * optionalParameterNumber(component, 'rodWorthPcm', 1_200)
-      const reactivity = context.readNumber(componentVariablePath(component, 'reactivityPcm'))
       context.write(componentVariablePath(component, 'promptReactivityPcm'), targetReactivity)
       context.write(componentVariablePath(component, 'reactivityPcm'), approach(reactivity, targetReactivity, 500 * context.dtSeconds))
     },
@@ -239,10 +263,14 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       'fuelLowerTemperatureC',
       'fuelMidTemperatureC',
       'fuelUpperTemperatureC',
-      'decayHeatMw',
+      'delayedNeutronGroup1PowerMw',
+      'decayHeatGroup1Mw',
+      'pumpHeatMw',
       'incoming:flowKgPerS',
+      'steamGenerator.heatTransferMw',
       'reactorVessel.boronConcentrationPpm',
       'reactorVessel.loopVoidFraction',
+      'intermediateRangeCurrentAmps',
     ],
     writes: [
       'powerMw',
@@ -261,10 +289,16 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       'coreHeatRemovalDeficitMw',
       'fuelHeatupRateCPerS',
       'decayHeatMw',
+      ...delayedNeutronGroupLocalPaths,
+      ...decayHeatGroupLocalPaths,
       'averageHotLegFlowKgPerS',
+      'powerRangePercent',
+      'aboveP10',
+      'intermediateRangeCurrentAmps',
+      'intermediateRangeStartupRateDpm',
+      'aboveP6',
       'sourceRangeEnergized',
       'sourceRangeCountRateCps',
-      'intermediateRangeCurrentAmps',
     ],
     update: ({ system, component, context }): void => {
       const ratedPower = parameterNumber(component, 'ratedPowerMw')
@@ -289,7 +323,9 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
         : context.readNumber(componentVariablePath(vessel, 'loopVoidFraction')) * 100 * optionalParameterNumber(component, 'voidFeedbackPcmPerPercent', 0)
       const effectiveReactivity = reactivity + temperatureFeedbackPcm + boronFeedbackPcm + voidFeedbackPcm
       const currentPower = context.readNumber(componentVariablePath(component, 'powerMw'))
-      const nextPower = reactorKineticsPowerStep({
+      const neutronics = reactorNeutronics(component)
+      const precursorPaths = delayedNeutronGroupPaths(component)
+      const kinetics = reactorKineticsPowerStep({
         currentPowerMw: currentPower,
         ratedPowerMw: ratedPower,
         nominalCriticalPowerMw: ratedPower * parameterNumber(component, 'initialPowerFraction'),
@@ -298,7 +334,12 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
         pcmPerEfoldPerSecond: optionalParameterNumber(component, 'kineticsPcmPerEfoldPerSecond', 600),
         maxPowerRampFractionPerS: optionalParameterNumber(component, 'maxPowerRampFractionPerS', 0.18),
         maxPowerFraction: 1.2,
+        delayedNeutronFraction: neutronics.delayedNeutrons.fraction,
+        delayedNeutronGroups: neutronics.delayedNeutrons.groups,
+        precursorPowerMw: precursorPaths.map(path => context.readNumber(path)),
       })
+      const nextPower = kinetics.powerMw
+      precursorPaths.forEach((path, index) => context.write(path, kinetics.precursorPowerMw[index]!))
       context.write(componentVariablePath(component, 'powerMw'), nextPower)
       context.write(componentVariablePath(component, 'fissionPowerMw'), nextPower)
       context.write(componentVariablePath(component, 'temperatureFeedbackPcm'), temperatureFeedbackPcm)
@@ -307,25 +348,38 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'effectiveReactivityPcm'), effectiveReactivity)
 
       // Core thermal power is the prompt share of fission power plus the decay
-      // heat of earlier fissions. At equilibrium the decay heat is that same
-      // share of fission power, so thermal and fission power agree at steady
-      // power and part after a trip, when the decay heat lingers.
-      const decayFraction = optionalParameterNumber(component, 'decayHeatFractionAtPower', 0.06)
-      const decayTarget = Math.max(currentPower, nextPower) * decayFraction
-      const decayHeat = context.readNumber(componentVariablePath(component, 'decayHeatMw'))
-      const nextDecayHeat = relaxToward(decayHeat, decayTarget, context.dtSeconds, optionalParameterNumber(component, 'decayHeatTimeConstantS', 900))
+      // heat of earlier fissions, in groups that each hold their share of
+      // fission power at equilibrium and decay with their own time constant.
+      // At steady power thermal and fission power agree; after a trip the
+      // decay heat lingers on the shape of the ANS-5.1 curve.
+      let decayFraction = 0
+      let nextDecayHeat = 0
+      decayHeatGroupPaths(component).forEach((path, index) => {
+        const group = neutronics.decayHeatGroups[index]!
+        const groupHeat = decayHeatGroupStep({ currentMw: context.readNumber(path), fissionPowerMw: nextPower, fractionOfFissionPower: group.fractionOfFissionPower, timeConstantS: group.timeConstantS, dtSeconds: context.dtSeconds })
+        context.write(path, groupHeat)
+        decayFraction += group.fractionOfFissionPower
+        nextDecayHeat += groupHeat
+      })
       const totalThermalPower = nextPower * (1 - decayFraction) + nextDecayHeat
       context.write(componentVariablePath(component, 'decayHeatMw'), nextDecayHeat)
       context.write(componentVariablePath(component, 'totalThermalPowerMw'), totalThermalPower)
 
-      const primaryFlow = sumIncomingLinkValue(system, component.index, 'flowKgPerS', context, link => link.service === 'primaryCoolant')
+      const primaryFlow = reactorCoreNetInflowKgPerS(system, component, context)
       const nominalPrimaryFlow = optionalParameterNumber(component, 'nominalPrimaryFlowKgPerS', Math.max(1, primaryFlow))
       const minimumCooling = optionalParameterNumber(component, 'minimumNaturalCirculationCoolingFraction', 0.08)
       context.write(componentVariablePath(component, 'averageHotLegFlowKgPerS'), primaryFlow)
       const coolingMargin = clamp(primaryFlow / Math.max(1, nominalPrimaryFlow), minimumCooling, 1.2)
-      const creditedCooling = clamp(coolingMargin, 0, 1)
-      const heatRemovalDeficit = Math.max(0, totalThermalPower * (1 - creditedCooling))
       const thermalFraction = clamp(totalThermalPower / ratedPower, 0, 1.25)
+      // The core is cooled while its flow carries its heat within the rise
+      // it was rated for; the flow that needs falls with the power, so the
+      // natural circulation of a few percent cools a tripped core in full.
+      const flowFraction = Math.max(0, primaryFlow) / Math.max(1, nominalPrimaryFlow)
+      const creditedCooling = thermalFraction <= 0 ? 1 : clamp(flowFraction / thermalFraction, 0, 1)
+      // What of the heat the coolant takes from the core and the pumps the
+      // steam generators do not take out heats the coolant.
+      const heatRemovalDeficit = Math.max(0, totalThermalPower + context.readNumber(componentVariablePath(component, 'pumpHeatMw'))
+        - sumComponentValueByKind(system, 'steamGenerator', 'heatTransferMw', context))
       const fuelRise = optionalParameterNumber(component, 'fuelTemperatureRiseAtRatedPowerC', 140)
         * thermalFraction
         / Math.sqrt(Math.max(0.05, coolingMargin))
@@ -342,10 +396,15 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'coreCoolingAvailabilityFraction'), creditedCooling)
       context.write(componentVariablePath(component, 'coreHeatRemovalDeficitMw'), heatRemovalDeficit)
       context.write(componentVariablePath(component, 'fuelHeatupRateCPerS'), (nextAverageFuelTemperature - currentFuelTemperature) / Math.max(context.dtSeconds, 1e-9))
+      const previousIntermediateRangeCurrent = context.readNumber(componentVariablePath(component, 'intermediateRangeCurrentAmps'))
       const instruments = nuclearInstrumentationReading(component, nextPower)
+      context.write(componentVariablePath(component, 'powerRangePercent'), instruments.powerRangePercent)
+      context.write(componentVariablePath(component, 'aboveP10'), instruments.aboveP10)
+      context.write(componentVariablePath(component, 'intermediateRangeCurrentAmps'), instruments.intermediateRangeCurrentAmps)
+      context.write(componentVariablePath(component, 'intermediateRangeStartupRateDpm'), intermediateRangeStartupRateDpm(previousIntermediateRangeCurrent, instruments.intermediateRangeCurrentAmps, context.dtSeconds))
+      context.write(componentVariablePath(component, 'aboveP6'), instruments.aboveP6)
       context.write(componentVariablePath(component, 'sourceRangeEnergized'), instruments.sourceRangeEnergized)
       context.write(componentVariablePath(component, 'sourceRangeCountRateCps'), instruments.sourceRangeCountRateCps)
-      context.write(componentVariablePath(component, 'intermediateRangeCurrentAmps'), instruments.intermediateRangeCurrentAmps)
     },
   },
   {
@@ -356,15 +415,15 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
     writes: ['coolantInletTemperatureC', 'coolantOutletTemperatureC', 'coreExitTemperatureC', 'vapourGenerationKgPerS'],
     update: ({ system, component, context }): void => {
       const dt = context.dtSeconds
-      const primaryInletLink = (link: { readonly service?: unknown }): boolean =>
-        link.service === 'primaryCoolant'
+      const primaryInletLink = (link: ReactorBehaviorLink): boolean =>
+        (link.service === 'primaryCoolant' && !primaryLoopLegReversed(system, link, context))
         || link.service === 'charging'
         || link.service === 'primaryInjection'
         || link.service === 'safetyInjection'
       const mixedInletTemperature = flowWeightedIncomingLinkValue(system, component.index, 'temperatureC', context, primaryInletLink)
         ?? averageIncomingLinkValue(system, component, 'temperatureC', context, link => link.service === 'primaryCoolant')
         ?? context.readNumber(componentVariablePath(component, 'coolantInletTemperatureC'))
-      const flow = Math.max(1, sumIncomingLinkValue(system, component.index, 'flowKgPerS', context, link => link.service === 'primaryCoolant'))
+      const flow = Math.max(1, reactorCoreNetInflowKgPerS(system, component, context))
       const pressure = coolantPressureMPa(system, component, context)
       const saturation = saturatedWaterSteam(pressure)
       const latentHeat = saturation.vapourEnthalpyKjPerKg - saturation.liquidEnthalpyKjPerKg
@@ -589,6 +648,29 @@ export const reactorBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefiniti
       context.write(componentVariablePath(component, 'meanPrimaryCoolantTemperatureC'), meanPrimaryCoolantTemperature)
       context.write(componentVariablePath(component, 'subcoolingMarginC'), subcoolingMargin)
       context.write(componentVariablePath(component, 'primaryReleaseRadiationMSvPerH'), primaryReleaseRadiation)
+    },
+  },
+  {
+    id: 'reactor-core-temperature-program',
+    // After the vessel's own update, so it compares this step's Tavg.
+    phase: 'updateComponentState',
+    componentKind: 'reactorCore',
+    reads: ['reactorVessel.meanPrimaryCoolantTemperatureC', 'turbine steamFlowKgPerS'],
+    writes: ['referenceAverageTemperatureC', 'averageTemperatureDeviationC'],
+    update: ({ system, component, context }): void => {
+      // Rod control programs Tref from turbine load, as the turbine's
+      // first-stage pressure reads it: its steam flow over its rated flow, from
+      // the no-load to the full-load average coolant temperature.
+      const program = reactorTemperatureProgram(component)
+      const turbineIndex = system.graph.componentIndexById.get(program.turbine as never)
+      if (turbineIndex === undefined) throw new Error(`reactor core ${component.id} programs Tref from turbine ${program.turbine}, which is not a component of the Plant`)
+      const turbine = system.graph.components[turbineIndex]!
+      const vessel = primarySystemReactorVessel(system)
+      if (vessel === null) throw new Error(`reactor core ${component.id} needs a reactor vessel to compare its average coolant temperature with Tref`)
+      const load = clamp(context.readNumber(componentVariablePath(turbine, 'steamFlowKgPerS')) / parameterNumber(turbine, 'nominalSteamFlowKgPerS'), 0, 1)
+      const reference = program.noLoadAverageTemperatureC + load * (program.fullLoadAverageTemperatureC - program.noLoadAverageTemperatureC)
+      context.write(componentVariablePath(component, 'referenceAverageTemperatureC'), reference)
+      context.write(componentVariablePath(component, 'averageTemperatureDeviationC'), context.readNumber(componentVariablePath(vessel, 'meanPrimaryCoolantTemperatureC')) - reference)
     },
   },
 ]

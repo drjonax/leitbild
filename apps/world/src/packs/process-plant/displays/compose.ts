@@ -13,7 +13,6 @@ import type {
 } from '../graph/index.ts'
 import { linkCarrier, processSignalTagIdSchema, variablePathSchema } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
-import { processPlantOperatingMode } from '../runtime/index.ts'
 import { findProcessPlantSignalBinding } from '../signals.ts'
 import {
   COMPOSED_DISPLAY_MAX_HEIGHT_PX,
@@ -39,15 +38,18 @@ import {
   type ComposedDisplaySignalRole,
   type ComposedPanelShape,
   type ComposedPanelSize,
+  type DisplayEvidence,
 } from './composition.ts'
-import { displayValue, formatQuantity, isPast, nearestThresholdMargin, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
-import { appendPoint, COMPARISON_HISTORY_MS, limitsInForce, limitStateText, rateWindowMs, readingLookBackMs, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
+import { displayValue, isPast, marginLimitName, nearestThresholdMargin, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
+import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
 import { principalCircuits } from './mimic/principal.ts'
-import { equipmentKeyValues, leadValuesKey, overviewKeyValues, type PlantNow } from './overview-key-values.ts'
-import { annunciatorSystems, type AnnunciatorSystem } from './annunciators.ts'
+import { equipmentKeyValues, leadValuesKey, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
+import { annunciatorSystems, displayAnnunciation, type AnnunciatorSystem, type DisplayAnnunciation } from './annunciators.ts'
+import { operatingPointValue } from './operating-point.ts'
+import { shorterSignalNames } from './signal-names.ts'
 import { MIMIC_REACH_LINKS, componentDescription, itemServices, plantCarriers, plantLoops, portName, resolveEquipmentName, resolveMimicScope, serviceResembles, withOtherServicesStopped } from './mimic/scope.ts'
 import type { CompiledMimic } from './mimic/mimic-model.ts'
 import {
@@ -65,6 +67,8 @@ export interface ComposedDisplayPen {
   readonly label: string
   /** What operators call it: the tag, or the label with its equipment ("Feedwater inflow · Steam Generator B"). */
   readonly name: string
+  /** Shorter forms of a name that is not a tag, from longest to shortest, for a room too narrow for it (signal-names.ts). */
+  readonly shorterNames: ReadonlyArray<string>
   /** The label with its equipment, where the label does not name it: what a state reads as ("Electrical bus energized · Safety Bus A"). */
   readonly described: string
   /** One measurement across parallel equipment ("steam-generator.levelPercent|percent"); pens sharing it share an axis. */
@@ -82,11 +86,20 @@ export interface ComposedDisplayPen {
    */
   readonly command: boolean
   readonly limits?: ProcessVariableLimits
+  /** The finest step its reading is shown in, in native units (readingResolution); null where the model declares nothing to derive it from. */
+  readonly resolution: number | null
   readonly thresholds: ReadonlyArray<ComposedDisplayThreshold>
   readonly combinedRules: ReadonlyArray<ComposedDisplayCombinedRule>
+  /** Added by World to an agent's display (evidence.ts): why, labelled on the readout. */
+  readonly added?: Pick<DisplayEvidence, 'kind' | 'reason'>
 }
 
-/** A threshold drawn on a panel: one per distinct rule action of the primary signals. */
+/**
+ * A threshold drawn on a panel: one per limit identity (its value, order,
+ * action and modes) among the panel's signals, so parallel loops' limits
+ * share one. Limits of different identity at one value (the AFW start and
+ * the reactor trip at 20 %) are drawn as one line with a label for each.
+ */
 export interface ComposedTrendThreshold extends ComposedDisplayThreshold {
   /** Every rule merged into this line, so an active alarm on any of them marks it. */
   readonly ruleIds: ReadonlyArray<string>
@@ -123,6 +136,8 @@ export interface ComposedComparisonPanel {
 export interface ComposedReadoutsPanel {
   readonly kind: 'readouts'
   readonly pens: ReadonlyArray<ComposedDisplayPen>
+  /** Every value in it was added by World (evidence.ts): a line over them says so. */
+  readonly added?: true
   /**
    * A generated display's lead values: the time the sparkline beside each
    * recorded one spans, in the column beside the drawing. Advice readouts
@@ -163,6 +178,8 @@ export interface CompiledComposedDisplay {
   readonly modelDigest: string
   readonly height: number
   readonly panels: ReadonlyArray<CompiledComposedPanel>
+  /** How its banner, actuation line and alarm rows name what the Plant's alarms and trips do. */
+  readonly annunciation: DisplayAnnunciation
 }
 
 export interface ComposedDisplayIssue {
@@ -220,14 +237,8 @@ const suggestionsFor = (ref: string, graph: CompiledPlantGraph): ReadonlyArray<s
     .map(({ binding }) => `${binding.tagId ?? binding.path} (${binding.label}, ${binding.unit})`)
 }
 
-/** The Plant's declared operating mode and live values now: what a detail's lead values are chosen by. */
-const plantNow = (system: ProcessPlantRuntimeInstance): PlantNow => {
-  const modes = system.plant.automation.operatingModes
-  return {
-    mode: modes.length === 0 ? null : processPlantOperatingMode({ system: system.plant, runtime: system.runtime, modes })?.id ?? null,
-    read: path => system.runtime.readVariableSnapshot(path).value,
-  }
-}
+/** The Plant's declared operating mode and live values now: what lead values are chosen by. */
+const plantNow = plantNowOf
 
 /**
  * What equipment opened now leads with besides itself (the Plant's mode, and
@@ -235,6 +246,13 @@ const plantNow = (system: ProcessPlantRuntimeInstance): PlantNow => {
  * the same values, so a cached detail is reused only while it still holds.
  */
 export const detailLeadKey = (system: ProcessPlantRuntimeInstance): string => leadValuesKey(system.plant, plantNow(system))
+
+/**
+ * What a unit overview leads with now: it follows the Plant's mode and what
+ * its protection can still do, so a cached overview is reused only while
+ * these hold.
+ */
+export const overviewLeadKey = (system: ProcessPlantRuntimeInstance): string => overviewKeyValues(system.plant, plantNow(system)).join(',')
 
 const resolveRef = (system: ProcessPlantRuntimeInstance, ref: string): ProcessSignalBinding | undefined => {
   const tag = processSignalTagIdSchema.safeParse(ref)
@@ -254,13 +272,13 @@ const zodIssues = (error: z.ZodError): ReadonlyArray<ComposedDisplayIssue> => er
 
 // Every displayed signal's thresholds are drawn: an operator must see when any
 // of them nears or crosses a limit. Parallel loops share set points, so one
-// line per distinct rule action (kind, direction, value, mode) keeps the panel
-// readable and names every signal it covers.
+// threshold per limit identity (kind, direction, value, order, action, modes)
+// keeps the panel readable and names every signal it covers.
 const drawnThresholds = (pens: ReadonlyArray<ComposedDisplayPen>): ReadonlyArray<ComposedTrendThreshold> => {
   const byAction = new Map<string, ComposedTrendThreshold>()
   for (const pen of pens) {
     for (const threshold of pen.thresholds) {
-      const key = `${threshold.kind}|${threshold.direction}|${threshold.value}|${threshold.modeLabel ?? ''}`
+      const key = `${threshold.kind}|${threshold.direction}|${threshold.value}|${threshold.order}|${threshold.action}|${threshold.modeLabel ?? ''}|${(threshold.gatedBy ?? []).join(',')}`
       const signal = pen.tagId ?? String(pen.path)
       const existing = byAction.get(key)
       byAction.set(key, existing === undefined
@@ -337,6 +355,7 @@ const resolvePens = (
       ...(binding.tagId === undefined ? {} : { tagId: binding.tagId }),
       label: binding.label,
       name: identity.name,
+      shorterNames: shorterSignalNames(system.plant.graph, binding, identity.name),
       described: identity.described,
       measurement: identity.measurement,
       unit: binding.unit,
@@ -346,6 +365,7 @@ const resolvePens = (
       recorded: options.recordedSeriesIds.has(seriesId),
       command: binding.writable,
       ...(binding.limits === undefined ? {} : { limits: binding.limits }),
+      resolution: readingResolution(binding.limits, thresholds, operatingPointValue(system.plant, binding.path)),
       thresholds,
       combinedRules,
     })
@@ -424,7 +444,7 @@ const compilePanel = (
 const panelShape = (panel: UnsizedPanel): ComposedPanelShape => {
   if (panel.kind === 'trend') return { kind: 'trend', strips: panel.strips.map(strip => strip.pens.length), live: panel.live.length }
   if (panel.kind === 'comparison') return { kind: 'comparison', rows: panel.pens.length }
-  if (panel.kind === 'readouts') return { kind: 'readouts', values: panel.pens.length }
+  if (panel.kind === 'readouts') return { kind: 'readouts', values: panel.pens.length, ...(panel.added === true ? { added: true } : {}) }
   if (panel.kind === 'mimic') return { kind: 'mimic', height: panel.mimic.height }
   return { kind: 'alarms' }
 }
@@ -763,8 +783,62 @@ export const compileComposedDisplay = (
       modelDigest: system.plant.modelDigest,
       height: fit.height,
       panels: compiled.map(panel => panel.kind === 'alarms' ? { ...panel, ruleIds } : panel),
+      annunciation: displayAnnunciation(system.plant),
     },
   }
+}
+
+/**
+ * An agent's display with what World adds to it (evidence.ts), each value
+ * labelled as added: first in the free places of the last row of the agent's
+ * readouts, then in one panel of its own over the alarms, under a line that
+ * says so, or where that line does not fit, in further rows of the agent's
+ * readouts. It never makes a display taller than a chat view allows: trends
+ * shrink first, then the least telling values are left out. A value that no
+ * longer resolves (a display re-opened on a changed model) is refused as any
+ * other signal is.
+ */
+export const withEvidence = (
+  system: ProcessPlantRuntimeInstance,
+  display: CompiledComposedDisplay,
+  evidence: ReadonlyArray<DisplayEvidence>,
+  recordedSeriesIds: ReadonlySet<string>,
+): { readonly ok: true; readonly display: CompiledComposedDisplay; readonly evidence: ReadonlyArray<DisplayEvidence> } | { readonly ok: false; readonly issues: ReadonlyArray<ComposedDisplayIssue> } => {
+  if (evidence.length === 0) return { ok: true, display, evidence }
+  const issues: ComposedDisplayIssue[] = []
+  const resolved = resolvePens(system, evidence.map(entry => ({ ref: entry.path, role: 'context' as const })), 'evidence', { numericOnly: false, panelName: 'evidence', recordedSeriesIds }, issues)
+  if (resolved === undefined) return { ok: false, issues }
+  const pens = resolved.map((pen, index): ComposedDisplayPen => ({ ...pen, added: { kind: evidence[index]!.kind, reason: evidence[index]!.reason } }))
+  const perRow = composedDisplayLayout.readoutsPerRow
+  const readouts = display.panels.findIndex(panel => panel.kind === 'readouts')
+  const free = readouts === -1 ? 0 : (perRow - (composedPanelPens(display.panels[readouts]!).length % perRow)) % perRow
+  const joined = pens.slice(0, free)
+  const own = display.panels.map((panel, index) => index === readouts && panel.kind === 'readouts' && joined.length > 0 ? { ...panel, pens: [...panel.pens, ...joined] } : panel)
+  const alarms = own.findIndex(panel => panel.kind === 'alarms')
+  const at = alarms === -1 ? own.length : alarms
+  const kept = (panels: ReadonlyArray<CompiledComposedPanel>, count: number) => {
+    const fit = fitComposedDisplay(panels.map(panelShape))
+    if (fit.height > composedDisplayMaxHeight(panels)) return null
+    const sized = panels.map((panel, index): CompiledComposedPanel => {
+      if (panel.kind !== 'trend') return panel
+      const size = fit.panels[index]
+      if (size?.kind !== 'trend') throw new Error('fitted panels follow the compiled panels')
+      return { ...panel, plot: size.plot }
+    })
+    return { ok: true as const, display: { ...display, height: fit.height, panels: sized }, evidence: evidence.slice(0, count) }
+  }
+  for (let count = pens.length; count > joined.length; count -= 1) {
+    const added: ComposedReadoutsPanel = { kind: 'readouts', pens: pens.slice(joined.length, count), added: true }
+    const fitted = kept([...own.slice(0, at), added, ...own.slice(at)], count)
+    if (fitted !== null) return fitted
+    // Where a panel of its own, with its line and gap, does not fit, the values join the agent's readouts in
+    // rows of their own, each still labelled as added (evaluation run 22: a pressurizer depressurization 2 px
+    // too tall to carry the subcooling margin).
+    if (readouts === -1) continue
+    const extended = kept(own.map((panel, index) => index === readouts && panel.kind === 'readouts' ? { ...panel, pens: [...panel.pens, ...pens.slice(joined.length, count)] } : panel), count)
+    if (extended !== null) return extended
+  }
+  return kept(own, joined.length) ?? { ok: true, display, evidence: [] }
 }
 
 /** The view a unit overview is shown in: its window's inner size in CSS px. */
@@ -936,6 +1010,7 @@ const generatedDisplay = (
     modelDigest: system.plant.modelDigest,
     height: overviewHeight(fitted.arrangement, fitted.panels, fitted.mimic, width),
     panels: [...shown, alarms(shown)],
+    annunciation: displayAnnunciation(system.plant),
   }
 }
 
@@ -952,15 +1027,16 @@ const leadValues = (
 }
 
 /**
- * The unit overview World generates for a Plant: its lead values (protection
- * and energy, overview-key-values.ts), its principal circuits drawn by the
+ * The unit overview World generates for a Plant: its lead values for the
+ * mode it is in (protection, delivery and energy, overview-key-values.ts),
+ * its principal circuits drawn by the
  * overview profile (principal.ts), and the whole Plant's active alarms. Every
  * part comes from the model; nothing names equipment. It is drawn for the
  * view it is shown in (fitGenerated).
  */
 export const compileOverviewDisplay = (system: ProcessPlantRuntimeInstance, recordedSeriesIds: ReadonlySet<string>, view: OverviewView | null): ComposedDisplayCompileResult => {
   const issues: ComposedDisplayIssue[] = []
-  const readouts = leadValues(system, overviewKeyValues(system.plant), recordedSeriesIds, issues)
+  const readouts = leadValues(system, overviewKeyValues(system.plant, plantNow(system)), recordedSeriesIds, issues)
   const circuits = principalCircuits(system.plant.graph)
   if (!circuits.ok) return { ok: false, issues: [{ path: 'overview', message: circuits.reason }] }
   if (issues.length > 0) return { ok: false, issues }
@@ -1028,10 +1104,11 @@ export const compileDetailDisplay = (
 const operatorText = { '<': 'below', '<=': 'at or below', '>': 'above', '>=': 'at or above' } as const
 const signalName = (pen: ComposedDisplayPen): string => `${pen.name} (${pen.tagId === undefined ? `${pen.path}, ` : `${pen.label}, `}${pen.unit}, ${pen.role}${pen.command ? ', a command (demand), shown as demand' : ''})`
 
-// Lines are named as the display labels them ("LO ALM 30 %"), so an answer
-// can refer to them by the same name.
+// Lines are named as the display labels them ("LO-LO 20 % · RX TRIP"), so
+// an answer can refer to them by the same name; an actuation is named by what
+// it actuates, never as a trip unless it trips the reactor.
 const thresholdText = (threshold: ComposedTrendThreshold, unit: ProcessUnit): string =>
-  `${threshold.kind === 'control' ? `I&C control set point marked on the axis: ${threshold.label}` : `"${thresholdName(threshold, unit)}" ${threshold.kind} line: ${threshold.label}`}, acts ${operatorText[threshold.operator]} ${threshold.value} ${unit} for ${threshold.signals.join(', ')}${threshold.modeLabel === undefined ? '' : ` (only in ${threshold.modeLabel})`}${threshold.gatedBy === undefined ? '' : ` (only while ${threshold.gatedBy.join(' and ')})`}`
+  `${threshold.kind === 'control' ? `I&C control set point marked on the axis: ${threshold.label}` : `"${thresholdName(threshold, unit)}" ${threshold.kind === 'alarm' ? 'alarm' : 'automatic action'} line: ${threshold.label}`}, acts ${operatorText[threshold.operator]} ${threshold.value} ${unit} for ${threshold.signals.join(', ')}${threshold.modeNames === undefined ? '' : ` (only in ${threshold.modeNames}: ${threshold.modeLabel}; drawn faint in other modes, even with the value past it)`}${threshold.gatedBy === undefined ? '' : ` (only while ${threshold.gatedBy.join(' and ')})`}`
 
 /** How each requested reference resolved, so the agent learns exact tags, paths and units. */
 export const composedDisplaySignals = (display: CompiledComposedDisplay): ReadonlyArray<{
@@ -1051,9 +1128,8 @@ export const composedDisplaySignals = (display: CompiledComposedDisplay): Readon
 })))
 
 const mimicShows = (mimic: CompiledMimic): ReadonlyArray<string> => [
-  `Live equipment mimic generated from the Plant model (${mimic.summary.carriers.join(', ')}): ${mimic.summary.equipment.map(item => `${item.label} (${item.id})`).join(', ')}. Pumps are drawn running or stopped from their actual speed, valves from their actual position, levels as vessel fills; pipes show flow, no flow (hollow) or unknown (dashed), with a direction arrow only where the model computes the direction; a command that disagrees with the equipment is stated as "CMD …" and the equipment is outlined as abnormal (not an alarm), so the cause of an upset stands out; equipment with an active alarm is framed with what the alarm watches ("P LO-LO")`,
+  `Live equipment mimic generated from the Plant model (${mimic.summary.carriers.join(', ')}): ${mimic.summary.equipment.map(item => `${item.label} (${item.id})`).join(', ')}. Pumps are drawn running or stopped from their actual speed and say RUN or STOP, valves from their actual position, levels as vessel fills; pipes show flow, no flow (hollow) or unknown (dashed), with a direction arrow only where the model computes the direction; a command that disagrees with the equipment is stated as "CMD …" and the equipment is outlined as abnormal (not an alarm), so the cause of an upset stands out; equipment with an active alarm or actuation acting in the current mode is framed with its most severe limit, named as its signal's chip names it ("P LO-LO · SI")`,
   ...(mimic.summary.stops.length === 0 ? [] : [`The drawing stops at: ${mimic.summary.stops.join('; ')}`]),
-  ...mimic.summary.entries.map(entry => `The pipe drawn into ${entry.item} enters it at ${entry.port}; the drawing does not name that port, so say it`),
 ]
 
 // A sparkline has no value axis: it shows which way a value went and how fast, never a value to quote.
@@ -1084,8 +1160,11 @@ export const composedDisplayShows = (display: CompiledComposedDisplay, historyMs
   }
   if (panel.kind === 'comparison') return [`Live side-by-side comparison with the median: ${panel.pens.map(signalName).join('; ')}`, ...panel.thresholds.map(threshold => thresholdText(threshold, panel.unit))]
   if (panel.kind === 'readouts') {
+    const chosen = panel.pens.filter(pen => pen.added === undefined)
+    const added = panel.pens.flatMap(pen => pen.added === undefined ? [] : [`${signalName(pen)}, ${pen.added.kind}: ${pen.added.reason}`])
     return [
-      `Live readouts with margin to the nearest I&C alarm or trip threshold: ${panel.pens.map(signalName).join('; ')}`,
+      ...(chosen.length === 0 ? [] : [`Live readouts with margin to the nearest I&C alarm or trip threshold: ${chosen.map(signalName).join('; ')}`]),
+      ...(added.length === 0 ? [] : [`World added these readouts, each labelled as added, for what the Plant model says bears on the question now; cite them as shown: ${added.join('; ')}`]),
       ...(panel.sparklineMs === undefined ? [] : [sparklinesShow(panel.pens, panel.sparklineMs)]),
     ]
   }
@@ -1143,7 +1222,17 @@ interface PenReading {
   readonly legend: boolean
   readonly text: string
   /** Its order in what the display leads with; null where it names no limit. */
-  readonly rank: { readonly order: number; readonly by: number } | null
+  readonly rank: ReadingRank | null
+}
+
+/**
+ * Where a reading stands in what a display leads with: order 0, heading for a
+ * limit (by minutes to it); 1, past a trip limit; 2, past an alarm limit; 3,
+ * nearest (by its margin relative to the limit).
+ */
+export interface ReadingRank {
+  readonly order: 0 | 1 | 2 | 3
+  readonly by: number
 }
 
 /**
@@ -1164,40 +1253,75 @@ const historyForReading = (now: ComposedDisplayNow, seriesId: string, windowStar
  * (trend-reading.ts), worded as its panel words it. Recorded history is read
  * only for signals drawn over time, and only what their reading needs.
  */
-const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ReadonlyArray<PenReading> => shownPens(display).flatMap(pen => {
-  const value = now.read(pen.path)
-  if (typeof value !== 'number') return []
-  const view = penView(display, pen)
+const penReadings = (display: CompiledComposedDisplay, now: ComposedDisplayNow): ReadonlyArray<PenReading> =>
+  shownPens(display).flatMap(pen => penReading(pen, penView(display, pen), now))
+
+/** One value read as a panel of the given view reads it on opening; none where it is not a number or says nothing. */
+const penReading = (pen: ComposedDisplayPen, view: PenView, now: ComposedDisplayNow): ReadonlyArray<PenReading> => {
+  const read = now.read(pen.path)
+  if (typeof read !== 'number') return []
+  // As the view shows it: below its resolution a reading is 0, and so is every point its rate is read from.
+  const value = shownReading(read, pen.resolution)
   const overTime = view.kind === 'legend' || view.kind === 'comparison' ? view : null
   const windowStart = overTime === null ? now.simulationMs : now.simulationMs - overTime.horizonMs
   const windowMs = rateWindowMs(overTime?.horizonMs ?? COMPARISON_HISTORY_MS)
   const history = overTime === null || !pen.recorded ? [] : historyForReading(now, pen.seriesId, windowStart, windowMs)
   const reading = trendReading({
     value,
-    points: overTime === null ? null : appendPoint(history, { t: now.simulationMs, v: value }, windowStart),
+    points: overTime === null ? null : appendPoint(history.map(point => ({ t: point.t, v: shownReading(point.v, pen.resolution) })), { t: now.simulationMs, v: value }, windowStart),
     windowMs,
     unit: pen.unit,
     thresholds: pen.thresholds,
     mode: now.mode,
+    gates: gateStatesOf(path => now.read(path as VariablePath)),
     activeRuleIds: now.activeRuleIds,
+    resolution: pen.resolution,
+    ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }),
   })
-  // A legend words every state of its limits; a readout and a comparison show only a margin to one, in words or as lines.
-  const worded = view.kind === 'legend' || view.kind === 'live' || reading.limit?.kind === 'margin'
-  const limit = reading.limit === null || !worded ? '' : limitStateText(reading.limit, pen.unit)
-  const travel = travelText(reading.rate, value, pen.unit, reading.change)
-  if (limit === '' && travel === '') return []
+  // A legend words every state of its limits; a readout and a comparison show only a margin to one, or the one it is past, in words or as lines.
+  const worded = view.kind === 'legend' || view.kind === 'live' || reading.limit?.kind === 'margin' || reading.limit?.kind === 'past'
+  const state = readingStateText({ offScale: reading.offScale, limit: worded ? reading.limit : null }, pen.unit, pen.resolution)
+  // A change the limit state already gives as its reason for no time ("· reversing") is not said twice.
+  const travel = travelText(reading.rate, value, pen.unit, worded ? changeBesideState(reading) : reading.change, pen.resolution, overTime === null ? undefined : windowMs)
+  if (state === '' && travel === '') return []
   // The alarm chip beside the value names the active limit, where the words do not say it is past one.
-  const saysPast = worded && reading.limit?.kind === 'margin' && isPast(reading.limit.margin)
+  const saysPast = worded && reading.limit?.kind === 'past'
   const chip = reading.inAlarm === null || saysPast ? '' : `in ${thresholdName(reading.inAlarm, pen.unit)}`
   return [{
     pen,
     value,
     reading,
     legend: view.kind === 'legend',
-    text: [`${pen.name}: ${formatQuantity(value, pen.unit)}`, travel, chip, limit].filter(part => part !== '').join(', '),
-    rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode, now.activeRuleIds)),
+    text: [`${pen.name}: ${readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan)}`, travel, chip, state].filter(part => part !== '').join(', '),
+    rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode, gateStatesOf(path => now.read(path as VariablePath)))),
   }]
-})
+}
+
+/**
+ * Values a display does not show, in the order it would lead with them were
+ * they compared over time beside its own (penRank): the shortest time to a
+ * limit from the Run's history first, then past a trip limit, past an alarm
+ * limit, and the nearest; those naming no limit keep their order after them.
+ * Each says whether it is off normal as its reading words it: past a limit,
+ * or heading for one, with a time to it or approaching without one.
+ */
+export const rankedAsRead = (
+  system: ProcessPlantRuntimeInstance,
+  paths: ReadonlyArray<VariablePath>,
+  now: ComposedDisplayNow,
+  recordedSeriesIds: ReadonlySet<string>,
+): ReadonlyArray<{ readonly path: VariablePath; readonly rank: ReadingRank | null; readonly offNormal: boolean }> => {
+  const issues: ComposedDisplayIssue[] = []
+  const pens = resolvePens(system, paths.map(path => ({ ref: path, role: 'context' as const })), 'ranked', { numericOnly: false, panelName: 'ranked', recordedSeriesIds }, issues) ?? []
+  const read = new Map(pens.flatMap(pen => penReading(pen, { kind: 'comparison', horizonMs: COMPARISON_HISTORY_MS }, now).map(entry => [entry.pen.path, entry] as const)))
+  const offNormal = (entry: PenReading | undefined): boolean => entry !== undefined && entry.rank !== null
+    && (entry.rank.order <= 2 || (entry.reading.limit?.kind === 'margin' && entry.reading.limit.eta !== ''))
+  return paths.map((path, index) => ({ path, index, rank: read.get(path)?.rank ?? null, offNormal: offNormal(read.get(path)) }))
+    .sort((left, right) => left.rank === null || right.rank === null
+      ? Number(left.rank === null) - Number(right.rank === null) || left.index - right.index
+      : left.rank.order - right.rank.order || left.rank.by - right.rank.by || left.index - right.index)
+    .map(({ path, rank, offNormal: off }) => ({ path, rank, offNormal: off }))
+}
 
 // The shortest projected time to a limit first; then past a trip limit, past
 // an alarm limit, and nearest relative to the limit it names: the first is
@@ -1256,11 +1380,11 @@ const travelContent = (entry: PenReading | undefined): Pick<EmbeddedViewContent[
   const unit = unitLabel(pen.unit)
   const trend = reading.travel === null || reading.rate === null ? {} : { trend: { rate: Number(displayValue(reading.rate, pen.unit).toPrecision(6)), unit, direction: reading.travel } }
   const limit = reading.limit
-  if (!entry.legend || limit?.kind !== 'margin' || isPast(limit.margin)) return trend
+  if (!entry.legend || limit?.kind !== 'margin') return trend
   const threshold = limit.margin.threshold
   return {
     ...trend,
-    limitAhead: { name: thresholdName(threshold, pen.unit), value: displayValue(threshold.value, pen.unit), unit },
+    limitAhead: { name: marginLimitName(limit.margin, pen.unit), value: displayValue(threshold.value, pen.unit), unit },
     ...(limit.minutes === null ? {} : { timeToLimitMs: Math.max(1, Math.round(limit.minutes * 60_000)) }),
   }
 }
@@ -1285,7 +1409,7 @@ export const composedDisplayContent = (
     const value = now.read(pen.path)
     return {
       names: penNames(pen),
-      values: typeof value === 'number' ? shownQuantity(value, pen.unit) : [],
+      values: typeof value === 'number' ? shownQuantity(shownReading(value, pen.resolution), pen.unit) : [],
       limits: pen.thresholds.flatMap(threshold => shownQuantity(threshold.value, pen.unit)),
       history: trended.has(pen.path),
       ...travelContent(readings.find(entry => entry.pen.path === pen.path)),

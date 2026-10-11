@@ -68,8 +68,29 @@ describe('process plant model composition', () => {
     // and charging resized to a four-loop plant's, and again when the
     // pressurizer's heaters were split into a control group on unit bus A
     // and a 1.5 MW backup group on diesel-backed safety bus A, through its
-    // own breaker; PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('7220d85e896f5d43429a50b3f44cbc6415a436f8fdf860c97804e254c289c270')
+    // own breaker, and again when the steam generators' narrow-range level
+    // instruments declared the 0 to 100 % span their indication saturates at,
+    // and again when the reactor coolant loops were given their hydraulics
+    // (flywheel coastdown, a vessel pressure drop the loops share, reverse
+    // flow in an idle loop and natural circulation by buoyancy), and again,
+    // as a model-truth change, when the pressurizer's level deviation from
+    // its program was given its tag (PZR-LVL-DEV), so its low-deviation alarm
+    // replaces the fixed 35 % low-level alarm that stood after every trip,
+    // and again when the core was given six delayed-neutron groups, decay
+    // heat on the ANS-5.1 curve and a scram worth on its trip breakers, and
+    // again when its nuclear instruments were given their spans, the power
+    // range and startup rate, and P-6 and P-10, and again when rod control
+    // was given its Tref program, and again when the PORV was rated at a
+    // Westinghouse PORV's 26.5 kg/s of steam at 16.2 MPa, and again when the
+    // auxiliary feedwater header was given its pressure balance and each
+    // steam generator its AFW flow signal, and again when each steam
+    // generator gained a wide-range level beside its narrow-range one, and
+    // again when the pressurizer's heaters were rated like a Westinghouse
+    // four-loop plant's, 0.4 MW proportional and 1.4 MW backup, and again
+    // when the narrow-range levels' spans moved from each steam generator to
+    // their kind, beside their hard range; PWR Runs checkpointed before then
+    // must be restarted.
+    expect(system.modelDigest).toBe('a1442657dfbf0a1b60f48eda78e843db5300bab4633be24184f9a9857a243cea')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
@@ -79,6 +100,27 @@ describe('process plant model composition', () => {
     restored.tick(700)
     running.tick(700)
     expect(JSON.stringify(restored.checkpoint())).toBe(JSON.stringify(running.checkpoint()))
+  })
+
+  test('declares the span each steam generator level instrument indicates over, and the wide range as the narrow\'s wider', () => {
+    const system = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:spans', loopCount: 4 }))
+    const levels = system.graph.signalBindings.filter(binding => /^SG-[A-D]-LVL-(NR|WR)$/.test(String(binding.tagId)))
+    expect(levels.map(binding => [String(binding.tagId), binding.limits?.instrumentSpan, binding.limits?.hardRange]).sort()).toEqual(['A', 'B', 'C', 'D']
+      .flatMap(loop => ['NR', 'WR'].map(range => [`SG-${loop}-LVL-${range}`, { min: 0, max: 100 }, { min: 0, max: 100 }])).sort())
+    // The same level over a wider span: where the narrow range reads off its span, the wide range reads on.
+    const sgB = system.graph.components[system.graph.componentIndexById.get('sgB' as never)!]!
+    expect(sgB.semantics.widerRanges).toEqual([{ reading: 'sgB.levelPercent', wider: 'sgB.wideRangeLevelPercent' }] as never)
+  })
+
+  test('declares the span each nuclear instrument indicates over, where it pins', () => {
+    const system = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:nuclear-spans', loopCount: 4 }))
+    const span = (tagId: string) => system.graph.signalBindingByTagId.get(tagId as never)!.limits?.instrumentSpan
+    expect(['NIS-PR-AVG', 'NIS-IR', 'NIS-IR-SUR', 'NIS-SR'].map(span)).toEqual([
+      { min: 0, max: 120 },
+      { min: 1e-11, max: 1e-3 },
+      { min: -0.5, max: 5 },
+      { min: 0, max: 1e6 },
+    ])
   })
 
   test('publishes branded signal references as their truthful JSON wire types', () => {
@@ -140,7 +182,7 @@ describe('process plant model composition', () => {
       operatingPointRef: 'test.operating-point',
       automationRef: 'test.automation',
       graph: invalid,
-      automationForGraph: () => ({ operatingModes: [], annunciatorSystems: [], rules: [] }),
+      automationForGraph: () => ({ operatingModes: [], annunciatorSystems: [], firstOutGroups: [], rules: [] }),
       validateGraph: assertPrimaryLoopTopologyValid,
     })).toThrow('primary loop A must have exactly one core hotLegA primaryCoolant outlet')
   })
@@ -375,7 +417,8 @@ describe('process plant discovery', () => {
             expect.stringContaining('Conversion from MPa to psig is unavailable'),
           ],
         },
-        { id: 'NIS-PR-AVG', status: 'resolved-with-warnings', warnings: [expect.stringContaining('Conversion from MW to percent is unavailable'), expect.stringContaining('no equipment identity')] },
+        // The power-range instruments read percent of rated power, as the procedures expect.
+        { id: 'NIS-PR-AVG', status: 'resolved', warnings: [] },
         { id: 'SI-SIG', status: 'missing', warnings: [] },
       ],
     })

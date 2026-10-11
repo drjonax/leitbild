@@ -13,8 +13,8 @@ import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../../runtime/index.ts'
 import { processLinkFlowFidelityFor, type ProcessLinkFlowFidelity } from '../../runtime/links/link-flow-fidelity.ts'
 import { resolveProcessPlantSignalBinding } from '../../signals.ts'
-import { icThresholdsForSignal } from '../ic-thresholds.ts'
-import { thresholdName } from '../display-text.ts'
+import { actionOf, icRuleKind, icThresholdsForSignal } from '../ic-thresholds.ts'
+import { limitOrderName, thresholdName } from '../display-text.ts'
 
 // What each drawn item shows and from which signals, all read from the model's
 // declared semantics: no variable path is named here. State comes from solved
@@ -45,17 +45,37 @@ export interface MimicStateBinding {
   readonly throughput?: { readonly path: VariablePath; readonly noFlowBelow: number | null }
 }
 
+/**
+ * A value an operator reads on an item: with its unit, the span its
+ * instrument indicates over (a reading at an end of it says only that the
+ * quantity is there or beyond), and the instrument the equipment declares
+ * reads the same quantity over a wider span (a steam generator's wide-range
+ * level beside its narrow range), with that one's span.
+ */
+export interface MimicValueBinding {
+  readonly path: VariablePath
+  readonly unit: string
+  readonly span?: { readonly min: number; readonly max: number }
+  readonly wider?: { readonly path: VariablePath; readonly span: { readonly min: number; readonly max: number } }
+}
+
 export interface MimicItemBinding {
   readonly item: MimicItem
   /** The operator's short name. */
   readonly label: string
   readonly state: MimicStateBinding | null
   /** The values an operator reads first on it. */
-  readonly values: ReadonlyArray<{ readonly path: VariablePath; readonly unit: string }>
+  readonly values: ReadonlyArray<MimicValueBinding>
   /** I&C alarm and trip limits on its level, marked on the vessel. */
   readonly limits: ReadonlyArray<{ readonly value: number; readonly kind: 'alarm' | 'trip'; readonly name: string }>
-  /** Rules that frame it, each with the flap text that says what it watches. */
-  readonly frames: ReadonlyArray<{ readonly ruleId: string; readonly flap: string }>
+  /**
+   * Rules that frame it, each with the flap text that says what it watches
+   * and does ("LO-LO · AFW START"), the same shortened to what it watches
+   * ("LO-LO"), for which its frame reserves room, and the declared modes it
+   * alone acts in: outside them it frames nothing, as its limit is drawn not
+   * in force on a trend.
+   */
+  readonly frames: ReadonlyArray<{ readonly ruleId: string; readonly flap: string; readonly flapShort: string; readonly modeIds?: ReadonlyArray<string> }>
 }
 
 export interface MimicFlowBinding {
@@ -111,6 +131,7 @@ const quantityLetters: Readonly<Record<string, string>> = {
   concentration: 'CONC',
   countRate: 'NI',
   electricalCurrent: 'I',
+  startupRate: 'SUR',
   head: 'HEAD',
   reactivity: 'RHO',
   frequency: 'HZ',
@@ -160,41 +181,61 @@ const discreteWords = (graph: CompiledPlantGraph, binding: ProcessSignalBinding,
         : (value ? flag : `NOT ${flag}`)
 }
 
+/** Its single numeric limit among on/off gates (SI on low pressure unless blocked): the limit the trend draws for it. */
+const gatedLeaf = (condition: ProcessPlantIcCondition): Extract<ProcessPlantIcCondition, { type: 'comparison' }> | null => {
+  if (condition.type !== 'all') return null
+  const leaves = condition.conditions.filter((child): child is Extract<ProcessPlantIcCondition, { type: 'comparison' }> => child.type === 'comparison')
+  if (leaves.length !== condition.conditions.length) return null
+  const numeric = leaves.filter(leaf => typeof leaf.value === 'number' && leaf.operator !== '==' && leaf.operator !== '!=')
+  const gates = leaves.filter(leaf => typeof leaf.value === 'boolean' && (leaf.operator === '==' || leaf.operator === '!='))
+  return numeric.length === 1 && gates.length === leaves.length - 1 && gates.length > 0 ? numeric[0]! : null
+}
+
 /**
- * What a framing rule watches, for its flap: "LO-LO" on the level the symbol
- * draws, "P HI" on another of its signals, "CMD STOP" on a command. Never
- * "TRIP": a vessel does not trip, and the trip itself leads the banner.
+ * What a framing rule watches and does, for its flap, in the words its
+ * signals' trend chips use: "LO-LO · AFW START" on the level the symbol draws,
+ * "P LO-LO · SI" on another of its signals, "CMD STOP" on a command; and the
+ * same shortened to what it watches ("LO-LO"), where its frame is too narrow
+ * for the whole. A limit names what the I&C does at it (ALM, or the declared
+ * action), so an AFW start never reads as a trip; an on/off state names itself.
  */
-export const flapText = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule, drawnState: VariablePath | undefined): string => {
+export const flapText = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule, drawnState: VariablePath | undefined): { readonly flap: string; readonly flapShort: string } => {
   const graph = plant.graph
-  const names = [...new Set(leaves(rule.condition).map(leaf => {
+  const gated = gatedLeaf(rule.condition)
+  const watched = gated === null ? leaves(rule.condition) : [gated]
+  let limited = false
+  const names = [...new Set(watched.map(leaf => {
     const binding = resolveProcessPlantSignalBinding(graph, leaf.signal)
     if (typeof leaf.value === 'boolean') {
       const truth = leaf.operator === '!=' ? !leaf.value : leaf.value
       return discreteWords(graph, binding, truth)
     }
+    limited = true
     const low = leaf.operator === '<' || leaf.operator === '<='
-    // Rank orders this signal's limits away from normal: the first low limit reads LO, the next LO-LO.
-    const sameSide = plant.automation.rules
-      .filter(other => other.enabled && effectKind(other) !== null && other.condition.type === 'comparison')
-      .map(other => other.condition as Extract<ProcessPlantIcCondition, { type: 'comparison' }>)
-      .filter(other => typeof other.value === 'number' && resolveProcessPlantSignalBinding(graph, other.signal).path === binding.path
-        && (other.operator === '<' || other.operator === '<=') === low)
-      .map(other => other.value as number)
-    const rank = low ? sameSide.filter(value => value > (leaf.value as number)).length : sameSide.filter(value => value < (leaf.value as number)).length
-    const limit = low ? (rank === 0 ? 'LO' : 'LO-LO') : (rank === 0 ? 'HI' : 'HI-HI')
-    return binding.path === drawnState ? limit : `${variableLetters(binding)} ${limit}`
+    // As its trend orders it: a limit with another closer to normal on its side reads LO-LO.
+    const own = icThresholdsForSignal(plant, binding.path).thresholds.find(threshold => threshold.ruleId === rule.id)
+    const beyond = icThresholdsForSignal(plant, binding.path).thresholds
+      .some(other => other.kind !== 'control' && (other.direction === 'low') === low && (low ? other.value > (leaf.value as number) : other.value < (leaf.value as number)))
+    const order = limitOrderName({ direction: low ? 'low' : 'high', order: own?.order ?? (beyond ? 2 : 1) })
+    return binding.path === drawnState ? order : `${variableLetters(binding)} ${order}`
   }))]
   // Conditions that must all hold read "&", alternatives "or".
-  return names.join(rule.condition.type === 'any' ? ' or ' : ' & ')
+  const watches = names.join(rule.condition.type === 'any' ? ' or ' : ' & ')
+  return { flap: limited || icRuleKind(rule) === 'trip' ? `${watches} · ${actionOf(plant, rule)}` : watches, flapShort: watches }
 }
 
-/** Rules whose every watched signal belongs to one drawn item frame that item; votes and rules across items lead the banner. */
+/**
+ * Rules that frame one drawn item: those whose every watched signal belongs
+ * to it, and those with one limit on its signal that on/off states elsewhere
+ * only gate (as its trend draws that limit); votes and rules across items
+ * lead the banner.
+ */
 export const framingRules = (plant: CompiledProcessPlant): ReadonlyMap<string, ReadonlyArray<ProcessPlantIcRule>> => {
   const framed = new Map<string, ProcessPlantIcRule[]>()
   for (const rule of plant.automation.rules) {
     if (!rule.enabled || effectKind(rule) === null || rule.condition.type === 'vote') continue
-    const owners = new Set(leaves(rule.condition).map(leaf => {
+    const gated = gatedLeaf(rule.condition)
+    const owners = new Set((gated === null ? leaves(rule.condition) : [gated]).map(leaf => {
       const owner = ownerItem(plant.graph, resolveProcessPlantSignalBinding(plant.graph, leaf.signal))
       return owner === null ? '' : mimicItemKey(owner)
     }))
@@ -228,6 +269,20 @@ const levelLimits = (plant: CompiledProcessPlant, state: MimicStateBinding | nul
       .filter((threshold): threshold is typeof threshold & { kind: 'alarm' | 'trip' } => threshold.kind !== 'control')
       .map(threshold => ({ value: threshold.value, kind: threshold.kind, name: thresholdName(threshold, 'percent') }))
 
+const valueBinding = (graph: CompiledPlantGraph, component: CompiledComponent, path: VariablePath): MimicValueBinding => {
+  const signal = graph.signalBindingByPath.get(path)!
+  const span = signal.limits?.instrumentSpan
+  // The compiler holds both instruments of a declared wider range to their spans.
+  const wider = component.semantics.widerRanges.find(range => range.reading === path)?.wider
+  const widerSignal = wider === undefined ? undefined : graph.signalBindingByPath.get(wider)
+  return {
+    path,
+    unit: signal.unit,
+    ...(span === undefined ? {} : { span }),
+    ...(widerSignal === undefined || !widerSignal.published ? {} : { wider: { path: widerSignal.path, span: widerSignal.limits!.instrumentSpan! } }),
+  }
+}
+
 export const itemBinding = (
   plant: CompiledProcessPlant,
   item: MimicItem,
@@ -246,9 +301,9 @@ export const itemBinding = (
     item,
     label: device === undefined ? labelOf(component) : deviceLabel(component, device),
     state,
-    values: device === undefined ? component.semantics.keyValues.map(path => ({ path, unit: graph.signalBindingByPath.get(path)!.unit })) : [],
+    values: device === undefined ? component.semantics.keyValues.map(path => valueBinding(graph, component, path)) : [],
     limits: levelLimits(plant, state),
-    frames: (framed.get(mimicItemKey(item)) ?? []).map(rule => ({ ruleId: rule.id, flap: flapText(plant, rule, drawnState) })),
+    frames: (framed.get(mimicItemKey(item)) ?? []).map(rule => ({ ruleId: rule.id, ...flapText(plant, rule, drawnState), ...(rule.modes === undefined ? {} : { modeIds: [...rule.modes] }) })),
   }
 }
 

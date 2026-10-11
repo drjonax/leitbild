@@ -23,7 +23,7 @@ These rules apply across the repository. Module-local `AGENTS.md` files may add 
 
 ## Concurrent agents
 
-- Several Claude Code sessions and their subagents work in this repository concurrently and commit as the same Git user. Mark authorship with a `Co-Authored-By` trailer. OpenAI Codex no longer works on this codebase (owner, 2026-10-10); its former paths (`apps/world/native/**`, `apps/world/scripts/**`, the process-plant reference-design wiki pages) are ordinary repository code.
+- Several coding sessions and their subagents work in this repository concurrently and commit as the same Git user. Mark authorship with a `Co-Authored-By` trailer.
 - Each session or subagent develops in its own worktree on its own branch and lands on `main` only by fast-forward with checked commits. Expect `main` to advance with other sessions' commits; never revert or rewrite them. In a shared worktree commit explicit paths only; never use `git add -A`, `git commit -a`, `stash`, `reset --hard` or `clean`.
 - Keep edits to shared files minimal and name them in the commit message: `bun.lock`, any `package.json`, `NOTICE.md`, `AGENTS.md` files, `apps/world/src/packs/process-plant/capabilities.ts`, `apps/world/vite.config.ts`, `apps/leitbild/deploy/**`.
 - Only a session that validated a commit deploys it; subagents never push or deploy. Announce a deploy to other live sessions first, and do not deploy while another session's evaluation probe runs on production.

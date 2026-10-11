@@ -1,4 +1,5 @@
 import { primaryLoopIdForPump } from '../../graph/index.ts'
+import { reactorNeutronics, reactorTemperatureProgram } from '../../graph/reactor-component-definitions.ts'
 import { clamp, optionalParameterBoolean, optionalParameterNumber, parameterNumber } from '../component-helpers.ts'
 import type { ComponentInitialValueDefinition } from './model.ts'
 import { reactorInitialThermalState } from '../../reactor-initial-conditions.ts'
@@ -12,9 +13,15 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       const initialPowerFraction = parameterNumber(component, 'initialPowerFraction')
       const initialFissionPower = ratedPowerMw * initialPowerFraction
       const { inlet: initialCoolantInlet, outlet: initialCoolantOutlet, coreExit: initialCoreExit, pumpHeatMw: initialPumpHeat, lower: initialFuelLower, mid: initialFuelMid, upper: initialFuelUpper, average: initialFuelAverage } = reactorInitialThermalState(component.parameters as Record<string, unknown>)
-      // At equilibrium the decay heat is its share of fission power, and the
-      // two parts of core thermal power add up to the fission power.
-      const initialDecayHeat = initialFissionPower * optionalParameterNumber(component, 'decayHeatFractionAtPower', 0.06)
+      // At equilibrium each precursor group sustains the fission power, each
+      // decay heat group holds its share of it, and the two parts of core
+      // thermal power add up to the fission power.
+      const neutronics = reactorNeutronics(component)
+      const delayedNeutronGroup = /^delayedNeutronGroup(\d+)PowerMw$/u.exec(localPath)
+      if (delayedNeutronGroup !== null) return initialFissionPower
+      const decayHeatGroup = /^decayHeatGroup(\d+)Mw$/u.exec(localPath)
+      if (decayHeatGroup !== null) return initialFissionPower * neutronics.decayHeatGroups[Number(decayHeatGroup[1]) - 1]!.fractionOfFissionPower
+      const initialDecayHeat = initialFissionPower * neutronics.decayHeatGroups.reduce((sum, group) => sum + group.fractionOfFissionPower, 0)
       if (localPath === 'powerMw') return initialFissionPower
       if (localPath === 'fissionPowerMw') return initialFissionPower
       if (localPath === 'totalThermalPowerMw') return initialFissionPower
@@ -24,10 +31,21 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'boronFeedbackPcm') return 0
       if (localPath === 'voidFeedbackPcm') return 0
       if (localPath === 'effectiveReactivityPcm') return 0
+      // At a steady initial state the turbine carries the core's power, so its
+      // load sets Tref where the initial power puts it.
+      const program = reactorTemperatureProgram(component)
+      const initialReference = program.noLoadAverageTemperatureC + clamp(initialPowerFraction, 0, 1) * (program.fullLoadAverageTemperatureC - program.noLoadAverageTemperatureC)
+      if (localPath === 'referenceAverageTemperatureC') return initialReference
+      if (localPath === 'averageTemperatureDeviationC') return (initialCoolantInlet + initialCoolantOutlet) / 2 - initialReference
       if (localPath === 'rodInsertionFraction') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1))
+      if (localPath === 'powerRangePercent') return nuclearInstrumentationReading(component, initialFissionPower).powerRangePercent
+      if (localPath === 'aboveP10') return nuclearInstrumentationReading(component, initialFissionPower).aboveP10
+      if (localPath === 'intermediateRangeCurrentAmps') return nuclearInstrumentationReading(component, initialFissionPower).intermediateRangeCurrentAmps
+      // Held at steady power, the flux does not change.
+      if (localPath === 'intermediateRangeStartupRateDpm') return 0
+      if (localPath === 'aboveP6') return nuclearInstrumentationReading(component, initialFissionPower).aboveP6
       if (localPath === 'sourceRangeEnergized') return nuclearInstrumentationReading(component, initialFissionPower).sourceRangeEnergized
       if (localPath === 'sourceRangeCountRateCps') return nuclearInstrumentationReading(component, initialFissionPower).sourceRangeCountRateCps
-      if (localPath === 'intermediateRangeCurrentAmps') return nuclearInstrumentationReading(component, initialFissionPower).intermediateRangeCurrentAmps
       if (localPath === 'coolantInletTemperatureC') return initialCoolantInlet
       if (localPath === 'coolantOutletTemperatureC') return initialCoolantOutlet
       if (localPath === 'coreExitTemperatureC') return initialCoreExit
@@ -88,8 +106,9 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'demandMw') return running
         ? parameterNumber(component, 'nominalFlowKgPerS') * parameterNumber(component, 'nominalHeadPa') / optionalParameterNumber(component, 'fluidDensityKgPerM3', 800) / optionalParameterNumber(component, 'hydraulicEfficiencyFraction', 0.82) / 1_000_000
         : 0
-      if (localPath === 'loopFlowTargetKgPerS') return primaryLoopId === null ? 0 : running ? parameterNumber(component, 'nominalFlowKgPerS') : optionalParameterNumber(component, 'minimumNaturalCirculationFlowKgPerS', 0)
-      if (localPath === 'loopFlowKgPerS') return primaryLoopId === null ? 0 : running ? parameterNumber(component, 'nominalFlowKgPerS') : optionalParameterNumber(component, 'minimumNaturalCirculationFlowKgPerS', 0)
+      if (localPath === 'loopFlowTargetKgPerS') return primaryLoopId !== null && running ? parameterNumber(component, 'nominalFlowKgPerS') : 0
+      if (localPath === 'loopFlowKgPerS') return primaryLoopId !== null && running ? parameterNumber(component, 'nominalFlowKgPerS') : 0
+      if (localPath === 'loopReverseFlowKgPerS') return 0
       return undefined
     },
   },

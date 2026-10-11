@@ -595,6 +595,29 @@ Action: Inspect «OTHER-STEP».
     expect(focused.body?.result.commands.every(command => ['ambulance', 'weather'].includes(command.packId))).toBe(true)
     expect((focused.body?.result.packs[0] as { configSchema?: unknown } | undefined)?.configSchema).toBeTruthy()
 
+    const weatherAuthoring = focused.body?.result.packs.find(pack => pack.id === 'weather') as {
+      id: string
+      itemTypes: Array<{ id: string; itemSchema: { properties: { keyframes: { description: string; items: { properties: { atSeconds: { description: string }; atmosphere: { description: string } } } } } } }>
+    }
+    const keyframes = weatherAuthoring.itemTypes.find(type => type.id === 'weather_area')!.itemSchema.properties.keyframes
+    expect(keyframes.description).toContain('not timed step changes')
+    expect(keyframes.description).toContain('final state holds')
+    expect(keyframes.items.properties.atSeconds.description).toContain('not when the change starts')
+    expect(keyframes.items.properties.atSeconds.description).toContain('{atSeconds:120}')
+    expect(keyframes.items.properties.atmosphere.description).toContain('Omitted quantities retain')
+
+    const editor = await call<{ result: { packs: Array<{ itemTypes: Array<{ id: string; collections: Array<{ fields: Array<{ path: string[]; description?: string }> }> }> }> } }>(
+      registry,
+      `/internal/workspaces/${workspaceId}/capabilities/${describeId}/invoke`,
+      {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, capabilityId: describeId, input: { packIds: ['weather'], detail: 'editor' }, access }),
+      },
+    )
+    expect(editor.status).toBe(200)
+    const endpointTime = editor.body?.result.packs[0]?.itemTypes.find(type => type.id === 'weather_area')?.collections[0]?.fields.find(field => field.path[0] === 'atSeconds')
+    expect(endpointTime?.description).toBe(keyframes.items.properties.atSeconds.description)
+
     const unknownPack = await call<{ error: { code: string } }>(
       registry,
       `/internal/workspaces/${workspaceId}/capabilities/${describeId}/invoke`,

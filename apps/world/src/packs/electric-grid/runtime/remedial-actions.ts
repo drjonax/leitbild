@@ -1,6 +1,7 @@
 import type { GridBranchDefinition } from '../grid-model.ts'
 import type { CaseParticipation } from './contingency-balance.ts'
 import { caseGeneratorOutputMw, switchedContingencyCase, type ContingencyCase, type CaseChanges } from './contingency-case.ts'
+import { separatedBoundarySystem } from './boundary-separation.ts'
 import { gridIslandAtBus, gridIslandFrequencyHz, solvedGridIslands } from './island-lifecycle.ts'
 import { manualShedRejection } from './load-shedding.ts'
 import { loopAngleText, type GridLoopAngleBasis } from './synchro-check.ts'
@@ -21,7 +22,7 @@ const synchronouslyCoupled = (current: ContingencyCase, fromComponent: number, t
   const { grid, network } = current
   return grid.definition.index.externalSystems.some(system => {
     if (!system.synchronous) return false
-    // A boundary bus whose ties are all open is a component of its own and couples nothing.
+    // A boundary bus whose ties are all open lies in no island and couples nothing.
     const coupled = new Set(system.boundaryBusIds
       .map(busId => current.islandOfBus[network.busIndexById.get(busId)!]!)
       .filter(component => current.islands[component]!.buses.length > 1))
@@ -135,6 +136,10 @@ export const remedialCaseChanges = (base: ContingencyCase, actions: ReadonlyArra
     }
     if (state === 'tripped') throw new Error(`branch ${action.assetId} is tripped; reset-branch-protection comes before closing it`)
     if (closed[index] === 1) throw new Error(`branch ${action.assetId} is already closed`)
+    const separated = [entry.definition.fromBusId, entry.definition.toBusId].find(busId => separatedBoundarySystem(grid, solvedGridIslands(grid).plan, network.busIndexById.get(busId)!) >= 0)
+    if (separated !== undefined) {
+      throw new Error(`closing ${action.assetId} reconnects ${separated}, a boundary bus whose ties are all open, to its external system; this evaluation covers switching within the energised islands, and close-branch checks synchronism with the external system`)
+    }
     const current = caseBefore(position)
     const energisedInCase = (busId: string): boolean => current.islands[current.islandOfBus[network.busIndexById.get(busId)!]!]!.energised
     if (!energisedInCase(entry.definition.fromBusId) || !energisedInCase(entry.definition.toBusId)) {

@@ -177,15 +177,16 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'heatersCutOff',
       'backupHeaterDemandMw',
       'levelProgramPercent',
+      'levelDeviationPercent',
       'chargingFlowDemandKgPerS',
       'demandMw',
     ],
     update: ({ system, component, context }): void => {
       const dt = context.dtSeconds
       const volume = parameterNumber(component, 'volumeM3')
-      const nominalPressure = parameterNumber(component, 'nominalPressureMPa')
       const reliefSetpoint = parameterNumber(component, 'reliefSetpointMPa')
       const reliefCapacity = parameterNumber(component, 'reliefCapacityKgPerS')
+      const reliefRatedPressure = parameterNumber(component, 'reliefRatedPressureMPa')
       const flashingTimeConstant = parameterNumber(component, 'flashingTimeConstantS')
       const condensationTimeConstant = parameterNumber(component, 'condensationTimeConstantS')
       const pressure = context.readNumber(componentVariablePath(component, 'pressureMPa'))
@@ -221,7 +222,10 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const nextBlockValvePosition = componentHasElectricalPower(system, component, context, 'blockValvePower')
         ? approach(blockValvePosition, clamp(context.readNumber(componentVariablePath(component, 'blockValvePositionFraction')), 0, 1), dt / parameterNumber(component, 'blockValveStrokeTimeS'))
         : blockValvePosition
-      const reliefFlow = reliefCapacity * Math.min(reliefOpening, nextBlockValvePosition) * clamp(pressure / nominalPressure, 0, 1.4)
+      // The relief line passes what the less open of its two valves lets
+      // through: its flow area. Steam chokes in the valve, so the flow through
+      // that area is the rated flow scaled by the inlet pressure.
+      const reliefFlow = reliefCapacity * Math.min(reliefOpening, nextBlockValvePosition) * pressure / reliefRatedPressure
       // The code safety valves pop open at their set pressure, reach full lift
       // with the accumulation above it and stay open until pressure falls by
       // the blowdown below it. Their lift follows pressure between reseat and
@@ -386,6 +390,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       const program = levelProgramPercent(levelControl, (hotLegTemperature + coldLegTemperature) / 2)
       context.write(componentVariablePath(component, 'levelPercent'), level)
       context.write(componentVariablePath(component, 'levelProgramPercent'), program)
+      context.write(componentVariablePath(component, 'levelDeviationPercent'), level - program)
       context.write(componentVariablePath(component, 'chargingFlowDemandKgPerS'), chargingFlowDemand(levelControl, program, level))
       context.write(componentVariablePath(component, 'compressedWaterVolumeM3'), compressedWater)
       context.write(componentVariablePath(component, 'pressureMPa'), clamp(nextPressure, 0.1, 22))
@@ -400,7 +405,7 @@ export const pressurizerInitialReconciliationDefinitions: ReadonlyArray<Componen
     // The program reads the loops' temperatures once the links are solved.
     afterLinks: true,
     reads: ['pressureMPa', 'levelPercent', 'reactorCore.coolantInletTemperatureC', 'reactorCore.coolantOutletTemperatureC'],
-    writes: ['levelProgramPercent', 'chargingFlowDemandKgPerS'],
+    writes: ['levelProgramPercent', 'levelDeviationPercent', 'chargingFlowDemandKgPerS'],
     reconcile: ({ system, component, context }): void => {
       const core = primarySystemReactorCore(system)
       const meanTemperature = core === null
@@ -411,12 +416,10 @@ export const pressurizerInitialReconciliationDefinitions: ReadonlyArray<Componen
         ) / 2
       const levelControl = pressurizerLevelControl(component)
       const program = levelProgramPercent(levelControl, meanTemperature)
+      const level = context.readNumber(componentVariablePath(component, 'levelPercent'))
       context.write(componentVariablePath(component, 'levelProgramPercent'), program)
-      context.write(componentVariablePath(component, 'chargingFlowDemandKgPerS'), chargingFlowDemand(
-        levelControl,
-        program,
-        context.readNumber(componentVariablePath(component, 'levelPercent')),
-      ))
+      context.write(componentVariablePath(component, 'levelDeviationPercent'), level - program)
+      context.write(componentVariablePath(component, 'chargingFlowDemandKgPerS'), chargingFlowDemand(levelControl, program, level))
     },
   },
   {

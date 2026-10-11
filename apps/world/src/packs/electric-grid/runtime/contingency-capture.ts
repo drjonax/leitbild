@@ -12,6 +12,7 @@ import {
 } from './contingency-snapshot.ts'
 import { generatorIsVoltageForming, generatorKineticEnergyMws } from './generator-dynamics.ts'
 import { gridGeneratorIsSynchronised } from './island-input.ts'
+import { gridTablesFor } from './state/tables.ts'
 
 export type ContingencyRatingBasis = 'normal' | 'emergency'
 
@@ -228,6 +229,7 @@ export const captureContingencySnapshot = (
       branchFrom: sharedCopyInt32(network.branchFrom),
       branchTo: sharedCopyInt32(network.branchTo),
       branchSusceptancePu: sharedCopyFloat64(network.branchSusceptancePu),
+      norwegianBus: sharedCopyUint8(gridTablesFor(grid.definition).norwegianBus),
     },
     islands,
     factors: factorsOf(screeningCase, islands),

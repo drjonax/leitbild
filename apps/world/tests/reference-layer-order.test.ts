@@ -4,6 +4,7 @@ import { gridNorwayStyle } from '../src/packs/electric-grid/ui/grid-norway-style
 import { createMapLayerRegistry } from '../src/ui/map-runtime/map-layer-registry.ts'
 import { referenceLayerAnchorId } from '../src/ui/map-runtime/reference-layer-order.ts'
 import { gridNorwayReferenceTileset } from './fixtures/grid-norway-reference-manifest.ts'
+import { routeMapErrors } from './helpers/fake-map-errors.ts'
 import { createFakeMapStyle, layerOrder, leitbildBaseLayers, leitbildBaseMetadata } from './helpers/fake-map-style.ts'
 
 const withCapabilities = async <T>(run: () => Promise<T>): Promise<T> => {
@@ -52,6 +53,7 @@ describe('map layer registry ordering', () => {
       layerGroups: electricGridPackView.presentation.mapLayerGroups ?? [],
       visibility: {},
       onError: message => { throw new Error(`unexpected reference failure: ${message}`) },
+      claimErrors: routeMapErrors(fake.map).claimErrors,
     }))
     const order = layerOrder(fake.layers)
     const gridIndexes = registration.layerIds.map(id => order.indexOf(id))
@@ -77,6 +79,7 @@ describe('map layer registry ordering', () => {
       layerGroups: electricGridPackView.presentation.mapLayerGroups ?? [],
       visibility: { 'electric-grid:reference-substations': false },
       onError: message => { throw new Error(`unexpected reference failure: ${message}`) },
+      claimErrors: routeMapErrors(fake.map).claimErrors,
     }))
     const hidden = fake.layers.filter(layer => layer.visibility === 'none').map(layer => layer.id)
     expect(hidden).toEqual(['reference:grid-norway:substations:fill', 'reference:grid-norway:substations:outline', 'reference:grid-norway:substations:point', 'reference:grid-norway:substations:label'])

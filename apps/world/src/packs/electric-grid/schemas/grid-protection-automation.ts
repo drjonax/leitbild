@@ -101,5 +101,7 @@ export const alarmsSchema = z.object({
   generatorTripped: alarmTimingSchema,
   /** An HVDC link stopped by its converter protection or by trip-hvdc, until reset-hvdc-trip. */
   hvdcTripped: alarmTimingSchema,
+  /** A synchronous external system's scheduled exchange voided by a separation, until it is back at the Operating Point's. */
+  externalExchangeVoided: alarmTimingSchema,
 }).strict()
 export type GridAlarmSettings = z.infer<typeof alarmsSchema>

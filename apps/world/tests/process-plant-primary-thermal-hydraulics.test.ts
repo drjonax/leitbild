@@ -9,6 +9,7 @@ import {
   type ProcessPlantIcConfig,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
+import { validateProcessPlantControlWrite } from '../src/packs/process-plant/control-write-validation.ts'
 import { saturationTemperatureCFromPressureMPa } from '../src/packs/process-plant/runtime/thermophysics.ts'
 import { liquidEnthalpyKjPerKg, saturationPressureMPaFromTemperatureC } from '../src/packs/process-plant/runtime/water-properties.ts'
 
@@ -100,34 +101,74 @@ describe('the full-power operating point', () => {
 })
 
 describe('a stuck-open PORV', () => {
-  test('holds coolant pressure near the hot leg\'s saturation pressure while the pressurizer fills', () => {
+  test('lets the pressure fall to the hot legs\' saturation pressure while safety injection fills the pressurizer', () => {
     const plantRun = started()
     plantRun.run(60)
     for (const command of commandsForProcessPlantAction({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 100 }, graph: plant.graph })) {
       plantRun.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
     }
+    const { read } = plantRun
+    // Rated 26.5 kg/s of steam at 16.2 MPa, the open PORV passes about 25 kg/s at 15.5 MPa.
+    plantRun.run(1)
+    expect(read('pressurizer.reliefFlowKgPerS')).toBeGreaterThan(24)
+    expect(read('pressurizer.reliefFlowKgPerS')).toBeLessThan(26.5)
     let lowestLevel = 100
-    plantRun.run(90, () => { lowestLevel = Math.min(lowestLevel, plantRun.read('pressurizer.levelPercent')) })
+    plantRun.run(89, () => { lowestLevel = Math.min(lowestLevel, read('pressurizer.levelPercent')) })
     // The falling pressure lowers the overtemperature delta-T set point onto the loop delta-T, which trips the
-    // reactor before the low-pressure trip would; the coolant shrinks and then flashes.
+    // reactor before the low-pressure trip would; the coolant shrinks and the pressurizer level falls.
     expect(plantRun.active()).toContain('trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip')
     expect(lowestLevel).toBeLessThan(40)
+    // Safety injection then outruns the relief: the pressurizer refills while the pressure keeps falling, toward
+    // the saturation pressure of the hot legs, about 8 MPa after the trip, never far below it. A level rising
+    // while the pressure falls is the trap Three Mile Island's operators fell into.
     const pressures: number[] = []
-    plantRun.run(450, () => pressures.push(plantRun.read('pressurizer.pressureMPa')))
-    const { read } = plantRun
-    // For minutes the pressure hangs near the saturation pressure of the hot
-    // legs, about 8 MPa after the trip, never falling far below it ...
+    let filled: { readonly pressure: number; readonly hotLegSaturation: number; readonly subcooling: number } | null = null
+    for (let second = 0; second < 1_200 && filled === null; second += 1) {
+      plantRun.run(1)
+      pressures.push(read('pressurizer.pressureMPa'))
+      if (read('pressurizer.levelPercent') > 90) {
+        filled = {
+          pressure: read('pressurizer.pressureMPa'),
+          hotLegSaturation: saturationPressureMPaFromTemperatureC(read('core.coolantOutletTemperatureC')),
+          subcooling: read('vessel.subcoolingMarginC'),
+        }
+      }
+    }
     expect(Math.min(...pressures)).toBeGreaterThan(7)
-    expect(Math.max(...pressures.slice(60))).toBeLessThan(9.5)
-    const hotLegSaturation = saturationPressureMPaFromTemperatureC(read('core.coolantOutletTemperatureC'))
-    expect(Math.abs(read('pressurizer.pressureMPa') - hotLegSaturation)).toBeLessThan(0.3)
-    expect(read('vessel.subcoolingMarginC')).toBeGreaterThan(-2)
-    expect(read('vessel.subcoolingMarginC')).toBeLessThan(2)
-    // ... while steam in the loops pushes water into the pressurizer, which
-    // rises far above its post-trip low, as at Three Mile Island.
-    expect(read('vessel.loopVoidFraction')).toBeGreaterThan(0.05)
-    expect(read('pressurizer.levelPercent')).toBeGreaterThan(90)
-    expect(read('pressurizer.reliefFlowKgPerS')).toBeGreaterThan(20)
+    expect(filled).not.toBeNull()
+    expect(Math.abs(filled!.pressure - filled!.hotLegSaturation)).toBeLessThan(0.3)
+    expect(filled!.subcooling).toBeGreaterThan(-2)
+    expect(filled!.subcooling).toBeLessThan(2)
+    expect(read('vessel.safetyInjectionFlowKgPerS')).toBeGreaterThan(40)
+  })
+
+  test('35 % open outruns the heaters: the reactor trips, SI comes in and the pressure falls to about 10.6 MPa in five minutes', () => {
+    const plantRun = started()
+    plantRun.run(60)
+    for (const command of commandsForProcessPlantAction({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 }, graph: plant.graph })) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    const { read } = plantRun
+    const firstIn = new Map<string, number>()
+    let second = 0
+    plantRun.run(300, () => {
+      second += 1
+      for (const id of plantRun.active()) if (!firstIn.has(id)) firstIn.set(id, second)
+    })
+    // About 9 kg/s of steam against 1.8 MW of heaters: the pressure falls about 0.55 MPa a minute until the
+    // falling pressure brings the overtemperature delta-T set point onto the loop delta-T, about two minutes in;
+    // the trip's shrink takes it to the 12.7 MPa SI set point some 15 s later.
+    const otdt = firstIn.get('trip:reactor-overtemperature-delta-t-trip:overtemperature-delta-t-trip')
+    const si = firstIn.get('trip:safety-injection-low-pzr-pressure:safety-injection')
+    expect(otdt).toBeGreaterThan(90)
+    expect(otdt).toBeLessThan(160)
+    expect(si).toBeGreaterThan(otdt!)
+    expect(si).toBeLessThan(otdt! + 40)
+    expect(read('pressurizer.pressureMPa')).toBeGreaterThan(10)
+    expect(read('pressurizer.pressureMPa')).toBeLessThan(11.2)
+    // The PORV then passes about 6 kg/s, a quarter of its rating at a third open and two thirds of the pressure.
+    expect(read('pressurizer.reliefFlowKgPerS')).toBeGreaterThan(5.5)
+    expect(read('pressurizer.reliefFlowKgPerS')).toBeLessThan(6.6)
   })
 
   test('passes water at its liquid rating once the pressurizer is solid, which the inventory balance counts', () => {
@@ -137,14 +178,51 @@ describe('a stuck-open PORV', () => {
       plantRun.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
     }
     const { read } = plantRun
-    plantRun.run(150)
+    // While it has a steam space the pressurizer relieves steam, at its rating in proportion to the pressure.
+    let steamRelief = 0
+    let solidFor = 0
+    for (let second = 0; second < 1_200 && solidFor < 60; second += 1) {
+      plantRun.run(1)
+      if (read('pressurizer.levelPercent') > 99) solidFor += 1
+      else if (read('pressurizer.levelPercent') < 90) steamRelief = read('pressurizer.reliefFlowKgPerS') / (26.5 * read('pressurizer.pressureMPa') / 16.2)
+    }
+    expect(steamRelief).toBeCloseTo(1, 2)
     expect(read('pressurizer.levelPercent')).toBeGreaterThan(99)
-    // Rated 85 kg/s of steam at 15.5 MPa, in proportion to pressure; water
-    // flashing as it chokes in the valve passes about three times the mass.
-    const steamRating = 85 * read('pressurizer.pressureMPa') / 15.5
+    // Solid, water flashing as it chokes in the valve passes about three times the mass.
+    const steamRating = 26.5 * read('pressurizer.pressureMPa') / 16.2
     expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeGreaterThan(2.5)
     expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeLessThan(3.5)
     expect(Math.abs(read('rcsInventoryBalance.leakRateKgPerS'))).toBeLessThan(0.063)
+  })
+})
+
+describe('the pressurizer heaters', () => {
+  test('are rated like a Westinghouse four-loop pressurizer\'s: 0.4 MW proportional and 1.4 MW backup, 1.8 MW in all', () => {
+    const pressurizer = plant.graph.components.find(component => component.id === 'pressurizer')!
+    const controlGroup = plant.graph.signalBindingByPath.get('pressurizer.heaterPowerMw' as VariablePath)!
+    expect(controlGroup.limits?.hardRange).toEqual({ min: 0, max: 0.4 })
+    expect((pressurizer.parameters as Readonly<Record<string, unknown>>).backupHeaterCapacityMw).toBe(1.4)
+    // The pressure control energizes the control group at its rating, no more.
+    const energized = plant.automation.rules.flatMap(rule => rule.effects).filter(effect => effect.type === 'writeSignal' && effect.signal.tagId === 'PZR-HTR' && effect.value !== 0)
+    expect(energized.map(effect => effect.type === 'writeSignal' ? effect.value : null)).toEqual([0.4])
+    // An operator can ask no more of the group than it has.
+    const runtime = createProcessPlantRuntime({ system: plant })
+    expect(validateProcessPlantControlWrite({ system: plant, runtime, payload: { plantId: plant.id, tagId: 'PZR-HTR', value: 12 } as never }).accepted).toBe(false)
+    expect(validateProcessPlantControlWrite({ system: plant, runtime, payload: { plantId: plant.id, tagId: 'PZR-HTR', value: 0.4 } as never }).accepted).toBe(true)
+  })
+
+  test('hold 15.5 MPa at steady full power with every group off', () => {
+    const plantRun = started()
+    let lowest = Infinity
+    let highest = -Infinity
+    plantRun.run(600, () => {
+      lowest = Math.min(lowest, plantRun.read('pressurizer.pressureMPa'))
+      highest = Math.max(highest, plantRun.read('pressurizer.pressureMPa'))
+    })
+    expect(lowest).toBeGreaterThan(15.45)
+    expect(highest).toBeLessThan(15.55)
+    expect(plantRun.read('pressurizer.demandMw')).toBe(0)
+    expect(plantRun.read('pressurizer.backupHeaterDemandMw')).toBe(0)
   })
 })
 
@@ -255,12 +333,18 @@ describe('a pressurizer draining below its low-level cutoff', () => {
     let heatedAbove = false
     let cutOffAt: number | null = null
     let heatedBelow = 0
-    plantRun.run(150, () => {
-      const level = read('pressurizer.levelPercent')
-      if (level > 20 && read('pressurizer.demandMw') > 0) heatedAbove = true
-      if (cutOffAt === null && read('pressurizer.heatersCutOff') === 1) cutOffAt = level
-      if (level < 16.5) heatedBelow = Math.max(heatedBelow, read('pressurizer.demandMw'))
-    })
+    // Read each solver step: the reactor trips on low pressure as the level nears the cutoff, and the coolant's
+    // shrink as the rods drop takes the level through it at several percent a second.
+    for (let second = 0; second < 150; second++) {
+      for (let step = 0; step < 10; step++) {
+        plantRun.runtime.tick(100)
+        const level = read('pressurizer.levelPercent')
+        if (level > 20 && read('pressurizer.demandMw') > 0) heatedAbove = true
+        if (cutOffAt === null && read('pressurizer.heatersCutOff') === 1) cutOffAt = level
+        if (level < 16.5) heatedBelow = Math.max(heatedBelow, read('pressurizer.demandMw'))
+      }
+      plantRun.evaluate()
+    }
     expect(heatedAbove).toBe(true)
     expect(cutOffAt).not.toBeNull()
     expect(cutOffAt!).toBeGreaterThan(15)
@@ -327,7 +411,9 @@ describe('after a loss of offsite power', () => {
     for (const diesel of ['dieselGeneratorA', 'dieselGeneratorB']) {
       plantRun.runtime.writeCommand({ type: 'setVariable', path: `${diesel}.startCommand` as VariablePath, value: true })
     }
-    plantRun.run(880)
+    // On the ANS-5.1 decay heat the generators take some 16 minutes to heat
+    // their auxiliary feed back up to the relief valves' set point.
+    plantRun.run(1_180)
     // Natural circulation carries the decay heat to the generators; their
     // relief valves, set at 7.86 MPa, open only as far as it takes to pass
     // the steam they raise ...

@@ -42,13 +42,17 @@ import type { ItemLook } from '../../../../packs/process-plant/displays/mimic/ev
 import { openBridgeDevice, textWidth } from '../../../../packs/process-plant/displays/mimic/text-metrics.ts'
 
 /**
- * The flap names the most severe active alarm and counts the others (" +2")
- * where the reserved frame has room; the alarms panel lists every one.
+ * The flap names the most severe active alarm, with what the I&C does there
+ * ("LO-LO · AFW START") and a count of the others (" +2"), as far as the
+ * reserved frame has room: first the action goes, which its chip and alarm
+ * row name too, then the count, never what it watches, for which the frame
+ * always has room. So one item counts its alarms alike on every display
+ * that draws it (QA review of run 22: "+2" on the overview, none on the
+ * core detail). The alarms panel lists every one.
  */
-export const flapLabel = (label: string, others: number, frameWidth: number): string => {
-  if (others === 0) return label
-  const counted = `${label} +${others}`
-  return textWidth('alertLabel', counted) + openBridgeDevice.flapLabelInset <= frameWidth ? counted : label
+export const flapLabel = (label: { readonly flap: string; readonly flapShort: string }, others: number, frameWidth: number): string => {
+  const forms = others === 0 ? [label.flap] : [`${label.flap} +${others}`, `${label.flapShort} +${others}`]
+  return forms.find(form => textWidth('alertLabel', form) + openBridgeDevice.flapLabelInset <= frameWidth) ?? label.flapShort
 }
 
 /** The text widths the server reserved were measured in OpenBridge's Noto Sans, so the mimic loads its glyphs (mimic-font.ts). */
@@ -234,8 +238,15 @@ export const createReadoutBlock = (): HTMLElement & Props => {
   return block
 }
 
-export const updateReadoutBlock = (block: HTMLElement & Props, value: number | null, fractionDigits: number, maxDigits: number): void => {
-  block.value = value
+/**
+ * A readout block's value: a number, or at an end of its instrument's span
+ * the text that says only where the quantity is ("<0"), in OpenBridge's
+ * low-integrity style, as a readout shows it.
+ */
+export const updateReadoutBlock = (block: HTMLElement & Props, value: number | null, fractionDigits: number, maxDigits: number, offScale: string | null = null): void => {
+  block.valueType = offScale === null ? 'number' : 'text'
+  block.value = offScale ?? value
+  block.dataQuality = offScale === null ? undefined : 'low-integrity'
   block.fractionDigits = fractionDigits
   block.maxDigits = maxDigits
 }

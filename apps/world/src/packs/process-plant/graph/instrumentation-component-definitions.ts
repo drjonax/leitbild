@@ -92,7 +92,7 @@ export const instrumentationComponentDefinitions: ReadonlyArray<ComponentDefinit
       /** The reactor trip breakers whose open contacts make P-4. */
       reactorTripBreakers: z.array(z.string().min(1)).min(1),
     }).strict(),
-    semantics: fixedSemantics({ keyValues: ['blocked'] }),
+    semantics: fixedSemantics({ keyValues: ['blocked'], permissives: ['belowP11'] }),
     variables: [
       variable({ path: 'blockPushbutton', label: 'Low pressurizer pressure SI block pushbutton', kind: 'discrete', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'blocked', label: 'Low pressurizer pressure SI blocked', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),

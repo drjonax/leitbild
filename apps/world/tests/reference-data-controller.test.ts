@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { PackReferenceDatasetStyle } from '../src/core/packs/reference-style.ts'
 import { gridNorwayStyle } from '../src/packs/electric-grid/ui/grid-norway-style.ts'
 import { createReferenceDataController } from '../src/ui/map/reference-data-controller.ts'
+import type { MapErrorClaim } from '../src/ui/map-runtime/types.ts'
 import { gridNorwayReferenceTileset } from './fixtures/grid-norway-reference-manifest.ts'
 import { createFakeMapStyle, layerOrder } from './helpers/fake-map-style.ts'
 
@@ -11,6 +12,8 @@ const capabilities = (...tilesets: ReadonlyArray<Record<string, unknown>>) => ({
 })
 
 const noRecoveryFailure = (message: string): void => { throw new Error(`unexpected build recovery failure: ${message}`) }
+// These tests fire no map errors, so no claim is ever consulted.
+const unroutedErrors = (_claim: MapErrorClaim) => () => undefined
 
 const fakeFetch = (status: number, body: unknown) => async (_input: string): Promise<Response> =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), {
@@ -34,6 +37,7 @@ describe('createReferenceDataController', () => {
       appearance: { theme: 'light' },
       beforeLayerId: () => 'poi-emergency',
       onBuildRecoveryFailed: noRecoveryFailure,
+      claimErrors: unroutedErrors,
       fetchFn: fakeFetch(200, capabilities(gridNorwayReferenceTileset)),
     })
     const registered = controller.registered[0]!
@@ -60,6 +64,7 @@ describe('createReferenceDataController', () => {
       appearance: { theme: 'dark' },
       beforeLayerId: () => { events.push('anchor'); return null },
       onBuildRecoveryFailed: noRecoveryFailure,
+      claimErrors: unroutedErrors,
       fetchFn: async input => { events.push('fetch'); return await fakeFetch(200, capabilities(gridNorwayReferenceTileset))(input) },
     })
     expect(events).toEqual(['fetch', 'anchor'])
@@ -73,6 +78,7 @@ describe('createReferenceDataController', () => {
       appearance: { theme: 'light' },
       beforeLayerId: () => 'missing-layer',
       onBuildRecoveryFailed: noRecoveryFailure,
+      claimErrors: unroutedErrors,
       fetchFn: fakeFetch(200, capabilities(gridNorwayReferenceTileset)),
     })).rejects.toThrow('missing layer missing-layer')
 
@@ -83,6 +89,7 @@ describe('createReferenceDataController', () => {
       appearance: { theme: 'light' },
       beforeLayerId: () => null,
       onBuildRecoveryFailed: noRecoveryFailure,
+      claimErrors: unroutedErrors,
       fetchFn: fakeFetch(200, capabilities(renamed)),
     })).rejects.toThrow('build wrote "power"')
   })
@@ -96,6 +103,7 @@ describe('createReferenceDataController', () => {
       appearance: { theme: 'light' },
       beforeLayerId: () => null,
       onBuildRecoveryFailed: noRecoveryFailure,
+      claimErrors: unroutedErrors,
       fetchFn: fakeFetch(200, capabilities(gridNorwayReferenceTileset, { ...gridNorwayReferenceTileset, datasetId: 'unstyled' })),
       logger: message => captured.push(message),
     })
@@ -113,6 +121,7 @@ describe('createReferenceDataController', () => {
         appearance: { theme: 'light' },
         beforeLayerId: () => null,
         onBuildRecoveryFailed: noRecoveryFailure,
+        claimErrors: unroutedErrors,
         fetchFn: fakeFetch(status, body),
         logger: message => captured.push(message),
       })
@@ -129,6 +138,7 @@ describe('createReferenceDataController', () => {
       appearance: { theme: 'light' },
       beforeLayerId: () => null,
       onBuildRecoveryFailed: noRecoveryFailure,
+      claimErrors: unroutedErrors,
       fetchFn: async input => { fetches += 1; return await fakeFetch(200, capabilities())(input) },
     })
     expect(controller.registered).toEqual([])

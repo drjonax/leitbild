@@ -19,7 +19,7 @@ import { buildGeometry, type GridGeometry } from './geometry.ts'
 import { buildHaldenAddition, haldenAdditionId } from './halden-addition.ts'
 import type { GridModelAdditionV2 } from '../schemas/grid-model-addition.ts'
 import type { NorwayModelBuildInputs } from './inputs.ts'
-import { buildExternalSystems, buildHvdcLinks, excludedInterconnectors, nordicRemainderState, topologyInterconnectors } from './interconnectors.ts'
+import { buildExternalSystems, buildHvdcLinks, buildHvdcRampGroups, excludedInterconnectors, nordicRemainderState, topologyInterconnectors } from './interconnectors.ts'
 import { createBuildLedger, type BuildLedgerEntry } from './ledger.ts'
 import { buildLoads, loadControlRule, loadKindRules, minimumShareMw, municipalAttachmentLimitKm } from './loads.ts'
 import { networkEquivalents } from './network-equivalents.ts'
@@ -225,6 +225,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   const equivalents = networkEquivalents({ curations, buses, stationOfFeature: featureId => stationOfFeature.get(featureId), ledger })
   const branches: GridBranchV2[] = [...lines, ...transformers, ...equivalents.map(equivalent => equivalent.branch)].sort((left, right) => compareText(left.id, right.id))
 
+  const hvdcLinks = buildHvdcLinks({ links: topology.hvdcLinks, table: inputs.interconnectors.data, curationsOfLink, sourceIds: ids })
   const rulesDigest = sha256Hex(JSON.stringify(buildRules))
   const buildId = sourceBuildId(sources.inputs, rulesDigest)
   const draft = {
@@ -239,7 +240,8 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     sourceBuild: { id: buildId, inputs: sources.inputs },
     buses,
     branches,
-    hvdcLinks: buildHvdcLinks({ links: topology.hvdcLinks, table: inputs.interconnectors.data, curationsOfLink, sourceIds: ids }),
+    hvdcLinks,
+    hvdcRampGroups: buildHvdcRampGroups({ table: inputs.interconnectors.data, links: hvdcLinks, sourceIds: ids }),
     externalSystems: buildExternalSystems({ boundaries: topology.boundaries, table: inputs.interconnectors.data, sourceIds: ids, synchronousCase: 'winterPeak' }),
     generators,
     loads,

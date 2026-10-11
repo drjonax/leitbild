@@ -224,10 +224,16 @@ const compileComponentSemantics = (
       const command = resolve(declaration.command)
       if (!command.writable || command.actuation !== 'command') throw new Error(`${context}: ${declaration.aspect} command ${declaration.command} is not a writable command`)
     }
+    if (declaration.isolation !== undefined) {
+      const isolation = resolve(declaration.isolation)
+      if (declaration.aspect !== 'position') throw new Error(`${context}: only a position is driven shut by an isolation input, not ${declaration.aspect}`)
+      if (!isolation.writable || isolation.actuation !== 'command' || isolation.quantity !== 'boolean') throw new Error(`${context}: position isolation ${declaration.isolation} is not a writable boolean command`)
+    }
     return {
       aspect: declaration.aspect,
       ...(state === undefined ? {} : { state: { path: variablePathFor(componentId, state.variable), reading: state.reading } }),
       ...(declaration.command === undefined ? {} : { command: variablePathFor(componentId, declaration.command) }),
+      ...(declaration.isolation === undefined ? {} : { isolation: variablePathFor(componentId, declaration.isolation) }),
     }
   }
   const portName = (name: string): PortName => {
@@ -278,6 +284,19 @@ const compileComponentSemantics = (
           return variablePathFor(componentId, local as LocalVariablePath)
         }),
       }
+    }),
+    permissives: semantics.permissives.map(local => {
+      const flag = resolve(local as LocalVariablePath)
+      if (flag.quantity !== 'boolean' || flag.writable) throw new Error(`${context}: permissive ${local} is not a solved flag`)
+      return variablePathFor(componentId, local as LocalVariablePath)
+    }),
+    widerRanges: semantics.widerRanges.map(range => {
+      const reading = resolve(range.reading as LocalVariablePath)
+      const wider = resolve(range.wider as LocalVariablePath)
+      if (reading.writable || wider.writable) throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must be solved readings`)
+      if (reading.quantity !== wider.quantity || reading.unit !== wider.unit || reading.measurand !== wider.measurand) throw new Error(`${context}: ${range.wider} does not read the quantity ${range.reading} reads`)
+      if (reading.limits?.instrumentSpan === undefined || wider.limits?.instrumentSpan === undefined) throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must declare their instrument spans`)
+      return { reading: variablePathFor(componentId, range.reading as LocalVariablePath), wider: variablePathFor(componentId, range.wider as LocalVariablePath) }
     }),
     energy: semantics.energy.map((role): CompiledEnergyRole => {
       const circuits = new Set(Object.values(ports).map(port => port.circuit))

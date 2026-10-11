@@ -37,12 +37,14 @@ const valveSemantics = (parameters: unknown): ComponentSemantics => {
   if (valveFunction === undefined) throw new Error(`valve mode ${mode} has no declared function`)
   return {
     function: valveFunction,
-    aspects: [aspect('position', { variable: 'effectivePositionFraction', reading: 'value' }, 'positionFraction')],
+    aspects: [aspect('position', { variable: 'effectivePositionFraction', reading: 'value' }, 'positionFraction', 'isolationSignal')],
     embedded: [],
     ratedOutflow: [],
     portFlows: [],
     keyValues: [],
     meaningfulWhile: [],
+    permissives: [],
+    widerRanges: [],
     energy: [],
   }
 }
@@ -103,7 +105,13 @@ export const junctionComponentDefinitions: ReadonlyArray<ComponentDefinition> = 
       nominalDensityKgPerM3: z.number().finite().positive().optional(),
       mixingTimeConstantS: z.number().finite().positive().optional(),
       pressureTimeConstantS: z.number().finite().positive().optional(),
-      distributionMode: z.enum(['demandWeighted', 'pressureWeighted']).optional(),
+      /**
+       * How the header shares its inflow among its outlets. pressureBalance:
+       * pumps alone feed it, each outlet leads through a valve with a flow
+       * coefficient to a vessel with a pressure, and the header stands where
+       * the pumps' curves deliver what the outlets pass to their vessels.
+       */
+      distributionMode: z.enum(['demandWeighted', 'pressureWeighted', 'pressureBalance']).optional(),
       portIds: headerPortIdsSchema.optional(),
     }).strict(),
     resolveAdditionalPorts: ({ parameters }) => headerPortsFor(headerPortIdsFrom(parameters), 'hydraulicThermal'),

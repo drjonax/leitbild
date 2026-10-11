@@ -31,6 +31,7 @@ export const pressurizerInitialValueDefinitions: ReadonlyArray<ComponentInitialV
       // where the plant starts; the initial reconciliation fits the program
       // to the loops' initial temperature.
       if (localPath === 'levelProgramPercent') return pressurizerLevelControl(component).fullLoadLevelPercent
+      if (localPath === 'levelDeviationPercent') return nominalLevelFraction * 100 - pressurizerLevelControl(component).fullLoadLevelPercent
       if (localPath === 'chargingFlowDemandKgPerS') return pressurizerLevelControl(component).nominalChargingFlowKgPerS
       if (localPath === 'heatersCutOff') return nominalLevelFraction * 100 < parameterNumber(component, 'heaterCutoffLevelPercent')
       if (localPath === 'demandMw') return 0

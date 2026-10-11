@@ -1,5 +1,5 @@
 import type { GridOperatingPointV2 } from '../schemas/grid-operating-point.ts'
-import type { GridExternalSystemV2, GridHvdcLinkV2 } from '../schemas/grid-model.ts'
+import type { GridExternalSystemV2, GridHvdcLinkV2, GridHvdcRampGroupV2 } from '../schemas/grid-model.ts'
 import type { ExternalArea } from '../schemas/grid-ids.ts'
 import { remainderAreaSchema, type GridInterconnectorTable } from '../schemas/grid-interconnector.ts'
 import { compareText } from '../topology/ids.ts'
@@ -58,6 +58,25 @@ export const buildHvdcLinks = (config: {
       confidence: curations.length > 0 ? 'medium' : 'high',
       note: `${link.provenance.note ?? 'route mapped in OSM'}; rating ${entry.rating.mw} MW (${entry.rating.basis}), losses ${entry.lossPercentAtRated} % at rated transfer (${entry.lossBasis}), ramp ${entry.rampMwPerMinute} MW/min (${entry.rampBasis})`,
     },
+  }
+}).sort((left, right) => compareText(left.id, right.id))
+
+/**
+ * The table's shared HVDC ramp limits over the model's links. A group naming a link the model does
+ * not carry (out of service) fails the build: the table must state the group of the links in service.
+ */
+export const buildHvdcRampGroups = (config: {
+  readonly table: GridInterconnectorTable
+  readonly links: ReadonlyArray<GridHvdcLinkV2>
+  readonly sourceIds: ModelSourceIds
+}): ReadonlyArray<GridHvdcRampGroupV2> => config.table.hvdcRampGroups.map((group): GridHvdcRampGroupV2 => {
+  const missing = group.linkIds.filter(linkId => !config.links.some(link => link.id === linkId))
+  if (missing.length > 0) throw new Error(`HVDC ramp group ${group.id} names ${missing.join(', ')}, which the model does not carry`)
+  return {
+    id: group.id,
+    linkIds: [...group.linkIds].sort(compareText),
+    rampMwPerMinute: group.rampMwPerMinute,
+    provenance: { sources: [config.sourceIds.interconnectors], method: 'curated', confidence: 'high', note: group.basis },
   }
 }).sort((left, right) => compareText(left.id, right.id))
 

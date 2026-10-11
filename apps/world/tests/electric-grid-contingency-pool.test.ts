@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { IsoTimestamp } from '../src/core/model/index.ts'
+import { norwayGridModelRef, norwayWinterPeakOperatingPointRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { gridOperatingPointDemand } from '../src/packs/electric-grid/definitions.ts'
 import type { CompiledGridDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
 import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
@@ -53,7 +55,7 @@ const v2Grid = async (): Promise<GridRuntimeInstance> => {
   const directory = join(import.meta.dir, '../src/packs/electric-grid/models')
   const generated = validateGridModel(JSON.parse(await readFile(join(directory, 'norway-transmission.grid-model.json'), 'utf8')), 'v2')
   const winter = validateGridOperatingPoint(JSON.parse(await readFile(join(directory, 'norway-winter-weekday-peak.operating-point.json'), 'utf8')), 'winter', gridOperatingPointTargetsForModel(generated))
-  return solved(gridDefinitionForModel(compileGridModelV2(generated, winter).model))
+  return solved(gridDefinitionForModel(compileGridModelV2(generated, winter, gridOperatingPointDemand(norwayWinterPeakOperatingPointRef, norwayGridModelRef)).model))
 }
 
 /** The synthetic grid intact: with branch relays its random dispatch would trip a fifth of it at once. */
@@ -143,8 +145,8 @@ describe('electric grid N-1 worker pool', () => {
   test('a parallel screening is byte-identical to the inline one on a synthetic 10k-bus grid, and faster', async () => {
     const grid = intactSynthetic(10_000)
     const live = liveContingencyCase(grid)
-    // Its AC load flow does not converge, so the base flows are DC.
-    expect(live.baseFlowModels.map(island => island.flowModel)).toEqual(['dc'])
+    // Its AC load flow converges at the fixture's declared demand (1.0 at 08:00), so the base flows are AC.
+    expect(live.baseFlowModels.map(island => island.flowModel)).toEqual(['ac'])
     const pool = poolOf(3)
     const branches = selectContingencies(live, { kind: 'all-branches' })
     expect(branches.length).toBe(14_000)

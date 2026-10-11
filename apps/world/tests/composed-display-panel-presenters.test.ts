@@ -1,123 +1,140 @@
 import { describe, expect, test } from 'bun:test'
 import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
-import { limitLabelRanks, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
-import { agoText, alarmAge, fitMarginText, median, visibleAlarms, annunciatorStates } from '../src/ui/embed/composed-display/panel-presenters.ts'
-import { activeThreshold, limitAhead, limitInForce, limitsInForce, projectionBasis, returningText, minutesToThreshold, movingAwayFromLimits, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText } from '../src/packs/process-plant/displays/trend-reading.ts'
-import { formatQuantity, limitKindName, marginText, marginTextForms, nearestThresholdMargin, simulationClock, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
-import { escalateLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
+import { idleText, limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
+import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates, tileActions } from '../src/ui/embed/composed-display/panel-presenters.ts'
+import { activeThreshold, gatesHold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { formatQuantity, formatValue, limitKindName, marginText, marginTextForms, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
+import { modesShortText, orderLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import type { ComposedDisplayAlarm } from '../src/ui/embed/composed-display/composed-display-client.ts'
 
+/** No on/off state read yet: every gated limit is kept. */
+const noGates = () => undefined
+
 const thresholds: ReadonlyArray<ComposedDisplayThreshold> = [
-  { ruleId: 'trip-low', label: 'Low-low', kind: 'trip', operator: '<', direction: 'low', value: 20, escalation: 1 },
-  { ruleId: 'alarm-low', label: 'Low', kind: 'alarm', operator: '<', direction: 'low', value: 30, escalation: 1 },
-  { ruleId: 'control', label: 'Demand', kind: 'control', operator: '<', direction: 'low', value: 50, escalation: 1 },
-  { ruleId: 'alarm-high', label: 'High', kind: 'alarm', operator: '>', direction: 'high', value: 75, escalation: 1, modeLabel: 'power operation', modeIds: ['powerOperation'] },
+  { ruleId: 'trip-low', label: 'Low-low', kind: 'trip', operator: '<', direction: 'low', value: 20, order: 2, action: 'RX TRIP' },
+  { ruleId: 'alarm-low', label: 'Low', kind: 'alarm', operator: '<', direction: 'low', value: 30, order: 1, action: 'ALM' },
+  { ruleId: 'control', label: 'Demand', kind: 'control', operator: '<', direction: 'low', value: 50, order: 1, action: 'CTL' },
+  { ruleId: 'alarm-high', label: 'High', kind: 'alarm', operator: '>', direction: 'high', value: 75, order: 1, action: 'ALM', modeLabel: 'Mode 1', modeNames: 'Power operation', modeIds: ['powerOperation'] },
 ]
 
 describe('composed display panel presenters', () => {
   test('margin to the nearest acting alarm or trip threshold, ignoring control set points', () => {
     const near = nearestThresholdMargin(34.5, thresholds)!
     expect([near.threshold.ruleId, near.margin]).toEqual(['alarm-low', 4.5])
-    expect(marginText(near, '%')).toBe('4.50 percentage points above LO ALM 30 %')
+    expect(marginText(near, '%')).toBe('4.50 percentage points above LO 30 % · ALM')
     const beyond = nearestThresholdMargin(26.9, thresholds)!
-    expect(marginText(beyond, '%')).toBe('past LO ALM 30 %')
+    expect(marginText(beyond, '%')).toBe('past LO 30 % · ALM')
     // Past both, the trip is what it says.
-    expect(marginText(nearestThresholdMargin(19.5, thresholds)!, '%')).toBe('past LO TRIP 20 %')
-    expect(marginText(nearestThresholdMargin(70, thresholds)!, '%')).toBe('5.00 percentage points below HI ALM 75 % (power operation)')
-    expect(thresholdName(thresholds[0]!, 'MPa')).toBe('LO TRIP 20 MPa')
-    expect(thresholdName(thresholds[0]!, 'MPa', { withUnit: false })).toBe('LO TRIP 20')
+    expect(marginText(nearestThresholdMargin(19.5, thresholds)!, '%')).toBe('past LO-LO 20 % · RX TRIP')
+    expect(marginText(nearestThresholdMargin(70, thresholds)!, '%')).toBe('5.00 percentage points below HI 75 % · ALM (Mode 1)')
+    expect(thresholdName(thresholds[0]!, 'MPa')).toBe('LO-LO 20 MPa · RX TRIP')
+    expect(thresholdName(thresholds[0]!, 'MPa', { withUnit: false })).toBe('LO-LO 20 · RX TRIP')
+    expect(thresholdFullName(thresholds[3]!, '%')).toBe('HI 75 % · ALM (Mode 1)')
     expect(nearestThresholdMargin(10, [thresholds[2]!])).toBeNull()
   })
 
-  test('limits of one kind escalate by order away from normal, never by signal', () => {
-    const limit = (ruleId: string, kind: 'alarm' | 'trip', direction: 'low' | 'high', value: number, modeIds?: ReadonlyArray<string>) =>
-      ({ ruleId, label: ruleId, kind, operator: direction === 'low' ? '<' : '>', direction, value, ...(modeIds === undefined ? {} : { modeLabel: modeIds.join(' or '), modeIds }) }) as const
-    const names = (limits: Parameters<typeof escalateLimits>[0]) => escalateLimits(limits).map(threshold => thresholdName(threshold, 'degC'))
+  test('limits order away from normal whatever each does, never by signal', () => {
+    const limit = (ruleId: string, kind: 'alarm' | 'trip', direction: 'low' | 'high', value: number, action: string, modeIds?: ReadonlyArray<string>) =>
+      ({ ruleId, label: ruleId, kind, action, operator: direction === 'low' ? '<' : '>', direction, value, ...(modeIds === undefined ? {} : { modeLabel: modeIds.join(' or '), modeIds }) }) as const
+    const names = (limits: Parameters<typeof orderLimits>[0]) => orderLimits(limits).map(threshold => thresholdName(threshold, 'degC'))
     // Subcooling: a warning at 16.7 °C and a critical alarm at 0 °C, both alarms below normal.
-    expect(names([limit('lost', 'alarm', 'low', 0), limit('low', 'alarm', 'low', 16.7)])).toEqual(['LO-LO ALM 0 °C', 'LO ALM 16.7 °C'])
-    // A trip and an alarm are each the first of their kind; high limits count upward.
-    expect(names([limit('trip', 'trip', 'low', 20), limit('alarm', 'alarm', 'low', 30), limit('high', 'alarm', 'high', 75), limit('higher', 'alarm', 'high', 82), limit('highest', 'alarm', 'high', 90)]))
-      .toEqual(['LO TRIP 20 °C', 'LO ALM 30 °C', 'HI ALM 75 °C', 'HI-HI ALM 82 °C', 'HI-HI ALM 90 °C'])
+    expect(names([limit('lost', 'alarm', 'low', 0, 'ALM'), limit('low', 'alarm', 'low', 16.7, 'ALM')])).toEqual(['LO-LO 0 °C · ALM', 'LO 16.7 °C · ALM'])
+    // Steam generator level: the alarm at 30 is LO, and both actuations at 20 beyond it are LO-LO, each named by what it does.
+    expect(names([limit('afw', 'trip', 'low', 20, 'AFW START'), limit('rx', 'trip', 'low', 20, 'RX TRIP', ['powerOperation', 'startup']), limit('alarm', 'alarm', 'low', 30, 'ALM'), limit('high', 'alarm', 'high', 75, 'ALM'), limit('higher', 'trip', 'high', 82, 'FWI')]))
+      .toEqual(['LO-LO 20 °C · AFW START', 'LO-LO 20 °C · RX TRIP', 'LO 30 °C · ALM', 'HI 75 °C · ALM', 'HI-HI 82 °C · FWI'])
     // A limit in every mode and one only in power operation act together; limits of two different modes are alternatives.
-    expect(names([limit('relief', 'trip', 'high', 16.18), limit('reactor', 'trip', 'high', 16.35, ['powerOperation'])])).toEqual(['HI TRIP 16.18 °C', 'HI-HI TRIP 16.35 °C'])
-    expect(names([limit('startup', 'alarm', 'low', 20, ['startup']), limit('power', 'alarm', 'low', 30, ['powerOperation'])])).toEqual(['LO ALM 20 °C', 'LO ALM 30 °C'])
-    // Two rules at one value are one step.
-    expect(names([limit('a', 'alarm', 'low', 10), limit('b', 'alarm', 'low', 10), limit('c', 'alarm', 'low', 5)])).toEqual(['LO ALM 10 °C', 'LO ALM 10 °C', 'LO-LO ALM 5 °C'])
-    expect(limitKindName({ direction: 'high', kind: 'trip', escalation: 2 })).toBe('HI-HI TRIP')
+    expect(names([limit('relief', 'trip', 'high', 16.18, 'PORV'), limit('reactor', 'trip', 'high', 16.35, 'RX TRIP', ['powerOperation'])])).toEqual(['HI 16.18 °C · PORV', 'HI-HI 16.35 °C · RX TRIP'])
+    expect(names([limit('startup', 'alarm', 'low', 20, 'ALM', ['startup']), limit('power', 'alarm', 'low', 30, 'ALM', ['powerOperation'])])).toEqual(['LO 20 °C · ALM', 'LO 30 °C · ALM'])
+    // Two rules at one value are one step; a third beyond them is LO-LO, never LO-LO-LO.
+    expect(names([limit('a', 'alarm', 'low', 10, 'ALM'), limit('b', 'alarm', 'low', 10, 'ALM'), limit('c', 'alarm', 'low', 5, 'ALM'), limit('d', 'trip', 'low', 2, 'SI')])).toEqual(['LO 10 °C · ALM', 'LO 10 °C · ALM', 'LO-LO 5 °C · ALM', 'LO-LO 2 °C · SI'])
+    expect(limitKindName({ direction: 'high', order: 2, action: 'FWI' })).toBe('HI-HI · FWI')
+    expect(limitKindName({ direction: 'low', order: 1, action: 'ALM' })).toBe('LO · ALM')
   })
 
-  test('a margin fitted to its room drops whole parts, the mode qualifier first, never cutting a word', () => {
-    // Primary inventory net flow on the overview: 0 kg/s against the power-operation-only LO TRIP -250 kg/s.
-    const netFlowTrip = { ruleId: 'net-flow', label: 'Primary inventory loss trip', kind: 'trip', operator: '<', direction: 'low', value: -250, escalation: 1, modeLabel: 'Power operation', modeIds: ['powerOperation'] } as const
+  test('the modes a limit acts in are named by their short labels, a run of them as a range', () => {
+    const condition = { type: 'comparison', signal: { path: 'core.powerMw' }, operator: '>', value: 1 } as never
+    const modes = ['Power operation', 'Startup', 'Hot standby', 'Hot shutdown', 'Cold shutdown'].map((label, index) => ({ id: `m${index + 1}`, label, shortLabel: String(index + 1), condition }))
+    expect(modesShortText(modes, ['m1', 'm2'])).toBe('Modes 1–2')
+    expect(modesShortText(modes, ['m1', 'm2', 'm3'])).toBe('Modes 1–3')
+    expect(modesShortText(modes, ['m3'])).toBe('Mode 3')
+    expect(modesShortText(modes, ['m3', 'm1'])).toBe('Modes 1, 3')
+    // A mode without a short label is named by its label.
+    expect(modesShortText([{ id: 'run', label: 'Running', condition }, ...modes], ['run', 'm1'])).toBe('Running or Power operation')
+  })
+
+  test('a margin fitted to its room drops whole parts, the time and mode qualifier first, never cutting a word', () => {
+    // Primary inventory net flow on the overview: 0 kg/s against the power-operation-only LO-LO -250 kg/s trip.
+    const netFlowTrip = { ruleId: 'net-flow', label: 'Primary inventory loss trip', kind: 'trip', operator: '<', direction: 'low', value: -250, order: 1, action: 'RX TRIP', modeLabel: 'Mode 1', modeNames: 'Power operation', modeIds: ['powerOperation'] } as const
     const margin = { threshold: netFlowTrip, margin: 250 }
     expect(marginTextForms(margin, 'kg/s')).toEqual([
-      '250 kg/s above LO TRIP -250 kg/s (Power operation)',
-      '250 kg/s above LO TRIP -250 kg/s',
-      '250 kg/s above LO TRIP -250',
-      '250 kg/s above LO TRIP',
+      '250 kg/s above LO -250 kg/s · RX TRIP (Mode 1)',
+      '250 kg/s above LO -250 kg/s · RX TRIP',
+      '250 kg/s above LO -250 · RX TRIP',
+      '250 kg/s above LO · RX TRIP',
     ])
-    expect(marginText(margin, 'kg/s')).toBe('250 kg/s above LO TRIP -250 kg/s (Power operation)')
+    expect(marginText(margin, 'kg/s')).toBe('250 kg/s above LO -250 kg/s · RX TRIP (Mode 1)')
     const within = (length: number) => (text: string) => text.length <= length
-    expect(fitMarginText(margin, 'kg/s', within(48))).toBe('250 kg/s above LO TRIP -250 kg/s')
-    expect(fitMarginText(margin, 'kg/s', within(28))).toBe('250 kg/s above LO TRIP -250')
+    const state: LimitState = { kind: 'margin', margin, eta: '≈4 min', minutes: 4 }
+    expect(limitStateForms(state, 'kg/s', null)[0]).toBe('250 kg/s above LO -250 kg/s · RX TRIP (Mode 1) · ≈4 min')
+    expect(fitLimitStateText(state, 'kg/s', null, within(48))).toBe('250 kg/s above LO -250 kg/s · RX TRIP (Mode 1)')
+    expect(fitLimitStateText(state, 'kg/s', null, within(38))).toBe('250 kg/s above LO -250 kg/s · RX TRIP')
     // Too narrow for any: the shortest, which still says how far and from which limit.
-    expect(fitMarginText(margin, 'kg/s', within(10))).toBe('250 kg/s above LO TRIP')
-    expect(marginTextForms({ threshold: netFlowTrip, margin: -5 }, 'kg/s')).toEqual(['past LO TRIP -250 kg/s (Power operation)', 'past LO TRIP -250 kg/s', 'past LO TRIP -250', 'past LO TRIP'])
+    expect(fitLimitStateText(state, 'kg/s', null, within(10))).toBe('250 kg/s above LO · RX TRIP')
+    expect(marginTextForms({ threshold: netFlowTrip, margin: -5 }, 'kg/s')).toEqual(['past LO -250 kg/s · RX TRIP (Mode 1)', 'past LO -250 kg/s · RX TRIP', 'past LO -250 · RX TRIP', 'past LO · RX TRIP'])
     // A unitless limit without modes has fewer forms, none repeated.
-    expect(marginTextForms({ threshold: { ...thresholds[1]!, value: 0.5 }, margin: 0.25 }, 'boolean')).toEqual(['0.250 above LO ALM 0.5', '0.250 above LO ALM'])
+    expect(marginTextForms({ threshold: { ...thresholds[1]!, value: 0.5 }, margin: 0.25 }, 'boolean')).toEqual(['0.250 above LO 0.5 · ALM', '0.250 above LO · ALM'])
+    // With nothing in force the way it moves, a single form.
+    expect(limitStateForms({ kind: 'clear', direction: 'low' }, '%', null)).toEqual(['no LO limit in force'])
   })
 
   test('a value on a limit that acts at equality is past it', () => {
     // Subcooling at exactly 0 °C: LO-LO ALM acts at "<= 0", so it leads, not the 16.7 °C alarm.
     const subcooling = [
-      { ruleId: 'margin-low', label: 'RCS subcooling margin low', kind: 'alarm', operator: '<', direction: 'low', value: 16.7, escalation: 1 },
-      { ruleId: 'margin-lost', label: 'RCS subcooling lost', kind: 'alarm', operator: '<=', direction: 'low', value: 0, escalation: 2 },
+      { ruleId: 'margin-low', label: 'RCS subcooling margin low', kind: 'alarm', operator: '<', direction: 'low', value: 16.7, order: 1, action: 'ALM' },
+      { ruleId: 'margin-lost', label: 'RCS subcooling lost', kind: 'alarm', operator: '<=', direction: 'low', value: 0, order: 2, action: 'ALM' },
     ] as const
     const margin = nearestThresholdMargin(0, subcooling)!
     expect(margin.threshold.ruleId).toBe('margin-lost')
-    expect(marginText(margin, 'degC')).toBe('past LO-LO ALM 0 °C')
+    expect(marginText(margin, 'degC')).toBe('past LO-LO 0 °C · ALM')
     // On a limit that acts only beyond it, the value is not past it yet.
     expect(nearestThresholdMargin(16.7, subcooling)!.threshold.ruleId).toBe('margin-low')
     expect(marginText(nearestThresholdMargin(16.7, subcooling)!, 'degC')).not.toMatch(/^past/)
   })
 
   test('fractions read as percent wherever the display or the answer names them', () => {
-    const busLow = { ruleId: 'bus-low', label: 'Bus voltage low', kind: 'alarm', operator: '<', direction: 'low', value: 0.9, escalation: 1 } as const
+    const busLow = { ruleId: 'bus-low', label: 'Bus voltage low', kind: 'alarm', operator: '<', direction: 'low', value: 0.9, order: 1, action: 'ALM' } as const
     expect(formatQuantity(1, 'fraction')).toBe('100 %')
     expect(formatQuantity(0.955, 'fraction')).toBe('95.5 %')
     expect(formatQuantity(0, 'kg/s')).toBe('0 kg/s')
     expect(formatQuantity(125, 'volts_dc')).toBe('125 V DC')
     expect(unitLabel('degC/s')).toBe('°C/s')
-    expect(thresholdName(busLow, 'fraction')).toBe('LO ALM 90 %')
-    expect(marginText(nearestThresholdMargin(0.955, [busLow])!, 'fraction')).toBe('5.50 percentage points above LO ALM 90 %')
+    expect(thresholdName(busLow, 'fraction')).toBe('LO 90 % · ALM')
+    expect(marginText(nearestThresholdMargin(0.955, [busLow])!, 'fraction')).toBe('5.50 percentage points above LO 90 % · ALM')
     expect(rateText(-0.012, 0.955, 'fraction')).toBe('▼ −1.20 %/min')
     expect(unitLabel('fraction')).toBe('%')
   })
 
   test('the limit ahead follows the direction of travel, also while in alarm', () => {
-    // SG B in LO ALM 30, falling: the next limit is LO TRIP 20, not the alarm it has passed.
-    expect(limitAhead(28, -2.25, thresholds)?.threshold.ruleId).toBe('trip-low')
+    // SG B in LO ALM 30, falling: the next limit is LO-LO 20, not the alarm it has passed.
+    expect(limitAhead(28, 'falling', thresholds)?.threshold.ruleId).toBe('trip-low')
+    // Rising: past LO ALM 30, it is the limit it moves back across first.
+    expect(limitAhead(28, 'rising', thresholds)?.threshold.ruleId).toBe('alarm-low')
     // Rising away from the low limits toward HI ALM 75.
-    expect(limitAhead(60, 24, thresholds)?.threshold.ruleId).toBe('alarm-high')
-    // Rising with no high limit configured: none ahead, and the legend says so.
+    expect(limitAhead(60, 'rising', thresholds)?.threshold.ruleId).toBe('alarm-high')
+    // Rising with no high limit configured: none ahead.
     const lowOnly = thresholds.filter(threshold => threshold.direction === 'low')
-    expect(limitAhead(72, 24, lowOnly)).toBeNull()
-    expect(movingAwayFromLimits(72, 24, lowOnly)).toBe('rising')
-    // Steady: the nearest limit either way.
-    expect(limitAhead(34.5, 0, thresholds)?.threshold.ruleId).toBe('alarm-low')
-    expect(movingAwayFromLimits(34.5, 0, thresholds)).toBeNull()
+    expect(limitAhead(72, 'rising', lowOnly)).toBeNull()
   })
 
-  test('a value in alarm that is moving back says when it will be back inside the limit', () => {
+  test('a value in alarm that is moving back is timed back across the limit, never said to recover', () => {
     // SG A N-16 in HI ALM 5 mSv/h and drifting down.
-    const highRadiation = { ruleId: 'n16-high', label: 'Secondary radiation high', kind: 'alarm', operator: '>', direction: 'high', value: 5, escalation: 1 } as const
-    expect(returningText(5.4, -0.2, highRadiation, 'mSv/h', true)).toBe('back below HI ALM 5 mSv/h in ≈2 min')
-    expect(returningText(5.4, 0.2, highRadiation, 'mSv/h', true)).toBe('')
-    // Hours away at this rate: when, never a recovery already made.
-    expect(returningText(5.4, -0.01, highRadiation, 'mSv/h', true)).toBe('back below HI ALM 5 mSv/h in over 30 min')
-    // Without a basis for a time, the recovery is said, not timed.
-    expect(returningText(5.4, -0.2, highRadiation, 'mSv/h', false)).toBe('recovering, not projected')
-    expect(returningText(5.4, 0.2, highRadiation, 'mSv/h', false)).toBe('')
+    const highRadiation = { ruleId: 'n16-high', label: 'Secondary radiation high', kind: 'alarm', operator: '>', direction: 'high', value: 5, order: 1, action: 'ALM' } as const
+    expect(timeToThresholdText(5.4, -0.2, highRadiation, true, true)).toBe('≈2 min')
+    expect(timeToThresholdText(5.4, 0.2, highRadiation, true, true)).toBe('')
+    expect(timeToThresholdText(5.4, -0.01, highRadiation, true, true)).toBe('')
+    expect(minutesToThreshold(5.4, -0.2, highRadiation, true)).toBeCloseTo(2, 6)
+    // Not past it, there is nothing to come back across.
+    expect(minutesToThreshold(4.6, 0.2, highRadiation, true)).toBeNull()
   })
 
   test('a time to a limit is projected only from half a minute of change one way that is not slowing', () => {
@@ -151,6 +168,10 @@ describe('composed display panel presenters', () => {
     // A name without equipment that fits stays whole.
     expect(fitName('Pressurizer relief flow', within(40))).toBe('Pressurizer relief flow')
     expect(fitName('Pressurizer relief flow', within(20))).toBe('Pressurizer … flow')
+    // The forms World derives come first: the equipment by its short name, the words its signals share dropped.
+    const header = ['Process header outlet flow · SI header', 'Outlet flow · SI header']
+    expect(fitName('Process header outlet flow · Safety Injection Header', within(40), header)).toBe('Process header outlet flow · SI header')
+    expect(fitName('Process header outlet flow · Safety Injection Header', within(30), header)).toBe('Outlet flow · SI header')
   })
 
   test('median of parallel signals', () => {
@@ -166,14 +187,63 @@ describe('composed display panel presenters', () => {
       { id: 'c', ruleId: 'other', kind: 'alarm', title: 'Other', severity: 'critical', active: true, acknowledged: false, firstOut: false },
       { id: 'd', ruleId: 'sg-b-feedwater-low', kind: 'alarm', title: 'SG B feed low', severity: 'warning', active: true, acknowledged: false, firstOut: false, firstActiveElapsedMs: 50_000 },
     ]
-    expect(visibleAlarms(alarms, 'related', ['sg-b-level-low', 'sg-b-level-low-low', 'sg-b-feedwater-low']).map(alarm => alarm.id)).toEqual(['b', 'd', 'a'])
+    // First-out groups name what an alarm row annunciates, by its id.
+    const groups = { firstOutGroups: { b: 'RX TRIP', 'sg-c-level-low-low': 'RX TRIP' } }
+    expect(visibleAlarms(alarms, 'related', ['sg-b-level-low', 'sg-b-level-low-low', 'sg-b-feedwater-low'], groups).map(alarm => alarm.id)).toEqual(['b', 'd', 'a'])
     const plant: ReadonlyArray<ComposedDisplayAlarm> = [
       { id: 'cleared', ruleId: 'r1', kind: 'alarm', title: 'Cleared', severity: 'critical', active: false, acknowledged: false, firstOut: false, firstActiveElapsedMs: 1_000 },
       { id: 'critical', ruleId: 'r2', kind: 'alarm', title: 'Critical', severity: 'critical', active: true, acknowledged: true, firstOut: false, firstActiveElapsedMs: 2_000 },
       { id: 'trip', ruleId: 'r3', kind: 'trip', title: 'Trip', severity: 'warning', active: true, acknowledged: true, firstOut: false, firstActiveElapsedMs: 3_000 },
     ]
-    expect(visibleAlarms(plant, 'plant', []).map(alarm => alarm.id)).toEqual(['trip', 'critical', 'cleared'])
-    expect(visibleAlarms(alarms, 'plant', []).map(alarm => alarm.id)).toEqual(['b', 'c', 'd', 'a'])
+    expect(visibleAlarms(plant, 'plant', [], groups).map(alarm => alarm.id)).toEqual(['trip', 'critical', 'cleared'])
+    expect(visibleAlarms(alarms, 'plant', [], groups).map(alarm => alarm.id)).toEqual(['b', 'c', 'd', 'a'])
+    // First out of a group of one says nothing: it is not read first.
+    const flagged = alarms.map(alarm => alarm.id === 'a' ? { ...alarm, firstOut: true } : alarm)
+    expect(visibleAlarms(flagged, 'plant', [], { firstOutGroups: {} }).map(alarm => alarm.id)).toEqual(['b', 'c', 'd', 'a'])
+    expect(visibleAlarms(flagged, 'plant', [], { firstOutGroups: { a: 'SG LO' } }).map(alarm => alarm.id)).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  test('the banner leads with the reactor trip\'s first-out, and lists the other actuations apart from it', () => {
+    // Evaluation run 22, loss of main feedwater: the AFW start came in first; the reactor tripped on SG B low-low level.
+    // An alarm row's id is the trip it annunciates, of its rule.
+    const trip = (title: string, ruleId: string, effectId: string, at: number, firstOut: boolean): ComposedDisplayAlarm =>
+      ({ id: `trip:${ruleId}:${effectId}`, ruleId, kind: 'trip', title, severity: 'critical', active: true, acknowledged: false, firstOut, firstActiveElapsedMs: at })
+    const alarms = [
+      trip('Steam generator B low-low level', 'sg-b-afw', 'afw', 60_000, false),
+      trip('Auxiliary feedwater start on main feedwater pump trip', 'mfw-afw', 'afw', 3_000, false),
+      trip('Reactor trip on steam generator B low-low level', 'sg-b-rx-trip', 'reactor-trip', 61_000, true),
+      trip('Feedwater isolation on reactor trip, low Tavg', 'fwi', 'fwi', 75_000, false),
+      { ...trip('Safety injection actuated', 'si', 'safety-injection', 90_000, true), active: false },
+      { ...trip('Reactor trip on safety injection, low pressurizer pressure', 'si', 'reactor-trip', 90_000, false), active: false },
+    ]
+    // Safety injection annunciates its own trip in SI's group and the reactor trip it causes in the reactor trip's.
+    const annunciation = {
+      reactorTrip: { name: 'RX TRIP', ids: ['trip:sg-a-rx-trip:reactor-trip', 'trip:sg-b-rx-trip:reactor-trip', 'trip:otdt:reactor-trip', 'trip:si:reactor-trip'] },
+      actuations: [
+        { name: 'AFW START', ids: ['trip:sg-a-afw:afw', 'trip:sg-b-afw:afw', 'trip:mfw-afw:afw'] },
+        { name: 'SI', ids: ['trip:si:safety-injection'] },
+        { name: 'FWI', ids: ['trip:fwi:fwi'] },
+      ],
+      firstOutGroups: { 'trip:sg-a-rx-trip:reactor-trip': 'RX TRIP', 'trip:sg-b-rx-trip:reactor-trip': 'RX TRIP', 'trip:otdt:reactor-trip': 'RX TRIP', 'trip:si:reactor-trip': 'RX TRIP' },
+    }
+    expect(bannerTrip(alarms, annunciation)?.title).toBe('Reactor trip on steam generator B low-low level')
+    expect(actuatedNames(alarms, annunciation)).toEqual(['AFW START', 'FWI'])
+    // Without a reactor trip, nothing leads the banner; the actuations still show.
+    expect(bannerTrip(alarms.filter(alarm => alarm.ruleId !== 'sg-b-rx-trip'), annunciation)).toBeUndefined()
+    // First out names its group, and only where the group has more than one member.
+    expect(firstOutFlag(alarms[2]!, annunciation)).toBe('1st RX TRIP')
+    expect(firstOutFlag({ id: 'trip:si:safety-injection', firstOut: true }, annunciation)).toBeNull()
+    // A pressurizer that falls to its SI set point first: the reactor trip safety injection causes leads the banner
+    // as the reactor trip's first-out, and SI is listed as actuated beside it.
+    const depressurized = [
+      trip('Safety injection actuated', 'si', 'safety-injection', 40_000, true),
+      trip('Reactor trip on safety injection, low pressurizer pressure', 'si', 'reactor-trip', 40_000, true),
+      trip('Reactor trip on overtemperature delta-T', 'otdt', 'reactor-trip', 41_000, false),
+    ]
+    const banner = bannerTrip(depressurized, annunciation)!
+    expect(banner.title).toBe('Reactor trip on safety injection, low pressurizer pressure')
+    expect(firstOutFlag(banner, annunciation)).toBe('1st RX TRIP')
+    expect(actuatedNames(depressurized, annunciation)).toEqual(['SI'])
   })
 
   test('alarm age in Plant time', () => {
@@ -218,7 +288,7 @@ describe('composed display panel presenters', () => {
     expect(simulationClock(Number.NaN)).toBe('--:--:-- UTC')
     expect(simulationClock(Number.MAX_VALUE)).toBe('--:--:-- UTC')
     // Rising 0.31 MPa/min with 0.285 MPa left to HI ALM 16 (turbine trip, run 6).
-    const highAlarm = { ruleId: 'pzr-high', label: 'Pressurizer pressure high', kind: 'alarm', operator: '>', direction: 'high', value: 16, escalation: 1 } as const
+    const highAlarm = { ruleId: 'pzr-high', label: 'Pressurizer pressure high', kind: 'alarm', operator: '>', direction: 'high', value: 16, order: 1, action: 'ALM' } as const
     expect(timeToThresholdText(15.715, 0.31, highAlarm, true)).toBe('≈55 s')
     expect(timeToThresholdText(15.715, -0.31, highAlarm, true)).toBe('')
     expect(timeToThresholdText(10, 0.1, highAlarm, true)).toBe('')
@@ -228,9 +298,53 @@ describe('composed display panel presenters', () => {
     expect(unitLabel('degC')).toBe('°C')
   })
 
-  test('the most severe active threshold marks the value', () => {
-    expect(activeThreshold(thresholds, new Set(['alarm-low', 'trip-low']))?.ruleId).toBe('trip-low')
-    expect(activeThreshold(thresholds, new Set(['control']))).toBeNull()
+  test('the most severe active threshold acting in the current mode marks the value', () => {
+    expect(activeThreshold(thresholds, new Set(['alarm-low', 'trip-low']), undefined, noGates)?.ruleId).toBe('trip-low')
+    expect(activeThreshold(thresholds, new Set(['control']), undefined, noGates)).toBeNull()
+    // A high alarm of power operation does not mark a value in hot standby, latched or not.
+    expect(activeThreshold(thresholds, new Set(['alarm-high']), { id: 'hotStandby', label: 'Hot standby' }, noGates)).toBeNull()
+  })
+
+  test('a reading is shown to a resolution of a thousandth of what the model declares it reads over', () => {
+    // An instrument span first, then a hard range, then the reach from zero of its I&C limits and its operating point.
+    expect(readingResolution({ instrumentSpan: { min: 0, max: 100 }, hardRange: { min: -10, max: 200 } }, [])).toBeCloseTo(0.1, 12)
+    expect(readingResolution({ hardRange: { min: 0, max: 4500 } }, [])).toBeCloseTo(4.5, 12)
+    // GEN-MW, with its 450 MW low alarm.
+    expect(readingResolution(undefined, [{ value: 450 }])).toBeCloseTo(0.45, 12)
+    expect(readingResolution(undefined, [])).toBeNull()
+    // Without a span, never finer than a tenth of the step its limits are set in: RCS-LEAK-RATE's 0.063 kg/s high
+    // alarm gives 0.0001 kg/s; TAVG-TREF's ±1.7 °C alarms 0.01 °C, where the QA review of run 22 read "0.004 °C".
+    expect(readingResolution(undefined, [{ value: 0.063 }])).toBeCloseTo(0.0001, 12)
+    const deviation = readingResolution(undefined, [{ value: -1.7 }, { value: 1.7 }])!
+    expect(deviation).toBeCloseTo(0.01, 12)
+    expect(formatQuantity(shownReading(0.004, deviation), 'degC', deviation)).toBe('0 °C')
+    // A steam flow with no limit and no span reads over what it carries at the operating point: its tail after a trip reads 0.
+    const steam = readingResolution(undefined, [], 378.1)!
+    expect(steam).toBeCloseTo(0.3781, 12)
+    expect(formatQuantity(shownReading(0.001, steam), 'kg/s', steam)).toBe('0 kg/s')
+    // A declared span is never coarsened: a level read over 0–100 % keeps its 0.1 % with limits at whole percent.
+    expect(readingResolution({ instrumentSpan: { min: 0, max: 100 } }, [{ value: 20 }, { value: 75 }], 55)).toBeCloseTo(0.1, 12)
+    // Evaluation run 22: a tripped generator read 0.0000098 MW, and no leak −0.000000000003 kg/s.
+    expect(formatQuantity(shownReading(0.0000098, 0.45), 'MW', 0.45)).toBe('0 MW')
+    expect(formatQuantity(shownReading(-3e-12, 0.000063), 'kg/s', 0.000063)).toBe('0 kg/s')
+    // Values above the resolution keep their digits, never more than it supports.
+    expect(formatQuantity(1162.07, 'MW', 0.45)).toBe('1162 MW')
+    expect(formatQuantity(7.672, 'kg/s', 0.000063)).toBe('7.67 kg/s')
+    expect(formatQuantity(0.6, 'MW', 0.45)).toBe('0.6 MW')
+    expect(formatQuantity(15.52, 'MPa', 0.016)).toBe('15.5 MPa')
+    expect(formatValue(-0.04, 0.1)).toBe('0.0')
+    // Without a declared basis, a reading is shown as it is.
+    expect(formatQuantity(0.0000098, 'MW')).toBe('0.0000098 MW')
+    // At an end of its instrument's span, a reading says it is there or beyond.
+    expect(readingText(0, 'percent', 0.1, { min: 0, max: 100 })).toBe('<0 %')
+    expect(readingText(100, 'percent', 0.1, { min: 0, max: 100 })).toBe('>100 %')
+    expect(readingText(0, 'percent', 0.1, undefined)).toBe('0 %')
+    // QA review of run 22: a startup rate pegged at its span's end read "<-0.500 DPM"; the end is written as declared.
+    expect(readingText(-0.5, 'DPM', 0.0055, { min: -0.5, max: 5 })).toBe('< −0.5 DPM')
+    // A reading over decades in powers of ten, never "0.0000022 A".
+    const decades = { min: 1e-11, max: 1e-3 }
+    expect(readingText(2.2e-6, 'amps', readingResolution({ instrumentSpan: decades }, []), decades)).toBe('2.2×10⁻⁶ A')
+    expect(readingText(1e-11, 'amps', null, decades)).toBe('<1.0×10⁻¹¹ A')
   })
 })
 
@@ -239,22 +353,61 @@ describe('annunciator tiles', () => {
     id: `${ruleId}:a`, ruleId, kind: 'alarm', title: ruleId, severity, active: true, acknowledged: true, firstOut: false, ...extra,
   })
 
-  test('each declared system counts its own active alarms, says how severe the worst is, and whether any trip or is unacknowledged', () => {
+  test('each declared system counts its own active alarms, says how severe the worst is, and whether any is unacknowledged', () => {
     const systems = [{ id: 'steamGenerators', name: 'Steam generators', ruleIds: ['sg-a-low', 'sg-b-low'] }, { id: 'electrical', name: 'Electrical', ruleIds: ['bus-a-dead'] }, { id: 'containment', name: 'Containment', ruleIds: ['ctmt-high'] }]
     const states = annunciatorStates(systems, [
       alarm('sg-a-low', 'warning'),
-      alarm('sg-b-low', 'critical', { acknowledged: false }),
+      alarm('sg-b-low', 'critical', { acknowledged: false, firstOut: true }),
       alarm('bus-a-dead', 'notice', { kind: 'trip', firstOut: true }),
       alarm('not-annunciated', 'critical'),
       // Cleared but unacknowledged: listed, not counted as active.
       alarm('ctmt-high', 'critical', { active: false, acknowledged: false }),
-    ])
+    ], { firstOutGroups: { 'bus-a-dead:a': 'BUS DEAD', 'bus-b-dead:a': 'BUS DEAD' }, groups: { 'bus-a-dead:a': 'BUS DEAD', 'bus-b-dead:a': 'BUS DEAD' }, groupOrder: ['RX TRIP', 'BUS DEAD'] })
     expect(states).toEqual([
-      { id: 'steamGenerators', name: 'Steam generators', active: 2, unacknowledged: 1, severity: 'critical', trip: false, firstOut: false },
-      { id: 'electrical', name: 'Electrical', active: 1, unacknowledged: 0, severity: 'notice', trip: true, firstOut: true },
+      { id: 'steamGenerators', name: 'Steam generators', active: 2, unacknowledged: 1, severity: 'critical', actions: [], firstOut: false },
+      { id: 'electrical', name: 'Electrical', active: 1, unacknowledged: 0, severity: 'notice', actions: [{ name: 'BUS DEAD', firstOut: true }], firstOut: true },
       // A quiet system keeps its place.
-      { id: 'containment', name: 'Containment', active: 0, unacknowledged: 0, severity: null, trip: false, firstOut: false },
+      { id: 'containment', name: 'Containment', active: 0, unacknowledged: 0, severity: null, actions: [], firstOut: false },
     ])
+  })
+
+  test('a tile names what its alarms do as chips and the banner do, never TRIP for an actuation', () => {
+    // QA review of run 22, PORV open at 3 min: the Safety injection, Steam generators and Feedwater tiles read "TRIP 1st".
+    const trip = (ruleId: string, effect: string, firstOut: boolean): ComposedDisplayAlarm =>
+      ({ id: `trip:${ruleId}:${effect}`, ruleId, kind: 'trip', title: ruleId, severity: 'critical', active: true, acknowledged: false, firstOut })
+    const annunciation = {
+      firstOutGroups: { 'trip:otdt:reactor-trip': 'RX TRIP', 'trip:si:reactor-trip': 'RX TRIP', 'trip:si:safety-injection': 'SI', 'trip:si-ctmt:safety-injection': 'SI', 'trip:sg-a-afw:afw': 'AFW START', 'trip:sg-b-afw:afw': 'AFW START' },
+      groups: { 'trip:otdt:reactor-trip': 'RX TRIP', 'trip:si:reactor-trip': 'RX TRIP', 'trip:si:safety-injection': 'SI', 'trip:si-ctmt:safety-injection': 'SI', 'trip:sg-a-afw:afw': 'AFW START', 'trip:sg-b-afw:afw': 'AFW START', 'trip:fwi:fwi': 'FWI' },
+      groupOrder: ['RX TRIP', 'SI', 'AFW START', 'FWI'],
+    }
+    const systems = [
+      { id: 'reactorProtection', name: 'Reactor protection', ruleIds: ['otdt'] },
+      { id: 'safetyInjection', name: 'Safety injection', ruleIds: ['si', 'si-ctmt'] },
+      { id: 'steamGenerators', name: 'Steam generators', ruleIds: ['sg-a-afw', 'sg-b-afw', 'fwi'] },
+    ]
+    const states = annunciatorStates(systems, [
+      trip('otdt', 'reactor-trip', true),
+      trip('si', 'safety-injection', true),
+      trip('si', 'reactor-trip', false),
+      trip('sg-a-afw', 'afw', true),
+      trip('sg-b-afw', 'afw', false),
+      trip('fwi', 'fwi', true),
+    ], annunciation)
+    expect(states.map(state => state.actions)).toEqual([
+      [{ name: 'RX TRIP', firstOut: true }],
+      // Safety injection trips the reactor too: its own first-out leads, then the reactor trip, whose first-out lies elsewhere.
+      [{ name: 'SI', firstOut: true }, { name: 'RX TRIP', firstOut: false }],
+      // FWI is a group of one: being first among one says nothing.
+      [{ name: 'AFW START', firstOut: true }, { name: 'FWI', firstOut: false }],
+    ])
+    // As many whole as the tile's width holds, the rest counted, a first-out kept; never cut.
+    const room = (characters: number) => (text: string) => text.length <= characters
+    expect(tileActions(states[1]!.actions, room(20))).toBe('SI 1st · RX TRIP')
+    expect(tileActions(states[1]!.actions, room(12))).toBe('SI 1st +1')
+    expect(tileActions(states[2]!.actions, room(6))).toBe('1st')
+    // Where the first does not fit with the rest counted, a shorter one does (the loss-of-feedwater overview's Feedwater tile).
+    expect(tileActions([{ name: 'AFW START', firstOut: true }, { name: 'FWI', firstOut: true }], room(12))).toBe('FWI 1st +1')
+    expect(tileActions([], room(20))).toBe('')
   })
 })
 
@@ -301,21 +454,60 @@ describe('limit labels', () => {
     expect([...ranks.entries()].sort((left, right) => left[1] - right[1]).map(([key]) => key)).toEqual(['lo-trip', 'lo-alarm', 'hi-alarm', 'hi-trip', 'far', 'idle'])
   })
 
-  test('a mode-qualified limit acts only in its modes, or while its rule is still active', () => {
+  test('a mode-qualified limit acts only in its modes, even with its rule latched from one of them', () => {
     // RCP A loop flow low acts in power operation only (rcp-trip, in hot standby).
-    const flowLow = { ruleId: 'rcp-a-loop-flow-low', label: 'RCP A loop flow low', kind: 'alarm', operator: '<', direction: 'low', value: 2500, escalation: 1, modeLabel: 'Power operation', modeIds: ['powerOperation'] } as const
+    const flowLow = { ruleId: 'rcp-a-loop-flow-low', label: 'RCP A loop flow low', kind: 'alarm', operator: '<', direction: 'low', value: 2500, order: 1, action: 'ALM', modeLabel: 'Mode 1', modeNames: 'Power operation', modeIds: ['powerOperation'] } as const
     const hotStandby = { id: 'hotStandby', label: 'Hot standby' }
-    expect(limitInForce(flowLow, hotStandby, false)).toBe(false)
-    expect(limitInForce(flowLow, { id: 'powerOperation' }, false)).toBe(true)
-    expect(limitInForce(flowLow, null, false)).toBe(false)
-    // A trip latched at power stays in force after the mode changes.
-    expect(limitInForce(flowLow, hotStandby, true)).toBe(true)
-    expect(limitInForce(thresholds[0]!, hotStandby, false)).toBe(true)
+    expect(limitInForce(flowLow, hotStandby)).toBe(false)
+    expect(limitInForce(flowLow, { id: 'powerOperation' })).toBe(true)
+    expect(limitInForce(flowLow, null)).toBe(false)
+    expect(limitInForce(thresholds[0]!, hotStandby)).toBe(true)
     // No margin or limit ahead is read against a limit that does not act: 401 kg/s is past nothing in hot standby.
-    expect(limitsInForce([flowLow], hotStandby, new Set())).toEqual([])
-    expect(limitAhead(401, -629, limitsInForce([flowLow], hotStandby, new Set()))).toBeNull()
-    expect(limitsInForce([flowLow], hotStandby, new Set(['rcp-a-loop-flow-low']))).toEqual([flowLow])
+    expect(limitsInForce([flowLow], hotStandby, noGates)).toEqual([])
+    expect(limitAhead(401, 'falling', limitsInForce([flowLow], hotStandby, noGates))).toBeNull()
     // Before the first sample the mode is unknown; nothing is compared yet.
-    expect(limitsInForce([flowLow], undefined, new Set())).toEqual([flowLow])
+    expect(limitsInForce([flowLow], undefined, noGates)).toEqual([flowLow])
+  })
+
+  test('limits at one value are one line, each keeping its own label, look and colour', () => {
+    // Evaluation run 22, loss of main feedwater in hot standby: two identical "LO TRIP 20" lines, both red.
+    const line = (ruleId: string, action: string, modeIds?: ReadonlyArray<string>) => ({
+      ruleId, label: ruleId, kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 20, order: 2, action,
+      ruleIds: [ruleId], signals: ['SG-B-LVL-NR'], ...(modeIds === undefined ? {} : { modeLabel: 'Modes 1–2', modeNames: 'Power operation or Startup', modeIds }),
+    }) as const
+    const afw = line('sg-b-afw', 'AFW START')
+    const reactorTrip = line('sg-b-rx-trip', 'RX TRIP', ['powerOperation', 'startup'])
+    const alarm = { ...line('sg-b-low', 'ALM'), kind: 'alarm', severity: 'warning', value: 30, order: 1 } as const
+    const hotStandby = { id: 'hotStandby', label: 'Hot standby' }
+    const lines = limitLines([reactorTrip, alarm, afw], hotStandby, noGates)
+    expect(lines.map(entry => [entry.value, entry.look, entry.members.map(member => member.ruleId)])).toEqual([
+      [30, 'acting', ['sg-b-low']],
+      // The AFW start acts now, so the line is drawn in force and its label comes first.
+      [20, 'acting', ['sg-b-afw', 'sg-b-rx-trip']],
+    ])
+    expect(lines[1]!.members.map(member => thresholdName(member, 'percent', { withUnit: false }))).toEqual(['LO-LO 20 · AFW START', 'LO-LO 20 · RX TRIP'])
+    // Both rules active and the value past both: only the limit in force takes the alarm colour; the reactor trip of modes 1-2 stays idle.
+    const active = new Set(['sg-b-afw', 'sg-b-rx-trip'])
+    expect([limitSeverity(afw, active, hotStandby, noGates), limitSeverity(reactorTrip, active, hotStandby, noGates)]).toEqual(['critical', null])
+    expect([limitLook(afw, hotStandby, noGates), limitLook(reactorTrip, hotStandby, noGates), limitLook(reactorTrip, undefined, noGates), limitLook(reactorTrip, { id: 'powerOperation', label: 'Power operation' }, noGates)]).toEqual(['acting', 'idle', 'qualified', 'acting'])
+    expect(limitLines([reactorTrip], hotStandby, noGates)[0]!.look).toBe('idle')
+    expect(idleText(reactorTrip, hotStandby)).toBe('Modes 1–2')
+  })
+
+  test('a limit whose gates do not hold is idle, as one of another mode is, and says what it waits for', () => {
+    // Safety injection on low pressurizer pressure acts only while SI-BLOCKED reads off.
+    const si = {
+      ruleId: 'si', label: 'Safety injection on low pressurizer pressure', kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 12.7, order: 2, action: 'SI',
+      ruleIds: ['si'], signals: ['PT-455'], gatedBy: ['SI-BLOCKED off'], gates: [{ path: 'safetyInjectionBlockLogic.blocked', on: false }],
+    } as unknown as Parameters<typeof limitLook>[0] & Parameters<typeof limitSeverity>[0]
+    const blocked = (path: string) => path === 'safetyInjectionBlockLogic.blocked' ? true : undefined
+    const unblocked = (path: string) => path === 'safetyInjectionBlockLogic.blocked' ? false : undefined
+    const hotStandby = { id: 'hotStandby', label: 'Hot standby' }
+    expect([gatesHold(si, blocked), gatesHold(si, unblocked), gatesHold(si, noGates)]).toEqual([false, true, true])
+    expect([limitLook(si, hotStandby, blocked), limitLook(si, hotStandby, unblocked)]).toEqual(['idle', 'acting'])
+    // Active or not, it takes no alarm colour while blocked, and its second line names the state it waits for.
+    expect(limitSeverity(si, new Set(['si']), hotStandby, blocked)).toBeNull()
+    expect(idleText(si, hotStandby)).toBe('SI-BLOCKED off')
+    expect(limitsInForce([si as unknown as ComposedDisplayThreshold], hotStandby, blocked)).toEqual([])
   })
 })

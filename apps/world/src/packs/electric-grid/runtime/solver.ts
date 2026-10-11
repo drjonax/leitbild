@@ -1,6 +1,7 @@
 import type { IsoTimestamp } from '../../../core/model/index.ts'
 import { applyGridDemand, demandSampleMs, rampSampleMs, segmentEndMs } from './demand.ts'
 import { advanceGridFrequencyControl } from './frequency-control.ts'
+import { advanceExternalExchanges, externalExchangesRamping } from './external-exchange.ts'
 import { advanceHvdcLinks, hvdcLinksRamping } from './hvdc.ts'
 import type { GridRuntimeInstance } from './instance.ts'
 import { reconcileGridIslands } from './island-lifecycle.ts'
@@ -16,7 +17,7 @@ const catchUpExceeded = (gridId: string, dtSeconds: number, maximumSeconds: numb
 
 /**
  * One Grid tick ending at `at`: stable islands for the live topology, then unit commitment, demand
- * samples, HVDC ramps and island frequency control over the elapsed time in fixed sub-steps, then
+ * samples, HVDC and external exchange ramps and island frequency control over the elapsed time in fixed sub-steps, then
  * one DC network solution with the balance check, alarms, then the system projection. With branch
  * protection the network is also solved at every relay sample inside the tick, where trips apply.
  */
@@ -44,14 +45,16 @@ export const advanceGrid = (grid: GridRuntimeInstance, dtSeconds: number, at: Is
     commitUnits(endMs)
     applyGridDemand(grid, endMs)
     advanceHvdcLinks(grid, 0)
+    advanceExternalExchanges(grid, 0)
     advanceGridFrequencyControl(grid, islands, 0)
   }
-  // Segments on fixed absolute grids: demand samples every minute, every second while HVDC ramps,
+  // Segments on fixed absolute grids: demand samples every minute, every second while HVDC or an external exchange ramps,
   // and a boundary wherever a starting unit synchronises.
   for (let cursorMs = startMs; cursorMs < endMs;) {
     commitUnits(cursorMs)
     const synchronisesAtMs = nextSynchronisationElapsedMs(grid)
-    const gridEndMs = Math.min(segmentEndMs(cursorMs, endMs, hvdcLinksRamping(grid) ? rampSampleMs : demandSampleMs), sampler.nextSampleMs(cursorMs))
+    const ramping = hvdcLinksRamping(grid) || externalExchangesRamping(grid)
+    const gridEndMs = Math.min(segmentEndMs(cursorMs, endMs, ramping ? rampSampleMs : demandSampleMs), sampler.nextSampleMs(cursorMs))
     // Synchronisation boundaries fall on whole milliseconds after the cursor, so a segment always advances.
     const nextMs = synchronisesAtMs === null
       ? gridEndMs
@@ -59,6 +62,7 @@ export const advanceGrid = (grid: GridRuntimeInstance, dtSeconds: number, at: Is
     const seconds = (nextMs - cursorMs) / 1_000
     applyGridDemand(grid, cursorMs)
     advanceHvdcLinks(grid, seconds)
+    advanceExternalExchanges(grid, seconds)
     advanceGridFrequencyControl(grid, islands, seconds)
     cursorMs = nextMs
     if (cursorMs < endMs && sampler.samplesAt(cursorMs)) {

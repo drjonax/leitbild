@@ -1,6 +1,7 @@
 import { processPlantSignalReferenceSchema, type ProcessPlantSignalReference } from '../signals.ts'
 import type { ProcessPlantIcAnnunciator, ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
 import type { ReferenceAnnunciatorSystemId } from './reference-ic-annunciators.ts'
+import type { ReferenceFirstOutGroupId } from './reference-ic-first-out-groups.ts'
 import type { ReferenceOperatingModeId } from './reference-ic-modes.ts'
 
 export type ReferenceIcEffect = ProcessPlantIcRule['effects'][number]
@@ -36,9 +37,9 @@ export const vote = (required: number, conditions: ReadonlyArray<ProcessPlantIcC
   conditions,
 })
 
-/** An annunciator on one of the systems the reference PWR declares (reference-ic-annunciators.ts). */
-export type ReferenceAnnunciator = ProcessPlantIcAnnunciator & { readonly system: ReferenceAnnunciatorSystemId }
-export const annunciator = (config: ReferenceAnnunciator): ReferenceAnnunciator => config
+/** An annunciator on one of the systems the reference PWR declares (reference-ic-annunciators.ts), in one of its first-out groups (reference-ic-first-out-groups.ts). */
+export type ReferenceAnnunciator = ProcessPlantIcAnnunciator & { readonly system: ReferenceAnnunciatorSystemId; readonly firstOutGroup?: ReferenceFirstOutGroupId }
+export const annunciator = <Annunciator extends ReferenceAnnunciator>(config: Annunciator): Annunciator => config
 
 export const alarm = (config: {
   readonly id: string
@@ -55,19 +56,25 @@ export const alarm = (config: {
   ...(config.annunciator === undefined ? {} : { annunciator: config.annunciator }),
 })
 
+/**
+ * A trip: an automatic action, annunciated in the first-out group of what it
+ * does (reference-ic-first-out-groups.ts), so a display names a limit by its
+ * action ("RX TRIP", "AFW START") and the banner lists it as the reactor trip
+ * or apart from it as an actuation.
+ */
 export const trip = (config: {
   readonly id: string
   readonly title: string
   readonly message: string
   readonly severity?: 'info' | 'notice' | 'warning' | 'critical'
-  readonly annunciator?: ProcessPlantIcAnnunciator
+  readonly annunciator: ReferenceAnnunciator & { readonly firstOutGroup: ReferenceFirstOutGroupId }
 }): ReferenceIcEffect => ({
   type: 'trip.enter',
   id: config.id,
   title: config.title,
   message: config.message,
   severity: config.severity ?? 'critical',
-  ...(config.annunciator === undefined ? {} : { annunciator: config.annunciator }),
+  annunciator: config.annunciator,
 })
 
 export const write = (id: string, signal: SignalRef, value: number | boolean): ReferenceIcEffect => ({
@@ -89,6 +96,29 @@ export const atPowerThresholdMw = 100
 export const reactorTripBreakerWrites = (idPrefix: string): ReadonlyArray<ReferenceIcEffect> => [
   write(`${idPrefix}-open-trip-breaker-a`, { tagId: 'TRIP-BKR-A' }, false),
   write(`${idPrefix}-open-trip-breaker-b`, { tagId: 'TRIP-BKR-B' }, false),
+]
+
+/**
+ * A turbine trip: the stop valve shuts and the generator's load is rejected,
+ * its output breaker open, so it carries and exports nothing. Both stay so
+ * until operators reopen the valve and load the generator again; above P-9
+ * the shut stop valve trips the reactor (reference-ic-reactor.ts).
+ */
+export const turbineTripWrites = (idPrefix: string): ReadonlyArray<ReferenceIcEffect> => [
+  write(`${idPrefix}-close-turbine-stop-valve`, { tagId: 'TURB-STOP' }, 0),
+  write(`${idPrefix}-reject-turbine-load`, { tagId: 'TURB-LOAD' }, 0),
+]
+
+/**
+ * Feedwater isolation: both main feedwater pumps trip, and every feed
+ * regulating valve's isolation signal shuts it against its level controller
+ * until the isolation is released (reference-ic-balance-of-plant.ts). The
+ * model has no feedwater isolation valves to close.
+ */
+export const feedwaterIsolationWrites = (idPrefix: string, loops: ReadonlyArray<string>): ReadonlyArray<ReferenceIcEffect> => [
+  write(`${idPrefix}-trip-main-feedwater-pump-a`, { tagId: 'MFW-PUMP-A-RUN' }, false),
+  write(`${idPrefix}-trip-main-feedwater-pump-b`, { tagId: 'MFW-PUMP-B-RUN' }, false),
+  ...loops.map(loop => write(`${idPrefix}-shut-feed-regulating-valve-${loop.toLowerCase()}`, { path: `feedwaterControlValve${loop}.isolationSignal` }, true)),
 ]
 
 export const rule = (config: {

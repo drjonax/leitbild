@@ -1,27 +1,102 @@
 import { describe, expect, test } from 'bun:test'
-import { compileProcessPlant, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
+import { commandsForProcessPlantAction, compileProcessPlant, createPwrReferencePlantDefinition, type CompiledProcessPlant } from '../src/packs/process-plant/index.ts'
 import { equipmentKeyValues, leadValuesKey, overviewKeyValues, type PlantNow } from '../src/packs/process-plant/displays/overview-key-values.ts'
 import { annunciatorSystems } from '../src/packs/process-plant/displays/annunciators.ts'
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, processPlantOperatingMode } from '../src/packs/process-plant/runtime/index.ts'
 import type { SimulationRunId } from '../src/core/model/index.ts'
 
 describe('the values a unit overview leads with', () => {
-  test('come from what protection trips on outside the loops, then the energy source and sink', () => {
+  // The reference Plant after a fault, its protection evaluated each second as a Run does.
+  const after = (plant: CompiledProcessPlant, fault: { readonly actionId: string; readonly parameters?: Record<string, unknown> } | null, seconds: number): PlantNow => {
+    const run = createProcessPlantRuntime({ system: plant })
+    const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
+    const step = () => {
+      run.tick(1_000)
+      protection.evaluate({ runtime: run, elapsedMs: run.elapsedMs(), simulationRunId: 'run-key-values' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+    }
+    step()
+    for (const command of fault === null ? [] : commandsForProcessPlantAction({ actionId: fault.actionId, parameters: fault.parameters ?? {}, graph: plant.graph })) {
+      run.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    for (let second = 0; second < seconds; second += 1) step()
+    return {
+      mode: processPlantOperatingMode({ system: plant, runtime: run, modes: plant.automation.operatingModes })?.id ?? null,
+      read: path => run.readVariable(path),
+    }
+  }
+
+  test('at power: what protection trips on outside the loops, then the energy source and sink', () => {
     for (const loopCount of [4, 6]) {
       const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: `plant:key-values-${loopCount}`, loopCount }))
-      const paths = overviewKeyValues(plant)
+      const atPower = after(plant, null, 0)
+      expect(atPower.mode).toBe('powerOperation')
+      const paths = overviewKeyValues(plant, atPower)
+      // The power the reactor protection trips on is the power range's, in percent of rated power. Containment
+      // pressure, which safety injection guards, stands at atmospheric inside its declared normal range, so it yields
+      // its place to the next value the I&C judges: the vessel's subcooling margin.
       expect(paths).toEqual([
-        'core.powerMw',
+        'core.powerRangePercent',
         'vessel.netInventoryFlowKgPerS',
         'pressurizer.pressureMPa',
-        'containment.pressureMPa',
+        'vessel.subcoolingMarginC',
         'core.coolantOutletTemperatureC',
         'turbine.electricMw',
       ] as never)
+      // Out of its normal range it takes its place back, before the values the I&C judges for their equipment.
+      expect(overviewKeyValues(plant, { ...atPower, read: path => String(path) === 'containment.pressureMPa' ? 0.109 : atPower.read(path) }).slice(0, 4))
+        .toEqual(['core.powerRangePercent', 'vessel.netInventoryFlowKgPerS', 'pressurizer.pressureMPa', 'containment.pressureMPa'] as never)
       // A steam generator's low-low level trips the auxiliary feed, but per-loop values stay on their loop.
       for (const path of paths) expect(plant.graph.components[plant.graph.componentIndexById.get(String(path).split('.')[0] as never)!]!.metadata?.loopId).toBeUndefined()
     }
   })
+
+  test('after a trip: the heat path first, core cooling and heat sink, then inventory, not a power the unit no longer makes', () => {
+    // Evaluation run 22: three minutes after SG B's feed valve ran back to 35 %, the unit had tripped on SG B
+    // low-low level into Hot standby, and its overview still led with "0 MW" fission power and the generator.
+    // Run 22 QA: after a trip it led with pressurizer and containment pressure, containment at normal, and had no
+    // room for the subcooling margin.
+    const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:key-values-trip', loopCount: 4 }))
+    const tripped = after(plant, { actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, 180)
+    expect(tripped.mode).toBe('hotStandby')
+    // The reactor trips have done all they can (breakers open, rods in), so fission power no longer leads; the
+    // generator's rules act only at power, and the turbine trips that act in every mode have tripped it, so no
+    // energy sink is watched: the decay heat leaves through the steam generators. The column leads, as E-0 and
+    // ES-0.1 check the critical safety functions, with the heat path: the margin of the coolant the core heats (the
+    // vessel's subcooling margin), the core's outlet temperature, and the auxiliary feed the actuations send into
+    // the steam generators. Then safety injection's pressure, which it can still act on, and the key values of
+    // equipment the I&C judges; containment pressure, at normal, yields its place.
+    expect(overviewKeyValues(plant, tripped)).toEqual([
+      'vessel.subcoolingMarginC',
+      'core.coolantOutletTemperatureC',
+      'auxFeedwaterHeader.outletFlowKgPerS',
+      'pressurizer.pressureMPa',
+      'pressurizer.levelPercent',
+      'vessel.collapsedLiquidLevelPercent',
+    ] as never)
+    expect(tripped.read('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeGreaterThan(50)
+  }, 30_000)
+
+  test('after a trip the heat sink leads before the feed has started, and the injection safety injection delivers once it has', () => {
+    const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:key-values-pumps', loopCount: 4 }))
+    // Run 22 QA: a minute after every reactor coolant pump tripped, feedwater was isolated and no steam generator had
+    // reached the low-low level that starts auxiliary feed; the overview showed no heat sink at all. It reads 0.
+    const pumps = after(plant, { actionId: 'trip-reactor-coolant-pumps' }, 60)
+    expect(pumps.mode).toBe('hotStandby')
+    expect(overviewKeyValues(plant, pumps).slice(0, 3)).toEqual(['vessel.subcoolingMarginC', 'core.coolantOutletTemperatureC', 'auxFeedwaterHeader.outletFlowKgPerS'] as never)
+    expect(pumps.read('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBe(0)
+    // Run 22 QA: three minutes after the PORV stuck at 35 %, safety injection had started; the subcooling margin,
+    // the decisive value in a pressurizer steam-space leak, leads, and the injection follows the heat sink.
+    const relief = after(plant, { actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 180)
+    expect(overviewKeyValues(plant, relief)).toEqual([
+      'vessel.subcoolingMarginC',
+      'core.coolantOutletTemperatureC',
+      'auxFeedwaterHeader.outletFlowKgPerS',
+      'safetyInjectionHeader.outletFlowKgPerS',
+      'pressurizer.pressureMPa',
+      'pressurizer.levelPercent',
+    ] as never)
+    expect(relief.read('safetyInjectionHeader.outletFlowKgPerS' as never)).toBeGreaterThan(30)
+  }, 60_000)
 })
 
 describe('the values equipment opened from the overview leads with', () => {
@@ -39,16 +114,19 @@ describe('the values equipment opened from the overview leads with', () => {
     expect(of(['rcpA'])).not.toContain('rcpA.running' as never)
   })
 
-  test('at power the core leads with its power, the subcooling margin, the RCS leak rate and its outlet temperature, and ranks the de-energized source range after every live reading', () => {
+  test('at power the core leads with its power range, the subcooling margin, the RCS leak rate and its outlet temperature, then its nuclear instruments while they measure', () => {
     // The subcooling margin and the RCS leak rate are bound to the reactor coolant system, as the core exit
-    // thermocouples are: their alarms are the core's related alarms. The core exit thermocouples read their own
-    // variable beside the mixed outlet temperature, an instrument after the intermediate range, so the de-energized
-    // source range, last, no longer fits the six.
-    expect(of(['core'])).toEqual(['core.powerMw', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
-    // With its high voltage on, the source range counts something and ranks as an instrument, ahead of the
-    // intermediate range, which no longer fits.
+    // thermocouples are: their alarms are the core's related alarms. The de-energized source range measures
+    // nothing at power: in its place the detail says its high voltage is off, as a state (run 22 QA: the source
+    // range's state was on neither core detail).
+    // Tavg's deviation from Tref, which alarms in power operation, follows the power range. The permissives the
+    // core derives (P-6, P-10) are never values of their own.
+    expect(of(['core'])).toEqual(['core.powerRangePercent', 'core.averageTemperatureDeviationC', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.sourceRangeEnergized', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
+    expect(runtime.readVariable('core.sourceRangeEnergized' as never)).toBe(false)
+    // With its high voltage on, the source range counts something and ranks as an instrument, before the
+    // intermediate range; its count rate then says the high voltage is on.
     const counting: PlantNow = { ...atPower, read: path => String(path) === 'core.sourceRangeEnergized' ? true : runtime.readVariable(path) }
-    expect(of(['core'], counting).slice(3)).toEqual(['core.coolantOutletTemperatureC', 'core.sourceRangeEnergized', 'core.sourceRangeCountRateCps'] as never)
+    expect(of(['core'], counting).slice(4)).toEqual(['core.coolantOutletTemperatureC', 'core.sourceRangeCountRateCps', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC'] as never)
   })
 
   test('a signal only rules of other modes judge follows its key values and instruments', () => {
@@ -66,7 +144,16 @@ describe('the values equipment opened from the overview leads with', () => {
   })
 
   test('parallel equipment is compared value by value', () => {
-    expect(of(['sgA', 'sgB'])).toEqual(['sgA.levelPercent', 'sgB.levelPercent', 'sgA.secondaryRadiationMSvPerH', 'sgB.secondaryRadiationMSvPerH', 'sgA.pressureMPa', 'sgB.pressureMPa'] as never)
+    // Each narrow-range level is followed by its wide-range level, the instrument that reads it over the wider span.
+    expect(of(['sgA', 'sgB'])).toEqual(['sgA.levelPercent', 'sgB.levelPercent', 'sgA.wideRangeLevelPercent', 'sgB.wideRangeLevelPercent', 'sgA.secondaryRadiationMSvPerH', 'sgB.secondaryRadiationMSvPerH', 'sgA.pressureMPa', 'sgB.pressureMPa'] as never)
+  })
+
+  test('a steam generator leads with the auxiliary feed its low-low level sends into it, in every mode the actuation acts in', () => {
+    // The low-low level actuation starts the pumps and opens this steam generator's valve: the line from that valve
+    // into it is what the actuation delivers here. Run 22's SG B detail showed neither it nor the pumps. Its
+    // high-high level isolates feedwater, shutting its feed regulating valve: the main feed line into it follows.
+    expect(of(['sgB'])).toEqual(['sgB.levelPercent', 'sgB.wideRangeLevelPercent', 'sgB.secondaryRadiationMSvPerH', 'sgB.pressureMPa', 'sgB.feedwaterFlowKgPerS', 'aux-feedwater-valve-b-to-sg-b.flowKgPerS', 'feedwater-control-valve-b-to-sg-b.flowKgPerS'] as never)
+    expect(of(['sgB'], { ...atPower, mode: 'hotStandby' })).toContain('aux-feedwater-valve-b-to-sg-b.flowKgPerS' as never)
   })
 
   test('a detail reflects the mode it was opened in: a trip changes the mode, and so what it leads with', () => {
@@ -74,7 +161,7 @@ describe('the values equipment opened from the overview leads with', () => {
       mode: processPlantOperatingMode({ system, runtime: run, modes: system.automation.operatingModes })?.id ?? null,
       read: path => run.readVariable(path),
     })
-    expect(leadValuesKey(plant, now(plant, runtime))).toBe('powerOperation|core.sourceRangeCountRateCps,core.sourceRangeEnergized')
+    expect(leadValuesKey(plant, now(plant, runtime))).toBe('powerOperation|core.sourceRangeCountRateCps')
     const tripped = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:equipment-values-trip', valueOverrides: { 'pressurizer.pressureMPa': 10 } }))
     const run = createProcessPlantRuntime({ system: tripped })
     const protection = createProcessPlantProtectionRunner({ system: tripped, protection: tripped.automation })
@@ -146,5 +233,34 @@ describe('operating modes are declared once', () => {
     expect(issues({ operatingModes: modes, rules: [rule('power-high', ['shutdown', 'shutdown'])] })).toEqual(['power-high names operating mode shutdown twice'])
     expect(issues({ operatingModes: [...modes, { ...modes[0]!, label: 'Again' }], rules: [] })).toEqual(['operating mode powerOperation is declared twice'])
     expect(issues({ rules: [rule('power-high', ['powerOperation'])] })).toEqual(['power-high acts in operating mode powerOperation, which is not declared; declared: none'])
+  })
+})
+
+describe('first-out groups are declared once', () => {
+  const holds = { type: 'comparison', signal: { path: 'core.powerMw' }, operator: '>', value: 1 }
+  const groups = [{ id: 'reactor-trip', label: 'Reactor trip', shortLabel: 'RX TRIP', reactorTrip: true }, { id: 'safety-injection', label: 'Safety injection', shortLabel: 'SI' }]
+  const rule = (id: string, firstOutGroup?: string) => ({
+    id,
+    condition: holds,
+    effects: [{ type: 'trip.enter', id: 'trip', title: id, message: id, annunciator: firstOutGroup === undefined ? {} : { firstOutGroup } }],
+  })
+  const issues = (config: unknown) => {
+    const parsed = processPlantIcConfigSchema.safeParse(config)
+    return parsed.success ? [] : parsed.error.issues.map(issue => issue.message)
+  }
+
+  test('so a display can name what a group does: every group an annunciator names is declared, each once', () => {
+    expect(issues({ firstOutGroups: groups, rules: [rule('power-high-trip', 'reactor-trip'), rule('relief')] })).toEqual([])
+    expect(issues({ firstOutGroups: groups, rules: [rule('power-high-trip', 'reactor-trp')] })).toEqual(['power-high-trip names first-out group reactor-trp, which is not declared; declared: reactor-trip, safety-injection'])
+    expect(issues({ firstOutGroups: [...groups, { ...groups[0]!, label: 'Again' }], rules: [] })).toEqual(['first-out group reactor-trip is declared twice'])
+    // A group is an actuation, not the reactor trip, unless it says so.
+    expect(processPlantIcConfigSchema.parse({ firstOutGroups: groups }).firstOutGroups.map(group => group.reactorTrip)).toEqual([true, false])
+  })
+
+  test('the reference PWR declares every group its annunciators name, the reactor trip among them', () => {
+    const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:first-out-groups', loopCount: 4 }))
+    expect(processPlantIcConfigSchema.safeParse(plant.automation).success).toBe(true)
+    expect(plant.automation.firstOutGroups.filter(group => group.reactorTrip).map(group => group.shortLabel)).toEqual(['RX TRIP'])
+    expect(plant.automation.operatingModes.map(mode => mode.shortLabel)).toEqual(['1', '2', '3', '4', '5'])
   })
 })

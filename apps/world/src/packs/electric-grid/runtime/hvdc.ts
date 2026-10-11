@@ -62,15 +62,18 @@ const islandAtBus = (grid: GridRuntimeInstance, busId: string): GridIsland => {
 }
 
 /**
- * A converter terminal has AC voltage: its bus is energised, or it is an HVDC terminal of an
- * asynchronous system. Energisation is the physical test: an energised island whose AC load flow
- * did not converge has AC voltage that the solution failed to compute, not a loss of it.
+ * A converter terminal has AC voltage: its bus is energised, or it lies in no island at the
+ * boundary of an external system, which holds it (an HVDC terminal of an asynchronous system, or a
+ * separated boundary bus of a synchronous one). Energisation is the physical test: an energised
+ * island whose AC load flow did not converge has AC voltage that the solution failed to compute,
+ * not a loss of it.
  */
 const terminalEnergizedAt = (grid: GridRuntimeInstance, bus: number): boolean => {
   if (gridTablesFor(grid.definition).asynchronousBoundaryBus[bus] === 1) return true
   const islands = grid.islandPlan
   if (!islands) throw new Error(`Grid ${grid.definition.gridId} has no islands yet; HVDC converters act inside an advance`)
-  return islands.islands[islands.plan.islandIndexOfBus[bus]!]!.energized
+  const planIndex = islands.plan.islandIndexOfBus[bus]!
+  return planIndex < 0 || islands.islands[planIndex]!.energized
 }
 
 const terminalEnergized = (grid: GridRuntimeInstance, busId: string): boolean =>
@@ -152,29 +155,80 @@ export const tripHvdcLink = (grid: GridRuntimeInstance, link: GridHvdcLinkDefini
   })
 }
 
+/** Moves a deblocked link's transfer up to `stepMw` towards its set-point, arriving exactly. */
+const rampLinkBy = (link: GridHvdcLinkDefinition, state: GridHvdcLinkState, stepMw: number): void => {
+  const differenceMw = state.setpointMw - state.transferMw
+  state.transferMw = Math.abs(differenceMw) <= stepMw ? state.setpointMw : state.transferMw + Math.sign(differenceMw) * stepMw
+  state.lossesMw = Math.abs(state.transferMw) * link.lossPercent / 100
+}
+
+/** The signed move a deblocked link takes on its own ramp over `seconds`: towards its set-point, at most its ramp (MW). */
+const ownMoveMw = (link: GridHvdcLinkDefinition, state: GridHvdcLinkState, seconds: number): number => {
+  const differenceMw = state.setpointMw - state.transferMw
+  return Math.sign(differenceMw) * Math.min(Math.abs(differenceMw), link.rampMwPerMinute / 60 * seconds)
+}
+
+/** Rounding of the moves (MW): a net change this close to the group's step passes, so links arrive exactly rather than a residue short. */
+const groupStepRoundingMw = 1e-9
+
 /**
- * Ramps each deblocked link's transfer towards its set-point at its ramp limit over `seconds`. A
- * converter whose AC terminal has lost voltage (its island de-energised) trips first: its transfer
- * drops to 0. On an energised island whose AC voltage is unsolved the converters keep following
- * their set-points: the non-convergence is numerical, so it trips, blocks or ramps nothing and
- * raises only the island's AC non-convergence alarm. A Plant reads the same unsolved port
- * conservatively as lost offsite power (electrical-ports.ts); that is the Plant's mapping.
+ * Ramps the deblocked links of ramp group k over `seconds` under the market's net rule: the group's
+ * aggregate flow changes by at most its ramp. Each link first takes its own move; when their net
+ * change exceeds the group's step, the moves in the net's direction are scaled back by one factor
+ * until the net equals the step, and the opposite moves, which offset, are kept.
+ */
+const advanceRampGroup = (grid: GridRuntimeInstance, group: number, seconds: number): void => {
+  const tables = gridTablesFor(grid.definition)
+  const links = grid.definition.index.hvdcLinks
+  const items = tables.hvdcRampGroupLinks.items
+  const start = tables.hvdcRampGroupLinks.start[group]!
+  const end = tables.hvdcRampGroupLinks.start[group + 1]!
+  const budgetMw = grid.definition.index.hvdcRampGroups[group]!.rampMwPerMinute / 60 * seconds
+  let upMw = 0
+  let downMw = 0
+  for (let position = start; position < end; position += 1) {
+    const index = items[position]!
+    const state = grid.arrays.hvdcLinks[index]!
+    if (state.state !== 'deblocked') continue
+    const moveMw = ownMoveMw(links[index]!, state, seconds)
+    if (moveMw > 0) upMw += moveMw
+    else downMw -= moveMw
+  }
+  const netMw = upMw - downMw
+  // Scale of the moves up and down: the dominant direction keeps the group's step plus what the other direction offsets.
+  const upScale = netMw > budgetMw + groupStepRoundingMw ? (budgetMw + downMw) / upMw : 1
+  const downScale = -netMw > budgetMw + groupStepRoundingMw ? (budgetMw + upMw) / downMw : 1
+  for (let position = start; position < end; position += 1) {
+    const index = items[position]!
+    const state = grid.arrays.hvdcLinks[index]!
+    if (state.state !== 'deblocked') continue
+    const link = links[index]!
+    const moveMw = ownMoveMw(link, state, seconds)
+    rampLinkBy(link, state, Math.abs(moveMw) * (moveMw > 0 ? upScale : downScale))
+  }
+}
+
+/**
+ * Ramps each deblocked link's transfer towards its set-point at its ramp limit over `seconds`, and
+ * the links of a ramp group within the group's limit on their net change (advanceRampGroup). A converter
+ * whose AC terminal has lost voltage (its island de-energised) trips first: its transfer drops to 0
+ * and it takes no share of its group's ramp. On an energised island whose AC voltage is unsolved the
+ * converters keep following their set-points: the non-convergence is numerical, so it trips, blocks
+ * or ramps nothing and raises only the island's AC non-convergence alarm. A Plant reads the same
+ * unsolved port conservatively as lost offsite power (electrical-ports.ts); that is the Plant's mapping.
  */
 export const advanceHvdcLinks = (grid: GridRuntimeInstance, seconds: number): void => {
   const links = grid.definition.index.hvdcLinks
+  const groupOfLink = gridTablesFor(grid.definition).hvdcRampGroupOfLink
   for (let index = 0; index < links.length; index += 1) {
-    const link = links[index]!
     const state = grid.arrays.hvdcLinks[index]!
-    if (state.state !== 'deblocked') continue
-    if (!terminalsEnergized(grid, index)) {
-      tripHvdcLink(grid, link, state, 'ac-voltage-loss')
-      continue
-    }
-    const stepMw = link.rampMwPerMinute / 60 * seconds
-    const differenceMw = state.setpointMw - state.transferMw
-    state.transferMw = Math.abs(differenceMw) <= stepMw ? state.setpointMw : state.transferMw + Math.sign(differenceMw) * stepMw
-    state.lossesMw = Math.abs(state.transferMw) * link.lossPercent / 100
+    if (state.state === 'deblocked' && !terminalsEnergized(grid, index)) tripHvdcLink(grid, links[index]!, state, 'ac-voltage-loss')
   }
+  for (let index = 0; index < links.length; index += 1) {
+    const state = grid.arrays.hvdcLinks[index]!
+    if (state.state === 'deblocked' && groupOfLink[index] === -1) rampLinkBy(links[index]!, state, links[index]!.rampMwPerMinute / 60 * seconds)
+  }
+  for (let group = 0; group < grid.definition.index.hvdcRampGroups.length; group += 1) advanceRampGroup(grid, group, seconds)
 }
 
 /** True while some deblocked link's transfer is still ramping towards its set-point. */

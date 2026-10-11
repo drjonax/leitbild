@@ -57,6 +57,8 @@ export const openBridgeDevice = {
   smallTextScale: 11.5 / 16,
   /** A value row is the readout block plus its unit plus this padding. */
   valueRowPadding: 22,
+  /** The gap between the parts of a value row (MimicPanel's value-row), before a mark such as WR. */
+  valueRowGap: 4,
   /** A state row is its text plus this padding. */
   stateRowPadding: 16,
   /** The bottom alarm flap below the button, and where its label starts. */

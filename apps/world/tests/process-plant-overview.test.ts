@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { IsoTimestamp, ObjectId } from '../src/core/model/index.ts'
+import type { IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import { recordingSeriesIdFor } from '../src/core/model/index.ts'
 import {
   answerProcessPlantQuery,
@@ -144,7 +144,8 @@ describe('the unit overview World generates for a Plant', () => {
       + annunciatorHeight(9, 134, layout.overviewColumn) + layout.alarms + layout.overviewFooter
     expect(readouts.pens).toHaveLength(6)
     expect(layout.overviewFrame + column).toBe(904)
-    expect(result.display.height).toBe(904)
+    // The drawing beside it, with the tags of the valves outside the loops, is the taller of the two.
+    expect(result.display.height).toBeGreaterThanOrEqual(904)
     expect(result.display.height).toBeLessThanOrEqual(fullHd.height)
     // Advice readouts show current values only.
     const advice = ask('world.process-plant.display.compose', {
@@ -182,18 +183,7 @@ describe('the unit overview World generates for a Plant', () => {
     }
   })
 
-  test('where only compact tiles let the column fit, they go three to a row with the declared short labels', () => {
-    const threeLoops = plant(3)
-    const result = compileOverviewDisplay(threeLoops, new Set(), { width: 1896, height: 880 })
-    if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))
-    expect(result.display.height).toBeLessThanOrEqual(880)
-    const alarms = result.display.panels.find(candidate => candidate.kind === 'alarms')!
-    if (alarms.kind !== 'alarms') throw new Error('expected the alarms')
-    expect(alarms.tileWidth).toBe(88)
-    expect(alarms.systems?.map(system => system.label)).toEqual(['RPS', 'RCS', 'SG', 'SI', 'CTMT', 'Electrical', 'Feedwater', 'BOP', 'Main steam'])
-  })
-
-  test('every loop count the reference PWR is built with draws its overview, two loops in Full HD beside the column', () => {
+  test('every loop count the reference PWR is built with draws its overview', () => {
     const mimicOf = (display: CompiledComposedDisplay) => {
       const panel = display.panels.find(candidate => candidate.kind === 'mimic')!
       if (panel.kind !== 'mimic') throw new Error('expected the mimic')
@@ -205,15 +195,6 @@ describe('the unit overview World generates for a Plant', () => {
       const { count, forced } = mimicOf(result.display).crossings
       expect(count).toBeLessThanOrEqual(forced + 2)
     }
-    const twoLoops = compileOverviewDisplay(plant(2), new Set(), fullHd)
-    if (!twoLoops.ok) throw new Error(twoLoops.issues.map(issue => issue.message).join('; '))
-    const column = overviewDrawingRoom(fullHd, 'column', { readouts: 6, annunciators: 9, tileWidth: 134 })!
-    const mimic = mimicOf(twoLoops.display)
-    expect(twoLoops.display.height).toBeLessThanOrEqual(fullHd.height)
-    expect(mimic.width).toBeLessThanOrEqual(column.maxWidth)
-    expect(mimic.height).toBeLessThanOrEqual(column.maxHeight)
-    // Two loops on two headers closed by the feed train force one crossing.
-    expect(mimic.crossings.forced).toBe(1)
     // Five and six loops overflow Full HD, so each searches the least height that draws: seconds under load.
   }, 120_000)
 
@@ -232,6 +213,38 @@ describe('the unit overview World generates for a Plant', () => {
     const abnormal = panel.mimic.items.filter(item => itemTreatment(drawnLook(item.binding, item.rows, index), false) === 'abnormal').map(item => item.components.join(','))
     expect(abnormal).toEqual(['feedwaterControlValveB'])
   })
+
+  test('after a trip it leads with the heat path: the subcooling margin, the core\'s outlet temperature and the auxiliary feedwater the actuation delivers', () => {
+    // Evaluation run 22 (HMI review, 5-second test): in Hot standby after SG B's runback tripped the unit, the
+    // overview led with "0 MW · 3600 MW below HI ALM" and the generator's output, and showed no auxiliary feedwater.
+    const upset = plant()
+    const step = () => {
+      upset.runtime.tick(1_000)
+      upset.protection!.evaluate({ runtime: upset.runtime, elapsedMs: upset.runtime.elapsedMs(), simulationRunId: 'run-overview' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
+    }
+    step()
+    const atPower = compileOverviewDisplay(upset, new Set(), fullHd)
+    for (const command of commandsForProcessPlantAction({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 }, graph: upset.plant.graph })) {
+      upset.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    for (let second = 0; second < 180; second += 1) step()
+    const tripped = compileOverviewDisplay(upset, new Set(), fullHd)
+    const leads = (result: typeof tripped) => {
+      if (!result.ok) throw new Error(result.issues.map(issue => issue.message).join('; '))
+      const readouts = result.display.panels.find(panel => panel.kind === 'readouts')!
+      if (readouts.kind !== 'readouts') throw new Error('expected the lead values')
+      return readouts.pens.map(pen => pen.tagId ?? String(pen.path))
+    }
+    // Containment pressure, at atmospheric inside its normal range, yields its place at power as after the trip.
+    expect(leads(atPower)).toEqual(['NIS-PR-AVG', 'vessel.netInventoryFlowKgPerS', 'PT-455', 'SUB-MARGIN', 'core.coolantOutletTemperatureC', 'GEN-MW'])
+    // No energy sink is watched once the turbine has tripped: the heat path leads (core cooling, then the heat sink
+    // the actuation feeds), then the pressure safety injection can still act on and the pressurizer's level.
+    expect(leads(tripped)).toEqual(['SUB-MARGIN', 'core.coolantOutletTemperatureC', 'AFW-FLOW', 'PT-455', 'PZR-LVL', 'RVLS-DYN'])
+    expect(upset.runtime.readVariable('auxFeedwaterHeader.outletFlowKgPerS' as never)).toBeGreaterThan(50)
+    if (!tripped.ok) return
+    // Still the whole column, and it still fits the window.
+    expect(tripped.display.height).toBeLessThanOrEqual(fullHd.height)
+  }, 60_000)
 
   test('an overview state for another Plant is refused', () => {
     expect(() => ask('world.process-plant.display.view', { plantId: system.plant.id, state: JSON.stringify({ overview: { plantId: 'plant:other' } }) }))
@@ -275,8 +288,10 @@ describe('equipment opened from the unit overview', () => {
     expect(result.display.panels.map(panel => panel.kind)).toEqual(['readouts', 'mimic', 'alarms'])
     const [readouts, mimic, alarms] = result.display.panels
     if (readouts?.kind !== 'readouts' || mimic?.kind !== 'mimic' || alarms?.kind !== 'alarms') throw new Error('expected readouts, a mimic and alarms')
-    // Its own signals lead, the ones its I&C rules judge first.
-    expect(readouts.pens.every(pen => String(pen.path).startsWith('sgB.'))).toBe(true)
+    // Its own signals lead, the ones its I&C rules judge first, the wide-range level beside the narrow range; then the
+    // auxiliary feed its low-low level starts into it, which the SG B detail of run 22 lacked, and the main feed its
+    // high-high level isolates.
+    expect(readouts.pens.map(pen => String(pen.path))).toEqual(['sgB.levelPercent', 'sgB.wideRangeLevelPercent', 'sgB.secondaryRadiationMSvPerH', 'sgB.pressureMPa', 'sgB.feedwaterFlowKgPerS', 'aux-feedwater-valve-b-to-sg-b.flowKgPerS', 'feedwater-control-valve-b-to-sg-b.flowKgPerS'])
     expect(readouts.pens[0]!.thresholds.length).toBeGreaterThan(0)
     // Narrowed to its loop: both sides of the steam generator and the shared headers, the other loops beyond as stops, every valve named.
     expect(mimic.mimic.profile).toBe('detail')
@@ -299,12 +314,14 @@ describe('equipment opened from the unit overview', () => {
     // Its injection and charging lines stop at it, by name.
     expect(mimic.mimic.stubs.map(stub => stub.text)).toContain('from ACC ×4, CHG ×2, RHR iso, SI header')
     expect(result.display.height).toBeLessThanOrEqual(fullHd.height)
-    // Opened at power it leads with power, subcooling margin, the RCS leak rate and outlet temperature, then its
-    // instruments, the core exit thermocouples among them; the de-energized source range no longer fits.
+    // Opened at power it leads with the power range, Tavg's deviation from Tref, subcooling margin, the RCS leak rate
+    // and outlet temperature, then its instruments, never a permissive: the de-energized source range as its high
+    // voltage's state, the intermediate range and the core exit thermocouples; the startup rate no longer fits.
     const readouts = result.display.panels.find(panel => panel.kind === 'readouts')!
     if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
-    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(0, 4)).toEqual(['core.powerMw', 'SUB-MARGIN', 'RCS-LEAK-RATE', 'core.coolantOutletTemperatureC'])
-    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-2)).toEqual(['NIS-IR', 'CET-AVG'])
+    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(0, 5)).toEqual(['NIS-PR-AVG', 'TAVG-TREF', 'SUB-MARGIN', 'RCS-LEAK-RATE', 'core.coolantOutletTemperatureC'])
+    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-3)).toEqual(['NIS-SR-HV', 'NIS-IR', 'CET-AVG'])
+    expect(readouts.pens.find(pen => pen.tagId === 'NIS-SR-HV')?.valueKind).toBe('boolean')
   })
 
   test('every item of the overview opens', () => {

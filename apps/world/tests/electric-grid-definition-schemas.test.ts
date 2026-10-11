@@ -57,6 +57,12 @@ describe('Grid Model Addition v2', () => {
     expect(composed.connectionPoints.map(point => point.id)).toEqual(['test-plant-unit-1', 'second-plant-unit-1'])
     expect(composed.sourceBuild.inputs).toHaveLength(base.sourceBuild.inputs.length + 1)
     expect(composed.hvdcLinks).toEqual(base.hvdcLinks)
+    expect(composed.hvdcRampGroups).toEqual(base.hvdcRampGroups)
+  })
+
+  test('leaves HVDC ramp groups to the base model: an addition cannot add or change one', () => {
+    expect(message(() => compose({ ...additionJson(), hvdcRampGroups: [] })))
+      .toContain('$.hvdcRampGroups: HVDC ramp groups belong to the base Grid Model; a Model Addition cannot add or change one')
   })
 
   test('reports unresolved references and id collisions at the addition JSON path', () => {

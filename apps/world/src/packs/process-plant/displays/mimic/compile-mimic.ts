@@ -7,7 +7,7 @@ import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutR
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { MimicProfile } from './profiles.ts'
-import { COUNT_WORDS, itemRows, type MimicRow } from './rows.ts'
+import { COUNT_WORDS, itemRows, WIDER_RANGE, type MimicRow } from './rows.ts'
 import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
 import { openBridgeDevice, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
@@ -59,6 +59,15 @@ const laneOf = (component: CompiledComponent, orders: ReadonlyMap<string, number
 const valueRowWidth = (unit: string, fractionDigits: number): number =>
   readoutBlockWidth(3, fractionDigits) + (unitLabel(unit) === '' ? 0 : textWidth('unit', unitLabel(unit))) + openBridgeDevice.valueRowPadding
 
+/**
+ * A value row that may read its wider instrument says so before the value, in
+ * whole units ("WR 24 %"), so it takes no more room than the row's own
+ * reading where the item's other rows are as wide (a steam generator's
+ * pressure in MPa).
+ */
+const valueRowSize = (row: Extract<MimicRow, { kind: 'value' }>, own: number, value: (fractionDigits: number) => number): number =>
+  row.wider === undefined ? own : Math.max(own, textWidth('unit', WIDER_RANGE) + openBridgeDevice.valueRowGap + value(0))
+
 const stateRowWidth = (texts: ReadonlyArray<string>): number =>
   Math.max(...texts.map(text => textWidth('stateRow', text))) + openBridgeDevice.stateRowPadding
 
@@ -71,17 +80,18 @@ const rowWords = (row: MimicRow): ReadonlyArray<string> =>
 const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['readoutSize']): { readonly width: number; readonly height: number } => {
   if (!device || readoutSize === 'regular') {
     const digits = device ? 0 : 1
-    if (row.kind === 'value') return { width: valueRowWidth(row.unit, digits), height: openBridgeDevice.row }
+    if (row.kind === 'value') return { width: valueRowSize(row, valueRowWidth(row.unit, digits), fraction => valueRowWidth(row.unit, fraction)), height: openBridgeDevice.row }
     if (row.kind === 'position') return { width: Math.max(valueRowWidth('fraction', digits), stateRowWidth(['POS ?'])), height: openBridgeDevice.row }
     return { width: stateRowWidth(rowWords(row)), height: openBridgeDevice.row }
   }
-  if (row.kind === 'value') return { width: smallValueRowWidth(unitLabel(row.unit)), height: openBridgeDevice.smallValueRow }
+  if (row.kind === 'value') return { width: valueRowSize(row, smallValueRowWidth(unitLabel(row.unit)), () => smallValueRowWidth(unitLabel(row.unit))), height: openBridgeDevice.smallValueRow }
   if (row.kind === 'position') return { width: Math.max(smallValueRowWidth('%'), smallStateRowWidth('POS ?')), height: openBridgeDevice.smallValueRow }
   return { width: Math.max(...rowWords(row).map(smallStateRowWidth)), height: openBridgeDevice.smallStateRow }
 }
 
 const rowTexts = (row: MimicRow): ReadonlyArray<{ readonly style: OpenBridgeTextStyle; readonly text: string }> =>
-  row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }] : rowWords(row).map(text => ({ style: 'stateRow' as const, text }))
+  row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }, ...(row.wider === undefined ? [] : [{ style: 'unit' as const, text: WIDER_RANGE }])]
+    : rowWords(row).map(text => ({ style: 'stateRow' as const, text }))
 
 const isDevice = (presentation: MimicPresentation): boolean => presentation.element === 'device'
 const isVessel = (presentation: MimicPresentation): boolean => presentation.element === 'tank' || presentation.element === 'heat-exchanger'
@@ -129,8 +139,6 @@ interface Planned {
   /** Per edge, the Plant link it draws and the links of grouped members it stands for too. */
   readonly edgeLinks: ReadonlyMap<string, { readonly link: number; readonly parallel: ReadonlyArray<number> }>
   readonly stubs: ReadonlyMap<string, MimicStub>
-  /** Hub ports lone pipes enter ("cold leg C" of the core). */
-  readonly entries: ReadonlyArray<{ readonly item: string; readonly port: string }>
   readonly issues: ReadonlyArray<MimicIssue>
 }
 
@@ -163,7 +171,6 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
   const edges: DiagramEdge[] = []
   const edgeLinks = new Map<string, { link: number; parallel: number[] }>()
   const stubs = new Map<string, MimicStub>()
-  const entries: Array<{ readonly item: string; readonly port: string }> = []
   const componentRank = new Map<number, string>()
 
   const measure = (style: OpenBridgeTextStyle, text: string, owner: string): number => {
@@ -180,7 +187,8 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const presentation = planned.presentation
     const vessel = isVessel(presentation) || planned.role === 'hub'
     for (const row of planned.rows) for (const { style, text } of rowTexts(row)) measure(style, text, planned.binding.label)
-    const flaps = planned.binding.frames.map(frame => measure('alertLabel', frame.flap, planned.binding.label))
+    // A frame reserves room for each flap shortened to what it watches; the whole flap shows where that room allows (openbridge-mimic.ts flapLabel).
+    const flaps = planned.binding.frames.map(frame => measure('alertLabel', frame.flapShort, planned.binding.label))
     const tag = measure('tag', planned.binding.label, planned.binding.label)
     nodes.push({
       id: planned.id,
@@ -192,8 +200,9 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       ...(planned.lane === undefined ? {} : { lane: planned.lane }),
       text: {
         lines: [
-          // A marker carries no tag: its place on the circuit names it.
-          ...(planned.marker ? [] : [{ width: tag, height: openBridgeDevice.tagLine, required: true }]),
+          // Every item carries its tag, a marker too: a valve's place on a loop does not say which valve it is
+          // (run 22 QA: unlabelled feed regulating and main steam isolation valves on the overview).
+          { width: tag, height: openBridgeDevice.tagLine, required: true },
           ...planned.rows.map(row => ({ ...rowSize(row, isDevice(presentation), profile.readoutSize), required: row.required })),
         ],
       },
@@ -277,27 +286,28 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const bindings = group.map(member => itemBinding(plant, { kind: 'component', component: member }, aspectFor(presentation), framed))
     // A group's own state is its members' (rows.ts drawnLook); it shows no member's values.
     // A header's ports are only where branches join; its stubs name the rest.
-    // The port is never added to the item's label: "Core · cold leg C" beside
-    // the core's 339 °C read as the cold leg's temperature. Naming it at the
-    // pipe's end needs room the layout engine does not reserve yet, so the
-    // compose result says where the pipe enters instead.
+    // A hub a lone pipe enters at one of its alike ports ("cold leg C" of the
+    // core's four) is that pipe's destination: its label names the port and it
+    // writes none of its own values, so no value reads as the port's ("Core ·
+    // cold leg C" beside the core's 339 °C read as the cold leg's temperature).
     const reached = group.length === 1 && presentation.element !== 'bar' ? loneReachedPort(graph, component, piped.get(index) ?? new Set(), usedPorts.get(index) ?? new Set()) : null
-    if (reached !== null) entries.push({ item: bindings[0]!.label, port: reached })
-    const binding: MimicItemBinding = group.length === 1 ? bindings[0]! : {
-      item: bindings[0]!.item,
-      label: groupLabel(bindings.map(member => member.label)),
-      state: null,
-      values: [],
-      limits: [],
-      frames: bindings.flatMap(member => member.frames),
-    }
+    const binding: MimicItemBinding = group.length === 1
+      ? (reached === null ? bindings[0]! : { ...bindings[0]!, label: `${bindings[0]!.label} · ${reached}`, values: [] })
+      : {
+          item: bindings[0]!.item,
+          label: groupLabel(bindings.map(member => member.label)),
+          state: null,
+          values: [],
+          limits: [],
+          frames: bindings.flatMap(member => member.frames),
+        }
     const marker = profile.valves === 'markers' && isValve(presentation) && group.length === 1
     const ports = [...(usedPorts.get(index) ?? [])].sort()
     const rank = [role, component.kind, component.metadata?.equipmentClass ?? '', component.metadata?.role ?? '', ports.join(','), binding.label].join('|')
     for (const member of group) componentRank.set(member, rank)
     const lane = laneOf(component, loopOrder)
     addItem(
-      { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands }), marker, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
+      { id: nodeOf(index), item: { kind: 'component', component: index }, binding, presentation, rows: itemRows(group.length === 1 ? binding : bindings[0]!, presentation, { marker, members: group.length === 1 ? [] : bindings, commands: profile.commands, offSpan: profile.offSpan }), marker, role, rank, ...(lane === undefined ? {} : { lane }), components: group },
       ports.map(port => ({ id: port, direction: portDirection(component, port), rank: port })),
     )
   }
@@ -335,7 +345,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
           const lane = laneOf(host, loopOrder)
           const marker = profile.valves === 'markers' && isValve(presentation)
           addItem(
-            { id, item: { kind: 'device', component: host.index, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands }), marker, role: 'device', rank: `${componentRank.get(host.index)}|${device.id}`, ...(lane === undefined ? {} : { lane }), components: [host.index] },
+            { id, item: { kind: 'device', component: host.index, device: device.id }, binding, presentation, rows: itemRows(binding, presentation, { marker, members: [], commands: profile.commands, offSpan: profile.offSpan }), marker, role: 'device', rank: `${componentRank.get(host.index)}|${device.id}`, ...(lane === undefined ? {} : { lane }), components: [host.index] },
             [{ id: 'in', direction: 'in', rank: 'in' }, { id: 'out', direction: 'out', rank: 'out' }],
           )
         }
@@ -383,7 +393,7 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       : { ...edge, from: { node: id, port: 'end' }, to: { node: nodeOf(stub.component), port: stub.port } })
   })
 
-  return { graph: { nodes, edges }, items, edgeLinks, stubs, entries, issues }
+  return { graph: { nodes, edges }, items, edgeLinks, stubs, issues }
 }
 
 const pipeState = (graph: CompiledPlantGraph, link: CompiledProcessLink, parallel: ReadonlyArray<number>): MimicPipeState =>
@@ -398,7 +408,7 @@ const orientationOf = (node: PlacedNode): 'horizontal' | 'vertical' =>
   Object.values(node.ports).some(port => port.face === 'left' || port.face === 'right') ? 'horizontal' : 'vertical'
 
 const rowPaths = (row: MimicRow): ReadonlyArray<VariablePath> => {
-  if (row.kind === 'value') return [row.path as VariablePath]
+  if (row.kind === 'value') return [row.path as VariablePath, ...(row.wider === undefined ? [] : [row.wider.path as VariablePath])]
   if (row.kind !== 'count') return []
   return row.members.flatMap(member => [
     ...(member.state?.state === undefined ? [] : [member.state.state.path]),
@@ -415,8 +425,6 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
   const placed = new Map(layout.nodes.map(node => [node.id, node]))
   const items: MimicDrawnItem[] = [...planned.items.values()].map(item => {
     const node = placed.get(item.id)!
-    // A stack's first line is the tag, except on a marker; the rows that fit follow it.
-    const tagLines = item.marker ? 0 : 1
     return {
       id: item.id,
       binding: item.binding,
@@ -425,7 +433,8 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       orientation: orientationOf(node),
       text: node.text,
       frame: node.frame,
-      rows: item.rows.slice(0, Math.max(0, (node.text?.lines ?? tagLines) - tagLines)),
+      // A stack's first line is the tag; the rows that fit follow it.
+      rows: item.rows.slice(0, Math.max(0, (node.text?.lines ?? 1) - 1)),
       marker: item.marker,
       components: item.components.map(component => String(graph.components[component]!.id)),
     }
@@ -495,7 +504,6 @@ const assemble = (plant: CompiledProcessPlant, intent: MimicIntent | null, profi
       carriers: scope.carriers,
       unverifiedFlows: [...new Set(pipes.filter(pipe => pipe.state.kind === 'fluid' && pipe.state.flow.fidelity === 'unverified').map(pipe => pipe.linkId))],
       unmeasuredStates: items.filter(item => item.binding.state?.aspect === 'position' && item.binding.state.state === undefined).map(item => item.binding.label),
-      entries: planned.entries,
     },
     hash: `${MIMIC_LAYOUT_VERSION}:${layout.hash}`,
   }

@@ -1,11 +1,13 @@
 <script lang="ts">
   import type { ComposedReadoutsPanel } from '../../../packs/process-plant/displays/compose.ts'
-  import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
+  import { composedDisplayLayout, type DisplayEvidenceKind } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
-  import { displayValue, isPast, marginText, nearestThresholdMargin, shownReading, type ThresholdMargin, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
-  import { fitMarginText } from './panel-presenters.ts'
-  import { activeThreshold, limitsInForce } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import { displayValue, limitKindName, logarithmicSpan, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
+  import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
+  import { fitLimitStateText, sampledGates } from './panel-presenters.ts'
+  import { limitStateText, rateWindowMs, readingStateText, trendReading, type LimitState, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { displayName, fitName } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
   import { SPARKLINE_SIZE, sparklineWindowText } from './sparkline.ts'
@@ -32,22 +34,69 @@
   // box as measured, dropping whole words.
   const measureName = textMeasure(panelFont(11.5))
   const rooms: Record<string, number> = $state({})
-  const named = (path: string, name: string): string => {
-    const room = rooms[path] ?? 0
-    return room === 0 ? name : fitName(name, text => measureName(text) <= room)
+  const named = (pen: ComposedDisplayPen): string => {
+    const room = rooms[String(pen.path)] ?? 0
+    return room === 0 ? displayName(pen) : fitName(displayName(pen), text => measureName(text) <= room, pen.shorterNames)
   }
-  // A margin takes its row's width, measured as drawn, and drops whole parts
-  // to fit it, the mode qualifier first, never cutting a word; its tooltip
-  // keeps the whole text.
+  // A tag is never shortened nor cut (QA review of run 22: "SG-A…"): where it
+  // and the alarm chip do not both fit the line, the chip names the limit's
+  // order alone, the margin line under it naming the action. The line's room
+  // is measured as drawn, less its word badges and the gaps between parts
+  // (the CSS below), so the choice never depends on the chip it makes.
+  const heads: Record<string, number> = $state({})
+  const measureBadge = textMeasure(panelFont(9.5))
+  const measureChip = textMeasure(panelFont(10.5, 700))
+  const HEAD_GAP = 5
+  /** A word badge as drawn: upper case, letter-spaced 0.04 em, 4 px padding and a 1 px border each side. */
+  const badgeWidth = (word: string): number => measureBadge(word.toUpperCase()) + word.length * 9.5 * 0.04 + 10
+  /** A chip as AlarmChip draws it: letter-spaced 0.03 em, 5 px padding each side. */
+  const chipWidth = (text: string): number => measureChip(text) + text.length * 10.5 * 0.03 + 10
+  const compactChip = (pen: ComposedDisplayPen, inAlarm: ComposedDisplayThreshold): boolean => {
+    const head = heads[String(pen.path)] ?? 0
+    if (pen.tagId === undefined || head === 0) return false
+    const badges = [...(pen.added === undefined ? [] : [ADDED_WORDS[pen.added.kind]]), ...(pen.command ? ['demand'] : [])]
+    const room = head - badges.reduce((sum, word) => sum + badgeWidth(word) + HEAD_GAP, 0) - chipWidth(limitKindName(inAlarm)) - HEAD_GAP
+    return measureName(pen.tagId) > room
+  }
+  // A limit state takes its row's width, measured as drawn, and drops whole
+  // parts to fit it, the time and mode qualifier first, never cutting a word;
+  // its tooltip keeps the whole text.
   const measureMargin = { near: textMeasure(panelFont(11)), beyond: textMeasure(panelFont(11, 600)) }
   const marginRooms: Record<string, number> = $state({})
-  const fittedMargin = (path: string, margin: ThresholdMargin, unit: string): string => {
+  const fittedState = (path: string, reading: TrendReading, pen: ComposedDisplayPen): string => {
     const room = marginRooms[path] ?? 0
-    const measure = isPast(margin) ? measureMargin.beyond : measureMargin.near
-    return room === 0 ? marginText(margin, unit) : fitMarginText(margin, unit, text => measure(text) <= room)
+    const limit = shownLimit(reading)
+    const prefix = reading.offScale === null ? '' : `${reading.offScale} range${limit === null ? '' : ' · '}`
+    const measure = beyond(reading) ? measureMargin.beyond : measureMargin.near
+    if (limit === null) return prefix
+    return room === 0 ? `${prefix}${limitStateText(limit, pen.unit, pen.resolution)}` : `${prefix}${fitLimitStateText(limit, pen.unit, pen.resolution, text => measure(`${prefix}${text}`) <= room)}`
   }
+  // A readout says what limits act on its value, not that it has none.
+  const shownLimit = (reading: TrendReading): LimitState | null => reading.limit === null || reading.limit.kind === 'unlimited' ? null : reading.limit
+  // Past a limit, or off its instrument's span, the line reads as a caution.
+  const beyond = (reading: TrendReading): boolean => reading.offScale !== null || reading.limit?.kind === 'past'
   const sampled = (path: string) => latest?.values.find(entry => entry.path === path)
+  // What World added to an agent's display says why on its own row, in a word (the tooltip has the reason).
+  const ADDED_WORDS: Readonly<Record<DisplayEvidenceKind, string>> = { cause: 'cause', wider: 'wider span', delivers: 'delivers', isolates: 'isolates', reference: 'reference', mode: 'mode watch', flow: 'flow' }
   const sparklineMs = $derived(column && history !== undefined ? panel.sparklineMs : undefined)
+  // Each value as the row reads it: in the column, which way its sparkline's
+  // history goes over the sparkline's rate window, so its margin names the
+  // limit it is heading for; elsewhere seen once, the limit it is past or else
+  // the nearest either way.
+  const readingOf = (pen: ComposedDisplayPen, value: number): TrendReading => trendReading({
+    value,
+    points: sparklineMs === undefined || history === undefined || !pen.recorded ? null : shownPoints(pen),
+    windowMs: rateWindowMs(sparklineMs ?? 0),
+    unit: pen.unit,
+    thresholds: pen.thresholds,
+    mode: latest?.mode,
+    gates: sampledGates(latest),
+    activeRuleIds,
+    resolution: pen.resolution,
+    ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }),
+  })
+  const shownPoints = (pen: ComposedDisplayPen) => (history?.series.get(String(pen.path)) ?? []).map(point => ({ t: point.t, v: shownReading(point.v, pen.resolution) }))
+  const limitDrawn = (reading: TrendReading) => reading.limit?.kind === 'margin' || reading.limit?.kind === 'past' ? reading.limit.margin.threshold : null
   const now = $derived(latest === undefined ? Number.NaN : Date.parse(latest.simulationTime))
   const rows = $derived(Math.ceil(panel.pens.length / (column ? 1 : composedDisplayLayout.readoutsPerRow)))
   const size = $derived(column
@@ -59,31 +108,36 @@
 <ul class="readouts" style={size}>
   {#each panel.pens as pen (pen.path)}
     {@const entry = sampled(String(pen.path))}
-    {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.limits) : entry?.value}
-    {@const margin = typeof value === 'number' ? nearestThresholdMargin(value, limitsInForce(pen.thresholds, latest?.mode, activeRuleIds)) : null}
-    {@const inAlarm = activeThreshold(pen.thresholds, activeRuleIds)}
-    <li class:primary={pen.role === 'primary'} title={`${pen.label} · ${pen.role}`}>
-      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`}><span class="name" bind:clientWidth={rooms[String(pen.path)]}>{named(String(pen.path), displayName(pen))}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} />{/if}</span>
+    {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.resolution) : entry?.value}
+    {@const reading = typeof value === 'number' ? readingOf(pen, value) : null}
+    {@const inAlarm = reading?.inAlarm ?? null}
+    {@const end = typeof value === 'number' ? offScale(value, pen.limits?.instrumentSpan) : null}
+    {@const asText = end !== null || logarithmicSpan(pen.limits?.instrumentSpan)}
+    <li class:primary={pen.role === 'primary'} class:added={pen.added !== undefined} title={pen.added === undefined ? `${pen.label} · ${pen.role}` : `${pen.label} · added by World: ${pen.added.reason}`}>
+      <span class="head" title={`${displayName(pen)}${pen.command ? ' · operator or automation demand, not a measured state' : ` · ${pen.label}`}`} bind:clientWidth={heads[String(pen.path)]}>{#if pen.added !== undefined}<span class="why" title={`Added by World from the Plant model: ${pen.added.reason}`}>{ADDED_WORDS[pen.added.kind]}</span>{/if}<span class="name" class:tag={pen.tagId !== undefined} bind:clientWidth={rooms[String(pen.path)]}>{named(pen)}</span>{#if pen.command}<span class="demand">demand</span>{/if}{#if inAlarm !== null}<AlarmChip threshold={inAlarm} compact={compactChip(pen, inAlarm)} />{/if}</span>
       {#if typeof value === 'boolean'}
         <!-- A state names its equipment, so a row of alike states (two buses) cannot be confused. -->
         <span class="state" title={pen.described}>{value ? pen.described : `Not ${pen.described.charAt(0).toLowerCase()}${pen.described.slice(1)}`}</span>
       {:else}
         <span class="reading">
+          <!-- At an end of its instrument's span the reading says only that the quantity is there or beyond: "<0", in low-integrity style. A reading over decades is written in powers of ten. -->
           <obc-readout
-            value={typeof value === 'number' ? displayValue(value, pen.unit) : null}
+            value={typeof value !== 'number' ? null : asText ? readingValueText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan) : displayValue(value, pen.unit)}
+            valueType={asText ? 'text' : 'number'}
+            dataQuality={end === null ? undefined : 'low-integrity'}
             off={typeof value !== 'number'}
             offText="—"
             unit={unitLabel(pen.unit)}
-            fractionDigits={typeof value === 'number' ? valueDigits(displayValue(value, pen.unit)) : 0}
+            fractionDigits={typeof value === 'number' ? valueDigits(displayValue(value, pen.unit), pen.resolution === null ? null : displayValue(pen.resolution, pen.unit)) : 0}
             size="small"
           ></obc-readout>
           {#if sparklineMs !== undefined && history !== undefined && pen.valueKind === 'number'}
             <Sparkline
               {pen}
               windowMs={sparklineMs}
-              points={(history.series.get(String(pen.path)) ?? []).map(point => ({ t: point.t, v: shownReading(point.v, pen.limits) }))}
+              points={shownPoints(pen)}
               {now}
-              value={typeof value === 'number' ? value : undefined}
+              limit={reading === null ? null : limitDrawn(reading)}
               {inAlarm}
               historyMissing={history.historyMissing.has(String(pen.path))}
               historyError={history.historyErrors.get(String(pen.path))}
@@ -91,8 +145,8 @@
           {/if}
         </span>
       {/if}
-      {#if margin !== null}
-        <span class="margin" class:beyond={isPast(margin)} title={marginText(margin, pen.unit)} bind:clientWidth={marginRooms[String(pen.path)]}>{fittedMargin(String(pen.path), margin, pen.unit)}</span>
+      {#if reading !== null && (reading.offScale !== null || shownLimit(reading) !== null)}
+        <span class="margin" class:beyond={beyond(reading)} title={readingStateText({ offScale: reading.offScale, limit: shownLimit(reading) }, pen.unit, pen.resolution)} bind:clientWidth={marginRooms[String(pen.path)]}>{fittedState(String(pen.path), reading, pen)}</span>
       {:else if entry?.quality === 'outside-hard-range'}
         <span class="margin beyond">outside range</span>
       {/if}
@@ -101,7 +155,13 @@
 </ul>
 {/snippet}
 
-{#if column}
+{#if panel.added}
+  <!-- The line over values World added to an agent's display (composedDisplayLayout.evidenceCaption). -->
+  <section aria-label="Added by World">
+    <h2 style={`height:${composedDisplayLayout.evidenceCaption}px`}><span>Added from the Plant model</span></h2>
+    {@render values()}
+  </section>
+{:else if column}
   <!-- The title line (composedDisplayLayout.overviewReadoutsTitle) labels the sparklines' window once, over them. -->
   <section aria-label="Lead values">
     <h2 style={`height:${composedDisplayLayout.overviewReadoutsTitle}px`}>
@@ -121,10 +181,15 @@
   li { display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 2px 8px; border-left: 2px solid var(--border-divider-color); }
   li.primary { border-left-color: var(--element-active-color); }
   .name { flex: 1 1 0; min-width: 0; font-size: 11.5px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* A tag is whole or not shown at all: never an ellipsis through it. */
+  .name.tag { text-overflow: clip; }
   /* Normal states read as plain text; colour and weight are kept for alarms. */
   .state { font-size: 13.5px; padding: 6px 0; }
   .head { display: flex; align-items: center; gap: 5px; min-width: 0; }
   .demand { flex: none; padding: 0 4px; border: 1px solid var(--border-outline-color); border-radius: 3px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+  /* Added by World: a dashed rule and a dashed word, never an alarm colour. */
+  li.added { border-left-style: dashed; }
+  .why { flex: none; padding: 0 4px; border: 1px dashed var(--border-outline-color); border-radius: 3px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--element-neutral-color); }
   .margin { font-size: 11px; color: var(--element-neutral-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .margin.beyond { color: var(--alert-caution-color); font-weight: 600; }
   .reading { display: flex; align-items: center; gap: 8px; min-width: 0; }
