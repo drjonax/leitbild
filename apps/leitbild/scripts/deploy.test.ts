@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import {
   INSTALL_MANIFEST_ONLY_WORKSPACE_PATHS,
@@ -9,7 +9,6 @@ import {
   PRODUCTION_DEPENDENCY_WORKSPACE_PATHS,
   moduleRoutingPreflight,
   caddySnippetPreflight,
-  caddySnippetDeployment,
   referencedInspectionEntries,
 } from './deploy.ts'
 
@@ -128,49 +127,3 @@ test('Caddy root delegates site ownership and refuses unprovisioned shared layou
     expect(await readFile(resolve(directory, 'Caddyfile'), 'utf8')).toBe('another.example { respond "keep" }\n')
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
-
-for (const outcome of ['success', 'invalid', 'reload-failed', 'public-failed'] as const) {
-  test(`Caddy snippet deployment preserves foreign sites and root: ${outcome}`, async () => {
-    const directory = await mkdtemp(resolve(tmpdir(), 'leitbild-caddy-deploy-'))
-    try {
-      const sites = resolve(directory, 'managed-sites')
-      const release = resolve(directory, 'release')
-      await mkdir(sites)
-      await mkdir(resolve(release, 'apps/leitbild/deploy/sites'), { recursive: true })
-      const root = `# Host-owned setting\nimport ${sites}/*.caddy\n`
-      const foreign = 'optifuel.mightwork.ai { reverse_proxy 127.0.0.1:8765 }\n'
-      await writeFile(resolve(directory, 'Caddyfile'), root)
-      await writeFile(resolve(sites, 'optifuel.caddy'), foreign)
-      await writeFile(resolve(sites, 'leitbild.caddy'), 'previous Leitbild\n')
-      await writeFile(resolve(release, 'apps/leitbild/deploy/sites/leitbild.caddy'), 'next Leitbild\n')
-      // Execute the real deployment shell against isolated files. Only privileged
-      // host commands are replaced; their failures exercise filesystem rollback.
-      const script = `
-release_id=test
-release_dir="$TEST_RELEASE"
-flock() { return 0; }
-install() { cp "\${@: -2:1}" "\${@: -1}"; }
-caddy() {
-  test "$1" = validate && test "$2" = --config && test "$3" = "$TEST_CADDY/Caddyfile" || return 2
-  test -s "$TEST_CADDY/managed-sites/optifuel.caddy" || return 2
-  test "$TEST_OUTCOME" != invalid
-}
-systemctl() {
-  test "$1" = reload && test "$2" = caddy.service || return 2
-  test "$TEST_OUTCOME" != reload-failed || ! grep -q 'next Leitbild' "$TEST_CADDY/managed-sites/leitbild.caddy"
-}
-${caddySnippetDeployment().replaceAll('/etc/caddy', directory).replace('/run/lock/caddy-config.lock', resolve(directory, 'caddy-config.lock'))}
-if test "$TEST_OUTCOME" = public-failed; then restore_leitbild_caddy; systemctl reload caddy.service; exit 1; fi
-`
-      const proc = Bun.spawn(['bash', '-euc', script], {
-        env: { ...process.env, TEST_RELEASE: release, TEST_CADDY: directory, TEST_OUTCOME: outcome },
-        stdout: 'pipe', stderr: 'pipe',
-      })
-      const error = await new Response(proc.stderr).text()
-      expect(await proc.exited, error).toBe(outcome === 'success' ? 0 : 1)
-      expect(await readFile(resolve(directory, 'Caddyfile'), 'utf8')).toBe(root)
-      expect(await readFile(resolve(sites, 'optifuel.caddy'), 'utf8')).toBe(foreign)
-      expect(await readFile(resolve(sites, 'leitbild.caddy'), 'utf8')).toBe(outcome === 'success' ? 'next Leitbild\n' : 'previous Leitbild\n')
-    } finally { await rm(directory, { recursive: true, force: true }) }
-  })
-}

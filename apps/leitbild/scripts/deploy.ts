@@ -317,30 +317,176 @@ export const caddySnippetPreflight = (): string => `if ! grep -Fxq 'import /etc/
   exit 1
 fi`
 
-/** The shared lock coordinates product deployers; rollback owns only this site's file. */
+/** Called inside the activation transaction; the shared lock stays held through rollback. */
 export const caddySnippetDeployment = (): string => `exec 8>/run/lock/caddy-config.lock
 flock -w 60 8 || { echo "Another Caddy configuration update is active" >&2; exit 1; }
 ${caddySnippetPreflight()}
 caddy_site=/etc/caddy/managed-sites/leitbild.caddy
-caddy_backup="/etc/caddy/leitbild.pre-$release_id"
-cp "$caddy_site" "$caddy_backup"
-restore_leitbild_caddy() {
-  cp "$caddy_backup" "$caddy_site"
-}
-if ! install -o root -g root -m 0644 "$release_dir/apps/leitbild/deploy/sites/leitbild.caddy" "/etc/caddy/leitbild.next-$release_id"; then
-  rm -f -- "/etc/caddy/leitbild.next-$release_id"
-  exit 1
-fi
+cp -a "$caddy_site" "$activation_backup/leitbild.caddy"
+install -o root -g root -m 0644 "$release_dir/apps/leitbild/deploy/sites/leitbild.caddy" "/etc/caddy/leitbild.next-$release_id"
+caddy_changed=1
 mv -f "/etc/caddy/leitbild.next-$release_id" "$caddy_site"
-if ! caddy validate --config /etc/caddy/Caddyfile; then
-  restore_leitbild_caddy
+caddy validate --config /etc/caddy/Caddyfile
+systemctl reload caddy.service`
+
+/** One success boundary for release selection, services, install configuration and site routing.
+ * The caller owns preparation and defines cleanup(); persistent application data is never restored.
+ */
+export const releaseActivation = (install: boolean, knowledgeRevision: string): string => `
+activation_backup=""
+activation_started=0
+activation_committed=0
+caddy_changed=0
+install_changed=0
+services_started=0
+rollback_failed=0
+rollback_step() {
+  if "$@"; then return 0; fi
+  echo "ROLLBACK FAILED: $*" >&2
+  rollback_failed=1
+}
+restore_file() {
+  if test -e "$activation_backup/$1" || test -L "$activation_backup/$1"; then
+    rm -f -- "$2" && cp -a "$activation_backup/$1" "$2"
+  else
+    rm -f -- "$2"
+  fi
+}
+finish_activation() {
+  result=$?
+  trap - EXIT INT TERM HUP
+  set +e
+  if test "$activation_started" -eq 1 && test "$activation_committed" -eq 0; then
+    test "$result" -ne 0 || result=1
+    echo "Release activation failed (exit $result); restoring previous activation" >&2
+    if test "$caddy_changed" -eq 1; then
+      rollback_step restore_file leitbild.caddy /etc/caddy/managed-sites/leitbild.caddy
+      rollback_step caddy validate --config /etc/caddy/Caddyfile
+      rollback_step systemctl reload caddy.service
+    fi
+    # Stop newly started services while their installed unit definitions still exist.
+    if test "$services_started" -eq 1; then
+      for service in ${SERVICES.join(' ')}; do
+        if ! test -f "$activation_backup/$service.active"; then rollback_step systemctl stop "$service"; fi
+      done
+    fi
+    if test "$install_changed" -eq 1; then
+      for service in ${SERVICES.join(' ')}; do
+        if test -f "$activation_backup/$service.enable-changed"; then rollback_step systemctl disable "$service"; fi
+        rollback_step restore_file "$service" "/etc/systemd/system/$service"
+      done
+      rollback_step restore_file platform.env /etc/leitbild/platform.env
+      rollback_step systemctl daemon-reload
+    fi
+    if test -n "$previous"; then
+      rollback_step ln -sfn "$previous" "$next_link"
+      rollback_step mv -Tf "$next_link" ${shellQuote(CURRENT_LINK)}
+    else
+      rollback_step rm -f -- ${shellQuote(CURRENT_LINK)}
+    fi
+    for service in ${SERVICES.join(' ')}; do
+      if test -f "$activation_backup/$service.active"; then
+        rollback_step systemctl restart "$service"
+      fi
+    done
+    if test "$rollback_failed" -eq 0; then
+      echo "Previous activation restored (selection/configuration restored; prior services restarted/stopped)" >&2
+    else
+      echo "Rollback incomplete; recovery files retained at $activation_backup" >&2
+    fi
+  fi
+  rm -f -- "$next_link" "/etc/caddy/leitbild.next-$release_id" || echo "Activation temporary-file cleanup failed" >&2
+  if test -n "$activation_backup" && test "$rollback_failed" -eq 0; then
+    rm -rf -- "$activation_backup" || echo "Activation backup cleanup failed" >&2
+  fi
+  cleanup || echo "Deployment upload cleanup failed" >&2
+  exit "$result"
+}
+next_link="${DEPLOY_ROOT}/.next-$release_id"
+trap finish_activation EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+activation_backup="$(mktemp -d ${DEPLOY_ROOT}/.activation-XXXXXX)"
+for service in ${SERVICES.join(' ')}; do
+  state_status=0
+  service_state="$(systemctl is-active "$service")" || state_status=$?
+  case "$service_state:$state_status" in
+    active:0) touch "$activation_backup/$service.active" ;;
+    inactive:3|failed:3) ;;
+    inactive:4|unknown:4)
+      if test ${install ? '1' : '0'} -eq 1 && load_state="$(systemctl show "$service" --property=LoadState --value)" && test "$load_state" = not-found; then
+        : # A first installation has no service to restart on rollback.
+      else
+        echo "Cannot confirm an absent service for --install: $service" >&2; exit 1
+      fi ;;
+    *) echo "Cannot snapshot running state for $service: $service_state (exit $state_status)" >&2; exit 1 ;;
+  esac
+done
+if test ${install ? '1' : '0'} -eq 1; then
+  # Replacing a linked file could mutate configuration outside this transaction.
+  for config in /etc/leitbild/platform.env ${SERVICES.map(service => `/etc/systemd/system/${service}`).join(' ')}; do
+    if test -L "$config" || { test -e "$config" && ! test -f "$config"; }; then
+      echo "--install requires regular configuration files or absent paths: $config" >&2; exit 1
+    fi
+  done
+  if test -e /etc/leitbild/platform.env; then cp -a /etc/leitbild/platform.env "$activation_backup/platform.env"; fi
+  for service in ${SERVICES.join(' ')}; do
+    if test -e "/etc/systemd/system/$service" || test -L "/etc/systemd/system/$service"; then cp -a "/etc/systemd/system/$service" "$activation_backup/$service"; fi
+    enabled="$(systemctl is-enabled "$service" 2>/dev/null)" || true
+    case "$enabled" in
+      enabled) ;;
+      disabled|not-found|static) touch "$activation_backup/$service.enable-needed" ;;
+      *) echo "Cannot safely restore --install enablement state for $service: $enabled" >&2; exit 1 ;;
+    esac
+  done
+fi
+activation_started=1
+if test ${install ? '1' : '0'} -eq 1; then
+  install_changed=1
+  cat > /etc/leitbild/platform.env <<'EOF'
+WORKSPACE_HOST_URL=https://leitbild.app
+WORKSPACE_MODULES=[{"moduleId":"world","internalBaseUrl":"http://127.0.0.1:4177","manifestPath":"/.well-known/workspace-module"},{"moduleId":"agents","internalBaseUrl":"http://127.0.0.1:3000","manifestPath":"/.well-known/workspace-module"}]
+EOF
+  chmod 0600 /etc/leitbild/platform.env
+  for service in ${SERVICES.join(' ')}; do cp "$release_dir/apps/leitbild/deploy/$service" "/etc/systemd/system/$service"; done
+  systemctl daemon-reload
+  for service in ${SERVICES.join(' ')}; do
+    if test -f "$activation_backup/$service.enable-needed"; then
+      touch "$activation_backup/$service.enable-changed"
+      systemctl enable "$service"
+    fi
+  done
+fi
+ln -s "$release_dir" "$next_link"
+mv -Tf "$next_link" ${shellQuote(CURRENT_LINK)}
+systemctl reset-failed ${SERVICES.join(' ')} || true
+services_started=1
+systemctl restart ${SERVICES.join(' ')}
+for port in 3000 4177 3100; do for attempt in $(seq 1 60); do curl -fsS -o /dev/null "http://127.0.0.1:$port/health" && break; sleep 1; done; curl -fsS -o /dev/null "http://127.0.0.1:$port/health"; done
+# Verify effective process routing, Workspace access and release-owned knowledge.
+for module in world agents; do
+  module_pid="$(systemctl show "leitbild-$module" --property=MainPID --value)"
+  if ! tr '\\0' '\\n' < "/proc/$module_pid/environ" | grep -Fx 'WORKSPACE_HOST_URL=http://127.0.0.1:3100' > /dev/null; then
+    echo "leitbild-$module is not routed to the internal Workspace Host" >&2
+    exit 1
+  fi
+done
+curl -fsS -o /dev/null http://127.0.0.1:3100/api/workspaces
+if ! curl -fsS http://127.0.0.1:3100/api/knowledge/index | jq -e --arg revision ${shellQuote(knowledgeRevision)} '.revision == $revision and (.documents | length > 0)' > /dev/null; then
+  echo "Knowledge publication does not match the release" >&2
   exit 1
 fi
-if ! systemctl reload caddy.service; then
-  restore_leitbild_caddy
-  systemctl reload caddy.service || true
-  exit 1
-fi`
+${caddySnippetDeployment()}
+public_ready=0
+for attempt in $(seq 1 60); do
+  if curl -fsS -o /dev/null ${shellQuote(PUBLIC_HEALTH_URL)}; then public_ready=1; break; fi
+  sleep 1
+done
+test "$public_ready" -eq 1
+activation_committed=1
+printf 'activated_release=%s previous=%s\n' "$release_id" "\${previous:-none}"
+`
 
 const remotePreflight = (install: boolean): string => `set -euo pipefail
 ${moduleRoutingPreflight()}
@@ -354,7 +500,7 @@ if test ${install ? '0' : '1'} -eq 1; then
 fi
 `
 
-const remoteDeploy = (artifact: Awaited<ReturnType<typeof createArtifact>>, remoteArchive: string, install: boolean): string => {
+export const remoteDeploy = (artifact: Pick<Awaited<ReturnType<typeof createArtifact>>, 'manifest' | 'lockChecksum' | 'archiveChecksum'>, remoteArchive: string, install: boolean): string => {
   const id = artifact.manifest.releaseId
   return `set -euo pipefail
 exec 9>/run/lock/leitbild-deploy.lock
@@ -367,19 +513,16 @@ incoming=${shellQuote(`${RELEASES_DIR}/.incoming-${id}`)}
 dep_dir=${shellQuote(`${DEPS_DIR}/${artifact.lockChecksum}-${artifact.manifest.dependencyPackagesDigest}`)}
 previous=""
 test ! -e "$release_dir"
+if test -e ${shellQuote(CURRENT_LINK)} && ! test -L ${shellQuote(CURRENT_LINK)}; then echo "current must be a release symlink" >&2; exit 1; fi
 if test -L ${shellQuote(CURRENT_LINK)}; then previous="$(readlink -f ${shellQuote(CURRENT_LINK)})"; fi
 cleanup() { rm -rf -- "$incoming"; rm -f -- "$archive"; }
 trap cleanup EXIT
 if test ${install ? '1' : '0'} -eq 1; then
+  # Provisioning is retained on activation failure; never remove application data.
   id -u ${SERVICE_USER} >/dev/null 2>&1 || useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin ${SERVICE_USER}
   install -d -o ${SERVICE_USER} -g ${SERVICE_USER} -m 0700 ${shellQuote(`${STATE_ROOT}/host`)} ${shellQuote(`${STATE_ROOT}/world`)} ${shellQuote(`${STATE_ROOT}/agents`)}
   install -d -o root -g root -m 0755 ${shellQuote(DEPLOY_ROOT)}
   install -d -o root -g root -m 0755 /etc/leitbild
-  cat > /etc/leitbild/platform.env <<'EOF'
-WORKSPACE_HOST_URL=https://leitbild.app
-WORKSPACE_MODULES=[{"moduleId":"world","internalBaseUrl":"http://127.0.0.1:4177","manifestPath":"/.well-known/workspace-module"},{"moduleId":"agents","internalBaseUrl":"http://127.0.0.1:3000","manifestPath":"/.well-known/workspace-module"}]
-EOF
-  chmod 0600 /etc/leitbild/platform.env
 fi
 mkdir -p ${shellQuote(RELEASES_DIR)} ${shellQuote(DEPS_DIR)}
 printf '%s  %s\n' ${shellQuote(artifact.archiveChecksum)} "$archive" | sha256sum --check --status
@@ -406,49 +549,10 @@ ln -s "$dep_dir/apps/leitbild/node_modules" "$incoming/apps/leitbild/node_module
 ln -s "$dep_dir/apps/world/node_modules" "$incoming/apps/world/node_modules"
 ln -s "$dep_dir/apps/agents/node_modules" "$incoming/apps/agents/node_modules"
 mv "$incoming" "$release_dir"
-next_link="${DEPLOY_ROOT}/.next-$release_id"
-ln -s "$release_dir" "$next_link"
-mv -Tf "$next_link" ${shellQuote(CURRENT_LINK)}
-if test ${install ? '1' : '0'} -eq 1; then
-  for service in ${SERVICES.join(' ')}; do cp "$release_dir/apps/leitbild/deploy/$service" "/etc/systemd/system/$service"; done
-  systemctl daemon-reload
-  systemctl enable ${SERVICES.join(' ')}
-fi
-systemctl reset-failed ${SERVICES.join(' ')} || true
-if ! systemctl restart ${SERVICES.join(' ')}; then
-  if test -n "$previous"; then ln -sfn "$previous" ${shellQuote(CURRENT_LINK)}; systemctl restart ${SERVICES.join(' ')}; fi
-  exit 1
-fi
-for port in 3000 4177 3100; do for attempt in $(seq 1 60); do curl -fsS -o /dev/null "http://127.0.0.1:$port/health" && break; sleep 1; done; curl -fsS -o /dev/null "http://127.0.0.1:$port/health"; done
-# Verify the effective process routing, not just standalone service health.
-for module in world agents; do
-  module_pid="$(systemctl show "leitbild-$module" --property=MainPID --value)"
-  if ! tr '\\0' '\\n' < "/proc/$module_pid/environ" | grep -Fx 'WORKSPACE_HOST_URL=http://127.0.0.1:3100' > /dev/null; then
-    echo "leitbild-$module is not routed to the internal Workspace Host" >&2
-    exit 1
-  fi
-done
-curl -fsS -o /dev/null http://127.0.0.1:3100/api/workspaces
-# A healthy process is insufficient: verify the release-owned knowledge is readable.
-if ! curl -fsS http://127.0.0.1:3100/api/knowledge/index | jq -e --arg revision ${shellQuote(artifact.manifest.knowledgeRevision)} '.revision == $revision and (.documents | length > 0)' > /dev/null; then
-  echo "Knowledge publication does not match the release" >&2
-  if test -n "$previous"; then ln -sfn "$previous" ${shellQuote(CURRENT_LINK)}; systemctl restart ${SERVICES.join(' ')}; fi
-  exit 1
-fi
-${caddySnippetDeployment()}
-public_ready=0
-for attempt in $(seq 1 60); do
-  if curl -fsS -o /dev/null ${shellQuote(PUBLIC_HEALTH_URL)}; then public_ready=1; break; fi
-  sleep 1
-done
-if test "$public_ready" -ne 1; then
-  restore_leitbild_caddy
-  systemctl reload caddy.service || true
-  exit 1
-fi
-find ${shellQuote(RELEASES_DIR)} -mindepth 1 -maxdepth 1 -type d ! -path "$release_dir" -exec rm -rf -- {} +
-find ${shellQuote(DEPS_DIR)} -mindepth 1 -maxdepth 1 -type d ! -path "$dep_dir" -exec rm -rf -- {} +
-printf 'activated_release=%s previous=%s\n' "$release_id" "\${previous:-none}"
+${releaseActivation(install, artifact.manifest.knowledgeRevision)}
+# Retention is maintenance after the activation commit, never a rollback trigger.
+find ${shellQuote(RELEASES_DIR)} -mindepth 1 -maxdepth 1 -type d ! -path "$release_dir" -exec rm -rf -- {} + || echo "Release retention cleanup failed" >&2
+find ${shellQuote(DEPS_DIR)} -mindepth 1 -maxdepth 1 -type d ! -path "$dep_dir" -exec rm -rf -- {} + || echo "Dependency retention cleanup failed" >&2
 `
 }
 
@@ -477,11 +581,7 @@ const main = async (): Promise<void> => {
     const remoteArchive = `/tmp/leitbild-${artifact.manifest.releaseId}.tgz`
     await run('Upload immutable Leitbild artifact', ['scp', artifact.archivePath, `${SSH_HOST}:${remoteArchive}`])
     await run('Activate Leitbild release', ['ssh', SSH_HOST, remoteDeploy(artifact, remoteArchive, options.install)])
-    for (const url of [PUBLIC_HEALTH_URL]) {
-      const response = await fetch(url)
-      if (!response.ok) throw new Error(`${url} returned ${response.status}`)
-      console.log(`✓ ${url} ${response.status}`)
-    }
+    console.log(`✓ Release activation and ${PUBLIC_HEALTH_URL} verified on the host`)
   } finally {
     await artifact.cleanup()
   }
