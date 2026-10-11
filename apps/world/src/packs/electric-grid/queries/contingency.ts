@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { rejectCapabilityInput } from '../../../simulation/capability-rejection.ts'
 import { liveContingencyCase, switchedContingencyCase, type ContingencyCase } from '../runtime/contingency-case.ts'
-import { screenRecordsInline } from '../runtime/contingency-execution.ts'
+import { sizedContingencyScreen } from '../runtime/contingency-execution.ts'
+import { processContingencyPool } from '../runtime/contingency-pool.ts'
 import { screenContingencies, selectContingencies, type ContingencyRecordScreen, type ContingencySelection, type ScreeningSummary } from '../runtime/contingency-screen.ts'
 import type { GridContingency } from '../runtime/contingency-snapshot.ts'
 import { remedialCaseChanges } from '../runtime/remedial-actions.ts'
@@ -85,7 +86,8 @@ const validated = <T>(step: () => T): T => {
   }
 }
 
-const recordScreen: ContingencyRecordScreen = async snapshot => screenRecordsInline(snapshot)
+/** Large screenings run on the process's N-1 worker pool, small ones inline (contingency-execution.ts). */
+const recordScreen: ContingencyRecordScreen = sizedContingencyScreen(processContingencyPool)
 
 /** The selected outages of a case; a selection the case cannot screen is the caller's input, rejected. */
 const selected = (screeningCase: ContingencyCase, selection: ContingencySelection): ReadonlyArray<GridContingency> =>
