@@ -21,10 +21,21 @@ export function parseOperatingPzr(text:string){
   return schema.parse(JSON.parse(blocks[0]![1]!))
 }
 const triple=z.tuple([positive,positive,positive])
-const stratifiedSchema=z.object({withdrawalScale_m:positive,admittedPreparationThickness_m:positive,
+/** The cell's `ld01-pzr-stratified` block. The bulk bubble exchange (request
+ * 4, K1) reuses `bubbleDiameter_m` and adds its vapor-side coefficient, its
+ * factors (the nominal 1 among them) and its exchange-only diameter, which
+ * must differ from the bubble diameter it is a sensitivity of. */
+export const stratifiedSchema=z.object({withdrawalScale_m:positive,admittedPreparationThickness_m:positive,
   inversionExchangeVelocity_m_s:positive,liquidRelaxationTime_s:positive,vaporRelaxationTime_s:positive,
-  relaxationSensitivity:triple,bubbleDiameter_m:positive,sprayDropDiameter_m:positive,
+  relaxationSensitivity:triple,bubbleDiameter_m:positive,bubbleVaporCoefficient_W_m2K:positive,
+  bubbleExchangeSensitivity:triple,bubbleExchangeDiameterSensitivity_m:positive,sprayDropDiameter_m:positive,
   dropDiameterSensitivity_m:triple,resolvabilityFactor:positive}).strict()
+  .superRefine((b,c)=>{
+    if(!b.bubbleExchangeSensitivity.includes(1))
+      c.addIssue({code:'custom',message:'bubbleExchangeSensitivity must contain the nominal factor 1'})
+    if(b.bubbleExchangeDiameterSensitivity_m===b.bubbleDiameter_m)
+      c.addIssue({code:'custom',message:'bubbleExchangeDiameterSensitivity_m must differ from bubbleDiameter_m'})
+  })
 export const metastableSchema=z.object({pressureRange_Pa:z.tuple([positive,positive]),lowerBoundExclusive:z.boolean(),
   liquidSuperheatMax_K:positive,vaporSubcoolingMax_K:positive,trialMax_K:positive,creditedMax_K:positive,
   liquidTemperatureMax_K:positive,liquidPressureCeiling_Pa:positive,vaporPressureCeiling_Pa:positive}).strict()

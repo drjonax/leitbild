@@ -132,7 +132,8 @@ test('actual five-piece surge splits at8m with disjoint inertia, head, elbow and
     bands_m: [0, 1, 3, 6, 9, 12], interfacialLength_m: .003, solidRoughness_m: .000045, absorberMassFraction: .001 })
     + '\n\n## Stratified PZR cell\n\n' + record('ld01-pzr-stratified', { withdrawalScale_m: .3, admittedPreparationThickness_m: .3,
       inversionExchangeVelocity_m_s: 1, liquidRelaxationTime_s: .3, vaporRelaxationTime_s: .5, relaxationSensitivity: [.5, 1, 2],
-      bubbleDiameter_m: .001, sprayDropDiameter_m: .003, dropDiameterSensitivity_m: [.0015, .003, .006], resolvabilityFactor: 1000 }),
+      bubbleDiameter_m: .001, bubbleVaporCoefficient_W_m2K: 1000, bubbleExchangeSensitivity: [.5, 1, 2], bubbleExchangeDiameterSensitivity_m: .0005,
+      sprayDropDiameter_m: .003, dropDiameterSensitivity_m: [.0015, .003, .006], resolvabilityFactor: 1000 }),
     surge: record('reference-surge-route', {
       source: 'LD01.HOT.A', receiver: 'LD01.PZR', sourceElevation_m: 2.5, receiverElevation_m: 6.5,
       developedLength_m: 16, firstStraight_m: 6, bendRadius_m: .45, internalDiameter_m: .3, wallThickness_m: .025,
