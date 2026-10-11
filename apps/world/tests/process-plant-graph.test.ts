@@ -86,7 +86,7 @@ describe('process plant model composition', () => {
   test('declares the span each steam generator narrow-range level indicates over', () => {
     const system = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:spans', loopCount: 4 }))
     const levels = system.graph.signalBindings.filter(binding => /^SG-[A-D]-LVL-NR$/.test(String(binding.tagId)))
-    expect(levels.map(binding => [binding.tagId, binding.limits?.instrumentSpan])).toEqual(['A', 'B', 'C', 'D'].map(loop => [`SG-${loop}-LVL-NR`, { min: 0, max: 100 }]))
+    expect(levels.map(binding => [String(binding.tagId), binding.limits?.instrumentSpan])).toEqual(['A', 'B', 'C', 'D'].map(loop => [`SG-${loop}-LVL-NR`, { min: 0, max: 100 }]))
   })
 
   test('publishes branded signal references as their truthful JSON wire types', () => {
@@ -148,7 +148,7 @@ describe('process plant model composition', () => {
       operatingPointRef: 'test.operating-point',
       automationRef: 'test.automation',
       graph: invalid,
-      automationForGraph: () => ({ operatingModes: [], annunciatorSystems: [], rules: [] }),
+      automationForGraph: () => ({ operatingModes: [], annunciatorSystems: [], firstOutGroups: [], rules: [] }),
       validateGraph: assertPrimaryLoopTopologyValid,
     })).toThrow('primary loop A must have exactly one core hotLegA primaryCoolant outlet')
   })

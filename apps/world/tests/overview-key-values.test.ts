@@ -148,3 +148,32 @@ describe('operating modes are declared once', () => {
     expect(issues({ rules: [rule('power-high', ['powerOperation'])] })).toEqual(['power-high acts in operating mode powerOperation, which is not declared; declared: none'])
   })
 })
+
+describe('first-out groups are declared once', () => {
+  const holds = { type: 'comparison', signal: { path: 'core.powerMw' }, operator: '>', value: 1 }
+  const groups = [{ id: 'reactor-trip', label: 'Reactor trip', shortLabel: 'RX TRIP', reactorTrip: true }, { id: 'safety-injection', label: 'Safety injection', shortLabel: 'SI' }]
+  const rule = (id: string, firstOutGroup?: string) => ({
+    id,
+    condition: holds,
+    effects: [{ type: 'trip.enter', id: 'trip', title: id, message: id, annunciator: firstOutGroup === undefined ? {} : { firstOutGroup } }],
+  })
+  const issues = (config: unknown) => {
+    const parsed = processPlantIcConfigSchema.safeParse(config)
+    return parsed.success ? [] : parsed.error.issues.map(issue => issue.message)
+  }
+
+  test('so a display can name what a group does: every group an annunciator names is declared, each once', () => {
+    expect(issues({ firstOutGroups: groups, rules: [rule('power-high-trip', 'reactor-trip'), rule('relief')] })).toEqual([])
+    expect(issues({ firstOutGroups: groups, rules: [rule('power-high-trip', 'reactor-trp')] })).toEqual(['power-high-trip names first-out group reactor-trp, which is not declared; declared: reactor-trip, safety-injection'])
+    expect(issues({ firstOutGroups: [...groups, { ...groups[0]!, label: 'Again' }], rules: [] })).toEqual(['first-out group reactor-trip is declared twice'])
+    // A group is an actuation, not the reactor trip, unless it says so.
+    expect(processPlantIcConfigSchema.parse({ firstOutGroups: groups }).firstOutGroups.map(group => group.reactorTrip)).toEqual([true, false])
+  })
+
+  test('the reference PWR declares every group its annunciators name, the reactor trip among them', () => {
+    const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:first-out-groups', loopCount: 4 }))
+    expect(processPlantIcConfigSchema.safeParse(plant.automation).success).toBe(true)
+    expect(plant.automation.firstOutGroups.filter(group => group.reactorTrip).map(group => group.shortLabel)).toEqual(['RX TRIP'])
+    expect(plant.automation.operatingModes.map(mode => mode.shortLabel)).toEqual(['1', '2', '3', '4', '5'])
+  })
+})
