@@ -145,6 +145,10 @@ struct Blocks<P> {
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
 pub struct CouplerCounters {
     pub local: Tally,
+    /// Inside `local`: the solids' wall refresh and closed-scope rows, and
+    /// the rod owner's whole evaluation when reached.
+    pub local_solids: Tally,
+    pub local_rods: Tally,
     pub solid_columns: Tally,
     pub secondary_columns: Tally,
     pub rod_columns: Tally,
@@ -1505,8 +1509,10 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             heats,
             scales,
             source_water,
+            coupler,
             ..
         } = &mut *self.blocks;
+        let solids_started = Instant::now();
         let replaced = solids.wall_water_local(properties, fluid, &wall)?;
         let solved = view(
             self.y,
@@ -1531,6 +1537,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             )
         });
         solids.restore_wall_water(replaced);
+        coupler.local_solids.add(solids_started);
         solved?;
         self.last.rows.clear();
         self.last.rows.extend(
@@ -1552,6 +1559,7 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
             }
         }
         if self.rods_reached(cells, faces) {
+            let rods_started = Instant::now();
             let Blocks {
                 properties,
                 rods,
@@ -1569,7 +1577,10 @@ impl<P: Properties + WaterProperties> LocalCoupler<'_, P> {
                 o.rods..o.end,
                 &scales[3].coordinates,
             )?;
-            b.rows(properties, self.t, x, fluid, receipts, &mut self.rod_rows)?;
+            let evaluated = b.rows(properties, self.t, x, fluid, receipts, &mut self.rod_rows);
+            self.blocks.coupler.local_rods.add(rods_started);
+            evaluated?;
+            let scales = &self.blocks.scales;
             self.last.rows.extend(
                 self.rod_rows
                     .iter()

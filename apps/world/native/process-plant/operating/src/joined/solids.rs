@@ -14,7 +14,7 @@
 //! nested surface solve. Water state, saturation and wall mass flux come
 //! from the network's own evaluation; every heat has one donor and one
 //! recipient, and the water receives its heat through the network's single
-//! liquid enthalpy port. The same thermal laws as `hot_spine` apply.
+//! liquid enthalpy port. The thermal laws are the retired hot spine's.
 use super::{
     block::{Class, Coordinates, Fluid, Layout, Receipts, SecondaryView},
     packet::Packet,
@@ -88,6 +88,23 @@ pub struct WallWater {
     /// `sum(0.5 * liquid mass flow)` over incident faces over the main flow
     /// area, kg/(m2 s) (operating-thermal.md, actual rod contacts).
     pub mass_flux: Scalar,
+}
+
+/// The split of a half's fuel deposition between its two equal-area and
+/// equal-mass radial fuel nodes, inner then outer (heat-and-history.md:
+/// each node receives half of the carrier's fuel deposition). It enters
+/// only the two fuel energy rows, as `-split * fuel_w`; nothing else in the
+/// solids reads the fuel heat.
+pub const FUEL_HEAT_SPLIT: [f64; 2] = [0.5, 0.5];
+
+/// One wall slot's reads and the solid elements reading it
+/// ([`Solids::wall_reads`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WallRead {
+    pub cell: usize,
+    pub faces: Vec<usize>,
+    pub halves: Vec<usize>,
+    pub segments: Vec<usize>,
 }
 
 /// Wall water a local refresh replaced: (slot, previous water).
@@ -212,6 +229,8 @@ pub struct Solids {
     passive_ids: Vec<String>,
     /// Every element: the full evaluation's scope.
     all: Closed,
+    /// The SG tube steel (`ld01-sg-contact`).
+    steel: thermal::SteelContact,
     /// Structural incidence and its inverse, compiled once.
     incidence: Incidence,
     inverse: Inverse,
@@ -370,6 +389,42 @@ impl Solids {
             }
             segments.push(segment);
         }
+        // The tube steel and exchange area of `ld01-sg-contact`: every SG's
+        // segments tile its exchange area.
+        let c = &packet.secondary.contact;
+        if ![
+            c.exchange_area_m2,
+            c.steel_conductivity_w_mk,
+            c.steel_density_kg_m3,
+            c.steel_cp_j_kgk,
+        ]
+        .iter()
+        .all(|v| v.is_finite() && *v > 0.)
+            || !(c.emissivity > 0. && c.emissivity <= 1.)
+        {
+            return Err(fatal("SG contact constants"));
+        }
+        for k in 0..t.secondaries.len() {
+            let area: f64 = segments
+                .iter()
+                .filter(|g| g.secondary == k)
+                .map(|g| g.area)
+                .sum();
+            if (area - c.exchange_area_m2).abs() > 1e-12 * c.exchange_area_m2 {
+                return Err(fatal(format!(
+                    "SG {k}'s segments tile {area} m2, not the contact law's {} m2",
+                    c.exchange_area_m2
+                )));
+            }
+        }
+        let steel = thermal::SteelContact {
+            emissivity: c.emissivity,
+            material: thermal::WallMaterial {
+                conductivity: s(c.steel_conductivity_w_mk),
+                density: c.steel_density_kg_m3,
+                cp: s(c.steel_cp_j_kgk),
+            },
+        };
         let helium_nr: Vec<f64> = t.helium.iter().map(|h| h.nr_j_k).collect();
         let passive_mass: Vec<f64> = t.passive_stores.iter().map(|p| p.mass_kg).collect();
         if helium_nr
@@ -484,6 +539,7 @@ impl Solids {
             generators: (0..t.secondaries.len()).collect(),
         };
         let mut solids = Self {
+            steel,
             all,
             incidence: Incidence::default(),
             inverse: Inverse::default(),
@@ -646,6 +702,29 @@ impl Solids {
     pub fn incidence(&self) -> &Incidence {
         &self.incidence
     }
+    /// What each wall slot reads and feeds, in slot order: its network
+    /// cell (the cell's pressure and liquid caloric point: `p`, `M_l`,
+    /// `U_l`), the faces whose liquid charts its mass flux reads (every face
+    /// with the cell as an endpoint, `endpoints` in face order), and the
+    /// core halves and SG segments whose rows read it. Passive contacts read
+    /// only their cell's liquid temperature, never a wall slot
+    /// ([`Solids::passive_wetted_by`]).
+    pub fn wall_reads(&self, endpoints: &[(usize, usize)]) -> Vec<WallRead> {
+        self.wall_cells
+            .iter()
+            .map(|&cell| WallRead {
+                cell,
+                faces: endpoints
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (from, to))| *from == cell || *to == cell)
+                    .map(|(f, _)| f)
+                    .collect(),
+                halves: self.inverse.cell_bands[cell].clone(),
+                segments: self.inverse.cell_segments[cell].clone(),
+            })
+            .collect()
+    }
     /// The unclosed scope of the elements that read own coordinate `i`
     /// (energy, surface or store), and the store whose temperature `i`
     /// sets, if any.
@@ -773,6 +852,18 @@ impl Solids {
             )));
         }
         let pressure = fluid.cells[cell].pressure;
+        // Saturation reads the pressure alone: an undirected pressure equal
+        // to the slot's undirected one gives the same tuple bit for bit.
+        let saturation = match self.wall[k] {
+            Some(w)
+                if pressure.direction == 0.
+                    && w.pressure.direction == 0.
+                    && w.pressure.value.to_bits() == pressure.value.to_bits() =>
+            {
+                w.saturation
+            }
+            _ => properties.saturation(pressure).map_err(trial)?,
+        };
         let mut flow = s(0.);
         for (face, (from, to)) in fluid.endpoints.iter().enumerate() {
             if *from == cell || *to == cell {
@@ -783,7 +874,7 @@ impl Solids {
             pressure,
             temperature: Scalar::new(q.temperature_k, d.temperature_k),
             bulk: point(q, d),
-            saturation: properties.saturation(pressure).map_err(trial)?,
+            saturation,
             mass_flux: flow / s(self.flow_area[cell]),
         });
         Ok(())
@@ -1165,7 +1256,7 @@ impl Solids {
                     clad_mean,
                     clad_outer,
                 },
-                [fuel_heat_w[i] * s(0.5); 2],
+                FUEL_HEAT_SPLIT.map(|f| fuel_heat_w[i] * s(f)),
                 wall,
             )
             .map_err(trial)?;
@@ -1223,12 +1314,8 @@ impl Solids {
                 thermal::WallLaw {
                     diameter_m: g.diameter,
                     film: thermal::Film::Tube,
-                    emissivity: 0.3,
-                    material: thermal::WallMaterial {
-                        conductivity: s(15.),
-                        density: 8000.,
-                        cp: s(500.),
-                    },
+                    emissivity: self.steel.emissivity,
+                    material: self.steel.material,
                 },
                 water.saturation,
                 water.bulk,
@@ -1251,6 +1338,7 @@ impl Solids {
                 g.end,
                 g.area,
                 g.diameter,
+                self.steel,
                 view.steam_present,
             )
             .map_err(trial)?;

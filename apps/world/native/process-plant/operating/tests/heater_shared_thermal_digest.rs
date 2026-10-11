@@ -178,6 +178,14 @@ fn shared_digest() -> (u64, [usize; 6]) {
                         5.,
                         1250.,
                         0.02,
+                        SteelContact {
+                            emissivity: 0.3,
+                            material: WallMaterial {
+                                conductivity: Scalar::new(15., 0.),
+                                density: 8000.,
+                                cp: Scalar::new(500., 0.),
+                            },
+                        },
                         steam,
                     );
                     d.outcome(&w, |d, x| d.scalar(*x));

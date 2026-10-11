@@ -221,8 +221,9 @@ struct Work {
 }
 
 impl Nuclear {
-    /// Compile once from the packet: the same models and checks hot_spine's
-    /// workspace made. `water_cells` is the network's regular cell count.
+    /// Compile once from the packet: the same models and checks the retired
+    /// hot spine's workspace made. `water_cells` is the network's regular
+    /// cell count.
     pub fn new(packet: &Packet, water_cells: usize) -> Result<Self, Failure> {
         let source = &packet.hot.source;
         let energy = &packet.hot.energy;
@@ -324,7 +325,8 @@ impl Nuclear {
             return Err(fatal("invalid nuclear coefficient"));
         }
         // Direct coolant deposition: the carrier's current emission shares,
-        // projected through each region's water owner (hot_spine's map).
+        // projected through each region's water owner (the retired hot
+        // spine's map).
         let mut deposition = vec![std::collections::BTreeMap::new(); a];
         for (k, support) in source.supports.iter().enumerate() {
             *deposition[support.material]

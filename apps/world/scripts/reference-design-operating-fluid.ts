@@ -11,6 +11,7 @@ import {parseFuelConstruction} from './reference-design-fuel-construction'
 import {parseFuelHandling, fuelHandlingChecks, fuelAssemblyPositions, fuelLatticeSites} from './reference-design-fuel-handling'
 import {parseControlAbsorber, controlAbsorberGeometry} from './reference-design-control-absorber'
 import {nativeIf97Primitives, nativeIf97Revision, nativeIf97HeaderSha256, nativeIf97LicenseSha256} from './reference-design-if97-primitives'
+import {parseSgContact,sgContactOwner} from './reference-design-sg-contact-law'
 
 export type WaterPoint={region:number,p:number,T:number,rho:number,u:number,h:number,cp:number,cv:number,
   w:number,alpha:number,kappa:number,mu:number,conductivity:number,saturationSlope:number}
@@ -358,13 +359,17 @@ export function preparePressureContinuity(regions:readonly PressureRegion[],edge
 export async function prepareOperatingFluid(directory:string,if97Directory:string,sourceHeat_W:number){
   positive(sourceHeat_W)
   const root='world/packs/process-plant/reference-designs/ld-01/',files=['systems/reactor/fuel-construction.md','systems/reactor/fuel-handling-and-pool.md','systems/reactor/control-absorber-and-guide-water.md',
-      'model/operating-hot-reference.md','numerical-basis.md','systems/primary-coolant/mechanical-energy-and-geometry.md','model/connected-primary-initialization.md','systems/primary-coolant/surge-route.md'],
+      'model/operating-hot-reference.md','numerical-basis.md','systems/primary-coolant/mechanical-energy-and-geometry.md','model/connected-primary-initialization.md','systems/primary-coolant/surge-route.md',
+      sgContactOwner.page],
     documents=await Promise.all(files.map(f=>Bun.file(join(directory,root,f)).text())),
     reference=parseOperatingHotReference(documents[3]!),balance=parseBalanceBasis(documents[4]!),
     mechanics=z.object({pumpPassageInsideDiameter_m:z.number().positive(),pumpPassageVolume_m3:z.number().positive(),
       hotInsideDiameter_m:z.number().positive(),coldHeaderVolume_m3:z.number().positive(),coldReturnLength_m:z.number().positive(),sgDevelopedLength_m:z.number().positive()}).parse(jsonBlock(documents[5]!,'reference-primary-mechanics')),
     volumes=z.object({volumes_m3:z.array(z.number().positive()).length(11)}).parse(jsonBlock(documents[6]!,'reference-initialization')).volumes_m3,
     surge=resolveSurgeRoute(parseSurgeRoute(documents[7]!)),
+    // The contact law's area per SG, uniform over the developed fold, on the
+    // compiler's four equal metal segments.
+    sgContact=parseSgContact(documents[8]!),sgSegment_m=mechanics.sgDevelopedLength_m/4,
     physical:Physical={downVolume_m3:volumes[0]!,hotVolume_m3:volumes[5]!,sgPrimaryVolume_m3:volumes[7]!,
       pumpVolume_m3:mechanics.pumpPassageVolume_m3,coldHeaderVolume_m3:mechanics.coldHeaderVolume_m3,
       pumpDiameter_m:mechanics.pumpPassageInsideDiameter_m,hotDiameter_m:mechanics.hotInsideDiameter_m,
@@ -404,8 +409,9 @@ export async function prepareOperatingFluid(directory:string,if97Directory:strin
         cladCaloric:{e_J_kg:solidStocks.cladCaloric.specificEnergy_J_kg,cp_J_kg_K:solidStocks.cladCaloric.cp_J_kg_K},
         solidStores:[...solidStocks.passive,...solidStocks.helium].map(s=>({id:s.id,energy_J:s.energy_J,capacity_J_K:s.capacity_J_K})),
         preparedCarriers:solidStocks.carriers},
-      steamGenerators:['A','B'].map(id=>({id,...sg,metal:Array.from({length:4},(_,i)=>({id:`SG.${id}.METAL.${i}`,developedStart_m:5*i,developedEnd_m:5*(i+1),
-        capacity_J_K:balance.wallCapacity_MJ_K*1e6/4,energy_J:balance.wallCapacity_MJ_K*1e6/4*(wallTemperature-273.15),temperature_K:wallTemperature,exchangeArea_m2:1250})),
+      steamGenerators:['A','B'].map(id=>({id,...sg,metal:Array.from({length:4},(_,i)=>({id:`SG.${id}.METAL.${i}`,developedStart_m:sgSegment_m*i,developedEnd_m:sgSegment_m*(i+1),
+        capacity_J_K:balance.wallCapacity_MJ_K*1e6/4,energy_J:balance.wallCapacity_MJ_K*1e6/4*(wallTemperature-273.15),temperature_K:wallTemperature,
+        exchangeArea_m2:sgContact.exchangeArea_m2*sgSegment_m/mechanics.sgDevelopedLength_m})),
         liquidDensity_kg_m3:endpoints[0]!.rho,steamDensity_kg_m3:endpoints[1]!.rho,airMass_kg:0,nitrogenMass_kg:0,absorberTracer_kgEq:0})),
       geometry,propertyPoints:points,secondaryPropertyPoints:endpoints}
   })

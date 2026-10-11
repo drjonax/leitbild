@@ -7,8 +7,8 @@
 //! with the stratified PZR cell of decision 0014). The joined blocks meet it
 //! only through its ports (`network::ports`): they read its fluid state of
 //! the same evaluation and deliver heat through its single liquid enthalpy
-//! receipt, so `hot_spine`'s duplicate water charts, continuity, edge
-//! advection and external ports have no place here (memo Table 1.3). The
+//! receipt. The retired hot spine's duplicate water charts, continuity, edge
+//! advection and external ports were deleted with it (memo Table 1.3). The
 //! SG secondary and rod owners implement [`block::Secondary`] and
 //! [`block::Rods`]; until an owner composes its block, the census lists it
 //! as pending and no composed evaluation includes it.

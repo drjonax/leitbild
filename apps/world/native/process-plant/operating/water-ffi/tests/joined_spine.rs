@@ -1063,6 +1063,15 @@ fn jacobian_attribution(
             json!({"wall_s_per_jacobian": t.wall_s / n, "calls_per_jacobian": t.calls as f64 / n}),
         );
     }
+    for (name, t) in [
+        ("within_local_solids", k.local_solids),
+        ("within_local_rods", k.local_rods),
+    ] {
+        per.insert(
+            name.into(),
+            json!({"wall_s_per_jacobian": t.wall_s / n, "calls_per_jacobian": t.calls as f64 / n}),
+        );
+    }
     per.insert(
         "rest_network_replay_nuclear_base_ports".into(),
         json!({"wall_s_per_jacobian": (c.jacobian_wall_s - coupler) / n}),

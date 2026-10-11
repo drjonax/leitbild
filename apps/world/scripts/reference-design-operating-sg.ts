@@ -19,14 +19,13 @@ import {parseOperatingHotReference} from './reference-design-operating-fluid'
 import {ownedBlock} from './reference-design-operating-pzr'
 import {parseOperatingThermal} from './reference-design-operating-thermal'
 import {parsePrimaryMechanics} from './reference-design-primary-mechanics'
+import {parseSgContact,sgContactOwner} from './reference-design-sg-contact-law'
 
 const positive=z.number().finite().positive()
 const exposureSchema=z.object({bottom_m:positive,top_m:positive,horizontalArea_m2:positive,crownTop_m:positive}).strict()
   .refine(e=>e.bottom_m<e.crownTop_m&&e.crownTop_m<e.top_m,'The crown must lie inside the contact span')
 const pickupSchema=z.object({pickupBottom_m:positive,pickupTop_m:positive}).strict()
   .refine(p=>p.pickupBottom_m<p.pickupTop_m,'The pickup span must be ordered')
-const contactSchema=z.object({exchangeArea_m2:positive,emissivity:positive.max(1),steelConductivity_W_mK:positive,
-  steelDensity_kg_m3:positive,steelCp_J_kgK:positive}).strict()
 const boundariesSchema=z.object({steamDemand_kg_s:z.object({A:positive,B:positive}).strict(),
   steamDonor:z.literal('pickupGas'),feedRule:z.literal('inventoryHolding')}).strict()
 const travelSchema=z.object({sgIsolation_s:positive,turbineStop_s:positive,reheaterIsolation_s:positive,
@@ -46,7 +45,7 @@ const root='world/packs/process-plant/reference-designs/ld-01/'
 export const sgOwners={
   exposure:{page:'systems/steam-generation/thermodynamics.md',heading:'Secondary exposure and local metal storage',fence:'ld01-sg-exposure'},
   pickup:{page:'systems/steam-generation/thermodynamics.md',heading:'Upper pickup, overfill and actual exported material',fence:'ld01-sg-pickup'},
-  contact:{page:'systems/steam-generation/thermodynamics.md',heading:'Selected pure-water secondary contact law',fence:'ld01-sg-contact'},
+  contact:sgContactOwner,
   boundaries:{page:'systems/steam-generation/thermodynamics.md',heading:'Emergent full-power SG pressure',fence:'ld01-s2-sg-boundaries'},
   relief:{page:'systems/steam-power/admission-and-protection.md',heading:'Turbine trip and reset semantics',fence:'ld01-sg-relief'},
   travel:{page:'systems/steam-power/admission-and-protection.md',heading:'Flow law and nominal sizing',fence:'ld01-steam-valve-travel'},
@@ -63,8 +62,7 @@ export const parseSgRelief=(admission:string)=>reliefSchema.parse(ownedBlock(adm
 export const parseSgBoundaries=(thermodynamics:string)=>
   boundariesSchema.parse(ownedBlock(thermodynamics,sgOwners.boundaries.heading,sgOwners.boundaries.fence))
 export const parseSteamValveTravel=(admission:string)=>travelSchema.parse(ownedBlock(admission,sgOwners.travel.heading,sgOwners.travel.fence))
-/** The SG contact law's exchange area and wall constants (`ld01-sg-contact`). */
-export const parseSgContact=(thermodynamics:string)=>contactSchema.parse(ownedBlock(thermodynamics,sgOwners.contact.heading,sgOwners.contact.fence))
+export {parseSgContact}
 
 /** The guard volumes from the contact coordinate: the crown's first
  * uncovery and the pickup's first coverage. The contact span times its area

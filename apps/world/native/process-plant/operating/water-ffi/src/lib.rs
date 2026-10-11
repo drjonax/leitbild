@@ -651,56 +651,6 @@ impl WaterPoint {
     }
 }
 
-impl leitbild_operating_plant::hot_spine::Properties for If97 {
-    /// Exact maintained rho/u/h values and first directions. Chart coefficient
-    /// directions use the same disclosed bounded same-branch cp/alpha/kappa
-    /// probes as the maintained adapter, not held coefficients or a new EOS.
-    fn fixed_liquid(
-        &self,
-        volume: f64,
-        p: leitbild_operating_plant::thermal::Scalar,
-        t: leitbild_operating_plant::thermal::Scalar,
-    ) -> leitbild_operating_plant::hot_spine::Result<leitbild_operating_plant::hot_spine::WaterChart>
-    {
-        use leitbild_operating_plant::{hot_spine::WaterChart, pressure, thermal::Scalar};
-        if !volume.is_finite() || volume <= 0. {
-            return Err("invalid fixed liquid volume".into());
-        }
-        let (q, d) = directional(Branch::Liquid, p.value, t.value, p.direction, t.direction)
-            .map_err(|e| e.to_string())?;
-        let s = Scalar::constant;
-        let rho = Scalar::new(q.density_kg_m3, d.density_kg_m3);
-        let u = Scalar::new(q.internal_energy_j_kg, d.internal_energy_j_kg);
-        let h = Scalar::new(q.enthalpy_j_kg, d.enthalpy_j_kg);
-        let cp = Scalar::new(q.cp_j_kg_k, d.cp_j_kg_k);
-        let alpha = Scalar::new(q.expansion_per_k, d.expansion_per_k);
-        let kappa = Scalar::new(q.compressibility_per_pa, d.compressibility_per_pa);
-        let rho_p = rho * kappa;
-        let rho_t = -rho * alpha;
-        let u_p = (p * kappa - t * alpha) / rho;
-        let u_t = cp - p * alpha / rho;
-        let mass_p = s(volume) * rho_p;
-        let mass_t = s(volume) * rho_t;
-        let energy_p = s(volume) * (rho_p * u + rho * u_p);
-        let energy_t = s(volume) * (rho_t * u + rho * u_t);
-        if !energy_t.value.is_finite() || energy_t.value == 0. {
-            return Err("singular fixed-volume energy coordinate".into());
-        }
-        Ok(WaterChart {
-            mass: s(volume) * rho,
-            energy: s(volume) * rho * u,
-            density: rho,
-            // The current thermal tuple is already present in this SAME native
-            // value/direction call. No second query or held cache is needed.
-            thermal: thermal_point(q, d),
-            projection: pressure::Region {
-                mass_p_at_energy: mass_p - mass_t * energy_p / energy_t,
-                mass_energy_at_pressure: mass_t / energy_t,
-                enthalpy: h,
-            },
-        })
-    }
-}
 #[cfg(feature = "ida")]
 pub mod ida;
 #[cfg(feature = "ida")]

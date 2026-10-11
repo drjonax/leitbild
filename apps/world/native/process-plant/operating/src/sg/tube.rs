@@ -174,6 +174,10 @@ impl Tube {
             segment.end_m,
             segment.area_m2,
             self.law.diameter_m,
+            thermal::SteelContact {
+                emissivity: self.law.emissivity,
+                material: self.law.material,
+            },
             view.steam_present,
         )
         .map_err(|e| recoverable(format!("SG tube secondary contact: {e}")))?;
