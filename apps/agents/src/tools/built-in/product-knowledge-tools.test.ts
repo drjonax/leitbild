@@ -71,6 +71,23 @@ describe('product knowledge tools', () => {
     expect((await read!.execute({ path: 'apps/world/src/execution.ts', revision: 'wrong' }, context)).success).toBe(false)
   })
 
+  test('a wiki search failure reports partial coverage without hiding healthy source matches', async () => {
+    const root = await fixture()
+    const wiki = createKnowledge({ revision: 'a'.repeat(40), documents: [{ path: 'index.md', content: '# Leitbild' }] })
+    let reads = 0
+    const [search] = createProductKnowledgeTools({ repoRoot: root, knowledge: async () => {
+      reads++
+      return { ...wiki, search: () => { throw new Error('index unavailable') } }
+    } })
+    const context = { callerId: 'a', callerName: 'A' }
+    const partial = await search!.execute({ query: 'acceleration' }, context)
+    expect(partial).toMatchObject({ success: true, data: { coverage: { partial: true, knowledge: { unavailable: true } } } })
+    expect(JSON.stringify(partial)).toContain('apps/world/src/execution.ts')
+    expect(JSON.stringify(partial)).toContain('index unavailable')
+    await search!.execute({ query: 'acceleration', kind: 'source' }, context)
+    expect(reads).toBe(1)
+  })
+
   test('hub children are directly readable agent paths without dumping descendants', async () => {
     const root = await fixture()
     const knowledge = createKnowledge({revision:'a'.repeat(40),documents:[
