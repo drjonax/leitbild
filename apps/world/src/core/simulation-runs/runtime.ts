@@ -169,6 +169,10 @@ export const createSimulationRunRuntime = async (config: {
   readonly runtimeStateLoaders?: Readonly<Record<string, () => Promise<unknown | null>>>
 }): Promise<SimulationRunRuntime> => {
   const state = config.stateStore ?? createSimulationRunStateStore()
+  // Admission state invalidates in-flight prepared commands immediately. Public
+  // reads and persistence see only acknowledged journal appends. Both maps share
+  // immutable objects; updates cost O(batch size), not a whole-world clone.
+  const committedState = createSimulationRunStateStore()
   const metrics = createSimulationRunRuntimeMetricsRecorder({
     simulationRunId: config.id,
     createdAt: nowIso(),
@@ -185,6 +189,12 @@ export const createSimulationRunRuntime = async (config: {
   let closing = false
   let maximumPaceActive = false
   let terminalExecutionFailure: string | null = null
+  let commitFailure: Error | null = null
+  let commitFailedAt: IsoTimestamp | null = null
+  let lastCommitAt = nowIso()
+  let quarantinePending: Promise<void> | null = null
+  let activeMutations = 0
+  let scenarioRunner: ScenarioTimelineRunner | null = null
   let pendingRuntimeEmissions = 0
   let runtimeEmissionFailure: unknown = null
   const maximumPaceNotificationBuffer = new Map<string, SimulationRunEvent>()
@@ -218,7 +228,7 @@ export const createSimulationRunRuntime = async (config: {
   })
 
   const snapshotWithCurrentClock = (): SimulationRunStateSnapshot => {
-    const snapshot = state.snapshot()
+    const snapshot = committedState.snapshot()
     if (!snapshot.clock) return snapshot
     return {
       ...snapshot,
@@ -240,6 +250,31 @@ export const createSimulationRunRuntime = async (config: {
     projectedSnapshotTimer = null
   }
 
+  const assertCommitAvailable = (): void => {
+    if (commitFailure) throw commitFailure
+  }
+
+  const failCommit = async (error: unknown, committedObservationFailure = false): Promise<never> => {
+    if (!commitFailure) {
+      terminalExecutionFailure = `${committedObservationFailure ? 'Events committed, but runtime observation failed; recovery required' : 'Commit outcome is uncertain'}: ${error instanceof Error ? error.message : String(error)}`
+      commitFailedAt = nowIso()
+      commitFailure = Object.assign(new Error(terminalExecutionFailure, { cause: error }), { code: committedObservationFailure ? 'simulation_run_observer_failed' : 'simulation_run_commit_uncertain' })
+      runClock.set({ ...runClock.read(), paused: true })
+      scenarioRunner?.close()
+      clearProjectedSnapshotTimer()
+      projectedSnapshotDirty = false
+      quarantinePending = (async () => {
+        try { await config.snapshotStore.quarantine(terminalExecutionFailure!) }
+        catch (quarantineError) {
+          terminalExecutionFailure += `; recovery quarantine could not be persisted; restart safety is unproven: ${quarantineError instanceof Error ? quarantineError.message : String(quarantineError)}`
+          commitFailure!.message = terminalExecutionFailure
+        }
+      })()
+    }
+    await quarantinePending
+    throw commitFailure
+  }
+
   const queueSnapshotSave = async (): Promise<void> => {
     const previousSave = snapshotSaveQueue
     const save = async (): Promise<void> => {
@@ -248,13 +283,14 @@ export const createSimulationRunRuntime = async (config: {
       } catch (err) {
         void err
       }
+      assertCommitAvailable()
       const startedAt = performance.now()
       try {
         await config.snapshotStore.save(snapshotWithCurrentClock())
         metrics.recordSnapshotSave(performance.now() - startedAt, nowIso())
       } catch (err) {
         metrics.recordSnapshotSaveFailure()
-        throw err
+        await failCommit(err)
       }
     }
     const currentSave = save()
@@ -292,7 +328,14 @@ export const createSimulationRunRuntime = async (config: {
     maximumPaceNotificationBuffer.clear()
     maximumPaceRealtimeBuffer.clear()
     lastFastForwardNotificationAt = performance.now()
-    for (const handler of handlers) handler(notification)
+    notifySubscribers(notification)
+  }
+
+  const notifySubscribers = (notification: SimulationRunEventNotification): void => {
+    for (const handler of handlers) {
+      try { handler(notification) }
+      catch (error) { console.error('Simulation Run subscriber failed:', error) }
+    }
   }
 
   const scheduleProjectedSnapshotSave = (): void => {
@@ -321,6 +364,7 @@ export const createSimulationRunRuntime = async (config: {
     simulationRunEvents: ReadonlyArray<SimulationRunEvent>,
     options?: PublishManyOptions,
   ): Promise<void> => {
+    assertCommitAvailable()
     if (simulationRunEvents.length === 0) return
     if (simulationRunEvents.some(event => event.type === 'object.deleted')) {
       // Validate the complete batch before changing canonical state. This covers
@@ -338,12 +382,12 @@ export const createSimulationRunRuntime = async (config: {
     let projectedEventCount = 0
     for (const [index, event] of simulationRunEvents.entries()) {
       const previousObject = event.type === 'object.upserted' ? state.getObject(event.object.id) : undefined
-      state.apply(event)
+      try { state.apply(event) }
+      catch (error) { await failCommit(error) }
       const persistence = options?.history
         ?? options?.historyForEvent?.(event, previousObject, index)
         ?? persistenceDispositionFor(event, previousObject)
       if (persistence === 'durable') {
-        durableEvents.push(event)
         eventsToPersist.push(event)
       } else {
         projectedEventCount += 1
@@ -354,7 +398,10 @@ export const createSimulationRunRuntime = async (config: {
       durableEventCount: eventsToPersist.length,
       projectedEventCount,
     })
-    await config.eventLog.appendMany(eventsToPersist)
+    try { await config.eventLog.appendMany(eventsToPersist) }
+    catch (error) { await failCommit(error) }
+    durableEvents.push(...eventsToPersist)
+    for (const event of simulationRunEvents) committedState.apply(event)
     if (eventsToPersist.length > 0) {
       await saveSnapshotImmediately()
     } else {
@@ -366,9 +413,14 @@ export const createSimulationRunRuntime = async (config: {
     } else {
       flushFastForwardNotifications()
       const notification: SimulationRunEventNotification = { type: 'event.notification', events: simulationRunEvents }
-      for (const handler of handlers) handler(notification)
+      notifySubscribers(notification)
     }
-    await config.runtimeConnection.observeCommittedEvents(simulationRunEvents)
+    try { await config.runtimeConnection.observeCommittedEvents(simulationRunEvents) }
+    catch (error) { await failCommit(error, true) }
+    const missedObserver = config.runtimeConnection.health?.().find(health => health.state === 'failed'
+      && (health.lastFailure?.operation === 'observe-committed-events' || health.lastFailure?.operation === 'after-committed-events'))
+    if (missedObserver) await failCommit(new Error(`Committed state was missed by ${missedObserver.runtimeId}: ${missedObserver.lastFailure?.message}`), true)
+    lastCommitAt = nowIso()
     if (simulationRunEvents.some(event => event.type === 'procedure.run.started' || event.type === 'procedure.run.resumed' || event.type === 'procedure.step.updated')) {
       await evaluateProcedureObservationsNow()
     }
@@ -475,6 +527,7 @@ export const createSimulationRunRuntime = async (config: {
     const previousPublish = publishQueue
     const currentPublish = (async (): Promise<void> => {
       await previousPublish
+      assertCommitAvailable()
       await work()
     })()
     publishQueue = keepQueueOpenAfter(currentPublish)
@@ -748,6 +801,7 @@ export const createSimulationRunRuntime = async (config: {
         })
         return { ok: true, commandId: command.id, acceptedAt: at }
       } catch (error) {
+        assertCommitAvailable()
         return {
           ok: false,
           commandId: command.id,
@@ -760,6 +814,7 @@ export const createSimulationRunRuntime = async (config: {
       await publishGenerated(() => coreDeleteEvents(command, at))
       return { ok: true, commandId: command.id, acceptedAt: at }
     } catch (error) {
+      assertCommitAvailable()
       return {
         ok: false,
         commandId: command.id,
@@ -848,7 +903,7 @@ export const createSimulationRunRuntime = async (config: {
           events: [],
           realtimeMessages: emission.realtimeMessages,
         }
-        for (const handler of handlers) handler(notification)
+        notifySubscribers(notification)
       }
     })
   }
@@ -863,6 +918,7 @@ export const createSimulationRunRuntime = async (config: {
   }
 
   const unsubscribeRuntime = config.runtimeConnection.subscribe((emission) => {
+    if (commitFailure) return
     pendingRuntimeEmissions += 1
     void publishPackRuntimeEmissionSafely(emission).finally(() => { pendingRuntimeEmissions -= 1 })
   })
@@ -908,6 +964,7 @@ export const createSimulationRunRuntime = async (config: {
       clock: runClock.read(),
       scenario: scenarioState,
     })
+    committedState.hydrate(state.snapshot())
     await config.snapshotStore.save(snapshotWithCurrentClock())
   }
   const hydratedClock = state.snapshot().clock
@@ -917,8 +974,7 @@ export const createSimulationRunRuntime = async (config: {
     runClock.set(initial)
     state.hydrate({ ...state.snapshot(), clock: initial })
   }
-
-  let scenarioRunner: ScenarioTimelineRunner | null = null
+  committedState.hydrate(state.snapshot())
 
   const issueCommandThroughRuntime = async (
     actor: Actor,
@@ -943,7 +999,7 @@ export const createSimulationRunRuntime = async (config: {
       command,
     }), { history: commandEventDisposition })
     const result = await handleCoreCommand(command, commandSource, actor) ?? await config.runtimeConnection.sendCommand(command)
-    await publishQueue
+    await drainRuntimeEmissions()
     await publishOneGenerated(() => ({
       id: eventId(),
       simulationRunId: config.id,
@@ -961,6 +1017,7 @@ export const createSimulationRunRuntime = async (config: {
     invocation: SimulationRunCapabilityInvocation,
     commandSource: Provenance['source'],
   ): Promise<SimulationRunCapabilityInvocationResult> => {
+    assertCommitAvailable()
     const active = runtimeCapabilities.get(invocation.capabilityId)
     if (!active) throw new Error(`Simulation Capability is not active: ${invocation.capabilityId}`)
     if (invocation.scheduled === true && active.capability.schedulable !== true) {
@@ -1047,12 +1104,14 @@ export const createSimulationRunRuntime = async (config: {
   }
 
   let cueQueue: Promise<void> = Promise.resolve()
+  let pendingCues = 0
   const publishScenarioCue = (cue: ScenarioTimelineCue, at: IsoTimestamp): Promise<void> => {
+    pendingCues++
     const pending = cueQueue.then(async () => {
       if (state.snapshot().scenario?.timeline?.firedCueIds.includes(cue.id)) return
       try { await executeScenarioCue(cue, at) }
       catch (error) { await publishOneGenerated(() => scenarioCueFailedEvent(cue, error, nowIso())) }
-    })
+    }).finally(() => { pendingCues-- })
     cueQueue = pending.catch(() => {})
     return pending
   }
@@ -1224,11 +1283,17 @@ export const createSimulationRunRuntime = async (config: {
     // serialize through publishQueue and reject stale revisions atomically.
     // Holding operationTail across preparation would deadlock valid reset and
     // deletion races while adding no consistency guarantee.
-    await enqueueOperation(async () => {})
-    return await invokeCapabilityThroughRuntime(actor, invocation, 'operator')
+    const mutating = runtimeCapabilities.get(invocation.capabilityId)?.capability.kind === 'command'
+    await enqueueOperation(async () => { if (mutating) activeMutations++ })
+    try { return await invokeCapabilityThroughRuntime(actor, invocation, 'operator') }
+    finally { if (mutating) activeMutations-- }
   }
 
   const checkpointForCopy = async (): Promise<SimulationRunCopyCheckpoint> => await enqueueOperation(async () => {
+    if (activeMutations > 0 || pendingCues > 0) throw Object.assign(
+      new Error('Simulation Run has commands preparing changes; retry copy when they finish'),
+      { code: 'simulation_run_busy' },
+    )
     const currentControl = runClock.read()
     let stopped = { ...currentControl, paused: true }
     scenarioRunner?.close()
@@ -1256,11 +1321,11 @@ export const createSimulationRunRuntime = async (config: {
     } finally {
       const resumed: SimulationClockState = {
         ...stopped,
-        paused: currentControl.paused,
+        paused: commitFailure ? true : currentControl.paused,
         updatedAt: nowIso(),
       }
       runClock.set(resumed)
-      await config.runtimeConnection.setClock(resumed)
+      if (!commitFailure) await config.runtimeConnection.setClock(resumed)
       if (!resumed.paused) startScenarioRunner()
     }
   })
@@ -1393,7 +1458,11 @@ export const createSimulationRunRuntime = async (config: {
         })
     }),
     metrics: () => metrics.snapshot(),
-    health: () => config.runtimeConnection.health?.() ?? [],
+    health: () => [
+      ...(config.runtimeConnection.health?.() ?? []),
+      ...(commitFailure ? [{ runtimeId: 'world.core', state: 'failed' as const, failureCount: 1,
+        lastSuccessfulInteractionAt: lastCommitAt, lastFailure: { at: commitFailedAt!, operation: 'commit', message: commitFailure.message } }] : []),
+    ],
     recordingStatus: () => config.historian?.status() ?? null,
     recordingSeries: () => config.historian?.listSeries() ?? [],
     recordedSamples: (input) => {
@@ -1434,19 +1503,35 @@ export const createSimulationRunRuntime = async (config: {
       const current = runClock.read()
       const stopped = { ...current, paused: true }
       runClock.set(stopped)
-      await config.runtimeConnection.setClock(stopped)
-      await drainRuntimeEmissions()
+      const failures: unknown[] = []
+      const recordCloseFailure = async (error: unknown): Promise<void> => {
+        try { await failCommit(error) }
+        catch (failure) { failures.push(failure) }
+      }
+      try {
+        if (!commitFailure) await config.runtimeConnection.setClock(stopped)
+        if (!commitFailure) await drainRuntimeEmissions()
+      } catch (error) { await recordCloseFailure(error) }
       unsubscribeRuntime()
-      await drainRuntimeEmissions()
-      await config.runtimeConnection.close()
+      await quarantinePending
+      try { await config.runtimeConnection.close() }
+      catch (error) { await recordCloseFailure(error) }
       if (projectedSnapshotTimer !== null) clearTimeout(projectedSnapshotTimer)
       projectedSnapshotTimer = null
       projectedSnapshotDirty = false
-      await snapshotSaveQueue
-      await config.snapshotStore.save({ ...state.snapshot(), clock: { ...stopped, paused: current.paused } })
-      config.historian?.close()
-      metrics.markClosed(nowIso())
-      handlers.clear()
+      try {
+        await snapshotSaveQueue
+        if (!commitFailure && failures.length === 0) {
+          try { await config.snapshotStore.save({ ...committedState.snapshot(), clock: { ...stopped, paused: current.paused } }) }
+          catch (error) { await failCommit(error) }
+        }
+      } catch (error) { failures.push(error) }
+      finally {
+        config.historian?.close()
+        metrics.markClosed(nowIso())
+        handlers.clear()
+      }
+      if (failures.length > 0) throw new AggregateError(failures, 'Simulation Run close failed')
     },
   }
 }

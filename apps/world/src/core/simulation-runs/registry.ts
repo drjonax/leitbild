@@ -38,7 +38,7 @@ import { createExecutionStore } from './execution-store.ts'
 import { accelerationStateSchema,executionAdvanceInputSchema,executionCheckpointWallIntervalMs,executionSetInputSchema,runCopyInputSchema,runExecutionStateSchema,type AccelerationState,type AdvanceCompletion,type ExecutionSetInput,type RunCopyOrigin,type RunExecutionState,type RunPace,type RunPlayback } from './execution.ts'
 import type { SimulationRunCapabilities } from './runtime.ts'
 import { createSimulationRunRuntime,type ActiveSimulationCapability,type SimulationRunRuntime } from './runtime.ts'
-import { createSimulationRunSnapshotStore } from './snapshot-store.ts'
+import { assertSimulationRunRecoveryNotRequired,createSimulationRunSnapshotStore } from './snapshot-store.ts'
 import { createSimulationRunStateStore } from './state-store.ts'
 import { createKeyedOperations } from '../storage/keyed-operations.ts'
 
@@ -519,6 +519,7 @@ export const createSimulationRunRegistry = (config: {
     try {
       restoredSnapshot = await snapshotStore.load()
     } catch (err) {
+      if (err instanceof Error && 'code' in err && err.code === 'simulation_run_recovery_required') throw err
       throw new Error(`Simulation Run snapshot is unreadable for ${id}: ${unreadableSnapshotMessage(err)}`, { cause: err })
     }
     let restoredEvents: ReadonlyArray<SimulationRunEvent> = []
@@ -961,6 +962,7 @@ export const createSimulationRunRegistry = (config: {
   const close = (id: SimulationRunId): Promise<boolean> => lifecycle.run(id, () => closeLoaded(id))
 
   const reset = (id: SimulationRunId): Promise<SimulationRunRuntime> => lifecycle.run(id, async () => {
+    await assertSimulationRunRecoveryNotRequired(join(simulationRunRoot, id, 'snapshot.json'))
     const leases = leaseSummary(id).leasesByKind
     if (leases.api > 0) throw Object.assign(new Error('Simulation Run has active requests; retry after they complete'), { code: 'simulation_run_busy' })
     if (leases['maximum-pace'] > 0) throw Object.assign(new Error('Simulation Run is playing at maximum pace; pause it before resetting'), { code: 'simulation_run_busy' })

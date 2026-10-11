@@ -73,7 +73,7 @@ ${JSON.stringify({ capabilityId: conditionCapabilityId, continuous: true, input:
       const response = await actual.invokeQuery(request)
       if (mode === 'hang') await queryGate.promise
       return response
-    } }, eventLog, snapshotStore: { load: async () => saved, save: async snapshot => { saved = snapshot } },
+    } }, eventLog, snapshotStore: { load: async () => saved, save: async snapshot => { saved = snapshot }, quarantine: async () => {} },
     observationAcquisitionTimeoutMs: options.timeoutMs ?? acquisitionBudgetMs,
     scenario: { id: scenario.scenarioId, startsAt: scenario.world.startsAt, agentRestrictions: { operationIds: [], objects: [] } },
     runtimeCapabilities: [...adapter.capabilities.map(capability => ({ packId: adapter.packId, runtimeId: adapter.id, capability })),

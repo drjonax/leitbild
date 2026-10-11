@@ -1,5 +1,6 @@
 import { expect, test, spyOn } from 'bun:test'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdirSync, renameSync } from 'node:fs'
 import { Database } from 'bun:sqlite'
 import type { PackRuntimeConnectionConfig } from '../src/simulation/protocol.ts'
 import { tmpdir } from 'node:os'
@@ -12,6 +13,55 @@ import { testScenarioDefinitions } from './fixtures/scenarios.ts'
 
 const workspaceId = 'bc98c19c-af60-442b-b65a-6d0a1975cba3' as never
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r }); return { promise, resolve } }
+
+test('Grid private-save then journal failure quarantines restore before reconnect and remains deletable', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'world-grid-commit-failure-'))
+  let failEmission = false
+  let connectCount = 0
+  let runDir = ''
+  const adapters = createTestPackRuntimeAdapters().map(adapter => ({ ...adapter, connect: async (config: PackRuntimeConnectionConfig) => {
+    connectCount++
+    const connection = await adapter.connect(config)
+    return { ...connection, subscribe: (handler: Parameters<typeof connection.subscribe>[0]) => connection.subscribe(emission => {
+      if (failEmission && emission.events.some(event => event.type === 'object.upserted' && event.provenance.causedByCommandId)) {
+        failEmission = false
+        // The installed Grid saves private state before emitting. Fail only the
+        // subsequent journal append, retaining the prior bytes as evidence.
+        renameSync(join(runDir, 'events.jsonl'), join(runDir, 'events-before-failure.jsonl'))
+        mkdirSync(join(runDir, 'events.jsonl'))
+      }
+      handler(emission)
+    }) }
+  } }))
+  const registry = createSimulationRunRegistry({ dataDir, workspaceId, ...testScenarioAuthoring(), runtimeAdapters: adapters,
+    scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), idleRuntimeCloseDelayMs: -1 })
+  const errors = spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const run = await registry.create({ scenarioId: 'test-grid' })
+    await run.setClock({ paused: true })
+    runDir = join(dataDir, 'workspaces', workspaceId, 'world', 'simulation-runs', run.id)
+    const actor = { id: 'actor:grid-failure' as never, role: 'operator' as const, label: 'Operator' }
+    const query = await run.invokeCapability(actor, { capabilityId: 'world.electric-grid.assets.search', input: { gridId: 'grid:norway', kinds: ['generator'], limit: 1 } })
+    if (query.kind !== 'query') throw new Error('expected query')
+    const assetId = (query.result as { assets: { id: string }[] }).assets[0]!.id
+    await run.checkpointForCopy()
+    const privatePath = join(runDir, 'runtimes', 'electric-grid.local.json')
+    const before = await readFile(privatePath, 'utf8')
+    failEmission = true
+    await expect(run.invokeCapability(actor, { capabilityId: 'world.electric-grid.trip-generator', input: { gridId: 'grid:norway', assetId } })).rejects.toMatchObject({ code: 'simulation_run_commit_uncertain' })
+    expect(await readFile(privatePath, 'utf8')).not.toBe(before)
+    expect(run.health()).toContainEqual(expect.objectContaining({ runtimeId: 'world.core', state: 'failed' }))
+    await registry.close(run.id)
+    const connectedBeforeLoad = connectCount
+    await expect(registry.load(run.id)).rejects.toThrow('requires recovery')
+    expect(connectCount).toBe(connectedBeforeLoad)
+    expect((await registry.listKnown()).find(item => item.id === run.id)?.loadError).toContain('requires recovery')
+    const privateAfterFailure = await readFile(privatePath, 'utf8')
+    await expect(registry.reset(run.id)).rejects.toThrow('requires recovery')
+    expect(await readFile(privatePath, 'utf8')).toBe(privateAfterFailure)
+    expect(await registry.delete(run.id)).toBe(true)
+  } finally { errors.mockRestore(); await registry.shutdown(); await rm(dataDir, { recursive: true, force: true }) }
+})
 
 test('shutdown waits for healthy sibling checkpoints before reporting a failed Run close', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'world-shutdown-drain-'))
