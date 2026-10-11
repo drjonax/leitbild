@@ -69,8 +69,8 @@ const exchange = (valueMw: number): string => valueMw === 0 ? '0 MW' : `${mw(Mat
 
 /**
  * The sign convention, the limit and, for a requested set-point, its ramp or why it would be
- * rejected. A grouped link ramps alone at the lower of its own and its group's limit; the estimate
- * says it takes longer while another link of the group ramps too.
+ * rejected. A grouped link ramps alone at the lower of its own and its group's limit on the net
+ * change; the estimate says it takes longer while another link of the group ramps the same way.
  */
 export const gridHvdcSetpointGuidance = (link: GridHvdcSetpointContext, requestedMw: number | null): { readonly convention: string; readonly outcome: string | null; readonly problem: string | null } => {
   const convention = `Positive exports from Norway over ${link.label}, negative imports into Norway; at most ±${mw(link.ratingMw)}.`
@@ -86,7 +86,7 @@ export const gridHvdcSetpointGuidance = (link: GridHvdcSetpointContext, requeste
     convention,
     outcome: group === null
       ? ramp
-      : `${ramp} ${group.id} limits its ${group.linkCount} links to ${mw(group.rampMwPerMinute)}/min together, so it takes longer while another of them ramps.`,
+      : `${ramp} ${group.id} limits the net change of its ${group.linkCount} links to ${mw(group.rampMwPerMinute)}/min, so it takes longer while another of them ramps the same way.`,
     problem: null,
   }
 }

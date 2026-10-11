@@ -141,8 +141,8 @@ export interface GridHvdcLinkDefinition {
 }
 
 /**
- * A ramp limit several HVDC links share: per step the sum of their |Δtransfer| stays within
- * rampMwPerMinute, each link within its own ramp too. A link belongs to at most one group.
+ * A ramp limit several HVDC links share: per step the net change of their aggregate transfer
+ * stays within rampMwPerMinute, each link within its own ramp too. A link belongs to at most one group.
  */
 export interface GridHvdcRampGroupDefinition {
   readonly id: string

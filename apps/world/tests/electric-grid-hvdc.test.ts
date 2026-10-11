@@ -141,44 +141,51 @@ describe('HVDC set-point', () => {
 })
 
 describe('HVDC ramp groups', () => {
-  /** Steps a run 1 s at a time to `untilMs`, failing a step whose Σ|Δtransfer| over the group exceeds its limit. */
+  /** Steps a run 1 s at a time to `untilMs`, failing a step whose net change of the group's aggregate transfer exceeds its limit. */
   const advanceHeldToGroup = (run: SteppedGrid, untilMs: number): void => {
     while (run.nowMs() < untilMs) {
       const before = [nordlinkId, westLinkId].map(linkId => linkOf(run, linkId).transferMw)
       run.advanceTo(run.nowMs() + 1_000, [1_000])
-      const movedMw = [nordlinkId, westLinkId].reduce((sum, linkId, index) => sum + Math.abs(linkOf(run, linkId).transferMw - before[index]!), 0)
-      expect(movedMw).toBeLessThanOrEqual(groupRampMwPerMinute / 60 + 1e-9)
+      const netMw = [nordlinkId, westLinkId].reduce((sum, linkId, index) => sum + linkOf(run, linkId).transferMw - before[index]!, 0)
+      expect(Math.abs(netMw)).toBeLessThanOrEqual(groupRampMwPerMinute / 60 + 1e-9)
     }
   }
 
-  test('holds two links stepping together to the joint limit, shared by remaining distance so they arrive together', () => {
+  test('holds two links ramping the same way to the group\'s net limit, both moves scaled back by one factor', () => {
     const run = steppedGrid(definitionFor(groupedModel))
     expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: -600 }).ok).toBe(true)
     expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: westLinkId, setpointMw: -300 }).ok).toBe(true)
-    // 900 MW of change at 50 MW/min together: 18 min, two thirds of it on the test NordLink.
-    advanceHeldToGroup(run, 540_000)
-    expect(linkOf(run).transferMw).toBeCloseTo(-300, 9)
-    expect(linkOf(run, westLinkId).transferMw).toBeCloseTo(-150, 9)
+    // Own ramps 60 and 26 MW/min, 86 together: both scale by 50/86 to 34.9 and 15.1 MW/min.
+    advanceHeldToGroup(run, 60_000)
+    expect(linkOf(run).transferMw).toBeCloseTo(-60 * 50 / 86, 9)
+    expect(linkOf(run, westLinkId).transferMw).toBeCloseTo(-26 * 50 / 86, 9)
     expect(hvdcLinksRamping(run.grid)).toBe(true)
-    advanceHeldToGroup(run, 1_080_000)
+    // The test NordLink arrives after 600 / (60·50/86) min = 1032 s; the west link then ramps alone at its own 26 MW/min, arriving at 1124 s.
+    advanceHeldToGroup(run, 1_040_000)
     expect(linkOf(run).transferMw).toBe(-600)
+    const westAfterMw = linkOf(run, westLinkId).transferMw
+    advanceHeldToGroup(run, 1_100_000)
+    expect(linkOf(run, westLinkId).transferMw - westAfterMw).toBeCloseTo(-26, 9)
+    advanceHeldToGroup(run, 1_400_000)
     expect(linkOf(run, westLinkId).transferMw).toBe(-300)
     expect(hvdcLinksRamping(run.grid)).toBe(false)
     expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
   })
 
-  test('a link bounded by its own ramp passes its unused share of the group to the others', () => {
+  test('links ramping in opposite directions offset: within the net limit both move at their own ramps', () => {
     const run = steppedGrid(definitionFor(groupedModel))
-    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: -100 }).ok).toBe(true)
-    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: westLinkId, setpointMw: -600 }).ok).toBe(true)
-    // By distance the west link would take 6/7 of 50 MW/min; its own 26 MW/min bounds it and the test NordLink takes the other 24.
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: 1_200 }).ok).toBe(true)
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: westLinkId, setpointMw: -300 }).ok).toBe(true)
+    // Net 60 − 26 = 34 MW/min, within the group's 50.
     advanceHeldToGroup(run, 60_000)
+    expect(linkOf(run).transferMw).toBeCloseTo(60, 9)
     expect(linkOf(run, westLinkId).transferMw).toBeCloseTo(-26, 9)
-    expect(linkOf(run).transferMw).toBeCloseTo(-24, 9)
-    // Once the test NordLink has arrived (after 250 s), the west link ramps alone at its own 26 MW/min.
-    advanceHeldToGroup(run, 300_000)
-    expect(linkOf(run).transferMw).toBe(-100)
-    expect(linkOf(run, westLinkId).transferMw).toBeCloseTo(-130, 9)
+    // Once the west link has arrived (after 692 s) the test NordLink ramps alone, held to the group's 50 MW/min.
+    advanceHeldToGroup(run, 700_000)
+    expect(linkOf(run, westLinkId).transferMw).toBe(-300)
+    const nordlinkAfterMw = linkOf(run).transferMw
+    advanceHeldToGroup(run, 760_000)
+    expect(linkOf(run).transferMw - nordlinkAfterMw).toBeCloseTo(50, 9)
   })
 
   test('a link ramping alone in its group moves at the lower of its own and the group\'s limit; a blocked member takes no share', () => {
@@ -200,10 +207,11 @@ describe('HVDC ramp groups', () => {
   })
 
   test('is deterministic and follows the same trajectory whatever the advance step', () => {
-    const sampleTimesMs = [90_000, 360_000, 720_000, 1_080_000]
+    // Samples while both ramp the same way, then after both have arrived.
+    const sampleTimesMs = [90_000, 360_000, 720_000, 2_000_000]
     const trajectory = (stepMs: number): ReadonlyArray<number> => {
       const run = steppedGrid(definitionFor(groupedModel))
-      expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: 600 }).ok).toBe(true)
+      expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: -600 }).ok).toBe(true)
       expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: westLinkId, setpointMw: -300 }).ok).toBe(true)
       return sampleTimesMs.flatMap(timeMs => {
         run.advanceTo(timeMs, [stepMs])
@@ -212,9 +220,8 @@ describe('HVDC ramp groups', () => {
     }
     const reference = trajectory(1_000)
     expect(trajectory(1_000)).toEqual(reference)
-    // Opposite directions count alike: Σ|Δ| is held to 50 MW/min, 2:1 by distance.
-    expect(reference.slice(0, 2).map(value => Math.round(value * 1e6) / 1e6)).toEqual([50, -25])
-    expect(reference.slice(-2)).toEqual([600, -300])
+    expect(reference.slice(0, 2).map(value => Math.round(value * 1e6) / 1e6)).toEqual([-60 * 50 / 86 * 1.5, -26 * 50 / 86 * 1.5].map(value => Math.round(value * 1e6) / 1e6))
+    expect(reference.slice(-2)).toEqual([-600, -300])
     for (const stepMs of [250, 2_500, 7_000]) trajectory(stepMs).forEach((value, index) => expect(value).toBeCloseTo(reference[index]!, 9))
   })
 

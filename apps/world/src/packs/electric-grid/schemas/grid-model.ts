@@ -164,8 +164,8 @@ export type GridHvdcLinkV2 = z.infer<typeof gridHvdcLinkSchema>
 
 /**
  * A ramp limit several HVDC links share (one market border, or a joint cap on several borders): the
- * sum of their transfer changes stays within rampMwPerMinute, each link within its own ramp too. A
- * link belongs to at most one group; the provenance note states the basis.
+ * change of their aggregate transfer stays within rampMwPerMinute, each link within its own ramp
+ * too. A link belongs to at most one group; the provenance note states the basis.
  */
 export const gridHvdcRampGroupSchema = z.object({
   id: z.string().regex(gridIdPatterns.hvdcRampGroup, 'must be an HVDC ramp group id'),

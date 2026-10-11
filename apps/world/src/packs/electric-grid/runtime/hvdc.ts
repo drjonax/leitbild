@@ -162,74 +162,55 @@ const rampLinkBy = (link: GridHvdcLinkDefinition, state: GridHvdcLinkState, step
   state.lossesMw = Math.abs(state.transferMw) * link.lossPercent / 100
 }
 
-/** The step a deblocked link may take on its own ramp over `seconds`: its remaining distance, at most its ramp (MW). */
-const ownStepMw = (link: GridHvdcLinkDefinition, state: GridHvdcLinkState, seconds: number): number =>
-  Math.min(Math.abs(state.setpointMw - state.transferMw), link.rampMwPerMinute / 60 * seconds)
-
-/** Σ over group k's deblocked links of min(share · distance, own step): what they move at `share` (MW). */
-const groupMovedMw = (grid: GridRuntimeInstance, start: number, end: number, share: number, seconds: number): number => {
-  const items = gridTablesFor(grid.definition).hvdcRampGroupLinks.items
-  const links = grid.definition.index.hvdcLinks
-  let movedMw = 0
-  for (let position = start; position < end; position += 1) {
-    const index = items[position]!
-    const state = grid.arrays.hvdcLinks[index]!
-    if (state.state !== 'deblocked') continue
-    movedMw += Math.min(share * Math.abs(state.setpointMw - state.transferMw), ownStepMw(links[index]!, state, seconds))
-  }
-  return movedMw
+/** The signed move a deblocked link takes on its own ramp over `seconds`: towards its set-point, at most its ramp (MW). */
+const ownMoveMw = (link: GridHvdcLinkDefinition, state: GridHvdcLinkState, seconds: number): number => {
+  const differenceMw = state.setpointMw - state.transferMw
+  return Math.sign(differenceMw) * Math.min(Math.abs(differenceMw), link.rampMwPerMinute / 60 * seconds)
 }
 
-/** Rounding of the shared steps (MW): a group's step this close to its links' remaining moves completes them, so they arrive exactly rather than a residue short. */
+/** Rounding of the moves (MW): a net change this close to the group's step passes, so links arrive exactly rather than a residue short. */
 const groupStepRoundingMw = 1e-9
 
 /**
- * Ramps the deblocked links of ramp group k over `seconds`: Σ|Δtransfer| stays within the group's
- * ramp and each link within its own. When the group binds it is shared in proportion to each link's
- * remaining distance (unbounded links arrive together), a link bounded by its own ramp passing its
- * unused share to the others: every link moves min(share · distance, own step) with the one share
- * that fills the group's step.
+ * Ramps the deblocked links of ramp group k over `seconds` under the market's net rule: the group's
+ * aggregate flow changes by at most its ramp. Each link first takes its own move; when their net
+ * change exceeds the group's step, the moves in the net's direction are scaled back by one factor
+ * until the net equals the step, and the opposite moves, which offset, are kept.
  */
 const advanceRampGroup = (grid: GridRuntimeInstance, group: number, seconds: number): void => {
   const tables = gridTablesFor(grid.definition)
   const links = grid.definition.index.hvdcLinks
+  const items = tables.hvdcRampGroupLinks.items
   const start = tables.hvdcRampGroupLinks.start[group]!
   const end = tables.hvdcRampGroupLinks.start[group + 1]!
   const budgetMw = grid.definition.index.hvdcRampGroups[group]!.rampMwPerMinute / 60 * seconds
-  let share = 1
-  if (groupMovedMw(grid, start, end, 1, seconds) > budgetMw + groupStepRoundingMw) {
-    // Moved(share) is increasing and piecewise linear with a kink where a link reaches its own step:
-    // from the last kink at or below the budget, the links still unbounded take the rest linearly.
-    let lower = 0
-    for (let position = start; position < end; position += 1) {
-      const index = tables.hvdcRampGroupLinks.items[position]!
-      const state = grid.arrays.hvdcLinks[index]!
-      const distanceMw = Math.abs(state.setpointMw - state.transferMw)
-      if (state.state !== 'deblocked' || distanceMw === 0) continue
-      const kink = ownStepMw(links[index]!, state, seconds) / distanceMw
-      if (kink > lower && groupMovedMw(grid, start, end, kink, seconds) <= budgetMw) lower = kink
-    }
-    let unboundedMw = 0
-    for (let position = start; position < end; position += 1) {
-      const index = tables.hvdcRampGroupLinks.items[position]!
-      const state = grid.arrays.hvdcLinks[index]!
-      const distanceMw = Math.abs(state.setpointMw - state.transferMw)
-      if (state.state === 'deblocked' && distanceMw > 0 && ownStepMw(links[index]!, state, seconds) / distanceMw > lower) unboundedMw += distanceMw
-    }
-    share = lower + (budgetMw - groupMovedMw(grid, start, end, lower, seconds)) / unboundedMw
-  }
+  let upMw = 0
+  let downMw = 0
   for (let position = start; position < end; position += 1) {
-    const index = tables.hvdcRampGroupLinks.items[position]!
+    const index = items[position]!
+    const state = grid.arrays.hvdcLinks[index]!
+    if (state.state !== 'deblocked') continue
+    const moveMw = ownMoveMw(links[index]!, state, seconds)
+    if (moveMw > 0) upMw += moveMw
+    else downMw -= moveMw
+  }
+  const netMw = upMw - downMw
+  // Scale of the moves up and down: the dominant direction keeps the group's step plus what the other direction offsets.
+  const upScale = netMw > budgetMw + groupStepRoundingMw ? (budgetMw + downMw) / upMw : 1
+  const downScale = -netMw > budgetMw + groupStepRoundingMw ? (budgetMw + upMw) / downMw : 1
+  for (let position = start; position < end; position += 1) {
+    const index = items[position]!
     const state = grid.arrays.hvdcLinks[index]!
     if (state.state !== 'deblocked') continue
     const link = links[index]!
-    rampLinkBy(link, state, Math.min(share * Math.abs(state.setpointMw - state.transferMw), ownStepMw(link, state, seconds)))
+    const moveMw = ownMoveMw(link, state, seconds)
+    rampLinkBy(link, state, Math.abs(moveMw) * (moveMw > 0 ? upScale : downScale))
   }
 }
 
 /**
  * Ramps each deblocked link's transfer towards its set-point at its ramp limit over `seconds`, and
- * the links of a ramp group together within the group's limit (advanceRampGroup). A converter
+ * the links of a ramp group within the group's limit on their net change (advanceRampGroup). A converter
  * whose AC terminal has lost voltage (its island de-energised) trips first: its transfer drops to 0
  * and it takes no share of its group's ramp. On an energised island whose AC voltage is unsolved the
  * converters keep following their set-points: the non-convergence is numerical, so it trips, blocks

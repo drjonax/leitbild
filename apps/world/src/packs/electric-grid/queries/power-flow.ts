@@ -43,7 +43,7 @@ const hvdcRowSchema = z.object({
   loadingPercent: finite.describe('|transferMw| over ratingMw, to 0.1 %.'),
   rampGroup: z.object({
     id: z.string(),
-    rampMwPerMinute: finite.describe('Limit on the sum of the group\'s transfer changes (MW/min); the link keeps its own rampMwPerMinute too.'),
+    rampMwPerMinute: finite.describe('Limit on the change of the group\'s aggregate transfer (MW/min), opposite moves offsetting; the link keeps its own rampMwPerMinute too.'),
   }).strict().nullable().describe('The ramp limit the link shares with other links (world.electric-grid.asset.get gives its members and basis); null when it has none.'),
   definition: hvdcLinkDefinitionSchema.optional(),
 }).strict()

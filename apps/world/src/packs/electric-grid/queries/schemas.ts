@@ -155,7 +155,7 @@ export const hvdcLinkDefinitionSchema = z.object({
 export const hvdcRampGroupSchema = z.object({
   id: z.string(),
   linkIds: z.array(z.string()).readonly().describe('The HVDC links sharing the limit.'),
-  rampMwPerMinute: finite.describe('Limit on the sum of the links\' transfer changes (MW/min), shared in proportion to each link\'s remaining distance to its set-point; each link also keeps its own rampMwPerMinute.'),
+  rampMwPerMinute: finite.describe('Limit on the change of the links\' aggregate transfer (MW/min), the market\'s net rule: links ramping in opposite directions offset, and when the net exceeds the limit the moves in its direction are scaled back by one factor. Each link also keeps its own rampMwPerMinute.'),
   provenance: assetProvenanceSchema,
 }).strict().describe('A ramp limit several HVDC links share (one market border, or a joint cap); the provenance note states its basis.')
 
