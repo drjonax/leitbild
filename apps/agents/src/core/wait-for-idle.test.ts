@@ -8,6 +8,7 @@
 import { describe, test, expect } from 'bun:test'
 import { createRoom } from './rooms/room.ts'
 import type { AIAgent } from './types/agent.ts'
+import type { Room } from './types/room.ts'
 import { waitForRoomIdle } from './wait-for-idle.ts'
 
 // Minimal AIAgent stub — only whenIdle is exercised by wait-for-idle.
@@ -115,26 +116,28 @@ describe('waitForRoomIdle', () => {
     const start = Date.now()
 
     // Post a fresh message on every poll to prevent quietMs from being satisfied.
+    // A message arrives whenever the room is read, so a loaded machine that
+    // runs the polls late cannot open a quiet gap between them.
     let ticks = 0
-    const tickTimer = setInterval(() => {
-      ticks++
-      room.post({ senderId: 'u', senderName: 'U', content: `m${ticks}`, type: 'chat' })
-    }, 20)
-
-    try {
-      const result = await waitForRoomIdle(room, {
-        quietMs: 100, // never satisfied — messages arrive every 20ms
-        timeoutMs: 200,
-        pollMs: 10,
-        inRoomAIAgents: () => [],
-      })
-      const elapsed = Date.now() - start
-
-      expect(result.idle).toBe(false)
-      expect(elapsed).toBeGreaterThanOrEqual(200)
-      expect(result.messageCount).toBeGreaterThan(1)
-    } finally {
-      clearInterval(tickTimer)
+    const busyRoom: Room = {
+      ...room,
+      getRecent: count => {
+        ticks++
+        room.post({ senderId: 'u', senderName: 'U', content: `m${ticks}`, type: 'chat' })
+        return room.getRecent(count)
+      },
     }
+
+    const result = await waitForRoomIdle(busyRoom, {
+      quietMs: 100, // never satisfied — every poll sees a message that just arrived
+      timeoutMs: 200,
+      pollMs: 10,
+      inRoomAIAgents: () => [],
+    })
+    const elapsed = Date.now() - start
+
+    expect(result.idle).toBe(false)
+    expect(elapsed).toBeGreaterThanOrEqual(200)
+    expect(result.messageCount).toBeGreaterThan(1)
   })
 })

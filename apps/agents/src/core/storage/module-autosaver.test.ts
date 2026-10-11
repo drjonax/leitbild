@@ -27,7 +27,9 @@ test('a retry and concurrent flush persist the latest state', async () => {
   try {
     saver.scheduleSave()
     await failureSeen
-    await Bun.sleep(20)
+    // Flush at once, while the failed save waits out its 250 ms retry backoff:
+    // a sleep a loaded machine stretched past the backoff would let the retry
+    // finish first and leave no concurrent flush to test.
     prompt='new prompt'
     await saver.flush()
     const afterFlush=(await loadWorkspaceModuleSnapshots(paths)).agents?.workspacePrompt

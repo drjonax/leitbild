@@ -279,7 +279,9 @@ describe('createOpenAICompatibleProvider', () => {
   })
 
   test('streaming: slowWarning emitted when inter-chunk gap exceeds warnMs, stream NOT aborted', async () => {
-    // Custom fixture — delay between frames so warn timer fires before chunk 2.
+    // Custom fixture — the gap between frames lasts until the client has warned,
+    // so the warn timer fires before chunk 2 however late a loaded machine runs it.
+    const warned = Promise.withResolvers<void>()
     const server = Bun.serve({
       port: 0,
       fetch: async () => {
@@ -288,11 +290,14 @@ describe('createOpenAICompatibleProvider', () => {
           async start(controller) {
             // First chunk arrives immediately (so the adapter commits to this provider).
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}\n\n`))
-            // 80ms gap > 50ms warnMs but < 500ms hardAbortMs — warn should fire.
-            await new Promise(r => setTimeout(r, 80))
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'there' } }] })}\n\n`))
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] })}\n\n`))
-            controller.enqueue(encoder.encode(`data: [DONE]\n\n`))
+            // Gap > 50ms warnMs, ended well before the hardAbortMs hang guard — warn should fire.
+            await warned.promise
+            // The rest in one write, so no second gap opens between its frames.
+            controller.enqueue(encoder.encode([
+              `data: ${JSON.stringify({ choices: [{ delta: { content: 'there' } }] })}\n\n`,
+              `data: ${JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] })}\n\n`,
+              `data: [DONE]\n\n`,
+            ].join('')))
             controller.close()
           },
         })
@@ -305,11 +310,12 @@ describe('createOpenAICompatibleProvider', () => {
         getBaseUrl: () => `http://localhost:${server.port}`,
         getApiKey: () => 'k',
         streamSlowWarnMs: 50,
-        streamHardAbortMs: 500,
+        streamHardAbortMs: 60_000,
       })
       const chunks: Array<{ delta: string; done: boolean; thinking?: string; slowWarning?: { elapsedMs: number; provider: string } }> = []
       for await (const chunk of provider.stream!({ model: 'm', messages: [{ role: 'user', content: 'x' }] })) {
         chunks.push(chunk as never)
+        if ((chunk as { slowWarning?: unknown }).slowWarning) warned.resolve()
       }
       const slow = chunks.filter(c => c.slowWarning)
       expect(slow).toHaveLength(1)

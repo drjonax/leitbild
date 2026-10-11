@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveLocation, type SourceFn } from './resolver.ts'
-import { listCategory, upsertFeature } from './store.ts'
+import { listCategory, removeFeature, upsertFeature } from './store.ts'
 import type { GeoFeature, GeoSource } from './types.ts'
 
 let prevHome: string | undefined
@@ -20,6 +20,10 @@ const f = (name: string, lat: number, lng: number, source: GeoSource = 'local'):
     source,
   },
 })
+
+// Write-back is fire-and-forget on the store's mutex. A no-op removal queues
+// behind every write-back resolveLocation issued, so it returns once they landed.
+const writeBacksLanded = () => removeFeature('city', 'local', 'no-such-feature')
 
 beforeEach(() => {
   prevHome = process.env.LEITBILD_HOME
@@ -92,8 +96,7 @@ describe('resolver — upstream cache write-back', () => {
       sources: [{ name: 'overpass', fn: overpassFn }],
     })
     expect(r?.source).toBe('overpass')
-    // Allow the fire-and-forget write to settle.
-    await new Promise((res) => setTimeout(res, 50))
+    await writeBacksLanded()
     const list = await listCategory('city')
     expect(list.length).toBe(1)
     expect(list[0]?.properties.source).toBe('overpass')
@@ -119,7 +122,7 @@ describe('resolver — upstream cache write-back', () => {
       sources: [{ name: 'overpass', fn: overpassFn }],
       cacheUpstream: false,
     })
-    await new Promise((res) => setTimeout(res, 50))
+    await writeBacksLanded()
     const list = await listCategory('city')
     expect(list.length).toBe(0)
   })

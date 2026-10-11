@@ -348,7 +348,10 @@ describe('WorkspaceRuntimeRegistry', () => {
     await new Promise(r => setTimeout(r, 80))
     await reg.getOrLoad(idB)        // freshly touched
 
-    const evictedCount = await reg.evictIdle(Date.now())
+    // Judge idleness as of B's touch: A has been idle for at least the 80 ms
+    // slept, B for none, however long a loaded machine takes to load B.
+    const touchedB = reg.list().find(m => m.id === idB)!.lastTouchedAt
+    const evictedCount = await reg.evictIdle(touchedB)
     expect(evictedCount).toBe(1)
     expect(reg.list().some(m => m.id === idA)).toBe(false)
     expect(reg.list().some(m => m.id === idB)).toBe(true)

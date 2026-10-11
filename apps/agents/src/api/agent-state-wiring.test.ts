@@ -50,6 +50,7 @@ import { makeStubGateway, makeStubSetup, stubProviderConfig as baseConfig } from
 import type { WSOutbound } from '../core/types/ws-protocol.ts'
 import type { ModuleAutoSaver } from '../core/storage/module-snapshots.ts'
 import { createAgentsModuleState } from '../core/workspaces/module-state.ts'
+import { asAIAgent } from '../agents/shared.ts'
 import { newWorkspaceId } from '@leitbild/contracts'
 
 const makeSetup = makeStubSetup
@@ -155,19 +156,13 @@ describe('per-agent state subscription is wired for every spawn path', () => {
       { senderId: 'system', senderName: 'system', content: `[[${TEST_AGENT_NAME}]] ping`, type: 'chat' },
     )
 
-    // The eval is async (it goes through the stub LLM). Poll for state events
-    // up to 2s. The stub returns instantly so 'generating' should fire within
-    // a tick or two.
-    let stateEvents: typeof broadcasts = []
-    const deadline = Date.now() + 2000
-    while (Date.now() < deadline) {
-      stateEvents = broadcasts.filter(b =>
-        b.workspaceId === cookieId && b.msg.type === 'agent_state' &&
-        (b.msg as { agentName?: string }).agentName === TEST_AGENT_NAME,
-      )
-      if (stateEvents.length > 0) break
-      await new Promise(r => setTimeout(r, 25))
-    }
+    // The eval is async (it goes through the stub LLM); its state events have
+    // all been broadcast once the agent is idle again.
+    await asAIAgent(agent)!.whenIdle()
+    const stateEvents = broadcasts.filter(b =>
+      b.workspaceId === cookieId && b.msg.type === 'agent_state' &&
+      (b.msg as { agentName?: string }).agentName === TEST_AGENT_NAME,
+    )
     if (stateEvents.length === 0) {
       // Diagnostic: dump what DID broadcast for Helper or this Workspace.
       const types = broadcasts.filter(b => b.workspaceId === cookieId).map(b => b.msg.type)
@@ -293,9 +288,6 @@ describe('per-agent state subscription is wired for every spawn path', () => {
     const helperId = helper1.id
     expect(helper1.name).toBe(TEST_AGENT_NAME)
 
-    // Wait for autosave to flush (seed triggers one).
-    await new Promise(r => setTimeout(r, 100))
-
     // Trigger eval pre-evict — confirm baseline that broadcasts work.
     sys1.routeMessage(
       { rooms: [room1.profile.id] },
@@ -307,21 +299,19 @@ describe('per-agent state subscription is wired for every spawn path', () => {
         return m.type === 'agent_state' && m.state === 'generating' && m.agentName === TEST_AGENT_NAME
       } catch { return false }
     }
-    {
-      const deadline = Date.now() + 2000
-      while (Date.now() < deadline) {
-        if (wsMessages.some(isGenerating)) break
-        await new Promise(r => setTimeout(r, 25))
-      }
-    }
+    // Let the agent settle to idle so eviction drains rather than cancels it.
+    await asAIAgent(helper1)!.whenIdle()
     expect(wsMessages.filter(isGenerating).length).toBeGreaterThan(0)
 
-    // Wait for agent to settle to idle so eviction can drain.
-    await new Promise(r => setTimeout(r, 200))
-
-    // Evict the Workspace runtime. stateUnsubs MUST be cleared for helperId;
-    // without the fix, it persists across the reload.
-    await registry.evictOne(cookieId)
+    // Evict the Workspace runtime, which flushes its snapshot. stateUnsubs
+    // MUST be cleared for helperId; without the fix, it persists across the reload.
+    // The answer's comparison record is saved in a Workspace operation that
+    // can outlast the turn, and eviction refuses while one runs.
+    for (;;) {
+      try { await registry.evictOne(cookieId); break }
+      catch (error) { if ((error as { code?: string }).code !== 'workspace_busy') throw error }
+      await Bun.sleep(5)
+    }
 
     // Lazy-reload: snapshot restores Helper with the SAME id.
     const sys2 = await registry.getOrLoad(cookieId)
@@ -343,11 +333,7 @@ describe('per-agent state subscription is wired for every spawn path', () => {
       { senderId: 'system', senderName: 'system', content: '[[AI]] ping2', type: 'chat' },
     )
 
-    const deadline = Date.now() + 2000
-    while (Date.now() < deadline) {
-      if (wsMessages.slice(beforeReloadCount).some(isGenerating)) break
-      await new Promise(r => setTimeout(r, 25))
-    }
+    await asAIAgent(helper2)!.whenIdle()
     const postReloadGenerating = wsMessages.slice(beforeReloadCount).filter(isGenerating)
     if (postReloadGenerating.length === 0) {
       const types = wsMessages.slice(beforeReloadCount).map(d => {

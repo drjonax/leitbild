@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import type { ProviderKeys } from '../llm/provider-keys.ts'
 import { createVectorStore } from '../embed/vector-store.ts'
 import { createDocumentManager } from './manager.ts'
+import type { DocumentMetadata } from './types.ts'
 
 const tempRoot = async (): Promise<{
   vectorsPath: string
@@ -44,6 +45,21 @@ const stubFetch = (dim: number): typeof globalThis.fetch => {
   return fn as unknown as typeof globalThis.fetch
 }
 
+// Indexing runs in the background after upload and load; a test awaits the
+// status indexing ends in, which a loaded machine can delay past any sleep.
+const indexingOutcomes = () => {
+  const outcomes = new Map<string, PromiseWithResolvers<DocumentMetadata>>()
+  const outcome = (docId: string) => {
+    const entry = outcomes.get(docId) ?? Promise.withResolvers<DocumentMetadata>()
+    outcomes.set(docId, entry)
+    return entry
+  }
+  return {
+    onStatusChange: (meta: DocumentMetadata) => { if (meta.status !== 'pending') outcome(meta.docId).resolve(meta) },
+    settled: (docId: string) => outcome(docId).promise,
+  }
+}
+
 describe('document manager', () => {
   test('upload .txt → status indexed; vectors written; metadata persisted', async () => {
     const origFetch = globalThis.fetch
@@ -53,11 +69,12 @@ describe('document manager', () => {
       try {
         const store = createVectorStore(vectorsPath)
         const statusEvents: string[] = []
+        const indexing = indexingOutcomes()
         const mgr = createDocumentManager({
           rootDir: docsRoot,
           vectorStore: store,
           providerKeys: mkProviderKeys('sk-test'),
-          onStatusChange: (m) => statusEvents.push(m.status),
+          onStatusChange: (m) => { statusEvents.push(m.status); indexing.onStatusChange(m) },
           log: () => {},
         })
         await mgr.load()
@@ -67,7 +84,7 @@ describe('document manager', () => {
         expect(meta.status).toBe('pending')
 
         // Wait for indexing to complete (fire-and-forget)
-        await new Promise(r => setTimeout(r, 50))
+        await indexing.settled(meta.docId)
         const after = mgr.get(meta.docId)
         expect(after?.status).toBe('indexed')
         expect(after?.chunkCount).toBeGreaterThan(0)
@@ -118,10 +135,12 @@ describe('document manager', () => {
       const { vectorsPath, docsRoot, cleanup } = await tempRoot()
       try {
         const store = createVectorStore(vectorsPath)
+        const indexing = indexingOutcomes()
         const mgr = createDocumentManager({
           rootDir: docsRoot,
           vectorStore: store,
           providerKeys: mkProviderKeys('sk-test'),
+          onStatusChange: indexing.onStatusChange,
           log: () => {},
         })
         await mgr.load()
@@ -131,7 +150,7 @@ describe('document manager', () => {
           new TextEncoder().encode('hello\n\nworld'),
           'text/plain',
         )
-        await new Promise(r => setTimeout(r, 50))
+        await indexing.settled(meta.docId)
         expect(mgr.get(meta.docId)?.status).toBe('indexed')
         const liveBefore = store.count().live
 
@@ -152,10 +171,12 @@ describe('document manager', () => {
     const { vectorsPath, docsRoot, cleanup } = await tempRoot()
     try {
       const store = createVectorStore(vectorsPath)
+      const indexing = indexingOutcomes()
       const mgr = createDocumentManager({
         rootDir: docsRoot,
         vectorStore: store,
         providerKeys: mkProviderKeys(''),  // no key
+        onStatusChange: indexing.onStatusChange,
         log: () => {},
       })
       await mgr.load()
@@ -165,7 +186,7 @@ describe('document manager', () => {
         new TextEncoder().encode('whatever'),
         'text/plain',
       )
-      await new Promise(r => setTimeout(r, 50))
+      await indexing.settled(meta.docId)
       const final = mgr.get(meta.docId)
       expect(final?.status).toBe('failed')
       expect(final?.errorMessage).toContain('OPENAI_API_KEY')
@@ -198,16 +219,18 @@ describe('document manager', () => {
         )
 
         const store = createVectorStore(vectorsPath)
+        const indexing = indexingOutcomes()
         const mgr = createDocumentManager({
           rootDir: docsRoot,
           vectorStore: store,
           providerKeys: mkProviderKeys('sk-test'),
+          onStatusChange: indexing.onStatusChange,
           log: () => {},
         })
         await mgr.load()
 
         // load() re-enqueued indexing; wait for it
-        await new Promise(r => setTimeout(r, 50))
+        await indexing.settled(docId)
         const final = mgr.get(docId)
         expect(final?.status).toBe('indexed')
       } finally {

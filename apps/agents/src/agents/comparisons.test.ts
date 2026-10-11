@@ -48,8 +48,10 @@ const setup = (chat: LLMProvider['chat']) => {
   return { comparisons, room, rooms, executions, registry, requests, binds, deliveries, input, prepare, close: async () => { await comparisons.close(); executions.close() } }
 }
 
+// The deadline reports a comparison that never finishes; it is not a budget,
+// so it leaves a loaded machine room.
 const completed = async (service: Comparisons, roomId: string, messageId: string, id: string) => {
-  const until = performance.now() + 2_000
+  const until = performance.now() + 30_000
   while (performance.now() < until) {
     const result = await service.detail(roomId, messageId, id)
     if (result.status !== 'running') return result
