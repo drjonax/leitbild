@@ -117,6 +117,7 @@ const quantityLetters: Readonly<Record<string, string>> = {
   concentration: 'CONC',
   countRate: 'NI',
   electricalCurrent: 'I',
+  startupRate: 'SUR',
   head: 'HEAD',
   reactivity: 'RHO',
   frequency: 'HZ',

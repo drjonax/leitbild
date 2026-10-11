@@ -100,6 +100,17 @@ describe('process plant model composition', () => {
     expect(levels.map(binding => [String(binding.tagId), binding.limits?.instrumentSpan])).toEqual(['A', 'B', 'C', 'D'].map(loop => [`SG-${loop}-LVL-NR`, { min: 0, max: 100 }]))
   })
 
+  test('declares the span each nuclear instrument indicates over, where it pins', () => {
+    const system = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:nuclear-spans', loopCount: 4 }))
+    const span = (tagId: string) => system.graph.signalBindingByTagId.get(tagId as never)!.limits?.instrumentSpan
+    expect(['NIS-PR-AVG', 'NIS-IR', 'NIS-IR-SUR', 'NIS-SR'].map(span)).toEqual([
+      { min: 0, max: 120 },
+      { min: 1e-11, max: 1e-3 },
+      { min: -0.5, max: 5 },
+      { min: 0, max: 1e6 },
+    ])
+  })
+
   test('publishes branded signal references as their truthful JSON wire types', () => {
     const capability = processPlantCapabilities.find(candidate => candidate.id === 'world.process-plant.signals.read')!
     const schema = capabilityJsonSchema(capability.input) as {

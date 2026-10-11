@@ -12,8 +12,9 @@ const primaryLoopIdsFrom = (parameters: unknown): ReadonlyArray<string> => {
 }
 
 /**
- * What the ex-core nuclear instruments can indicate; a reading beyond pins at
- * the end of its span: the power range 0 to 120 % of rated power, the
+ * What the ex-core nuclear instruments can indicate, declared as their
+ * instrument spans so displays tell a pinned reading from a value; a reading
+ * beyond pins at the end of its span: the power range 0 to 120 % of rated power, the
  * intermediate range's compensated ion chamber 1e-11 A to 1e-3 A and its
  * startup-rate meter -0.5 to +5 decades a minute, the source range's
  * proportional counter up to 1e6 counts a second.
@@ -215,8 +216,8 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'effectiveReactivityPcm', label: 'Effective core reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'rodInsertionFraction', label: 'Rod insertion demand', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'sourceRangeEnergized', label: 'Source-range detector high voltage on', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
-      variable({ path: 'sourceRangeCountRateCps', label: 'Source-range neutron count rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'countRate', unit: 'cps', limits: { hardRange: nuclearInstrumentSpans.sourceRangeCountRateCps } }),
-      variable({ path: 'intermediateRangeCurrentAmps', label: 'Intermediate-range neutron current', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'electricalCurrent', unit: 'amps', limits: { hardRange: nuclearInstrumentSpans.intermediateRangeCurrentAmps } }),
+      variable({ path: 'sourceRangeCountRateCps', label: 'Source-range neutron count rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'countRate', unit: 'cps', limits: { hardRange: nuclearInstrumentSpans.sourceRangeCountRateCps, instrumentSpan: nuclearInstrumentSpans.sourceRangeCountRateCps } }),
+      variable({ path: 'intermediateRangeCurrentAmps', label: 'Intermediate-range neutron current', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'electricalCurrent', unit: 'amps', limits: { hardRange: nuclearInstrumentSpans.intermediateRangeCurrentAmps, instrumentSpan: nuclearInstrumentSpans.intermediateRangeCurrentAmps } }),
       variable({ path: 'coolantInletTemperatureC', label: 'Core coolant inlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'coolantOutletTemperatureC', label: 'Core coolant outlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'coreExitTemperatureC', label: 'Core-exit temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
@@ -236,9 +237,9 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'pumpHeatMw', label: 'Reactor coolant pump heat', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'heatToCoolantMw', label: 'Heat to coolant', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'vapourGenerationKgPerS', label: 'Reactor coolant steam generation', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
-      variable({ path: 'powerRangePercent', label: 'Power-range neutron flux', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'power', unit: 'percent', limits: { hardRange: nuclearInstrumentSpans.powerRangePercent } }),
+      variable({ path: 'powerRangePercent', label: 'Power-range neutron flux', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'power', unit: 'percent', limits: { hardRange: nuclearInstrumentSpans.powerRangePercent, instrumentSpan: nuclearInstrumentSpans.powerRangePercent } }),
       variable({ path: 'aboveP10', label: 'P-10 power range above setpoint', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
-      variable({ path: 'intermediateRangeStartupRateDpm', label: 'Intermediate-range startup rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'startupRate', unit: 'DPM', limits: { hardRange: nuclearInstrumentSpans.intermediateRangeStartupRateDpm } }),
+      variable({ path: 'intermediateRangeStartupRateDpm', label: 'Intermediate-range startup rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'startupRate', unit: 'DPM', limits: { hardRange: nuclearInstrumentSpans.intermediateRangeStartupRateDpm, instrumentSpan: nuclearInstrumentSpans.intermediateRangeStartupRateDpm } }),
       variable({ path: 'aboveP6', label: 'P-6 intermediate range above setpoint', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'referenceAverageTemperatureC', label: 'Reference average coolant temperature', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'averageTemperatureDeviationC', label: 'Average coolant temperature deviation from reference', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
