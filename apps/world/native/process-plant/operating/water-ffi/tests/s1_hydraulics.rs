@@ -11,7 +11,8 @@
 //! rtol/100 references (request 2, E0-E3, with request 3's cap-cycle floor,
 //! H2), then restarted at the window's end by the exact consistent start and
 //! continued 10 s at stock settings, its recovery judged on cost (H1) beside
-//! a never-capped reference run, R0, that is reported and judges nothing.
+//! a never-capped reference run, R0, whose comparisons are reported only and
+//! whose frozen failure rules apply as in every S1 run.
 //! Credited outputs are observed every 0.002 s through one stock IDA root
 //! function, which changes no step, and are compared after the contract's
 //! zero-phase low-pass. A decisive failure stops dependent runs and is
@@ -759,6 +760,9 @@ struct Run {
     /// The counts and step at the spec's mark, when it was reached.
     mark: Option<Mark>,
     failure: Option<String>,
+    /// The failure is the run's step cap, reached with no frozen rule
+    /// tripped at that output.
+    cap_reached: bool,
     rtol: f64,
     max_order: usize,
     max_step_s: f64,
@@ -974,6 +978,7 @@ fn advance_run(
     }
     let mut window: Option<Counts> = None;
     let mut restart_pair = None;
+    let mut cap_reached = false;
     let mut k = 1;
     while failure.is_none() {
         // Past the window the history is the continuation's, restarted at
@@ -1019,9 +1024,13 @@ fn advance_run(
                         "recovery",
                     )
                 };
-                failure = frozen_rule(&s, taps, admitted_atol, blocked_path_limit_m3_s)
+                let rule = frozen_rule(&s, taps, admitted_atol, blocked_path_limit_m3_s);
+                // The step cap stops the run where no frozen rule tripped
+                // first; R0 reports this stop and fails on every other.
+                cap_reached = rule.is_none() && run_steps > cap;
+                failure = rule
                     .or_else(|| {
-                        (run_steps > cap).then(|| {
+                        cap_reached.then(|| {
                             format!("{phase} cap reached: {run_steps} steps from the run's start")
                         })
                     })
@@ -1115,6 +1124,7 @@ fn advance_run(
         restart_pair,
         mark,
         failure,
+        cap_reached,
         rtol,
         max_order,
         max_step_s,
@@ -1547,15 +1557,26 @@ fn recovery(gates: &Gates, run: &Run, window_s: f64, post_window_s: f64) -> (Val
     )
 }
 
-/// The diagnostic beside H1's cost gate, never a gate: H1 bounds the
-/// window's and continuation's cost together, so a continuation that never
-/// left the cap's rate could still pass it. R0, the never-capped run from
-/// the same event start in one history, shows what the plant asks for over
-/// the same interval: its steps, error-test and Newton convergence failures
-/// over the window and over [window, window + post], its step at the
-/// window's end, and the event run's continuation steps over R0's where both
-/// covered that interval. R0's window counts are read at its window-end
-/// output ([`Mark`]). Reaching R0's run cap is reported, not failed.
+/// R0 is an S1 run: its frozen failure rules (the energy identity, the
+/// metastable band, the credited departure, A-layer resolvability and the
+/// phantom-momentum guard) and every other failure, such as a
+/// property-domain exit surfacing through stock IDA, fail the event. Only
+/// stopping at its own step cap is reported and not failed.
+fn r0_fails(r0: &Run) -> bool {
+    r0.failure.is_some() && !r0.cap_reached
+}
+
+/// The diagnostic beside H1's cost gate, whose comparisons judge nothing:
+/// H1 bounds the window's and continuation's cost together, so a
+/// continuation that never left the cap's rate could still pass it. R0, the
+/// never-capped run from the same event start in one history, shows what
+/// the plant asks for over the same interval: its steps, error-test and
+/// Newton convergence failures over the window and over [window, window +
+/// post], its step at the window's end, and the event run's continuation
+/// steps over R0's where both covered that interval. R0's window counts are
+/// read at its window-end output ([`Mark`]). Whether R0's own failure fails
+/// the event ([`r0_fails`]) is stated with it; reaching its run cap does
+/// not.
 fn natural_reference(
     run: &Run,
     r0: &Run,
@@ -1577,12 +1598,12 @@ fn natural_reference(
     let rate = interval
         .filter(|_| covered(r0))
         .map(|i| i.steps as f64 / post_window_s);
-    json!({"diagnostic":"never a gate: the never-capped run R0 from the same event start, one IDA history to window + post_window_s with no forced stop or restart at the window's end; its window counts are read at the window-end output, which stock reaches by interpolation, so the step straddling the window's end counts in R0's window",
+    json!({"diagnostic":"the never-capped run R0 from the same event start, one IDA history to window + post_window_s with no forced stop or restart at the window's end; its window counts are read at the window-end output, which stock reaches by interpolation, so the step straddling the window's end counts in R0's window. Its counts, step and ratio judge nothing and reaching its run cap is reported only; as an S1 run, R0's frozen failure rules and any other failure fail the event (fails_event)",
         "configuration":{"rtol":r0.rtol,"atol_factor":1.,"max_step_s":r0.max_step_s.is_finite().then_some(r0.max_step_s),"newton_coefficient":r0.newton_coefficient.unwrap_or(STOCK_NEWTON_COEFFICIENT),"max_order":r0.max_order,"run_cap_steps":run_cap_steps},
         "window":window.map(counts),"interval":interval.map(counts),"interval_s":[window_s, span],"interval_steps_per_s":rate,
         "marked_at_s":r0.mark.map(|m| m.t),"step_at_window_end_s":r0.mark.map(|m| m.last_step_s),"order_at_window_end":r0.mark.map(|m| m.last_order),"next_step_at_window_end_s":r0.mark.map(|m| m.current_step_s),
         "continuation_over_r0_steps":ratio,"continuation_steps":run.continuation.map(|c| c.steps),
-        "reached_s":reached(r0),"covered":covered(r0),"run_cap_reached":r0.total.steps > run_cap_steps,"failure":r0.failure,
+        "reached_s":reached(r0),"covered":covered(r0),"run_cap_reached":r0.cap_reached,"failure":r0.failure,"fails_event":r0_fails(r0),
         "cpu_s":r0.cpu_s,"solver_cpu_s":r0.solver_cpu_s,"run":run_json(r0)})
 }
 
@@ -1594,8 +1615,10 @@ fn natural_reference(
 /// coefficient (E3). Over the window, credited outputs must agree with both
 /// within the contract, and the cap-cycle check holds above its floor (H2).
 /// R0, the never-capped run over the window and the recovery interval, is
-/// reported beside the recovery gate ([`natural_reference`]) and judges
-/// nothing; the returned runs are the gated three.
+/// reported beside the recovery gate ([`natural_reference`]); its
+/// comparisons judge nothing, but as an S1 run its failures other than its
+/// run cap fail the event ([`r0_fails`]). The returned runs are the window
+/// run, R1, R2 and R0.
 fn event_case(
     event: &dyn Fn() -> (Network<If97>, Vec<f64>, Vec<f64>),
     taps: &Taps,
@@ -1604,7 +1627,7 @@ fn event_case(
     budgets: &Budgets,
     window_s: f64,
     post_window_s: f64,
-) -> (Value, bool, [Run; 3]) {
+) -> (Value, bool, [Run; 4]) {
     let (ew, er) = (&gates.event_window, &gates.event_reference);
     let (dt, output, cutoff) = (
         gates.comparison.observation_s,
@@ -1638,10 +1661,10 @@ fn event_case(
     let (network, y, ids) = event();
     let s = spec(gates, window_s, rtol * f, &second, i64::MAX);
     let r2 = advance_run(network, taps, &y, &ids, observed(s, event().0, dt), &never);
-    // R0, diagnostic only: never capped, contract tolerances, stock's
+    // R0, the natural reference: never capped, contract tolerances, stock's
     // coefficient and order cap, one history over the window and the
     // recovery interval, its window counts marked at the window's end, and
-    // capped at the recovery's run cap.
+    // capped at the recovery's run cap, which it reports only.
     let span = window_s + post_window_s;
     let r0_cap = gates.cap_steps(span);
     let (network, y, ids) = event();
@@ -1672,6 +1695,7 @@ fn event_case(
     let pass = run.failure.is_none()
         && r1.failure.is_none()
         && r2.failure.is_none()
+        && !r0_fails(&r0)
         && budget_pass
         && within_r1
         && within_r2
@@ -1689,7 +1713,7 @@ fn event_case(
         "cap_cycle":cap_cycle,
         "recovery":recovery,
         "pass":pass});
-    (receipt, pass, [run, r1, r2])
+    (receipt, pass, [run, r1, r2, r0])
 }
 
 fn running(network: &mut Network<If97>) {
@@ -2185,8 +2209,8 @@ fn s1_hydraulics_admission() {
     ok &= seize_pass;
     cases.insert("rcp_seizure".into(), seize);
 
-    // 5. Joint cost check and conservation identity across every gated run
-    // (each event's R0 reports its own in its natural reference).
+    // 5. Joint cost check, and the conservation identity across every run,
+    // each event's R0 included.
     let joint = quiet_rate.map(|r| r * gates.projected_full_unit_step_s);
     let joint_pass = joint.is_some_and(|j| j <= gates.integrator_budget_cpu_s_per_s);
     ok &= joint_pass;
@@ -2307,15 +2331,18 @@ fn s1_harness_smoke() {
         "{}",
         json!({"kind":"s1-harness-smoke-event-pipeline-NOT-EVIDENCE","from_t_s":run.samples.last().map(|s|s.t),"case":case})
     );
-    for r in &runs {
+    let [event, r1, r2, r0] = &runs;
+    for r in [event, r1, r2] {
         assert!(r.failure.is_none(), "{:?}", r.failure);
         assert_eq!(r.fine.len(), 251, "observations over the 0.5 s window");
     }
+    // R0 is unobserved, and as an S1 run it must not fail.
+    assert!(r0.failure.is_none() && !r0_fails(r0), "{:?}", r0.failure);
+    assert!(r0.fine.is_empty());
     assert!(case["versus_r1"]["evaluable"].as_bool() == Some(true));
     // H1: the event run restarted at the window's end by the exact
     // consistent start and reached its continuation's end; its counts are
     // the window's and the continuation's, which only it has.
-    let [event, r1, r2] = &runs;
     let pair = event.restart_pair.as_ref().expect("restart pair");
     assert!(pair.residual.value <= CONSISTENT_ROW_BOUND, "{pair:?}");
     assert!(
@@ -2349,6 +2376,11 @@ fn s1_harness_smoke() {
     assert_eq!(natural["reached_s"].as_f64(), Some(1.), "{natural}");
     assert_eq!(natural["covered"], json!(true), "{natural}");
     assert_eq!(natural["failure"], Value::Null, "{natural}");
+    assert_eq!(
+        (&natural["fails_event"], &natural["run_cap_reached"]),
+        (&json!(false), &json!(false)),
+        "{natural}"
+    );
     let steps = |part: &str| natural[part]["steps"].as_i64().unwrap();
     assert_eq!(
         steps("window") + steps("interval"),
@@ -3240,7 +3272,7 @@ fn recovery_is_judged_on_the_window_and_continuation_cost() {
 }
 
 #[test]
-fn the_natural_reference_reports_r0_beside_the_continuation_and_judges_nothing() {
+fn r0_is_reported_beside_the_continuation_and_fails_the_event_except_at_its_cap() {
     let counts = |steps, error_failures, convergence_failures| Counts {
         steps,
         error_failures,
@@ -3305,29 +3337,54 @@ fn the_natural_reference_reports_r0_beside_the_continuation_and_judges_nothing()
         (&Value::Null, &json!(STOCK_NEWTON_COEFFICIENT))
     );
     assert_eq!(
-        (&report["covered"], &report["run_cap_reached"]),
-        (&json!(true), &json!(false))
+        (
+            &report["covered"],
+            &report["run_cap_reached"],
+            &report["fails_event"]
+        ),
+        (&json!(true), &json!(false), &json!(false))
     );
     // An R0 that stopped at its cap short of the interval's end is reported
-    // with its counts so far and no ratio; it is never a failure of the
-    // event, since the report carries no verdict.
-    let short = natural_reference(
-        &run,
-        &r0(16.8, counts(300, 2, 0), counts(2501, 9, 0)),
-        10.,
-        10.,
-        2500,
-    );
+    // with its counts so far and no ratio, and does not fail the event.
+    let capped = Run {
+        failure: Some("run cap reached: 2501 steps from the run's start".into()),
+        cap_reached: true,
+        ..r0(16.8, counts(300, 2, 0), counts(2501, 9, 0))
+    };
+    assert!(!r0_fails(&capped));
+    let short = natural_reference(&run, &capped, 10., 10., 2500);
     assert!(
         short["continuation_over_r0_steps"].is_null() && short["interval_steps_per_s"].is_null(),
         "{short}"
     );
     assert_eq!(
-        (&short["covered"], &short["run_cap_reached"]),
-        (&json!(false), &json!(true))
+        (
+            &short["covered"],
+            &short["run_cap_reached"],
+            &short["fails_event"]
+        ),
+        (&json!(false), &json!(true), &json!(false))
     );
     assert_eq!(short["interval"]["steps"], json!(2201));
     assert!(short.get("pass").is_none());
+    // R0 is an S1 run: a frozen-rule trip, or any other failure such as a
+    // property-domain exit through stock IDA, fails the event.
+    for failure in [
+        "energy identity open at t=14.3: 2 W against terms 1 W",
+        "fatal IDA callback: property evaluation outside the admitted domain",
+    ] {
+        let tripped = Run {
+            failure: Some(failure.into()),
+            ..r0(14.3, counts(300, 2, 0), counts(400, 3, 0))
+        };
+        assert!(r0_fails(&tripped), "{failure}");
+        let report = natural_reference(&run, &tripped, 10., 10., 2500);
+        assert_eq!(
+            (&report["fails_event"], &report["run_cap_reached"]),
+            (&json!(true), &json!(false))
+        );
+    }
+    assert!(!r0_fails(&r0(20., counts(300, 2, 0), counts(450, 5, 1))));
 }
 
 /// y0' = -y0 (differential) and 0 = y1 + y1^3 - y0 (algebraic, nonlinear),
