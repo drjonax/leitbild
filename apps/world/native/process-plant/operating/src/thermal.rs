@@ -151,6 +151,80 @@ pub trait WaterProperties {
     fn saturation(&self, pressure: Scalar) -> Result<Saturation>;
     fn saturated_vapor_density(&self, temperature: Scalar) -> Result<Scalar>;
 }
+/// One evaluation's property boundary for the thermal laws: every query at
+/// bit-identical inputs (value and direction) is answered once, from the
+/// first answer. The answers are pure functions of their inputs, so a law
+/// sees exactly what a fresh query returns. A caller wraps its properties
+/// for one evaluation (one residual or one seeded pass) and drops the
+/// wrapper with it; nothing persists across evaluations or trials.
+pub struct Shared<'a, P: WaterProperties> {
+    inner: &'a P,
+    liquid: std::cell::RefCell<Vec<([u64; 4], WaterPoint)>>,
+    vapor: std::cell::RefCell<Vec<([u64; 4], WaterPoint)>>,
+    saturation: std::cell::RefCell<Vec<([u64; 2], Saturation)>>,
+    vapor_density: std::cell::RefCell<Vec<([u64; 2], Scalar)>>,
+}
+impl<'a, P: WaterProperties> Shared<'a, P> {
+    pub fn new(inner: &'a P) -> Self {
+        Self {
+            inner,
+            liquid: Default::default(),
+            vapor: Default::default(),
+            saturation: Default::default(),
+            vapor_density: Default::default(),
+        }
+    }
+    /// Queries answered by the inner implementation so far.
+    pub fn evaluated(&self) -> usize {
+        self.liquid.borrow().len()
+            + self.vapor.borrow().len()
+            + self.saturation.borrow().len()
+            + self.vapor_density.borrow().len()
+    }
+}
+fn bits2(x: Scalar) -> [u64; 2] {
+    [x.value.to_bits(), x.direction.to_bits()]
+}
+/// The held answer to `key`, or the inner answer, held when it succeeds.
+fn held<K: PartialEq + Copy, V: Copy>(
+    store: &std::cell::RefCell<Vec<(K, V)>>,
+    key: K,
+    answer: impl FnOnce() -> Result<V>,
+) -> Result<V> {
+    if let Some((_, v)) = store.borrow().iter().find(|(k, _)| *k == key) {
+        return Ok(*v);
+    }
+    let v = answer()?;
+    store.borrow_mut().push((key, v));
+    Ok(v)
+}
+impl<P: WaterProperties> WaterProperties for Shared<'_, P> {
+    fn liquid(&self, pressure: Scalar, temperature: Scalar) -> Result<WaterPoint> {
+        let [a, b] = bits2(pressure);
+        let [c, d] = bits2(temperature);
+        held(&self.liquid, [a, b, c, d], || {
+            self.inner.liquid(pressure, temperature)
+        })
+    }
+    fn vapor(&self, pressure: Scalar, temperature: Scalar) -> Result<WaterPoint> {
+        let [a, b] = bits2(pressure);
+        let [c, d] = bits2(temperature);
+        held(&self.vapor, [a, b, c, d], || {
+            self.inner.vapor(pressure, temperature)
+        })
+    }
+    fn saturation(&self, pressure: Scalar) -> Result<Saturation> {
+        held(&self.saturation, bits2(pressure), || {
+            self.inner.saturation(pressure)
+        })
+    }
+    fn saturated_vapor_density(&self, temperature: Scalar) -> Result<Scalar> {
+        held(&self.vapor_density, bits2(temperature), || {
+            self.inner.saturated_vapor_density(temperature)
+        })
+    }
+}
+
 fn check_water(w: WaterPoint) -> Result<()> {
     for v in [w.density, w.viscosity, w.conductivity, w.cp] {
         positive(v)?;
@@ -1326,6 +1400,67 @@ mod current_port_regression {
                 cp: s(500.),
             },
         }
+    }
+
+    fn point_bits(w: WaterPoint) -> Vec<u64> {
+        [
+            w.density,
+            w.viscosity,
+            w.conductivity,
+            w.cp,
+            w.expansion,
+            w.enthalpy,
+        ]
+        .iter()
+        .flat_map(|x| [x.value.to_bits(), x.direction.to_bits()])
+        .collect()
+    }
+
+    /// One evaluation's shared boundary answers each distinct query once,
+    /// with exactly the direct answer, for every query kind.
+    #[test]
+    fn shared_boundary_answers_each_identical_query_once() {
+        let direct = Properties::default();
+        let inner = Properties::default();
+        let shared = Shared::new(&inner);
+        let pressures = [
+            Scalar::new(1e7, 1000.),
+            s(1e7),
+            Scalar::new(1e7, -0.),
+            s(1.01e7),
+        ];
+        let temperatures = [s(580.), Scalar::new(580., 0.3), s(590.)];
+        for _ in 0..3 {
+            for p in pressures {
+                for t in temperatures {
+                    assert_eq!(
+                        point_bits(shared.liquid(p, t).unwrap()),
+                        point_bits(direct.liquid(p, t).unwrap())
+                    );
+                    assert_eq!(
+                        point_bits(shared.vapor(p, t).unwrap()),
+                        point_bits(direct.vapor(p, t).unwrap())
+                    );
+                }
+                let (a, b) = (shared.saturation(p).unwrap(), direct.saturation(p).unwrap());
+                assert_eq!(
+                    [point_bits(a.liquid), point_bits(a.vapor)],
+                    [point_bits(b.liquid), point_bits(b.vapor)]
+                );
+                assert_eq!(bits2(a.temperature), bits2(b.temperature));
+            }
+            for t in temperatures {
+                assert_eq!(
+                    bits2(shared.saturated_vapor_density(t).unwrap()),
+                    bits2(direct.saturated_vapor_density(t).unwrap())
+                );
+            }
+        }
+        // 4 x 3 liquid, 4 x 3 vapor, 4 saturation and 3 density queries are
+        // distinct (+0.0 and -0.0 seeds are distinct inputs); each once.
+        assert_eq!(inner.queries.get(), 31);
+        assert_eq!(shared.evaluated(), 31);
+        assert_eq!(direct.queries.get(), 93);
     }
 
     #[test]
