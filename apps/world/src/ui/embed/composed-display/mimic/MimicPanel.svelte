@@ -304,7 +304,8 @@
         {/each}
         {#each mimic.stubs as stub (stub.id)}
           {#if stub.textBox !== null}
-            <span class="stub tag" style={`left:${stub.textBox.x}px;top:${stub.textBox.y}px`}>{stub.text}{#if stub.states.some(state => state.kind === 'power')}{` · ${powerStateWord(pipeStatesLook(stub.states, index) as 'live' | 'dead' | 'unknown')}`}{/if}</span>
+            <!-- A power line's far end says on a line under its name whether it is live. -->
+            <span class="stub tag" style={`left:${stub.textBox.x}px;top:${stub.textBox.y}px`}>{stub.text}{#if stub.states.some(state => state.kind === 'power')}<br />{powerStateWord(pipeStatesLook(stub.states, index) as 'live' | 'dead' | 'unknown')}{/if}</span>
           {/if}
         {/each}
       </div>

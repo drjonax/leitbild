@@ -358,7 +358,7 @@ describe('a limit that on/off states gate, as World reads it', () => {
     expect(Number(blocked.read('pressurizer.pressureMPa'))).toBeLessThan(12.7)
     const { result } = blocked.compose('Planned depressurization', ['PT-455'], [{ kind: 'trend', horizon: '10m', signals: [signal('PT-455', 'primary')] }])
     // The SI limit is drawn and said to act only while SI-BLOCKED is off; no margin is read against it while blocked.
-    expect(result.shows.join('\n')).toContain('"LO-LO 12.7 MPa · SI" automatic action line')
+    expect(result.shows.join('\n')).toContain('"LO-3 12.7 MPa · SI" automatic action line')
     expect(result.shows.join('\n')).toContain('(only while SI-BLOCKED off)')
     expect(result.margins.join('\n')).not.toContain('· SI')
     expect(result.margins[0]).toMatch(/^PT-455: .*LO 14\.8 MPa · ALM/)

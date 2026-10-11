@@ -428,9 +428,9 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const id = `s${at}`
     const component = graph.components[stub.component]!
     stubs.set(id, stub)
-    // A power line's far end says whether it is live after its name ("from UAT · LIVE"); its room is kept for the longest word.
+    // A power line's far end says whether it is live on a line under its name ("from UAT", "DEAD"), its room kept for the longest word.
     const powered = linkCarrier(graph.links[stub.links[0]!]!) === 'electricalPower'
-    const text = `${stubText(graph, stub, profile.stubLabels)}${powered ? ` · ${[...POWER_STATE_WORDS].sort((a, b) => textWidth('tag', b) - textWidth('tag', a))[0]}` : ''}`
+    const text = stubText(graph, stub, profile.stubLabels)
     const lane = laneOf(component, loopOrder)
     nodes.push({
       id,
@@ -440,7 +440,10 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
       portInset: 0,
       ports: [{ id: 'end', direction: stub.direction === 'out' ? 'in' : 'out', rank: 'end' }],
       ...(lane === undefined ? {} : { lane }),
-      text: { lines: [{ width: measure('tag', text, text), height: openBridgeDevice.tagLine, required: true }] },
+      text: { lines: [
+        { width: measure('tag', text, text), height: openBridgeDevice.tagLine, required: true },
+        ...(powered ? [{ width: Math.max(...POWER_STATE_WORDS.map(word => measure('tag', word, text))), height: openBridgeDevice.tagLine, required: true }] : []),
+      ] },
       frameable: false,
     })
     const edge = { id: `${id}.edge`, rank: `stub|${componentRank.get(stub.component)}|${stub.port}|${stub.direction}` }
