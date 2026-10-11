@@ -20,6 +20,8 @@ export interface SnapshotNetwork {
   readonly branchTo: Int32Array
   /** Series susceptance 1/x (pu on sBaseMva). */
   readonly branchSusceptancePu: Float64Array
+  /** 1 on a bus of the Norwegian network, 0 on a boundary bus of an external system (GridTables.norwegianBus). */
+  readonly norwegianBus: Uint8Array
 }
 
 /** The case's AC components in compressed rows; component i owns `buses[busStart[i] .. busStart[i + 1])`, ascending, the first its angle reference. */

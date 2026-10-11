@@ -25,7 +25,7 @@ interface FakeLayer {
 
 const createFakeMap = (baseLayers: ReadonlyArray<FakeLayer>) => {
   const layers: FakeLayer[] = baseLayers.map(layer => ({ ...layer }))
-  const sources = new Map<string, { data: GeoJSON.FeatureCollection; promoteId?: string; attribution?: string; setData: (data: GeoJSON.FeatureCollection) => void }>()
+  const sources = new Map<string, { data: GeoJSON.FeatureCollection; promoteId?: string; buffer?: number; attribution?: string; setData: (data: GeoJSON.FeatureCollection) => void }>()
   const featureState = new Map<string, Record<string, unknown>>()
   const stateWrites: Array<{ readonly source: string; readonly id: number; readonly state: Readonly<Record<string, unknown>> }> = []
   const stateRemovals: Array<{ readonly source: string; readonly id?: number; readonly key?: string }> = []
@@ -37,7 +37,7 @@ const createFakeMap = (baseLayers: ReadonlyArray<FakeLayer>) => {
     getSource: id => sources.get(id),
     addSource: (id, source) => {
       if (sources.has(id)) throw new Error(`source ${id} exists`)
-      const entry = { data: source.data, ...(source.promoteId === undefined ? {} : { promoteId: source.promoteId }), ...(source.attribution === undefined ? {} : { attribution: source.attribution }), setData: (data: GeoJSON.FeatureCollection) => { entry.data = data } }
+      const entry = { data: source.data, ...(source.promoteId === undefined ? {} : { promoteId: source.promoteId }), ...(source.buffer === undefined ? {} : { buffer: source.buffer }), ...(source.attribution === undefined ? {} : { attribution: source.attribution }), setData: (data: GeoJSON.FeatureCollection) => { entry.data = data } }
       sources.set(id, entry)
     },
     removeSource: id => { sources.delete(id) },
@@ -208,6 +208,9 @@ describe('Pack live map layer renderer', () => {
     await settle()
     expect(h.errors).toEqual([])
     expect(h.map.sources.get(sourceId)!.promoteId).toBe('fid')
+    // A narrow tile buffer keeps MapLibre's per-tile feature-state work small; labels keep the default.
+    expect(h.map.sources.get(sourceId)!.buffer).toBe(32)
+    expect(h.map.sources.get(`${sourceId}:labels`)!.buffer).toBeUndefined()
     expect(h.map.sources.get(sourceId)!.attribution).toBe('Test data')
     expect(h.map.sources.get(sourceId)!.data.features.map(feature => feature.properties!.fid)).toEqual([0, 1, 2])
     expect(h.map.layers.map(layer => layer.id)).toEqual([

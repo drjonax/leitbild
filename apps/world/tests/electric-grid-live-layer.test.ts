@@ -29,7 +29,7 @@ import {
 } from '../src/packs/electric-grid/ui/grid-live-layer.ts'
 import { gridMapPalette } from '../src/packs/electric-grid/ui/grid-map-palette.ts'
 import { gridNorwayStyle } from '../src/packs/electric-grid/ui/grid-norway-style.ts'
-import { recolorPaintValue } from '../src/ui/map-runtime/pack-live-layer.ts'
+import { liveFeatureTileBufferPx, recolorPaintValue } from '../src/ui/map-runtime/pack-live-layer.ts'
 import { corridorDefinition, corridorModel, steppedGrid } from './fixtures/grid-corridor.ts'
 
 const themes: ReadonlyArray<PackMapTheme> = ['light', 'dark']
@@ -80,6 +80,22 @@ describe('Grid live layer: MapLibre layers', () => {
       } as never)
       expect(errors.map(error => error.message)).toEqual([])
     }
+  })
+
+  test('keep line half-widths and flow arrows inside the live source tile buffer, so tile edges stay seamless', () => {
+    const widest = { live: true, hover: true, selected: true, loading: 150, tripped: true }
+    for (const theme of themes) {
+      for (const layer of specs(theme).filter(candidate => candidate.type === 'line')) {
+        for (const zoom of [4, 8, 12, 16, 22]) {
+          const width = paintAt(layer, 'line-width', zoom, { kind: 'branch', kv: 420 }, widest) as number
+          expect(width / 2).toBeLessThan(liveFeatureTileBufferPx)
+        }
+      }
+    }
+    // Pack artwork is rasterised at 48 px for pixel ratio 2: 24 px at icon-size 1.
+    const iconSize = expression.createPropertyExpression(spec('flow-forward').layout!['icon-size'] as never, (latest as unknown as Record<string, Record<string, unknown>>).layout_symbol!['icon-size'] as never)
+    if (iconSize.result !== 'success') throw new Error(JSON.stringify(iconSize.value))
+    for (const zoom of [6, 12, 22]) expect((iconSize.value.evaluate({ zoom } as never) as number) * 24 / 2).toBeLessThan(liveFeatureTileBufferPx)
   })
 
   test('never use a constant fractional line-opacity, and their line opacity is 0 or 1', () => {
@@ -336,6 +352,22 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     expect(before.hoverCard(busFid('bus:boundary-DE'))!.fields.find(field => field.key === `link-${nordlink}`))
       .toEqual({ key: `link-${nordlink}`, label: 'NordLink', value: transferMw === 0 ? '0 MW' : `${Math.abs(transferMw).toLocaleString()} MW ${transferMw > 0 ? 'export' : 'import'}` })
     expect(terminalCard.fields.find(field => field.key === `link-${nordlink}`)!.value).toBe('Tripped by its converter protection: reset it, then deblock')
+  })
+
+  test('draw a boundary bus separated from Norway as a live bus of its external system, not as an HVDC terminal', () => {
+    const grid = createGridRuntimeInstance({ definition: norway, at })
+    advanceGrid(grid, 0, at)
+    const geometry = gridLiveMapLayer.loadGeometry(wire(grid, 'world.electric-grid.map.geometry'))
+    const busId = 'bus:boundary-SE1@132'
+    const ties = norway.model.branches.filter(branch => branch.fromBusId === busId || branch.toBusId === busId)
+    expect(ties.length).toBe(1)
+    command(grid, gridOpenBranchCommandKind, ties[0]!.id)
+    const state = geometry.presentState(wire(grid, 'world.electric-grid.map.state'))
+    const busFid = geometry.features.findIndex(feature => feature.properties.kind === 'bus') + norway.model.buses.findIndex(bus => bus.id === busId)
+    expect(state.featureStates.get(busFid)).toMatchObject({ external: false, energized: true, island: -1, alarm: false })
+    const card = state.hoverCard(busFid)!
+    expect(card.fields.map(field => field.key)).toEqual(['external', 'voltage', 'role'])
+    expect(card.fields.find(field => field.key === 'role')!.value).toStartWith('Separated from Norway')
   })
 
   test('read a branch its protection tripped as tripped, distinct from one an operator opened', () => {

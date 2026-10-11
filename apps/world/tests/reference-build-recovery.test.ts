@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import { electricGridPackView } from '../src/packs/electric-grid/ui-pack.ts'
 import { gridNorwayStyle } from '../src/packs/electric-grid/ui/grid-norway-style.ts'
 import { createReferenceDataController } from '../src/ui/map/reference-data-controller.ts'
-import { createMapLayerRegistry } from '../src/ui/map-runtime/map-layer-registry.ts'
+import { createReferenceLayerController } from '../src/ui/map-runtime/reference-layer-controller.ts'
+import type { MapRuntimeDiagnosticPhaseReport, MapRuntimeHandle } from '../src/ui/map-runtime/types.ts'
 import { gridNorwayReferenceTileset, gridNorwaySlimReferenceTileset } from './fixtures/grid-norway-reference-manifest.ts'
+import { routeMapErrors } from './helpers/fake-map-errors.ts'
 import { createFakeMapStyle, layerOrder } from './helpers/fake-map-style.ts'
 
 const oldBuild = gridNorwayReferenceTileset.buildId
@@ -42,6 +44,7 @@ const settled = async (): Promise<void> => { await Bun.sleep(5) }
 
 const registerGrid = async (...responses: ReadonlyArray<() => Response>) => {
   const fake = createFakeMapStyle()
+  const errors = routeMapErrors(fake.map)
   const scripted = scriptedFetch(() => capabilities(gridNorwayReferenceTileset), ...responses)
   const failures: string[] = []
   const logs: string[] = []
@@ -53,9 +56,10 @@ const registerGrid = async (...responses: ReadonlyArray<() => Response>) => {
     fetchFn: scripted.fetchFn,
     logger: message => logs.push(message),
     onBuildRecoveryFailed: message => failures.push(message),
+    claimErrors: errors.claimErrors,
   })
   const gridLayerIds = () => fake.layers.filter(layer => layer.source === sourceId).map(layer => layer.id)
-  return { ...fake, ...scripted, controller, failures, logs, gridLayerIds }
+  return { ...fake, ...scripted, controller, errors, failures, logs, gridLayerIds }
 }
 
 describe('reference build recovery after a promotion', () => {
@@ -79,26 +83,47 @@ describe('reference build recovery after a promotion', () => {
     expect(grid.layers.filter(layer => layer.visibility === 'none').map(layer => layer.id)).toEqual(['reference:grid-norway:substations:point'])
     expect(grid.failures).toEqual([])
     expect(grid.logs).toContain(`reference-data: grid-norway moved from build ${oldBuild} to ${newBuild}`)
+    // The refused tiles were the recovery's to handle: no reference warning, no runtime error.
+    expect(grid.errors.warnings).toEqual([])
+    expect(grid.errors.runtimeErrors).toEqual([])
   })
 
-  test('reads the capabilities once per superseded build and ignores late, unrelated or other errors', async () => {
+  test('reads the capabilities once per superseded build and leaves errors it does not handle to the reference warning', async () => {
     const grid = await registerGrid(() => capabilities(gridNorwaySlimReferenceTileset), () => capabilities(laterTileset))
     grid.emit('error', tileError(409, oldBuild))
     await settled()
     expect(grid.reads).toHaveLength(2)
 
+    // A late answer for the build the map left is handled; the rest are not the recovery's.
     grid.emit('error', tileError(409, oldBuild))
+    expect(grid.errors.warnings).toEqual([])
     grid.emit('error', tileError(500, newBuild))
     grid.emit('error', tileError(409, newBuild, 'reference:other-dataset'))
     grid.emit('error', { type: 'error', sourceId, error: new Error('network down') })
     await settled()
     expect(grid.reads).toHaveLength(2)
+    expect(grid.errors.warnings).toEqual([
+      tileError(500, newBuild).error.message,
+      tileError(409, newBuild, 'reference:other-dataset').error.message,
+      'network down',
+    ])
 
     grid.emit('error', tileError(409, newBuild))
     await settled()
     expect(grid.reads).toHaveLength(3)
     expect(String((grid.sources.get(sourceId)?.tiles as ReadonlyArray<string>)[0])).toEndWith('?build=20261101-000000')
     expect(grid.failures).toEqual([])
+    expect(grid.errors.warnings).toHaveLength(3)
+    expect(grid.errors.runtimeErrors).toEqual([])
+  })
+
+  test('warns about a refused build the dataset never served instead of claiming it', async () => {
+    const grid = await registerGrid()
+    grid.emit('error', tileError(409, '20250101-000000'))
+    await settled()
+    expect(grid.reads).toHaveLength(1)
+    expect(grid.failures).toEqual([])
+    expect(grid.errors.warnings).toEqual([tileError(409, '20250101-000000').error.message])
   })
 
   test('removes the dataset and reports when the capabilities cannot be read', async () => {
@@ -115,6 +140,8 @@ describe('reference build recovery after a promotion', () => {
     await settled()
     expect(grid.reads).toHaveLength(2)
     expect(grid.failures).toHaveLength(1)
+    // The failure is the visible outcome; the refused tiles add no warning of their own.
+    expect(grid.errors.warnings).toEqual([])
   })
 
   test('removes the dataset and reports when it is no longer published, or the refused build still is', async () => {
@@ -130,44 +157,61 @@ describe('reference build recovery after a promotion', () => {
     await settled()
     expect(unchanged.failures[0]).toContain('still publish the build the server refuses')
     expect(unchanged.gridLayerIds()).toEqual([])
+    expect([...vanished.errors.warnings, ...unchanged.errors.warnings]).toEqual([])
   })
 
   test('a disposed controller stops following promotions', async () => {
     const grid = await registerGrid()
-    expect(grid.listenerCount('error')).toBe(1)
+    expect(grid.errors.claimCount()).toBe(1)
     grid.controller.dispose()
-    expect(grid.listenerCount('error')).toBe(0)
+    expect(grid.errors.claimCount()).toBe(0)
     grid.emit('error', tileError(409, oldBuild))
     await settled()
     expect(grid.reads).toHaveLength(1)
+    expect(grid.errors.warnings).toEqual([tileError(409, oldBuild).error.message])
   })
 })
 
-describe('map layer registry and build recovery', () => {
-  test('reports a failed recovery through onError and stops following on reset', async () => {
+describe('reference layer controller and build recovery', () => {
+  test('fails the reference phase visibly when a refused build cannot be replaced, and stops following on reset', async () => {
     const fake = createFakeMapStyle()
+    const errors = routeMapErrors(fake.map)
     const responses = [() => capabilities(gridNorwayReferenceTileset), () => new Response('gone', { status: 500 })]
     const originalFetch = globalThis.fetch
     let reads = 0
     globalThis.fetch = (async () => responses[reads++]!()) as unknown as typeof fetch
-    const errors: string[] = []
+    const reports: MapRuntimeDiagnosticPhaseReport[] = []
+    const mapErrors: string[] = []
+    const runtime = {
+      map: fake.map,
+      claimErrors: errors.claimErrors,
+      reportDiagnosticPhase: (report: MapRuntimeDiagnosticPhaseReport) => { reports.push(report) },
+    } as unknown as MapRuntimeHandle
     try {
-      const registry = createMapLayerRegistry()
-      await registry.registerReferenceLayers({
-        map: fake.map,
+      const controller = createReferenceLayerController({ requestIdle: callback => callback(), onError: message => mapErrors.push(message) })
+      controller.register({
+        runtime,
+        simulationRunId: 'run-1',
         styles: [gridNorwayStyle],
         appearance: { theme: 'light' },
         layerGroups: electricGridPackView.presentation.mapLayerGroups ?? [],
         visibility: {},
-        onError: message => errors.push(message),
       })
-      fake.emit('error', tileError(409, oldBuild))
       await settled()
-      expect(errors).toHaveLength(1)
-      expect(errors[0]).toContain('returned HTTP 500')
-      expect(fake.listenerCount('error')).toBe(1)
-      registry.reset()
-      expect(fake.listenerCount('error')).toBe(0)
+      expect(reports.at(-1)).toMatchObject({ phase: 'reference', status: 'ready' })
+      expect(errors.claimCount()).toBe(1)
+
+      for (let index = 0; index < 3; index++) fake.emit('error', tileError(409, oldBuild))
+      await settled()
+      expect(mapErrors).toHaveLength(1)
+      expect(mapErrors[0]).toStartWith('Reference map overlay failed: reference dataset grid-norway left build')
+      expect(mapErrors[0]).toContain('returned HTTP 500')
+      expect(reports.at(-1)).toMatchObject({ phase: 'reference', status: 'failed', error: { phase: 'reference', recoverable: true } })
+      expect(errors.warnings).toEqual([])
+      expect(errors.runtimeErrors).toEqual([])
+
+      controller.reset()
+      expect(errors.claimCount()).toBe(0)
     } finally {
       globalThis.fetch = originalFetch
     }

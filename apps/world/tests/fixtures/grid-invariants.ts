@@ -19,6 +19,7 @@ export const largestKclResidualMw = (grid: GridRuntimeInstance): number => {
 /** Sum of all injections of each energised island (MW); balance closes by construction. */
 export const largestIslandInjectionSumMw = (grid: GridRuntimeInstance): number => {
   const sums = new Map<string, number>()
-  for (const state of grid.busStates.values()) if (state.energized) sums.set(state.islandId, (sums.get(state.islandId) ?? 0) + state.netInjectionMw)
+  // A separated boundary bus is energised by its external system in no island and carries no injection.
+  for (const state of grid.busStates.values()) if (state.energized && state.islandId !== null) sums.set(state.islandId, (sums.get(state.islandId) ?? 0) + state.netInjectionMw)
   return Math.max(0, ...[...sums.values()].map(Math.abs))
 }

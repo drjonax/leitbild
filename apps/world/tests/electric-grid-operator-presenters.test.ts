@@ -23,7 +23,8 @@ import {
   gridFlowModelSummary,
   gridRemedialComparison,
 } from '../src/packs/electric-grid/ui/operator-contingency.ts'
-import { corridorDefinition, steppedGrid, type SteppedGrid } from './fixtures/grid-corridor.ts'
+import { corridorDefinition, corridorModel, steppedGrid, type SteppedGrid } from './fixtures/grid-corridor.ts'
+import { gridDefinitionForModel, handBuiltModel } from './fixtures/synthetic-grid.ts'
 
 /** A query as the browser receives it: answered, validated by its published output schema, sent as JSON. */
 const ask = async <T>(run: SteppedGrid, capabilityId: string, input: Readonly<Record<string, unknown>> = {}): Promise<T> => {
@@ -76,16 +77,21 @@ describe('Grid operator alarms presenter', () => {
     expect(() => formatGridAlarmTime('not a time', gridLocalTimeZone)).toThrow('not an ISO timestamp')
   })
 
-  test('island alarms locate at the island\'s reference bus', async () => {
-    const run = steppedGrid(corridorDefinition())
+  test('island alarms are named after and located at the island\'s anchor bus, as islands.list names it', async () => {
+    // Bus B first in model order: the part L–A–B that forms is referenced at B but named after L,
+    // its 300 kV station with the most connected branch capacity.
+    const byId = new Map(corridorModel.buses.map(bus => [bus.id, bus]))
+    const reordered = handBuiltModel({ ...corridorModel, buses: ['bus:g', 'bus:b', 'bus:a', 'bus:l'].map(busId => byId.get(busId)!) })
+    const run = steppedGrid(gridDefinitionForModel(reordered))
     run.advanceTo(10_000)
-    for (const branchId of ['branch:g-l', 'branch:a-l', 'branch:b-l']) expect(run.command(gridOpenBranchCommandKind, { assetId: branchId }).ok).toBe(true)
+    for (const branchId of ['branch:g-l', 'branch:g-a', 'branch:g-b']) expect(run.command(gridOpenBranchCommandKind, { assetId: branchId }).ok).toBe(true)
     run.advanceTo(12_000)
     const listed = await ask<GridAlarmsListResult>(run, 'world.electric-grid.alarms.list', { states: ['active'] })
     const islands = await ask<GridIslandsResult>(run, 'world.electric-grid.islands.list')
     const formed = gridAlarmRows(listed.alarms, gridLocalTimeZone).find(row => row.id.startsWith('island:') && row.id.endsWith(':formed'))!
     const island = islands.islands.find(candidate => formed.id === `island:${candidate.id.slice('island:'.length)}:formed`)!
-    expect(formed).toMatchObject({ mapAssetId: island.referenceBus.id, assetLabel: `Island at ${island.referenceBus.label}` })
+    expect([island.anchorBus.id, island.referenceBus.id]).toEqual(['bus:l', 'bus:b'])
+    expect(formed).toMatchObject({ mapAssetId: 'bus:l', assetLabel: 'Island at bus:l' })
   })
 })
 
@@ -170,10 +176,18 @@ describe('Grid operator command guidance', () => {
   })
 
   test('HVDC set-point guidance states the sign, the limit and the ramp', () => {
-    const link = { label: 'NordLink', ratingMw: 1_400, rampMwPerMinute: 60, transferMw: 200, setpointMw: 200 }
+    const link = { label: 'NordLink', ratingMw: 1_400, rampMwPerMinute: 60, transferMw: 200, setpointMw: 200, rampGroup: null }
     expect(gridHvdcSetpointGuidance(link, null)).toEqual({ convention: 'Positive exports from Norway over NordLink, negative imports into Norway; at most ±1,400 MW.', outcome: null, problem: null })
     expect(gridHvdcSetpointGuidance(link, -600).outcome).toBe('Ramps from 200 MW export to 600 MW import in 13.3 min at 60 MW/min.')
     expect(gridHvdcSetpointGuidance(link, 1_500).problem).toBe('1,500 MW is beyond the ±1,400 MW rating.')
     expect(gridHvdcSetpointGuidance(link, 200).problem).toBe('NordLink already has the set-point 200 MW.')
+  })
+
+  test('HVDC set-point guidance ramps a grouped link at the lower of its own and its group\'s limit', () => {
+    const grouped = { label: 'NordLink', ratingMw: 1_400, rampMwPerMinute: 60, transferMw: 200, setpointMw: 200, rampGroup: { id: 'ramp:no2-continental', rampMwPerMinute: 50, linkCount: 2 } }
+    expect(gridHvdcSetpointGuidance(grouped, -600).outcome)
+      .toBe('Ramps from 200 MW export to 600 MW import in 16.0 min at 50 MW/min. ramp:no2-continental limits the net change of its 2 links to 50 MW/min, so it takes longer while another of them ramps the same way.')
+    const ownLimited = { ...grouped, label: 'NorNed', ratingMw: 700, rampMwPerMinute: 30 }
+    expect(gridHvdcSetpointGuidance(ownLimited, -400).outcome).toStartWith('Ramps from 200 MW export to 400 MW import in 20.0 min at 30 MW/min.')
   })
 })

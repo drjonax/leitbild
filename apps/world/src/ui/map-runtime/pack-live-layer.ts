@@ -25,7 +25,7 @@ import { referenceLayerIdPrefix } from '../map/reference-layer-factory.ts'
 export interface LiveMapPort {
   getStyle(): { readonly layers: ReadonlyArray<{ readonly id: string; readonly type: string }> }
   getSource(id: string): unknown
-  addSource(id: string, source: { readonly type: 'geojson'; readonly data: GeoJSON.FeatureCollection; readonly promoteId?: string; readonly attribution?: string }): void
+  addSource(id: string, source: { readonly type: 'geojson'; readonly data: GeoJSON.FeatureCollection; readonly promoteId?: string; readonly buffer?: number; readonly attribution?: string }): void
   removeSource(id: string): void
   getLayer(id: string): unknown
   addLayer(layer: Record<string, unknown>, beforeId?: string): void
@@ -122,6 +122,12 @@ const segmentPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const imagePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$/
 // Pack artwork is drawn at 2× and shown at half size, like Pack feature icons.
 const imagePixelRatio = 2
+// Tile buffer of a feature source, px of a 512 px tile (MapLibre's default is 128). When a tile
+// is added after a state change, MapLibre re-evaluates the state-dependent paint of every feature
+// in it, so features copied into neighbouring tiles' buffers cost main-thread time at each zoom
+// step. 32 px keeps tile edges seamless while live line half-widths and along-line symbol
+// half-sizes stay below it; for the Norway Grid it cut that work at z6 by about a third.
+export const liveFeatureTileBufferPx = 32
 
 export const liveLayerIdPrefix = 'live:'
 
@@ -415,7 +421,7 @@ export const createPackLiveLayerController = (config: PackLiveLayerControllerCon
       }
       const specs = layer.layersFor(appearance)
       validateSpecs(layer, specs)
-      map.addSource(instance.sourceId, { type: 'geojson', data: featureCollection(instance.geometry!.features), promoteId: 'fid', attribution: layer.attribution })
+      map.addSource(instance.sourceId, { type: 'geojson', data: featureCollection(instance.geometry!.features), promoteId: 'fid', buffer: liveFeatureTileBufferPx, attribution: layer.attribution })
       map.addSource(instance.labelSourceId, { type: 'geojson', data: featureCollection(instance.state!.labels) })
       instance.labelSignature = JSON.stringify(instance.state!.labels)
       const anchor = liveLayerAnchorId(map.getStyle())

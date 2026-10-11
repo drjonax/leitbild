@@ -41,6 +41,10 @@ const hvdcRowSchema = z.object({
   transferMw: finite.describe('Power sent at the sending converter to 0.1 MW, signed like the set-point; it ramps towards it.'),
   lossesMw: finite.describe('Converter and cable losses to 0.1 MW.'),
   loadingPercent: finite.describe('|transferMw| over ratingMw, to 0.1 %.'),
+  rampGroup: z.object({
+    id: z.string(),
+    rampMwPerMinute: finite.describe('Limit on the change of the group\'s aggregate transfer (MW/min), opposite moves offsetting; the link keeps its own rampMwPerMinute too.'),
+  }).strict().nullable().describe('The ramp limit the link shares with other links (world.electric-grid.asset.get gives its members and basis); null when it has none.'),
   definition: hvdcLinkDefinitionSchema.optional(),
 }).strict()
 
@@ -75,6 +79,7 @@ const rowFor = (grid: GridRuntimeInstance, definition: GridBranchDefinition, inc
 
 const hvdcRowFor = (grid: GridRuntimeInstance, definition: GridHvdcLinkDefinition, includeDefinition: boolean): z.infer<typeof hvdcRowSchema> => {
   const state = grid.hvdcLinks.get(definition.id)!
+  const group = grid.definition.index.hvdcRampGroupOfLink.get(definition.id)
   return {
     id: definition.id,
     label: definition.label,
@@ -84,6 +89,7 @@ const hvdcRowFor = (grid: GridRuntimeInstance, definition: GridHvdcLinkDefinitio
     transferMw: tenths(state.transferMw),
     lossesMw: tenths(state.lossesMw),
     loadingPercent: tenths(Math.abs(state.transferMw) / definition.ratingMw * 100),
+    rampGroup: group === undefined ? null : { id: group.id, rampMwPerMinute: group.rampMwPerMinute },
     ...(includeDefinition ? { definition } : {}),
   }
 }
@@ -91,7 +97,7 @@ const hvdcRowFor = (grid: GridRuntimeInstance, definition: GridHvdcLinkDefinitio
 export const gridPowerFlowQuery = defineGridQuery({
   id: 'world.electric-grid.power-flow.snapshot',
   title: 'Get power-flow snapshot',
-  description: 'Returns a bounded page of compact branch rows: rating, closed/open/tripped, derate, flow model (AC where the island\'s load flow converged, else DC), flow (0.1 MW, positive from fromBusId to toBusId), rated flow (MVA in AC) and loading (0.1 % of the derated rating), optionally filtered by minimum loading and island and sorted by loading. Every HVDC link follows in its own rows: deblocked/blocked/tripped, set-point and transfer (positive exports from Norway), losses and loading. Endpoints and electrical parameters come with includeDefinition.',
+  description: 'Returns a bounded page of compact branch rows: rating, closed/open/tripped, derate, flow model (AC where the island\'s load flow converged, else DC), flow (0.1 MW, positive from fromBusId to toBusId), rated flow (MVA in AC) and loading (0.1 % of the derated rating), optionally filtered by minimum loading and island and sorted by loading. Every HVDC link follows in its own rows: deblocked/blocked/tripped, set-point and transfer (positive exports from Norway), losses, loading and the ramp group whose limit it shares. Endpoints and electrical parameters come with includeDefinition.',
   searchTerms: ['power flow', 'branch flow', 'loading', 'overload', 'congestion', 'corridor', 'constraint', 'HVDC', 'interconnector', 'kraftflyt', 'belastning', 'overlast', 'flaskehals', 'snitt', 'linje', 'utenlandsforbindelse'],
   input: powerFlowPayloadSchema,
   output: powerFlowResultSchema,

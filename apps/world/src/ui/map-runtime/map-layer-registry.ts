@@ -1,7 +1,7 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import type { PackMapLayerGroup } from '../../core/packs/protocol.ts'
 import type { PackMapAppearance, PackReferenceDatasetStyle } from '../../core/packs/reference-style.ts'
-import type { RenderPhase } from './types.ts'
+import type { MapErrorClaim, RenderPhase } from './types.ts'
 import { createReferenceDataController, type ReferenceDatasetController } from '../map/reference-data-controller.ts'
 import { createPackLayerGroupControllerFromGroups, type PackLayerGroupController } from '../map/pack-layer-group-controller.ts'
 import { referenceLayerAnchorId } from './reference-layer-order.ts'
@@ -28,6 +28,8 @@ export interface ReferenceLayerRegistrationConfig {
   readonly logger?: (message: string) => void
   /** A registered dataset failed after registration, e.g. when its promoted build could not be adopted. */
   readonly onError: (message: string) => void
+  /** The map's error routing (`MapRuntimeHandle.claimErrors`). */
+  readonly claimErrors: (claim: MapErrorClaim) => () => void
 }
 
 export const createMapLayerRegistry = (): MapLayerRegistry => {
@@ -53,6 +55,7 @@ export const createMapLayerRegistry = (): MapLayerRegistry => {
         beforeLayerId: () => referenceLayerAnchorId(config.map.getStyle()),
         ...(config.logger === undefined ? {} : { logger: config.logger }),
         onBuildRecoveryFailed: config.onError,
+        claimErrors: config.claimErrors,
       })
       // A reset while the capabilities loaded superseded this registration.
       if (registration !== generation) controller.dispose()

@@ -1,4 +1,5 @@
-import type { CompiledGridModelIndex, GridLoadDefinition, GridModelDefinition } from '../../grid-model.ts'
+import type { CompiledGridModelIndex, GridModelDefinition } from '../../grid-model.ts'
+import { demandProfileStride } from '../demand-profiles.ts'
 import { generatorIsVoltageForming, generatorKineticEnergyMws } from '../generator-dynamics.ts'
 import { compiledGridNetworkFor, type CompiledGridNetwork } from '../network/compiled-network.ts'
 
@@ -36,11 +37,16 @@ export interface GridTables {
   readonly synchronousExternalOfBus: Int32Array
   /** 1 on the boundary buses of asynchronous external systems (HVDC terminals outside the AC network). */
   readonly asynchronousBoundaryBus: Uint8Array
+  /** 1 on a bus of the Norwegian network, 0 on a boundary bus of an external system: an AC component without one lies in no island (topology.ts). */
+  readonly norwegianBus: Uint8Array
   /** Boundary buses of each external system, in its Model order: system k's are `items[start[k] .. start[k + 1])`. */
   readonly externalBoundaryBuses: GridIndexByBus
   /** Converter terminal buses of each HVDC link. */
   readonly hvdcFromBus: Int32Array
   readonly hvdcToBus: Int32Array
+  /** The ramp group of each HVDC link, or −1; group k's links are `hvdcRampGroupLinks.items[start[k] .. start[k + 1])`, in its Model order. */
+  readonly hvdcRampGroupOfLink: Int32Array
+  readonly hvdcRampGroupLinks: GridIndexByBus
   /** 1 for a synchronous (voltage-forming) unit, and its kinetic energy H·S (MWs; 0 when converter-connected). */
   readonly generatorSynchronous: Uint8Array
   readonly generatorKineticEnergyMws: Float64Array
@@ -51,9 +57,10 @@ export interface GridTables {
   readonly branchRatingMw: Float64Array
   /** Reactive demand per MW served of each load: tan(acos(power factor)). */
   readonly loadReactivePerMw: Float64Array
-  /** The distinct load kinds of the Model, and each load's position among them (its daily profile). */
-  readonly loadKinds: ReadonlyArray<GridLoadDefinition['kind']>
-  readonly loadKind: Uint8Array
+  /** Each load's demand profile: its position in the Model's demandProfiles. */
+  readonly loadDemandProfile: Int32Array
+  /** Hour values of the Model's demand profiles: profile p's weekday hours 0..23 from p·48, then its weekend hours. */
+  readonly demandProfileHours: Float64Array
 }
 
 const indexById = (items: ReadonlyArray<{ readonly id: string }>): ReadonlyMap<string, number> =>
@@ -96,10 +103,24 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
       else asynchronousBoundaryBus[busOf(busId)] = 1
     }
   })
-  const loadKinds = [...new Set(model.loads.map(load => load.kind))]
+  const demandProfileIndexById = indexById(model.demandProfiles)
+  const demandProfileHours = new Float64Array(model.demandProfiles.length * demandProfileStride)
+  model.demandProfiles.forEach((profile, position) => {
+    demandProfileHours.set(profile.weekday, position * demandProfileStride)
+    demandProfileHours.set(profile.weekend, position * demandProfileStride + 24)
+  })
   const boundaryStart = new Int32Array(index.externalSystems.length + 1)
   index.externalSystems.forEach((system, position) => { boundaryStart[position + 1] = boundaryStart[position]! + system.boundaryBusIds.length })
   const boundaryItems = Int32Array.from(index.externalSystems.flatMap(system => system.boundaryBusIds), busOf)
+  const norwegianBus = new Uint8Array(network.busCount)
+  for (let bus = 0; bus < network.busCount; bus += 1) norwegianBus[bus] = synchronousExternalOfBus[bus]! < 0 && asynchronousBoundaryBus[bus] === 0 ? 1 : 0
+  const hvdcIndex = indexById(index.hvdcLinks)
+  const hvdcRampGroupOfLink = new Int32Array(index.hvdcLinks.length).fill(-1)
+  const rampGroupStart = new Int32Array(index.hvdcRampGroups.length + 1)
+  index.hvdcRampGroups.forEach((group, position) => {
+    rampGroupStart[position + 1] = rampGroupStart[position]! + group.linkIds.length
+    for (const linkId of group.linkIds) hvdcRampGroupOfLink[hvdcIndex.get(linkId)!] = position
+  })
   return {
     network,
     externalBoundaryBuses: { start: boundaryStart, items: boundaryItems },
@@ -108,7 +129,7 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
     loadIndexById: indexById(model.loads),
     storageIndexById: indexById(model.storage),
     externalIndexById: indexById(index.externalSystems),
-    hvdcIndexById: indexById(index.hvdcLinks),
+    hvdcIndexById: hvdcIndex,
     connectionPointIndexById: indexById(model.connectionPoints),
     generatorBus,
     loadBus,
@@ -120,8 +141,11 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
     branchesOfBus: { start: endsOfBus.start, items: endsOfBus.items.map(end => branchOfEnd[end]!) },
     synchronousExternalOfBus,
     asynchronousBoundaryBus,
+    norwegianBus,
     hvdcFromBus: Int32Array.from(index.hvdcLinks, link => busOf(link.fromBusId)),
     hvdcToBus: Int32Array.from(index.hvdcLinks, link => busOf(link.toBusId)),
+    hvdcRampGroupOfLink,
+    hvdcRampGroupLinks: { start: rampGroupStart, items: Int32Array.from(index.hvdcRampGroups.flatMap(group => group.linkIds), linkId => hvdcIndex.get(linkId)!) },
     generatorSynchronous: Uint8Array.from(model.generators, generator => generatorIsVoltageForming(generator) ? 1 : 0),
     generatorKineticEnergyMws: Float64Array.from(model.generators, generatorKineticEnergyMws),
     branchResistancePu: Float64Array.from(model.branches, branch => branch.resistancePu),
@@ -130,8 +154,8 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
     branchFromTap: Float64Array.from(model.branches, branch => branch.kind === 'transformer' ? branch.tapRatio! : 1),
     branchRatingMw: Float64Array.from(model.branches, branch => branch.ratingMw),
     loadReactivePerMw: Float64Array.from(model.loads, load => Math.tan(Math.acos(load.powerFactor))),
-    loadKinds,
-    loadKind: Uint8Array.from(model.loads, load => loadKinds.indexOf(load.kind)),
+    loadDemandProfile: Int32Array.from(model.loads, load => demandProfileIndexById.get(load.demandProfileId)!),
+    demandProfileHours,
   }
 }
 

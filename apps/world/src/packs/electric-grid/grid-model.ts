@@ -140,6 +140,17 @@ export interface GridHvdcLinkDefinition {
   readonly provenance: GridAssetProvenance
 }
 
+/**
+ * A ramp limit several HVDC links share: per step the net change of their aggregate transfer
+ * stays within rampMwPerMinute, each link within its own ramp too. A link belongs to at most one group.
+ */
+export interface GridHvdcRampGroupDefinition {
+  readonly id: string
+  readonly linkIds: ReadonlyArray<string>
+  readonly rampMwPerMinute: number
+  readonly provenance: GridAssetProvenance
+}
+
 /** Lifecycle state a generator starts in, from the Operating Point. */
 export type GridGeneratorInitialState = 'online' | 'offline' | 'tripped'
 
@@ -178,6 +189,37 @@ export interface GridGeneratorDefinition {
   readonly provenance?: GridAssetProvenance | undefined
 }
 
+export type GridDemandSeason = 'winter' | 'summer'
+/** Elhub's municipality consumption groups (private = household + cabin, business = tertiary, industry = primary + secondary). */
+export type GridDemandGroup = 'private' | 'business' | 'industry'
+export type GridDemandDayType = 'weekday' | 'weekend'
+
+/** The measured series a demand profile follows: one price area and Elhub group in one season's week. */
+export interface GridDemandProfileSeries {
+  /** The Grid Load Profiles set the values come from. */
+  readonly profileSetId: string
+  readonly season: GridDemandSeason
+  readonly priceArea: string
+  readonly group: GridDemandGroup
+  /** The Operating Point's hour, at which the profile is exactly 1. */
+  readonly referenceHour: string
+}
+
+/**
+ * A load's daily demand profile: demand relative to its Operating Point demand at each Europe/Oslo
+ * local clock hour h:00 (h = 0..23) of Monday to Friday and of Saturday and Sunday, linear between
+ * hours and into the next day's first hour.
+ */
+export interface GridDemandProfileDefinition {
+  readonly id: string
+  readonly label: string
+  readonly weekday: ReadonlyArray<number>
+  readonly weekend: ReadonlyArray<number>
+  /** The measured series it follows; null for a profile the Model declares outright (its provenance says why). */
+  readonly series: GridDemandProfileSeries | null
+  readonly provenance: GridAssetProvenance
+}
+
 export interface GridLoadDefinition {
   readonly id: string
   readonly label: string
@@ -186,6 +228,8 @@ export interface GridLoadDefinition {
   readonly location: GridAssetLocation
   /** Demand at the Operating Point before its load scale (MW). */
   readonly demandMw: number
+  /** The Model's demand profile this load follows over the day. */
+  readonly demandProfileId: string
   /** Demand that neither manual nor automatic shedding disconnects. */
   readonly criticalMw: number
   /** Reactive demand is P·tan(acos powerFactor), lagging. */
@@ -236,10 +280,13 @@ export interface GridModelDefinition {
   readonly shunts: ReadonlyArray<GridShuntDefinition>
   readonly generators: ReadonlyArray<GridGeneratorDefinition>
   readonly loads: ReadonlyArray<GridLoadDefinition>
+  /** The daily demand profiles its loads follow. */
+  readonly demandProfiles: ReadonlyArray<GridDemandProfileDefinition>
   readonly storage: ReadonlyArray<GridStorageDefinition>
   readonly connectionPoints: ReadonlyArray<GridConnectionPointDefinition>
   readonly externalSystems: ReadonlyArray<GridExternalSystemDefinition>
   readonly hvdcLinks: ReadonlyArray<GridHvdcLinkDefinition>
+  readonly hvdcRampGroups: ReadonlyArray<GridHvdcRampGroupDefinition>
 }
 
 /** The Operating Point values the runtime applies when a Grid starts; generator states and availability are in the Model's generators. */
@@ -288,6 +335,9 @@ export interface CompiledGridModelIndex {
   /** The Model's external systems and HVDC links, empty when it declares none. */
   readonly externalSystems: ReadonlyArray<GridExternalSystemDefinition>
   readonly hvdcLinks: ReadonlyArray<GridHvdcLinkDefinition>
+  readonly hvdcRampGroups: ReadonlyArray<GridHvdcRampGroupDefinition>
+  /** The ramp group each grouped HVDC link shares, by link id. */
+  readonly hvdcRampGroupOfLink: ReadonlyMap<string, GridHvdcRampGroupDefinition>
   /** The synchronous external system (at most one) by each of its boundary buses. */
   readonly synchronousExternalByBus: ReadonlyMap<string, GridExternalSystemDefinition>
   /** Boundary buses of asynchronous external systems: HVDC terminals outside the modelled AC network. */

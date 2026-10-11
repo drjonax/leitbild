@@ -2,7 +2,9 @@ import { z } from 'zod'
 import { matchesLiteralSearch } from '../../../core/model/index.ts'
 import { rejectCapabilityTarget } from '../../../simulation/capability-rejection.ts'
 import type { GridAssetIndexEntry, GridHvdcLinkDefinition } from '../grid-model.ts'
+import { gridDemandSampleClock } from '../runtime/demand.ts'
 import { gridAssetSnapshotFor, type GridRuntimeInstance } from '../runtime/instance.ts'
+import { gridTablesFor } from '../runtime/state/tables.ts'
 import { assetListItemSchema, assetPresentationFor, hvdcPresentationFor } from './asset-presentation.ts'
 import { assetKindSchema, defineGridQuery, gridBusIslandId, gridFor, requireGridIsland } from './common.ts'
 import {
@@ -10,10 +12,13 @@ import {
   branchStateSchema,
   busDefinitionSchema,
   busStateSchema,
+  demandProfileDefinitionSchema,
+  demandSampleSchema,
   generatorDefinitionSchema,
   generatorStateSchema,
   hvdcLinkDefinitionSchema,
   hvdcLinkStateSchema,
+  hvdcRampGroupSchema,
   hvdcTerminalStateSchema,
   loadDefinitionSchema,
   loadStateSchema,
@@ -58,11 +63,33 @@ const assetDetailSchema = z.discriminatedUnion('kind', [
   z.object({ ...listItemFields, kind: z.literal('bus'), definition: busDefinitionSchema, state: z.union([busStateSchema, hvdcTerminalStateSchema]).optional() }).strict(),
   z.object({ ...listItemFields, kind: z.literal('branch'), definition: branchDefinitionSchema, state: branchStateSchema }).strict(),
   z.object({ ...listItemFields, kind: z.literal('generator'), definition: generatorDefinitionSchema, state: generatorStateSchema }).strict(),
-  z.object({ ...listItemFields, kind: z.literal('load'), definition: loadDefinitionSchema, state: loadStateSchema }).strict(),
+  z.object({
+    ...listItemFields,
+    kind: z.literal('load'),
+    definition: loadDefinitionSchema,
+    state: loadStateSchema,
+    demandProfile: z.object({ definition: demandProfileDefinitionSchema, sample: demandSampleSchema }).strict()
+      .describe('The daily profile the load follows and the demand sample its profileFactor is at.'),
+  }).strict(),
   z.object({ ...listItemFields, kind: z.literal('storage'), definition: storageDefinitionSchema, state: storageStateSchema }).strict(),
-  z.object({ ...listItemFields, kind: z.literal('hvdc'), definition: hvdcLinkDefinitionSchema, state: hvdcLinkStateSchema }).strict(),
+  z.object({
+    ...listItemFields,
+    kind: z.literal('hvdc'),
+    definition: hvdcLinkDefinitionSchema,
+    rampGroup: hvdcRampGroupSchema.nullable().describe('The ramp limit the link shares with other links; null when it ramps on its own limit only.'),
+    state: hvdcLinkStateSchema,
+  }).strict(),
 ])
 const assetDetailResultSchema = z.object({ gridId: z.string(), asset: assetDetailSchema }).strict()
+
+/** The demand profile a load follows, and the demand sample its profile factor is at. */
+const demandProfileOf = (grid: GridRuntimeInstance, loadId: string) => {
+  const tables = gridTablesFor(grid.definition)
+  return {
+    definition: grid.definition.model.demandProfiles[tables.loadDemandProfile[tables.loadIndexById.get(loadId)!]!]!,
+    sample: gridDemandSampleClock(grid.demandSample),
+  }
+}
 
 /** A Model asset, or an HVDC link, which the Model keeps apart from its AC assets. */
 type SearchEntry = GridAssetIndexEntry | { readonly id: string; readonly label: string; readonly kind: 'hvdc'; readonly definition: GridHvdcLinkDefinition }
@@ -142,7 +169,7 @@ export const gridAssetSearchQuery = defineGridQuery({
 export const gridAssetGetQuery = defineGridQuery({
   id: 'world.electric-grid.asset.get',
   title: 'Get Grid Asset',
-  description: 'Returns the Model definition with provenance, the current state, map target and applicable operations of one Grid Asset. Branch flow is positive from fromBusId to toBusId; storage and generator output are positive into the Grid; an HVDC link (kind hvdc) transfers positive from its Norwegian converter fromBusId, so positive exports from Norway. The bus of an external system reached only by HVDC is an HVDC terminal in no island: its state names the system\'s area and the links ending there.',
+  description: 'Returns the Model definition with provenance, the current state, map target and applicable operations of one Grid Asset. Branch flow is positive from fromBusId to toBusId; storage and generator output are positive into the Grid; an HVDC link (kind hvdc) transfers positive from its Norwegian converter fromBusId, so positive exports from Norway, and names the ramp group whose limit it shares. The bus of an external system reached only by HVDC is an HVDC terminal in no island: its state names the system\'s area and the links ending there.',
   searchTerms: ['asset detail', 'definition', 'provenance', 'state', 'parameters', 'detaljer', 'kilde', 'tilstand'],
   input: assetPayloadSchema,
   output: assetDetailResultSchema,
@@ -150,15 +177,17 @@ export const gridAssetGetQuery = defineGridQuery({
     const grid = gridFor(grids, payload.gridId)
     const link = grid.definition.index.hvdcLinks.find(candidate => candidate.id === payload.assetId)
     if (link) {
-      return { gridId: payload.gridId, asset: { ...hvdcPresentationFor(grid, link), definition: link, state: grid.hvdcLinks.get(link.id)! } }
+      const rampGroup = grid.definition.index.hvdcRampGroupOfLink.get(link.id) ?? null
+      return { gridId: payload.gridId, asset: { ...hvdcPresentationFor(grid, link), definition: link, rampGroup, state: grid.hvdcLinks.get(link.id)! } }
     }
     const asset = gridAssetSnapshotFor(grid, payload.assetId)
     if (!asset) return rejectCapabilityTarget(
       `Grid Asset not found: ${payload.assetId}. Discover exact asset ids with world.electric-grid.assets.search.`,
     )
+    const demandProfile = asset.kind === 'load' ? { demandProfile: demandProfileOf(grid, asset.id) } : {}
     return {
       gridId: payload.gridId,
-      asset: { ...assetPresentationFor(grid, asset), definition: asset.definition, ...(asset.state === undefined ? {} : { state: asset.state }) },
+      asset: { ...assetPresentationFor(grid, asset), definition: asset.definition, ...(asset.state === undefined ? {} : { state: asset.state }), ...demandProfile },
     }
   },
 })

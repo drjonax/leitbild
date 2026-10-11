@@ -1,4 +1,4 @@
-import { gridAcState, solveGridAcLoadFlow } from './ac-load-flow.ts'
+import { externalVoltageSetpointPu, gridAcState, solveGridAcLoadFlow } from './ac-load-flow.ts'
 import { noteGridAcSolution } from './alarms.ts'
 import { hvdcFromTerminalMw, hvdcToTerminalMw } from './hvdc.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
@@ -13,7 +13,8 @@ import {
 } from './island-input.ts'
 import { completeDeadGridLoad, completeLiveGridLoad } from './load-service.ts'
 import { gridBranchFlowsMwInto } from './network/dc-power-flow.ts'
-import { islandScratch, flowModelAc, flowModelDc, flowModelNone, publishedNullable, voltageModelAc, voltageModelDeEnergised, voltageModelNotConverged, type GridIslandScratch } from './state/arrays.ts'
+import { islandScratch, flowModelAc, flowModelDc, flowModelNone, publishedNullable, voltageModelAc, voltageModelDeEnergised, voltageModelExternal, voltageModelNotConverged, type GridIslandScratch } from './state/arrays.ts'
+import { externalSystemFrequencyHz } from './boundary-separation.ts'
 import { gridTablesFor } from './state/tables.ts'
 import { busStateViews } from './state/views.ts'
 import { solvePlanInto } from './topology.ts'
@@ -385,12 +386,21 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   for (let bus = 0; bus < network.busCount; bus += 1) {
     const planIndex = islandOf[bus]!
     if (planIndex < 0) {
-      // An HVDC terminal lies in no island and has no bus state (grid.hvdcTerminals): no quantities here.
       busArrays.solvedIsland[bus] = -1
+      busArrays.reactiveInjectionMvar[bus] = Number.NaN
+      const system = tables.synchronousExternalOfBus[bus]!
+      if (system >= 0) {
+        // A separated boundary bus: its external system holds it at the equivalent's voltage set-point and its own frequency.
+        busArrays.energized[bus] = 1
+        busArrays.voltagePu[bus] = externalVoltageSetpointPu
+        busArrays.voltageModel[bus] = voltageModelExternal
+        busArrays.frequencyHz[bus] = externalSystemFrequencyHz(grid, islands, system)
+        continue
+      }
+      // An HVDC terminal lies in no island and has no bus state (grid.hvdcTerminals): no quantities here.
       busArrays.energized[bus] = 0
       busArrays.voltagePu[bus] = Number.NaN
       busArrays.voltageModel[bus] = voltageModelDeEnergised
-      busArrays.reactiveInjectionMvar[bus] = Number.NaN
       busArrays.frequencyHz[bus] = Number.NaN
       continue
     }

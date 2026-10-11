@@ -100,6 +100,7 @@ export const createReferenceLayerController = (
           onError: message => {
             if (registrationSerial === serial) reportFailure(runtime, message)
           },
+          claimErrors: runtime.claimErrors,
         }),
         {
           datasets: registration.styles.length,

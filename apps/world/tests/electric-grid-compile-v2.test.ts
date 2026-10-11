@@ -5,6 +5,9 @@ import { compileGridModelIndex } from '../src/packs/electric-grid/definitions.ts
 import { nordicAreaParticipation } from '../src/packs/electric-grid/model-build/interconnectors.ts'
 import { interconnectorTableSchema } from '../src/packs/electric-grid/schemas/grid-interconnector.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
+import { gridOperatingPointDemand } from '../src/packs/electric-grid/definitions.ts'
+import { norwayGridModelRef, norwayWinterPeakOperatingPointRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { v2FixtureDemand } from './fixtures/electric-grid/load-profiles.ts'
 import { validateGridModel } from '../src/packs/electric-grid/schemas/grid-model.ts'
 import { gridOperatingPointTargetsForModel, validateGridOperatingPoint } from '../src/packs/electric-grid/schemas/grid-operating-point.ts'
 
@@ -20,7 +23,7 @@ const fixturePoint = validateGridOperatingPoint({
 
 describe('Grid Model v2 → runtime model', () => {
   test('maps every asset with its Operating Point state and demand scaling', () => {
-    const { model, operatingPoint } = compileGridModelV2(fixture, fixturePoint)
+    const { model, operatingPoint } = compileGridModelV2(fixture, fixturePoint, v2FixtureDemand)
     expect(model.buses.map(bus => bus.id)).toEqual(fixture.buses.map(bus => bus.id))
     expect(model.branches.map(branch => branch.kind)).toEqual(fixture.branches.map(branch => branch.kind))
     const source = (id: string) => fixture.generators.find(generator => generator.id === id)!
@@ -56,7 +59,7 @@ describe('Grid Model v2 → runtime model', () => {
   test('carries the synchronous Nordic equivalent with all its boundary buses and keeps the totals', async () => {
     const generated = validateGridModel(JSON.parse(await readFile(join(import.meta.dir, '../src/packs/electric-grid/models/norway-transmission.grid-model.json'), 'utf8')), 'generated')
     const winter = validateGridOperatingPoint(JSON.parse(await readFile(join(import.meta.dir, '../src/packs/electric-grid/models/norway-winter-weekday-peak.operating-point.json'), 'utf8')), 'winter', gridOperatingPointTargetsForModel(generated))
-    const { model } = compileGridModelV2(generated, winter)
+    const { model } = compileGridModelV2(generated, winter, gridOperatingPointDemand(norwayWinterPeakOperatingPointRef, norwayGridModelRef))
     const nordic = generated.externalSystems.find(system => system.synchronous)!
     const synchronous = model.externalSystems.filter(system => system.synchronous)
     expect(synchronous.map(system => [system.id, system.boundaryBusIds])).toEqual([[nordic.id, nordic.boundaryBusIds]])
@@ -86,7 +89,7 @@ describe('Grid Model v2 → runtime model', () => {
     const targets = gridOperatingPointTargetsForModel(generated)
     const winter = validateGridOperatingPoint(await read('norway-winter-weekday-peak.operating-point.json'), 'winter', targets)
     const summer = validateGridOperatingPoint(await read('norway-summer-night-low.operating-point.json'), 'summer', targets)
-    const equivalent = (point: typeof winter) => compileGridModelV2(generated, point).model.externalSystems.find(system => system.synchronous)!
+    const equivalent = (point: typeof winter) => compileGridModelV2(generated, point, gridOperatingPointDemand(point.id, norwayGridModelRef)).model.externalSystems.find(system => system.synchronous)!
     for (const point of [winter, summer]) {
       const state = point.externalSystemStates!.find(entry => entry.assetId === 'external:nordic-remainder')!
       expect(equivalent(point)).toMatchObject({ inertiaGws: state.inertiaGws, loadMw: state.loadMw })
@@ -100,17 +103,17 @@ describe('Grid Model v2 → runtime model', () => {
   })
 
   test('refuses an Operating Point for another model and schedules the runtime does not follow', () => {
-    expect(() => compileGridModelV2(fixture, { ...fixturePoint, compatibleModelRefs: ['electric-grid.other'] })).toThrow('is not compatible')
+    expect(() => compileGridModelV2(fixture, { ...fixturePoint, compatibleModelRefs: ['electric-grid.other'] }, v2FixtureDemand)).toThrow('is not compatible')
     const link = fixture.hvdcLinks[0]!
     const twoPoints = { assetId: link.id, timeZone: 'Europe/Oslo' as const, points: [{ localTime: '00:00', transferMw: 0 }, { localTime: '12:00', transferMw: 100 }] }
-    expect(() => compileGridModelV2(fixture, { ...fixturePoint, hvdcSchedules: [twoPoints] })).toThrow(`the schedule of ${link.id} has 2 points`)
-    const constant = compileGridModelV2(fixture, { ...fixturePoint, hvdcSchedules: [{ ...twoPoints, points: [{ localTime: '00:00', transferMw: 100 }] }] })
+    expect(() => compileGridModelV2(fixture, { ...fixturePoint, hvdcSchedules: [twoPoints] }, v2FixtureDemand)).toThrow(`the schedule of ${link.id} has 2 points`)
+    const constant = compileGridModelV2(fixture, { ...fixturePoint, hvdcSchedules: [{ ...twoPoints, points: [{ localTime: '00:00', transferMw: 100 }] }] }, v2FixtureDemand)
     expect(constant.operatingPoint.hvdcSetpoints.find(entry => entry.linkId === link.id)?.setpointMw).toBe(100)
   })
 
   test('takes the Operating Point\'s ambient ratings as the base ratings of the branches it lists', () => {
     const [summer, other] = fixture.branches
-    const compiled = compileGridModelV2(fixture, { ...fixturePoint, branchRatings: [{ assetId: summer!.id, ratingMw: summer!.ratingMw * 0.856, emergencyRatingMw: summer!.emergencyRatingMw * 0.856 }] })
+    const compiled = compileGridModelV2(fixture, { ...fixturePoint, branchRatings: [{ assetId: summer!.id, ratingMw: summer!.ratingMw * 0.856, emergencyRatingMw: summer!.emergencyRatingMw * 0.856 }] }, v2FixtureDemand)
     expect(compiled.model.branches[0]).toMatchObject({ ratingMw: summer!.ratingMw * 0.856, emergencyRatingMw: summer!.emergencyRatingMw * 0.856 })
     expect(compiled.model.branches[1]).toMatchObject({ ratingMw: other!.ratingMw, emergencyRatingMw: other!.emergencyRatingMw })
     expect(compiled.operatingPoint.branchStates[0]).toEqual({ branchId: summer!.id, state: 'closed', availability: 1 })
@@ -122,7 +125,7 @@ describe('Grid Model v2 → runtime model', () => {
 
   test('starts each branch as the Operating Point lists it, and every other branch closed at its full rating', () => {
     const [opened, derated, ...others] = fixture.branches
-    const compiled = compileGridModelV2(fixture, { ...fixturePoint, branchStates: [{ assetId: opened!.id, state: 'open' }, { assetId: derated!.id, state: 'closed', availability: 0.856 }] })
+    const compiled = compileGridModelV2(fixture, { ...fixturePoint, branchStates: [{ assetId: opened!.id, state: 'open' }, { assetId: derated!.id, state: 'closed', availability: 0.856 }] }, v2FixtureDemand)
     expect(compiled.operatingPoint.branchStates).toEqual([
       { branchId: opened!.id, state: 'open', availability: 1 },
       { branchId: derated!.id, state: 'closed', availability: 0.856 },

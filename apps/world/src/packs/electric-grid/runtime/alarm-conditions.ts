@@ -2,6 +2,7 @@ import type { GridAutomation, ReserveRequirement } from '../schemas/grid-automat
 import type { GridAlarmSettings, GridAlarmTiming } from '../schemas/grid-protection-automation.ts'
 import { gridAlarmId, type GridAlarmObservation, type GridAlarmState } from './alarms.ts'
 import { reserveRequirementFor } from './frequency/governors.ts'
+import { operatingPointImportMw } from './boundary-separation.ts'
 import { hvdcTripReason } from './hvdc.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
 import { externalReserveVolumes } from './island-input.ts'
@@ -289,6 +290,31 @@ const hvdcObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings
   }
 }
 
+const externalObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings, emit: Emit): void => {
+  const systems = grid.definition.index.externalSystems
+  for (let position = 0; position < systems.length; position += 1) {
+    const state = grid.arrays.externalSystems[position]!
+    if (!state.exchangeVoided) continue
+    const system = systems[position]!
+    const operatingPointExportMw = 0 - operatingPointImportMw(grid, system)
+    const scheduledExportMw = 0 - state.scheduledImportMw
+    emit({
+      id: gridAlarmId('external', system.id, 'exchange-voided'),
+      scope: 'external',
+      assetId: system.id,
+      condition: 'exchange-voided',
+      timing: settings.externalExchangeVoided,
+      islandId: state.islandId,
+      raising: true,
+      title: 'External exchange voided by separation',
+      message: `${system.label} was separated from every Norwegian island, which voided its scheduled exchange: ${mw(scheduledExportMw)} scheduled (target ${mw(0 - state.targetImportMw)}) against the Operating Point's ${mw(operatingPointExportMw)}, positive exports from Norway; once a tie is closed, set-external-exchange restores it`,
+      value: Math.abs(scheduledExportMw - operatingPointExportMw),
+      limit: null,
+      unit: 'MW',
+    })
+  }
+}
+
 /** Observations of every alarm condition near or beyond its limit at the latest solve. */
 export const gridAlarmObservations = (grid: GridRuntimeInstance, islands: GridIslandPlan, settings: GridAlarmSettings, state: GridAlarmState): ReadonlyArray<GridAlarmObservation> => {
   const observations: GridAlarmObservation[] = []
@@ -318,5 +344,6 @@ export const gridAlarmObservations = (grid: GridRuntimeInstance, islands: GridIs
   branchObservations(grid, settings, emit)
   generatorObservations(grid, settings, emit)
   hvdcObservations(grid, settings, emit)
+  externalObservations(grid, settings, emit)
   return observations
 }

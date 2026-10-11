@@ -262,7 +262,7 @@ describe('Nordic boundary ties opening and closing in any order', () => {
     kind, targetObjectIds: [grid.definition.gridId as ObjectId], payload: { assetId }, issuedAt: iso(seconds),
   })
 
-  test('every later advance succeeds with KCL and island balance intact, and a stranded boundary bus is de-energised', () => {
+  test('every later advance succeeds with KCL and island balance intact, and a stranded boundary bus stays held by the remainder', () => {
     const grid = createGridRuntimeInstance({ definition: norwayAt(norwaySummerLowOperatingPointRef), at: iso(0) })
     let seconds = 0
     const advance = (dtSeconds: number): void => {
@@ -272,36 +272,56 @@ describe('Nordic boundary ties opening and closing in any order', () => {
       expect(largestIslandInjectionSumMw(grid)).toBeLessThan(1e-6)
       expect(grid.diagnostics.energyAudit.lastMaximumIslandMismatchMw).toBeLessThan(1e-6)
     }
+    /** The published fields of a bus state (a view of getters). */
+    const busState = (busId: string) => {
+      const state = grid.busStates.get(busId)!
+      return { islandId: state.islandId, energized: state.energized, voltagePu: state.voltagePu, voltageModel: state.voltageModel, frequencyHz: state.frequencyHz }
+    }
     advance(0)
     const nordic = grid.definition.index.externalSystems.find(system => system.synchronous)!
     const ties = nordic.boundaryBusIds.flatMap(busId => grid.definition.index.branchesByBus.get(busId)!)
     expect(ties.length).toBe(8)
     const boundaryOf = (tieId: string): string => nordic.boundaryBusIds.find(busId => grid.definition.index.branchesByBus.get(busId)!.some(branch => branch.id === tieId))!
+    const norwegianIsland = () => grid.islandPlan!.islands.find(island => island.energized)!
     for (const tie of ties) {
       expect(command(grid, gridOpenBranchCommandKind, tie.id, seconds).ok).toBe(true)
       advance(0)
       advance(2)
       const boundary = boundaryOf(tie.id)
       const stranded = grid.definition.index.branchesByBus.get(boundary)!.every(branch => grid.branches.get(branch.id)!.state !== 'closed')
-      // Without a closed tie the boundary bus is no longer coupled: no source of its own, so de-energised.
-      if (stranded) expect(grid.busStates.get(boundary)).toMatchObject({ energized: false, voltagePu: 0, frequencyHz: null })
+      // Without a closed tie the boundary bus lies in no island; the remainder, coupled through the other ties, holds it at Norway's frequency.
+      if (stranded) expect(busState(boundary)).toMatchObject({ islandId: null, energized: true, voltagePu: 1, voltageModel: 'external', frequencyHz: norwegianIsland().frequency!.frequencyHz })
+      expect(grid.projection.islandCount).toBe(1)
       expect(command(grid, gridCloseBranchCommandKind, tie.id, seconds).ok).toBe(true)
       advance(0)
       advance(2)
-      expect(grid.busStates.get(boundary)!.energized).toBe(true)
+      expect(busState(boundary)).toMatchObject({ islandId: norwegianIsland().id, energized: true })
     }
     for (const tie of ties) expect(command(grid, gridOpenBranchCommandKind, tie.id, seconds).ok).toBe(true)
     advance(0)
     for (let tick = 0; tick < 5; tick += 1) advance(2)
-    for (const busId of nordic.boundaryBusIds) expect(grid.busStates.get(busId)!.energized).toBe(false)
-    expect(grid.projection.activeIslandCount).toBeGreaterThan(0)
+    // Separated from every Norwegian island, the remainder holds its boundary buses at nominal frequency.
+    for (const busId of nordic.boundaryBusIds) expect(busState(busId)).toMatchObject({ islandId: null, energized: true, frequencyHz: 50 })
+    expect(grid.projection.islandCount).toBe(1)
     // Closing checks the solved islands, so each close is followed by a zero-length solve, as the adapter does.
+    // The first close waits until Norway's own reserves bring it within the synchro-check's 0.1 Hz of the remainder.
+    const firstTie = ties[0]!
+    let rejections = 0
+    while (Math.abs(norwegianIsland().frequency!.frequencyHz! - 50) > 0.1) {
+      const result = command(grid, gridCloseBranchCommandKind, firstTie.id, seconds)
+      if (result.ok) throw new Error(`closing ${firstTie.id} at ${norwegianIsland().frequency!.frequencyHz} Hz passed the synchro-check`)
+      expect(result.reason).toContain('external:nordic-remainder, separated from every Norwegian island and so at its nominal 50.000 Hz')
+      rejections += 1
+      if (seconds > 1_800) throw new Error('Norway did not return within 0.1 Hz of nominal in 30 minutes')
+      for (let tick = 0; tick < 5; tick += 1) advance(2)
+    }
+    expect(rejections).toBeGreaterThan(0)
     for (const tie of ties) {
       expect(command(grid, gridCloseBranchCommandKind, tie.id, seconds).ok).toBe(true)
       advance(0)
     }
     for (let tick = 0; tick < 5; tick += 1) advance(2)
-    for (const busId of nordic.boundaryBusIds) expect(grid.busStates.get(busId)!.energized).toBe(true)
+    for (const busId of nordic.boundaryBusIds) expect(busState(busId)).toMatchObject({ islandId: norwegianIsland().id, energized: true })
   }, 120_000)
 })
 

@@ -32,6 +32,7 @@ export const gridIdPatterns = {
   bus: exact(`bus:(?:${busToken}|boundary-(?:${externalAreas.join('|')})(?:@${kv})?)`),
   branch: exact(`branch:(?:osm-[0-9a-f]{16,64}|transformer-${osmElement}-${kv}-${kv}|curated-${slug})`),
   hvdcLink: exact(`hvdc:${slug}`),
+  hvdcRampGroup: exact(`ramp:${slug}`),
   externalSystem: exact(`external:(?:nordic-remainder|${externalAreas.join('|')})`),
   generator: exact(`generator:(?:nve-(?:hydro|wind)-[1-9]\\d*|${osmElement}|aggregate-${busToken}-(?:${generatorKinds.join('|')})|curated-${slug})`),
   load: exact(`load:(?:\\d{4}-(?:${municipalityLoadGroups.join('|')})-${osmElement}|site-${slug})`),

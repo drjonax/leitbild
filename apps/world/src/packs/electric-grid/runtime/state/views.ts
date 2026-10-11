@@ -95,7 +95,8 @@ export const branchStateViews = (branchIds: ReadonlyArray<string>, arrays: GridB
 /** Bus states by id over the bus arrays of the last network solution, in model order. */
 export const busStateViews = (busIds: ReadonlyArray<string>, arrays: GridBusArrays): Map<string, GridBusState> => {
   const accessors: Record<string, Accessor> = {
-    islandId: readOnly(index => arrays.solvedIslandIds[arrays.solvedIsland[index]!]),
+    // −1: a separated boundary bus, in no island.
+    islandId: readOnly(index => arrays.solvedIsland[index]! < 0 ? null : arrays.solvedIslandIds[arrays.solvedIsland[index]!]),
     energized: readOnly(index => arrays.energized[index] === 1),
     voltagePu: readOnly(index => publishedNullable(arrays.voltagePu[index]!)),
     voltageModel: readOnly(index => voltageModelCodes[arrays.voltageModel[index]!]),
@@ -161,6 +162,7 @@ export const loadStateViews = (loadIds: ReadonlyArray<string>, arrays: GridLoadA
       get() { return arrays.manualShedEmergency[this[viewIndex]] === 1 },
       set(value: boolean) { arrays.manualShedEmergency[this[viewIndex]] = value ? 1 : 0 },
     },
+    profileFactor: readOnly(index => arrays.profileFactor[index]),
     demandMw: numberField(arrays.demandMw),
     curtailedMw: numberField(arrays.curtailedMw),
     lfddShedMw: numberField(arrays.lfddShedMw),

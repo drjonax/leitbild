@@ -8,7 +8,7 @@ import { municipalityLoadIdParts, nordicSynchronousExternalAreas, transformerIdP
 export const gridModelAssetCollections = ['buses', 'branches', 'hvdcLinks', 'externalSystems', 'generators', 'loads', 'shunts', 'connectionPoints'] as const
 export type GridModelAssetCollection = typeof gridModelAssetCollections[number]
 
-type Model = Pick<GridModelV2, GridModelAssetCollection | 'sourceBuild'>
+type Model = Pick<GridModelV2, GridModelAssetCollection | 'hvdcRampGroups' | 'sourceBuild'>
 type Bus = GridModelV2['buses'][number]
 
 export const gridModelReferenceIssues = (model: Model): ReadonlyArray<GridDataIssue> => {
@@ -61,6 +61,23 @@ export const gridModelReferenceIssues = (model: Model): ReadonlyArray<GridDataIs
   model.hvdcLinks.forEach((link, index) => {
     requireBus(['hvdcLinks', index, 'fromBusId'], link.fromBusId, 'norwegian')
     requireBus(['hvdcLinks', index, 'toBusId'], link.toBusId, 'any')
+  })
+  const hvdcLinkIds = new Set(model.hvdcLinks.map(link => link.id))
+  const groupIds = new Set<string>()
+  const groupOfLink = new Map<string, string>()
+  model.hvdcRampGroups.forEach((group, index) => {
+    if (groupIds.has(group.id)) fail(['hvdcRampGroups', index, 'id'], `duplicate HVDC ramp group ${group.id}`)
+    groupIds.add(group.id)
+    group.provenance.sources.forEach((source, sourceIndex) => {
+      if (!inputIds.has(source)) fail(['hvdcRampGroups', index, 'provenance', 'sources', sourceIndex], `${source} is not a sourceBuild input`)
+    })
+    group.linkIds.forEach((linkId, linkIndex) => {
+      const path = ['hvdcRampGroups', index, 'linkIds', linkIndex]
+      if (!hvdcLinkIds.has(linkId)) fail(path, `unknown HVDC link ${linkId}`)
+      const owner = groupOfLink.get(linkId)
+      if (owner !== undefined && owner !== group.id) fail(path, `${linkId} already belongs to ${owner}; a link shares at most one ramp group`)
+      groupOfLink.set(linkId, group.id)
+    })
   })
 
   const externalByBoundaryBus = new Map<string, string>()

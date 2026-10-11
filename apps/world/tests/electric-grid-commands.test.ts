@@ -42,7 +42,7 @@ import { capabilityJsonSchema } from '../src/simulation/capabilities.ts'
 import type { PackRuntimeEvent } from '../src/simulation/protocol.ts'
 import { balanceSeparablePart, separableBranch } from './fixtures/grid-split.ts'
 import { scenarios } from './fixtures/scenarios.ts'
-import { syntheticHydroUnit, testLoad } from './fixtures/synthetic-grid.ts'
+import { flatDemandProfile, syntheticHydroUnit, testLoad } from './fixtures/synthetic-grid.ts'
 
 const startsAtMs = Date.parse('2026-01-01T10:00:00.000Z')
 const isoAt = (seconds: number): IsoTimestamp => new Date(startsAtMs + seconds * 1_000).toISOString() as IsoTimestamp
@@ -69,6 +69,8 @@ const testModel = {
     testLoad({ id: evLoadId, kind: 'ev_charging', busId: osloBus.id, location: osloBus.location, demandMw: 120, criticalMw: 20, interruptibleMw: 100 }),
     testLoad({ id: criticalLoadId, kind: 'hospital', busId: osloBus.id, location: osloBus.location, demandMw: 40, criticalMw: 40, priority: 'critical' }),
   ],
+  // The added loads draw flat demand, so their commands see only the demand they set.
+  demandProfiles: [...norway.model.demandProfiles, flatDemandProfile],
   generators: [
     ...norway.model.generators,
     // A combined-cycle unit: H 4.2 s on rated MVA at cos φ 0.9 (Kundur Table 3.2), 40 % minimum load and 8 %/min (VGB 2012).

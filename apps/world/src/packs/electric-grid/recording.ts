@@ -119,9 +119,10 @@ const islandSeries = (grid: GridRuntimeInstance, islandId: string): ReadonlyArra
 // Each island adds its three series when it forms; the estimate counts the main island's.
 const estimatedIslandSeriesCount = 3
 
+/** The series a Grid records from its start (one island), as createGridRecordingPlan describes them; an HVDC terminal has no bus series. */
 export const gridRecordingSeriesCount = (counts: GridModelAssetCounts, profileId: string): number =>
   operations.length + estimatedIslandSeriesCount + (profileId === 'engineering'
-    ? counts.bus * 2 + counts.branch * 3 + counts.generator + counts.load + counts.storage : 0)
+    ? (counts.bus - counts.hvdcTerminal) * 2 + counts.branch * 3 + counts.generator + counts.load + counts.storage : 0)
 
 // Per-asset values read the Grid's arrays by model index; bus values exist once the network has been
 // solved. An HVDC terminal lies in no island and takes no part in energisation, so it has no bus series.

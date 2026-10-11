@@ -281,7 +281,10 @@ export interface PackLiveMapLayer {
   readonly loadGeometry: (result: unknown) => PackLiveMapGeometry
   /** The geometry key a state result aligns with; the renderer refetches geometry when it differs. */
   readonly stateGeometryKey: (result: unknown) => string
-  /** Layers in paint order, bottom first. */
+  /**
+   * Layers in paint order, bottom first. The feature source has a 32 px tile buffer, so a line's
+   * half-width and an along-line symbol's half-size must stay below 32 px.
+   */
   readonly layersFor: (appearance: PackMapAppearance) => ReadonlyArray<PackLiveMapLayerSpec>
   readonly imagesFor?: (appearance: PackMapAppearance) => ReadonlyArray<PackLiveMapImage>
   readonly referenceContext?: PackLiveMapReferenceContext

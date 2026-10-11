@@ -164,6 +164,14 @@
       "note": "No universal angle: some systems accept no more than 20°; manual reclosing in normal operation with digital relays uses 15-25°, automatic synch-check relays 15-35°; a digital-relay example uses 15° and 0.05 Hz. 20° for closing a loop inside one island is a modelling choice within these ranges."
     },
     {
+      "section": "externalExchange",
+      "title": "Commission Regulation (EU) 2017/2196 (NC ER), Articles 32 and 34: resynchronisation",
+      "url": "https://www.legislation.gov.uk/eur/2017/2196/article/34",
+      "accessedOn": "2026-10-11",
+      "status": "modelling-choice",
+      "note": "The model's assumption, not a published limit. NC ER leaves the maximum active power exchange at resynchronisation to the resynchronisation leader (Article 34) and the limits to the TSO's restoration plan (Article 32); it sets no rate for re-establishing a schedule. The model ramps the Nordic equivalent's scheduled exchange at 100 MW/min, so the 808 MW summer-night import returns in about 8 minutes."
+    },
+    {
       "section": "branchProtection",
       "title": "Commission Regulation (EU) 2017/1485 (SO GL), Article 25",
       "url": "https://www.legislation.gov.uk/eur/2017/1485/article/25/adopted/data.xml",
@@ -339,6 +347,9 @@
     "maximumFrequencyDifferenceHz": 0.1,
     "maximumAngleDifferenceDegrees": 20
   },
+  "externalExchange": {
+    "rampMwPerMinute": 100
+  },
   "branchProtection": {
     "enabled": true,
     "sampleIntervalSeconds": 1,
@@ -453,6 +464,11 @@
       "clearDelaySeconds": 0
     },
     "hvdcTripped": {
+      "priority": 2,
+      "raiseDelaySeconds": 0,
+      "clearDelaySeconds": 0
+    },
+    "externalExchangeVoided": {
       "priority": 2,
       "raiseDelaySeconds": 0,
       "clearDelaySeconds": 0

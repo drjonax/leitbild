@@ -12,7 +12,9 @@ import {
 } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { compileGridDefinition, compileGridModelIndex } from '../src/packs/electric-grid/definitions.ts'
+import { norwayWinterPeakOperatingPointRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { electricGridPackDataSchema } from '../src/packs/electric-grid/model.ts'
+import { createGridRecordingPlan } from '../src/packs/electric-grid/recording.ts'
 import { electricGridPack } from '../src/packs/electric-grid/pack.ts'
 import { composeGridModel, validateGridModelAddition } from '../src/packs/electric-grid/schemas/grid-model-addition.ts'
 import { gridModelV2 } from '../src/packs/electric-grid/definitions.ts'
@@ -91,10 +93,27 @@ describe('electric grid Pack', () => {
     const rekinded = (busId: string, kind: 'substation' | 'boundary') => ({ ...halden.model, buses: halden.model.buses.map(bus => bus.id === busId ? { ...bus, kind } : bus) })
     expect(() => compileGridModelIndex(rekinded('bus:boundary-DE', 'substation'))).toThrow('bus:boundary-DE is a substation bus but external:DE uses it as a boundary bus')
     expect(() => compileGridModelIndex(rekinded(halden.model.loads[0]!.busId, 'boundary'))).toThrow(`boundary bus ${halden.model.loads[0]!.busId} belongs to no external system`)
-    // A published model is an immutable artifact used by persisted Run state; regenerating the model data changes this digest.
-    expect(halden.definitionDigest).toBe('1f974b3c211df809ffae77845acdeeb6dd8b66b7a3523ba7422730fb92584e6e')
+    // A published model is an immutable artifact used by persisted Run state; regenerating the model data or its Load Profiles changes this digest.
+    expect(halden.definitionDigest).toBe('f67e7ae1837fa25b853fceb044928f4f61318c7592683df47907536a97f84e54')
     expect(() => definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal')).toThrow('unknown Grid Operating Point')
     expect(halden.model.connectionPoints).toHaveLength(4)
+  })
+
+  test('estimates the recorded series exactly on the Norway winter peak, leaving out the HVDC terminals\' bus series', () => {
+    const scenarioObject = gridScenario().initialObjects.find(object => object.packId === 'electric-grid')!
+    const packData = electricGridPackDataSchema.parse(scenarioObject.packData)
+    const object = { ...scenarioObject, packData: { ...packData, operatingPoint: { ref: norwayWinterPeakOperatingPointRef } } }
+    const definition = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:norway', model: packData.model, operatingPoint: { ref: norwayWinterPeakOperatingPointRef }, automation: packData.automation,
+    }))
+    const grid = createGridRuntimeInstance({ definition, at: nowIso() })
+    advanceGrid(grid, 0, nowIso())
+    expect(grid.hvdcTerminals.size).toBe(4)
+    const estimateSeries = electricGridPack.recording!.estimateSeries!
+    for (const profileId of ['operations', 'engineering']) {
+      const recorded = createGridRecordingPlan({ selection: { packId: 'electric-grid', profileId }, grids: new Map([[definition.gridId, grid]]) }).descriptors.length
+      expect(estimateSeries([object], profileId)).toBe(recorded)
+    }
   })
 
   test('compiles a Scenario to one Grid object with discoverable selections', () => {

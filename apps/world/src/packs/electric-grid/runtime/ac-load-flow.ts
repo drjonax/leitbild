@@ -30,7 +30,7 @@ const tolerancePu = 1e-6
  */
 const maximumIterations = 200
 /** The synchronous equivalent holds its boundary buses at nominal voltage: a stiff network behind the ties (modelling choice). */
-const externalVoltageSetpointPu = 1
+export const externalVoltageSetpointPu = 1
 
 /** The AC network of a Model: π branches with charging and off-nominal taps, bus shunts at 1 pu. */
 const acNetworks = new WeakMap<GridModelDefinition, AcNetwork>()

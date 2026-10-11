@@ -1,6 +1,7 @@
 // Two islands for restoration tests. Main island M: a 2 GW hydro station and 800 MW of demand.
 // Island R starts dead: a power station bus with a black-start capable hydro unit and one that is
-// not, and a load bus whose demand is a 30 MW base feeder and six 15 MW feeders. The tie M–R is open.
+// not, and a load bus whose demand is a 31 MW base feeder, just above the black-start unit's 30 MW
+// minimum stable output, and six 15 MW feeders, all flat over the day. The tie M–R is open.
 import type { CompiledGridDefinition, GridBranchDefinition, GridBusDefinition, GridModelDefinition } from '../../src/packs/electric-grid/grid-model.ts'
 import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './synthetic-grid.ts'
 
@@ -24,7 +25,7 @@ export const restorationModel: GridModelDefinition = handBuiltModel({
   ],
   loads: [
     testLoad({ id: 'load:m', busId: 'bus:m', location: [8, 61], demandMw: 800 }),
-    testLoad({ id: 'load:r-base', busId: 'bus:r2', location: [9.2, 61], demandMw: 30 }),
+    testLoad({ id: 'load:r-base', busId: 'bus:r2', location: [9.2, 61], demandMw: 31 }),
     ...restorationFeederIds.map(id => testLoad({ id, busId: 'bus:r2', location: [9.2, 61], demandMw: 15 })),
   ],
 })
