@@ -105,6 +105,8 @@ interface CachedValidatedJsonText {
 interface ReferenceDatasetArtifactResolution {
   readonly ok: true
   readonly filePath: string
+  /** Build id of the release directory the file was resolved in. */
+  readonly buildId: string
 }
 
 interface ReferenceDatasetArtifactFailure {
@@ -117,6 +119,8 @@ type ReferenceDatasetArtifactResult = ReferenceDatasetArtifactResolution | Refer
 const pmtilesArchiveCache = new Map<string, CachedPmtilesArchive>()
 const validatedJsonTextCache = new Map<string, CachedValidatedJsonText>()
 const defaultTileCacheControl = 'public, max-age=3600'
+// A reference tile URL names its build, so its bytes never change.
+const buildTileCacheControl = 'public, max-age=31536000, immutable'
 // Gzipped vector tiles shared by the base map, the overview and reference datasets. The largest
 // grid tile is about 160 KB gzipped and a base-map tile about 20 KB.
 const compressedVectorTiles = createCompressedTileCache({ maxBytes: 64 * 1024 * 1024 })
@@ -224,12 +228,12 @@ const pmtilesArchiveFor = async (filePath: string): Promise<PMTiles> => {
   return archive
 }
 
-const emptyVectorTileResponse = (): Response =>
+const emptyVectorTileResponse = (cacheControl: string = defaultTileCacheControl): Response =>
   new Response(new Uint8Array(), {
     headers: {
       'Content-Type': vectorTileContentType,
       'Content-Length': '0',
-      'Cache-Control': defaultTileCacheControl,
+      'Cache-Control': cacheControl,
     },
   })
 
@@ -262,6 +266,7 @@ const vectorTileResponse = async (
   filePath: string,
   coordinates: TileCoordinates,
   missing: { readonly error: string; readonly status: number },
+  cacheControl?: string,
 ): Promise<Response> => {
   const file = Bun.file(filePath)
   if (!await file.exists()) {
@@ -296,8 +301,8 @@ const vectorTileResponse = async (
   // vector-tile media type, so the module codes the tile itself.
   if (!acceptsGzipEncoding(req.headers.get('accept-encoding'))) {
     const tile = await archive.getZxy(coordinates.z, coordinates.x, coordinates.y)
-    if (!tile) return emptyVectorTileResponse()
-    return encodedVectorTileResponse(new Uint8Array(tile.data), tile.cacheControl ?? defaultTileCacheControl, 'identity')
+    if (!tile) return emptyVectorTileResponse(cacheControl)
+    return encodedVectorTileResponse(new Uint8Array(tile.data), cacheControl ?? tile.cacheControl ?? defaultTileCacheControl, 'identity')
   }
 
   // The source key carries the archive's path, modification time and size.
@@ -310,8 +315,8 @@ const vectorTileResponse = async (
       cacheControl: tile.cacheControl ?? defaultTileCacheControl,
     }
   })
-  if (!compressed) return emptyVectorTileResponse()
-  return encodedVectorTileResponse(compressed.bytes, compressed.cacheControl, 'gzip')
+  if (!compressed) return emptyVectorTileResponse(cacheControl)
+  return encodedVectorTileResponse(compressed.bytes, cacheControl ?? compressed.cacheControl, 'gzip')
 }
 
 const rasterDemTileResponse = async (
@@ -400,7 +405,17 @@ const referenceDatasetArtifactPath = async (
     }
   }
 
-  return { ok: true, filePath }
+  // Builds live in builds/<dataset>/<buildId>; a promotion between reading the manifest and
+  // resolving the release would otherwise pair one build's id with another build's bytes.
+  const releaseBuildId = basename(currentDirRealPath)
+  if (releaseBuildId !== tileset.buildId) {
+    return {
+      ok: false,
+      response: Response.json({ ok: false, error: 'reference dataset release is changing', releaseBuildId, manifestBuildId: tileset.buildId }, { status: 503 }),
+    }
+  }
+
+  return { ok: true, filePath, buildId: releaseBuildId }
 }
 
 export const mapCapabilitiesResponse = async (
@@ -795,13 +810,27 @@ export const referenceDatasetVectorTileResponse = async (
     return Response.json({ ok: false, error: 'invalid reference dataset tile coordinates' }, { status: 400 })
   }
 
+  const requestedBuildId = url.searchParams.get('build')
+  if (requestedBuildId === null || requestedBuildId === '') {
+    return Response.json({ ok: false, error: 'reference dataset tile URL needs ?build=<buildId> from /map/capabilities.json' }, { status: 400 })
+  }
+
   const resolved = await referenceDatasetArtifactPath(datasetId, `${pmtilesBaseName}.pmtiles`, config)
   if (!resolved.ok) return resolved.response
+  // A client holding an older capabilities manifest must reload it rather than mix builds.
+  if (requestedBuildId !== resolved.buildId) {
+    return Response.json({
+      ok: false,
+      error: 'reference dataset build is not the current release',
+      requestedBuildId,
+      currentBuildId: resolved.buildId,
+    }, { status: 409, headers: { 'Cache-Control': 'no-store' } })
+  }
 
   return vectorTileResponse(req, resolved.filePath, coordinates, {
     error: 'reference dataset artifact unavailable',
     status: 503,
-  })
+  }, buildTileCacheControl)
 }
 
 export const mapGlyphResponse = async (url: URL, config: MapArtifactConfig): Promise<Response | null> => {

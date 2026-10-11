@@ -282,27 +282,38 @@ export const marginLimitName = (margin: ThresholdMargin, unit: string): string =
  */
 export const marginTextForms = (margin: ThresholdMargin, unit: string, resolution: number | null = null): ReadonlyArray<string> => {
   const threshold = margin.threshold
-  const lead = isPast(margin) ? 'past' : `${formatQuantity(margin.margin, unit, resolution)} ${threshold.direction === 'low' ? 'above' : 'below'}`
+  // A difference of percentages is in percentage points, spelled out where
+  // there is room and "pp" in a tile's shortest forms.
+  const percent = unitLabel(unit) === '%'
+  const distance = (spelled: boolean): string => percent
+    ? `${formatQuantity(margin.margin, unit, resolution).replace(/ %$/, '')} ${spelled ? 'percentage points' : 'pp'}`
+    : formatQuantity(margin.margin, unit, resolution)
+  const leadOf = (spelled: boolean): string => isPast(margin) ? 'past' : `${distance(spelled)} ${threshold.direction === 'low' ? 'above' : 'below'}`
+  const lead = leadOf(true)
+  const short = leadOf(false)
   const label = unitLabel(unit)
   const value = `${displayValue(threshold.value, unit)}`
   const order = limitOrderName(threshold)
   return [...new Set([
     `${lead} ${order} ${value}${label === '' ? '' : ` ${label}`} · ${actionsText(margin, true)}`,
     `${lead} ${order} ${value}${label === '' ? '' : ` ${label}`} · ${actionsText(margin, false)}`,
-    `${lead} ${order} ${value} · ${actionsText(margin, false)}`,
-    `${lead} ${order} · ${actionsText(margin, false)}`,
+    `${short} ${order} ${value} · ${actionsText(margin, false)}`,
+    `${short} ${order} · ${actionsText(margin, false)}`,
   ])]
 }
 
 /**
- * "4.50 % above LO 30 % · ALM", or "past LO-LO 20 % · AFW START" once the
- * value is beyond it: the margin first, with its unit, so a narrow tile drops
- * the limit's value rather than how far away it is (marginTextForms).
+ * "4.50 percentage points above LO 30 % · ALM", or "past LO-LO 20 % ·
+ * AFW START" once the value is beyond it: the margin first, with its unit, so
+ * a narrow tile drops the limit's value rather than how far away it is
+ * (marginTextForms).
  */
 export const marginText = (margin: ThresholdMargin, unit: string, resolution: number | null = null): string => marginTextForms(margin, unit, resolution)[0]!
 
-/** Simulation time of day as the display header shows it: "10:01:00". */
-export const simulationClock = (ms: number): string => new Date(ms).toISOString().slice(11, 19)
+/** Simulation time of day, labelled independently of the browser timezone. */
+export const simulationClock = (ms: number): string => Number.isFinite(new Date(ms).getTime())
+  ? `${new Date(ms).toISOString().slice(11, 19)} UTC`
+  : '--:--:-- UTC'
 
 // A trend never spans less than this, so a Run's first minute still reads as a curve.
 const MIN_TREND_SPAN_MS = 60_000

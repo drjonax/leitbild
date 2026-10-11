@@ -1,0 +1,81 @@
+{
+  "id": "nordland-corridor-security",
+  "title": "Nordland corridor N-1 security",
+  "description": "A winter weekday peak: Nordland's 420 kV corridor (Salten – Svartisen – Rana – Nedre Røssåga) carries about 620 MW of northern hydropower south through Svartisen – Rana. A few 132 kV lines elsewhere in Norway already run above their ratings and hold overload alarms, but Helgeland's are lightly loaded. The grid is not N-1 secure there: an outage of Svartisen – Rana 420 kV would push its flow onto the parallel Helgeland 132 kV network, loading Smibelg – Sjona and its neighbours far beyond the 150 % at which their instantaneous protection trips them. Ten minutes in, Svartisen – Rana trips. Find the weakness with N-1 screening, test remedial actions on a private copy of the solved grid, apply the one that works and verify it before the trip. Without preparation, protection splits the Helgeland network and load is lost. There are no weather-driven faults.",
+  "objectives": [
+    "Screen every branch outage (contingency.screen, all-branches). The base case already holds a few overloaded 132 kV lines in other regions, so look for outages that push branches over their ratings; identify the one that hits the Helgeland 132 kV network hardest.",
+    "Evaluate candidate remedial actions with remedial-actions.evaluate (redispatch, load shedding, opening or closing branches) and choose one after which that outage no longer pushes any Helgeland branch over its rating, without islanding load or adding base-case overloads.",
+    "Apply the chosen action with its command and confirm with a fresh screening that the outage no longer overloads the Helgeland network.",
+    "When Svartisen – Rana trips at ten minutes, verify that no branch trips and that all load is still served."
+  ],
+  "packs": [
+    {
+      "id": "electric-grid",
+      "config": {},
+      "items": [
+        {
+          "type": "grid",
+          "id": "grid:norway",
+          "label": "Norway transmission grid",
+          "location": [15.5, 64.7],
+          "model": { "ref": "electric-grid.norway.transmission" },
+          "operatingPoint": { "ref": "electric-grid.norway.winter-weekday-peak" },
+          "automation": { "ref": "electric-grid.frequency.nordic-2025" }
+        }
+      ],
+      "recording": { "profileId": "operations" }
+    }
+  ],
+  "world": {
+    "startsAt": "2026-01-12T07:00:00.000Z",
+    "environment": {}
+  },
+  "view": {
+    "map": { "center": [13.9, 66.45], "zoom": 8 }
+  },
+  "timeline": {
+    "cues": [
+      {
+        "id": "corridor-security-briefing",
+        "at": { "kind": "after_scenario_start", "seconds": 0 },
+        "title": "Nordland corridor is not N-1 secure",
+        "actions": [
+          {
+            "type": "show_guidance",
+            "guidance": {
+              "id": "corridor-security-briefing",
+              "title": "Nordland corridor is not N-1 secure",
+              "message": "Run N-1 screening, find the outage that would overload the Helgeland 132 kV network, and evaluate and apply a remedial action. A 420 kV circuit in the corridor trips at ten minutes.",
+              "objectIds": ["grid:norway"],
+              "dismissible": true,
+              "tone": "default"
+            }
+          }
+        ]
+      },
+      {
+        "id": "svartisen-rana-trip",
+        "at": { "kind": "after_scenario_start", "seconds": 600 },
+        "title": "Svartisen – Rana 420 kV trips",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.open-branch",
+            "input": { "gridId": "grid:norway", "assetId": "branch:osm-ac345cb49df196e1" }
+          },
+          {
+            "type": "show_guidance",
+            "guidance": {
+              "id": "svartisen-rana-trip",
+              "title": "Svartisen – Rana 420 kV tripped",
+              "message": "Check branch loading, protection trips, islands and unserved load in the Helgeland network, and screen the new topology for its own N-1 weaknesses.",
+              "objectIds": ["grid:norway"],
+              "dismissible": true,
+              "tone": "update"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

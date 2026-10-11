@@ -21,7 +21,7 @@ import { createWorkspaceSettings, type WorkspaceSettings } from './core/workspac
 import { createBookmarkStore, type BookmarkStore, type OnBookmarksChanged } from './core/workspaces/bookmark-store.ts'
 import type { SummaryScheduler, SummaryTarget } from './core/summaries/summary-scheduler.ts'
 import { createSummaryEngine } from './core/summaries/summary-engine.ts'
-import { effectiveActivePackSet } from './packs/activation.ts'
+import { effectiveActivePackSet, type RoomPacksResult } from './packs/activation.ts'
 import { createSummaryScheduler } from './core/summaries/summary-scheduler.ts'
 import { createTriggerScheduler, type TriggerScheduler } from './core/triggers/scheduler.ts'
 import type { OnEvalEvent } from './core/types/agent-eval.ts'
@@ -166,6 +166,8 @@ export interface AgentsWorkspaceRuntime {
   readonly ollamaUrls: OllamaUrlRegistry
   readonly removeAgent: (id: string) => boolean
   readonly removeRoom: (roomId: string) => boolean
+  readonly setRoomPacks: (roomId: string, packIds: ReadonlyArray<string>) => RoomPacksResult
+  readonly setOnRoomPacksChanged: (callback: (roomId: string, activePacks: ReadonlyArray<string>) => void) => void
   // Clear every room and agent from the running Workspace. Used by the
   // `reset_system` MCP tool in the experiment runner's persistent-process
   // mode so a single subprocess can serve many independent runs. Leaves the
@@ -364,6 +366,7 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
     const turnChanged = lateBinding<OnTurnChanged>('turnChanged')
     const deliveryModeChanged = lateBinding<OnDeliveryModeChanged>('deliveryModeChanged')
     const roomCreated = lateBinding<OnRoomCreated>('roomCreated')
+    const roomPacksChanged = lateBinding<(roomId: string, activePacks: ReadonlyArray<string>) => void>('roomPacksChanged')
     const roomDeleted = lateBinding<OnRoomDeleted>('roomDeleted')
     const membershipChanged = lateBinding<OnMembershipChanged>('membershipChanged')
     const bookmarksChanged = lateBinding<OnBookmarksChanged>('bookmarksChanged')
@@ -981,6 +984,18 @@ export const createAgentsWorkspaceRuntime = (options: CreateAgentsWorkspaceRunti
       ollamaUrls,
       removeAgent,
       removeRoom: systemRemoveRoom,
+      setRoomPacks: (roomId, packIds) => {
+        const room = rooms.getRoom(roomId)
+        if (!room) return { ok: false, code: 'room_not_found', message: 'Room not found' }
+        const requested = [...new Set(packIds)]
+        const known = new Set(deployment.packCatalog.list().map(pack => pack.id))
+        const unknown = requested.filter(id => !known.has(id))
+        if (unknown.length > 0) return { ok: false, code: 'unknown_pack', message: `Unknown Pack ids: ${unknown.join(', ')}` }
+        room.setActivePacks(requested)
+        roomPacksChanged.proxy(room.profile.id, room.getActivePacks())
+        return { ok: true, activePacks: room.getActivePacks() }
+      },
+      setOnRoomPacksChanged: roomPacksChanged.set,
       resetState,
       addAgentToRoom: systemAddAgentToRoom,
       removeAgentFromRoom: systemRemoveAgentFromRoom,

@@ -1,7 +1,8 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { readTerrainPmtilesMetadata, type TerrainDemEncoding } from './terrain-artifact.ts'
+import { readVectorTileArchiveSummary } from './vector-tile-archive.ts'
 import {
   sceneryAssetFormat,
   sceneryAssetTilesetSchema,
@@ -198,11 +199,15 @@ const tilesetCategorySchema = z.object({
   featureCount: z.number().int().min(0),
 })
 
-// Matches the per-dataset manifest fragment shape from manifest-writer.ts
-// (Phase A.1). The on-disk field name is `datasetId`; we layer `kind:
-// 'reference'` on top when assembling the unified manifest.
-export const referenceTilesetSchema = z.object({
-  kind: z.literal('reference'),
+const tilesetTilesSchema = z.object({
+  minZoom: z.number().int().min(0).max(24),
+  maxZoom: z.number().int().min(0).max(24),
+  /** [west, south, east, north] in degrees. */
+  bounds: z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90), z.number().min(-180).max(180), z.number().min(-90).max(90)]),
+})
+
+// The per-dataset build manifest from manifest-writer.ts, as far as clients use it.
+const referenceBuildManifestSchema = z.object({
   datasetId: z.string().min(1),
   schemaVersion: z.literal(1),
   builtAt: z.string().min(1),
@@ -215,6 +220,13 @@ export const referenceTilesetSchema = z.object({
   categories: z.array(tilesetCategorySchema),
   sources: z.array(tilesetSourceSchema).min(1),
   licences: z.array(tilesetLicenceSchema).min(1),
+})
+
+// A promoted build manifest under `kind: 'reference'`, with the zoom range and
+// bounds read from the header of the archive the release serves.
+export const referenceTilesetSchema = referenceBuildManifestSchema.extend({
+  kind: z.literal('reference'),
+  tiles: tilesetTilesSchema,
 })
 export type ReferenceTileset = z.infer<typeof referenceTilesetSchema>
 
@@ -529,12 +541,11 @@ const readReferenceManifest = async (
   // Manifest file is `<datasetId>.manifest.json` per the pipeline writer.
   const manifestPath = join(currentDir, `${datasetId}.manifest.json`)
   try {
-    const raw = await readFile(manifestPath, 'utf8')
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    // The on-disk manifest is the per-dataset shape from manifest-writer.ts (no
-    // top-level `kind`). We layer that on top of `kind: 'reference'`.
-    const candidate = { kind: 'reference' as const, ...parsed }
-    const tileset = referenceTilesetSchema.parse(candidate)
+    const build = referenceBuildManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
+    const { pmtilesPath } = build.artifact
+    if (basename(pmtilesPath) !== pmtilesPath) throw new Error(`archive path ${pmtilesPath} is not a file name in the release`)
+    const tiles = await readVectorTileArchiveSummary(join(currentDir, pmtilesPath))
+    const tileset = referenceTilesetSchema.parse({ kind: 'reference', ...build, tiles })
     return { tileset, mtimeMs }
   } catch (err) {
     console.warn(`map-capabilities: skipping reference dataset "${datasetId}" — ${err instanceof Error ? err.message : String(err)}`)

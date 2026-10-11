@@ -1,0 +1,101 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": 1639977,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     6.662767626170009,
+     59.52561294187649
+    ]
+   },
+   "properties": {
+    "objectid": 1639977,
+    "vannkraftverknr": 222,
+    "vannkraftverknavn": "Kvilldal",
+    "vannkraftverktype": "K",
+    "status": "D",
+    "idriftsattaar": 1981,
+    "maksytelse_mw": 1240,
+    "vannkraftverkeier": "STATKRAFT ENERGI AS",
+    "kommunenummer": "1134",
+    "kommunenavn": "Suldal",
+    "fylke": "Rogaland"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 1640029,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     6.69529585588991,
+     59.47986783428917
+    ]
+   },
+   "properties": {
+    "objectid": 1640029,
+    "vannkraftverknr": 362,
+    "vannkraftverknavn": "Saurdal",
+    "vannkraftverktype": "PK",
+    "status": "D",
+    "idriftsattaar": 1985,
+    "maksytelse_mw": 640,
+    "vannkraftverkeier": "STATKRAFT ENERGI AS",
+    "kommunenummer": "1134",
+    "kommunenavn": "Suldal",
+    "fylke": "Rogaland"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 1640036,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     11.169892814342127,
+     59.54260968389228
+    ]
+   },
+   "properties": {
+    "objectid": 1640036,
+    "vannkraftverknr": 488,
+    "vannkraftverknavn": "Vamma",
+    "vannkraftverktype": "K",
+    "status": "D",
+    "idriftsattaar": 1915,
+    "maksytelse_mw": 344,
+    "vannkraftverkeier": "HAFSLUND KRAFT AS",
+    "kommunenummer": "3118",
+    "kommunenavn": "Indre Østfold",
+    "fylke": "Østfold"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 1640039,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     11.170712558795525,
+     59.54178730708438
+    ]
+   },
+   "properties": {
+    "objectid": 1640039,
+    "vannkraftverknr": 488,
+    "vannkraftverknavn": "Vamma",
+    "vannkraftverktype": "K",
+    "status": "D",
+    "idriftsattaar": 1915,
+    "maksytelse_mw": 344,
+    "vannkraftverkeier": "HAFSLUND KRAFT AS",
+    "kommunenummer": "3116",
+    "kommunenavn": "Skiptvet",
+    "fylke": "Østfold"
+   }
+  }
+ ]
+}

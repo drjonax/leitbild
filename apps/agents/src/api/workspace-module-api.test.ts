@@ -100,6 +100,46 @@ const invokeBody = (workspaceId: WorkspaceId, capabilityId: string, input: unkno
 })
 
 describe('Agents Workspace Module API', () => {
+  test('AI can discover and replace existing Room Packs through the validated owner, durably and independently', async () => {
+    const workspaceId = newWorkspaceId()
+    await request('PUT', `/internal/workspaces/${workspaceId}`, { workspaceId })
+    const runtime = await registry.getOrLoad(workspaceId)
+    const first = runtime.rooms.createRoom({ name: 'First', createdBy: 'test' })
+    const second = runtime.rooms.createRoom({ name: 'Second', createdBy: 'test' })
+    const knownPack = runtime.packCatalog.list()[0]!.id
+    const changed: string[] = []
+    runtime.setOnRoomPacksChanged(roomId => changed.push(roomId))
+    const operationId = 'agents.room.packs.set'
+    const packList = await request('POST', `/internal/workspaces/${workspaceId}/capabilities/agents.packs.list/invoke`, invokeBody(workspaceId, 'agents.packs.list', {}))
+    expect(packList.status).toBe(200)
+    expect(await packList.json()).toEqual({ result: { packs: runtime.packCatalog.list().map(pack => ({ id: pack.id, title: pack.descriptor.name, description: pack.descriptor.description, deployment: pack.deployment })) } })
+    const set = (roomId: string, input: unknown) => request('POST', `/internal/workspaces/${workspaceId}/capabilities/${operationId}/invoke`, invokeBody(workspaceId, operationId, input, { resource: { type: 'agents.room', id: roomId } }))
+    const catalog = await request('GET', `/internal/workspaces/${workspaceId}/capabilities`)
+    expect(moduleCapabilityCollectionSchema.parse(await catalog.json()).capabilities.some(capability => capability.id === operationId)).toBe(true)
+    const resources = await request('GET', `/internal/workspaces/${workspaceId}/resources`)
+    expect(moduleResourceCollectionSchema.parse(await resources.json()).resources.find(resource => resource.ref.id === first.profile.id)!.capabilityIds.some(id => id === operationId)).toBe(true)
+    const [a, b] = await Promise.all([set(first.profile.id, { activePacks: [knownPack, knownPack] }), set(second.profile.id, { activePacks: [] })])
+    expect(a.status).toBe(200)
+    expect(b.status).toBe(200)
+    expect(await a.json()).toMatchObject({ result: { activePacks: [knownPack] } })
+    expect(first.getActivePacks()).toEqual([knownPack])
+    expect(second.getActivePacks()).toEqual([])
+    expect(changed.sort()).toEqual([first.profile.id, second.profile.id].sort())
+    const invalid = await set(first.profile.id, { activePacks: [knownPack, 'absent-pack'] })
+    expect(invalid.status).toBe(400)
+    expect(await invalid.json()).toMatchObject({ error: { code: 'unknown_pack' } })
+    expect(first.getActivePacks()).toEqual([knownPack])
+    expect((await set(first.profile.id, { activePacks: [3] })).status).toBe(400)
+    expect((await set(first.profile.id, { activePacks: [], extra: true })).status).toBe(400)
+    expect((await set('missing', { activePacks: [] })).status).toBe(404)
+    expect(changed).toHaveLength(2)
+    await registry.evictOne(workspaceId)
+    const restored = await registry.getOrLoad(workspaceId)
+    expect(restored.rooms.getRoom(first.profile.id)!.getActivePacks()).toEqual([knownPack])
+    const read = await request('POST', `/internal/workspaces/${workspaceId}/capabilities/agents.room.read/invoke`, invokeBody(workspaceId, 'agents.room.read', {}, { resource: { type: 'agents.room', id: first.profile.id } }))
+    expect(await read.json()).toMatchObject({ result: { state: { activePacks: [knownPack] } } })
+  })
+
   test('opens one concurrent-safe Leitbild Assistant Room and preserves focused subjects', async () => {
     const workspaceId = newWorkspaceId()
     await request('PUT', `/internal/workspaces/${workspaceId}`, { workspaceId })

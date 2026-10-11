@@ -29,12 +29,28 @@ describe('reference-data registry (collector)', () => {
     expect(datasets.map(d => String(d.id))).toContain(String(gridNorwayDatasetId))
   })
 
-  test('grid-norway build() returns a raw OSM PBF dataset config by default', () => {
+  test('grid-norway build() returns an OSM PBF dataset config for a pinned extract', () => {
     const descriptor = findRegisteredDataset(String(gridNorwayDatasetId), packs)!
-    const config = descriptor.build(emptyEnv)
+    const config = descriptor.build({
+      GRID_NORWAY_OSM_PBF_PATH: '/opt/leitbild/maps/sources/norway-latest.osm.pbf',
+      GRID_NORWAY_OSM_PBF_MAX_AGE_DAYS: '14',
+    })
     expect(String(config.id)).toBe(String(gridNorwayDatasetId))
     expect(config.sources.map(source => String(source.id))).toEqual(['osm:pbf-power:NO'])
     expect(config.licences.map(licence => String(licence.id))).toEqual(['osm-odbl-1.0'])
+  })
+
+  test('grid-norway build() refuses an unpinned or ambiguously pinned extract', () => {
+    const descriptor = findRegisteredDataset(String(gridNorwayDatasetId), packs)!
+    expect(() => descriptor.build(emptyEnv)).toThrow('GRID_NORWAY_OSM_PBF_PATH is required')
+    expect(() => descriptor.build({ GRID_NORWAY_OSM_PBF_PATH: '/x.osm.pbf' })).toThrow('exactly one of')
+    expect(() => descriptor.build({
+      GRID_NORWAY_OSM_PBF_PATH: '/x.osm.pbf',
+      GRID_NORWAY_OSM_PBF_SHA256: 'a'.repeat(64),
+      GRID_NORWAY_OSM_PBF_MAX_AGE_DAYS: '14',
+    })).toThrow('exactly one of')
+    expect(() => descriptor.build({ GRID_NORWAY_OSM_PBF_PATH: '/x.osm.pbf', GRID_NORWAY_OSM_PBF_SHA256: 'abc' })).toThrow('64 lowercase hex')
+    expect(() => descriptor.build({ GRID_NORWAY_OSM_PBF_PATH: '/x.osm.pbf', GRID_NORWAY_OSM_PBF_MAX_AGE_DAYS: 'soon' })).toThrow('positive number of days')
   })
 
   test('findRegisteredDataset returns null for unknown id', () => {

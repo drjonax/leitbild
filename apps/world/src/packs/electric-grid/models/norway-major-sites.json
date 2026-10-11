@@ -1,0 +1,2350 @@
+{
+  "schema": "leitbild.electric-grid.norway-major-sites",
+  "curatedAt": "2026-10-11",
+  "osmSnapshot": "Substation OSM ids from the production grid-norway sidecar build 20260528-230419 (OSM PBF); re-confirm against the fresh 2026-10 Geofabrik extract.",
+  "inclusionRule": "Industrial, petroleum and data-centre loads with a published electrical demand of at least 25 MW (annual self-reported electricity / 8760 h, or published power-from-shore or contracted MW), in the municipalities that dominate Elhub industry consumption.",
+  "sites": [
+    {
+      "id": "site:hydro-sunndal",
+      "name": "Hydro Sunndal (Sunndalsøra) primary aluminium",
+      "operator": "Norsk Hydro ASA (Hydro Aluminium AS)",
+      "kind": "industry-site",
+      "activity": "primary aluminium smelter",
+      "location": [
+        8.5539,
+        62.6805
+      ],
+      "municipalityNr": "1563",
+      "municipalityName": "Sunndal",
+      "priceArea": "NO3",
+      "servingSubstation": {
+        "name": "Hydro Sunndal trafostasjon",
+        "osmId": "relation/9344826",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Viklandet trafostasjon",
+        "osmId": "way/202200066",
+        "kv": 420
+      },
+      "demand": {
+        "publishedMw": 691.7,
+        "basis": "Annual average = self-reported 2025 electricity 6.059 TWh / 8760 h. Elhub Sunndal industry 2026-01-15 00-01 = 698 MW matches. Historical: 450 MW rising to 600 MW (TU 2004).",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1563",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 6.151 TWh (2024), 6.059 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5309",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-midt/surna-viklandet/bakgrunn-for-vedtak.pdf",
+          "supports": "NVE decision background (2015): Hydro consultation names Viklandet and Aura supply, asks for n-1 420 kV"
+        },
+        {
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/61bb404c-38c8-4266-a0cf-eb6520d7a1cc/202215107/3436677",
+          "supports": "NVE concession 2024: Viklandet station with 420 kV transformers"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-midt/harstad-transformatorstasjon/",
+          "supports": "Statnett Hårstad: new 420 kV Viklandet–Hårstad replaces Aura 300 kV; enables more consumption at Sunndalsøra"
+        },
+        {
+          "url": "https://www.tu.no/artikler/kraftutbygging-for-industriloft/266596",
+          "supports": "TU 2004: Hydro load 300->450 MW, signalled 600 MW to Statnett"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Plant station from OpenStreetMap; Hydro names Viklandet (Statnett) and Aura 300 kV as supply."
+      }
+    },
+    {
+      "id": "site:hydro-karmoy",
+      "name": "Hydro Karmøy primary aluminium (incl. technology pilot)",
+      "operator": "Norsk Hydro ASA",
+      "kind": "industry-site",
+      "activity": "primary aluminium smelter",
+      "location": [
+        5.3126,
+        59.3149
+      ],
+      "municipalityNr": "1149",
+      "municipalityName": "Karmøy",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Håvik trafostasjon",
+        "osmId": "relation/13989591",
+        "kv": 300
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 371.2,
+        "basis": "Annual average = self-reported 2025 electricity 3.252 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1149",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 2.933 TWh (2024), 3.252 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5121",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-vest/karmoy-transformatorstasjon/",
+          "supports": "Karmøy station on Hydro land 30 m N of Håvik; 300 kV Spanne/Sauda/Kårstø–Håvik lines"
+        },
+        {
+          "url": "https://www.statnett.no/contentassets/0c45ddb7ecba4f41b2e407784641256b/22_00925-1-konsesjonssoknad-ny-karmoy-stasjon-778234_1_1.pdf",
+          "supports": "Statnett application 2022: Håvik since 1967, owned by Statnett and Hydro; two new 300 kV links to Hydro"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Håvik 300 kV, owned by Statnett and Hydro."
+      }
+    },
+    {
+      "id": "site:hydro-ardal",
+      "name": "Hydro Årdal Metallverk (Øvre Årdal) primary aluminium",
+      "operator": "Norsk Hydro ASA",
+      "kind": "industry-site",
+      "activity": "primary aluminium smelter",
+      "location": [
+        7.8249,
+        61.3116
+      ],
+      "municipalityNr": "4643",
+      "municipalityName": "Årdal",
+      "priceArea": "NO5",
+      "servingSubstation": {
+        "name": "Øvre Årdal smelteverk",
+        "osmId": "relation/11781403",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Fortun trafostasjon",
+        "osmId": "relation/8679746",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 365.6,
+        "basis": "Annual average = self-reported 2025 electricity 3.203 TWh / 8760 h. Norske utslipp 2016-2023 values (~0.2 TWh) look under-reported vs 2024/25 and Elhub (394 MW); use 2024/25. Plus Årdal Karbon ~4.5 MW.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4643",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 3.061 TWh (2024), 3.203 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6258",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/200905411/690575",
+          "supports": "2013 grid report: four 132 kV lines (3 from Fortun); electrolysis ~400 MW"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6259",
+          "supports": "Hydro Årdal Karbon (anode plant, Årdal) adds ~0.04 TWh/yr"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Hydro 132 kV plant station fed by three 132 kV lines from Fortun 300/132 kV."
+      }
+    },
+    {
+      "id": "site:hydro-husnes",
+      "name": "Hydro Husnes (ex Sør-Norge Aluminium/Søral) primary aluminium",
+      "operator": "Norsk Hydro ASA (100% since 1 Nov 2014)",
+      "kind": "industry-site",
+      "activity": "primary aluminium smelter",
+      "location": [
+        5.7683,
+        59.8681
+      ],
+      "municipalityNr": "4617",
+      "municipalityName": "Kvinnherad",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Husnes",
+        "osmId": "relation/7809753",
+        "kv": 300
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 278.4,
+        "basis": "Annual average = self-reported 2025 electricity 2.439 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4617",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 2.32 TWh (2024), 2.439 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6256",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/d562eeda-c61b-4525-a7cc-055d799bcacf/202207831/3433003",
+          "supports": "Hydro consultation 2023: Husnes 300 kV station, three main transformers, Statnett lines"
+        },
+        {
+          "url": "https://www.hydro.com/en/global/media/news/2014/hydro-and-rta-close-soral-deal/",
+          "supports": "Deal closed 31 Oct 2014; Husnes is Hydro fully owned smelter"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Hydro-owned Husnes 300 kV station on Statnett lines."
+      }
+    },
+    {
+      "id": "site:hydro-hoyanger",
+      "name": "Hydro Høyanger primary aluminium",
+      "operator": "Norsk Hydro ASA",
+      "kind": "industry-site",
+      "activity": "primary aluminium smelter",
+      "location": [
+        6.0683,
+        61.2187
+      ],
+      "municipalityNr": "4638",
+      "municipalityName": "Høyanger",
+      "priceArea": "NO3",
+      "servingSubstation": {
+        "name": "Hydro Høyanger",
+        "osmId": "relation/16005161",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Høyanger trafostasjon",
+        "osmId": "way/547743430",
+        "kv": 420
+      },
+      "demand": {
+        "publishedMw": 111,
+        "basis": "Annual average = self-reported 2025 electricity 0.972 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4638",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.969 TWh (2024), 0.972 TWh (2025); site coords"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Serving station not published; the plant station in OpenStreetMap (0.2 km) and the Statnett station 5 km away are inferred."
+      }
+    },
+    {
+      "id": "site:alcoa-mosjoen",
+      "name": "Alcoa Mosjøen aluminium smelter",
+      "operator": "Alcoa Norway AS",
+      "kind": "industry-site",
+      "activity": "primary aluminium smelter",
+      "location": [
+        13.1903,
+        65.8471
+      ],
+      "municipalityNr": "1824",
+      "municipalityName": "Vefsn",
+      "priceArea": "NO4",
+      "servingSubstation": {
+        "name": "Marka trafostasjon",
+        "osmId": "relation/8476872",
+        "kv": 300
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 360.8,
+        "basis": "Annual average = self-reported 2025 electricity 3.161 TWh / 8760 h. Published load: 350 MW, planned 410 MW (NVE 2018).",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1824",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 3.112 TWh (2024), 3.161 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5116",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-nord/marka-transformatorstasjon/oversendelse-fra-nve-om-konsesjon.pdf",
+          "supports": "NVE 2018: Marka supplies Mosjøen and Alcoa; Alcoa demand 350 -> 410 MW planned"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/marka-transformatorstasjon/",
+          "supports": "Marka 22/300 kV, energised Dec 2020"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "NVE 2018: Marka supplies Mosjøen and Alcoa."
+      }
+    },
+    {
+      "id": "site:alcoa-lista",
+      "name": "Alcoa Lista aluminium smelter (Farsund)",
+      "operator": "Alcoa Norway AS",
+      "kind": "industry-site",
+      "activity": "primary aluminium smelter",
+      "location": [
+        6.7832,
+        58.0731
+      ],
+      "municipalityNr": "4206",
+      "municipalityName": "Farsund",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Lista trafostasjon",
+        "osmId": "relation/8896922",
+        "kv": 300
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 162,
+        "basis": "Annual average = self-reported 2025 electricity 1.419 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4206",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 1.193 TWh (2024), 1.419 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5310",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.tu.no/artikler/landanlegget-klart-for-valhall/256681",
+          "supports": "TU 2009: Valhall converter at Alcoa Lista, supplied via Statnett 300 kV from Feda"
+        },
+        {
+          "url": "https://library.e.abb.com/public/2754389c241b6961852572dd006506e3/Valhall%20Re-Development%20Project,%20Power%20From%20Shore%20for%20Energex%202006.pdf",
+          "supports": "ABB 2006: converter connects at Elkem's 300 kV substation at Lista"
+        },
+        {
+          "url": "https://www.statkraft.com/newsroom/news-and-stories/2026/statkraft-and-alcoa-sign-new-power-agreements-to-secure-energy-supply-for-the-aluminium-plant-in-southern-norway/",
+          "supports": "Statkraft 18 Jun 2026: ~4.8 TWh contracted 2028-2031; capacity 95 kt"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Alcoa 300/132 kV station fed by Statnett 300 kV from Feda; OpenStreetMap maps it as Lista trafostasjon (0.6 km)."
+      }
+    },
+    {
+      "id": "site:elkem-rana",
+      "name": "Elkem Rana ferrosilicon plant (Mo Industripark)",
+      "operator": "Elkem ASA",
+      "kind": "industry-site",
+      "activity": "ferrosilicon plant",
+      "location": [
+        14.1676,
+        66.3134
+      ],
+      "municipalityNr": "1833",
+      "municipalityName": "Rana",
+      "priceArea": "NO4",
+      "servingSubstation": {
+        "name": "Svabo trafostasjon (Mo Industripark)",
+        "osmId": "way/589085618",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Rana trafostasjon",
+        "osmId": "way/197866182",
+        "kv": 420
+      },
+      "demand": {
+        "publishedMw": 62.8,
+        "basis": "Annual average = self-reported 2025 electricity 0.55 TWh / 8760 h. 2024: 0.682 TWh.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1833",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.682 TWh (2024), 0.55 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5122",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/rana-transformatorstasjon/",
+          "supports": "Rana TS 132/420 kV; 132 kV distribution to Mo Industripark"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-nord/rana-transformatorstasjon/konsesjonssoknad-rana-transformatorstasjon.pdf",
+          "supports": "Statnett application 2023: Rana–Svabo 132 kV lines; Svabo 132/22 kV; ~2,200 GWh/yr distributed in park"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Svabo 132 kV park grid fed from Statnett Rana 420/132 kV."
+      }
+    },
+    {
+      "id": "site:ferroglobe-mangan-norge",
+      "name": "Ferroglobe Mangan Norge manganese alloys (Mo Industripark, ex Glencore Manganese Norway)",
+      "operator": "Ferroglobe PLC",
+      "kind": "industry-site",
+      "activity": "manganese alloys plant",
+      "location": [
+        14.1635,
+        66.3126
+      ],
+      "municipalityNr": "1833",
+      "municipalityName": "Rana",
+      "priceArea": "NO4",
+      "servingSubstation": {
+        "name": "Svabo trafostasjon (Mo Industripark)",
+        "osmId": "way/589085618",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Rana trafostasjon",
+        "osmId": "way/197866182",
+        "kv": 420
+      },
+      "demand": {
+        "publishedMw": 60,
+        "basis": "Annual average = self-reported 2025 electricity 0.526 TWh / 8760 h. Installed: 2 x 60 MVA furnaces. Norske utslipp 2016-2023 values (120 MWh) are clearly mis-entered.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1833",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.54 TWh (2024), 0.526 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6476",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/rana-transformatorstasjon/",
+          "supports": "Rana TS 132/420 kV; 132 kV distribution to Mo Industripark"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-nord/rana-transformatorstasjon/konsesjonssoknad-rana-transformatorstasjon.pdf",
+          "supports": "Statnett application 2023: Rana–Svabo 132 kV lines; Svabo 132/22 kV; ~2,200 GWh/yr distributed in park"
+        },
+        {
+          "url": "https://www.ferroglobe.com/static-files/fafe26b3-d63d-46d0-8cd4-39ecb2dd6bdc",
+          "supports": "Ferroglobe 2025 Transparency Act report (seen via search; URL returned 403): two closed furnaces, 60 MVA each"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Svabo 132 kV park grid fed from Statnett Rana 420/132 kV."
+      }
+    },
+    {
+      "id": "site:7steel-nordic-rana",
+      "name": "7 Steel Nordic (ex Celsa Armeringsstål) EAF rebar steel mill, Mo i Rana",
+      "operator": "7 Steel Nordic (formerly Celsa Armeringsstål AS)",
+      "kind": "industry-site",
+      "activity": "electric arc furnace steel mill",
+      "location": [
+        14.1576,
+        66.3133
+      ],
+      "municipalityNr": "1833",
+      "municipalityName": "Rana",
+      "priceArea": "NO4",
+      "servingSubstation": {
+        "name": "Svabo trafostasjon (Mo Industripark)",
+        "osmId": "way/589085618",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Rana trafostasjon",
+        "osmId": "way/197866182",
+        "kv": 420
+      },
+      "demand": {
+        "publishedMw": 40.5,
+        "basis": "Annual average = self-reported 2025 electricity 0.355 TWh / 8760 h. EAF: instantaneous peaks far above average.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1833",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.369 TWh (2024), 0.355 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6474",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/rana-transformatorstasjon/",
+          "supports": "Rana TS 132/420 kV; 132 kV distribution to Mo Industripark"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-nord/rana-transformatorstasjon/konsesjonssoknad-rana-transformatorstasjon.pdf",
+          "supports": "Statnett application 2023: Rana–Svabo 132 kV lines; Svabo 132/22 kV; ~2,200 GWh/yr distributed in park"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Svabo 132 kV park grid fed from Statnett Rana 420/132 kV; arc-furnace peaks far exceed the average."
+      }
+    },
+    {
+      "id": "site:kollsnes-gas-plant",
+      "name": "Kollsnes gas processing plant",
+      "operator": "Gassco AS (technical operator Equinor)",
+      "kind": "petroleum-site",
+      "activity": "gas processing plant",
+      "location": [
+        4.8329,
+        60.5501
+      ],
+      "municipalityNr": "4626",
+      "municipalityName": "Øygarden",
+      "priceArea": "NO5",
+      "servingSubstation": {
+        "name": "Kollsnes trafostasjon",
+        "osmId": "relation/8839478",
+        "kv": 300
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 227.6,
+        "basis": "Annual average = self-reported 2025 electricity 1.994 TWh / 8760 h. Elhub Øygarden 560 MW also includes offshore loads fed via Kollsnes (Troll A, Troll B/C partial, Martin Linge), Sture terminal (~10 MW) and Molgas (~8 MW).",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4626",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 2.205 TWh (2024), 1.994 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6426",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/a41c2759-45f3-46f7-8968-0b37091d3096/201914127/3445557",
+          "supports": "NVE 25 Jun 2025: Kollsnes 300/132 kV transformers to Statnett from 2026; Troll A fed from Kollsnes"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-vest/sogndal-sauda/oygarden-transformatorstasjon/",
+          "supports": "Øygarden 420 kV station, 2029"
+        },
+        {
+          "url": "https://www.norskpetroleum.no/en/environment-and-technology/emissions-to-air/",
+          "supports": "Kollsnes supplied partly/wholly from grid"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Kollsnes 300/132 kV, Statnett from 2026-01-01."
+      }
+    },
+    {
+      "id": "site:karsto-gas-plant",
+      "name": "Kårstø gas processing plant",
+      "operator": "Gassco AS (technical operator Equinor)",
+      "kind": "petroleum-site",
+      "activity": "gas processing plant",
+      "location": [
+        5.5128,
+        59.2747
+      ],
+      "municipalityNr": "1146",
+      "municipalityName": "Tysvær",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Kårstø trafostasjon",
+        "osmId": "relation/8864887",
+        "kv": 300
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 80.4,
+        "basis": "Annual average = self-reported 2025 electricity 0.704 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1146",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.66 TWh (2024), 0.704 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6428",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://gassco.eu/prosessanlegg/karsto/",
+          "supports": "4 of 9 compressors electric, 5 on fuel gas"
+        },
+        {
+          "url": "https://www.tu.no/artikler/gassco-og-equinor-vil-ikke-elektrifisere-karsto-anlegget-likevel/524186",
+          "supports": "Full electrification dropped Jan 2023"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Kårstø 300 kV switching station; four of nine compressors electric."
+      }
+    },
+    {
+      "id": "site:nyhamna-gas-plant",
+      "name": "Nyhamna gas processing plant (Ormen Lange), incl. Ormen Lange subsea compression (started 2025)",
+      "operator": "Gassco AS (technical service provider Shell)",
+      "kind": "petroleum-site",
+      "activity": "gas processing plant (Ormen Lange) incl. subsea compression",
+      "location": [
+        6.9427,
+        62.8479
+      ],
+      "municipalityNr": "1547",
+      "municipalityName": "Aukra",
+      "priceArea": "NO3",
+      "servingSubstation": {
+        "name": "Nyhamna trafostasjon",
+        "osmId": "relation/10104222",
+        "kv": 420
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 173.7,
+        "basis": "Annual average = self-reported 2025 electricity 1.522 TWh / 8760 h. Historic max ~170 MW (2011). Elhub Aukra 233 MW suggests ~60 MW extra (likely subsea compression, unverified).",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1547",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 1.558 TWh (2024), 1.522 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=16782",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.regjeringen.no/contentassets/c5937f8aee5a47dfa79468bae75a8dab/konseptvalgutredning-for-okt-leveringspalitelighet-til-gassprosesseringsanlegget-pa-nyhamna.pdf",
+          "supports": "Statnett KVU 2015 (via search summary): ~155 MW demand, ~260 MW expected 2018/19; single 420 kV route"
+        },
+        {
+          "url": "https://www.tu.no/artikler/statnett-og-shell-vil-ha-ulonnsom-kraftlinje-til-nyhamna/231853",
+          "supports": "TU 2013 (via search summary): 170 MW rising to ~300 MW"
+        },
+        {
+          "url": "https://www.statnett.no/contentassets/bb747844e4fc498c9ecf4f108102c48c/exec-summary-nyhamna-swiftpac-powerplants-january-2022.pdf",
+          "supports": "Statnett reserve plant 3x60 MW FT8, 11.5/132 kV"
+        },
+        {
+          "url": "https://www.norskpetroleum.no/en/facts/field/ormen-lange/",
+          "supports": "Ormen Lange subsea compression started 2025"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Single radial 420 kV supply from Statnett."
+      }
+    },
+    {
+      "id": "site:mongstad-refinery",
+      "name": "Mongstad refinery",
+      "operator": "Equinor",
+      "kind": "petroleum-site",
+      "activity": "oil refinery",
+      "location": [
+        5.0333,
+        60.8149
+      ],
+      "municipalityNr": "4631",
+      "municipalityName": "Alver",
+      "priceArea": "NO5",
+      "servingSubstation": {
+        "name": "Mongstad",
+        "osmId": "way/432969239",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Lindås trafostasjon",
+        "osmId": "relation/20598970",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 57.4,
+        "basis": "Annual average = self-reported 2025 electricity 0.503 TWh / 8760 h. Mongstad CHP (~280 MW) closed 2022, so refinery now grid-supplied; Elhub Alver 111 MW also includes Gjøa (~25-40 MW).",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4631",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.518 TWh (2024), 0.503 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5440",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-vest/lindas-transformatorstasjon/konsesjonssoknad-lindas-transformatorstasjon.pdf",
+          "supports": "Statnett 2021: second 300 MVA transformer and 132 kV line because Mongstad CHP closes; >=55 MW load shedding"
+        },
+        {
+          "url": "https://www.tu.no/artikler/kompromiss-mellom-equinor-og-statnett-mongstad-stenger-men-rives-ikke/521225",
+          "supports": "Mongstad CHP closed (not demolished)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "BKK 132 kV from Statnett Lindås 300/132 kV; the Mongstad CHP closed in 2022."
+      }
+    },
+    {
+      "id": "site:hammerfest-lng",
+      "name": "Hammerfest LNG (Melkøya)",
+      "operator": "Equinor",
+      "kind": "petroleum-site",
+      "activity": "LNG plant",
+      "location": [
+        23.602,
+        70.6911
+      ],
+      "municipalityNr": "5603",
+      "municipalityName": "Hammerfest",
+      "priceArea": "NO4",
+      "servingSubstation": {
+        "name": "Melkøya trafostasjon",
+        "osmId": "way/685025511",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Hammerfest trafostasjon",
+        "osmId": "way/586152359",
+        "kv": 132
+      },
+      "demand": {
+        "publishedMw": 138.5,
+        "basis": "Annual average = self-reported 2025 electricity 1.213 TWh / 8760 h. This electricity is largely self-generated (2025 also burned 207 kt natural gas); grid draw in Jan 2026 not published. 2024: 1.662 TWh.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": {
+        "name": "Melkøya gasskraftverk",
+        "osmPlantId": "way/685025522",
+        "kind": "thermal",
+        "fuel": "gas",
+        "units": 5,
+        "capacityMw": 225,
+        "evidence": [
+          {
+            "url": "https://www.regjeringen.no/contentassets/c0c85d54ff88493b86713781ec7b6ece/vedrorende-godkjenning-av-endret-utbyggingsplan-for-snohvitfeltet-og-hammerfest-lng-l1483852-002-l1484472.pdf",
+            "supports": "OED 2023, p. 2: five gas-turbine generators of 45 MW, four in operation and one in reserve, about 225 MW electricity; p. 3: grid connection allocation 50 MW"
+          },
+          {
+            "url": "https://www.offshorenorge.no/contentassets/7a9efe0e38314d2fa311e25075ecf402/hammerfest-lng-2025.pdf",
+            "supports": "Equinor annual report 2025 to Miljødirektoratet: four turbines ran in 2025 (turbine gas 252.8 million Sm³, table 7.1.1a)"
+          },
+          {
+            "url": "https://www.regjeringen.no/contentassets/c0c85d54ff88493b86713781ec7b6ece/equinor-energy-as-soknad-om-anleggskonsesjon-og-ekspropriasjonstillatelse-for-a-bygge-og-drive-nettanlegg-for-a-elektrifisere-hammerfest-lng-melkoya-1484280.pdf",
+            "supports": "OED 2023, pp. 6–7: the 132 kV cable from Lucerna has about 80 MW technical capacity, 50 MW allocated to Equinor"
+          },
+          {
+            "url": "https://www.regjeringen.no/no/aktuelt/kraft-og-industriloft-for-finnmark/id2990581/",
+            "supports": "Electrification of Melkøya from the grid no earlier than 1 January 2030"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/685025522",
+            "supports": "OSM power=plant \"Melkøya gasskraftverk\", Equinor, plant:source=gas, 229 MW (extract 2026-10-08)"
+          }
+        ]
+      },
+      "elhubAbsorption": {
+        "municipalityNr": "5603",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 1.662 TWh (2024), 1.213 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5018",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.equinor.com/energy/snohvit",
+          "supports": "Onshore compression from 2029, electrification from 2030"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/skaidi-hammerfest/",
+          "supports": "420 kV Skaidi–Hyggevatn ~54 km, new Hyggevatn 420 kV GIS, enables full Melkøya electrification"
+        },
+        {
+          "url": "https://www.norskpetroleum.no/en/environment-and-technology/emissions-to-air/",
+          "supports": "Melkøya supplied partly or wholly from the grid"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Electricity is largely generated on site from gas; grid draw is not published, so the published annual electricity is a weight only. Full electrification via 420 kV Skaidi–Hyggevatn planned for 2030. The on-site gas power plant (5 × 45 MW) is modelled as a thermal unit at the same bus."
+      }
+    },
+    {
+      "id": "site:troll-a",
+      "name": "Troll A platform (power from shore)",
+      "operator": "Equinor",
+      "kind": "petroleum-site",
+      "activity": "offshore gas platform powered from shore",
+      "location": [
+        4.8329,
+        60.5501
+      ],
+      "municipalityNr": "4626",
+      "municipalityName": "Øygarden",
+      "priceArea": "NO5",
+      "servingSubstation": {
+        "name": "Kollsnes Troll A likeretter 1 & 2",
+        "osmId": "way/637350367",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Kollsnes trafostasjon",
+        "osmId": "relation/8839478",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 208,
+        "basis": "Nameplate: 20 MW AC (1996) + HVDC 2x44 MW (2005) + 2x50 MW (2015) compressor drives. lonLat = Kollsnes landfall/converter.",
+        "year": 2015
+      },
+      "offshore": {
+        "installations": [
+          "Troll A platform (power from shore)"
+        ],
+        "powerFromShoreMw": 208,
+        "onshoreConnection": "Kollsnes HVDC rectifiers, +/-60 kV, ~70 km cables (+ original AC cable)"
+      },
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4626",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/news-and-events/customer-stories/troll-a",
+          "supports": "1&2: 2x44 MW (2005); 3&4: 2x50 MW (2015); rectifiers on 132 kV"
+        },
+        {
+          "url": "https://www.offshore-mag.com/field-development/article/16754856/statoil-steps-up-power-from-shore-to-extend-troll-field-gas-production",
+          "supports": "20 MW AC supply since 1996; 44 and 50 MW units"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Troll A HVDC rectifiers 1&2 and 3&4 (way/637350368) on 132 kV at Kollsnes, plus the original 20 MW AC supply."
+      }
+    },
+    {
+      "id": "site:martin-linge",
+      "name": "Martin Linge (power from shore)",
+      "operator": "Equinor",
+      "kind": "petroleum-site",
+      "activity": "offshore field powered from shore",
+      "location": [
+        4.8329,
+        60.5501
+      ],
+      "municipalityNr": "4626",
+      "municipalityName": "Øygarden",
+      "priceArea": "NO5",
+      "servingSubstation": {
+        "name": "Kollsnes Martin Linge trafostasjon",
+        "osmId": "way/636875282",
+        "kv": 300
+      },
+      "upstreamSubstation": {
+        "name": "Kollsnes trafostasjon",
+        "osmId": "relation/8839478",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 55,
+        "basis": "Cable/onshore substation rating 55 MW (Equinor history table says 65 MW).",
+        "year": 2021
+      },
+      "offshore": {
+        "installations": [
+          "Martin Linge (power from shore)"
+        ],
+        "powerFromShoreMw": 55,
+        "onshoreConnection": "Kollsnes onshore substation, 145 kV HVAC subsea cable ~162 km; energised Dec 2018, production from 30 Jun 2021"
+      },
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4626",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.equinor.com/energy/martin-linge",
+          "supports": "162 km cable; power Dec 2018; production 2021"
+        },
+        {
+          "url": "https://www.tdworld.com/substations/article/20963660/siemens-to-build-martin-linge-onshore-substation-in-norway",
+          "supports": "55 MW onshore substation (via search)"
+        },
+        {
+          "url": "https://equinor.industriminne.no/en/powering-johan-sverdrup-from-shore/",
+          "supports": "Equinor history table (65 MW)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "145 kV AC subsea cable from the Kollsnes onshore substation."
+      }
+    },
+    {
+      "id": "site:johan-sverdrup",
+      "name": "Johan Sverdrup field centre (power from shore, phases 1+2)",
+      "operator": "Equinor",
+      "kind": "petroleum-site",
+      "activity": "offshore field centre powered from shore",
+      "location": [
+        5.565,
+        59.28
+      ],
+      "municipalityNr": "1146",
+      "municipalityName": "Tysvær",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Haugsneset likeretter",
+        "osmId": "relation/12969006",
+        "kv": 300
+      },
+      "upstreamSubstation": {
+        "name": "Kårstø trafostasjon",
+        "osmId": "relation/8864887",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 180,
+        "basis": "Equinor expected 120-180 MW for Johan Sverdrup at full field; Haugsneset total 300 MW is shared with Utsira High. lonLat = Haugsneset (approx).",
+        "year": 2022
+      },
+      "offshore": {
+        "installations": [
+          "Johan Sverdrup field centre (power from shore, phases 1+2)"
+        ],
+        "powerFromShoreMw": 300,
+        "onshoreConnection": "Haugsneset (Tysvær): phase 1 100 MW HVDC (2018/2019), phase 2 +200 MW HVDC (2022); ~200 km"
+      },
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1146",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.equinor.com/news/archive/2018-10-09-johan-sverdrup-powered-shore",
+          "supports": "100 MW phase 1, +200 MW phase 2 = 300 MW; Haugsneset near Kårstø"
+        },
+        {
+          "url": "https://stortinget.no/no/Saker-og-publikasjoner/Publikasjoner/Referater/Stortinget/2018-2019/refs-201819-04-29/4",
+          "supports": "Sverdrup 120-180 MW; area total ~300 MW (via search summary)"
+        },
+        {
+          "url": "https://www.regjeringen.no/contentassets/11e9b8e54b024e4b97b643d7962f7f86/nves_forslag_til_innstilling_av_13_feb_2015.pdf",
+          "supports": "NVE 2015: 300 kV cables Kårstø–Haugsneset; ~115 MW phase 1 (via search)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Haugsneset converters (300 MW in total, shared with the Utsira High area) on two 300 kV land cables to Kårstø."
+      }
+    },
+    {
+      "id": "site:utsira-high",
+      "name": "Utsira High area (Edvard Grieg, Ivar Aasen, Gina Krog; Sleipner partial via Gina Krog)",
+      "operator": "Aker BP (Edvard Grieg, Ivar Aasen); Equinor (Gina Krog, Sleipner)",
+      "kind": "petroleum-site",
+      "activity": "offshore fields powered from shore via Johan Sverdrup",
+      "location": [
+        5.565,
+        59.28
+      ],
+      "municipalityNr": "1146",
+      "municipalityName": "Tysvær",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Haugsneset likeretter",
+        "osmId": "relation/12969006",
+        "kv": 300
+      },
+      "upstreamSubstation": {
+        "name": "Kårstø trafostasjon",
+        "osmId": "relation/8864887",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 115,
+        "basis": "Allocations 60 (Edvard Grieg) + 30 (Ivar Aasen) + 25 (Gina Krog) MW per Equinor history table (single source); Sleipner MW not published. Fed from Johan Sverdrup phase 2 capacity, do not add on top of 300 MW.",
+        "year": 2023
+      },
+      "offshore": {
+        "installations": [
+          "Utsira High area (Edvard Grieg, Ivar Aasen, Gina Krog; Sleipner partial via Gina Krog)"
+        ],
+        "powerFromShoreMw": 115,
+        "onshoreConnection": "Via Johan Sverdrup field centre (phase 2) from Haugsneset; Edvard Grieg 2022, Ivar Aasen and Gina Krog 2023, Sleipner 2024"
+      },
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1146",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://equinor.industriminne.no/en/powering-johan-sverdrup-from-shore/",
+          "supports": "Allocations 60/30/25 MW"
+        },
+        {
+          "url": "https://www.equinor.com/news/archive/2019-10-28-power-utsira-high",
+          "supports": "Utsira High area solution; 35 MW spare"
+        },
+        {
+          "url": "https://www.norskpetroleum.no/en/facts/field/gina-krog/",
+          "supports": "Gina Krog on shore power 2023; Sleipner since 2024"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Fed from Johan Sverdrup phase 2 capacity at Haugsneset; the 60/30/25 MW allocations rest on one Equinor history page. Together with johan-sverdrup within the 300 MW Haugsneset capacity."
+      }
+    },
+    {
+      "id": "site:valhall",
+      "name": "Valhall field centre (power from shore)",
+      "operator": "Aker BP",
+      "kind": "petroleum-site",
+      "activity": "offshore field centre powered from shore",
+      "location": [
+        6.78,
+        58.07
+      ],
+      "municipalityNr": "4206",
+      "municipalityName": "Farsund",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Lista trafostasjon",
+        "osmId": "relation/8896922",
+        "kv": 300
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 70,
+        "basis": "Max demand 70 MW, cable 78 MW (TU 2008). lonLat = Lista converter beside Alcoa Lista (approx).",
+        "year": 2013
+      },
+      "offshore": {
+        "installations": [
+          "Valhall field centre (power from shore)"
+        ],
+        "powerFromShoreMw": 78,
+        "onshoreConnection": "Lista HVDC Light converter, 150 kV DC, ~292-294 km; operations 2012, field on stream 2013"
+      },
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4206",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.tu.no/artikler/forste-oljefelt-med-kraft-fra-land/258574",
+          "supports": "78 MW cable, 70 MW max demand, 292 km from Lista"
+        },
+        {
+          "url": "https://www.hitachienergy.com/content/case-studies/en/valhall",
+          "supports": "78 MW, 150 kV DC, 292 km (via search)"
+        },
+        {
+          "url": "https://valhall.industriminne.no/en/power-from-shore-to-valhall/",
+          "supports": "294 km; handed over 30 Jan 2012; Farsund"
+        },
+        {
+          "url": "https://www.tu.no/artikler/landanlegget-klart-for-valhall/256681",
+          "supports": "Converter at Alcoa, 300 kV from Feda"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Lista HVDC Light converter beside Alcoa Lista on the 300 kV station fed from Feda."
+      }
+    },
+    {
+      "id": "site:goliat",
+      "name": "Goliat FPSO (power from shore)",
+      "operator": "Vår Energi",
+      "kind": "petroleum-site",
+      "activity": "offshore FPSO powered from shore",
+      "location": [
+        23.72,
+        70.65
+      ],
+      "municipalityNr": "5603",
+      "municipalityName": "Hammerfest",
+      "priceArea": "NO4",
+      "servingSubstation": {
+        "name": "Hyggevatn trafostasjon",
+        "osmId": "way/511117400",
+        "kv": 132
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 75,
+        "basis": "Power-from-shore 75 MW AC per Equinor history table (single source, unverified elsewhere); one gas turbine kept. lonLat = Hyggevatn (approx).",
+        "year": 2016
+      },
+      "offshore": {
+        "installations": [
+          "Goliat FPSO (power from shore)"
+        ],
+        "powerFromShoreMw": 75,
+        "onshoreConnection": "Hyggevatn, AC subsea cable ~106 km"
+      },
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "5603",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.offshore-mag.com/production/article/16794776/siemens-to-offer-shoreside-power-to-barents-sea-platform",
+          "supports": "Hyggevatn substation, 132 kV, 106 km"
+        },
+        {
+          "url": "https://equinor.industriminne.no/en/powering-johan-sverdrup-from-shore/",
+          "supports": "75 MW"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "AC subsea cable from Hyggevatn; the 75 MW figure rests on one Equinor history page."
+      }
+    },
+    {
+      "id": "site:gjoa",
+      "name": "Gjøa platform (partial power from shore; Vega via Gjøa)",
+      "operator": "Vår Energi",
+      "kind": "petroleum-site",
+      "activity": "offshore platform partly powered from shore",
+      "location": [
+        5.0333,
+        60.8149
+      ],
+      "municipalityNr": "4631",
+      "municipalityName": "Alver",
+      "priceArea": "NO5",
+      "servingSubstation": {
+        "name": "Mongstad",
+        "osmId": "way/432969239",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Lindås trafostasjon",
+        "osmId": "relation/20598970",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 40,
+        "basis": "Rated 40 MW; ~25-30 MW average; export compressors stay on gas turbines.",
+        "year": 2010
+      },
+      "offshore": {
+        "installations": [
+          "Gjøa platform (partial power from shore; Vega via Gjøa)"
+        ],
+        "powerFromShoreMw": 40,
+        "onshoreConnection": "Mongstad, ~98.5 km static AC cable + 1.5 km riser"
+      },
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4631",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.offshore-mag.com/subsea/article/16760962/onshore-power-link-cuts-weight-and-cost-of-gja-platform",
+          "supports": "40 MW; 132 to 90 kV at Mongstad (via search)"
+        },
+        {
+          "url": "https://equinor.industriminne.no/en/powering-johan-sverdrup-from-shore/",
+          "supports": "40 MW, 98.5 km"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "AC cable from Mongstad (132 kV stepped down to about 90 kV); export compressors stay on gas turbines."
+      }
+    },
+    {
+      "id": "site:yara-porsgrunn",
+      "name": "Yara Porsgrunn (Herøya) fertiliser/ammonia",
+      "operator": "Yara International ASA",
+      "kind": "industry-site",
+      "activity": "fertiliser and ammonia plant",
+      "location": [
+        9.6214,
+        59.1205
+      ],
+      "municipalityNr": "4001",
+      "municipalityName": "Porsgrunn",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Herøya 2 trafostasjon",
+        "osmId": "relation/11568301",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Porsgrunn trafostasjon",
+        "osmId": "way/100648754",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 93.2,
+        "basis": "Annual average = self-reported 2025 electricity 0.816 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4001",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.713 TWh (2024), 0.816 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5447",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://eng.heroya-industripark.no/en/companies-and-businesses-in-the-industrial-park/heroeya-nett-as",
+          "supports": "Herøya Nett: area licence up to 132 kV; 640 MW capacity; ~1 TWh/yr"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Herøya Nett area grid (≤132 kV); the station is the nearest Herøya Nett station in OpenStreetMap and the Statnett upstream is unverified."
+      }
+    },
+    {
+      "id": "site:eramet-porsgrunn",
+      "name": "Eramet Porsgrunn manganese alloys refining",
+      "operator": "Eramet Norway AS",
+      "kind": "industry-site",
+      "activity": "manganese alloys refining",
+      "location": [
+        9.6238,
+        59.1272
+      ],
+      "municipalityNr": "4001",
+      "municipalityName": "Porsgrunn",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Roligheten trafostasjon",
+        "osmId": "relation/11568298",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Porsgrunn trafostasjon",
+        "osmId": "way/100648754",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 67,
+        "basis": "Annual average = self-reported 2025 electricity 0.587 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4001",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.581 TWh (2024), 0.587 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6261",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/horinger-og-konsultasjoner/horing-om-ny-modell-for-statnetts-tariffer/eramet-norway.pdf",
+          "supports": "Eramet 2025: Porsgrunn via Lede regional grid; 7 furnaces 30-42 MW; 2.0-2.1 TWh/yr group"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Lede regional grid; the nearest Lede station in OpenStreetMap (0.1 km) is inferred."
+      }
+    },
+    {
+      "id": "site:inovyn-rafnes",
+      "name": "INOVYN Rafnes chlor-alkali/VCM (Rafnes, Bamble)",
+      "operator": "INOVYN (INEOS)",
+      "kind": "industry-site",
+      "activity": "chlor-alkali and VCM plant",
+      "location": [
+        9.5869,
+        59.1016
+      ],
+      "municipalityNr": "4012",
+      "municipalityName": "Bamble",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Rafnes trafostasjon",
+        "osmId": "way/435669205",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Bamble trafostasjon",
+        "osmId": "way/206628449",
+        "kv": 420
+      },
+      "demand": {
+        "publishedMw": 80.3,
+        "basis": "Annual average = self-reported 2025 electricity 0.703 TWh / 8760 h. 2024: 0.875 TWh. Dominant Rafnes load (electrolysis).",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4012",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.875 TWh (2024), 0.703 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5012",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Rafnes trafostasjon is operated by Inovyn in OpenStreetMap; the Statnett upstream station is inferred."
+      }
+    },
+    {
+      "id": "site:ineos-rafnes",
+      "name": "INEOS Rafnes ethylene cracker (Noretyl)",
+      "operator": "INEOS",
+      "kind": "industry-site",
+      "activity": "ethylene cracker",
+      "location": [
+        9.5933,
+        59.0961
+      ],
+      "municipalityNr": "4012",
+      "municipalityName": "Bamble",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Rafnes trafostasjon",
+        "osmId": "way/435669205",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Bamble trafostasjon",
+        "osmId": "way/206628449",
+        "kv": 420
+      },
+      "demand": {
+        "publishedMw": 27.6,
+        "basis": "Annual average = self-reported 2025 electricity 0.242 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4012",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.236 TWh (2024), 0.242 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5655",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Shares the Rafnes site station (inferred)."
+      }
+    },
+    {
+      "id": "site:elkem-salten",
+      "name": "Elkem Salten silicon plant (Straumen, Sørfold)",
+      "operator": "Elkem ASA",
+      "kind": "industry-site",
+      "activity": "silicon plant",
+      "location": [
+        15.5894,
+        67.3635
+      ],
+      "municipalityNr": "1845",
+      "municipalityName": "Sørfold",
+      "priceArea": "NO4",
+      "servingSubstation": {
+        "name": "Salten verk",
+        "osmId": "relation/8296013",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Salten trafostasjon",
+        "osmId": "way/1140662370",
+        "kv": 420
+      },
+      "demand": {
+        "publishedMw": 96.3,
+        "basis": "Annual average = self-reported 2025 electricity 0.844 TWh / 8760 h. 2024: 0.475 TWh (reduced). On-site energy recovery (~300 GWh/yr) means grid net draw may be lower than gross.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1845",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.475 TWh (2024), 0.844 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5151",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-nord/salten-transformatorstasjon/",
+          "supports": "Salten 132/420 kV at Lemmen, planned in service 2023"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-nord/salten-transformatorstasjon/konsesjonssoknad-salten.pdf",
+          "supports": "2012 application: built on Elkem 132 kV site, 2x250 MVA"
+        },
+        {
+          "url": "https://www.elkem.com/media/news-articles/energy-recovery-plant-decided-at-elkem-salten/",
+          "supports": "Energy recovery plant expected to recover 28% of electricity use"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Elkem 132 kV station; Statnett Salten 420/132 kV. On-site energy recovery means the grid draw may be below the gross figure."
+      }
+    },
+    {
+      "id": "site:wacker-holla",
+      "name": "Wacker Holla silicon plant (Kyrksæterøra)",
+      "operator": "Wacker Chemie AG",
+      "kind": "industry-site",
+      "activity": "silicon plant",
+      "location": [
+        9.1436,
+        63.3178
+      ],
+      "municipalityNr": "5055",
+      "municipalityName": "Heim",
+      "priceArea": "NO3",
+      "servingSubstation": {
+        "name": "Holla trafostasjon",
+        "osmId": "relation/8812587",
+        "kv": 132
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 112.6,
+        "basis": "Annual average = self-reported 2025 electricity 0.986 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "5055",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 1.023 TWh (2024), 0.986 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6075",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/f83a33a7-ffd7-4c3d-9f37-d6ba4402ca82/202419115/3442627",
+          "supports": "NVE 2024: Holla 132/22 kV, 3x72 MVA, new 55 MW furnace"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Wacker-owned Holla 132/22 kV on Tensio 132 kV Hemne–Holla."
+      }
+    },
+    {
+      "id": "site:elkem-thamshavn",
+      "name": "Elkem Thamshavn silicon plant (Orkanger)",
+      "operator": "Elkem ASA",
+      "kind": "industry-site",
+      "activity": "silicon plant",
+      "location": [
+        9.8944,
+        63.3259
+      ],
+      "municipalityNr": "5059",
+      "municipalityName": "Orkland",
+      "priceArea": "NO3",
+      "servingSubstation": {
+        "name": "Thamshavn trafostasjon",
+        "osmId": "way/617335959",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Orkdal transformatorstasjon",
+        "osmId": "way/288680849",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 71,
+        "basis": "Annual average = self-reported 2025 electricity 0.622 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "5059",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.62 TWh (2024), 0.622 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6074",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-midt/orkdal-transformatorstasjon/nve-bakgrunn-for-vedtak-utvidelse-orkdal-transformatorstasjon-2023.pdf",
+          "supports": "NVE 2023: Elkem 132 kV Orkdal–Thamshavn"
+        },
+        {
+          "url": "https://www.statnett.no/vare-prosjekter/region-midt/fornying-av-orkdal-transformatorstasjon/",
+          "supports": "Orkdal 300/420 kV upgrade for consumption around Orkanger"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Elkem 132 kV Orkdal–Thamshavn line from Statnett Orkdal."
+      }
+    },
+    {
+      "id": "site:finnfjord",
+      "name": "Finnfjord ferrosilicon plant (Finnsnes)",
+      "operator": "Finnfjord AS",
+      "kind": "industry-site",
+      "activity": "ferrosilicon plant",
+      "location": [
+        18.0822,
+        69.2226
+      ],
+      "municipalityNr": "5530",
+      "municipalityName": "Senja",
+      "priceArea": "NO4",
+      "servingSubstation": {
+        "name": "Finnfjordbotn trafostasjon",
+        "osmId": "relation/8285305",
+        "kv": 132
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 82.5,
+        "basis": "Annual average = self-reported 2025 electricity 0.723 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "5530",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.682 TWh (2024), 0.723 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5712",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.finnfjord.no/",
+          "supports": "Three furnaces, ~100 kt FeSi; steam turbine up to 340 GWh/yr"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Serving station not published; the station 0.15 km from the plant is inferred."
+      }
+    },
+    {
+      "id": "site:eramet-kvinesdal",
+      "name": "Eramet Kvinesdal (Øye) manganese alloys",
+      "operator": "Eramet Norway AS",
+      "kind": "industry-site",
+      "activity": "manganese alloys plant",
+      "location": [
+        6.8913,
+        58.2768
+      ],
+      "municipalityNr": "4227",
+      "municipalityName": "Kvinesdal",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Eramet Norway Øye",
+        "osmId": "node/9040906607",
+        "kv": 110
+      },
+      "upstreamSubstation": {
+        "name": "Statnett 300/110 kV station at Øye (unnamed in OpenStreetMap)",
+        "osmId": "relation/8193470",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 83.2,
+        "basis": "Annual average = self-reported 2025 electricity 0.729 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4227",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.759 TWh (2024), 0.729 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6260",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/horinger-og-konsultasjoner/horing-om-ny-modell-for-statnetts-tariffer/eramet-norway.pdf",
+          "supports": "Kvinesdal directly on transmission grid"
+        },
+        {
+          "url": "https://www.inderes.se/en/releases/afg-expanding-transformer-stations-in-bamble-and-kvinesdal",
+          "supports": "Statnett Kvinesdal station expansion (2025)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Eramet states a direct transmission-grid connection; the stations 0.15–0.24 km from the plant are inferred."
+      }
+    },
+    {
+      "id": "site:eramet-sauda",
+      "name": "Eramet Sauda manganese alloys",
+      "operator": "Eramet Norway AS",
+      "kind": "industry-site",
+      "activity": "manganese alloys plant",
+      "location": [
+        6.3608,
+        59.647
+      ],
+      "municipalityNr": "1135",
+      "municipalityName": "Sauda",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Sauda smelteverk trafostasjon",
+        "osmId": "way/605991631",
+        "kv": 66
+      },
+      "upstreamSubstation": {
+        "name": "Sauda trafostasjon",
+        "osmId": "relation/8860331",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 70,
+        "basis": "Annual average = self-reported 2025 electricity 0.613 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "1135",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.635 TWh (2024), 0.613 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=6257",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/horinger-og-konsultasjoner/horing-om-ny-modell-for-statnetts-tariffer/eramet-norway.pdf",
+          "supports": "Sauda connected indirectly via Saudefaldene"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Connected indirectly via AS Saudefaldene; the Statnett upstream is inferred."
+      }
+    },
+    {
+      "id": "site:elkem-bremanger",
+      "name": "Elkem Bremanger silicon plant (Svelgen)",
+      "operator": "Elkem ASA",
+      "kind": "industry-site",
+      "activity": "silicon plant",
+      "location": [
+        5.2965,
+        61.7732
+      ],
+      "municipalityNr": "4648",
+      "municipalityName": "Bremanger",
+      "priceArea": "NO3",
+      "servingSubstation": {
+        "name": "Svelgen trafostasjon",
+        "osmId": "relation/11520073",
+        "kv": 132
+      },
+      "upstreamSubstation": {
+        "name": "Ålfoten trafostasjon",
+        "osmId": "way/548201553",
+        "kv": 420
+      },
+      "demand": {
+        "publishedMw": 79.7,
+        "basis": "Annual average = self-reported 2025 electricity 0.698 TWh / 8760 h. 2024: 0.706 TWh.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4648",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.706 TWh (2024), 0.698 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5117",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/201707411/2546245",
+          "supports": "NVE 2018: Svelgen 132 kV lines (Hennøy, Ålfoten, Magnhildskaret)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Svelgen on the 132 kV regional grid; transmission node Statnett Ålfoten 420/132 kV."
+      }
+    },
+    {
+      "id": "site:borregaard",
+      "name": "Borregaard biorefinery (Sarpsborg)",
+      "operator": "Borregaard ASA",
+      "kind": "industry-site",
+      "activity": "biorefinery",
+      "location": [
+        11.1163,
+        59.2729
+      ],
+      "municipalityNr": "3105",
+      "municipalityName": "Sarpsborg",
+      "priceArea": "NO1",
+      "servingSubstation": {
+        "name": "Hasle trafostasjon",
+        "osmId": "way/60495669",
+        "kv": 132
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 59.1,
+        "basis": "Annual average = self-reported 2025 electricity 0.518 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "3105",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.511 TWh (2024), 0.518 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5086",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Serving station not published and no Borregaard station is mapped; Hasle (5 km) is the nearest substation in OpenStreetMap."
+      }
+    },
+    {
+      "id": "site:boliden-odda",
+      "name": "Boliden Odda zinc plant",
+      "operator": "Boliden AB",
+      "kind": "industry-site",
+      "activity": "zinc plant",
+      "location": [
+        6.5334,
+        60.0884
+      ],
+      "municipalityNr": "4618",
+      "municipalityName": "Ullensvang",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "Eitrheimsneset trafostasjon",
+        "osmId": "way/1005314256",
+        "kv": 66
+      },
+      "upstreamSubstation": {
+        "name": "Åsen trafostasjon",
+        "osmId": "way/638183341",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 83.4,
+        "basis": "Annual average = self-reported 2025 electricity 0.731 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4618",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.665 TWh (2024), 0.731 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5120",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://fagne.no/wp-content/uploads/2023/08/Bakgrunn-for-vedtak.pdf",
+          "supports": "NVE: Åsen 300/66 kV; Boliden +100 MW plan; TTI supplied via Sengjanes"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Statnett Åsen 300/66 kV to the Boliden station at Eitrheimsneset."
+      }
+    },
+    {
+      "id": "site:ineos-tyssedal",
+      "name": "INEOS Tyssedal (ex TiZir Titanium & Iron) titanium slag smelter",
+      "operator": "INEOS",
+      "kind": "industry-site",
+      "activity": "titanium slag smelter",
+      "location": [
+        6.5545,
+        60.1151
+      ],
+      "municipalityNr": "4618",
+      "municipalityName": "Ullensvang",
+      "priceArea": "NO2",
+      "servingSubstation": {
+        "name": "TTI trafostasjon",
+        "osmId": "node/6135405020",
+        "kv": 66
+      },
+      "upstreamSubstation": {
+        "name": "Åsen trafostasjon",
+        "osmId": "way/638183341",
+        "kv": 300
+      },
+      "demand": {
+        "publishedMw": 26.1,
+        "basis": "2023 Norske utslipp value 0.229 TWh / 8760 h (2016-2023 range 0.20-0.38 TWh). 2024/25 values (3.46/3.13 TWh) look ~10x mis-reported: Elhub Ullensvang is only 97 MW incl. Boliden.",
+        "year": 2023
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "4618",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 3.459 TWh (2024), 3.127 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5118",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://fagne.no/wp-content/uploads/2023/08/Bakgrunn-for-vedtak.pdf",
+          "supports": "TTI supplied from Mågeli and Oksla via Sengjanes; +20-200 MW plans"
+        },
+        {
+          "url": "https://energiogklima.no/nyhet/tizir-sikter-pa-gront-hydrogen",
+          "supports": "~230 kt slag/yr"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Fed via Sengjanes on the 66 kV regional grid; the 2024/25 self-reported values look about ten times too high, so the 2023 value is used."
+      }
+    },
+    {
+      "id": "site:norske-skog-skogn",
+      "name": "Norske Skog Skogn newsprint mill",
+      "operator": "Norske Skog ASA",
+      "kind": "industry-site",
+      "activity": "newsprint mill",
+      "location": [
+        11.1583,
+        63.7119
+      ],
+      "municipalityNr": "5037",
+      "municipalityName": "Levanger",
+      "priceArea": "NO3",
+      "servingSubstation": {
+        "name": "Fiborg",
+        "osmId": "node/6839731126",
+        "kv": 66
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 151.6,
+        "basis": "Annual average = self-reported 2025 electricity 1.328 TWh / 8760 h. Grid capacity 250 MW (company, 2026).",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "5037",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 1.326 TWh (2024), 1.328 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5085",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        },
+        {
+          "url": "https://www.levanger.kommune.no/_f/p1/i9a825e2b-d1ee-44f9-a90b-d880057d2bdf/norske_skog.pdf",
+          "supports": "Company presentation Jun 2026: 250 MW grid capacity, ~1,300 GWh/yr"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Serving station not published; the Norske Skog station mapped at the mill is inferred and its 132 kV+ supply point is unknown."
+      }
+    },
+    {
+      "id": "site:norske-skog-saugbrugs",
+      "name": "Norske Skog Saugbrugs paper mill (Halden)",
+      "operator": "Norske Skog ASA",
+      "kind": "industry-site",
+      "activity": "paper mill",
+      "location": [
+        11.4023,
+        59.125
+      ],
+      "municipalityNr": "3101",
+      "municipalityName": "Halden",
+      "priceArea": "NO1",
+      "servingSubstation": {
+        "name": "Halden trafostasjon",
+        "osmId": "way/232893576",
+        "kv": 47
+      },
+      "upstreamSubstation": null,
+      "demand": {
+        "publishedMw": 75.8,
+        "basis": "Annual average = self-reported 2025 electricity 0.664 TWh / 8760 h.",
+        "year": 2025
+      },
+      "offshore": null,
+      "onSiteGeneration": null,
+      "elhubAbsorption": {
+        "municipalityNr": "3101",
+        "group": "industry"
+      },
+      "evidence": [
+        {
+          "url": "https://www.miljodirektoratet.no/aktuelt/datavisualisering/utslipp-fra-landbasert-industri/",
+          "supports": "Self-reported electricity 0.606 TWh (2024), 0.664 TWh (2025); site coords"
+        },
+        {
+          "url": "https://www.norskeutslipp.no/no/Diverse/Virksomhet/?CompanyID=5284",
+          "supports": "Elektrisk kraft series 2016-2023 (MWh/yr)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-major-sites@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "low",
+        "note": "Serving station not published; Statnett Halden 420/47 kV (0.8 km) is the nearest substation."
+      }
+    }
+  ],
+  "excluded": [
+    {
+      "id": "site:rana-gruber",
+      "name": "Rana Gruber iron ore (Storforshei/Mo)",
+      "reason": "Published demand 12.4 MW is below the 25 MW inclusion threshold."
+    },
+    {
+      "id": "site:troll-b-c-partial",
+      "name": "Troll B and Troll C (partial power from shore)",
+      "reason": "Partial power from shore since 2024 with no published MW."
+    },
+    {
+      "id": "site:ineos-bamble",
+      "name": "INEOS Bamble polyethylene plant (Rønningen)",
+      "reason": "Published demand 16.7 MW is below the 25 MW inclusion threshold."
+    },
+    {
+      "id": "site:green-mountain-osl1",
+      "name": "Green Mountain OSL1 (Enebakk)",
+      "reason": "Data centre: published figure is facility capacity, not load."
+    },
+    {
+      "id": "site:bulk-n01",
+      "name": "Bulk N01 campus (Støleheia, Vennesla)",
+      "reason": "Data centre: \"up to 1 GW\" is a campus design capacity, not load."
+    },
+    {
+      "id": "site:bulk-os-ix",
+      "name": "Bulk OS-IX (Oslo)",
+      "reason": "Data centre below threshold; capacity, not load."
+    },
+    {
+      "id": "site:stack-osl03-fetsund",
+      "name": "STACK OSL03 (Fetsund)",
+      "reason": "Data centre: capacity, not load; site location assumed."
+    },
+    {
+      "id": "site:stack-osl04-holtskogen",
+      "name": "STACK OSL04 (Holtskogen)",
+      "reason": "Data centre below threshold; capacity, not load."
+    },
+    {
+      "id": "site:lefdal-mine",
+      "name": "Lefdal Mine Datacenter",
+      "reason": "Data centre: municipality, location and load not verified."
+    }
+  ]
+}

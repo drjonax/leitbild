@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 2,
+  "id": "electric-grid.halden.four-unit",
+  "title": "Halden four-unit transmission connection",
+  "description": "Norway transmission grid with a dedicated 420 kV Halden switchyard, three circuits each to Hasle and Tegneby, and four independently connectable unit bays.",
+  "baseModelRef": "electric-grid.norway.transmission",
+  "sourceInputs": [
+    {"sourceId":"leitbild:halden-four-unit-design@2026-10-10","snapshotAt":"2026-10-10T00:00:00Z","sha256":"bff722d22cf56dc528c78a14f6f0d736d36ceb3876e7c0e52619c3d67e3a4760","licence":"repo-owned"}
+  ],
+  "buses": [
+    {"id":"bus:curated-halden-pwr-switchyard@420","label":"Halden PWR switchyard","kind":"plant-terminal","nominalKv":420,"location":[11.48,59.08],"priceArea":"NO1","provenance":{"sources":["leitbild:halden-four-unit-design@2026-10-10"],"method":"curated","confidence":"low","note":"Leitbild engineering design of the Halden four-unit plant connection (formerly the v1 addition halden.grid-model.json)"}}
+  ],
+  "branches": [
+    {"id":"branch:curated-halden-pwr-hasle-1","label":"Halden PWR – Hasle circuit 1","kind":"ac_line","fromBusId":"bus:curated-halden-pwr-switchyard@420","toBusId":"bus:osm-way-60495669@420","nominalKv":420,"lengthKm":31.9544,"circuits":1,"ratingMw":2587,"emergencyRatingMw":3104,"emergencyDurationSeconds":900,"reactancePu":0.00543442,"resistancePu":0.000452868,"chargingSusceptancePu":0.22547,"osmWayIds":[],"provenance":{"sources":["leitbild:halden-four-unit-design@2026-10-10"],"method":"curated","confidence":"low","note":"Leitbild engineering design of the Halden four-unit plant connection (formerly the v1 addition halden.grid-model.json); straight-line route, electrical rules overhead-420kv, overhead-rating-at-0c, emergency-120pct-15min"}},
+    {"id":"branch:curated-halden-pwr-hasle-2","label":"Halden PWR – Hasle circuit 2","kind":"ac_line","fromBusId":"bus:curated-halden-pwr-switchyard@420","toBusId":"bus:osm-way-60495669@420","nominalKv":420,"lengthKm":31.9544,"circuits":1,"ratingMw":2587,"emergencyRatingMw":3104,"emergencyDurationSeconds":900,"reactancePu":0.00543442,"resistancePu":0.000452868,"chargingSusceptancePu":0.22547,"osmWayIds":[],"provenance":{"sources":["leitbild:halden-four-unit-design@2026-10-10"],"method":"curated","confidence":"low","note":"Leitbild engineering design of the Halden four-unit plant connection (formerly the v1 addition halden.grid-model.json); straight-line route, electrical rules overhead-420kv, overhead-rating-at-0c, emergency-120pct-15min"}},
+    {"id":"branch:curated-halden-pwr-hasle-3","label":"Halden PWR – Hasle circuit 3","kind":"ac_line","fromBusId":"bus:curated-halden-pwr-switchyard@420","toBusId":"bus:osm-way-60495669@420","nominalKv":420,"lengthKm":31.9544,"circuits":1,"ratingMw":2587,"emergencyRatingMw":3104,"emergencyDurationSeconds":900,"reactancePu":0.00543442,"resistancePu":0.000452868,"chargingSusceptancePu":0.22547,"osmWayIds":[],"provenance":{"sources":["leitbild:halden-four-unit-design@2026-10-10"],"method":"curated","confidence":"low","note":"Leitbild engineering design of the Halden four-unit plant connection (formerly the v1 addition halden.grid-model.json); straight-line route, electrical rules overhead-420kv, overhead-rating-at-0c, emergency-120pct-15min"}},
+    {"id":"branch:curated-halden-pwr-tegneby-1","label":"Halden PWR – Tegneby circuit 1","kind":"ac_line","fromBusId":"bus:curated-halden-pwr-switchyard@420","toBusId":"bus:osm-way-29578389@420","nominalKv":420,"lengthKm":63.9851,"circuits":1,"ratingMw":2587,"emergencyRatingMw":3104,"emergencyDurationSeconds":900,"reactancePu":0.0108818,"resistancePu":0.000906818,"chargingSusceptancePu":0.451479,"osmWayIds":[],"provenance":{"sources":["leitbild:halden-four-unit-design@2026-10-10"],"method":"curated","confidence":"low","note":"Leitbild engineering design of the Halden four-unit plant connection (formerly the v1 addition halden.grid-model.json); straight-line route, electrical rules overhead-420kv, overhead-rating-at-0c, emergency-120pct-15min"}},
+    {"id":"branch:curated-halden-pwr-tegneby-2","label":"Halden PWR – Tegneby circuit 2","kind":"ac_line","fromBusId":"bus:curated-halden-pwr-switchyard@420","toBusId":"bus:osm-way-29578389@420","nominalKv":420,"lengthKm":63.9851,"circuits":1,"ratingMw":2587,"emergencyRatingMw":3104,"emergencyDurationSeconds":900,"reactancePu":0.0108818,"resistancePu":0.000906818,"chargingSusceptancePu":0.451479,"osmWayIds":[],"provenance":{"sources":["leitbild:halden-four-unit-design@2026-10-10"],"method":"curated","confidence":"low","note":"Leitbild engineering design of the Halden four-unit plant connection (formerly the v1 addition halden.grid-model.json); straight-line route, electrical rules overhead-420kv, overhead-rating-at-0c, emergency-120pct-15min"}},
+    {"id":"branch:curated-halden-pwr-tegneby-3","label":"Halden PWR – Tegneby circuit 3","kind":"ac_line","fromBusId":"bus:curated-halden-pwr-switchyard@420","toBusId":"bus:osm-way-29578389@420","nominalKv":420,"lengthKm":63.9851,"circuits":1,"ratingMw":2587,"emergencyRatingMw":3104,"emergencyDurationSeconds":900,"reactancePu":0.0108818,"resistancePu":0.000906818,"chargingSusceptancePu":0.451479,"osmWayIds":[],"provenance":{"sources":["leitbild:halden-four-unit-design@2026-10-10"],"method":"curated","confidence":"low","note":"Leitbild engineering design of the Halden four-unit plant connection (formerly the v1 addition halden.grid-model.json); straight-line route, electrical rules overhead-420kv, overhead-rating-at-0c, emergency-120pct-15min"}}
+  ],
+  "hvdcLinks": [],
+  "externalSystems": [],
+  "generators": [],
+  "loads": [],
+  "shunts": [],
+  "connectionPoints": [
+    {"id":"unit-1-420kv","label":"Halden unit 1 420 kV bay","busId":"bus:curated-halden-pwr-switchyard@420","nominalKv":420,"maximumExportMw":100,"maximumImportMw":1100},
+    {"id":"unit-2-420kv","label":"Halden unit 2 420 kV bay","busId":"bus:curated-halden-pwr-switchyard@420","nominalKv":420,"maximumExportMw":100,"maximumImportMw":1100},
+    {"id":"unit-3-420kv","label":"Halden unit 3 420 kV bay","busId":"bus:curated-halden-pwr-switchyard@420","nominalKv":420,"maximumExportMw":100,"maximumImportMw":1100},
+    {"id":"unit-4-420kv","label":"Halden unit 4 420 kV bay","busId":"bus:curated-halden-pwr-switchyard@420","nominalKv":420,"maximumExportMw":100,"maximumImportMw":1100}
+  ]
+}

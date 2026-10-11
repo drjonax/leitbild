@@ -101,11 +101,17 @@ export const noReserves: FrequencyReserveAllocation = Object.freeze({
   fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrUpMw: 0, afrrDownMw: 0, mfrrUpMw: 0, mfrrDownMw: 0,
 })
 
-const requirementMw = (requirement: ReserveRequirement, islandLoadMw: number, units: ReadonlyArray<Omit<FrequencyUnit, 'reserves'>>): number => {
+/** A reserve requirement evaluated for one island: fixed, a share of its demand, or a multiple of its largest synchronised unit output. */
+export const reserveRequirementMw = (requirement: ReserveRequirement, islandLoadMw: number, units: ReadonlyArray<Pick<FrequencyUnit, 'synchronised' | 'targetMw'>>): number =>
+  reserveRequirementFor(requirement, islandLoadMw, requirement.basis === 'largest-unit-output'
+    ? units.reduce((maximum, unit) => unit.synchronised ? Math.max(maximum, unit.targetMw) : maximum, 0)
+    : 0)
+
+/** reserveRequirementMw given the largest synchronised unit's set-point (read only for a largest-unit requirement). */
+export const reserveRequirementFor = (requirement: ReserveRequirement, islandLoadMw: number, largestUnitMw: number): number => {
   if (requirement.basis === 'fixed') return requirement.mw
   if (requirement.basis === 'share-of-island-load') return requirement.fraction * islandLoadMw
-  const largest = units.reduce((maximum, unit) => unit.synchronised ? Math.max(maximum, unit.targetMw) : maximum, 0)
-  return requirement.factor * largest
+  return requirement.factor * largestUnitMw
 }
 
 const allocationField: Record<ReserveProduct, keyof FrequencyReserveAllocation> = {
@@ -134,7 +140,7 @@ export const allocateFrequencyReserves = (config: {
     eligible: ReadonlyArray<string>,
     direction: 'up' | 'down' | 'symmetric',
   ): void => {
-    const required = requirementMw(requirement, config.islandLoadMw, units)
+    const required = reserveRequirementMw(requirement, config.islandLoadMw, units)
     const candidates = units.filter(unit => unit.synchronised && eligible.includes(unit.governorClass))
     const room = (unitId: string): number => direction === 'up' ? up.get(unitId)! : direction === 'down' ? down.get(unitId)! : Math.min(up.get(unitId)!, down.get(unitId)!)
     const totalRoom = candidates.reduce((sum, unit) => sum + room(unit.id), 0)

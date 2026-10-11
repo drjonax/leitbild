@@ -60,7 +60,10 @@ describe('selective Plant artifact evidence', () => {
     expect(Object.keys(full).sort()).toEqual(['plantId', 'artifact', 'title', 'language', 'content', 'components', 'sourceFiles', 'metadata'].sort())
     expect(full.content).toBe(JSON.stringify(plant.sourceGraph, null, 2))
     expect(full).toMatchObject({ plantId: plant.id, artifact: 'authored-spec', title: `${plant.graph.title} source specification`, language: 'json' })
-    for (const file of full.sourceFiles) expect(file.content).toBe(readFileSync(new URL(`../${file.path}`, import.meta.url), 'utf8'))
+    for (const file of full.sourceFiles) {
+      expect(file.path.startsWith('apps/world/src/packs/process-plant/')).toBe(true)
+      expect(file.content).toBe(readFileSync(new URL(`../../../${file.path}`, import.meta.url), 'utf8'))
+    }
     const mermaid = read({ artifact: 'compiled-graph-mermaid', mode: 'full' }) as ProcessPlantArtifact
     expect(mermaid).toEqual({ ...full, artifact: 'compiled-graph-mermaid', title: `${plant.graph.title} full component graph`, language: 'mermaid', content: plantGraphToMermaid(plant.graph, { highlightedComponentIds: new Set(plant.graph.components.filter(component => full.components.find(item => item.id === component.id)?.shownOnOverview).map(component => component.id)) }) })
   })

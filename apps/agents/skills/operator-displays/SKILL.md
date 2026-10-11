@@ -4,7 +4,11 @@ description: Composes a small live operator display (trends, loop comparisons, r
 allowed-tools: [workspace_explore, workspace_call]
 ---
 
-The Process Plant module validates, lays out and keeps each display current from the plant model; you decide what the operator must see and why. Show at most one per answer, only when the operator's next action depends on it, and refer to an earlier one that still answers the question.
+A display is a small live panel set that the Process Plant module validates, lays out and keeps current, attached to your answer. You decide what the operator must see and why; the module takes units, scales, thresholds, symbols, colours and layout from the plant model.
+
+## Decide
+
+Show at most one display per answer, and only when change over time, margin to a threshold, or which equipment runs and where flow goes matters for the operator's next action. If an earlier display still answers the question, refer to it.
 
 ## Plan
 
@@ -20,21 +24,19 @@ Start from the panel that answers the question, usually one trend of the signals
 
 Size: next to a three- or four-measurement trend add only `alarms`; next to two, at most `alarms` and three readouts. A mimic leads its display: next to it add `alarms` and at most a one- or two-measurement trend.
 
-Never supply numbers, limits, colours or positions, nor draw equipment yourself (Mermaid, ASCII or any diagram): it would be neither live nor validated.
+Never supply numbers, limits, colours or positions. Never draw equipment yourself (Mermaid, ASCII or any diagram): it would be neither live nor validated.
 
 ## Compose
 
-1. Call `world.process-plant.display.compose` through `workspace_call` with the exact Run target and `plantId` you analysed; it is a read; batch it with others. A typical input is one trend: `{"plantId":"<plantId>","title":"<what it shows>","question":"<question>","need":"<need>","subjects":["<tagId>"],"panels":[{"kind":"trend","horizon":"10m","signals":[{"ref":"<tagId>","role":"primary"},{"ref":"<tagId of a healthy peer>","role":"context"}]}]}`.
-2. A rejection stores nothing and lists every issue with `Did you mean` names and fixes known to fit; apply them all and call again. After two rejections, answer in text and say in one sentence that no display could be produced.
+1. Call `world.process-plant.display.compose` through `workspace_call` with the exact Run target and `plantId` you analysed; it is a read; batch it with others. A typical input is one trend: `{"plantId":"<plantId>","title":"<what it shows>","question":"<the question it answers>","need":"<the decision it supports>","subjects":["<tagId>"],"panels":[{"kind":"trend","horizon":"10m","signals":[{"ref":"<tagId>","role":"primary"},{"ref":"<tagId of a healthy peer>","role":"context"}]}]}`.
+2. A rejection stores nothing and lists every issue with `Did you mean` names and fixes known to fit. Apply them all and call again. After two rejections, answer in text and say in one sentence that no display could be produced.
 
 ## Present
 
-End the answer with this block, copying `viewRef` from the compose result exactly:
+Write the answer first, then end it with this block, copying `viewRef` from the compose result exactly:
 
 ```leitbild-view
 view <viewRef>
 ```
 
-Where you find a fault path, name the action that ends it (close an isolation or block valve, trip, stop) and, from general emergency procedures, the criterion deciding the next procedure step, with a number only where your data shows one; past a trip or actuation limit, say whether its automatic action happened. Never only "monitor" or "follow the procedure". State the span a trend or verdict rests on; if too short to judge, say what will decide it, not yes or no.
-
-With a display, write at most four plain sentences, under 80 words, before the block: the assessment, decisive values or states, and actions. Name what the display leads with (the first `margins` line). Cite values and watch items only as the display shows them (`shows`, `margins`, `equipment`, never a command) or mark one "(not shown)"; name limits as it does and its time span as `shows` states it. Point to the display; never restate it. Give times as `simulationClock` (sim hh:mm:ss) and say "current", not "live". `warnings` are for you; mention one only if it changes the conclusion.
+Keep the assessment concise: decisive evidence and next action, not every displayed value. Bind measurements to equipment or signals and observation time. Distinguish current readings, history, limits, commands and calculations. Prefer displayed units; make conversions explicit. Identify sources for evidence outside this display. `viewContent.span` is the time-axis extent, not retained history; use recorded sample bounds for history claims. After an actuation limit is passed, check whether the automatic action occurred before recommending action. Use `simulationClock` and identify paused Runs. Mention warnings that change the conclusion. Structured display validation checks data and identities, not your prose.

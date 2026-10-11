@@ -4,23 +4,25 @@ import { rejectCapabilityTarget } from '../../../simulation/capability-rejection
 import { defineSimulationQueryCapability } from '../../../simulation/capabilities.ts'
 import type { SimulationCapability } from '../../../simulation/protocol.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
+import { solvedGridIslands } from '../runtime/island-lifecycle.ts'
 
 export type GridRuntimes = ReadonlyMap<string, GridRuntimeInstance>
 
 /** One read-only Electric Grid query Capability and the handler answering it. */
 export interface ElectricGridQuery {
   readonly capability: SimulationCapability
+  /** The answer, or a Promise of it from a query that finishes on worker threads. */
   readonly answer: (rawInput: unknown, grids: GridRuntimes) => unknown
 }
 
-export const assetKindSchema = z.enum(['bus', 'branch', 'generator', 'load', 'storage'])
+export const assetKindSchema = z.enum(['bus', 'branch', 'generator', 'load', 'storage', 'hvdc'])
 export const gridPayloadSchema = z.object({ gridId: z.string().min(1) }).strict()
-export const genericObjectSchema = z.record(z.string(), z.unknown())
 
 export const defineGridQuery = <Input extends z.ZodType>(config: {
   readonly id: string
   readonly title: string
   readonly description: string
+  readonly searchTerms: ReadonlyArray<string>
   readonly input: Input
   readonly output: z.ZodType
   readonly answer: (payload: z.output<Input>, grids: GridRuntimes) => unknown
@@ -29,6 +31,7 @@ export const defineGridQuery = <Input extends z.ZodType>(config: {
     id: config.id,
     title: config.title,
     description: config.description,
+    searchTerms: config.searchTerms,
     input: config.input,
     output: config.output,
     inspectObjectIds: rawInput => {
@@ -46,3 +49,15 @@ export const gridFor = (grids: GridRuntimes, gridId: string): GridRuntimeInstanc
   )
   return grid
 }
+
+/** A stable island id of the Grid's solved islands, or a capability rejection naming where ids come from. */
+export const requireGridIsland = (grid: GridRuntimeInstance, islandId: string): string => {
+  if (!solvedGridIslands(grid).islands.some(island => island.id === islandId)) return rejectCapabilityTarget(
+    `Grid island not found: ${islandId}. Discover current island ids with world.electric-grid.islands.list.`,
+  )
+  return islandId
+}
+
+/** The stable island id holding a bus at the last solve; null for an HVDC terminal, which lies in no island. */
+export const gridBusIslandId = (grid: GridRuntimeInstance, busId: string): string | null =>
+  grid.hvdcTerminals.has(busId) ? null : grid.busStates.get(busId)!.islandId

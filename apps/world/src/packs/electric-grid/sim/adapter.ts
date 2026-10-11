@@ -29,12 +29,15 @@ import { createRuntimeStateWriter } from '../../../simulation/runtime-state-writ
 import { electricGridPackDataSchema,electricGridPackId } from '../model.ts'
 import { answerElectricGridQuery,electricGridQueryCapabilities } from '../queries/index.ts'
 import { createGridRecordingPlan } from '../recording.ts'
-import { balanceInitialGridDispatch,createGridRuntimeInstance,type GridRuntimeInstance } from '../runtime/instance.ts'
+import { dispatchGridFromLiveIslands } from '../runtime/dispatch.ts'
+import { createGridRuntimeInstance,type GridRuntimeInstance } from '../runtime/instance.ts'
 import { applyGridCommand } from '../runtime/apply-command.ts'
 import { advanceGrid } from '../runtime/solver.ts'
+import { commandProvenanceSource } from './command-provenance.ts'
 import { electricGridAdapterId,electricGridRuntimeId } from './constants.ts'
+import { gridSignalEvents } from './grid-signal-events.ts'
 import { gridProjectionEvents,projectGridObject,projectedInitialGridObjects } from './object-projection.ts'
-import { electricGridRuntimeStateSchema,restoredGridRuntimeStateFor,runtimeStateForElectricGrids } from './runtime-state.ts'
+import { parseElectricGridRuntimeState,restoredGridRuntimeStateFor,runtimeStateForElectricGrids } from './runtime-state.ts'
 
 const updateIntervalMs = 2_000
 
@@ -97,9 +100,10 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
   capabilities: [...electricGridCommandCapabilities, ...electricGridQueryCapabilities],
   connect: async (config: PackRuntimeConnectionConfig): Promise<PackRuntimeConnection> => {
     const { compileGridDefinition } = await import('../definitions.ts')
+    const simulationRunId = config.simulationRunId
     const initialObjects = (config.initialObjects ?? config.scenario.initialObjects).filter(object => object.packId === electricGridPackId)
     const rawState = await config.runtimeStateStore?.load()
-    const runtimeState = rawState === undefined || rawState === null ? null : electricGridRuntimeStateSchema.parse(rawState)
+    const runtimeState = rawState === undefined || rawState === null ? null : parseElectricGridRuntimeState(rawState)
     const initialAt = config.scenario.world.startsAt
     const grids = new Map<string, GridRuntimeInstance>()
     const initiallyBalancedGridIds = new Set<string>()
@@ -107,12 +111,15 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       const definition = compileGridDefinition(item.definition)
       const restored = restoredGridRuntimeStateFor(runtimeState, item.object.id, definition.definitionDigest)
       if (restored !== undefined) initiallyBalancedGridIds.add(item.object.id)
-      grids.set(item.object.id, createGridRuntimeInstance({
+      const grid = createGridRuntimeInstance({
         definition,
         at: initialAt,
         connections: networkConnectionsFor(config.scenario.connections, item.object.id),
         ...(restored === undefined ? {} : { restored }),
-      }))
+      })
+      // A fresh Grid with connected systems is dispatched once they report; its relays wait for that.
+      if (restored === undefined && grid.externalConnections.size > 0) grid.protection.startingDispatchPending = true
+      grids.set(item.object.id, grid)
     }
     for (const grid of grids.values()) advanceGrid(grid, 0, initialAt)
     const objectsById = new Map<ObjectId, OperationalObject>(projectedInitialGridObjects({ objects: initialObjects, grids, at: initialAt }).map(object => [object.id, object]))
@@ -171,6 +178,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
           }
           connection.systemActivePowerMw = nextPowerMw
           connection.connected = nextConnected
+          connection.systemPresent = true
           if (trackStartup) observedStartupConnections.add(`${grid.definition.gridId}\u0000${connection.definition.network.portId}`)
         }
       }
@@ -182,7 +190,8 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       for (const grid of grids.values()) {
         for (const connection of grid.externalConnections.values()) {
           if (connection.definition.system.objectId !== objectId) continue
-          if (connection.connected || connection.systemActivePowerMw !== 0) affectedGridIds.add(grid.definition.gridId)
+          if (connection.connected || connection.systemPresent || connection.systemActivePowerMw !== 0) affectedGridIds.add(grid.definition.gridId)
+          connection.systemPresent = false
           connection.connected = false
           connection.systemActivePowerMw = 0
         }
@@ -205,7 +214,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       }
       emit({
         handlers,
-        events: gridProjectionEvents({
+        events: [...gridProjectionEvents({
           objectsById,
           grids: affectedGrids,
           previousKeys: projectionKeys,
@@ -216,7 +225,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
             ...(config.cause?.causedByCommandId === undefined ? {} : { causedByCommandId: config.cause.causedByCommandId }),
           },
           history: 'snapshot-only',
-        }),
+        }), ...gridSignalEvents(affectedGrids.values(), simulationRunId)],
       })
     }
 
@@ -226,7 +235,8 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
         const allObserved = [...grid.externalConnections.values()].every(connection =>
           observedStartupConnections.has(`${grid.definition.gridId}\u0000${connection.definition.network.portId}`))
         if (!allObserved) continue
-        balanceInitialGridDispatch(grid)
+        dispatchGridFromLiveIslands(grid, Date.parse(currentSimulationTime()))
+        grid.protection.startingDispatchPending = false
         initiallyBalancedGridIds.add(grid.definition.gridId)
       }
     }
@@ -248,6 +258,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       for (const grid of grids.values()) {
         for (const connection of grid.externalConnections.values()) {
           if (config.isObjectProviderAvailable?.(connection.definition.system.objectId) === false) {
+            connection.systemPresent = false
             connection.connected = false
             connection.systemActivePowerMw = 0
           }
@@ -273,7 +284,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
           })()
         : undefined
       persistence.scheduleSave()
-      emit({ handlers, events, ...(recording === undefined ? {} : { recording }) })
+      emit({ handlers, events: [...events, ...gridSignalEvents(grids.values(), simulationRunId)], ...(recording === undefined ? {} : { recording }) })
       lastSuccessfulInteractionAt = nowIso()
     }
 
@@ -345,11 +356,11 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
             grids: new Map([[grid.definition.gridId, grid]]),
             previousKeys: projectionKeys,
             at: nowIso(),
-            provenance: { source: 'operator', causedByCommandId: command.id },
+            provenance: { source: commandProvenanceSource(command.actorId), causedByCommandId: command.id },
             history: 'record',
           })
           await persistence.saveNow()
-          emit({ handlers, events })
+          emit({ handlers, events: [...events, ...gridSignalEvents([grid], simulationRunId)] })
           return { ok: true, commandId: command.id, acceptedAt: nowIso() }
         } catch (error) {
           return commandRejected(command, error instanceof Error ? error.message : String(error))
@@ -358,7 +369,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       invokeQuery: async (request: PackRuntimeQuery): Promise<unknown> => {
         if (failure !== null) throw new Error(`Electric Grid runtime stopped after a failure: ${failure}`)
         const startedAtMs = performance.now()
-        const response = answerElectricGridQuery({ request, grids })
+        const response = await answerElectricGridQuery({ request, grids })
         const gridId = typeof request.input === 'object' && request.input !== null && !Array.isArray(request.input)
           ? (request.input as { readonly gridId?: unknown }).gridId
           : undefined
@@ -419,6 +430,10 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
         // after every connection has published a committed runtime projection.
         observeSystemObjects(objects, false)
         for (const grid of grids.values()) {
+          // The snapshot's systems already inject their live power; until every connection has
+          // published a committed projection, a provisional dispatch balances the islands for it,
+          // so the first published state is an operating point (the starting dispatch replaces it).
+          if (grid.protection.startingDispatchPending) dispatchGridFromLiveIslands(grid, Date.parse(initialAt))
           advanceGrid(grid, 0, initialAt)
           const object = objectsById.get(grid.definition.gridId as ObjectId)
           if (object) objectsById.set(object.id, projectGridObject({ object, grid, at: initialAt }))

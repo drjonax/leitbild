@@ -280,6 +280,37 @@ export const createAIAgent = (
     }
   }
 
+  // The whole turn owns its trace, including preparation and delivery outside
+  // evaluate(). Cancellation closes immediately even if an external await has
+  // not unwound yet; late events cannot reopen the bounded diagnostic record.
+  const createTurnEvents = (roomId: string, traceId: string, signal: AbortSignal) => {
+    let closed = false
+    const forward = (event: EvalEventCore): void => {
+      try {
+        onEvalEvent?.({ agentId, agentName: config.name, roomId }, { ...event, traceId })
+      } catch (error) {
+        console.error(`[${config.name}] Evaluation event subscriber failed:`, error)
+      }
+    }
+    const finish = (outcome: Extract<EvalEventCore, { kind: 'eval_completed' }>['outcome']): void => {
+      if (closed) return
+      closed = true
+      signal.removeEventListener('abort', cancelled)
+      forward({ kind: 'eval_completed', outcome })
+    }
+    const cancelled = (): void => finish('cancelled')
+    signal.addEventListener('abort', cancelled, { once: true })
+    if (signal.aborted) cancelled()
+    return {
+      emit: (event: EvalEventCore): void => {
+        // evaluate() also supports standalone consumers. Its terminal event
+        // does not finish a parent turn before delivery/persistence completes.
+        if (!closed && event.kind !== 'eval_completed') forward(event)
+      },
+      finish,
+    }
+  }
+
   // After an agent responds (not pass), delay pending re-evaluation by this amount.
   // This lets other agents' responses coalesce into a single re-evaluation rather than
   // triggering N separate evals. Major reduction in LLM calls for broadcast rooms.
@@ -296,6 +327,7 @@ export const createAIAgent = (
     triggerRoomId: string,
     signal: AbortSignal,
     traceId: string,
+    emit: (event: EvalEventCore) => void,
     evalToolDefs: ReadonlyArray<ToolDefinition> | undefined,
     inReplyTo?: ReadonlyArray<string>,
     requireView?: boolean,
@@ -311,15 +343,6 @@ export const createAIAgent = (
       ...(maxToolIterationsCfg !== undefined ? { maxToolIterations: maxToolIterationsCfg } : {}),
     }
     const evalToolExec = includeTools ? toolExecutor : undefined
-    // Stamp traceId onto every event from the inner evaluate loop before
-    // forwarding. Internal sites work with EvalEventCore (no traceId
-    // plumbing); subscribers see a full EvalEvent.
-    const evalEventCb = onEvalEvent
-      ? (event: EvalEventCore) => onEvalEvent(
-          { agentId, agentName: config.name, roomId: triggerRoomId },
-          { ...event, traceId } as EvalEvent,
-        )
-      : undefined
     // Tool-iteration check-in wiring. Returns a Promise the evaluate loop
     // awaits; the room's pending checkin Map below is keyed by roomId so
     // the agent-level continueTools() can resolve it from the HTTP route.
@@ -346,7 +369,7 @@ export const createAIAgent = (
       ...(evalToolDefs ? { toolDefinitions: evalToolDefs } : {}),
       ...(inReplyTo ? { inReplyTo } : {}),
       ...(requireView ? { requireView } : {}),
-      ...(evalEventCb ? { onEvent: evalEventCb } : {}),
+      onEvent: emit,
       signal,
       ...(checkinEnabled && maxToolIterationsCfg !== undefined ? { requestToolCheckin } : {}),
     }
@@ -369,7 +392,7 @@ export const createAIAgent = (
         // generation. Report it explicitly and leave this turn unavailable for replay.
         const message = `Could not retain the starting input for model comparison: ${error instanceof Error ? error.message : String(error)}`
         console.error(`[${config.name}] ${message}`)
-        evalEventCb?.({ kind: 'warning', message })
+        emit({ kind: 'warning', message })
       }
       signal.throwIfAborted()
     }
@@ -447,46 +470,30 @@ export const createAIAgent = (
     // carries it so subscribers (the diagnostics ring buffer + UI) can
     // correlate per-eval state without polling.
     const traceId = generateTraceId()
-    const emit = onEvalEvent
-      ? (event: EvalEventCore) => onEvalEvent(
-          { agentId, agentName: config.name, roomId: triggerRoomId },
-          { ...event, traceId } as EvalEvent,
-        )
-      : undefined
-
     const epoch = cm.epochAtStart()
-
-    // Resolve effective model per call. `currentModel` is the user's intent
-    // (preferred); the resolver decides whether to fall through to a default
-    // when the preferred provider isn't currently usable. Identity if no
-    // resolver was wired (tests, MCP-only mode).
-    const resolved = resolveEffective
-      ? resolveEffective(currentModel)
-      : { model: currentModel, fallback: false, reason: 'preferred_available' }
-    const effectiveModel = resolved.model
-    if (resolved.fallback && effectiveModel !== currentModel) {
-      // One-shot per fallback target — re-emit only when the target changes
-      // (which it does when the preferred model recovers and then breaks again).
-      if (lastFallbackTarget !== effectiveModel && emit) {
-        emit({
-          kind: 'model_fallback',
-          preferred: currentModel,
-          effective: effectiveModel,
-          reason: resolved.reason,
-        })
-      }
-      lastFallbackTarget = effectiveModel
-    } else if (!resolved.fallback) {
-      lastFallbackTarget = null
-    }
-
     const abortController = new AbortController()
     activeAbortController = abortController
+    const { emit, finish } = createTurnEvents(triggerRoomId, traceId, abortController.signal)
     // epoch guards: each cancelGeneration() increments generationEpoch so stale
     // in-flight results from a prior generation cycle are silently discarded.
     const run = async (): Promise<void> => {
       let wasRespond = false
+      let outcome: 'respond' | 'pass' | 'error' = 'error'
       try {
+        // Model resolution belongs to the turn too: it can fail or emit a
+        // fallback before context construction starts.
+        const resolved = resolveEffective
+          ? resolveEffective(currentModel)
+          : { model: currentModel, fallback: false, reason: 'preferred_available' }
+        const effectiveModel = resolved.model
+        if (resolved.fallback && effectiveModel !== currentModel) {
+          if (lastFallbackTarget !== effectiveModel) {
+            emit({ kind: 'model_fallback', preferred: currentModel, effective: effectiveModel, reason: resolved.reason })
+          }
+          lastFallbackTarget = effectiveModel
+        } else if (!resolved.fallback) {
+          lastFallbackTarget = null
+        }
         const info = await llmProvider.modelInfo?.(effectiveModel)
         if (!cm.isEpochCurrent(epoch) || abortController.signal.aborted) return
         describedModel = { requested: effectiveModel, info: info ?? { id: effectiveModel, provider: 'unknown', contextMax: 0, source: 'unavailable' } }
@@ -539,7 +546,7 @@ export const createAIAgent = (
           }
         }
         const { decision, flushInfo } = await runEvaluate(
-          contextResult, effectiveModel, triggerRoomId, abortController.signal, traceId, effectiveToolDefs, inReplyTo, requested?.requireView,
+          contextResult, effectiveModel, triggerRoomId, abortController.signal, traceId, emit, effectiveToolDefs, inReplyTo, requested?.requireView,
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled — discard stale result
 
@@ -549,6 +556,7 @@ export const createAIAgent = (
         // On pass, the agent has consciously evaluated these messages; they belong in history.
         flushIncoming(flushInfo, agentHistory, historyLimit)
         onDecision({ ...decision, generationTraceId: traceId, ...(requested ? { cause: requested.cause } : {}) })
+        outcome = decision.response.action
       } catch (err) {
         if (!cm.isEpochCurrent(epoch)) return  // cancelled, ignore error
         // Unexpected throw — evaluate() catches LLM-layer errors and converts
@@ -574,6 +582,7 @@ export const createAIAgent = (
           console.error(`[${config.name}] onDecision threw while reporting eval error:`, decisionErr)
         }
       } finally {
+        finish(abortController.signal.aborted ? 'cancelled' : outcome)
         if (requested) runningRequests.delete(triggerRoomId)
         notifyTurnFinished(traceId)
         if (cm.isEpochCurrent(epoch)) {
@@ -875,6 +884,8 @@ export const createAIAgent = (
       const abortController = new AbortController()
       activeAbortController = abortController
       const triggerTraceId = generateTraceId()
+      const { emit, finish } = createTurnEvents(roomId, triggerTraceId, abortController.signal)
+      let outcome: 'respond' | 'pass' | 'error' = 'error'
 
       try {
         // Resolve effective model (mirrors tryEvaluate).
@@ -899,15 +910,17 @@ export const createAIAgent = (
         }
 
         const { decision } = await runEvaluate(
-          contextResult, effectiveModel, roomId, abortController.signal, triggerTraceId, effectiveToolDefs,
+          contextResult, effectiveModel, roomId, abortController.signal, triggerTraceId, emit, effectiveToolDefs,
         )
         if (!cm.isEpochCurrent(epoch)) return  // cancelled
         onDecision({ ...decision, generationTraceId: triggerTraceId })
+        outcome = decision.response.action
       } catch (err) {
         if (cm.isEpochCurrent(epoch)) {
           console.error(`[${config.name}] trigger execute failed:`, err)
         }
       } finally {
+        finish(abortController.signal.aborted ? 'cancelled' : outcome)
         notifyTurnFinished(triggerTraceId)
         // Restore held incoming at the front; new arrivals during eval are
         // already at the back. Order preserved: held first, then new.

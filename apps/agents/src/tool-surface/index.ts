@@ -17,6 +17,7 @@ export const createToolSurface = (deps: {
 }) => {
   const buildCandidates = (roomId: string | undefined): ReadonlySet<string> => {
     const room = roomId === undefined ? undefined : deps.getRoomActivation?.(roomId)
+    if (roomId !== undefined && deps.getRoomActivation !== undefined && room === undefined) return new Set()
     const active = room ? effectiveActivePackSet(room) : undefined
     return new Set(deps.requestedTools.filter(name => {
       const entry = deps.registry.getEntry(name)

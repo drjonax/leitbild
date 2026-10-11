@@ -2,15 +2,39 @@ import { z } from 'zod'
 import { idSchema, objectIdSchema, type ObjectId } from './ids.ts'
 import { isoTimestampSchema, type IsoTimestamp } from './time.ts'
 
-export interface ElectricalPortState {
+interface ElectricalPortStateBase {
   /** Positive values leave the owning Operational Object. */
   readonly activePowerMw: number
-  readonly voltagePu: number
-  readonly frequencyHz: number
-  readonly energized: boolean
   readonly connected: boolean
   readonly observedAt: IsoTimestamp
 }
+
+/**
+ * A live port: it is energised and has a positive finite frequency (Hz).
+ *
+ * voltagePu is the solved voltage magnitude at the port (pu of its nominal kV), or null when the
+ * port is energised but the network voltage there is unsolved: the network's AC load flow of the
+ * port's island did not converge, so no steady-state voltage exists to report. Null is never a
+ * stand-in for a guessed, nominal or DC value, and it is only valid while energised (a dead port
+ * reports 0). A system reading a network port with voltage null treats it as lost offsite power,
+ * exactly like a dead port: it takes no supply and exchanges no power there until a solved voltage
+ * returns. The conservative mapping is the reader's: the network side treats an unsolved voltage
+ * as a numerical state, not a physical event, and trips nothing of its own because of it.
+ */
+export interface EnergizedElectricalPortState extends ElectricalPortStateBase {
+  readonly energized: true
+  readonly voltagePu: number | null
+  readonly frequencyHz: number
+}
+
+/** A dead port: no voltage and no frequency (frequency is absent, never 0 Hz). */
+export interface DeenergizedElectricalPortState extends ElectricalPortStateBase {
+  readonly energized: false
+  readonly voltagePu: 0
+  readonly frequencyHz: null
+}
+
+export type ElectricalPortState = EnergizedElectricalPortState | DeenergizedElectricalPortState
 
 export interface ElectricalPortDefinition {
   readonly id: string
@@ -39,14 +63,27 @@ export interface ElectricalConnectionDefinition {
   readonly systemInertiaSeconds?: number | undefined
 }
 
-export const electricalPortStateSchema = z.object({
+const electricalPortStateBaseShape = {
   activePowerMw: z.number().finite(),
-  voltagePu: z.number().finite().nonnegative(),
-  frequencyHz: z.number().finite().nonnegative(),
-  energized: z.boolean(),
   connected: z.boolean(),
   observedAt: isoTimestampSchema,
-}).strict()
+}
+
+export const electricalPortStateSchema = z.discriminatedUnion('energized', [
+  z.object({
+    ...electricalPortStateBaseShape,
+    energized: z.literal(true),
+    // null: energised, network voltage unsolved (see EnergizedElectricalPortState).
+    voltagePu: z.number().finite().positive().nullable(),
+    frequencyHz: z.number().finite().positive(),
+  }).strict(),
+  z.object({
+    ...electricalPortStateBaseShape,
+    energized: z.literal(false),
+    voltagePu: z.literal(0),
+    frequencyHz: z.null(),
+  }).strict(),
+])
 
 export const electricalPortDefinitionSchema = z.object({
   id: idSchema,

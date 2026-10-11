@@ -51,6 +51,7 @@ describe('map layer registry ordering', () => {
       appearance: { theme: 'light' },
       layerGroups: electricGridPackView.presentation.mapLayerGroups ?? [],
       visibility: {},
+      onError: message => { throw new Error(`unexpected reference failure: ${message}`) },
     }))
     const order = layerOrder(fake.layers)
     const gridIndexes = registration.layerIds.map(id => order.indexOf(id))
@@ -75,6 +76,7 @@ describe('map layer registry ordering', () => {
       appearance: { theme: 'dark' },
       layerGroups: electricGridPackView.presentation.mapLayerGroups ?? [],
       visibility: { 'electric-grid:reference-substations': false },
+      onError: message => { throw new Error(`unexpected reference failure: ${message}`) },
     }))
     const hidden = fake.layers.filter(layer => layer.visibility === 'none').map(layer => layer.id)
     expect(hidden).toEqual(['reference:grid-norway:substations:fill', 'reference:grid-norway:substations:outline', 'reference:grid-norway:substations:point', 'reference:grid-norway:substations:label'])

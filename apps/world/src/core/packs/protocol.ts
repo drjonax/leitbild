@@ -6,7 +6,7 @@ import type { RoutingAdapter } from '../../routing/protocol.ts'
 import type { GeoJsonPoint,GeoJsonPolygon,InteractionHandler,IsoTimestamp,MapLayerId,ObjectId,OperationalObject,ProcedureTag,RecordingProfileDescriptor } from '../model/index.ts'
 import { geoJsonPointSchema,geoJsonPolygonSchema,isoTimestampSchema } from '../model/index.ts'
 import { geoJsonGeometrySchema, type GeoJsonGeometry } from '../model/geo.ts'
-import type { PackMapLegend,PackMapLegendSwatch,PackReferenceDatasetStyle } from './reference-style.ts'
+import type { PackMapAppearance,PackMapLegend,PackMapLegendSwatch,PackReferenceDatasetStyle } from './reference-style.ts'
 
 export type WorldPackDescriptor = PackDescriptor & { readonly description: string }
 export const packDataChangedSchema = z.object({ packId: z.string().min(1), revision: z.number().int().nonnegative() }).strict()
@@ -201,6 +201,94 @@ export interface PackMapFeatureQuery {
   readonly input: unknown
 }
 
+export type PackMapFeatureSelection = NonNullable<PackMapFeature['selection']>
+
+/** Values a live map layer sets as MapLibre feature-state; paint reads them with ['feature-state', key]. */
+export type PackLiveFeatureState = Readonly<Record<string, number | boolean>>
+
+export interface PackLiveMapFeature {
+  /** Unique non-negative integer within its source; the renderer promotes it to the feature id. */
+  readonly fid: number
+  readonly geometry: GeoJsonGeometry
+  readonly properties: Readonly<Record<string, string | number | boolean>>
+}
+
+export interface PackLiveMapHoverCard {
+  readonly title: string
+  readonly fields: ReadonlyArray<PackObjectField>
+}
+
+/** One validated state result, mapped onto the features of the geometry it aligns with. */
+export interface PackLiveMapState {
+  readonly revision: number
+  /** Every feature's state; the renderer applies only the values that changed. */
+  readonly featureStates: ReadonlyMap<number, PackLiveFeatureState>
+  /** A small label set rebuilt with each state, because text cannot read feature-state. */
+  readonly labels: ReadonlyArray<PackLiveMapFeature>
+  readonly hoverCard: (fid: number) => PackLiveMapHoverCard | null
+}
+
+/** Static features of one source object, fetched once per key. */
+export interface PackLiveMapGeometry {
+  readonly key: string
+  readonly features: ReadonlyArray<PackLiveMapFeature>
+  readonly selectionFor: (fid: number) => PackMapFeatureSelection | null
+  readonly fidForSelection: (selection: PackMapFeatureSelection) => number | null
+  /** Validates a state result for this geometry; a state for another geometry key is an error. */
+  readonly presentState: (result: unknown) => PackLiveMapState
+}
+
+export interface PackLiveMapLayerSpec {
+  /** One lowercase segment; published as `live:<layer id>:<object>:<spec id>`. */
+  readonly id: string
+  readonly source: 'features' | 'labels'
+  readonly type: 'line' | 'circle' | 'symbol'
+  readonly minzoom?: number
+  readonly filter?: ReadonlyArray<unknown>
+  readonly layout?: Readonly<Record<string, unknown>>
+  /** Dynamic values come from feature-state only. */
+  readonly paint: Readonly<Record<string, unknown>>
+  /** Hover cards and selection read features of this layer. */
+  readonly interactive?: boolean
+}
+
+export interface PackLiveMapImage {
+  /** `<layer id>:<name>`, referenced by `icon-image`. */
+  readonly id: string
+  readonly svg: string
+}
+
+/** Recolours reference datasets as muted context while the live layer is shown. */
+export interface PackLiveMapReferenceContext {
+  readonly datasetIds: ReadonlyArray<string>
+  readonly color: (color: string, appearance: PackMapAppearance) => string
+}
+
+/**
+ * A Pack-owned live map layer: geometry fetched once per geometry key and compact state
+ * fetched when a source object's revision changes, both through the Pack's own query
+ * Capabilities, and applied to native MapLibre layers as feature-state.
+ */
+export interface PackLiveMapLayer {
+  /** One lowercase segment, unique across active Packs. */
+  readonly id: string
+  /** The Pack layer group (pattern `live:<id>:*:*`) that shows and hides this layer. */
+  readonly layerGroupId: string
+  /** Objects this layer draws, one instance each; their revision gates state fetches. */
+  readonly sourceObjects: (objects: ReadonlyArray<OperationalObject>) => ReadonlyArray<OperationalObject>
+  readonly geometryQuery: (object: OperationalObject) => PackMapFeatureQuery
+  readonly stateQuery: (object: OperationalObject) => PackMapFeatureQuery
+  readonly loadGeometry: (result: unknown) => PackLiveMapGeometry
+  /** The geometry key a state result aligns with; the renderer refetches geometry when it differs. */
+  readonly stateGeometryKey: (result: unknown) => string
+  /** Layers in paint order, bottom first. */
+  readonly layersFor: (appearance: PackMapAppearance) => ReadonlyArray<PackLiveMapLayerSpec>
+  readonly imagesFor?: (appearance: PackMapAppearance) => ReadonlyArray<PackLiveMapImage>
+  readonly referenceContext?: PackLiveMapReferenceContext
+  /** Credits for the data this layer draws, shown in the map's attribution control. */
+  readonly attribution: string
+}
+
 export interface PackObjectCreationContext {
   readonly objects: ReadonlyArray<OperationalObject>
 }
@@ -361,6 +449,7 @@ export interface PackPresentationContribution {
   readonly referenceStyles?: ReadonlyArray<PackReferenceDatasetStyle>
   /** Keys the layers panel renders for this Pack's map encodings. */
   readonly mapLegends?: ReadonlyArray<PackMapLegend>
+  readonly liveMapLayers?: ReadonlyArray<PackLiveMapLayer>
 }
 
 export interface PackCreationContribution {

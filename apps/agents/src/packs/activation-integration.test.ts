@@ -13,7 +13,7 @@
 import { describe, test, expect } from 'bun:test'
 import { createRoomDirectory } from '../core/rooms/directory.ts'
 import { createToolRegistry } from '../core/tool-registry.ts'
-import { buildToolSupport } from '../agents/spawn.ts'
+import { buildToolSupport, createToolExecutor } from '../agents/spawn.ts'
 import type { Tool, ToolResult } from '../core/types/tool.ts'
 import type { LLMProvider } from '../core/types/llm.ts'
 import { effectiveActivePacks } from './activation.ts'
@@ -29,6 +29,64 @@ const okTool = (name: string): Tool => ({
 const stubProvider = {} as unknown as LLMProvider
 
 describe('pack activation — end-to-end with RoomDirectory + Room', () => {
+  test.each(['deactivate', 'uninstall', 'delete-room'] as const)('%s while queued prevents stale tool dispatch', async change => {
+    const house = createRoomDirectory({})
+    const room = house.createRoom({ name: 'Operations', createdBy: SYSTEM_SENDER_ID })
+    room.setActivePacks(['site-survey'])
+    const reg = createToolRegistry()
+    let calls = 0
+    reg.registerWithSource({ ...okTool('survey'), execute: async () => { calls++; return { success: true } } }, { kind: 'pack-owned', pack: 'site-survey' })
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const executor = createToolExecutor(reg, ['survey'], { callerId: 'test', callerName: 'Test' }, id => house.getRoom(id), undefined, undefined, undefined,
+      async operation => { entered.resolve(); await release.promise; return operation() })
+    const pending = executor([{ tool: 'survey', arguments: {} }], room.profile.id)
+    await entered.promise
+    if (change === 'deactivate') room.setActivePacks([])
+    if (change === 'uninstall') reg.unregister('survey')
+    if (change === 'delete-room') house.removeRoom(room.profile.id)
+    release.resolve()
+    const result = (await pending)[0]!
+    expect(result.success).toBe(false)
+    expect(result.error).toContain(change === 'deactivate' ? 'not active' : change === 'uninstall' ? 'not registered' : 'unavailable')
+    expect(calls).toBe(0)
+  })
+
+  test.each(['deactivate', 'uninstall'] as const)('%s after dispatch does not cancel admitted work but blocks the next call', async change => {
+    const house = createRoomDirectory({})
+    const room = house.createRoom({ name: 'Operations', createdBy: SYSTEM_SENDER_ID })
+    room.setActivePacks(['site-survey'])
+    const reg = createToolRegistry()
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let calls = 0
+    reg.registerWithSource({ ...okTool('survey'), execute: async () => { calls++; entered.resolve(); await release.promise; return { success: true, data: 'admitted outcome' } } }, { kind: 'pack-owned', pack: 'site-survey' })
+    const support = await buildToolSupport(['survey'], reg, { id: 'test', name: 'Test' }, stubProvider, id => house.getRoom(id))
+    const pending = support.toolExecutor!([{ tool: 'survey', arguments: {} }, { tool: 'survey', arguments: {} }], room.profile.id)
+    await entered.promise
+    if (change === 'deactivate') room.setActivePacks([])
+    else reg.unregister('survey')
+    release.resolve()
+    const result = await pending
+    expect(result[0]).toEqual({ success: true, data: 'admitted outcome' })
+    expect(result[1]!.success).toBe(false)
+    expect(calls).toBe(1)
+    expect(support.resolveToolDefinitions!(room.profile.id)).toEqual([])
+  })
+
+  test('deleted explicit Room cannot widen either projection or execution authority', async () => {
+    const house = createRoomDirectory({})
+    const room = house.createRoom({ name: 'Operations', createdBy: SYSTEM_SENDER_ID })
+    const reg = createToolRegistry()
+    let calls = 0
+    reg.register({ ...okTool('builtin'), execute: async () => { calls++; return { success: true } } })
+    const support = await buildToolSupport(['builtin'], reg, { id: 'test', name: 'Test' }, stubProvider, id => house.getRoom(id))
+    house.removeRoom(room.profile.id)
+    expect(support.resolveToolDefinitions!(room.profile.id)).toEqual([])
+    expect((await support.toolExecutor!([{ tool: 'builtin', arguments: {} }], room.profile.id))[0]!.success).toBe(false)
+    expect(calls).toBe(0)
+  })
+
   test('fresh Room has no active Packs; selected non-Pack tools remain available', async () => {
     const house = createRoomDirectory({})
     const room = house.createRoom({ name: 'Cafe', createdBy: SYSTEM_SENDER_ID })

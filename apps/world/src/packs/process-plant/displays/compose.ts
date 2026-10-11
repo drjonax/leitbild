@@ -1140,12 +1140,12 @@ const sparklinesShow = (pens: ReadonlyArray<ComposedDisplayPen>, sparklineMs: nu
 
 const minutes = (ms: number): string => `${Number((ms / 60_000).toFixed(1))} min`
 
-// While the Run's history is shorter than the horizon, the axis reaches only
-// as far back as the history: say so, or an answer promises a window the
-// operator does not see (evaluation run 19: "10-minute window" over a 1 min axis).
+// Axis width follows elapsed Run age, rounded up with a one-minute minimum.
+// It is presentation geometry, not the retained recording's coverage: a new
+// or sparsely recorded Run can have far fewer samples than this axis spans.
 const trendSpanText = (panel: ComposedTrendPanel, historyMs: number): string => {
   const shown = trendSpanMs(panel.horizonMs, historyMs)
-  return shown === panel.horizonMs ? `the last ${panel.horizon}` : `the last ${minutes(shown)} (the Run's history so far; it widens to ${panel.horizon} as the Run continues)`
+  return shown === panel.horizonMs ? `a ${panel.horizon} time axis` : `a ${minutes(shown)} time axis (widens to ${panel.horizon} as the Run continues)`
 }
 
 /** Plain statements of what the view shows, so the agent's text need not repeat it. */
@@ -1153,7 +1153,7 @@ export const composedDisplayShows = (display: CompiledComposedDisplay, historyMs
   if (panel.kind === 'trend') {
     const strips = panel.strips.length === 1 ? '' : ` in ${panel.strips.length} stacked strips (one per measurement)`
     return [
-      ...(panel.strips.length === 0 ? [] : [`Live trend of ${trendSpanText(panel, historyMs)}${strips}: ${panel.strips.flatMap(strip => strip.pens).map(signalName).join('; ')}`]),
+      ...(panel.strips.length === 0 ? [] : [`Live trend with ${trendSpanText(panel, historyMs)}${strips}; recorded samples may cover less: ${panel.strips.flatMap(strip => strip.pens).map(signalName).join('; ')}`]),
       ...(panel.live.length === 0 ? [] : [`Current values only, not recorded by this Run (no history to describe): ${panel.live.map(signalName).join('; ')}`]),
       ...panel.strips.flatMap(strip => strip.thresholds.map(threshold => thresholdText(threshold, strip.unit))),
     ]

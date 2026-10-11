@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { gridAutomationPreset, gridAutomationPresets } from '../src/packs/electric-grid/automation-presets.ts'
+import { electricGridDefinitionCatalog } from '../src/packs/electric-grid/definition-refs.ts'
+import { gridAutomationPreset } from '../src/packs/electric-grid/definitions.ts'
 import { evaluateGeneratorProtection, createGeneratorProtectionState } from '../src/packs/electric-grid/runtime/frequency/generator-protection.ts'
 import { allocateFrequencyReserves, noReserves } from '../src/packs/electric-grid/runtime/frequency/governors.ts'
 import {
@@ -11,6 +12,7 @@ import {
   type IslandFrequencyState,
 } from '../src/packs/electric-grid/runtime/frequency/island-state.ts'
 import { advanceIslandFrequency, type IslandFrequencyAdvance } from '../src/packs/electric-grid/runtime/frequency/island.ts'
+import { mfrrOutputMw, mfrrRampInProgress, mfrrTiming } from '../src/packs/electric-grid/runtime/frequency/mfrr.ts'
 import { integrateSwingSubStep } from '../src/packs/electric-grid/runtime/frequency/swing.ts'
 import type { FrequencyLoad, FrequencyStorageUnit, FrequencyUnit, IslandFrequencyInput } from '../src/packs/electric-grid/runtime/frequency/types.ts'
 import { gridAutomationSchema, type GridAutomation } from '../src/packs/electric-grid/schemas/grid-automation.ts'
@@ -65,7 +67,7 @@ const buildIsland = (spec: IslandSpec): BuiltIsland => {
   const allocation = allocateFrequencyReserves({ automation: spec.automation, units: raw, islandLoadMw: spec.loadMw })
   const units: FrequencyUnit[] = raw.map(unit => ({ ...unit, reserves: allocation.allocations.get(unit.id)! }))
   const loads = spec.loads ?? [{ id: 'demand', priority: 'normal', demandMw: spec.loadMw, protectedMw: 0 }]
-  const before: IslandFrequencyInput = { islandId: 'island', units: [...units, lost], storage: spec.storage ?? [], loads, externals: [], lossesMw: 0 }
+  const before: IslandFrequencyInput = { islandId: 'island', units: [...units, lost], storage: spec.storage ?? [], loads, externals: [], lossesMw: 0, fixedInjectionMw: 0 }
   const after: IslandFrequencyInput = { ...before, units: [...units, { ...lost, synchronised: false }] }
   const state = createIslandFrequencyState(spec.automation, before, {
     frequencyHz: 50,
@@ -115,14 +117,18 @@ const frequencyAt = (result: SimulationResult, seconds: number): number => {
 
 describe('electric grid Automation presets', () => {
   test('every preset validates and the Nordic preset cites a source for every section', () => {
-    expect([...gridAutomationPresets.keys()].sort()).toEqual([
+    const presetIds = electricGridDefinitionCatalog.automations.map(entry => entry.id)
+    expect([...presetIds].sort()).toEqual([
       'electric-grid.frequency.islanded-operation',
       'electric-grid.frequency.manual-balancing-training',
       'electric-grid.frequency.nordic-2025',
     ])
-    for (const preset of gridAutomationPresets.values()) expect(gridAutomationSchema.parse(preset)).toEqual(preset)
+    for (const id of presetIds) {
+      const preset = gridAutomationPreset(id)
+      expect(gridAutomationSchema.parse(preset)).toEqual(preset)
+    }
     const cited = new Set(nordic.sources.filter(source => source.status !== 'modelling-choice').map(source => source.section))
-    for (const section of ['swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection'] as const) {
+    for (const section of ['swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection', 'synchroCheck'] as const) {
       expect(cited.has(section)).toBe(true)
     }
     expect(training.afrr.enabled).toBe(false)
@@ -150,7 +156,7 @@ describe('island swing equation', () => {
   test('a constant imbalance changes frequency by ΔP·h·f0/(2·E_k) and load damping relaxes it', () => {
     const step = integrateSwingSubStep({
       nominalFrequencyHz: 50, frequencyHz: 50, kineticEnergyMws: 10_000, stepSeconds: 0.1,
-      fixedEnergyMws: 900 * 0.1, loadMw: 1_000, loadDampingPerHz: 0, elements: [],
+      fixedEnergyMws: 900 * 0.1, loadMw: 1_000, loadDampingPerHz: 0, externalDampingMwPerHz: 0, elements: [],
     })
     expect(step.frequencyHz - 50).toBeCloseTo(-100 * 0.1 * 50 / 20_000, 12)
     expect(step.rocofHzPerSecond).toBeCloseTo(-0.25, 12)
@@ -173,7 +179,7 @@ describe('island swing equation', () => {
       rampRateMwPerSecond: 10, reserves: { ...noReserves, fcrNMw: allocationMw },
     }
     const lost: FrequencyUnit = { ...machine, id: 'lost', governorClass: 'none', ratedMva: 12, inertiaConstantSeconds: 0, maximumMw: lossMw, targetMw: lossMw, reserves: noReserves }
-    const before: IslandFrequencyInput = { islandId: 'single', units: [machine, lost], storage: [], loads: [{ id: 'load', priority: 'normal', demandMw: loadMw, protectedMw: 0 }], externals: [], lossesMw: 0 }
+    const before: IslandFrequencyInput = { islandId: 'single', units: [machine, lost], storage: [], loads: [{ id: 'load', priority: 'normal', demandMw: loadMw, protectedMw: 0 }], externals: [], lossesMw: 0, fixedInjectionMw: 0 }
     const after: IslandFrequencyInput = { ...before, units: [machine, { ...lost, synchronised: false }] }
     let state = createIslandFrequencyState(automation, before, { frequencyHz: 50, startSeconds: 0, storageStateOfChargeFraction: {} })
     const h = automation.simulation.subStepSeconds
@@ -236,14 +242,22 @@ describe('island frequency control', () => {
     }
   })
 
-  test('(d) aFRR restores |Δf| < 10 mHz within 300 s after a 267 MW loss in a 15 GW island', () => {
+  test('(d) aFRR and then mFRR restore |Δf| < 10 mHz after a 267 MW loss in a 15 GW island', () => {
     const island = buildIsland({ automation: nordic, loadMw: 15_000, kineticEnergyMws: 60_000, lossMw: 267 })
     const result = simulate(nordic, island.state, island.after, 900, 1)
-    const restoredAt = [...result.frequencyAt].find(([seconds]) =>
-      [...result.frequencyAt].every(([later, hz]) => later < seconds || Math.abs(hz - 50) < 0.01))
+    if (!nordic.mfrr.enabled) throw new Error('Nordic preset must enable mFRR')
+    // The island's 200 MW aFRR cannot cover the loss: while the activated mFRR is in its 2.5 min
+    // preparation, FCR-N holds the uncovered 67 MW at about 67 / (6,000 + 150) MW/Hz = 11 mHz;
+    // the mFRR ramp then restores frequency.
+    const activationSeconds = result.actions.find(action => action.kind === 'mfrr-activated')!.atSeconds
+    const rampStartSeconds = activationSeconds + nordic.mfrr.preparationSeconds
+    const samples = [...result.frequencyAt]
+    const plateauHz = Math.max(...samples.filter(([seconds]) => seconds >= 300 && seconds < rampStartSeconds).map(([, hz]) => Math.abs(hz - 50)))
+    expect(plateauHz).toBeLessThan(0.015)
+    const restoredAt = samples.find(([seconds]) => samples.every(([later, hz]) => later < seconds || Math.abs(hz - 50) < 0.01))
     expect(restoredAt).toBeDefined()
-    expect(restoredAt![0]).toBeLessThanOrEqual(300)
-    console.info(`(d) |Δf| < 10 mHz from ${restoredAt![0]} s; f(300 s) ${frequencyAt(result, 300).toFixed(5)} Hz; nadir ${result.nadirHz.toFixed(4)} Hz`)
+    expect(restoredAt![0]).toBeLessThanOrEqual(rampStartSeconds + 60)
+    console.info(`(d) mFRR activated at ${activationSeconds.toFixed(0)} s, ramping from ${rampStartSeconds.toFixed(0)} s; |Δf| ≤ ${(plateauHz * 1_000).toFixed(1)} mHz meanwhile, < 10 mHz from ${restoredAt![0]} s; nadir ${result.nadirHz.toFixed(4)} Hz`)
   })
 
   test('mFRR takes over saturated aFRR and frees it', () => {
@@ -331,6 +345,20 @@ describe('island frequency control', () => {
   })
 })
 
+describe('mFRR activation timing', () => {
+  test('holds through the 2.5 min preparation time, then ramps 10 min to full activation at 12.5 min', () => {
+    const nordic = gridAutomationPreset('electric-grid.frequency.nordic-2025')
+    if (!nordic.mfrr.enabled) throw new Error('Nordic preset must enable mFRR')
+    const timing = mfrrTiming(nordic.mfrr)
+    expect(timing).toEqual({ preparationSeconds: 150, fullActivationSeconds: 750 })
+    const ramp = { fromMw: 20, toMw: 120, startedAtSeconds: 1_000 }
+    expect([1_000, 1_100, 1_150, 1_450, 1_750, 2_000].map(at => mfrrOutputMw(ramp, 1_000 + (at - 1_000), timing))).toEqual([20, 20, 20, 70, 120, 120])
+    expect(mfrrRampInProgress(ramp, 1_749, timing)).toBe(true)
+    expect(mfrrRampInProgress(ramp, 1_750, timing)).toBe(false)
+    expect(() => gridAutomationSchema.parse({ ...nordic, mfrr: { ...nordic.mfrr, preparationSeconds: 750 } })).toThrow('mFRR preparation must end before full activation')
+  })
+})
+
 describe('generator frequency protection', () => {
   test('(g) an under-frequency element trips at 47.5 Hz only after its delay', () => {
     const element = nordic.generatorProtection.underFrequency.find(candidate => candidate.thresholdHz === 47.5)
@@ -382,7 +410,7 @@ describe('generator frequency protection', () => {
     // A synchronous neighbour keeps the island energised after its own units trip.
     const island = buildIsland({ automation: nordic, loadMw: 2_000, kineticEnergyMws: 12_000, lossMw: 900, unitCount: 10,
       loads: [{ id: 'essential', priority: 'critical', demandMw: 2_000, protectedMw: 2_000 }] })
-    const neighbour = { id: 'neighbour', kineticEnergyMws: 20_000, scheduledImportMw: 0, frequencyResponseMwPerHz: 0, responseTimeConstantSeconds: 1, responseLimitMw: 0 }
+    const neighbour = { id: 'neighbour', kineticEnergyMws: 20_000, scheduledImportMw: 0, loadMw: 0, reserves: { fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrUpMw: 0, afrrDownMw: 0 } }
     const before = { ...island.before, externals: [neighbour] }
     const after = { ...island.after, externals: [neighbour] }
     let state = createIslandFrequencyState(nordic, before, { frequencyHz: 50, startSeconds: 0, storageStateOfChargeFraction: {} })
@@ -424,5 +452,62 @@ describe('frequency advance boundaries', () => {
       .reduce((sum, product) => sum + product.allocatedMw, 0)
     expect(allocatedUp).toBeLessThanOrEqual(headroomMw + 1e-9)
     expect(result.products.some(product => product.deficitMw > 0)).toBe(true)
+  })
+})
+
+describe('unit output band', () => {
+  /** Eight hydro units of 40–100 MW at one set-point, with more reserve allocated than a set-point at an edge leaves room for. */
+  const units = (targetMw: number): FrequencyUnit[] => Array.from({ length: 8 }, (_, index) => ({
+    id: `hydro-${index}`, connection: 'synchronous', governorClass: 'hydro', synchronised: true,
+    ratedMva: 111, inertiaConstantSeconds: 6, minimumMw: 40, maximumMw: 100, targetMw, rampRateMwPerSecond: 2,
+    reserves: { fcrNMw: 2, fcrDUpMw: 2, fcrDDownMw: 2, afrrUpMw: 5, afrrDownMw: 5, mfrrUpMw: 20, mfrrDownMw: 20 },
+  }))
+
+  /**
+   * Runs 300 s with aFRR and mFRR acting against an imbalance, then moves every set-point to the
+   * band edge, with demand to match, while that activation is still held, and runs 300 s more.
+   */
+  const run = (config: { readonly targetMw: number; readonly loadMw: number; readonly edgeMw: number }) => {
+    const before: IslandFrequencyInput = {
+      islandId: 'band', units: units(config.targetMw), storage: [],
+      loads: [{ id: 'demand', priority: 'normal', demandMw: config.loadMw, protectedMw: 0 }],
+      externals: [], lossesMw: 0, fixedInjectionMw: 0,
+    }
+    const steady = { ...before, loads: [{ id: 'demand', priority: 'normal' as const, demandMw: 8 * config.targetMw, protectedMw: 0 }] }
+    let state = createIslandFrequencyState(nordic, steady, { frequencyHz: 50, startSeconds: 0, storageStateOfChargeFraction: {} })
+    let restorationMw = 0
+    let lowestMw = Number.POSITIVE_INFINITY
+    let highestMw = 0
+    const advance = (input: IslandFrequencyInput, record: boolean): void => {
+      const result = advanceIslandFrequency(nordic, state, input, 2)
+      state = result.state
+      for (const unit of result.units) {
+        if (!record) {
+          restorationMw = unit.afrrMw + unit.mfrrMw
+          continue
+        }
+        lowestMw = Math.min(lowestMw, unit.outputMw)
+        highestMw = Math.max(highestMw, unit.outputMw)
+      }
+    }
+    for (let step = 0; step < 150; step += 1) advance(before, false)
+    // Demand now matches the new set-points, so the held activation is no longer needed and has no room.
+    const atEdge = { ...before, units: units(config.edgeMw), loads: [{ id: 'demand', priority: 'normal' as const, demandMw: 8 * config.edgeMw, protectedMw: 0 }] }
+    for (let step = 0; step < 150; step += 1) advance(atEdge, true)
+    return { restorationMw, lowestMw, highestMw }
+  }
+
+  test('a set-point raised to availability takes held aFRR and mFRR out instead of exceeding it', () => {
+    const result = run({ targetMw: 90, loadMw: 8 * 90 + 24, edgeMw: 100 })
+    expect(result.restorationMw).toBeGreaterThan(1)
+    expect(result.highestMw).toBeLessThanOrEqual(100 + 1e-9)
+    expect(result.highestMw).toBeGreaterThan(100 - 1e-6)
+  })
+
+  test('a set-point lowered to minimum stable generation takes held aFRR and mFRR out instead of undercutting it', () => {
+    const result = run({ targetMw: 50, loadMw: 8 * 50 - 24, edgeMw: 40 })
+    expect(result.restorationMw).toBeLessThan(-1)
+    expect(result.lowestMw).toBeGreaterThanOrEqual(40 - 1e-9)
+    expect(result.lowestMw).toBeLessThan(40 + 1e-6)
   })
 })

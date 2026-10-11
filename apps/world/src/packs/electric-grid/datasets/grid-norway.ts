@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { nveNlod20, osmOdbl } from '../../../reference-data/licences.ts'
+import { osmOdbl } from '../../../reference-data/licences.ts'
 import {
   asDatasetId,
   type DatasetConfig,
@@ -8,11 +8,12 @@ import {
 } from '../../../reference-data/types.ts'
 import { compileGridReferenceGraph } from '../reference-graph.ts'
 import { gridReferenceFeatureSchema } from '../schemas/grid-reference.ts'
-import { overpassPowerSource, type HttpFetch, type OverpassBbox } from '../sources/overpass-power.ts'
-import { osmPbfPowerSource } from '../sources/osm-pbf-power.ts'
-import { nveNettanleggSource, type HttpFetch as NveHttpFetch } from '../sources/nve-nettanlegg.ts'
+import { osmPbfPowerSource, type OsmPbfPin } from '../sources/osm-pbf-power.ts'
+import { gridFootprintMinZoom } from '../ui/grid-zoom-classes.ts'
+import { gridNorwayTileFeatures } from './grid-norway-tiles.ts'
 
 export const gridNorwayDatasetId = asDatasetId('grid-norway')
+export const gridNorwayOsmSourceId = 'osm:pbf-power:NO'
 
 export const gridNorwayFeatureSchema = gridReferenceFeatureSchema
 export type GridNorwayFeatureProperties = z.infer<typeof gridNorwayFeatureSchema>
@@ -24,16 +25,10 @@ export interface GridNorwayThresholds {
 }
 
 export interface GridNorwayDatasetConfig {
-  readonly bbox: OverpassBbox
-  readonly osmPbfPath?: string
-  readonly osmPbfDownloadUrl?: string
-  readonly osmPbfUserAgent?: string
-  readonly sourceMode?: 'osm-pbf' | 'overpass' | 'nve-nettanlegg'
-  readonly overpassEndpointUrl?: string
-  readonly overpassUserAgent?: string
-  readonly overpassFetchFn?: HttpFetch
-  readonly nveNettanleggEndpointUrl?: string
-  readonly nveNettanleggFetchFn?: NveHttpFetch
+  readonly osmPbf: {
+    readonly path: string
+    readonly pin: OsmPbfPin
+  }
   readonly thresholds?: GridNorwayThresholds
 }
 
@@ -46,17 +41,11 @@ export const gridNorwayProductionThresholds: GridNorwayThresholds = {
 export const gridNorwayTilebuild: TilebuildConfig = {
   outputLayer: 'grid',
   globalMinZoom: 4,
-  globalMaxZoom: 14,
-  categories: [
-    { category: 'line', minZoom: 4, maxZoom: 14 },
-    { category: 'cable', minZoom: 5, maxZoom: 14 },
-    { category: 'substation', minZoom: 6, maxZoom: 14 },
-    { category: 'transformer', minZoom: 9, maxZoom: 14 },
-    { category: 'plant', minZoom: 6, maxZoom: 14 },
-    { category: 'generator', minZoom: 8, maxZoom: 14 },
-    { category: 'load', minZoom: 8, maxZoom: 14 },
-    { category: 'unknown', minZoom: 10, maxZoom: 14 },
-  ],
+  // Footprints and busbars appear at z12 with exact geometry; MapLibre overzooms z12 beyond.
+  globalMaxZoom: gridFootprintMinZoom,
+  // gzip bytes; about five times the largest tile (21 KB at z6) of the 2026-10-08 sidecar's build.
+  maximumTileBytes: 100_000,
+  tileFeatures: gridNorwayTileFeatures,
 }
 
 export const gridNorwayFeatureToCategory = (feature: NormalizedFeature): string => {
@@ -73,34 +62,18 @@ const failIfBelow = (
 
 export const createGridNorwayDataset = (config: GridNorwayDatasetConfig): DatasetConfig => {
   const thresholds = config.thresholds ?? gridNorwayProductionThresholds
-  const sourceMode = config.sourceMode ?? 'osm-pbf'
-  const powerSource = sourceMode === 'overpass'
-    ? overpassPowerSource({
-        id: 'osm:overpass-power:NO',
-        bbox: config.bbox,
-        ...(config.overpassEndpointUrl !== undefined ? { endpointUrl: config.overpassEndpointUrl } : {}),
-        ...(config.overpassUserAgent !== undefined ? { userAgent: config.overpassUserAgent } : {}),
-        ...(config.overpassFetchFn !== undefined ? { fetchFn: config.overpassFetchFn } : {}),
-      })
-    : sourceMode === 'nve-nettanlegg'
-      ? nveNettanleggSource({
-          id: 'nve:nettanlegg4:NO',
-          ...(config.nveNettanleggEndpointUrl !== undefined ? { endpointUrl: config.nveNettanleggEndpointUrl } : {}),
-          ...(config.nveNettanleggFetchFn !== undefined ? { fetchFn: config.nveNettanleggFetchFn } : {}),
-        })
-      : osmPbfPowerSource({
-        id: 'osm:pbf-power:NO',
-        path: config.osmPbfPath ?? '/opt/leitbild/maps/sources/norway-latest.osm.pbf',
-        ...(config.osmPbfDownloadUrl !== undefined ? { downloadUrl: config.osmPbfDownloadUrl } : {}),
-        ...(config.osmPbfUserAgent !== undefined ? { userAgent: config.osmPbfUserAgent } : {}),
-      })
+  const powerSource = osmPbfPowerSource({
+    id: gridNorwayOsmSourceId,
+    path: config.osmPbf.path,
+    pin: config.osmPbf.pin,
+  })
   return {
     id: gridNorwayDatasetId,
     schemaVersion: 1,
     featureSchema: gridNorwayFeatureSchema,
     sources: [powerSource],
     tilebuild: gridNorwayTilebuild,
-    licences: sourceMode === 'nve-nettanlegg' ? [nveNlod20] : [osmOdbl],
+    licences: [osmOdbl],
     featureToCategory: gridNorwayFeatureToCategory,
     audit: (features): void => {
       const graph = compileGridReferenceGraph(features)

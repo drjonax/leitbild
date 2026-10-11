@@ -23,6 +23,71 @@ const fixture = async (): Promise<string> => {
 }
 
 describe('product knowledge tools', () => {
+  test('failed source initialization leaves wiki usable and retries on the same tool instance', async () => {
+    const root = await fixture()
+    const missing = join(root, 'missing')
+    const knowledge = createKnowledge({ revision: 'a'.repeat(40), documents: [{ path: 'index.md', content: '# Leitbild\nSimulation documentation.' }] })
+    const [search, read] = createProductKnowledgeTools({ repoRoot: missing, knowledge: async () => knowledge })
+    const context = { callerId: 'a', callerName: 'A' }
+    const partial = await search!.execute({ query: 'simulation', kind: 'documentation' }, context)
+    expect(partial.success).toBe(true)
+    expect(partial.data).toMatchObject({ coverage: { partial: true, source: { unavailable: true }, knowledge: { total: 1, returned: 1 } }, matches: [{ path: 'knowledge/index.md', revision: knowledge.revision }] })
+    expect(JSON.stringify(partial.data)).toContain('Deployed source unavailable')
+    expect((await search!.execute({ query: 'simulation', kind: 'source' }, context)).success).toBe(false)
+    const batch = await read!.execute({ requests: [{ path: 'README.md' }, { path: 'knowledge/index.md' }] }, context)
+    expect(batch.data).toMatchObject({ results: [{ success: false }, { success: true }] })
+    await mkdir(missing)
+    await writeFile(join(missing, 'README.md'), '# Simulation\nRecovered source documentation.')
+    const recovered = await search!.execute({ query: 'simulation', kind: 'documentation' }, context)
+    expect(recovered.data).toMatchObject({ coverage: { partial: false, source: { total: 1, returned: 1 } } })
+    expect(JSON.stringify(recovered.data)).toContain('README.md')
+  })
+
+  test('healthy source survives wiki failure; all unavailable and source-only failures are explicit', async () => {
+    const root = await fixture()
+    const [search] = createProductKnowledgeTools({ repoRoot: root, knowledge: async () => { throw new Error('publication offline') } })
+    const context = { callerId: 'a', callerName: 'A' }
+    const partial = await search!.execute({ query: 'simulation' }, context)
+    expect(partial).toMatchObject({ success: true, data: { coverage: { partial: true, knowledge: { unavailable: true } } } })
+    const sourceOnly = await search!.execute({ query: 'acceleration', kind: 'source' }, context)
+    expect(sourceOnly).toMatchObject({ success: true, data: { coverage: { partial: false } } })
+    const [unavailable] = createProductKnowledgeTools({ repoRoot: join(root, 'missing'), knowledge: async () => { throw new Error('publication offline') } })
+    const failed = await unavailable!.execute({ query: 'simulation' }, context)
+    expect(failed.success).toBe(false)
+    expect(failed.error).toContain('Deployed source unavailable')
+    expect(failed.error).toContain('Knowledge publication unavailable')
+  })
+
+  test('concurrent initialization shares a successful immutable source snapshot', async () => {
+    const root = await fixture()
+    const [search, read] = createProductKnowledgeTools({ repoRoot: root })
+    const context = { callerId: 'a', callerName: 'A' }
+    const first = await Promise.all(Array.from({ length: 8 }, () => search!.execute({ query: 'acceleration', kind: 'source' }, context)))
+    expect(first.every(result => result.success)).toBe(true)
+    expect(first.every(result => JSON.stringify(result) === JSON.stringify(first[0]))).toBe(true)
+    await writeFile(join(root, 'apps/world/src/execution.ts'), 'changed after immutable snapshot')
+    const cached = await read!.execute({ path: 'apps/world/src/execution.ts', revision: 'development' }, context)
+    expect(JSON.stringify(cached)).toContain('accelerationMode')
+    expect((await read!.execute({ path: 'apps/world/src/execution.ts', revision: 'wrong' }, context)).success).toBe(false)
+  })
+
+  test('a wiki search failure reports partial coverage without hiding healthy source matches', async () => {
+    const root = await fixture()
+    const wiki = createKnowledge({ revision: 'a'.repeat(40), documents: [{ path: 'index.md', content: '# Leitbild' }] })
+    let reads = 0
+    const [search] = createProductKnowledgeTools({ repoRoot: root, knowledge: async () => {
+      reads++
+      return { ...wiki, search: () => { throw new Error('index unavailable') } }
+    } })
+    const context = { callerId: 'a', callerName: 'A' }
+    const partial = await search!.execute({ query: 'acceleration' }, context)
+    expect(partial).toMatchObject({ success: true, data: { coverage: { partial: true, knowledge: { unavailable: true } } } })
+    expect(JSON.stringify(partial)).toContain('apps/world/src/execution.ts')
+    expect(JSON.stringify(partial)).toContain('index unavailable')
+    await search!.execute({ query: 'acceleration', kind: 'source' }, context)
+    expect(reads).toBe(1)
+  })
+
   test('hub children are directly readable agent paths without dumping descendants', async () => {
     const root = await fixture()
     const knowledge = createKnowledge({revision:'a'.repeat(40),documents:[

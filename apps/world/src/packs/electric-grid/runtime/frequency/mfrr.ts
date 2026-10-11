@@ -11,7 +11,7 @@ export interface MfrrState {
 
 export const createMfrrState = (): MfrrState => ({ sustainedSeconds: 0, sustainedDirection: null })
 
-/** One unit's mFRR activation, ramping linearly from fromMw to toMw over the full activation time. */
+/** One unit's mFRR activation: holds fromMw through the preparation time, then ramps linearly to toMw by full activation. */
 export interface MfrrUnitRamp {
   readonly fromMw: number
   readonly toMw: number
@@ -20,13 +20,21 @@ export interface MfrrUnitRamp {
 
 export const idleMfrrRamp: MfrrUnitRamp = Object.freeze({ fromMw: 0, toMw: 0, startedAtSeconds: 0 })
 
-export const mfrrOutputMw = (ramp: MfrrUnitRamp, nowSeconds: number, fullActivationSeconds: number): number => {
-  const progress = (nowSeconds - ramp.startedAtSeconds) / fullActivationSeconds
+/** An activation holds its previous level through the preparation time, then ramps linearly until full activation. */
+export interface MfrrTiming {
+  readonly preparationSeconds: number
+  readonly fullActivationSeconds: number
+}
+
+export const mfrrTiming = (config: EnabledMfrr): MfrrTiming => ({ preparationSeconds: config.preparationSeconds, fullActivationSeconds: config.fullActivationSeconds })
+
+export const mfrrOutputMw = (ramp: MfrrUnitRamp, nowSeconds: number, timing: MfrrTiming): number => {
+  const progress = (nowSeconds - ramp.startedAtSeconds - timing.preparationSeconds) / (timing.fullActivationSeconds - timing.preparationSeconds)
   return progress >= 1 ? ramp.toMw : progress <= 0 ? ramp.fromMw : ramp.fromMw + (ramp.toMw - ramp.fromMw) * progress
 }
 
-export const mfrrRampInProgress = (ramp: MfrrUnitRamp, nowSeconds: number, fullActivationSeconds: number): boolean =>
-  ramp.fromMw !== ramp.toMw && nowSeconds < ramp.startedAtSeconds + fullActivationSeconds
+export const mfrrRampInProgress = (ramp: MfrrUnitRamp, nowSeconds: number, timing: MfrrTiming): boolean =>
+  ramp.fromMw !== ramp.toMw && nowSeconds < ramp.startedAtSeconds + timing.fullActivationSeconds
 
 /**
  * Once aFRR utilisation has exceeded the threshold for the sustained time, requests mFRR equal
@@ -62,10 +70,14 @@ export const distributeMfrrActivation = (
   units: ReadonlyArray<FrequencyUnit>,
   levels: ReadonlyMap<string, number>,
 ): { readonly levels: ReadonlyMap<string, number>; readonly activatedMw: number; readonly shortfallMw: number } => {
+  // A unit takes activation up to its allocated mFRR and to the physical room its set-point leaves
+  // between minimum and maximum output.
   const room = (unit: FrequencyUnit): number => {
     if (!unit.synchronised) return 0
     const level = levels.get(unit.id)!
-    return activationMw >= 0 ? Math.max(0, unit.reserves.mfrrUpMw - level) : Math.max(0, unit.reserves.mfrrDownMw + level)
+    return activationMw >= 0
+      ? Math.max(0, Math.min(unit.reserves.mfrrUpMw - level, unit.maximumMw - unit.targetMw - level))
+      : Math.max(0, Math.min(unit.reserves.mfrrDownMw + level, unit.targetMw + level - unit.minimumMw))
   }
   const totalRoom = units.reduce((sum, unit) => sum + room(unit), 0)
   const magnitude = Math.min(Math.abs(activationMw), totalRoom)

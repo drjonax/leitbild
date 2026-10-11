@@ -362,10 +362,10 @@ describe('process plant discovery', () => {
       readonly sourceFiles: ReadonlyArray<{ readonly path: string; readonly content: string }>
     }
     const core = result.components.find(component => component.id === 'core')
-    expect(core?.sourcePath).toBe('src/packs/process-plant/runtime/behaviors/reactor-behaviors.ts')
+    expect(core?.sourcePath).toBe('apps/world/src/packs/process-plant/runtime/behaviors/reactor-behaviors.ts')
     const kineticsLink = core?.sourceLinks.find(link => link.symbol === 'reactorKineticsPowerStep')
     expect(kineticsLink).toMatchObject({
-      targetPath: 'src/packs/process-plant/runtime/physics.ts',
+      targetPath: 'apps/world/src/packs/process-plant/runtime/physics.ts',
     })
     expect(kineticsLink?.targetLineIndex).toBeGreaterThanOrEqual(0)
     expect(result.sourceFiles.find(file => file.path === core?.sourcePath)?.content)
@@ -479,6 +479,7 @@ describe('built-in process plant scenarios', () => {
   test('compile Plants directly from Scenario Items with no Pack configuration shadow', () => {
     const builtIns = scenarios.filter(scenario => scenario.packs.includes('process-plant' as PackId))
     expect(builtIns.map(scenario => scenario.id).sort()).toEqual([
+      'halden-offsite-power-restoration',
       'halden-power-complex',
       'test-plant',
     ])

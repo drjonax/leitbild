@@ -71,6 +71,31 @@ const provision = async (registry: WorldWorkspaceRuntimeRegistry, workspaceId: W
   })
 
 describe('World Module API', () => {
+  test('preserves uncertain, committed-observer, recovery and busy outcomes at the capability boundary', async () => {
+    const registry = await createRegistry()
+    const workspaceId = newWorkspaceId()
+    await provision(registry, workspaceId)
+    const run = await registry.getLoaded(workspaceId)!.simulationRuns.create({ scenarioId: 'test-response' })
+    const access = accessContextSchema.parse({ workspaceId, requestId: newRequestId(), actor: { kind: 'human', id: 'operator' } })
+    const capabilityId = 'world.object.delete'
+    for (const [code, message] of [
+      ['simulation_run_commit_uncertain', 'Commit outcome is uncertain: disk write failed'],
+      ['simulation_run_observer_failed', 'Events committed, but runtime observation failed; recovery required'],
+      ['simulation_run_recovery_required', 'Simulation Run requires recovery'],
+      ['simulation_run_busy', 'Simulation Run has commands preparing changes; retry copy when they finish'],
+    ]) {
+      const failure = spyOn(run, 'invokeCapability').mockRejectedValue(Object.assign(new Error(message), { code }))
+      try {
+        const result = await call(registry, `/internal/workspaces/${workspaceId}/capabilities/${capabilityId}/invoke`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspaceId, capabilityId, resource: { workspaceId, moduleId: 'world', type: 'world.simulation-run', id: run.id }, input: { objectId: run.snapshot().objects[0]!.id }, access }),
+        })
+        expect(result.status).toBe(409)
+        expect(result.body).toMatchObject({ error: { code, message } })
+      } finally { failure.mockRestore() }
+    }
+  })
+
   test('procedure evidence and historical decisions obey exact-subject AI restrictions without hiding human evidence', async () => {
     const retention = await mkdtemp(join(tmpdir(), 'world-procedure-access-'))
     temporaryDirectories.push(retention)

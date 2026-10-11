@@ -5,6 +5,7 @@ import { createWorldPackDescriptor } from '../../core/packs/protocol.ts'
 import { asDatasetId } from '../../reference-data/types.ts'
 import { electricGridPackId, parseElectricGridObjectData } from './model.ts'
 import { electricGridRuntimeId } from './sim/constants.ts'
+import { gridLiveLayerGroupId, gridLiveMapLayer, gridLiveStateLegend, gridOverviewPanelId } from './ui/grid-live-layer.ts'
 import { gridGenerationColor, gridVoltageLegend, neutralSwatchColor } from './ui/grid-map-palette.ts'
 import { gridNorwayStyle } from './ui/grid-norway-style.ts'
 
@@ -36,6 +37,12 @@ const layerGroups: ReadonlyArray<PackMapLayerGroup> = [{
   defaultVisible: true,
   layerIdPattern: referenceLayerPattern('generation'),
   swatch: { symbol: 'circle', color: gridGenerationColor, sizePx: 11 },
+}, {
+  id: gridLiveLayerGroupId,
+  label: 'Live grid state',
+  defaultVisible: true,
+  layerIdPattern: `live:${gridLiveMapLayer.id}:*:*`,
+  swatch: { symbol: 'line', color: gridLiveStateLegend.entries[0]!.color, sizePx: 3 },
 }]
 
 const presentationForGrid = (object: OperationalObject): PackObjectPresentation => {
@@ -60,11 +67,11 @@ const presentationForGrid = (object: OperationalObject): PackObjectPresentation 
     fields: [
       packField('model', 'Model', data.model.ref),
       packField('operating-point', 'Operating point', data.operatingPoint.ref),
-      packField('frequency', 'Frequency', `${projection.frequencyHz.toFixed(2)} Hz`),
+      packField('frequency', 'Frequency (largest island)', projection.frequencyHz === null ? 'No island energised' : `${projection.frequencyHz.toFixed(2)} Hz`),
       packField('generation', 'Generation', mw(projection.totalGenerationMw)),
       packField('load', 'Served load', `${mw(projection.servedLoadMw)} / ${mw(projection.totalLoadMw)}`),
       packField('reserve', 'Reserve margin', mw(projection.reserveMarginMw)),
-      packField('islands', 'Islands', String(projection.activeIslandCount)),
+      packField('islands', 'Energised islands', `${projection.activeIslandCount} of ${projection.islandCount}`),
       packField('alarms', 'Active alarms', String(projection.activeAlarmCount)),
     ],
     mapIconVisible: true,
@@ -89,7 +96,8 @@ export const electricGridPackView: WorldPackView = {
   presentation: {
     mapLayerGroups: layerGroups,
     referenceStyles: [gridNorwayStyle],
-    mapLegends: [gridVoltageLegend],
+    mapLegends: [gridVoltageLegend, gridLiveStateLegend],
+    liveMapLayers: [gridLiveMapLayer],
     categories: [{
       id: 'electric-grids',
       label: 'Electric grids',
@@ -100,7 +108,7 @@ export const electricGridPackView: WorldPackView = {
   },
   ui: {
     surfacePanels: [{
-      id: 'electric-grid.overview',
+      id: gridOverviewPanelId,
       label: 'Grid operations',
       defaultOpen: true,
       load: async () => await import('../../ui/grid/GridOverviewPanel.svelte'),

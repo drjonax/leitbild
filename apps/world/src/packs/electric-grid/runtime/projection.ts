@@ -1,70 +1,199 @@
 import type { IsoTimestamp } from '../../../core/model/index.ts'
-import { gridGeneratorIsOnline } from './dynamics.ts'
-import type { GridRuntimeInstance, GridTopologyPlan } from './instance.ts'
+import type { GridIslandProjection } from '../model.ts'
+import { gridAlarmCounts, gridIslandAlarmCounts } from './alarms.ts'
+import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from './instance.ts'
+import { externalReserveVolumes, generatorSynchronisedAt, islandFixedInjectionMw } from './island-input.ts'
+import { publishedNullable } from './state/arrays.ts'
+import { gridTablesFor } from './state/tables.ts'
 
-/** System-level projection: totals, weighted system frequency, alarm count, and status. */
-export const projectGridSystem = (
-  grid: GridRuntimeInstance,
-  plan: GridTopologyPlan,
-  frequencyByIsland: ReadonlyMap<string, number>,
-  at: IsoTimestamp,
-): void => {
-  const model = grid.definition.model
-  const busStates = grid.busStates
-  const externalSupplyMw = [...grid.externalConnections.values()]
-    .reduce((sum, connection) => sum + (connection.connected ? Math.max(0, connection.systemActivePowerMw) : 0), 0)
-  const externalDemandMw = [...grid.externalConnections.values()]
-    .reduce((sum, connection) => sum + (connection.connected ? Math.max(0, -connection.systemActivePowerMw) : 0), 0)
-  const totalGenerationMw = [...grid.generators.values()].reduce((sum, item) => sum + item.dispatchMw, 0) + externalSupplyMw
-  const totalLoadMw = [...grid.loads.values()].reduce((sum, item) => sum + item.demandMw, 0) + externalDemandMw
-  const servedLoadMw = [...grid.loads.values()].reduce((sum, item) => sum + item.servedMw, 0) + externalDemandMw
-  const unservedLoadMw = totalLoadMw - servedLoadMw
-  const reserveMarginMw = [...grid.generators.values()].reduce((sum, item) => sum + (gridGeneratorIsOnline(item.state) ? Math.min(item.reserveMw, Math.max(0, item.availableMw - item.dispatchMw)) : 0), 0)
-  const highestBranchLoadingPercent = [...grid.branches.values()].reduce((highest, item) => Math.max(highest, item.loadingPercent), 0)
-  const lowestVoltagePu = [...busStates.values()].reduce((lowest, item) => Math.min(lowest, item.voltagePu), 1)
-  const islandFrequencyWeights = plan.islands.map(island => {
-    const internalSupplyMw = island.generators.reduce((sum, generator) => sum + grid.generators.get(generator.id)!.dispatchMw, 0)
-      + island.storage.reduce((sum, item) => sum + Math.max(0, grid.storage.get(item.id)!.dispatchMw), 0)
-    const internalDemandMw = island.loads.reduce((sum, load) => sum + grid.loads.get(load.id)!.servedMw, 0)
-      + island.storage.reduce((sum, item) => sum + Math.max(0, -grid.storage.get(item.id)!.dispatchMw), 0)
-    const external = [...grid.externalConnections.values()]
-      .filter(connection => connection.connected && island.busSet.has(connection.busId))
-      .reduce((totals, connection) => ({
-        supplyMw: totals.supplyMw + Math.max(0, connection.systemActivePowerMw),
-        demandMw: totals.demandMw + Math.max(0, -connection.systemActivePowerMw),
-      }), { supplyMw: 0, demandMw: 0 })
-    return {
-      frequencyHz: frequencyByIsland.get(island.id) ?? model.nominalFrequencyHz,
-      weightMw: Math.max(internalSupplyMw + external.supplyMw, internalDemandMw + external.demandMw),
+// Status turns "working" when the headline island is 50 mHz off nominal: half the standard range.
+const workingDeviationHz = 0.05
+
+// Projection values are rounded to metering resolution (0.1 MW, 0.1 mHz) to keep the shared object compact.
+const mw = (value: number): number => Math.round(value * 10) / 10
+const hz = (value: number): number => Math.round(value * 10_000) / 10_000
+const pu = (value: number): number => Math.round(value * 10_000) / 10_000
+
+/** The island's AC result: converged with its bus voltage range and AC flows, not converged (DC flows), or de-energised. */
+const islandVoltage = (grid: GridRuntimeInstance, island: GridIsland, buses: Int32Array): Pick<GridIslandProjection, 'voltageModel' | 'voltageMinPu' | 'voltageMaxPu' | 'flowModel'> => {
+  if (!island.energized) return { voltageModel: 'de-energised', voltageMinPu: null, voltageMaxPu: null, flowModel: null }
+  const outcome = grid.acOutcomeByIsland.get(island.id)
+  if (outcome === undefined) throw new Error(`Grid ${grid.definition.gridId} island ${island.id} is energised but has no AC load-flow outcome`)
+  if (!outcome.converged) return { voltageModel: 'not-converged', voltageMinPu: null, voltageMaxPu: null, flowModel: 'dc' }
+  let minimum = Number.POSITIVE_INFINITY
+  let maximum = Number.NEGATIVE_INFINITY
+  const voltages = grid.arrays.buses.voltagePu
+  for (let position = 0; position < buses.length; position += 1) {
+    const voltage = publishedNullable(voltages[buses[position]!]!)!
+    if (voltage < minimum) minimum = voltage
+    if (voltage > maximum) maximum = voltage
+  }
+  return { voltageModel: 'ac-fdlf', voltageMinPu: pu(minimum), voltageMaxPu: pu(maximum), flowModel: 'ac' }
+}
+
+const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland, alarmCount: number): GridIslandProjection | null => {
+  const structure = islands.plan.islands[island.planIndex]!
+  if (structure.generatorIndices.length + structure.loadIndices.length + structure.storageIndices.length + structure.externalIndices.length + structure.connectionPointIndices.length === 0) return null
+  const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
+  const generators = grid.arrays.generators
+  const loads = grid.arrays.loads
+  let unitsMw = 0
+  for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+    const generator = structure.generatorIndices[generatorPosition]!
+    unitsMw += generators.dispatchMw[generator]!
+  }
+  let storageMw = 0
+  for (let itemPosition = 0; itemPosition < structure.storageIndices.length; itemPosition += 1) {
+    const item = structure.storageIndices[itemPosition]!
+    storageMw += grid.arrays.storage[item]!.dispatchMw
+  }
+  const generationMw = unitsMw + storageMw
+  let externalImportMw = 0
+  for (let systemPosition = 0; systemPosition < structure.externalIndices.length; systemPosition += 1) {
+    externalImportMw += grid.arrays.externalSystems[structure.externalIndices[systemPosition]!]!.importMw
+  }
+  const importMw = island.energized ? externalImportMw + islandFixedInjectionMw(grid, structure) : 0
+  let loadMw = 0
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
+    loadMw += loads.demandMw[load]!
+  }
+  let servedLoadMw = 0
+  for (let loadPosition = 0; loadPosition < structure.loadIndices.length; loadPosition += 1) {
+    const load = structure.loadIndices[loadPosition]!
+    servedLoadMw += loads.servedMw[load]!
+  }
+  let lossesMw = 0
+  for (let busPosition = 0; busPosition < structure.busIndices.length; busPosition += 1) {
+    const bus = structure.busIndices[busPosition]!
+    lossesMw += grid.lossLoadByBusMw[bus]!
+  }
+  const reserves = { fcrNMw: 0, fcrDUpMw: 0, fcrDDownMw: 0, afrrUpMw: 0, afrrDownMw: 0, mfrrUpMw: 0, mfrrDownMw: 0 }
+  if (island.energized) {
+    for (let generatorPosition = 0; generatorPosition < structure.generatorIndices.length; generatorPosition += 1) {
+      const generator = structure.generatorIndices[generatorPosition]!
+      if (!generatorSynchronisedAt(generators, generator)) continue
+      reserves.fcrNMw += generators.fcrNReserveMw[generator]!
+      reserves.fcrDUpMw += generators.fcrDUpReserveMw[generator]!
+      reserves.fcrDDownMw += generators.fcrDDownReserveMw[generator]!
+      reserves.afrrUpMw += generators.afrrUpReserveMw[generator]!
+      reserves.afrrDownMw += generators.afrrDownReserveMw[generator]!
+      reserves.mfrrUpMw += generators.mfrrUpReserveMw[generator]!
+      reserves.mfrrDownMw += generators.mfrrDownReserveMw[generator]!
     }
+    for (let systemPosition = 0; systemPosition < structure.externalIndices.length; systemPosition += 1) {
+      const system = structure.externalIndices[systemPosition]!
+      const external = externalReserveVolumes(grid, grid.definition.index.externalSystems[system]!)
+      reserves.fcrNMw += external[0]!
+      reserves.fcrDUpMw += external[1]!
+      reserves.fcrDDownMw += external[2]!
+      reserves.afrrUpMw += external[3]!
+      reserves.afrrDownMw += external[4]!
+    }
+  }
+  const frequencyHz = island.energized ? island.workspace!.frequencyHz! : null
+  return {
+    id: island.id,
+    energized: island.energized,
+    busCount: structure.busIndices.length,
+    frequencyHz: frequencyHz === null ? null : hz(frequencyHz),
+    rocofHzPerSecond: island.energized && island.rocofHzPerSecond !== null ? hz(island.rocofHzPerSecond) : null,
+    generationMw: mw(generationMw),
+    importMw: mw(importMw),
+    loadMw: mw(loadMw),
+    servedLoadMw: mw(servedLoadMw),
+    lossesMw: mw(lossesMw),
+    reserves: {
+      fcrNMw: mw(reserves.fcrNMw), fcrDUpMw: mw(reserves.fcrDUpMw), fcrDDownMw: mw(reserves.fcrDDownMw),
+      afrrUpMw: mw(reserves.afrrUpMw), afrrDownMw: mw(reserves.afrrDownMw), mfrrUpMw: mw(reserves.mfrrUpMw), mfrrDownMw: mw(reserves.mfrrDownMw),
+    },
+    ...islandVoltage(grid, island, structure.busIndices),
+    alarmCount,
+  }
+}
+
+/**
+ * System projection: per-island state, the headline frequency of the largest-load energised island,
+ * and totals. Alarm counts are the active, unshelved alarm records (island alarms per island).
+ */
+export const projectGridSystem = (grid: GridRuntimeInstance, islands: GridIslandPlan, at: IsoTimestamp): void => {
+  const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
+  const alarms = gridAlarmCounts(grid)
+  const islandAlarms = gridIslandAlarmCounts(grid)
+  const projected = islands.islands.flatMap(island => {
+    const view = islandProjection(grid, islands, island, islandAlarms.get(island.id) ?? 0)
+    return view === null ? [] : [view]
   })
-  const totalFrequencyWeight = islandFrequencyWeights.reduce((sum, island) => sum + island.weightMw, 0)
-  const frequencyHz = totalFrequencyWeight <= 0
-    ? model.nominalFrequencyHz
-    : islandFrequencyWeights.reduce((sum, island) => sum + island.frequencyHz * island.weightMw, 0) / totalFrequencyWeight
-  const activeAlarmCount = [
-    Math.abs(frequencyHz - model.nominalFrequencyHz) >= 0.15,
-    highestBranchLoadingPercent >= 85,
-    lowestVoltagePu < 0.95,
-    unservedLoadMw > 0.1,
-  ].filter(Boolean).length
-  const activeIslandCount = islandFrequencyWeights.filter(island => island.weightMw > 0).length
-  const statusTone = activeAlarmCount > 0 ? 'error' as const : Math.abs(frequencyHz - model.nominalFrequencyHz) >= 0.05 ? 'working' as const : 'ready' as const
+  const energised = projected.filter(island => island.energized && island.frequencyHz !== null)
+  const converged = projected.filter(island => island.voltageModel === 'ac-fdlf')
+  const headline = [...energised].sort((a, b) => b.loadMw - a.loadMw || a.id.localeCompare(b.id))[0] ?? null
+  const frequencies = energised.map(island => island.frequencyHz!)
+  let plantSupplyMw = 0
+  let plantDemandMw = 0
+  const tables = gridTablesFor(grid.definition)
+  for (const connection of grid.externalConnections.values()) {
+    if (!connection.connected || grid.arrays.buses.energized[tables.network.busIndexById.get(connection.busId)!] !== 1) continue
+    plantSupplyMw += Math.max(0, connection.systemActivePowerMw)
+    plantDemandMw += Math.max(0, -connection.systemActivePowerMw)
+  }
+  let generationMw = plantSupplyMw
+  let reserveMarginMw = 0
+  const generators = grid.arrays.generators
+  for (let generator = 0; generator < generators.dispatchMw.length; generator += 1) {
+    const dispatchMw = generators.dispatchMw[generator]!
+    generationMw += Math.max(0, dispatchMw)
+    if (generatorSynchronisedAt(generators, generator)) reserveMarginMw += Math.min(generators.reserveMw[generator]!, Math.max(0, generators.availableMw[generator]! - dispatchMw))
+  }
+  for (const state of grid.arrays.storage) generationMw += Math.max(0, state.dispatchMw)
+  for (const state of grid.arrays.externalSystems) generationMw += Math.max(0, state.importMw)
+  const loads = grid.arrays.loads
+  let demandMw = 0
+  let servedMw = 0
+  let unservedMw = 0
+  for (let load = 0; load < loads.demandMw.length; load += 1) {
+    demandMw += loads.demandMw[load]!
+    servedMw += loads.servedMw[load]!
+    unservedMw += loads.unservedMw[load]!
+  }
+  let lossesMw = 0
+  const branchArrays = grid.arrays.branches
+  for (let index = 0; index < branchArrays.lossesMw.length; index += 1) lossesMw += branchArrays.lossesMw[index]!
+  for (const state of grid.arrays.hvdcLinks) lossesMw += state.lossesMw
+  let highestBranchLoadingPercent = 0
+  for (let index = 0; index < branchArrays.loadingPercent.length; index += 1) highestBranchLoadingPercent = Math.max(highestBranchLoadingPercent, branchArrays.loadingPercent[index]!)
+  const activeAlarmCount = alarms.active
+  const statusTone = activeAlarmCount > 0
+    ? 'error' as const
+    : headline === null || Math.abs(headline.frequencyHz! - nominalHz) >= workingDeviationHz ? 'working' as const : 'ready' as const
+  const audit = grid.diagnostics.energyAudit
   grid.projection = {
     statusTone,
-    statusLabel: activeAlarmCount > 0 ? `${activeAlarmCount} active alarm${activeAlarmCount === 1 ? '' : 's'}` : 'Normal',
-    summary: `${frequencyHz.toFixed(2)} Hz · ${Math.round(servedLoadMw).toLocaleString()} MW served · ${activeAlarmCount} alarms`,
-    nominalFrequencyHz: model.nominalFrequencyHz,
-    frequencyHz,
-    totalGenerationMw,
-    totalLoadMw,
-    servedLoadMw,
-    unservedLoadMw,
+    statusLabel: activeAlarmCount > 0 ? `${activeAlarmCount} active alarm${activeAlarmCount === 1 ? '' : 's'}` : headline === null ? 'No island energised' : 'Normal',
+    summary: headline === null
+      ? `No island energised · ${Math.round(demandMw).toLocaleString()} MW unserved`
+      : `${headline.frequencyHz!.toFixed(2)} Hz (largest island) · ${Math.round(servedMw + plantDemandMw).toLocaleString()} MW served · ${activeAlarmCount} alarms`,
+    nominalFrequencyHz: nominalHz,
+    frequencyHz: headline?.frequencyHz ?? null,
+    frequencyBasis: 'largest-load-energized-island',
+    frequencyIslandId: headline?.id ?? null,
+    frequencyMinHz: frequencies.length === 0 ? null : Math.min(...frequencies),
+    frequencyMaxHz: frequencies.length === 0 ? null : Math.max(...frequencies),
+    voltageModel: 'ac-fdlf',
+    voltageMinPu: converged.length === 0 ? null : Math.min(...converged.map(island => island.voltageMinPu!)),
+    voltageMaxPu: converged.length === 0 ? null : Math.max(...converged.map(island => island.voltageMaxPu!)),
+    notConvergedIslandCount: projected.filter(island => island.voltageModel === 'not-converged').length,
+    totalGenerationMw: generationMw,
+    totalLoadMw: demandMw + plantDemandMw,
+    servedLoadMw: servedMw + plantDemandMw,
+    unservedLoadMw: unservedMw,
+    lossesMw,
     reserveMarginMw,
     highestBranchLoadingPercent,
-    lowestVoltagePu,
-    activeIslandCount: Math.max(1, activeIslandCount),
+    activeIslandCount: islands.islands.filter(island => island.energized).length,
+    islandCount: islands.islands.length,
     activeAlarmCount,
+    islands: projected,
+    energyAudit: { maximumIslandMismatchMw: audit.lastMaximumIslandMismatchMw, cumulativeMismatchMwh: audit.cumulativeMismatchMwh },
     tick: grid.tick,
     updatedAt: at,
   }

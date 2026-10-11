@@ -1,0 +1,57 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "id": 35,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     29.041696907408976,
+     70.75502044612949
+    ]
+   },
+   "properties": {
+    "objectid": 35,
+    "anleggsnr": 9894,
+    "anleggnavn": "Raggovidda",
+    "status": "D",
+    "effekt_mw": 97,
+    "effekt_mw_idrift": 45,
+    "antallturbiner": 15,
+    "forsteidriftdato": 1410393600000,
+    "utavdriftdato": null,
+    "kommune": "Berlevåg",
+    "fylkenavn": "Finnmark",
+    "lokalisering": "5630",
+    "eier": "VARANGER KRAFTVIND AS"
+   }
+  },
+  {
+   "type": "Feature",
+   "id": 104,
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     10.374617567088155,
+     64.22481104165219
+    ]
+   },
+   "properties": {
+    "objectid": 104,
+    "anleggsnr": 10413,
+    "anleggnavn": "Bessakerfjellet",
+    "status": "D",
+    "effekt_mw": 57.5,
+    "effekt_mw_idrift": 57.5,
+    "antallturbiner": 25,
+    "forsteidriftdato": 1189382400000,
+    "utavdriftdato": null,
+    "kommune": "Åfjord",
+    "fylkenavn": "Trøndelag",
+    "lokalisering": "5058",
+    "eier": "ANEO VIND AS"
+   }
+  }
+ ]
+}

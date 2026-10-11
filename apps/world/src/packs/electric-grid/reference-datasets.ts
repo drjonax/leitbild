@@ -1,39 +1,32 @@
 import type { PackReferenceDatasetBuilder } from '../../core/packs/protocol.ts'
 import { createGridNorwayDataset, gridNorwayDatasetId } from './datasets/grid-norway.ts'
+import type { OsmPbfPin } from './sources/osm-pbf-power.ts'
 
-const parseBbox = (
-  value: string | undefined,
-): { readonly south: number; readonly west: number; readonly north: number; readonly east: number } => {
-  const fallback = { south: 57.5, west: 4.0, north: 71.5, east: 31.5 }
-  if (!value) return fallback
-  const parts = value.split(',').map(part => Number(part.trim()))
-  if (parts.length !== 4) {
-    throw new Error('electric-grid pack: GRID_NORWAY_BBOX must be "south,west,north,east"')
+type Env = Readonly<Record<string, string | undefined>>
+
+const requiredEnv = (env: Env, key: string): string => {
+  const value = env[key]
+  if (value === undefined || value.trim() === '') throw new Error(`electric-grid pack: ${key} is required`)
+  return value.trim()
+}
+
+// The OSM extract is a pinned input: either its exact sha256 or a maximum age of its replication timestamp.
+const osmPbfPinFromEnv = (env: Env): OsmPbfPin => {
+  const sha256 = env.GRID_NORWAY_OSM_PBF_SHA256
+  const maxAgeDays = env.GRID_NORWAY_OSM_PBF_MAX_AGE_DAYS
+  if ((sha256 === undefined) === (maxAgeDays === undefined)) {
+    throw new Error('electric-grid pack: set exactly one of GRID_NORWAY_OSM_PBF_SHA256 or GRID_NORWAY_OSM_PBF_MAX_AGE_DAYS')
   }
-  const [south, west, north, east] = parts as [number, number, number, number]
-  if (!Number.isFinite(south) || !Number.isFinite(west) || !Number.isFinite(north) || !Number.isFinite(east)) {
-    throw new Error('electric-grid pack: GRID_NORWAY_BBOX must be "south,west,north,east"')
-  }
-  if (south >= north || west >= east) {
-    throw new Error('electric-grid pack: GRID_NORWAY_BBOX must have south < north and west < east')
-  }
-  return { south, west, north, east }
+  if (sha256 !== undefined) return { kind: 'sha256', sha256: sha256.trim().toLowerCase() }
+  return { kind: 'max-age', maxAgeDays: Number(maxAgeDays), now: () => new Date() }
 }
 
 export const electricGridReferenceDatasetBuilders: ReadonlyArray<PackReferenceDatasetBuilder> = [{
   id: gridNorwayDatasetId,
   build: (env) => createGridNorwayDataset({
-    bbox: parseBbox(env.GRID_NORWAY_BBOX),
-    sourceMode: env.GRID_NORWAY_SOURCE === 'overpass'
-      ? 'overpass'
-      : env.GRID_NORWAY_SOURCE === 'nve-nettanlegg'
-        ? 'nve-nettanlegg'
-        : 'osm-pbf',
-    ...(env.GRID_NORWAY_OSM_PBF_PATH !== undefined ? { osmPbfPath: env.GRID_NORWAY_OSM_PBF_PATH } : {}),
-    ...(env.GRID_NORWAY_OSM_PBF_URL !== undefined ? { osmPbfDownloadUrl: env.GRID_NORWAY_OSM_PBF_URL } : {}),
-    ...(env.GRID_NORWAY_OSM_PBF_USER_AGENT !== undefined ? { osmPbfUserAgent: env.GRID_NORWAY_OSM_PBF_USER_AGENT } : {}),
-    ...(env.GRID_NORWAY_OVERPASS_URL !== undefined ? { overpassEndpointUrl: env.GRID_NORWAY_OVERPASS_URL } : {}),
-    ...(env.GRID_NORWAY_OVERPASS_USER_AGENT !== undefined ? { overpassUserAgent: env.GRID_NORWAY_OVERPASS_USER_AGENT } : {}),
-    ...(env.GRID_NORWAY_NVE_NETTANLEGG_URL !== undefined ? { nveNettanleggEndpointUrl: env.GRID_NORWAY_NVE_NETTANLEGG_URL } : {}),
+    osmPbf: {
+      path: requiredEnv(env, 'GRID_NORWAY_OSM_PBF_PATH'),
+      pin: osmPbfPinFromEnv(env),
+    },
   }),
 }]

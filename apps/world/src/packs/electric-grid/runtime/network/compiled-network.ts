@@ -1,13 +1,7 @@
-import type { GridModelDefinition } from '../../grid-model.ts'
-
-/**
- * System base power in MVA for the model's per-unit branch reactances. 100 MVA is the
- * conventional transmission study base (IEEE test systems, ENTSO-E/Nordic planning
- * models), so a DC solve θ = B⁻¹·P/S_base yields bus angles in radians.
- */
-export const gridSystemBaseMva = 100
+import type { GridBusKind, GridModelDefinition } from '../../grid-model.ts'
 
 export interface CompiledGridNetwork {
+  /** The Model's base power of its per-unit impedances, so a DC solve θ = B⁻¹·P/S_base yields angles in radians. */
   readonly sBaseMva: number
   readonly busCount: number
   readonly branchCount: number
@@ -19,11 +13,20 @@ export interface CompiledGridNetwork {
   readonly branchTo: Int32Array
   /** Series susceptance 1/x in per unit on `sBaseMva`. */
   readonly branchSusceptancePu: Float64Array
-  /** Rank of each bus id in UTF-16 code-unit order; the lowest-ranked bus names its island. */
-  readonly busIdSortRank: Int32Array
+  /**
+   * Rank of each bus in the island naming order (0 first); the lowest-ranked bus of an island names
+   * it. Station buses (substation, plant terminal, connection point) come before junctions, and
+   * junctions before boundary buses; then the highest nominal voltage; then the largest connected
+   * capacity, the summed continuous rating of the Model's branches at the bus whatever their
+   * switching state; then the id in UTF-16 code-unit order. The rank depends on the Model alone.
+   */
+  readonly busNamingRank: Int32Array
 }
 
-type GridNetworkModel = Pick<GridModelDefinition, 'id' | 'buses' | 'branches'>
+/** Naming class of each bus kind: a station's voltage level, then a junction, then an external system's boundary bus. */
+const namingClass: Readonly<Record<GridBusKind, number>> = { substation: 0, 'plant-terminal': 0, 'connection-point': 0, junction: 1, boundary: 2 }
+
+type GridNetworkModel = Pick<GridModelDefinition, 'id' | 'sBaseMva' | 'buses' | 'branches'>
 
 export const compileGridNetwork = (model: GridNetworkModel): CompiledGridNetwork => {
   const busIds = model.buses.map(bus => bus.id)
@@ -44,13 +47,22 @@ export const compileGridNetwork = (model: GridNetworkModel): CompiledGridNetwork
     branchTo[index] = to
     branchSusceptancePu[index] = susceptancePu
   })
-  const busIdSortRank = new Int32Array(busIds.length)
+  const connectedRatingMw = new Float64Array(busIds.length)
+  model.branches.forEach((branch, index) => {
+    connectedRatingMw[branchFrom[index]!] = connectedRatingMw[branchFrom[index]!]! + branch.ratingMw
+    connectedRatingMw[branchTo[index]!] = connectedRatingMw[branchTo[index]!]! + branch.ratingMw
+  })
+  const busNamingRank = new Int32Array(busIds.length)
+  const buses = model.buses
   busIds
     .map((_, index) => index)
-    .sort((a, b) => (busIds[a]! < busIds[b]! ? -1 : busIds[a]! > busIds[b]! ? 1 : 0))
-    .forEach((busIndex, rank) => { busIdSortRank[busIndex] = rank })
+    .sort((a, b) => namingClass[buses[a]!.kind] - namingClass[buses[b]!.kind]
+      || buses[b]!.nominalKv - buses[a]!.nominalKv
+      || connectedRatingMw[b]! - connectedRatingMw[a]!
+      || (busIds[a]! < busIds[b]! ? -1 : busIds[a]! > busIds[b]! ? 1 : 0))
+    .forEach((busIndex, rank) => { busNamingRank[busIndex] = rank })
   return {
-    sBaseMva: gridSystemBaseMva,
+    sBaseMva: model.sBaseMva,
     busCount: busIds.length,
     branchCount,
     busIds,
@@ -59,7 +71,7 @@ export const compileGridNetwork = (model: GridNetworkModel): CompiledGridNetwork
     branchFrom,
     branchTo,
     branchSusceptancePu,
-    busIdSortRank,
+    busNamingRank,
   }
 }
 

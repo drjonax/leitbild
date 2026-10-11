@@ -1,0 +1,1630 @@
+{
+  "schema": "leitbild.electric-grid.norway-interconnectors",
+  "curatedAt": "2026-10-10",
+  "osmSnapshot": "Norwegian terminal OSM ids and way ids from the production grid-norway sidecar build 20260528-230419 (OSM PBF); re-confirm against the fresh 2026-10 Geofabrik extract.",
+  "links": [
+    {
+      "kind": "hvdc",
+      "id": "hvdc:norned",
+      "name": "NorNed",
+      "norwegianArea": "NO2",
+      "foreignArea": "NL",
+      "norwegianTerminal": {
+        "substationName": "Feda like- og vekselretter stasjon",
+        "osmId": "relation/11981383",
+        "acKv": 300,
+        "location": [
+          6.8668,
+          58.2825
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Eemshaven",
+        "country": "NL"
+      },
+      "commissioned": 2008,
+      "rating": {
+        "mw": 700,
+        "basis": "published-rating",
+        "note": "700 MW continuous design rating. TenneT capped operation at 620 MW from 2022-10-17; the cable section was replaced in 2025 and no source found restores or confirms the cap today."
+      },
+      "inService": true,
+      "statusNote": null,
+      "osmWayIds": [
+        "way/1054177797",
+        "way/1054177798",
+        "way/1054177799",
+        "way/1054177800",
+        "way/161363331",
+        "way/577730208"
+      ],
+      "technology": "LCC",
+      "dcKv": 450,
+      "lengthKm": 580,
+      "foreignConverter": "Eemshaven converter station (TenneT), 380/400 kV",
+      "lossPercentAtRated": 3.8,
+      "lossBasis": "Published 3.7 % at 600 MW (ABB/Statnett/TenneT 2007); the TSO loss curve 0.000043·P² + 0.00618·P + 1.4971 MW gives 26.9 MW = 3.8 % at 700 MW. Market loss factor 3.2 %.",
+      "rampMwPerMinute": 30,
+      "rampBasis": "RME-approved Nordic ramping method: 30 MW/min over the 10-minute window around each 15-minute interval (Nord Pool lists 309 MW per interval including losses), and 50 MW/min together with NordLink (see hvdcRampGroups).",
+      "pypsaEurPNomMw": 700,
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/news-and-events/customer-stories/norned",
+          "supports": "2008, 700 MW, ±450 kV, 580 km, symmetrical monopole, Feda–Eemshaven"
+        },
+        {
+          "url": "https://jicable.org/TOUT_JICABLE_FIRST_PAGE/2007/2007-B7-2_page1.pdf",
+          "supports": "Total losses 3.7 % at 600 MW; 700 MW continuous"
+        },
+        {
+          "url": "https://forsyningstilsynet.dk/Media/638222362370002882/appendix-1-principles-for-calculating-the-loss-factor-on-the-skagerrak-con.pdf",
+          "supports": "NorNed loss curve coefficients; 3.2 % loss factor"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/en/trading/Day-ahead-trading/Ramping/",
+          "supports": "Joint NorNed+NordLink ramp limit of 500 MW per interval"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/4a756c/contentassets/967a6843ae9c48e29f4561743ad5a698/image0-7.png",
+          "supports": "NorNed 309 MW per interval, loss factor 3.2 %"
+        },
+        {
+          "url": "https://nve.no/media/17542/rme-godkjenner-metode-om-rampingrestriksjoner.pdf",
+          "supports": "RME approved the ramping method on 2024-02-02"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Rating, losses and ramping from TSO, vendor and Nord Pool documents; the 2022 620 MW cap may still apply."
+      }
+    },
+    {
+      "kind": "hvdc",
+      "id": "hvdc:nordlink",
+      "name": "NordLink",
+      "norwegianArea": "NO2",
+      "foreignArea": "DE",
+      "norwegianTerminal": {
+        "substationName": "Ertsmyra like- og vekselretter stasjon (next to Tonstad)",
+        "osmId": "relation/8890887",
+        "acKv": 420,
+        "location": [
+          6.7548,
+          58.6694
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Wilster",
+        "country": "DE"
+      },
+      "commissioned": 2020,
+      "rating": {
+        "mw": 1400,
+        "basis": "published-rating",
+        "note": "1400 MW; full capacity released 2021-01-05."
+      },
+      "inService": true,
+      "statusNote": null,
+      "osmWayIds": [
+        "way/370147304",
+        "way/629694685",
+        "way/641089872",
+        "way/842077313"
+      ],
+      "technology": "VSC",
+      "dcKv": 515,
+      "lengthKm": 623,
+      "foreignConverter": "Wilster converter station (TenneT), 380 kV Wilster/West",
+      "lossPercentAtRated": 3.1,
+      "lossBasis": "Estimate: the published market loss factor 3.1 %; no physical full-load loss is published.",
+      "rampMwPerMinute": 60,
+      "rampBasis": "Nord Pool: 619 MW per 15-minute interval on its own (600 MW over the 10-minute window, grossed up for losses), and 50 MW/min together with NorNed (see hvdcRampGroups).",
+      "pypsaEurPNomMw": 1400,
+      "evidence": [
+        {
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2021/nordlink-in-operation2/",
+          "supports": "Trial operation 2020-12-09, up to 1400 MW, 623 km, converter at Ertsmyra, Sirdal"
+        },
+        {
+          "url": "https://cse.cigre.org/cse-n024/connecting-two-synchronous-areas-with-an-hvdc-link-the-nordlink-interconnector",
+          "supports": "±515 kV, 1400 MW, VSC"
+        },
+        {
+          "url": "https://www.hitachienergy.com/about-us/case-studies/nordlink",
+          "supports": "Bipole HVDC Light, 1400 MW, Tonstad–Wilster"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/4a756c/contentassets/967a6843ae9c48e29f4561743ad5a698/image0-7.png",
+          "supports": "NordLink 619 MW per interval, loss factor 3.1 %"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/en/trading/Day-ahead-trading/Ramping/",
+          "supports": "Joint NorNed+NordLink ramp limit of 500 MW per interval"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Loss is the market loss factor, not a measured full-load loss."
+      }
+    },
+    {
+      "kind": "hvdc",
+      "id": "hvdc:north-sea-link",
+      "name": "North Sea Link",
+      "norwegianArea": "NO2",
+      "foreignArea": "GB",
+      "norwegianTerminal": {
+        "substationName": "North Sea Link like- og vekselretterstasjon (Kvilldal)",
+        "osmId": "relation/12832053",
+        "acKv": 420,
+        "location": [
+          6.6546,
+          59.5301
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Blyth",
+        "country": "GB"
+      },
+      "commissioned": 2021,
+      "rating": {
+        "mw": 1400,
+        "basis": "published-rating",
+        "note": "1400 MW design; operated at 1300 MW at times in 2023."
+      },
+      "inService": true,
+      "statusNote": null,
+      "osmWayIds": [
+        "way/1073550382",
+        "way/642490152",
+        "way/645703019",
+        "way/645703020",
+        "way/645703021",
+        "way/952935816",
+        "way/952935817",
+        "way/952935818",
+        "way/952935819",
+        "way/952935820",
+        "way/952935821",
+        "way/952935856"
+      ],
+      "technology": "VSC",
+      "dcKv": 515,
+      "lengthKm": 720,
+      "foreignConverter": "Blyth converter station (National Grid), 400 kV",
+      "lossPercentAtRated": 3.4,
+      "lossBasis": "Estimate: the published market loss factor 3.4 %; no physical full-load loss is published.",
+      "rampMwPerMinute": 26,
+      "rampBasis": "Traded hourly: 517 MW change between consecutive hours since 2026-09-01 (465 before), ramped over at most 20 minutes per hour (Nordic ramping method), i.e. about 26 MW/min.",
+      "pypsaEurPNomMw": 1400,
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/about-us/case-studies/nsl-link",
+          "supports": "2021, bipole, 1400 MW, ±515 kV, 720 km, Blyth–Kvilldal"
+        },
+        {
+          "url": "https://www.statnett.no/en/for-stakeholders-in-the-power-industry/news-for-the-power-industry/trial-operation-at-nsl-starts-on-1-october/",
+          "supports": "Trial operation 2021-10-01, built for 1400 MW"
+        },
+        {
+          "url": "https://www.ofgem.gov.uk/sites/default/files/2021-08/NSL%20Access%20Rules%20and%20Charging%20Methodology.pdf",
+          "supports": "Hourly auction; ramping limit between consecutive hours"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/4a756c/contentassets/967a6843ae9c48e29f4561743ad5a698/image0-7.png",
+          "supports": "NSL ramp 517 MW (old 465), loss factor 3.4 %"
+        },
+        {
+          "url": "https://nve.no/media/17543/ramping-restrictions-for-active-power-output-amendment-for-nra-approval.pdf",
+          "supports": "Ramping at most 20 minutes per hour at up to 30 MW/min"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Loss is the market loss factor, not a measured full-load loss."
+      }
+    },
+    {
+      "kind": "hvdc",
+      "id": "hvdc:skagerrak-1",
+      "name": "Skagerrak 1",
+      "norwegianArea": "NO2",
+      "foreignArea": "DK1",
+      "norwegianTerminal": {
+        "substationName": "Kristiansand trafostasjon (Skagerrak converter station)",
+        "osmId": "relation/7928148",
+        "acKv": 300,
+        "location": [
+          7.901,
+          58.2593
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Tjele",
+        "country": "DK"
+      },
+      "commissioned": 1976,
+      "rating": {
+        "mw": 250,
+        "basis": "published-rating",
+        "note": "250 MW pole rating (500 MW with SK2); Statnett operating table: 227 MW stand-alone, 472 MW for SK1+SK2."
+      },
+      "inService": true,
+      "statusNote": "Near the end of its life; replacement being studied (NVE 2025).",
+      "osmWayIds": [
+        "way/1050962500",
+        "way/1117735149",
+        "way/1117735156",
+        "way/1117735158",
+        "way/129017294",
+        "way/244941377",
+        "way/555201905",
+        "way/575816471"
+      ],
+      "technology": "LCC",
+      "dcKv": 250,
+      "lengthKm": 240,
+      "foreignConverter": "Tjele converter station (Energinet)",
+      "lossPercentAtRated": 6.4,
+      "lossBasis": "Energinet/Statnett pole model: 6.4 % at the 227 MW stand-alone maximum.",
+      "rampMwPerMinute": 25,
+      "rampBasis": "Skagerrak is one market border: 250 MW per 15-minute interval for SK1–4 together since 2026-09-29 (225 before), applied over the 10-minute ramp window of the RME-approved Nordic method, i.e. 25 MW/min shared by all four poles (see hvdcRampGroups).",
+      "pypsaEurPNomMw": null,
+      "evidence": [
+        {
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/4c2a8ec6-c063-4450-9135-645f75b63b98/202416984/3444509",
+          "supports": "SK1/SK2 in service 1976/1977, 500 MW together; Kristiansand–Tjele"
+        },
+        {
+          "url": "https://forsyningstilsynet.dk/Media/638222362370002882/appendix-1-principles-for-calculating-the-loss-factor-on-the-skagerrak-con.pdf",
+          "supports": "Statnett operating table: SK1 alone 227 MW, 6.4 % loss; SK1+SK2 472 MW"
+        },
+        {
+          "url": "https://www.hitachienergy.com/news-and-events/customer-stories/skagerrak",
+          "supports": "Poles 1 and 2: 250 kV, 500 MW, HVDC Classic"
+        },
+        {
+          "url": "https://en.wikipedia.org/wiki/Skagerrak_(power_transmission_system)",
+          "supports": "Last resort: SK1–3 route 240 km (127 km subsea, 113 km overhead)"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/4a756c/contentassets/967a6843ae9c48e29f4561743ad5a698/image0-7.png",
+          "supports": "Skagerrak border ramp 250 MW per interval (old 225), loss factor 2.9 %"
+        },
+        {
+          "url": "https://nve.no/media/17543/ramping-restrictions-for-active-power-output-amendment-for-nra-approval.pdf",
+          "supports": "Ramp window of 10 minutes starting 5 minutes before each interval"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "PyPSA-Eur models SK1–3 as one 940 MW link, which agrees with 250 + 250 + 440. AC 300 kV at Kristiansand inferred from the 300 kV SVC inside the converter station."
+      }
+    },
+    {
+      "kind": "hvdc",
+      "id": "hvdc:skagerrak-2",
+      "name": "Skagerrak 2",
+      "norwegianArea": "NO2",
+      "foreignArea": "DK1",
+      "norwegianTerminal": {
+        "substationName": "Kristiansand trafostasjon (Skagerrak converter station)",
+        "osmId": "relation/7928148",
+        "acKv": 300,
+        "location": [
+          7.901,
+          58.2593
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Tjele",
+        "country": "DK"
+      },
+      "commissioned": 1977,
+      "rating": {
+        "mw": 250,
+        "basis": "published-rating",
+        "note": "250 MW pole rating; Statnett operating table: 227 MW stand-alone."
+      },
+      "inService": true,
+      "statusNote": "Out of service from 2026-06-02 for a three-month cable repair (Reuters/Statnett); return to service not verified.",
+      "osmWayIds": [
+        "way/1050962500",
+        "way/1117735150",
+        "way/1117735155",
+        "way/1117735159",
+        "way/129017294",
+        "way/244941377",
+        "way/555201908",
+        "way/575816471"
+      ],
+      "technology": "LCC",
+      "dcKv": 250,
+      "lengthKm": 240,
+      "foreignConverter": "Tjele converter station (Energinet)",
+      "lossPercentAtRated": 6.4,
+      "lossBasis": "Energinet/Statnett pole model: 6.4 % at the 227 MW stand-alone maximum.",
+      "rampMwPerMinute": 25,
+      "rampBasis": "Skagerrak is one market border: 250 MW per 15-minute interval for SK1–4 together since 2026-09-29 (225 before), applied over the 10-minute ramp window of the RME-approved Nordic method, i.e. 25 MW/min shared by all four poles (see hvdcRampGroups).",
+      "pypsaEurPNomMw": null,
+      "evidence": [
+        {
+          "url": "https://www.bairdmaritime.com/marine-projects/marine-infrastructure/norway-denmark-subsea-power-cable-offline-for-three-month-repair-sabotage-ruled-out",
+          "supports": "SK2 out from 2026-06-02; Skagerrak total 1632 MW reduced by 245 MW"
+        },
+        {
+          "url": "https://forsyningstilsynet.dk/Media/638222362370002882/appendix-1-principles-for-calculating-the-loss-factor-on-the-skagerrak-con.pdf",
+          "supports": "SK2 alone 227 MW, 6.4 % loss"
+        },
+        {
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/4c2a8ec6-c063-4450-9135-645f75b63b98/202416984/3444509",
+          "supports": "SK2 in service 1977"
+        },
+        {
+          "url": "https://www.hitachienergy.com/news-and-events/customer-stories/skagerrak",
+          "supports": "Pole 2: 250 kV, HVDC Classic"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/4a756c/contentassets/967a6843ae9c48e29f4561743ad5a698/image0-7.png",
+          "supports": "Skagerrak border ramp 250 MW per interval (old 225), loss factor 2.9 %"
+        },
+        {
+          "url": "https://nve.no/media/17543/ramping-restrictions-for-active-power-output-amendment-for-nra-approval.pdf",
+          "supports": "Ramp window of 10 minutes starting 5 minutes before each interval"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "PyPSA-Eur models SK1–3 as one 940 MW link. AC 300 kV at Kristiansand inferred."
+      }
+    },
+    {
+      "kind": "hvdc",
+      "id": "hvdc:skagerrak-3",
+      "name": "Skagerrak 3",
+      "norwegianArea": "NO2",
+      "foreignArea": "DK1",
+      "norwegianTerminal": {
+        "substationName": "Kristiansand trafostasjon (Skagerrak converter station)",
+        "osmId": "relation/7928148",
+        "acKv": 300,
+        "location": [
+          7.901,
+          58.2593
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Tjele",
+        "country": "DK"
+      },
+      "commissioned": 1993,
+      "rating": {
+        "mw": 440,
+        "basis": "published-rating",
+        "note": "Hitachi Energy: 440 MW (one Hitachi page says 500 MW); carries about 500 MW in the SK3/SK4 bipole (1160 MW together)."
+      },
+      "inService": true,
+      "statusNote": null,
+      "osmWayIds": [
+        "way/1050962500",
+        "way/1117735157",
+        "way/1117735160",
+        "way/1117735162",
+        "way/129017286",
+        "way/129017294",
+        "way/244941377",
+        "way/555201816",
+        "way/575816471"
+      ],
+      "technology": "LCC",
+      "dcKv": 350,
+      "lengthKm": 240,
+      "foreignConverter": "Tjele converter station (Energinet)",
+      "lossPercentAtRated": 2.8,
+      "lossBasis": "Energinet/Statnett pole model: 2.8 % at the 330 MW stand-alone maximum.",
+      "rampMwPerMinute": 25,
+      "rampBasis": "Skagerrak is one market border: 250 MW per 15-minute interval for SK1–4 together since 2026-09-29 (225 before), applied over the 10-minute ramp window of the RME-approved Nordic method, i.e. 25 MW/min shared by all four poles (see hvdcRampGroups).",
+      "pypsaEurPNomMw": null,
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/news-and-events/customer-stories/skagerrak",
+          "supports": "Pole 3: 350 kV, 440 MW, 1993, bipole with Pole 4"
+        },
+        {
+          "url": "https://forsyningstilsynet.dk/Media/638222362370002882/appendix-1-principles-for-calculating-the-loss-factor-on-the-skagerrak-con.pdf",
+          "supports": "SK3+SK4 1160 MW; SK3 alone 330 MW, 2.8 % loss"
+        },
+        {
+          "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/4c2a8ec6-c063-4450-9135-645f75b63b98/202416984/3444509",
+          "supports": "SK3 expected life to 2042"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/4a756c/contentassets/967a6843ae9c48e29f4561743ad5a698/image0-7.png",
+          "supports": "Skagerrak border ramp 250 MW per interval (old 225), loss factor 2.9 %"
+        },
+        {
+          "url": "https://nve.no/media/17543/ramping-restrictions-for-active-power-output-amendment-for-nra-approval.pdf",
+          "supports": "Ramp window of 10 minutes starting 5 minutes before each interval"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "PyPSA-Eur models SK1–3 as one 940 MW link. AC 300 kV at Kristiansand inferred."
+      }
+    },
+    {
+      "kind": "hvdc",
+      "id": "hvdc:skagerrak-4",
+      "name": "Skagerrak 4",
+      "norwegianArea": "NO2",
+      "foreignArea": "DK1",
+      "norwegianTerminal": {
+        "substationName": "Kristiansand trafostasjon (Skagerrak converter station)",
+        "osmId": "relation/7928148",
+        "acKv": 420,
+        "location": [
+          7.901,
+          58.2593
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Tjele",
+        "country": "DK"
+      },
+      "commissioned": 2014,
+      "rating": {
+        "mw": 700,
+        "basis": "published-rating",
+        "note": "700 MW to the market; 715 MW at the sending end including 15 MW losses."
+      },
+      "inService": true,
+      "statusNote": null,
+      "osmWayIds": [
+        "way/465835084",
+        "way/555201854",
+        "way/575816468",
+        "way/635828661",
+        "way/635828664",
+        "way/635828666",
+        "way/635828669"
+      ],
+      "technology": "VSC",
+      "dcKv": 500,
+      "lengthKm": 241,
+      "foreignConverter": "Tjele converter station (Energinet)",
+      "lossPercentAtRated": 2.1,
+      "lossBasis": "Published: 15 MW of 715 MW covers converter and cable losses (2.1 %); TSO pole model 2.3 % at 481 MW stand-alone.",
+      "rampMwPerMinute": 25,
+      "rampBasis": "Skagerrak is one market border: 250 MW per 15-minute interval for SK1–4 together since 2026-09-29 (225 before), applied over the 10-minute ramp window of the RME-approved Nordic method, i.e. 25 MW/min shared by all four poles (see hvdcRampGroups).",
+      "pypsaEurPNomMw": 700,
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/news-and-events/customer-stories/skagerrak",
+          "supports": "Pole 4: 500 kV, 700 MW, HVDC Light"
+        },
+        {
+          "url": "https://www.tu.no/artikler/dette-anlegget-blir-verdens-storste-med-ny-omformer-teknologi/230520",
+          "supports": "Test operation 2014-10-01; 715 MW with 15 MW losses; 241 km route"
+        },
+        {
+          "url": "https://forsyningstilsynet.dk/Media/638222362370002882/appendix-1-principles-for-calculating-the-loss-factor-on-the-skagerrak-con.pdf",
+          "supports": "SK4 alone 481 MW, 2.3 % loss"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/4a756c/contentassets/967a6843ae9c48e29f4561743ad5a698/image0-7.png",
+          "supports": "Skagerrak border ramp 250 MW per interval (old 225), loss factor 2.9 %"
+        },
+        {
+          "url": "https://nve.no/media/17543/ramping-restrictions-for-active-power-output-amendment-for-nra-approval.pdf",
+          "supports": "Ramp window of 10 minutes starting 5 minutes before each interval"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "The AC voltage of the SK4 converter at Kristiansand is not published; 420 kV is assumed from the station levels in OpenStreetMap (420/300 kV)."
+      }
+    },
+    {
+      "kind": "ac",
+      "id": "ac:hasle-borgvik",
+      "name": "Hasle–Borgvik",
+      "norwegianArea": "NO1",
+      "foreignArea": "SE3",
+      "norwegianTerminal": {
+        "substationName": "Hasle trafostasjon",
+        "osmId": "way/60495669",
+        "acKv": 420,
+        "location": [
+          11.1554,
+          59.3141
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Borgvik",
+        "country": "SE"
+      },
+      "commissioned": 1963,
+      "rating": {
+        "mw": 1900,
+        "basis": "published-rating",
+        "note": "2007 Nordic System Operation Agreement per-line transfer capacity at 0 °C (2100 at −20 °C … 1510 at 30 °C); no conductor rating is published. Shares the Hasle constraint with Halden–Loviseholm (2022 SOA: 2200 MW to SE, 2150 MW from SE combined)."
+      },
+      "inService": true,
+      "statusNote": null,
+      "nominalKv": 420,
+      "circuits": 1,
+      "osmWayIds": [
+        "way/188965945",
+        "way/585198893"
+      ],
+      "evidence": [
+        {
+          "url": "https://www.nve.no/om-nve/nves-listefoerte-kulturminner/kraftledninger/hasle-borgvik/",
+          "supports": "Endpoints, 420 kV, in operation 1963, 105 km, Statnett, duplex conductor"
+        },
+        {
+          "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/kantaverkko/kantaverkon-kehittaminen/appendix-1-9-to-soa-annex-os-v5.pdf",
+          "supports": "2022 SOA Appendix 1: 400 kV TSO facility within the Hasle constraint"
+        },
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/pre2015/publications/nordic/operations/060613_entsoe_nordic_SystemOperationAgreement_EN.pdf",
+          "supports": "2007 SOA per-line temperature-dependent capacity table"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Rating is the 2007 SOA per-line capacity at 0 °C, not a conductor thermal rating."
+      }
+    },
+    {
+      "kind": "ac",
+      "id": "ac:halden-loviseholm",
+      "name": "Halden–Loviseholm (built as Halden–Skogssäter)",
+      "norwegianArea": "NO1",
+      "foreignArea": "SE3",
+      "norwegianTerminal": {
+        "substationName": "Halden trafostasjon",
+        "osmId": "way/232893576",
+        "acKv": 420,
+        "location": [
+          11.4156,
+          59.1238
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Loviseholm",
+        "country": "SE"
+      },
+      "commissioned": 1979,
+      "rating": {
+        "mw": 2700,
+        "basis": "published-rating",
+        "note": "2007 SOA per-line capacity at 0 °C for Halden–Skogssäter (3070 at −20 °C … 2000 at 30 °C); triplex conductor. Inside the Hasle constraint."
+      },
+      "inService": true,
+      "statusNote": "OpenStreetMap still names the line Halden – Skogssäter; the 2022 SOA and Svenska kraftnät name Loviseholm as the Swedish end.",
+      "nominalKv": 420,
+      "circuits": 1,
+      "osmWayIds": [
+        "way/232662155",
+        "way/585475863"
+      ],
+      "evidence": [
+        {
+          "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/kantaverkko/kantaverkon-kehittaminen/appendix-1-9-to-soa-annex-os-v5.pdf",
+          "supports": "2022 SOA lists Halden–Loviseholm 400 kV"
+        },
+        {
+          "url": "https://www.svk.se/utveckling-av-kraftsystemet/transmissionsnatet/Sa-planerar-vi-elnatet-for-framtiden/vastra-gotalands-lan/",
+          "supports": "Svenska kraftnät: the link to Halden runs from Loviseholm"
+        },
+        {
+          "url": "https://publikasjoner.nve.no/rapport/2010/rapport2010_17.pdf",
+          "supports": "1979 420 kV Østfold–Skogssäter line, first triplex line in Norway"
+        },
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/pre2015/publications/nordic/operations/060613_entsoe_nordic_SystemOperationAgreement_EN.pdf",
+          "supports": "2007 SOA per-line capacity table (as Halden–Skogssäter)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Rating is the 2007 SOA per-line capacity at 0 °C; the date Loviseholm was cut in is not published."
+      }
+    },
+    {
+      "kind": "ac",
+      "id": "ac:eidskog-charlottenberg",
+      "name": "Eidskog–Charlottenberg",
+      "norwegianArea": "NO1",
+      "foreignArea": "SE3",
+      "norwegianTerminal": {
+        "substationName": "Eidskog trafo",
+        "osmId": "way/581435428",
+        "acKv": 132,
+        "location": [
+          12.1572,
+          59.9753
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Charlottenberg",
+        "country": "SE"
+      },
+      "commissioned": null,
+      "rating": {
+        "mw": 95,
+        "basis": "published-rating",
+        "note": "Published physical maximum 95 MW both directions, about 50 MW at winter peak because of the surrounding grid."
+      },
+      "inService": true,
+      "statusNote": "Swedish side owned by Ellevio (not Swedish transmission grid); included in NO1–SE3 trading capacity since 2010-02-17.",
+      "nominalKv": 132,
+      "circuits": 1,
+      "osmWayIds": [
+        "way/581435426"
+      ],
+      "evidence": [
+        {
+          "url": "https://nordpoolgroup.com/en/message-center-container/newsroom/exchange-message-list/2010/02/No-082010-NPS---Interconnector-132-kV-Eidskog-Charlottenberg-included-in-the-Elspot-market",
+          "supports": "132 kV, max 95 MW, in Elspot from 2010-02-17"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/493abd/globalassets/download-center/tso/principles-for-determining-the-transfer-capacities-2023-03-23.pdf",
+          "supports": "95 MW both directions, about 50 MW at winter peak"
+        },
+        {
+          "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/kantaverkko/kantaverkon-kehittaminen/appendix-1-9-to-soa-annex-os-v5.pdf",
+          "supports": "Ellevio owner, 95 MW at all temperatures"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Published maximum transfer of the line."
+      }
+    },
+    {
+      "kind": "ac",
+      "id": "ac:nea-jarpstrommen",
+      "name": "Nea–Järpströmmen",
+      "norwegianArea": "NO3",
+      "foreignArea": "SE2",
+      "norwegianTerminal": {
+        "substationName": "Nea trafostasjon",
+        "osmId": "relation/8527323",
+        "acKv": 420,
+        "location": [
+          11.6876,
+          63.0294
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Järpströmmen",
+        "country": "SE"
+      },
+      "commissioned": 2009,
+      "rating": {
+        "mw": 1000,
+        "basis": "corridor-share",
+        "note": "No thermal rating published for the 2009 420 kV line; the 2022 SOA gives a flat system-limited capacity of 600 MW to SE and 1000 MW from SE, which is the whole NO3–SE2 border."
+      },
+      "inService": true,
+      "statusNote": "Replaced the 1960 220 kV / 1976 300 kV line on mostly the same route. OpenStreetMap names the Norwegian section Nea – Riksgrensen.",
+      "nominalKv": 420,
+      "circuits": 1,
+      "osmWayIds": [
+        "way/287684721"
+      ],
+      "evidence": [
+        {
+          "url": "https://www.nve.no/om-nve/nves-listefoerte-kulturminner/kraftledninger/nea-järpströmmen/",
+          "supports": "History 1960/1976, new 420 kV line, 25 km in Norway, Statnett"
+        },
+        {
+          "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/kantaverkko/kantaverkon-kehittaminen/appendix-1-9-to-soa-annex-os-v5.pdf",
+          "supports": "400 kV; capacity 600 MW to SE, 1000 MW from SE"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Rating is the SOA border capacity because no line rating is published."
+      }
+    },
+    {
+      "kind": "ac",
+      "id": "ac:nedre-rossaga-ajaure",
+      "name": "Nedre Røssåga–Gejmån–Ajaure",
+      "norwegianArea": "NO4",
+      "foreignArea": "SE2",
+      "norwegianTerminal": {
+        "substationName": "Nedre Røssåga trafostasjon",
+        "osmId": "relation/8473044",
+        "acKv": 220,
+        "location": [
+          13.7819,
+          66.0516
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Ajaure (via Gejmån)",
+        "country": "SE"
+      },
+      "commissioned": 1963,
+      "rating": {
+        "mw": 451,
+        "basis": "published-rating",
+        "note": "2007 SOA per-line capacity at 0 °C (536 at −20 °C … 250 at 30 °C); 2022 SOA system-limited 178–250 MW to SE, 300 MW from SE."
+      },
+      "inService": true,
+      "statusNote": "Built in 1963 to Grundfors; the year the Swedish end moved to Gejmån/Ajaure is not published.",
+      "nominalKv": 220,
+      "circuits": 1,
+      "osmWayIds": [
+        "way/610564182"
+      ],
+      "evidence": [
+        {
+          "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/kantaverkko/kantaverkon-kehittaminen/appendix-1-9-to-soa-annex-os-v5.pdf",
+          "supports": "220 kV TSO facility; 2022 capacity table"
+        },
+        {
+          "url": "https://publikasjoner.nve.no/rapport/2010/rapport2010_17.pdf",
+          "supports": "1963 line Nedre Røssåga–Grundfors"
+        },
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/pre2015/publications/nordic/operations/060613_entsoe_nordic_SystemOperationAgreement_EN.pdf",
+          "supports": "2007 SOA per-line capacity table"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Rating is the 2007 SOA per-line capacity at 0 °C."
+      }
+    },
+    {
+      "kind": "ac",
+      "id": "ac:ofoten-ritsem",
+      "name": "Ofoten–Ritsem",
+      "norwegianArea": "NO4",
+      "foreignArea": "SE1",
+      "norwegianTerminal": {
+        "substationName": "Ofoten trafostasjon",
+        "osmId": "way/572898626",
+        "acKv": 420,
+        "location": [
+          17.5588,
+          68.1588
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Ritsem",
+        "country": "SE"
+      },
+      "commissioned": 1979,
+      "rating": {
+        "mw": 1350,
+        "basis": "published-rating",
+        "note": "2007 SOA per-line capacity at −20 to 10 °C (1170 at 20 °C, 880 at 30 °C); 2022 SOA system-limited 700 MW to SE, 600 MW from SE."
+      },
+      "inService": true,
+      "statusNote": null,
+      "nominalKv": 420,
+      "circuits": 1,
+      "osmWayIds": [
+        "way/292593505",
+        "way/400886663"
+      ],
+      "evidence": [
+        {
+          "url": "https://publikasjoner.nve.no/rapport/2010/rapport2010_17.pdf",
+          "supports": "1979 420 kV line from the Narvik area to Ritsem"
+        },
+        {
+          "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/kantaverkko/kantaverkon-kehittaminen/appendix-1-9-to-soa-annex-os-v5.pdf",
+          "supports": "400 kV; 700/600 MW"
+        },
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/pre2015/publications/nordic/operations/060613_entsoe_nordic_SystemOperationAgreement_EN.pdf",
+          "supports": "2007 SOA per-line capacity table"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Rating is the 2007 SOA per-line capacity in winter."
+      }
+    },
+    {
+      "kind": "ac",
+      "id": "ac:sildvik-tornehamn",
+      "name": "Sildvik–Tornehamn",
+      "norwegianArea": "NO4",
+      "foreignArea": "SE1",
+      "norwegianTerminal": {
+        "substationName": "Sildvik koblingsstasjon",
+        "osmId": "way/1065776932",
+        "acKv": 132,
+        "location": [
+          17.7974,
+          68.4094
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Tornehamn",
+        "country": "SE"
+      },
+      "commissioned": null,
+      "rating": {
+        "mw": 120,
+        "basis": "published-rating",
+        "note": "2007 SOA per-line capacity 120 MW to SE (100 at 30 °C), 70 MW from SE; 2022 SOA 90 MW to SE, 50 MW from SE."
+      },
+      "inService": true,
+      "statusNote": "Vattenfall owns the Swedish side; listed in the 2022 SOA as a non-TSO facility at 130 kV. Not stated whether it counts toward the NO4–SE1 capacity.",
+      "nominalKv": 132,
+      "circuits": 1,
+      "osmWayIds": [
+        "way/1065776936",
+        "way/587642068"
+      ],
+      "evidence": [
+        {
+          "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/kantaverkko/kantaverkon-kehittaminen/appendix-1-9-to-soa-annex-os-v5.pdf",
+          "supports": "Listed in the 2022 SOA; 130 kV; Vattenfall; 90/50 MW"
+        },
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/pre2015/publications/nordic/annualstatistics/Annual%20Statistics%202008.pdf",
+          "supports": "132 kV, 39 km"
+        },
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/pre2015/publications/nordic/operations/060613_entsoe_nordic_SystemOperationAgreement_EN.pdf",
+          "supports": "2007 SOA per-line capacity table"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Not in the PM golden list; included because the 2022 SOA lists it as a cross-border facility."
+      }
+    },
+    {
+      "kind": "ac",
+      "id": "ac:varangerbotn-ivalo",
+      "name": "Varangerbotn–Ivalo",
+      "norwegianArea": "NO4",
+      "foreignArea": "FI",
+      "norwegianTerminal": {
+        "substationName": "Varangerbotn trafostasjon",
+        "osmId": "way/257192868",
+        "acKv": 220,
+        "location": [
+          28.5416,
+          70.1718
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Ivalo",
+        "country": "FI"
+      },
+      "commissioned": 1988,
+      "rating": {
+        "mw": 120,
+        "basis": "corridor-share",
+        "note": "No line rating published; 2022 SOA capacity NO→FI 40–120 MW depending on the Norwegian sectioning point, FI→NO 100 MW (Nordel 2008 design capacity 100/100)."
+      },
+      "inService": true,
+      "statusNote": "Separate day-ahead border since the flow-based go-live on 2024-10-29. T-branch at Vaisjänkä to Utsjoki on the Finnish side.",
+      "nominalKv": 220,
+      "circuits": 1,
+      "osmWayIds": [
+        "way/400415359",
+        "way/400567450"
+      ],
+      "evidence": [
+        {
+          "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/kantaverkko/kantaverkon-kehittaminen/appendix-1-9-to-soa-annex-os-v5.pdf",
+          "supports": "Appendix 3: ownership, T-branch, capacities"
+        },
+        {
+          "url": "https://publikasjoner.nve.no/rapport/2010/rapport2010_17.pdf",
+          "supports": "In operation September 1988"
+        },
+        {
+          "url": "https://www.fingrid.fi/en/news/news/2023/change-in-the-handling-of-transmission-capacity-between-finland-and-norway-from-early-2024/",
+          "supports": "Day-ahead coupled border at flow-based go-live, about ±100 MW"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Rating is the SOA upper capacity because no line rating is published."
+      }
+    },
+    {
+      "kind": "ac",
+      "id": "ac:kirkenes-boris-gleb",
+      "name": "Kirkenes–Boris Gleb",
+      "norwegianArea": "NO4",
+      "foreignArea": "RU",
+      "norwegianTerminal": {
+        "substationName": "Kirkenes trafostasjon",
+        "osmId": "relation/8269874",
+        "acKv": 154,
+        "location": [
+          30.0337,
+          69.7229
+        ]
+      },
+      "foreignTerminal": {
+        "name": "Boris Gleb hydropower plant",
+        "country": "RU"
+      },
+      "commissioned": 1972,
+      "rating": {
+        "mw": 50,
+        "basis": "published-rating",
+        "note": "Statnett: just over 50 MW; Nordel 2008: 50/50 MW."
+      },
+      "inService": false,
+      "statusNote": "Capacity set to zero indefinitely by Statnett on 2022-03-02; no activity reported in January 2025. Not a synchronous tie: import ran by switching a Boris Gleb unit onto the Norwegian grid. OpenStreetMap tags the line 150 kV and the substation 132 kV; NVE gives 154 kV.",
+      "nominalKv": 154,
+      "circuits": 1,
+      "osmWayIds": [
+        "way/585715856",
+        "way/585715857",
+        "way/585715883"
+      ],
+      "evidence": [
+        {
+          "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2022/statnett-setter-kapasitet-mot-russland-til-null/",
+          "supports": "Capacity set to zero indefinitely, 2022-03-02"
+        },
+        {
+          "url": "https://www.statnett.no/en/The-power-system/interconnectors/",
+          "supports": "No activity on the line"
+        },
+        {
+          "url": "https://www.nve.no/om-nve/nves-listefoerte-kulturminner/kraftledninger/boris-gleb-kirkenes/",
+          "supports": "154 kV, Kirkenes substation, 1972, operating mode"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-interconnectors@2026-10-10",
+          "osm:sidecar-grid-norway@20260528-230419"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Out of service for trade since 2022; kept so the topology knows the physical line."
+      }
+    }
+  ],
+  "hvdcRampGroups": [
+    {
+      "id": "ramp:no2-continental",
+      "linkIds": [
+        "hvdc:norned",
+        "hvdc:nordlink"
+      ],
+      "rampMwPerMinute": 50,
+      "basis": "Nord Pool: NorNed and NordLink together at most 500 MW per 15-minute interval (450 before 2026-09), over the 10-minute ramp window.",
+      "evidence": [
+        {
+          "url": "https://www.nordpoolgroup.com/en/trading/Day-ahead-trading/Ramping/",
+          "supports": "Joint NorNed+NordLink restriction of 500 MW per interval"
+        },
+        {
+          "url": "https://nve.no/media/17543/ramping-restrictions-for-active-power-output-amendment-for-nra-approval.pdf",
+          "supports": "10-minute ramp window; combined caps between 30(n−1) and 30n MW/min"
+        }
+      ]
+    },
+    {
+      "id": "ramp:skagerrak",
+      "linkIds": [
+        "hvdc:skagerrak-1",
+        "hvdc:skagerrak-2",
+        "hvdc:skagerrak-3",
+        "hvdc:skagerrak-4"
+      ],
+      "rampMwPerMinute": 25,
+      "basis": "Nord Pool: the Skagerrak border at most 250 MW per 15-minute interval since 2026-09-29, over the 10-minute ramp window.",
+      "evidence": [
+        {
+          "url": "https://www.nordpoolgroup.com/4a756c/contentassets/967a6843ae9c48e29f4561743ad5a698/image0-7.png",
+          "supports": "Skagerrak 250 MW per interval (old 225)"
+        }
+      ]
+    }
+  ],
+  "borderCapacities": [
+    {
+      "border": "NO1-SE3",
+      "exportMw": 2145,
+      "importMw": 2095,
+      "basis": "Maximum NTC (structural reference value) on the Nordic max-NTC map valid from 2024-01-01; day-ahead capacity on AC borders is flow-based since 2024-10-29.",
+      "asOf": "2024-01-01",
+      "evidence": [
+        {
+          "url": "https://www.nordpoolgroup.com/49378f/globalassets/download-center/tso/max-ntc.pdf",
+          "supports": "NO1→SE3 2145 MW, SE3→NO1 2095 MW"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/493abd/globalassets/download-center/tso/principles-for-determining-the-transfer-capacities-2023-03-23.pdf",
+          "supports": "NO1–SE3 corridor = Hasle corridor + Eidskog–Charlottenberg"
+        }
+      ]
+    },
+    {
+      "border": "NO3-SE2",
+      "exportMw": 600,
+      "importMw": 1000,
+      "basis": "Maximum NTC (structural reference value) on the Nordic max-NTC map valid from 2024-01-01; day-ahead capacity on AC borders is flow-based since 2024-10-29.",
+      "asOf": "2024-01-01",
+      "evidence": [
+        {
+          "url": "https://www.nordpoolgroup.com/49378f/globalassets/download-center/tso/max-ntc.pdf",
+          "supports": "NO3→SE2 600 MW, SE2→NO3 1000 MW"
+        }
+      ]
+    },
+    {
+      "border": "NO4-SE2",
+      "exportMw": 250,
+      "importMw": 300,
+      "basis": "Maximum NTC (structural reference value) on the Nordic max-NTC map valid from 2024-01-01; day-ahead capacity on AC borders is flow-based since 2024-10-29.",
+      "asOf": "2024-01-01",
+      "evidence": [
+        {
+          "url": "https://www.nordpoolgroup.com/49378f/globalassets/download-center/tso/max-ntc.pdf",
+          "supports": "NO4→SE2 250 MW, SE2→NO4 300 MW"
+        }
+      ]
+    },
+    {
+      "border": "NO4-SE1",
+      "exportMw": 700,
+      "importMw": 600,
+      "basis": "Maximum NTC (structural reference value) on the Nordic max-NTC map valid from 2024-01-01; day-ahead capacity on AC borders is flow-based since 2024-10-29.",
+      "asOf": "2024-01-01",
+      "evidence": [
+        {
+          "url": "https://www.nordpoolgroup.com/49378f/globalassets/download-center/tso/max-ntc.pdf",
+          "supports": "NO4→SE1 700 MW, SE1→NO4 600 MW"
+        }
+      ]
+    },
+    {
+      "border": "NO4-FI",
+      "exportMw": 100,
+      "importMw": 100,
+      "basis": "Approximate trading capacity announced by Fingrid for the flow-based go-live; not on the max-NTC map.",
+      "asOf": "2024-10-29",
+      "evidence": [
+        {
+          "url": "https://www.fingrid.fi/en/news/news/2023/change-in-the-handling-of-transmission-capacity-between-finland-and-norway-from-early-2024/",
+          "supports": "About ±100 MW between Finland and NO4"
+        }
+      ]
+    },
+    {
+      "border": "NO4-RU",
+      "exportMw": 0,
+      "importMw": 0,
+      "basis": "Statnett set the capacity to zero indefinitely on 2022-03-02; the max-NTC map still shows a 56 MW structural import maximum.",
+      "asOf": "2022-03-02",
+      "evidence": [
+        {
+          "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2022/statnett-setter-kapasitet-mot-russland-til-null/",
+          "supports": "Capacity to Russia set to zero"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/49378f/globalassets/download-center/tso/max-ntc.pdf",
+          "supports": "RU→NO4 56 MW structural maximum"
+        }
+      ]
+    },
+    {
+      "border": "NO2-NL",
+      "exportMw": 700,
+      "importMw": 700,
+      "basis": "NorNed rated transfer; operated at up to 620 MW from 2022-10-17 (current cap not verified).",
+      "asOf": "2026-10-10",
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/news-and-events/customer-stories/norned",
+          "supports": "700 MW"
+        }
+      ]
+    },
+    {
+      "border": "NO2-DE",
+      "exportMw": 1400,
+      "importMw": 1400,
+      "basis": "NordLink rated transfer.",
+      "asOf": "2026-10-10",
+      "evidence": [
+        {
+          "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2021/nordlink-in-operation2/",
+          "supports": "Up to 1400 MW"
+        }
+      ]
+    },
+    {
+      "border": "NO2-GB",
+      "exportMw": 1400,
+      "importMw": 1400,
+      "basis": "North Sea Link rated transfer.",
+      "asOf": "2026-10-10",
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/about-us/case-studies/nsl-link",
+          "supports": "1400 MW"
+        }
+      ]
+    },
+    {
+      "border": "NO2-DK1",
+      "exportMw": 1632,
+      "importMw": 1632,
+      "basis": "Skagerrak 1–4 border limit from the Statnett operating table (100 MW was reserved for balancing in 2019, giving 1532 MW to the market; current reservation not verified).",
+      "asOf": "2026-06-02",
+      "evidence": [
+        {
+          "url": "https://forsyningstilsynet.dk/Media/638222362370002882/appendix-1-principles-for-calculating-the-loss-factor-on-the-skagerrak-con.pdf",
+          "supports": "Skagerrak border 1632 MW with all poles"
+        },
+        {
+          "url": "https://www.bairdmaritime.com/marine-projects/marine-infrastructure/norway-denmark-subsea-power-cable-offline-for-three-month-repair-sabotage-ruled-out",
+          "supports": "Total 1632 MW (2026)"
+        }
+      ]
+    }
+  ],
+  "externalSystems": [
+    {
+      "id": "external:nordic-remainder",
+      "label": "Nordic synchronous area without Norway (Sweden, Finland, eastern Denmark)",
+      "area": "nordic-remainder",
+      "synchronous": true,
+      "members": [
+        "SE1",
+        "SE2",
+        "SE3",
+        "SE4",
+        "FI",
+        "DK2"
+      ],
+      "cases": {
+        "winterPeak": {
+          "inertiaGws": 171,
+          "loadMw": 43100,
+          "fcrNMwPerHz": 3720,
+          "fcrDUpMw": 899,
+          "fcrDDownMw": 868,
+          "afrrUpMw": 138,
+          "afrrDownMw": 138,
+          "derivation": "Kinetic energy 256 GWs (Fingrid map, 2020-12-31 17–18) × remainder share 66.9 % (Norway 6.6 % NO4 + 26.5 % southern Norway) = 171 GWs. Load: non-coincident January 2026 peaks SE 24,965 + FI 15,553 + DK2 2,616 = 43,134 MW (coincident value probably 1–2 GW lower). FCR-N 600 MW over ±0.1 Hz and FCR-D 1450 MW up / 1400 MW down for the Nordic area (2026 SOA LFCR parameters); Norway's 2026 obligation share is 38 %, so the remainder holds 62 %: FCR-N 372 MW = 3720 MW/Hz, FCR-D up 899 MW (linear 49.9→49.5 Hz), FCR-D down 868 MW. aFRR: the Nordic 2026 volume of 200 MW each way (Appendix 1 to Annex LFCR 2026) less Norway's 31 % share = 138 MW."
+        },
+        "summerLow": {
+          "inertiaGws": 101,
+          "loadMw": 16400,
+          "fcrNMwPerHz": 3720,
+          "fcrDUpMw": 899,
+          "fcrDDownMw": 868,
+          "afrrUpMw": 138,
+          "afrrDownMw": 138,
+          "derivation": "Kinetic energy: 2024 annual minimum 131 GWs × remainder share 77.0 % from the Fingrid map of the 2021-06-13 low-inertia hour = 101 GWs (the 2021 record low of 110 GWs gives 85 GWs). Load: SE+DK2 coincident summer-2025 minimum 10,154 MW + FI estimate 6,000–6,500 MW (Q3-2025 mean 8.15 GW × the 0.74–0.80 min/mean ratio of NO and SE) ≈ 16,400 MW. FCR-N 600 MW over ±0.1 Hz and FCR-D 1450 MW up / 1400 MW down for the Nordic area (2026 SOA LFCR parameters); Norway's 2026 obligation share is 38 %, so the remainder holds 62 %: FCR-N 372 MW = 3720 MW/Hz, FCR-D up 899 MW (linear 49.9→49.5 Hz), FCR-D down 868 MW. FFR up to 186 MW (62 % of about 300 MW) is procured only in low-inertia hours and is not included. aFRR: the Nordic 2026 volume of 200 MW each way (Appendix 1 to Annex LFCR 2026) less Norway's 31 % share = 138 MW."
+        }
+      },
+      "loadDampingPercentPerHz": 1,
+      "boundaryParticipation": {
+        "method": "Each remainder area's share of the remainder's kinetic energy (Fingrid maps; Finland's two dots summed; the shares of each hour normalised to the remainder, then the hours averaged) passes towards Norway along its route: at an area with Norwegian borders it splits between those borders and its onward AC border in proportion to their capacities (the mean of both directions: borderCapacities for the Norwegian borders, remainderBorders inside the remainder); an area without a Norwegian border passes all of it on. SE4 and eastern Denmark reach Norway through SE3, Finland through its 100 MW NO4 border and the 1,900 MW Aurora-strengthened SE1 border, SE1 and SE2 through their Norwegian borders and southwards. The shares are where the remainder's response enters Norway, not physical flows: a network equivalent of Sweden and Finland would give location-dependent sharing.",
+        "kineticEnergyHours": [
+          {
+            "hour": "2020-12-31 17–18 CET",
+            "nordicGws": 256,
+            "areaPercent": {
+              "SE1": 6.1,
+              "SE2": 11.6,
+              "SE3": 27.0,
+              "SE4": 0.5,
+              "FI": 15.8,
+              "DK2": 6.1
+            },
+            "evidence": [
+              {
+                "url": "https://www.fingrid.fi/contentassets/33e309d8bafb4e88a156f7beb5daffe9/imagejcjw.png",
+                "supports": "Per-area share of the Nordic 256 GWs: SE1 6.1 %, SE2 11.6 %, SE3 27.0 %, SE4 0.5 %, Finland 14.8 % + 1.0 % (two dots), DK2 6.1 %; Norway NO4 6.6 % and southern Norway 26.5 %"
+              },
+              {
+                "url": "https://www.fingrid.fi/en/electricity-market-information/InertiaofNordicpowersystem/",
+                "supports": "Fingrid's per-area kinetic-energy maps of the Nordic power system"
+              }
+            ]
+          },
+          {
+            "hour": "2021-06-13 14–15 CEST",
+            "nordicGws": 110,
+            "areaPercent": {
+              "SE1": 4.5,
+              "SE2": 10.1,
+              "SE3": 35.3,
+              "SE4": 0.7,
+              "FI": 21.3,
+              "DK2": 5.2
+            },
+            "evidence": [
+              {
+                "url": "https://www.fingrid.fi/contentassets/33e309d8bafb4e88a156f7beb5daffe9/image06rx.png",
+                "supports": "Per-area share of the Nordic 110 GWs: SE1 4.5 %, SE2 10.1 %, SE3 35.3 %, SE4 0.7 %, Finland 20.4 % + 0.9 % (two dots), DK2 5.2 %; Norway NO4 7.4 % and southern Norway 15.6 %"
+              }
+            ]
+          }
+        ],
+        "routes": [
+          {
+            "area": "DK2",
+            "norwegianBorders": [],
+            "onward": {
+              "area": "SE4",
+              "border": null
+            }
+          },
+          {
+            "area": "FI",
+            "norwegianBorders": [
+              "NO4-FI"
+            ],
+            "onward": {
+              "area": "SE1",
+              "border": "FI-SE1"
+            }
+          },
+          {
+            "area": "SE1",
+            "norwegianBorders": [
+              "NO4-SE1"
+            ],
+            "onward": {
+              "area": "SE2",
+              "border": "SE1-SE2"
+            }
+          },
+          {
+            "area": "SE2",
+            "norwegianBorders": [
+              "NO3-SE2",
+              "NO4-SE2"
+            ],
+            "onward": {
+              "area": "SE3",
+              "border": "SE2-SE3"
+            }
+          },
+          {
+            "area": "SE3",
+            "norwegianBorders": [
+              "NO1-SE3"
+            ],
+            "onward": null
+          },
+          {
+            "area": "SE4",
+            "norwegianBorders": [],
+            "onward": {
+              "area": "SE3",
+              "border": null
+            }
+          }
+        ],
+        "remainderBorders": [
+          {
+            "border": "FI-SE1",
+            "forwardMw": 1900,
+            "backwardMw": 1900,
+            "basis": "Fingrid's maximum cross-border capacity between Finland and northern Sweden after the Aurora Line (commissioned 2025-11-13).",
+            "evidence": [
+              {
+                "url": "https://www.fingrid.fi/en/news/news/2025/aurora-line-power-transmission-connection-to-be-commissioned-on-november-13/",
+                "supports": "a maximum of 1,900 megawatts in both import and export directions (2025-10-29)"
+              }
+            ]
+          },
+          {
+            "border": "SE1-SE2",
+            "forwardMw": 3300,
+            "backwardMw": 3300,
+            "basis": "Maximum NTC (structural reference value) on the Nordic max-NTC map valid from 2024-01-01.",
+            "evidence": [
+              {
+                "url": "https://www.nordpoolgroup.com/49378f/globalassets/download-center/tso/max-ntc.pdf",
+                "supports": "SE1→SE2 3300 MW, SE2→SE1 3300 MW"
+              }
+            ]
+          },
+          {
+            "border": "SE2-SE3",
+            "forwardMw": 7300,
+            "backwardMw": 7300,
+            "basis": "Maximum NTC (structural reference value) on the Nordic max-NTC map valid from 2024-01-01.",
+            "evidence": [
+              {
+                "url": "https://www.nordpoolgroup.com/49378f/globalassets/download-center/tso/max-ntc.pdf",
+                "supports": "SE2→SE3 7300 MW, SE3→SE2 7300 MW"
+              }
+            ]
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "url": "https://www.fingrid.fi/globalassets/dokumentit/fi/tiedotteet/2025---requirements-for-minimum-inertia-in-the-nordic-power-system.pdf",
+          "supports": "Nordic kinetic-energy statistics 2020–2024 (2024 minimum 131 GWs); no minimum-inertia requirement; 49.0 Hz criterion; reference incident 1450 MW"
+        },
+        {
+          "url": "https://www.fingrid.fi/en/electricity-market-information/InertiaofNordicpowersystem/",
+          "supports": "Typical 120–280 GWs; per-area kinetic-energy maps"
+        },
+        {
+          "url": "https://www.fingrid.fi/contentassets/33e309d8bafb4e88a156f7beb5daffe9/imagejcjw.png",
+          "supports": "2020-12-31 17–18: 256 GWs with the per-area split"
+        },
+        {
+          "url": "https://www.fingrid.fi/contentassets/33e309d8bafb4e88a156f7beb5daffe9/image06rx.png",
+          "supports": "2021-06-13 14–15: 110 GWs with the per-area split"
+        },
+        {
+          "url": "https://data.fingrid.fi/en/datasets/260",
+          "supports": "Real-time Nordic kinetic energy, dataset 260"
+        },
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/SOC%20documents/Nordic/2026/Nordic_SOA_Appendix_1_to_Annex_LFCR_Regularly_changing_parameters_2026.pdf",
+          "supports": "FCR-N 600 MW; 2026 FCR shares DK2 3 %, FI 21 %, NO 38 %, SE 38 %"
+        },
+        {
+          "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/marked/reservemarkeder/ebgl_art-60-2026.pdf",
+          "supports": "Nordic FCR-D 1450 MW up / 1400 MW down, FCR-N 600 MW, FFR about 300 MW"
+        },
+        {
+          "url": "https://energinet.dk/media/lq1ptzg3/fcr-technical-requirements-2022-06-27_.pdf",
+          "supports": "FCR-D activation bands; load self-regulation Kf = 1 %/Hz in all design cases"
+        },
+        {
+          "url": "https://www.svk.se/om-kraftsystemet/kontrollrummet/",
+          "supports": "Swedish hourly consumption (January 2026 peak, summer 2025 minimum)"
+        },
+        {
+          "url": "https://www.fingrid.fi/en/news/news/2026/fingrid-group--managements-review-1.1.31.3.2026/",
+          "supports": "Finnish consumption record 15,553 MW on 2026-01-08"
+        },
+        {
+          "url": "https://api.energidataservice.dk/dataset/ElectricityBalanceNonv",
+          "supports": "DK2 total load, winter maximum and summer 2025 minimum"
+        },
+        {
+          "url": "https://www.fingrid.fi/en/news/news/2025/fingrid-group--managements-review-1.1.30.9.2025/",
+          "supports": "Finnish Jan–Sep 2025 consumption 61.3 TWh (summer estimate)"
+        },
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/SOC%20documents/Nordic/2026/Nordic_SOA_Appendix_1_to_Annex_LFCR_Regularly_changing_parameters_2026.pdf",
+          "supports": "2026 Nordic aFRR volume of at least 200 MW and the national shares (Norway 31 %)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-nordic-equivalent@2026-10-10"
+        ],
+        "method": "curated",
+        "confidence": "medium",
+        "note": "Remainder = Nordic minus Norway. The kinetic-energy split rests on two Fingrid map hours (Norway 23–33 %); the winter load adds non-coincident peaks; the Finnish summer low is an estimate; FCR shares are obligations, not where the reserve physically sits."
+      }
+    },
+    {
+      "id": "external:dk1",
+      "label": "Western Denmark (Continental European synchronous area)",
+      "area": "DK1",
+      "synchronous": false,
+      "members": [
+        "DK1"
+      ],
+      "cases": null,
+      "loadDampingPercentPerHz": null,
+      "boundaryParticipation": null,
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/news-and-events/customer-stories/skagerrak",
+          "supports": "Skagerrak 1–4 HVDC between Norway and Denmark (Tjele)"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-nordic-equivalent@2026-10-10"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Reached from Norway only through Skagerrak 1–4."
+      }
+    },
+    {
+      "id": "external:nl",
+      "label": "Netherlands (Continental European synchronous area)",
+      "area": "NL",
+      "synchronous": false,
+      "members": [
+        "NL"
+      ],
+      "cases": null,
+      "loadDampingPercentPerHz": null,
+      "boundaryParticipation": null,
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/news-and-events/customer-stories/norned",
+          "supports": "NorNed HVDC between Feda and Eemshaven"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-nordic-equivalent@2026-10-10"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Reached from Norway only through NorNed."
+      }
+    },
+    {
+      "id": "external:de",
+      "label": "Germany (Continental European synchronous area)",
+      "area": "DE",
+      "synchronous": false,
+      "members": [
+        "DE-LU"
+      ],
+      "cases": null,
+      "loadDampingPercentPerHz": null,
+      "boundaryParticipation": null,
+      "evidence": [
+        {
+          "url": "https://cse.cigre.org/cse-n024/connecting-two-synchronous-areas-with-an-hvdc-link-the-nordlink-interconnector",
+          "supports": "NordLink connects two synchronous areas"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-nordic-equivalent@2026-10-10"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Reached from Norway only through NordLink."
+      }
+    },
+    {
+      "id": "external:gb",
+      "label": "Great Britain (own synchronous area)",
+      "area": "GB",
+      "synchronous": false,
+      "members": [
+        "GB"
+      ],
+      "cases": null,
+      "loadDampingPercentPerHz": null,
+      "boundaryParticipation": null,
+      "evidence": [
+        {
+          "url": "https://www.hitachienergy.com/about-us/case-studies/nsl-link",
+          "supports": "North Sea Link HVDC between Kvilldal and Blyth"
+        }
+      ],
+      "provenance": {
+        "sources": [
+          "curated:ds2-nordic-equivalent@2026-10-10"
+        ],
+        "method": "curated",
+        "confidence": "high",
+        "note": "Reached from Norway only through North Sea Link."
+      }
+    }
+  ],
+  "excludedCandidates": [
+    {
+      "name": "Lutufallet–Höljes (132 kV, NO1–SE3)",
+      "osmWayIds": [
+        "way/370213033"
+      ],
+      "reason": "Listed in the Nordel statistics of 1997 and 2008 (40 MW from SE, 20 MW to SE) and mapped in OpenStreetMap, but absent from the 2007 and 2022 System Operation Agreements and the max-NTC map, whose NO1–SE3 corridor is Hasle plus Eidskog only. Current service not confirmed.",
+      "evidence": [
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/pre2015/publications/nordic/annualstatistics/Annual%20Statistics%202008.pdf",
+          "supports": "132 kV Lutufallet–Höljes, 40/20 MW, 18 km"
+        },
+        {
+          "url": "https://www.nordpoolgroup.com/493abd/globalassets/download-center/tso/principles-for-determining-the-transfer-capacities-2023-03-23.pdf",
+          "supports": "NO1–SE3 corridor defined as the Hasle corridor plus Eidskog–Charlottenberg"
+        }
+      ]
+    },
+    {
+      "name": "Linnvasselv 220/66 kV transformer tie (NO–SE2)",
+      "osmWayIds": [],
+      "reason": "Appears only in the Nordel 2008 statistics (50 MW each way); not in the 2007 or 2022 System Operation Agreements. NVE registers Linvasselv hydropower plant on the Swedish side of the border.",
+      "evidence": [
+        {
+          "url": "https://eepublicdownloads.entsoe.eu/clean-documents/pre2015/publications/nordic/annualstatistics/Annual%20Statistics%202008.pdf",
+          "supports": "Linnvasselv transformer 220/66 kV, 50/50 MW"
+        }
+      ]
+    }
+  ]
+}

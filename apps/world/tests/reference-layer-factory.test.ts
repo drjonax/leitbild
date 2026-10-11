@@ -33,6 +33,7 @@ const testStyle: PackReferenceDatasetStyle = {
 
 const baseManifest: DatasetManifestForLayers = {
   datasetId: 'reference-areas',
+  buildId: '20261010-120000',
   artifact: {
     pmtilesPath: 'reference-areas.pmtiles',
     sidecarGeoJsonPath: 'reference-areas.features.geojson',
@@ -48,6 +49,7 @@ const baseManifest: DatasetManifestForLayers = {
     { id: 'nlod-2.0', attribution: '© Map dataset B · NLOD 2.0' },
     { id: 'nlod-2.0', attribution: '© Map dataset B · NLOD 2.0' },
   ],
+  tiles: { minZoom: 5, maxZoom: 12, bounds: [4.1, 57.8, 31.2, 71.3] },
 }
 
 describe('buildReferenceDatasetLayers', () => {
@@ -79,14 +81,15 @@ describe('buildReferenceDatasetLayers', () => {
     for (const layer of built.layers) expect('maxzoom' in layer).toBe(false)
   })
 
-  test('source spans the populated categories and overzooms past the archive', () => {
+  test('source covers the archive header zoom range and bounds, names its build and overzooms past the archive', () => {
     const built = buildReferenceDatasetLayers(baseManifest, testStyle, { theme: 'light' })
     expect(built.sourceId).toBe('reference:reference-areas')
     expect(built.source).toEqual({
       type: 'vector',
-      tiles: ['/map/datasets/reference-areas/current/reference-areas/{z}/{x}/{y}.mvt'],
-      minzoom: 6,
-      maxzoom: 14,
+      tiles: ['/map/datasets/reference-areas/current/reference-areas/{z}/{x}/{y}.mvt?build=20261010-120000'],
+      minzoom: 5,
+      maxzoom: 12,
+      bounds: [4.1, 57.8, 31.2, 71.3],
       attribution: '© Map dataset A contributors · CC BY-NC-SA 4.0 • © Map dataset B · NLOD 2.0',
     })
   })
@@ -120,7 +123,8 @@ describe('reference-layer-factory internals', () => {
     expect(__internals.sourceIdFor('reference-areas')).toBe('reference:reference-areas')
   })
 
-  test('sourceTilesFor builds the API-served MVT tile template', () => {
-    expect(__internals.sourceTilesFor('foo', 'foo.pmtiles')).toEqual(['/map/datasets/foo/current/foo/{z}/{x}/{y}.mvt'])
+  test('sourceTilesFor builds the API-served MVT tile template for one build', () => {
+    expect(__internals.sourceTilesFor('foo', 'foo.pmtiles', '20261010-120000')).toEqual(['/map/datasets/foo/current/foo/{z}/{x}/{y}.mvt?build=20261010-120000'])
+    expect(__internals.sourceTilesFor('foo', 'foo.pmtiles', 'a b&c')).toEqual(['/map/datasets/foo/current/foo/{z}/{x}/{y}.mvt?build=a%20b%26c'])
   })
 })

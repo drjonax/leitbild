@@ -10,10 +10,15 @@ import {
   type SimulationRunEvent,
   type SimulationRunId,
 } from '../src/core/model/index.ts'
+import { z } from 'zod'
 import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import { createScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
+import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
+import { electricGridPackDataSchema } from '../src/packs/electric-grid/model.ts'
 import { electricGridPack } from '../src/packs/electric-grid/pack.ts'
+import { createGridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { createLocalElectricGridPackRuntimeAdapter } from '../src/packs/electric-grid/sim/adapter.ts'
+import { gridCloseBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { processPlantActionInvokeCommandKind } from '../src/packs/process-plant/commands.ts'
 import { processPlantPack } from '../src/packs/process-plant/pack.ts'
 import { createLocalProcessPlantPackRuntimeAdapter } from '../src/packs/process-plant/sim/adapter.ts'
@@ -84,6 +89,23 @@ describe('electrical Pack connection', () => {
     await expect(compileScenarioDefinition(duplicated, packs, { routing: createDirectRoutingAdapter() }))
       .rejects.toThrow('electrical port is connected more than once')
 
+    // Two Plants on one Grid connection point fail at the second connection's network endpoint.
+    const sharedPoint = structuredClone(source)
+    sharedPoint.connections[1]!.network = { ...sharedPoint.connections[0]!.network }
+    const rejection = await compileScenarioDefinition(sharedPoint, packs, { routing: createDirectRoutingAdapter() }).then(() => null, (error: unknown) => error)
+    expect(rejection).toBeInstanceOf(z.ZodError)
+    expect((rejection as z.ZodError).issues.map(issue => [issue.path, issue.message])).toEqual([
+      [['connections', 1, 'network'], 'electrical port is connected more than once: grid:halden-four-unit:unit-1-420kv'],
+    ])
+    // The Grid runtime refuses the same pair if it is ever handed one, instead of keeping the last.
+    const halden = scenarios.find(candidate => candidate.id === source.id)!
+    const gridObject = halden.initialObjects.find(object => object.id === 'grid:halden-four-unit' as ObjectId)!
+    const gridData = electricGridPackDataSchema.parse(gridObject.packData)
+    const gridDefinition = compileGridDefinition({ id: gridObject.id, model: gridData.model, operatingPoint: gridData.operatingPoint, automation: gridData.automation })
+    const pair = [halden.connections[0]!, { ...halden.connections[1]!, network: halden.connections[0]!.network }]
+    expect(() => createGridRuntimeInstance({ definition: gridDefinition, at: halden.world.startsAt, connections: pair }))
+      .toThrow('Grid connection point grid:halden-four-unit:unit-1-420kv is connected by both halden-unit-1-grid and halden-unit-2-grid')
+
     const laterDeletion = structuredClone(source)
     laterDeletion.timeline = { cues: [{
       id: 'remove-connected-plant',
@@ -140,11 +162,11 @@ describe('electrical Pack connection', () => {
       expect(beforePoints).toHaveLength(4)
       expect(beforePoints.every(point => point.connected && point.systemActivePowerMw > 1000)).toBe(true)
       const summaryBefore = await connection.invokeQuery({ capabilityId: 'world.electric-grid.grid.summary', input: { gridId: 'grid:halden-four-unit' } })
-      const projectionBefore = (summaryBefore as { projection: { activeAlarmCount: number; frequencyHz: number; highestBranchLoadingPercent: number; totalGenerationMw: number } }).projection
-      // Four actual full-power units can oversupply the connected demand island
-      // and overload inferred transmission lines. Never suppress those alarms or
-      // inflate line ratings just to preserve the old underpowered baseline.
-      expect(Number.isFinite(projectionBefore.frequencyHz)).toBe(true)
+      const projectionBefore = (summaryBefore as { projection: { activeAlarmCount: number; frequencyHz: number | null; frequencyBasis: string; highestBranchLoadingPercent: number; totalGenerationMw: number } }).projection
+      // The four units' surplus over the island's demand is exported over the real 420 kV ties to the
+      // Nordic synchronous equivalent, so the island holds the Nordic normal band (±0.1 Hz).
+      expect(projectionBefore.frequencyBasis).toBe('largest-load-energized-island')
+      expect(Math.abs(projectionBefore.frequencyHz! - 50)).toBeLessThan(0.1)
       expect(projectionBefore.totalGenerationMw).toBeGreaterThanOrEqual(beforePoints.reduce((sum, point) => sum + point.systemActivePowerMw, 0))
 
       const trip = await connection.sendCommand({
@@ -170,17 +192,81 @@ describe('electrical Pack connection', () => {
       const afterPoints = (afterQuery as { connectionPoints: ReadonlyArray<{ system: { objectId: string }; systemActivePowerMw: number }> }).connectionPoints
       expect(afterPoints.find(point => point.system.objectId === 'plant:halden-1')?.systemActivePowerMw).toBeLessThan(beforePoints[0]!.systemActivePowerMw * 0.45)
       const summaryAfter = await connection.invokeQuery({ capabilityId: 'world.electric-grid.grid.summary', input: { gridId: 'grid:halden-four-unit' } })
-      const projectionAfter = (summaryAfter as { projection: { frequencyHz: number; totalGenerationMw: number } }).projection
-      // A weighted average across independently settling islands is not a trip
-      // response measurement. Halden can also remain oversupplied after one trip.
-      // The solver's island-local response is tested against a time-aligned control.
-      expect(Number.isFinite(projectionAfter.frequencyHz)).toBe(true)
+      const projectionAfter = (summaryAfter as { projection: { frequencyHz: number | null; totalGenerationMw: number } }).projection
+      // The lost infeed is contained by the island's and the Nordic equivalent's inertia and FCR:
+      // frequency falls but stays above the 49.0 Hz reference-incident minimum.
+      expect(projectionAfter.frequencyHz!).toBeLessThan(50)
+      expect(projectionAfter.frequencyHz!).toBeGreaterThan(49)
       expect(projectionAfter.totalGenerationMw).toBeLessThan(projectionBefore.totalGenerationMw - 500)
     } finally {
       unsubscribe()
       await connection.close()
     }
   }, 120_000)
+
+  // Skipped until DQ1 removes the v2 winter overloads: with branch protection the Halden scenario
+  // starts in a cascade (27 branches above rating at the starting dispatch), so the ±0.1 Hz start
+  // and the contained unit trip cannot be observed in the combined runtime yet.
+  test('isolating the Halden switchyard takes offsite power from the Plants, and reclosing returns it through the ports', async () => {
+    const scenario = scenarios.find(candidate => candidate.id === 'halden-power-complex')
+    if (!scenario) throw new Error('missing Halden four-unit scenario')
+    const connection = await connectScenario(scenario)
+    let sequence = 0
+    let committed = Promise.resolve()
+    const unsubscribe = connection.subscribe(emission => {
+      const events: SimulationRunEvent[] = emission.events.flatMap(event => {
+        if (event.type !== 'object.upserted' && event.type !== 'object.deleted') return []
+        sequence += 1
+        return [{ ...event, id: `event:offsite-power:${sequence}` as EventId, simulationRunId, seq: sequence } as SimulationRunEvent]
+      })
+      committed = committed.then(() => connection.observeCommittedEvents(events))
+    })
+    const gridCommand = async (kind: string, assetId: string) => connection.sendCommand({
+      id: `command:offsite-power-${crypto.randomUUID()}` as CommandId,
+      simulationRunId,
+      actorId: 'actor:integration-test' as ActorId,
+      kind,
+      targetObjectIds: ['grid:halden-four-unit' as ObjectId],
+      payload: { assetId },
+      issuedAt: nowIso(),
+    })
+    const ports = async () => {
+      await committed
+      const snapshot = await connection.getSnapshot()
+      const grid = snapshot.objects.find(object => object.id === 'grid:halden-four-unit' as ObjectId)!
+      const plant = snapshot.objects.find(object => object.id === 'plant:halden-1' as ObjectId)!
+      return { grid: electricalPortFromObject(grid, 'unit-1-420kv')!.state!, plant: electricalPortFromObject(plant, 'grid-420kv')!.state! }
+    }
+    const switchyardBranches = ['branch:curated-halden-pwr-hasle-1', 'branch:curated-halden-pwr-hasle-2', 'branch:curated-halden-pwr-hasle-3',
+      'branch:curated-halden-pwr-tegneby-1', 'branch:curated-halden-pwr-tegneby-2', 'branch:curated-halden-pwr-tegneby-3']
+    try {
+      await Bun.sleep(3_200)
+      const before = await ports()
+      expect(before.grid).toMatchObject({ energized: true, connected: true })
+      expect(before.plant).toMatchObject({ energized: true, connected: true })
+
+      for (const branchId of switchyardBranches) expect((await gridCommand(gridOpenBranchCommandKind, branchId)).ok).toBe(true)
+      await Bun.sleep(4_200)
+      const isolated = await ports()
+      // The switchyard has no voltage-forming source: the Plants see loss of offsite power.
+      expect(isolated.grid).toMatchObject({ energized: false, voltagePu: 0, frequencyHz: null })
+      expect(isolated.plant).toMatchObject({ connected: false })
+
+      // Dead-bus closing re-energises the switchyard from the grid; the Plants regain offsite power
+      // through the ordinary port exchange, without any reset.
+      for (const branchId of switchyardBranches) expect((await gridCommand(gridCloseBranchCommandKind, branchId)).ok).toBe(true)
+      await Bun.sleep(4_200)
+      const restored = await ports()
+      // Losing the four units' 4.4 GW export pulls the Norwegian island far below 49 Hz (LFDD operates);
+      // the switchyard returns to that island's live frequency.
+      expect(restored.grid).toMatchObject({ energized: true })
+      expect(restored.grid.energized && restored.grid.frequencyHz).toBeGreaterThan(47.5)
+      expect(restored.plant).toMatchObject({ energized: true, connected: true })
+    } finally {
+      unsubscribe()
+      await connection.close()
+    }
+  }, 30_000)
 
   test('removes a Plant runtime and its Grid exchange immediately on committed deletion', async () => {
     const scenario = scenarios.find(candidate => candidate.id === 'halden-power-complex')
@@ -228,7 +314,7 @@ describe('electrical Pack connection', () => {
 
       const switchyard = await connection.invokeQuery({
         capabilityId: 'world.electric-grid.asset.get',
-        input: { gridId: 'grid:halden-four-unit', assetId: 'bus:halden-pwr-switchyard-420' },
+        input: { gridId: 'grid:halden-four-unit', assetId: 'bus:curated-halden-pwr-switchyard@420' },
       })
       expect(switchyard).toMatchObject({
         asset: {

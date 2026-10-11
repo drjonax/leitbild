@@ -10,6 +10,8 @@ const capabilities = (...tilesets: ReadonlyArray<Record<string, unknown>>) => ({
   tilesets: [{ kind: 'base', id: 'leitbild-osm-norway' }, ...tilesets],
 })
 
+const noRecoveryFailure = (message: string): void => { throw new Error(`unexpected build recovery failure: ${message}`) }
+
 const fakeFetch = (status: number, body: unknown) => async (_input: string): Promise<Response> =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), {
     status,
@@ -31,12 +33,18 @@ describe('createReferenceDataController', () => {
       styles: [gridNorwayStyle],
       appearance: { theme: 'light' },
       beforeLayerId: () => 'poi-emergency',
+      onBuildRecoveryFailed: noRecoveryFailure,
       fetchFn: fakeFetch(200, capabilities(gridNorwayReferenceTileset)),
     })
     const registered = controller.registered[0]!
     expect(controller.registered).toHaveLength(1)
     expect(registered.sourceId).toBe('reference:grid-norway')
-    expect(sources.get('reference:grid-norway')?.tiles).toEqual(['/map/datasets/grid-norway/current/grid-norway/{z}/{x}/{y}.mvt'])
+    expect(sources.get('reference:grid-norway')).toMatchObject({
+      tiles: ['/map/datasets/grid-norway/current/grid-norway/{z}/{x}/{y}.mvt?build=20260528-230419'],
+      minzoom: 4,
+      maxzoom: 14,
+      bounds: [-0.4, 53.45, 31.02, 78.23],
+    })
     expect(registered.layerIds.length).toBeGreaterThan(0)
     const order = layerOrder(layers)
     const firstLabel = order.indexOf('poi-emergency')
@@ -51,6 +59,7 @@ describe('createReferenceDataController', () => {
       styles: [gridNorwayStyle],
       appearance: { theme: 'dark' },
       beforeLayerId: () => { events.push('anchor'); return null },
+      onBuildRecoveryFailed: noRecoveryFailure,
       fetchFn: async input => { events.push('fetch'); return await fakeFetch(200, capabilities(gridNorwayReferenceTileset))(input) },
     })
     expect(events).toEqual(['fetch', 'anchor'])
@@ -63,6 +72,7 @@ describe('createReferenceDataController', () => {
       styles: [gridNorwayStyle],
       appearance: { theme: 'light' },
       beforeLayerId: () => 'missing-layer',
+      onBuildRecoveryFailed: noRecoveryFailure,
       fetchFn: fakeFetch(200, capabilities(gridNorwayReferenceTileset)),
     })).rejects.toThrow('missing layer missing-layer')
 
@@ -72,6 +82,7 @@ describe('createReferenceDataController', () => {
       styles: [gridNorwayStyle],
       appearance: { theme: 'light' },
       beforeLayerId: () => null,
+      onBuildRecoveryFailed: noRecoveryFailure,
       fetchFn: fakeFetch(200, capabilities(renamed)),
     })).rejects.toThrow('build wrote "power"')
   })
@@ -84,6 +95,7 @@ describe('createReferenceDataController', () => {
       styles: [gridNorwayStyle, otherStyle],
       appearance: { theme: 'light' },
       beforeLayerId: () => null,
+      onBuildRecoveryFailed: noRecoveryFailure,
       fetchFn: fakeFetch(200, capabilities(gridNorwayReferenceTileset, { ...gridNorwayReferenceTileset, datasetId: 'unstyled' })),
       logger: message => captured.push(message),
     })
@@ -100,6 +112,7 @@ describe('createReferenceDataController', () => {
         styles: [gridNorwayStyle],
         appearance: { theme: 'light' },
         beforeLayerId: () => null,
+        onBuildRecoveryFailed: noRecoveryFailure,
         fetchFn: fakeFetch(status, body),
         logger: message => captured.push(message),
       })
@@ -115,6 +128,7 @@ describe('createReferenceDataController', () => {
       styles: [],
       appearance: { theme: 'light' },
       beforeLayerId: () => null,
+      onBuildRecoveryFailed: noRecoveryFailure,
       fetchFn: async input => { fetches += 1; return await fakeFetch(200, capabilities())(input) },
     })
     expect(controller.registered).toEqual([])

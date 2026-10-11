@@ -22,6 +22,21 @@ export interface PersistedSimulationRunSnapshot {
 export interface SimulationRunSnapshotStore {
   readonly load: () => Promise<SimulationRunStateSnapshot | null>
   readonly save: (snapshot: SimulationRunStateSnapshot) => Promise<void>
+  /** Permanent quarantine after an uncertain commit; ordinary saves never clear it. */
+  readonly quarantine: (reason: string) => Promise<void>
+}
+
+export const assertSimulationRunRecoveryNotRequired = async (path: string): Promise<void> => {
+  // An unreadable marker also refuses restore. Ordinary loading and reset must
+  // not turn an uncertain boundary into an apparently healthy Run.
+  try {
+    const reason = await readFile(`${path}.failed`, 'utf8')
+    throw Object.assign(new Error(`Simulation Run requires recovery: ${reason}`), { code: 'simulation_run_recovery_required' })
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'simulation_run_recovery_required') throw error
+    if (code !== 'ENOENT') throw Object.assign(new Error('Simulation Run requires recovery: failure marker is unreadable', { cause: error }), { code: 'simulation_run_recovery_required' })
+  }
 }
 
 export const createSimulationRunSnapshotStore = (config: {
@@ -29,6 +44,8 @@ export const createSimulationRunSnapshotStore = (config: {
   readonly path: string
 }): SimulationRunSnapshotStore => {
   const load = async (): Promise<SimulationRunStateSnapshot | null> => {
+    // Check before adapters can load possibly newer private mechanics.
+    await assertSimulationRunRecoveryNotRequired(config.path)
     let raw: string
     try {
       raw = await readFile(config.path, 'utf8')
@@ -54,5 +71,10 @@ export const createSimulationRunSnapshotStore = (config: {
     await writeAtomic(config.path, `${JSON.stringify(payload)}\n`)
   }
 
-  return { load, save }
+  const quarantine = async (reason: string): Promise<void> => {
+    await mkdir(dirname(config.path), { recursive: true })
+    await writeAtomic(`${config.path}.failed`, reason)
+  }
+
+  return { load, save, quarantine }
 }

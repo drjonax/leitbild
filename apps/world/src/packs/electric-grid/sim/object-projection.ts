@@ -1,6 +1,7 @@
 import type { IsoTimestamp, ObjectId, OperationalObject, Provenance } from '../../../core/model/index.ts'
 import type { PackRuntimeEvent, PackRuntimeEventHistory } from '../../../simulation/protocol.ts'
 import { electricGridPackDataSchema, gridIdForObject } from '../model.ts'
+import { gridAlarmCounts } from '../runtime/alarms.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
 import { gridElectricalPortsAt } from '../electrical-ports.ts'
 
@@ -9,16 +10,17 @@ const projectionKey = (grid: GridRuntimeInstance): string => {
   return JSON.stringify({
     statusTone: value.statusTone,
     statusLabel: value.statusLabel,
-    frequencyHz: Math.round(value.frequencyHz * 100) / 100,
+    frequencyHz: value.frequencyHz === null ? null : Math.round(value.frequencyHz * 100) / 100,
+    islands: value.islands.map(island => [island.id, island.energized, island.frequencyHz === null ? null : Math.round(island.frequencyHz * 100) / 100, island.alarmCount]),
     totalGenerationMw: Math.round(value.totalGenerationMw),
     totalLoadMw: Math.round(value.totalLoadMw),
     servedLoadMw: Math.round(value.servedLoadMw),
     unservedLoadMw: Math.round(value.unservedLoadMw),
     reserveMarginMw: Math.round(value.reserveMarginMw),
     highestBranchLoadingPercent: Math.round(value.highestBranchLoadingPercent),
-    lowestVoltagePu: Math.round(value.lowestVoltagePu * 500) / 500,
     activeIslandCount: value.activeIslandCount,
     activeAlarmCount: value.activeAlarmCount,
+    alarms: gridAlarmCounts(grid).activeUnacknowledged,
     externalConnections: [...grid.externalConnections].map(([id, connection]) => ({
       id,
       connected: connection.connected,
@@ -33,19 +35,22 @@ export const projectGridObject = (config: {
   readonly at: IsoTimestamp
 }): OperationalObject => {
   const data = electricGridPackDataSchema.parse(config.object.packData)
-  const priority = config.grid.projection.activeAlarmCount > 0 ? 'high' as const : 'normal' as const
-  const status = config.grid.projection.activeAlarmCount > 0 ? 'constrained' : 'normal'
+  const alarms = gridAlarmCounts(config.grid)
+  const priority = alarms.active > 0 ? 'high' as const : 'normal' as const
+  const status = alarms.active > 0 ? 'constrained' : 'normal'
   return {
     ...config.object,
     revision: config.object.revision + 1,
     operational: { ...config.object.operational, status, priority },
-    alerts: config.grid.projection.activeAlarmCount === 0 ? [] : [{
+    // One health alert summarises the alarm records: its severity follows the most urgent active
+    // alarm, it is acknowledged once every active alarm is, and it dates from the oldest active alarm.
+    alerts: alarms.active === 0 ? [] : [{
       id: `${config.object.id}:grid-health`,
       kind: 'electric_grid_health',
-      severity: config.grid.projection.statusTone === 'error' ? 'warning' : 'info',
+      severity: alarms.highestPriority === 1 ? 'critical' : alarms.highestPriority === 2 ? 'warning' : 'info',
       message: config.grid.projection.statusLabel,
-      raisedAt: config.at,
-      acknowledged: false,
+      raisedAt: alarms.oldestActiveRaisedAt!,
+      acknowledged: alarms.activeUnacknowledged === 0,
     }],
     timestamps: { ...config.object.timestamps, updatedAt: config.at },
     packData: { ...data, electricalPorts: [...gridElectricalPortsAt({ grid: config.grid, at: config.at })], projection: config.grid.projection },

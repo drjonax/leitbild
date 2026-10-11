@@ -2,13 +2,13 @@ import type { WorldPack } from '../../core/packs/protocol.ts'
 import { electricGridPackConfigSchema } from './config.ts'
 import {
   electricGridDefinitionCatalog,
+  gridModelCatalogEntry,
   norwayGridModelRef,
-  norwayNormalOperatingPointRef,
-  norwayStandardAutomationRef,
+  norwayWinterPeakOperatingPointRef,
+  nordicFrequencyAutomationRef,
 } from './definition-refs.ts'
 import { electricGridRecordingProfiles, gridRecordingSeriesCount } from './recording.ts'
 import { electricGridPackDataSchema } from './model.ts'
-import { compileGridDefinition } from './definitions.ts'
 import { electricGridScenarioSupport } from './scenario.ts'
 import { electricGridPackView } from './ui-pack.ts'
 
@@ -24,11 +24,8 @@ export const electricGridPack: WorldPack = {
       idPrefix: 'grid',
       defaultItem: {
         model: { ref: norwayGridModelRef },
-        operatingPoint: {
-          ref: norwayNormalOperatingPointRef,
-          overrides: { loadScale: 1.03, generationAvailabilityScale: 1, storageStateOfCharge: 0.58 },
-        },
-        automation: { ref: norwayStandardAutomationRef },
+        operatingPoint: { ref: norwayWinterPeakOperatingPointRef },
+        automation: { ref: nordicFrequencyAutomationRef },
       },
       placement: { kind: 'point', path: ['location'] },
       fields: [{
@@ -46,15 +43,12 @@ export const electricGridPack: WorldPack = {
       }, {
         path: ['operatingPoint', 'overrides', 'generationAvailabilityScale'], label: 'Generation availability scale',
         control: { kind: 'number', min: 0, step: 0.01 },
-      }, {
-        path: ['operatingPoint', 'overrides', 'storageStateOfCharge'], label: 'Initial storage charge',
-        control: { kind: 'number', min: 0, max: 1, step: 0.01 },
       }],
     }],
   },
   recording: { profiles: electricGridRecordingProfiles, estimateSeries: (objects, profileId) => objects.reduce((sum, object) => {
     const data = electricGridPackDataSchema.parse(object.packData)
-    return sum + gridRecordingSeriesCount(compileGridDefinition({ id: object.id, model: data.model, operatingPoint: data.operatingPoint, automation: data.automation }), profileId)
+    return sum + gridRecordingSeriesCount(gridModelCatalogEntry(data.model.ref).assetCounts, profileId)
   }, 0) },
   scenario: electricGridScenarioSupport,
 }

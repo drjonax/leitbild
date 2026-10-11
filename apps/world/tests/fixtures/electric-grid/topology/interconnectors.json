@@ -1,0 +1,33 @@
+{
+ "sourceId": "fixture:interconnectors",
+ "interconnectors": [
+  {
+   "id": "hvdc:test-link",
+   "label": "Test link",
+   "kind": "hvdc",
+   "externalArea": "NL",
+   "voltageKv": 450,
+   "norwegianStationId": "way/32",
+   "osmWayIds": [
+    "way/402"
+   ],
+   "sources": [
+    "fixture"
+   ]
+  },
+  {
+   "id": "ac:test-tie",
+   "label": "Test tie",
+   "kind": "ac",
+   "externalArea": "SE3",
+   "voltageKv": 420,
+   "norwegianStationId": "way/31",
+   "osmWayIds": [
+    "way/403"
+   ],
+   "sources": [
+    "fixture"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,426 @@
+{
+ "modelId": "electric-grid.norway.transmission",
+ "modelKind": "grid-model-v2",
+ "goldenId": "electric-grid.norway.golden",
+ "asOf": "2026-10-10",
+ "verdict": "pass",
+ "counts": {
+  "buses": 1000,
+  "branches": 1244,
+  "hvdcLinks": 7,
+  "generators": 851,
+  "loads": 3142
+ },
+ "oracles": {
+  "nveCoverage": "not-supplied"
+ },
+ "checks": [
+  {
+   "id": "components",
+   "title": "Connected components (boundary buses excluded)",
+   "status": "pass",
+   "summary": "1 components (max 1); main component holds 100.0 % of ≥300 kV buses, 100.0 % of ≥132 kV buses, 100.0 % of load",
+   "metrics": {
+    "components": 1,
+    "componentSizes": [
+     989
+    ],
+    "busShare300kv": 1,
+    "busShare132kv": 1,
+    "loadShare": 1
+   },
+   "failures": []
+  },
+  {
+   "id": "bridges-300kv",
+   "title": "Bridges in the ≥300 kV network against the radial allow-list",
+   "status": "pass",
+   "summary": "81 bridges, 0 not explained by the radial allow-list (max 0)",
+   "metrics": {
+    "bridges": 81,
+    "unexplainedBridges": 0
+   },
+   "failures": []
+  },
+  {
+   "id": "articulation-points-300kv",
+   "title": "Articulation points in the ≥300 kV network against the radial allow-list",
+   "status": "pass",
+   "summary": "81 articulation points, 0 not explained (max 0)",
+   "metrics": {
+    "articulationPoints": 81,
+    "unexplainedArticulationPoints": 0
+   },
+   "failures": []
+  },
+  {
+   "id": "degree-one-300kv",
+   "title": "≥300 kV buses with at most one ≥300 kV branch",
+   "status": "pass",
+   "summary": "54 buses with degree ≤ 1, 0 not on the radial allow-list (max 0)",
+   "metrics": {
+    "degreeOneBuses": 54,
+    "unexplainedDegreeOneBuses": 0
+   },
+   "failures": []
+  },
+  {
+   "id": "voltage-mismatch",
+   "title": "Line voltage against terminal bus voltage (transformers excepted)",
+   "status": "pass",
+   "summary": "0 lines end at a bus of another voltage class (max 0)",
+   "metrics": {
+    "mismatchedLines": 0,
+    "lines": 1142
+   },
+   "failures": []
+  },
+  {
+   "id": "parallel-duplicates",
+   "title": "Branches built twice from the same OSM ways",
+   "status": "pass",
+   "summary": "0 duplicate branches in 0 way sets (max 0); 17 way sets split into segments at a tee or a station inside the way",
+   "metrics": {
+    "duplicateBranches": 0,
+    "duplicateWaySets": 0,
+    "segmentedWaySets": 17,
+    "segmentBranches": 34,
+    "linesWithoutWayIds": 0
+   },
+   "failures": []
+  },
+  {
+   "id": "off-terminal-ends",
+   "title": "Mapped line ends outside their terminal station",
+   "status": "pass",
+   "summary": "0 of 2270 measured line ends lie outside their terminal (max 0)",
+   "metrics": {
+    "offTerminalEnds": 0,
+    "measuredEnds": 2270,
+    "unmeasuredEnds": 0,
+    "boundaryEnds": 8
+   },
+   "failures": []
+  },
+  {
+   "id": "attachment-distance",
+   "title": "Generator and load attachment distance by kind",
+   "status": "pass",
+   "summary": "0 assets attached beyond their kind limit (max 0); 12 generators and 18 loads beyond it on a curated regional route",
+   "metrics": {
+    "violations": 0,
+    "generatorViolations": 0,
+    "curatedRegionalRoutes": 12,
+    "curatedRegionalSupplies": 18,
+    "maximumGeneratorKm": 64.9,
+    "maximumLoadKm": 84.72
+   },
+   "failures": []
+  },
+  {
+   "id": "generation-by-area",
+   "title": "Generation capacity per kind and price area against registry totals",
+   "status": "pass",
+   "summary": "0 deviations; 0 MW without price area; solar/thermal/nuclear have no registry reference and are reported only",
+   "metrics": {
+    "hydro.NO1.modelMw": 3778.9,
+    "hydro.NO1.referenceMw": 3777.7,
+    "hydro.NO2.modelMw": 11623.9,
+    "hydro.NO2.referenceMw": 11585,
+    "hydro.NO3.modelMw": 4789.9,
+    "hydro.NO3.referenceMw": 4787.8,
+    "hydro.NO4.modelMw": 5482.6,
+    "hydro.NO4.referenceMw": 5516.3,
+    "hydro.NO5.modelMw": 8376.5,
+    "hydro.NO5.referenceMw": 8356.8,
+    "wind.NO1.modelMw": 384.7,
+    "wind.NO1.referenceMw": 384.7,
+    "wind.NO2.modelMw": 1419.9,
+    "wind.NO2.referenceMw": 1427,
+    "wind.NO3.modelMw": 2090.9,
+    "wind.NO3.referenceMw": 2107.8,
+    "wind.NO4.modelMw": 1159.3,
+    "wind.NO4.referenceMw": 1159.3,
+    "wind.NO5.modelMw": 0,
+    "wind.NO5.referenceMw": 0,
+    "solar.unreferencedMw": 0,
+    "thermal.unreferencedMw": 225,
+    "nuclear.unreferencedMw": 0,
+    "unassignedMw": 0
+   },
+   "failures": []
+  },
+  {
+   "id": "load-by-area",
+   "title": "Load per price area against the reference hour",
+   "status": "pass",
+   "summary": "model 22867.7 MW vs reference 22882.899999999998 MW at 2026-01-12T08:00:00+01:00; 0 deviations",
+   "metrics": {
+    "NO1.modelMw": 7255.2,
+    "NO1.referenceMw": 7238.7,
+    "NO2.modelMw": 5851.1,
+    "NO2.referenceMw": 5817.4,
+    "NO3.modelMw": 4255.5,
+    "NO3.referenceMw": 4262.9,
+    "NO4.modelMw": 3039.7,
+    "NO4.referenceMw": 3047.1,
+    "NO5.modelMw": 2466.2,
+    "NO5.referenceMw": 2516.8,
+    "totalModelMw": 22867.7,
+    "totalReferenceMw": 22882.899999999998
+   },
+   "failures": []
+  },
+  {
+   "id": "golden-substations",
+   "title": "Golden substations present at their voltage, in the main component, with their degree",
+   "status": "pass",
+   "summary": "37/37 present, 37/37 in the main component, 37/37 with their expected degree",
+   "metrics": {
+    "total": 37,
+    "present": 37,
+    "inMainComponent": 37,
+    "degreeMet": 37
+   },
+   "failures": []
+  },
+  {
+   "id": "golden-corridors",
+   "title": "Golden corridors as connected paths with their circuits",
+   "status": "pass",
+   "summary": "25/25 connected, 25/25 with their circuits",
+   "metrics": {
+    "total": 25,
+    "connected": 25,
+    "circuitsMet": 25
+   },
+   "failures": []
+  },
+  {
+   "id": "golden-excluded-corridors",
+   "title": "Corridors that must not be energised (under construction or decommissioned)",
+   "status": "pass",
+   "summary": "1/1 correctly absent",
+   "metrics": {
+    "total": 1,
+    "energised": 0
+   },
+   "failures": []
+  },
+  {
+   "id": "golden-interconnectors",
+   "title": "Golden interconnectors as boundary connections or HVDC links",
+   "status": "pass",
+   "summary": "14/14 present",
+   "metrics": {
+    "total": 14,
+    "present": 14
+   },
+   "failures": []
+  },
+  {
+   "id": "curations",
+   "title": "Curated corrections applied, unexpired, and within the curated-length budget",
+   "status": "pass",
+   "summary": "31/31 applied, 0 unused, 0 expired, 0 violated; curated ≥300 kV length 0.17 % (max 2.00 %)",
+   "metrics": {
+    "total": 31,
+    "applied": 31,
+    "unused": 0,
+    "expired": 0,
+    "violated": 0,
+    "curatedKm300kv": 15.626,
+    "curatedShare300kv": 0.0017297420128420877
+   },
+   "failures": []
+  }
+ ],
+ "curations": [
+  {
+   "id": "nygard-plant-terminal",
+   "kind": "add-terminal",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "jostedal-plant-terminal",
+   "kind": "add-terminal",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "boris-gleb-kirkenes-out-of-service",
+   "kind": "exclude-feature",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "nordlink-cable-in-service",
+   "kind": "assert-in-service",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "skagerrak-1-kristiansand-ways",
+   "kind": "add-interconnector-ways",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "skagerrak-2-kristiansand-ways",
+   "kind": "add-interconnector-ways",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "johan-sverdrup-power-from-shore",
+   "kind": "offshore-load",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "valhall-power-from-shore",
+   "kind": "offshore-load",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "tunnsjo-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "linvasselv-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "storaselva-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "sagfossen-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "dividalen-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "fakken-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "kjollefjord-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "havoygavlen-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "hundhammerfjellet-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "donnesfjord-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "ytre-vikna-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "marker-regional-route",
+   "kind": "attach-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "skillemoen-variable-reactor",
+   "kind": "add-shunt-device",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "rost-regional-supply",
+   "kind": "attach-load-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "leka-regional-supply",
+   "kind": "attach-load-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "karasjok-regional-supply",
+   "kind": "attach-load-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "kautokeino-regional-supply",
+   "kind": "attach-load-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "loppa-regional-supply",
+   "kind": "attach-load-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "nordkapp-regional-supply",
+   "kind": "attach-load-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "gamvik-regional-supply",
+   "kind": "attach-load-via-regional-grid",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "oyfjellet-marka-duplex",
+   "kind": "set-line-rating",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "ertsmyra-transformer-300mva",
+   "kind": "set-transformer-rating",
+   "status": "applied",
+   "reasons": []
+  },
+  {
+   "id": "follo-lambertseter-47kv-equivalent",
+   "kind": "add-network-equivalent",
+   "status": "applied",
+   "reasons": []
+  }
+ ]
+}

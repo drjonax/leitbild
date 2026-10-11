@@ -1,0 +1,526 @@
+{
+ "meta": {
+  "created": "2026-10-10T20:05:09+02:00",
+  "lastUpdated": "2026-06-17T00:27:21+02:00"
+ },
+ "links": {
+  "self": "https://api.elhub.no/energy-data/v0/price-areas?dataset=CONSUMPTION_PER_GROUP_MBA_HOUR&startDate=2026-01-12T00%3A00%3A00%2B01%3A00&endDate=2026-01-19T00%3A00%3A00%2B01%3A00"
+ },
+ "data": [
+  {
+   "type": "price-areas",
+   "id": "*",
+   "attributes": {
+    "name": "*",
+    "eic": "*",
+    "country": "NO",
+    "consumptionPerGroupMbaHour": []
+   }
+  },
+  {
+   "type": "price-areas",
+   "id": "NO1",
+   "attributes": {
+    "name": "NO1",
+    "eic": "10YNO-1--------2",
+    "country": "NO",
+    "consumptionPerGroupMbaHour": [
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 188628.52,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 110845
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 189300.66,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 110845
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "household",
+      "quantityKwh": 3777336.2,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 1120032
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "household",
+      "quantityKwh": 3717427.5,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 1120032
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "primary",
+      "quantityKwh": 80642,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 7655
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "primary",
+      "quantityKwh": 80788.82,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 7655
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 1141658.8,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 15177
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 1021115.7,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 15177
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 2055647.8,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 97335
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO1",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 2230068,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 97335
+     }
+    ]
+   }
+  },
+  {
+   "type": "price-areas",
+   "id": "NO2",
+   "attributes": {
+    "name": "NO2",
+    "eic": "10YNO-2--------T",
+    "country": "NO",
+    "consumptionPerGroupMbaHour": [
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 144490.3,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 106580
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 144523.55,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 106580
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "household",
+      "quantityKwh": 1969742.1,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 632724
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "household",
+      "quantityKwh": 1933889.8,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 632724
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "primary",
+      "quantityKwh": 117459.68,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 5824
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "primary",
+      "quantityKwh": 120307.89,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 5824
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 2422475.5,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 12722
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 2453297.8,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 12722
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 1075005.8,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 75119
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO2",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 1165367.6,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 75119
+     }
+    ]
+   }
+  },
+  {
+   "type": "price-areas",
+   "id": "NO3",
+   "attributes": {
+    "name": "NO3",
+    "eic": "10YNO-3--------J",
+    "country": "NO",
+    "consumptionPerGroupMbaHour": [
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 79843.016,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 62800
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 80246.32,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 62800
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "household",
+      "quantityKwh": 1141834.9,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 410170
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "household",
+      "quantityKwh": 1125241,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 410170
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "primary",
+      "quantityKwh": 122098.7,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 10768
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "primary",
+      "quantityKwh": 126511.9,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 10768
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 2016388.9,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 9296
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 2037493.9,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 9296
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 825296.94,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 53159
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO3",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 893415.75,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 53159
+     }
+    ]
+   }
+  },
+  {
+   "type": "price-areas",
+   "id": "NO4",
+   "attributes": {
+    "name": "NO4",
+    "eic": "10YNO-4--------9",
+    "country": "NO",
+    "consumptionPerGroupMbaHour": [
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 71820.83,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 44418
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 71955.016,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 44418
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "household",
+      "quantityKwh": 861999.2,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 246468
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "household",
+      "quantityKwh": 854681.1,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 246468
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "primary",
+      "quantityKwh": 76918.8,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 3980
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "primary",
+      "quantityKwh": 78981.46,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 3980
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 1304286.2,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 6145
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 1325815.8,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 6145
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 668595.6,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 40415
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO4",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 715707.2,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 40415
+     }
+    ]
+   }
+  },
+  {
+   "type": "price-areas",
+   "id": "NO5",
+   "attributes": {
+    "name": "NO5",
+    "eic": "10Y1001A1001A48H",
+    "country": "NO",
+    "consumptionPerGroupMbaHour": [
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 81906.58,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 48442
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "cabin",
+      "quantityKwh": 82194.2,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 48442
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "household",
+      "quantityKwh": 695970.2,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 260334
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "household",
+      "quantityKwh": 690199.44,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 260334
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "primary",
+      "quantityKwh": 19098.93,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 1983
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "primary",
+      "quantityKwh": 20515.88,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 1983
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 1212793.9,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 5007
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "secondary",
+      "quantityKwh": 1223775.2,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 5007
+     },
+     {
+      "startTime": "2026-01-12T07:00:00+01:00",
+      "endTime": "2026-01-12T08:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 458177.9,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 28255
+     },
+     {
+      "startTime": "2026-01-12T08:00:00+01:00",
+      "endTime": "2026-01-12T09:00:00+01:00",
+      "priceArea": "NO5",
+      "consumptionGroup": "tertiary",
+      "quantityKwh": 500135.66,
+      "lastUpdatedTime": "2026-06-16T22:39:01+02:00",
+      "meteringPointCount": 28255
+     }
+    ]
+   }
+  }
+ ]
+}

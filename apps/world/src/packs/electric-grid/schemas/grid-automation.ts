@@ -1,7 +1,9 @@
 import { z } from 'zod'
+import { alarmsSchema, branchProtectionSchema } from './grid-protection-automation.ts'
 
 // Automation Definition for island frequency control: swing integration, FCR-N/FCR-D,
-// aFRR, mFRR, LFDD, storage response and generator frequency protection. Frequencies are
+// aFRR, mFRR, LFDD, storage response, generator frequency protection, branch protection and
+// alarm limits (grid-protection-automation.ts). Frequencies are
 // absolute Hz on the declared nominal frequency; every field names its unit.
 
 const hz = z.number().finite().positive()
@@ -34,7 +36,8 @@ const directionalRequirementSchema = z.object({
 }).strict()
 
 export const automationSectionSchema = z.enum([
-  'simulation', 'swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection',
+  'simulation', 'swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection', 'synchroCheck',
+  'branchProtection', 'alarms',
 ])
 
 const sourceReferenceSchema = z.object({
@@ -110,6 +113,9 @@ const mfrrSchema = z.discriminatedUnion('enabled', [
     afrrUtilisationThresholdFraction: positiveFraction,
     /** Time the utilisation must persist before mFRR is activated. */
     sustainedSeconds: seconds,
+    /** From activation to the start of the provider's ramp: output holds meanwhile. */
+    preparationSeconds: nonNegativeSeconds,
+    /** From activation to full delivery, preparation included. */
     fullActivationSeconds: seconds,
     minimumActivationMw: z.number().finite().positive(),
     requirement: directionalRequirementSchema,
@@ -194,6 +200,13 @@ const generatorProtectionSchema = z.object({
   return new Set(ids).size === ids.length && !ids.includes('rocof')
 }, 'generator protection element ids must be unique and must not be "rocof"')
 
+const synchroCheckSchema = z.object({
+  /** Largest frequency difference between two energised islands at which a branch may join them. */
+  maximumFrequencyDifferenceHz: hz,
+  /** Largest voltage-angle difference across an open branch whose ends are already in one energised island (loop closing). */
+  maximumAngleDifferenceDegrees: z.number().finite().positive().max(180),
+}).strict()
+
 export const gridAutomationSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -208,6 +221,9 @@ export const gridAutomationSchema = z.object({
   lfdd: lfddSchema,
   storage: storageSchema,
   generatorProtection: generatorProtectionSchema,
+  synchroCheck: synchroCheckSchema,
+  branchProtection: branchProtectionSchema,
+  alarms: alarmsSchema,
 }).strict().superRefine((value, context) => {
   const nominal = value.swing.nominalFrequencyHz
   const issue = (message: string, path: ReadonlyArray<string | number>): void => {
@@ -223,6 +239,7 @@ export const gridAutomationSchema = z.object({
     if (Math.abs(cycles - Math.round(cycles)) > 1e-9) issue('aFRR cycle must be a whole number of sub-steps', ['afrr', 'cycleSeconds'])
   }
   if (value.mfrr.enabled && !value.afrr.enabled) issue('mFRR activation is driven by aFRR utilisation and requires aFRR', ['mfrr', 'enabled'])
+  if (value.mfrr.enabled && value.mfrr.preparationSeconds >= value.mfrr.fullActivationSeconds) issue('mFRR preparation must end before full activation', ['mfrr', 'preparationSeconds'])
   value.lfdd.stages.forEach((stage, index) => {
     if (stage.thresholdHz >= value.fcrD.up.fullHz) issue('LFDD stages must lie below full FCR-D up activation', ['lfdd', 'stages', index, 'thresholdHz'])
   })

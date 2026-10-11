@@ -1,15 +1,20 @@
 import { z } from 'zod'
+import { gridOperatingPointStateShape, refineGridOperatingPointState } from './schemas/grid-operating-point.ts'
 
 export const gridModelSelectionSchema = z.object({
   ref: z.string().min(1),
 }).strict()
 export type GridModelSelection = z.infer<typeof gridModelSelectionSchema>
 
+/** Operating Point v2 fields, validated against the compiled model, plus two the current runtime applies globally. */
 export const gridOperatingPointOverridesSchema = z.object({
-  loadScale: z.number().finite().positive().optional(),
+  ...gridOperatingPointStateShape,
+  loadScale: gridOperatingPointStateShape.loadScale.optional(),
+  /** Scales every generator's availability; Operating Point v2 sets availability per generator. */
   generationAvailabilityScale: z.number().finite().nonnegative().optional(),
+  /** Initial charge of every storage asset; Grid Model v2 has no storage. */
   storageStateOfCharge: z.number().finite().min(0).max(1).optional(),
-}).strict()
+}).strict().superRefine(refineGridOperatingPointState)
 export type GridOperatingPointOverrides = z.infer<typeof gridOperatingPointOverridesSchema>
 
 export const gridOperatingPointSelectionSchema = z.object({

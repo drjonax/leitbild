@@ -1,0 +1,1639 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "nygard-plant-terminal",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          6.0648179,
+          60.8910458
+        ]
+      },
+      "properties": {
+        "kind": "add-terminal",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid audit (lane DA1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/549836008",
+          "way/549836007",
+          "relation/7802012"
+        ],
+        "wayOsmId": "way/549836008",
+        "substationOsmId": "way/549836007",
+        "remoteSubstationOsmId": "relation/7802012",
+        "voltageKv": 300,
+        "reason": "The 300 kV line from Modalen ends at node 5311382733 by the underground Nygard pumped-storage plant, 162 m outside the mapped plant outline, so open data leaves the plant without a grid terminal.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7B0775A1E2-1252-4B8F-A85C-8E35157452E0%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+            "ref": "{0775A1E2-1252-4B8F-A85C-8E35157452E0}",
+            "note": "NVE Nettanlegg5 transmission line \"S 300 Nygard-Modalen\" 300 kV"
+          },
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 827",
+            "note": "NVE hydropower plant Nygard, 56 MW, Modalen"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/549836008",
+            "ref": "way/549836008",
+            "note": "line \"Nygard pumpekraftverk - Modalen\", version 3 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/549836007",
+            "ref": "way/549836007",
+            "note": "plant \"Nygard pumpekraftverk\", location=underground"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "mapped-corridor-present",
+            "fromSubstationOsmId": "way/549836007",
+            "toSubstationOsmId": "relation/7802012",
+            "voltageKv": 300
+          },
+          {
+            "kind": "review-by",
+            "date": "2027-10-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "jostedal-plant-terminal",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          7.2870254,
+          61.5261312
+        ]
+      },
+      "properties": {
+        "kind": "add-terminal",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid audit (lane DA1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/547209001",
+          "way/549798912",
+          "way/845807670"
+        ],
+        "wayOsmId": "way/547209001",
+        "substationOsmId": "way/549798912",
+        "remoteSubstationOsmId": "way/845807670",
+        "voltageKv": 300,
+        "reason": "The 300 kV Jostedal – Leirdøla line ends at node 5287283393, where NVE places the Jostedal station, 1.27 km from the outline of the underground Jostedal plant; OSM maps no station there.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid%3D%27%7BB9F0D20E-B279-42B0-902C-323C8E43A2C3%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+            "ref": "{B9F0D20E-B279-42B0-902C-323C8E43A2C3}",
+            "note": "NVE Nettanlegg5 station \"Jostedal\" at 7.2871, 61.5262"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/0/query?where=globalid%3D%27%7BACAB4395-4247-40F1-BE7C-251C3170CD7E%7D%27&outFields=navn,spenning_kv,drifter,globalid&returnGeometry=false&f=json",
+            "ref": "{ACAB4395-4247-40F1-BE7C-251C3170CD7E}",
+            "note": "NVE Nettanlegg5 transmission line \"Jostedal - Leirdøla\" 300 kV"
+          },
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 547",
+            "note": "NVE hydropower plant Jostedal, 288 MW, Luster"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/547209001",
+            "ref": "way/547209001",
+            "note": "line \"Jostedal - Leirdøla\", version 2 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/549798912",
+            "ref": "way/549798912",
+            "note": "plant \"Jostedal kraftverk\", location=underground"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/845807670",
+            "ref": "way/845807670",
+            "note": "substation \"Leirdøla trafostasjon\" 300/66 kV, operator Statnett: the Leirdøla station of the 2026-10-08 extract (record first written against relation/7814748)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "mapped-corridor-present",
+            "fromSubstationOsmId": "way/549798912",
+            "toSubstationOsmId": "way/845807670",
+            "voltageKv": 300
+          },
+          {
+            "kind": "review-by",
+            "date": "2027-10-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "boris-gleb-kirkenes-out-of-service",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          30.1465402,
+          69.6518627
+        ]
+      },
+      "properties": {
+        "kind": "exclude-feature",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid audit (lane DA1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/585715856",
+          "way/585715857",
+          "way/585715883"
+        ],
+        "reason": "Statnett set the capacity of the Kirkenes – Boris Gleb connection to Russia to zero indefinitely on 2022-03-02; the model has no Russian boundary and must not carry this line.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2022/statnett-setter-kapasitet-mot-russland-til-null/",
+            "ref": "Statnett setter kapasitet mot Russland til null (2022-03-02)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/585715883",
+            "ref": "way/585715883",
+            "note": "line \"Boris Gleb - Kirkenes\" 150 kV, version 3 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/585715857",
+            "ref": "way/585715857",
+            "note": "line \"Boris Gleb - Kirkenes\" 150 kV, version 2 (checked 2026-10-10)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/585715856",
+            "ref": "way/585715856",
+            "note": "line \"Boris Gleb - Kirkenes\" 132 kV, version 2 (checked 2026-10-10)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "nordlink-cable-in-service",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          6.6117096,
+          58.1831372
+        ]
+      },
+      "properties": {
+        "kind": "assert-in-service",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/370147304"
+        ],
+        "reason": "The NordLink sea cable (Tonstad – Wilster, 1,400 MW) has been in operation since Statnett took it over from the suppliers on 2021-03-31; OpenStreetMap still tags the cable way construction=yes, which would leave the link out of the model.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/en/about-statnett/news-and-press-releases/news-archive-2021/nordlink-in-operation2/",
+            "ref": "Statnett news 2021-05-11 \"NordLink in operation\"",
+            "note": "\"NordLink is now in the operation phase\"; takeover from the suppliers 31.03.2021; capacity up to 1400 MW between Tonstad and Wilster"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/370147304",
+            "ref": "way/370147304",
+            "note": "cable \"NordLink\" 525 kV DC, operator Statnett; TenneT, tagged construction (OSM extract 2026-10-08)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "skagerrak-1-kristiansand-ways",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          7.8999047,
+          58.2613987
+        ]
+      },
+      "properties": {
+        "kind": "add-interconnector-ways",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/1525480862"
+        ],
+        "interconnectorId": "hvdc:skagerrak-1",
+        "osmWayIds": [
+          "way/1525480862"
+        ],
+        "reason": "A 250 kV DC way named Skagerrak 1 at the Kristiansand converter was mapped after the 2026-05-28 extract the interconnector table was curated from; without it the Skagerrak 1 route no longer reaches its converter in the 2026-10-08 extract.",
+        "evidence": [
+          {
+            "url": "https://www.openstreetmap.org/way/1525480862",
+            "ref": "way/1525480862",
+            "note": "line \"Skagerrak 1\" 250 kV DC, operator Statnett (OSM extract 2026-10-08)"
+          },
+          {
+            "url": "https://www.statnett.no/om-statnett/nyheter-og-pressemeldinger/nyhetsarkiv-2024/melder-reinvestering-av-sk1-og-sk2/",
+            "ref": "Statnett news 2024-09-26 \"Melder reinvestering av SK1 og SK2\"",
+            "note": "SK1 and SK2 in operation since 1976 and 1977, together 500 MW; kept in operation while technically and economically justified"
+          },
+          {
+            "url": "https://www.hitachienergy.com/uk-ie/en/news-and-events/customer-stories/skagerrak",
+            "ref": "Hitachi Energy customer story Skagerrak",
+            "note": "Pole 1 and 2: 250 kV HVDC Classic, 500 MW, Kristiansand – Tjele"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "skagerrak-2-kristiansand-ways",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          7.9000749,
+          58.2610674
+        ]
+      },
+      "properties": {
+        "kind": "add-interconnector-ways",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/1525480861",
+          "way/1525480863"
+        ],
+        "interconnectorId": "hvdc:skagerrak-2",
+        "osmWayIds": [
+          "way/1525480861",
+          "way/1525480863"
+        ],
+        "reason": "Two 250 kV DC ways named Skagerrak 2 at the Kristiansand converter were mapped after the 2026-05-28 extract the interconnector table was curated from; without them the Skagerrak 2 route no longer reaches its converter in the 2026-10-08 extract.",
+        "evidence": [
+          {
+            "url": "https://www.openstreetmap.org/way/1525480861",
+            "ref": "way/1525480861",
+            "note": "line \"Skagerrak 2\" 250 kV DC, operator Statnett (OSM extract 2026-10-08)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/1525480863",
+            "ref": "way/1525480863",
+            "note": "line \"Skagerrak 2\" 250 kV DC, operator Statnett (OSM extract 2026-10-08)"
+          },
+          {
+            "url": "https://www.statnett.no/vare-prosjekter/region-sor/skagerak-1-og-2/",
+            "ref": "Statnett project page \"Skagerak 1 og 2\"",
+            "note": "SK1 and SK2 expected in operation until 2026; Statnett and Energinet operate four HVDC links between Norway and Denmark"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "johan-sverdrup-power-from-shore",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.3321028,
+          59.0874142
+        ]
+      },
+      "properties": {
+        "kind": "offshore-load",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/640019134",
+          "way/1112544041",
+          "way/1112544043"
+        ],
+        "siteId": "site:johan-sverdrup",
+        "reason": "The 80 kV DC cables from the Haugsneset converter supply the Johan Sverdrup field offshore; the field is no grid area, so the model carries its demand as the site:johan-sverdrup load at Haugsneset and no HVDC branch.",
+        "evidence": [
+          {
+            "url": "https://www.equinor.com/news/archive/2018-10-09-johan-sverdrup-powered-shore",
+            "ref": "Equinor news 2018-10-09",
+            "note": "onshore converter at Haugsneset close to Kårstø; phase 1 100 MW, phase 2 adds 200 MW (300 MW in total)"
+          },
+          {
+            "url": "https://www.equinor.com/news/archive/2018-10-04-johan-sverdrup-power-cables-phase2",
+            "ref": "Equinor news 2018-10-04",
+            "note": "phase 2 cables for 200 MW/80 kV from Haugsneset in Tysvær, also powering Utsira High"
+          },
+          {
+            "url": "https://www.hitachienergy.com/content/case-studies/en/johan-sverdrup",
+            "ref": "Hitachi Energy case study Johan Sverdrup",
+            "note": "two ±80 kV 100 MW HVDC Light converter stations, power from shore, 2019"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/640019134",
+            "ref": "way/640019134",
+            "note": "cable \"Johan Sverdrup HVDC 1+2\" 80 kV DC (OSM extract 2026-10-08)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "valhall-power-from-shore",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          6.7746229,
+          58.0768069
+        ]
+      },
+      "properties": {
+        "kind": "offshore-load",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/641637113",
+          "way/641637114"
+        ],
+        "siteId": "site:valhall",
+        "reason": "The 150 kV DC cable from the Lista converter supplies the Valhall field offshore; the field is no grid area, so the model carries its demand as the site:valhall load at Lista and no HVDC branch.",
+        "evidence": [
+          {
+            "url": "https://www.hitachienergy.com/content/case-studies/en/valhall",
+            "ref": "Hitachi Energy case study Valhall",
+            "note": "power from shore for BP Norway, 78 MW, 292 km, DC voltage 0 to -150 kV, 2011"
+          },
+          {
+            "url": "https://akerbp.com/en/plugging-wells-on-valhall-using-power-from-shore/",
+            "ref": "Aker BP, Valhall power from shore",
+            "note": "\"The Valhall field receives power from Lista through a 294-km long subsea cable\""
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/641637114",
+            "ref": "way/641637114",
+            "note": "cable \"Lista - Valhall\" 150 kV DC (OSM extract 2026-10-08)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "tunnsjo-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          13.6417302,
+          64.6950633
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/8488332"
+        ],
+        "generatorId": "generator:nve-hydro-457",
+        "substationOsmId": "relation/8488332",
+        "voltageKv": 132,
+        "viaOsmIds": [
+          "way/612378690",
+          "way/612378680",
+          "relation/8488332"
+        ],
+        "networkKm": 42.7,
+        "reason": "Tunnsjø (30.4 MW, NVE 457) lies 37.9 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its mapped 66 kV route of 2 ways reaches Tunnsjødal trafostasjon after 42.7 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 457",
+            "note": "NVE hydropower plant Tunnsjø, 30.4 MW, NO4"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/612378690",
+            "ref": "way/612378690",
+            "note": "first way of the mapped route (Tunnsjødal - Tunnsjø, 66 kV); OSM extract 2026-10-08"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8488332",
+            "ref": "relation/8488332",
+            "note": "Tunnsjødal trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "linvasselv-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          13.7862255,
+          64.6524932
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/8488332"
+        ],
+        "generatorId": "generator:nve-hydro-245",
+        "substationOsmId": "relation/8488332",
+        "voltageKv": 132,
+        "viaOsmIds": [
+          "way/612378664",
+          "way/612378690",
+          "way/612378680",
+          "relation/8488332"
+        ],
+        "networkKm": 50.5,
+        "reason": "Linvasselv (25 MW, NVE 245) lies 45.5 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its mapped 66 kV route of 3 ways reaches Tunnsjødal trafostasjon after 50.5 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 245",
+            "note": "NVE hydropower plant Linvasselv, 25 MW, NO4"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/612378664",
+            "ref": "way/612378664",
+            "note": "first way of the mapped route (Tunnsjø - Linnvasselv, 66 kV); OSM extract 2026-10-08"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8488332",
+            "ref": "relation/8488332",
+            "note": "Tunnsjødal trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "storaselva-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          12.6173456,
+          64.2797713
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/8492197"
+        ],
+        "generatorId": "generator:nve-hydro-1934",
+        "substationOsmId": "relation/8492197",
+        "voltageKv": 132,
+        "viaOsmIds": [
+          "way/613630125",
+          "way/613630121",
+          "way/1160622307",
+          "way/613630129",
+          "way/613630130",
+          "relation/8492197"
+        ],
+        "networkKm": 54.8,
+        "reason": "Storåselva (25.5 MW, NVE 1934) lies 30.3 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its mapped 66 kV route of 4 ways through Vegset koblingspunkt reaches Nedre Fiskumfoss trafostasjon after 54.8 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 1934",
+            "note": "NVE hydropower plant Storåselva, 25.5 MW, NO3"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/613630125",
+            "ref": "way/613630125",
+            "note": "first way of the mapped route (Storåselva produksjonsradial, 66 kV); OSM extract 2026-10-08"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8492197",
+            "ref": "relation/8492197",
+            "note": "Nedre Fiskumfoss trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "sagfossen-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          15.8600277,
+          67.9046014
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/587793855"
+        ],
+        "generatorId": "generator:nve-hydro-354",
+        "substationOsmId": "way/587793855",
+        "voltageKv": 132,
+        "viaOsmIds": [
+          "way/689766857",
+          "way/689615264",
+          "way/689615252",
+          "way/689615253",
+          "way/689615259",
+          "way/689615257",
+          "way/689615263",
+          "way/689615261",
+          "way/587793855"
+        ],
+        "networkKm": 35.2,
+        "reason": "Sagfossen (11.3 MW, NVE 354) lies 30.0 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its mapped 66 kV route of 8 ways reaches Kjøpsvik trafostasjon after 35.2 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 354",
+            "note": "NVE hydropower plant Sagfossen, 11.3 MW, NO4"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/689766857",
+            "ref": "way/689766857",
+            "note": "first way of the mapped route (Botelvatn - Vassmo, 66 kV); OSM extract 2026-10-08"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/587793855",
+            "ref": "way/587793855",
+            "note": "Kjøpsvik trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "dividalen-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          19.5605569,
+          68.8755561
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/8283080"
+        ],
+        "generatorId": "generator:nve-hydro-58",
+        "substationOsmId": "relation/8283080",
+        "voltageKv": 132,
+        "viaOsmIds": [],
+        "networkKm": 40.0,
+        "reason": "Dividalen (26 MW, NVE 58) lies 37.7 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its 66 kV regional route in NVE Nettanlegg5 (3 line segments) reaches Storsteinnes trafostasjon after 40.0 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/Powerplant/GetHydroPowerPlantsInOperation",
+            "ref": "VannKraftverkID 58",
+            "note": "NVE hydropower plant Dividalen, 26 MW, NO4"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/1/query?where=globalid+IN+%28%27%7B4B962BF3-F110-4CC6-9CFB-30D9BBEEAB4B%7D%27%2C%27%7BC05D7813-E040-4672-BCCD-E7B079F0A87E%7D%27%2C%27%7BC79F13FA-D330-4108-9457-A70A6D51D9E8%7D%27%29&outFields=navn%2Cspenning_kv%2Cdrifter%2Cglobalid&returnGeometry=false&f=json",
+            "ref": "Nettanlegg5 layer 1: 3 segments",
+            "note": "NVE regional overhead lines of the route, 66 kV"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8283080",
+            "ref": "relation/8283080",
+            "note": "Storsteinnes trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fakken-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.1076293,
+          70.1023023
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/8281954"
+        ],
+        "generatorId": "generator:nve-wind-9333",
+        "substationOsmId": "relation/8281954",
+        "voltageKv": 132,
+        "viaOsmIds": [
+          "way/671935881",
+          "way/671937479",
+          "way/664705275",
+          "relation/9342010",
+          "way/671736681",
+          "way/671736682",
+          "way/671736684",
+          "way/671736683",
+          "way/134074802",
+          "relation/8281954"
+        ],
+        "networkKm": 75.2,
+        "reason": "Fakken (54 MW, NVE 9333) lies 56.6 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its mapped 66 kV route of 8 ways through Ringvassøy trafostasjon reaches Kvaløya trafostasjon after 75.2 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+            "ref": "AnleggsNr 9333",
+            "note": "NVE wind farm Fakken, 54 MW, NO4"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/671935881",
+            "ref": "way/671935881",
+            "note": "first way of the mapped route (Ringvassøy - Fakken, 66 kV); OSM extract 2026-10-08"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8281954",
+            "ref": "relation/8281954",
+            "note": "Kvaløya trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "kjollefjord-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          27.2681627,
+          70.9219753
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/552672002"
+        ],
+        "generatorId": "generator:nve-wind-9574",
+        "substationOsmId": "way/552672002",
+        "voltageKv": 132,
+        "viaOsmIds": [
+          "way/300674558",
+          "way/552672002"
+        ],
+        "networkKm": 88.4,
+        "reason": "Kjøllefjord (39.1 MW, NVE 9574) lies 60.7 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its mapped 66 kV route of 1 ways reaches Adamselv trafostasjon after 88.4 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+            "ref": "AnleggsNr 9574",
+            "note": "NVE wind farm Kjøllefjord, 39.1 MW, NO4"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/300674558",
+            "ref": "way/300674558",
+            "note": "first way of the mapped route (Adamselv - Kjøllefjord, 66 kV); OSM extract 2026-10-08"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/552672002",
+            "ref": "way/552672002",
+            "note": "Adamselv trafostasjon, the ≥132 kV station the route reaches"
+          },
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/200103742/1027150",
+            "ref": "NVE 200103742-86 (2005-09-22)",
+            "note": "66 kV connection: up to 5.9 km from Gartefjellet transformer station to Kjøllefjord transformer station"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "havoygavlen-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          24.5892833,
+          71.0119025
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/586116281"
+        ],
+        "generatorId": "generator:nve-wind-9792",
+        "substationOsmId": "way/586116281",
+        "voltageKv": 132,
+        "viaOsmIds": [
+          "way/657056822",
+          "way/453122974",
+          "way/379153557",
+          "way/657035735",
+          "way/586116281"
+        ],
+        "networkKm": 82.9,
+        "reason": "Havøygavlen (40.8 MW, NVE 9792) lies 48.5 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its mapped 66 kV route of 3 ways through Smørfjord trafostasjon reaches Skaidi trafostasjon after 82.9 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+            "ref": "AnleggsNr 9792",
+            "note": "NVE wind farm Havøygavlen, 40.8 MW, NO4"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/657056822",
+            "ref": "way/657056822",
+            "note": "first way of the mapped route (Snefjord - Havøysund, 66 kV); OSM extract 2026-10-08"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/586116281",
+            "ref": "way/586116281",
+            "note": "Skaidi trafostasjon, the ≥132 kV station the route reaches"
+          },
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/048c0a9a-bec4-4397-aef1-2af136986aaa/202407064/3438868",
+            "ref": "NVE anleggskonsesjon 202407064-12 (2024-06-04)",
+            "note": "a 3.1 km 66 kV cable from Havøygavlen transformer station to Havøysund"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "hundhammerfjellet-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.3745579,
+          64.7574727
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/254428135"
+        ],
+        "generatorId": "generator:nve-wind-9794",
+        "substationOsmId": "way/254428135",
+        "voltageKv": 420,
+        "viaOsmIds": [
+          "way/613214458",
+          "way/1160649927",
+          "way/1160649926",
+          "way/613190262",
+          "way/1160649928",
+          "way/1160649929",
+          "way/1160649930",
+          "way/1160649931",
+          "relation/8494324",
+          "way/613181621",
+          "way/613181620",
+          "way/254428136",
+          "way/254428135"
+        ],
+        "networkKm": 52.7,
+        "reason": "Hundhammerfjellet (55 MW, NVE 9794) lies 36.5 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its mapped 66 kV route of 11 ways through Daltrøa trafostasjon reaches Namsos (Statnett) trafostasjon after 52.7 km, where the model attaches it at 420 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+            "ref": "AnleggsNr 9794",
+            "note": "NVE wind farm Hundhammerfjellet, 55 MW, NO3"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/613214458",
+            "ref": "way/613214458",
+            "note": "first way of the mapped route (Daltrøa - (Jøa) - (Abelvær) - Strand, 66 kV); OSM extract 2026-10-08"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/254428135",
+            "ref": "way/254428135",
+            "note": "Namsos (Statnett) trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "donnesfjord-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          22.4683803,
+          70.6370348
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/8277461"
+        ],
+        "generatorId": "generator:nve-wind-10097",
+        "substationOsmId": "relation/8277461",
+        "voltageKv": 132,
+        "viaOsmIds": [],
+        "networkKm": 94.5,
+        "reason": "Dønnesfjord (14.1 MW, NVE 10097) lies 45.9 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its 110 kV regional route in NVE Nettanlegg5 (6 line segments) reaches Kvalsund trafostasjon after 94.5 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+            "ref": "AnleggsNr 10097",
+            "note": "NVE wind farm Dønnesfjord, 14.1 MW, NO4"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/1/query?where=globalid+IN+%28%27%7BABF62F58-D066-4477-A97B-E8A2F7778761%7D%27%2C%27%7BD0BEA520-BCFD-44B2-A16F-73F871F45D3B%7D%27%2C%27%7BD1E93B94-698F-4EED-B454-1C446173F20C%7D%27%2C%27%7B6D346137-9106-4288-96EA-4EAE8143534F%7D%27%29&outFields=navn%2Cspenning_kv%2Cdrifter%2Cglobalid&returnGeometry=false&f=json",
+            "ref": "Nettanlegg5 layer 1: 4 segments",
+            "note": "NVE regional overhead lines of the route, 110 kV"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/2/query?where=globalid+IN+%28%27%7B564833A0-DA28-411D-979D-121A95A9296F%7D%27%2C%27%7B757FFF2B-B3E9-450F-8696-86136893232C%7D%27%29&outFields=navn%2Cspenning_kv%2Cdrifter%2Cglobalid&returnGeometry=false&f=json",
+            "ref": "Nettanlegg5 layer 2: 2 segments",
+            "note": "NVE sea cables of the route, 110 kV"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8277461",
+            "ref": "relation/8277461",
+            "note": "Kvalsund trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ytre-vikna-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          10.8888489,
+          64.9014818
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "way/612087812"
+        ],
+        "generatorId": "generator:nve-wind-9893",
+        "substationOsmId": "way/612087812",
+        "voltageKv": 132,
+        "viaOsmIds": [
+          "way/612129382",
+          "way/612129403",
+          "way/612129423",
+          "way/612129392",
+          "way/612129416",
+          "way/612129420",
+          "way/612101153",
+          "way/612101155",
+          "way/612087812"
+        ],
+        "networkKm": 73.5,
+        "reason": "Ytre Vikna (39.1 MW, NVE 9893) lies 57.2 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; its mapped 66 kV route of 7 ways through Rørvik trafostasjon reaches Årsandøy trafostasjon after 73.5 km, where the model attaches it at 132 kV.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+            "ref": "AnleggsNr 9893",
+            "note": "NVE wind farm Ytre Vikna, 39.1 MW, NO3"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/612129382",
+            "ref": "way/612129382",
+            "note": "first way of the mapped route (Dale - Rørvik, 66 kV); OSM extract 2026-10-08"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/612087812",
+            "ref": "way/612087812",
+            "note": "Årsandøy trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "marker-regional-route",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.7276605,
+          59.4870266
+        ]
+      },
+      "properties": {
+        "kind": "attach-via-regional-grid",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model build (lane MB1)",
+        "reviewedAt": "2026-10-10",
+        "targetOsmIds": [
+          "relation/8251802"
+        ],
+        "generatorId": "generator:nve-wind-10101",
+        "substationOsmId": "relation/8251802",
+        "voltageKv": 132,
+        "viaOsmIds": [],
+        "networkKm": 33.8,
+        "reason": "Marker (54 MW, NVE 10101) lies 31.8 km from the nearest ≥132 kV station, beyond the 30 km attachment radius; NVE registers the farm's 47 kV transformer station 4.3 km from Elvia's Ørje 47 kV station (the link is not in NVE's overhead-line layer, so a cable is assumed), and NVE's 47 kV overhead lines run 29.5 km from Ørje to Vammafossen, where the model attaches the farm at 132 kV. OpenStreetMap maps neither link.",
+        "evidence": [
+          {
+            "url": "https://api.nve.no/web/WindPowerplant/GetWindPowerPlantsInOperation",
+            "ref": "AnleggsNr 10101",
+            "note": "NVE wind farm Marker, 54 MW, NO1"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/4/query?where=globalid+IN+%28%27%7B2CF68B11-6007-4345-8B2A-D6EADA1E8006%7D%27%2C%27%7B54F5CC6C-DB42-48DD-AC36-A65B13A445B6%7D%27%2C%27%7B645ECCA6-5B66-47DA-BE79-D643A5DED3DA%7D%27%29&outFields=navn%2Cspenning_kv%2Cdrifter%2Cglobalid&returnGeometry=false&f=json",
+            "ref": "Nettanlegg5 layer 4: Marker vindpark, Ørje, Vammafossen",
+            "note": "NVE transformer stations: the farm's 47 kV station (MARKER VINDPARK AS), Ørje 47 kV (ELVIA AS) and Vammafossen 132 kV"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg5/MapServer/1/query?where=globalid+IN+%28%27%7BE3B11389-5C7C-448C-BEAF-052526A2CC4C%7D%27%2C%27%7BCD38ACD1-21EC-4D47-A603-9CCCB96536FC%7D%27%2C%27%7B38706D4F-B9CC-49B9-902F-5A62F871CC39%7D%27%29&outFields=navn%2Cspenning_kv%2Cdrifter%2Cglobalid&returnGeometry=false&f=json",
+            "ref": "Nettanlegg5 layer 1: 3 segments",
+            "note": "NVE 47 kV regional overhead lines (ELVIA AS) from Ørje to Vammafossen"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8251802",
+            "ref": "relation/8251802",
+            "note": "Vammafossen trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-10"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "skillemoen-variable-reactor",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          23.216037,
+          69.905141
+        ]
+      },
+      "properties": {
+        "kind": "add-shunt-device",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/883151328"
+        ],
+        "substationOsmId": "way/883151328",
+        "voltageKv": 420,
+        "device": "shunt-reactor",
+        "mvarAtNominalVoltage": -70,
+        "switchable": true,
+        "reason": "Skillemoen 420 kV has a variable shunt reactor of 70–150 MVAr on the line towards Balsfjord (in service with the station, December 2020); the model sets it at its 70 MVAr minimum for the reference hours (tap position not published) instead of the rule-inferred 23 MVAr. The ±250 MVAr STATCOM at Skillemoen is not modelled: Grid Model v2 has no controllable reactive device, and at both reference hours Skillemoen stays at 0.99–1.00 pu without it.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-nord/balsfjord-skaidi/bakgrunn-for-vedtak.pdf",
+            "ref": "NVE, Bakgrunn for vedtak (2015-06-30), p. 12",
+            "note": "variable shunt reactor 70–150 MVAr at Skillemoen, 420 kV"
+          },
+          {
+            "url": "https://norconsult.com/projects/skillemoen-substation",
+            "ref": "Norconsult, Skillemoen substation",
+            "note": "station energised December 2020"
+          },
+          {
+            "url": "https://www.hitachienergy.com/news-and-events/features/2021/04/no-siste-brikke-p-plass-i-statcom-leveransen-til-skillemoen",
+            "ref": "Hitachi Energy (2021-04-09)",
+            "note": "±250 MVAr STATCOM (SVC Light) at Skillemoen"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "rost-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          12.08,
+          67.5
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/154904137"
+        ],
+        "municipalityNr": "1856",
+        "substationOsmId": "way/154904137",
+        "voltageKv": 132,
+        "routeKm": 81.0,
+        "reason": "Røst is supplied from Værøy over the 24 kV Værøy – Røst sea cable (Lofotkraft, 2009), and Værøy from the Lofoten 22 kV network that Solbjørn 132/22 kV feeds; the mapped distribution route from Røst to Solbjørn is 81.0 km (NVE Nettanlegg4, layers 2–3).",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 3, sea cable 'VÆRØY - RØST' (Lofotkraft AS, 24 kV, 2009)",
+            "note": "(67.518, 12.126) → (67.652, 12.719)"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 2, line 'SUNDSTRØMMEN-SOLBJØRN' (Lofotkraft AS, 22 kV)",
+            "note": "the Værøy and Moskenes 22 kV network reaches Solbjørn"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/154904137",
+            "ref": "way/154904137",
+            "note": "Solbjørn trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "leka-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          11.7,
+          65.09
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/612087812"
+        ],
+        "municipalityNr": "5052",
+        "substationOsmId": "way/612087812",
+        "voltageKv": 132,
+        "routeKm": 30.2,
+        "reason": "Leka has no ≥132 kV station of its own price area within 60 km (Namsos 420 kV lies 69.9 km away); NVE Nettanlegg4 maps its distribution network and Tensio's 66 kV line from Saltbotn to Årsandøy 132 kV, 30.2 km of mapped route. Which end feeds Leka in normal operation is not published (confidence low); Årsandøy is the only ≥132 kV end of the mapped network. Årsandøy lies in NO4 while Leka's point lies in NO3.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, Tensio TN AS 66 kV lines (64.903, 11.718) → (65.036, 12.185)",
+            "note": "Saltbotn – Årsandøy, 30.9 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/612087812",
+            "ref": "way/612087812",
+            "note": "Årsandøy trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "karasjok-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          25.51,
+          69.47
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/128291126"
+        ],
+        "municipalityNr": "5610",
+        "substationOsmId": "way/128291126",
+        "voltageKv": 132,
+        "routeKm": 70.3,
+        "reason": "Karasjok is supplied from Lakselv 132/66 kV over two 66 kV lines (Luostejok); the Lakselv – Karasjok line 1 is 70.3 km in NVE Nettanlegg4.",
+        "evidence": [
+          {
+            "url": "https://www.barents-nett.no/getfile.php/134733-1600173559/Dokumenter/Nett/Energiutredninger/Kraftsystemutredning%202020.pdf",
+            "ref": "Regional kraftsystemutredning for Finnmark 2020–2039, §4.2.3 (p. 33)",
+            "note": "Fra Lakselv går det to 66 kV ledninger til Karasjok"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, line 'N 66 LAKSELV-KARASJOK LINJE 1' (Luostejok Nett AS)",
+            "note": "70.3 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/128291126",
+            "ref": "way/128291126",
+            "note": "Lakselv trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "kautokeino-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          23.03,
+          69.0
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "relation/8276522"
+        ],
+        "municipalityNr": "5612",
+        "substationOsmId": "relation/8276522",
+        "voltageKv": 132,
+        "routeKm": 94.3,
+        "reason": "Kautokeino is supplied from Sautso over the 94.3 km 66 kV line Sautso – Kautokeino (Vissi); the 66 kV line from Vinnelys is the reserve.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, line 'SAUTSO-KAUTOKEINO' (Vissi AS, 66 kV)",
+            "note": "(69.004, 23.026) → (69.704, 23.813), 94.3 km"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, line 'VINNELYS-KAUTOKEINO' (Vissi AS, 66 kV)",
+            "note": "reserve route"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8276522",
+            "ref": "relation/8276522",
+            "note": "Sautso (Alta kraftverk), the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "loppa-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          22.37,
+          70.23
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "relation/8280181"
+        ],
+        "municipalityNr": "5614",
+        "substationOsmId": "relation/8280181",
+        "voltageKv": 132,
+        "routeKm": 75.5,
+        "reason": "Loppa (Øksfjord) is supplied over the Alut 66 kV chain Kvænangsbotn – Burfjord – Øksfjordbotn – Øksfjord, 75.5 km in NVE Nettanlegg4, from the 132/66 kV transformation at Kvænangsbotn (the model's Kvænangen trafostasjon).",
+        "evidence": [
+          {
+            "url": "https://www.barents-nett.no/getfile.php/134733-1600173559/Dokumenter/Nett/Energiutredninger/Kraftsystemutredning%202020.pdf",
+            "ref": "Regional kraftsystemutredning for Finnmark 2020–2039, §4.3.3 (p. 38)",
+            "note": "66/22 kV stations Kvænangsbotn, Burfjord, Øksfjordbotn and Øksfjord fed by the 66 kV net from Kvænangsbotn"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, Alut AS 66 kV lines (69.719, 22.062) → (70.228, 22.373)",
+            "note": "75.5 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8280181",
+            "ref": "relation/8280181",
+            "note": "Kvænangen trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "nordkapp-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          25.96,
+          71.0
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/586116281"
+        ],
+        "municipalityNr": "5620",
+        "substationOsmId": "way/586116281",
+        "voltageKv": 132,
+        "routeKm": 85.1,
+        "reason": "Nordkapp (Honningsvåg) is supplied from Skaidi over the 66 kV lines Skaidi – Smørfjord, Smørfjord – Repvåg, Repvåg – Vesterpollen and Veidnes – Storbukt (85.1 km mapped; the Magerøysund crossing between Vesterpollen and Veidnes is not mapped); the Lakselv – Smørfjord 66 kV line is open at Lakselv in normal operation.",
+        "evidence": [
+          {
+            "url": "https://www.barents-nett.no/getfile.php/134733-1600173559/Dokumenter/Nett/Energiutredninger/Kraftsystemutredning%202020.pdf",
+            "ref": "Regional kraftsystemutredning for Finnmark 2020–2039, §4.2.5 (p. 34) and §4.3.3 (p. 38)",
+            "note": "Lakselv-Smørfjord spenningssatt fra Smørfjord og utkoplet i Lakselv; Storbukt fed from Smørfjord"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, lines 'N 66 SKAIDI-SMØRFJORD', 'N 66 SMØRFJORD-REPVÅG', 'REPVÅG-VESTERPOLLEN', 'N 66 VEIDNES - STORBUKT'",
+            "note": "17.8 + 38.8 + 13.6 + 14.9 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/586116281",
+            "ref": "way/586116281",
+            "note": "Skaidi trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "gamvik-regional-supply",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          27.85,
+          71.03
+        ]
+      },
+      "properties": {
+        "kind": "attach-load-via-regional-grid",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/552672002"
+        ],
+        "municipalityNr": "5626",
+        "substationOsmId": "way/552672002",
+        "voltageKv": 132,
+        "routeKm": 91.2,
+        "reason": "Gamvik (Mehamn) is supplied from Adamselv 132/66/22 kV over the 66 kV line from Adamselv towards Kjøllefjord with its branch to Mehamn, 91.2 km in NVE Nettanlegg4.",
+        "evidence": [
+          {
+            "url": "https://www.barents-nett.no/getfile.php/134733-1600173559/Dokumenter/Nett/Energiutredninger/Kraftsystemutredning%202020.pdf",
+            "ref": "Regional kraftsystemutredning for Finnmark 2020–2039, §4.2.4 (p. 34)",
+            "note": "66 kV ledning fra Adamselv Kraftverk til Kjøllefjord med en avgreining til Mehamn"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, lines 'N 66 ADAMSELV - M584', 'FUTELV - MEHAMN', 'N 66 M584 - MEHAMN'",
+            "note": "72.3 + 4.6 + 14.3 km"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/552672002",
+            "ref": "way/552672002",
+            "note": "Adamselv trafostasjon, the ≥132 kV station the route reaches"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "oyfjellet-marka-duplex",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          13.27,
+          65.83
+        ]
+      },
+      "properties": {
+        "kind": "set-line-rating",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/935180688",
+          "way/935180689",
+          "way/935180690",
+          "way/935180691",
+          "way/935180693",
+          "way/1013098334"
+        ],
+        "wayOsmIds": [
+          "way/935180688",
+          "way/935180689",
+          "way/935180690",
+          "way/935180691",
+          "way/935180693",
+          "way/1013098334"
+        ],
+        "voltageKv": 132,
+        "designRatingMva": 294,
+        "reason": "NVE's concession for the Øyfjellet grid connection requires the 132 kV Kleivan – Marka line to carry at least as much as duplex FeAl 185 (293-AL1/48 per sub-conductor, larger than the rule's 243-AL1/39) and its cable sections at least TSLF 2×3×1 1600 mm²; OSM tags the overhead ways wires=double and the cable ways cables=6. The line is rated as two rule conductors per phase, 2 × 147 MVA at 35 °C design air, a lower bound.",
+        "evidence": [
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/201707386/3009313",
+            "ref": "NVE 201707386-82 (2019-12-18), p. 2",
+            "note": "minimum strømføringsevne tilsvarende 3x2FeAl 185; jordkabler … TSLF 2x3x1 1600 mm2"
+          },
+          {
+            "url": "https://www.statnett.no/globalassets/for-aktorer-i-kraftsystemet/systemansvaret/fosweb/beregning-av-termisk-grenselast-pa-kraftledninger-statnett-sf.pdf",
+            "ref": "Statnett SDOK-39-30 rev 6.0, revision log",
+            "note": "293-AL1/48-ST1A is FeAl 185 (26/7)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/935180689",
+            "ref": "way/935180689",
+            "note": "overhead way tagged wires=double"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "ertsmyra-transformer-300mva",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          6.753007,
+          58.670772
+        ]
+      },
+      "properties": {
+        "kind": "set-transformer-rating",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "relation/8890888"
+        ],
+        "substationOsmId": "relation/8890888",
+        "highKv": 300,
+        "lowKv": 132,
+        "ratingMva": 300,
+        "reason": "Ertsmyra has one 300 MVA transformer for Tonstad and Buheii wind farms, Rusdal hydro and the regional grid (NVE); NVE describes it as 420/132 kV, OSM maps the station at 300 kV, and the model keeps the mapped voltage.",
+        "evidence": [
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/200903265/2489649",
+            "ref": "NVE 200903265-224 (2018-08-27), p. 1",
+            "note": "Ertsmyra transformatorstasjon (132/420 MVA) med kapasitet på 300 MVA"
+          },
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/200903265/652473",
+            "ref": "Tonstad Vindpark AS, konsesjonssøknad (2012-12-10), p. 3",
+            "note": "En 420/132 kV transformator, med ytelse 300 MVA"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "follo-lambertseter-47kv-equivalent",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          10.806,
+          59.8
+        ]
+      },
+      "properties": {
+        "kind": "add-network-equivalent",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model data quality (lane DQ1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/100151486",
+          "relation/8244314"
+        ],
+        "fromSubstationOsmId": "way/100151486",
+        "fromKv": 420,
+        "toSubstationOsmId": "relation/8244314",
+        "toKv": 132,
+        "viaKv": 47,
+        "circuits": 2,
+        "routeKm": 16.0,
+        "reason": "Elvia's 47 kV network shares Oslo south and north Nordre Follo between Statnett's Follo 420/47 kV station and Elvia's Lambertseter 132/47 kV station: NVE Nettanlegg4 maps two 47 kV circuits over the 16.0 km route Follo – Myrvoll – Tårnlia – Prinsdal – Klemetsrud – Lambertseter. The ≥132 kV model would otherwise feed the area's whole demand at Lambertseter through its one 132 kV cable. Statnett and Elvia name Follo as one of the stations supplying Oslo south and Follo, with little transformation margin left, which is why Liåsen 420/132 kV is being built. Conductors, transformer ratings and the normal switching state of the 47 kV network are not published; the equivalent assumes both circuits closed.",
+        "evidence": [
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 1, Elvia AS 47 kV lines (59.730, 10.788) → (59.871, 10.829)",
+            "note": "two circuits on the Follo – Myrvoll, Tårnlia – Prinsdal, Prinsdal – Klemetsrud, Klemetsrud – Lambertseter sections; route 16.0 km"
+          },
+          {
+            "url": "https://kart.nve.no/enterprise/rest/services/Nettanlegg4/MapServer",
+            "ref": "layer 5, transformer stations Follo (Statnett, 420 kV), Myrvoll, Tårnlia, Prinsdal, Klemetsrud, Lambertseter (Elvia, 47 kV)",
+            "note": "stations of the route"
+          },
+          {
+            "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-ost/nettplan-stor-oslo/liasen-transformatorstasjon/liasen-endringssoknad.pdf",
+            "ref": "Statnett, Liåsen transformatorstasjon – endringssøknad (2020-10-28), p. 8–9",
+            "note": "kun margin på transformering i Follo til ytterliggere ca. 27 MW (supply of Oslo sør og Follo)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/8244314",
+            "ref": "relation/8244314",
+            "note": "Lambertseter trafostasjon, 132/47/11 kV"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    }
+  ]
+}

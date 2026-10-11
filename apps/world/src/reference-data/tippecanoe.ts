@@ -1,3 +1,4 @@
+import { tileFeatureIdProperty } from './tile-projection.ts'
 import type { TilebuildConfig } from './types.ts'
 
 // Tippecanoe subprocess wrapper. The runner is injectable so tests stub it
@@ -27,25 +28,32 @@ export interface BuildTilesArgs {
 }
 
 const flagArgs = (config: TilebuildConfig): string[] => {
-  // Polygon-friendly defaults:
-  //   --minimum-zoom / --maximum-zoom: fixed range from the dataset config.
-  //   --drop-densest-as-needed: thin features when a tile would otherwise
-  //     overflow the 500 KB MVT cap.
-  //   --no-feature-limit: keep all 455+ ENOR polygons in a single tile when
-  //     they fit, without artificial per-tile feature caps.
-  //   --simplification: aggressive Douglas-Peucker (10) trims jagged polygon
-  //     boundaries to keep tiles small at low zooms.
-  // We DO NOT use --no-tile-size-limit or --extend-zooms-if-still-dropping:
-  // for ENOR they pushed the PMTiles archive past 400 MB by extending zoom
-  // well beyond globalMaxZoom and refusing to drop anything.
+  // Every input feature carries its own `tippecanoe.minzoom`/`maxzoom` from the
+  // dataset's tile projection, and nothing may be dropped or degraded silently:
+  //   --use-attribute-for-id: the projection's numeric `fid` becomes the MVT feature id.
+  //   --drop-rate=1: keep every point at every zoom; the default thins points below the base zoom.
+  //   --maximum-tile-bytes with --minimum-detail equal to the default full and low detail (12):
+  //     an oversized tile fails the build instead of being re-encoded at lower resolution.
+  //   --simplification 10 with --simplify-only-low-zooms: Douglas-Peucker within 10 tile units
+  //     (4096 units per tile, so about 1.25 px of a 512 px tile) below the maximum zoom; the
+  //     maximum zoom keeps exact geometry, and MapLibre overzooms it beyond.
+  //   --no-tiny-polygon-reduction: small footprints stay polygons instead of becoming pixel squares.
+  // No --drop-*-as-needed, --coalesce-*, --no-feature-limit or --no-tile-size-limit.
   const args: string[] = [
     '-o', '__placeholder__',
     '--layer', config.outputLayer,
     '--minimum-zoom', String(config.globalMinZoom),
     '--maximum-zoom', String(config.globalMaxZoom),
-    '--drop-densest-as-needed',
-    '--no-feature-limit',
+    `--use-attribute-for-id=${tileFeatureIdProperty}`,
+    '--drop-rate=1',
+    '--maximum-tile-bytes', String(config.maximumTileBytes),
+    '--full-detail=12',
+    '--low-detail=12',
+    '--minimum-detail=12',
     '--simplification', '10',
+    '--simplify-only-low-zooms',
+    '--no-tiny-polygon-reduction',
+    '--no-progress-indicator',
     '--force',
   ]
   return args

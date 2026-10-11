@@ -83,6 +83,12 @@ export const evaluateLfdd = (config: GridAutomation['lfdd'], state: LfddState, i
   readonly nowSeconds: number
   readonly loads: ReadonlyArray<FrequencyLoad>
 }): { readonly state: LfddState; readonly operations: ReadonlyArray<LfddOperation> } => {
+  // Above every armed threshold with no relay timing, nothing can operate in this step.
+  const low = Math.min(input.previousFrequencyHz, input.frequencyHz)
+  if (config.stages.every(stage => {
+    const current = state.stages[stage.id]
+    return current !== undefined && (current.status !== 'armed' || (current.belowThresholdSeconds === 0 && low >= stage.thresholdHz))
+  })) return { state, operations: [] }
   const stages: Record<string, LfddStageState> = { ...state.stages }
   const operations: LfddOperation[] = []
   const connectedDemandMw = input.loads.reduce((sum, load) => sum + load.demandMw, 0)

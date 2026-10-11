@@ -18,27 +18,46 @@ export const gridElectricalPortDefinitions = (
     maximumImportMw: point.maximumImportMw,
   }))
 
+/**
+ * Port state at each connection point. A live bus reports its AC load-flow voltage and its island
+ * frequency; a de-energised bus reports energized=false, voltage 0 and no frequency, and no power
+ * flows through the port. An energised bus whose island's AC load flow did not converge reports
+ * no voltage (null), never a DC or nominal one. That is a numerical state of the solution, not a
+ * physical event: the Grid's own equipment on the island carries on (HVDC converters keep their
+ * set-points, nothing trips) and only the island's AC non-convergence alarm marks it, while a
+ * Plant maps it conservatively to lost offsite power. `connected` is the Grid side of the bay: true
+ * while a present system is connected there, whatever that system's own breaker does, so a
+ * system that lost offsite power sees it return when the bus is energised again. Power flows only
+ * while the system's own port is connected and energised.
+ */
 export const gridElectricalPortsAt = (config: {
   readonly grid: GridRuntimeInstance
   readonly at: IsoTimestamp
 }): ReadonlyArray<ElectricalPortDefinition> => config.grid.definition.model.connectionPoints.map(point => {
   const bus = config.grid.busStates.get(point.busId)
+  if (!bus) throw new Error(`Grid ${config.grid.definition.gridId} has no solved state for connection bus ${point.busId}; advance the Grid first`)
   const connection = config.grid.externalConnections.get(point.id)
-  const connected = connection?.connected === true
-  return electricalPortDefinitionSchema.parse({
+  const connected = connection?.systemPresent === true
+  const exchanging = connection?.connected === true
+  const base = {
     id: point.id,
     label: point.label,
     role: 'network',
     nominalKv: point.nominalKv,
     maximumExportMw: point.maximumExportMw,
     maximumImportMw: point.maximumImportMw,
-    state: {
-      activePowerMw: connection?.connected === true ? -connection.systemActivePowerMw : 0,
-      voltagePu: bus?.voltagePu ?? 0,
-      frequencyHz: bus?.frequencyHz ?? 0,
-      energized: (bus?.voltagePu ?? 0) >= 0.8,
-      connected,
-      observedAt: config.at,
-    },
+  }
+  return electricalPortDefinitionSchema.parse({
+    ...base,
+    state: bus.energized
+      ? {
+          activePowerMw: exchanging ? -connection.systemActivePowerMw : 0,
+          voltagePu: bus.voltagePu,
+          frequencyHz: bus.frequencyHz,
+          energized: true,
+          connected,
+          observedAt: config.at,
+        }
+      : { activePowerMw: 0, voltagePu: 0, frequencyHz: null, energized: false, connected, observedAt: config.at },
   })
 })

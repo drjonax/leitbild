@@ -1,0 +1,487 @@
+[
+ {
+  "VannKraftverkID": 146,
+  "Navn": "Hetland",
+  "VannKVType": "Kraftverk",
+  "VannKVTypeID": "K",
+  "HovedEier": "LYSE KRAFT DA",
+  "HovedEier_OrgNr": "925749419",
+  "Fylke": "Rogaland",
+  "FylkesNr": "11",
+  "Kommune": "Hå",
+  "KommuneNr": "19",
+  "ForsteUtnyttelseAvFalletDato": 1915,
+  "DatoForEldsteKraftproduserendeDel": 1983,
+  "MaksYtelse": 1.48,
+  "MidProd_91_20": 7.309,
+  "BruttoFallhoyde_M": 55.3,
+  "Slukeevne": 3,
+  "EnEkv": 0.137,
+  "ElspotomraadeNummer": "2",
+  "RegineNr": "027.6B",
+  "ErIDrift": true,
+  "IDriftDato": "1983-01-03T00:00:00",
+  "Eiere": [
+   {
+    "AdressatID": 10282,
+    "Driftselskap": true,
+    "Hovedeier": false,
+    "Navn": "HYDRO ENERGI AS",
+    "OrgNr": 930187240,
+    "ProsentAndel": 25.6,
+    "ProsentAndelDrift": null
+   },
+   {
+    "AdressatID": 29097,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "LYSE PRODUKSJON AS",
+    "OrgNr": 980335216,
+    "ProsentAndel": 74.4,
+    "ProsentAndelDrift": null
+   },
+   {
+    "AdressatID": 60547,
+    "Driftselskap": false,
+    "Hovedeier": true,
+    "Navn": "LYSE KRAFT DA",
+    "OrgNr": 925749419,
+    "ProsentAndel": null,
+    "ProsentAndelDrift": 100
+   }
+  ],
+  "Konsesjoner": [
+   {
+    "KdbID": 1637,
+    "Tittel": "Regulering av Helgåen og ovf. til Ogneelven."
+   },
+   {
+    "KdbID": 2581,
+    "Tittel": "Hetland kraftverk, endring i man.regl. Holmavatn og Homsevatn og fortsatt overføring fra Hagavatn"
+   },
+   {
+    "KdbID": 3731,
+    "Tittel": "Manøvreringsreglement for Homsevand og Holmevand i Helgeaaen"
+   },
+   {
+    "KdbID": 7669,
+    "Tittel": "Hetland kraftverk, delvis nedleggelse av dam Hundsvatn"
+   }
+  ],
+  "Kraftverkstatus": "Idrift",
+  "NVEOmraadeID": null,
+  "NVEOmraadeNavn": null,
+  "Nedborsfeltnavn": "Ognaåni",
+  "SPPunkt": "01",
+  "SPSone": "138",
+  "UnderBygging": false,
+  "UteAvDrift": null,
+  "VassdragsOmraadeID": 4,
+  "VassdragsOmraadeNavn": "NVE - område: 4"
+ },
+ {
+  "VannKraftverkID": 1389,
+  "Navn": "Hetland",
+  "VannKVType": "Kraftverk",
+  "VannKVTypeID": "K",
+  "HovedEier": "HETLAND KRAFT AS",
+  "HovedEier_OrgNr": "992327138",
+  "Fylke": "Rogaland",
+  "FylkesNr": "11",
+  "Kommune": "Vindafjord",
+  "KommuneNr": "60",
+  "ForsteUtnyttelseAvFalletDato": 2008,
+  "DatoForEldsteKraftproduserendeDel": 2008,
+  "MaksYtelse": 0.275,
+  "MidProd_91_20": 0.927,
+  "BruttoFallhoyde_M": 142,
+  "Slukeevne": 0.27,
+  "EnEkv": 0.283,
+  "ElspotomraadeNummer": "2",
+  "RegineNr": "041.32Z",
+  "ErIDrift": true,
+  "IDriftDato": "2008-09-24T00:00:00",
+  "Eiere": [
+   {
+    "AdressatID": 42769,
+    "Driftselskap": true,
+    "Hovedeier": true,
+    "Navn": "HETLAND KRAFT AS",
+    "OrgNr": 992327138,
+    "ProsentAndel": 100,
+    "ProsentAndelDrift": 100
+   }
+  ],
+  "Konsesjoner": [
+   {
+    "KdbID": 4861,
+    "Tittel": "Hetland minikraftverk"
+   }
+  ],
+  "Kraftverkstatus": "Idrift",
+  "NVEOmraadeID": null,
+  "NVEOmraadeNavn": null,
+  "Nedborsfeltnavn": "Ølsvågelva",
+  "SPPunkt": null,
+  "SPSone": "999",
+  "UnderBygging": false,
+  "UteAvDrift": null,
+  "VassdragsOmraadeID": 5,
+  "VassdragsOmraadeNavn": "NVE - område: 5"
+ },
+ {
+  "VannKraftverkID": 1225,
+  "Navn": "Isvatn",
+  "VannKVType": "Pumpe",
+  "VannKVTypeID": "P",
+  "HovedEier": "HELGELAND KRAFT VANNKRAFT AS",
+  "HovedEier_OrgNr": "917424896",
+  "Fylke": "Nordland",
+  "FylkesNr": "18",
+  "Kommune": "Rana",
+  "KommuneNr": "33",
+  "ForsteUtnyttelseAvFalletDato": 2004,
+  "DatoForEldsteKraftproduserendeDel": 2004,
+  "MaksYtelse": -0.1,
+  "MidProd_91_20": -0.247,
+  "BruttoFallhoyde_M": -31.83,
+  "Slukeevne": 0.25,
+  "EnEkv": -0.111,
+  "ElspotomraadeNummer": "4",
+  "RegineNr": "157.1B5A",
+  "ErIDrift": true,
+  "IDriftDato": "2004-01-01T00:00:00",
+  "Eiere": [
+   {
+    "AdressatID": 51392,
+    "Driftselskap": true,
+    "Hovedeier": true,
+    "Navn": "HELGELAND KRAFT VANNKRAFT AS",
+    "OrgNr": 917424896,
+    "ProsentAndel": 100,
+    "ProsentAndelDrift": 100
+   }
+  ],
+  "Konsesjoner": [
+   {
+    "KdbID": 2711,
+    "Tittel": "Reg./overf. m.v. Isvatn, Lille Isvatn, Trolldalselva, Rundtuvvatn"
+   }
+  ],
+  "Kraftverkstatus": "Idrift",
+  "NVEOmraadeID": null,
+  "NVEOmraadeNavn": null,
+  "Nedborsfeltnavn": "Holmelva",
+  "SPPunkt": "04",
+  "SPSone": "658",
+  "UnderBygging": false,
+  "UteAvDrift": null,
+  "VassdragsOmraadeID": 10,
+  "VassdragsOmraadeNavn": "NVE - område: 10"
+ },
+ {
+  "VannKraftverkID": 222,
+  "Navn": "Kvilldal",
+  "VannKVType": "Kraftverk",
+  "VannKVTypeID": "K",
+  "HovedEier": "STATKRAFT ENERGI AS",
+  "HovedEier_OrgNr": "987059729",
+  "Fylke": "Rogaland",
+  "FylkesNr": "11",
+  "Kommune": "Suldal",
+  "KommuneNr": "34",
+  "ForsteUtnyttelseAvFalletDato": 1981,
+  "DatoForEldsteKraftproduserendeDel": 1981,
+  "MaksYtelse": 1240,
+  "MidProd_91_20": 3230.895,
+  "BruttoFallhoyde_M": 536.5,
+  "Slukeevne": 263.33,
+  "EnEkv": 1.307,
+  "ElspotomraadeNummer": "2",
+  "RegineNr": "036.B121",
+  "ErIDrift": true,
+  "IDriftDato": "1981-12-11T00:00:00",
+  "Eiere": [
+   {
+    "AdressatID": 10394,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "OTRA KRAFT DA",
+    "OrgNr": 955007514,
+    "ProsentAndel": 7.3,
+    "ProsentAndelDrift": 7.3
+   },
+   {
+    "AdressatID": 10437,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "SUNNHORDLAND KRAFTLAG AS",
+    "OrgNr": 916435711,
+    "ProsentAndel": 2.5,
+    "ProsentAndelDrift": 2.5
+   },
+   {
+    "AdressatID": 40121,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "Å ENERGI VANNKRAFT AS",
+    "OrgNr": 882973972,
+    "ProsentAndel": 0.2,
+    "ProsentAndelDrift": 0.2
+   },
+   {
+    "AdressatID": 41005,
+    "Driftselskap": true,
+    "Hovedeier": true,
+    "Navn": "STATKRAFT ENERGI AS",
+    "OrgNr": 987059729,
+    "ProsentAndel": 72,
+    "ProsentAndelDrift": 72
+   },
+   {
+    "AdressatID": 60547,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "LYSE KRAFT DA",
+    "OrgNr": 925749419,
+    "ProsentAndel": 18,
+    "ProsentAndelDrift": 18
+   }
+  ],
+  "Konsesjoner": [
+   {
+    "KdbID": 479,
+    "Tittel": "Statsreg. for utb. av Ulla-Førrevassdragene - Reguleringsbest. m.v."
+   },
+   {
+    "KdbID": 698,
+    "Tittel": "Ulla-Førrevassdragene , Statsregulering , Planendring"
+   },
+   {
+    "KdbID": 1010,
+    "Tittel": "Ulla-Førre - Nytt manøvreringsreglement for Suldalslågen"
+   },
+   {
+    "KdbID": 4227,
+    "Tittel": "Ulla-Førre. Manøvreringsreglement for Suldalslågen"
+   }
+  ],
+  "Kraftverkstatus": "Idrift",
+  "NVEOmraadeID": null,
+  "NVEOmraadeNavn": null,
+  "Nedborsfeltnavn": "Suldalsvassdraget",
+  "SPPunkt": "12",
+  "SPSone": "166",
+  "UnderBygging": false,
+  "UteAvDrift": null,
+  "VassdragsOmraadeID": 3,
+  "VassdragsOmraadeNavn": "NVE - område: 3"
+ },
+ {
+  "VannKraftverkID": 245,
+  "Navn": "Linvasselv",
+  "VannKVType": "Kraftverk",
+  "VannKVTypeID": "K",
+  "HovedEier": "NTE ENERGI AS",
+  "HovedEier_OrgNr": "988340715",
+  "Fylke": "Trøndelag",
+  "FylkesNr": "50",
+  "Kommune": "Lierne",
+  "KommuneNr": "42",
+  "ForsteUtnyttelseAvFalletDato": 1962,
+  "DatoForEldsteKraftproduserendeDel": 1962,
+  "MaksYtelse": 25,
+  "MidProd_91_20": 70.59,
+  "BruttoFallhoyde_M": 106.69,
+  "Slukeevne": 27.45,
+  "EnEkv": 0.252,
+  "ElspotomraadeNummer": "4",
+  "RegineNr": "307.3B9",
+  "ErIDrift": true,
+  "IDriftDato": "1962-12-02T00:00:00",
+  "Eiere": [
+   {
+    "AdressatID": 42662,
+    "Driftselskap": true,
+    "Hovedeier": true,
+    "Navn": "NTE ENERGI AS",
+    "OrgNr": 988340715,
+    "ProsentAndel": 100,
+    "ProsentAndelDrift": 100
+   }
+  ],
+  "Konsesjoner": [
+   {
+    "KdbID": 1144,
+    "Tittel": "Reg. av Vekteren og Limingen - Manøvreringreglement"
+   }
+  ],
+  "Kraftverkstatus": "Idrift",
+  "NVEOmraadeID": null,
+  "NVEOmraadeNavn": null,
+  "Nedborsfeltnavn": "Faxälven",
+  "SPPunkt": "01",
+  "SPSone": "964",
+  "UnderBygging": false,
+  "UteAvDrift": null,
+  "VassdragsOmraadeID": 10,
+  "VassdragsOmraadeNavn": "NVE - område: 10"
+ },
+ {
+  "VannKraftverkID": 362,
+  "Navn": "Saurdal",
+  "VannKVType": "Pumpekraftverk",
+  "VannKVTypeID": "PK",
+  "HovedEier": "STATKRAFT ENERGI AS",
+  "HovedEier_OrgNr": "987059729",
+  "Fylke": "Rogaland",
+  "FylkesNr": "11",
+  "Kommune": "Suldal",
+  "KommuneNr": "34",
+  "ForsteUtnyttelseAvFalletDato": 1985,
+  "DatoForEldsteKraftproduserendeDel": 1985,
+  "MaksYtelse": 640,
+  "MidProd_91_20": 1063.719,
+  "BruttoFallhoyde_M": 437,
+  "Slukeevne": 173.27,
+  "EnEkv": 1.026,
+  "ElspotomraadeNummer": "2",
+  "RegineNr": "036.B1B",
+  "ErIDrift": true,
+  "IDriftDato": "1985-10-19T00:00:00",
+  "Eiere": [
+   {
+    "AdressatID": 10394,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "OTRA KRAFT DA",
+    "OrgNr": 955007514,
+    "ProsentAndel": 7.3,
+    "ProsentAndelDrift": 7.3
+   },
+   {
+    "AdressatID": 10437,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "SUNNHORDLAND KRAFTLAG AS",
+    "OrgNr": 916435711,
+    "ProsentAndel": 2.5,
+    "ProsentAndelDrift": 2.5
+   },
+   {
+    "AdressatID": 40121,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "Å ENERGI VANNKRAFT AS",
+    "OrgNr": 882973972,
+    "ProsentAndel": 0.2,
+    "ProsentAndelDrift": 0.2
+   },
+   {
+    "AdressatID": 41005,
+    "Driftselskap": true,
+    "Hovedeier": true,
+    "Navn": "STATKRAFT ENERGI AS",
+    "OrgNr": 987059729,
+    "ProsentAndel": 72,
+    "ProsentAndelDrift": 72
+   },
+   {
+    "AdressatID": 60547,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "LYSE KRAFT DA",
+    "OrgNr": 925749419,
+    "ProsentAndel": 18,
+    "ProsentAndelDrift": 18
+   }
+  ],
+  "Konsesjoner": [
+   {
+    "KdbID": 479,
+    "Tittel": "Statsreg. for utb. av Ulla-Førrevassdragene - Reguleringsbest. m.v."
+   },
+   {
+    "KdbID": 698,
+    "Tittel": "Ulla-Førrevassdragene , Statsregulering , Planendring"
+   },
+   {
+    "KdbID": 1010,
+    "Tittel": "Ulla-Førre - Nytt manøvreringsreglement for Suldalslågen"
+   },
+   {
+    "KdbID": 4227,
+    "Tittel": "Ulla-Førre. Manøvreringsreglement for Suldalslågen"
+   }
+  ],
+  "Kraftverkstatus": "Idrift",
+  "NVEOmraadeID": null,
+  "NVEOmraadeNavn": null,
+  "Nedborsfeltnavn": "Suldalsvassdraget",
+  "SPPunkt": "17",
+  "SPSone": "166",
+  "UnderBygging": false,
+  "UteAvDrift": null,
+  "VassdragsOmraadeID": 3,
+  "VassdragsOmraadeNavn": "NVE - område: 3"
+ },
+ {
+  "VannKraftverkID": 488,
+  "Navn": "Vamma",
+  "VannKVType": "Kraftverk",
+  "VannKVTypeID": "K",
+  "HovedEier": "HAFSLUND KRAFT AS",
+  "HovedEier_OrgNr": "976894677",
+  "Fylke": "Østfold",
+  "FylkesNr": "31",
+  "Kommune": "Indre Østfold",
+  "KommuneNr": "18",
+  "ForsteUtnyttelseAvFalletDato": 1915,
+  "DatoForEldsteKraftproduserendeDel": 1915,
+  "MaksYtelse": 344,
+  "MidProd_91_20": 1565.42,
+  "BruttoFallhoyde_M": 27.5,
+  "Slukeevne": 1450,
+  "EnEkv": 0.067,
+  "ElspotomraadeNummer": "1",
+  "RegineNr": "002.B3",
+  "ErIDrift": true,
+  "IDriftDato": "1915-04-01T00:00:00",
+  "Eiere": [
+   {
+    "AdressatID": 10242,
+    "Driftselskap": true,
+    "Hovedeier": true,
+    "Navn": "HAFSLUND KRAFT AS",
+    "OrgNr": 976894677,
+    "ProsentAndel": null,
+    "ProsentAndelDrift": 100
+   },
+   {
+    "AdressatID": 40037,
+    "Driftselskap": false,
+    "Hovedeier": false,
+    "Navn": "HAFSLUND PRODUKSJON AS",
+    "OrgNr": 987223200,
+    "ProsentAndel": 100,
+    "ProsentAndelDrift": null
+   }
+  ],
+  "Konsesjoner": [
+   {
+    "KdbID": 7293,
+    "Tittel": "Utvidelse av Vamma kraftverk"
+   }
+  ],
+  "Kraftverkstatus": "Idrift",
+  "NVEOmraadeID": null,
+  "NVEOmraadeNavn": null,
+  "Nedborsfeltnavn": "Glommavassdraget",
+  "SPPunkt": "15",
+  "SPSone": "004",
+  "UnderBygging": false,
+  "UteAvDrift": null,
+  "VassdragsOmraadeID": 1,
+  "VassdragsOmraadeNavn": "NVE - område: 1"
+ }
+]

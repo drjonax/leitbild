@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { describe, expect, test, spyOn } from 'bun:test'
+import { appendFile, mkdtemp, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { z } from 'zod'
@@ -10,6 +10,8 @@ import { createJsonlEventLog } from '../src/core/simulation-runs/event-log.ts'
 import { createSimulationRunSnapshotStore, type SimulationRunSnapshotStore } from '../src/core/simulation-runs/snapshot-store.ts'
 import { createSimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
 import { defineSimulationCommandCapability } from '../src/simulation/capabilities.ts'
+import { worldCoreCapabilities } from '../src/simulation/core-capabilities.ts'
+import { createRuntimeHub } from '../src/simulation/runtime-hub.ts'
 
 const simulationRunId = 'run-persistence-policy-test' as SimulationRunId
 const objectId = 'object:test-mobile' as ObjectId
@@ -137,6 +139,118 @@ const waitFor = async (predicate: () => Promise<boolean>, label: string): Promis
 }
 
 describe('simulation run persistence policy', () => {
+  for (const failure of ['before-append', 'after-append', 'partial-append', 'snapshot', 'quarantine'] as const) {
+    test(`uncertain ${failure} failure stops publication and reports recovery state`, async () => {
+      const dataDir = await mkdtemp(join(tmpdir(), 'run-commit-failure-'))
+      const path = join(dataDir, 'events.jsonl')
+      const journal = createJsonlEventLog(path)
+      const snapshots = createSimulationRunSnapshotStore({ simulationRunId, path: join(dataDir, 'snapshot.json') })
+      const controlled = createControlledRuntimeConnection(makeObject())
+      const runtime = await createSimulationRunRuntime({
+        id: simulationRunId, scenario: testScenario, runtimeConnection: controlled.connection,
+        runtimeCapabilities: worldCoreCapabilities.map(capability => ({ packId: 'world', runtimeId: 'world.core', capability })),
+        eventLog: { ...journal, appendMany: async events => {
+          if (!events.some(event => event.type === 'object.deleted')) return await journal.appendMany(events)
+          if (failure === 'snapshot') return await journal.appendMany(events)
+          if (failure === 'after-append') await journal.appendMany(events)
+          if (failure === 'partial-append') await appendFile(path, '{"incomplete":', 'utf8')
+          throw new Error('injected journal write failure')
+        } },
+        snapshotStore: { ...snapshots,
+          quarantine: failure === 'quarantine' ? async () => { throw new Error('injected quarantine failure') } : snapshots.quarantine,
+          save: async snapshot => {
+            if (failure === 'snapshot' && snapshot.objects.length === 0) throw new Error('injected snapshot failure')
+            await snapshots.save(snapshot)
+          },
+        },
+      })
+      const notifications: SimulationRunEvent[] = []
+      runtime.subscribe(message => { if (message.type === 'event.notification') notifications.push(...message.events) })
+      const outcome = await runtime.invokeCapability(operatorActor, { capabilityId: 'world.object.delete', input: { objectId } }).catch(error => error)
+      expect(outcome).toMatchObject({ code: 'simulation_run_commit_uncertain' })
+      expect(outcome.message).toContain(failure === 'snapshot' ? 'snapshot failure' : 'journal write failure')
+      expect(runtime.snapshot().objects).toHaveLength(failure === 'snapshot' ? 0 : 1)
+      expect(runtime.snapshot().clock?.paused).toBe(true)
+      expect(runtime.events().some(event => event.type === 'object.deleted')).toBe(failure === 'snapshot')
+      expect(notifications.some(event => event.type === 'object.deleted')).toBe(false)
+      expect(runtime.health()).toContainEqual(expect.objectContaining({ runtimeId: 'world.core', state: 'failed' }))
+      await expect(runtime.setClock({ paused: false })).rejects.toThrow('fail-stopped')
+      await expect(runtime.invokeCapability(operatorActor, { capabilityId: 'world.object.delete', input: { objectId } })).rejects.toThrow()
+      const persistedBeforeClose = await readFile(join(dataDir, 'snapshot.json'), 'utf8')
+      await runtime.close()
+      expect(await readFile(join(dataDir, 'snapshot.json'), 'utf8')).toBe(persistedBeforeClose)
+      const reopened = createSimulationRunSnapshotStore({ simulationRunId, path: join(dataDir, 'snapshot.json') })
+      if (failure === 'quarantine') {
+        expect(outcome.message).toContain('restart safety is unproven')
+        expect(runtime.health().at(-1)?.lastFailure?.message).toContain('quarantine could not be persisted')
+      } else await expect(reopened.load()).rejects.toThrow('requires recovery')
+      if (failure === 'partial-append') await expect(journal.readAll()).rejects.toThrow('invalid event log JSON')
+      else expect((await journal.readAll()).some(event => event.type === 'object.deleted')).toBe(failure === 'snapshot' || failure === 'after-append')
+    })
+  }
+
+  for (const throughHub of [false, true]) test(`committed observer failure quarantines recovery through ${throughHub ? 'Hub' : 'direct connection'}`, async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'run-observer-failure-'))
+    const journal = createJsonlEventLog(join(dataDir, 'events.jsonl'))
+    const snapshots = createSimulationRunSnapshotStore({ simulationRunId, path: join(dataDir, 'snapshot.json') })
+    const base = createControlledRuntimeConnection(makeObject()).connection
+    const observer = { ...base, observeCommittedEvents: (events: readonly SimulationRunEvent[]): Promise<void> => {
+      if (events.some(event => event.type === 'object.deleted')) throw new Error('synchronous observer failure')
+      return Promise.resolve()
+    } }
+    const runtimeConnection = throughHub ? await createRuntimeHub([{
+      id: 'test-runtime', packId: 'packId:test', version: '1', clock: 'none', capabilities: [], connect: async () => observer,
+    }]).connect({ simulationRunId, scenario: { scenarioId: testScenario.id, runtimeIds: ['test-runtime'], connections: [], initialObjects: [makeObject()], world: { startsAt: testScenario.startsAt, environment: {} }, runtimeConfig: {} } }) : observer
+    const runtime = await createSimulationRunRuntime({ id: simulationRunId, scenario: testScenario, runtimeConnection,
+      runtimeCapabilities: worldCoreCapabilities.map(capability => ({ packId: 'world', runtimeId: 'world.core', capability })),
+      eventLog: journal, snapshotStore: snapshots,
+    })
+    const errors = spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(runtime.invokeCapability(operatorActor, { capabilityId: 'world.object.delete', input: { objectId } })).rejects.toMatchObject({ code: 'simulation_run_observer_failed', message: expect.stringContaining('Events committed') })
+      expect(runtime.snapshot().objects).toHaveLength(0)
+      expect((await journal.readAll()).some(event => event.type === 'object.deleted')).toBe(true)
+      await runtime.close()
+      await expect(snapshots.load()).rejects.toThrow('requires recovery')
+    } finally { errors.mockRestore() }
+  })
+
+  for (const failure of ['snapshot', 'private']) test(`a final close ${failure} failure persists recovery quarantine after private cleanup`, async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'run-close-failure-'))
+    const snapshots = createSimulationRunSnapshotStore({ simulationRunId, path: join(dataDir, 'snapshot.json') })
+    const controlled = createControlledRuntimeConnection(makeObject())
+    let failSave = false
+    let closed = false
+    const runtime = await createSimulationRunRuntime({ id: simulationRunId, scenario: testScenario,
+      runtimeConnection: { ...controlled.connection, close: async () => { closed = true; await controlled.connection.close(); if (failure === 'private') throw new Error('private save failed') } },
+      eventLog: createJsonlEventLog(join(dataDir, 'events.jsonl')),
+      snapshotStore: { ...snapshots, save: async snapshot => { if (failSave) throw new Error('close save failed'); await snapshots.save(snapshot) } },
+    })
+    controlled.emit([{ type: 'object.upserted', at: nowIso(), object: makeObject({ revision: 1 }), provenance: { source: 'simulator' }, history: 'snapshot-only' }])
+    await waitFor(async () => runtime.snapshot().objects[0]?.revision === 1, 'projected update')
+    failSave = failure === 'snapshot'
+    await expect(runtime.close()).rejects.toThrow('Simulation Run close failed')
+    expect(closed).toBe(true)
+    await expect(snapshots.load()).rejects.toThrow('requires recovery')
+  })
+
+  test('a throwing notification subscriber cannot turn a committed deletion into rejection', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'run-subscriber-failure-'))
+    const runtime = await createSimulationRunRuntime({
+      id: simulationRunId, scenario: testScenario, runtimeConnection: createControlledRuntimeConnection(makeObject()).connection,
+      runtimeCapabilities: worldCoreCapabilities.map(capability => ({ packId: 'world', runtimeId: 'world.core', capability })),
+      eventLog: createJsonlEventLog(join(dataDir, 'events.jsonl')),
+      snapshotStore: createSimulationRunSnapshotStore({ simulationRunId, path: join(dataDir, 'snapshot.json') }),
+    })
+    const errors = spyOn(console, 'error').mockImplementation(() => {})
+    runtime.subscribe(() => { throw new Error('subscriber failed') })
+    try {
+      expect(await runtime.invokeCapability(operatorActor, { capabilityId: 'world.object.delete', input: { objectId } })).toMatchObject({ kind: 'command', result: { ok: true } })
+      expect(runtime.snapshot().objects).toHaveLength(0)
+      expect(runtime.health().some(entry => entry.state === 'failed')).toBe(false)
+    } finally { errors.mockRestore(); await runtime.close() }
+  })
+
   test('applies volatile object updates to snapshots without retaining them in the durable journal', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-test-'))
     const eventLogPath = join(dataDir, 'events.jsonl')
@@ -385,6 +499,7 @@ describe('simulation run persistence policy', () => {
     const savedSnapshots: unknown[] = []
     const snapshotStore: SimulationRunSnapshotStore = {
       load: async () => null,
+      quarantine: async () => {},
       save: async (snapshot) => {
         savedSnapshots.push(snapshot)
       },

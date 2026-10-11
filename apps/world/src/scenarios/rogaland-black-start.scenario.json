@@ -1,0 +1,87 @@
+{
+  "id": "rogaland-black-start",
+  "title": "Regional blackout and black start · Sør-Rogaland",
+  "description": "A summer night. The 132 kV network serving southern Stavanger, Sandnes and Ryfylke is fed from the 300 kV grid through two transformers, at Lyse and Fagrafjell, and imports about two thirds of its 320 MW demand. One minute in, both transformers trip. The region's own units cannot carry the deficit: its frequency collapses within a second, every unit trips and the island goes dead while the rest of the grid stays live. Restore it as a black-start exercise: a dead island energises only from a black-start capable unit inside it or by closing a branch onto it from a live neighbour, and the exercise keeps both transformers open until the region is live again. Lysebotn I (120 MW), Flørli and Jøssang are the region's units the model marks black-start capable, by its rule for storage hydropower (Statnett does not publish its black-start providers). Disconnect the demand, black-start Lysebotn I onto a small starting block, pick up the rest in blocks small enough to stay above the 48.8 Hz first stage of under-frequency load shedding, then bring the island within 0.1 Hz of the main grid and close a transformer under synchro-check. There are no weather-driven faults.",
+  "objectives": [
+    "Confirm the blackout: the region's island is de-energised, its units are tripped and its demand is out, while the main grid stays live (islands.list, assets.search with the island id).",
+    "Prepare the black start: reset Lysebotn I's trip and disconnect the region's demand with emergency shedding (shed-load with emergency: true), leaving a starting block of about 40 MW in Ryfylke (Forsand, Dalen, Jøssang, Nye Veland and Nye Hjelmeland) for Lysebotn I's 36 MW minimum stable output. A unit that is not black-start capable cannot start in the dead island.",
+    "Black-start Lysebotn I (start-generator): after its five-minute start-up it energises the island and carries the starting block.",
+    "Pick up the Stavanger and Sandnes demand in blocks of about 10 MW, raising Lysebotn I's set-point with each block and letting the frequency recover between blocks, so that no under-frequency load-shedding stage operates.",
+    "Resynchronise: close-branch refuses a transformer while the island and the main grid differ by more than 0.1 Hz. Trim Lysebotn I's set-point in small steps, close the Fagrafjell transformer once the frequencies agree, then close the Lyse transformer and restore the remaining demand from the main grid."
+  ],
+  "packs": [
+    {
+      "id": "electric-grid",
+      "config": {},
+      "items": [
+        {
+          "type": "grid",
+          "id": "grid:norway",
+          "label": "Norway transmission grid",
+          "location": [15.5, 64.7],
+          "model": { "ref": "electric-grid.norway.transmission" },
+          "operatingPoint": { "ref": "electric-grid.norway.summer-night-low" },
+          "automation": { "ref": "electric-grid.frequency.nordic-2025" }
+        }
+      ],
+      "recording": { "profileId": "operations" }
+    }
+  ],
+  "world": {
+    "startsAt": "2026-07-12T04:00:00.000Z",
+    "environment": {}
+  },
+  "view": {
+    "map": { "center": [6.15, 58.97], "zoom": 9 }
+  },
+  "timeline": {
+    "cues": [
+      {
+        "id": "black-start-briefing",
+        "at": { "kind": "after_scenario_start", "seconds": 0 },
+        "title": "Sør-Rogaland hangs on two transformers",
+        "actions": [
+          {
+            "type": "show_guidance",
+            "guidance": {
+              "id": "black-start-briefing",
+              "title": "Sør-Rogaland hangs on two transformers",
+              "message": "The 132 kV network serving southern Stavanger, Sandnes and Ryfylke imports most of its demand through the Lyse and Fagrafjell 300/132 kV transformers. Both trip at one minute.",
+              "objectIds": ["grid:norway"],
+              "dismissible": true,
+              "tone": "default"
+            }
+          }
+        ]
+      },
+      {
+        "id": "rogaland-transformers-trip",
+        "at": { "kind": "after_scenario_start", "seconds": 60 },
+        "title": "Both Sør-Rogaland 300/132 kV transformers trip",
+        "actions": [
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.open-branch",
+            "input": { "gridId": "grid:norway", "assetId": "branch:transformer-osm-relation-8886202-300-132" }
+          },
+          {
+            "type": "invoke_capability",
+            "capabilityId": "world.electric-grid.open-branch",
+            "input": { "gridId": "grid:norway", "assetId": "branch:transformer-osm-way-830770515-300-132" }
+          },
+          {
+            "type": "show_guidance",
+            "guidance": {
+              "id": "rogaland-transformers-trip",
+              "title": "Sør-Rogaland is dark",
+              "message": "Both transformers are open and the region's island is de-energised. Keep them open: shed the region's demand, black-start Lysebotn I, pick up load in blocks and resynchronise under synchro-check.",
+              "objectIds": ["grid:norway"],
+              "dismissible": true,
+              "tone": "update"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

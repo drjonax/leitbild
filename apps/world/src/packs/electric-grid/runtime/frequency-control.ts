@@ -1,118 +1,130 @@
-import { gridFrequencyStep, gridGeneratorIsOnline } from './dynamics.ts'
-import type { GridRuntimeInstance, GridTopologyPlan } from './instance.ts'
+import { advanceFrequencyWorkspace } from './frequency/advance.ts'
+import { validateIslandInput, type FrequencyAction } from './frequency/island-state.ts'
+import { frequencyStateOf, resetWorkspaceUnitProtection, type IslandFrequencyWorkspace } from './frequency/workspace.ts'
+import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
+import { allocateGridIslandReserves } from './island-reserves.ts'
+import { generatorSynchronisedAt, islandFrequencyInput } from './island-input.ts'
+import { refreshIslandWorkspaceInputs } from './island-workspace.ts'
+import { generatorTripped } from './state/arrays.ts'
+import { gridTablesFor } from './state/tables.ts'
 
-const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value))
+// Enough recent actions for an operator or Agent to see a cascade; older ones are in the journal.
+const retainedFrequencyEvents = 200
 
-const ramp = (current: number, target: number, maxDelta: number): number =>
-  target > current ? Math.min(target, current + maxDelta) : Math.max(target, current - maxDelta)
+const storageStateFor = (operatingState: string): 'idle' | 'charging' | 'discharging' | 'unavailable' =>
+  operatingState === 'disconnected' ? 'unavailable' : operatingState as 'idle' | 'charging' | 'discharging'
+
+const actionSummary = (action: FrequencyAction): string => {
+  switch (action.kind) {
+    case 'generator-trip': return `${action.unitId} tripped by ${action.cause} protection (${action.elementId})`
+    case 'lfdd-stage-operated': return `LFDD ${action.stageId} shed ${action.shedMw.toFixed(1)} of ${action.requestedMw.toFixed(1)} MW`
+    case 'mfrr-activated': return `mFRR activated ${action.activatedMw.toFixed(1)} MW (shortfall ${action.shortfallMw.toFixed(1)} MW)`
+    case 'storage-state-changed': return `${action.storageId} ${action.from} → ${action.to}`
+    case 'island-collapsed': return `island collapsed: ${action.cause}`
+  }
+}
+
+const recordActions = (grid: GridRuntimeInstance, islandId: string, actions: ReadonlyArray<FrequencyAction>): void => {
+  for (const action of actions) {
+    grid.frequencyEvents.push({
+      islandId, atElapsedSeconds: action.atSeconds, kind: action.kind, summary: actionSummary(action),
+      ...(action.kind === 'generator-trip' ? { trip: { unitId: action.unitId, elementId: action.elementId, cause: action.cause } } : {}),
+    })
+  }
+  if (grid.frequencyEvents.length > retainedFrequencyEvents) grid.frequencyEvents.splice(0, grid.frequencyEvents.length - retainedFrequencyEvents)
+}
 
 /**
- * Per-island primary frequency response, storage response, under-frequency
- * load shedding, and the aggregate frequency step. Returns the new frequency
- * of every island in the topology plan.
+ * Writes the island's last advance from its workspace into the Grid asset states: mechanical
+ * outputs and latches; electrical outputs follow in the network solve. The workspace lists units,
+ * storage, loads and externals in the island's order.
  */
-export const advanceGridFrequencyControl = (
-  grid: GridRuntimeInstance,
-  plan: GridTopologyPlan,
-  dynamicSeconds: number,
-): Map<string, number> => {
-  const model = grid.definition.model
-  const frequencyByIsland = new Map<string, number>()
-  for (const island of plan.islands) {
-    const generators = island.generators
-    const loads = island.loads
-    const storage = island.storage
-    const previousHz = grid.frequencyByIsland.get(island.id) ?? model.nominalFrequencyHz
-    const reserveMw = generators.reduce((sum, generator) => {
-      const state = grid.generators.get(generator.id)!
-      return sum + (gridGeneratorIsOnline(state.state) ? Math.min(state.reserveMw, Math.max(0, state.availableMw - state.dispatchMw)) : 0)
-    }, 0)
-    const downwardMw = generators.reduce((sum, generator) => {
-      const state = grid.generators.get(generator.id)!
-      return sum + (gridGeneratorIsOnline(state.state) ? state.dispatchMw : 0)
-    }, 0)
-    const requestedResponseMw = clamp(
-      (model.nominalFrequencyHz - previousHz) * grid.definition.automation.primaryFrequencyResponseMwPerHz,
-      -downwardMw,
-      reserveMw,
-    )
-    for (const generator of generators) {
-      const state = grid.generators.get(generator.id)!
-      if (!gridGeneratorIsOnline(state.state)) {
-        state.dispatchMw = ramp(state.dispatchMw, 0, generator.rampRateMwPerMinute * dynamicSeconds / 60)
-        continue
-      }
-      const responseBasis = requestedResponseMw >= 0
-        ? Math.min(state.reserveMw, Math.max(0, state.availableMw - state.dispatchMw))
-        : state.dispatchMw
-      const responseTotal = requestedResponseMw >= 0 ? reserveMw : downwardMw
-      const responseMw = responseTotal <= 0 ? 0 : requestedResponseMw * responseBasis / responseTotal
-      const target = clamp(state.targetMw + responseMw, 0, state.availableMw)
-      const primaryRampMw = Math.abs(responseMw) * dynamicSeconds / 5
-      state.dispatchMw = ramp(state.dispatchMw, target, Math.max(generator.rampRateMwPerMinute * dynamicSeconds / 60, primaryRampMw))
-    }
-    const internalGenerationMw = generators.reduce((sum, generator) => sum + grid.generators.get(generator.id)!.dispatchMw, 0)
-    const externalConnections = [...grid.externalConnections.values()].filter(connection => island.busSet.has(connection.busId) && connection.connected)
-    const externalGenerationMw = externalConnections.reduce((sum, connection) => sum + connection.systemActivePowerMw, 0)
-    const inertiaSeconds = generators.reduce((sum, generator) => {
-      const state = grid.generators.get(generator.id)!
-      return sum + (gridGeneratorIsOnline(state.state) ? generator.inertiaSeconds * Math.max(0.1, state.dispatchMw / Math.max(1, generator.capacityMw)) : 0)
-    }, 0) + externalConnections.reduce((sum, connection) => sum
-      + (connection.definition.systemInertiaSeconds ?? 0)
-        * Math.max(0.1, Math.max(0, connection.systemActivePowerMw) / Math.max(1, connection.definition.maximumSystemExportMw)), 0)
-    for (const item of storage) {
-      const state = grid.storage.get(item.id)!
-      const canDischarge = state.stateOfChargeFraction > 0.02
-      const canCharge = state.stateOfChargeFraction < 0.98
-      state.dispatchMw = !grid.definition.automation.storageFrequencyResponse
-        ? 0
-        : previousHz < model.nominalFrequencyHz - 0.15 && canDischarge
-          ? item.maxDischargeMw
-          : previousHz > model.nominalFrequencyHz + 0.08 && canCharge
-            ? -item.maxChargeMw
-            : 0
-      const energyMwh = state.dispatchMw >= 0
-        ? state.dispatchMw * dynamicSeconds / 3_600 / 0.92
-        : state.dispatchMw * dynamicSeconds / 3_600 * 0.92
-      state.stateOfChargeFraction = clamp(state.stateOfChargeFraction - energyMwh / item.capacityMwh, 0, 1)
-      state.state = state.dispatchMw > 0 ? 'discharging' : state.dispatchMw < 0 ? 'charging' : 'idle'
-    }
-    const shedFraction = !grid.definition.automation.underFrequencyLoadShedding
-      ? 0
-      : previousHz < model.nominalFrequencyHz - 0.85
-        ? 0.45
-        : previousHz < model.nominalFrequencyHz - 0.65
-          ? 0.28
-          : previousHz < model.nominalFrequencyHz - 0.35
-            ? 0.12
-            : 0
-    for (const load of loads) {
-      const state = grid.loads.get(load.id)!
-      const interruptibleMw = Math.max(0, state.demandMw - load.criticalMw)
-      state.shedMw = interruptibleMw * shedFraction
-      state.servedMw = Math.max(load.criticalMw, state.demandMw - state.shedMw)
-    }
-    const servedLoadMw = loads.reduce((sum, load) => sum + grid.loads.get(load.id)!.servedMw, 0)
-    const storageGenerationMw = storage.reduce((sum, item) => sum + grid.storage.get(item.id)!.dispatchMw, 0)
-    const frequencyHz = gridFrequencyStep({
-      nominalHz: model.nominalFrequencyHz,
-      previousHz,
-      generationMw: internalGenerationMw + externalGenerationMw + storageGenerationMw,
-      loadMw: servedLoadMw,
-      inertiaSeconds,
-      dtSeconds: dynamicSeconds,
-    })
-    frequencyByIsland.set(island.id, frequencyHz)
-    for (const load of loads) {
-      const state = grid.loads.get(load.id)!
-      state.frequencyHz = frequencyHz
-      state.serviceState = state.servedMw <= 0 ? 'outage' : state.shedMw > 0 ? 'shed' : Math.abs(frequencyHz - model.nominalFrequencyHz) >= 0.2 ? 'constrained' : 'normal'
-    }
-    for (const item of storage) {
-      const state = grid.storage.get(item.id)!
-      state.frequencyHz = frequencyHz
-    }
-    for (const generator of generators) grid.generators.get(generator.id)!.frequencyHz = frequencyHz
+const applyAdvance = (grid: GridRuntimeInstance, island: GridIsland, structure: GridTopologyIsland, workspace: IslandFrequencyWorkspace): void => {
+  const generators = grid.arrays.generators
+  for (let position = 0; position < structure.generatorIndices.length; position += 1) {
+    const generator = structure.generatorIndices[position]!
+    const synchronised = workspace.outputSynchronised[position] === 1
+    generators.scheduledMw[generator] = synchronised ? workspace.scheduledMw[position]! : 0
+    generators.fcrMw[generator] = synchronised ? workspace.outputFcrNMw[position]! + workspace.outputFcrDMw[position]! : 0
+    generators.afrrMw[generator] = synchronised ? workspace.afrrMw[position]! : 0
+    generators.mfrrMw[generator] = synchronised ? workspace.outputMfrrMw[position]! : 0
   }
-  return frequencyByIsland
+  for (const action of workspace.actions) {
+    if (action.kind !== 'generator-trip') continue
+    const generator = gridTablesFor(grid.definition).generatorIndexById.get(action.unitId)!
+    generators.lifecycle[generator] = generatorTripped
+    generators.targetMw[generator] = 0
+    generators.scheduledMw[generator] = 0
+    generators.fcrMw[generator] = 0
+    generators.afrrMw[generator] = 0
+    generators.mfrrMw[generator] = 0
+  }
+  for (let position = 0; position < structure.storageIndices.length; position += 1) {
+    const item = workspace.storageOutputs[position]!
+    const state = grid.arrays.storage[structure.storageIndices[position]!]!
+    state.dispatchMw = item.powerMw
+    state.stateOfChargeFraction = item.stateOfChargeFraction
+    state.state = storageStateFor(item.operatingState)
+  }
+  const loads = grid.arrays.loads
+  for (let position = 0; position < structure.loadIndices.length; position += 1) {
+    const load = structure.loadIndices[position]!
+    loads.servedMw[load] = workspace.loadServedMw[position]!
+    loads.lfddShedMw[load] = workspace.loadLfddShedMw[position]!
+  }
+  for (let position = 0; position < structure.externalIndices.length; position += 1) {
+    const external = workspace.externalOutputs[position]!
+    const state = grid.arrays.externalSystems[structure.externalIndices[position]!]!
+    state.mechanicalMw = external.mechanicalMw
+    state.fcrMw = external.fcrNMw + external.fcrDMw
+    state.afrrMw = external.afrrMw
+  }
+  if (workspace.frequencyHz === null) {
+    island.energized = false
+    island.workspace = null
+    island.rocofHzPerSecond = null
+    return
+  }
+  island.rocofHzPerSecond = workspace.rocofHzPerSecond
+  if (workspace.hasExtremes) {
+    const extremes = workspace.extremes
+    island.minimumHz = Math.min(island.minimumHz ?? extremes.minimumHz, extremes.minimumHz)
+    island.maximumHz = Math.max(island.maximumHz ?? extremes.maximumHz, extremes.maximumHz)
+  }
+}
+
+/**
+ * A unit returned to service by command has had its trip reset by that command; the frequency
+ * state's protection latch follows so the unit can synchronise again.
+ */
+const resetReturnedUnits = (grid: GridRuntimeInstance, structure: GridTopologyIsland, workspace: IslandFrequencyWorkspace): void => {
+  for (let position = 0; position < structure.generatorIndices.length; position += 1) {
+    if (workspace.protection[position]!.trip && generatorSynchronisedAt(grid.arrays.generators, structure.generatorIndices[position]!)) {
+      resetWorkspaceUnitProtection(grid.definition.automation, workspace, position)
+    }
+  }
+}
+
+/**
+ * Advances every energised island's swing equation, reserves, LFDD and protection by `seconds` in
+ * the Automation's fixed sub-steps, against the demand and injections currently set on the Grid.
+ * Each island's workspace advances in place; inputs that fail the common-case checks are validated
+ * in detail against the island's IslandFrequencyInput, which names the offending member.
+ */
+export const advanceGridFrequencyControl = (grid: GridRuntimeInstance, islands: GridIslandPlan, seconds: number): void => {
+  const automation = grid.definition.automation
+  for (const island of islands.islands) {
+    const workspace = island.workspace
+    if (!island.energized || workspace === null) continue
+    const structure = islands.plan.islands[island.planIndex]!
+    resetReturnedUnits(grid, structure, workspace)
+    allocateGridIslandReserves(grid, structure)
+    refreshIslandWorkspaceInputs(grid, structure, workspace)
+    advanceFrequencyWorkspace(automation, workspace, seconds, {
+      inputsValidated: false,
+      validateInDetail: () => validateIslandInput(automation, frequencyStateOf(workspace), islandFrequencyInput(grid, structure, island.id)),
+    })
+    recordActions(grid, island.id, workspace.actions)
+    applyAdvance(grid, island, structure, workspace)
+  }
 }

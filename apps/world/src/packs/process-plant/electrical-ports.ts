@@ -75,15 +75,15 @@ export const processPlantElectricalPortsAt = (config: {
     const netExportMw = grossGenerationMw(config.plant) - totalAuxiliaryDemandMw(config.plant)
     return electricalPortDefinitionSchema.parse({
       ...boundary.port,
-      state: {
-        activePowerMw: connected
-          ? Math.max(-boundary.port.maximumImportMw, Math.min(boundary.port.maximumExportMw, netExportMw))
-          : 0,
-        voltagePu: connected && typeof voltage === 'number' ? voltage : 0,
-        frequencyHz: connected && typeof frequency === 'number' ? frequency : 0,
-        energized: connected,
-        connected,
-        observedAt: config.at,
-      },
+      state: connected
+        ? {
+            activePowerMw: Math.max(-boundary.port.maximumImportMw, Math.min(boundary.port.maximumExportMw, netExportMw)),
+            voltagePu: voltage,
+            frequencyHz: frequency,
+            energized: true,
+            connected,
+            observedAt: config.at,
+          }
+        : { activePowerMw: 0, voltagePu: 0, frequencyHz: null, energized: false, connected, observedAt: config.at },
     })
   })

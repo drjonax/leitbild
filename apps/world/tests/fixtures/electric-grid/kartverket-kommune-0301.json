@@ -1,0 +1,71 @@
+{
+ "avgrensningsboks": {
+  "coordinates": [
+   [
+    [
+     10.489165172744,
+     59.809311319501
+    ],
+    [
+     10.489165172744,
+     60.13510637668
+    ],
+    [
+     10.951389441821,
+     60.13510637668
+    ],
+    [
+     10.951389441821,
+     59.809311319501
+    ],
+    [
+     10.489165172744,
+     59.809311319501
+    ]
+   ]
+  ],
+  "crs": {
+   "properties": {
+    "name": "EPSG:4258"
+   },
+   "type": "name"
+  },
+  "type": "Polygon"
+ },
+ "fylkesnavn": "Oslo",
+ "fylkesnummer": "03",
+ "gyldigeNavn": [
+  {
+   "navn": "Oslo",
+   "prioritet": 1,
+   "sprak": "Norwegian"
+  },
+  {
+   "navn": null,
+   "prioritet": 2,
+   "sprak": null
+  },
+  {
+   "navn": null,
+   "prioritet": 3,
+   "sprak": null
+  }
+ ],
+ "kommunenavn": "Oslo",
+ "kommunenavnNorsk": "Oslo",
+ "kommunenummer": "0301",
+ "punktIOmrade": {
+  "coordinates": [
+   10.775729226427,
+   59.972397398369
+  ],
+  "crs": {
+   "properties": {
+    "name": "EPSG:4258"
+   },
+   "type": "name"
+  },
+  "type": "Point"
+ },
+ "samiskForvaltningsomrade": false
+}

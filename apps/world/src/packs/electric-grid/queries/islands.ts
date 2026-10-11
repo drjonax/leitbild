@@ -1,0 +1,127 @@
+import { z } from 'zod'
+import { gridIslandFlowModel } from '../runtime/ac-load-flow.ts'
+import { hvdcInjectionIntoIslandMw } from '../runtime/hvdc.ts'
+import type { GridIsland, GridIslandPlan, GridRuntimeInstance } from '../runtime/instance.ts'
+import { islandFixedInjectionMw, islandMembers } from '../runtime/island-input.ts'
+import { gridIslandFrequencyHz, solvedGridIslands } from '../runtime/island-lifecycle.ts'
+import { defineGridQuery, gridFor } from './common.ts'
+
+const finite = z.number().finite()
+const count = z.number().int().nonnegative()
+
+const islandsPayloadSchema = z.object({
+  gridId: z.string().min(1),
+  offset: z.number().int().nonnegative().default(0),
+  limit: z.number().int().min(1).max(500).default(50),
+}).strict()
+
+export const gridIslandSchema = z.object({
+  id: z.string().describe('Stable island id; it survives splits and merges of the island. A new island is named island:<anchor bus>; after a split the child with the larger kinetic energy keeps its parent\'s id, and a merge keeps the id of the parent with the larger kinetic energy.'),
+  anchorBus: z.object({ id: z.string(), label: z.string() }).strict().describe('The bus the island is named after as it is now: its highest-voltage station bus with the most connected branch capacity (never a junction or boundary bus while it holds a station). An island that kept its id through a split may carry an earlier anchor in its id.'),
+  referenceBus: z.object({ id: z.string(), label: z.string() }).strict().describe('The DC angle reference of its first AC component.'),
+  busCount: count,
+  branchCount: count,
+  generatorCount: count,
+  onlineGeneratorCount: count,
+  loadCount: count,
+  energized: z.boolean().describe('True while a synchronised synchronous generator or a synchronous external system forms the island voltage; storage, converters and Plant connections cannot energise an island.'),
+  frequencyHz: finite.nullable().describe('Island frequency; null when the island is not energised.'),
+  flowModel: z.enum(['ac', 'dc']).nullable().describe('ac: branch flows, loading and voltages from the island\'s converged AC load flow; dc: its AC load flow did not converge, so flows and loading are the DC solution\'s and voltages are unknown; null: not energised.'),
+  generationMw: finite.describe('Generator output in the island (MW).'),
+  storageMw: finite.describe('Net storage output, positive when discharging (MW).'),
+  externalExchangeMw: finite.describe('Net power into the island from external systems, HVDC links and Plant connections, positive into the island (MW); 0 while de-energised.'),
+  hvdcImportMw: finite.describe('Net power the island\'s HVDC converters deliver into it (MW; part of externalExchangeMw), negative while they export; 0 while de-energised.'),
+  loadMw: finite.describe('Demand of the island loads (MW).'),
+  servedLoadMw: finite,
+  unservedLoadMw: finite,
+  reserveMw: finite.describe('Upward reserve of online units, limited by their headroom (MW).'),
+  lfddStages: z.array(z.object({
+    id: z.string(),
+    thresholdHz: finite,
+    status: z.enum(['armed', 'operated', 'disarmed']).describe('armed: operates on under-frequency; operated: latched, its feeders disconnected until restore-lfdd-stage; disarmed: restored, inactive until rearm-lfdd-stage.'),
+    disconnectedMw: finite.describe('Demand the operated stage keeps disconnected in this island (MW); 0 unless operated.'),
+  }).strict()).describe('The Automation\'s LFDD stages, highest threshold first, as latched in this island; empty while de-energised (losing supply resets them).'),
+}).strict()
+export type GridIslandView = z.infer<typeof gridIslandSchema>
+
+export const gridIslandsResultSchema = z.object({
+  gridId: z.string(),
+  total: count,
+  offset: count,
+  limit: z.number().int().positive(),
+  islands: z.array(gridIslandSchema),
+}).strict()
+
+const lfddStagesOf = (grid: GridRuntimeInstance, island: GridIsland): GridIslandView['lfddStages'] => {
+  if (!island.energized || island.frequency === null) return []
+  const stages = island.frequency.lfdd.stages
+  return grid.definition.automation.lfdd.stages.map(stage => {
+    const state = stages[stage.id]
+    if (state === undefined) throw new Error(`Grid island ${island.id} has no state for LFDD stage ${stage.id}`)
+    const disconnectedMw = state.status !== 'operated' ? 0 : Object.entries(state.shedFractionByLoad)
+      .reduce((sum, [loadId, fraction]) => sum + fraction * grid.loads.get(loadId)!.demandMw, 0)
+    return { id: stage.id, thresholdHz: stage.thresholdHz, status: state.status, disconnectedMw: Math.round(disconnectedMw * 10) / 10 }
+  })
+}
+
+const islandView = (grid: GridRuntimeInstance, islands: GridIslandPlan, island: GridIsland): GridIslandView => {
+  const structure = islands.plan.islands[island.planIndex]!
+  const referenceBusId = structure.referenceBusId
+  const generators = structure.generators.map(generator => grid.generators.get(generator.id)!)
+  const loads = structure.loads.map(load => grid.loads.get(load.id)!)
+  const loadMw = loads.reduce((sum, load) => sum + load.demandMw, 0)
+  const servedLoadMw = loads.reduce((sum, load) => sum + load.servedMw, 0)
+  const externalExchangeMw = island.energized
+    ? islandMembers(grid, structure).externals.reduce((sum, system) => sum + grid.externalSystems.get(system.id)!.importMw, 0)
+      + islandFixedInjectionMw(grid, structure)
+    : 0
+  return {
+    id: island.id,
+    anchorBus: { id: structure.anchorBusId, label: grid.definition.index.busById.get(structure.anchorBusId)!.label },
+    referenceBus: { id: referenceBusId, label: grid.definition.index.busById.get(referenceBusId)!.label },
+    busCount: structure.buses.length,
+    branchCount: structure.branches.length,
+    generatorCount: generators.length,
+    onlineGeneratorCount: generators.filter(generator => generator.state === 'online').length,
+    loadCount: loads.length,
+    energized: island.energized,
+    frequencyHz: gridIslandFrequencyHz(island),
+    flowModel: gridIslandFlowModel(grid, island),
+    generationMw: generators.reduce((sum, generator) => sum + generator.dispatchMw, 0),
+    storageMw: structure.storage.reduce((sum, item) => sum + grid.storage.get(item.id)!.dispatchMw, 0),
+    externalExchangeMw,
+    hvdcImportMw: island.energized ? hvdcInjectionIntoIslandMw(grid, structure.busIndices) : 0,
+    loadMw,
+    servedLoadMw,
+    unservedLoadMw: loads.reduce((sum, load) => sum + load.unservedMw, 0),
+    reserveMw: generators.reduce((sum, generator) => sum + (generator.state === 'online'
+      ? Math.min(generator.reserveMw, Math.max(0, generator.availableMw - generator.dispatchMw))
+      : 0), 0),
+    lfddStages: lfddStagesOf(grid, island),
+  }
+}
+
+export const gridIslandsQuery = defineGridQuery({
+  id: 'world.electric-grid.islands.list',
+  title: 'List Grid islands',
+  description: 'Lists the electrically separate islands of one Grid, largest demand first: buses, units, energisation, island frequency, generation, demand, served and unserved load, reserve, and the latch state of each LFDD stage (restore-lfdd-stage and rearm-lfdd-stage act on it). Use an island id to filter assets.search and power-flow.snapshot.',
+  searchTerms: ['island', 'islanding', 'separation', 'system split', 'blackout', 'energised', 'dead island', 'frequency', 'øydrift', 'nettdeling', 'separasjon', 'mørklegging', 'spenningsløs', 'frekvens'],
+  input: islandsPayloadSchema,
+  output: gridIslandsResultSchema,
+  answer: (payload, grids) => {
+    const grid = gridFor(grids, payload.gridId)
+    const plan = solvedGridIslands(grid)
+    const islands = plan.islands
+      .map(island => islandView(grid, plan, island))
+      .sort((left, right) => right.loadMw - left.loadMw || right.busCount - left.busCount || left.id.localeCompare(right.id))
+    return {
+      gridId: payload.gridId,
+      total: islands.length,
+      offset: payload.offset,
+      limit: payload.limit,
+      islands: islands.slice(payload.offset, payload.offset + payload.limit),
+    }
+  },
+})
+
+export type GridIslandsResult = z.infer<typeof gridIslandsResultSchema>

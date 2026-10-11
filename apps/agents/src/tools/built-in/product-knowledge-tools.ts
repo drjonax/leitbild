@@ -70,14 +70,19 @@ const normalizeTerms = (query: string): ReadonlyArray<string> => {
 export const createProductKnowledgeTools = (options: { readonly repoRoot?: string; readonly knowledge?: () => Promise<Knowledge> } = {}): ReadonlyArray<Tool> => {
   const root = resolve(options.repoRoot ?? resolve(import.meta.dir, '../../../../..'))
   let corpusPromise: Promise<ProductCorpus> | undefined
-  const corpus = (): Promise<ProductCorpus> => corpusPromise ??= loadCorpus(root)
+  // Share successful immutable-release data and concurrent initialization, but
+  // do not turn a transient filesystem failure into a deployment-long outage.
+  const corpus = (): Promise<ProductCorpus> => corpusPromise ??= loadCorpus(root).catch(error => {
+    corpusPromise = undefined
+    throw error
+  })
   const knowledge = options.knowledge ?? (() => loadKnowledge(knowledgeSnapshotPath(root)))
 
   const search: Tool = {
     name: 'product_search',
     description: 'Search the unified Leitbild wiki, executable skill guidance and deployed source. Knowledge explains models and assumptions; source establishes implemented behavior. Both are revision identified.',
     usage: 'Use before explaining Leitbild internals; then read the most relevant exact paths.',
-    returns: 'Revision-tagged matches with path, line, and a bounded source snippet.',
+    returns: 'Revision-tagged matches with path, line, and a bounded source snippet. Partial coverage explicitly identifies unavailable corpora; retry after they recover.',
     parameters: {
       type: 'object', additionalProperties: false,
       properties: {
@@ -92,20 +97,33 @@ export const createProductKnowledgeTools = (options: { readonly repoRoot?: strin
     execute: async params => {
       const input = searchInputSchema.safeParse(params)
       if (!input.success) return { success: false, error: input.error.message }
-      const loaded = await corpus()
+      const [sourceResult, wikiResult] = await Promise.allSettled([
+        corpus(), input.data.kind === 'source' ? Promise.resolve(undefined) : Promise.resolve().then(async () => {
+          const wiki = await knowledge()
+          return { revision: wiki.revision, found: wiki.search(input.data.query, { offset: input.data.offset, limit: input.data.limit, includeQuality: input.data.includeQuality }) }
+        }),
+      ])
+      const loaded = sourceResult.status === 'fulfilled' ? sourceResult.value : undefined
       const warnings: string[] = []
       let knowledgeMatches: ReadonlyArray<{ path: string; revision: string; kind: string; authority: string; line: number; snippet: string; section?: string | undefined }> = []
-      let knowledgeCoverage: { total: number; returned: number; nextOffset?: number } | undefined
-      if (input.data.kind !== 'source') try {
-        const wiki = await knowledge()
-        const found = wiki.search(input.data.query, { offset: input.data.offset, limit: input.data.limit, includeQuality: input.data.includeQuality })
+      let knowledgeCoverage: { total: number; returned: number; nextOffset?: number } | { unavailable: true } | undefined
+      if (sourceResult.status === 'rejected') warnings.push(`Deployed source unavailable: ${sourceResult.reason instanceof Error ? sourceResult.reason.message : String(sourceResult.reason)}`)
+      if (wikiResult.status === 'rejected') {
+        warnings.push(`Knowledge publication unavailable: ${wikiResult.reason instanceof Error ? wikiResult.reason.message : String(wikiResult.reason)}`)
+        knowledgeCoverage = { unavailable: true }
+      }
+      if (wikiResult.status === 'fulfilled' && wikiResult.value !== undefined) {
+        const { revision, found } = wikiResult.value
         knowledgeCoverage = { total: found.total, returned: found.matches.length, ...(found.nextOffset !== undefined ? { nextOffset: found.nextOffset } : {}) }
         knowledgeMatches = found.matches.map(match => ({
-          ...match, path: `knowledge/${match.path}`, revision: wiki.revision, kind: 'documentation', authority: 'documentation',
+          ...match, path: `knowledge/${match.path}`, revision, kind: 'documentation', authority: 'documentation',
         }))
-      } catch (error) { warnings.push(error instanceof Error ? error.message : 'Knowledge publication unavailable') }
+      }
+      if (!loaded && (wikiResult.status === 'rejected' || wikiResult.value === undefined)) {
+        return { success: false, error: warnings.join('; ') }
+      }
       const terms = normalizeTerms(input.data.query)
-      const rankedMatches = loaded.documents
+      const rankedMatches = (loaded?.documents ?? [])
         .filter(document => input.data.kind === 'all' || document.kind === input.data.kind)
         .flatMap(document => {
           const lowerPath = document.path.toLocaleLowerCase()
@@ -126,7 +144,7 @@ export const createProductKnowledgeTools = (options: { readonly repoRoot?: strin
           return [{
             score: pathScore + bestLineScore + coverage + authorityScore,
             path: document.path,
-            revision: document.revision ?? loaded.revision,
+            revision: document.revision ?? loaded!.revision,
             kind: document.kind,
             authority: document.authority,
             line: bestLine + 1,
@@ -136,9 +154,9 @@ export const createProductKnowledgeTools = (options: { readonly repoRoot?: strin
         .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
         .map(({ score: _score, ...match }) => match)
       const matches = rankedMatches.slice(input.data.offset, input.data.offset + input.data.limit)
-      return { success: true, data: { revision: loaded.revision, query: input.data.query, matches: [...knowledgeMatches, ...matches],
-        coverage: { knowledge: knowledgeCoverage, source: { total: rankedMatches.length, returned: matches.length,
-          ...(input.data.offset + matches.length < rankedMatches.length ? { nextOffset: input.data.offset + matches.length } : {}) } },
+      return { success: true, data: { ...(loaded ? { revision: loaded.revision } : {}), query: input.data.query, matches: [...knowledgeMatches, ...matches],
+        coverage: { partial: warnings.length > 0, knowledge: knowledgeCoverage, source: loaded ? { total: rankedMatches.length, returned: matches.length,
+          ...(input.data.offset + matches.length < rankedMatches.length ? { nextOffset: input.data.offset + matches.length } : {}) } : { unavailable: true } },
         ...(warnings.length ? { warnings } : {}) } }
     },
   }
@@ -186,7 +204,9 @@ export const createProductKnowledgeTools = (options: { readonly repoRoot?: strin
             kind: 'documentation', authority: 'documentation' } }
         } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'Knowledge read failed' } }
       }
-      const loaded = await corpus()
+      let loaded: ProductCorpus
+      try { loaded = await corpus() }
+      catch (error) { return { success: false, error: `Deployed source unavailable: ${error instanceof Error ? error.message : String(error)}` } }
       if (input.data.section !== undefined) return { success: false, error: 'section is supported for knowledge paths only; use source line ranges.' }
       if (input.data.revision && input.data.revision !== loaded.revision) return { success: false, error: 'Source revision changed; rediscover the deployed source.' }
       const document = loaded.documents.find(candidate => candidate.path === input.data.path)

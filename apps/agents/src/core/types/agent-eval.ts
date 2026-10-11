@@ -10,7 +10,8 @@
 //                    OnEvalEvent. ai-agent.ts wraps the callback once at
 //                    evaluate() entry to stamp traceId onto every event
 //                    before forwarding. Trace correlation is centralised;
-//                    nothing else has to know about it.
+//                    nothing else has to know about it. The Agent's outer turn
+//                    owns completion, including preparation and cancellation.
 //
 // The diagnostics ring buffer (src/diagnostics/eval-buffer.ts) keys
 // records by traceId so a single eval's events all roll up into one
@@ -31,7 +32,7 @@ export type EvalEventCore =
   | { readonly kind: 'context_ready'; readonly messages: ReadonlyArray<{ readonly role: string; readonly content: string }>; readonly model: string; readonly temperature?: number; readonly toolCount: number }
   | { readonly kind: 'warning'; readonly message: string }
   | { readonly kind: 'model_fallback'; readonly preferred: string; readonly effective: string; readonly reason: string }
-  | { readonly kind: 'eval_completed'; readonly outcome: 'respond' | 'pass' | 'error' }
+  | { readonly kind: 'eval_completed'; readonly outcome: 'respond' | 'pass' | 'error' | 'cancelled' }
   // Tool-iteration check-in: the agent's tool loop has used `iterations`
   // calls without finishing. It emits this event and waits for explicit
   // user input. The UI surfaces

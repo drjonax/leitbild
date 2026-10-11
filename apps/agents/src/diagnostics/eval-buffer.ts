@@ -44,7 +44,7 @@ export interface EvalRecord {
   toolCalls: ToolCallTrace[]
   warnings: string[]
   modelFallback?: { preferred: string; effective: string; reason: string }
-  outcome?: 'respond' | 'pass' | 'error'
+  outcome?: Extract<EvalEvent, { kind: 'eval_completed' }>['outcome']
 }
 
 export type EvalRecordSummary = EvalRecord

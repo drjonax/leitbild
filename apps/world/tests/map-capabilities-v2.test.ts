@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { TileType } from 'pmtiles'
 import {
   __clearManifestCacheForTests,
   createBaseTileset,
@@ -13,17 +14,27 @@ import {
   loadMapCapabilityManifest,
   mapCapabilityManifestSchema,
 } from '../src/map/capabilities.ts'
+import { writePmtilesArchive } from '../src/map/pmtiles-writer.ts'
 import { buildSceneryTilesetDocument } from '../src/map/scenery-tileset.ts'
 import type { SceneryAssetTileSummary } from '../src/map/scenery.ts'
+
+const referenceArchive = (tileType: TileType = TileType.Mvt): Uint8Array => writePmtilesArchive({
+  tiles: [{ z: 6, x: 33, y: 17, data: new Uint8Array([1]) }, { z: 12, x: 2170, y: 1190, data: new Uint8Array([2]) }],
+  tileType,
+  bounds: { minLon: 4.5, minLat: 57.9, maxLon: 31.1, maxLat: 71.2 },
+  center: { lon: 10.7, lat: 59.9, zoom: 6 },
+})
 
 const writeReferenceManifest = async (
   root: string,
   datasetId: string,
   buildId: string,
   overrides: Record<string, unknown> = {},
+  archive: Uint8Array | null = referenceArchive(),
 ): Promise<void> => {
   const buildDir = join(root, 'builds', datasetId, buildId)
   await mkdir(buildDir, { recursive: true })
+  if (archive !== null) await Bun.write(join(buildDir, `${datasetId}.pmtiles`), archive)
   const manifest = {
     schemaVersion: 1,
     datasetId,
@@ -248,6 +259,26 @@ describe('loadMapCapabilityManifest (disk reads)', () => {
     expect(refs.length).toBe(1)
     expect(refs[0]!.datasetId).toBe('reference-areas')
     expect(refs[0]!.buildId).toBe('20260526-2000')
+  })
+
+  test('publishes the zoom range and bounds of the archive the release serves', async () => {
+    const root = await refRoot()
+    await writeReferenceManifest(root, 'grid-norway', '20261010-192738', {
+      // A build manifest's own record of the header is not what clients get.
+      tiles: { minZoom: 0, maxZoom: 3, bounds: [0, 0, 1, 1] },
+    })
+    const [tileset] = findReferenceTilesets(await loadMapCapabilityManifest({ referenceRoot: root }))
+    expect(tileset?.tiles).toEqual({ minZoom: 6, maxZoom: 12, bounds: [4.5, 57.9, 31.1, 71.2] })
+  })
+
+  test('skips a reference dataset whose archive is missing or holds no vector tiles', async () => {
+    const root = await refRoot()
+    await writeReferenceManifest(root, 'missing-archive', 'b1', { datasetId: 'missing-archive' }, null)
+    await writeReferenceManifest(root, 'raster-archive', 'b1', { datasetId: 'raster-archive' }, referenceArchive(TileType.Png))
+    await writeReferenceManifest(root, 'escaping-archive', 'b1', { datasetId: 'escaping-archive', artifact: { pmtilesPath: '../x.pmtiles', sidecarGeoJsonPath: 'x.geojson', outputLayer: 'x' } })
+    await writeReferenceManifest(root, 'reference-areas', 'b1')
+    const manifest = await loadMapCapabilityManifest({ referenceRoot: root })
+    expect(findReferenceTilesets(manifest).map(tileset => tileset.datasetId)).toEqual(['reference-areas'])
   })
 
   test('accepts local-file reference sources in promoted manifests', async () => {

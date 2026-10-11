@@ -820,7 +820,7 @@ describe('Integration — Room + Team + routeMessage', () => {
   })
 })
 
-describe('Integration — AI Agent with real Ollama', () => {
+describe.skipIf(process.env.OLLAMA_INTEGRATION !== '1')('Integration — AI Agent with real Ollama', () => {
   const ollamaProvider = createOllamaProvider(DEFAULTS.ollamaBaseUrl)
 
   test('spawnAIAgent creates agent (no auto-join), explicit join posts join message', async () => {
