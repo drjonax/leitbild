@@ -39,8 +39,10 @@ import {
   type ComposedPanelShape,
   type ComposedPanelSize,
   type DisplayEvidence,
+  type DisplayEvidenceKind,
 } from './composition.ts'
-import { displayValue, isPast, marginLimitName, nearestThresholdMargin, readingDecimals, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
+import { displayValue, isPast, marginLimitName, nearestThresholdMargin, offScale, readingDecimals, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel, writtenDecimals } from './display-text.ts'
+import { WIDER_RANGE } from './mimic/rows.ts'
 import { appendPoint, changeBesideState, COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
@@ -86,12 +88,16 @@ export interface ComposedDisplayPen {
    */
   readonly command: boolean
   readonly limits?: ProcessVariableLimits
+  /**
+   * The instrument its equipment declares reads the same quantity over a
+   * wider span (a steam generator's wide-range level beside its narrow range):
+   * where this reading stands off its span, a trend's legend reads that one.
+   */
+  readonly wider?: { readonly path: VariablePath; readonly tagId?: string; readonly span: { readonly min: number; readonly max: number } }
   /** The finest step its reading is shown in, in native units (readingResolution); null where the model declares nothing to derive it from. */
   readonly resolution: number | null
   readonly thresholds: ReadonlyArray<ComposedDisplayThreshold>
   readonly combinedRules: ReadonlyArray<ComposedDisplayCombinedRule>
-  /** Added by World to an agent's display (evidence.ts): why, labelled on the readout. */
-  readonly added?: Pick<DisplayEvidence, 'kind' | 'reason'>
 }
 
 /**
@@ -136,8 +142,6 @@ export interface ComposedComparisonPanel {
 export interface ComposedReadoutsPanel {
   readonly kind: 'readouts'
   readonly pens: ReadonlyArray<ComposedDisplayPen>
-  /** Every value in it was added by World (evidence.ts): a line over them says so. */
-  readonly added?: true
   /**
    * A generated display's lead values: the time the sparkline beside each
    * recorded one spans, in the column beside the drawing. Advice readouts
@@ -162,7 +166,36 @@ export interface ComposedMimicPanel {
   readonly mimic: CompiledMimic
 }
 
-export type CompiledComposedPanel = ComposedTrendPanel | ComposedComparisonPanel | ComposedReadoutsPanel | ComposedAlarmsPanel | ComposedMimicPanel
+/** A value in a row World adds, and the word the row reads it by: its tag, or the equipment that tells it from the others ("SG A"). */
+export interface ComposedEvidenceItem {
+  readonly pen: ComposedDisplayPen
+  readonly label: string
+}
+
+/**
+ * Values World added to an agent's display for one reason, read together in
+ * one row (composeEvidenceRows): why in a word (its kind), what they are
+ * where their own labels do not say it, the values, and what the row says
+ * beside them.
+ */
+export interface ComposedEvidenceRow {
+  readonly kind: DisplayEvidenceKind
+  readonly reason: string
+  /** What the values are ("Steam generator wide-range level"); empty where each item's label says it. */
+  readonly name: string
+  readonly items: ReadonlyArray<ComposedEvidenceItem>
+  readonly note?: string
+}
+
+/** What World added to an agent's display (evidence.ts), in rows under a line that says so. */
+export interface ComposedEvidencePanel {
+  readonly kind: 'evidence'
+  /** Every value its rows show, in row order. */
+  readonly pens: ReadonlyArray<ComposedDisplayPen>
+  readonly rows: ReadonlyArray<ComposedEvidenceRow>
+}
+
+export type CompiledComposedPanel = ComposedTrendPanel | ComposedComparisonPanel | ComposedReadoutsPanel | ComposedEvidencePanel | ComposedAlarmsPanel | ComposedMimicPanel
 
 /** Every signal a compiled panel shows, in display order. */
 export const composedPanelPens = (panel: CompiledComposedPanel): ReadonlyArray<ComposedDisplayPen> => {
@@ -388,6 +421,7 @@ const resolvePens = (
     const { thresholds, combinedRules } = icThresholdsForSignal(system.plant, binding.path)
     const seriesId = recordingSeriesIdFor(system.plant.id, binding.path)
     const identity = signalIdentity(system, binding)
+    const wider = widerInstrument(system.plant.graph, binding)
     pens.push({
       ref: signal.ref,
       role: signal.role,
@@ -405,12 +439,22 @@ const resolvePens = (
       recorded: options.recordedSeriesIds.has(seriesId),
       command: binding.writable,
       ...(binding.limits === undefined ? {} : { limits: binding.limits }),
+      ...(wider === undefined ? {} : { wider }),
       resolution: readingResolution(binding.limits, thresholds, operatingPointValue(system.plant, binding.path)),
       thresholds,
       combinedRules,
     })
   })
   return pens.length === signals.length ? pens : undefined
+}
+
+/** The published instrument a signal's equipment declares reads its quantity over a wider span, with that span. */
+const widerInstrument = (graph: CompiledPlantGraph, binding: ProcessSignalBinding): ComposedDisplayPen['wider'] => {
+  if (binding.owner.type !== 'component') return undefined
+  const path = graph.components[binding.owner.componentIndex]!.semantics.widerRanges.find(range => range.reading === binding.path)?.wider
+  const wider = path === undefined ? undefined : graph.signalBindingByPath.get(path)
+  // The compiler holds both instruments of a declared wider range to their spans.
+  return wider === undefined || !wider.published ? undefined : { path: wider.path, ...(wider.tagId === undefined ? {} : { tagId: wider.tagId }), span: wider.limits!.instrumentSpan! }
 }
 
 const unitGroups = (pens: ReadonlyArray<ComposedDisplayPen>): string => [...new Set(pens.map(pen => pen.unit))]
@@ -484,7 +528,8 @@ const compilePanel = (
 const panelShape = (panel: UnsizedPanel): ComposedPanelShape => {
   if (panel.kind === 'trend') return { kind: 'trend', strips: panel.strips.map(strip => strip.pens.length), live: panel.live.length }
   if (panel.kind === 'comparison') return { kind: 'comparison', rows: panel.pens.length }
-  if (panel.kind === 'readouts') return { kind: 'readouts', values: panel.pens.length, ...(panel.added === true ? { added: true } : {}) }
+  if (panel.kind === 'readouts') return { kind: 'readouts', values: panel.pens.length }
+  if (panel.kind === 'evidence') return { kind: 'evidence', rows: panel.rows.length }
   if (panel.kind === 'mimic') return { kind: 'mimic', height: panel.mimic.height }
   return { kind: 'alarms' }
 }
@@ -829,14 +874,57 @@ export const compileComposedDisplay = (
 }
 
 /**
- * An agent's display with what World adds to it (evidence.ts), each value
- * labelled as added: first in the free places of the last row of the agent's
- * readouts, then in one panel of its own over the alarms, under a line that
- * says so, or where that line does not fit, in further rows of the agent's
- * readouts. It never makes a display taller than a chat view allows: trends
- * shrink first, then the least telling values are left out. A value that no
- * longer resolves (a display re-opened on a changed model) is refused as any
- * other signal is.
+ * Values World adds, in the rows they are read in: consecutive values of one
+ * kind added for one reason share a row. A row of one value reads it by its
+ * name. A row of several reads each by its tag where every one has a tag
+ * (SG-A-LVL-WR … SG-D-LVL-WR); else by the equipment that tells it from the
+ * others (its own, or for a pipe's flow the equipment it flows into), under
+ * the label they share ("Steam generator wide-range level") or, for the flows
+ * of pipes of one service, that service ("Feedwater to SG A, SG B …").
+ */
+export const composeEvidenceRows = (
+  graph: CompiledPlantGraph,
+  evidence: ReadonlyArray<DisplayEvidence>,
+  pens: ReadonlyArray<ComposedDisplayPen>,
+): ReadonlyArray<ComposedEvidenceRow & { readonly count: number }> => {
+  const rows: Array<ComposedEvidenceRow & { readonly count: number }> = []
+  let start = 0
+  while (start < evidence.length) {
+    const first = evidence[start]!
+    let end = start + 1
+    while (end < evidence.length && evidence[end]!.kind === first.kind && evidence[end]!.reason === first.reason) end += 1
+    const shown = pens.slice(start, end)
+    rows.push({ kind: first.kind, reason: first.reason, ...evidenceRowItems(graph, shown), ...(first.note === undefined ? {} : { note: first.note }), count: end - start })
+    start = end
+  }
+  return rows
+}
+
+const evidenceRowItems = (graph: CompiledPlantGraph, pens: ReadonlyArray<ComposedDisplayPen>): Pick<ComposedEvidenceRow, 'name' | 'items'> => {
+  if (pens.length === 1 || pens.every(pen => pen.tagId !== undefined)) return { name: '', items: pens.map(pen => ({ pen, label: pen.tagId ?? pen.name })) }
+  const bindings = pens.map(pen => graph.signalBindingByPath.get(pen.path)!)
+  const apart = bindings.map(binding => binding.owner.type === 'component'
+    ? shortLabelOf(graph, binding.owner.componentIndex)
+    : shortLabelOf(graph, graph.links[binding.owner.linkIndex]!.toComponentIndex))
+  if (new Set(apart).size !== pens.length) return { name: '', items: pens.map(pen => ({ pen, label: pen.name })) }
+  const labels = new Set(bindings.map(binding => binding.label))
+  const services = new Set(bindings.map(binding => binding.owner.type === 'link' ? linkCarrier(graph.links[binding.owner.linkIndex]!) : null))
+  const service = services.size === 1 ? [...services][0]! : null
+  const name = bindings.every(binding => binding.owner.type === 'component') && labels.size === 1 ? [...labels][0]!
+    : service !== null && pens.every(pen => pen.quantity === 'flowRate') ? `${capitalized(words(service).join(' '))} to` : null
+  return name === null ? { name: '', items: pens.map(pen => ({ pen, label: pen.name })) } : { name, items: pens.map((pen, index) => ({ pen, label: apart[index]! })) }
+}
+
+const capitalized = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1)
+
+/**
+ * An agent's display with what World adds to it (evidence.ts): its rows, in
+ * one panel over the alarms, under a line that says so. A row is one line,
+ * however many loops it reads, so the values an operator needs fit beside a
+ * full trend. It never makes a display taller than a chat view allows: trends
+ * shrink first, then the least telling rows are left out, each whole. A value
+ * that no longer resolves (a display re-opened on a changed model) is refused
+ * as any other signal is.
  */
 export const withEvidence = (
   system: ProcessPlantRuntimeInstance,
@@ -846,39 +934,27 @@ export const withEvidence = (
 ): { readonly ok: true; readonly display: CompiledComposedDisplay; readonly evidence: ReadonlyArray<DisplayEvidence> } | { readonly ok: false; readonly issues: ReadonlyArray<ComposedDisplayIssue> } => {
   if (evidence.length === 0) return { ok: true, display, evidence }
   const issues: ComposedDisplayIssue[] = []
-  const resolved = resolvePens(system, evidence.map(entry => ({ ref: entry.path, role: 'context' as const })), 'evidence', { numericOnly: false, panelName: 'evidence', recordedSeriesIds }, issues)
-  if (resolved === undefined) return { ok: false, issues }
-  const pens = resolved.map((pen, index): ComposedDisplayPen => ({ ...pen, added: { kind: evidence[index]!.kind, reason: evidence[index]!.reason } }))
-  const perRow = composedDisplayLayout.readoutsPerRow
-  const readouts = display.panels.findIndex(panel => panel.kind === 'readouts')
-  const free = readouts === -1 ? 0 : (perRow - (composedPanelPens(display.panels[readouts]!).length % perRow)) % perRow
-  const joined = pens.slice(0, free)
-  const own = display.panels.map((panel, index) => index === readouts && panel.kind === 'readouts' && joined.length > 0 ? { ...panel, pens: [...panel.pens, ...joined] } : panel)
-  const alarms = own.findIndex(panel => panel.kind === 'alarms')
-  const at = alarms === -1 ? own.length : alarms
-  const kept = (panels: ReadonlyArray<CompiledComposedPanel>, count: number) => {
+  const pens = resolvePens(system, evidence.map(entry => ({ ref: entry.path, role: 'context' as const })), 'evidence', { numericOnly: false, panelName: 'evidence', recordedSeriesIds }, issues)
+  if (pens === undefined) return { ok: false, issues }
+  const rows = composeEvidenceRows(system.plant.graph, evidence, pens)
+  const alarms = display.panels.findIndex(panel => panel.kind === 'alarms')
+  const at = alarms === -1 ? display.panels.length : alarms
+  for (let count = rows.length; count > 0; count -= 1) {
+    const kept = rows.slice(0, count).map(({ count: _count, ...row }) => row)
+    const added: ComposedEvidencePanel = { kind: 'evidence', pens: kept.flatMap(row => row.items.map(item => item.pen)), rows: kept }
+    const panels = [...display.panels.slice(0, at), added, ...display.panels.slice(at)]
     const fit = fitComposedDisplay(panels.map(panelShape))
-    if (fit.height > composedDisplayMaxHeight(panels)) return null
+    if (fit.height > composedDisplayMaxHeight(panels)) continue
     const sized = panels.map((panel, index): CompiledComposedPanel => {
       if (panel.kind !== 'trend') return panel
       const size = fit.panels[index]
       if (size?.kind !== 'trend') throw new Error('fitted panels follow the compiled panels')
       return { ...panel, plot: size.plot }
     })
-    return { ok: true as const, display: { ...display, height: fit.height, panels: sized }, evidence: evidence.slice(0, count) }
+    const values = rows.slice(0, count).reduce((sum, row) => sum + row.count, 0)
+    return { ok: true, display: { ...display, height: fit.height, panels: sized }, evidence: evidence.slice(0, values) }
   }
-  for (let count = pens.length; count > joined.length; count -= 1) {
-    const added: ComposedReadoutsPanel = { kind: 'readouts', pens: pens.slice(joined.length, count), added: true }
-    const fitted = kept([...own.slice(0, at), added, ...own.slice(at)], count)
-    if (fitted !== null) return fitted
-    // Where a panel of its own, with its line and gap, does not fit, the values join the agent's readouts in
-    // rows of their own, each still labelled as added (evaluation run 22: a pressurizer depressurization 2 px
-    // too tall to carry the subcooling margin).
-    if (readouts === -1) continue
-    const extended = kept(own.map((panel, index) => index === readouts && panel.kind === 'readouts' ? { ...panel, pens: [...panel.pens, ...pens.slice(joined.length, count)] } : panel), count)
-    if (extended !== null) return extended
-  }
-  return kept(own, joined.length) ?? { ok: true, display, evidence: [] }
+  return { ok: true, display, evidence: [] }
 }
 
 /** The view a unit overview is shown in: its window's inner size in CSS px. */
@@ -1180,6 +1256,11 @@ const sparklinesShow = (pens: ReadonlyArray<ComposedDisplayPen>, sparklineMs: nu
 
 const minutes = (ms: number): string => `${Number((ms / 60_000).toFixed(1))} min`
 
+const widerShows = (pens: ReadonlyArray<ComposedDisplayPen>): ReadonlyArray<string> => {
+  const widened = pens.filter(pen => pen.wider !== undefined)
+  return widened.length === 0 ? [] : [`Where ${widened.map(pen => pen.tagId ?? String(pen.path)).join(', ')} stand off their span, their legend rows read the same quantity on the instrument with the wider span (${widened.map(pen => pen.wider!.tagId ?? String(pen.wider!.path)).join(', ')}) in the rate's place, marked ${WIDER_RANGE}`]
+}
+
 // Axis width follows elapsed Run age, rounded up with a one-minute minimum.
 // It is presentation geometry, not the retained recording's coverage: a new
 // or sparsely recorded Run can have far fewer samples than this axis spans.
@@ -1195,18 +1276,20 @@ export const composedDisplayShows = (display: CompiledComposedDisplay, historyMs
     return [
       ...(panel.strips.length === 0 ? [] : [`Live trend with ${trendSpanText(panel, historyMs)}${strips}; recorded samples may cover less: ${panel.strips.flatMap(strip => strip.pens).map(signalName).join('; ')}`]),
       ...(panel.live.length === 0 ? [] : [`Current values only, not recorded by this Run (no history to describe): ${panel.live.map(signalName).join('; ')}`]),
+      ...widerShows(panel.strips.flatMap(strip => strip.pens)),
       ...panel.strips.flatMap(strip => strip.thresholds.map(threshold => thresholdText(threshold, strip.unit))),
     ]
   }
   if (panel.kind === 'comparison') return [`Live side-by-side comparison with the median: ${panel.pens.map(signalName).join('; ')}`, ...panel.thresholds.map(threshold => thresholdText(threshold, panel.unit))]
   if (panel.kind === 'readouts') {
-    const chosen = panel.pens.filter(pen => pen.added === undefined)
-    const added = panel.pens.flatMap(pen => pen.added === undefined ? [] : [`${signalName(pen)}, ${pen.added.kind}: ${pen.added.reason}`])
     return [
-      ...(chosen.length === 0 ? [] : [`Live readouts with margin to the nearest I&C alarm or trip threshold: ${chosen.map(signalName).join('; ')}`]),
-      ...(added.length === 0 ? [] : [`World added these readouts, each labelled as added, for what the Plant model says bears on the question now; cite them as shown: ${added.join('; ')}`]),
+      `Live readouts with margin to the nearest I&C alarm or trip threshold: ${panel.pens.map(signalName).join('; ')}`,
       ...(panel.sparklineMs === undefined ? [] : [sparklinesShow(panel.pens, panel.sparklineMs)]),
     ]
+  }
+  if (panel.kind === 'evidence') {
+    const rows = panel.rows.map(row => `[${row.kind}] ${row.name === '' ? '' : `${row.name}: `}${row.items.map(item => signalName(item.pen)).join(', ')} (${row.reason})${row.note === undefined ? '' : `; the row says: ${row.note}`}`)
+    return [`World added these values from the Plant model, one row each for what bears on the question now, labelled with why ("Added from the Plant model"); cite them as shown: ${rows.join('; ')}`]
   }
   if (panel.kind === 'mimic') return mimicShows(panel.mimic)
   return [panel.scope === 'related' ? `Active alarms and trips of the ${panel.ruleIds.length} I&C rules acting on the displayed signals and their equipment` : 'All active alarms and trips of the Plant']
@@ -1327,12 +1410,14 @@ const penReading = (pen: ComposedDisplayPen, view: PenView, now: ComposedDisplay
   // The alarm chip beside the value names the active limit, where the words do not say it is past one.
   const saysPast = worded && reading.limit?.kind === 'past'
   const chip = reading.inAlarm === null || saysPast ? '' : `in ${thresholdName(reading.inAlarm, pen.unit)}`
+  // Off its span, a legend row reads the wider instrument where its rate would be.
+  const wider = view.kind === 'legend' ? widerReading(pen, value, now.read) : null
   return [{
     pen,
     value,
     reading,
     legend: view.kind === 'legend',
-    text: [`${pen.name}: ${readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan)}`, travel, chip, state].filter(part => part !== '').join(', '),
+    text: [`${pen.name}: ${readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan)}${wider === null ? '' : ` (${WIDER_RANGE} ${wider.name}: ${readingText(wider.value, pen.unit, pen.resolution, pen.wider!.span)})`}`, travel, chip, state].filter(part => part !== '').join(', '),
     rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode, gateStatesOf(path => now.read(path as VariablePath)))),
   }]
 }
@@ -1373,6 +1458,17 @@ const penRank = (value: number, reading: TrendReading, inForce: ReadonlyArray<Co
   if (nearest !== null && isPast(nearest)) return { order: nearest.threshold.kind === 'trip' ? 1 : 2, by: 0 }
   if (limit?.kind !== 'margin') return null
   return { order: 3, by: limit.margin.margin / Math.max(Math.abs(limit.margin.threshold.value), Number.EPSILON) }
+}
+
+/**
+ * The wider instrument's reading where a pen's own stands off its span (a
+ * trend legend reads it in the rate's place); null where it stands on its
+ * span, or its equipment declares no wider instrument.
+ */
+export const widerReading = (pen: ComposedDisplayPen, value: number, read: (path: VariablePath) => unknown): { readonly path: VariablePath; readonly name: string; readonly value: number } | null => {
+  if (pen.wider === undefined || offScale(value, pen.limits?.instrumentSpan) === null) return null
+  const wider = read(pen.wider.path)
+  return typeof wider === 'number' ? { path: pen.wider.path, name: pen.wider.tagId ?? String(pen.wider.path), value: wider } : null
 }
 
 /** How a display reads as it opens: the values now and each signal's reading, in the order it leads with them. */
@@ -1446,15 +1542,22 @@ export const composedDisplayContent = (
 ): EmbeddedViewContent => {
   const pens = shownPens(display)
   const trended = new Set(display.panels.flatMap(panel => panel.kind === 'trend' ? panel.strips.flatMap(strip => strip.pens.filter(pen => pen.recorded).map(pen => pen.path)) : []))
-  const items = pens.map(pen => {
+  const items = pens.flatMap(pen => {
     const value = now.read(pen.path)
-    return {
+    // A legend row off its span reads the wider instrument too.
+    const wider = typeof value === 'number' && readings.some(entry => entry.pen.path === pen.path && entry.legend) ? widerReading(pen, value, now.read) : null
+    return [{
       names: penNames(pen),
       values: typeof value === 'number' ? shownQuantity(shownReading(value, pen.resolution), pen.unit, readingDecimals(shownReading(value, pen.resolution), pen.unit, pen.resolution, pen.limits?.instrumentSpan)) : [],
       limits: pen.thresholds.flatMap(threshold => shownQuantity(threshold.value, pen.unit, writtenDecimals(displayValue(threshold.value, pen.unit)))),
       history: trended.has(pen.path),
       ...travelContent(readings.find(entry => entry.pen.path === pen.path)),
-    }
+    }, ...(wider === null ? [] : [{
+      names: [wider.name, String(wider.path), `${WIDER_RANGE} ${pen.name}`],
+      values: shownQuantity(shownReading(wider.value, pen.resolution), pen.unit),
+      limits: [],
+      history: false,
+    }])]
   })
   const alarms = display.panels.flatMap(panel => panel.kind === 'alarms' && (panel.scope === 'plant' || panel.ruleIds.length > 0)
     ? [{ names: [panel.scope === 'plant' ? 'Active alarms and trips of the Plant' : 'Active alarms and trips of the displayed signals and equipment'], values: [], limits: [], history: false }]

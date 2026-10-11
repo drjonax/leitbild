@@ -134,22 +134,36 @@ export type ComposedDisplayComposition = z.infer<typeof composedDisplayCompositi
 /**
  * Why World added a value to an agent's display (evidence.ts): the state
  * and command of equipment in the question's path that do not agree; the
- * same quantity on a wider instrument where a shown reading is off its span;
- * what an automatic action delivers or isolates; the same reading on a
- * healthy or left-out loop; what the unit watches in its mode; the flow
- * along a drawn line-up.
+ * device that isolates a relief or fault path, with its position; the same
+ * quantity on a wider instrument where a shown reading is off its span or
+ * heading off it; what an automatic action delivers, to each destination, or
+ * isolates; whether a reactor trip did what it must; the program a reading is
+ * held to; the same reading on a healthy or left-out loop; what the unit
+ * watches in its mode; the flows along a drawn line-up.
  */
-export const displayEvidenceKindSchema = z.enum(['cause', 'wider', 'delivers', 'isolates', 'reference', 'mode', 'flow'])
+export const displayEvidenceKindSchema = z.enum(['cause', 'isolation', 'wider', 'delivers', 'trip', 'program', 'isolates', 'reference', 'mode', 'flow'])
 export type DisplayEvidenceKind = z.infer<typeof displayEvidenceKindSchema>
 
-/** The most values World adds to one display: two readout rows. */
-export const COMPOSED_EVIDENCE_MAX = 6
+/**
+ * The most rows of values World adds to one display, and the most values in
+ * them: a row holds the values read together, at most one per loop of a
+ * six-loop Plant (the wide-range level of every steam generator).
+ */
+export const COMPOSED_EVIDENCE_MAX_ROWS = 6
+export const COMPOSED_EVIDENCE_MAX = 36
 
+/**
+ * One value World adds. Consecutive values of one kind added for one reason
+ * are read together in one row (composeEvidenceRows): the wide-range levels
+ * of the steam generators, a valve's position beside its demand.
+ */
 export const displayEvidenceSchema = z.object({
   path: text(1, 160),
   kind: displayEvidenceKindSchema,
   /** Why it is shown, in plant terms ("FCV B does not follow its demand (CMD 100 %)"). */
   reason: text(1, 200),
+  /** What its row says beside its values: how a state and its demand stood across the onset of their disagreement. */
+  note: text(1, 160).optional(),
 }).strict()
 export type DisplayEvidence = z.infer<typeof displayEvidenceSchema>
 
@@ -235,6 +249,8 @@ export const composedDisplayLayout = {
   readoutsRow: 82,
   /** Over the values World adds to an agent's display: the line that says so. */
   evidenceCaption: 16,
+  /** A row of values World adds: why in a word, the values read together, and what they say beside them. */
+  evidenceRow: 20,
   /** Title row plus four alarm rows; more are summarised as a count. */
   alarms: 110,
   alarmRows: 4,
@@ -286,8 +302,9 @@ export type ComposedPanelShape =
   /** Pens per strip, top to bottom, and live-only rows under the strips. */
   | { readonly kind: 'trend'; readonly strips: ReadonlyArray<number>; readonly live: number }
   | { readonly kind: 'comparison'; readonly rows: number }
-  /** `added`: values World adds, under a line that says so. */
-  | { readonly kind: 'readouts'; readonly values: number; readonly added?: boolean }
+  | { readonly kind: 'readouts'; readonly values: number }
+  /** Rows of values World adds, under a line that says so. */
+  | { readonly kind: 'evidence'; readonly rows: number }
   | { readonly kind: 'alarms' }
   /** A mimic has the height its generated drawing takes. */
   | { readonly kind: 'mimic'; readonly height: number }
@@ -318,7 +335,8 @@ export const composedPanelHeight = (panel: ComposedPanelSize): number => {
     return panel.strips.reduce((sum, pens, index) => sum + charts[index]! + composedTrendLegendHeight(pens), 0) + live
   }
   if (panel.kind === 'comparison') return layout.comparisonHeader + layout.comparisonRow * panel.rows + layout.comparisonCaption
-  if (panel.kind === 'readouts') return (panel.added === true ? layout.evidenceCaption : 0) + layout.readoutsRow * Math.ceil(panel.values / layout.readoutsPerRow)
+  if (panel.kind === 'readouts') return layout.readoutsRow * Math.ceil(panel.values / layout.readoutsPerRow)
+  if (panel.kind === 'evidence') return layout.evidenceCaption + layout.evidenceRow * panel.rows
   if (panel.kind === 'mimic') return panel.height + layout.mimicLegend
   return layout.alarms
 }

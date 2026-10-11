@@ -1,4 +1,4 @@
-import type { ProcessSignalBinding, VariablePath } from '../graph/index.ts'
+import type { CompiledProcessLink, ProcessSignalBinding, VariablePath } from '../graph/index.ts'
 import { downstreamLinks, linkCarrier, nextLinks } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcRule } from '../runtime/index.ts'
@@ -100,6 +100,33 @@ export const feedsTransferIntake = (plant: CompiledProcessPlant, flow: VariableP
   })
 }
 
+/**
+ * What a header sends to each of its destinations: along each branch that
+ * leaves it, through the equipment in series on it (a valve), the published
+ * flow nearest the equipment the branch ends in (the auxiliary feed to each
+ * steam generator), within `reach` links. None where fewer than two branches
+ * publish a flow: one branch's flow is the header's own.
+ */
+export const branchFlows = (plant: CompiledProcessPlant, header: number, reach: number): ReadonlyArray<{ readonly path: VariablePath; readonly destination: number }> => {
+  const graph = plant.graph
+  const flowOf = (link: CompiledProcessLink): VariablePath | undefined => link.variables.find(variable => String(variable.path).endsWith('.flowKgPerS'))?.path
+  const branches = (graph.outgoingLinksByComponent[header] ?? []).map(index => graph.links[index]!).filter(link => link.kind === 'fluidFlow').flatMap(first => {
+    const carriers = new Set([linkCarrier(first)])
+    const branch = [first]
+    for (let step = 1; step < reach; step += 1) {
+      const next = nextLinks(graph, branch.at(-1)!, carriers)
+      if (next.length !== 1) break
+      branch.push(next[0]!)
+    }
+    const published = branch.flatMap(link => {
+      const path = flowOf(link)
+      return path !== undefined && graph.signalBindingByPath.get(path)?.published === true ? [path] : []
+    })
+    return published.length === 0 ? [] : [{ path: published.at(-1)!, destination: branch.at(-1)!.toComponentIndex }]
+  })
+  return branches.length < 2 ? [] : branches
+}
+
 /** Whether what a component sends out reaches another within `reach` links downstream, along the services it delivers. */
 export const feeds = (plant: CompiledProcessPlant, source: number, target: number, reach: number): boolean => {
   const graph = plant.graph
@@ -150,6 +177,23 @@ export const actionFlows = (plant: CompiledProcessPlant, action: AutomaticAction
 export const actionEquipment = (plant: CompiledProcessPlant, action: AutomaticAction): ReadonlyArray<number> => [...new Set(action.writes
   .filter(write => writeEffect(plant, write) !== null)
   .map(write => write.component))]
+
+/**
+ * The states that say an action moved what it commands: for each run or
+ * position command or isolation input it writes, the state of that aspect of
+ * the component, or of a device it bundles (a turbine stop valve's position
+ * for the turbine trip's stop command); none where the model solves none.
+ */
+export const actionStates = (plant: CompiledProcessPlant, action: AutomaticAction): ReadonlyArray<{ readonly component: number; readonly path: VariablePath }> => {
+  const states = new Map<VariablePath, number>()
+  for (const write of action.writes) {
+    const component = plant.graph.components[write.component]!
+    for (const aspect of [...component.semantics.aspects, ...component.semantics.embedded.flatMap(device => device.aspects)]) {
+      if ((aspect.command === write.binding.path || aspect.isolation === write.binding.path) && aspect.state !== undefined && !states.has(aspect.state.path)) states.set(aspect.state.path, write.component)
+    }
+  }
+  return [...states].map(([path, component]) => ({ component, path }))
+}
 
 /**
  * The flows the equipment an action runs or moves sends straight into a

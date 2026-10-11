@@ -13,17 +13,17 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
-import type { CompiledComposedDisplay } from '../src/packs/process-plant/displays/compose.ts'
+import { composeEvidenceRows, type CompiledComposedDisplay } from '../src/packs/process-plant/displays/compose.ts'
 import { COMPOSED_DISPLAY_MAX_HEIGHT_PX, COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX, composedDisplayStateSchema, type DisplayEvidence } from '../src/packs/process-plant/displays/composition.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
 
 guardPlantTests()
 
-// Evaluation run 22's situations on the four-loop reference Plant: the fault,
-// then the minutes the probe played, with protection evaluated and the Run's
-// operations profile recorded each second; then the display the agent composed
-// in that run. World adds what the model says bears on the question.
+// Evaluation runs 22 and 23's situations on the four-loop reference Plant: the
+// fault, then the minutes the probe played, with protection evaluated and the
+// Run's operations profile recorded each second; then the display the agent
+// composed in that run. World adds what the model says bears on the question.
 
 const START = Date.parse('2026-10-11T10:00:00.000Z')
 
@@ -79,6 +79,7 @@ const situation = (fault: { readonly actionId: string; readonly parameters?: Rec
       shows: ReadonlyArray<string>
       margins: ReadonlyArray<string>
       viewContent: unknown
+      equipment: ReadonlyArray<{ readonly label: string; readonly state: string }>
     }
     const state = composedDisplayStateSchema.parse(JSON.parse(result.view.state))
     const reopened = ask('world.process-plant.display.view', { plantId: plant.id, state: result.view.state }) as { display: CompiledComposedDisplay }
@@ -98,178 +99,224 @@ const listed = (evidence: ReadonlyArray<DisplayEvidence>) => evidence.map(entry 
 const runback = once(() => situation({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 35 } }, 3))
 const atPower = once(() => situation(null, 1))
 
+/** The rows World added, each as its kind, what it names, the words its values are read by and its note. */
+const rowsOf = (display: CompiledComposedDisplay) => {
+  const panel = display.panels.find(candidate => candidate.kind === 'evidence')
+  return panel?.kind !== 'evidence' ? [] : panel.rows.map(row => ({ kind: row.kind, name: row.name, items: row.items.map(item => item.label), ...(row.note === undefined ? {} : { note: row.note }) }))
+}
+type Row = ReturnType<typeof rowsOf>[number]
+const trip: Row = { kind: 'trip', name: '', items: ['NIS-PR-AVG', 'NIS-IR-SUR', 'TURB-STOP-POS'] }
+const afwToEach: Row = { kind: 'delivers', name: '', items: ['AFW-A-FLOW', 'AFW-B-FLOW', 'AFW-C-FLOW', 'AFW-D-FLOW'] }
+
 describe('what World adds to a composed display', () => {
-  test('SG B runback: the feed valve that does not follow its demand, its wide-range level, the auxiliary feed into SG B and a healthy steam generator', () => {
-    // Run 22: SG B level at 0 % three minutes after FCV B ran back to 35 %, the unit tripped into Hot standby. The
-    // agent trended SG B's level, feed and steam flow; both reviewers missed FCV B and a healthy reference SG, and the
-    // operator asked for the wide-range level. Feedwater isolation now shuts every feed regulating valve: FCV B,
-    // failed at 35 %, does not follow it; with the other valves shut, A, C and D reach low-low level too, and the
-    // turbine-driven pump joins. Six values fill the slots: the isolated main feed is left out.
+  test('SG B runback: the feed valve that does not follow its demand, as it stood across the onset; the wide range in the legend; the auxiliary feed into SG B, the trip check and a healthy steam generator', () => {
+    // Run 22: SG B level at 0 % three minutes after FCV B ran back to 35 %, the unit tripped into Hot standby. Run 23:
+    // the CAUSE pair read only as it stands now, 35 % against a demand of 0 %, an over-feed (HMI review); across the
+    // onset it is a valve stuck at 35 % while demanded full open, until feedwater isolation shut its demand.
     const { compose, read } = runback()
     const { result, evidence, display } = compose('SG B low-low and feedwater response', ['SG-B-LVL-NR'], [
       { kind: 'trend', horizon: '10m', signals: [signal('SG-B-LVL-NR', 'primary'), signal('sgB.feedwaterFlowKgPerS'), signal('sgB.steamOutflowKgPerS')] },
       { kind: 'alarms', scope: 'related' },
     ])
-    expect(listed(evidence)).toEqual([
+    expect(listed(evidence).slice(0, 3)).toEqual([
       ['feedwaterControlValveB.effectivePositionFraction', 'cause'],
       ['feedwaterControlValveB.positionFraction', 'cause'],
-      ['sgB.wideRangeLevelPercent', 'wider'],
       ['aux-feedwater-valve-b-to-sg-b.flowKgPerS', 'delivers'],
-      ['auxFeedwaterHeader.outletFlowKgPerS', 'delivers'],
-      ['sgA.levelPercent', 'reference'],
     ])
     expect([read('feedwaterControlValveB.effectivePositionFraction'), read('feedwaterControlValveB.positionFraction')]).toEqual([expect.closeTo(0.35, 2), 0])
-    expect(read('sgB.levelPercent')).toBe(0)
-    expect(read('sgB.wideRangeLevelPercent')).toBeGreaterThan(15)
-    expect(read('aux-feedwater-valve-b-to-sg-b.flowKgPerS')).toBeGreaterThan(20)
     expect(evidence[0]!.reason).toBe('FCV B does not follow its demand (CMD SHUT)')
-    expect(evidence[2]!.reason).toBe('SG-B-LVL-NR reads below its span: the same quantity on the instrument with the wider span')
+    expect(evidence[0]!.note).toMatch(/^35\.0 % since 10:00:0\d; demand 100 % then, 0 % since 10:01:[0-5]\d$/)
     // Named by the action that judges the shown level, though every start lines the feed up to SG B.
-    expect(evidence[3]!.reason).toBe('Steam generator B low-low level auxiliary feedwater actuation: its flow into SG B')
-    expect(evidence[5]!.reason).toBe('the same reading on loop A, the healthiest other loop')
-    // In one labelled panel over the alarms, within a chat view's height; the agent's panels keep their order.
-    expect(display.panels.map(panel => panel.kind)).toEqual(['trend', 'readouts', 'alarms'])
-    const added = display.panels[1]!
-    if (added.kind !== 'readouts') throw new Error('expected the added readouts')
-    expect(added.added).toBe(true)
-    expect(added.pens.map(pen => pen.added?.kind)).toEqual(['cause', 'cause', 'wider', 'delivers', 'delivers', 'reference'])
+    expect(evidence[2]!.reason).toBe('Steam generator B low-low level auxiliary feedwater actuation: its flow into SG B')
+    const rows = rowsOf(display)
+    expect(rows[0]).toEqual({ kind: 'cause', name: '', items: ['MFW-B-CV-POS', 'MFW-B-CV'], note: evidence[0]!.note! })
+    expect(rows).toContainEqual(trip)
+    expect(rows).toContainEqual({ kind: 'reference', name: '', items: ['SG-A-LVL-NR'] })
+    // The narrow range is off its span: its legend row reads the wide range in its rate's place, so World adds none.
+    expect(read('sgB.levelPercent')).toBe(0)
+    expect(listed(evidence).map(([, kind]) => kind)).not.toContain('wider')
+    expect(result.margins[0]).toMatch(/^SG-B-LVL-NR: <0 % \(WR SG-B-LVL-WR: 2\d\.\d %\)/)
+    const content = embeddedViewContentSchema.parse(result.viewContent)
+    expect(content.items.find(item => item.names.includes('SG-B-LVL-WR'))?.values[0]?.value).toBeGreaterThan(15)
+    expect(content.items.some(item => item.names.includes('MFW-B-CV-POS'))).toBe(true)
+    // One panel over the alarms, a line per row, within a chat view's height; the agent's panels keep their order.
+    expect(display.panels.map(panel => panel.kind)).toEqual(['trend', 'evidence', 'alarms'])
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
     expect(display.height).toBe(result.view.height)
-    // The agent is told, and may cite them: they are in what the view shows.
-    expect(result.shows.join('\n')).toContain('World added these readouts, each labelled as added')
-    const content = embeddedViewContentSchema.parse(result.viewContent)
-    expect(content.items.some(item => item.names.includes('MFW-B-CV-POS'))).toBe(true)
+    expect(result.shows.join('\n')).toContain('World added these values from the Plant model')
   }, PLANT_HANG_GUARD_MS)
 
-  const relief = once(() => situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 3))
+  const relief = once(() => situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 2))
 
-  test('PORV open: the safety injection it set off and the subcooling margin fill the free places of the agent\'s readouts', () => {
-    // Run 22: pressure 10.7 MPa falling with the PORV stuck at 35 %; the display showed no subcooling margin. After
-    // the trip the overview leads with it (core cooling, the first critical safety function it checks), so it is
-    // added; containment pressure, at normal, is no lead.
+  test('PORV open: its demand as it stood across the onset, and the block valve that isolates its line, with its position', () => {
+    // Run 23: both PORV answers told the operator to close the block valve; neither display showed where it stood.
+    // The run-23 composition, at its two minutes: the PORV stuck at 35 % with no demand to open, the reactor not yet tripped.
     const { compose, read } = relief()
-    const { evidence, display, result } = compose('Pressurizer depressurization', ['PT-455', 'PORV-456A', 'PZR-LVL'], [
-      { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('PZR-LVL')] },
-      { kind: 'readouts', signals: [signal('pressurizer.reliefFlowKgPerS'), signal('PORV-456A-POS'), signal('PORV-456A'), signal('MOV-8000A-POS')] },
+    const { evidence, display, result } = compose('Unit 2 pressurizer pressure and relief', ['PT-455', 'PORV-456A-POS', 'pressurizer.reliefFlowKgPerS'], [
+      { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('pressurizer.reliefFlowKgPerS'), signal('PORV-456A-POS'), signal('SUB-MARGIN')] },
       { kind: 'alarms', scope: 'related' },
     ])
-    expect(listed(evidence)).toEqual([['safetyInjectionHeader.outletFlowKgPerS', 'delivers'], ['vessel.subcoolingMarginC', 'mode']])
-    expect(read('safetyInjectionHeader.outletFlowKgPerS')).toBeGreaterThan(30)
-    expect(evidence[1]!.reason).toBe('what the unit leads with in Hot standby')
-    // The four readouts left two places in their second row: no panel and no height are added.
-    expect(display.panels.map(panel => panel.kind)).toEqual(['trend', 'readouts', 'alarms'])
-    const readouts = display.panels[1]!
-    if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
-    expect(readouts.added).toBeUndefined()
-    expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, null, 'delivers', 'mode'])
-    expect(result.view.height).toBe(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
-  }, PLANT_HANG_GUARD_MS)
-
-  test('PORV open as run 22 composed it: with no room for a panel of their own, the values join the agent\'s readouts in a row of their own', () => {
-    // Run 22 QA: the display added nothing three minutes in. Its trend has two strips and a live row, and its three
-    // readouts fill their row: a labelled panel of the safety injection and the subcooling margin needed 662 px of
-    // the 660 a chat view allows, so both were dropped.
-    const { compose, read } = relief()
-    const { evidence, display, result } = compose('Unit 2 pressurizer depressurization', ['PT-455', 'PORV-456A', 'PZR-LVL'], [
-      { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('pressurizer.reliefFlowKgPerS'), signal('PZR-LVL', 'counter-evidence')] },
-      { kind: 'readouts', signals: [signal('PORV-456A-POS', 'primary'), signal('PORV-456A'), signal('MOV-8000A-POS')] },
-      { kind: 'alarms', scope: 'related' },
+    expect(listed(evidence)).toEqual([
+      ['pressurizer.reliefValvePositionFraction', 'cause'],
+      ['pressurizer.blockValveEffectivePositionFraction', 'isolation'],
+      ['pressurizer.blockValvePositionFraction', 'isolation'],
     ])
-    expect(listed(evidence)).toEqual([['safetyInjectionHeader.outletFlowKgPerS', 'delivers'], ['vessel.subcoolingMarginC', 'mode']])
-    expect(display.panels.map(panel => panel.kind)).toEqual(['trend', 'readouts', 'alarms'])
-    const readouts = display.panels[1]!
-    if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
-    expect(readouts.added).toBeUndefined()
-    expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, 'delivers', 'mode'])
+    expect(evidence[0]!.note).toMatch(/^35\.0 % since 10:00:0\d; demand 0 % throughout$/)
+    expect(evidence[1]!.reason).toBe('PORV block isolates the PORV\'s line')
+    expect(read('pressurizer.blockValveEffectivePositionFraction')).toBe(1)
+    expect(rowsOf(display)[1]).toEqual({ kind: 'isolation', name: '', items: ['MOV-8000A-POS', 'MOV-8000A'] })
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
-    expect(read('vessel.subcoolingMarginC')).toBeGreaterThan(16.7)
   }, PLANT_HANG_GUARD_MS)
 
-  test('loss of main feedwater and turbine trip: the auxiliary feedwater the actuation delivers, and the loops the display left out', () => {
-    // Run 22: both displays showed no AFW flow, and the turbine-trip one only SG A and B. With every narrow-range
-    // level at 0 %, the wide-range levels say where the inventory is, as a heat-sink judgement wants (FR-H.1).
+  test('a relief valve shown open, its demand followed, still has the device that isolates its line added; one the display shows is not', () => {
+    const { compose } = situation(null, 0, operator => {
+      operator.write('PORV-456A', 0.35)
+      for (let second = 0; second < 20; second += 1) operator.step()
+    })
+    const open = compose('Relief valve opened', ['PORV-456A-POS'], [{ kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('PORV-456A-POS')] }])
+    expect(listed(open.evidence)).toContainEqual(['pressurizer.blockValveEffectivePositionFraction', 'isolation'])
+    expect(listed(open.evidence).map(([, kind]) => kind)).not.toContain('cause')
+    const both = compose('Relief valve and its block valve', ['PORV-456A-POS'], [{ kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('PORV-456A-POS'), signal('MOV-8000A-POS')] }])
+    expect(listed(both.evidence).map(([, kind]) => kind)).not.toContain('isolation')
+  }, PLANT_HANG_GUARD_MS)
+
+  test('loss of main feedwater as run 23 composed it: the wide ranges in the legend, the auxiliary feed to each steam generator and the trip check, within the chat height', () => {
+    // Run 23: every narrow range below its span, a header flow of 114 kg/s that cannot say whether any steam
+    // generator is unfed, and nothing added: one readout row did not fit beside the trend.
     const lossOfFeed = situation({ actionId: 'loss-main-feedwater' }, 2)
-    const feed = lossOfFeed.compose('SG inventory after feedwater loss', ['SG-A-LVL-NR'], [
-      { kind: 'trend', horizon: '2m', signals: ['A', 'B', 'C', 'D'].map(loop => signal(`SG-${loop}-LVL-NR`, 'primary')) },
-      { kind: 'alarms', scope: 'related' },
+    const { result, evidence, display } = lossOfFeed.compose('Unit 2 feedwater loss: SG inventory and AFW', ['SG-A-LVL-NR', 'SG-B-LVL-NR', 'SG-C-LVL-NR', 'SG-D-LVL-NR'], [
+      { kind: 'trend', horizon: '10m', signals: [...['A', 'B', 'C', 'D'].map(loop => signal(`SG-${loop}-LVL-NR`, 'primary')), signal('AFW-FLOW'), signal('CST-LVL')] },
+      { kind: 'alarms', scope: 'plant' },
     ])
-    expect(listed(feed.evidence)).toEqual([
-      ...['A', 'B', 'C', 'D'].map(loop => [`sg${loop}.wideRangeLevelPercent`, 'wider']),
-      ['auxFeedwaterHeader.outletFlowKgPerS', 'delivers'],
-      ['feedwaterHeader.outletFlowKgPerS', 'isolates'],
-    ])
-    expect(lossOfFeed.read('sgA.levelPercent')).toBe(0)
+    for (const loop of ['A', 'B', 'C', 'D']) expect(result.margins.join('\n')).toMatch(new RegExp(`SG-${loop}-LVL-NR: <0 % \\(WR SG-${loop}-LVL-WR: \\d+\\.\\d %\\)`))
     expect(lossOfFeed.read('sgA.wideRangeLevelPercent')).toBeGreaterThan(15)
-    expect(lossOfFeed.read('auxFeedwaterHeader.outletFlowKgPerS')).toBeGreaterThan(100)
-    expect(feed.result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
+    // The header flow is shown: its flow to each steam generator is added, then the trip check; what feedwater
+    // isolation shut off, ranked last, finds no room.
+    expect(rowsOf(display)).toEqual([afwToEach, trip])
+    expect(listed(evidence)).not.toContainEqual(['feedwaterHeader.outletFlowKgPerS', 'isolates'])
+    for (const loop of ['a', 'b', 'c', 'd']) expect(lossOfFeed.read(`aux-feedwater-valve-${loop}-to-sg-${loop}.flowKgPerS`)).toBeGreaterThan(20)
+    expect(Number(lossOfFeed.read('core.powerRangePercent'))).toBeLessThan(5)
+    expect(lossOfFeed.read('turbineStopValve.effectivePositionFraction')).toBe(0)
+    expect(evidence.find(entry => entry.kind === 'trip')!.reason).toMatch(/^Reactor trip at 10:01:\d\d: what says Core and Turbine stopped$/)
+    expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
 
-    const turbineTrip = situation({ actionId: 'turbine-trip' }, 1)
-    const trip = turbineTrip.compose('Post turbine trip watch', ['SG-A-LVL-NR', 'PT-455', 'PZR-LVL'], [
-      { kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary'), signal('SG-B-LVL-NR'), signal('PT-455'), signal('PZR-LVL')] },
+    // A drawing that writes a narrow range at the end of its span: the wide ranges are added, in one row.
+    const drawing = lossOfFeed.compose('Main feedwater to steam generators', ['feedwaterHeader'], [
+      { kind: 'mimic', services: ['feedwater'], to: ['sgA', 'sgB', 'sgC', 'sgD'], reach: 3 },
       { kind: 'alarms', scope: 'related' },
     ])
-    // With feedwater isolated on the trip, SG A has fallen to the low-low level that starts auxiliary feedwater within
-    // the minute: what it delivers, then C and D.
-    expect(listed(trip.evidence)).toEqual([
-      ['auxFeedwaterHeader.outletFlowKgPerS', 'delivers'],
-      ['sgC.levelPercent', 'reference'],
-      ['sgD.levelPercent', 'reference'],
-    ])
-    expect(trip.evidence[0]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers')
-    // One row was all the chat view had room for: the isolated main feed is left out.
-    expect(trip.result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
+    expect(rowsOf(drawing.display)[0]).toEqual({ kind: 'wider', name: '', items: ['SG-A-LVL-WR', 'SG-B-LVL-WR', 'SG-C-LVL-WR', 'SG-D-LVL-WR'] })
+    expect(drawing.evidence[0]!.reason).toBe('SG-A-LVL-NR, SG-B-LVL-NR, SG-C-LVL-NR and SG-D-LVL-NR read below their span: the same quantity on the instruments with the wider span')
+
+    // Readouts alone draw no history across the trip: no trip check.
+    const now = lossOfFeed.compose('Feed now', ['AFW-FLOW'], [{ kind: 'readouts', signals: [signal('AFW-FLOW', 'primary')] }])
+    expect(listed(now.evidence).map(([, kind]) => kind)).not.toContain('trip')
   }, PLANT_HANG_GUARD_MS)
 
-  test('a line-up drawing: the flow its header carries and the flow the pumps drawn feed', () => {
-    // Run 22: the SI line-up to loop C, the feedwater line-up and the diesel-to-AFW drawing showed no flows.
+  test('turbine trip: narrow ranges falling toward the end of their span bring the wide ranges, beside the auxiliary feed in all and to each, and the trip check', () => {
+    // Run 23: a minute after the turbine trip the narrow ranges read 17.9 %, falling 18 %/min, on scale; nothing
+    // showed where the inventory would be once they left it.
+    const turbineTrip = situation({ actionId: 'turbine-trip' }, 1)
+    const { evidence, display, result } = turbineTrip.compose('Post-trip steam-generator inventory', ['SG-A-LVL-NR', 'SG-B-LVL-NR', 'SG-C-LVL-NR', 'SG-D-LVL-NR'], [
+      { kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary'), ...['B', 'C', 'D'].map(loop => signal(`SG-${loop}-LVL-NR`))] },
+      { kind: 'alarms', scope: 'plant' },
+    ])
+    expect(Number(turbineTrip.read('sgA.levelPercent'))).toBeGreaterThan(0)
+    expect(rowsOf(display)).toEqual([
+      { kind: 'wider', name: '', items: ['SG-A-LVL-WR', 'SG-B-LVL-WR', 'SG-C-LVL-WR', 'SG-D-LVL-WR'] },
+      { kind: 'delivers', name: '', items: ['AFW-FLOW'] },
+      afwToEach,
+      trip,
+      { kind: 'isolates', name: '', items: ['Process header outlet flow · Main Feedwater Header'] },
+    ])
+    expect(evidence[0]!.reason).toBe('SG-A-LVL-NR, SG-B-LVL-NR, SG-C-LVL-NR and SG-D-LVL-NR head for the bottom of their span: the same quantity on the instruments with the wider span')
+    expect(evidence[4]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers')
+    expect(evidence[5]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers to SG A, SG B, SG C and SG D')
+    expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
+  }, PLANT_HANG_GUARD_MS)
+
+  test('a line-up drawing: the parallel supply into what it ends at, the flow its header carries in all and to each destination', () => {
+    // Run 23: the SI line-up to loop C drew no accumulator; the feed line-up had no flow per steam generator.
     const power = atPower()
     const si = power.compose('Safety injection to loop C', ['safetyInjection', 'C'], [{ kind: 'mimic', services: ['safetyInjection'], loops: ['C'] }, { kind: 'alarms', scope: 'related' }])
+    const drawn = si.display.panels.find(panel => panel.kind === 'mimic')!
+    if (drawn.kind !== 'mimic') throw new Error('expected the mimic')
+    expect(drawn.mimic.summary.equipment.map(item => item.label)).toEqual(expect.arrayContaining(['RWST', 'HHSI A', 'HHSI B', 'SI header', 'ACC C']))
+    expect(drawn.mimic.summary.carriers).toEqual(['primaryInjection', 'safetyInjection'])
+    // Its discharge isolation valve, open behind a check valve the coolant's pressure holds shut, reads no flow, never a demand it ignores.
+    expect(si.result.equipment.find(item => item.label === 'ACC C discharge isolation valve')?.state).toBe('position not measured; no flow')
+    // The safety injection header's lines to the cold legs publish no flow: its flow is added in all only.
     expect(listed(si.evidence)).toEqual([['safetyInjectionHeader.outletFlowKgPerS', 'flow']])
-    const feed = power.compose('Main feedwater to steam generators', ['feedwaterHeader'], [{ kind: 'mimic', services: ['feedwater'], to: ['sgA', 'sgB', 'sgC', 'sgD'], reach: 3 }, { kind: 'alarms', scope: 'related' }])
-    expect(listed(feed.evidence)).toEqual([['feedwaterHeader.outletFlowKgPerS', 'flow']])
+    expect(si.result.view.height).toBeLessThanOrEqual(COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX)
+    const feed = power.compose('Main feedwater to steam generators', ['feedwater'], [{ kind: 'mimic', services: ['feedwater'] }, { kind: 'alarms', scope: 'related' }])
+    expect(rowsOf(feed.display)).toEqual([
+      { kind: 'flow', name: '', items: ['Process header outlet flow · Main Feedwater Header'] },
+      { kind: 'flow', name: 'Feedwater to', items: ['SG A', 'SG B', 'SG C', 'SG D'] },
+    ])
+    expect(power.read('feedwater-control-valve-b-to-sg-b.flowKgPerS')).toBeGreaterThan(300)
+    // The auxiliary feed beside the main feed into all four steam generators draws legibly neither drawn nor stopped at their inlets.
+    const feedDrawing = feed.display.panels.find(panel => panel.kind === 'mimic')!
+    if (feedDrawing.kind !== 'mimic') throw new Error('expected the mimic')
+    expect(feedDrawing.mimic.summary.carriers).toEqual(['feedwater'])
     expect(feed.result.view.height).toBeLessThanOrEqual(COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX)
     const offsite = situation({ actionId: 'loss-offsite-power' }, 1)
     const diesel = offsite.compose('Diesel supply to motor-driven AFW', ['dieselGeneratorA', 'auxFeedwaterPumpMotor'], [
       { kind: 'mimic', to: ['auxFeedwaterPumpMotor', 'auxFeedwaterPumpMotorB'], services: ['electricalPower'], reach: 2 },
       { kind: 'alarms', scope: 'related' },
     ])
-    // Powered is not pumping: the pumps' header flow says whether they deliver water. With the pumps coasting down
-    // and the loops on natural circulation, the steam generators have shrunk to low-low level within the minute, so
-    // it is what that actuation, which starts the drawn pumps, delivers.
-    expect(listed(diesel.evidence)).toEqual([['auxFeedwaterHeader.outletFlowKgPerS', 'delivers']])
+    // Powered is not pumping: the pumps' header flow says whether they deliver water, and its flow to each steam
+    // generator whether every one is fed.
+    expect(rowsOf(diesel.display)).toEqual([{ kind: 'delivers', name: '', items: ['AFW-FLOW'] }, afwToEach])
     expect(diesel.evidence[0]!.reason).toMatch(/^Steam generator [A-D] low-low level auxiliary feedwater actuation: what it delivers$/)
     expect(offsite.read('auxFeedwaterHeader.outletFlowKgPerS')).toBeGreaterThan(50)
   }, PLANT_HANG_GUARD_MS)
 
-  test('a chat drawing that writes a narrow-range level at the end of its span adds the wide-range level', () => {
-    // A chat mimic has no room for the wide range beside the value: it writes "<0 %", and World adds the wide range.
-    const lossOfFeed = situation({ actionId: 'loss-main-feedwater' }, 2)
-    const { evidence, display } = lossOfFeed.compose('Main feedwater to steam generators', ['feedwaterHeader'], [
-      { kind: 'mimic', services: ['feedwater'], to: ['sgA', 'sgB', 'sgC', 'sgD'], reach: 3 },
-      { kind: 'alarms', scope: 'related' },
-    ])
-    expect(lossOfFeed.read('sgB.levelPercent')).toBe(0)
-    const mimic = display.panels.find(panel => panel.kind === 'mimic')!
-    if (mimic.kind !== 'mimic') throw new Error('expected the mimic')
-    const sg = mimic.mimic.items.find(item => item.binding.label === 'SG B')!
-    expect(sg.rows.find(row => row.kind === 'value' && row.path === 'sgB.levelPercent')).toEqual({ kind: 'value', path: 'sgB.levelPercent', unit: 'percent', required: true, span: { min: 0, max: 100 } })
-    for (const loop of ['A', 'B', 'C', 'D']) expect(listed(evidence)).toContainEqual([`sg${loop}.wideRangeLevelPercent`, 'wider'])
-    expect(evidence.find(entry => entry.path === 'sgB.wideRangeLevelPercent')!.reason).toBe('SG B reads below the span of SG-B-LVL-NR: the same quantity on the instrument with the wider span')
+  test('a reading held to a program: Tref and the deviation beside Tavg, the level program beside the pressurizer level', () => {
+    // Run 23: show-tavg read Tavg alone, though rod control holds it to Tref (SME review).
+    const power = atPower()
+    const tavg = power.compose('Tavg over ten minutes', ['TAVG'], [{ kind: 'trend', horizon: '10m', signals: [signal('TAVG', 'primary')] }])
+    expect(rowsOf(tavg.display)).toEqual([{ kind: 'program', name: '', items: ['TREF', 'TAVG-TREF'] }])
+    expect(tavg.evidence[0]!.reason).toBe('the program TAVG is held to, and how far it stands from it')
+    expect(Number(power.read('core.referenceAverageTemperatureC'))).toBeCloseTo(Number(power.read('vessel.meanPrimaryCoolantTemperatureC')), 0)
+    const level = power.compose('Pressurizer level', ['PZR-LVL'], [{ kind: 'trend', horizon: '10m', signals: [signal('PZR-LVL', 'primary')] }])
+    expect(rowsOf(level.display)[0]).toEqual({ kind: 'program', name: '', items: ['PZR-LVL-PGM', 'PZR-LVL-DEV'] })
   }, PLANT_HANG_GUARD_MS)
 
-  test('a normal plant gets nothing added: a steady level, power and temperature at power', () => {
+  test('a normal plant gets nothing added: a steady level and power at power', () => {
     const power = atPower()
     for (const panels of [
       [{ kind: 'comparison', signals: ['A', 'B', 'C', 'D'].map(loop => signal(`SG-${loop}-LVL-NR`, 'primary')) }, { kind: 'alarms', scope: 'related' }],
       [{ kind: 'trend', horizon: '10m', signals: [signal('SG-B-LVL-NR', 'primary')] }],
       [{ kind: 'trend', horizon: '10m', signals: [signal('core.powerMw', 'primary')] }],
-      [{ kind: 'trend', horizon: '10m', signals: [signal('TAVG', 'primary')] }],
     ]) {
       const { evidence, display } = power.compose('Normal plant values', [(panels[0] as { signals: ReadonlyArray<{ ref: string }> }).signals[0]!.ref], panels)
       expect(evidence).toEqual([])
       expect(display.panels).toHaveLength(panels.length)
     }
   }, PLANT_HANG_GUARD_MS)
+})
+
+describe('the rows World adds', () => {
+  test('read parallel values by their tags, or by the equipment that tells them apart under what they share', () => {
+    const graph = atPower().system.plant.graph
+    const pen = (path: string) => {
+      const binding = graph.signalBindingByPath.get(path as never)!
+      return { path: binding.path, name: binding.tagId ?? binding.label, quantity: binding.quantity, ...(binding.tagId === undefined ? {} : { tagId: binding.tagId }) } as never
+    }
+    const entry = (path: string, kind: DisplayEvidence['kind'], reason: string): DisplayEvidence => ({ path, kind, reason })
+    const evidence = [
+      entry('sgA.wideRangeLevelPercent', 'wider', 'off span'),
+      entry('sgB.wideRangeLevelPercent', 'wider', 'off span'),
+      entry('feedwater-control-valve-a-to-sg-a.flowKgPerS', 'flow', 'to each'),
+      entry('feedwater-control-valve-b-to-sg-b.flowKgPerS', 'flow', 'to each'),
+      entry('sgC.wideRangeLevelPercent', 'wider', 'off span'),
+    ]
+    expect(composeEvidenceRows(graph, evidence, evidence.map(value => pen(value.path))).map(row => [row.kind, row.name, row.items.map(item => item.label), row.count])).toEqual([
+      ['wider', '', ['SG-A-LVL-WR', 'SG-B-LVL-WR'], 2],
+      ['flow', 'Feedwater to', ['SG A', 'SG B'], 2],
+      ['wider', '', ['SG-C-LVL-WR'], 1],
+    ])
+  })
 })
 
 describe('a limit that on/off states gate, as World reads it', () => {

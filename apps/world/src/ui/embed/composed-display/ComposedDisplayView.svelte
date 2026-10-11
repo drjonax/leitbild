@@ -11,6 +11,7 @@
   import AlarmsPanel from './AlarmsPanel.svelte'
   import AnnunciatorTiles from './AnnunciatorTiles.svelte'
   import ComparisonPanel from './ComparisonPanel.svelte'
+  import EvidencePanel from './EvidencePanel.svelte'
   import PenLegend from './PenLegend.svelte'
   import ReadoutsPanel from './ReadoutsPanel.svelte'
   import SafetyFunctionChips from './SafetyFunctionChips.svelte'
@@ -341,6 +342,8 @@
           <ComparisonPanel {panel} latest={snapshot.latest} series={snapshot.series} range={snapshot.ranges[index]?.[0] ?? null} {activeRuleIds} />
         {:else if panel.kind === 'readouts'}
           <ReadoutsPanel {panel} latest={snapshot.latest} {activeRuleIds} />
+        {:else if panel.kind === 'evidence'}
+          <EvidencePanel {panel} latest={snapshot.latest} {activeRuleIds} />
         {:else if panel.kind === 'mimic'}
           <MimicPanel mimic={panel.mimic} latest={snapshot.latest} {stale} open={opens} {highlight} />
         {:else}

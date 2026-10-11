@@ -3,6 +3,7 @@
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { composedTrendLegendHeight } from '../../../packs/process-plant/displays/composition.ts'
   import { readingText, shownReading } from '../../../packs/process-plant/displays/display-text.ts'
+  import { WIDER_RANGE } from '../../../packs/process-plant/displays/mimic/rows.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { sampledGates } from './panel-presenters.ts'
   import { displayName, fitName, penStroke, roleLabel } from './pen-style.ts'
@@ -24,6 +25,11 @@
   } = $props()
 
   const sampled = (path: string) => latest?.values.find(entry => entry.path === path)
+  // Off its span a reading has no rate; the instrument that reads it over a wider span says where it is.
+  const widerText = (pen: ComposedDisplayPen): string | null => {
+    const value = pen.wider === undefined ? undefined : sampled(String(pen.wider.path))?.value
+    return typeof value === 'number' ? `${WIDER_RANGE} ${readingText(shownReading(value, pen.resolution), pen.unit, pen.resolution, pen.wider!.span)}` : null
+  }
   const windowMs = $derived(rateWindowMs(horizonMs))
 
   // A name takes what the swatch, the column gaps, the value and limit-state
@@ -62,6 +68,7 @@
     {@const reading = typeof value === 'number' ? trendReading({ value, points: live ? null : points, windowMs, unit: pen.unit, thresholds: pen.thresholds, mode: latest?.mode, gates: sampledGates(latest), activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }) : null}
     {@const inAlarm = reading?.inAlarm ?? null}
     {@const state = reading === null ? '' : readingStateText(reading, pen.unit, pen.resolution)}
+    {@const wider = reading?.offScale != null ? widerText(pen) : null}
     <li>
       {#if live}<span class="swatch live" aria-hidden="true"></span>{:else}<svg class="swatch" width="22" height="8" aria-hidden="true"><line x1="0" x2="22" y1="4" y2="4" style={penStroke(pen.role, index)} /></svg>{/if}
       <span class="name" title={`${displayName(pen)} · ${pen.label} · ${roleLabel[pen.role]}${pen.command ? ' · operator or automation demand, not a measured state' : ''}${live ? ' · not recorded by this Run: current value only' : liveOnly ? ' · no recorded history in this window' : ''}`}>{#if live}<span class="badge">not recorded</span>{/if}{named(pen, (live ? 1 : 0) + (pen.command ? 1 : 0))}{#if pen.command}<span class="badge">demand</span>{/if}</span>
@@ -72,7 +79,7 @@
         {#if state !== ''}<span class:beyond={reading?.offScale != null || reading?.limit?.kind === 'past'}>{state}</span>{/if}
         {#if entry?.quality === 'outside-hard-range'}<span class="beyond">outside range</span>{/if}
       </span>
-      <span class="rate">{typeof value === 'number' && reading !== null && !live ? (reading.offScale === null ? rateText(reading.rate, value, pen.unit, { windowMs, change: changeBesideState(reading), resolution: pen.resolution }) : 'off scale: no rate') : ''}{liveOnly && !live ? ' · live only' : ''}</span>
+      <span class="rate" class:wider={wider !== null} title={wider === null ? undefined : `${pen.wider!.tagId ?? pen.wider!.path}: the same quantity on the instrument with the wider span`}>{typeof value === 'number' && reading !== null && !live ? (reading.offScale === null ? rateText(reading.rate, value, pen.unit, { windowMs, change: changeBesideState(reading), resolution: pen.resolution }) : wider ?? 'off scale: no rate') : ''}{liveOnly && !live ? ' · live only' : ''}</span>
     </li>
   {/each}
 </ul>
@@ -92,6 +99,8 @@
   .value { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
   .state, .rate { font-size: 11px; color: var(--element-neutral-color); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .rate { overflow: hidden; text-overflow: ellipsis; }
+  /* The wider instrument's reading in the rate's place is a value: read as one. */
+  .rate.wider { font-size: 12px; font-weight: 600; color: var(--element-active-color); }
   .beyond { color: var(--alert-caution-color); font-weight: 600; }
   /* The trend's off-span comb (TrendPanel), beside the words that say so. */
   .comb-key { flex: none; }

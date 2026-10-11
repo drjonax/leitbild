@@ -103,13 +103,14 @@ export const createComposedDisplaySession = (config: {
   const panels = () => snapshot.view?.display.panels ?? []
 
   /**
-   * Every displayed signal is sampled once, however many panels show it, and
-   * the on/off states its drawn gated limits require, so a limit whose gates
-   * do not hold is drawn idle as World reads it (gatesHold).
+   * Every displayed signal is sampled once, however many panels show it, with
+   * the instrument that reads it over a wider span (its legend reads that one
+   * off its span) and the on/off states its drawn gated limits require, so a
+   * limit whose gates do not hold is drawn idle as World reads it (gatesHold).
    */
   const sampledPaths = (): ReadonlyArray<string> => [...new Set(panels().flatMap(panel => panel.kind === 'mimic'
     ? panel.mimic.paths.map(String)
-    : pensOf(panel).flatMap(pen => [String(pen.path), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).map(gate => String(gate.path)))])))]
+    : pensOf(panel).flatMap(pen => [String(pen.path), ...(pen.wider === undefined ? [] : [String(pen.wider.path)]), ...pen.thresholds.flatMap(threshold => (threshold.gates ?? []).map(gate => String(gate.path)))])))]
 
   /** Trends keep their horizon; comparisons keep ten minutes for rates. Advice readouts use only the latest sample. */
   const trendPens = (shown: ReadonlyArray<CompiledComposedPanel>): ReadonlyArray<HistoryPen> =>
