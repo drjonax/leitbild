@@ -44,6 +44,8 @@ const feedwaterIsolationRelease = (loops: ReadonlyArray<ProcessPlantReferenceLoo
   effects: loops.map(loop => write(`release-feed-regulating-valve-${loop.toLowerCase()}`, { path: `feedwaterControlValve${loop}.isolationSignal` }, false)),
 })
 
+const hotwellLevelLowPercent = 35
+
 const turbineAlarm = annunciator({
   system: 'balanceOfPlant',
   equipmentId: 'turbine',
@@ -194,6 +196,26 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       id: 'backpressure-high',
       title: 'Condenser backpressure high',
       message: 'Condenser backpressure is above the reference operating threshold.',
+      severity: 'warning',
+      annunciator: annunciator({ ...turbineAlarm, equipmentId: 'condenser', priority: 'high', role: 'symptom' }),
+    })],
+  }),
+  // The hotwell's low-level alarm, well below its 55 % normal level and
+  // before the condensate pumps lose their suction.
+  rule({
+    id: 'condenser-hotwell-level-low',
+    label: 'Condenser hotwell level low',
+    ruleClass: 'alarm',
+    condition: comparison({ path: 'condenser.condensateLevelPercent' }, '<', hotwellLevelLowPercent),
+    clearCondition: comparison({ path: 'condenser.condensateLevelPercent' }, '>', hotwellLevelLowPercent + 5),
+    clearDelayMs: 2_000,
+    delayMs: 2_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'hotwell-level-low',
+      title: 'Condenser hotwell level low',
+      message: `Condenser hotwell level is below ${hotwellLevelLowPercent} %: the condensate pumps are drawing it down faster than the condenser refills it.`,
       severity: 'warning',
       annunciator: annunciator({ ...turbineAlarm, equipmentId: 'condenser', priority: 'high', role: 'symptom' }),
     })],

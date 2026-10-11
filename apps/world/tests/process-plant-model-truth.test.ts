@@ -939,3 +939,24 @@ describe('signal labels', () => {
     expect(label('pressurizer-surge-line.leakFlowKgPerS')).toBe('Hot leg A to Pressurizer leak flow')
   })
 })
+
+describe('the condenser hotwell', () => {
+  const hotwellLow = 'alarm:condenser-hotwell-level-low:hotwell-level-low'
+
+  test('alarms below 35 %, as the condensate pumps draw it down after a trip', () => {
+    const level = resolveProcessPlantSignalBinding(graph, { path: 'condenser.condensateLevelPercent' as never }).path
+    expect(icThresholdsForSignal(plant, level).thresholds.map(threshold => [threshold.value, threshold.kind, threshold.direction])).toEqual([[35, 'alarm', 'low']])
+    const plantRun = started()
+    plantRun.run(5_000)
+    expect(Number(plantRun.read('condenser.condensateLevelPercent'))).toBeCloseTo(55, 0)
+    plantRun.act('turbine-trip')
+    let alarmedAt: number | null = null
+    for (let second = 1; second <= 120 && alarmedAt === null; second += 1) {
+      plantRun.run(1_000)
+      if (plantRun.activeIds().includes(hotwellLow)) alarmedAt = Number(plantRun.read('condenser.condensateLevelPercent'))
+    }
+    expect(alarmedAt).not.toBeNull()
+    expect(alarmedAt!).toBeLessThan(35)
+    expect(alarmedAt!).toBeGreaterThan(25)
+  })
+})
