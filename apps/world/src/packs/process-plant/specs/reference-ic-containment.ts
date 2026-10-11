@@ -54,6 +54,7 @@ export const containmentReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
         id: 'containment-high-pressure-reactor-trip',
         title: 'Containment high-pressure reactor trip',
         message: 'Containment pressure is above the reference reactor-trip threshold.',
+        actuates: ['reactorTrip'],
         annunciator: annunciator({ ...containmentAlarm, priority: 'urgent', role: 'automaticAction', firstOutGroup: 'containment-isolation' }),
       }),
       ...reactorTripBreakerWrites('containment-pressure-trip'),

@@ -1,7 +1,7 @@
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { processPlantSignalView, resolveProcessPlantSignalBinding } from '../../signals.ts'
 import type { ProcessPlantSignalReference, ProcessPlantSignalView } from '../../signals.ts'
-import type { ProcessPlantIcCondition, ProcessPlantIcEffect, ProcessPlantIcOperatingMode, ProcessPlantIcRule } from './control-protection-model.ts'
+import type { ProcessPlantIcActuation, ProcessPlantIcCondition, ProcessPlantIcEffect, ProcessPlantIcOperatingMode, ProcessPlantIcRule } from './control-protection-model.ts'
 
 export interface ProcessPlantIcEffectCatalogEntry {
   readonly id: string
@@ -32,6 +32,8 @@ export interface ProcessPlantIcRuleCatalogEntry {
 
 export interface ProcessPlantIcCatalog {
   readonly plantId: string
+  /** What the trips' annunciators name in their actuates, by id. */
+  readonly actuations: ReadonlyArray<ProcessPlantIcActuation>
   readonly ruleCount: number
   readonly rules: ReadonlyArray<ProcessPlantIcRuleCatalogEntry>
 }
@@ -88,8 +90,10 @@ export const catalogForProcessPlantIcRules = (
   system: CompiledProcessPlant,
   rules: ReadonlyArray<ProcessPlantIcRule>,
   operatingModes: ReadonlyArray<ProcessPlantIcOperatingMode>,
+  actuations: ReadonlyArray<ProcessPlantIcActuation>,
 ): ProcessPlantIcCatalog => ({
   plantId: system.id,
+  actuations,
   ruleCount: rules.length,
   rules: rules.map(rule => {
     const modes = (rule.modes ?? []).map(id => operatingModes.find(mode => mode.id === id)!)

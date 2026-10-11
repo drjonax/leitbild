@@ -33,6 +33,12 @@ export const processPlantIcAnnunciatorSchema = z.object({
   firstOutGroup: z.string().min(1).optional(),
   priority: processPlantIcAnnunciatorPrioritySchema.default('medium'),
   role: processPlantIcAnnunciatorRoleSchema.default('symptom'),
+  /**
+   * For an automatic action: the ids of the actuations the I&C config
+   * declares (processPlantIcActuationSchema) that it carries out, its own
+   * function first ("safetyInjection" before the "reactorTrip" it also causes).
+   */
+  actuates: z.array(idSchema).min(1).optional(),
 }).strict()
 export type ProcessPlantIcAnnunciator = z.infer<typeof processPlantIcAnnunciatorSchema>
 
@@ -199,6 +205,19 @@ export const processPlantIcAnnunciatorSystemSchema = z.object({
 export type ProcessPlantIcAnnunciatorSystem = z.infer<typeof processPlantIcAnnunciatorSystemSchema>
 
 /**
+ * What an automatic action does ("Safety injection"), declared once and named
+ * by its id on each trip that carries it out, so a display can name a limit's
+ * function without knowing the Plant. Its label is how operators name it; its
+ * short label is how a limit or a tile names it ("SI").
+ */
+export const processPlantIcActuationSchema = z.object({
+  id: idSchema,
+  label: z.string().min(1),
+  shortLabel: z.string().min(1).optional(),
+}).strict()
+export type ProcessPlantIcActuation = z.infer<typeof processPlantIcActuationSchema>
+
+/**
  * A first-out group: the alarms and trips whose annunciators name it, of
  * which the first to come in is marked first out. Declared once, as operators
  * name what its members do ("Reactor trip") and as a display names a limit
@@ -232,6 +251,7 @@ export type ProcessPlantIcOperatingMode = z.infer<typeof processPlantIcOperating
 export const processPlantIcConfigSchema = z.object({
   operatingModes: z.array(processPlantIcOperatingModeSchema).default([]),
   annunciatorSystems: z.array(processPlantIcAnnunciatorSystemSchema).default([]),
+  actuations: z.array(processPlantIcActuationSchema).default([]),
   firstOutGroups: z.array(processPlantIcFirstOutGroupSchema).default([]),
   rules: z.array(processPlantIcRuleSchema).default([]),
 }).strict().superRefine((config, ctx) => {
@@ -268,6 +288,25 @@ export const processPlantIcConfigSchema = z.object({
       named.add(system)
     }
     if (named.size > 1) ctx.addIssue({ code: 'custom', path: ['rules', ruleIndex], message: `${rule.id} annunciates on ${[...named].join(' and ')}; a rule annunciates on one system` })
+  }
+  // A trip names what it actuates, each once, from the declared actuations; an alarm actuates nothing.
+  const actuations = new Set<string>()
+  for (const [index, actuation] of config.actuations.entries()) {
+    if (actuations.has(actuation.id)) ctx.addIssue({ code: 'custom', path: ['actuations', index, 'id'], message: `actuation ${actuation.id} is declared twice` })
+    actuations.add(actuation.id)
+  }
+  for (const [ruleIndex, rule] of config.rules.entries()) {
+    for (const [effectIndex, effect] of rule.effects.entries()) {
+      if (effect.type !== 'alarm.enter' && effect.type !== 'trip.enter') continue
+      const path = ['rules', ruleIndex, 'effects', effectIndex, 'annunciator', 'actuates']
+      const actuates = effect.annunciator?.actuates ?? []
+      if (effect.type === 'alarm.enter' && actuates.length > 0) ctx.addIssue({ code: 'custom', path, message: `${rule.id} alarm ${effect.id} names actuations; only a trip actuates` })
+      if (effect.type === 'trip.enter' && actuates.length === 0 && actuations.size > 0) ctx.addIssue({ code: 'custom', path, message: `${rule.id} trip ${effect.id} names no actuation; this Plant names what every trip actuates from ${[...actuations].join(', ')}` })
+      for (const [index, id] of actuates.entries()) {
+        if (!actuations.has(id)) ctx.addIssue({ code: 'custom', path: [...path, index], message: `${rule.id} actuates ${id}, which is not declared; declared: ${[...actuations].join(', ') || 'none'}` })
+        if (actuates.indexOf(id) !== index) ctx.addIssue({ code: 'custom', path: [...path, index], message: `${rule.id} names actuation ${id} twice` })
+      }
+    }
   }
   // A first-out group an annunciator names is declared once, so a display can name what its members do.
   const groups = new Set<string>()

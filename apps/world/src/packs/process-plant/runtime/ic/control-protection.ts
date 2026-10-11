@@ -473,7 +473,7 @@ export const createProcessPlantProtectionRunner = (config: {
       failures: [...failures],
       history: [...history],
     }),
-    catalog: (): ProcessPlantIcCatalog => catalogForProcessPlantIcRules(config.system, rules, protection.operatingModes),
+    catalog: (): ProcessPlantIcCatalog => catalogForProcessPlantIcRules(config.system, rules, protection.operatingModes, protection.actuations),
     applyLifecycleAction: input => {
       const lifecycle = lifecycles.get(input.id)
       if (!lifecycle) throw new Error(`unknown process plant I&C lifecycle id: ${input.id}`)

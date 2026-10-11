@@ -44,6 +44,7 @@ export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcR
         id: 'safety-injection',
         title: 'Safety injection actuated',
         message: `Pressurizer pressure is below ${lowPressurizerPressureSiMPa} MPa: the SI signal starts both high-head safety injection pumps and trips the reactor.`,
+        actuates: ['safetyInjection', 'reactorTrip'],
         annunciator: siAction,
       }),
       ...siPumps.map(pump => write(`start-high-head-si-pump-${pump.train.toLowerCase()}`, { tagId: `SI-PUMP-${pump.train}` }, true)),

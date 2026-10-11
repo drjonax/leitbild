@@ -146,6 +146,7 @@ const lossOfOffsitePowerAuxiliaryFeedwater = (loops: ReadonlyArray<ProcessPlantR
       id: 'afw-actuation',
       title: 'AFW actuation on loss of offsite power',
       message: 'Both unit buses are dead: the turbine-driven auxiliary feedwater pump starts and auxiliary feedwater is lined up to every steam generator.',
+      actuates: ['auxiliaryFeedwaterStart'],
       annunciator: annunciator({ system: 'feedwater', equipmentId: 'auxFeedwaterHeader', group: 'auxiliary-feedwater', priority: 'urgent', role: 'automaticAction' }),
     }),
     write('start-turbine-afw', { tagId: 'AFW-PUMP-T' }, true),

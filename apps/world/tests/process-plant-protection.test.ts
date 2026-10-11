@@ -6,6 +6,7 @@ import {
   createProcessPlantProtectionRunner,
   createProcessPlantRuntime,
   createPwrReferencePlantDefinition,
+  processPlantIcConfigSchema,
   type ProcessPlantIcConfig,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
@@ -501,5 +502,52 @@ describe('blocking low-pressure safety injection below P-11', () => {
     expect(plantRun.secondsUntil(siActuated, 120)).not.toBeNull()
     plantRun.run(5_000)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
+  })
+})
+
+describe('what each trip actuates', () => {
+  // A display names a limit's function from the trip's annunciator ("LO-LO 20 · AFW START"), never from a plant name.
+  const actuatesOf = (ruleId: string) => plant.automation.rules.find(rule => rule.id === ruleId)!.effects
+    .flatMap(effect => effect.type === 'trip.enter' ? [effect.annunciator?.actuates] : [])
+
+  test('every trip names the declared actuations it carries out, its own function first', () => {
+    const declared = new Map(plant.automation.actuations.map(actuation => [actuation.id, actuation.shortLabel]))
+    const trips = plant.automation.rules.flatMap(rule => rule.effects.flatMap(effect => effect.type === 'trip.enter' ? [{ rule, effect }] : []))
+    expect(trips.length).toBeGreaterThan(20)
+    for (const { rule, effect } of trips) {
+      expect(effect.annunciator?.actuates?.length, rule.id).toBeGreaterThan(0)
+      for (const id of effect.annunciator!.actuates!) expect(declared.has(id), `${rule.id} ${id}`).toBe(true)
+    }
+    for (const rule of plant.automation.rules) {
+      for (const effect of rule.effects) if (effect.type === 'alarm.enter') expect(effect.annunciator?.actuates, rule.id).toBeUndefined()
+    }
+    expect(actuatesOf('safety-injection-low-pzr-pressure')).toEqual([['safetyInjection', 'reactorTrip']])
+    expect(actuatesOf('sg-b-level-low-low-afw-actuation')).toEqual([['auxiliaryFeedwaterStart']])
+    expect(actuatesOf('sg-b-level-low-low-reactor-trip')).toEqual([['reactorTrip']])
+    expect(actuatesOf('pzr-pressure-high-relief')).toEqual([['pressurizerReliefOpen']])
+    expect(actuatesOf('reactor-trip-low-tavg-feedwater-isolation')).toEqual([['feedwaterIsolation']])
+    expect(actuatesOf('sg-b-level-high-high-feedwater-isolation')).toEqual([['feedwaterIsolation', 'turbineTrip']])
+    expect([...declared.entries()]).toEqual(expect.arrayContaining([['reactorTrip', 'RX TRIP'], ['safetyInjection', 'SI'], ['auxiliaryFeedwaterStart', 'AFW START']]))
+  })
+
+  test('a trip naming an undeclared actuation, or none where actuations are declared, is refused', () => {
+    const si = plant.automation.rules.find(rule => rule.id === 'safety-injection-low-pzr-pressure')!
+    const withAnnunciator = (actuates: ReadonlyArray<string> | undefined) => ({
+      ...plant.automation,
+      rules: plant.automation.rules.map(rule => rule.id !== si.id ? rule : {
+        ...rule,
+        effects: rule.effects.map(effect => effect.type !== 'trip.enter' ? effect : {
+          ...effect,
+          annunciator: { ...effect.annunciator!, actuates: actuates as never },
+        }),
+      }),
+    })
+    expect(() => processPlantIcConfigSchema.parse(withAnnunciator(['coreSpray']))).toThrow('actuates coreSpray, which is not declared')
+    expect(() => processPlantIcConfigSchema.parse(withAnnunciator(undefined))).toThrow('names no actuation')
+  })
+
+  test('the I&C catalog lists the declared actuations', () => {
+    const plantRun = started()
+    expect(plantRun.protection.catalog().actuations.map(actuation => actuation.id)).toEqual(plant.automation.actuations.map(actuation => actuation.id))
   })
 })
