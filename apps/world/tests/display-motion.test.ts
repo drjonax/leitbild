@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { SimulationRunId, GeoJsonLineString, OperationalObject } from '../src/core/model/index.ts'
+import type { GeoJsonLineString, OperationalObject } from '../src/core/model/index.ts'
 import { geoPointFromLonLat } from '../src/core/model/index.ts'
 import {
   createDisplayMotionState,
@@ -8,18 +8,11 @@ import {
   reconcileDisplayMotionState,
 } from '../src/ui/display-motion.ts'
 import { responseScenario } from './fixtures/scenarios.ts'
-import { createAmbulanceSimEngine } from '../src/packs/ambulance/sim/engine.ts'
-import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 
-const scenarioAmbulance = (): OperationalObject => {
-  const object = createAmbulanceSimEngine({
-    simulationRunId: 'run-display-motion-test' as SimulationRunId,
-    objects: responseScenario.initialObjects,
-    simulationTimeMs: Date.parse(responseScenario.world.startsAt),
-    routing: createDirectRoutingAdapter(),
-  }).snapshot().objects.find(candidate => candidate.kind === 'mobile_entity')
-  if (!object) throw new Error('scenario fixture missing ambulance')
-  return object
+const scenarioUnit = (): OperationalObject => {
+  const object = responseScenario.initialObjects.find(candidate => candidate.kind === 'mobile_entity')
+  if (!object) throw new Error('scenario fixture missing unit')
+  return structuredClone(object)
 }
 
 const movingObject = (object: OperationalObject, longitude: number, latitude: number): OperationalObject => ({
@@ -40,9 +33,9 @@ const movingObject = (object: OperationalObject, longitude: number, latitude: nu
 
 describe('display motion interpolation', () => {
   test('interpolates moving objects between authoritative positions', () => {
-    const ambulance = scenarioAmbulance()
-    const previous = movingObject(ambulance, 10.7, 59.9)
-    const next = movingObject(ambulance, 10.7002, 59.9002)
+    const unit = scenarioUnit()
+    const previous = movingObject(unit, 10.7, 59.9)
+    const next = movingObject(unit, 10.7002, 59.9002)
     const state = reconcileDisplayMotionState({
       previousState: createDisplayMotionState(),
       previousObjects: [previous],
@@ -59,7 +52,7 @@ describe('display motion interpolation', () => {
   })
 
   test('continues interpolating when volatile route details change', () => {
-    const ambulance = scenarioAmbulance()
+    const unit = scenarioUnit()
     const route: GeoJsonLineString = {
       type: 'LineString',
       coordinates: [
@@ -78,8 +71,8 @@ describe('display motion interpolation', () => {
         },
       },
     })
-    const previous = withRoute(movingObject(ambulance, 10.7, 59.9), 120)
-    const next = withRoute(movingObject(ambulance, 10.7002, 59.9002), 119)
+    const previous = withRoute(movingObject(unit, 10.7, 59.9), 120)
+    const next = withRoute(movingObject(unit, 10.7002, 59.9002), 119)
     const state = reconcileDisplayMotionState({
       previousState: createDisplayMotionState(),
       previousObjects: [previous],
@@ -96,7 +89,7 @@ describe('display motion interpolation', () => {
   })
 
   test('snaps instead of interpolating when a route changes', () => {
-    const ambulance = scenarioAmbulance()
+    const unit = scenarioUnit()
     const route: GeoJsonLineString = {
       type: 'LineString',
       coordinates: [
@@ -104,11 +97,11 @@ describe('display motion interpolation', () => {
         geoPointFromLonLat(10.72, 59.91).coordinates,
       ],
     }
-    const previous = movingObject(ambulance, 10.7, 59.9)
+    const previous = movingObject(unit, 10.7, 59.9)
     const next = {
-      ...movingObject(ambulance, 10.7002, 59.9002),
+      ...movingObject(unit, 10.7002, 59.9002),
       spatial: {
-        ...movingObject(ambulance, 10.7002, 59.9002).spatial,
+        ...movingObject(unit, 10.7002, 59.9002).spatial,
         route: {
           planned: route,
           source: 'operator' as const,
@@ -130,18 +123,18 @@ describe('display motion interpolation', () => {
   })
 
   test('snaps when a moving object stops', () => {
-    const ambulance = scenarioAmbulance()
-    const previous = movingObject(ambulance, 10.7, 59.9)
+    const unit = scenarioUnit()
+    const previous = movingObject(unit, 10.7, 59.9)
     const stopped = {
-      ...movingObject(ambulance, 10.7002, 59.9002),
+      ...movingObject(unit, 10.7002, 59.9002),
       operational: {
-        ...ambulance.operational,
+        ...unit.operational,
         status: 'available',
       },
       spatial: {
-        ...movingObject(ambulance, 10.7002, 59.9002).spatial,
+        ...movingObject(unit, 10.7002, 59.9002).spatial,
         position: {
-          ...movingObject(ambulance, 10.7002, 59.9002).spatial.position!,
+          ...movingObject(unit, 10.7002, 59.9002).spatial.position!,
           speedMps: 0,
         },
       },
@@ -161,18 +154,18 @@ describe('display motion interpolation', () => {
   })
 
   test('interpolates moving objects from speed rather than generic operational status', () => {
-    const ambulance = scenarioAmbulance()
+    const unit = scenarioUnit()
     const previous = {
-      ...movingObject(ambulance, 10.7, 59.9),
+      ...movingObject(unit, 10.7, 59.9),
       operational: {
-        ...ambulance.operational,
+        ...unit.operational,
         status: 'available',
       },
     }
     const next = {
-      ...movingObject(ambulance, 10.7002, 59.9002),
+      ...movingObject(unit, 10.7002, 59.9002),
       operational: {
-        ...ambulance.operational,
+        ...unit.operational,
         status: 'available',
       },
     }

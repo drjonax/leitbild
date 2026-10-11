@@ -55,14 +55,14 @@ describe('simulation run client', () => {
   test('sends typed inputs through the Simulation Run Capability endpoint', async () => {
     let recordedBody = ''
     installFetch((input, init) => {
-      expect(String(input)).toBe(`${apiPrefix}/simulation-runs/run-test/capabilities/world.ambulance.assign/invoke`)
+      expect(String(input)).toBe(`${apiPrefix}/simulation-runs/run-test/capabilities/world.fixture.assign/invoke`)
       expect(init?.method).toBe('POST')
       recordedBody = String(init?.body ?? '')
       return new Response(JSON.stringify({ kind: 'command', result: { ok: true }, replayed: false }), { status: 200 })
     })
 
     const response = await invokeSimulationRunCapability('run-test' as SimulationRunId, {
-      capabilityId: 'world.ambulance.assign',
+      capabilityId: 'world.fixture.assign',
       input: { value: 1 },
     })
 

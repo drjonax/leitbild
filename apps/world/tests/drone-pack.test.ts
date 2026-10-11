@@ -111,8 +111,8 @@ const genericTarget = (config: {
 }): OperationalObject => ({
   id: config.id as ObjectId,
   kind: 'mobile_entity',
-  packId: 'ambulance' as PackId,
-  label: 'Target ambulance',
+  packId: 'fixture' as PackId,
+  label: 'Target unit',
   lifecycle: 'active',
   revision: 0,
   spatial: {
@@ -655,7 +655,7 @@ describe('drone pack native runtime', () => {
 
   test('attack interaction handler applies drone effects through interaction signals', async () => {
     const attacker = drone({ id: 'drone:attacker', model: effectModel() })
-    const target = genericTarget({ id: 'amb:target' })
+    const target = genericTarget({ id: 'unit:target' })
     const handler = createDroneAttackInteractionHandler()
     const effects = await handler.handle({
       signal: droneAttackSignal({

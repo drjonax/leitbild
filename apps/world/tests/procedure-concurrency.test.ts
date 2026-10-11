@@ -7,9 +7,8 @@ import { actorIdSchema, deleteObjectCommandKind, type SimulationRunEvent } from 
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import { createSimulationRunStateStore } from '../src/core/simulation-runs/state-store.ts'
 import { createSimulationRunRealtimeManager } from '../src/core/api/realtime.ts'
-import { createLocalAmbulancePackRuntimeAdapter } from '../src/packs/ambulance/sim/adapter.ts'
 import { createLocalWeatherPackRuntimeAdapter } from '../src/packs/weather/sim/adapter.ts'
-import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
+import { createFixturePackRuntimeAdapter } from './fixtures/fixture-runtime.ts'
 import { createTestScenarioRuntimeResolver, testScenarioAuthoring } from './helpers.ts'
 import { deferred, procedureTestCatalog, procedureTestDocument, procedureTestSource } from './procedure-fixtures.ts'
 import type { ProcedureSourceService } from '../src/features/procedures/source.ts'
@@ -24,7 +23,7 @@ describe('procedure commands through the real publish queue and realtime project
     const registry = createSimulationRunRegistry({
       dataDir, workspaceId: newWorkspaceId(), scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), ...testScenarioAuthoring(),
       runtimeAdapters: [
-        createLocalAmbulancePackRuntimeAdapter({ routing: createDirectRoutingAdapter() }),
+        createFixturePackRuntimeAdapter(),
         createLocalWeatherPackRuntimeAdapter(),
       ],
       procedureSourceService: { listSources: () => [], readCatalog: async () => procedureTestCatalog(), readDocument: async input => await readDocument(input), readEvidence: async () => { throw new Error('No retained evidence in this concurrency fixture') } },
@@ -36,7 +35,7 @@ describe('procedure commands through the real publish queue and realtime project
       send: (client, message) => {
         if (message.type === 'events') { batches.push(message.events); for (const event of message.events) client.apply(event) }
       }, sendReady: () => {} })
-    const unit = runtime.snapshot().objects.find(object => object.id.startsWith('ambulance:')) ?? runtime.snapshot().objects[0]!
+    const unit = runtime.snapshot().objects.find(object => object.id.startsWith('unit:'))!
     const scope = { plantId: unit.id, targetObjectId: unit.id }
     const startInput = { sourceId: procedureTestSource.sourceId, sourceRevision: procedureTestSource.revision, procedureId: 'E-0', scope }
     const command = async (id: string, input: unknown, actor = actorA) => {

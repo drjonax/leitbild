@@ -8,27 +8,20 @@ import {
   objectContextSchema,
   operationalObjectSchema,
   type ObjectId,
-  type SimulationRunId,
 } from '../src/core/model/index.ts'
-import { createAmbulanceSimEngine } from '../src/packs/ambulance/sim/engine.ts'
-import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
+import { fixturePackId } from './fixtures/fixture-pack.ts'
 import { responseScenario } from './fixtures/scenarios.ts'
 
-const ambulanceObjects = () =>
-  createAmbulanceSimEngine({
-    simulationRunId: 'run-context-model-test' as SimulationRunId,
-    objects: responseScenario.initialObjects,
-    simulationTimeMs: Date.parse(responseScenario.world.startsAt),
-    routing: createDirectRoutingAdapter(),
-  }).snapshot().objects
+const fixtureObjects = () =>
+  structuredClone(responseScenario.initialObjects.filter(object => object.packId === fixturePackId))
 
-const ambulanceObjectWithContext = () => {
+const unitWithContext = () => {
   const at = nowIso()
-  const ambulance = ambulanceObjects().find(object => object.kind === 'mobile_entity')
-  if (!ambulance) throw new Error('scenario missing ambulance')
+  const unit = fixtureObjects().find(object => object.kind === 'mobile_entity')
+  if (!unit) throw new Error('scenario missing unit')
 
   return {
-    ...ambulance,
+    ...unit,
     context: {
       schemaVersion: 1,
       facts: [{
@@ -44,7 +37,7 @@ const ambulanceObjectWithContext = () => {
         at,
         source: 'radio',
         perspective: 'asset',
-        summary: 'Dispatch assigned Ambulance A-12 to Incident 77.',
+        summary: 'Dispatch assigned Unit A-12 to Incident 77.',
         relatedObjectIds: ['incident:77' as ObjectId],
         relatedTaskIds: ['task:respond-incident-77'],
       }],
@@ -57,7 +50,7 @@ const ambulanceObjectWithContext = () => {
         id: 'summary:initial-dispatch',
         createdAt: at,
         perspective: 'asset',
-        summary: 'Ambulance A-12 has one active response assignment.',
+        summary: 'Unit A-12 has one active response assignment.',
         coversActivityIds: ['activity:radio-1'],
       }],
     },
@@ -66,7 +59,7 @@ const ambulanceObjectWithContext = () => {
 
 describe('object context, scenario, and mission model', () => {
   test('OperationalObject accepts valid perspective-bearing context', () => {
-    const parsed = operationalObjectSchema.parse(ambulanceObjectWithContext())
+    const parsed = operationalObjectSchema.parse(unitWithContext())
 
     expect(parsed.context?.schemaVersion).toBe(1)
     expect(parsed.context?.facts[0]?.perspective).toBe('asset')
@@ -130,15 +123,15 @@ describe('object context, scenario, and mission model', () => {
   })
 
   test('CompiledScenario keeps object context with the object it describes', () => {
-    const object = ambulanceObjectWithContext()
+    const object = unitWithContext()
     const parsed = compiledScenarioSchema.parse({
       id: 'scenario:oslo-context-basic',
       schemaVersion: 1,
       title: 'Oslo context basic',
       agentRestrictions: { operationIds: [], objects: [] },
-      packs: ['ambulance'],
+      packs: [fixturePackId],
       packRuntimes: {},
-      packConfigs: { ambulance: { adapter: 'ambulance.local' } },
+      packConfigs: { [fixturePackId]: { adapter: 'fixture.local' } },
       world: {
         startsAt: nowIso(),
         environment: { weather: 'clear' },
@@ -160,7 +153,7 @@ describe('object context, scenario, and mission model', () => {
 
   test('AgentContextView is derivable and not required on stored objects', () => {
     const at = nowIso()
-    const object = operationalObjectSchema.parse(ambulanceObjects()[0])
+    const object = operationalObjectSchema.parse(fixtureObjects()[0])
     expect(object.context).toBeUndefined()
 
     const view = agentContextViewSchema.parse({
@@ -178,10 +171,10 @@ describe('object context, scenario, and mission model', () => {
       recentActivity: [],
       summaries: [],
       relevantObjects: [],
-      allowedCommands: ['ambulance.set_destination'],
+      allowedCommands: ['fixture.assign'],
     })
 
     expect(view.object.id).toBe(object.id)
-    expect(view.allowedCommands).toEqual(['ambulance.set_destination'])
+    expect(view.allowedCommands).toEqual(['fixture.assign'])
   })
 })

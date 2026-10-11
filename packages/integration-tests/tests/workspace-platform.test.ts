@@ -6,7 +6,12 @@ import { moduleRegistrationSchema, workspaceIdSchema, workspaceResourceCatalogSc
 import { createServer as createWorldServer } from '../../../apps/world/src/core/api/server.ts'
 import { createWorldModuleState } from '../../../apps/world/src/core/workspaces/module-state.ts'
 import { createWorldWorkspaceRuntimeRegistry } from '../../../apps/world/src/core/workspaces/runtime-registry.ts'
-import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testScenarioAuthoring } from '../../../apps/world/tests/helpers.ts'
+import { createWorldApplicationAssembly } from '../../../apps/world/src/app-assembly.ts'
+import { scenarioAuthoringCatalogFor } from '../../../apps/world/src/core/scenarios/authoring.ts'
+import { compileScenarioDefinition } from '../../../apps/world/src/core/scenarios/compiler.ts'
+import { createScenarioRuntimeResolver } from '../../../apps/world/src/core/scenarios/runtime-resolver.ts'
+import { createDirectRoutingAdapter } from '../../../apps/world/src/routing/direct-adapter.ts'
+import { builtinScenarioDefinitions } from '../../../apps/world/src/scenarios/definitions.ts'
 import { handleAgentsModuleApi } from '../../../apps/agents/src/api/workspace-module-api.ts'
 import { asAIAgent } from '../../../apps/agents/src/agents/shared.ts'
 import { effectiveAgentToolSelection } from '../../../apps/agents/src/agents/spawn.ts'
@@ -57,12 +62,18 @@ describe('Workspace Host with real Modules', () => {
     cleanup.push(() => rm(dataDir, { recursive: true, force: true }))
     cleanup.push(() => rm(uiDir, { recursive: true, force: true }))
 
+    // The shipped World catalogue, assembled as src/index.ts does, with
+    // straight-line routing instead of OSRM.
+    const routing = createDirectRoutingAdapter()
+    const worldAssembly = createWorldApplicationAssembly({ routing })
     const worldRegistry = createWorldWorkspaceRuntimeRegistry({
       dataDir,
       moduleState: createWorldModuleState({ dataDir }),
-      scenarioRuntimeResolver: createTestScenarioRuntimeResolver(),
-      ...testScenarioAuthoring(),
-      runtimeAdapters: createTestPackRuntimeAdapters(),
+      scenarioRuntimeResolver: createScenarioRuntimeResolver({ packs: worldAssembly.packs }),
+      scenarioDefinitions: builtinScenarioDefinitions,
+      compileScenarioDefinition: source => compileScenarioDefinition(source, worldAssembly.packs, { routing }),
+      scenarioAuthoringCatalog: scenarioAuthoringCatalogFor(worldAssembly.packs),
+      runtimeAdapters: worldAssembly.runtimeAdapters,
     })
     const worldServer = createWorldServer({
       workspaces: worldRegistry,

@@ -10,7 +10,7 @@ import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import type { RoutingAdapter } from '../src/routing/protocol.ts'
 import { worldCoreCapabilities } from '../src/simulation/core-capabilities.ts'
 import { createRuntimeHub } from '../src/simulation/runtime-hub.ts'
-import { testScenarioRuntimeConfig } from './helpers.ts'
+import { testScenarioRuntimeConfig } from './ambulance-fixtures.ts'
 
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r }); return { promise, resolve } }
 const actor: Actor = { id: 'actor:run-race-test' as Actor['id'], label: 'Test operator', role: 'operator' }

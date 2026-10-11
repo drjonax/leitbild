@@ -11,11 +11,16 @@ import type { SimulationClockReader } from '../src/core/model/time.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testPacks, testScenarioAuthoring } from './helpers.ts'
 import { testScenarioDefinitions } from './fixtures/scenarios.ts'
-import { patientPackDataSchema } from '../src/packs/ambulance/model.ts'
+import { fixtureDataOf, fixturePackId } from './fixtures/fixture-pack.ts'
 
-const unitSettings = { patientCapacity: 1, capabilities: ['clinical-care'], crewReady: true, mobilizationSeconds: 30, sceneSeconds: 60 }
+const unitSettings = { speedMps: 15 }
+const taskDataOf = (object: Parameters<typeof fixtureDataOf>[0]) => {
+  const data = fixtureDataOf(object)
+  if (data.type !== 'task') throw new Error(`${object.id} is not a fixture task`)
+  return data
+}
 
-const definition = () => scenarioDefinitionSchema.parse({ id: 'authoring-test', title: 'Authoring test', packs: [{ id: 'ambulance', config: {}, items: [] }], world: { startsAt: '2000-01-01T00:00:00.000Z' }, view: { map: { center: [11.4, 59.1], zoom: 12 } } })
+const definition = () => scenarioDefinitionSchema.parse({ id: 'authoring-test', title: 'Authoring test', packs: [{ id: fixturePackId, config: {}, items: [] }], world: { startsAt: '2000-01-01T00:00:00.000Z' }, view: { map: { center: [11.4, 59.1], zoom: 12 } } })
 const withRegistry = async (testBody: (registry: ReturnType<typeof createSimulationRunRegistry>) => Promise<void>) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-authoring-regressions-'))
   const registry = createSimulationRunRegistry({ dataDir, workspaceId: newWorkspaceId(), ...testScenarioAuthoring(), runtimeAdapters: createTestPackRuntimeAdapters(), scenarioRuntimeResolver: createTestScenarioRuntimeResolver() })
@@ -25,16 +30,16 @@ const withRegistry = async (testBody: (registry: ReturnType<typeof createSimulat
 
 test('Scenario AI restrictions compile as the initial Run policy without Pack-specific structure', async () => {
   const source = definition()
-  source.packs[0]!.items = [{ type: 'ambulance', id: 'ambulance:restricted' as never, label: 'Restricted ambulance', position: [11.4, 59.1], ...unitSettings }]
+  source.packs[0]!.items = [{ type: 'unit', id: 'unit:restricted' as never, label: 'Restricted unit', position: [11.4, 59.1], ...unitSettings }]
   source.agentRestrictions = {
     operationIds: ['world.simulation-run.inspect'],
-    objects: [{ objectId: 'ambulance:restricted' as never, deny: ['change'] }],
+    objects: [{ objectId: 'unit:restricted' as never, deny: ['change'] }],
   }
   const compiled = await compileScenarioDefinition(source, testPacks, { routing: createDirectRoutingAdapter() })
   expect(compiled.agentRestrictions).toEqual(source.agentRestrictions)
 })
 
-test('all five real Packs share one paused startup clock and preserve progress through controls and restart', async () => {
+test('all five test Packs share one paused startup clock and preserve progress through controls and restart', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-shared-clock-'))
   const clocks: SimulationClockReader[] = []
   const adapters = createTestPackRuntimeAdapters().map(adapter => ({
@@ -51,7 +56,7 @@ test('all five real Packs share one paused startup clock and preserve progress t
     const source = structuredClone(testScenarioDefinitions.find(source => source.id === 'halden-power-complex')!)
     source.id = 'all-packs-clock'
     source.packs.push(
-      { id: 'ambulance', config: {}, items: [{ id: 'ambulance:clock' as never, type: 'ambulance', label: 'Ambulance', position: [11.48, 59.08], ...unitSettings }] },
+      { id: fixturePackId, config: {}, items: [{ id: 'unit:clock' as never, type: 'unit', label: 'Unit', position: [11.48, 59.08], ...unitSettings }] },
       { id: 'drone', config: {}, items: [{ id: 'drone:clock' as never, type: 'drone', label: 'Drone', position: [11.48, 59.08], modelId: 'native-survey-quad', altitudeM: 35, headingDeg: 0 }] },
     )
     await registry.createScenario(source)
@@ -85,63 +90,67 @@ test('save/preview reject unknown runtime, profile, command and missing conditio
   const invalid = [
     { ...source, packs: [{ ...source.packs[0]!, runtime: 'missing-runtime' }] },
     { ...source, packs: [{ ...source.packs[0]!, recording: { profileId: 'missing-profile' } }] },
-    { ...source, packs: [{ ...source.packs[0]!, config: { roadWeather: { enabled: true } } }] },
     { ...source, timeline: { cues: [{ id: 'invalid', at: { kind: 'after_scenario_start' as const, seconds: 1 }, actions: [{ type: 'invoke_capability' as const, capabilityId: 'world.weather.update', input: {} }] }] } },
   ]
   for (const document of invalid) {
     await expect(registry.previewScenario(document)).rejects.toThrow()
     await expect(registry.createScenario(document)).rejects.toThrow()
   }
+  const missingProvider = { ...source, packs: [{ ...source.packs[0]!, config: { requiredQueries: ['world.weather.sample-at-point'] } }] }
+  await expect(registry.previewScenario(missingProvider)).rejects.toThrow('fixture requires an active query provider: world.weather.sample-at-point')
+  await expect(registry.createScenario(missingProvider)).rejects.toThrow('fixture requires an active query provider: world.weather.sample-at-point')
   expect(await registry.currentScenario(source.id)).toBeUndefined()
 }))
 
 test('forward asset references are independent of item order and core context survives strict Pack parsing', async () => {
   const source = definition()
   source.packs[0]!.items = [
-    { type: 'ambulance', id: 'ambulance:forward' as never, label: 'Forward', atObject: 'care-site:later', ...unitSettings, context: objectContextSchema.parse({ schemaVersion: 1 }) },
-    { type: 'care-site', id: 'care-site:later' as never, label: 'Later care site', position: [11.4, 59.1], capabilities: ['clinical-care'], acceptedUrgencies: ['acute', 'urgent', 'ordinary'], handoverSlots: 2, handoverSeconds: 60, accepting: true },
+    { type: 'unit', id: 'unit:forward' as never, label: 'Forward', atObject: 'site:later', ...unitSettings, context: objectContextSchema.parse({ schemaVersion: 1 }) },
+    { type: 'site', id: 'site:later' as never, label: 'Later site', position: [11.4, 59.1] },
   ]
   const compiled = await compileScenarioDefinition(source, testPacks, { routing: createDirectRoutingAdapter() })
-  const ambulance = compiled.initialObjects.find(object => object.id === 'ambulance:forward')!
-  expect(ambulance.context?.schemaVersion).toBe(1)
-  expect(ambulance.spatial.position?.point).toEqual(geoPointFromLonLat(11.4, 59.1))
+  const unit = compiled.initialObjects.find(object => object.id === 'unit:forward')!
+  expect(unit.context?.schemaVersion).toBe(1)
+  expect(unit.spatial.position?.point).toEqual(geoPointFromLonLat(11.4, 59.1))
   source.packs[0]!.items.pop()
-  await expect(compileScenarioDefinition(source, testPacks, { routing: createDirectRoutingAdapter() })).rejects.toThrow('care-site:later')
+  await expect(compileScenarioDefinition(source, testPacks, { routing: createDirectRoutingAdapter() })).rejects.toThrow('site:later')
 })
 
-test('same-time cues follow authored order, modify patient assessment and do not replay after restore', async () => withRegistry(async registry => {
+test('same-time cues follow authored order, modify task priority and do not replay after restore', async () => withRegistry(async registry => {
   const source = definition()
-  source.packs[0]!.items = [{ type: 'ambulance', id: 'ambulance:one' as never, label: 'Ambulance', position: [11.4, 59.1], ...unitSettings }]
+  source.packs[0]!.items = [{ type: 'unit', id: 'unit:one' as never, label: 'Unit', position: [11.4, 59.1], ...unitSettings }]
   source.timeline = { cues: [
     { id: 'z-create-first', at: { kind: 'after_scenario_start', seconds: 0 }, actions: [
-      { type: 'invoke_capability', capabilityId: 'world.ambulance.create-item', input: { item: { type: 'incident', id: 'incident:live', label: 'Live incident', position: [11.41, 59.1], summary: 'Synthetic fixture', dispatchUrgency: 'acute' } } },
-      { type: 'invoke_capability', capabilityId: 'world.ambulance.create-item', input: { item: { type: 'patient', id: 'patient:live', label: 'Live patient', incidentId: 'incident:live', summary: 'Synthetic fixture', assessedUrgency: 'ordinary', needs: ['clinical-care'] } } },
+      { type: 'invoke_capability', capabilityId: 'world.fixture.create-item', input: { item: { type: 'task', id: 'task:live', label: 'Live task', position: [11.41, 59.1], priority: 'low' } } },
+      { type: 'invoke_capability', capabilityId: 'world.fixture.create-item', input: { item: { type: 'site', id: 'site:live', label: 'Live site', atObject: 'task:live' } } },
     ] },
-    { id: 'a-update-second', at: { kind: 'after_scenario_start', seconds: 0 }, actions: [{ type: 'invoke_capability', capabilityId: 'world.ambulance.set-patient-assessment', input: { patientId: 'patient:live', assessedUrgency: 'urgent', needs: ['clinical-care'] } }] },
+    { id: 'a-update-second', at: { kind: 'after_scenario_start', seconds: 0 }, actions: [{ type: 'invoke_capability', capabilityId: 'world.fixture.set-priority', input: { taskId: 'task:live', priority: 'normal' } }] },
   ] }
   const preview = await registry.previewScenario(source)
-  expect(preview.initialInventory).toContainEqual({ packId: 'ambulance', kind: 'mobile_entity', count: 1 })
+  expect(preview.initialInventory).toContainEqual({ packId: fixturePackId, kind: 'mobile_entity', count: 1 })
   expect(preview.timeline.cues[0]?.actions[0]).toMatchObject({
-    capabilityId: 'world.ambulance.create-item',
+    capabilityId: 'world.fixture.create-item',
     inputKeys: ['item'],
-    identifiers: { 'item.id': 'incident:live' },
+    identifiers: { 'item.id': 'task:live' },
   })
   await registry.createScenario(source)
   const run = await registry.create({ scenarioId: source.id })
   await run.setClock({ paused: true })
   expect(run.snapshot().scenario!.timeline!.firedCueIds).toEqual(['z-create-first', 'a-update-second'])
   const actor = { id: actorIdSchema.parse('test:operator'), label: 'Operator', role: 'system' as const }
-  expect(patientPackDataSchema.parse(run.snapshot().objects.find(object => object.id === 'patient:live')!.packData).assessedUrgency).toBe('urgent')
-  const dispatched = await run.invokeCapability(actor, { capabilityId: 'world.ambulance.assign', input: { unitId: 'ambulance:one', incidentId: 'incident:live', patientIds: ['patient:live'] } })
+  expect(run.snapshot().objects.find(object => object.id === 'site:live')?.spatial.position?.point).toEqual(geoPointFromLonLat(11.41, 59.1))
+  expect(taskDataOf(run.snapshot().objects.find(object => object.id === 'task:live')!).priority).toBe('normal')
+  const dispatched = await run.invokeCapability(actor, { capabilityId: 'world.fixture.assign', input: { unitId: 'unit:one', taskId: 'task:live' } })
   expect(dispatched.kind === 'command' && dispatched.result.ok).toBe(true)
-  const before = run.snapshot().objects.find(object => object.id === 'patient:live')!
-  const changed = await run.invokeCapability(actor, { capabilityId: 'world.ambulance.set-patient-assessment', input: { patientId: 'patient:live', assessedUrgency: 'acute', needs: ['clinical-care'] } })
+  const before = run.snapshot().objects.find(object => object.id === 'task:live')!
+  expect(String(taskDataOf(before).unitId)).toBe('unit:one')
+  const changed = await run.invokeCapability(actor, { capabilityId: 'world.fixture.set-priority', input: { taskId: 'task:live', priority: 'high' } })
   expect(changed.kind === 'command' && changed.result.ok).toBe(true)
-  const after = run.snapshot().objects.find(object => object.id === 'patient:live')!
+  const after = run.snapshot().objects.find(object => object.id === 'task:live')!
   expect(after.operational).toEqual(before.operational)
   expect(after.tasking).toEqual(before.tasking)
-  expect(patientPackDataSchema.parse(after.packData).assessedUrgency).toBe('acute')
-  expect(patientPackDataSchema.parse(after.packData).holder).toEqual(patientPackDataSchema.parse(before.packData).holder)
+  expect(taskDataOf(after).priority).toBe('high')
+  expect(taskDataOf(after).unitId).toEqual(taskDataOf(before).unitId)
   expect(Date.parse(after.timestamps.createdAt)).toBeGreaterThan(Date.parse('2020-01-01T00:00:00Z'))
   const clock = run.snapshot().clock!
   await Bun.sleep(30)
@@ -151,5 +160,5 @@ test('same-time cues follow authored order, modify patient assessment and do not
   const restored = await registry.load(id)
   expect(restored.snapshot().clock!.currentTime).toBe(clock.currentTime)
   expect(restored.snapshot().scenario!.timeline!.firedCueIds).toEqual(['z-create-first', 'a-update-second'])
-  expect(patientPackDataSchema.parse(restored.snapshot().objects.find(object => object.id === 'patient:live')!.packData).assessedUrgency).toBe('acute')
+  expect(taskDataOf(restored.snapshot().objects.find(object => object.id === 'task:live')!).priority).toBe('high')
 }))

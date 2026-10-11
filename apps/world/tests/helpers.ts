@@ -3,21 +3,17 @@ import type { IdleRuntimeCloseTimer } from '../src/core/simulation-runs/registry
 import { scenarioAuthoringCatalogFor } from '../src/core/scenarios/authoring.ts'
 import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import { createScenarioRuntimeResolver,type ScenarioRuntimeResolver } from '../src/core/scenarios/runtime-resolver.ts'
-import { ambulancePack } from '../src/packs/ambulance/pack.ts'
-import { createLocalAmbulancePackRuntimeAdapter } from '../src/packs/ambulance/sim/adapter.ts'
 import { createDroneNativePackRuntimeAdapter } from '../src/packs/drone/native/adapter.ts'
-import { dronePack } from '../src/packs/drone/pack.ts'
-import { electricGridPack } from '../src/packs/electric-grid/pack.ts'
 import { createLocalElectricGridPackRuntimeAdapter } from '../src/packs/electric-grid/sim/adapter.ts'
-import { processPlantPack } from '../src/packs/process-plant/pack.ts'
 import { createLocalProcessPlantPackRuntimeAdapter } from '../src/packs/process-plant/sim/adapter.ts'
-import { weatherPack } from '../src/packs/weather/pack.ts'
 import { createLocalWeatherPackRuntimeAdapter } from '../src/packs/weather/sim/adapter.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import type { PackRuntimeAdapter,PackRuntimeConnectionConfig,PackScenarioRuntimeConfig } from '../src/simulation/protocol.ts'
-import { responseScenario,testScenarioDefinitions } from './fixtures/scenarios.ts'
+import { createFixturePackRuntimeAdapter } from './fixtures/fixture-runtime.ts'
+import { testScenarioDefinitions } from './fixtures/scenarios.ts'
+import { testPacks } from './fixtures/test-packs.ts'
 
-export const testPacks = [ambulancePack, weatherPack, dronePack, processPlantPack, electricGridPack] as const
+export { testPacks }
 
 export const createTestScenarioRuntimeResolver = (): ScenarioRuntimeResolver => createScenarioRuntimeResolver({
   packs: testPacks,
@@ -31,26 +27,12 @@ export const testScenarioAuthoring = () => ({
 
 export const createTestPackRuntimeAdapters = (): ReadonlyArray<PackRuntimeAdapter> => {
   return [
-    createLocalAmbulancePackRuntimeAdapter({ routing: createDirectRoutingAdapter() }),
+    createFixturePackRuntimeAdapter(),
     createLocalWeatherPackRuntimeAdapter(),
     createDroneNativePackRuntimeAdapter(),
     createLocalProcessPlantPackRuntimeAdapter(),
     createLocalElectricGridPackRuntimeAdapter(),
   ]
-}
-
-export const testScenarioRuntimeConfig = (): PackScenarioRuntimeConfig => {
-  const runtime = createTestScenarioRuntimeResolver().resolve(responseScenario)
-  if (!runtime) throw new Error(`missing test scenario runtime: ${responseScenario.id}`)
-  return {
-    scenarioId: runtime.scenarioId,
-    runtimeIds: runtime.runtimes.map(runtime => runtime.runtimeId),
-    connections: [],
-    world: runtime.scenario.world,
-    initialObjects: runtime.initialObjects,
-    runtimeConfigByRuntimeId: runtime.runtimeConfigByRuntimeId,
-    runtimeConfig: {},
-  }
 }
 
 export const testSimulationRunId = (suffix: string): SimulationRunId =>

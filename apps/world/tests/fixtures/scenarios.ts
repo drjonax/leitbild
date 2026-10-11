@@ -1,9 +1,9 @@
 // Behavioral fixtures, deliberately independent of the shipped demo catalog.
-import { worldPacks } from '../../src/app-assembly.ts'
 import { compileScenarioDefinition } from '../../src/core/scenarios/compiler.ts'
 import { scenarioDefinitionSchema } from '../../src/core/scenarios/definition.ts'
 import { createDirectRoutingAdapter } from '../../src/routing/direct-adapter.ts'
 import { builtinScenarioDefinitions } from '../../src/scenarios/definitions.ts'
+import { testPacks } from './test-packs.ts'
 
 const fixtures = [
   {
@@ -11,194 +11,92 @@ const fixtures = [
     "title": "Response fixture",
     "packs": [
       {
-        "id": "ambulance",
+        "id": "fixture",
         "config": {},
         "items": [
           {
-            "id": "facility:ous",
-            "label": "Oslo University Hospital",
+            "id": "site:north",
+            "label": "North site",
             "position": [
               10.7387,
               59.9365
             ],
-            "type": "care-site",
-            "capabilities": [
-              "advanced_life_support"
-            ],
-            "acceptedUrgencies": [
-              "acute",
-              "urgent",
-              "ordinary"
-            ],
-            "handoverSlots": 2,
-            "handoverSeconds": 120,
-            "accepting": true
+            "type": "site"
           },
           {
-            "id": "facility:lovisenberg",
-            "label": "Lovisenberg Hospital",
+            "id": "site:centre",
+            "label": "Centre site",
             "position": [
               10.7519,
               59.9326
             ],
-            "type": "care-site",
-            "capabilities": [
-              "advanced_life_support"
-            ],
-            "acceptedUrgencies": [
-              "acute",
-              "urgent",
-              "ordinary"
-            ],
-            "handoverSlots": 4,
-            "handoverSeconds": 120,
-            "accepting": true
+            "type": "site"
           },
           {
-            "id": "facility:aker",
-            "label": "Aker Emergency Clinic",
+            "id": "site:east",
+            "label": "East site",
             "position": [
               10.8001,
               59.9391
             ],
-            "type": "care-site",
-            "capabilities": [
-              "advanced_life_support"
-            ],
-            "acceptedUrgencies": [
-              "acute",
-              "urgent",
-              "ordinary"
-            ],
-            "handoverSlots": 5,
-            "handoverSeconds": 120,
-            "accepting": true
+            "type": "site"
           },
           {
-            "id": "amb:a12",
-            "label": "Ambulance A-12",
-            "atObject": "facility:ous",
-            "type": "ambulance",
-            "patientCapacity": 1,
-            "capabilities": [
-              "advanced_life_support",
-              "defibrillator",
-              "ventilator"
-            ],
-            "crewReady": true,
-            "mobilizationSeconds": 30,
-            "sceneSeconds": 120
+            "id": "unit:a12",
+            "label": "Unit A-12",
+            "atObject": "site:north",
+            "type": "unit",
+            "speedMps": 15
           },
           {
-            "id": "amb:a21",
-            "label": "Ambulance A-21",
+            "id": "unit:a21",
+            "label": "Unit A-21",
             "position": [
               10.7707,
               59.9146
             ],
-            "type": "ambulance",
-            "patientCapacity": 1,
-            "capabilities": [
-              "advanced_life_support",
-              "defibrillator"
-            ],
-            "crewReady": true,
-            "mobilizationSeconds": 30,
-            "sceneSeconds": 120
+            "type": "unit",
+            "speedMps": 15
           },
           {
-            "id": "amb:a34",
-            "label": "Ambulance A-34",
+            "id": "unit:a34",
+            "label": "Unit A-34",
             "position": [
               10.7828,
               59.9237
             ],
-            "type": "ambulance",
-            "patientCapacity": 1,
-            "capabilities": [
-              "advanced_life_support",
-              "defibrillator"
-            ],
-            "crewReady": true,
-            "mobilizationSeconds": 30,
-            "sceneSeconds": 120
+            "type": "unit",
+            "speedMps": 15
           },
           {
-            "id": "incident:storo-cleared",
-            "label": "Storo collision",
+            "id": "task:alpha",
+            "label": "Task Alpha",
             "position": [
               10.7874,
               59.946
             ],
-            "type": "incident",
-            "summary": "Storo collision",
-            "dispatchUrgency": "urgent"
+            "type": "task",
+            "priority": "normal"
           },
           {
-            "id": "incident:torshov-partial",
-            "label": "Torshov bicycle crash",
+            "id": "task:bravo",
+            "label": "Task Bravo",
             "position": [
               10.775,
               59.9328
             ],
-            "type": "incident",
-            "summary": "Torshov bicycle crash",
-            "dispatchUrgency": "urgent"
+            "type": "task",
+            "priority": "normal"
           },
           {
-            "type": "patient",
-            "id": "patient:torshov-partial:1",
-            "label": "Patient 1",
-            "incidentId": "incident:torshov-partial",
-            "summary": "Synthetic research fixture patient",
-            "assessedUrgency": "urgent",
-            "needs": [
-              "advanced_life_support"
-            ]
-          },
-          {
-            "id": "incident:gronland-unattended",
-            "label": "Grønland multi-car crash",
+            "id": "task:charlie",
+            "label": "Task Charlie",
             "position": [
               10.7628,
               59.9124
             ],
-            "type": "incident",
-            "summary": "Grønland multi-car crash",
-            "dispatchUrgency": "acute"
-          },
-          {
-            "type": "patient",
-            "id": "patient:gronland-unattended:1",
-            "label": "Patient 1",
-            "incidentId": "incident:gronland-unattended",
-            "summary": "Synthetic research fixture patient",
-            "assessedUrgency": "acute",
-            "needs": [
-              "advanced_life_support"
-            ]
-          },
-          {
-            "type": "patient",
-            "id": "patient:gronland-unattended:2",
-            "label": "Patient 2",
-            "incidentId": "incident:gronland-unattended",
-            "summary": "Synthetic research fixture patient",
-            "assessedUrgency": "acute",
-            "needs": [
-              "advanced_life_support"
-            ]
-          },
-          {
-            "type": "patient",
-            "id": "patient:gronland-unattended:3",
-            "label": "Patient 3",
-            "incidentId": "incident:gronland-unattended",
-            "summary": "Synthetic research fixture patient",
-            "assessedUrgency": "acute",
-            "needs": [
-              "advanced_life_support"
-            ]
+            "type": "task",
+            "priority": "high"
           }
         ],
         "recording": {
@@ -301,25 +199,25 @@ const fixtures = [
       "rail": {
         "sections": [
           {
-            "categoryId": "care-sites",
-            "visible": true,
-            "collapsed": false,
-            "visibleFields": [
-              "slots"
-            ]
-          },
-          {
-            "categoryId": "ambulances",
+            "categoryId": "sites",
             "visible": true,
             "collapsed": false,
             "visibleFields": []
           },
           {
-            "categoryId": "incidents",
+            "categoryId": "units",
             "visible": true,
             "collapsed": false,
             "visibleFields": [
-              "patients"
+              "speed"
+            ]
+          },
+          {
+            "categoryId": "tasks",
+            "visible": true,
+            "collapsed": false,
+            "visibleFields": [
+              "priority"
             ]
           },
           {
@@ -348,11 +246,11 @@ const fixtures = [
               "type": "show_guidance",
               "guidance": {
                 "id": "welcome",
-                "title": "Dispatch overview",
+                "title": "Fixture overview",
                 "message": "Fixture guidance",
                 "objectIds": [
-                  "amb:a12",
-                  "incident:gronland-unattended"
+                  "unit:a12",
+                  "task:charlie"
                 ],
                 "dismissible": true
               }
@@ -360,14 +258,14 @@ const fixtures = [
             {
               "type": "highlight_objects",
               "objectIds": [
-                "amb:a12",
-                "incident:gronland-unattended"
+                "unit:a12",
+                "task:charlie"
               ]
             }
           ]
         },
         {
-          "id": "partial-incident-clarified",
+          "id": "task-bravo-raised",
           "at": {
             "kind": "after_scenario_start",
             "seconds": 45
@@ -375,24 +273,21 @@ const fixtures = [
           "actions": [
             {
               "type": "invoke_capability",
-              "capabilityId": "world.ambulance.set-patient-assessment",
+              "capabilityId": "world.fixture.set-priority",
               "input": {
-                "patientId": "patient:torshov-partial:1",
-                "assessedUrgency": "urgent",
-                "needs": [
-                  "advanced_life_support"
-                ]
+                "taskId": "task:bravo",
+                "priority": "high"
               }
             },
             {
               "type": "show_guidance",
               "guidance": {
-                "id": "partial-clarified",
-                "title": "New incident information",
+                "id": "bravo-raised",
+                "title": "Priority raised",
                 "tone": "update",
                 "message": "Fixture guidance",
                 "objectIds": [
-                  "incident:torshov-partial"
+                  "task:bravo"
                 ],
                 "dismissible": true
               }
@@ -400,13 +295,13 @@ const fixtures = [
             {
               "type": "highlight_objects",
               "objectIds": [
-                "incident:torshov-partial"
+                "task:bravo"
               ]
             }
           ]
         },
         {
-          "id": "majorstuen-created",
+          "id": "task-delta-created",
           "at": {
             "kind": "after_scenario_start",
             "seconds": 120
@@ -414,46 +309,28 @@ const fixtures = [
           "actions": [
             {
               "type": "invoke_capability",
-              "capabilityId": "world.ambulance.create-item",
+              "capabilityId": "world.fixture.create-item",
               "input": {
                 "item": {
-                  "id": "incident:majorstuen-tram",
-                  "label": "Majorstuen tram stop fall",
+                  "id": "task:delta",
+                  "label": "Task Delta",
                   "position": [
                     10.7146,
                     59.9292
                   ],
-                  "type": "incident",
-                  "summary": "Majorstuen tram stop fall",
-                  "dispatchUrgency": "urgent"
-                }
-              }
-            },
-            {
-              "type": "invoke_capability",
-              "capabilityId": "world.ambulance.create-item",
-              "input": {
-                "item": {
-                  "type": "patient",
-                  "id": "patient:majorstuen-tram:1",
-                  "label": "Patient 1",
-                  "incidentId": "incident:majorstuen-tram",
-                  "summary": "Synthetic research fixture patient",
-                  "assessedUrgency": "urgent",
-                  "needs": [
-                    "advanced_life_support"
-                  ]
+                  "type": "task",
+                  "priority": "normal"
                 }
               }
             },
             {
               "type": "show_guidance",
               "guidance": {
-                "id": "majorstuen-created",
-                "title": "New incident",
+                "id": "delta-created",
+                "title": "New task",
                 "message": "Fixture guidance",
                 "objectIds": [
-                  "incident:majorstuen-tram"
+                  "task:delta"
                 ],
                 "dismissible": true
               }
@@ -461,13 +338,13 @@ const fixtures = [
             {
               "type": "highlight_objects",
               "objectIds": [
-                "incident:majorstuen-tram"
+                "task:delta"
               ]
             }
           ]
         },
         {
-          "id": "majorstuen-clarified",
+          "id": "task-delta-raised",
           "at": {
             "kind": "after_scenario_start",
             "seconds": 165
@@ -475,30 +352,21 @@ const fixtures = [
           "actions": [
             {
               "type": "invoke_capability",
-              "capabilityId": "world.ambulance.create-item",
+              "capabilityId": "world.fixture.set-priority",
               "input": {
-                "item": {
-                  "type": "patient",
-                  "id": "patient:majorstuen-tram:2",
-                  "label": "Patient 2",
-                  "incidentId": "incident:majorstuen-tram",
-                  "summary": "Synthetic research fixture patient",
-                  "assessedUrgency": "urgent",
-                  "needs": [
-                    "advanced_life_support"
-                  ]
-                }
+                "taskId": "task:delta",
+                "priority": "high"
               }
             },
             {
               "type": "show_guidance",
               "guidance": {
-                "id": "majorstuen-clarified",
-                "title": "Victim count updated",
+                "id": "delta-raised",
+                "title": "Priority raised",
                 "tone": "update",
                 "message": "Fixture guidance",
                 "objectIds": [
-                  "incident:majorstuen-tram"
+                  "task:delta"
                 ],
                 "dismissible": true
               }
@@ -506,7 +374,7 @@ const fixtures = [
           ]
         },
         {
-          "id": "ring-three-created",
+          "id": "task-echo-created",
           "at": {
             "kind": "after_scenario_start",
             "seconds": 300
@@ -514,97 +382,40 @@ const fixtures = [
           "actions": [
             {
               "type": "invoke_capability",
-              "capabilityId": "world.ambulance.create-item",
+              "capabilityId": "world.fixture.create-item",
               "input": {
                 "item": {
-                  "id": "incident:ring3-pileup",
-                  "label": "Ring 3 pile-up",
+                  "id": "task:echo",
+                  "label": "Task Echo",
                   "position": [
                     10.8061,
                     59.9362
                   ],
-                  "type": "incident",
-                  "summary": "Ring 3 pile-up",
-                  "dispatchUrgency": "acute"
+                  "type": "task",
+                  "priority": "high"
                 }
               }
             },
             {
               "type": "invoke_capability",
-              "capabilityId": "world.ambulance.create-item",
+              "capabilityId": "world.fixture.create-item",
               "input": {
                 "item": {
-                  "type": "patient",
-                  "id": "patient:ring3-pileup:1",
-                  "label": "Patient 1",
-                  "incidentId": "incident:ring3-pileup",
-                  "summary": "Synthetic research fixture patient",
-                  "assessedUrgency": "acute",
-                  "needs": [
-                    "advanced_life_support"
-                  ]
-                }
-              }
-            },
-            {
-              "type": "invoke_capability",
-              "capabilityId": "world.ambulance.create-item",
-              "input": {
-                "item": {
-                  "type": "patient",
-                  "id": "patient:ring3-pileup:2",
-                  "label": "Patient 2",
-                  "incidentId": "incident:ring3-pileup",
-                  "summary": "Synthetic research fixture patient",
-                  "assessedUrgency": "acute",
-                  "needs": [
-                    "advanced_life_support"
-                  ]
-                }
-              }
-            },
-            {
-              "type": "invoke_capability",
-              "capabilityId": "world.ambulance.create-item",
-              "input": {
-                "item": {
-                  "type": "patient",
-                  "id": "patient:ring3-pileup:3",
-                  "label": "Patient 3",
-                  "incidentId": "incident:ring3-pileup",
-                  "summary": "Synthetic research fixture patient",
-                  "assessedUrgency": "acute",
-                  "needs": [
-                    "advanced_life_support"
-                  ]
-                }
-              }
-            },
-            {
-              "type": "invoke_capability",
-              "capabilityId": "world.ambulance.create-item",
-              "input": {
-                "item": {
-                  "type": "patient",
-                  "id": "patient:ring3-pileup:4",
-                  "label": "Patient 4",
-                  "incidentId": "incident:ring3-pileup",
-                  "summary": "Synthetic research fixture patient",
-                  "assessedUrgency": "acute",
-                  "needs": [
-                    "advanced_life_support"
-                  ]
+                  "id": "site:echo",
+                  "label": "Echo staging site",
+                  "atObject": "task:echo",
+                  "type": "site"
                 }
               }
             },
             {
               "type": "show_guidance",
               "guidance": {
-                "id": "ring-three-created",
+                "id": "echo-created",
                 "title": "Escalation",
                 "message": "Fixture guidance",
                 "objectIds": [
-                  "incident:ring3-pileup"
+                  "task:echo"
                 ],
                 "dismissible": true
               }
@@ -612,13 +423,13 @@ const fixtures = [
             {
               "type": "highlight_objects",
               "objectIds": [
-                "incident:ring3-pileup"
+                "task:echo"
               ]
             }
           ]
         },
         {
-          "id": "gronland-revised",
+          "id": "task-charlie-lowered",
           "at": {
             "kind": "after_scenario_start",
             "seconds": 360
@@ -626,22 +437,21 @@ const fixtures = [
           "actions": [
             {
               "type": "invoke_capability",
-              "capabilityId": "world.ambulance.set-patient-disposition",
+              "capabilityId": "world.fixture.set-priority",
               "input": {
-                "patientId": "patient:gronland-unattended:3",
-                "disposition": "no-transport",
-                "reason": "Synthetic assessment: transport not required"
+                "taskId": "task:charlie",
+                "priority": "low"
               }
             },
             {
               "type": "show_guidance",
               "guidance": {
-                "id": "gronland-revised",
-                "title": "Assessment revised",
+                "id": "charlie-lowered",
+                "title": "Priority lowered",
                 "tone": "update",
                 "message": "Fixture guidance",
                 "objectIds": [
-                  "incident:gronland-unattended"
+                  "task:charlie"
                 ],
                 "dismissible": true
               }
@@ -649,7 +459,7 @@ const fixtures = [
           ]
         },
         {
-          "id": "majorstuen-removed",
+          "id": "task-delta-removed",
           "at": {
             "kind": "after_scenario_start",
             "seconds": 420
@@ -659,21 +469,7 @@ const fixtures = [
               "type": "invoke_capability",
               "capabilityId": "world.object.delete",
               "input": {
-                "objectId": "patient:majorstuen-tram:1"
-              }
-            },
-            {
-              "type": "invoke_capability",
-              "capabilityId": "world.object.delete",
-              "input": {
-                "objectId": "patient:majorstuen-tram:2"
-              }
-            },
-            {
-              "type": "invoke_capability",
-              "capabilityId": "world.object.delete",
-              "input": {
-                "objectId": "incident:majorstuen-tram"
+                "objectId": "task:delta"
               }
             }
           ]
@@ -687,82 +483,44 @@ const fixtures = [
     "title": "Drone fixture",
     "packs": [
       {
-        "id": "ambulance",
+        "id": "fixture",
         "config": {},
         "items": [
           {
-            "id": "facility:ous-drone",
-            "label": "Oslo University Hospital",
+            "id": "site:drone-base",
+            "label": "Drone base",
             "position": [
               10.7387,
               59.9365
             ],
-            "type": "care-site",
-            "capabilities": [
-              "advanced_life_support"
-            ],
-            "acceptedUrgencies": [
-              "acute",
-              "urgent",
-              "ordinary"
-            ],
-            "handoverSlots": 2,
-            "handoverSeconds": 120,
-            "accepting": true
+            "type": "site"
           },
           {
-            "id": "amb:drone-target-a12",
-            "label": "Ambulance A-12",
-            "atObject": "facility:ous-drone",
-            "type": "ambulance",
-            "patientCapacity": 1,
-            "capabilities": [
-              "advanced_life_support",
-              "defibrillator",
-              "ventilator"
-            ],
-            "crewReady": true,
-            "mobilizationSeconds": 30,
-            "sceneSeconds": 120
+            "id": "unit:drone-target-a12",
+            "label": "Unit A-12",
+            "atObject": "site:drone-base",
+            "type": "unit",
+            "speedMps": 15
           },
           {
-            "id": "amb:drone-target-a21",
-            "label": "Ambulance A-21",
+            "id": "unit:drone-target-a21",
+            "label": "Unit A-21",
             "position": [
               10.7605,
               59.9144
             ],
-            "type": "ambulance",
-            "patientCapacity": 1,
-            "capabilities": [
-              "advanced_life_support",
-              "defibrillator"
-            ],
-            "crewReady": true,
-            "mobilizationSeconds": 30,
-            "sceneSeconds": 120
+            "type": "unit",
+            "speedMps": 15
           },
           {
-            "id": "incident:drone-search-zone",
-            "label": "Riverside missing patient search",
+            "id": "task:drone-search",
+            "label": "Riverside search",
             "position": [
               10.7442,
               59.9068
             ],
-            "type": "incident",
-            "summary": "Riverside missing patient search",
-            "dispatchUrgency": "urgent"
-          },
-          {
-            "type": "patient",
-            "id": "patient:drone-search-zone:1",
-            "label": "Patient 1",
-            "incidentId": "incident:drone-search-zone",
-            "summary": "Synthetic research fixture patient",
-            "assessedUrgency": "urgent",
-            "needs": [
-              "advanced_life_support"
-            ]
+            "type": "task",
+            "priority": "normal"
           }
         ]
       },
@@ -1018,21 +776,21 @@ const fixtures = [
             ]
           },
           {
-            "categoryId": "ambulances",
+            "categoryId": "units",
             "visible": true,
             "collapsed": false,
             "visibleFields": [
-              "destination",
-              "capabilities"
+              "speed",
+              "task"
             ]
           },
           {
-            "categoryId": "incidents",
+            "categoryId": "tasks",
             "visible": true,
             "collapsed": false,
             "visibleFields": [
-              "urgency",
-              "patients"
+              "priority",
+              "unit"
             ]
           }
         ]
@@ -1280,7 +1038,22 @@ const fixtures = [
   }
 ]
 
-export const testScenarioDefinitions = [...fixtures.map(source => scenarioDefinitionSchema.parse(source)), ...builtinScenarioDefinitions]
+// The shipped Scenarios that core and Pack tests also run, named one by one
+// so a built-in whose Packs change fails here instead of dropping out.
+const builtinIds = [
+  'halden-offsite-power-restoration',
+  'halden-power-complex',
+  'nordic-frequency-event',
+  'nordland-corridor-security',
+  'rogaland-black-start',
+] as const
+const builtins = builtinIds.map(id => {
+  const source = builtinScenarioDefinitions.find(candidate => candidate.id === id)
+  if (!source) throw new Error(`missing built-in Scenario: ${id}`)
+  return source
+})
+
+export const testScenarioDefinitions = [...fixtures.map(source => scenarioDefinitionSchema.parse(source)), ...builtins]
 export const scenarios = await Promise.all(testScenarioDefinitions.map(source =>
-  compileScenarioDefinition(source, worldPacks, { routing: createDirectRoutingAdapter() })))
+  compileScenarioDefinition(source, testPacks, { routing: createDirectRoutingAdapter() })))
 export const responseScenario = scenarios.find(scenario => scenario.id === 'test-response')!

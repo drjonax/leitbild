@@ -8,9 +8,8 @@ import { procedureSourceUrlSchema } from '../src/core/model/procedures.ts'
 import { newWorkspaceId } from '@leitbild/contracts'
 import { actorIdSchema } from '../src/core/model/index.ts'
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
-import { createLocalAmbulancePackRuntimeAdapter } from '../src/packs/ambulance/sim/adapter.ts'
 import { createLocalWeatherPackRuntimeAdapter } from '../src/packs/weather/sim/adapter.ts'
-import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
+import { createFixturePackRuntimeAdapter } from './fixtures/fixture-runtime.ts'
 import { createTestScenarioRuntimeResolver, testScenarioAuthoring } from './helpers.ts'
 import { procedureSources } from '../src/procedure-sources.ts'
 
@@ -217,7 +216,7 @@ describe('native local procedure publication', () => {
     let offline = false
     const createRegistry = () => createSimulationRunRegistry({
       dataDir, workspaceId, scenarioRuntimeResolver: createTestScenarioRuntimeResolver(), ...testScenarioAuthoring(),
-      runtimeAdapters: [createLocalAmbulancePackRuntimeAdapter({ routing: createDirectRoutingAdapter() }), createLocalWeatherPackRuntimeAdapter()],
+      runtimeAdapters: [createFixturePackRuntimeAdapter(), createLocalWeatherPackRuntimeAdapter()],
       procedureSourceService: createProcedureSourceService({ sources: [localSource], retentionDirectory: join(dataDir, 'procedure-publications'),
         loadKnowledge: async () => { if (offline) throw new Error('Latest publication offline'); return current }, }),
     })

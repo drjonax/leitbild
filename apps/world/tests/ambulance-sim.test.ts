@@ -6,8 +6,7 @@ import { createLocalAmbulancePackRuntimeAdapter } from '../src/packs/ambulance/s
 import { createAmbulanceSimEngine } from '../src/packs/ambulance/sim/engine.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import type { RoutingAdapter } from '../src/routing/protocol.ts'
-import { responseScenario } from './fixtures/scenarios.ts'
-import { testScenarioRuntimeConfig } from './helpers.ts'
+import { responseScenario, testScenarioRuntimeConfig } from './ambulance-fixtures.ts'
 
 const simulationRunId = 'run-test' as SimulationRunId
 const epoch = Date.parse(responseScenario.world.startsAt)

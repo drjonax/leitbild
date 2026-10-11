@@ -11,9 +11,11 @@ import type { PackMapFeature, PackObjectPresentation } from '../src/core/packs/p
 import { inspectBaseMapReadiness } from '../src/ui/map-runtime/base-map-readiness.ts'
 import { createMapFeatureStore } from '../src/ui/map-runtime/map-feature-store.ts'
 
+const iconByPackId: Readonly<Record<string, string>> = { 'electric-grid': 'network', weather: 'cloud-rain', fixture: 'square' }
+
 const presentationFor = (object: OperationalObject): PackObjectPresentation => ({
   categoryId: object.packId === 'electric-grid' ? 'electric-grids' : object.packId,
-  icon: object.packId === 'electric-grid' ? 'network' : object.packId === 'weather' ? 'cloud-rain' : object.packId,
+  icon: iconByPackId[object.packId] ?? object.packId,
   color: object.operational.status === 'constrained' ? '#b45309' : '#16834f',
   summary: object.label,
   fields: [],
@@ -23,7 +25,7 @@ const presentationFor = (object: OperationalObject): PackObjectPresentation => (
     label: object.operational.status,
     indicator: { shape: 'dot' },
   },
-  noteworthyUpdates: object.id === 'ambulance:1',
+  noteworthyUpdates: object.id === 'unit:1',
 })
 
 const makeObject = (
@@ -32,7 +34,7 @@ const makeObject = (
 ): OperationalObject => ({
   id: id as ObjectId,
   kind: 'facility',
-  packId: 'ambulance' as PackId,
+  packId: 'fixture' as PackId,
   label: id,
   lifecycle: 'active',
   revision: 1,
@@ -67,9 +69,9 @@ const updateStore = (
 
 describe('map feature store', () => {
   test('projects positioned operational objects into semantic point features', () => {
-    const ambulance = makeObject('ambulance:1', {
+    const unit = makeObject('unit:1', {
       kind: 'mobile_entity',
-      packId: 'ambulance' as PackId,
+      packId: 'fixture' as PackId,
       spatial: {
         frame: { kind: 'wgs84' },
         position: {
@@ -79,16 +81,16 @@ describe('map feature store', () => {
       },
     })
 
-    const snapshot = updateStore([ambulance], {
-      selectedControllerId: ambulance.id,
-      highlightedObjectIds: [ambulance.id],
-      hasNewInfo: object => object.id === ambulance.id,
+    const snapshot = updateStore([unit], {
+      selectedControllerId: unit.id,
+      highlightedObjectIds: [unit.id],
+      hasNewInfo: object => object.id === unit.id,
     })
     const point = snapshot.points[0]
 
     expect(snapshot.points).toHaveLength(1)
-    expect(point?.id).toBe(ambulance.id)
-    expect(point?.symbolId).toBe('ambulance')
+    expect(point?.id).toBe(unit.id)
+    expect(point?.symbolId).toBe('square')
     expect(point?.selected).toBe(true)
     expect(point?.highlighted).toBe(true)
     expect(point?.hasNewInfo).toBe(true)
@@ -104,9 +106,9 @@ describe('map feature store', () => {
         geoPointFromLonLat(10.85, 59.94).coordinates,
       ],
     }
-    const ambulance = makeObject('ambulance:route', {
+    const unit = makeObject('unit:route', {
       kind: 'mobile_entity',
-      packId: 'ambulance' as PackId,
+      packId: 'fixture' as PackId,
       spatial: {
         frame: { kind: 'wgs84' },
         position: {
@@ -124,7 +126,7 @@ describe('map feature store', () => {
       },
     })
 
-    const snapshot = updateStore([ambulance], { selectedControllerId: ambulance.id })
+    const snapshot = updateStore([unit], { selectedControllerId: unit.id })
     const routePath = snapshot.paths.find(path => path.kind === 'route')
 
     expect(routePath?.selected).toBe(true)
@@ -303,7 +305,7 @@ describe('map feature store', () => {
   })
 
   test('updates placement without re-projecting object presentations', () => {
-    const object = makeObject('ambulance:placement-selective', {
+    const object = makeObject('unit:placement-selective', {
       spatial: {
         frame: { kind: 'wgs84' },
         position: {

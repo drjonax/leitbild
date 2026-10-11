@@ -13,12 +13,10 @@ import { createWorldWorkspaceRuntimeRegistry } from '../src/core/workspaces/runt
 import { createWorldModuleState } from '../src/core/workspaces/module-state.ts'
 import { createSimulationRunRealtimeManager, type RealtimeEventBatchMessage, type RealtimeOutboundMessage } from '../src/core/api/realtime.ts'
 import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
-import { createLocalAmbulancePackRuntimeAdapter } from '../src/packs/ambulance/sim/adapter.ts'
 import { createLocalWeatherPackRuntimeAdapter } from '../src/packs/weather/sim/adapter.ts'
-import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import { createManualIdleTimer, createTestScenarioRuntimeResolver, testScenarioAuthoring } from './helpers.ts'
+import { fixtureCommandIds, createFixturePackRuntimeAdapter } from './fixtures/fixture-runtime.ts'
 import { responseScenario } from './fixtures/scenarios.ts'
-import { assignCommandKind } from '../src/packs/ambulance/commands.ts'
 
 interface CapturedRealtimeClient {
   readonly events: SimulationRunEvent[]
@@ -151,7 +149,7 @@ describe('server health', () => {
       scenarioRuntimeResolver: createTestScenarioRuntimeResolver(),
       ...testScenarioAuthoring(),
       runtimeAdapters: [
-        createLocalAmbulancePackRuntimeAdapter({ routing: createDirectRoutingAdapter() }),
+        createFixturePackRuntimeAdapter(),
         createLocalWeatherPackRuntimeAdapter(),
       ],
     })
@@ -191,7 +189,7 @@ describe('server health', () => {
       scenarioRuntimeResolver: createTestScenarioRuntimeResolver(),
       ...testScenarioAuthoring(),
       runtimeAdapters: [
-        createLocalAmbulancePackRuntimeAdapter({ routing: createDirectRoutingAdapter() }),
+        createFixturePackRuntimeAdapter(),
         createLocalWeatherPackRuntimeAdapter(),
       ],
     })
@@ -224,15 +222,15 @@ describe('server health', () => {
       const runtime = registry.get(simulationRunId)
       if (!runtime) throw new Error('expected simulation run runtime after reset')
       const outcome = await runtime.invokeCapability(operatorActor, {
-        capabilityId: assignCommandKind,
-        input: { unitId: 'amb:a12', incidentId: 'incident:gronland-unattended', patientIds: runtime.snapshot().objects.filter(object => (object.packData as { type?: string; incidentId?: string }).type === 'patient' && (object.packData as { incidentId?: string }).incidentId === 'incident:gronland-unattended').slice(0, 1).map(object => object.id) },
+        capabilityId: fixtureCommandIds.assign,
+        input: { unitId: 'unit:a12', taskId: 'task:charlie' },
       })
       expect(outcome.kind).toBe('command')
       if (outcome.kind !== 'command') throw new Error('expected command Capability result')
       expect(outcome.result.ok).toBe(true)
 
       await registry.setExecution(simulationRunId, { pace: 'maximum' })
-      await waitForMovingObjectEvent(client, 'amb:a12')
+      await waitForMovingObjectEvent(client, 'unit:a12')
       const postResetEventMessages = client.eventMessages.filter(message =>
         !message.events.some(event => event.type === 'simulationRun.reset'),
       )
@@ -255,7 +253,7 @@ describe('server health', () => {
       scenarioRuntimeResolver: createTestScenarioRuntimeResolver(),
       ...testScenarioAuthoring(),
       runtimeAdapters: [
-        createLocalAmbulancePackRuntimeAdapter({ routing: createDirectRoutingAdapter() }),
+        createFixturePackRuntimeAdapter(),
         createLocalWeatherPackRuntimeAdapter(),
       ],
     })
@@ -365,7 +363,7 @@ describe('server health', () => {
       idleRuntimeCloseDelayMs: 5,
       idleRuntimeCloseTimer: idle.arm,
       runtimeAdapters: [
-        createLocalAmbulancePackRuntimeAdapter({ routing: createDirectRoutingAdapter() }),
+        createFixturePackRuntimeAdapter(),
         createLocalWeatherPackRuntimeAdapter(),
       ],
     })

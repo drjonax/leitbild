@@ -8,13 +8,13 @@ describe('scenario timeline model', () => {
   test('validates timed scenario cues and declarative actions', () => {
     const parsed = compiledScenarioSchema.parse(responseScenario)
 
-    expect(parsed.packs).toEqual(['ambulance', 'weather'])
-    expect(parsed.initialObjects.some(object => object.id === 'incident:gronland-unattended')).toBe(true)
-    expect(parsed.timeline?.cues.map(cue => cue.id)).toContain('majorstuen-created')
+    expect(parsed.packs).toEqual(['fixture', 'weather'])
+    expect(parsed.initialObjects.some(object => object.id === 'task:charlie')).toBe(true)
+    expect(parsed.timeline?.cues.map(cue => cue.id)).toContain('task-delta-created')
     expect(parsed.timeline?.cues.some(cue =>
       cue.actions.some(action => action.type === 'show_guidance'))).toBe(true)
     expect(parsed.timeline?.cues.some(cue =>
-      cue.actions.some(action => action.type === 'invoke_capability' && action.capabilityId === 'world.ambulance.create-item'))).toBe(true)
+      cue.actions.some(action => action.type === 'invoke_capability' && action.capabilityId === 'world.fixture.create-item'))).toBe(true)
     expect(parsed.timeline?.cues.some(cue =>
       cue.actions.some(action => action.type === 'invoke_capability' && action.capabilityId === 'world.object.delete'))).toBe(true)
   })
@@ -64,9 +64,9 @@ describe('scenario timeline model', () => {
     })
 
     expect(dueAtThreeMinutes.map(cue => cue.id)).toEqual([
-      'partial-incident-clarified',
-      'majorstuen-created',
-      'majorstuen-clarified',
+      'task-bravo-raised',
+      'task-delta-created',
+      'task-delta-raised',
     ])
   })
 })

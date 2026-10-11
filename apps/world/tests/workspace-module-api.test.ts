@@ -575,9 +575,9 @@ Action: Inspect «OTHER-STEP».
         body: JSON.stringify({ workspaceId, capabilityId: describeId, input: {}, access }),
       },
     )
-    expect(described.body?.result.packs.find(pack => pack.id === 'ambulance')?.itemTypes.length).toBeGreaterThan(0)
+    expect(described.body?.result.packs.find(pack => pack.id === 'fixture')?.itemTypes.length).toBeGreaterThan(0)
     expect(described.body?.result.packs.find(pack => pack.id === 'process-plant')?.itemTypes.length).toBeGreaterThan(0)
-    expect(described.body?.result.packs.map(pack => pack.id).sort()).toEqual(['ambulance', 'drone', 'electric-grid', 'process-plant', 'weather'])
+    expect(described.body?.result.packs.map(pack => pack.id).sort()).toEqual(['drone', 'electric-grid', 'fixture', 'process-plant', 'weather'])
     expect(described.body?.result.detail).toBe('catalog')
     expect(described.body?.result.packs.find(pack => pack.id === 'process-plant')?.configSchema).toBeUndefined()
 
@@ -587,12 +587,12 @@ Action: Inspect «OTHER-STEP».
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceId, capabilityId: describeId, input: { packIds: ['ambulance', 'weather'], detail: 'authoring' }, access }),
+        body: JSON.stringify({ workspaceId, capabilityId: describeId, input: { packIds: ['fixture', 'weather'], detail: 'authoring' }, access }),
       },
     )
     expect(focused.status).toBe(200)
-    expect(focused.body?.result.packs.map(pack => pack.id)).toEqual(['ambulance', 'weather'])
-    expect(focused.body?.result.commands.every(command => ['ambulance', 'weather'].includes(command.packId))).toBe(true)
+    expect(focused.body?.result.packs.map(pack => pack.id)).toEqual(['fixture', 'weather'])
+    expect(focused.body?.result.commands.every(command => ['fixture', 'weather'].includes(command.packId))).toBe(true)
     expect((focused.body?.result.packs[0] as { configSchema?: unknown } | undefined)?.configSchema).toBeTruthy()
 
     const weatherAuthoring = focused.body?.result.packs.find(pack => pack.id === 'weather') as {
@@ -873,16 +873,16 @@ Action: Inspect «OTHER-STEP».
           workspaceId,
           capabilityId: searchObjectsCapabilityId,
           resource: run!.ref,
-          input: { packId: 'ambulance', limit: 2 },
+          input: { packId: 'fixture', limit: 2 },
           access,
         }),
       },
     )
     expect(searchedObjects.status).toBe(200)
     expect(searchedObjects.body?.result.objects.length).toBeLessThanOrEqual(2)
-    expect(searchedObjects.body?.result.objects.every(object => object.packId === 'ambulance')).toBe(true)
+    expect(searchedObjects.body?.result.objects.every(object => object.packId === 'fixture')).toBe(true)
 
-    const packCapabilityId = capabilityIdSchema.parse('world.ambulance.dispatch-state')
+    const packCapabilityId = capabilityIdSchema.parse('world.fixture.state')
     const publishedCapabilities = moduleCapabilityCollectionSchema.parse(capabilities.body)
     const contextDescriptor = publishedCapabilities.capabilities.find(capability => capability.id === contextCapabilityId)
     expect(contextDescriptor?.outputSchema).toMatchObject({
@@ -901,12 +901,11 @@ Action: Inspect «OTHER-STEP».
       type: 'object',
       properties: {
         units: { type: 'array' },
-        incidents: { type: 'array' },
-        patients: { type: 'array' },
-        careSites: { type: 'array' },
+        tasks: { type: 'array' },
+        sites: { type: 'array' },
       },
     })
-    const dispatchState = await call<{ result: { units: unknown[]; incidents: unknown[]; patients: unknown[]; careSites: unknown[] } }>(
+    const fixtureState = await call<{ result: { units: unknown[]; tasks: unknown[]; sites: unknown[] } }>(
       registry,
       `/internal/workspaces/${workspaceId}/capabilities/${packCapabilityId}/invoke`,
       {
@@ -921,8 +920,8 @@ Action: Inspect «OTHER-STEP».
         }),
       },
     )
-    expect(dispatchState.status).toBe(200)
-    expect(dispatchState.body?.result.units.length).toBeGreaterThan(0)
+    expect(fixtureState.status).toBe(200)
+    expect(fixtureState.body?.result.units.length).toBeGreaterThan(0)
 
     const deleteObjectCapabilityId = capabilityIdSchema.parse('world.object.delete')
     const deletedObject = await call<{ result: { ok: boolean } }>(

@@ -4,6 +4,7 @@ import { compiledScenarioSchema } from '../src/core/model/index.ts'
 import { compileScenarioDefinition } from '../src/core/scenarios/compiler.ts'
 import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import { responseScenario,testScenarioDefinitions } from './fixtures/scenarios.ts'
+import { testPacks } from './fixtures/test-packs.ts'
 
 test('compiled Starting View contains no persisted screen composition', () => {
   const parsed = compiledScenarioSchema.parse(responseScenario)
@@ -32,5 +33,5 @@ test('rejects unknown starting-view categories instead of hiding them silently',
   const source = testScenarioDefinitions[0]!
   await expect(compileScenarioDefinition({ ...source, view: {
     ...source.view, rail: { sections: [{ categoryId: 'missing' }] },
-  } }, worldPacks, { routing: createDirectRoutingAdapter() })).rejects.toThrow('inactive category')
+  } }, testPacks, { routing: createDirectRoutingAdapter() })).rejects.toThrow('inactive category')
 })

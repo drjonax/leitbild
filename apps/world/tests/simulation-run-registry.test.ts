@@ -13,7 +13,8 @@ import type {
 import { deleteObjectCommandKind,nowIso,simulationRunIdSchema } from '../src/core/model/index.ts'
 import { createSimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import type { SimulationRunRuntime } from '../src/core/simulation-runs/runtime.ts'
-import { assignCommandKind } from '../src/packs/ambulance/commands.ts'
+import { fixtureDataOf, fixturePackId } from './fixtures/fixture-pack.ts'
+import { fixtureCommandIds, fixtureQueryIds } from './fixtures/fixture-runtime.ts'
 import { responseScenario } from './fixtures/scenarios.ts'
 import { createTestPackRuntimeAdapters,createTestScenarioRuntimeResolver,testScenarioAuthoring } from './helpers.ts'
 
@@ -34,15 +35,19 @@ const simulationRunDir = (
 
 const issueDispatchCommand = async (runtime: SimulationRunRuntime): Promise<void> => {
   const snapshot = runtime.snapshot()
-  const ambulance = snapshot.objects.find(object =>
+  const unit = snapshot.objects.find(object =>
     object.kind === 'mobile_entity' && object.operational.status === 'available')
-  const incident = snapshot.objects.find(object => object.kind === 'incident' && snapshot.objects.some(patient => (patient.packData as { type?: string; incidentId?: string }).type === 'patient' && (patient.packData as { incidentId?: string }).incidentId === object.id))
-  if (!ambulance || !incident) throw new Error('Scenario missing ambulance or incident')
+  const task = snapshot.objects.find(object => {
+    if (object.packId !== fixturePackId) return false
+    const data = fixtureDataOf(object)
+    return data.type === 'task' && data.unitId === undefined
+  })
+  if (!unit || !task) throw new Error('Scenario missing an available unit or an unassigned task')
   const outcome = await runtime.invokeCapability(
     { id: 'actor:test-operator' as ActorId, label: 'Test Operator', role: 'operator' },
     {
-      capabilityId: assignCommandKind,
-      input: { unitId: ambulance.id, incidentId: incident.id, patientIds: snapshot.objects.filter(object => (object.packData as { type?: string; incidentId?: string }).type === 'patient' && (object.packData as { incidentId?: string }).incidentId === incident.id).slice(0, 1).map(object => object.id) },
+      capabilityId: fixtureCommandIds.assign,
+      input: { unitId: unit.id, taskId: task.id },
     },
   )
   expect(outcome.kind).toBe('command')
@@ -56,25 +61,25 @@ describe('Simulation Run registry', () => {
     const registry = createRegistry(dataDir)
     try {
       const run = await registry.create({ scenarioId: 'test-response' })
-      const ambulance = run.snapshot().objects.find(object => object.packId === 'ambulance')!
+      const unit = run.snapshot().objects.find(object => object.packId === fixturePackId && object.kind === 'mobile_entity')!
       const operator = { id: 'actor:test-operator' as ActorId, label: 'Test Operator', role: 'operator' as const }
       const ai = { id: 'actor:test-ai' as ActorId, label: 'Test AI', role: 'ai_agent' as const }
 
       const restricted = await run.setAgentRestrictions(operator, {
-        operationIds: [], objects: [{ objectId: ambulance.id, deny: ['inspect', 'change'] }],
+        operationIds: [], objects: [{ objectId: unit.id, deny: ['inspect', 'change'] }],
       }, 0)
-      expect(restricted).toMatchObject({ revision: 1, objects: [{ objectId: ambulance.id, deny: ['inspect', 'change'] }] })
+      expect(restricted).toMatchObject({ revision: 1, objects: [{ objectId: unit.id, deny: ['inspect', 'change'] }] })
       await expect(run.invokeCapability(ai, {
-        capabilityId: 'world.ambulance.object', input: { objectId: ambulance.id },
-      })).rejects.toThrow(`AI inspect access is restricted for: ${ambulance.id}`)
+        capabilityId: fixtureQueryIds.object, input: { objectId: unit.id },
+      })).rejects.toThrow(`AI inspect access is restricted for: ${unit.id}`)
       await expect(run.invokeCapability(ai, {
-        capabilityId: deleteObjectCommandKind, input: { objectId: ambulance.id },
-      })).rejects.toThrow(`AI change access is restricted for: ${ambulance.id}`)
+        capabilityId: deleteObjectCommandKind, input: { objectId: unit.id },
+      })).rejects.toThrow(`AI change access is restricted for: ${unit.id}`)
 
       const cleared = await run.setAgentRestrictions(operator, { operationIds: [], objects: [] }, 1)
       expect(cleared).toEqual({ operationIds: [], objects: [], revision: 2 })
       expect((await run.invokeCapability(ai, {
-        capabilityId: 'world.ambulance.object', input: { objectId: ambulance.id },
+        capabilityId: fixtureQueryIds.object, input: { objectId: unit.id },
       })).kind).toBe('query')
       await expect(run.setAgentRestrictions(ai, { operationIds: [], objects: [] }, 2))
         .rejects.toThrow('Only a human operator or system actor may replace Run AI restrictions')
@@ -294,42 +299,6 @@ describe('Simulation Run registry', () => {
       expect(snapshot.objects.some(object => object.id === 'weather:halden-complex')).toBe(true)
     } finally { await registry.shutdown() }
   })
-  test('starts the Halden dispatch exercise with real responses underway and advances their routes', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-fast-forward-dispatch-'))
-    const registry = createRegistry(dataDir)
-    try {
-      const source = await registry.create({ scenarioId: 'halden-dispatch' })
-      await source.setClock({ paused: true })
-      const sourceUnits = source.snapshot().objects.filter(object =>
-        object.packId === 'ambulance' && (object.packData as { type?: string }).type === 'response-unit')
-      const responding = sourceUnits.filter(object =>
-        (object.packData as { assignment?: { phase?: string } }).assignment?.phase === 'responding')
-      expect(responding.map(object => String(object.id)).sort()).toEqual(['unit:halden-1', 'unit:halden-2'])
-      expect(sourceUnits.find(object => object.id === 'unit:sarpsborg-1')?.operational.status).toBe('available')
-      expect(sourceUnits.find(object => object.id === 'unit:helo-ostfold')?.operational.status).toBe('mobilizing')
-      expect((sourceUnits.find(object => object.id === 'unit:helo-ostfold')?.packData as { patientCapacity?: number }).patientCapacity).toBe(2)
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const incident = source.snapshot().objects.find(object => object.id === 'incident:e6-collision')!
-        if ((incident.packData as { observations?: unknown[] }).observations?.length) break
-        await Bun.sleep(5)
-      }
-      const observedIncident = source.snapshot().objects.find(object => object.id === 'incident:e6-collision')!
-      expect((observedIncident.packData as { observations?: Array<{ casualtyCount: number }> }).observations?.at(-1)?.casualtyCount).toBe(3)
-      expect(source.snapshot().objects.filter(object => object.packId === 'drone')).toHaveLength(2)
-
-      const startingPoints = new Map(responding.map(object => [object.id, object.spatial.position?.point.coordinates]))
-      const copy = await registry.copy(source.id, {})
-      await registry.advanceExecution(copy.id, { minutes: 0.1, onComplete: 'pause' })
-      for (let attempt = 0; attempt < 160; attempt += 1) {
-        if ((await registry.executionStatus(copy.id)).acceleration?.status !== 'running') break
-        await Bun.sleep(25)
-      }
-      expect(await registry.executionStatus(copy.id)).toMatchObject({ playback: 'paused', pace: 'realtime', acceleration: { status: 'completed' } })
-      const moved = copy.snapshot().objects.filter(object => startingPoints.has(object.id)).some(object =>
-        JSON.stringify(object.spatial.position?.point.coordinates) !== JSON.stringify(startingPoints.get(object.id)))
-      expect(moved).toBe(true)
-    } finally { await registry.shutdown() }
-  })
   test('an unreadable compiled artifact does not hide healthy sibling Runs or rewrite retained state', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'leitbild-run-unreadable-'))
     const workspaceId = newWorkspaceId()
@@ -430,9 +399,22 @@ describe('Simulation Run registry', () => {
     const untouched = await registry.create({ scenarioId: 'test-response' })
     try {
       await issueDispatchCommand(changed)
+      // The core deletion veto asks the Pack runtime before an assigned task goes.
+      const assignedTask = changed.snapshot().objects.find(object => {
+        if (object.packId !== fixturePackId) return false
+        const data = fixtureDataOf(object)
+        return data.type === 'task' && data.unitId !== undefined
+      })
+      if (!assignedTask) throw new Error('dispatch left no assigned task')
+      const vetoed = await changed.invokeCapability(
+        { id: 'actor:test-operator' as ActorId, label: 'Test Operator', role: 'operator' },
+        { capabilityId: deleteObjectCommandKind, input: { objectId: assignedTask.id } },
+      )
+      expect(vetoed).toMatchObject({ kind: 'command', result: { ok: false, reason: expect.stringContaining('is assigned to') } })
+      expect(changed.snapshot().objects.some(object => object.id === assignedTask.id)).toBe(true)
       expect(changed.snapshot().seq).toBeGreaterThan(untouched.snapshot().seq)
       expect(untouched.snapshot().objects).toHaveLength(responseScenario.initialObjects.length)
-      expect(untouched.snapshot().objects.find(object => object.id === 'amb:a12')?.operational.status).toBe('available')
+      expect(untouched.snapshot().objects.find(object => object.id === 'unit:a12')?.operational.status).toBe('available')
     } finally {
       await registry.close(changed.id)
       await registry.close(untouched.id)
@@ -476,7 +458,7 @@ describe('Simulation Run registry', () => {
     try {
       expect(after).not.toBe(before)
       expect(after.snapshot().scenario?.scenarioId).toBe('test-response')
-      expect(after.snapshot().objects.some(object => object.id === 'facility:ous')).toBe(true)
+      expect(after.snapshot().objects.some(object => object.id === 'site:north')).toBe(true)
       expect(await readFile(manifestPath, 'utf8')).toBe(manifestBefore)
     } finally {
       await registry.close(id)

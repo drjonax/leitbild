@@ -21,8 +21,8 @@ import { handleSimulationRunApi } from '../src/core/api/simulation-run-routes.ts
 import { createSimulationRunRegistry, type SimulationRunRegistry } from '../src/core/simulation-runs/registry.ts'
 import type { ProcedureSourceService } from '../src/features/procedures/source.ts'
 import { parseProcedureMarkdown } from '../src/features/procedures/procmd.ts'
-import { assignCommandKind } from '../src/packs/ambulance/commands.ts'
-import { ambulanceSimRuntimeId } from '../src/packs/ambulance/sim/constants.ts'
+import { fixturePackId, fixtureRuntimeId } from './fixtures/fixture-pack.ts'
+import { fixtureCommandIds, fixtureQueryIds } from './fixtures/fixture-runtime.ts'
 import { createTestPackRuntimeAdapters, createTestScenarioRuntimeResolver, testPacks, testScenarioAuthoring, waitForCondition } from './helpers.ts'
 import { responseScenario } from './fixtures/scenarios.ts'
 
@@ -273,10 +273,10 @@ describe('Simulation Run API', () => {
       expect(capabilities.body).toMatchObject({
         simulationRunId: created.id,
         scenarioId: 'test-response',
-        activePackIds: ['ambulance', 'weather'],
+        activePackIds: [fixturePackId, 'weather'],
       })
-      expect(capabilities.body.runtimes).toContainEqual({ id: ambulanceSimRuntimeId, packId: 'ambulance', clock: 'simulation' })
-      expect(capabilities.body.capabilities.some(capability => capability.kind === 'command' && capability.id === assignCommandKind)).toBe(true)
+      expect(capabilities.body.runtimes).toContainEqual({ id: fixtureRuntimeId, packId: fixturePackId, clock: 'simulation' })
+      expect(capabilities.body.capabilities.some(capability => capability.kind === 'command' && capability.id === fixtureCommandIds.assign)).toBe(true)
 
       const missing = await callRoute<{ readonly error: { readonly code: string } }>(
         registry,
@@ -316,14 +316,14 @@ describe('Simulation Run API', () => {
       expect(weather.body.kind).toBe('query')
       expect(weather.body.result.state).toBeTruthy()
 
-      const ambulance = await callRoute<{
+      const fixture = await callRoute<{
         readonly kind: 'query'; readonly result: { readonly units?: readonly unknown[] }
-      }>(registry, capabilityPath(created.id, 'world.ambulance.dispatch-state'), {
+      }>(registry, capabilityPath(created.id, fixtureQueryIds.state), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input: {} }),
       })
-      expect(ambulance.body.result.units?.length).toBeGreaterThan(0)
+      expect(fixture.body.result.units?.length).toBeGreaterThan(0)
     } finally {
       await closeAll(registry)
     }
@@ -371,13 +371,13 @@ describe('Simulation Run API', () => {
     }
   })
 
-  test('records dynamically discovered ambulance assets through the same Historian boundary', async () => {
+  test('records dynamically discovered fixture assets through the same Historian boundary', async () => {
     const registry = await createTestRegistry()
     try {
       const created = await createRun(registry, 'test-response')
       const runtime = registry.get(created.id)
       if (!runtime) throw new Error('expected loaded Run')
-      await waitForCondition('ambulance historian samples', () => (runtime.recordingStatus()?.sampleCount ?? 0) > 0, {
+      await waitForCondition('fixture historian samples', () => (runtime.recordingStatus()?.sampleCount ?? 0) > 0, {
         timeoutMs: 5_000,
         intervalMs: 100,
       })
@@ -385,12 +385,12 @@ describe('Simulation Run API', () => {
         readonly series: ReadonlyArray<{ readonly id: string; readonly runtimeId: string; readonly subjectId: string; readonly signalId: string }>
       }>(registry, runPath(created.id, '/history'))
       const statusSeries = history.body.series.find(series =>
-        series.runtimeId === ambulanceSimRuntimeId
-        && series.subjectId === 'amb:a12'
+        series.runtimeId === fixtureRuntimeId
+        && series.subjectId === 'unit:a12'
         && series.signalId === 'operational.status'
       )
       expect(statusSeries).toBeTruthy()
-      if (!statusSeries) throw new Error('expected ambulance status series')
+      if (!statusSeries) throw new Error('expected unit status series')
 
       const samples = await callRoute<{ readonly samples: ReadonlyArray<{ readonly value: unknown }> }>(
         registry,
@@ -459,21 +459,20 @@ describe('Simulation Run API', () => {
     const registry = await createTestRegistry()
     try {
       const created = await createRun(registry)
-      const ambulance = created.snapshot.objects.find(object => object.kind === 'mobile_entity')
-      const incident = created.snapshot.objects.find(object => object.kind === 'incident' && created.snapshot.objects.some(patient => (patient.packData as { type?: string; incidentId?: string }).type === 'patient' && (patient.packData as { incidentId?: string }).incidentId === object.id))
-      if (!ambulance || !incident) throw new Error('expected ambulance and incident')
-      const patientIds = created.snapshot.objects.filter(object => (object.packData as { type?: string; incidentId?: string }).type === 'patient' && (object.packData as { incidentId?: string }).incidentId === incident.id).slice(0, 1).map(object => object.id)
+      const unit = created.snapshot.objects.find(object => object.kind === 'mobile_entity')
+      const task = created.snapshot.objects.find(object => object.kind === 'incident')
+      if (!unit || !task) throw new Error('expected unit and task')
       const idempotencyKey = `api-attribution-${crypto.randomUUID()}`
 
       const command = await callRoute<{ readonly result: { readonly ok: boolean } }>(
         registry,
-        capabilityPath(created.id, assignCommandKind),
+        capabilityPath(created.id, fixtureCommandIds.assign),
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             idempotencyKey,
-            input: { unitId: ambulance.id, incidentId: incident.id, patientIds },
+            input: { unitId: unit.id, taskId: task.id },
           }),
         },
       )
@@ -481,13 +480,13 @@ describe('Simulation Run API', () => {
 
       const conflict = await callRoute<{ readonly error: { readonly code: string } }>(
         registry,
-        capabilityPath(created.id, assignCommandKind),
+        capabilityPath(created.id, fixtureCommandIds.assign),
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             idempotencyKey,
-            input: { unitId: ambulance.id, incidentId: ambulance.id, patientIds },
+            input: { unitId: unit.id, taskId: unit.id },
           }),
         },
       )
@@ -502,10 +501,10 @@ describe('Simulation Run API', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             actorId: 'actor:test-api-operator',
-            source: { kind: 'object', id: ambulance.id },
+            source: { kind: 'object', id: unit.id },
             type: 'test.operator-note',
-            targetObjectIds: [incident.id],
-            payload: { targetObjectId: incident.id },
+            targetObjectIds: [task.id],
+            payload: { targetObjectId: task.id },
           }),
         },
       )

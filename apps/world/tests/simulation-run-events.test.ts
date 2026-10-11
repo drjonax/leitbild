@@ -11,20 +11,12 @@ import {
   upsertOperationalObject,
 } from '../src/ui/simulation-run-events.ts'
 import { responseScenario } from './fixtures/scenarios.ts'
-import { createAmbulanceSimEngine } from '../src/packs/ambulance/sim/engine.ts'
-import { createDirectRoutingAdapter } from '../src/routing/direct-adapter.ts'
 import { workspaceIdSchema } from '@leitbild/contracts'
 
 const workspaceId = workspaceIdSchema.parse('11111111-1111-4111-8111-111111111111')
 const messageScope = { workspaceId, simulationRunId: 'run-event-helper-test' }
 
-const scenarioObjects = () =>
-  createAmbulanceSimEngine({
-    simulationRunId: 'run-event-helper-test' as SimulationRunId,
-    objects: responseScenario.initialObjects,
-    simulationTimeMs: Date.parse(responseScenario.world.startsAt),
-    routing: createDirectRoutingAdapter(),
-  }).snapshot().objects
+const scenarioObjects = () => structuredClone(responseScenario.initialObjects)
 
 const eventBatch = (
   events: SimulationRunEventBatchMessage['events'],
