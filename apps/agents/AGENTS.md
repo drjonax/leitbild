@@ -8,7 +8,8 @@ Rules for working in this repo. Architecture overview is in [README.md](README.m
 - **Workflow**: commit each logical change as its own commit. Production deploys from a clean checkout of `main` through the platform deployer (see "Concurrent agents" in the root `AGENTS.md`).
 - **Commands**:
   - `bun run check` — typecheck (always run after non-trivial edits)
-  - `bun test` — full suite; `bun test -t '^(?!.*Ollama)'` skips Ollama integration (= `bun run test:unit`)
+  - `bun test` / `bun run test:unit` — full deterministic suite, including Ollama adapter/fallback fixtures; external Ollama integration and soaks are explicitly skipped unless enabled
+  - `bun run test:ollama` — opts into real Ollama integration (`OLLAMA_INTEGRATION=1`); requires the configured endpoint and `llama3.2:latest`
   - `bun test path/to/file.test.ts` — one file; `bun test -t "pattern"` filters by name
   - `bun run start` / `dev` / `headless` (MCP only) / `dev:remote` (`OLLAMA_URL=http://192.168.0.222:11434`)
   - `bun run health` — strict typecheck, type coverage, and dependency-boundary audit

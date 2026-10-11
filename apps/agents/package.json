@@ -18,7 +18,8 @@
     "check:server": "tsc --noEmit",
     "check:ui": "tsc --noEmit -p tsconfig.ui.json",
     "test": "bun test",
-    "test:unit": "bun test -t '^(?!.*Ollama)'",
+    "test:unit": "bun test",
+    "test:ollama": "OLLAMA_INTEGRATION=1 bun test src/llm/ollama.test.ts src/agents/integration.test.ts",
     "headless": "bun run src/main.ts --headless",
     "health": "bash scripts/health.sh"
   },

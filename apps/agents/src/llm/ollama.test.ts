@@ -4,7 +4,9 @@ import { DEFAULTS } from '../core/types/constants.ts'
 
 const FAST_MODEL = 'llama3.2:latest'
 
-describe('OllamaProvider', () => {
+// Network/model integration is opt-in. Deterministic Ollama adapter tests
+// remain part of every normal test run; never filter by provider name.
+describe.skipIf(process.env.OLLAMA_INTEGRATION !== '1')('OllamaProvider (external integration)', () => {
   const provider = createOllamaProvider(DEFAULTS.ollamaBaseUrl)
 
   test('lists available models', async () => {

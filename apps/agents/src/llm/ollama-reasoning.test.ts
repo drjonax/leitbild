@@ -61,19 +61,43 @@ for (const mode of ['chat', 'stream'] as const) {
     } finally { fx.close() }
   })
 
-  // An explicitly configured fallback model is a separate choice; its
-  // refusal ends the service chain and is reported as configured.
-  test(`explicit effort is nonfallbackable at Ollama after cloud failure (${mode}, service chain)`, async () => {
+  // The service skips an incapable fallback route, without changing the
+  // request. This is the same refusal policy as the router (7f643957).
+  test(`explicit effort skips incapable Ollama fallback and reaches a capable model (${mode}, service chain)`, async () => {
     const fx = await fixture()
     try {
       const provider = createLLMService({ router: fx.router }).bound({ source: 'agent', fallbackChain: ['ollama:shared', 'backup:shared'] })
       const request: ChatRequest = { model: 'cloud:shared', messages: [{ role: 'user', content: 'hello' }], reasoningEffort: 'high', think: true }
-      const invoke = () => mode === 'chat' ? provider.chat(request) : Array.fromAsync(provider.stream!(request))
-      await expect(invoke()).rejects.toThrow('reasoning_effort_unsupported')
+      const text = mode === 'chat' ? (await provider.chat(request)).content : (await Array.fromAsync(provider.stream!(request))).map(chunk => chunk.delta).join('')
+      expect(text).toBe('answer with the requested effort')
+      expect(fx.cloudCalls()).toBe(1)
+      expect(fx.ollamaBodies).toHaveLength(0)
+      expect(fx.backupBodies.map(body => body.reasoning)).toEqual([{ effort: 'high' }])
+      expect(fx.ollama.getMetrics().circuitState).toBe('closed')
+    } finally { fx.close() }
+  })
+
+  test(`requested Ollama model refusal still stops the service chain (${mode})`, async () => {
+    const fx = await fixture()
+    try {
+      const provider = createLLMService({ router: fx.router }).bound({ source: 'agent', fallbackChain: ['backup:shared'] })
+      const request: ChatRequest = { model: 'ollama:shared', messages: [{ role: 'user', content: 'hello' }], reasoningEffort: 'high' }
+      await expect(mode === 'chat' ? provider.chat(request) : Array.fromAsync(provider.stream!(request))).rejects.toThrow('reasoning_effort_unsupported')
+      expect(fx.ollamaBodies).toHaveLength(0)
+      expect(fx.backupCalls()).toBe(0)
+      expect(fx.cloudCalls()).toBe(0)
+    } finally { fx.close() }
+  })
+
+  test(`exhausted service fallback retains the actual outage, not Ollama's refusal (${mode})`, async () => {
+    const fx = await fixture()
+    try {
+      const provider = createLLMService({ router: fx.router }).bound({ source: 'agent', fallbackChain: ['ollama:shared'] })
+      const request: ChatRequest = { model: 'cloud:shared', messages: [{ role: 'user', content: 'hello' }], reasoningEffort: 'high' }
+      await expect(mode === 'chat' ? provider.chat(request) : Array.fromAsync(provider.stream!(request))).rejects.toThrow('fixture unavailable')
       expect(fx.cloudCalls()).toBe(1)
       expect(fx.ollamaBodies).toHaveLength(0)
       expect(fx.backupCalls()).toBe(0)
-      expect(fx.ollama.getMetrics().circuitState).toBe('closed')
     } finally { fx.close() }
   })
 
