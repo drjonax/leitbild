@@ -331,8 +331,40 @@ const directionIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewCon
   })
 })
 
-// A limit named as the display names them: "HI ALM 16 MPa", "LO-LO TRIP 20%", "low alarm at 14.8 MPa".
-const LIMIT = new RegExp(`\\b(HI(?:-HI)?|LO(?:-LO)?|high(?:[- ]high)?|low(?:[- ]low)?)[- ](ALM|TRIP|alarm|trip)(?:\\s+(?:limit|threshold|line|set ?point))?(?:\\s+(?:at|of))?\\s+([-−]?\\d+(?:\\.\\d+)?)\\s?(${UNIT_PATTERN})(?![\\w/])`, 'gi')
+// A limit named as the display names them or in words: "HI ALM 16 MPa",
+// "LO-LO TRIP 20%", "LO-LO 12.7 MPa · SI", "LO TRIP", "low alarm at 14.8 MPa".
+// Without a kind (ALM, TRIP) only the display's capitals with a value name
+// one, and without a value only its capitals with a kind: "low 20 %" and "the
+// low trip" are words. The value's unit may be left out ("LO-LO 12.7").
+const LIMIT = new RegExp(`\\b(HI(?:-HI)?|LO(?:-LO)?|high(?:[- ]high)?|low(?:[- ]low)?)(?:[- ](ALM|TRIP|alarm|trip))?(?:\\s+(?:limit|threshold|line|set ?point))?(?:(?:\\s+(?:at|of))?\\s+([-−]?\\d+(?:\\.\\d+)?)(?!\\.?\\d)(?:\\s?(${UNIT_PATTERN})(?![\\w/]))?)?`, 'gi')
+const DISPLAY_ORDER = /^(?:HI|LO)(?:-(?:HI|LO))?$/
+
+type CitedLimit = { readonly value: number; readonly written: string; readonly unit: string | undefined }
+type NamedLimit = { readonly text: string; readonly low: boolean; readonly cited: CitedLimit | undefined }
+
+const limitsNamed = (text: string): ReadonlyArray<NamedLimit> => [...text.matchAll(LIMIT)].flatMap(match => {
+  const [whole, order, kind, written, unit] = match
+  const capitals = DISPLAY_ORDER.test(order!)
+  if (kind === undefined ? !capitals || written === undefined : !capitals && written === undefined) return []
+  return [{
+    text: whole,
+    low: /^lo/i.test(order!),
+    cited: written === undefined ? undefined : { value: Number(written.replace('−', '-')), written, unit: unit === undefined ? undefined : canonicalUnit(unit) },
+  }]
+})
+
+/** Whether a limit the display marks is the one cited: the same value as written, in its unit where the answer gives one. */
+const isCited = (cited: CitedLimit, limit: { readonly value: number; readonly unit: string }): boolean =>
+  (cited.unit === undefined || canonicalUnit(limit.unit) === cited.unit) && near(cited.value, cited.written, limit.value)
+
+/** Whether an item's value is still short of a limit cited for it, read in that limit's unit. */
+const shortOf = (item: Item, cited: CitedLimit, low: boolean): boolean => {
+  const unit = cited.unit ?? item.limits.find(limit => isCited(cited, limit))?.unit
+  // An item that marks no such limit, or reads no value in its unit, is short of nothing.
+  if (unit === undefined) return false
+  const value = item.values.find(reading => canonicalUnit(reading.unit) === canonicalUnit(unit))?.value
+  return value !== undefined && (low ? value > cited.value : value < cited.value)
+}
 
 /**
  * A limit the answer names for an item, not yet passed, other than the limit
@@ -345,17 +377,13 @@ const limitAheadIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewCo
   const aheadNamed = new Set<Item>()
   const other = new Map<Item, string>()
   for (const sentence of sentences) {
-    for (const match of sentence.matchAll(LIMIT)) {
-      const cited = { value: Number(match[3]!.replace('−', '-')), unit: canonicalUnit(match[4]!), text: match[0] }
-      const low = /^lo/i.test(match[1]!)
-      const limited = view.items.filter(item => item.limitAhead !== undefined && item.limits.some(limit => canonicalUnit(limit.unit) === cited.unit && near(cited.value, match[3]!, limit.value)))
+    for (const { text, low, cited } of limitsNamed(sentence)) {
+      if (cited === undefined) continue
+      const limited = view.items.filter(item => item.limitAhead !== undefined && item.limits.some(limit => isCited(cited, limit)))
       const named = itemsNamed(sentence, limited)
       for (const item of named.length > 0 ? named : limited) {
-        const ahead = item.limitAhead!
-        if (canonicalUnit(ahead.unit) === cited.unit && near(cited.value, match[3]!, ahead.value)) { aheadNamed.add(item); continue }
-        const value = item.values.find(reading => canonicalUnit(reading.unit) === cited.unit)?.value
-        const unpassed = value !== undefined && (low ? value > cited.value : value < cited.value)
-        if (unpassed && !other.has(item)) other.set(item, cited.text)
+        if (isCited(cited, item.limitAhead!)) { aheadNamed.add(item); continue }
+        if (shortOf(item, cited, low) && !other.has(item)) other.set(item, text)
       }
     }
   }

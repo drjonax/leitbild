@@ -149,6 +149,7 @@ const moving = (item: Item, rate: number, direction: 'rising' | 'falling' | 'ste
   ...(ahead === undefined ? {} : { limitAhead: { name: ahead.name, value: ahead.value, unit: item.values[0]!.unit }, ...(ahead.timeToLimitMs === undefined ? {} : { timeToLimitMs: ahead.timeToLimitMs }) }),
 })
 const pressure = (value: number) => signal(['PT-455', 'pressurizer.pressureMPa', 'Pressurizer pressure'], value, 'MPa', [13.8, 14.8, 16])
+const siPressure = (value: number) => signal(['PT-455', 'pressurizer.pressureMPa', 'Pressurizer pressure'], value, 'MPa', [12.7, 13.8, 14.8, 16])
 
 describe('answers that state a direction or limit the display shows otherwise', () => {
   test('production: the nearest limit named for a pressure falling toward the other one', () => {
@@ -188,6 +189,10 @@ describe('answers whose directions and limits agree with the display', () => {
       'At sim 10:03:00, Unit 2’s SG B narrow-range level is **29.6%**, just below **LO ALM 30%** and falling; SG A is 53.8%. **LO TRIP 20%** is the next level threshold shown.' + FENCE,
       view([moving(sgLevels(29.6)[1]!, -2.25, 'falling', { name: 'LO TRIP 20 %', value: 20, timeToLimitMs: 255_000 }), moving(signal(['SG-A-LVL-NR', 'sgA.levelPercent', 'Steam generator level'], 53.8, '%', [20, 30, 75]), -1.28, 'falling', { name: 'LO ALM 30 %', value: 30 })]),
     )).toEqual([])
+  })
+
+  test('a limit named by its order and value, as limits relabelled by function read, is the limit ahead', () => {
+    expect(answerViewIssues('PT-455 is 13.2 MPa and falling, 0.5 MPa above LO-LO 12.7 · SI; HI ALM 16 MPa lies behind it.' + FENCE, view([moving(siPressure(13.2), -1, 'falling', { name: 'LO-LO 12.7 MPa · SI', value: 12.7 })]))).toEqual([])
   })
 
   test('turbine-trip: the limit ahead, and watching for either direction', () => {
