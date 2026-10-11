@@ -12,15 +12,19 @@
 //! one assembly and nothing falls back to another assembly.
 use super::{
     nuclear::{LinearTemplate, Nuclear, RegionWater, Target},
-    operator::Joined,
+    operator::{Joined, LocalCoupler},
 };
 use crate::{
     kinetics,
-    network::{Failure, Properties},
+    network::{
+        BlockJacobian, Failure, Fluid, Held, LocalCoupling, NetworkSeed, Properties, Receipts,
+        Replay,
+    },
     poisons, source_feedback as sf,
+    sparse::Pattern,
     thermal::{Scalar, WaterProperties},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
@@ -532,4 +536,309 @@ pub fn joined_pattern<P: Properties + WaterProperties>(
         .into_iter()
         .map(|rows| rows.into_iter().collect())
         .collect())
+}
+
+/// Compiled structure of the joined block Jacobian, built once at a state:
+/// its own structural pattern ([`joined_pattern`]), the network's element
+/// incidence and the nuclear block's linear template.
+pub struct JoinedJacobian {
+    pub pattern: Pattern,
+    network: BlockJacobian,
+    template: LinearTemplate,
+    /// Global row scale of every joined row (a network row is its own).
+    row_scales: Vec<f64>,
+}
+
+/// Which pieces an assembly covers. The production assembly covers all.
+/// A narrower one verifies the pieces it names and leaves the others out:
+/// without `owners`, the solid, secondary and rod columns stay zero and so
+/// do the two responses the owners' own blocks carry (the bands' fuel heat
+/// into the solid rows, the SG metal heat into the secondary rows); every
+/// other entry of the named columns is assembled in full.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Classes {
+    pub network: bool,
+    pub nuclear: bool,
+    pub owners: bool,
+}
+impl Classes {
+    pub const ALL: Self = Self {
+        network: true,
+        nuclear: true,
+        owners: true,
+    };
+}
+
+/// The nuclear block's partials at the operator's last evaluation.
+fn partials_at<P: Properties + WaterProperties>(
+    joined: &Joined<P>,
+    t: f64,
+    y: &[f64],
+) -> Result<NuclearPartials, Failure> {
+    let o = joined.offsets();
+    let scales = joined.scales();
+    let x: Vec<f64> = (o.nuclear..o.solids).map(|i| y[i] * scales[i]).collect();
+    let fuel_t: Vec<f64> = joined
+        .fuel_feedback_temperatures()
+        .iter()
+        .map(|v| v.value)
+        .collect();
+    let travel: Vec<f64> = joined.travel().iter().map(|v| v.value).collect();
+    let mut partials = NuclearPartials::default();
+    nuclear_partials(
+        joined.nuclear(),
+        o.nuclear,
+        t,
+        &x,
+        &fuel_t,
+        joined.region_water(),
+        &travel,
+        &mut partials,
+    )?;
+    Ok(partials)
+}
+
+impl JoinedJacobian {
+    /// Compile at the value state `(t, y, 0)`; the structure is no state's.
+    pub fn compile<P: Properties + WaterProperties>(
+        joined: &mut Joined<P>,
+        t: f64,
+        y: &[f64],
+    ) -> Result<Self, Failure> {
+        let o = joined.offsets();
+        if y.len() != o.end {
+            return Err(fatal("joined block Jacobian compile length"));
+        }
+        let zero = vec![0.; y.len()];
+        joined.evaluate(t, y, &zero, None, 0., None)?;
+        let template = joined.nuclear().linear_template(o.nuclear);
+        let partials = partials_at(joined, t, y)?;
+        let columns = joined_pattern(joined, &template, &partials)?;
+        let pattern = Pattern::from_columns(o.end, &columns).map_err(fatal)?;
+        let network = joined.network.block_jacobian()?;
+        let row_scales = joined
+            .layouts()
+            .into_iter()
+            .flat_map(|(_, l)| l.row_scales)
+            .collect();
+        Ok(Self {
+            pattern,
+            network,
+            template,
+            row_scales,
+        })
+    }
+}
+
+/// Entries added into a CSC value array over a fixed pattern; an entry
+/// outside the pattern, or a nonfinite one, refuses.
+struct Sink<'a> {
+    pattern: &'a Pattern,
+    values: &'a mut [f64],
+}
+impl Sink<'_> {
+    fn add(&mut self, row: usize, column: usize, v: f64) -> Result<(), Failure> {
+        if !v.is_finite() {
+            return Err(fatal(format!(
+                "nonfinite entry {v} at row {row}, column {column}"
+            )));
+        }
+        if v == 0. {
+            return Ok(());
+        }
+        let position = self.pattern.position(row, column).ok_or_else(|| {
+            fatal(format!(
+                "entry {v} at row {row}, column {column} lies outside the pattern; it omits a dependency"
+            ))
+        })?;
+        self.values[position] += v;
+        Ok(())
+    }
+}
+
+/// The operator's coupler as the network replay's hook, noting whether
+/// this column called it (its `last()` is stale otherwise).
+struct Hook<'a, 'b, P> {
+    coupler: &'a mut LocalCoupler<'b, P>,
+    called: bool,
+}
+impl<P: Properties + WaterProperties> LocalCoupling for Hook<'_, '_, P> {
+    fn local(
+        &mut self,
+        cells: &[usize],
+        faces: &[usize],
+        fluid: &Fluid<'_>,
+        receipts: &mut Receipts<'_>,
+    ) -> Result<(), Failure> {
+        self.called = true;
+        self.coupler.local(cells, faces, fluid, receipts)
+    }
+}
+
+/// The joined stage Jacobian `dF/dy + cj dF/dy'` by blocks into `values`,
+/// in `structure.pattern`'s stored order: the network's element replay
+/// with the coupled owners' local terms, the nuclear block's template and
+/// partials, the owners' columns, and their ports chained. Requires
+/// nothing else; refuses (Fatal) when any piece it needs is unavailable,
+/// when the network's base pass does not reproduce its rows bitwise or
+/// when an entry falls outside the pattern.
+#[allow(clippy::too_many_arguments)] // The stage inputs, the structure and the classes.
+pub fn jacobian_blocks<P: Properties + WaterProperties>(
+    joined: &mut Joined<P>,
+    structure: &JoinedJacobian,
+    t: f64,
+    cj: f64,
+    y: &[f64],
+    yp: &[f64],
+    values: &mut [f64],
+    classes: Classes,
+) -> Result<(), Failure> {
+    let o = joined.offsets();
+    if y.len() != o.end || yp.len() != o.end || values.len() != structure.pattern.nonzeros() {
+        return Err(fatal("joined block Jacobian layout"));
+    }
+    let mut reuse = joined.network.reuse();
+    joined.evaluate(t, y, yp, None, 0., Some(&mut reuse))?;
+    let partials = partials_at(joined, t, y)?;
+    let scales = joined.scales();
+    let rs = &structure.row_scales;
+    let deposition: Vec<Vec<(usize, f64)>> = joined.nuclear().deposition().to_vec();
+    values.fill(0.);
+    let mut sink = Sink {
+        pattern: &structure.pattern,
+        values,
+    };
+    let (network, mut coupler) = joined.local_parts(y, yp, cj);
+    let held = Held::new(network.properties());
+    let mut replay = Replay::new(
+        network,
+        &held,
+        &y[..o.nuclear],
+        &yp[..o.nuclear],
+        cj,
+        reuse,
+        &structure.network,
+        true,
+    )?;
+    let mut response = Vec::new();
+    // The population rows' water partials by region.
+    let mut water_rows: Vec<Vec<(usize, [f64; 4])>> = vec![Vec::new(); joined_regions(&partials)];
+    for (row, region, p) in &partials.water {
+        water_rows[*region].push((*row, *p));
+    }
+    if classes.network {
+        for j in 0..o.nuclear {
+            response.clear();
+            let sign = replay.sign(j);
+            let mut hook = Hook {
+                coupler: &mut coupler,
+                called: false,
+            };
+            replay.column(j, Some(&mut hook), &mut response)?;
+            for &(row, d) in &response {
+                sink.add(row, j, d / sign)?;
+            }
+            if !hook.called {
+                continue;
+            }
+            let last = hook.coupler.last();
+            for (row, v) in &last.rows {
+                sink.add(*row, j, v.direction / sign)?;
+            }
+            for (region, w) in &last.water {
+                let d = [
+                    w.density_kg_m3.direction,
+                    w.boron_ppm_eq.direction,
+                    w.pressure_pa.direction,
+                    w.temperature_k.direction,
+                ];
+                for (row, p) in &water_rows[*region] {
+                    let rhs: f64 = p.iter().zip(&d).map(|(a, b)| a * b).sum();
+                    sink.add(*row, j, -rhs / rs[*row] / sign)?;
+                }
+            }
+            if !classes.owners {
+                continue;
+            }
+            if let Some((g, q)) = last.secondary_w.iter().find(|(_, q)| q.direction != 0.) {
+                return Err(fatal(format!(
+                    "network column {j} moves SG {g}'s metal heat ({}); the secondary rows' heat response awaits the coupler",
+                    q.direction
+                )));
+            }
+        }
+    }
+    if classes.nuclear {
+        let template = &structure.template;
+        // Every nuclear row is differential: its own coordinate's cj.
+        for i in o.nuclear..o.solids {
+            sink.add(i, i, cj)?;
+        }
+        for r in &template.rows {
+            sink.add(r.row, r.row, r.decay_per_s)?;
+            for &(feed, c) in &template.terms[r.terms.clone()] {
+                for &(col, d) in &partials.feeds[feed] {
+                    sink.add(r.row, col, -c * d * scales[col] / rs[r.row])?;
+                }
+            }
+        }
+        let mut fuel_heat: Vec<(usize, usize, f64)> = Vec::new();
+        let mut coolant: BTreeMap<usize, Vec<(usize, f64)>> = BTreeMap::new();
+        for (target, col, c) in &template.consumers {
+            match target {
+                Target::Row(row) => sink.add(*row, *col, -c * scales[*col] / rs[*row])?,
+                Target::FuelHeat(a) => fuel_heat.push((*a, *col, c * scales[*col])),
+                Target::CoolantHeat(a) => {
+                    for (cell, f) in &deposition[*a] {
+                        coolant
+                            .entry(*col)
+                            .or_default()
+                            .push((*cell, f * c * scales[*col]));
+                    }
+                }
+            }
+        }
+        for (row, col, v) in &partials.own {
+            sink.add(*row, *col, -v * scales[*col] / rs[*row])?;
+        }
+        for (a, col, v) in &partials.fuel_w {
+            fuel_heat.push((*a, *col, v * scales[*col]));
+        }
+        for (a, col, v) in &partials.coolant_w {
+            for (cell, f) in &deposition[*a] {
+                coolant
+                    .entry(*col)
+                    .or_default()
+                    .push((*cell, f * v * scales[*col]));
+            }
+        }
+        // Direct coolant heat: the deposition cells' liquid enthalpy port.
+        let mut seed = NetworkSeed::default();
+        for (col, heats) in &coolant {
+            seed.receipts.clear();
+            for (cell, q) in heats {
+                seed.receipts.push((*cell, [[0., *q, 0.], [0.; 3]]));
+            }
+            response.clear();
+            replay.external(&seed, None, &mut response)?;
+            for &(row, d) in &response {
+                sink.add(row, *col, d)?;
+            }
+        }
+        if classes.owners && fuel_heat.iter().any(|e| e.2 != 0.) {
+            return Err(fatal(
+                "the bands' fuel-heat response awaits the coupler's fuel_heat_column",
+            ));
+        }
+    }
+    if classes.owners {
+        return Err(fatal(
+            "the solid, secondary and rod columns await the coupler's owner_column",
+        ));
+    }
+    Ok(())
+}
+
+fn joined_regions(p: &NuclearPartials) -> usize {
+    p.water.iter().map(|w| w.1 + 1).max().unwrap_or(0)
 }

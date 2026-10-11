@@ -1,7 +1,8 @@
 //! spec: world/packs/process-plant/reference-designs/ld-01/model/operating-equations.md#6-solver-properties-and-cost-obligations
 //! The joined block Jacobian's pieces against the exact seeded evaluation of
-//! the residual they differentiate, on the actual packet at the hot
-//! reference. Zero-time checks, NOT S2 evidence.
+//! the residual they differentiate and against the colored joined matrix,
+//! on the actual packet at the hot reference. Zero-time checks, NOT S2
+//! evidence.
 #![cfg(all(feature = "ida", target_os = "macos"))]
 mod jacobian_harness;
 use jacobian_harness::*;
@@ -16,7 +17,7 @@ use leitbild_operating_plant::{
     thermal::{self, Scalar},
 };
 use leitbild_operating_water::If97;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 /// The nuclear block's rhs Jacobian (physical) from the template and the
@@ -271,4 +272,221 @@ fn nuclear_partials_against_seeded_rows() {
         worst <= 1e-12,
         "nuclear partials differ from the seeded rows: {worst}"
     );
+}
+
+/// The block assembly's network and nuclear columns against the colored
+/// joined reference, entry by entry (column-relative), and the block
+/// pattern against every colored nonzero. The owners' own two heat
+/// responses (fuel heat into the solid rows, SG metal heat into the
+/// secondary rows) are not in this assembly and are left out of the
+/// comparison by row; every other row of those columns is compared.
+#[test]
+#[ignore = "requires the S1 packet, the wiki gates, maintained IF97 and stock IDA/KLU; zero-time check"]
+fn joined_blocks_against_colored() {
+    use leitbild_operating_plant::joined::blocks::{Classes, JoinedJacobian, jacobian_blocks};
+    prefer_performance_core();
+    let full = std::env::var("LD01_JAC_PREPARED_PORTS").is_err();
+    let declared = Declared::load();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, full);
+    let n = joined.dimension();
+    let o = joined.offsets();
+    let zero = vec![0.; n];
+    let cj = 20.;
+    let (reference, colored, colors, colored_s) = joined_colored(&mut joined, &y, &zero, cj);
+    let started = cpu();
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let compile_s = cpu() - started;
+    let mine = &structure.pattern;
+    // Every colored nonzero lies in the block pattern.
+    let mut outside = Vec::new();
+    for j in 0..n {
+        for (row, v) in stored_column(&reference, &colored, j) {
+            if v != 0. && mine.position(row, j).is_none() {
+                outside.push(json!({"row": row, "column": j, "value": v}));
+            }
+        }
+    }
+    let classes = Classes {
+        network: true,
+        nuclear: true,
+        owners: false,
+    };
+    let mut values = vec![0.; mine.nonzeros()];
+    let mut best = f64::INFINITY;
+    let mut refused = None;
+    for _ in 0..3 {
+        let s = cpu();
+        if let Err(e) = jacobian_blocks(
+            &mut joined,
+            &structure,
+            0.,
+            cj,
+            &y,
+            &zero,
+            &mut values,
+            classes,
+        ) {
+            refused = Some(format!("{e:?}"));
+            break;
+        }
+        best = best.min(cpu() - s);
+    }
+    let excluded = |j: usize, row: usize| {
+        if j < o.nuclear {
+            (o.secondary..o.rods).contains(&row)
+        } else {
+            (o.solids..o.secondary).contains(&row)
+        }
+    };
+    let mut worst = 0_f64;
+    let mut worst_at = json!(null);
+    let mut excluded_entries = 0usize;
+    let mut differing = Vec::new();
+    for j in 0..o.solids {
+        let mut entries: BTreeMap<usize, [f64; 2]> = BTreeMap::new();
+        for (row, v) in stored_column(&reference, &colored, j) {
+            entries.entry(row).or_default()[0] = v;
+        }
+        for (row, v) in stored_column(mine, &values, j) {
+            entries.entry(row).or_default()[1] = v;
+        }
+        let compared: Vec<(usize, [f64; 2])> = entries
+            .into_iter()
+            .filter(|(row, e)| {
+                let out = excluded(j, *row);
+                if out && e[0] != 0. {
+                    excluded_entries += 1;
+                }
+                !out
+            })
+            .collect();
+        let scale = compared
+            .iter()
+            .map(|(_, e)| e[0].abs())
+            .fold(0., f64::max)
+            .max(1e-300);
+        for (row, e) in &compared {
+            let d = (e[0] - e[1]).abs() / scale;
+            if d > worst {
+                worst = d;
+                worst_at = json!({"row": row, "column": j, "colored": e[0], "blocks": e[1]});
+            }
+            if d > 1e-9 && differing.len() < 200000 {
+                differing.push(json!({"row": row, "column": j, "colored": e[0], "blocks": e[1], "relative": d}));
+            }
+        }
+    }
+    // Stock KLU on the block pattern, with the colored matrix's own values
+    // (every colored nonzero lies in it), against the structural pattern.
+    let mut on_mine = vec![0.; mine.nonzeros()];
+    for j in 0..n {
+        for (row, v) in stored_column(&reference, &colored, j) {
+            if let Some(k) = mine.position(row, j) {
+                on_mine[k] = v;
+            }
+        }
+    }
+    let klu = |p: &leitbild_operating_plant::sparse::Pattern, v: &[f64]| {
+        let (pointers, rows) = p.to_i64().unwrap();
+        json!({"colamd": klu_profile(&pointers, &rows, &[v.to_vec()], 3),
+            "amd": klu_profile_ordered(&pointers, &rows, &[v.to_vec()], 3, 0)})
+    };
+    let klu_blocks = if outside.is_empty() {
+        klu(mine, &on_mine)
+    } else {
+        json!(null)
+    };
+    let klu_structural = klu(&reference, &colored);
+    let receipt = json!({
+        "kind": "s2-joined-blocks-against-colored-NOT-EVIDENCE",
+        "block_assembly_refused": refused,
+        "klu_block_pattern": klu_blocks, "klu_structural_pattern": klu_structural,
+        "composition": {"dimension": n, "offsets": o, "full_owners": full},
+        "colored": {"pattern_nonzeros": reference.nonzeros(), "colors": colors, "ms": 1e3 * colored_s},
+        "blocks": {"pattern_nonzeros": mine.nonzeros(), "compile_ms": 1e3 * compile_s,
+            "network_and_nuclear_columns_ms": 1e3 * best},
+        "colored_nonzeros_outside_block_pattern": outside.len(),
+        "outside_sample": outside.iter().take(20).collect::<Vec<_>>(),
+        "columns_compared": o.solids,
+        "owner_chain_entries_left_out": excluded_entries,
+        "worst_column_relative": worst, "worst_at": worst_at,
+        "above_1e-9": differing,
+    });
+    println!("{}", serde_json::to_string(&receipt).unwrap());
+    assert!(
+        outside.is_empty(),
+        "colored nonzeros outside the block pattern"
+    );
+    assert!(
+        worst <= 1e-9,
+        "block columns differ from the colored reference: {worst}"
+    );
+}
+
+/// Diagnostic: one coordinate's exact seeded joined direction (the dense
+/// column), its rows' owners in the network layout, and whether the
+/// operator's structural pattern stores each nonzero row.
+#[test]
+#[ignore = "diagnostic; LD01_JAC_PROBE_COLUMN selects the coordinate"]
+fn joined_single_column_probe() {
+    let columns: Vec<usize> = std::env::var("LD01_JAC_PROBE_COLUMN")
+        .expect("LD01_JAC_PROBE_COLUMN")
+        .split(',')
+        .map(|c| c.parse().unwrap())
+        .collect();
+    let declared = Declared::load();
+    let full = std::env::var("LD01_JAC_PREPARED_PORTS").is_err();
+    let settled = settle(&declared, &[46.], Assembly::Blocks)
+        .outputs
+        .pop()
+        .unwrap();
+    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, full);
+    let n = joined.dimension();
+    let zero = vec![0.; n];
+    let structural = joined.structural_pattern().unwrap();
+    let cell_layout = joined.network.cell_layout.clone();
+    let face_layout = joined.network.face_layout.clone();
+    let pzr = joined.network.pzr.coordinates();
+    let owner = |i: usize| -> String {
+        for (c, l) in cell_layout.iter().enumerate() {
+            if i == l.boron || l.mass.contains(&i) || l.energy.contains(&i) || i == l.base {
+                return format!("cell {c} (base {})", l.base);
+            }
+        }
+        for l in &face_layout {
+            if l.index == i {
+                return format!("face {} phase {}", l.face, l.phase);
+            }
+        }
+        if pzr.contains(&i) {
+            return format!("pzr +{}", i - pzr.start);
+        }
+        format!("joined {i}")
+    };
+    let mut seed = vec![0.; n];
+    for &j in &columns {
+        seed.fill(0.);
+        seed[j] = 1.;
+        joined
+            .evaluate(0., &y, &zero, Some(&seed), 20., None)
+            .unwrap();
+        let rows: Vec<Value> = joined
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.direction != 0.)
+            .map(|(i, r)| {
+                json!({"row": i, "owner": owner(i), "d": r.direction,
+                    "stored": structural[j].binary_search(&i).is_ok()})
+            })
+            .collect();
+        println!(
+            "{}",
+            json!({"column": j, "owner": owner(j), "nonzero_rows": rows})
+        );
+    }
 }

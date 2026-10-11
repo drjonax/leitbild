@@ -942,3 +942,65 @@ pub fn write_receipt(path: &str, receipt: &Value) {
         .unwrap();
     file.write_all(b"\n").unwrap();
 }
+
+/// The joined operator's colored stage Jacobian at `(0, y, yp)`: its own
+/// structural pattern, a verified greedy coloring and one exact seeded
+/// joined evaluation per color (the operator's own loop). The reference
+/// matrix of the block assembly; returns (pattern, values, colors, CPU s).
+pub fn joined_colored(
+    joined: &mut leitbild_operating_plant::joined::operator::Joined<If97>,
+    y: &[f64],
+    yp: &[f64],
+    cj: f64,
+) -> (
+    leitbild_operating_plant::sparse::Pattern,
+    Vec<f64>,
+    usize,
+    f64,
+) {
+    use leitbild_operating_plant::sparse::{self, Coloring, Pattern};
+    let n = joined.dimension();
+    let columns = joined.structural_pattern().expect("joined pattern");
+    let pattern = Pattern::from_columns(n, &columns).expect("pattern");
+    let coloring = Coloring::greedy(&pattern);
+    coloring.verify(&pattern).expect("coloring");
+    let o = joined.offsets();
+    let mut signs = vec![1.; n];
+    joined.evaluate(0., y, yp, None, 0., None).unwrap();
+    signs[..o.nuclear].copy_from_slice(&joined.network.column_signs(&y[..o.nuclear]));
+    let mut values = vec![0.; pattern.nonzeros()];
+    let mut seeded = vec![0.; n];
+    let mut directions = vec![0.; n];
+    let started = cpu();
+    let mut reuse = joined.network.reuse();
+    joined
+        .evaluate(0., y, yp, None, 0., Some(&mut reuse))
+        .unwrap();
+    for color in 0..coloring.count() {
+        coloring.seed_into(color, &signs, &mut seeded).unwrap();
+        joined
+            .evaluate(0., y, yp, Some(&seeded), cj, Some(&mut reuse))
+            .unwrap();
+        for (d, r) in directions.iter_mut().zip(joined.rows()) {
+            *d = r.direction;
+        }
+        sparse::scatter(&pattern, &coloring, color, &directions, &signs, &mut values)
+            .unwrap_or_else(|e| panic!("color {color}: {e}"));
+    }
+    let seconds = cpu() - started;
+    (pattern, values, coloring.count(), seconds)
+}
+
+/// One stored column as (row, value) pairs.
+pub fn stored_column(
+    pattern: &leitbild_operating_plant::sparse::Pattern,
+    values: &[f64],
+    column: usize,
+) -> Vec<(usize, f64)> {
+    let span = pattern.pointers()[column]..pattern.pointers()[column + 1];
+    pattern.indices()[span.clone()]
+        .iter()
+        .copied()
+        .zip(values[span].iter().copied())
+        .collect()
+}
