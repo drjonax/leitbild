@@ -19,6 +19,7 @@ import {
   saturationPressureMPaFromTemperatureC,
   saturationPressureMPaFromVapourDensity,
 } from '../water-properties.ts'
+import { liquidMassFluxKgPerM2S, steamMassFluxKgPerM2S } from '../links/primary-break-flow.ts'
 import { componentHasElectricalPower } from './electrical-behaviors.ts'
 
 // The pressurizer is a fixed volume of boiling water under its steam. Every
@@ -269,15 +270,23 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       }
       waterEnthalpy += heaterPower * 1_000 * dt
       // The PORV and the safety valves relieve steam while there is a steam
-      // space, water once the pressurizer is solid.
-      const reliefMass = (reliefFlow + safetyFlow) * dt
-      const steamRelief = Math.min(steam, reliefMass)
+      // space, water once the pressurizer is solid. Rated for steam, they pass
+      // water at its own critical flux, flashing as it chokes in the valve:
+      // some two to three times the mass of steam through the same throat.
+      const ratedReliefMass = (reliefFlow + safetyFlow) * dt
+      const steamRelief = Math.min(steam, ratedReliefMass)
       steam -= steamRelief
-      const waterRelief = Math.min(water, reliefMass - steamRelief)
+      const unusedReliefShare = ratedReliefMass > 0 ? 1 - steamRelief / ratedReliefMass : 0
+      const waterRelief = unusedReliefShare > 0 && water > 0
+        ? Math.min(water, ratedReliefMass * unusedReliefShare
+          * liquidMassFluxKgPerM2S(pressure, liquidTemperatureCFromEnthalpy(pressure, waterEnthalpy / water), 0)
+          / steamMassFluxKgPerM2S(pressure, saturation.vapourDensityKgPerM3, 0))
+        : 0
       if (waterRelief > 0) {
         waterEnthalpy *= (water - waterRelief) / Math.max(1e-9, water)
         water -= waterRelief
       }
+      const reliefMassFactor = ratedReliefMass > 0 ? (steamRelief + waterRelief) / ratedReliefMass : 1
 
       // Flashing and condensation at the steam-water interface, each no
       // further than brings the steam to the water's own saturation pressure.
@@ -345,10 +354,10 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
 
       context.write(componentVariablePath(component, 'reliefValveEffectivePositionFraction'), reliefOpening)
       context.write(componentVariablePath(component, 'blockValveEffectivePositionFraction'), nextBlockValvePosition)
-      context.write(componentVariablePath(component, 'reliefFlowKgPerS'), reliefFlow)
+      context.write(componentVariablePath(component, 'reliefFlowKgPerS'), reliefFlow * reliefMassFactor)
       context.write(componentVariablePath(component, 'safetyValvesOpen'), safetyValvesOpen)
       context.write(componentVariablePath(component, 'safetyValvesLiftFraction'), safetyLift)
-      context.write(componentVariablePath(component, 'safetyValveFlowKgPerS'), safetyFlow)
+      context.write(componentVariablePath(component, 'safetyValveFlowKgPerS'), safetyFlow * reliefMassFactor)
       context.write(componentVariablePath(component, 'waterTemperatureC'), nextWaterTemperature)
       context.write(componentVariablePath(component, 'steamTemperatureC'), saturationTemperatureCFromPressureMPa(nextPressure))
       context.write(componentVariablePath(component, 'waterInventoryKg'), water)

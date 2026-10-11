@@ -2,7 +2,7 @@ import type { CompiledProcessLink } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { componentVariablePath, processLinkVariablePath, type ProcessPlantBehaviorContext } from '../behavior-contract.ts'
 import { primarySystemContainment, primarySystemReactorVessel } from '../system-topology.ts'
-import { compressedWaterState, saturatedWaterSteam, saturationPressureMPaFromTemperatureC } from '../water-properties.ts'
+import { compressedWaterState, liquidEnthalpyKjPerKg, saturatedWaterSteam, saturationPressureMPaFromTemperatureC } from '../water-properties.ts'
 
 type BreakFlowContext = Pick<ProcessPlantBehaviorContext, 'readNumber' | 'readOptionalNumber' | 'dtSeconds'>
 
@@ -14,8 +14,8 @@ type BreakFlowContext = Pick<ProcessPlantBehaviorContext, 'readNumber' | 'readOp
 // - liquid adds to the choked flux at its own saturation pressure the flow its
 //   subcooling drives, 2ρ(p − psat) in the square, with a sharp-edged
 //   discharge coefficient. Saturated liquid flashes in the break and chokes
-//   at about the steam's flux, which the homogeneous equilibrium model gives
-//   within some 20%;
+//   at Fauske's equilibrium rate, h_fg / v_fg · sqrt(1 / (c_p T)): twice
+//   saturated steam's flux at 16 MPa, three times at 7 and four at 3;
 // - the loops' steam reaches the break in the share of the loops it fills.
 // A large break therefore drains the loops in about a minute and a small one
 // trickles; the steam leaving takes its latent heat, so the coolant flashes,
@@ -25,17 +25,33 @@ const steamIsentropicExponent = 1.3
 const chokedSteamFactor = (2 / (steamIsentropicExponent + 1)) ** ((steamIsentropicExponent + 1) / (2 * (steamIsentropicExponent - 1)))
 const liquidDischargeCoefficient = 0.6
 
-const steamMassFluxKgPerM2S = (pressureMPa: number, densityKgPerM3: number, backPressureMPa: number): number =>
+/** The critical mass flux of steam at a pressure and density, or its orifice flux where the back pressure is too close for it to choke. */
+export const steamMassFluxKgPerM2S = (pressureMPa: number, densityKgPerM3: number, backPressureMPa: number): number =>
   Math.min(
     chokedSteamFactor * Math.sqrt(steamIsentropicExponent * pressureMPa * 1e6 * densityKgPerM3),
     Math.sqrt(2 * densityKgPerM3 * Math.max(0, pressureMPa - backPressureMPa) * 1e6),
   )
 
-const liquidMassFluxKgPerM2S = (pressureMPa: number, temperatureC: number, backPressureMPa: number): number => {
+const flashingLiquidMassFluxKgPerM2S = (saturationPressureMPa: number, backPressureMPa: number): number => {
+  const saturation = saturatedWaterSteam(saturationPressureMPa)
+  const latentHeatJPerKg = (saturation.vapourEnthalpyKjPerKg - saturation.liquidEnthalpyKjPerKg) * 1e3
+  const volumeChangeM3PerKg = 1 / saturation.vapourDensityKgPerM3 - 1 / saturation.liquidDensityKgPerM3
+  const specificHeatJPerKgK = (
+    liquidEnthalpyKjPerKg(saturation.temperatureC + 1, saturationPressureMPa)
+    - liquidEnthalpyKjPerKg(saturation.temperatureC - 1, saturationPressureMPa)
+  ) / 2 * 1e3
+  return Math.min(
+    latentHeatJPerKg / volumeChangeM3PerKg / Math.sqrt(specificHeatJPerKgK * (saturation.temperatureC + 273.15)),
+    Math.sqrt(2 * saturation.liquidDensityKgPerM3 * Math.max(0, saturationPressureMPa - backPressureMPa) * 1e6),
+  )
+}
+
+/** The critical mass flux of water at a pressure and temperature, flashing as it chokes. */
+export const liquidMassFluxKgPerM2S = (pressureMPa: number, temperatureC: number, backPressureMPa: number): number => {
   const density = compressedWaterState(temperatureC, pressureMPa).densityKgPerM3
   const ownSaturationPressure = Math.min(pressureMPa, saturationPressureMPaFromTemperatureC(temperatureC))
   const flashing = ownSaturationPressure > backPressureMPa
-    ? steamMassFluxKgPerM2S(ownSaturationPressure, saturatedWaterSteam(ownSaturationPressure).vapourDensityKgPerM3, backPressureMPa)
+    ? flashingLiquidMassFluxKgPerM2S(ownSaturationPressure, backPressureMPa)
     : 0
   const subcooling = 2 * density * Math.max(0, pressureMPa - Math.max(ownSaturationPressure, backPressureMPa)) * 1e6
   return Math.sqrt(liquidDischargeCoefficient ** 2 * subcooling + flashing ** 2)

@@ -129,6 +129,23 @@ describe('a stuck-open PORV', () => {
     expect(read('pressurizer.levelPercent')).toBeGreaterThan(90)
     expect(read('pressurizer.reliefFlowKgPerS')).toBeGreaterThan(20)
   }, 60_000)
+
+  test('passes water at its liquid rating once the pressurizer is solid, which the inventory balance counts', () => {
+    const plantRun = started()
+    plantRun.run(5)
+    for (const command of commandsForProcessPlantAction({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 100 }, graph: plant.graph })) {
+      plantRun.runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
+    }
+    const { read } = plantRun
+    plantRun.run(150)
+    expect(read('pressurizer.levelPercent')).toBeGreaterThan(99)
+    // Rated 85 kg/s of steam at 15.5 MPa, in proportion to pressure; water
+    // flashing as it chokes in the valve passes about three times the mass.
+    const steamRating = 85 * read('pressurizer.pressureMPa') / 15.5
+    expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeGreaterThan(2.5)
+    expect(read('pressurizer.reliefFlowKgPerS') / steamRating).toBeLessThan(3.5)
+    expect(Math.abs(read('rcsInventoryBalance.leakRateKgPerS'))).toBeLessThan(0.063)
+  }, 60_000)
 })
 
 describe('a reactor trip', () => {

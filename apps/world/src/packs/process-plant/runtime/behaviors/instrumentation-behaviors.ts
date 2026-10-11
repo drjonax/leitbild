@@ -101,7 +101,7 @@ const rcsInventoryKg = (system: CompiledProcessPlant, balance: CompiledComponent
     + context.readNumber(componentVariablePath(pressurizer, 'steamMassKg'))
 }
 
-const rcsInventoryReads = ['vessel.chargingFlowKgPerS', 'vessel.safetyInjectionFlowKgPerS', 'vessel.letdownFlowKgPerS', 'vessel.reliefOutflowKgPerS', 'vessel.primaryCoolantInventoryKg', 'pressurizer.waterInventoryKg', 'pressurizer.steamMassKg', 'leakRateKgPerS', 'balancedInventoryKg']
+const rcsInventoryReads = ['vessel.chargingFlowKgPerS', 'vessel.safetyInjectionFlowKgPerS', 'vessel.letdownFlowKgPerS', 'pressurizer.reliefFlowKgPerS', 'pressurizer.safetyValveFlowKgPerS', 'vessel.primaryCoolantInventoryKg', 'pressurizer.waterInventoryKg', 'pressurizer.steamMassKg', 'leakRateKgPerS', 'balancedInventoryKg']
 
 const siBlockWrites = ['blockPushbutton', 'blocked', 'belowP11']
 
@@ -141,7 +141,13 @@ export const instrumentationBehaviorDefinitions: ReadonlyArray<ComponentBehavior
       const flow = (localPath: string) => context.readNumber(componentVariablePath(vessel, localPath))
       const inventory = rcsInventoryKg(system, component, context)
       const inventoryChange = (inventory - context.readNumber(componentVariablePath(component, 'balancedInventoryKg'))) / Math.max(context.dtSeconds, 1e-9)
-      const unaccounted = flow('chargingFlowKgPerS') + flow('safetyInjectionFlowKgPerS') - flow('letdownFlowKgPerS') - flow('reliefOutflowKgPerS') - inventoryChange
+      // Relief is the pressurizer's own this step, as its inventory is: the
+      // relief line's flow trails it by a step, which a sudden change in
+      // relief, as the pressurizer goes solid, would read as a leak.
+      const pressurizer = required(primarySystemPressurizer(system), `RCS inventory balance ${component.id} needs a pressurizer`)
+      const relief = context.readNumber(componentVariablePath(pressurizer, 'reliefFlowKgPerS'))
+        + context.readNumber(componentVariablePath(pressurizer, 'safetyValveFlowKgPerS'))
+      const unaccounted = flow('chargingFlowKgPerS') + flow('safetyInjectionFlowKgPerS') - flow('letdownFlowKgPerS') - relief - inventoryChange
       const leakRate = context.readNumber(componentVariablePath(component, 'leakRateKgPerS'))
       context.write(componentVariablePath(component, 'leakRateKgPerS'), relaxToward(leakRate, unaccounted, context.dtSeconds, parameterNumber(component, 'averagingTimeConstantS')))
       context.write(componentVariablePath(component, 'balancedInventoryKg'), inventory)
