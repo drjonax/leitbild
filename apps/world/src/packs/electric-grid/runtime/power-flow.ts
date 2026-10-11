@@ -70,7 +70,7 @@ const injectEnergisedIsland = (grid: GridRuntimeInstance, plans: GridIslandPlan,
   const tables = gridTablesFor(grid.definition)
   const generators = grid.arrays.generators
   const loads = grid.arrays.loads
-  const frequencyHz = island.frequency!.frequencyHz!
+  const frequencyHz = island.workspace!.frequencyHz!
   const nominalHz = grid.definition.automation.swing.nominalFrequencyHz
   const externalSystems = grid.definition.index.externalSystems
   let mechanicalMw = 0
@@ -306,7 +306,7 @@ export const solveGridNetwork = (grid: GridRuntimeInstance, islands: GridIslandP
   for (const island of islands.islands) {
     energised[island.planIndex] = island.energized ? 1 : 0
     // NaN codes null: an energised island always carries a frequency (gridIslandFrequencyHz).
-    const frequencyHz = island.energized ? island.frequency!.frequencyHz : null
+    const frequencyHz = island.energized ? island.workspace!.frequencyHz : null
     frequencyOfIsland[island.planIndex] = frequencyHz === null ? Number.NaN : frequencyHz
     solvedIds[island.planIndex] = island.id
   }

@@ -24,7 +24,7 @@ const islandObservation = (island: GridIsland, condition: string, timing: GridAl
 })
 
 const frequencyObservations = (settings: GridAlarmSettings, nominalHz: number, island: GridIsland, emit: Emit): void => {
-  const frequencyHz = island.frequency!.frequencyHz!
+  const frequencyHz = island.workspace!.frequencyHz!
   const deviationHz = frequencyHz - nominalHz
   const side = deviationHz < 0 ? 'under' : 'over'
   for (const band of settings.islandFrequency) {
@@ -159,7 +159,7 @@ const energisedIslandObservations = (grid: GridRuntimeInstance, settings: GridAl
     }))
   }
   for (const stage of automation.lfdd.stages) {
-    if (island.frequency!.lfdd.stages[stage.id]?.status !== 'operated') continue
+    if (island.workspace!.lfdd.stages[stage.id]?.status !== 'operated') continue
     emit(islandObservation(island, `lfdd-${stage.id}-operated`, settings.lfddStageOperated, {
       raising: true,
       title: `LFDD ${stage.id} operated`,

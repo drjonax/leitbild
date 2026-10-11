@@ -27,8 +27,8 @@ export const advanceGrid = (grid: GridRuntimeInstance, dtSeconds: number, at: Is
   const startedAtMs = performance.now()
   let islands = reconcileGridIslands(grid, topologyPlanForGrid(grid))
   for (const island of islands.islands) {
-    island.minimumHz = island.frequency?.frequencyHz ?? null
-    island.maximumHz = island.frequency?.frequencyHz ?? null
+    island.minimumHz = island.workspace?.frequencyHz ?? null
+    island.maximumHz = island.workspace?.frequencyHz ?? null
   }
   const endMs = Date.parse(at)
   if (!Number.isFinite(endMs)) throw new Error(`Grid ${grid.definition.gridId} advance has an invalid time ${at}`)

@@ -1,8 +1,10 @@
-import { resetIslandGeneratorProtection, type FrequencyAction } from './frequency/island-state.ts'
-import { advanceIslandFrequency, type IslandFrequencyAdvance } from './frequency/island.ts'
+import { advanceFrequencyWorkspace } from './frequency/advance.ts'
+import { validateIslandInput, type FrequencyAction } from './frequency/island-state.ts'
+import { frequencyStateOf, resetWorkspaceUnitProtection, type IslandFrequencyWorkspace } from './frequency/workspace.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
 import { allocateGridIslandReserves } from './island-reserves.ts'
 import { generatorSynchronisedAt, islandFrequencyInput } from './island-input.ts'
+import { refreshIslandWorkspaceInputs } from './island-workspace.ts'
 import { generatorTripped } from './state/arrays.ts'
 import { gridTablesFor } from './state/tables.ts'
 
@@ -33,20 +35,21 @@ const recordActions = (grid: GridRuntimeInstance, islandId: string, actions: Rea
 }
 
 /**
- * Writes one advance's mechanical outputs and latches into the Grid asset states; electrical outputs
- * follow in the network solve. The advance lists units, storage, loads and externals in the
- * island's order.
+ * Writes the island's last advance from its workspace into the Grid asset states: mechanical
+ * outputs and latches; electrical outputs follow in the network solve. The workspace lists units,
+ * storage, loads and externals in the island's order.
  */
-const applyAdvance = (grid: GridRuntimeInstance, island: GridIsland, structure: GridTopologyIsland, advance: IslandFrequencyAdvance): void => {
+const applyAdvance = (grid: GridRuntimeInstance, island: GridIsland, structure: GridTopologyIsland, workspace: IslandFrequencyWorkspace): void => {
   const generators = grid.arrays.generators
-  advance.units.forEach((unit, position) => {
+  for (let position = 0; position < structure.generatorIndices.length; position += 1) {
     const generator = structure.generatorIndices[position]!
-    generators.scheduledMw[generator] = unit.synchronised ? unit.scheduledMw : 0
-    generators.fcrMw[generator] = unit.synchronised ? unit.fcrNMw + unit.fcrDMw : 0
-    generators.afrrMw[generator] = unit.synchronised ? unit.afrrMw : 0
-    generators.mfrrMw[generator] = unit.synchronised ? unit.mfrrMw : 0
-  })
-  for (const action of advance.actions) {
+    const synchronised = workspace.outputSynchronised[position] === 1
+    generators.scheduledMw[generator] = synchronised ? workspace.scheduledMw[position]! : 0
+    generators.fcrMw[generator] = synchronised ? workspace.outputFcrNMw[position]! + workspace.outputFcrDMw[position]! : 0
+    generators.afrrMw[generator] = synchronised ? workspace.afrrMw[position]! : 0
+    generators.mfrrMw[generator] = synchronised ? workspace.outputMfrrMw[position]! : 0
+  }
+  for (const action of workspace.actions) {
     if (action.kind !== 'generator-trip') continue
     const generator = gridTablesFor(grid.definition).generatorIndexById.get(action.unitId)!
     generators.lifecycle[generator] = generatorTripped
@@ -56,35 +59,37 @@ const applyAdvance = (grid: GridRuntimeInstance, island: GridIsland, structure: 
     generators.afrrMw[generator] = 0
     generators.mfrrMw[generator] = 0
   }
-  advance.storage.forEach((item, position) => {
+  for (let position = 0; position < structure.storageIndices.length; position += 1) {
+    const item = workspace.storageOutputs[position]!
     const state = grid.arrays.storage[structure.storageIndices[position]!]!
     state.dispatchMw = item.powerMw
     state.stateOfChargeFraction = item.stateOfChargeFraction
     state.state = storageStateFor(item.operatingState)
-  })
+  }
   const loads = grid.arrays.loads
-  advance.loads.forEach((item, position) => {
+  for (let position = 0; position < structure.loadIndices.length; position += 1) {
     const load = structure.loadIndices[position]!
-    loads.servedMw[load] = item.servedMw
-    loads.lfddShedMw[load] = item.lfddShedMw
-  })
-  advance.externals.forEach((external, position) => {
+    loads.servedMw[load] = workspace.loadServedMw[position]!
+    loads.lfddShedMw[load] = workspace.loadLfddShedMw[position]!
+  }
+  for (let position = 0; position < structure.externalIndices.length; position += 1) {
+    const external = workspace.externalOutputs[position]!
     const state = grid.arrays.externalSystems[structure.externalIndices[position]!]!
     state.mechanicalMw = external.mechanicalMw
     state.fcrMw = external.fcrNMw + external.fcrDMw
     state.afrrMw = external.afrrMw
-  })
-  island.frequency = advance.state
-  if (advance.state.frequencyHz === null) {
+  }
+  if (workspace.frequencyHz === null) {
     island.energized = false
-    island.frequency = null
+    island.workspace = null
     island.rocofHzPerSecond = null
     return
   }
-  island.rocofHzPerSecond = advance.state.rocofHzPerSecond
-  if (advance.extremes) {
-    island.minimumHz = Math.min(island.minimumHz ?? advance.extremes.minimumHz, advance.extremes.minimumHz)
-    island.maximumHz = Math.max(island.maximumHz ?? advance.extremes.maximumHz, advance.extremes.maximumHz)
+  island.rocofHzPerSecond = workspace.rocofHzPerSecond
+  if (workspace.hasExtremes) {
+    const extremes = workspace.extremes
+    island.minimumHz = Math.min(island.minimumHz ?? extremes.minimumHz, extremes.minimumHz)
+    island.maximumHz = Math.max(island.maximumHz ?? extremes.maximumHz, extremes.maximumHz)
   }
 }
 
@@ -92,11 +97,10 @@ const applyAdvance = (grid: GridRuntimeInstance, island: GridIsland, structure: 
  * A unit returned to service by command has had its trip reset by that command; the frequency
  * state's protection latch follows so the unit can synchronise again.
  */
-const resetReturnedUnits = (grid: GridRuntimeInstance, island: GridIsland): void => {
-  const frequency = island.frequency!
-  for (const [unitId, unit] of Object.entries(frequency.units)) {
-    if (unit.protection.trip && generatorSynchronisedAt(grid.arrays.generators, gridTablesFor(grid.definition).generatorIndexById.get(unitId)!)) {
-      island.frequency = resetIslandGeneratorProtection(grid.definition.automation, island.frequency!, unitId)
+const resetReturnedUnits = (grid: GridRuntimeInstance, structure: GridTopologyIsland, workspace: IslandFrequencyWorkspace): void => {
+  for (let position = 0; position < structure.generatorIndices.length; position += 1) {
+    if (workspace.protection[position]!.trip && generatorSynchronisedAt(grid.arrays.generators, structure.generatorIndices[position]!)) {
+      resetWorkspaceUnitProtection(grid.definition.automation, workspace, position)
     }
   }
 }
@@ -104,15 +108,23 @@ const resetReturnedUnits = (grid: GridRuntimeInstance, island: GridIsland): void
 /**
  * Advances every energised island's swing equation, reserves, LFDD and protection by `seconds` in
  * the Automation's fixed sub-steps, against the demand and injections currently set on the Grid.
+ * Each island's workspace advances in place; inputs that fail the common-case checks are validated
+ * in detail against the island's IslandFrequencyInput, which names the offending member.
  */
 export const advanceGridFrequencyControl = (grid: GridRuntimeInstance, islands: GridIslandPlan, seconds: number): void => {
+  const automation = grid.definition.automation
   for (const island of islands.islands) {
-    if (!island.energized || island.frequency === null) continue
-    resetReturnedUnits(grid, island)
+    const workspace = island.workspace
+    if (!island.energized || workspace === null) continue
     const structure = islands.plan.islands[island.planIndex]!
+    resetReturnedUnits(grid, structure, workspace)
     allocateGridIslandReserves(grid, structure)
-    const advance = advanceIslandFrequency(grid.definition.automation, island.frequency!, islandFrequencyInput(grid, structure, island.id), seconds)
-    recordActions(grid, island.id, advance.actions)
-    applyAdvance(grid, island, structure, advance)
+    refreshIslandWorkspaceInputs(grid, structure, workspace)
+    advanceFrequencyWorkspace(automation, workspace, seconds, {
+      inputsValidated: false,
+      validateInDetail: () => validateIslandInput(automation, frequencyStateOf(workspace), islandFrequencyInput(grid, structure, island.id)),
+    })
+    recordActions(grid, island.id, workspace.actions)
+    applyAdvance(grid, island, structure, workspace)
   }
 }

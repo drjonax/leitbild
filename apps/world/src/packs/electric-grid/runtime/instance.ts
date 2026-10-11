@@ -10,6 +10,7 @@ import type {
 import type { GridProjection } from '../model.ts'
 import type { ElectricalConnectionDefinition } from '../../../core/model/index.ts'
 import type { IslandFrequencyState } from './frequency/island-state.ts'
+import type { IslandFrequencyWorkspace } from './frequency/workspace.ts'
 import type { FrequencyReserveAllocation } from './frequency/types.ts'
 import type { GridIslandAcOutcome } from './ac-load-flow.ts'
 import type { GeneratorTripCause } from './frequency/generator-protection.ts'
@@ -282,11 +283,14 @@ export interface GridIsland {
   /** A bus of the island; locates the island again in a rebuilt plan. */
   readonly anchorBusId: string
   energized: boolean
-  frequency: IslandFrequencyState | null
+  /** The frequency-control state as published, read from `workspace`; null while de-energised. */
+  readonly frequency: IslandFrequencyState | null
   rocofHzPerSecond: number | null
   /** Lowest and highest frequency reached in the last advance (Hz). */
   minimumHz: number | null
   maximumHz: number | null
+  /** The frequency-control state the runtime advances in place; null while de-energised. Not enumerable. */
+  workspace: IslandFrequencyWorkspace | null
 }
 
 export interface GridIslandPlan {

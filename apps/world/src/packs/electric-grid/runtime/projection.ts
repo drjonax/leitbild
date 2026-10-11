@@ -91,7 +91,7 @@ const islandProjection = (grid: GridRuntimeInstance, islands: GridIslandPlan, is
       reserves.afrrDownMw += external[4]!
     }
   }
-  const frequencyHz = island.energized ? island.frequency!.frequencyHz! : null
+  const frequencyHz = island.energized ? island.workspace!.frequencyHz! : null
   return {
     id: island.id,
     energized: island.energized,

@@ -9,6 +9,7 @@ import {
   type IslandFrequencyState,
 } from './frequency/island-state.ts'
 import { createStorageFrequencyState } from './frequency/storage.ts'
+import { frequencyStateOf, type IslandFrequencyWorkspace } from './frequency/workspace.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
 import {
   gridGeneratorIsSynchronised,
@@ -18,6 +19,7 @@ import {
   islandMembers,
   storageFrequencyUnit,
 } from './island-input.ts'
+import { islandWorkspaceFits, islandWorkspaceHolding } from './island-workspace.ts'
 
 const gridSeconds = (grid: GridRuntimeInstance): number => grid.elapsedMs / 1_000
 
@@ -36,6 +38,45 @@ interface Parent {
   readonly island: GridIsland
   readonly kineticEnergyMws: number
 }
+
+const publishedStates = new WeakMap<IslandFrequencyWorkspace, { readonly version: number; readonly state: IslandFrequencyState }>()
+
+/** The workspace's state as published, produced again only after the workspace changed. */
+const publishedFrequency = (workspace: IslandFrequencyWorkspace): IslandFrequencyState => {
+  const published = publishedStates.get(workspace)
+  if (published !== undefined && published.version === workspace.version) return published.state
+  const state = frequencyStateOf(workspace)
+  publishedStates.set(workspace, { version: workspace.version, state })
+  return state
+}
+
+const frequencyAccessor: PropertyDescriptor = {
+  enumerable: true,
+  get(this: GridIsland): IslandFrequencyState | null {
+    return this.workspace === null ? null : publishedFrequency(this.workspace)
+  },
+}
+
+/** A stable island record; `frequency` reads the workspace, which is not enumerable. */
+const gridIsland = (fields: {
+  readonly id: string
+  readonly planIndex: number
+  readonly anchorBusId: string
+  readonly energized: boolean
+  readonly workspace: IslandFrequencyWorkspace | null
+  readonly rocofHzPerSecond: number | null
+  readonly minimumHz: number | null
+  readonly maximumHz: number | null
+}): GridIsland => {
+  const island = { id: fields.id, planIndex: fields.planIndex, anchorBusId: fields.anchorBusId, energized: fields.energized }
+  Object.defineProperty(island, 'frequency', frequencyAccessor)
+  Object.assign(island, { rocofHzPerSecond: fields.rocofHzPerSecond, minimumHz: fields.minimumHz, maximumHz: fields.maximumHz })
+  Object.defineProperty(island, 'workspace', { value: fields.workspace, writable: true })
+  return island as GridIsland
+}
+
+/** The island's frequency now, null while it has no frequency state. */
+const workspaceFrequencyHz = (island: GridIsland): number | null => island.workspace === null ? null : island.workspace.frequencyHz
 
 const mergedLfddStage = (stages: ReadonlyArray<LfddStageState>, loadIds: ReadonlySet<string>): LfddStageState => {
   const shed: Record<string, number> = {}
@@ -58,7 +99,7 @@ const mergedLfddStage = (stages: ReadonlyArray<LfddStageState>, loadIds: Readonl
  */
 const inheritedFrequencyState = (grid: GridRuntimeInstance, island: GridTopologyIsland, islandId: string, parents: ReadonlyArray<Parent>): IslandFrequencyState => {
   const automation = grid.definition.automation
-  const live = parents.filter(parent => parent.island.frequency?.frequencyHz != null)
+  const live = parents.filter(parent => workspaceFrequencyHz(parent.island) !== null)
   const dominant = [...live].sort((a, b) => b.kineticEnergyMws - a.kineticEnergyMws)[0]!.island.frequency!
   const weight = live.reduce((sum, parent) => sum + parent.kineticEnergyMws, 0)
   const frequencyHz = live.length === 1 || weight <= 0
@@ -166,22 +207,22 @@ const newIsland = (config: {
 }): GridIsland => {
   const island = config.plan.islands[config.planIndex]!
   const energized = islandHasVoltageFormingSource(config.grid, island)
-  const liveParents = config.parents.some(parent => parent.island.frequency?.frequencyHz != null)
+  const liveParents = config.parents.some(parent => workspaceFrequencyHz(parent.island) !== null)
   const frequency = !energized
     ? null
     : liveParents
       ? inheritedFrequencyState(config.grid, island, config.id, config.parents)
       : freshFrequencyState(config.grid, island, config.id)
-  return {
+  return gridIsland({
     id: config.id,
     planIndex: config.planIndex,
     anchorBusId: anchorBusOf(config.plan, island),
     energized,
-    frequency,
+    workspace: frequency === null ? null : islandWorkspaceHolding(config.grid, island, frequency),
     rocofHzPerSecond: frequency?.rocofHzPerSecond ?? null,
     minimumHz: frequency?.frequencyHz ?? null,
     maximumHz: frequency?.frequencyHz ?? null,
-  }
+  })
 }
 
 const initialIslands = (grid: GridRuntimeInstance, plan: GridTopologyPlan): ReadonlyArray<GridIsland> => {
@@ -208,16 +249,16 @@ const initialIslands = (grid: GridRuntimeInstance, plan: GridTopologyPlan): Read
   return plan.islands.map((island, planIndex) => {
     const item = byPlanIndex.get(planIndex)!
     if (item.frequency !== null) validateIslandInput(grid.definition.automation, item.frequency, islandFrequencyInput(grid, island, item.id))
-    return {
+    return gridIsland({
       id: item.id,
       planIndex,
       anchorBusId: item.anchorBusId,
       energized: item.frequency?.frequencyHz != null,
-      frequency: item.frequency,
+      workspace: item.frequency === null ? null : islandWorkspaceHolding(grid, island, item.frequency),
       rocofHzPerSecond: item.frequency?.rocofHzPerSecond ?? null,
       minimumHz: item.frequency?.frequencyHz ?? null,
       maximumHz: item.frequency?.frequencyHz ?? null,
-    }
+    })
   })
 }
 
@@ -236,8 +277,23 @@ const reconciledIslands = (grid: GridRuntimeInstance, previous: GridIslandPlan, 
     }))
     if (component.previous.length === 1 && component.next.length === 1) {
       const island = parents[0]!.island
+      const planIndex = component.next[0]!
+      const structure = plan.islands[planIndex]!
       taken.add(island.id)
-      result[component.next[0]!] = { ...island, planIndex: component.next[0]!, anchorBusId: anchorBusOf(plan, plan.islands[component.next[0]!]!) }
+      // The island keeps its workspace while its members are unchanged; otherwise its state moves to one for the new members.
+      const workspace = island.workspace === null || islandWorkspaceFits(grid, structure, island.workspace)
+        ? island.workspace
+        : islandWorkspaceHolding(grid, structure, island.frequency!)
+      result[planIndex] = gridIsland({
+        id: island.id,
+        planIndex,
+        anchorBusId: anchorBusOf(plan, structure),
+        energized: island.energized,
+        workspace,
+        rocofHzPerSecond: island.rocofHzPerSecond,
+        minimumHz: island.minimumHz,
+        maximumHz: island.maximumHz,
+      })
       continue
     }
     // Largest parent identity goes to the largest child; further children get new ids.
@@ -267,13 +323,14 @@ const reconciledIslands = (grid: GridRuntimeInstance, previous: GridIslandPlan, 
 const refreshEnergisation = (grid: GridRuntimeInstance, plan: GridTopologyPlan, island: GridIsland): void => {
   const structure = plan.islands[island.planIndex]!
   const energized = islandHasVoltageFormingSource(grid, structure)
-  if (energized && island.frequency?.frequencyHz == null) {
-    island.frequency = freshFrequencyState(grid, structure, island.id)
+  if (energized && workspaceFrequencyHz(island) === null) {
+    const frequency = freshFrequencyState(grid, structure, island.id)
+    island.workspace = islandWorkspaceHolding(grid, structure, frequency)
     island.rocofHzPerSecond = 0
-    island.minimumHz = island.frequency.frequencyHz
-    island.maximumHz = island.frequency.frequencyHz
+    island.minimumHz = frequency.frequencyHz
+    island.maximumHz = frequency.frequencyHz
   } else if (!energized) {
-    island.frequency = null
+    island.workspace = null
     island.rocofHzPerSecond = null
     island.minimumHz = null
     island.maximumHz = null
@@ -301,7 +358,7 @@ export const reconcileGridIslands = (grid: GridRuntimeInstance, plan: GridTopolo
 /** Discards every island's frequency state so the next reconciliation starts all live islands steady at nominal. */
 export const resetGridIslandFrequencies = (grid: GridRuntimeInstance): void => {
   if (!grid.islandPlan) return
-  for (const island of grid.islandPlan.islands) island.frequency = null
+  for (const island of grid.islandPlan.islands) island.workspace = null
 }
 
 /** The stable islands of the Grid's solved topology; readers fail explicitly before the Grid has advanced on it. */
@@ -323,7 +380,7 @@ export const gridIslandAtBus = (islands: GridIslandPlan, busId: string): GridIsl
 /** The frequency of a stable island: null while de-energised; an energised island always carries one. */
 export const gridIslandFrequencyHz = (island: GridIsland): number | null => {
   if (!island.energized) return null
-  const frequencyHz = island.frequency?.frequencyHz
-  if (frequencyHz == null) throw new Error(`energised Grid island ${island.id} has no frequency state`)
+  const frequencyHz = workspaceFrequencyHz(island)
+  if (frequencyHz === null) throw new Error(`energised Grid island ${island.id} has no frequency state`)
   return frequencyHz
 }
