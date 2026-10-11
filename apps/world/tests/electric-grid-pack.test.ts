@@ -87,8 +87,12 @@ describe('electric grid Pack', () => {
       .toThrow('resolved base electric-grid.norway.transmission is not electric-grid.missing')
     const halden = definition('electric-grid.halden.four-unit', 'electric-grid.norway.winter-weekday-peak')
     expect(() => compileGridModelIndex({ ...halden.model, connectionPoints: [{ ...halden.model.connectionPoints[0]!, busId: 'missing' }] })).toThrow('references unknown bus missing')
+    // The bus kind carried from Grid Model v2 agrees with the external systems: boundary buses and only those are theirs.
+    const rekinded = (busId: string, kind: 'substation' | 'boundary') => ({ ...halden.model, buses: halden.model.buses.map(bus => bus.id === busId ? { ...bus, kind } : bus) })
+    expect(() => compileGridModelIndex(rekinded('bus:boundary-DE', 'substation'))).toThrow('bus:boundary-DE is a substation bus but external:DE uses it as a boundary bus')
+    expect(() => compileGridModelIndex(rekinded(halden.model.loads[0]!.busId, 'boundary'))).toThrow(`boundary bus ${halden.model.loads[0]!.busId} belongs to no external system`)
     // A published model is an immutable artifact used by persisted Run state; regenerating the model data changes this digest.
-    expect(halden.definitionDigest).toBe('a23752ef5cfc662c93513473f1713767fc790360603e3dd83b8b101fbd183f60')
+    expect(halden.definitionDigest).toBe('1f974b3c211df809ffae77845acdeeb6dd8b66b7a3523ba7422730fb92584e6e')
     expect(() => definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal')).toThrow('unknown Grid Operating Point')
     expect(halden.model.connectionPoints).toHaveLength(4)
   })

@@ -35,6 +35,8 @@ const assetProvenanceSchema = z.object({
 export const busDefinitionSchema = z.object({
   id: z.string(),
   label: z.string(),
+  kind: z.enum(['substation', 'plant-terminal', 'connection-point', 'junction', 'boundary'])
+    .describe('substation, plant-terminal or connection-point: a voltage level of a station; junction: a tee point where corridors meet outside a station; boundary: a bus of an external system.'),
   nominalKv: finite,
   location,
   ...sourceFields,

@@ -10,7 +10,7 @@ import {
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { nordicFrequencyAutomationRef, norwayGridModelRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
-import type { CompiledGridDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
+import type { CompiledGridDefinition, GridBusDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
 import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
@@ -28,7 +28,7 @@ import { largestIslandInjectionSumMw, largestKclResidualMw } from './fixtures/gr
 // converter bus west of it, and two links to Germany: one with NordLink's rating, losses and ramp
 // as the Norway Model carries them, one with a slower ramp.
 const provenance = { sources: ['test:hand-built'], method: 'curated' as const, confidence: 'high' as const, note: 'HVDC command test model.' }
-const bus = (id: string, longitude: number) => ({ id, label: id, nominalKv: 420, location: [longitude, 59] as const })
+const bus = (id: string, longitude: number, kind: GridBusDefinition['kind'] = 'substation'): GridBusDefinition => ({ id, label: id, kind, nominalKv: 420, location: [longitude, 59] })
 const line = (id: string, fromBusId: string, toBusId: string, ratingMw: number) =>
   testLine({ id, fromBusId, toBusId, nominalKv: 420, ratingMw, reactancePu: 0.01, resistancePu: 0.001 })
 const nordlinkId = 'hvdc:test-nordlink'
@@ -38,7 +38,7 @@ const model: GridModelDefinition = handBuiltModel({
   id: 'hvdc-commands',
   title: 'HVDC commands',
   description: 'A Norwegian bus tied to the Nordic equivalent, a radial converter bus and two links to Germany.',
-  buses: [bus('bus:south', 7), bus('bus:west', 6), bus('bus:boundary-SE3@420', 11), bus('bus:boundary-DE', 9)],
+  buses: [bus('bus:south', 7), bus('bus:west', 6), bus('bus:boundary-SE3@420', 11, 'boundary'), bus('bus:boundary-DE', 9, 'boundary')],
   branches: [line('tie-se3', 'bus:south', 'bus:boundary-SE3@420', 3_000), line('west-line', 'bus:south', 'bus:west', 1_500)],
   generators: Array.from({ length: 4 }, (_, index) => syntheticHydroUnit({ id: `south-${index}`, label: `South ${index}`, busId: 'bus:south', location: [7, 59], capacityMw: 400 })),
   loads: [testLoad({ id: 'south-load', busId: 'bus:south', demandMw: 1_000 }), testLoad({ id: 'west-load', busId: 'bus:west', demandMw: 100 })],

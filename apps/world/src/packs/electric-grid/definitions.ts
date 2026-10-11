@@ -225,6 +225,12 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
       }
     }
   }
+  // A bus is a boundary bus exactly when an external system owns it.
+  for (const bus of model.buses) {
+    if ((bus.kind === 'boundary') !== boundaryOwner.has(bus.id)) {
+      failModel(model, bus.kind === 'boundary' ? `boundary bus ${bus.id} belongs to no external system` : `${bus.id} is a ${bus.kind} bus but ${boundaryOwner.get(bus.id)} uses it as a boundary bus`)
+    }
+  }
   const hvdcIds = new Set<string>()
   for (const link of hvdcLinks) {
     if (hvdcIds.has(link.id) || assetById.has(link.id) || externalIds.has(link.id)) failModel(model, `duplicate HVDC link id ${link.id}`)

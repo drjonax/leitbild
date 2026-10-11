@@ -29,7 +29,7 @@ const handModel = (id: string, busIds: ReadonlyArray<string>, branches: Readonly
   fidelity: { powerFlow: 'ac-fdlf-or-dc', voltage: 'ac-fdlf', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
   sourceBuild: { id: 'network-test', generatedAt: '2026-10-10T00:00:00.000Z' },
   sourceIds: [],
-  buses: busIds.map((busId, index) => ({ id: busId, label: busId, nominalKv: 420, location: [10 + index * 0.1, 60] as const })),
+  buses: busIds.map((busId, index) => ({ id: busId, label: busId, kind: 'substation' as const, nominalKv: 420, location: [10 + index * 0.1, 60] as const })),
   branches,
   shunts: [], generators: [], loads: [], storage: [], connectionPoints: [], externalSystems: [], hvdcLinks: [],
 })

@@ -69,6 +69,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
   const buses: GridBusDefinition[] = model.buses.map(bus => ({
     id: bus.id,
     label: bus.label,
+    kind: bus.kind,
     nominalKv: bus.nominalKv,
     location: bus.location,
     sourceId: firstSource(bus.provenance),

@@ -145,12 +145,12 @@ describe('Grid AC load flow on every tick', () => {
 // unity power factor, so a 1,000 MW load cannot be served in AC although the DC balance closes
 // (angle 5 rad). The generator bus is tied to a Nordic equivalent, so shedding the load leaves the
 // island near 50 Hz.
-const weakBus = (id: string, longitude: number): GridBusDefinition => ({ id, label: id, nominalKv: 300, location: [longitude, 60] })
+const weakBus = (id: string, longitude: number, kind: GridBusDefinition['kind'] = 'substation'): GridBusDefinition => ({ id, label: id, kind, nominalKv: 300, location: [longitude, 60] })
 const weakLinkModel = handBuiltModel({
   id: 'test-weak-link',
   title: 'Weak link',
   description: 'A load beyond the AC transfer limit of its only line',
-  buses: [weakBus('bus:g', 8), weakBus('bus:l', 10), weakBus('bus:boundary-SE3@300', 7)],
+  buses: [weakBus('bus:g', 8), weakBus('bus:l', 10), weakBus('bus:boundary-SE3@300', 7, 'boundary')],
   branches: [
     testLine({ id: 'branch:g-l', fromBusId: 'bus:g', toBusId: 'bus:l', nominalKv: 300, ratingMw: 5_000, emergencyRatingMw: 6_000, reactancePu: 0.5, resistancePu: 0.01 }),
     testLine({ id: 'branch:tie', fromBusId: 'bus:g', toBusId: 'bus:boundary-SE3@300', nominalKv: 300, ratingMw: 5_000, emergencyRatingMw: 6_000, reactancePu: 0.01, resistancePu: 0.001 }),

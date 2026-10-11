@@ -4,7 +4,7 @@
 import type { CompiledGridDefinition, GridBranchDefinition, GridBusDefinition, GridModelDefinition } from '../../src/packs/electric-grid/grid-model.ts'
 import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './synthetic-grid.ts'
 
-const bus = (id: string, longitude: number): GridBusDefinition => ({ id, label: id, nominalKv: 132, location: [longitude, 61] })
+const bus = (id: string, longitude: number): GridBusDefinition => ({ id, label: id, kind: 'substation', nominalKv: 132, location: [longitude, 61] })
 
 const line = (id: string, fromBusId: string, toBusId: string): GridBranchDefinition =>
   testLine({ id, fromBusId, toBusId, nominalKv: 132, ratingMw: 400, emergencyRatingMw: 480, reactancePu: 0.05, resistancePu: 0.005 })

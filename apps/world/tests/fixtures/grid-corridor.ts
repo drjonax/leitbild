@@ -11,7 +11,7 @@ import { createGridRuntimeInstance, type GridRuntimeInstance } from '../../src/p
 import { advanceGrid } from '../../src/packs/electric-grid/runtime/solver.ts'
 import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './synthetic-grid.ts'
 
-const bus = (id: string, longitude: number): GridBusDefinition => ({ id, label: id, nominalKv: 300, location: [longitude, 60] })
+const bus = (id: string, longitude: number): GridBusDefinition => ({ id, label: id, kind: 'substation', nominalKv: 300, location: [longitude, 60] })
 
 // Emergency rating 120 % for 15 minutes, as the v2 electrical rule emergency-120pct-15min.
 const line = (id: string, fromBusId: string, toBusId: string, reactancePu: number, ratingMw: number): GridBranchDefinition =>

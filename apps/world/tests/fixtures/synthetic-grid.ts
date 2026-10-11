@@ -122,6 +122,7 @@ export const syntheticGridModel = (busCount: number, seed = 7): GridModelDefinit
   const buses: GridBusDefinition[] = points.map((location, index) => ({
     id: `B${index}`,
     label: `Bus ${index}`,
+    kind: 'substation',
     nominalKv: voltageClassesKv[index % voltageClassesKv.length]!,
     location,
   }))

@@ -36,9 +36,17 @@ export interface GridModelSourceBuild {
   readonly generatedAt: string
 }
 
+/**
+ * What a bus is: a voltage level of a substation, of a plant's terminal switchyard or of a
+ * connection point; a junction (tee point) where three or more corridors meet outside a station;
+ * or a boundary bus of an external system.
+ */
+export type GridBusKind = 'substation' | 'plant-terminal' | 'connection-point' | 'junction' | 'boundary'
+
 export interface GridBusDefinition {
   readonly id: string
   readonly label: string
+  readonly kind: GridBusKind
   readonly nominalKv: number
   readonly location: GridAssetLocation
   readonly sourceId?: string

@@ -8,7 +8,7 @@ import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition, gridAutomationPreset } from '../src/packs/electric-grid/definitions.ts'
 import { gridElectricalPortsAt } from '../src/packs/electric-grid/electrical-ports.ts'
-import type { CompiledGridDefinition, GridBranchDefinition, GridGeneratorDefinition, GridLoadDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
+import type { CompiledGridDefinition, GridBranchDefinition, GridBusDefinition, GridGeneratorDefinition, GridLoadDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
 import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
@@ -258,7 +258,7 @@ describe('electric grid physics invariants', () => {
   })
 
   test('LFDD stages latch, shed the lowest priority first, and reconnect only by command', () => {
-    const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 132, location: [10 + index * 0.1, 60] as const })
+    const bus = (id: string, index: number, kind: GridBusDefinition['kind'] = 'substation'): GridBusDefinition => ({ id, label: id, kind, nominalKv: 132, location: [10 + index * 0.1, 60] as const })
     const line = (id: string, fromBusId: string, toBusId: string): GridBranchDefinition =>
       testLine({ id, fromBusId, toBusId, nominalKv: 132, ratingMw: 600, reactancePu: 0.05, resistancePu: 0.005 })
     const hydro = (id: string, busId: string, capacityMw: number): GridGeneratorDefinition =>
@@ -319,14 +319,14 @@ describe('electric grid physics invariants', () => {
 
 describe('HVDC links', () => {
   test('ramp to their set-point and move power between islands as an injection pair with converter losses', () => {
-    const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.1, 60] as const })
+    const bus = (id: string, index: number, kind: GridBusDefinition['kind'] = 'substation'): GridBusDefinition => ({ id, label: id, kind, nominalKv: 420, location: [10 + index * 0.1, 60] as const })
     const hydro = (id: string, busId: string): GridGeneratorDefinition =>
       syntheticHydroUnit({ id, label: id, busId, location: [10, 60], capacityMw: 600, rampRateMwPerMinute: 600 })
     const load = (id: string, busId: string): GridLoadDefinition => testLoad({ id, busId, demandMw: 400 })
     const provenance = { sources: ['test:hand-built'], method: 'curated' as const, confidence: 'high' as const, note: 'Physics test model.' }
     const model: GridModelDefinition = handBuiltModel({
       id: 'hvdc-pair', title: 'HVDC pair', description: 'Two AC islands joined only by an HVDC link, and a link to an asynchronous neighbour.',
-      buses: [bus('bus:west', 0), bus('bus:east', 1), bus('bus:boundary-DE', 2)],
+      buses: [bus('bus:west', 0), bus('bus:east', 1), bus('bus:boundary-DE', 2, 'boundary')],
       branches: [],
       generators: [hydro('west-unit', 'bus:west'), ...Array.from({ length: 3 }, (_, index) => hydro(`east-unit-${index}`, 'bus:east'))],
       loads: [load('west-load', 'bus:west'), load('east-load', 'bus:east')],
@@ -371,13 +371,13 @@ describe('HVDC links', () => {
 describe('a synchronous external equivalent with several boundary buses', () => {
   test('keeps Norwegian components it ties together at one frequency and closes each through its own boundary buses', () => {
     // North and south are joined by one corridor; north is tied to SE2, south to SE3 by two ties.
-    const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.5, 60 + index] as const })
+    const bus = (id: string, index: number, kind: GridBusDefinition['kind'] = 'substation'): GridBusDefinition => ({ id, label: id, kind, nominalKv: 420, location: [10 + index * 0.5, 60 + index] as const })
     const line = (id: string, fromBusId: string, toBusId: string, ratingMw: number): GridBranchDefinition =>
       testLine({ id, fromBusId, toBusId, nominalKv: 420, ratingMw, reactancePu: 0.01, resistancePu: 0.001 })
     const provenance = { sources: ['test:hand-built'], method: 'curated' as const, confidence: 'high' as const, note: 'Physics test model.' }
     const model = handBuiltModel({
       id: 'two-boundaries', title: 'Two boundaries', description: 'North and south Norway, each tied to the Nordic equivalent.',
-      buses: [bus('bus:north', 0), bus('bus:south', 1), bus('bus:boundary-SE2@420', 2), bus('bus:boundary-SE3@420', 3)],
+      buses: [bus('bus:north', 0), bus('bus:south', 1), bus('bus:boundary-SE2@420', 2, 'boundary'), bus('bus:boundary-SE3@420', 3, 'boundary')],
       branches: [
         line('corridor', 'bus:north', 'bus:south', 1_500),
         line('tie-se2', 'bus:north', 'bus:boundary-SE2@420', 1_000),
@@ -440,11 +440,11 @@ describe('a synchronous external equivalent with several boundary buses', () => 
 
 describe('reserves dimensioned per synchronous area', () => {
   const build = (withEquivalent: boolean): GridModelDefinition => {
-    const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.5, 60] as const })
+    const bus = (id: string, index: number, kind: GridBusDefinition['kind'] = 'substation'): GridBusDefinition => ({ id, label: id, kind, nominalKv: 420, location: [10 + index * 0.5, 60] as const })
     const provenance = { sources: ['test:hand-built'], method: 'curated' as const, confidence: 'high' as const, note: 'Physics test model.' }
     return handBuiltModel({
       id: withEquivalent ? 'area-tied' : 'area-detached', title: 'Reserve area', description: 'Four hydro units and a load, with or without the Nordic equivalent.',
-      buses: [bus('bus:a', 0), ...(withEquivalent ? [bus('bus:boundary-SE3@420', 1)] : [])],
+      buses: [bus('bus:a', 0), ...(withEquivalent ? [bus('bus:boundary-SE3@420', 1, 'boundary')] : [])],
       branches: withEquivalent ? [testLine({ id: 'tie', fromBusId: 'bus:a', toBusId: 'bus:boundary-SE3@420', nominalKv: 420, ratingMw: 1_500, reactancePu: 0.01, resistancePu: 0.001 })] : [],
       generators: Array.from({ length: 4 }, (_, index) => syntheticHydroUnit({ id: `unit-${index}`, label: `Unit ${index}`, busId: 'bus:a', location: [10, 60], capacityMw: 400 })),
       loads: [testLoad({ id: 'load', busId: 'bus:a', demandMw: 1_000 })],
@@ -486,7 +486,7 @@ describe('synchro-check on closing a loop', () => {
   test('closing a branch inside one energised island is limited by the voltage-angle difference across it', async () => {
     // Two parallel lines carry 300 MW from hydro units at A to a load at B: a short one (x 0.02 pu)
     // and a long one (x 0.25 pu). With only the long one closed, A–B differ by P·x = 3 pu · 0.25 = 0.75 rad.
-    const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.5, 60] as const })
+    const bus = (id: string, index: number, kind: GridBusDefinition['kind'] = 'substation'): GridBusDefinition => ({ id, label: id, kind, nominalKv: 420, location: [10 + index * 0.5, 60] as const })
     const line = (id: string, reactancePu: number): GridBranchDefinition =>
       testLine({ id, fromBusId: 'bus:a', toBusId: 'bus:b', nominalKv: 420, ratingMw: 2_000, reactancePu, resistancePu: 0 })
     const model: GridModelDefinition = handBuiltModel({

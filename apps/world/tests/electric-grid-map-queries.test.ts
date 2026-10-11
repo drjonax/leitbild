@@ -220,7 +220,7 @@ const v2Model = (): GridModelDefinition => {
     ...base,
     id: 'electric-grid.test.v2',
     sourceBuild: { id: 'build-1', generatedAt: '2026-10-10T00:00:00.000Z' },
-    buses: busIds.map((id, position) => ({ id, label: `Bus ${position}`, nominalKv: 420, location: locations[position]! })),
+    buses: busIds.map((id, position) => ({ id, label: `Bus ${position}`, kind: 'substation' as const, nominalKv: 420, location: locations[position]! })),
     branches: [
       { ...base.branches[0]!, id: 'branch:osm-0123456789abcdef', fromBusId: busIds[0]!, toBusId: busIds[1]! },
       { ...base.branches[1]!, id: 'branch:osm-fedcba9876543210', fromBusId: busIds[1]!, toBusId: busIds[2]! },

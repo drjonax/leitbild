@@ -11,7 +11,7 @@ const curtailmentModel: GridModelDefinition = handBuiltModel({
   id: 'test-curtailment',
   title: 'Test curtailment',
   description: 'Loads with and without interruptible demand',
-  buses: [{ id: 'bus:a', label: 'A', nominalKv: 132, location: [10, 60] }, { id: 'bus:b', label: 'B', nominalKv: 132, location: [10.1, 60] }],
+  buses: [{ id: 'bus:a', label: 'A', kind: 'substation', nominalKv: 132, location: [10, 60] }, { id: 'bus:b', label: 'B', kind: 'substation', nominalKv: 132, location: [10.1, 60] }],
   branches: [testLine({ id: 'branch:a-b', fromBusId: 'bus:a', toBusId: 'bus:b', nominalKv: 132, ratingMw: 600, reactancePu: 0.05, resistancePu: 0.005 })],
   generators: [
     syntheticHydroUnit({ id: 'generator:big', label: 'Big', busId: 'bus:a', location: [10, 60], capacityMw: 250, rampRateMwPerMinute: 250 }),
