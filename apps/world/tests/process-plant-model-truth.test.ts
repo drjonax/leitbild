@@ -217,8 +217,8 @@ describe('breakers', () => {
     expect(rowsOf('EDG A')).toEqual(['CMD RUN'])
     expect(rowsOf('Bus A')).toEqual(['0 %'])
     plantRun.run(20_000)
-    // Running, the symbol shows it, as a pump's does.
-    expect(rowsOf('EDG A')).toEqual([''])
+    // Running, the symbol shows it and says RUN, as a pump's does.
+    expect(rowsOf('EDG A')).toEqual(['RUN'])
     expect(rowsOf('Bus A')).toEqual(['100 %'])
   })
 
