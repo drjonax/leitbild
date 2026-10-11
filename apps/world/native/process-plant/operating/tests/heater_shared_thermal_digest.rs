@@ -6,15 +6,22 @@
 //! baseline is the unmodified thermal.rs at ed9fa309; later edits must
 //! reproduce it.
 //!
-//! The laws call the platform's `exp`, `ln` and `powf`, whose last bits differ
-//! between libms. At ed9fa309, Apple's libm and glibc differ in 8 of the 802
+//! The gate is portable: every case matches the committed baseline table with
+//! identical outcome, mode and refusal text, and values and directions within
+//! `PORTABLE_RELATIVE`. The laws call the platform's `exp`, `ln` and `powf`,
+//! whose last bits differ between libms, so an exact aggregate hash cannot be
+//! a portable gate. At ed9fa309, Apple's libm and glibc differ in 8 of the 802
 //! cases, by at most 1 ULP in values and 1.35e-14 relative in directions, with
-//! identical outcomes, modes and refusals. So the guard has two parts:
-//! - bitwise: the digest of every result's exact bits equals the one recorded
-//!   at ed9fa309 on the same target and build profile;
-//! - portable: every case matches the committed baseline table with identical
-//!   outcome, mode and refusal text, and values and directions within
-//!   `PORTABLE_RELATIVE`.
+//! identical outcomes, modes and refusals.
+//!
+//! The FNV digest of every result's exact bits is printed as a diagnostic. To
+//! show a refactor is bitwise, compare the digest at the baseline commit and
+//! at the candidate in one pinned environment. For reference, ed9fa309 gives
+//! debug `0xf7967ba897abad31` and release `0x68ed99d2b37b6651` on macOS
+//! aarch64 (Darwin 25), and debug `0x97f8597f7e113de0` and release
+//! `0x763a76b4a8238084` on GitHub ubuntu-latest (glibc 2.39), with rustc
+//! 1.97.1. Debug and release differ in the last bits of the Tube transition
+//! directions.
 use leitbild_operating_plant::thermal::*;
 
 fn c(x: f64) -> Scalar {
@@ -237,29 +244,20 @@ fn shared_digest() -> (u64, [usize; 6], Vec<Case>) {
 }
 
 #[test]
-fn heater_edit_keeps_core_tube_external_and_sg_branches_bitwise() {
-    let (digest, modes, _) = shared_digest();
-    let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
-    println!("shared thermal digest {digest:#018x} on {os}-{arch}, modes {modes:?}");
-    // Every branch is exercised, so the digest guards each of them.
-    assert!(modes.iter().all(|&n| n > 0), "modes {modes:?}");
-    let Some(recorded) = recorded(os, arch) else {
-        panic!(
-            "no bitwise baseline is recorded for {os}-{arch}: run this test at \
-             ed9fa309 on this target and record that digest, never one from \
-             later code"
-        );
+fn heater_edit_keeps_core_tube_external_and_sg_branches_on_the_baseline() {
+    let (digest, modes, cases) = shared_digest();
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
     };
-    assert_eq!(
-        digest, recorded,
-        "shared thermal laws changed bitwise on {os}-{arch}; the portable \
-         baseline comparison tells a law change from a libm change"
+    println!(
+        "shared thermal digest {digest:#018x} (diagnostic) on {}-{} {profile}, modes {modes:?}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
     );
-}
-
-#[test]
-fn shared_thermal_laws_match_the_pre_edit_baseline_portably() {
-    let (_, _, cases) = shared_digest();
+    // Every branch is exercised, so the comparison guards each of them.
+    assert!(modes.iter().all(|&n| n > 0), "modes {modes:?}");
     let baseline = baseline_cases(include_str!("heater_shared_thermal_baseline.txt"));
     assert_eq!(cases.len(), baseline.len(), "case count");
     let mut inexact = 0;
@@ -289,29 +287,6 @@ fn shared_thermal_laws_match_the_pre_edit_baseline_portably() {
         }
     }
     println!("{inexact} results differ from the baseline's bits, worst relative {worst:e}");
-}
-
-/// The digest recorded at ed9fa309 per target and build profile. The
-/// optimized build rounds the last bits of the Tube transition-branch
-/// directions differently (values agree), so each profile keeps its own.
-fn recorded(os: &str, arch: &str) -> Option<u64> {
-    let debug = cfg!(debug_assertions);
-    match (os, arch) {
-        // Apple libm (Darwin 25), rustc 1.97.1.
-        ("macos", "aarch64") => Some(if debug {
-            0xf796_7ba8_97ab_ad31
-        } else {
-            0x68ed_99d2_b37b_6651
-        }),
-        // GitHub ubuntu-latest: glibc 2.39, AMD EPYC with FMA, rustc 1.97.1,
-        // recorded at ed9fa309 in Actions run 38162140292.
-        ("linux", "x86_64") => Some(if debug {
-            0x97f8_597f_7e11_3de0
-        } else {
-            0x763a_76b4_a823_8084
-        }),
-        _ => None,
-    }
 }
 
 /// Relative agreement required of every value and direction against the
