@@ -121,6 +121,54 @@ impl Output {
         }
     }
 }
+/// Partials of [`Model::evaluate`] at one state ([`Model::partials`]).
+#[derive(Clone, Debug, Default)]
+pub struct Partials {
+    /// Per support, in support order.
+    pub supports: Vec<SupportPartials>,
+    /// Per region, in region order.
+    pub regions: Vec<RegionPartials>,
+    /// Per material, in material order.
+    pub materials: Vec<MaterialPartials>,
+}
+/// One support's fission conversion and its region's reactivity slopes in
+/// the support's material inputs.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SupportPartials {
+    /// `G = G_ref fissile / fissile_ref`, fissions per population per s.
+    pub production_per_s: f64,
+    /// `dG/d fissile`.
+    pub production_fissile: f64,
+    /// Exposure per population, m^-2.
+    pub exposure: f64,
+    /// d rho_region / d fuel temperature (1/K).
+    pub fuel_temperature: f64,
+    /// d rho_region / d fissile atoms.
+    pub fissile: f64,
+    /// d rho_region / d capture-loss change (1/m2).
+    pub capture_loss: f64,
+    /// d rho_region / d xenon atoms and samarium atoms.
+    pub xenon: f64,
+    pub samarium: f64,
+}
+/// One region's reactivity slopes in its water and the rods' travel.
+#[derive(Clone, Debug, Default)]
+pub struct RegionPartials {
+    /// d rho / d water density (m3/kg) and d rho / d boron ppm-eq.
+    pub water_density: f64,
+    pub boron: f64,
+    /// `(rod, d rho / d achieved travel)` for every rod weighting the region.
+    pub rods: Vec<(usize, f64)>,
+}
+/// One material's poison capture `sigma X N_poison` slopes: the cross
+/// sections and the poison inventories at this state.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MaterialPartials {
+    pub xenon_capture_per_xenon: f64,
+    pub samarium_capture_per_samarium: f64,
+    pub xenon: f64,
+    pub samarium: f64,
+}
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
     InvalidMetadata(&'static str),
@@ -455,6 +503,103 @@ impl Model {
                 .iter()
                 .any(|v| !finite(v.xenon) || !finite(v.samarium))
         {
+            return Err(Error::NonfiniteResult);
+        }
+        Ok(())
+    }
+    /// Exact partials of [`Model::evaluate`]'s outputs at the values of
+    /// `c` (directions are ignored), for an analytic block Jacobian: per
+    /// support its fission conversion `G` and its fissile slope, its
+    /// exposure weight and the slopes of its region's reactivity in its
+    /// material's fuel temperature, fissile, capture-loss change, xenon and
+    /// samarium; per region the reactivity slopes in water density, boron
+    /// and each weighted rod's achieved travel, the rod overlap taking the
+    /// same selected right-travel branch as `evaluate`; per material the
+    /// poison capture slopes. Each slope is the derivative of the same
+    /// formula `evaluate` composes. Pressure and moderator temperature
+    /// enter only the domain checks, so they have no slope.
+    pub fn partials(&self, c: Conditions<'_>, out: &mut Partials) -> Result<(), Error> {
+        let neutrons = vec![s(0.); self.regions.len()];
+        self.check_conditions(c, &neutrons)?;
+        let p = self.parameters;
+        out.supports.clear();
+        out.regions.clear();
+        out.materials.clear();
+        for (i, region) in self.regions.iter().enumerate() {
+            let mut rods = Vec::new();
+            for (rod, (w, travel)) in region
+                .rod_weights
+                .iter()
+                .zip(c.achieved_rod_travel_m)
+                .enumerate()
+            {
+                if *w == 0. {
+                    continue;
+                }
+                let bottom = s(p.inserted_active_bottom_m) + Scalar::new(travel.value, 1.);
+                let slope =
+                    overlap(region.z0_m, region.z1_m, bottom, p.rod_active_length_m).direction;
+                rods.push((
+                    rod,
+                    -p.rod_worth * (*w / (region.z1_m - region.z0_m)) * slope,
+                ));
+            }
+            let density = c.water_density_kg_m3[i].value / region.reference_density_kg_m3;
+            out.regions.push(RegionPartials {
+                water_density: (p.water_worth + p.boron_per_ppm_eq * c.boron_ppm_eq[i].value)
+                    / region.reference_density_kg_m3,
+                boron: p.boron_per_ppm_eq * density,
+                rods,
+            });
+        }
+        for e in &self.supports {
+            let material = self.materials[e.material];
+            let a = e.material;
+            let production_fissile =
+                e.production_reference_per_s / material.reference_fissile_atoms;
+            let root = sqrt(Scalar::new(c.fuel_temperature_k[a].value, 1.))?;
+            let h = e.exposure_per_population_s_m2;
+            out.supports.push(SupportPartials {
+                production_per_s: e.production_reference_per_s * c.fissile_atoms[a].value
+                    / material.reference_fissile_atoms,
+                production_fissile,
+                exposure: h,
+                fuel_temperature: p.doppler_per_sqrt_k * e.fuel_importance * root.direction,
+                fissile: p.generation_time_s * (p.nu_effective - 1.) * production_fissile,
+                capture_loss: -p.generation_time_s * h,
+                xenon: -p.generation_time_s * h * p.sigma_xe_m2,
+                samarium: -p.generation_time_s * h * p.sigma_sm_m2,
+            });
+        }
+        for a in 0..self.materials.len() {
+            out.materials.push(MaterialPartials {
+                xenon_capture_per_xenon: p.sigma_xe_m2,
+                samarium_capture_per_samarium: p.sigma_sm_m2,
+                xenon: c.xenon_atoms[a].value,
+                samarium: c.samarium_atoms[a].value,
+            });
+        }
+        let finite_all = out
+            .supports
+            .iter()
+            .flat_map(|e| {
+                [
+                    e.production_per_s,
+                    e.production_fissile,
+                    e.fuel_temperature,
+                    e.fissile,
+                    e.capture_loss,
+                    e.xenon,
+                    e.samarium,
+                ]
+            })
+            .chain(out.regions.iter().flat_map(|r| {
+                [r.water_density, r.boron]
+                    .into_iter()
+                    .chain(r.rods.iter().map(|(_, v)| *v))
+            }))
+            .all(f64::is_finite);
+        if !finite_all {
             return Err(Error::NonfiniteResult);
         }
         Ok(())
