@@ -19,7 +19,7 @@ const alarmsPayloadSchema = z.object({
 }).strict()
 
 const alarmSchema = z.object({
-  id: z.string().describe('Stable alarm id <scope>:<asset>:<condition>; the same condition on the same asset always has this id.'),
+  id: z.string().describe('Stable alarm id <scope>:<asset key>:<condition>, the asset key being the asset id without its own scope prefix (hvdc:nordlink:tripped); the same condition on the same asset always has this id.'),
   scope: z.enum(['island', 'branch', 'generator', 'hvdc']),
   assetId: z.string().describe('Island id or Grid Asset id.'),
   condition: z.string(),

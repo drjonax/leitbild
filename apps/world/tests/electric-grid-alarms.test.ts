@@ -5,11 +5,12 @@ import { gridAlarmLifecycleCommandKind } from '../src/packs/electric-grid/comman
 import { gridDerateBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridShedLoadCommandKind } from '../src/packs/electric-grid/commands/load.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
+import { gridTripHvdcCommandKind } from '../src/packs/electric-grid/commands/hvdc.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, norwayWinterPeakOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
-import { gridAlarmId, noteGridAcSolution, type GridAlarmRecord } from '../src/packs/electric-grid/runtime/alarms.ts'
+import { gridAlarmId, noteGridAcSolution, type GridAlarmRecord, type GridAlarmScope } from '../src/packs/electric-grid/runtime/alarms.ts'
 import { createGridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { createLocalElectricGridPackRuntimeAdapter } from '../src/packs/electric-grid/sim/adapter.ts'
@@ -132,7 +133,7 @@ describe('electric grid alarms', () => {
     const alarmId = loadingAlarm('overload')
     expect(lifecycle(run, { alarmIds: [alarmId], action: 'shelve' }).reason).toContain('shelveSeconds is required')
     expect(lifecycle(run, { alarmIds: [alarmId], action: 'acknowledge', shelveSeconds: 60 }).reason).toContain('not allowed')
-    expect(lifecycle(run, { alarmIds: ['branch:branch:g-a:no-such-condition'], action: 'acknowledge' }).reason).toContain('Grid alarm not found')
+    expect(lifecycle(run, { alarmIds: ['branch:g-a:no-such-condition'], action: 'acknowledge' }).reason).toContain('Grid alarm not found')
     expect(lifecycle(run, { alarmIds: [alarmId], action: 'unshelve' }).reason).toContain('not shelved')
     expect(lifecycle(run, { alarmIds: [alarmId], action: 'shelve', shelveSeconds: 60, reason: 'known overload' }).ok).toBe(true)
     expect(run.grid.alarms.records.get(alarmId)).toMatchObject({ acknowledged: true, shelvedUntilElapsedMs: 90_000 })
@@ -252,4 +253,73 @@ describe('electric grid alarms', () => {
       await connection.close()
     }
   })
+})
+
+// <scope>:<asset key>:<condition>: the scope once, the asset id without its own scope prefix, and a
+// condition of lowercase words joined by hyphens.
+const alarmIdGrammar = /^(island|branch|generator|hvdc):(?!(?:island|branch|generator|hvdc):(?:island|branch|generator|hvdc):)(.+):([a-z0-9]+(?:-[a-z0-9]+)*)$/
+
+const expectAlarmIdGrammar = (id: string, scope: GridAlarmScope, assetId: string, condition: string): void => {
+  const match = alarmIdGrammar.exec(id)
+  expect(match).not.toBeNull()
+  expect(match![1]).toBe(scope)
+  expect(match![3]).toBe(condition)
+  expect(id.startsWith(`${scope}:${scope}:`)).toBe(false)
+  // Grid Model asset ids carry their scope prefix, so the alarm id is the asset id and the condition.
+  expect(id).toBe(assetId.startsWith(`${scope}:`) ? `${assetId}:${condition}` : `${scope}:${assetId}:${condition}`)
+}
+
+describe('electric grid alarm id grammar', () => {
+  test('every alarm condition of the Nordic Automation names its scope once', () => {
+    const automation = norway.automation
+    const settings = automation.alarms
+    const conditions: ReadonlyArray<readonly [GridAlarmScope, string, ReadonlyArray<string>]> = [
+      ['island', `island:${norway.model.buses[0]!.id}`, [
+        ...settings.islandFrequency.flatMap(band => [`under-frequency-${band.id}`, `over-frequency-${band.id}`]),
+        'formed', 'de-energised', 'unserved-load', 'ac-non-convergence',
+        ...['fcr-n', 'fcr-d-up', 'fcr-d-down', 'afrr-up', 'afrr-down', 'mfrr-up', 'mfrr-down'].map(product => `reserve-deficit-${product}`),
+        ...automation.lfdd.stages.map(stage => `lfdd-${stage.id}-operated`),
+      ]],
+      ['branch', norway.model.branches[0]!.id, ['tripped', ...settings.branchLoading.map(band => `loading-${band.id}`)]],
+      ['generator', norway.model.generators[0]!.id, ['tripped']],
+      ['hvdc', 'hvdc:nordlink', ['tripped']],
+    ]
+    for (const [scope, assetId, names] of conditions) {
+      for (const condition of names) expectAlarmIdGrammar(gridAlarmId(scope, assetId, condition), scope, assetId, condition)
+    }
+    expect(gridAlarmId('hvdc', 'hvdc:nordlink', 'tripped')).toBe('hvdc:nordlink:tripped')
+    expect(gridAlarmId('island', 'island:bus:osm-way-1@420', 'de-energised')).toBe('island:bus:osm-way-1@420:de-energised')
+    // Hand-built test assets without a scope prefix keep the whole id as their key.
+    expect(gridAlarmId('branch', 'g-a', 'tripped')).toBe('branch:g-a:tripped')
+  })
+
+  test('raised records on the Norway Model follow the grammar in every scope', () => {
+    const winter = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:norway', model: { ref: norwayGridModelRef }, operatingPoint: { ref: norwayWinterPeakOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
+    }))
+    const run = steppedGrid(winter)
+    run.advanceTo(4_000, [1_000])
+    const model = winter.model
+    // A radial load bus without generation: opening its only branch de-energises an island with demand.
+    const generatorBuses = new Set(model.generators.map(generator => generator.busId))
+    const loadBuses = new Set(model.loads.map(load => load.busId))
+    const radial = model.buses.find(bus => loadBuses.has(bus.id) && !generatorBuses.has(bus.id)
+      && model.branches.filter(branch => branch.fromBusId === bus.id || branch.toBusId === bus.id).length === 1)!
+    const radialBranch = model.branches.find(branch => branch.fromBusId === radial.id || branch.toBusId === radial.id)!
+    expect(run.command(gridOpenBranchCommandKind, { assetId: radialBranch.id }).ok).toBe(true)
+    const link = model.hvdcLinks.find(candidate => run.grid.hvdcLinks.get(candidate.id)!.state === 'deblocked')!
+    expect(run.command(gridTripHvdcCommandKind, { assetId: link.id }).ok).toBe(true)
+    const unit = model.generators.find(generator => run.grid.generators.get(generator.id)!.state === 'online')!
+    expect(run.command(gridTripGeneratorCommandKind, { assetId: unit.id }).ok).toBe(true)
+    run.advanceTo(30_000, [1_000])
+    const records = [...run.grid.alarms.records.values()]
+    expect(new Set(records.map(record => record.scope))).toEqual(new Set(['island', 'branch', 'generator', 'hvdc']))
+    for (const record of records) {
+      expect(record.id).toBe(gridAlarmId(record.scope, record.assetId, record.condition))
+      expectAlarmIdGrammar(record.id, record.scope, record.assetId, record.condition)
+    }
+    expect(run.grid.alarms.records.get(`${link.id}:tripped`)).toMatchObject({ scope: 'hvdc', assetId: link.id, active: true })
+    const deadIsland = run.grid.busStates.get(radial.id)!.islandId
+    expect(run.grid.alarms.records.get(`${deadIsland}:de-energised`)).toMatchObject({ scope: 'island', assetId: deadIsland, active: true })
+  }, 60_000)
 })

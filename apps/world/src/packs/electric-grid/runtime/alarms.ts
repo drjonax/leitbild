@@ -4,7 +4,7 @@ import { gridAlarmObservations } from './alarm-conditions.ts'
 import { queueGridSignal } from './grid-signals.ts'
 import type { GridIslandPlan, GridRuntimeInstance } from './instance.ts'
 
-// Persistent alarm records with stable ids `<scope>:<asset>:<condition>`, after the process-plant
+// Persistent alarm records with stable ids `<scope>:<asset key>:<condition>`, after the process-plant
 // I&C lifecycle: a record is raised and cleared by its condition (with delays, hysteresis and a
 // minimum interval between transitions), acknowledged or shelved by command, and never cleared by
 // acknowledgement. Every transition is queued as a Simulation Run signal.
@@ -97,8 +97,13 @@ export const persistedGridAlarmState = (state: GridAlarmState): PersistedGridAla
   clock: state.clock,
 })
 
-/** `<scope>:<asset>:<condition>`; asset ids may contain colons, the condition never does. */
-export const gridAlarmId = (scope: GridAlarmScope, assetId: string, condition: string): string => `${scope}:${assetId}:${condition}`
+/**
+ * `<scope>:<asset key>:<condition>`, the scope once: the asset key is the asset id without its own
+ * `<scope>:` prefix, which Grid Model ids carry (hvdc:nordlink → hvdc:nordlink:tripped). Asset ids
+ * may contain colons, the condition never does.
+ */
+export const gridAlarmId = (scope: GridAlarmScope, assetId: string, condition: string): string =>
+  `${scope}:${assetId.startsWith(`${scope}:`) ? assetId.slice(scope.length + 1) : assetId}:${condition}`
 
 /**
  * Reports one island's AC load-flow result for its non-convergence alarm. The AC solver calls it
