@@ -1264,7 +1264,8 @@ fn path_volume<P: Properties>(
     let single = if vapor { past(hg, 1.) } else { past(hf, -1.) };
     if single {
         *calls += 1;
-        let (q, d) = props::inverse(properties, p, h, usize::from(vapor), true, None)?;
+        let (q, d) =
+            props::inverse_thermodynamic(properties, p, h, usize::from(vapor), true, None)?;
         return Ok(s(1.) / Scalar::new(q.density_kg_m3, d.density_kg_m3));
     }
     let quality = (h - hf) / (hg - hf);
@@ -1304,7 +1305,7 @@ pub fn restriction_flux<P: Properties>(
     let mut inversions = 0;
     let sat_at = |p: Scalar, calls: &mut usize| -> Result<Saturation, Failure> {
         *calls += 1;
-        properties.saturation(p).map_err(recoverable)
+        properties.saturation_caloric(p).map_err(recoverable)
     };
     if p_back.value == p0.value {
         return Ok(Flux {
