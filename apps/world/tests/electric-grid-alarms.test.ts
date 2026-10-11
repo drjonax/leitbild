@@ -93,7 +93,7 @@ describe('electric grid alarms', () => {
   test('a priority-1 under-frequency alarm of an island persists after acknowledgement and clears back in band', () => {
     const run = steppedGrid(norway)
     run.advanceTo(120_000)
-    const islandId = run.grid.busStates.get(norway.model.loads[0]!.busId)!.islandId
+    const islandId = run.grid.busStates.get(norway.model.loads[0]!.busId)!.islandId!
     const units = norway.model.generators
       .filter(generator => run.grid.busStates.get(generator.busId)!.islandId === islandId && run.grid.generators.get(generator.id)!.state === 'online')
       .sort((a, b) => run.grid.generators.get(b.id)!.dispatchMw - run.grid.generators.get(a.id)!.dispatchMw)
@@ -217,7 +217,7 @@ describe('electric grid alarms', () => {
     lifecycle(run, { alarmIds: [loadingAlarm('overload')], action: 'shelve', shelveSeconds: 60 })
     expect(list({ states: ['shelved'] }).alarms.map(alarm => alarm.id)).toEqual([loadingAlarm('overload')])
     expect(list({ states: ['active'] }).alarms.some(alarm => alarm.shelved)).toBe(false)
-    const islandId = run.grid.busStates.get('bus:a')!.islandId
+    const islandId = run.grid.busStates.get('bus:a')!.islandId!
     expect(list({ islandId }).alarms.every(alarm => alarm.islandId === islandId)).toBe(true)
     expect(() => list({ islandId: 'island:none' })).toThrow('Grid island not found')
   })

@@ -126,7 +126,13 @@ export const assetPresentationFor = (grid: GridRuntimeInstance, asset: GridAsset
     const connections = [...grid.externalConnections.values()].filter(connection => connection.busId === asset.id)
     const connectedCount = connections.filter(connection => connection.connected).length
     const connectedLabel = `${connectedCount}/${connections.length} connected`
-    if (!state || !state.energized || state.frequencyHz === null) {
+    if (state?.voltageModel === 'external') {
+      // In no island: its ties are all open and its external system holds it.
+      const system = grid.definition.index.synchronousExternalByBus.get(asset.id)!
+      tone = 'working'
+      statusLabel = `Separated · held by ${system.label}`
+      summary = `${definition.nominalKv} kV · ${state.frequencyHz!.toFixed(2)} Hz · ties open`
+    } else if (!state || !state.energized || state.frequencyHz === null) {
       // The DC model computes no voltage: a live bus is described by its island frequency, a dead one as de-energised.
       tone = state ? 'error' : 'idle'
       statusLabel = state ? connections.length === 0 ? 'De-energised' : `De-energised · ${connectedLabel}` : 'Initializing'

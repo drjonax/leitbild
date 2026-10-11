@@ -477,7 +477,7 @@ describe('reserves dimensioned per synchronous area', () => {
     for (let step = 0; step < 3; step += 1) run.advance(10)
     // 600 MW Nordic FCR-N less the equivalent's 372 MW leaves 228 MW for four units that offer 20 MW each by droop.
     expect(unitReserves(run).reduce((sum, reserves) => sum + reserves.fcrNMw, 0)).toBeCloseTo(80, 9)
-    const deficit = run.grid.alarms.records.get(gridAlarmId('island', run.grid.busStates.get('bus:a')!.islandId, 'reserve-deficit-fcr-n'))
+    const deficit = run.grid.alarms.records.get(gridAlarmId('island', run.grid.busStates.get('bus:a')!.islandId!, 'reserve-deficit-fcr-n'))
     expect(deficit).toMatchObject({ active: true })
     expect(deficit!.value).toBeCloseTo(600 - 372 - 80, 6)
   })

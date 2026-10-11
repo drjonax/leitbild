@@ -71,15 +71,18 @@ const createCachedIsland = (network: CompiledGridNetwork, buses: Int32Array, bra
 }
 
 /**
- * Synchronous islands over AC components: components holding boundary buses of the same
- * synchronous external system run at that system's frequency and form one island. A boundary bus
- * whose ties are all open is a component of its own, not coupled to Norway: it forms an island of
- * its own and stays de-energised (the system has no voltage-forming source of its own there). An
- * HVDC terminal, which has no AC branch, is a component of its own in no island (−1).
+ * Synchronous islands over AC components holding a Norwegian bus: components holding boundary
+ * buses of the same synchronous external system run at that system's frequency and form one
+ * island. A component without a Norwegian bus lies in no island (−1): an HVDC terminal, which has
+ * no AC branch, or a separated boundary bus of a synchronous system whose ties are all open, which
+ * that system holds (boundary-separation.ts).
  */
-const synchronousIslandOfComponent = (grid: GridRuntimeInstance, network: CompiledGridNetwork, componentOfBus: Int32Array, componentCount: number, componentBusCount: (component: number) => number): Int32Array => {
-  const terminalComponent = new Uint8Array(componentCount)
-  for (const busId of grid.definition.index.asynchronousBoundaryBusIds) terminalComponent[componentOfBus[network.busIndexById.get(busId)!]!] = 1
+const synchronousIslandOfComponent = (grid: GridRuntimeInstance, network: CompiledGridNetwork, componentOfBus: Int32Array, componentCount: number): Int32Array => {
+  const tables = gridTablesFor(grid.definition)
+  const norwegian = new Uint8Array(componentCount)
+  for (let bus = 0; bus < network.busCount; bus += 1) {
+    if (tables.synchronousExternalOfBus[bus]! < 0 && tables.asynchronousBoundaryBus[bus] === 0) norwegian[componentOfBus[bus]!] = 1
+  }
   const parent = Int32Array.from({ length: componentCount }, (_, index) => index)
   const find = (node: number): number => {
     let current = node
@@ -93,7 +96,7 @@ const synchronousIslandOfComponent = (grid: GridRuntimeInstance, network: Compil
     if (!system.synchronous) continue
     const coupled = system.boundaryBusIds
       .map(busId => componentOfBus[network.busIndexById.get(busId)!]!)
-      .filter(component => componentBusCount(component) > 1)
+      .filter(component => norwegian[component] === 1)
     if (coupled.length === 0) continue
     const first = find(coupled[0]!)
     for (const component of coupled.slice(1)) {
@@ -106,7 +109,7 @@ const synchronousIslandOfComponent = (grid: GridRuntimeInstance, network: Compil
   const islandOfComponent = new Int32Array(componentCount)
   let count = 0
   for (let component = 0; component < componentCount; component += 1) {
-    if (terminalComponent[component] === 1) {
+    if (norwegian[component] !== 1) {
       islandOfComponent[component] = -1
       continue
     }
@@ -257,7 +260,7 @@ const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwo
     systems.push(entry.system)
   }
   islandCaches.set(grid, { current: generation, previous: cache.current })
-  const islandOfComponent = synchronousIslandOfComponent(grid, network, found.islandOfBus, found.count, component => found.busStart[component + 1]! - found.busStart[component]!)
+  const islandOfComponent = synchronousIslandOfComponent(grid, network, found.islandOfBus, found.count)
   const islandCount = Math.max(-1, ...islandOfComponent) + 1
   const components: GridTopologyComponent[] = systems.map((system, component) => {
     const item = { referenceBusId: network.busIds[system.buses[0]!]!, busIndices: system.buses, islandIndex: islandOfComponent[component]! }
@@ -336,7 +339,7 @@ export const topologyPlanForGrid = (grid: GridRuntimeInstance): GridTopologyPlan
 /**
  * Solves the components of the islands flagged in `solveIsland` from the plan's `injectionsMw` into
  * `anglesRad` (radians, each component's reference bus 0) and `referenceMismatchMw` (the component's
- * injection sum); the components of other islands and HVDC terminals get angle 0.
+ * injection sum); the components of other islands, HVDC terminals and separated boundary buses get angle 0.
  */
 export const solvePlanInto = (plan: GridTopologyPlan, solveIsland: Uint8Array): void => {
   const { network, injectionsMw, anglesRad } = plan
@@ -352,7 +355,7 @@ export const solvePlanInto = (plan: GridTopologyPlan, solveIsland: Uint8Array): 
   }
 }
 
-/** Solves every component into the plan's per-bus angle and per-component reference-mismatch arrays; an HVDC terminal has no AC injection. */
+/** Solves every component into the plan's per-bus angle and per-component reference-mismatch arrays; a bus in no island (an HVDC terminal or a separated boundary bus) has no AC injection. */
 const solvePlan = (plan: GridTopologyPlan, injections: ReadonlyMap<string, number>): void => {
   const { network, injectionsMw, anglesRad } = plan
   for (let bus = 0; bus < network.busCount; bus += 1) {

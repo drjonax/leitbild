@@ -40,15 +40,17 @@ import { hvdcTerminalStateViews, type GridHvdcTerminalState } from './hvdc-termi
 /**
  * Where a bus voltage comes from. `ac-fdlf`: the island's AC load flow converged and the voltage
  * is its result; `not-converged`: the island is energised but its AC load flow failed, so no
- * voltage is known (never a DC or nominal stand-in); `de-energised`: no source holds the bus (0 pu).
+ * voltage is known (never a DC or nominal stand-in); `de-energised`: no source holds the bus (0 pu);
+ * `external`: a separated boundary bus, held by its synchronous external system at the equivalent's
+ * voltage set-point outside the AC load flow (boundary-separation.ts).
  */
-export type GridVoltageModel = 'ac-fdlf' | 'not-converged' | 'de-energised'
+export type GridVoltageModel = 'ac-fdlf' | 'not-converged' | 'de-energised' | 'external'
 
 /** A bus in an island at the last network solution: a read-only view of the bus arrays (state/views.ts). An HVDC terminal has a GridHvdcTerminalState instead. */
 export interface GridBusState {
   readonly busId: string
-  /** Stable id of the island holding the bus. */
-  readonly islandId: string
+  /** Stable id of the island holding the bus; null for a separated boundary bus, held by its external system in no island (boundary-separation.ts). */
+  readonly islandId: string | null
   readonly energized: boolean
   /** AC voltage magnitude (pu); null while the island's AC load flow has not converged; 0 when de-energised. */
   readonly voltagePu: number | null
@@ -213,7 +215,7 @@ export interface GridHvdcLinkState {
 /**
  * One AC component: buses joined by closed branches. Its first bus in model order is its DC angle
  * reference; it absorbs nothing, because the component's injections sum to zero by construction.
- * An HVDC terminal (hvdc-terminals.ts) is a component of its own, held by no island.
+ * An HVDC terminal (hvdc-terminals.ts) and a separated boundary bus (boundary-separation.ts) are components held by no island.
  */
 export interface GridTopologyComponent {
   readonly referenceBusId: string
@@ -221,7 +223,7 @@ export interface GridTopologyComponent {
   readonly busIndices: Int32Array
   /** Ids of `busIndices`, computed on first read. */
   readonly buses: ReadonlyArray<string>
-  /** Index of the synchronous island holding the component; −1 for an HVDC terminal. */
+  /** Index of the synchronous island holding the component; −1 for a component without a Norwegian bus (an HVDC terminal or a separated boundary bus). */
   readonly islandIndex: number
 }
 
@@ -268,7 +270,7 @@ export interface GridTopologyPlan {
   readonly network: CompiledGridNetwork
   /** Closed flag (1) per model branch this plan was built from; compared with live branch states every tick. */
   readonly closedBranches: Uint8Array
-  /** Synchronous islands; their ids name the structure, not the stable island identity. HVDC terminals lie in none. */
+  /** Synchronous islands; their ids name the structure, not the stable island identity. HVDC terminals and separated boundary buses lie in none. */
   readonly islands: ReadonlyArray<GridTopologyIsland>
   /** AC components, ordered by their first bus. */
   readonly components: ReadonlyArray<GridTopologyComponent>
@@ -276,7 +278,7 @@ export interface GridTopologyPlan {
   readonly systems: ReadonlyArray<GridIslandSystem>
   /** Structural island id of each bus id in an island, computed on first read; the runtime reads `islandIndexOfBus`. */
   readonly islandIdByBus: ReadonlyMap<string, string>
-  /** Plan island index per bus in model order; −1 at an HVDC terminal. */
+  /** Plan island index per bus in model order; −1 at an HVDC terminal and a separated boundary bus. */
   readonly islandIndexOfBus: Int32Array
   /** Plan component index per bus in model order. */
   readonly componentIndexOfBus: Int32Array

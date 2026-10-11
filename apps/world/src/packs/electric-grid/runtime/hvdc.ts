@@ -62,15 +62,18 @@ const islandAtBus = (grid: GridRuntimeInstance, busId: string): GridIsland => {
 }
 
 /**
- * A converter terminal has AC voltage: its bus is energised, or it is an HVDC terminal of an
- * asynchronous system. Energisation is the physical test: an energised island whose AC load flow
- * did not converge has AC voltage that the solution failed to compute, not a loss of it.
+ * A converter terminal has AC voltage: its bus is energised, or it lies in no island at the
+ * boundary of an external system, which holds it (an HVDC terminal of an asynchronous system, or a
+ * separated boundary bus of a synchronous one). Energisation is the physical test: an energised
+ * island whose AC load flow did not converge has AC voltage that the solution failed to compute,
+ * not a loss of it.
  */
 const terminalEnergizedAt = (grid: GridRuntimeInstance, bus: number): boolean => {
   if (gridTablesFor(grid.definition).asynchronousBoundaryBus[bus] === 1) return true
   const islands = grid.islandPlan
   if (!islands) throw new Error(`Grid ${grid.definition.gridId} has no islands yet; HVDC converters act inside an advance`)
-  return islands.islands[islands.plan.islandIndexOfBus[bus]!]!.energized
+  const planIndex = islands.plan.islandIndexOfBus[bus]!
+  return planIndex < 0 || islands.islands[planIndex]!.energized
 }
 
 const terminalEnergized = (grid: GridRuntimeInstance, busId: string): boolean =>

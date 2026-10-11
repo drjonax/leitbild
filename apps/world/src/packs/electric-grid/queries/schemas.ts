@@ -163,12 +163,12 @@ const islandFrequencyHz = finite.nullable().describe('Frequency of the island ho
 
 export const busStateSchema = z.object({
   busId: z.string(),
-  islandId: z.string().describe('Stable id of the island holding the bus (world.electric-grid.islands.list).'),
+  islandId: z.string().nullable().describe('Stable id of the island holding the bus (world.electric-grid.islands.list); null for a separated boundary bus: a boundary bus of the synchronous external system whose ties are all open, held by that system in no island.'),
   energized: z.boolean(),
-  voltagePu: finite.nullable().describe('AC load-flow voltage (pu); null while the island\'s AC load flow has not converged; 0 on a de-energised bus.'),
-  voltageModel: z.enum(['ac-fdlf', 'not-converged', 'de-energised']).describe('ac-fdlf: voltagePu is the AC result; not-converged: the island is energised but no voltage is known; de-energised: no source holds the bus.'),
+  voltagePu: finite.nullable().describe('AC load-flow voltage (pu); null while the island\'s AC load flow has not converged; 0 on a de-energised bus; the external system\'s set-point on a separated boundary bus.'),
+  voltageModel: z.enum(['ac-fdlf', 'not-converged', 'de-energised', 'external']).describe('ac-fdlf: voltagePu is the AC result; not-converged: the island is energised but no voltage is known; de-energised: no source holds the bus; external: a separated boundary bus, held by its external system at the equivalent\'s voltage set-point.'),
   reactiveInjectionMvar: finite.nullable().describe('Net reactive injection of the bus\'s sources in the AC solution (Mvar, generation − demand); null unless converged.'),
-  frequencyHz: islandFrequencyHz,
+  frequencyHz: finite.nullable().describe('Frequency of the island holding the bus, or on a separated boundary bus of its external system; null while de-energised (Hz).'),
   angleRad: finite,
   netInjectionMw: finite.describe('Net active power injected at the bus, including its share of branch losses (MW).'),
 }).strict()

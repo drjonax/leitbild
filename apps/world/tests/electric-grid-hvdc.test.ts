@@ -454,7 +454,7 @@ describe('HVDC terminals of asynchronous external systems', () => {
     const terminal = 'bus:boundary-DE'
     const islands = solvedGridIslands(run.grid)
     expect(islands.plan.islandIndexOfBus[islands.plan.network.busIndexById.get(terminal)!]).toBe(-1)
-    expect(() => gridIslandAtBus(islands, terminal)).toThrow('is an HVDC terminal of an asynchronous external system and lies in no island')
+    expect(() => gridIslandAtBus(islands, terminal)).toThrow('lies in no island: it is an HVDC terminal of an asynchronous external system')
     // One Norwegian island, counted alike by islands.list, the projection count and the projected islands.
     const listed = query(run.grid, 'world.electric-grid.islands.list')
     expect(listed.total).toBe(1)

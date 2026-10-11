@@ -95,7 +95,8 @@ export const branchStateViews = (branchIds: ReadonlyArray<string>, arrays: GridB
 /** Bus states by id over the bus arrays of the last network solution, in model order. */
 export const busStateViews = (busIds: ReadonlyArray<string>, arrays: GridBusArrays): Map<string, GridBusState> => {
   const accessors: Record<string, Accessor> = {
-    islandId: readOnly(index => arrays.solvedIslandIds[arrays.solvedIsland[index]!]),
+    // −1: a separated boundary bus, in no island.
+    islandId: readOnly(index => arrays.solvedIsland[index]! < 0 ? null : arrays.solvedIslandIds[arrays.solvedIsland[index]!]),
     energized: readOnly(index => arrays.energized[index] === 1),
     voltagePu: readOnly(index => publishedNullable(arrays.voltagePu[index]!)),
     voltageModel: readOnly(index => voltageModelCodes[arrays.voltageModel[index]!]),

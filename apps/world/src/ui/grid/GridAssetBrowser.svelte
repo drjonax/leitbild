@@ -372,9 +372,11 @@
       field('From → to', `${formatted(valueOf(definition, 'fromBusId'))} → ${formatted(valueOf(definition, 'toBusId'))}`),
     ]
     if (asset.kind === 'bus') return [
-      field('Voltage', state === undefined ? 'Not solved' : valueOf(state, 'voltageModel') === 'not-converged' ? 'Unknown: AC load flow did not converge' : formatted(valueOf(state, 'voltagePu'), 'pu', 3)),
+      field('Voltage', state === undefined ? 'Not solved' : valueOf(state, 'voltageModel') === 'not-converged'
+        ? 'Unknown: AC load flow did not converge'
+        : `${formatted(valueOf(state, 'voltagePu'), 'pu', 3)}${valueOf(state, 'voltageModel') === 'external' ? ' (held by its external system)' : ''}`),
       field('Frequency', state === undefined ? 'Not solved' : formatted(valueOf(state, 'frequencyHz'), 'Hz', 3)),
-      field('Island', state === undefined ? 'Not solved' : formatted(valueOf(state, 'islandId'))),
+      field('Island', state === undefined ? 'Not solved' : valueOf(state, 'voltageModel') === 'external' ? 'None: its ties are open, its external system holds it' : formatted(valueOf(state, 'islandId'))),
       field('Nominal', formatted(valueOf(definition, 'nominalKv'), 'kV')),
     ]
     return [

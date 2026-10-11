@@ -11,7 +11,9 @@ import {
 import { createStorageFrequencyState } from './frequency/storage.ts'
 import { frequencyStateOf, type IslandFrequencyWorkspace } from './frequency/workspace.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland, GridTopologyPlan } from './instance.ts'
+import { voidDetachedExchanges } from './boundary-separation.ts'
 import {
+  externalKineticEnergyMws,
   gridGeneratorIsSynchronised,
   islandFrequencyInput,
   islandHasVoltageFormingSource,
@@ -93,19 +95,24 @@ const mergedLfddStage = (stages: ReadonlyArray<LfddStageState>, loadIds: Readonl
 }
 
 /**
- * Frequency state of an island formed from energised parents after a split or merge: every unit,
- * storage unit and external keeps its own state, LFDD stages keep their latches for the island's
- * loads, and the frequency is the parents' E_k-weighted mean (a child of one parent inherits it exactly).
+ * Frequency state of an island formed from energised parents after a split or merge, or gaining or
+ * losing a synchronous external system as a tie to it closes or opens: every unit, storage unit and
+ * external keeps its own state, LFDD stages keep their latches for the island's loads, and the
+ * frequency is the E_k-weighted mean of the parents and of any external system joining from
+ * separation at its nominal frequency (boundary-separation.ts); a child of one parent that gains no
+ * external inherits the parent's frequency exactly.
  */
 const inheritedFrequencyState = (grid: GridRuntimeInstance, island: GridTopologyIsland, islandId: string, parents: ReadonlyArray<Parent>): IslandFrequencyState => {
   const automation = grid.definition.automation
   const live = parents.filter(parent => workspaceFrequencyHz(parent.island) !== null)
   const dominant = [...live].sort((a, b) => b.kineticEnergyMws - a.kineticEnergyMws)[0]!.island.frequency!
-  const weight = live.reduce((sum, parent) => sum + parent.kineticEnergyMws, 0)
-  const frequencyHz = live.length === 1 || weight <= 0
-    ? dominant.frequencyHz!
-    : live.reduce((sum, parent) => sum + parent.island.frequency!.frequencyHz! * parent.kineticEnergyMws, 0) / weight
   const states = live.map(parent => parent.island.frequency!)
+  const joining = islandMembers(grid, island).externals.filter(system => !states.some(state => state.externals[system.id] !== undefined))
+  const joiningMws = joining.reduce((sum, system) => sum + externalKineticEnergyMws(system), 0)
+  const weight = live.reduce((sum, parent) => sum + parent.kineticEnergyMws, 0) + joiningMws
+  const frequencyHz = (live.length === 1 && joining.length === 0) || weight <= 0
+    ? dominant.frequencyHz!
+    : (live.reduce((sum, parent) => sum + parent.island.frequency!.frequencyHz! * parent.kineticEnergyMws, 0) + automation.swing.nominalFrequencyHz * joiningMws) / weight
   const find = <T>(pick: (state: IslandFrequencyState) => T | undefined): T | undefined => {
     for (const state of states) {
       const value = pick(state)
@@ -136,7 +143,7 @@ const inheritedFrequencyState = (grid: GridRuntimeInstance, island: GridTopology
     automationId: automation.id,
     elapsedSeconds: now,
     frequencyHz,
-    rocofHzPerSecond: live.length === 1 ? dominant.rocofHzPerSecond : 0,
+    rocofHzPerSecond: live.length === 1 && joining.length === 0 ? dominant.rocofHzPerSecond : 0,
     units,
     storage,
     externals,
@@ -170,6 +177,16 @@ interface Component {
   readonly next: number[]
 }
 
+/** Whether `workspace` holds exactly the synchronous external systems of `structure`. */
+const sameExternals = (grid: GridRuntimeInstance, structure: GridTopologyIsland, workspace: IslandFrequencyWorkspace): boolean => {
+  const externals = structure.externalIndices
+  if (externals.length !== workspace.externalIds.length) return false
+  for (let position = 0; position < externals.length; position += 1) {
+    if (grid.definition.index.externalSystems[externals[position]!]!.id !== workspace.externalIds[position]) return false
+  }
+  return true
+}
+
 /** Groups previous and new islands that share buses: unchanged, split, merged, or both at once. */
 const overlapComponents = (previous: GridIslandPlan, plan: GridTopologyPlan): ReadonlyArray<Component> => {
   const previousOfBus = previous.plan.islandIndexOfBus
@@ -184,8 +201,8 @@ const overlapComponents = (previous: GridIslandPlan, plan: GridTopologyPlan): Re
     return current
   }
   for (let bus = 0; bus < nextOfBus.length; bus += 1) {
-    // An HVDC terminal lies in no island in every plan.
-    if (nextOfBus[bus]! < 0) continue
+    // An HVDC terminal lies in no island in every plan, a separated boundary bus in none while separated.
+    if (nextOfBus[bus]! < 0 || previousOfBus[bus]! < 0) continue
     const a = find(previousOfBus[bus]!)
     const b = find(previous.islands.length + nextOfBus[bus]!)
     if (a !== b) parent[a] = b
@@ -286,10 +303,13 @@ const reconciledIslands = (grid: GridRuntimeInstance, previous: GridIslandPlan, 
       const planIndex = component.next[0]!
       const structure = plan.islands[planIndex]!
       taken.add(island.id)
-      // The island keeps its workspace while its members are unchanged; otherwise its state moves to one for the new members.
+      // The island keeps its workspace while its members are unchanged; otherwise its state moves to
+      // one for the new members, inherited when a synchronous external system joined or left it.
       const workspace = island.workspace === null || islandWorkspaceFits(grid, structure, island.workspace)
         ? island.workspace
-        : islandWorkspaceHolding(grid, structure, island.frequency!)
+        : islandWorkspaceHolding(grid, structure, sameExternals(grid, structure, island.workspace)
+          ? island.frequency!
+          : inheritedFrequencyState(grid, structure, island.id, parents))
       result[planIndex] = gridIsland({
         id: island.id,
         planIndex,
@@ -352,9 +372,11 @@ export const refreshGridIslandEnergisation = (grid: GridRuntimeInstance, islands
 /** Stable island identities for the current topology plan, with inherited or fresh frequency state. */
 export const reconcileGridIslands = (grid: GridRuntimeInstance, plan: GridTopologyPlan): GridIslandPlan => {
   const previous = grid.islandPlan
+  const changed = previous === null || previous.plan !== plan
   const islands = previous === null
     ? initialIslands(grid, plan)
     : previous.plan === plan ? previous.islands : reconciledIslands(grid, previous, plan)
+  if (changed) voidDetachedExchanges(grid, plan)
   for (const island of islands) refreshEnergisation(grid, plan, island)
   const reconciled: GridIslandPlan = { plan, islands }
   grid.islandPlan = reconciled
@@ -376,12 +398,12 @@ export const solvedGridIslands = (grid: GridRuntimeInstance): GridIslandPlan => 
   return islands
 }
 
-/** The stable island holding a bus; an HVDC terminal lies in none. */
+/** The stable island holding a bus; an HVDC terminal and a separated boundary bus lie in none. */
 export const gridIslandAtBus = (islands: GridIslandPlan, busId: string): GridIsland => {
   const bus = islands.plan.network.busIndexById.get(busId)
   if (bus === undefined) throw new Error(`unknown Grid bus ${busId}`)
   const planIndex = islands.plan.islandIndexOfBus[bus]!
-  if (planIndex < 0) throw new Error(`Grid bus ${busId} is an HVDC terminal of an asynchronous external system and lies in no island`)
+  if (planIndex < 0) throw new Error(`Grid bus ${busId} lies in no island: it is an HVDC terminal of an asynchronous external system, or a boundary bus of a synchronous one with all its ties open`)
   return islands.islands[planIndex]!
 }
 

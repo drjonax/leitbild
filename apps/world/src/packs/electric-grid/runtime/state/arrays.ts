@@ -8,7 +8,7 @@ import type { GridBranchTrip } from '../protection/state.ts'
 /** Codes of the string-valued quantities: the position in each list is the stored code. */
 export const branchStatusCodes = ['closed', 'open', 'tripped'] as const
 export const flowModelCodes = [null, 'ac', 'dc'] as const
-export const voltageModelCodes = ['ac-fdlf', 'not-converged', 'de-energised'] as const
+export const voltageModelCodes = ['ac-fdlf', 'not-converged', 'de-energised', 'external'] as const
 
 export const generatorLifecycleCodes = ['online', 'offline', 'starting', 'stopping', 'tripped'] as const
 export const loadServiceStateCodes = ['normal', 'constrained', 'shed', 'outage'] as const
@@ -22,6 +22,7 @@ export const flowModelDc = 2
 export const voltageModelAc = 0
 export const voltageModelNotConverged = 1
 export const voltageModelDeEnergised = 2
+export const voltageModelExternal = 3
 export const generatorOnline = 0
 export const generatorOffline = 1
 export const generatorStarting = 2
