@@ -17,10 +17,36 @@ export interface ReserveCandidate {
   readonly targetMw: number
 }
 
+/** A synchronous island's place in its synchronous area: Nordic reserve volumes are dimensioned for the area. */
+export interface SynchronousArea {
+  /** Connected demand of the island's own loads (MW). */
+  readonly islandLoadMw: number
+  /** Synchronous external equivalents in the island: with one, the island is part of their synchronous area. */
+  readonly externals: ReadonlyArray<{ readonly reserves: ExternalReserveAllocation; readonly loadMw: number }>
+}
+
+/**
+ * A product's requirement for a synchronous island, dimensioned per synchronous area: the island
+ * with the synchronous external equivalent it holds. A fixed volume is the synchronous area's
+ * (the Nordic 600 MW FCR-N, 1,450 MW FCR-D up, …): an island that holds no equivalent is detached
+ * from that area, carries none of it, and its units hold only their own droop and headroom (null).
+ * A share-of-load requirement counts the equivalent's demand with the island's; a largest-unit
+ * requirement looks at the island's own units (the equivalent declares none).
+ */
+export const synchronousAreaRequirementMw = (
+  requirement: ReserveRequirement,
+  area: SynchronousArea,
+  units: ReadonlyArray<{ readonly synchronised: boolean; readonly targetMw: number }>,
+): number | null => {
+  if (requirement.basis === 'fixed' && area.externals.length === 0) return null
+  const areaLoadMw = area.islandLoadMw + area.externals.reduce((sum, external) => sum + external.loadMw, 0)
+  return reserveRequirementMw(requirement, areaLoadMw, units)
+}
+
 export interface IslandReserveProduct {
   readonly product: ReserveProduct
-  /** The Automation's requirement evaluated for the island. */
-  readonly requirementMw: number
+  /** The Automation's requirement for the island's synchronous area; null for a detached island under a fixed area volume. */
+  readonly requirementMw: number | null
   /** Part of the requirement held by synchronous external systems in the island. */
   readonly externalMw: number
   /** Allocated to the island's own units. */
@@ -38,19 +64,20 @@ const externalField: Partial<Record<ReserveProduct, keyof ExternalReserveAllocat
 }
 
 /**
- * Allocates an island's reserve requirements to the units in it. Synchronous external systems in
- * the island hold their own share of a synchronous-area volume, so the island's units are
- * allocated only the rest. Each unit offers at most its headroom around its set-point and, for
- * FCR, what its governor droop delivers (`droopFcrCapabilityMw`); the requirement is shared in
- * proportion to that offer. Products are served FCR-N, FCR-D, aFRR, mFRR, each reporting deficits.
- * Allocations are made at dispatch and then kept by the units: an island that later separates keeps
- * only its own units' allocations and headroom.
+ * Allocates an island's reserve requirements to the units in it, dimensioned per synchronous area
+ * (`synchronousAreaRequirementMw`). Synchronous external systems in the island hold their own
+ * share of the area's volume, so the island's units are allocated only the rest. Each unit offers
+ * at most its headroom around its set-point and, for FCR, what its governor droop delivers
+ * (`droopFcrCapabilityMw`); the requirement is shared in proportion to that offer. A detached
+ * island under a fixed area volume allocates every eligible unit its full offer. Products are
+ * served FCR-N, FCR-D, aFRR, mFRR, each reporting deficits. Allocations are made at dispatch and
+ * then kept by the units: an island that later separates keeps only its own units' allocations
+ * and headroom.
  */
 export const allocateIslandReserves = (config: {
   readonly automation: GridAutomation
   readonly units: ReadonlyArray<ReserveCandidate>
-  readonly islandLoadMw: number
-  readonly externals: ReadonlyArray<ExternalReserveAllocation>
+  readonly area: SynchronousArea
 }): { readonly allocations: ReadonlyMap<string, FrequencyReserveAllocation>; readonly products: ReadonlyArray<IslandReserveProduct> } => {
   const { automation } = config
   const synchronised = config.units.filter(unit => unit.synchronised)
@@ -63,10 +90,10 @@ export const allocateIslandReserves = (config: {
   const requirementUnits = synchronised.map(unit => ({ synchronised: true, targetMw: unit.targetMw }))
   const products: IslandReserveProduct[] = []
   const allocate = (product: ReserveProduct, requirement: ReserveRequirement, eligible: ReadonlyArray<string>, direction: 'up' | 'down' | 'symmetric'): void => {
-    const requirementMw = reserveRequirementMw(requirement, config.islandLoadMw, requirementUnits)
+    const requirementMw = synchronousAreaRequirementMw(requirement, config.area, requirementUnits)
     const field = externalField[product]
-    const externalMw = field === undefined ? 0 : config.externals.reduce((sum, external) => sum + external[field], 0)
-    const unitRequirementMw = Math.max(0, requirementMw - externalMw)
+    const externalMw = field === undefined ? 0 : config.area.externals.reduce((sum, external) => sum + external.reserves[field], 0)
+    const unitRequirementMw = requirementMw === null ? Number.POSITIVE_INFINITY : Math.max(0, requirementMw - externalMw)
     const offer = (unit: ReserveCandidate): number => {
       const id = unit.definition.id
       const room = direction === 'up' ? up.get(id)! : direction === 'down' ? down.get(id)! : Math.min(up.get(id)!, down.get(id)!)
@@ -87,7 +114,7 @@ export const allocateIslandReserves = (config: {
       if (direction !== 'up') down.set(id, down.get(id)! - mw)
       allocatedMw += mw
     }
-    products.push({ product, requirementMw, externalMw, allocatedMw, deficitMw: Math.max(0, unitRequirementMw - allocatedMw) })
+    products.push({ product, requirementMw, externalMw, allocatedMw, deficitMw: requirementMw === null ? 0 : Math.max(0, unitRequirementMw - allocatedMw) })
   }
   allocate('fcrN', automation.fcrN.requirement, automation.fcrN.eligibleGovernorClasses, 'symmetric')
   allocate('fcrDUp', automation.fcrD.up.requirement, automation.fcrD.eligibleGovernorClasses, 'up')

@@ -84,8 +84,13 @@ const dispatchIsland = (grid: GridRuntimeInstance, plan: GridTopologyPlan, islan
       const state = grid.generators.get(definition.id)!
       return { definition, synchronised: state.state === 'online', minimumMw: generatorMinimumStableMw(definition), availableMw: state.availableMw, targetMw: state.targetMw }
     }),
-    islandLoadMw: demandMw,
-    externals: externals.map(system => externalFrequencyEquivalent(grid, system).reserves),
+    area: {
+      islandLoadMw: demandMw,
+      externals: externals.map(system => {
+        const equivalent = externalFrequencyEquivalent(grid, system)
+        return { reserves: equivalent.reserves, loadMw: equivalent.loadMw }
+      }),
+    },
   })
   for (const definition of structure.generators) {
     const state = grid.generators.get(definition.id)!

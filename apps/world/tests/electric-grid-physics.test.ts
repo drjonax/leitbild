@@ -8,6 +8,7 @@ import { nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definit
 import { compileGridDefinition, gridAutomationPreset } from '../src/packs/electric-grid/definitions.ts'
 import { gridElectricalPortsAt } from '../src/packs/electric-grid/electrical-ports.ts'
 import type { CompiledGridDefinition, GridBranchDefinition, GridGeneratorDefinition, GridLoadDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
+import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
 import { dispatchGridFromLiveIslands } from '../src/packs/electric-grid/runtime/dispatch.ts'
 import { generatorKineticEnergyMws } from '../src/packs/electric-grid/runtime/generator-dynamics.ts'
@@ -430,6 +431,49 @@ describe('a synchronous external equivalent with several boundary buses', () => 
     run.advance(1)
     expect(run.grid.topologyPlan!.components).toHaveLength(1)
     expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
+  })
+})
+
+describe('reserves dimensioned per synchronous area', () => {
+  const build = (withEquivalent: boolean): GridModelDefinition => {
+    const bus = (id: string, index: number) => ({ id, label: id, nominalKv: 420, location: [10 + index * 0.5, 60] as const })
+    const provenance = { sources: ['test:hand-built'], method: 'curated' as const, confidence: 'high' as const, note: 'Physics test model.' }
+    return handBuiltModel({
+      id: withEquivalent ? 'area-tied' : 'area-detached', title: 'Reserve area', description: 'Four hydro units and a load, with or without the Nordic equivalent.',
+      buses: [bus('bus:a', 0), ...(withEquivalent ? [bus('bus:boundary-SE3@420', 1)] : [])],
+      branches: withEquivalent ? [testLine({ id: 'tie', fromBusId: 'bus:a', toBusId: 'bus:boundary-SE3@420', nominalKv: 420, ratingMw: 1_500, reactancePu: 0.01, resistancePu: 0.001 })] : [],
+      generators: Array.from({ length: 4 }, (_, index) => syntheticHydroUnit({ id: `unit-${index}`, label: `Unit ${index}`, busId: 'bus:a', location: [10, 60], capacityMw: 400 })),
+      loads: [testLoad({ id: 'load', busId: 'bus:a', demandMw: 1_000 })],
+      ...(withEquivalent ? { externalSystems: [{
+        id: 'external:nordic-remainder', label: 'Nordic remainder', area: 'nordic-remainder' as const, synchronous: true, boundaryBusIds: ['bus:boundary-SE3@420'],
+        inertiaGws: 171, loadMw: 43_100, fcrNMwPerHz: 3_720, fcrDUpMw: 899, fcrDDownMw: 868, afrrUpMw: 138, afrrDownMw: 138, provenance,
+      }] } : {}),
+    })
+  }
+  const unitReserves = (run: ReturnType<typeof runningGrid>) => [0, 1, 2, 3].map(index => run.grid.generators.get(`unit-${index}`)!.reserves)
+
+  test('a detached island holds its units\' own droop and headroom and no share of the Nordic volumes', () => {
+    const run = runningGrid({ ...gridDefinitionForModel(build(false)), gridId: 'grid:test' })
+    for (let step = 0; step < 3; step += 1) run.advance(10)
+    // Droop 4 % on 400 MW: 200 MW/Hz, so FCR-N over 0.1 Hz is 20 MW and FCR-D up over 0.5 Hz another 80 MW.
+    for (const reserves of unitReserves(run)) {
+      expect(reserves.fcrNMw).toBeCloseTo(20, 9)
+      expect(reserves.fcrDUpMw).toBeCloseTo(80, 9)
+      const state = run.grid.generators.get('unit-0')!
+      // aFRR takes the rest of the headroom above the set-point, mFRR nothing is left for.
+      expect(reserves.afrrUpMw).toBeCloseTo(state.availableMw - state.targetMw - 20 - 80, 6)
+    }
+    expect([...run.grid.alarms.records.keys()].filter(id => id.includes('reserve-deficit'))).toEqual([])
+  })
+
+  test('an island in the Nordic synchronous area holds the area volume less the equivalent\'s share, and reports a real shortfall', () => {
+    const run = runningGrid({ ...gridDefinitionForModel(build(true)), gridId: 'grid:test' })
+    for (let step = 0; step < 3; step += 1) run.advance(10)
+    // 600 MW Nordic FCR-N less the equivalent's 372 MW leaves 228 MW for four units that offer 20 MW each by droop.
+    expect(unitReserves(run).reduce((sum, reserves) => sum + reserves.fcrNMw, 0)).toBeCloseTo(80, 9)
+    const deficit = run.grid.alarms.records.get(gridAlarmId('island', run.grid.busStates.get('bus:a')!.islandId, 'reserve-deficit-fcr-n'))
+    expect(deficit).toMatchObject({ active: true })
+    expect(deficit!.value).toBeCloseTo(600 - 372 - 80, 6)
   })
 })
 

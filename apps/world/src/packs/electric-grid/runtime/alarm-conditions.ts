@@ -1,7 +1,7 @@
 import type { ReserveRequirement } from '../schemas/grid-automation.ts'
 import type { GridAlarmSettings, GridAlarmTiming } from '../schemas/grid-protection-automation.ts'
 import { gridAlarmId, type GridAlarmObservation, type GridAlarmState } from './alarms.ts'
-import { reserveRequirementMw } from './frequency/governors.ts'
+import { synchronousAreaRequirementMw } from './reserve-allocation.ts'
 import type { FrequencyReserveAllocation } from './frequency/types.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
 import { externalFrequencyEquivalent, islandMembers } from './island-input.ts'
@@ -65,9 +65,18 @@ const reserveObservations = (grid: GridRuntimeInstance, settings: GridAlarmSetti
     return { synchronised: state.state === 'online', targetMw: state.targetMw, reserves: state.reserves }
   })
   const loadMw = structure.loads.reduce((sum, load) => sum + connectedGridLoadMw(grid.loads.get(load.id)!), 0)
+  const area = {
+    islandLoadMw: loadMw,
+    externals: islandMembers(grid, structure).externals.map(system => {
+      const equivalent = externalFrequencyEquivalent(grid, system)
+      return { reserves: equivalent.reserves, loadMw: equivalent.loadMw }
+    }),
+  }
   const alarm = settings.reserveDeficit
   for (const [product, field, requirement] of reserveProducts(grid)) {
-    const requiredMw = reserveRequirementMw(requirement, loadMw, units)
+    // Dimensioned per synchronous area; a detached island has no share of a fixed area volume to fall short of.
+    const requiredMw = synchronousAreaRequirementMw(requirement, area, units)
+    if (requiredMw === null) continue
     const heldMw = externalReserveMw(grid, structure, field) + units.reduce((sum, unit) => sum + (unit.synchronised ? unit.reserves[field] : 0), 0)
     const deficitMw = Math.max(0, requiredMw - heldMw)
     if (deficitMw < alarm.clearMw) continue
