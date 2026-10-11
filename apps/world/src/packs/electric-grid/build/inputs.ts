@@ -97,6 +97,19 @@ export const municipalitySnapshotSchema = z.object({
 })
 export type MunicipalitySnapshot = z.infer<typeof municipalitySnapshotSchema>
 
+/** SSB 1 km population grid snapshot (scripts/electric-grid/snapshot-population.ts). */
+export const populationSnapshotSchema = z.object({
+  sources: z.array(snapshotSourceSchema).min(1),
+  sourceId: z.string().min(1),
+  year: z.number().int().min(2000).max(2100),
+  cells: z.array(z.object({
+    id: z.string().regex(/^\d+$/),
+    centre: lonLat,
+    population: z.number().int().positive(),
+  })).min(1),
+})
+export type PopulationSnapshot = z.infer<typeof populationSnapshotSchema>
+
 const referenceHourSchema = z.object({
   priceAreas: z.object({
     startUtc: isoInstant,
@@ -157,6 +170,7 @@ export interface NorwayModelBuildInputs {
   readonly interconnectors: BuildFile<GridInterconnectorTable>
   readonly majorSites: BuildFile<GridMajorSiteTable>
   readonly referenceDispatch: BuildFile<GridReferenceDispatchTable>
+  readonly population: BuildFile<PopulationSnapshot>
 }
 
 export const buildFileSchemas = {

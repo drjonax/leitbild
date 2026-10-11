@@ -14,6 +14,7 @@ const reasonDispositions = {
   'generators-aggregated': 'inferred',
   'municipality-unlocated': 'dropped',
   'municipality-load-attached': 'inferred',
+  'municipality-without-residents': 'inferred',
   'site-load-attached': 'curated',
   'site-without-station': 'dropped',
   'site-generator-attached': 'curated',

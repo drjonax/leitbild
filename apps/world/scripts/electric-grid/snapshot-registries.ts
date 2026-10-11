@@ -190,7 +190,7 @@ const arcGisPageName = (document: RawDocument): string => {
   return `${document.snapshot.sourceId.split(':')[1]}-offset-${offset}.geojson`
 }
 
-const compactDate = (instant: Date): string => instant.toISOString().slice(0, 10).replaceAll('-', '')
+export const compactDate = (instant: Date): string => instant.toISOString().slice(0, 10).replaceAll('-', '')
 
 const assertDocumentSizes = (documents: ReadonlyArray<RawDocument>): void => {
   for (const document of documents) {
@@ -200,7 +200,7 @@ const assertDocumentSizes = (documents: ReadonlyArray<RawDocument>): void => {
   }
 }
 
-const createWriter = (dataDir: string, date: string) => {
+export const createWriter = (dataDir: string, date: string) => {
   const written: string[] = []
   const ensureFresh = async (directory: string): Promise<void> => {
     const exists = await stat(directory).then(() => true, (error: NodeJS.ErrnoException) => {

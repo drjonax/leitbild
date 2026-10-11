@@ -6,7 +6,7 @@
 //     --snapshots <Leitbild-grid-data/snapshots> --snapshot-date YYYYMMDD \
 //     --curations <norway-grid-curations.geojson> --interconnectors <norway-interconnectors.json> \
 //     --major-sites <norway-major-sites.json> --reference-dispatch <norway-reference-dispatch.json>
-//     [--out <directory>]
+//     --population <snapshots/ssb-population-grid/YYYYMMDD/population-cells.json> [--out <directory>]
 //
 // The sidecar manifest is read from beside the sidecar. Exit codes: 0 built and audit passed,
 // 1 built but the audit did not pass, 2 invalid invocation or input.
@@ -23,6 +23,7 @@ import {
   buildFileSchemas,
   hydroSnapshotSchema,
   municipalitySnapshotSchema,
+  populationSnapshotSchema,
   referenceHoursSnapshotSchema,
   sidecarManifestSchema,
   weekProfileSnapshotSchema,
@@ -70,6 +71,7 @@ const main = async (): Promise<void> => {
       interconnectors: { type: 'string' },
       'major-sites': { type: 'string' },
       'reference-dispatch': { type: 'string' },
+      population: { type: 'string' },
       golden: { type: 'string', default: join(modelsDirectory, 'norway-grid-golden.json') },
       out: { type: 'string', default: modelsDirectory },
     },
@@ -108,6 +110,7 @@ const main = async (): Promise<void> => {
     interconnectors: await readValidated(resolve(required('interconnectors')), buildFileSchemas.interconnectors),
     majorSites: await readValidated(resolve(required('major-sites')), buildFileSchemas.majorSites),
     referenceDispatch: await readValidated(resolve(required('reference-dispatch')), buildFileSchemas.referenceDispatch),
+    population: await readValidated(resolve(required('population')), populationSnapshotSchema),
   }
   const read = performance.now()
   const built = buildNorwayGridModel(inputs)

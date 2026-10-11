@@ -2,16 +2,17 @@ import type { PriceArea } from '../schemas/grid-ids.ts'
 import type { GridBusV2, GridLoadV2 } from '../schemas/grid-model.ts'
 import type { GridMajorSite, GridMajorSiteTable } from '../schemas/grid-major-site.ts'
 import { compareText } from '../topology/ids.ts'
-import { haversineKm, roundTo } from './geo.ts'
+import { haversineKm, roundTo, type LonLat } from './geo.ts'
 import type { MunicipalitySnapshot, ReferenceHour } from './inputs.ts'
 import type { BuildLedger } from './ledger.ts'
 import { lowestLevel, type Station, type StationIndex } from './stations.ts'
+import type { PopulationAllocation } from './population-weights.ts'
 import type { ModelSourceIds } from './sources.ts'
 
 // Elhub metered demand at the reference hour → Grid Model v2 loads: curated major sites absorb
 // part of their municipality's industry group at a station listed for them; each municipality
-// group's remainder splits over the ≥132 kV substations of its price area inside the
-// municipality's bounding box, or goes to the nearest one.
+// group's remainder splits over the ≥132 kV substations of its price area that serve its residents
+// (population-weights.ts), or goes where a reviewed regional supply route reaches the grid.
 
 const municipalityGroups = ['private', 'business', 'industry'] as const
 type MunicipalityGroup = typeof municipalityGroups[number]
@@ -44,14 +45,16 @@ export const loadKindRules: Readonly<Record<GridLoadV2['kind'], LoadKindRule>> =
   'data-center': tariffPowerFactor,
 }
 
-/**
- * Municipal demand is split in shares of at most this, MW: below the 147 MVA rating of one 132 kV
- * circuit (overheadRules), so a share does not by itself overload the regional line feeding it.
- */
-const municipalShareMw = 100
-
 /** Maximum distance from a site to the station that serves it, km (golden list site attachment limit). */
 const siteSearchKm = 15
+
+/**
+ * A substation keeps its resident share of a municipality only when that share carries at least
+ * this much of the municipality's located demand, MW; smaller shares (a few border squares nearest
+ * another substation) are spread over the kept ones in proportion (modelling judgement: no sub-MW
+ * loads at ≥132 kV buses). A municipality with no share that large goes wholly to its largest share.
+ */
+export const minimumShareMw = 1
 
 /** Distributed loads farther than this from their station need a reviewed regional route, km (golden list distributed load limit). */
 export const municipalAttachmentLimitKm = 60
@@ -77,7 +80,8 @@ const listedStations = (site: GridMajorSite, stations: StationIndex): ReadonlyAr
 /**
  * The bus a site connects at: the first listed station level (serving, then upstream; the listed
  * voltage first, then the station's levels from the lowest) whose connected lines carry the site's
- * demand, else the listed level with the largest line capacity, else the nearest ≥132 kV substation.
+ * demand at their 35 °C design rating, else the listed level with the largest line capacity, else the
+ * nearest ≥132 kV substation.
  */
 const siteBus = (site: GridMajorSite, demandMw: number, stations: StationIndex, lineCapacityMw: (busId: string) => number): { readonly bus: GridBusV2; readonly how: string } | undefined => {
   const candidates = listedStations(site, stations).flatMap(entry => [
@@ -103,6 +107,7 @@ export const buildLoads = (config: {
   readonly priceAreaOf: (location: readonly [number, number]) => PriceArea
   readonly lineCapacityMw: (busId: string) => number
   readonly regionalSupplies: ReadonlyMap<string, RegionalSupply>
+  readonly population: PopulationAllocation
   readonly ledger: BuildLedger
 }): ReadonlyArray<GridLoadV2> => {
   const { hour, stations, sourceIds, ledger } = config
@@ -187,62 +192,71 @@ export const buildLoads = (config: {
       industry: industryMw - sites.reduce((sum, site) => sum + siteShare(site), 0),
     }
     const point: [number, number] = [roundTo(place.point[0], 6), roundTo(place.point[1], 6)]
-    const [west, south, east, north] = place.bbox
     const eligible = (station: Station): boolean => station.kind === 'substation' && station.priceArea === priceArea
-    const remainderMw = remainder.private + remainder.business + remainder.industry
-    // One share per started shareMw, over the substations inside the municipality's bounding box
-    // nearest its point; a municipality without one inside takes the nearest substation.
-    const shares = Math.max(1, Math.ceil(remainderMw / municipalShareMw))
-    const inside = stations.stations.filter(station => eligible(station)
-      && station.location[0] >= west && station.location[0] <= east && station.location[1] >= south && station.location[1] <= north)
-      .map(station => ({ station, km: haversineKm(place.point, station.location) }))
-      .sort((left, right) => left.km - right.km || compareText(left.station.stationId, right.station.stationId))
     const nearest = stations.nearest(place.point, eligible)
     if (nearest === undefined) throw new Error(`municipality ${nr}: no ≥132 kV substation in ${priceArea}`)
     const supply = config.regionalSupplies.get(nr)
+    const residentShares = config.population.sharesOf(nr)
     if (supply !== undefined) {
       seenSupplies.add(nr)
-      if (nearest.km <= municipalAttachmentLimitKm) throw new Error(`${supply.curationId}: ${municipality.name} lies ${roundTo(nearest.km, 1)} km from ${nearest.station.label}, within ${municipalAttachmentLimitKm} km; the regional-route curation is no longer needed`)
+      const farthest = Math.max(...(residentShares ?? []).map(entry => entry.meanKm), nearest.km)
+      if (residentShares !== undefined && residentShares.every(entry => entry.meanKm <= municipalAttachmentLimitKm)) {
+        throw new Error(`${supply.curationId}: ${municipality.name}'s residents lie at most ${roundTo(farthest, 1)} km (resident-weighted) from their nearest ≥132 kV substations, within ${municipalAttachmentLimitKm} km; the regional-route curation is no longer needed`)
+      }
     }
     const routed = supply === undefined ? undefined : stations.byFeatureId(supply.substationOsmId)
     if (supply !== undefined && routed === undefined) throw new Error(`${supply.curationId}: ${supply.substationOsmId} is not a ≥132 kV station of the main island`)
     const routedBus = supply === undefined ? undefined : routed!.buses.find(candidate => candidate.nominalKv === supply.voltageKv)
     if (supply !== undefined && routedBus === undefined) throw new Error(`${supply.curationId}: ${routed!.label} has no ${supply.voltageKv} kV bus`)
-    const served = routed !== undefined ? [routed] : inside.length > 0 && shares > 1 ? inside.slice(0, shares).map(entry => entry.station) : [nearest.station]
-    const how = supply !== undefined
-      ? `at ${routed!.label}, where its regional supply route (${supply.routeKm} km mapped) reaches the ≥132 kV grid, by ${supply.curationId}`
-      : served.length > 1
-        ? `split equally over the ${served.length} ≥132 kV substations in ${priceArea} inside the municipality's bounding box nearest its point`
-        : `at the nearest ≥132 kV substation in ${priceArea} to the municipality point`
-    for (const station of served) {
-      const bus = routedBus ?? lowestLevel(station)
-      const km = haversineKm(place.point, bus.location)
+    if (supply === undefined && residentShares === undefined) {
+      ledger.add({ reason: 'municipality-without-residents', elementIds: [`elhub-municipality:${nr}`, nearest.station.stationId], mw: totalMw, distanceKm: nearest.km, detail: `${municipality.name} has no populated square in the SSB grid; its demand goes to the nearest ≥132 kV substation` })
+    }
+    const remainderMw = remainder.private + remainder.business + remainder.industry
+    const keptShares = residentShares === undefined ? undefined : (() => {
+      const kept = residentShares.filter(entry => entry.share * remainderMw >= minimumShareMw)
+      const chosen = kept.length > 0 ? kept : residentShares.slice(0, 1)
+      const total = chosen.reduce((sum, entry) => sum + entry.share, 0)
+      return chosen.map(entry => ({ ...entry, share: entry.share / total, residentShare: entry.share }))
+    })()
+    const served: ReadonlyArray<{ readonly station: Station; readonly share: number; readonly location: LonLat; readonly km: number; readonly how: string }> = supply !== undefined
+      ? [{ station: routed!, share: 1, location: point, km: haversineKm(place.point, routedBus!.location), how: `at ${routed!.label}, where its regional supply route (${supply.routeKm} km mapped) reaches the ≥132 kV grid, by ${supply.curationId}` }]
+      : keptShares !== undefined
+        ? keptShares.map(entry => ({
+            station: entry.station,
+            share: entry.share,
+            location: [roundTo(entry.centre[0], 6), roundTo(entry.centre[1], 6)] as const,
+            km: entry.meanKm,
+            how: `${roundTo(entry.share * 100, 1)} % of it: the ${roundTo(entry.residentShare * 100, 1)} % of the municipality's residents (${sourceIds.population}) whose nearest ≥132 kV substation in ${priceArea} this is${keptShares.length < residentShares!.length ? `, scaled up for the ${residentShares!.length - keptShares.length} shares below ${minimumShareMw} MW` : ''}`,
+          }))
+        : [{ station: nearest.station, share: 1, location: point, km: nearest.km, how: `at the nearest ≥132 kV substation in ${priceArea} to the municipality point (no residents in the population grid)` }]
+    for (const entry of served) {
+      const bus = routedBus ?? lowestLevel(entry.station)
       for (const group of municipalityGroups) {
-        const demandMw = remainder[group] / served.length
+        const demandMw = remainder[group] * entry.share
         if (demandMw <= 0) continue
         loads.push({
-          id: `load:${nr}-${group}-${station.stationId}`,
-          label: `${municipality.name} ${group}${served.length > 1 ? ` at ${station.label}` : ''}`,
+          id: `load:${nr}-${group}-${entry.station.stationId}`,
+          label: `${municipality.name} ${group}${served.length > 1 ? ` at ${entry.station.label}` : ''}`,
           kind: group,
           busId: bus.id,
-          location: point,
+          location: [entry.location[0], entry.location[1]],
           referenceDemandMw: roundTo(demandMw, 3),
           powerFactor: loadKindRules[group].powerFactor,
           priority: 'normal',
           interruptibleMw: 0,
           municipalityNr: nr,
           priceArea,
-          attachmentKm: roundTo(km, 2),
+          attachmentKm: roundTo(entry.km, 2),
           provenance: {
-            sources: [sourceIds.elhub, sourceIds.municipalities, sourceIds.biddingZones, sourceIds.osm, ...(supply === undefined ? [] : [supply.curationId])],
+            sources: [sourceIds.elhub, sourceIds.municipalities, sourceIds.biddingZones, sourceIds.osm, ...(supply === undefined ? [sourceIds.population] : [supply.curationId])],
             method: supply === undefined ? 'measured' : 'curated',
             confidence: 'medium',
-            note: `Elhub ${group} demand${group === 'industry' && sites.length > 0 ? ' less listed sites' : ''}, ${how}; ${unknownControl}`,
+            note: `Elhub ${group} demand${group === 'industry' && sites.length > 0 ? ' less listed sites' : ''}, ${entry.how}; ${unknownControl}`,
           },
         })
       }
     }
-    ledger.add({ reason: 'municipality-load-attached', elementIds: [`elhub-municipality:${nr}`, ...served.map(station => station.stationId)], mw: totalMw, distanceKm: nearest.km, detail: `${municipality.name} → ${served.length} substation${served.length === 1 ? '' : 's'}` })
+    ledger.add({ reason: 'municipality-load-attached', elementIds: [`elhub-municipality:${nr}`, ...served.map(entry => entry.station.stationId)], mw: totalMw, distanceKm: Math.max(...served.map(entry => entry.km)), detail: `${municipality.name} → ${served.map(entry => `${entry.station.label} ${roundTo(entry.share * 100, 1)} %`).join(', ')}` })
   }
   const unknownSupplies = [...config.regionalSupplies.keys()].filter(nr => !seenSupplies.has(nr))
   if (unknownSupplies.length > 0) throw new Error(`regional-supply curations name municipalities without located Elhub demand: ${unknownSupplies.join(', ')}`)

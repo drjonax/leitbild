@@ -20,7 +20,8 @@ import type { GridModelAdditionV2 } from '../schemas/grid-model-addition.ts'
 import type { NorwayModelBuildInputs } from './inputs.ts'
 import { buildExternalSystems, buildHvdcLinks, excludedInterconnectors, topologyInterconnectors } from './interconnectors.ts'
 import { createBuildLedger, type BuildLedgerEntry } from './ledger.ts'
-import { buildLoads, loadKindRules } from './loads.ts'
+import { buildLoads, loadKindRules, minimumShareMw, municipalAttachmentLimitKm } from './loads.ts'
+import { allocateByPopulation } from './population-weights.ts'
 import { inferShunts, mainNetwork, toGridBus, toGridLine, toGridTransformer } from './network.ts'
 import { buildOperatingPoints, dispatchRule } from './operating-points.ts'
 import { buildLoadProfiles } from './profiles.ts'
@@ -39,6 +40,7 @@ export const buildRules = {
   aggregationThresholdMw,
   attachmentRadiusKm,
   runOfRiverUtilisationHours,
+  loadAllocation: { minimumShareMw, municipalAttachmentLimitKm },
   dispatch: dispatchRule,
 }
 
@@ -159,6 +161,15 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   const winterHour = inputs.referenceHours.data.referenceHours.winterPeak
   const lineCapacity = new Map<string, number>()
   for (const line of lines) for (const busId of [line.fromBusId, line.toBusId]) lineCapacity.set(busId, (lineCapacity.get(busId) ?? 0) + line.ratingMw)
+  const population = allocateByPopulation({
+    squares: inputs.population.data.cells,
+    municipalities: inputs.municipalities.data.municipalities.flatMap(place => {
+      const areas = inputs.municipalities.data.pointPriceAreas.find(entry => entry.municipalityNumber === place.municipalityNumber)?.priceAreas
+      if (areas === undefined || areas.length !== 1) throw new Error(`municipality ${place.municipalityNumber}: its point lies in ${areas?.length ?? 0} price areas`)
+      return [{ municipalityNumber: place.municipalityNumber, point: place.point, bbox: place.bbox, priceArea: priceAreaSchema.parse(areas[0]) }]
+    }),
+    stations,
+  })
   const loads = buildLoads({
     hour: winterHour,
     municipalities: inputs.municipalities.data,
@@ -176,6 +187,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
           routeKm: feature.properties.routeKm,
         }] as const]
       : [])),
+    population,
     ledger,
   })
   const generators = [...registeredGenerators, ...buildSiteGenerators({
