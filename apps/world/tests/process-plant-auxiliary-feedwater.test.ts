@@ -10,6 +10,9 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { headerPressureBalance } from '../src/packs/process-plant/runtime/behaviors/junction/header-pressure-balance.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // Auxiliary feedwater of the four-loop reference PWR: two motor-driven pumps
 // of 440 gpm (27.6 kg/s) and a turbine-driven one of 880 gpm (55.2 kg/s)

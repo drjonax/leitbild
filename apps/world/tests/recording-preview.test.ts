@@ -6,6 +6,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStorageBudget } from '@leitbild/module-runtime'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 test('Halden recording preview uses Pack-owned series selection and sampling cadence', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'recording-preview-'))

@@ -7,6 +7,9 @@ import { evaluateProcessPlantAssessments } from '../src/packs/process-plant/asse
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import { createProcessPlantRecordingPlan } from '../src/packs/process-plant/recording.ts'
 import { isoTimestampSchema, objectIdSchema } from '../src/core/model/index.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:procedure-evidence', loopCount: 2 }))
 const runtime = createProcessPlantRuntime({ system: compiled })

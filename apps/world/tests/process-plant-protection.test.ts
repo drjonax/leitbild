@@ -12,6 +12,9 @@ import {
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
 import { validateProcessPlantControlWrite } from '../src/packs/process-plant/control-write-validation.ts'
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // Reactor protection and safety injection of the four-loop reference PWR,
 // read from the I&C's trips and alarms and the equipment's feedback. Each
@@ -110,7 +113,7 @@ describe('the pressurizer PORV on high pressure', () => {
     expect(peak).toBeLessThan(16.55)
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(true)
     expect(plantRun.trip('trip:pzr-pressure-high-reactor-trip:high-pzr-pressure-reactor-trip')!.occurrenceCount).toBe(0)
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 })
 
 describe('pressurizer code safety valves', () => {
@@ -603,7 +606,7 @@ describe('feedwater isolation', () => {
     expect(Number(plantRun.tag('MFW-A-CV-POS'))).toBe(0)
     expect(Number(plantRun.tag('MFW-B-CV-POS'))).toBeCloseTo(0.35, 6)
     expect(plantRun.trip(isolation)).toMatchObject({ active: true, latched: true })
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('is released to the level controllers once both reactor trip breakers close; its trip stands until reset', () => {
     const plantRun = started()
@@ -622,7 +625,7 @@ describe('feedwater isolation', () => {
     // Back on its controller, the valve opens toward what the shrunk level calls for.
     expect(Number(plantRun.tag('MFW-A-CV'))).toBeGreaterThan(0.5)
     expect(plantRun.trip(isolation)).toMatchObject({ active: true, resettable: true })
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('on P-14 high-high level shuts the feed regulating valves as it trips the pumps', () => {
     const effects = plant.automation.rules.find(rule => rule.id === 'sg-c-level-high-high-feedwater-isolation')!.effects
@@ -676,7 +679,7 @@ describe('containment pressure', () => {
     expect(plantRun.trip(hi1)!.firstOut).toBe(false)
     expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
     expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('a larger break shuts the steam lines on Hi-2 and starts spray on Hi-3, which brings the pressure back down', () => {
     const plantRun = started()
@@ -691,7 +694,7 @@ describe('containment pressure', () => {
     const sprayed = Number(plantRun.tag('CTMT-PR'))
     plantRun.run(30_000)
     expect(Number(plantRun.tag('CTMT-PR'))).toBeLessThan(sprayed)
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 })
 
 describe('pressurizer low level', () => {
@@ -727,7 +730,7 @@ describe('pressurizer low level', () => {
     expect(lowestLevel).toBeLessThan(35)
     expect(lowestDeviation).toBeGreaterThan(-5)
     expect(Number(plantRun.tag('PZR-LVL-PGM'))).toBeLessThan(30)
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('alarms as a leak drains the pressurizer, before the 17 % cutoff of heaters and letdown', () => {
     const plantRun = started()
@@ -738,7 +741,7 @@ describe('pressurizer low level', () => {
     expect(Number(plantRun.tag('PZR-LVL-DEV'))).toBeLessThan(-5)
     expect(plantRun.activeIds()).not.toContain(cutoff)
     expect(plantRun.secondsUntil(cutoff, 150)).not.toBeNull()
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 })
 
 describe('Tavg against Tref', () => {
@@ -760,5 +763,5 @@ describe('Tavg against Tref', () => {
     expect(plantRun.secondsUntil('alarm:tavg-tref-deviation-high:tavg-tref-deviation-high', 120)).not.toBeNull()
     expect(plantRun.tag('TAVG-TREF') as number).toBeGreaterThan(1.7)
     expect(plantRun.activeIds()).not.toContain('alarm:tavg-tref-deviation-low:tavg-tref-deviation-low')
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 })

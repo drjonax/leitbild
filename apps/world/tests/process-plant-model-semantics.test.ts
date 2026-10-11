@@ -15,6 +15,9 @@ import { component, connect, plantGraph } from '../src/packs/process-plant/graph
 import { fixedSemantics, aspect } from '../src/packs/process-plant/graph/semantics.ts'
 import { variable } from '../src/packs/process-plant/graph/component-definition-helpers.ts'
 import { processLinkFlowFidelityFor } from '../src/packs/process-plant/runtime/links/link-flow-fidelity.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 const reference = (loopCount: number) => compileProcessPlant(createPwrReferencePlantDefinition({ id: `plant:semantics-${loopCount}`, loopCount }))
 const plant = reference(4)

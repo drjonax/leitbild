@@ -10,6 +10,9 @@ import { PROCESS_PLANT_SEARCH_DEFAULT_LIMIT } from '../src/packs/process-plant/q
 import { artifactReadQuerySchema } from '../src/packs/process-plant/queries/graph-query.ts'
 import { configureActiveWorkspace } from '../src/ui/workspace-context.ts'
 import { readProcessPlantArtifact, type ProcessPlantArtifact } from '../src/ui/process-display/process-display-client.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:artifact' }))
 const plants = new Map([[plant.id, { plant } as ProcessPlantRuntimeInstance]])

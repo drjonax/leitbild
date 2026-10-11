@@ -7,6 +7,9 @@ import {
   createPwrReferencePlantDefinition,
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // A display opened on a fresh or paused Run reads the initial state. Every
 // derived variable must already read what the model derives from that state,

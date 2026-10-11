@@ -8,6 +8,9 @@ import {
   saturationPressureMPaFromVapourDensity,
   steamState,
 } from '../src/packs/process-plant/runtime/water-properties.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // The IAPWS-IF97 computer-program verification values (R7-97, 2012).
 const kelvin = (temperatureK: number): number => temperatureK - 273.15

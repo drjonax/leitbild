@@ -22,6 +22,9 @@ import { compileMimic } from '../src/packs/process-plant/displays/mimic/compile-
 import { MIMIC_MAX_WIDTH } from '../src/packs/process-plant/displays/mimic/mimic-model.ts'
 import { chatMimicProfile } from '../src/packs/process-plant/displays/mimic/profiles.ts'
 import { itemRowTexts, pipeStatesLook } from '../src/packs/process-plant/displays/mimic/rows.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // The reference PWR reports what its equipment does, beside what it is told
 // to do: a feedback tag for each command tag, read from the solved state.
@@ -416,7 +419,7 @@ describe('pressurizer backup heaters', () => {
     expect(lowest).toBeGreaterThan(13.5)
     expect(Number(plantRun.tag('PT-455'))).toBeGreaterThan(15)
     expect(plantRun.activeIds()).not.toContain('trip:safety-injection-low-pzr-pressure:safety-injection')
-  }, 120_000) // A half-hour trajectory: the long-trajectory watchdog.
+  }, PLANT_HANG_GUARD_MS) // A half-hour trajectory: the long-trajectory watchdog.
 })
 
 describe('pumps', () => {

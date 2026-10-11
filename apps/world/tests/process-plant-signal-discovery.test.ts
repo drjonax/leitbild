@@ -2,6 +2,9 @@ import { expect, test } from 'bun:test'
 import { answerProcessPlantQuery, compileProcessPlant, createPwrReferencePlantDefinition, createProcessPlantRuntime, createProcessPlantRampRunner } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 test('compact search preserves selection and meaning, with exact full metadata and live-read drilldown', () => {
   const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:discovery' }))

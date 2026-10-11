@@ -9,6 +9,9 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // Each steam generator of the four-loop reference PWR has two level
 // instruments reading the same two-phase mixture: the narrow range, spanning

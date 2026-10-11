@@ -19,6 +19,9 @@ import {
   processPlantUnitPackDataSchema,
 } from '../src/packs/process-plant/index.ts'
 import { scenarios } from './fixtures/scenarios.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 const simulationRunId = 'run:process-plant-test' as SimulationRunId
 const issuedAt = '2026-01-01T09:00:00.000Z' as IsoTimestamp

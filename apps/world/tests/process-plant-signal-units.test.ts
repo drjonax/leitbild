@@ -9,6 +9,9 @@ import {
 import { createProcessPlantRuntimePerformance } from '../src/packs/process-plant/runtime-instance.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import { requestedSignalValueView, type RequestedSignalValueView } from '../src/packs/process-plant/queries/signal-units.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 describe('requested signal units', () => {
   test('keeps exact units and explicit boolean spelling native', () => {

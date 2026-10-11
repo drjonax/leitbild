@@ -10,6 +10,9 @@ import {
 import { reactorNeutronics } from '../src/packs/process-plant/graph/reactor-component-definitions.ts'
 import { reactorKineticsPowerStep } from '../src/packs/process-plant/runtime/physics.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // The four-loop reference PWR tripped from steady full power, against what a
 // Westinghouse-type four-loop plant does: the power drops promptly as the rods
@@ -124,7 +127,7 @@ describe('a reactor trip from full power', () => {
     // The meter pins at the bottom of its -0.5 DPM span through the prompt drop, and never reads a rise.
     expect(at(2).startupRate).toBe(-0.5)
     expect(Math.max(...tripped().samples.map(sample => sample.startupRate as number))).toBeLessThanOrEqual(0)
-  }, 120_000) // The trip is held for 20 minutes, the same watchdog as the runtime's long trajectories.
+  }, PLANT_HANG_GUARD_MS) // The trip is held for 20 minutes, the same watchdog as the runtime's long trajectories.
 
   test('leaves decay heat on the ANS-5.1 curve', () => {
     // The fission power still falling in the first seconds adds its own share, a few percent at most.
@@ -133,7 +136,7 @@ describe('a reactor trip from full power', () => {
       expect(fraction / ansDecayHeatFraction(second)).toBeGreaterThan(0.97)
       expect(fraction / ansDecayHeatFraction(second)).toBeLessThan(1.05)
     }
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('re-energizes the source range below P-6, some 10 to 20 minutes after the trip', () => {
     const { samples } = tripped()
@@ -152,7 +155,7 @@ describe('a reactor trip from full power', () => {
     expect(at(clearedAt).sourceRange as number).toBeLessThanOrEqual(1e5 + 10)
     expect(at(1_200).sourceRange as number).toBeLessThan(at(clearedAt).sourceRange as number)
     expect(at(1_200).sourceRange as number).toBeGreaterThan(10)
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 })
 
 describe('the declared decay heat groups', () => {

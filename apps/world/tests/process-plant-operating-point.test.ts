@@ -4,6 +4,9 @@ import { createPwrReferencePlantDefinition, processPlantDefinitionCatalog } from
 import { createProcessPlantRuntime } from '../src/packs/process-plant/runtime/runtime.ts'
 import type { VariablePath } from '../src/packs/process-plant/graph/index.ts'
 import { saturationTemperatureCFromPressureMPa } from '../src/packs/process-plant/runtime/thermophysics.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 describe('authoritative PWR full-power operating point', () => {
   test('saturation temperature agrees with the IAPWS region 4 verification points', () => {
@@ -89,5 +92,5 @@ describe('authoritative PWR full-power operating point', () => {
         expect(Number(runtime.readVariable('vessel.primaryCoolantInventoryKg' as VariablePath)) / initialInventory).toBeCloseTo(1, 3)
       }
     }
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 })

@@ -16,6 +16,9 @@ import { recordedPlantVariables } from '../src/packs/process-plant/recording.ts'
 import type { CompiledComposedDisplay } from '../src/packs/process-plant/displays/compose.ts'
 import { COMPOSED_DISPLAY_MAX_HEIGHT_PX, COMPOSED_MIMIC_DISPLAY_MAX_HEIGHT_PX, composedDisplayStateSchema, type DisplayEvidence } from '../src/packs/process-plant/displays/composition.ts'
 import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // Evaluation run 22's situations on the four-loop reference Plant: the fault,
 // then the minutes the probe played, with protection evaluated and the Run's
@@ -136,7 +139,7 @@ describe('what World adds to a composed display', () => {
     expect(result.shows.join('\n')).toContain('World added these readouts, each labelled as added')
     const content = embeddedViewContentSchema.parse(result.viewContent)
     expect(content.items.some(item => item.names.includes('MFW-B-CV-POS'))).toBe(true)
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 
   const relief = once(() => situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 3))
 
@@ -160,7 +163,7 @@ describe('what World adds to a composed display', () => {
     expect(readouts.added).toBeUndefined()
     expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, null, 'delivers', 'mode'])
     expect(result.view.height).toBe(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('PORV open as run 22 composed it: with no room for a panel of their own, the values join the agent\'s readouts in a row of their own', () => {
     // Run 22 QA: the display added nothing three minutes in. Its trend has two strips and a live row, and its three
@@ -180,7 +183,7 @@ describe('what World adds to a composed display', () => {
     expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, 'delivers', 'mode'])
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
     expect(read('vessel.subcoolingMarginC')).toBeGreaterThan(16.7)
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('loss of main feedwater and turbine trip: the auxiliary feedwater the actuation delivers, and the loops the display left out', () => {
     // Run 22: both displays showed no AFW flow, and the turbine-trip one only SG A and B. With every narrow-range
@@ -215,7 +218,7 @@ describe('what World adds to a composed display', () => {
     expect(trip.evidence[0]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers')
     // One row was all the chat view had room for: the isolated main feed is left out.
     expect(trip.result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('a line-up drawing: the flow its header carries and the flow the pumps drawn feed', () => {
     // Run 22: the SI line-up to loop C, the feedwater line-up and the diesel-to-AFW drawing showed no flows.
@@ -236,7 +239,7 @@ describe('what World adds to a composed display', () => {
     expect(listed(diesel.evidence)).toEqual([['auxFeedwaterHeader.outletFlowKgPerS', 'delivers']])
     expect(diesel.evidence[0]!.reason).toMatch(/^Steam generator [A-D] low-low level auxiliary feedwater actuation: what it delivers$/)
     expect(offsite.read('auxFeedwaterHeader.outletFlowKgPerS')).toBeGreaterThan(50)
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('a chat drawing that writes a narrow-range level at the end of its span adds the wide-range level', () => {
     // A chat mimic has no room for the wide range beside the value: it writes "<0 %", and World adds the wide range.
@@ -252,7 +255,7 @@ describe('what World adds to a composed display', () => {
     expect(sg.rows.find(row => row.kind === 'value' && row.path === 'sgB.levelPercent')).toEqual({ kind: 'value', path: 'sgB.levelPercent', unit: 'percent', required: true, span: { min: 0, max: 100 } })
     for (const loop of ['A', 'B', 'C', 'D']) expect(listed(evidence)).toContainEqual([`sg${loop}.wideRangeLevelPercent`, 'wider'])
     expect(evidence.find(entry => entry.path === 'sgB.wideRangeLevelPercent')!.reason).toBe('SG B reads below the span of SG-B-LVL-NR: the same quantity on the instrument with the wider span')
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('a normal plant gets nothing added: a steady level, power and temperature at power', () => {
     const power = atPower()
@@ -266,7 +269,7 @@ describe('what World adds to a composed display', () => {
       expect(evidence).toEqual([])
       expect(display.panels).toHaveLength(panels.length)
     }
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 })
 
 describe('a limit that on/off states gate, as World reads it', () => {
@@ -290,10 +293,10 @@ describe('a limit that on/off states gate, as World reads it', () => {
     expect(result.shows.join('\n')).toContain('(only while SI-BLOCKED off)')
     expect(result.margins.join('\n')).not.toContain('· SI')
     expect(result.margins[0]).toMatch(/^PT-455: .*LO 14\.8 MPa · ALM/)
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('a generator at power is past no limit', () => {
     const { result } = atPower().compose('Generator output', ['GEN-MW'], [{ kind: 'trend', horizon: '10m', signals: [signal('GEN-MW', 'primary')] }])
     expect(result.margins.join('\n')).not.toContain('past')
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 })

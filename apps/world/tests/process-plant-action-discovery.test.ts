@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { answerProcessPlantCatalogQuery } from '../src/packs/process-plant/queries/catalog-query.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 describe('Process Plant action discovery', () => {
   test('finds canonical action ids from domain shorthand', () => {

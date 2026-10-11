@@ -24,6 +24,9 @@ import { scenarios } from './fixtures/scenarios.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
 import { capabilityJsonSchema } from '../src/simulation/capabilities.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 
 describe('process plant model composition', () => {

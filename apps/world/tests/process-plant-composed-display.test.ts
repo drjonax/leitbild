@@ -24,6 +24,9 @@ import { createRunHistorian, recordedHistoryOf } from '../src/features/historian
 import { displayAnnunciation } from '../src/packs/process-plant/displays/annunciators.ts'
 import { shorterSignalNames } from '../src/packs/process-plant/displays/signal-names.ts'
 import { actuatedNames, bannerTrip, firstOutFlag } from '../src/ui/embed/composed-display/panel-presenters.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:composed-display', loopCount: 4 }))
 const runtime = createProcessPlantRuntime({ system: compiled })

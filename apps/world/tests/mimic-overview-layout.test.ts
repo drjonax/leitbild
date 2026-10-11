@@ -19,6 +19,9 @@ import { overviewKeyValues } from '../src/packs/process-plant/displays/overview-
 import { drawnLook, rowText } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { openBridgeDevice, readoutBlockWidth, textWidth } from '../src/packs/process-plant/displays/mimic/text-metrics.ts'
 import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // The unit overview: the principal circuits the energy rule finds, drawn by
 // the overview profile at 1:1 with OpenBridge's regular text. The drawing is
@@ -304,5 +307,5 @@ describe('the unit overview of the principal circuits', () => {
   test('compiles the 4-loop overview within 500 ms quiet', () => {
     const [cost] = costsInReferences([() => overview(plantOf(4), budgetFor(4))], 5)
     expect(cost).toBeLessThan(500 / referenceQuietMs)
-  }, 120_000) // A watchdog for the whole sweep, not the property it measures.
+  }, PLANT_HANG_GUARD_MS) // A watchdog for the whole sweep, not the property it measures.
 })

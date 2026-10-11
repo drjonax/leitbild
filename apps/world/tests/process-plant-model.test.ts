@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { objectIdSchema, packIdSchema } from '../src/core/model/index.ts'
 import { processPlantIdForObject } from '../src/packs/process-plant/model.ts'
 import { processPlantIdForObject as processPlantIdForUiObject } from '../src/ui/process-display/process-display-client.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 const unit = {
   id: objectIdSchema.parse('plant:halden-a1'),

@@ -5,6 +5,9 @@ import { marginLimitName, marginTextForms, readingResolution, shownReading } fro
 import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import { commandsForProcessPlantAction, compileProcessPlant, createProcessPlantProtectionRunner, createProcessPlantRuntime, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import { activeThreshold, changeBesideState, limitStateText, projectedMinutes, rateChange, rateText, rateWindowMs, readingLookBackMs, readingStateText, travelOf, travelText, trendPoints, trendReading, type LimitState, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // Pressurizer pressure limits as the reference PWR's I&C draws them.
 const pressureLimits: ReadonlyArray<ComposedDisplayThreshold> = [

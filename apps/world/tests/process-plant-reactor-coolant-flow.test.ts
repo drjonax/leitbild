@@ -10,6 +10,9 @@ import {
   type VariablePath,
 } from '../src/packs/process-plant/index.ts'
 import { saturationTemperatureCFromPressureMPa } from '../src/packs/process-plant/runtime/thermophysics.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // Reactor coolant flow in the deployed four-loop reference PWR after its pumps
 // trip from full power, run under its own I&C, against what a Westinghouse-type

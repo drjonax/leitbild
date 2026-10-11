@@ -18,6 +18,9 @@ import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.
 import { itemRowTexts } from '../src/packs/process-plant/displays/mimic/rows.ts'
 import { plantCarriers, plantLoops, type MimicIntent } from '../src/packs/process-plant/displays/mimic/scope.ts'
 import { carriersAt } from '../src/packs/process-plant/graph/index.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 const plantWithLoops = (loopCount: number): ProcessPlantRuntimeInstance => {
   const compiled = compileProcessPlant(createPwrReferencePlantDefinition({ id: `plant:mimic-${loopCount}`, loopCount }))
@@ -190,7 +193,7 @@ describe('every intent over the reference Plant draws or is refused with a reaso
       }
     })
     expect(failures).toEqual([])
-  }, 120_000) // A watchdog for the whole sweep, not the property it measures.
+  }, PLANT_HANG_GUARD_MS) // A watchdog for the whole sweep, not the property it measures.
 
   test('is the diesel feeding the motor-driven AFW pump: the pump with its suction and its supply', () => {
     const mimic = generated(system, { to: ['auxFeedwaterPumpMotor'], services: ['auxFeedwater', 'electricalPower'] })

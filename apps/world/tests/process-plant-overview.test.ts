@@ -16,6 +16,9 @@ import { annunciatorHeight, compileDetailDisplay, compileOverviewDisplay, compos
 import { composedDisplayLayout } from '../src/packs/process-plant/displays/composition.ts'
 import { indexSample } from '../src/packs/process-plant/displays/mimic/evaluate.ts'
 import { drawnLook, itemTreatment } from '../src/packs/process-plant/displays/mimic/rows.ts'
+import { guardPlantTests, PLANT_HANG_GUARD_MS } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // Process display windows as measured on production in Full HD and QHD browsers.
 const fullHd: OverviewView = { width: 1896, height: 972 }
@@ -196,7 +199,7 @@ describe('the unit overview World generates for a Plant', () => {
       expect(count).toBeLessThanOrEqual(forced + 2)
     }
     // Five and six loops overflow Full HD, so each searches the least height that draws: seconds under load.
-  }, 120_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('on a feedwater runback the failed valve that causes it stands out as abnormal, and nothing else does', () => {
     const upset = plant()
@@ -244,7 +247,7 @@ describe('the unit overview World generates for a Plant', () => {
     if (!tripped.ok) return
     // Still the whole column, and it still fits the window.
     expect(tripped.display.height).toBeLessThanOrEqual(fullHd.height)
-  }, 60_000)
+  }, PLANT_HANG_GUARD_MS)
 
   test('an overview state for another Plant is refused', () => {
     expect(() => ask('world.process-plant.display.view', { plantId: system.plant.id, state: JSON.stringify({ overview: { plantId: 'plant:other' } }) }))

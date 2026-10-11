@@ -12,6 +12,9 @@ import {
 import { validateProcessPlantControlWrite } from '../src/packs/process-plant/control-write-validation.ts'
 import { saturationTemperatureCFromPressureMPa } from '../src/packs/process-plant/runtime/thermophysics.ts'
 import { liquidEnthalpyKjPerKg, saturationPressureMPaFromTemperatureC } from '../src/packs/process-plant/runtime/water-properties.ts'
+import { guardPlantTests } from './plant-hang-guard.ts'
+
+guardPlantTests()
 
 // The deployed four-loop reference PWR at full power, run under its own I&C,
 // against what a Westinghouse-type four-loop plant does.
