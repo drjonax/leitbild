@@ -194,15 +194,16 @@ fn clad_potential(t: Scalar) -> Result<Scalar> {
             + s(7.67e-9 / 4.) * t * t * t * t,
     )
 }
+/// Knots of the selected Zircaloy cp (K) and its values there (J/(kg K)).
+const CLAD_CP_T: [f64; 14] = [
+    300., 400., 640., 1090., 1093., 1113., 1133., 1153., 1173., 1193., 1213., 1233., 1248., 2098.,
+];
+const CLAD_CP: [f64; 14] = [
+    281., 302., 331., 375., 502., 590., 615., 719., 816., 770., 619., 469., 356., 356.,
+];
 fn clad_cp(t: Scalar) -> Result<Scalar> {
     clad_conductivity(t)?;
-    let x = [
-        300., 400., 640., 1090., 1093., 1113., 1133., 1153., 1173., 1193., 1213., 1233., 1248.,
-        2098.,
-    ];
-    let y = [
-        281., 302., 331., 375., 502., 590., 615., 719., 816., 770., 619., 469., 356., 356.,
-    ];
+    let (x, y) = (CLAD_CP_T, CLAD_CP);
     let i = if t.value < 300. {
         0
     } else {
@@ -246,13 +247,7 @@ pub fn fuel_caloric(t: Scalar) -> Result<Caloric> {
 pub fn clad_caloric(t: Scalar) -> Result<Caloric> {
     t.finite()?;
     let cp = clad_cp(t)?;
-    let x = [
-        300., 400., 640., 1090., 1093., 1113., 1133., 1153., 1173., 1193., 1213., 1233., 1248.,
-        2098.,
-    ];
-    let y = [
-        281., 302., 331., 375., 502., 590., 615., 719., 816., 770., 619., 469., 356., 356.,
-    ];
+    let (x, y) = (CLAD_CP_T, CLAD_CP);
     let mut energy = if t.value < 300. {
         let dt = t - s(300.);
         s(281.) * dt + s(0.105) * dt * dt
@@ -276,6 +271,76 @@ pub fn clad_caloric(t: Scalar) -> Result<Caloric> {
         specific_energy: energy.finite()?,
         cp: cp.finite()?,
     })
+}
+
+/// Exact inverse of [`clad_caloric`]: on each piece of the piecewise-linear
+/// cp the energy is quadratic in temperature, solved in its cancellation-free
+/// root form. The direction is `du/cp(T)` at the returned temperature, and
+/// the same 290–1800 K domain as the forward law is refused outside.
+pub fn clad_temperature(u: Scalar) -> Result<Scalar> {
+    u.finite()?;
+    let (x, y) = (CLAD_CP_T, CLAD_CP);
+    let v = u.value;
+    let t = if v < 0. {
+        // Below the 300 K datum the forward law is 281 dT + 0.105 dT^2.
+        let discriminant = 281. * 281. + 0.42 * v;
+        if discriminant <= 0. {
+            return Err("clad caloric inverse below its domain");
+        }
+        300. + 2. * v / (281. + discriminant.sqrt())
+    } else {
+        let mut start = 0.;
+        let mut t = None;
+        for i in 0..x.len() - 1 {
+            let width = x[i + 1] - x[i];
+            let slope = (y[i + 1] - y[i]) / width;
+            let piece = width * (y[i] + 0.5 * slope * width);
+            if v <= start + piece || i == x.len() - 2 {
+                let r = v - start;
+                t = Some(x[i] + 2. * r / (y[i] + (y[i] * y[i] + 2. * slope * r).sqrt()));
+                break;
+            }
+            start += piece;
+        }
+        t.ok_or("clad caloric inverse table")?
+    };
+    let cp = clad_cp(s(t))?;
+    Scalar::new(t, u.direction / cp.value).finite()
+}
+
+/// Inverse of [`fuel_caloric`] inside its 290–2000 K domain by safeguarded
+/// Newton on the same law, bracketed by the domain ends; bisection is only
+/// a root-finding safeguard. The direction is `du/cp(T)` at the root. The
+/// iteration bound is a termination guard, not a time step.
+pub fn fuel_temperature(u: Scalar) -> Result<Scalar> {
+    u.finite()?;
+    let energy = |t: f64| fuel_caloric(s(t)).map(|c| (c.specific_energy.value, c.cp.value));
+    let (mut lo, mut hi) = (290., 2000.);
+    let (u_lo, _) = energy(lo)?;
+    let (u_hi, _) = energy(hi)?;
+    if !(u_lo..=u_hi).contains(&u.value) {
+        return Err("fuel caloric inverse outside 290--2000 K");
+    }
+    let mut t = lo + (hi - lo) * (u.value - u_lo) / (u_hi - u_lo);
+    for _ in 0..64 {
+        let (e, cp) = energy(t)?;
+        let defect = e - u.value;
+        if defect.abs() <= 2e-12 * u.value.abs().max(cp * t) {
+            return Scalar::new(t, u.direction / cp).finite();
+        }
+        if defect < 0. {
+            lo = t;
+        } else {
+            hi = t;
+        }
+        let next = t - defect / cp;
+        t = if next > lo && next < hi {
+            next
+        } else {
+            0.5 * (lo + hi)
+        };
+    }
+    Err("fuel caloric inverse did not converge")
 }
 
 #[derive(Clone, Copy, Debug)]

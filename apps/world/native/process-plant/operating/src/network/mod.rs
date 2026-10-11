@@ -22,6 +22,7 @@ mod evaluate;
 pub mod heaters;
 mod jacobian;
 pub mod packet;
+pub mod ports;
 pub mod prepare;
 pub mod properties;
 pub mod stratified;
@@ -35,6 +36,7 @@ pub use jacobian::{
     ConsistentPair, ConsistentSystem, CscOut, DensePattern, Largest, Projection, SparseJacobian,
     consistent_rates, consistent_start, project_constraints,
 };
+pub use ports::{CellVolume, Coupling, Fluid, Receipts};
 pub use properties::{Band, BandReport, MetastableBand, Properties, Reuse, Water};
 pub use tolerance::ToleranceClasses;
 
@@ -205,6 +207,12 @@ pub struct Network<P: Properties> {
     pub counters: Counters,
     shaft_power: Scalar,
     wall_budget: Option<(Instant, f64)>,
+    /// Port state of a coupled evaluation ([`ports`]): region elevations,
+    /// face endpoints, and per-evaluation tracer view and coupled receipts.
+    elevations: Vec<f64>,
+    endpoints: Vec<(usize, usize)>,
+    coupled_tracer: Vec<Scalar>,
+    coupled_receipts: Vec<[[Scalar; 3]; 2]>,
 }
 
 fn s(v: f64) -> Scalar {
@@ -438,6 +446,8 @@ impl<P: Properties> Network<P> {
         let y: Vec<f64> = physical.iter().zip(&scales).map(|(v, s)| v / s).collect();
         let face_count = faces.len();
         let section_count = sections.len();
+        let elevations = geometry.regions.iter().map(|r| r.elevation_m).collect();
+        let endpoints = faces.iter().map(|f| (f.from, f.to)).collect();
         Ok((
             Self {
                 properties,
@@ -470,6 +480,10 @@ impl<P: Properties> Network<P> {
                 counters: Counters::default(),
                 shaft_power: s(0.),
                 wall_budget: None,
+                elevations,
+                endpoints,
+                coupled_tracer: vec![s(0.); pzr],
+                coupled_receipts: vec![[[s(0.); 3]; 2]; pzr],
             },
             Prepared {
                 y,
