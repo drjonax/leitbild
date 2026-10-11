@@ -20,6 +20,7 @@ import {
   gridSetEvChargingDemandCommandKind,
   gridShedLoadCommandKind,
 } from '../src/packs/electric-grid/commands/load.ts'
+import { gridBlockHvdcCommandKind, gridTripHvdcCommandKind } from '../src/packs/electric-grid/commands/hvdc.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition, compileGridModelIndex, gridModelV2 } from '../src/packs/electric-grid/definitions.ts'
@@ -387,7 +388,7 @@ describe('electric grid command Capabilities', () => {
     ]))
     expect(commands.every(capability => capability.idempotent && capability.schedulable === true)).toBe(true)
     expect(commands.filter(capability => capability.risk === 'destructive').map(capability => capability.id).sort())
-      .toEqual([gridOpenBranchCommandKind, gridShedLoadCommandKind, gridTripGeneratorCommandKind].sort())
+      .toEqual([gridOpenBranchCommandKind, gridShedLoadCommandKind, gridTripGeneratorCommandKind, gridBlockHvdcCommandKind, gridTripHvdcCommandKind].sort())
     expect(commands.every(capability => (capability.searchTerms?.length ?? 0) >= 8)).toBe(true)
     const shed = commands.find(capability => capability.id === gridShedLoadCommandKind)!
     expect(shed.searchTerms).toEqual(expect.arrayContaining(['load shedding', 'lastfrakobling', 'UFLS', 'frekvens', 'reserve']))

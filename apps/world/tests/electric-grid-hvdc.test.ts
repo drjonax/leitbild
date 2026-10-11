@@ -1,0 +1,290 @@
+import { describe, expect, test } from 'bun:test'
+import { gridCloseBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
+import {
+  gridBlockHvdcCommandKind,
+  gridDeblockHvdcCommandKind,
+  gridResetHvdcTripCommandKind,
+  gridSetHvdcSetpointCommandKind,
+  gridTripHvdcCommandKind,
+} from '../src/packs/electric-grid/commands/hvdc.ts'
+import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
+import { nordicFrequencyAutomationRef, norwayGridModelRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
+import type { CompiledGridDefinition, GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
+import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
+import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
+import { islandKineticEnergyMws } from '../src/packs/electric-grid/runtime/island-input.ts'
+import { electricGridRuntimeStateSchema, restoredGridRuntimeStateFor, runtimeStateForElectricGrids } from '../src/packs/electric-grid/sim/runtime-state.ts'
+import { isoAt, steppedGrid, tripSignals, type SteppedGrid } from './fixtures/grid-corridor.ts'
+import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
+import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './fixtures/synthetic-grid.ts'
+
+// A Norwegian 420 kV bus tied to the Nordic equivalent at SE3 with four hydro units, a radial
+// converter bus west of it, and two links to Germany: one with NordLink's rating, losses and ramp
+// as the Norway Model carries them, one with a slower ramp.
+const provenance = { sources: ['test:hand-built'], method: 'curated' as const, confidence: 'high' as const, note: 'HVDC command test model.' }
+const bus = (id: string, longitude: number) => ({ id, label: id, nominalKv: 420, location: [longitude, 59] as const })
+const line = (id: string, fromBusId: string, toBusId: string, ratingMw: number) =>
+  testLine({ id, fromBusId, toBusId, nominalKv: 420, ratingMw, reactancePu: 0.01, resistancePu: 0.001 })
+const nordlinkId = 'hvdc:test-nordlink'
+const westLinkId = 'hvdc:test-west'
+
+const model: GridModelDefinition = handBuiltModel({
+  id: 'hvdc-commands',
+  title: 'HVDC commands',
+  description: 'A Norwegian bus tied to the Nordic equivalent, a radial converter bus and two links to Germany.',
+  buses: [bus('bus:south', 7), bus('bus:west', 6), bus('bus:boundary-SE3@420', 11), bus('bus:boundary-DE', 9)],
+  branches: [line('tie-se3', 'bus:south', 'bus:boundary-SE3@420', 3_000), line('west-line', 'bus:south', 'bus:west', 1_500)],
+  generators: Array.from({ length: 4 }, (_, index) => syntheticHydroUnit({ id: `south-${index}`, label: `South ${index}`, busId: 'bus:south', location: [7, 59], capacityMw: 400 })),
+  loads: [testLoad({ id: 'south-load', busId: 'bus:south', demandMw: 1_000 }), testLoad({ id: 'west-load', busId: 'bus:west', demandMw: 100 })],
+  externalSystems: [
+    {
+      id: 'external:nordic-remainder', label: 'Nordic remainder', area: 'nordic-remainder', synchronous: true, boundaryBusIds: ['bus:boundary-SE3@420'],
+      inertiaGws: 171, loadMw: 43_100, fcrNMwPerHz: 3_720, fcrDUpMw: 899, fcrDDownMw: 868, afrrUpMw: 138, afrrDownMw: 138, provenance,
+    },
+    { id: 'external:DE', label: 'Germany', area: 'DE', synchronous: false, boundaryBusIds: ['bus:boundary-DE'], provenance },
+  ],
+  hvdcLinks: [
+    { id: nordlinkId, label: 'Test NordLink', fromBusId: 'bus:south', toBusId: 'bus:boundary-DE', ratingMw: 1_400, lossPercent: 3.1, rampMwPerMinute: 60, osmWayIds: [], provenance },
+    { id: westLinkId, label: 'Test west link', fromBusId: 'bus:west', toBusId: 'bus:boundary-DE', ratingMw: 700, lossPercent: 2, rampMwPerMinute: 26, osmWayIds: [], provenance },
+  ],
+})
+
+/** The test Model with each link starting at the given transfer (MW, positive exports); others at 0. */
+const definitionWith = (transfersMw: Readonly<Record<string, number>> = {}): CompiledGridDefinition => {
+  const base = gridDefinitionForModel(model)
+  return { ...base, operatingPoint: { ...base.operatingPoint, hvdcSetpoints: model.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: transfersMw[link.id] ?? 0 })) } }
+}
+
+const linkOf = (run: SteppedGrid, linkId = nordlinkId) => run.grid.hvdcLinks.get(linkId)!
+const reasonOf = (result: { readonly ok: boolean; readonly reason?: string }): string => {
+  if (result.ok) throw new Error('expected the command to be rejected')
+  return result.reason!
+}
+const hvdcTransitions = (run: SteppedGrid) => run.signals.filter(signal => signal.type.startsWith('electric-grid.hvdc.')).map(signal => signal.type)
+
+/** Sum of all injections of each energised island (MW); balance closes by construction. */
+const largestIslandInjectionSumMw = (grid: GridRuntimeInstance): number => {
+  const sums = new Map<string, number>()
+  for (const state of grid.busStates.values()) if (state.energized) sums.set(state.islandId, (sums.get(state.islandId) ?? 0) + state.netInjectionMw)
+  return Math.max(0, ...[...sums.values()].map(Math.abs))
+}
+
+/** KCL at every bus from the solved injections and branch flows (MW). */
+const largestKclResidualMw = (grid: GridRuntimeInstance): number => {
+  const residuals = new Map([...grid.busStates].map(([busId, state]) => [busId, state.netInjectionMw]))
+  for (const branch of grid.definition.model.branches) {
+    const flowMw = grid.branches.get(branch.id)!.flowMw
+    residuals.set(branch.fromBusId, residuals.get(branch.fromBusId)! - flowMw)
+    residuals.set(branch.toBusId, residuals.get(branch.toBusId)! + flowMw)
+  }
+  return Math.max(...[...residuals.values()].map(Math.abs))
+}
+
+describe('HVDC set-point', () => {
+  test('ramps the transfer at the link\'s rate to the set-point; an import arrives less the converter losses', () => {
+    const run = steppedGrid(definitionWith())
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: -600 }).ok).toBe(true)
+    expect(linkOf(run)).toMatchObject({ state: 'deblocked', setpointMw: -600, transferMw: 0 })
+    // 60 MW/min: 600 MW take 600 s.
+    run.advanceTo(300_000, [1_000])
+    expect(linkOf(run).transferMw).toBeCloseTo(-300, 9)
+    run.advanceTo(599_000, [1_000])
+    expect(linkOf(run).transferMw).toBeCloseTo(-599, 9)
+    run.advanceTo(600_000, [1_000])
+    expect(linkOf(run).transferMw).toBe(-600)
+    expect(linkOf(run).lossesMw).toBeCloseTo(18.6, 9)
+    expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
+  })
+
+  test('follows the same ramp whatever the advance step', () => {
+    // 26 MW/min: a 100 MW import completes after 230.8 s, inside an advance for every step.
+    const sampleTimesMs = [35_000, 70_000, 105_000, 140_000, 175_000, 210_000, 245_000]
+    const trajectory = (stepMs: number): ReadonlyArray<number> => {
+      const run = steppedGrid(definitionWith())
+      expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: westLinkId, setpointMw: -100 }).ok).toBe(true)
+      return sampleTimesMs.map(timeMs => {
+        run.advanceTo(timeMs, [stepMs])
+        return linkOf(run, westLinkId).transferMw
+      })
+    }
+    const expected = sampleTimesMs.map(timeMs => Math.max(-100, -26 / 60 * timeMs / 1_000))
+    for (const stepMs of [250, 1_000, 2_500, 7_000]) {
+      const transfers = trajectory(stepMs)
+      transfers.forEach((transferMw, index) => expect(transferMw).toBeCloseTo(expected[index]!, 9))
+      console.info(`HVDC ramp, step ${stepMs / 1_000} s: ${transfers.map(value => value.toFixed(6)).join(', ')} MW`)
+    }
+  })
+
+  test('rejects set-points beyond the rating, an unchanged set-point and unknown links, changing nothing', () => {
+    const run = steppedGrid(definitionWith())
+    const setpoint = (assetId: string, setpointMw: number) => run.command(gridSetHvdcSetpointCommandKind, { assetId, setpointMw })
+    expect(reasonOf(setpoint(nordlinkId, 1_400.1))).toBe('HVDC link hvdc:test-nordlink set-point 1400.1 MW lies outside its ±1400 MW rating (positive exports from bus:south)')
+    expect(reasonOf(setpoint(nordlinkId, -1_401))).toContain('outside its ±1400 MW rating')
+    expect(linkOf(run).setpointMw).toBe(0)
+    expect(setpoint(nordlinkId, -1_400).ok).toBe(true)
+    expect(reasonOf(setpoint(nordlinkId, -1_400))).toBe('HVDC link hvdc:test-nordlink already has the set-point -1400 MW (transfer 0 MW)')
+    expect(reasonOf(setpoint('hvdc:missing', 100))).toContain('HVDC link not found: hvdc:missing')
+    expect(reasonOf(setpoint('south-0', 100))).toContain('HVDC link not found: south-0')
+    expect(linkOf(run).setpointMw).toBe(-1_400)
+  })
+})
+
+describe('HVDC block and deblock', () => {
+  test('block stops the transfer at once without ramping; deblock returns the link at 0 MW to ramp on a new set-point', () => {
+    const run = steppedGrid(definitionWith({ [nordlinkId]: -600 }))
+    run.advanceTo(10_000)
+    expect(linkOf(run)).toMatchObject({ state: 'deblocked', transferMw: -600 })
+    expect(run.command(gridBlockHvdcCommandKind, { assetId: nordlinkId }).ok).toBe(true)
+    expect(linkOf(run)).toMatchObject({ state: 'blocked', setpointMw: 0, transferMw: 0, lossesMw: 0, trip: null })
+    expect(run.signals.find(signal => signal.type === 'electric-grid.hvdc.blocked')!.payload)
+      .toMatchObject({ assetId: nordlinkId, transferBeforeMw: -600, islandId: run.grid.busStates.get('bus:south')!.islandId, elapsedSeconds: 10 })
+    expect(reasonOf(run.command(gridBlockHvdcCommandKind, { assetId: nordlinkId }))).toBe('HVDC link hvdc:test-nordlink is already blocked')
+    expect(reasonOf(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: 100 }))).toContain('is blocked; deblock-hvdc returns it to service at 0 MW')
+    expect(reasonOf(run.command(gridResetHvdcTripCommandKind, { assetId: nordlinkId }))).toContain('not tripped')
+    // A block is an operator action, not a fault: it raises no HVDC alarm.
+    run.advanceTo(20_000)
+    expect(run.grid.alarms.records.has(gridAlarmId('hvdc', nordlinkId, 'tripped'))).toBe(false)
+    expect(run.command(gridDeblockHvdcCommandKind, { assetId: nordlinkId }).ok).toBe(true)
+    expect(linkOf(run)).toMatchObject({ state: 'deblocked', setpointMw: 0, transferMw: 0 })
+    expect(reasonOf(run.command(gridDeblockHvdcCommandKind, { assetId: nordlinkId }))).toBe('HVDC link hvdc:test-nordlink is already deblocked')
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: 120 }).ok).toBe(true)
+    run.advanceTo(80_000, [1_000])
+    expect(linkOf(run).transferMw).toBeCloseTo(60, 9)
+    run.advanceTo(140_000, [1_000])
+    expect(linkOf(run).transferMw).toBe(120)
+    expect(hvdcTransitions(run)).toEqual(['electric-grid.hvdc.blocked', 'electric-grid.hvdc.deblocked'])
+  })
+})
+
+describe('HVDC converter trips', () => {
+  test('trip-hvdc trips the link and raises an alarm; reset leaves it blocked until deblock', () => {
+    const run = steppedGrid(definitionWith({ [nordlinkId]: 800 }))
+    run.advanceTo(10_000)
+    expect(run.command(gridTripHvdcCommandKind, { assetId: nordlinkId }).ok).toBe(true)
+    expect(linkOf(run)).toMatchObject({ state: 'tripped', setpointMw: 0, transferMw: 0, trip: { cause: 'command', atElapsedMs: 10_000, transferMw: 800 } })
+    expect(tripSignals(run.signals)).toEqual([{ assetId: nordlinkId, element: 'command', elapsedSeconds: 10 }])
+    const alarmId = gridAlarmId('hvdc', nordlinkId, 'tripped')
+    expect(run.grid.alarms.records.get(alarmId)).toMatchObject({ active: true, priority: 2, scope: 'hvdc', assetId: nordlinkId, value: 800, unit: 'MW' })
+    expect(run.grid.alarms.records.get(alarmId)!.message).toBe('Test NordLink was tripped by command while sending 800 MW; reset-hvdc-trip, then deblock-hvdc')
+    expect(reasonOf(run.command(gridDeblockHvdcCommandKind, { assetId: nordlinkId }))).toContain('reset it with reset-hvdc-trip before deblocking it')
+    expect(reasonOf(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: 100 }))).toContain('reset-hvdc-trip, then deblock-hvdc')
+    expect(reasonOf(run.command(gridBlockHvdcCommandKind, { assetId: nordlinkId }))).toContain('already stopped')
+    expect(reasonOf(run.command(gridTripHvdcCommandKind, { assetId: nordlinkId }))).toContain('nothing to trip')
+    expect(run.command(gridResetHvdcTripCommandKind, { assetId: nordlinkId }).ok).toBe(true)
+    expect(linkOf(run)).toMatchObject({ state: 'blocked', trip: null })
+    run.advanceTo(30_000)
+    expect(run.grid.alarms.records.get(alarmId)).toMatchObject({ active: false })
+    expect(reasonOf(run.command(gridTripHvdcCommandKind, { assetId: nordlinkId }))).toContain('is blocked; there is nothing to trip')
+    expect(run.command(gridDeblockHvdcCommandKind, { assetId: nordlinkId }).ok).toBe(true)
+    expect(hvdcTransitions(run)).toEqual(['electric-grid.hvdc.trip-reset', 'electric-grid.hvdc.deblocked'])
+  })
+
+  test('a converter whose AC terminal loses voltage trips and cannot deblock until it is re-energised', () => {
+    const run = steppedGrid(definitionWith({ [westLinkId]: -200 }))
+    run.advanceTo(10_000)
+    expect(run.command(gridOpenBranchCommandKind, { assetId: 'west-line' }).ok).toBe(true)
+    // The trip applies in the zero-length tick that follows the switching, before any import reaches the dead bus.
+    expect(run.grid.busStates.get('bus:west')!.energized).toBe(false)
+    expect(linkOf(run, westLinkId)).toMatchObject({ state: 'tripped', transferMw: 0, trip: { cause: 'ac-voltage-loss', atElapsedMs: 10_000, transferMw: -200 } })
+    expect(tripSignals(run.signals)).toEqual([{ assetId: westLinkId, element: 'ac-voltage-loss', elapsedSeconds: 10 }])
+    expect(run.grid.alarms.records.get(gridAlarmId('hvdc', westLinkId, 'tripped'))!.message).toContain('tripped on loss of AC voltage while sending -200 MW')
+    expect(run.command(gridResetHvdcTripCommandKind, { assetId: westLinkId }).ok).toBe(true)
+    expect(reasonOf(run.command(gridDeblockHvdcCommandKind, { assetId: westLinkId }))).toBe('HVDC link hvdc:test-west cannot deblock: its converter terminal bus:west (bus:west) has no AC voltage')
+    expect(run.command(gridCloseBranchCommandKind, { assetId: 'west-line' }).ok).toBe(true)
+    expect(run.command(gridDeblockHvdcCommandKind, { assetId: westLinkId }).ok).toBe(true)
+    expect(linkOf(run, westLinkId)).toMatchObject({ state: 'deblocked', transferMw: 0 })
+  })
+
+  test('blocked and tripped links keep their state and trip through a persistence round trip', () => {
+    const run = steppedGrid(definitionWith({ [nordlinkId]: 500, [westLinkId]: 100 }))
+    run.advanceTo(10_000)
+    expect(run.command(gridTripHvdcCommandKind, { assetId: nordlinkId }).ok).toBe(true)
+    expect(run.command(gridBlockHvdcCommandKind, { assetId: westLinkId }).ok).toBe(true)
+    const { gridId, definitionDigest } = run.grid.definition
+    const stored = electricGridRuntimeStateSchema.parse(JSON.parse(JSON.stringify(runtimeStateForElectricGrids(new Map([[gridId, run.grid]])))))
+    const restored = createGridRuntimeInstance({ definition: run.grid.definition, at: isoAt(10_000), restored: restoredGridRuntimeStateFor(stored, gridId, definitionDigest)! })
+    expect(restored.hvdcLinks.get(nordlinkId)).toEqual(linkOf(run))
+    expect(restored.hvdcLinks.get(westLinkId)).toEqual(linkOf(run, westLinkId))
+    expect(restored.hvdcLinks.get(nordlinkId)).toMatchObject({ state: 'tripped', trip: { cause: 'command', transferMw: 500 } })
+  })
+})
+
+describe('island balance through an HVDC import step', () => {
+  test('stays exact when a 1,000 MW import blocks or trips at once', () => {
+    for (const kind of [gridBlockHvdcCommandKind, gridTripHvdcCommandKind]) {
+      const run = steppedGrid(definitionWith({ [nordlinkId]: -1_000 }))
+      run.advanceTo(10_000, [1_000])
+      const southIsland = () => run.grid.islandPlan!.islands.find(island => island.id === run.grid.busStates.get('bus:south')!.islandId)!
+      const pickUpBaseMw = [0, 1, 2, 3].reduce((sum, index) => sum + run.grid.generators.get(`south-${index}`)!.dispatchMw, 0)
+        + run.grid.externalSystems.get('external:nordic-remainder')!.importMw
+      expect(run.command(kind, { assetId: nordlinkId }).ok).toBe(true)
+      let worstSumMw = largestIslandInjectionSumMw(run.grid)
+      let worstKclMw = largestKclResidualMw(run.grid)
+      let nadirHz = Number.POSITIVE_INFINITY
+      for (let second = 0; second < 30; second += 1) {
+        run.advanceTo(run.nowMs() + 1_000, [1_000])
+        worstSumMw = Math.max(worstSumMw, largestIslandInjectionSumMw(run.grid))
+        worstKclMw = Math.max(worstKclMw, largestKclResidualMw(run.grid))
+        nadirHz = Math.min(nadirHz, southIsland().minimumHz!)
+      }
+      const pickUpMw = [0, 1, 2, 3].reduce((sum, index) => sum + run.grid.generators.get(`south-${index}`)!.dispatchMw, 0)
+        + run.grid.externalSystems.get('external:nordic-remainder')!.importMw - pickUpBaseMw
+      console.info(`HVDC ${kind.split('.').at(-1)} of a 1000 MW import (969 MW delivered): island sum ≤ ${worstSumMw.toExponential(2)} MW, KCL ≤ ${worstKclMw.toExponential(2)} MW, nadir ${nadirHz.toFixed(4)} Hz, units + Nordic equivalent +${pickUpMw.toFixed(1)} MW after 30 s`)
+      expect(worstSumMw).toBeLessThan(1e-6)
+      expect(worstKclMw).toBeLessThan(1e-6)
+      expect(nadirHz).toBeLessThan(50)
+      // Units and the equivalent replace the lost 969 MW, plus the tie's added I²R losses (r 0.001 pu
+      // at about 9.7 pu more flow: about 9 MW), less load self-regulation at the lower frequency.
+      expect(Math.abs(pickUpMw - 969)).toBeLessThan(15)
+    }
+  })
+})
+
+describe('NordLink import block on the Norway Model', () => {
+  test('blocking a 1,400 MW NordLink import is a frequency event that Nordic FCR-D arrests above 49.0 Hz', () => {
+    const definition = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:norway',
+      model: { ref: norwayGridModelRef },
+      automation: { ref: nordicFrequencyAutomationRef },
+      operatingPoint: {
+        ref: norwayRuntimeTestOperatingPointRef,
+        overrides: { hvdcSchedules: [{ assetId: 'hvdc:nordlink', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', transferMw: -1_400 }] }] },
+      },
+    }))
+    const nordlink = definition.index.hvdcLinks.find(link => link.id === 'hvdc:nordlink')!
+    const run = steppedGrid(definition)
+    run.advanceTo(10_000, [1_000])
+    expect(run.grid.hvdcLinks.get(nordlink.id)).toMatchObject({ state: 'deblocked', transferMw: -1_400 })
+    const island = () => run.grid.islandPlan!.islands.find(candidate => candidate.id === run.grid.busStates.get(nordlink.fromBusId)!.islandId)!
+    const beforeHz = island().frequency!.frequencyHz!
+    expect(run.command(gridBlockHvdcCommandKind, { assetId: nordlink.id }).ok).toBe(true)
+    // The swing equation's RoCoF at the step: ΔP·f0 / (2·E_k) over the island's kinetic energy.
+    const kineticEnergyMws = islandKineticEnergyMws(run.grid, run.grid.islandPlan!.plan.islands[island().planIndex]!)
+    let worstSumMw = largestIslandInjectionSumMw(run.grid)
+    let nadirHz = Number.POSITIVE_INFINITY
+    let nadirAtSeconds = 0
+    let largestRocof = 0
+    const frequencyAt = new Map<number, number>()
+    for (let second = 1; second <= 60; second += 1) {
+      run.advanceTo(10_000 + second * 1_000, [1_000])
+      const current = island()
+      worstSumMw = Math.max(worstSumMw, largestIslandInjectionSumMw(run.grid))
+      if (current.minimumHz! < nadirHz) {
+        nadirHz = current.minimumHz!
+        nadirAtSeconds = second
+      }
+      largestRocof = Math.max(largestRocof, Math.abs(current.rocofHzPerSecond!))
+      frequencyAt.set(second, current.frequency!.frequencyHz!)
+    }
+    const lostInfeedMw = 1_400 * (1 - nordlink.lossPercent / 100)
+    const initialRocof = lostInfeedMw * 50 / (2 * kineticEnergyMws)
+    console.info(`NordLink block at 1400 MW import (${lostInfeedMw.toFixed(1)} MW infeed lost): f ${beforeHz.toFixed(4)} Hz → nadir ${nadirHz.toFixed(4)} Hz in second ${nadirAtSeconds}, E_k ${(kineticEnergyMws / 1_000).toFixed(1)} GWs so RoCoF −${initialRocof.toFixed(4)} Hz/s at the step, |RoCoF| ≤ ${largestRocof.toFixed(4)} Hz/s at 1 s samples, f(30 s) ${frequencyAt.get(30)!.toFixed(4)} Hz, f(60 s) ${frequencyAt.get(60)!.toFixed(4)} Hz, island sum ≤ ${worstSumMw.toExponential(2)} MW`)
+    expect(worstSumMw).toBeLessThan(1e-6)
+    // FCR-D activates below 49.9 Hz; SO GL Annex III caps the Nordic maximum instantaneous frequency deviation at 1000 mHz.
+    expect(nadirHz).toBeLessThan(49.9)
+    expect(nadirHz).toBeGreaterThan(49.0)
+    expect(run.grid.frequencyEvents.filter(event => event.kind === 'lfdd-stage-operated' || event.kind === 'generator-trip')).toEqual([])
+    expect(run.grid.alarms.records.has(gridAlarmId('hvdc', nordlink.id, 'tripped'))).toBe(false)
+  }, 120_000)
+})

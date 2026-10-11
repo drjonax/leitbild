@@ -9,7 +9,7 @@ import type { GridIslandPlan, GridRuntimeInstance } from './instance.ts'
 // minimum interval between transitions), acknowledged or shelved by command, and never cleared by
 // acknowledgement. Every transition is queued as a Simulation Run signal.
 
-export type GridAlarmScope = 'island' | 'branch' | 'generator'
+export type GridAlarmScope = 'island' | 'branch' | 'generator' | 'hvdc'
 export type GridAlarmPriority = 1 | 2 | 3
 
 export interface GridAlarmRecord {

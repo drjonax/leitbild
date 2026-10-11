@@ -3,6 +3,7 @@ import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-po
 import type { ActorId, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import { gridCloseBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridRearmLfddStageCommandKind, gridRestoreLfddStageCommandKind } from '../src/packs/electric-grid/commands/frequency.ts'
+import { gridSetHvdcSetpointCommandKind } from '../src/packs/electric-grid/commands/hvdc.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition, gridAutomationPreset } from '../src/packs/electric-grid/definitions.ts'
@@ -12,7 +13,6 @@ import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
 import { dispatchGridFromLiveIslands } from '../src/packs/electric-grid/runtime/dispatch.ts'
 import { generatorKineticEnergyMws } from '../src/packs/electric-grid/runtime/generator-dynamics.ts'
-import { setHvdcSetpoint } from '../src/packs/electric-grid/runtime/hvdc.ts'
 import { createGridRuntimeInstance, type GridIsland, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { gridAutomationSchema } from '../src/packs/electric-grid/schemas/grid-automation.ts'
@@ -339,9 +339,10 @@ describe('HVDC links', () => {
       ],
     })
     const run = runningGrid({ ...gridDefinitionForModel(model), gridId: 'grid:test' })
-    expect(() => setHvdcSetpoint(run.grid, 'hvdc:west-east', 800)).toThrow(/outside its ±700 MW rating/)
-    setHvdcSetpoint(run.grid, 'hvdc:west-east', -100)
-    setHvdcSetpoint(run.grid, 'hvdc:east-de', 200)
+    const setpoint = (assetId: string, setpointMw: number) => applyGridCommand(run.grid, command(gridSetHvdcSetpointCommandKind, { assetId, setpointMw }))
+    expect(setpoint('hvdc:west-east', 800)).toMatchObject({ ok: false, reason: expect.stringContaining('outside its ±700 MW rating') })
+    expect(setpoint('hvdc:west-east', -100)).toEqual({ ok: true })
+    expect(setpoint('hvdc:east-de', 200)).toEqual({ ok: true })
     run.advance(60)
     expect(run.grid.hvdcLinks.get('hvdc:west-east')!.transferMw).toBeCloseTo(-60, 9)
     expect(run.grid.hvdcLinks.get('hvdc:east-de')!.transferMw).toBeCloseTo(200, 9)

@@ -43,6 +43,7 @@ export const advanceGrid = (grid: GridRuntimeInstance, dtSeconds: number, at: Is
   if (dtSeconds === 0) {
     commitUnits(endMs)
     applyGridDemand(grid, endMs)
+    advanceHvdcLinks(grid, 0)
     advanceGridFrequencyControl(grid, islands, 0)
   }
   // Segments on fixed absolute grids: demand samples every minute, every second while HVDC ramps,

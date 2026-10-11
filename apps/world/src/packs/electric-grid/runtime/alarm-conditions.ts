@@ -1,6 +1,7 @@
 import type { ReserveRequirement } from '../schemas/grid-automation.ts'
 import type { GridAlarmSettings, GridAlarmTiming } from '../schemas/grid-protection-automation.ts'
 import { gridAlarmId, type GridAlarmObservation, type GridAlarmState } from './alarms.ts'
+import { hvdcTripReason } from './hvdc.ts'
 import { synchronousAreaRequirementMw } from './reserve-allocation.ts'
 import type { FrequencyReserveAllocation } from './frequency/types.ts'
 import type { GridIsland, GridIslandPlan, GridRuntimeInstance, GridTopologyIsland } from './instance.ts'
@@ -221,6 +222,27 @@ const generatorObservations = (grid: GridRuntimeInstance, settings: GridAlarmSet
   }
 }
 
+const hvdcObservations = (grid: GridRuntimeInstance, settings: GridAlarmSettings, emit: Emit): void => {
+  for (const link of grid.definition.index.hvdcLinks) {
+    const trip = grid.hvdcLinks.get(link.id)!.trip
+    if (trip === null) continue
+    emit({
+      id: gridAlarmId('hvdc', link.id, 'tripped'),
+      scope: 'hvdc',
+      assetId: link.id,
+      condition: 'tripped',
+      timing: settings.hvdcTripped,
+      islandId: grid.busStates.get(link.fromBusId)!.islandId,
+      raising: true,
+      title: 'HVDC link tripped',
+      message: `${link.label} ${hvdcTripReason(trip)}; reset-hvdc-trip, then deblock-hvdc`,
+      value: Math.abs(trip.transferMw),
+      limit: null,
+      unit: 'MW',
+    })
+  }
+}
+
 /** Observations of every alarm condition near or beyond its limit at the latest solve. */
 export const gridAlarmObservations = (grid: GridRuntimeInstance, islands: GridIslandPlan, settings: GridAlarmSettings, state: GridAlarmState): ReadonlyArray<GridAlarmObservation> => {
   const observations: GridAlarmObservation[] = []
@@ -245,5 +267,6 @@ export const gridAlarmObservations = (grid: GridRuntimeInstance, islands: GridIs
   }
   branchObservations(grid, settings, emit)
   generatorObservations(grid, settings, emit)
+  hvdcObservations(grid, settings, emit)
   return observations
 }

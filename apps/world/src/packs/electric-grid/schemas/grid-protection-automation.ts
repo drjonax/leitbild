@@ -99,5 +99,7 @@ export const alarmsSchema = z.object({
   branchLoading: z.array(loadingBandSchema).min(1).refine(uniqueIds, 'branch loading band ids must be unique'),
   branchTripped: alarmTimingSchema,
   generatorTripped: alarmTimingSchema,
+  /** An HVDC link stopped by its converter protection or by trip-hvdc, until reset-hvdc-trip. */
+  hvdcTripped: alarmTimingSchema,
 }).strict()
 export type GridAlarmSettings = z.infer<typeof alarmsSchema>

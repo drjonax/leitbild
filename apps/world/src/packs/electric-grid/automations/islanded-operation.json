@@ -509,6 +509,11 @@
       "priority": 2,
       "raiseDelaySeconds": 0,
       "clearDelaySeconds": 0
+    },
+    "hvdcTripped": {
+      "priority": 2,
+      "raiseDelaySeconds": 0,
+      "clearDelaySeconds": 0
     }
   }
 }

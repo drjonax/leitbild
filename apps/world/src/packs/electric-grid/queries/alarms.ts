@@ -20,7 +20,7 @@ const alarmsPayloadSchema = z.object({
 
 const alarmSchema = z.object({
   id: z.string().describe('Stable alarm id <scope>:<asset>:<condition>; the same condition on the same asset always has this id.'),
-  scope: z.enum(['island', 'branch', 'generator']),
+  scope: z.enum(['island', 'branch', 'generator', 'hvdc']),
   assetId: z.string().describe('Island id or Grid Asset id.'),
   condition: z.string(),
   priority,
@@ -94,7 +94,7 @@ const byUrgency = (left: GridAlarmRecord, right: GridAlarmRecord): number =>
 export const gridAlarmsQuery = defineGridQuery({
   id: 'world.electric-grid.alarms.list',
   title: 'List Grid alarms',
-  description: 'Lists persistent Grid alarm records, most urgent first: island frequency bands, de-energised and formed islands, reserve deficits per product, unserved load, LFDD stages, AC non-convergence, branch loading bands, branch and generator trips. An alarm stays active until its condition clears; acknowledgement never clears it. Filter by priority, state and island; acknowledge or shelve with world.electric-grid.alarm.lifecycle.',
+  description: 'Lists persistent Grid alarm records, most urgent first: island frequency bands, de-energised and formed islands, reserve deficits per product, unserved load, LFDD stages, AC non-convergence, branch loading bands, branch, generator and HVDC link trips. An alarm stays active until its condition clears; acknowledgement never clears it. Filter by priority, state and island; acknowledge or shelve with world.electric-grid.alarm.lifecycle.',
   searchTerms: ['alarm', 'alarms', 'alarm list', 'annunciator', 'event list', 'trip', 'overload', 'frequency', 'unacknowledged', 'shelved', 'alarm flood', 'alarm', 'alarmliste', 'hendelser', 'utløst', 'overlast', 'frekvens', 'kvittering'],
   input: alarmsPayloadSchema,
   output: alarmsResultSchema,

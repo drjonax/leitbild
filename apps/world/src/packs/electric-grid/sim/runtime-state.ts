@@ -7,10 +7,11 @@ import type { GridRuntimeInstance, RestoredGridRuntimeState } from '../runtime/i
 const finite = z.number().finite()
 const nonNegative = finite.nonnegative()
 
-// Version 4 persists island identity, the full frequency-control state (governors, AGC, mFRR,
-// LFDD latches and generator relays), branch relay state, alarm records and whether a manual
-// shedding limit is emergency shedding. Earlier runs do not restore: there is no migration.
-export const electricGridRuntimeStateSchemaVersion = 4
+// Version 5 persists island identity, the full frequency-control state (governors, AGC, mFRR,
+// LFDD latches and generator relays), branch relay state, alarm records, whether a manual
+// shedding limit is emergency shedding, and each HVDC link's operating state and trip. Earlier
+// runs do not restore: there is no migration.
+export const electricGridRuntimeStateSchemaVersion = 5
 
 const reservesSchema = z.object({
   fcrNMw: nonNegative,
@@ -77,9 +78,17 @@ const branchProtectionStateSchema = z.object({
   }).strict().nullable(),
 }).strict()
 
+const hvdcLinkStateSchema = z.object({
+  id: z.string().min(1),
+  state: z.enum(['deblocked', 'blocked', 'tripped']),
+  setpointMw: finite,
+  transferMw: finite,
+  trip: z.object({ cause: z.enum(['command', 'ac-voltage-loss']), atElapsedMs: nonNegative, transferMw: finite }).strict().nullable(),
+}).strict()
+
 const alarmRecordSchema = z.object({
   id: z.string().min(1),
-  scope: z.enum(['island', 'branch', 'generator']),
+  scope: z.enum(['island', 'branch', 'generator', 'hvdc']),
   assetId: z.string().min(1),
   condition: z.string().min(1),
   priority: z.union([z.literal(1), z.literal(2), z.literal(3)]),
@@ -128,7 +137,7 @@ export const electricGridRuntimeStateSchema = z.object({
     loads: z.array(z.object({ id: z.string().min(1), nominalDemandMw: nonNegative, manualDemandLimitMw: nonNegative.nullable(), manualShedEmergency: z.boolean() }).strict()),
     storage: z.array(z.object({ id: z.string().min(1), stateOfChargeFraction: finite.min(0).max(1) }).strict()),
     externalSystems: z.array(z.object({ id: z.string().min(1), scheduledImportMw: finite }).strict()),
-    hvdcLinks: z.array(z.object({ id: z.string().min(1), setpointMw: finite, transferMw: finite }).strict()),
+    hvdcLinks: z.array(hvdcLinkStateSchema),
     islands: z.array(z.object({ id: z.string().min(1), anchorBusId: z.string().min(1), frequency: islandFrequencyStateSchema.nullable() }).strict()),
     lossLoadByBusMw: z.array(nonNegative),
     protection: z.object({
@@ -181,7 +190,7 @@ export const runtimeStateForElectricGrids = (grids: ReadonlyMap<string, GridRunt
       loads: [...grid.loads].map(([id, state]) => ({ id, nominalDemandMw: state.nominalDemandMw, manualDemandLimitMw: state.manualDemandLimitMw, manualShedEmergency: state.manualShedEmergency })),
       storage: [...grid.storage].map(([id, state]) => ({ id, stateOfChargeFraction: state.stateOfChargeFraction })),
       externalSystems: [...grid.externalSystems].map(([id, state]) => ({ id, scheduledImportMw: state.scheduledImportMw })),
-      hvdcLinks: [...grid.hvdcLinks].map(([id, state]) => ({ id, setpointMw: state.setpointMw, transferMw: state.transferMw })),
+      hvdcLinks: [...grid.hvdcLinks].map(([id, state]) => ({ id, state: state.state, setpointMw: state.setpointMw, transferMw: state.transferMw, trip: state.trip === null ? null : { ...state.trip } })),
       islands: islands.islands.map(island => ({ id: island.id, anchorBusId: island.anchorBusId, frequency: island.frequency === null ? null : structuredClone(island.frequency) as ElectricGridRuntimeState['grids'][number]['islands'][number]['frequency'] })),
       lossLoadByBusMw: Array.from(grid.lossLoadByBusMw),
       protection: {

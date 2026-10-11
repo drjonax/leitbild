@@ -1,11 +1,12 @@
 import type { GridHvdcLinkDefinition } from '../grid-model.ts'
-import type { GridRuntimeInstance } from './instance.ts'
+import { queueGridSignal } from './grid-signals.ts'
+import type { GridHvdcLinkState, GridHvdcTrip, GridHvdcTripCause, GridIsland, GridRuntimeInstance } from './instance.ts'
 
 /**
  * HVDC links are controllable injection pairs, never AC branches. The sending converter draws
  * |transfer| from its AC bus and the receiving converter delivers |transfer|·(1 − loss). A terminal
  * on the boundary bus of an asynchronous external system lies outside the modelled AC network: that
- * system absorbs or supplies it.
+ * system absorbs or supplies it. A blocked or tripped link transfers nothing.
  */
 export const hvdcTerminalInjectionsMw = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition): { readonly fromMw: number; readonly toMw: number } => {
   const transferMw = grid.hvdcLinks.get(link.id)!.transferMw
@@ -28,45 +29,113 @@ export const hvdcInjectionAtBusesMw = (grid: GridRuntimeInstance, busIds: Readon
   return injectionMw
 }
 
-const busIsEnergized = (grid: GridRuntimeInstance, busId: string): boolean => {
-  if (grid.definition.index.asynchronousBoundaryBusIds.has(busId)) return true
+/** The stable island holding a bus at the latest island reconciliation. */
+const islandAtBus = (grid: GridRuntimeInstance, busId: string): GridIsland => {
   const islands = grid.islandPlan
-  if (!islands) return false
+  if (!islands) throw new Error(`Grid ${grid.definition.gridId} has no islands yet; HVDC converters act inside an advance`)
   const network = islands.plan.network
-  return islands.islands[islands.plan.islandIndexOfBus[network.busIndexById.get(busId)!]!]!.energized
+  return islands.islands[islands.plan.islandIndexOfBus[network.busIndexById.get(busId)!]!]!
+}
+
+/** A converter terminal has AC voltage: its bus is energised, or it is the boundary of an asynchronous system. */
+const terminalEnergized = (grid: GridRuntimeInstance, busId: string): boolean =>
+  grid.definition.index.asynchronousBoundaryBusIds.has(busId) || islandAtBus(grid, busId).energized
+
+const terminalsEnergized = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition): boolean =>
+  terminalEnergized(grid, link.fromBusId) && terminalEnergized(grid, link.toBusId)
+
+/** The converter terminal without AC voltage as `label (bus id)`, or null when both terminals have it. */
+export const unpoweredHvdcTerminal = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition): string | null => {
+  const busId = [link.fromBusId, link.toBusId].find(candidate => !terminalEnergized(grid, candidate))
+  return busId === undefined ? null : `${grid.definition.index.busById.get(busId)!.label} (${busId})`
+}
+
+export const hvdcLinkFor = (grid: GridRuntimeInstance, linkId: string): { readonly definition: GridHvdcLinkDefinition; readonly state: GridHvdcLinkState } => {
+  const definition = grid.definition.index.hvdcLinks.find(link => link.id === linkId)
+  const state = grid.hvdcLinks.get(linkId)
+  if (!definition || !state) throw new Error(`HVDC link not found: ${linkId}. Discover HVDC link ids with world.electric-grid.assets.search (kind hvdc).`)
+  return { definition, state }
+}
+
+/** A blocked or tripped link: no set-point, transfer or losses. */
+export const stopHvdcLink = (state: GridHvdcLinkState): void => {
+  state.setpointMw = 0
+  state.transferMw = 0
+  state.lossesMw = 0
+}
+
+const tripCauseText: Readonly<Record<GridHvdcTripCause, string>> = {
+  command: 'was tripped by command',
+  'ac-voltage-loss': 'tripped on loss of AC voltage',
+}
+
+/** What tripped a link, for rejection reasons and its alarm. */
+export const hvdcTripReason = (trip: GridHvdcTrip): string =>
+  `${tripCauseText[trip.cause]} while sending ${Math.round(trip.transferMw * 10) / 10} MW`
+
+/** Queues an operator transition of a link as a Simulation Run signal. */
+export const queueHvdcTransition = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition, transition: 'blocked' | 'deblocked' | 'trip-reset', transferBeforeMw: number): void => {
+  queueGridSignal(grid, {
+    type: `electric-grid.hvdc.${transition}`,
+    // A block disconnects an import or export at once.
+    severity: transition === 'blocked' ? 'warning' : 'info',
+    key: `hvdc|${link.id}|${transition}|${grid.elapsedMs}|${grid.tick}`,
+    payload: {
+      gridId: grid.definition.gridId,
+      assetId: link.id,
+      label: link.label,
+      transferBeforeMw,
+      islandId: islandAtBus(grid, link.fromBusId).id,
+      elapsedSeconds: grid.elapsedMs / 1_000,
+    },
+  })
+}
+
+/** Trips a deblocked link: its transfer drops to 0 at once and it stays tripped until reset-hvdc-trip. */
+export const tripHvdcLink = (grid: GridRuntimeInstance, link: GridHvdcLinkDefinition, state: GridHvdcLinkState, cause: GridHvdcTripCause): void => {
+  const transferMw = state.transferMw
+  state.state = 'tripped'
+  state.trip = { cause, atElapsedMs: grid.elapsedMs, transferMw }
+  stopHvdcLink(state)
+  queueGridSignal(grid, {
+    type: 'electric-grid.protection.tripped',
+    severity: 'warning',
+    key: `trip|${link.id}|${grid.elapsedMs}|${grid.tick}`,
+    payload: {
+      gridId: grid.definition.gridId,
+      assetId: link.id,
+      assetKind: 'hvdc',
+      label: link.label,
+      element: cause,
+      transferMw,
+      islandId: islandAtBus(grid, link.fromBusId).id,
+      elapsedSeconds: grid.elapsedMs / 1_000,
+    },
+  })
 }
 
 /**
- * Ramps each link's transfer towards its set-point at its ramp limit over `seconds`. A converter
- * whose AC terminal is de-energised blocks: its transfer drops to 0.
+ * Ramps each deblocked link's transfer towards its set-point at its ramp limit over `seconds`. A
+ * converter whose AC terminal has lost voltage trips first: its transfer drops to 0.
  */
 export const advanceHvdcLinks = (grid: GridRuntimeInstance, seconds: number): void => {
   for (const link of grid.definition.index.hvdcLinks) {
     const state = grid.hvdcLinks.get(link.id)!
-    if (!busIsEnergized(grid, link.fromBusId) || !busIsEnergized(grid, link.toBusId)) {
-      state.transferMw = 0
-    } else {
-      const stepMw = link.rampMwPerMinute / 60 * seconds
-      const differenceMw = state.setpointMw - state.transferMw
-      state.transferMw = Math.abs(differenceMw) <= stepMw ? state.setpointMw : state.transferMw + Math.sign(differenceMw) * stepMw
+    if (state.state !== 'deblocked') continue
+    if (!terminalsEnergized(grid, link)) {
+      tripHvdcLink(grid, link, state, 'ac-voltage-loss')
+      continue
     }
+    const stepMw = link.rampMwPerMinute / 60 * seconds
+    const differenceMw = state.setpointMw - state.transferMw
+    state.transferMw = Math.abs(differenceMw) <= stepMw ? state.setpointMw : state.transferMw + Math.sign(differenceMw) * stepMw
     state.lossesMw = Math.abs(state.transferMw) * link.lossPercent / 100
   }
 }
 
-/** True while some unblocked link's transfer is still ramping towards its set-point. */
+/** True while some deblocked link's transfer is still ramping towards its set-point. */
 export const hvdcLinksRamping = (grid: GridRuntimeInstance): boolean =>
   grid.definition.index.hvdcLinks.some(link => {
     const state = grid.hvdcLinks.get(link.id)!
-    return state.transferMw !== state.setpointMw && busIsEnergized(grid, link.fromBusId) && busIsEnergized(grid, link.toBusId)
+    return state.state === 'deblocked' && state.transferMw !== state.setpointMw && terminalsEnergized(grid, link)
   })
-
-/** Sets an HVDC link's set-point; the transfer follows at the link's ramp limit. */
-export const setHvdcSetpoint = (grid: GridRuntimeInstance, linkId: string, setpointMw: number): void => {
-  const link = grid.definition.index.hvdcLinks.find(candidate => candidate.id === linkId)
-  if (!link) throw new Error(`HVDC link not found: ${linkId}`)
-  if (!Number.isFinite(setpointMw) || Math.abs(setpointMw) > link.ratingMw) {
-    throw new Error(`HVDC link ${linkId} set-point ${setpointMw} MW lies outside its ±${link.ratingMw} MW rating`)
-  }
-  grid.hvdcLinks.get(linkId)!.setpointMw = setpointMw
-}

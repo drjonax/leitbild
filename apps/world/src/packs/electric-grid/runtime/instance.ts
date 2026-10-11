@@ -152,12 +152,32 @@ export interface GridExternalSystemState {
   energized: boolean
 }
 
+/**
+ * deblocked: the converters run and the transfer follows the set-point; blocked: stopped by
+ * block-hvdc (or after a trip reset) at 0 MW until deblock-hvdc; tripped: stopped by the converter
+ * protection or trip-hvdc at 0 MW until reset-hvdc-trip.
+ */
+export type GridHvdcLinkOperatingState = 'deblocked' | 'blocked' | 'tripped'
+
+/** command: trip-hvdc; ac-voltage-loss: a converter terminal's AC bus was de-energised. */
+export type GridHvdcTripCause = 'command' | 'ac-voltage-loss'
+
+export interface GridHvdcTrip {
+  readonly cause: GridHvdcTripCause
+  readonly atElapsedMs: number
+  /** Transfer at the trip (MW, signed like the set-point). */
+  readonly transferMw: number
+}
+
 export interface GridHvdcLinkState {
-  /** Set-point (MW): positive sends from the link's from-bus to its to-bus. */
+  state: GridHvdcLinkOperatingState
+  /** Set-point (MW): positive sends from the link's from-bus (its Norwegian converter) to its to-bus, so positive exports. */
   setpointMw: number
   /** Power sent at the sending converter (MW, signed like the set-point), ramping towards the set-point. */
   transferMw: number
   lossesMw: number
+  /** The trip of a tripped link; null in every other state. */
+  trip: GridHvdcTrip | null
 }
 
 /**
@@ -335,7 +355,7 @@ export interface RestoredGridRuntimeState {
   readonly loads: ReadonlyArray<{ readonly id: string; readonly nominalDemandMw: number; readonly manualDemandLimitMw: number | null; readonly manualShedEmergency: boolean }>
   readonly storage: ReadonlyArray<{ readonly id: string; readonly stateOfChargeFraction: number }>
   readonly externalSystems: ReadonlyArray<{ readonly id: string; readonly scheduledImportMw: number }>
-  readonly hvdcLinks: ReadonlyArray<{ readonly id: string; readonly setpointMw: number; readonly transferMw: number }>
+  readonly hvdcLinks: ReadonlyArray<{ readonly id: string; readonly state: GridHvdcLinkOperatingState; readonly setpointMw: number; readonly transferMw: number; readonly trip: GridHvdcTrip | null }>
   readonly islands: ReadonlyArray<{ readonly id: string; readonly anchorBusId: string; readonly frequency: IslandFrequencyState | null }>
   readonly lossLoadByBusMw: ReadonlyArray<number>
   readonly protection: {
@@ -465,9 +485,17 @@ export const createGridRuntimeInstance = (config: {
   const hvdcSetpoints = new Map(operatingPoint.hvdcSetpoints.map(entry => [entry.linkId, entry.setpointMw]))
   const hvdcLinks = new Map(index.hvdcLinks.map(link => {
     const stored = restoredHvdc?.get(link.id)
-    // A fresh Grid starts with each link transferring its Operating Point set-point.
+    if (stored && stored.state !== 'deblocked' && (stored.setpointMw !== 0 || stored.transferMw !== 0)) throw new Error(`stored HVDC link ${link.id} is ${stored.state} but carries a set-point or transfer`)
+    if (stored && (stored.state === 'tripped') !== (stored.trip !== null)) throw new Error(`stored HVDC link ${link.id} must carry a trip exactly when it is tripped`)
+    // A fresh Grid starts with each link deblocked, transferring its Operating Point set-point.
     const setpointMw = stored?.setpointMw ?? requiredValue(hvdcSetpoints, link.id, 'HVDC set-point')
-    return [link.id, { setpointMw, transferMw: stored?.transferMw ?? setpointMw, lossesMw: 0 } satisfies GridHvdcLinkState]
+    return [link.id, {
+      state: stored?.state ?? 'deblocked',
+      setpointMw,
+      transferMw: stored?.transferMw ?? setpointMw,
+      lossesMw: 0,
+      trip: stored?.trip ?? null,
+    } satisfies GridHvdcLinkState]
   }))
   const pointsById = new Map(model.connectionPoints.map(point => [point.id, point]))
   const externalConnections = new Map<string, GridExternalConnectionState>()
