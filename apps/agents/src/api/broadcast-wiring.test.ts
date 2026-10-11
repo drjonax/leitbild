@@ -107,6 +107,22 @@ describe('lazy Workspace broadcast wiring (regression for 5d73a8e)', () => {
     const our = broadcasts.filter(b => b.workspaceId === cookieId)
     expect(our.length).toBeGreaterThan(0)
     expect(our.some(b => b.msg.type === 'message')).toBe(true)
+    // Human HTTP activation uses the same owner operation as the capability,
+    // including broadcast and scheduled persistence rather than route-only UI wiring.
+    const packsEndpoint = `/rooms/${room.profile.id}/packs`
+    const packsRoute = roomRoutes.find(route => route.method === 'PUT' && route.pattern.test(packsEndpoint))!
+    const knownPack = sys.packCatalog.list()[0]!.id
+    const packsResponse = await packsRoute.handler(new Request(`http://localhost${packsEndpoint}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ activePacks: [knownPack, knownPack] }),
+    }), packsEndpoint.match(packsRoute.pattern)!, { system: sys } as RouteContext)
+    expect(packsResponse.status).toBe(200)
+    expect(await packsResponse.json()).toEqual({ activePacks: [knownPack] })
+    expect(broadcasts.filter(b => b.msg.type === 'pack_activation_changed')).toEqual([
+      { workspaceId: cookieId, msg: { type: 'pack_activation_changed', roomId: room.profile.id, activePacks: [knownPack] } },
+    ])
+    await registry.evictOne(cookieId)
+    const restored = await registry.getOrLoad(cookieId)
+    expect(restored.rooms.getRoom(room.profile.id)!.getActivePacks()).toEqual([knownPack])
     await registry.shutdown()
   })
 

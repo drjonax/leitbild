@@ -6,6 +6,7 @@ import { validateSummaryConfig } from '../../core/types/summary.ts'
 import type { RouteEntry } from './types.ts'
 import { asAIAgent } from '../../agents/shared.ts'
 import { exportRoomConversation } from '../../core/rooms/room-export.ts'
+import { roomPacksInputSchema } from '../../packs/activation.ts'
 
 export const roomRoutes: RouteEntry[] = [
   {
@@ -194,26 +195,15 @@ export const roomRoutes: RouteEntry[] = [
     // unknown Pack id aborts the whole replacement.
     method: 'PUT',
     pattern: /^\/rooms\/([^/]+)\/packs$/,
-    handler: async (req, match, { system, broadcastToWorkspace, workspaceId }) => {
+    handler: async (req, match, { system }) => {
       const name = decodeURIComponent(match[1]!)
       const room = system.rooms.getRoom(name)
       if (!room) return errorResponse(`Room "${name}" not found`, 404)
-      const body = await parseBody(req) as { activePacks?: unknown } | null
-      if (!Array.isArray(body?.activePacks)
-        || !body.activePacks.every(value => typeof value === 'string' && value.length > 0)) {
-        return errorResponse('activePacks must be an array of Pack ids', 400)
-      }
-      const requested = [...new Set(body.activePacks as ReadonlyArray<string>)]
-
-      const knownSet = new Set(system.packCatalog.list().map(pack => pack.id))
-
-      const unknown = requested.filter(ns => !knownSet.has(ns))
-      if (unknown.length > 0) return errorResponse(`unknown Pack ids: ${unknown.join(', ')}`, 400)
-
-      room.setActivePacks(requested)
-      const activePacks = room.getActivePacks()
-      broadcastToWorkspace(workspaceId, { type: 'pack_activation_changed', roomId: room.profile.id, activePacks })
-      return json({ activePacks })
+      const parsed = roomPacksInputSchema.safeParse(await parseBody(req))
+      if (!parsed.success) return errorResponse(parsed.error.message, 400)
+      const result = system.setRoomPacks(room.profile.id, parsed.data.activePacks)
+      if (!result.ok) return errorResponse(result.message, result.code === 'room_not_found' ? 404 : 400)
+      return json({ activePacks: result.activePacks })
     },
   },
   {

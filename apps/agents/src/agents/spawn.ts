@@ -99,20 +99,6 @@ export const createToolExecutor = (
         continue
       }
 
-      const entry = registry.getEntry(call.tool)
-      if (!entry) {
-        results.push(retainOutcome({ success: false, error: `Tool "${call.tool}" is not registered` }))
-        continue
-      }
-      const owningPack = owningPackFor(entry)
-      const room = roomId === undefined || getRoomActivation === undefined
-        ? undefined
-        : getRoomActivation(roomId)
-      if (owningPack !== undefined && room !== undefined && !room.getActivePacks().includes(owningPack)) {
-        results.push(retainOutcome({ success: false, error: `Tool "${call.tool}" belongs to Pack "${owningPack}", which is not active in this Room` }))
-        continue
-      }
-
       const controller = new AbortController()
       const callSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
       const timer = setTimeout(() => controller.abort(new Error(`Tool "${call.tool}" timed out after 30s; inspect state before retrying a command`)), 30_000)
@@ -128,6 +114,16 @@ export const createToolExecutor = (
           // Admission/cancellation before dispatch is not a tool outcome.
           // In particular, a queued Workspace operation may already be stale.
           callSignal.throwIfAborted()
+          const entry = registry.getEntry(call.tool)
+          if (!entry) return retainOutcome({ success: false, error: `Tool "${call.tool}" is not registered` })
+          const room = roomId === undefined || getRoomActivation === undefined ? undefined : getRoomActivation(roomId)
+          if (roomId !== undefined && getRoomActivation !== undefined && room === undefined) {
+            return retainOutcome({ success: false, error: `Room "${roomId}" is unavailable; no tool was dispatched` })
+          }
+          const owningPack = owningPackFor(entry)
+          if (owningPack !== undefined && room !== undefined && !room.getActivePacks().includes(owningPack)) {
+            return retainOutcome({ success: false, error: `Tool "${call.tool}" belongs to Pack "${owningPack}", which is not active in this Room` })
+          }
           let result: ToolResult
           dispatched = true
           try { result = await entry.tool.execute(call.arguments, { ...callContext, signal: callSignal, ...(call.callId === undefined ? {} : { executionCallId: call.callId }) }) }
@@ -179,13 +175,12 @@ export const __testSeam = { createToolExecutor }
 export interface AgentToolSupport {
   readonly toolExecutor?: ToolExecutor
   // Static tool definitions — the maximal set across all rooms. Used as a
-  // fallback when no resolver is wired (tests, MCP-only mode, room not
-  // found). Pack-aware spawns also set resolveToolDefinitions, which the
+  // fallback when no resolver is wired (tests, MCP-only mode).
+  // Pack-aware spawns also set resolveToolDefinitions, which the
   // agent prefers per eval.
   readonly toolDefinitions?: ReadonlyArray<ToolDefinition>
   // Per-eval tool surface resolver. Filters definitions + executor allow-set
-  // by the active packs in `roomId`. Returns null when the room is unknown
-  // (caller falls back to the static toolDefinitions).
+  // by the active packs in `roomId`. Unknown rooms expose no tools.
   //
   // The LLM sees only selected tools whose owning Packs are active.
   readonly resolveToolDefinitions?: (roomId: string) => ReadonlyArray<ToolDefinition> | null
@@ -199,8 +194,7 @@ const warnMissingTools = (agentName: string, requested: ReadonlyArray<string>, r
 
 // Resolves a room → pack-activation view. Used by the per-eval tool surface
 // resolver to filter the static tool list down to tools whose owning pack is
-// active in the current room. Returns undefined when the room is unknown
-// (caller falls through to the static toolDefinitions).
+// active in the current room. An unknown room exposes no tools.
 export type GetRoomActivation = (roomId: string) =>
   | { readonly getActivePacks: () => ReadonlyArray<string> }
   | undefined
@@ -278,11 +272,7 @@ export const buildToolSupport = async (
   }
 
   if (getRoomActivation) {
-    // A missing Room yields null for headless/test callers using static tools.
-    support.resolveToolDefinitions = (roomId: string): ReadonlyArray<ToolDefinition> | null => {
-      if (!getRoomActivation(roomId)) return null
-      return surface.project(roomId)
-    }
+    support.resolveToolDefinitions = roomId => surface.project(roomId)
   }
 
   return support

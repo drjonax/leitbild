@@ -91,7 +91,7 @@ describe('pack-aware tool surface filter', () => {
     expect(names).not.toContain('cafes_menu')
   })
 
-  test('unknown room → resolver returns null (caller falls back to static)', async () => {
+  test('unknown room exposes no tools instead of falling back to the static selection', async () => {
     const registry = createToolRegistry()
     registry.registerWithSource(okTool('core_tool'), { kind: 'built-in' })
 
@@ -103,7 +103,7 @@ describe('pack-aware tool surface filter', () => {
       () => undefined,
     )
 
-    expect(support.resolveToolDefinitions!('does-not-exist')).toBeNull()
+    expect(support.resolveToolDefinitions!('does-not-exist')).toEqual([])
   })
 
   test('without a Room resolver, support keeps its static selected-tool surface', async () => {

@@ -75,6 +75,11 @@ export const wireWorkspaceRuntimeEvents = (
     sched()
   })
 
+  system.setOnRoomPacksChanged((roomId, activePacks) => {
+    broadcast({ type: 'pack_activation_changed', roomId, activePacks })
+    sched()
+  })
+
   const unsubscribeScriptCatalog = system.scriptStore.onChange(() => {
     broadcast({ type: 'script_catalog_changed' })
   })

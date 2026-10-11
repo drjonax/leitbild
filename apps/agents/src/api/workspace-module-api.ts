@@ -25,6 +25,7 @@ import type { AgentsModuleState } from '../core/workspaces/module-state.ts'
 import type { WorkspaceRuntimeRegistry } from '../core/workspaces/runtime-registry.ts'
 import { workspaceModulePaths } from '../core/paths.ts'
 import { loadWorkspaceModuleSnapshots } from '../core/storage/module-snapshots.ts'
+import { roomPacksInputSchema } from '../packs/activation.ts'
 
 export const agentsModuleManifest = workspaceModuleManifestSchema.parse({
   module: {
@@ -290,6 +291,39 @@ const parseRoomDefinitionWrite = (runtime: AgentsWorkspaceRuntime, raw: unknown)
 }
 
 const agentsCapabilities = createModuleCapabilityRegistry<{ runtime: AgentsWorkspaceRuntime; library: RoomDefinitionLibrary; flush: () => Promise<void> }, Response>(AGENTS_MODULE_ID, [
+  {
+    descriptor: {
+      id: 'agents.packs.list', moduleId: AGENTS_MODULE_ID,
+      kind: 'query', scope: { kind: 'workspace' }, title: 'List installed Agent Packs',
+      description: 'Lists exact installed and bundled Pack IDs available for agents.room.packs.set. Installation and per-Room activation are separate; this does not activate anything.',
+      risk: 'read', idempotent: true,
+      inputSchema: z.toJSONSchema(emptyInputSchema), outputSchema: { type: 'object' },
+    },
+    invoke: async ({ runtime }, invocation) => {
+      emptyInputSchema.parse(invocation.input)
+      return json({ result: { packs: runtime.packCatalog.list().map(pack => ({
+        id: pack.id, title: pack.descriptor.name, description: pack.descriptor.description, deployment: pack.deployment,
+      })) } })
+    },
+  },
+  {
+    descriptor: {
+      id: 'agents.room.packs.set', moduleId: AGENTS_MODULE_ID,
+      kind: 'command', scope: { kind: 'resource', resourceType: 'agents.room' },
+      title: 'Set Room Packs',
+      description: 'Replaces the installed Packs active in this Room. Read the current list with agents.room.read. Activation does not install Packs or select tools for an Agent. New tool invocations use the current activation; already admitted work may finish.',
+      risk: 'write', idempotent: true,
+      inputSchema: z.toJSONSchema(roomPacksInputSchema),
+      outputSchema: z.toJSONSchema(roomPacksInputSchema),
+    },
+    invoke: async ({ runtime, flush }, invocation) => {
+      const input = roomPacksInputSchema.parse(invocation.input)
+      const result = runtime.setRoomPacks(requireResourceId(invocation, 'agents.room'), input.activePacks)
+      if (!result.ok) return apiError(result.code === 'room_not_found' ? 404 : 400, result.code, result.message)
+      await flush()
+      return json({ result: { activePacks: result.activePacks } })
+    },
+  },
   {
     descriptor: {
       id: 'agents.assistance.open', moduleId: AGENTS_MODULE_ID,

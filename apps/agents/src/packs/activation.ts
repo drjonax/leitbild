@@ -4,6 +4,14 @@
 // room.activePacks is the complete, explicit list. Installing a Pack does
 // not activate it, and no synthetic or implicit Packs are added at read time.
 
+import { z } from 'zod'
+
+export const roomPacksInputSchema = z.object({ activePacks: z.array(z.string().min(1)) }).strict()
+
+export type RoomPacksResult =
+  | { readonly ok: true; readonly activePacks: ReadonlyArray<string> }
+  | { readonly ok: false; readonly code: 'room_not_found' | 'unknown_pack'; readonly message: string }
+
 export interface RoomActivation {
   readonly getActivePacks: () => ReadonlyArray<string>
 }
