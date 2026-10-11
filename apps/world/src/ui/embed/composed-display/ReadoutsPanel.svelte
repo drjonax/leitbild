@@ -56,7 +56,7 @@
   const beyond = (reading: TrendReading): boolean => reading.offScale !== null || reading.limit?.kind === 'past'
   const sampled = (path: string) => latest?.values.find(entry => entry.path === path)
   // What World added to an agent's display says why on its own row, in a word (the tooltip has the reason).
-  const ADDED_WORDS: Readonly<Record<DisplayEvidenceKind, string>> = { cause: 'cause', delivers: 'delivers', isolates: 'isolates', reference: 'reference', mode: 'mode lead', flow: 'flow' }
+  const ADDED_WORDS: Readonly<Record<DisplayEvidenceKind, string>> = { cause: 'cause', delivers: 'delivers', isolates: 'isolates', reference: 'reference', mode: 'mode watch', flow: 'flow' }
   const sparklineMs = $derived(column && history !== undefined ? panel.sparklineMs : undefined)
   // Each value as the row reads it: in the column, which way its sparkline's
   // history goes over the sparkline's rate window, so its margin names the
