@@ -1,0 +1,545 @@
+{
+ "schema": "leitbild.electric-grid.norway-measured-exchange",
+ "curatedAt": "2026-10-11",
+ "note": "Measured physical exchange, production and consumption of Norway at the two Operating Point hours, for the measured-flows validation test. Flows are hourly means of the four quarter-hours, positive in the listed from→to direction. Elhub hourly energy (kWh) is the hour's mean power. HVDC flows are per neighbouring area, as Energy-Charts publishes them per country.",
+ "sources": [
+  {
+   "id": "svk-physical-flows",
+   "title": "Svenska kraftnät Data Service: Physical Power Flows (net_cross_border_physical_flows), quarter-hourly per bidding-zone border",
+   "publisher": "Svenska kraftnät",
+   "url": "https://data.svk.se/dataset/net_cross_border_physical_flows",
+   "licence": "cc-by-4.0",
+   "attribution": "Svenska kraftnät",
+   "retrievals": [
+    {
+     "url": "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-01-12T07%3A00%3A00%22%2C%222026-01-12T07%3A15%3A00%22%2C%222026-01-12T07%3A30%3A00%22%2C%222026-01-12T07%3A45%3A00%22%5D%7D",
+     "retrievedAt": "2026-10-11T18:51:35.178Z",
+     "sha256": "b9995a8dcc6820aeb6c9f5ab02fd0e87c5d0f8b3be13125192671cdf2b89af4e"
+    },
+    {
+     "url": "https://data.svk.se/api/3/action/datastore_search?resource_id=4aa94b88-9f42-4f0a-a6a8-8e47aadc782a&limit=1000&filters=%7B%22start_time_utc%22%3A%5B%222026-07-12T04%3A00%3A00%22%2C%222026-07-12T04%3A15%3A00%22%2C%222026-07-12T04%3A30%3A00%22%2C%222026-07-12T04%3A45%3A00%22%5D%7D",
+     "retrievedAt": "2026-10-11T18:51:35.376Z",
+     "sha256": "f12eb4c90d6d41e8b7bfa5c1e102e9d401e64b1a820fde24435a9030f65b8fd7"
+    },
+    {
+     "url": "https://data.svk.se/api/3/action/package_show?id=net_cross_border_physical_flows",
+     "retrievedAt": "2026-10-11T18:51:35.798Z",
+     "sha256": "bb7c8deda36fe77293db51cbc679bdbef4dc4ad73c09200b473796c13cd9fed7"
+    }
+   ]
+  },
+  {
+   "id": "energy-charts",
+   "title": "Energy-Charts API: cross-border physical flows (/cbpf) and public net generation (/public_power), country no",
+   "publisher": "Fraunhofer ISE (Energy-Charts.info), from ENTSO-E Transparency Platform data",
+   "url": "https://api.energy-charts.info/",
+   "licence": "cc-by-4.0",
+   "attribution": "Energy-Charts.info (Fraunhofer ISE); data: ENTSO-E Transparency Platform",
+   "retrievals": [
+    {
+     "url": "https://api.energy-charts.info/cbpf?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z",
+     "retrievedAt": "2026-10-11T18:59:31.946Z",
+     "sha256": "24ffcbe6521365a9822cc466e0a03b1e7ea4ae666c3aa51cd1af05e3e9338912"
+    },
+    {
+     "url": "https://api.energy-charts.info/cbpf?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z",
+     "retrievedAt": "2026-10-11T18:59:32.171Z",
+     "sha256": "e8f636d0c4fa5d289b0cea96d0ed3f58084415162c4a552c5444e8e25ec03478"
+    },
+    {
+     "url": "https://api.energy-charts.info/public_power?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z",
+     "retrievedAt": "2026-10-11T18:59:32.505Z",
+     "sha256": "5d3221a2ff5982f092f9c419cdca80e554dd109dbec34f528ed9c9bfdd14351f"
+    },
+    {
+     "url": "https://api.energy-charts.info/public_power?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z",
+     "retrievedAt": "2026-10-11T18:59:32.862Z",
+     "sha256": "0f11a3c90197c143aa65c59bbd83a5767999ee876fdf434b0c23cc8e819ed370"
+    }
+   ]
+  },
+  {
+   "id": "elhub",
+   "title": "Elhub energy-data API: PRODUCTION_PER_GROUP_MBA_HOUR and CONSUMPTION_PER_GROUP_MBA_HOUR per price area",
+   "publisher": "Elhub AS",
+   "url": "https://api.elhub.no/energy-data/v0/price-areas",
+   "licence": "cc-by-4.0",
+   "attribution": "Elhub AS",
+   "retrievals": [
+    {
+     "url": "https://api.elhub.no/energy-data/v0/price-areas?dataset=PRODUCTION_PER_GROUP_MBA_HOUR&startDate=2026-01-12T08%3A00%3A00%2B01%3A00&endDate=2026-01-12T09%3A00%3A00%2B01%3A00",
+     "retrievedAt": "2026-10-11T18:54:08.397Z",
+     "sha256": "cf0eece9c68307760f1fe938b9aee5779093e1b2a02a64d3c37eb06e78409b90"
+    },
+    {
+     "url": "https://api.elhub.no/energy-data/v0/price-areas?dataset=CONSUMPTION_PER_GROUP_MBA_HOUR&startDate=2026-01-12T08%3A00%3A00%2B01%3A00&endDate=2026-01-12T09%3A00%3A00%2B01%3A00",
+     "retrievedAt": "2026-10-11T18:54:08.730Z",
+     "sha256": "f8f9377b9f746f78222ef974012bb1a376993651d9541a21c2a51e0e7570843a"
+    },
+    {
+     "url": "https://api.elhub.no/energy-data/v0/price-areas?dataset=PRODUCTION_PER_GROUP_MBA_HOUR&startDate=2026-07-12T06%3A00%3A00%2B02%3A00&endDate=2026-07-12T07%3A00%3A00%2B02%3A00",
+     "retrievedAt": "2026-10-11T18:54:08.561Z",
+     "sha256": "d120f4b43766d3ac7b3e7f7420b3003a957c4996a21ee594498185b0fc063649"
+    },
+    {
+     "url": "https://api.elhub.no/energy-data/v0/price-areas?dataset=CONSUMPTION_PER_GROUP_MBA_HOUR&startDate=2026-07-12T06%3A00%3A00%2B02%3A00&endDate=2026-07-12T07%3A00%3A00%2B02%3A00",
+     "retrievedAt": "2026-10-11T18:54:09.000Z",
+     "sha256": "a42b18ec481f0404aaaf949efc45b6a1610af65d4880fad2b223ed7a703913b5"
+    }
+   ]
+  },
+  {
+   "id": "statnett-driftsdata-entsoe",
+   "title": "Statnett driftsdata REST API, PhysicalFlowMap/GetTranFlow: physical flow between bidding areas from ENTSO-E (PhysicalFlowMinuteTran), quarter-hour values",
+   "publisher": "Statnett SF (values sourced from the ENTSO-E Transparency Platform, as the API documentation states)",
+   "url": "https://driftsdata.statnett.no/restapi/swagger/docs/v1",
+   "licence": "not-stated",
+   "licenceNote": "Neither driftsdata.statnett.no nor statnett.no states terms of use for these values (checked 2026-10-11). Kept as 24 cited factual measurements for validation only; no other open source gives Norway's internal bidding-area flows without an ENTSO-E account. The API holds no internal flows before late January 2026, so the winter hour has none.",
+   "attribution": "Statnett SF; ENTSO-E Transparency Platform",
+   "retrievals": [
+    {
+     "url": "https://driftsdata.statnett.no/restapi/PhysicalFlowMap/GetTranFlow?Ticks=1783828800000&tranFlow=true",
+     "retrievedAt": "2026-10-11T18:54:29.019Z",
+     "sha256": "aeac7dc607e02405cb8fc05272ce20ae1fdc4b876ae6db589a29ae779c3cb344"
+    },
+    {
+     "url": "https://driftsdata.statnett.no/restapi/PhysicalFlowMap/GetTranFlow?Ticks=1783829700000&tranFlow=true",
+     "retrievedAt": "2026-10-11T18:54:29.728Z",
+     "sha256": "91be1a0bc8c3ee4308430d9afabebb56ddd8ee24e730b2046467770aafc2ead3"
+    },
+    {
+     "url": "https://driftsdata.statnett.no/restapi/PhysicalFlowMap/GetTranFlow?Ticks=1783830600000&tranFlow=true",
+     "retrievedAt": "2026-10-11T18:54:30.538Z",
+     "sha256": "1436ce1d602cfee808f996715dc1758aae3566811dd1fda727ec1843e7b7c9d7"
+    },
+    {
+     "url": "https://driftsdata.statnett.no/restapi/PhysicalFlowMap/GetTranFlow?Ticks=1783831500000&tranFlow=true",
+     "retrievedAt": "2026-10-11T18:54:31.428Z",
+     "sha256": "9029569a11d1acc7d1d6f66355ab8c67fe69c6189e000801ea24c15dca44970a"
+    }
+   ]
+  }
+ ],
+ "hours": {
+  "winterPeak": {
+   "operatingPointId": "electric-grid.norway.winter-weekday-peak",
+   "startUtc": "2026-01-12T07:00:00.000Z",
+   "acBorders": [
+    {
+     "from": "NO1",
+     "to": "SE3",
+     "mw": 1081.2,
+     "quarterHoursMw": [
+      885.4,
+      1122.2,
+      1213.4,
+      1103.7
+     ],
+     "source": "svk-physical-flows"
+    },
+    {
+     "from": "NO3",
+     "to": "SE2",
+     "mw": 151.2,
+     "quarterHoursMw": [
+      158,
+      153.5,
+      154.5,
+      138.8
+     ],
+     "source": "svk-physical-flows"
+    },
+    {
+     "from": "NO4",
+     "to": "SE2",
+     "mw": 73.9,
+     "quarterHoursMw": [
+      79,
+      72.5,
+      70.9,
+      73
+     ],
+     "source": "svk-physical-flows"
+    },
+    {
+     "from": "NO4",
+     "to": "SE1",
+     "mw": 153.8,
+     "quarterHoursMw": [
+      157.3,
+      140.9,
+      148.7,
+      168.4
+     ],
+     "source": "svk-physical-flows"
+    },
+    {
+     "from": "NO4",
+     "to": "FI",
+     "mw": 47,
+     "quarterHoursMw": [
+      47,
+      47,
+      47,
+      47
+     ],
+     "source": "energy-charts"
+    }
+   ],
+   "swedenTotal": {
+    "mw": 1459.3,
+    "quarterHoursMw": [
+     1279,
+     1488,
+     1586,
+     1484
+    ],
+    "source": "energy-charts"
+   },
+   "hvdc": [
+    {
+     "to": "DK1",
+     "mw": -118,
+     "quarterHoursMw": [
+      -161,
+      -176,
+      -160,
+      25
+     ],
+     "source": "energy-charts"
+    },
+    {
+     "to": "DE",
+     "mw": 1404,
+     "quarterHoursMw": [
+      1404,
+      1404,
+      1404,
+      1404
+     ],
+     "source": "energy-charts"
+    },
+    {
+     "to": "NL",
+     "mw": -12,
+     "quarterHoursMw": [
+      -12,
+      -12,
+      -12,
+      -12
+     ],
+     "source": "energy-charts"
+    },
+    {
+     "to": "GB",
+     "mw": -629,
+     "quarterHoursMw": [
+      -629,
+      -629,
+      -629,
+      -629
+     ],
+     "source": "energy-charts"
+    }
+   ],
+   "areas": {
+    "NO1": {
+     "productionMw": {
+      "hydro": 2482.9,
+      "wind": 92.8,
+      "thermal": 27.4,
+      "solar": 0.3,
+      "other": 0.1
+     },
+     "consumptionMw": 7238.7
+    },
+    "NO2": {
+     "productionMw": {
+      "hydro": 8749,
+      "wind": 1031.9,
+      "thermal": 12.9,
+      "solar": 0,
+      "other": 7.2
+     },
+     "consumptionMw": 5817.4
+    },
+    "NO3": {
+     "productionMw": {
+      "hydro": 2741.5,
+      "wind": 1385.5,
+      "thermal": 19.8,
+      "solar": 0,
+      "other": 0.2
+     },
+     "consumptionMw": 4262.9
+    },
+    "NO4": {
+     "productionMw": {
+      "hydro": 3239.7,
+      "wind": 893.5,
+      "thermal": 182.2,
+      "solar": 0,
+      "other": 0.1
+     },
+     "consumptionMw": 3047.1
+    },
+    "NO5": {
+     "productionMw": {
+      "hydro": 5725.3,
+      "wind": 0,
+      "thermal": 12,
+      "solar": 0,
+      "other": 0
+     },
+     "consumptionMw": 2516.8
+    }
+   }
+  },
+  "summerLow": {
+   "operatingPointId": "electric-grid.norway.summer-night-low",
+   "startUtc": "2026-07-12T04:00:00.000Z",
+   "acBorders": [
+    {
+     "from": "NO1",
+     "to": "SE3",
+     "mw": -990.7,
+     "quarterHoursMw": [
+      -953.3,
+      -891.9,
+      -1013.3,
+      -1104.3
+     ],
+     "source": "svk-physical-flows"
+    },
+    {
+     "from": "NO3",
+     "to": "SE2",
+     "mw": -91.9,
+     "quarterHoursMw": [
+      -176.9,
+      -134.9,
+      -55.7,
+      0
+     ],
+     "source": "svk-physical-flows"
+    },
+    {
+     "from": "NO4",
+     "to": "SE2",
+     "mw": -18.7,
+     "quarterHoursMw": [
+      -6,
+      -2.8,
+      -25.2,
+      -41
+     ],
+     "source": "svk-physical-flows"
+    },
+    {
+     "from": "NO4",
+     "to": "SE1",
+     "mw": 255.4,
+     "quarterHoursMw": [
+      266.6,
+      276.4,
+      240,
+      238.4
+     ],
+     "source": "svk-physical-flows"
+    },
+    {
+     "from": "NO4",
+     "to": "FI",
+     "mw": 37,
+     "quarterHoursMw": [
+      37,
+      37,
+      37,
+      37
+     ],
+     "source": "energy-charts"
+    },
+    {
+     "from": "NO1",
+     "to": "NO2",
+     "mw": 1648,
+     "quarterHoursMw": [
+      1675,
+      1598.6,
+      1657.7,
+      1660.5
+     ],
+     "source": "statnett-driftsdata-entsoe"
+    },
+    {
+     "from": "NO1",
+     "to": "NO3",
+     "mw": -76.6,
+     "quarterHoursMw": [
+      -79.2,
+      -90,
+      -78,
+      -59.4
+     ],
+     "source": "statnett-driftsdata-entsoe"
+    },
+    {
+     "from": "NO1",
+     "to": "NO5",
+     "mw": -1011.7,
+     "quarterHoursMw": [
+      -1048.7,
+      -1022.4,
+      -1011.6,
+      -964.3
+     ],
+     "source": "statnett-driftsdata-entsoe"
+    },
+    {
+     "from": "NO2",
+     "to": "NO5",
+     "mw": -673.2,
+     "quarterHoursMw": [
+      -678.5,
+      -661,
+      -684.7,
+      -668.5
+     ],
+     "source": "statnett-driftsdata-entsoe"
+    },
+    {
+     "from": "NO3",
+     "to": "NO4",
+     "mw": -925.7,
+     "quarterHoursMw": [
+      -932.8,
+      -900.9,
+      -922,
+      -947.1
+     ],
+     "source": "statnett-driftsdata-entsoe"
+    },
+    {
+     "from": "NO3",
+     "to": "NO5",
+     "mw": 235.2,
+     "quarterHoursMw": [
+      236.1,
+      251.5,
+      235.5,
+      217.6
+     ],
+     "source": "statnett-driftsdata-entsoe"
+    }
+   ],
+   "swedenTotal": {
+    "mw": -845.2,
+    "quarterHoursMw": [
+     -865,
+     -750,
+     -856,
+     -910
+    ],
+    "source": "energy-charts"
+   },
+   "hvdc": [
+    {
+     "to": "DK1",
+     "mw": 719,
+     "quarterHoursMw": [
+      982,
+      786,
+      633,
+      475
+     ],
+     "source": "energy-charts"
+    },
+    {
+     "to": "DE",
+     "mw": 883.3,
+     "quarterHoursMw": [
+      1174,
+      945,
+      813,
+      601
+     ],
+     "source": "energy-charts"
+    },
+    {
+     "to": "NL",
+     "mw": 0,
+     "quarterHoursMw": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "source": "energy-charts"
+    },
+    {
+     "to": "GB",
+     "mw": 1125,
+     "quarterHoursMw": [
+      1125,
+      1125,
+      1125,
+      1125
+     ],
+     "source": "energy-charts"
+    }
+   ],
+   "areas": {
+    "NO1": {
+     "productionMw": {
+      "hydro": 1238,
+      "wind": 197.3,
+      "thermal": 32.1,
+      "solar": 16.7,
+      "other": 0.5
+     },
+     "consumptionMw": 1811.8
+    },
+    "NO2": {
+     "productionMw": {
+      "hydro": 3546.6,
+      "wind": 71.7,
+      "thermal": 11.1,
+      "solar": 4.3,
+      "other": 11.6
+     },
+     "consumptionMw": 3044.1
+    },
+    "NO3": {
+     "productionMw": {
+      "hydro": 1732.4,
+      "wind": 101.8,
+      "thermal": 18.5,
+      "solar": 1.4,
+      "other": 0.1
+     },
+     "consumptionMw": 2470.3
+    },
+    "NO4": {
+     "productionMw": {
+      "hydro": 2692,
+      "wind": 104.4,
+      "thermal": 180,
+      "solar": 0.1,
+      "other": 0
+     },
+     "consumptionMw": 1674.8
+    },
+    "NO5": {
+     "productionMw": {
+      "hydro": 2999.1,
+      "wind": 0,
+      "thermal": 19.8,
+      "solar": 1.2,
+      "other": 0
+     },
+     "consumptionMw": 1491.9
+    }
+   }
+  }
+ }
+}
