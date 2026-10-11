@@ -580,6 +580,14 @@ enum After {
     Restart(f64),
     /// Run 4's E4: the cap lifted in the same history, no reinitialization.
     Lift(f64),
+    /// The exact consistent start at the window's end, as H1's, but keeping
+    /// the window's step cap, with this Newton coefficient and dcj (stock's
+    /// 0.25 set explicitly when `None`), for this many seconds.
+    Resume {
+        duration_s: f64,
+        newton: f64,
+        dcj: Option<f64>,
+    },
 }
 struct Plan<'a> {
     rtol: f64,
@@ -644,6 +652,7 @@ fn run(base: &Base, kind: Event, plan: Plan<'_>) -> Trace {
     let duration = match plan.after {
         After::None => 0.,
         After::Restart(d) | After::Lift(d) => d,
+        After::Resume { duration_s, .. } => duration_s,
     };
     let end_s = plan.window_s + duration;
     let log = Rc::new(RefCell::new(Log::new(base.pi.clone())));
@@ -795,8 +804,15 @@ fn run(base: &Base, kind: Event, plan: Plan<'_>) -> Trace {
                     ida.stop_at(end_s).unwrap();
                     segment = 1;
                 }
-                After::Restart(_) => {
-                    // H1's restart, as the harness makes it.
+                After::Restart(_) | After::Resume { .. } => {
+                    // H1's restart, as the harness makes it (a resume keeps
+                    // the window's cap at its own coefficient and dcj).
+                    let (newton, dcj, cap) = match plan.after {
+                        After::Resume { newton, dcj, .. } => {
+                            (newton, Some(dcj.unwrap_or(0.25)), plan.max_step_s)
+                        }
+                        _ => (STOCK_NEWTON, plan.dcj, f64::INFINITY),
+                    };
                     let weights = error_weights(&y, plan.rtol, plan.atol);
                     let mut projected = y.clone();
                     let (rates, _) = consistent_start(
@@ -811,12 +827,11 @@ fn run(base: &Base, kind: Event, plan: Plan<'_>) -> Trace {
                     .expect("window-end restart");
                     prior = counts(&stats);
                     ida.reinitialize(t, &projected, &rates).unwrap();
-                    ida.set_nonlinear_convergence_coefficient(STOCK_NEWTON)
-                        .unwrap();
-                    if let Some(d) = plan.dcj {
+                    ida.set_nonlinear_convergence_coefficient(newton).unwrap();
+                    if let Some(d) = dcj {
                         ida.set_delta_cj_lsetup(d).unwrap();
                     }
-                    ida.set_max_step(f64::INFINITY).unwrap();
+                    ida.set_max_step(cap).unwrap();
                     ida.set_max_order(max_order).unwrap();
                     ida.constrain_nonnegative(&stocks).unwrap();
                     ida.stop_at(end_s).unwrap();
@@ -1933,4 +1948,68 @@ fn donor_delta_cj_threshold_probe() {
         "method":"as donor-delta-cj (capped seizure, stock Newton coefficient, dcj set before the first step) and donor-quiet-cost (never capped, from the settled state), at the listed dcj",
         "colors":colors,"capped_seizure":capped,"natural":natural,"cpu_s_total":cpu_s()-cpu0,"load_average_end":load_average()});
     write(&base, "donor-delta-cj-threshold.json", &receipt);
+}
+
+/// Diagnosis 8: does either remedy stop a cycle that has already formed?
+/// The 4.5 and 5 ms capped seizure at stock settings for 5 s, where the cycle
+/// is established, then restarted there by the exact consistent start with
+/// the cap kept, for 5 s more: at stock settings (does a plain restart
+/// alone stop it?), at stock's coefficient with dcj 0.15 and 0.1, and at the
+/// 0.01 coefficient with stock's dcj. Content over 7-10 s.
+#[test]
+#[ignore = "diagnostic probe, NOT S1 evidence; requires the actual packet, the wiki, maintained IF97 and stock IDA/KLU"]
+fn donor_established_cycle_probe() {
+    let cpu0 = cpu_s();
+    let base = base();
+    assert_eq!(base.settle["run5_reproduced"], json!(true));
+    let rtol = num(&base.gates, &["relativeTolerance"]);
+    let dt = num(&base.gates, &["comparison", "observation_s"]);
+    let cutoff = num(&base.budgets, &["uncreditedAbove_Hz"]);
+    let colors = colors(&base);
+    let mut runs = Vec::new();
+    for cap in [0.0045, 0.005] {
+        for (name, newton, dcj) in [
+            ("stock", STOCK_NEWTON, None),
+            ("dcj_0.15", STOCK_NEWTON, Some(0.15)),
+            ("dcj_0.1", STOCK_NEWTON, Some(0.1)),
+            ("newton_0.01", 0.01, None),
+        ] {
+            let trace = run(
+                &base,
+                Event::Seizure,
+                Plan {
+                    rtol,
+                    atol: &base.atol,
+                    window_s: 5.,
+                    max_step_s: cap,
+                    newton: None,
+                    after: After::Resume {
+                        duration_s: 5.,
+                        newton,
+                        dcj,
+                    },
+                    observe_s: Some(dt),
+                    dcj: None,
+                    step_cap: 50_000,
+                    cpu_cap_s: 900.,
+                },
+            );
+            let rms = |a: f64, b: f64| {
+                let x: Vec<f64> = fine_between(&trace, a, b)
+                    .iter()
+                    .map(|c| c.core_dp_pa)
+                    .collect();
+                high_pass_rms(&x, dt, cutoff)
+            };
+            let resumed: Vec<&Step> = trace.steps.iter().filter(|s| s.t > 5. + 1e-12).collect();
+            runs.push(json!({"max_step_s":cap,"resume":name,"newton_coefficient":newton,"dcj":dcj.unwrap_or(0.25),
+                "core_dp_above_band_rms_pa":{"before_restart_2_5_s":rms(2., 5.),"after_restart_7_10_s":rms(7., 10.)},
+                "resumed_steps":resumed.len(),"resumed_residuals":trace.total_residuals-trace.window_counts.map_or(0,|c| c[1]),"resumed_jacobians":trace.total_jacobians-trace.window_counts.map_or(0,|c| c[2]),
+                "cost":cost(&trace, colors, 10.)}));
+        }
+    }
+    let receipt = json!({"kind":"donor-established-cycle-probe-NOT-EVIDENCE","provenance":provenance(&base),
+        "method":"the capped S1 seizure at stock settings to 5 s, then the exact consistent start there (H1's restart) keeping the cap, with the listed Newton coefficient and dcj set before the resumed first step; harness above-band (2 Hz) core-DP RMS before (2-5 s) and after (7-10 s) the restart",
+        "runs":runs,"cpu_s_total":cpu_s()-cpu0,"load_average_end":load_average()});
+    write(&base, "donor-established-cycle.json", &receipt);
 }
