@@ -26,6 +26,7 @@ export const signalsReadQuerySchema = z.object({
 }).strict()
 
 export const signalsSearchQuerySchema = z.object({
+  detail: z.enum(['summary', 'full']).default('summary').describe('Summary keeps signal identity, meaning, units and writability. Use full or signals.resolve for capabilities, limits, provenance and external references. Filtering always uses all metadata.'),
   plantId: idSchema.optional(),
   text: z.string().min(1).optional(),
   tagId: processSignalTagIdSchema.optional(),
@@ -186,5 +187,11 @@ export const answerProcessPlantSignalQuery = (config: {
     .filter(binding => matchesSignalSearch(binding, payload))
     .map(signal => ({ plantId: system.plant.id, signal })))
   const page = paginateProcessPlantSearch(matches, payload.offset, payload.limit)
-  return { total: page.total, offset: page.offset, returned: page.returned, hasMore: page.hasMore, signals: page.items }
+  return {
+    total: page.total, offset: page.offset, returned: page.returned, hasMore: page.hasMore,
+    signals: payload.detail === 'full' ? page.items : page.items.map(({ plantId, signal }) => {
+      const { capabilities, limits, owner, externalRefs, ...summary } = signal
+      return { plantId, signal: summary }
+    }),
+  }
 }
