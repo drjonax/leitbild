@@ -22,9 +22,9 @@ import {
 import { gridMapPalette } from './grid-map-palette.ts'
 import { gridNorwayStyle } from './grid-norway-style.ts'
 
-// The Grid's live map layer: branch loading, switching, energisation and flow direction,
-// bus islands, generator dispatch and trips, and load shedding, drawn from
-// world.electric-grid.map.geometry and map.state as feature-state over native layers.
+// The Grid's live map layer: branch loading, switching, trips, energisation and flow direction,
+// HVDC link state and transfer, bus islands, generator dispatch and trips, and load shedding,
+// drawn from world.electric-grid.map.geometry and map.state as feature-state over native layers.
 
 export const gridOverviewPanelId = 'electric-grid.overview'
 export const gridLiveLayerGroupId = 'electric-grid:live'
@@ -57,6 +57,8 @@ interface LivePalette {
   readonly watch: string
   readonly high: string
   readonly overload: string
+  readonly tripped: string
+  readonly hvdc: string
   readonly open: string
   readonly deenergized: string
   readonly unknown: string
@@ -75,12 +77,15 @@ interface LivePalette {
 }
 
 // Live state colours sit outside the reference voltage hues: teal, amber, orange and red carry
-// loading; greys carry open and de-energised. Alpha lives in the colour, never in line-opacity.
+// loading; greys carry open and de-energised; a tripped branch is red and dashed; HVDC links in
+// service are indigo and dashed. Alpha lives in the colour, never in line-opacity.
 const themed = {
   normal: { light: '#0f8b8d', dark: '#2dd4bf' },
   watch: { light: '#d99a00', dark: '#facc15' },
   high: { light: '#ea580c', dark: '#fb923c' },
   overload: { light: '#d62828', dark: '#f87171' },
+  tripped: { light: '#d62828', dark: '#f87171' },
+  hvdc: { light: '#4338ca', dark: '#a5b4fc' },
   open: { light: '#6b7280', dark: '#9ca3af' },
   deenergized: { light: '#c3c8cf', dark: '#4b5563' },
   shed: { light: '#d62828', dark: '#f87171' },
@@ -95,6 +100,8 @@ const livePalette = (theme: PackMapTheme): LivePalette => {
     watch: themed.watch[theme],
     high: themed.high[theme],
     overload: themed.overload[theme],
+    tripped: themed.tripped[theme],
+    hvdc: themed.hvdc[theme],
     open: themed.open[theme],
     deenergized: themed.deenergized[theme],
     unknown: themed.open[theme],
@@ -145,6 +152,7 @@ const branchWidth = (extra: number): ReadonlyArray<unknown> => ['interpolate', [
 
 const branchColor = (palette: LivePalette): ReadonlyArray<unknown> => ['case',
   ['!', flagState('live', false)], palette.unknown,
+  flagState('tripped', false), palette.tripped,
   ['!', flagState('closed', true)], palette.open,
   ['!', flagState('energized', true)], palette.deenergized,
   ['>=', numberState('loading'), overloadLoadingPercent], palette.overload,
@@ -153,14 +161,26 @@ const branchColor = (palette: LivePalette): ReadonlyArray<unknown> => ['case',
   palette.normal,
 ]
 
+const hvdcColor = (palette: LivePalette): ReadonlyArray<unknown> => ['case',
+  ['!', flagState('live', false)], palette.unknown,
+  flagState('tripped', false), palette.tripped,
+  flagState('blocked', false), palette.open,
+  palette.hvdc,
+]
+
 const majorBranch: ReadonlyArray<unknown> = ['>=', ['get', 'kv'], majorBranchKv]
+// Dash pattern in line widths: a tripped branch reads as broken; an HVDC cable as a dashed DC link.
+const trippedDash = [1.5, 1.5]
+const hvdcDash = [3, 1.5]
+const hvdcWidth = (extra: number): ReadonlyArray<unknown> => ['interpolate', ['exponential', 1.4], ['zoom'],
+  4, ['+', 1.6 + extra, ['case', emphasised, 2, 0]], 8, ['+', 2.8 + extra, ['case', emphasised, 3, 0]], 12, ['+', 4.8 + extra, ['case', emphasised, 4, 0]], 16, ['+', 8 + extra, ['case', emphasised, 6, 0]]]
 
 const flowArrows = (direction: 1 | -1): PackLiveMapLayerSpec => ({
   id: direction === 1 ? 'flow-forward' : 'flow-reverse',
   source: 'features',
   type: 'symbol',
   minzoom: detailZoom,
-  filter: isKind('branch'),
+  filter: ['any', isKind('branch'), isKind('hvdc')],
   layout: {
     'symbol-placement': 'line',
     'symbol-spacing': 160,
@@ -206,6 +226,44 @@ const layersFor = (appearance: PackMapAppearance): ReadonlyArray<PackLiveMapLaye
       'line-opacity': detailOpacity(majorBranch),
     },
     interactive: true,
+  }, {
+    // Casing-coloured gaps over a tripped branch's red line: it reads as broken, unlike a grey open one.
+    id: 'branch-tripped',
+    source: 'features',
+    type: 'line',
+    filter: isKind('branch'),
+    layout: { 'line-join': 'round', 'line-cap': 'butt' },
+    paint: {
+      'line-color': palette.casing,
+      'line-width': branchWidth(0),
+      'line-dasharray': trippedDash,
+      'line-opacity': ['case', flagState('tripped', false), 1, 0],
+    },
+  }, {
+    id: 'hvdc-casing',
+    source: 'features',
+    type: 'line',
+    filter: isKind('hvdc'),
+    layout: line,
+    paint: {
+      'line-color': ['case', flagState('selected', false), palette.selected, flagState('hover', false), palette.hover, palette.casing],
+      'line-width': hvdcWidth(2),
+      'line-opacity': 1,
+    },
+    interactive: true,
+  }, {
+    id: 'hvdc-line',
+    source: 'features',
+    type: 'line',
+    filter: isKind('hvdc'),
+    layout: { 'line-join': 'round', 'line-cap': 'butt' },
+    paint: {
+      'line-color': hvdcColor(palette),
+      'line-width': hvdcWidth(0),
+      'line-dasharray': hvdcDash,
+      'line-opacity': 1,
+    },
+    interactive: true,
   },
   flowArrows(1),
   flowArrows(-1),
@@ -216,11 +274,13 @@ const layersFor = (appearance: PackMapAppearance): ReadonlyArray<PackLiveMapLaye
     filter: isKind('bus'),
     paint: {
       'circle-radius': pointRadius([[4, 1.5], [8, 3], [12, 5]]),
-      'circle-color': palette.bus,
+      // An asynchronous system's boundary bus terminates HVDC links outside the modelled AC network.
+      'circle-color': ['case', flagState('external', false), palette.hvdc, palette.bus],
       // De-energised buses are hollow.
-      'circle-opacity': detailOpacity(false, ['case', flagState('energized', true), 1, 0]),
+      'circle-opacity': detailOpacity(false, ['case', ['any', flagState('external', false), flagState('energized', true)], 1, 0]),
       'circle-stroke-color': ['case',
         flagState('selected', false), palette.selected,
+        flagState('external', false), palette.halo,
         ['!', flagState('energized', true)], palette.deenergized,
         ['>=', islandState, 0], ['match', islandState, ...palette.islands.flatMap((color, index) => [index, color]), palette.halo],
         palette.halo,
@@ -289,7 +349,7 @@ const layersFor = (appearance: PackMapAppearance): ReadonlyArray<PackLiveMapLaye
       'symbol-sort-key': ['get', 'rank'],
     },
     paint: {
-      'text-color': ['case', ['>=', ['get', 'loading'], overloadLoadingPercent], palette.overload, palette.text],
+      'text-color': ['case', ['==', ['get', 'tone'], 'alarm'], palette.overload, palette.text],
       'text-halo-color': palette.halo,
       'text-halo-width': 1.6,
     },
@@ -327,6 +387,19 @@ export const gridReferenceContextColor = (color: string, appearance: PackMapAppe
 }
 
 const percent = (value: number): string => `${value.toFixed(1)} %`
+
+const drawnAs: Readonly<Record<GridMapGeometryResult['branches'][number]['pathSource'], string>> = {
+  'mapped-route': 'Mapped route',
+  transformer: 'Transformer, drawn between its buses',
+  'network-equivalent': 'Network equivalent (not a mapped line)',
+  'bus-to-bus': 'Straight line between its buses (no mapped route)',
+}
+
+const hvdcStateText: Readonly<Record<GridMapStateResult['hvdcLinks']['state'][number], string>> = {
+  deblocked: 'In service',
+  blocked: 'Blocked: deblock to return it to service',
+  tripped: 'Tripped by its converter protection: reset it, then deblock',
+}
 const mw = (value: number): string => `${Math.round(value).toLocaleString()} MW`
 
 interface FeatureRefs {
@@ -334,6 +407,7 @@ interface FeatureRefs {
   readonly busStart: number
   readonly generatorStart: number
   readonly loadStart: number
+  readonly hvdcStart: number
   readonly end: number
 }
 
@@ -342,7 +416,8 @@ const refsFor = (geometry: GridMapGeometryResult): FeatureRefs => {
   const busStart = branchStart + geometry.branches.length
   const generatorStart = busStart + geometry.buses.length
   const loadStart = generatorStart + geometry.generators.length
-  return { branchStart, busStart, generatorStart, loadStart, end: loadStart + geometry.loads.length }
+  const hvdcStart = loadStart + geometry.loads.length
+  return { branchStart, busStart, generatorStart, loadStart, hvdcStart, end: hvdcStart + geometry.hvdcLinks.length }
 }
 
 const requireAligned = (geometry: GridMapGeometryResult, result: GridMapStateResult): void => {
@@ -351,6 +426,7 @@ const requireAligned = (geometry: GridMapGeometryResult, result: GridMapStateRes
     ['buses', geometry.buses.length, Object.values(result.buses)],
     ['generators', geometry.generators.length, Object.values(result.generators)],
     ['loads', geometry.loads.length, Object.values(result.loads)],
+    ['hvdcLinks', geometry.hvdcLinks.length, Object.values(result.hvdcLinks)],
   ].filter(([, length, arrays]) => (arrays as ReadonlyArray<ReadonlyArray<unknown>>).some(values => values.length !== length))
   if (mismatched.length > 0) throw new Error(`Grid map state arrays do not match the geometry: ${mismatched.map(([name]) => name).join(', ')}`)
 }
@@ -378,19 +454,23 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
     featureStates.set(refs.branchStart + position, {
       live: true,
       closed,
+      tripped: result.branches.tripped[position] === 1,
       energized,
       loading,
       flowDir: closed && energized && Math.abs(flow) > flowArrowMinimumMw ? Math.sign(flow) : 0,
       alarm: !closed || !energized || loading >= highLoadingPercent,
     })
   })
-  geometry.buses.forEach((_bus, position) => {
+  geometry.buses.forEach((bus, position) => {
     const energized = busEnergized(position)
+    // An asynchronous system's boundary bus lies outside the modelled AC network: never a dead island.
+    const external = bus.external !== undefined && !bus.external.synchronous
     featureStates.set(refs.busStart + position, {
       live: true,
       energized,
-      island: islandColor(result.buses.island[position]!),
-      alarm: !energized,
+      external,
+      island: external ? -1 : islandColor(result.buses.island[position]!),
+      alarm: !external && !energized,
     })
   })
   geometry.generators.forEach((generator, position) => {
@@ -415,17 +495,38 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
       alarm: shed > 0 || !energized,
     })
   })
+  geometry.hvdcLinks.forEach((_link, position) => {
+    const linkState = result.hvdcLinks.state[position]!
+    const transfer = result.hvdcLinks.transferMw[position]!
+    featureStates.set(refs.hvdcStart + position, {
+      live: true,
+      blocked: linkState === 'blocked',
+      tripped: linkState === 'tripped',
+      flowDir: linkState === 'deblocked' && Math.abs(transfer) > flowArrowMinimumMw ? Math.sign(transfer) : 0,
+      alarm: linkState === 'tripped',
+    })
+  })
 
-  const labels: PackLiveMapFeature[] = geometry.branches
+  // Tripped branches first, then the most loaded closed ones, within the label limit; every HVDC link
+  // carries its transfer or state.
+  const branchLabel = (position: number, text: string, tone: 'alarm' | 'normal') => ({ path: geometry.branches[position]!.path, text, tone })
+  const tripped = geometry.branches.flatMap((branch, position) => result.branches.tripped[position] === 1 ? [branchLabel(position, `${branch.label} tripped`, 'alarm')] : [])
+  const loaded = geometry.branches
     .map((branch, position) => ({ branch, position, loading: result.branches.loadingPercent[position]! }))
     .filter(item => result.branches.closed[item.position] === 1 && item.loading >= watchLoadingPercent)
     .sort((left, right) => right.loading - left.loading)
-    .slice(0, constraintLabelLimit)
-    .map((item, rank) => ({
-      fid: rank,
-      geometry: { type: 'LineString', coordinates: item.branch.path },
-      properties: { text: `${item.branch.label} ${Math.round(item.loading)} %`, loading: item.loading, rank },
-    }))
+    .map(item => branchLabel(item.position, `${item.branch.label} ${Math.round(item.loading)} %`, item.loading >= overloadLoadingPercent ? 'alarm' : 'normal'))
+  const links = geometry.hvdcLinks.map((link, position) => {
+    const linkState = result.hvdcLinks.state[position]!
+    const transfer = result.hvdcLinks.transferMw[position]!
+    const text = linkState !== 'deblocked' ? `${link.label} ${linkState}` : `${link.label} ${mw(Math.abs(transfer))} ${transfer >= 0 ? 'export' : 'import'}`
+    return { path: link.path, text, tone: linkState === 'tripped' ? 'alarm' as const : 'normal' as const }
+  })
+  const labels: PackLiveMapFeature[] = [...[...tripped, ...loaded].slice(0, constraintLabelLimit), ...links].map((label, rank) => ({
+    fid: rank,
+    geometry: { type: 'LineString', coordinates: label.path },
+    properties: { text: label.text, tone: label.tone, rank },
+  }))
 
   const hoverCard = (fid: number): PackLiveMapHoverCard | null => {
     if (fid < refs.branchStart || fid >= refs.end) return null
@@ -436,6 +537,7 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
       const to = geometry.buses[branch.toBus]!
       const flow = result.branches.flowMw[position]!
       const closed = result.branches.closed[position] === 1
+      const branchTripped = result.branches.tripped[position] === 1
       const availability = result.branches.availability[position]!
       return {
         title: branch.label,
@@ -443,10 +545,12 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
           packField('loading', 'Loading', `${percent(result.branches.loadingPercent[position]!)} of ${mw(branch.ratingMw * availability)}`),
           packField('flow', 'Flow', flow === 0 ? '0 MW' : `${mw(Math.abs(flow))}, ${flow > 0 ? from.label : to.label} → ${flow > 0 ? to.label : from.label}`),
           packField('flow-model', 'Flow model', result.branches.flowModel[position] === 'ac' ? 'AC load flow' : result.branches.flowModel[position] === 'dc' ? 'DC estimate (AC load flow not converged)' : 'No flow'),
-          packField('switching', 'Switching', closed ? (availability < 1 ? `Closed, derated to ${Math.round(availability * 100)} %` : 'Closed') : 'Open'),
+          packField('switching', 'Switching', closed
+            ? (availability < 1 ? `Closed, derated to ${Math.round(availability * 100)} %` : 'Closed')
+            : branchTripped ? 'Tripped by its protection: reset it, then close' : 'Open'),
           packField('energized', 'Energised', busEnergized(branch.fromBus) && busEnergized(branch.toBus) ? 'Yes' : 'No'),
           packField('voltage', 'Voltage', `${branch.kv} kV ${branch.kind.replaceAll('_', ' ')}`),
-          packField('path', 'Drawn as', branch.pathSource === 'artifact' ? 'Mapped route' : 'Straight line between its buses (no mapped route)'),
+          packField('path', 'Drawn as', drawnAs[branch.pathSource]),
         ],
       }
     }
@@ -454,9 +558,19 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
       const position = fid - refs.busStart
       const bus = geometry.buses[position]!
       const island = result.islands[result.buses.island[position]!]!
+      if (bus.external !== undefined && !bus.external.synchronous) {
+        return {
+          title: bus.label,
+          fields: [
+            packField('external', 'External system', bus.external.label),
+            packField('role', 'Connection', 'HVDC terminal outside the modelled AC network; the external system supplies or absorbs its links\' transfer'),
+          ],
+        }
+      }
       return {
         title: bus.label,
         fields: [
+          ...(bus.external === undefined ? [] : [packField('external', 'External system', `${bus.external.label}, behind AC ties`)]),
           packField('voltage', 'Voltage level', `${bus.kv} kV`),
           packField('island', 'Island', `${island.id} (${result.islands.length} in the Grid)`),
           packField('energized', 'Energised', island.energized
@@ -477,14 +591,33 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
         ],
       }
     }
-    const position = fid - refs.loadStart
-    const load = geometry.loads[position]!
+    if (fid < refs.hvdcStart) {
+      const position = fid - refs.loadStart
+      const load = geometry.loads[position]!
+      return {
+        title: load.label,
+        fields: [
+          packField('kind', 'Kind', load.kinds.map(kind => kind.replaceAll('_', ' ')).join(', ')),
+          packField('served', 'Served', `${mw(result.loads.servedMw[position]!)} of ${mw(result.loads.demandMw[position]!)}`),
+          packField('shed', 'Shed', mw(result.loads.shedMw[position]!)),
+        ],
+      }
+    }
+    const position = fid - refs.hvdcStart
+    const link = geometry.hvdcLinks[position]!
+    const linkState = result.hvdcLinks.state[position]!
+    const transfer = result.hvdcLinks.transferMw[position]!
+    const from = geometry.buses[link.fromBus]!
+    const to = geometry.buses[link.toBus]!
+    const end = (bus: typeof from): string => bus.external?.label ?? bus.label
     return {
-      title: load.label,
+      title: link.label,
       fields: [
-        packField('kind', 'Kind', load.kinds.map(kind => kind.replaceAll('_', ' ')).join(', ')),
-        packField('served', 'Served', `${mw(result.loads.servedMw[position]!)} of ${mw(result.loads.demandMw[position]!)}`),
-        packField('shed', 'Shed', mw(result.loads.shedMw[position]!)),
+        packField('state', 'State', hvdcStateText[linkState]),
+        packField('transfer', 'Transfer', transfer === 0 ? '0 MW' : `${mw(Math.abs(transfer))}, ${transfer > 0 ? `${end(from)} → ${end(to)} (export)` : `${end(to)} → ${end(from)} (import)`}`),
+        packField('setpoint', 'Set-point', `${mw(result.hvdcLinks.setpointMw[position]!)} (positive exports from Norway)`),
+        packField('rating', 'Rating', `±${mw(link.ratingMw)}`),
+        packField('path', 'Drawn as', link.pathSource === 'mapped-route' ? 'Mapped cable route' : 'Straight line between its converters (no mapped route)'),
       ],
     }
   }
@@ -501,10 +634,12 @@ const loadGeometry = (rawGeometry: unknown): PackLiveMapGeometry => {
     ...geometry.buses.map(bus => bus.id),
     ...geometry.generators.map(generator => generator.id),
     ...geometry.loads.map(load => load.loadIds[0]!),
+    ...geometry.hvdcLinks.map(link => link.id),
   ]
   const fidByAssetId = new Map([
     ...assetIds.slice(0, refs.loadStart).map((assetId, fid) => [assetId, fid] as const),
     ...geometry.loads.flatMap((load, position) => load.loadIds.map(loadId => [loadId, refs.loadStart + position] as const)),
+    ...geometry.hvdcLinks.map((link, position) => [link.id, refs.hvdcStart + position] as const),
   ])
   const features: PackLiveMapFeature[] = [
     ...geometry.branches.map((branch, position) => ({
@@ -526,6 +661,11 @@ const loadGeometry = (rawGeometry: unknown): PackLiveMapGeometry => {
       fid: refs.loadStart + position,
       geometry: geoPointFromLonLat(load.location[0], load.location[1]),
       properties: { kind: 'load' },
+    })),
+    ...geometry.hvdcLinks.map((link, position) => ({
+      fid: refs.hvdcStart + position,
+      geometry: { type: 'LineString' as const, coordinates: link.path },
+      properties: { kind: 'hvdc' },
     })),
   ]
   return {
@@ -573,7 +713,9 @@ export const gridLiveStateLegend: PackMapLegend = {
     { id: 'watch', label: `${watchLoadingPercent}–${highLoadingPercent} %`, symbol: 'line', color: themed.watch, sizePx: 3 },
     { id: 'high', label: `${highLoadingPercent}–${overloadLoadingPercent} %`, symbol: 'line', color: themed.high, sizePx: 3 },
     { id: 'overload', label: `Overloaded (≥ ${overloadLoadingPercent} %)`, symbol: 'line', color: themed.overload, sizePx: 4 },
+    { id: 'tripped', label: 'Tripped by protection', symbol: 'dashed-line', color: themed.tripped, sizePx: 3 },
     { id: 'open', label: 'Open', symbol: 'line', color: themed.open, sizePx: 3 },
+    { id: 'hvdc', label: 'HVDC link in service (grey: blocked, red: tripped)', symbol: 'dashed-line', color: themed.hvdc, sizePx: 3 },
     { id: 'deenergized', label: 'De-energised', symbol: 'line', color: themed.deenergized, sizePx: 3 },
     { id: 'generator', label: 'Generator (fill: dispatch)', symbol: 'circle', color: themed.generation, sizePx: 11 },
     { id: 'shed', label: 'Load (fills as demand is shed)', symbol: 'ring', color: themed.shed, sizePx: 11 },

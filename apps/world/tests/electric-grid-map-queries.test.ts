@@ -82,7 +82,7 @@ describe('Grid map query Capabilities', () => {
     expect(JSON.stringify({ state: runtimeStateForElectricGrids(new Map([[grid.definition.gridId, grid]])), tick: grid.tick, projection: grid.projection })).toBe(before)
   })
 
-  test('geometry lists every asset in model order and draws each branch along its mapped route', () => {
+  test('geometry lists every asset in model order and draws lines along their mapped routes, HVDC links along their cables', () => {
     const grid = runningGrid()
     const geometry = ask<GridMapGeometryResult>(grid, geometryId)
     const model = norway.model
@@ -97,10 +97,22 @@ describe('Grid map query Capabilities', () => {
     for (const group of geometry.loads) expect(group.loadIds.every(id => busOfLoad.get(id) === geometry.buses[group.bus]!.id)).toBe(true)
     expect(geometry.simplificationMeters).toBeGreaterThan(0)
     for (const branch of geometry.branches) {
-      expect(branch.pathSource).toBe('artifact')
+      // Transformers, and the curated equivalent of out-of-scope sub-transmission, are no mapped lines.
+      expect(branch.pathSource).toBe(branch.id === 'branch:curated-follo-lambertseter-47kv-equivalent' ? 'network-equivalent' : branch.kind === 'transformer' ? 'transformer' : 'mapped-route')
       expect(branch.path.length).toBeGreaterThanOrEqual(2)
       expect(geometry.buses[branch.fromBus]!.id).toBe(model.branches.find(candidate => candidate.id === branch.id)!.fromBusId)
     }
+    expect(geometry.hvdcLinks.map(link => link.id)).toEqual(model.hvdcLinks.map(link => link.id))
+    for (const link of geometry.hvdcLinks) {
+      expect(link.pathSource).toBe('mapped-route')
+      expect(link.path.length).toBeGreaterThan(2)
+      expect(geometry.buses[link.fromBus]!.id).toBe(model.hvdcLinks.find(candidate => candidate.id === link.id)!.fromBusId)
+    }
+    // Boundary buses name their external system; HVDC-only systems are asynchronous.
+    const external = (busId: string) => geometry.buses.find(bus => bus.id === busId)!.external
+    expect(external('bus:boundary-DE')).toEqual({ label: 'Germany (Continental European synchronous area)', synchronous: false })
+    expect(external('bus:boundary-SE3@420')?.synchronous).toBe(true)
+    expect(geometry.buses.filter(bus => bus.external !== undefined).map(bus => bus.id).every(id => id.startsWith('bus:boundary-'))).toBe(true)
     expect(ask<GridMapGeometryResult>(grid, geometryId).geometryDigest).toBe(geometry.geometryDigest)
     expect(ask<GridMapStateResult>(grid, stateId).geometryDigest).toBe(geometry.geometryDigest)
   })
@@ -113,7 +125,7 @@ describe('Grid map query Capabilities', () => {
     advanceGrid(grid, 0, at)
     const geometry = ask<GridMapGeometryResult>(grid, geometryId)
     const baseBranchCount = norway.model.branches.length
-    expect(geometry.branches.slice(0, baseBranchCount).every(branch => branch.pathSource === 'artifact')).toBe(true)
+    expect(geometry.branches.slice(0, baseBranchCount).every(branch => branch.pathSource !== 'bus-to-bus')).toBe(true)
     const added = geometry.branches.slice(baseBranchCount)
     expect(added.map(branch => branch.id)).toEqual(halden.model.branches.slice(baseBranchCount).map(branch => branch.id))
     for (const branch of added) {
@@ -130,6 +142,7 @@ describe('Grid map query Capabilities', () => {
     for (const values of Object.values(state.buses)) expect(values).toHaveLength(geometry.buses.length)
     for (const values of Object.values(state.generators)) expect(values).toHaveLength(geometry.generators.length)
     for (const values of Object.values(state.loads)) expect(values).toHaveLength(geometry.loads.length)
+    for (const values of Object.values(state.hvdcLinks)) expect(values).toHaveLength(geometry.hvdcLinks.length)
     expect(state.revision).toBe(grid.tick)
     expect(state.buses.island.every(position => position < state.islands.length)).toBe(true)
     const shared = geometry.loads.findIndex(group => group.loadIds.length > 1)
@@ -143,6 +156,7 @@ describe('Grid map query Capabilities', () => {
     command(grid, gridTripGeneratorCommandKind, { assetId: geometry.generators[generatorIndex]!.id })
     const after = ask<GridMapStateResult>(grid, stateId)
     expect(after.branches.closed[branchIndex]).toBe(0)
+    expect(after.branches.tripped[branchIndex]).toBe(0)
     expect(after.branches.flowMw[branchIndex]).toBe(0)
     expect(after.generators.state[generatorIndex]).toBe('tripped')
     expect(after.revision).toBeGreaterThan(state.revision)
@@ -244,7 +258,7 @@ describe('Grid geometry artifact', () => {
     query.answer({ gridId: grid.definition.gridId }, new Map([[grid.definition.gridId, grid]]))
     expect(files).toEqual(['electric-grid.test.v2.geometry.json'])
     expect(result.simplificationMeters).toBe(50)
-    expect(result.branches.map(branch => [branch.pathSource, branch.path.length])).toEqual([['artifact', 3], ['artifact', 3]])
+    expect(result.branches.map(branch => [branch.pathSource, branch.path.length])).toEqual([['mapped-route', 3], ['mapped-route', 3]])
     const busToBus = createGridMapGeometry({ artifactFor: () => null, readArtifact: () => '' })(model)
     expect(busToBus.geometryDigest).not.toBe(geometryFor(model).geometryDigest)
     expect(busToBus.modelDigest).toBe(geometryFor(model).modelDigest)

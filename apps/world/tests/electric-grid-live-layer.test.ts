@@ -7,10 +7,13 @@ import type { PackLiveFeatureState, PackLiveMapLayerSpec } from '../src/core/pac
 import type { PackMapTheme } from '../src/core/packs/reference-style.ts'
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
+import { gridTripHvdcCommandKind } from '../src/packs/electric-grid/commands/hvdc.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
+import { createGridMapGeometry, createGridMapGeometryQuery } from '../src/packs/electric-grid/queries/map-geometry.ts'
+import { createGridMapStateQuery } from '../src/packs/electric-grid/queries/map-state.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
@@ -27,6 +30,7 @@ import {
 import { gridMapPalette } from '../src/packs/electric-grid/ui/grid-map-palette.ts'
 import { gridNorwayStyle } from '../src/packs/electric-grid/ui/grid-norway-style.ts'
 import { recolorPaintValue } from '../src/ui/map-runtime/pack-live-layer.ts'
+import { corridorDefinition, corridorModel, steppedGrid } from './fixtures/grid-corridor.ts'
 
 const themes: ReadonlyArray<PackMapTheme> = ['light', 'dark']
 const at = '2026-01-01T10:00:00.000Z' as IsoTimestamp
@@ -107,6 +111,42 @@ describe('Grid live layer: MapLibre layers', () => {
     }
   })
 
+  test('draw a tripped branch red and dashed, unlike a grey open one', () => {
+    const line = spec('branch-line')
+    const dashes = spec('branch-tripped')
+    const tripped = branchState({ closed: false, tripped: true, loading: 0, alarm: true })
+    const open = branchState({ closed: false, loading: 0, alarm: true })
+    expect(isColor(paintAt(line, 'line-color', 8, { kind: 'branch', kv: 420 }, tripped), '#d62828')).toBe(true)
+    expect(isColor(paintAt(line, 'line-color', 8, { kind: 'branch', kv: 420 }, open), '#6b7280')).toBe(true)
+    // The casing-coloured dashes break only a tripped line, and stay visible with it below z6.
+    expect(dashes.paint['line-dasharray']).toEqual([1.5, 1.5])
+    expect(paintAt(dashes, 'line-opacity', 5, { kind: 'branch', kv: 132 }, tripped)).toBe(1)
+    expect(paintAt(dashes, 'line-opacity', 8, { kind: 'branch', kv: 420 }, open)).toBe(0)
+    expect(paintAt(line, 'line-opacity', 5, { kind: 'branch', kv: 132 }, tripped)).toBe(1)
+  })
+
+  test('draw HVDC links dashed in their own colour, grey while blocked and red when tripped, with flow arrows', () => {
+    for (const theme of themes) {
+      const line = spec('hvdc-line', theme)
+      const color = (state: PackLiveFeatureState) => paintAt(line, 'line-color', 6, { kind: 'hvdc' }, { live: true, ...state })
+      const expected = theme === 'light' ? { hvdc: '#4338ca', open: '#6b7280', tripped: '#d62828' } : { hvdc: '#a5b4fc', open: '#9ca3af', tripped: '#f87171' }
+      expect(isColor(color({}), expected.hvdc)).toBe(true)
+      expect(isColor(color({ blocked: true }), expected.open)).toBe(true)
+      expect(isColor(color({ tripped: true }), expected.tripped)).toBe(true)
+      expect(line.paint['line-dasharray']).toEqual([3, 1.5])
+    }
+    expect(paintAt(spec('flow-reverse'), 'icon-opacity', 8, { kind: 'hvdc' }, { live: true, flowDir: -1 })).toBe(1)
+  })
+
+  test('fill an HVDC-only boundary bus as a terminal, never as a hollow dead bus', () => {
+    const buses = spec('buses')
+    const terminal = { live: true, energized: false, external: true, island: -1, alarm: false }
+    expect(paintAt(buses, 'circle-opacity', 5, { kind: 'bus' }, terminal)).toBe(0)
+    expect(paintAt(buses, 'circle-opacity', 8, { kind: 'bus' }, terminal)).toBe(1)
+    expect(isColor(paintAt(buses, 'circle-color', 8, { kind: 'bus' }, terminal), '#4338ca')).toBe(true)
+    expect(paintAt(buses, 'circle-opacity', 8, { kind: 'bus' }, { ...terminal, external: false })).toBe(0)
+  })
+
   test('below z6 show branches of 300 kV and above plus anything in alarm, so an overloaded 132 kV line is red at z5', () => {
     const line = spec('branch-line')
     const overloaded = branchState({ loading: 104, alarm: true })
@@ -145,7 +185,7 @@ describe('Grid live layer: MapLibre layers', () => {
     const group = electricGridPackView.presentation.mapLayerGroups!.find(candidate => candidate.id === gridLiveLayerGroupId)!
     expect(gridLiveMapLayer.layerGroupId).toBe(gridLiveLayerGroupId)
     expect(layerIdsMatching(ids, group.layerIdPattern)).toEqual(ids)
-    expect(specs('light').filter(layer => layer.interactive).map(layer => layer.id)).toEqual(['branch-casing', 'branch-line', 'buses', 'loads', 'generators'])
+    expect(specs('light').filter(layer => layer.interactive).map(layer => layer.id)).toEqual(['branch-casing', 'branch-line', 'hvdc-casing', 'hvdc-line', 'buses', 'loads', 'generators'])
     expect(electricGridPackView.presentation.liveMapLayers).toEqual([gridLiveMapLayer])
     expect(electricGridPackView.presentation.mapLegends).toContain(gridLiveStateLegend)
   })
@@ -204,7 +244,7 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     const geometry = gridLiveMapLayer.loadGeometry(wire(grid, 'world.electric-grid.map.geometry'))
     // Loads draw one marker per bus.
     const loadMarkers = new Set(norway.model.loads.map(load => load.busId)).size
-    const assetCount = norway.model.buses.length + norway.model.branches.length + norway.model.generators.length + loadMarkers
+    const assetCount = norway.model.buses.length + norway.model.branches.length + norway.model.generators.length + loadMarkers + norway.model.hvdcLinks.length
     expect(geometry.features.map(feature => feature.fid)).toEqual(Array.from({ length: assetCount }, (_, fid) => fid))
     for (const feature of geometry.features) {
       expect(Object.keys(feature.properties).every(key => ['kind', 'kv', 'capacityMw'].includes(key))).toBe(true)
@@ -217,19 +257,26 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     const rawState = wire(grid, 'world.electric-grid.map.state') as { islands: Array<{ energized: boolean }>; buses: { island: number[] } }
     const state = geometry.presentState(rawState)
     expect([...state.featureStates.keys()]).toEqual(geometry.features.map(feature => feature.fid))
-    expect(state.labels.length).toBeLessThanOrEqual(20)
-    // The largest energised island keeps the plain stroke; every other island takes a categorical colour.
+    // At most 20 branch labels, and one per HVDC link.
+    expect(state.labels.length).toBeLessThanOrEqual(20 + norway.model.hvdcLinks.length)
+    // The largest energised island keeps the plain stroke, as do HVDC-only boundary buses outside the
+    // AC network; every other island takes a categorical colour.
     const busesPerIsland = rawState.islands.map((_, island) => rawState.buses.island.filter(candidate => candidate === island).length)
     const mainIsland = busesPerIsland.indexOf(Math.max(...busesPerIsland.filter((_, island) => rawState.islands[island]!.energized)))
     const busFids = geometry.features.filter(feature => feature.properties.kind === 'bus').map(feature => feature.fid)
     busFids.forEach((fid, bus) => {
       const island = state.featureStates.get(fid)!.island as number
-      if (rawState.buses.island[bus] === mainIsland) expect(island).toBe(-1)
+      if (rawState.buses.island[bus] === mainIsland || norway.index.asynchronousBoundaryBusIds.has(norway.model.buses[bus]!.id)) expect(island).toBe(-1)
       else expect(island).toBeGreaterThanOrEqual(0)
     })
     const branchCard = state.hoverCard(0)!
     expect(branchCard.title).toBe(norway.model.branches[0]!.label)
-    expect(branchCard.fields.find(field => field.key === 'path')!.value).toBe('Mapped route')
+    const drawnAs = (branchId: string) => state.hoverCard(norway.model.branches.findIndex(branch => branch.id === branchId))!.fields.find(field => field.key === 'path')!.value
+    // The first branch in id order is the curated Follo – Lambertseter equivalent; lines follow their mapped routes.
+    expect(norway.model.branches[0]!.id).toBe('branch:curated-follo-lambertseter-47kv-equivalent')
+    expect(drawnAs(norway.model.branches.find(branch => branch.kind === 'ac_line' && branch.id.startsWith('branch:osm-'))!.id)).toBe('Mapped route')
+    expect(drawnAs('branch:curated-follo-lambertseter-47kv-equivalent')).toBe('Network equivalent (not a mapped line)')
+    expect(drawnAs(norway.model.branches.find(branch => branch.id.startsWith('branch:transformer-'))!.id)).toBe('Transformer, drawn between its buses')
   })
 
   test('follow switching and trips, and label the most loaded closed branches', () => {
@@ -244,9 +291,68 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     const state = geometry.presentState(wire(grid, 'world.electric-grid.map.state'))
     expect(state.featureStates.get(branchFid)).toMatchObject({ closed: false, flowDir: 0, alarm: true })
     expect(state.featureStates.get(generatorFid)).toMatchObject({ tripped: true, online: false, alarm: true })
-    const loadings = state.labels.map(label => label.properties.loading as number)
+    const loadings = state.labels.flatMap(label => {
+      const loading = / (\d+) %$/.exec(label.properties.text as string)
+      return loading === null ? [] : [Number(loading[1])]
+    })
     expect(loadings).toEqual([...loadings].sort((left, right) => right - left))
     expect(loadings.every(loading => loading >= 70)).toBe(true)
+  })
+
+  test('show HVDC links with their transfer and trips, and HVDC-only boundary buses as terminals, not dead islands', () => {
+    const grid = createGridRuntimeInstance({ definition: norway, at })
+    advanceGrid(grid, 0, at)
+    const geometry = gridLiveMapLayer.loadGeometry(wire(grid, 'world.electric-grid.map.geometry'))
+    const hvdcStart = geometry.features.findIndex(feature => feature.properties.kind === 'hvdc')
+    const nordlink = norway.model.hvdcLinks.findIndex(link => link.id === 'hvdc:nordlink')
+    const nordlinkFid = hvdcStart + nordlink
+    expect(geometry.selectionFor(nordlinkFid)!.itemId).toBe(gridAssetItemId('grid:norway', 'hvdc:nordlink'))
+    expect(geometry.features[nordlinkFid]!.geometry.type).toBe('LineString')
+    const before = geometry.presentState(wire(grid, 'world.electric-grid.map.state'))
+    const transferMw = Math.round(grid.hvdcLinks.get('hvdc:nordlink')!.transferMw)
+    expect(before.featureStates.get(nordlinkFid)).toMatchObject({ tripped: false, blocked: false, alarm: false, flowDir: Math.abs(transferMw) > 5 ? Math.sign(transferMw) : 0 })
+    expect(before.labels.find(label => (label.properties.text as string).startsWith('NordLink '))!.properties.text)
+      .toBe(`NordLink ${Math.abs(transferMw).toLocaleString()} MW ${transferMw >= 0 ? 'export' : 'import'}`)
+    // DE, DK1, GB and NL reach Norway only by HVDC: their boundary buses are terminals, never dead islands.
+    const busFid = (busId: string) => geometry.features.findIndex(feature => feature.properties.kind === 'bus') + norway.model.buses.findIndex(bus => bus.id === busId)
+    for (const busId of ['bus:boundary-DE', 'bus:boundary-DK1', 'bus:boundary-GB', 'bus:boundary-NL']) {
+      expect(before.featureStates.get(busFid(busId))).toMatchObject({ external: true, alarm: false, island: -1 })
+      expect(before.hoverCard(busFid(busId))!.fields.map(field => field.key)).toEqual(['external', 'role'])
+    }
+    expect(before.featureStates.get(busFid('bus:boundary-SE3@420'))).toMatchObject({ external: false, energized: true })
+
+    command(grid, gridTripHvdcCommandKind, 'hvdc:nordlink')
+    const after = geometry.presentState(wire(grid, 'world.electric-grid.map.state'))
+    expect(after.featureStates.get(nordlinkFid)).toMatchObject({ tripped: true, flowDir: 0, alarm: true })
+    expect(after.labels.find(label => label.properties.text === 'NordLink tripped')!.properties.tone).toBe('alarm')
+    const card = after.hoverCard(nordlinkFid)!
+    expect(card.title).toBe('NordLink')
+    expect(card.fields.find(field => field.key === 'state')!.value).toBe('Tripped by its converter protection: reset it, then deblock')
+    expect(card.fields.find(field => field.key === 'path')!.value).toBe('Mapped cable route')
+  })
+
+  test('read a branch its protection tripped as tripped, distinct from one an operator opened', () => {
+    // The test corridor with its direct line and B path open: the A path's relays trip it at once.
+    const run = steppedGrid(corridorDefinition())
+    run.advanceTo(10_000)
+    expect(run.command(gridOpenBranchCommandKind, { assetId: 'branch:g-l' }).ok).toBe(true)
+    expect(run.command(gridOpenBranchCommandKind, { assetId: 'branch:g-b' }).ok).toBe(true)
+    run.advanceTo(12_000)
+    expect(run.grid.branches.get('branch:g-a')!.state).toBe('tripped')
+    // A hand-built model has no geometry artifact: it draws bus to bus.
+    const geometryFor = createGridMapGeometry({ artifactFor: () => null, readArtifact: file => { throw new Error(`no artifact ${file}`) } })
+    const answer = (query: ReturnType<typeof createGridMapStateQuery>): unknown => JSON.parse(JSON.stringify(query.capability.output.parse(
+      query.answer({ gridId: run.grid.definition.gridId }, new Map([[run.grid.definition.gridId, run.grid]])))))
+    const geometry = gridLiveMapLayer.loadGeometry(answer(createGridMapGeometryQuery(geometryFor)))
+    const state = geometry.presentState(answer(createGridMapStateQuery(geometryFor)))
+    const fid = (branchId: string) => corridorModel.branches.findIndex(branch => branch.id === branchId)
+    expect(state.featureStates.get(fid('branch:g-a'))).toMatchObject({ closed: false, tripped: true, flowDir: 0, alarm: true })
+    expect(state.featureStates.get(fid('branch:g-b'))).toMatchObject({ closed: false, tripped: false })
+    const switching = (branchId: string) => state.hoverCard(fid(branchId))!.fields.find(field => field.key === 'switching')!.value
+    expect(switching('branch:g-a')).toBe('Tripped by its protection: reset it, then close')
+    expect(switching('branch:g-b')).toBe('Open')
+    expect(state.labels.filter(label => label.properties.tone === 'alarm').map(label => label.properties.text)).toEqual(expect.arrayContaining(['branch:g-a tripped']))
+    expect(state.labels.some(label => label.properties.text === 'branch:g-b tripped')).toBe(false)
   })
 
   test('reject a state for another geometry', () => {

@@ -37,6 +37,7 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
   const loadingPercent = new Array<number>(branchCount)
   const flowMw = new Array<number>(branchCount)
   const closed = new Array<0 | 1>(branchCount)
+  const tripped = new Array<0 | 1>(branchCount)
   const availability = new Array<number>(branchCount)
   const flowModel = new Array<'ac' | 'dc' | null>(branchCount)
   model.branches.forEach((branch, position) => {
@@ -45,9 +46,11 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
     flowMw[position] = Math.round(state.flowMw)
     flowModel[position] = state.flowModel
     closed[position] = state.state === 'closed' ? 1 : 0
+    tripped[position] = state.state === 'tripped' ? 1 : 0
     availability[position] = hundredths(state.availability)
   })
   const generatorStates = model.generators.map(generator => grid.generators.get(generator.id)!)
+  const linkStates = model.hvdcLinks.map(link => grid.hvdcLinks.get(link.id)!)
   const loadGroups = geometry.payload.loads.map(group => group.loadIds.map(id => grid.loads.get(id)!))
   const summed = (value: (state: GridLoadState) => number): number[] => loadGroups.map(group => tenths(group.reduce((sum, state) => sum + value(state), 0)))
   return {
@@ -59,7 +62,7 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
       island: [...busIsland],
       energized: busIsland.map(position => islands[position]!.energized ? 1 : 0),
     },
-    branches: { loadingPercent, flowMw, flowModel, closed, availability },
+    branches: { loadingPercent, flowMw, flowModel, closed, tripped, availability },
     generators: {
       dispatchMw: generatorStates.map(state => Math.round(state.dispatchMw)),
       state: generatorStates.map(state => state.state),
@@ -69,13 +72,18 @@ const stateFor = (grid: GridRuntimeInstance, geometry: GridMapGeometry): Omit<Gr
       servedMw: summed(state => state.servedMw),
       shedMw: summed(state => state.shedMw),
     },
+    hvdcLinks: {
+      state: linkStates.map(state => state.state),
+      transferMw: linkStates.map(state => Math.round(state.transferMw)),
+      setpointMw: linkStates.map(state => Math.round(state.setpointMw)),
+    },
   }
 }
 
 export const createGridMapStateQuery = (geometryFor: (model: GridModelDefinition) => GridMapGeometry): ElectricGridQuery => defineGridQuery({
   id: 'world.electric-grid.map.state',
   title: 'Get Grid map state',
-  description: 'Returns compact live state of one Grid as arrays in world.electric-grid.map.geometry order: branch loading, flow, switching state and availability; bus island and energisation; generator dispatch and state; load demand, served and shed summed per bus. Fetch it when the Grid object revision changes.',
+  description: 'Returns compact live state of one Grid as arrays in world.electric-grid.map.geometry order: branch loading, flow, switching state (closed, or tripped by protection) and availability; bus island and energisation; generator dispatch and state; load demand, served and shed summed per bus; HVDC link state, transfer and set-point. Fetch it when the Grid object revision changes.',
   searchTerms: ['map state', 'live map', 'loading', 'flow', 'energised', 'islands', 'kartstatus', 'belastning', 'flyt', 'spenningssatt', 'øydrift'],
   input: gridPayloadSchema,
   output: gridMapStateResultSchema,

@@ -4,12 +4,13 @@ import { fileURLToPath } from 'node:url'
 import { gridModelCatalogEntry } from '../definition-refs.ts'
 import type { GridAssetLocation, GridModelDefinition } from '../grid-model.ts'
 import { gridDataError, type GridDataIssue } from '../schemas/data-issues.ts'
+import { transformerIdParts } from '../schemas/grid-ids.ts'
 import { validateGridGeometryArtifact } from '../schemas/grid-geometry.ts'
 import { defineGridQuery, gridFor, gridPayloadSchema, type ElectricGridQuery } from './common.ts'
 import { gridMapGeometryResultSchema, type GridMapGeometryWire } from './map-schemas.ts'
 
-// Static map geometry of a Grid: buses, branch paths and generators in model order and loads per
-// bus, so world.electric-grid.map.state can publish compact arrays aligned with it. Built once per
+// Static map geometry of a Grid: buses, branch and HVDC link paths and generators in model order and
+// loads per bus, so world.electric-grid.map.state can publish compact arrays aligned with it. Built once per
 // model and cached; clients refetch it only when geometryDigest changes.
 
 type LonLat = readonly [number, number]
@@ -153,11 +154,29 @@ export const loadsPerBus = (model: GridModelDefinition): ReadonlyArray<ReadonlyA
   return [...groups.values()]
 }
 
+type GridBranch = GridModelDefinition['branches'][number]
+
+/**
+ * A curated network equivalent (build/network-equivalents.ts): kind transformer because it joins two
+ * voltage levels, but standing for sub-transmission below the model's floor, not a substation
+ * transformer or a mapped line.
+ */
+const isNetworkEquivalent = (branch: GridBranch): boolean =>
+  branch.kind === 'transformer' && branch.provenance?.method === 'curated' && transformerIdParts(branch.id) === undefined
+
+/** How a branch is drawn; transformers and equivalents always run between their buses. */
+const branchPathSource = (branch: GridBranch, artifactPath: ReadonlyArray<LonLat> | null): GridMapGeometryWire['branches'][number]['pathSource'] =>
+  isNetworkEquivalent(branch) ? 'network-equivalent'
+    : branch.kind === 'transformer' ? 'transformer'
+      : artifactPath === null ? 'bus-to-bus' : 'mapped-route'
+
 const buildGridMapGeometry = (model: GridModelDefinition, artifact: GridArtifactPaths | null): GridMapGeometry => {
   const modelDigest = sha256(JSON.stringify(model))
   const geometryDigest = sha256(`${modelDigest}\n${artifact?.sha256 ?? 'bus-to-bus'}`)
   const busIndex = new Map(model.buses.map((bus, position) => [bus.id, position]))
   const location = (value: GridAssetLocation): [number, number] => roundPoint(value)
+  const externalByBus = new Map(model.externalSystems.flatMap(system => system.boundaryBusIds.map(busId => [busId, system] as const)))
+  const busToBus = (fromBus: number, toBus: number): Array<[number, number]> => [location(model.buses[fromBus]!.location), location(model.buses[toBus]!.location)]
   return {
     modelDigest,
     geometryDigest,
@@ -167,7 +186,16 @@ const buildGridMapGeometry = (model: GridModelDefinition, artifact: GridArtifact
       modelDigest,
       geometryDigest,
       simplificationMeters: artifact?.simplificationMeters ?? null,
-      buses: model.buses.map(bus => ({ id: bus.id, label: bus.label, kv: bus.nominalKv, location: location(bus.location) })),
+      buses: model.buses.map(bus => {
+        const external = externalByBus.get(bus.id)
+        return {
+          id: bus.id,
+          label: bus.label,
+          kv: bus.nominalKv,
+          location: location(bus.location),
+          ...(external === undefined ? {} : { external: { label: external.label, synchronous: external.synchronous } }),
+        }
+      }),
       branches: model.branches.map(branch => {
         const fromBus = busIndex.get(branch.fromBusId)!
         const toBus = busIndex.get(branch.toBusId)!
@@ -181,9 +209,24 @@ const buildGridMapGeometry = (model: GridModelDefinition, artifact: GridArtifact
           fromBus,
           toBus,
           ratingMw: branch.ratingMw,
+          pathSource: branchPathSource(branch, path),
+          path: path === null ? busToBus(fromBus, toBus) : path.map(roundPoint),
+        }
+      }),
+      hvdcLinks: model.hvdcLinks.map(link => {
+        const fromBus = busIndex.get(link.fromBusId)!
+        const toBus = busIndex.get(link.toBusId)!
+        // The loader requires an artifact to hold a path for every link.
+        const path = artifact?.hvdcLinkPaths.get(link.id) ?? null
+        return {
+          id: link.id,
+          label: link.label,
+          fromBus,
+          toBus,
+          ratingMw: link.ratingMw,
           ...(path === null
-            ? { pathSource: 'bus-to-bus' as const, path: [location(model.buses[fromBus]!.location), location(model.buses[toBus]!.location)] }
-            : { pathSource: 'artifact' as const, path: path.map(roundPoint) }),
+            ? { pathSource: 'bus-to-bus' as const, path: busToBus(fromBus, toBus) }
+            : { pathSource: 'mapped-route' as const, path: path.map(roundPoint) }),
         }
       }),
       generators: model.generators.map(generator => ({
@@ -251,7 +294,7 @@ export const gridMapGeometryFor = createGridMapGeometry({
 export const createGridMapGeometryQuery = (geometryFor: (model: GridModelDefinition) => GridMapGeometry): ElectricGridQuery => defineGridQuery({
   id: 'world.electric-grid.map.geometry',
   title: 'Get Grid map geometry',
-  description: 'Returns the static map geometry of one Grid in model order: buses, branches with their path from fromBus to toBus and its source, generators, and loads per bus. world.electric-grid.map.state publishes live state as arrays in the same order; refetch this only when its geometryDigest changes.',
+  description: 'Returns the static map geometry of one Grid in model order: buses (boundary buses with their external system), branches and HVDC links with their path from fromBus to toBus and how it is drawn, generators, and loads per bus. world.electric-grid.map.state publishes live state as arrays in the same order; refetch this only when its geometryDigest changes.',
   searchTerms: ['map', 'geometry', 'lines', 'routes', 'substations', 'live map', 'kart', 'geometri', 'linjer', 'traseer', 'stasjoner'],
   input: gridPayloadSchema,
   output: gridMapGeometryResultSchema,
