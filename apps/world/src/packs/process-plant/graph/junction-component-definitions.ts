@@ -45,6 +45,8 @@ const valveSemantics = (parameters: unknown): ComponentSemantics => {
     meaningfulWhile: [],
     permissives: [],
     widerRanges: [],
+    programs: [],
+    shutdownReadings: [],
     energy: [],
   }
 }

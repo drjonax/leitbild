@@ -142,13 +142,34 @@ export interface ComponentSemantics {
    * says where the quantity is.
    */
   readonly widerRanges: ReadonlyArray<{ readonly reading: string; readonly wider: string }>
+  /**
+   * A reading's program: the value the Plant's control holds it to (`program`),
+   * and how far it stands from it (`deviation`), both the equipment's own. The
+   * reading is the equipment's own (a pressurizer's level, held to its level
+   * program), or that of the component at the far end of one of its ports
+   * (`via`): a core programs the average coolant temperature its vessel reads.
+   */
+  readonly programs: ReadonlyArray<ProgramDeclaration>
+  /**
+   * Readings that say the equipment has stopped, verified after a reactor
+   * trip: a core's power-range flux and its startup rate.
+   */
+  readonly shutdownReadings: ReadonlyArray<string>
   /** What the equipment does with energy, by port circuit. */
   readonly energy: ReadonlyArray<EnergyRole>
 }
 
+export interface ProgramDeclaration {
+  readonly reading: string
+  /** The port whose one link reaches the component that reads it; absent where the equipment reads it itself. */
+  readonly via?: string
+  readonly program: string
+  readonly deviation?: string
+}
+
 /** Declares semantics that do not depend on a component's parameters. */
 export const fixedSemantics = (semantics: Partial<ComponentSemantics>): ((parameters: unknown) => ComponentSemantics) => {
-  const resolved: ComponentSemantics = { aspects: [], embedded: [], ratedOutflow: [], portFlows: [], keyValues: [], meaningfulWhile: [], permissives: [], widerRanges: [], energy: [], ...semantics }
+  const resolved: ComponentSemantics = { aspects: [], embedded: [], ratedOutflow: [], portFlows: [], keyValues: [], meaningfulWhile: [], permissives: [], widerRanges: [], programs: [], shutdownReadings: [], energy: [], ...semantics }
   return () => resolved
 }
 
@@ -191,6 +212,8 @@ export interface CompiledComponentSemantics {
   readonly meaningfulWhile: ReadonlyArray<{ readonly flag: VariablePath; readonly variables: ReadonlyArray<VariablePath> }>
   readonly permissives: ReadonlyArray<VariablePath>
   readonly widerRanges: ReadonlyArray<{ readonly reading: VariablePath; readonly wider: VariablePath }>
+  readonly programs: ReadonlyArray<{ readonly reading: VariablePath; readonly program: VariablePath; readonly deviation?: VariablePath }>
+  readonly shutdownReadings: ReadonlyArray<VariablePath>
   readonly energy: ReadonlyArray<CompiledEnergyRole>
 }
 

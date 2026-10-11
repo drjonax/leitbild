@@ -180,6 +180,24 @@ describe('model semantics declared per component kind', () => {
     expect(() => compilePlantGraph(assemblePwrReferencePlantGraph({ loopCount: 4 }), registry)).toThrow('component core semantics: readings are meaningful while sourceRangeCountRateCps, which is not a solved flag')
   })
 
+  test('a reading\'s program is the equipment\'s own, of the quantity it programs, read on it or through one port', () => {
+    // Rod control holds Tavg, as the vessel the core heats reads it, to Tref; level control the pressurizer's level to its program.
+    expect(componentById(graph, 'core').semantics.programs).toEqual([{ reading: 'vessel.meanPrimaryCoolantTemperatureC', program: 'core.referenceAverageTemperatureC', deviation: 'core.averageTemperatureDeviationC' }] as never)
+    expect(componentById(graph, 'pressurizer').semantics.programs).toEqual([{ reading: 'pressurizer.levelPercent', program: 'pressurizer.levelProgramPercent', deviation: 'pressurizer.levelDeviationPercent' }] as never)
+    expect(componentById(graph, 'core').semantics.shutdownReadings).toEqual(['core.powerRangePercent', 'core.intermediateRangeStartupRateDpm'] as never)
+    const base = processPlantComponentRegistry.get('reactorCore' as ComponentKind)!
+    const compileWith = (semantics: Parameters<typeof fixedSemantics>[0]) => () => compilePlantGraph(assemblePwrReferencePlantGraph({ loopCount: 4 }), new Map([...processPlantComponentRegistry, ['reactorCore' as ComponentKind, { ...base, semantics: fixedSemantics(semantics) }]]))
+    expect(compileWith({ programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'vesselThermal', program: 'powerRangePercent' }] }))
+      .toThrow('component core semantics: powerRangePercent does not program the quantity vessel.meanPrimaryCoolantTemperatureC reads')
+    expect(compileWith({ programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'thermalOut', program: 'referenceAverageTemperatureC' }] }))
+      .toThrow('component core semantics: meanPrimaryCoolantTemperatureC is read through unknown port thermalOut')
+    expect(compileWith({ programs: [{ reading: 'meanPrimaryCoolantTemperatureC', program: 'referenceAverageTemperatureC' }] }))
+      .toThrow('component core semantics names unknown variable core.meanPrimaryCoolantTemperatureC')
+    expect(compileWith({ programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'vesselThermal', program: 'rodInsertionFraction' }] }))
+      .toThrow('component core semantics: core.rodInsertionFraction must be a solved reading')
+    expect(compileWith({ shutdownReadings: ['aboveP6'] })).toThrow('component core semantics: shutdown reading aboveP6 must be a solved numeric reading')
+  })
+
   test('a writable variable without an actuation is rejected', () => {
     const base = processPlantComponentRegistry.get('processTank' as ComponentKind)!
     const undeclared: ComponentDefinition = {

@@ -25,7 +25,7 @@ import type {
 } from './model.ts'
 import { linkVariableSemanticsFor, validateProcessLinkContracts } from './link-contracts.ts'
 import { connectionKindSchema, deriveProcessVariableCapabilities, plantGraphSpecSchema } from './model.ts'
-import { readingAccepts, type CompiledComponentSemantics, type CompiledEnergyRole, type CompiledStateAspect, type ComponentSemantics, type StateAspectDeclaration } from './semantics.ts'
+import { readingAccepts, type CompiledComponentSemantics, type CompiledEnergyRole, type CompiledStateAspect, type ComponentSemantics, type ProgramDeclaration, type StateAspectDeclaration } from './semantics.ts'
 
 interface ResolvedPortRef {
   readonly componentId: ComponentId
@@ -298,6 +298,13 @@ const compileComponentSemantics = (
       if (reading.limits?.instrumentSpan === undefined || wider.limits?.instrumentSpan === undefined) throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must declare their instrument spans`)
       return { reading: variablePathFor(componentId, range.reading as LocalVariablePath), wider: variablePathFor(componentId, range.wider as LocalVariablePath) }
     }),
+    // A program can program a reading of another component, so programs are resolved once the links are (compilePrograms).
+    programs: [],
+    shutdownReadings: semantics.shutdownReadings.map(local => {
+      const variable = resolve(local as LocalVariablePath)
+      if (variable.writable || variable.quantity === 'boolean') throw new Error(`${context}: shutdown reading ${local} must be a solved numeric reading`)
+      return variablePathFor(componentId, local as LocalVariablePath)
+    }),
     energy: semantics.energy.map((role): CompiledEnergyRole => {
       const circuits = new Set(Object.values(ports).map(port => port.circuit))
       const named = role.role === 'transfer' ? [role.from, role.to] : [role.circuit]
@@ -311,6 +318,51 @@ const compileComponentSemantics = (
       return { ...role, rate: variablePathFor(componentId, role.rate as LocalVariablePath) }
     }),
   }
+}
+
+/**
+ * A component's programs, resolved against the Plant's links. The reading a
+ * program holds is the component's own, or, through a port, the variable of
+ * the component on that port's one link; a port the Plant leaves unconnected
+ * reaches none, so that program is not the Plant's. The reading, the program
+ * and its deviation are solved readings, the program of the reading's
+ * quantity and unit.
+ */
+const compilePrograms = (
+  component: CompiledComponent,
+  declarations: ReadonlyArray<ProgramDeclaration>,
+  components: ReadonlyArray<CompiledComponent>,
+  links: ReadonlyArray<CompiledProcessLink>,
+): CompiledComponentSemantics['programs'] => {
+  const context = `component ${component.id} semantics`
+  const solved = (holder: CompiledComponent, local: string): VariableDescriptor => {
+    const path = variablePathFor(holder.id, local as LocalVariablePath)
+    const variable = holder.variables.find(candidate => candidate.path === path)
+    if (variable === undefined) throw new Error(`${context} names unknown variable ${path}`)
+    if (variable.writable) throw new Error(`${context}: ${path} must be a solved reading`)
+    return variable
+  }
+  const holderOf = (declaration: ProgramDeclaration): CompiledComponent | null => {
+    const via = declaration.via
+    if (via === undefined) return component
+    if (component.ports[via] === undefined) throw new Error(`${context}: ${declaration.reading} is read through unknown port ${via}`)
+    const onPort = links.filter(link => (link.fromComponentIndex === component.index && String(link.fromPortName) === via) || (link.toComponentIndex === component.index && String(link.toPortName) === via))
+    if (onPort.length > 1) throw new Error(`${context}: ${declaration.reading} is read through port ${via}, which has ${onPort.length} links, not one`)
+    const link = onPort[0]
+    return link === undefined ? null : components[link.fromComponentIndex === component.index ? link.toComponentIndex : link.fromComponentIndex]!
+  }
+  return declarations.flatMap(declaration => {
+    const holder = holderOf(declaration)
+    if (holder === null) return []
+    const reading = solved(holder, declaration.reading)
+    const program = solved(component, declaration.program)
+    if (reading.quantity !== program.quantity || reading.unit !== program.unit) throw new Error(`${context}: ${declaration.program} does not program the quantity ${reading.path} reads`)
+    return [{
+      reading: reading.path,
+      program: program.path,
+      ...(declaration.deviation === undefined ? {} : { deviation: solved(component, declaration.deviation).path }),
+    }]
+  })
 }
 
 // Names readers resolve must be unambiguous: an operator's short label names
@@ -487,7 +539,8 @@ export const compilePlantGraph = (
   const componentIndexById = new Map<ComponentId, number>()
   const definitions = new Map<ComponentId, ComponentDefinition>()
   const portDefinitions = new Map<ComponentId, Readonly<Record<string, PortDefinition>>>()
-  const components: CompiledComponent[] = spec.components.map((component, index) => {
+  const programDeclarations: Array<ReadonlyArray<ProgramDeclaration>> = []
+  const ownSemantics: CompiledComponent[] = spec.components.map((component, index) => {
     const definition = resolveDefinition(registry, component.kind)
     assertComponentVariableOverridesValid(component.id, definition, component.variables)
     const overrideByPath = new Map(component.variables.map(override => [override.path, override]))
@@ -496,6 +549,8 @@ export const compilePlantGraph = (
     componentIndexById.set(component.id, index)
     definitions.set(component.id, definition)
     portDefinitions.set(component.id, ports)
+    const declared = definition.semantics(parameters)
+    programDeclarations.push(declared.programs)
     const variables = definition.variables.map(variable => applyComponentVariableOverride({
       ...variable,
       path: variablePathFor(component.id, variable.path),
@@ -509,7 +564,7 @@ export const compilePlantGraph = (
       ...(component.metadata === undefined ? {} : { metadata: component.metadata }),
       ports: compilePorts(component.id, { ...definition, ports }),
       variables,
-      semantics: compileComponentSemantics(component.id, definition.semantics(parameters), variables, ports, parameters),
+      semantics: compileComponentSemantics(component.id, declared, variables, ports, parameters),
     }
     return compiled
   })
@@ -550,10 +605,10 @@ export const compilePlantGraph = (
       id: connection.id,
       kind,
       fromComponentIndex,
-      fromPortIndex: components[fromComponentIndex]?.ports[from.portName]?.index ?? -1,
+      fromPortIndex: ownSemantics[fromComponentIndex]?.ports[from.portName]?.index ?? -1,
       fromPortName: from.portName as PortName,
       toComponentIndex,
-      toPortIndex: components[toComponentIndex]?.ports[to.portName]?.index ?? -1,
+      toPortIndex: ownSemantics[toComponentIndex]?.ports[to.portName]?.index ?? -1,
       toPortName: to.portName as PortName,
       ...(connection.service === undefined ? {} : { service: connection.service }),
       ...(connection.nominalFluid === undefined ? {} : { nominalFluid: connection.nominalFluid }),
@@ -577,6 +632,10 @@ export const compilePlantGraph = (
     }
     return compiled
   })
+  const components: ReadonlyArray<CompiledComponent> = ownSemantics.map(component => ({
+    ...component,
+    semantics: { ...component.semantics, programs: compilePrograms(component, programDeclarations[component.index]!, ownSemantics, links) },
+  }))
   const published = new Set(spec.publishedVariables)
   const componentVariables: CompiledVariable[] = components.flatMap(component =>
     component.variables.map(descriptor => ({

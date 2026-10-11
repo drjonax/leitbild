@@ -85,6 +85,8 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
     }),
     semantics: fixedSemantics({ keyValues: ['pressureMPa', 'levelPercent'],
       aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })],
+      // Level control holds the level to its program, set by the loops' mean temperature.
+      programs: [{ reading: 'levelPercent', program: 'levelProgramPercent', deviation: 'levelDeviationPercent' }],
       // The PORV and its block valve are modelled inside the pressurizer, on its relief outlet, in the order they sit on
       // the relief line: the motor-operated block valve next to the pressurizer, then the PORV. The pressurizer solves
       // the relief flow itself, so both valves that throttle it belong to it; the line passes what the less open allows.

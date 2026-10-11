@@ -11351,6 +11351,8 @@
     "core.vapourGenerationKgPerS",
     "pressurizer.pressureMPa",
     "pressurizer.levelPercent",
+    "pressurizer.levelProgramPercent",
+    "pressurizer.levelDeviationPercent",
     "pressurizer.waterInventoryKg",
     "pressurizer.steamMassKg",
     "pressurizer.steamMassFlowKgPerS",

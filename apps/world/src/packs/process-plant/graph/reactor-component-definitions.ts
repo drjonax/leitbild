@@ -200,6 +200,10 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       // Above P-6 the source range's high voltage is cut and it counts nothing.
       meaningfulWhile: [{ flag: 'sourceRangeEnergized', variables: ['sourceRangeCountRateCps'] }],
       permissives: ['aboveP6', 'aboveP10'],
+      // Rod control holds the coolant's average temperature, as the vessel the core heats reads it, to Tref.
+      programs: [{ reading: 'meanPrimaryCoolantTemperatureC', via: 'vesselThermal', program: 'referenceAverageTemperatureC', deviation: 'averageTemperatureDeviationC' }],
+      // After a reactor trip the power range falls to decay power and the startup rate goes negative.
+      shutdownReadings: ['powerRangePercent', 'intermediateRangeStartupRateDpm'],
       energy: [{ role: 'source', circuit: 'coolant', rate: 'totalThermalPowerMw' }],
     }),
     variables: [
