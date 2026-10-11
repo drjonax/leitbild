@@ -17,7 +17,7 @@ import {
   screenRecordsOnPool,
   sizedContingencyScreen,
 } from '../src/packs/electric-grid/runtime/contingency-execution.ts'
-import { contingencyPoolConfigFromEnv, contingencyPoolSize, createContingencyPool, type ContingencyPool } from '../src/packs/electric-grid/runtime/contingency-pool.ts'
+import { contingencyPoolConfigFromEnv, createContingencyPool, type ContingencyPool } from '../src/packs/electric-grid/runtime/contingency-pool.ts'
 import { screenContingencies, selectContingencies, type ContingencySelection, type ScreeningSummary } from '../src/packs/electric-grid/runtime/contingency-screen.ts'
 import { sharedScreeningRecords, type ContingencySnapshot, type GridContingency } from '../src/packs/electric-grid/runtime/contingency-snapshot.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
@@ -33,7 +33,7 @@ import { gridDefinitionForModel, syntheticGridDefinition } from './fixtures/synt
 const workerUrl = new URL('../src/packs/electric-grid/runtime/contingency-worker.ts', import.meta.url)
 const pools: ContingencyPool[] = []
 const poolOf = (size: number, idleTimeoutMs = 60_000, url = workerUrl): ContingencyPool => {
-  const pool = createContingencyPool({ size, idleTimeoutMs, workerUrl: url })
+  const pool = createContingencyPool({ size, sizeReason: `test pool of ${size}`, idleTimeoutMs, workerUrl: url })
   pools.push(pool)
   return pool
 }
@@ -198,7 +198,6 @@ describe('electric grid N-1 worker pool', () => {
     expect(contingencyExecution(large, 4)).toBe('pool')
     // A host without a spare core, or LEITBILD_GRID_N1_MAX_WORKERS=0, screens everything inline.
     expect(contingencyExecution(large, 0)).toBe('inline')
-    expect([contingencyPoolSize(8, 4), contingencyPoolSize(3, 4), contingencyPoolSize(1, 4), contingencyPoolSize(16, 0)]).toEqual([4, 2, 0, 0])
     for (const [count, workers] of [[1, 4], [7, 2], [1_239, 3], [14_000, 4]] as const) {
       const chunks = screeningChunks(count, workers)
       expect(chunks.length).toBe(Math.min(count, workers * 4))
@@ -209,10 +208,11 @@ describe('electric grid N-1 worker pool', () => {
         if (index > 0) expect(chunk.start).toBe(chunks[index - 1]!.end)
       })
     }
-    expect(contingencyPoolConfigFromEnv({ LEITBILD_GRID_N1_MAX_WORKERS: '2', LEITBILD_GRID_N1_IDLE_MS: '500' })).toMatchObject({ idleTimeoutMs: 500 })
-    expect(contingencyPoolConfigFromEnv({ LEITBILD_GRID_N1_MAX_WORKERS: '0' }).size).toBe(0)
-    expect(() => contingencyPoolConfigFromEnv({ LEITBILD_GRID_N1_MAX_WORKERS: 'four' })).toThrow('LEITBILD_GRID_N1_MAX_WORKERS must be an integer of at least 0, got "four"')
-    expect(() => contingencyPoolConfigFromEnv({ LEITBILD_GRID_N1_IDLE_MS: '0' })).toThrow('LEITBILD_GRID_N1_IDLE_MS must be an integer of at least 1')
+    const host = { cores: 8, limit: { kind: 'cores', why: 'test host' } } as const
+    expect(contingencyPoolConfigFromEnv({ LEITBILD_GRID_N1_MAX_WORKERS: '2', LEITBILD_GRID_N1_IDLE_MS: '500' }, host)).toMatchObject({ size: 2, idleTimeoutMs: 500 })
+    expect(contingencyPoolConfigFromEnv({ LEITBILD_GRID_N1_MAX_WORKERS: '0' }, host).size).toBe(0)
+    expect(() => contingencyPoolConfigFromEnv({ LEITBILD_GRID_N1_MAX_WORKERS: 'four' }, host)).toThrow('LEITBILD_GRID_N1_MAX_WORKERS must be an integer of at least 0, got "four"')
+    expect(() => contingencyPoolConfigFromEnv({ LEITBILD_GRID_N1_IDLE_MS: '0' }, host)).toThrow('LEITBILD_GRID_N1_IDLE_MS must be an integer of at least 1')
   }, 60_000)
 
   test('a pool starts no worker before its first pooled screening, and none for inline ones', async () => {
@@ -237,7 +237,14 @@ describe('electric grid N-1 worker pool', () => {
     const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
     expect(stderr).toBe('')
     expect(exitCode).toBe(0)
-    expect(JSON.parse(stdout.trim().split('\n').at(-1)!)).toEqual({ poolCreatedAtStart: false, workersAfterSmall: 0, workersAfterLarge: 2, workersAfterIdle: 0, size: 2 })
+    const report = JSON.parse(stdout.trim().split('\n').at(-1)!)
+    expect(report).toMatchObject({ poolAtStart: null, workersAfterSmall: 0, workersAfterLarge: 2, workersAfterIdle: 0 })
+    // grid.summary reports the pool once a screening created it, with how its size was chosen.
+    expect(report.poolAtStart).toBeNull()
+    expect(report.summaryPoolAtStart).toBeNull()
+    expect(report.summaryPoolAfterLarge).toMatchObject({ size: 2, liveWorkerCount: 2 })
+    expect(report.summaryPoolAfterLarge.sizeReason).toStartWith('2 workers = min of cores ')
+    expect(report.summaryPoolAfterLarge.sizeReason).toContain('cap 2 (LEITBILD_GRID_N1_MAX_WORKERS)')
   }, 60_000)
 
   test('idle workers are terminated after the idle time, and the next screening starts new ones', async () => {

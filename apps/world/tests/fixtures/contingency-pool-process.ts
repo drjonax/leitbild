@@ -3,7 +3,7 @@
 // screening has started the pool before.
 import type { IsoTimestamp } from '../../src/core/model/index.ts'
 import { answerElectricGridQuery } from '../../src/packs/electric-grid/queries/index.ts'
-import { processContingencyPool, processContingencyPoolCreated } from '../../src/packs/electric-grid/runtime/contingency-pool.ts'
+import { processContingencyPool, processContingencyPoolStatus } from '../../src/packs/electric-grid/runtime/contingency-pool.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../../src/packs/electric-grid/runtime/solver.ts'
 import { gridAutomationSchema } from '../../src/packs/electric-grid/schemas/grid-automation.ts'
@@ -16,11 +16,18 @@ const screen = async (grid: GridRuntimeInstance): Promise<unknown> => await answ
   grids: new Map([[grid.definition.gridId, grid]]),
 })
 
+/** The pool as grid.summary reports it in its diagnostics. */
+const summaryPool = (grid: GridRuntimeInstance): unknown => (answerElectricGridQuery({
+  request: { capabilityId: 'world.electric-grid.grid.summary', input: { gridId: grid.definition.gridId } },
+  grids: new Map([[grid.definition.gridId, grid]]),
+}) as { diagnostics: { contingencyWorkerPool: unknown } }).diagnostics.contingencyWorkerPool
+
 createLocalElectricGridPackRuntimeAdapter()
-const atStart = processContingencyPoolCreated()
+const atStart = processContingencyPoolStatus()
 
 const corridor = steppedGrid(corridorDefinition())
 corridor.advanceTo(10_000)
+const summaryAtStart = summaryPool(corridor.grid)
 await screen(corridor.grid)
 const afterSmall = processContingencyPool().liveWorkerCount()
 
@@ -32,10 +39,18 @@ const large = createGridRuntimeInstance({ definition, at })
 advanceGrid(large, 0, at)
 await screen(large)
 const afterLarge = processContingencyPool().liveWorkerCount()
+const summaryAfterLarge = summaryPool(large)
 
 // Polled with a generous deadline: a loaded machine may run the idle timer late, never early.
 const idleFrom = performance.now()
 while (processContingencyPool().liveWorkerCount() > 0 && performance.now() - idleFrom < 10_000) await Bun.sleep(10)
 const afterIdle = processContingencyPool().liveWorkerCount()
 
-console.log(JSON.stringify({ poolCreatedAtStart: atStart, workersAfterSmall: afterSmall, workersAfterLarge: afterLarge, workersAfterIdle: afterIdle, size: processContingencyPool().size }))
+console.log(JSON.stringify({
+  poolAtStart: atStart,
+  summaryPoolAtStart: summaryAtStart,
+  workersAfterSmall: afterSmall,
+  workersAfterLarge: afterLarge,
+  summaryPoolAfterLarge: summaryAfterLarge,
+  workersAfterIdle: afterIdle,
+}))

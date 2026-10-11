@@ -1,4 +1,4 @@
-import { availableParallelism } from 'node:os'
+import { contingencyPoolSizing, currentHostCpus, type HostCpus } from './contingency-pool-size.ts'
 import type { ContingencySnapshot, ScreeningRecords } from './contingency-snapshot.ts'
 import { parseContingencyTaskReply, type ContingencyTask } from './contingency-worker-protocol.ts'
 
@@ -10,6 +10,8 @@ import { parseContingencyTaskReply, type ContingencyTask } from './contingency-w
 export interface ContingencyPoolConfig {
   /** Most worker threads the pool runs; 0 means it runs none (every screening is inline). */
   readonly size: number
+  /** How `size` was chosen (contingency-pool-size.ts), for diagnostics. */
+  readonly sizeReason: string
   /** Workers are terminated after this long without a task (ms). */
   readonly idleTimeoutMs: number
   /** The worker's entry module. */
@@ -24,6 +26,7 @@ export interface ContingencyChunk {
 
 export interface ContingencyPool {
   readonly size: number
+  readonly sizeReason: string
   /** Worker threads alive now. */
   readonly liveWorkerCount: () => number
   /** Screens every chunk into the records on the workers; rejects with the first chunk's failure. */
@@ -31,9 +34,6 @@ export interface ContingencyPool {
   /** Terminates every worker and fails the screenings still running. */
   readonly close: () => void
 }
-
-/** Workers for a host: one core stays with the main thread (the Grid's ticks and the server), at most `cap`. */
-export const contingencyPoolSize = (cores: number, cap: number): number => Math.max(0, Math.min(cores - 1, cap))
 
 interface PoolRun {
   readonly snapshot: ContingencySnapshot
@@ -177,6 +177,7 @@ export const createContingencyPool = (config: ContingencyPoolConfig): Contingenc
 
   return {
     size: config.size,
+    sizeReason: config.sizeReason,
     liveWorkerCount: () => workers.length,
     screen: async (snapshot, records, chunks) => {
       if (closed) throw new Error('the N-1 worker pool is closed')
@@ -216,20 +217,39 @@ const integerFromEnv = (name: string, value: string | undefined, minimum: number
   return parsed
 }
 
-/** The process pool's configuration: LEITBILD_GRID_N1_MAX_WORKERS (cap, default 4) and LEITBILD_GRID_N1_IDLE_MS (default 30 000). */
-export const contingencyPoolConfigFromEnv = (env: Readonly<Record<string, string | undefined>>): ContingencyPoolConfig => ({
-  size: contingencyPoolSize(availableParallelism(), integerFromEnv('LEITBILD_GRID_N1_MAX_WORKERS', env.LEITBILD_GRID_N1_MAX_WORKERS, 0, defaultMaximumWorkers)),
-  idleTimeoutMs: integerFromEnv('LEITBILD_GRID_N1_IDLE_MS', env.LEITBILD_GRID_N1_IDLE_MS, 1, defaultIdleTimeoutMs),
-  workerUrl: new URL('./contingency-worker.ts', import.meta.url),
-})
+/**
+ * The process pool's configuration: its size from the host's cores and CPU quota with the cap
+ * LEITBILD_GRID_N1_MAX_WORKERS (default 4), and LEITBILD_GRID_N1_IDLE_MS (default 30 000).
+ */
+export const contingencyPoolConfigFromEnv = (env: Readonly<Record<string, string | undefined>>, host: HostCpus): ContingencyPoolConfig => {
+  const cap = integerFromEnv('LEITBILD_GRID_N1_MAX_WORKERS', env.LEITBILD_GRID_N1_MAX_WORKERS, 0, defaultMaximumWorkers)
+  const capSource = env.LEITBILD_GRID_N1_MAX_WORKERS === undefined ? 'default' : 'LEITBILD_GRID_N1_MAX_WORKERS'
+  const sizing = contingencyPoolSizing({ cores: host.cores, cap, capSource, limit: host.limit })
+  return {
+    size: sizing.size,
+    sizeReason: sizing.reason,
+    idleTimeoutMs: integerFromEnv('LEITBILD_GRID_N1_IDLE_MS', env.LEITBILD_GRID_N1_IDLE_MS, 1, defaultIdleTimeoutMs),
+    workerUrl: new URL('./contingency-worker.ts', import.meta.url),
+  }
+}
 
 let processPool: ContingencyPool | null = null
 
-/** The process's N-1 worker pool, created by the first screening that needs it (never at start-up). */
+/**
+ * The process's N-1 worker pool, created by the first screening (never at start-up). Its creation
+ * reads the host's CPU quota; a malformed one fails it, and with it that screening.
+ */
 export const processContingencyPool = (): ContingencyPool => {
-  processPool ??= createContingencyPool(contingencyPoolConfigFromEnv(process.env))
+  processPool ??= createContingencyPool(contingencyPoolConfigFromEnv(process.env, currentHostCpus()))
   return processPool
 }
 
-/** Whether the process pool exists yet; it does only after a screening needed it. */
-export const processContingencyPoolCreated = (): boolean => processPool !== null
+export interface ContingencyPoolStatus {
+  readonly size: number
+  readonly sizeReason: string
+  readonly liveWorkerCount: number
+}
+
+/** The process pool for diagnostics, or null before a screening created it; reading it creates nothing. */
+export const processContingencyPoolStatus = (): ContingencyPoolStatus | null =>
+  processPool === null ? null : { size: processPool.size, sizeReason: processPool.sizeReason, liveWorkerCount: processPool.liveWorkerCount() }

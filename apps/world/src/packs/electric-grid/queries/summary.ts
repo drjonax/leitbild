@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { gridProjectionSchema } from '../model.ts'
+import { processContingencyPoolStatus } from '../runtime/contingency-pool.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
 import type { GridOperatingPointDefinition } from '../grid-model.ts'
 import { modelDiagnosticsSchema, modelFidelitySchema } from './catalog.ts'
@@ -109,6 +110,11 @@ const summaryResultSchema = z.object({
         lossEnergyMwh: finite,
       }).strict(),
     }).strict(),
+    contingencyWorkerPool: z.object({
+      size: count.describe('Worker threads the process may run for N-1 screening; 0: every screening is inline.'),
+      sizeReason: z.string().describe('How the size was chosen: cores, the configured cap and the cgroup v2 CPU quota (Linux) or the platform without one.'),
+      liveWorkerCount: count.describe('Workers alive now; idle ones are terminated.'),
+    }).strict().nullable().describe('The process\'s N-1 worker pool, shared by every Grid; null until the first screening creates it.'),
   }).strict(),
   thresholds: z.object({
     constrainedBranchLoadingPercent: finite.describe('constrainedBranches lists closed branches loaded at or above this percent.'),
@@ -181,7 +187,11 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
       load: model.loads.length,
       storage: model.storage.length,
     },
-    diagnostics: { model: grid.definition.index.diagnostics, runtime: { ...grid.diagnostics, energyAudit: { ...grid.diagnostics.energyAudit } } },
+    diagnostics: {
+      model: grid.definition.index.diagnostics,
+      runtime: { ...grid.diagnostics, energyAudit: { ...grid.diagnostics.energyAudit } },
+      contingencyWorkerPool: processContingencyPoolStatus(),
+    },
     thresholds: { constrainedBranchLoadingPercent, affectedLoadUnservedMw },
     constrainedBranchCount: constrained.length,
     constrainedBranches: constrained.slice(0, constrainedBranchRowLimit).map(({ definition, state }) => ({
