@@ -47,6 +47,112 @@ const levelDeviationAlarmPercent = 5
  */
 const lowLevelCutoffPercent = 17
 
+// What tells an operator the relief path passes steam: the PORV's acoustic
+// flow monitor, its tailpipe thermocouple and the relief tank's pressure,
+// temperature and level, each annunciated as at a Westinghouse four-loop
+// plant. The tailpipe of a tight valve sits at the containment's 35 to
+// 50 °C; one that passes steam reads well above 100 °C, so its alarm stands
+// at 70 °C (about 160 °F). The relief tank's nitrogen blanket stands at
+// 0.12 MPa (3 psig) and alarms at 0.157 MPa (8 psig), long before its
+// rupture disk bursts at 0.79 MPa (100 psig); its water, at the
+// containment's temperature, alarms at 49 °C (120 °F); its level, 72 %
+// normally, alarms at 80 %, the rise some 4 t of condensed steam brings.
+const tailpipeTemperatureHighC = 70
+const reliefTankPressureHighMPa = 0.157
+const reliefTankTemperatureHighC = 49
+const reliefTankLevelHighPercent = 80
+
+const reliefTankAlarm = annunciator({ ...pzrAlarm, equipmentId: 'pressurizerReliefTank' })
+
+const reliefPathAlarms = (): ReadonlyArray<ProcessPlantIcRule> => [
+  rule({
+    id: 'pzr-porv-flow',
+    label: 'Pressurizer PORV flow',
+    ruleClass: 'alarm',
+    condition: comparison({ tagId: 'PORV-456A-FLOW' }, '==', true),
+    clearCondition: comparison({ tagId: 'PORV-456A-FLOW' }, '==', false),
+    clearDelayMs: 1_000,
+    delayMs: 1_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'porv-flow',
+      title: 'Pressurizer PORV flow',
+      message: 'The PORV\'s acoustic flow monitor reads flow through the valve: the PORV passes reactor coolant steam to the relief tank.',
+      severity: 'warning',
+      annunciator: pzrAlarm,
+    })],
+  }),
+  rule({
+    id: 'pzr-porv-tailpipe-temperature-high',
+    label: 'Pressurizer PORV tailpipe temperature high',
+    ruleClass: 'alarm',
+    condition: comparison({ tagId: 'PORV-456A-TEMP' }, '>', tailpipeTemperatureHighC),
+    clearCondition: comparison({ tagId: 'PORV-456A-TEMP' }, '<', tailpipeTemperatureHighC - 5),
+    clearDelayMs: 2_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'porv-tailpipe-temperature-high',
+      title: 'PORV tailpipe temperature high',
+      message: `The PORV's tailpipe reads above ${tailpipeTemperatureHighC} °C: the valve passes, or has just passed, steam.`,
+      severity: 'warning',
+      annunciator: pzrAlarm,
+    })],
+  }),
+  rule({
+    id: 'prt-pressure-high',
+    label: 'Pressurizer relief tank pressure high',
+    ruleClass: 'alarm',
+    condition: comparison({ tagId: 'PRT-PRESS' }, '>', reliefTankPressureHighMPa),
+    clearCondition: comparison({ tagId: 'PRT-PRESS' }, '<', reliefTankPressureHighMPa - 0.01),
+    clearDelayMs: 2_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'prt-pressure-high',
+      title: 'Relief tank pressure high',
+      message: `The pressurizer relief tank's pressure is above ${reliefTankPressureHighMPa} MPa: relief or safety valve discharge is heating its water and squeezing its nitrogen blanket.`,
+      severity: 'warning',
+      annunciator: reliefTankAlarm,
+    })],
+  }),
+  rule({
+    id: 'prt-temperature-high',
+    label: 'Pressurizer relief tank temperature high',
+    ruleClass: 'alarm',
+    condition: comparison({ tagId: 'PRT-TEMP' }, '>', reliefTankTemperatureHighC),
+    clearCondition: comparison({ tagId: 'PRT-TEMP' }, '<', reliefTankTemperatureHighC - 2),
+    clearDelayMs: 2_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'prt-temperature-high',
+      title: 'Relief tank temperature high',
+      message: `The pressurizer relief tank's water is above ${reliefTankTemperatureHighC} °C: discharge has heated it.`,
+      severity: 'warning',
+      annunciator: reliefTankAlarm,
+    })],
+  }),
+  rule({
+    id: 'prt-level-high',
+    label: 'Pressurizer relief tank level high',
+    ruleClass: 'alarm',
+    condition: comparison({ tagId: 'PRT-LVL' }, '>', reliefTankLevelHighPercent),
+    clearCondition: comparison({ tagId: 'PRT-LVL' }, '<', reliefTankLevelHighPercent - 2),
+    clearDelayMs: 2_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [alarm({
+      id: 'prt-level-high',
+      title: 'Relief tank level high',
+      message: `The pressurizer relief tank's level is above ${reliefTankLevelHighPercent} %: discharge has condensed into it.`,
+      severity: 'warning',
+      annunciator: reliefTankAlarm,
+    })],
+  }),
+]
+
 export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
     id: 'pzr-pressure-low',
@@ -99,24 +205,7 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
     resetWhenClear: true,
     effects: [write('open-porv', { tagId: 'PORV-456A' }, 1)],
   }),
-  rule({
-    id: 'pzr-relief-flow-high',
-    label: 'Pressurizer relief flow high',
-    ruleClass: 'alarm',
-    condition: comparison({ path: 'pressurizer.reliefFlowKgPerS' }, '>', 1),
-    clearCondition: comparison({ path: 'pressurizer.reliefFlowKgPerS' }, '<', 0.5),
-    clearDelayMs: 1_000,
-    delayMs: 1_000,
-    latch: false,
-    resetWhenClear: true,
-    effects: [alarm({
-      id: 'relief-flow-high',
-      title: 'Pressurizer relief flow high',
-      message: 'Pressurizer relief flow is above the reference alarm threshold.',
-      severity: 'warning',
-      annunciator: pzrAlarm,
-    })],
-  }),
+  ...reliefPathAlarms(),
   rule({
     id: 'pzr-safety-valve-open',
     label: 'Pressurizer safety valve open',

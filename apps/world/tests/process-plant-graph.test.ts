@@ -95,12 +95,14 @@ describe('process plant model composition', () => {
     // level program and its deviation from it were published beside its
     // level, again when the link flows no plant instrument measures (leak,
     // relief and release flows) were marked simulator-only, again when the
-    // rods gained their position indication and rod bottom bistable, and
-    // again when the diesels gained their kW, voltage and frequency, the
-    // buses their kilovolts, and each safety train its load sequencer and
-    // the loads it sequences; PWR Runs checkpointed before then must be
-    // restarted.
-    expect(system.modelDigest).toBe('d089fa630d048a2f5585d43ec21fb6298c5631272c034939487446d9f290ae9b')
+    // rods gained their position indication and rod bottom bistable, again
+    // when the diesels gained their kW, voltage and frequency, the buses
+    // their kilovolts, and each safety train its load sequencer and the
+    // loads it sequences, and again when the pressurizer relief tank became
+    // a nitrogen-blanketed quench tank and the relief lines gained their
+    // tailpipe temperatures and the PORV its acoustic flow monitor; PWR Runs
+    // checkpointed before then must be restarted.
+    expect(system.modelDigest).toBe('42d44633da8662692fdd45c0e174e55e0ef26ab3906cf454da56859f28aef238')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))

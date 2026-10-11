@@ -50,6 +50,7 @@ const byKind: Readonly<Record<string, MimicPresentation | ((component: CompiledC
   processValve: valvePresentation,
   steamValve: valvePresentation,
   processTank: { element: 'tank', tank: 'atmospheric', aspect: 'level' },
+  reliefTank: { element: 'tank', tank: 'pressurized', aspect: 'level' },
   pressurizer: { element: 'tank', tank: 'pressurized', aspect: 'level' },
   accumulator: { element: 'tank', tank: 'pressurized', aspect: null },
   reactorCore: { element: 'tank', tank: 'pressurized', aspect: null },

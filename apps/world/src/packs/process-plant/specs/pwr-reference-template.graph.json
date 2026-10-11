@@ -314,6 +314,7 @@
         "safetyValveBlowdownFraction": 0.05,
         "heaterCutoffLevelPercent": 17,
         "backupHeaterCapacityMw": 1.4,
+        "reliefFlowMonitorThresholdKgPerS": 0.5,
         "levelControl": {
           "noLoadAverageTemperatureC": 291.7,
           "noLoadLevelPercent": 25,
@@ -404,6 +405,12 @@
           "description": "Pressurizer PORV 456A position feedback"
         },
         {
+          "path": "reliefValveFlowing",
+          "tagId": "PORV-456A-FLOW",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer PORV 456A acoustic flow monitor: flow through the valve, from 0.5 kg/s"
+        },
+        {
           "path": "blockValvePositionFraction",
           "tagId": "MOV-8000A",
           "equipmentId": "pressurizer",
@@ -441,17 +448,41 @@
     },
     {
       "id": "pressurizerReliefTank",
-      "kind": "processTank",
+      "kind": "reliefTank",
       "label": "Pressurizer Relief Tank",
       "parameters": {
-        "nominalInventoryKg": 80000,
-        "initialInventoryFraction": 0.15,
-        "initialTemperatureC": 80,
-        "makeupFlowKgPerS": 0,
-        "maxOutletFlowKgPerS": 0,
-        "thermalTimeConstantS": 120,
-        "initialSoluteConcentrationPpm": 1200
+        "vesselVolumeM3": 51,
+        "initialLevelPercent": 72,
+        "initialTemperatureC": 35,
+        "initialPressureMPa": 0.122,
+        "ruptureDiskPressureMPa": 0.79
       },
+      "variables": [
+        {
+          "path": "pressureMPa",
+          "tagId": "PRT-PRESS",
+          "equipmentId": "pressurizerReliefTank",
+          "description": "Pressurizer relief tank pressure, absolute: its nitrogen blanket at 0.12 MPa (3 psig) normally; the rupture disk bursts at 0.79 MPa (100 psig)"
+        },
+        {
+          "path": "temperatureC",
+          "tagId": "PRT-TEMP",
+          "equipmentId": "pressurizerReliefTank",
+          "description": "Pressurizer relief tank water temperature"
+        },
+        {
+          "path": "levelPercent",
+          "tagId": "PRT-LVL",
+          "equipmentId": "pressurizerReliefTank",
+          "description": "Pressurizer relief tank level, 72 % normally"
+        },
+        {
+          "path": "ruptureDiskBurst",
+          "tagId": "PRT-DISK",
+          "equipmentId": "pressurizerReliefTank",
+          "description": "Pressurizer relief tank rupture disk burst"
+        }
+      ],
       "metadata": {
         "presentation": {
           "shortLabel": "PRT"
@@ -4949,14 +4980,17 @@
         },
         {
           "path": "temperatureC",
-          "label": "Pressurizer relief temperature",
+          "label": "Pressurizer PORV tailpipe temperature",
+          "tagId": "PORV-456A-TEMP",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer PORV 456A tailpipe temperature, just past the valve",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
           "publish": "telemetry",
           "quantity": "temperature",
           "unit": "degC",
-          "initialValue": 322
+          "initialValue": 35
         }
       ]
     },
@@ -4984,14 +5018,17 @@
         },
         {
           "path": "temperatureC",
-          "label": "Pressurizer safety valve discharge temperature",
+          "label": "Pressurizer safety valve tailpipe temperature",
+          "tagId": "PSV-8010-TEMP",
+          "equipmentId": "pressurizer",
+          "description": "Pressurizer code safety valves 8010A, B and C tailpipe temperature",
           "kind": "derived",
           "discipline": "thermal",
           "writable": false,
           "publish": "telemetry",
           "quantity": "temperature",
           "unit": "degC",
-          "initialValue": 322
+          "initialValue": 35
         }
       ]
     },
@@ -12592,6 +12629,9 @@
     "serviceWaterPumpB.connected",
     "serviceWaterPumpB.energized",
     "containmentFanCoolersB.connected",
-    "containmentFanCoolersB.energized"
+    "containmentFanCoolersB.energized",
+    "pressurizerReliefTank.pressureMPa",
+    "pressurizerReliefTank.ruptureDiskBurst",
+    "pressurizer.reliefValveFlowing"
   ]
 }

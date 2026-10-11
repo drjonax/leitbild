@@ -116,6 +116,49 @@ describe('the pressurizer PORV on high pressure', () => {
   }, PLANT_HANG_GUARD_MS)
 })
 
+describe('the relief path read by its instruments', () => {
+  test('a stuck-open PORV reads on its acoustic monitor and tailpipe at once and heats, fills and pressurizes the relief tank', () => {
+    const plantRun = started()
+    plantRun.run(60_000)
+    // A tight relief path: the tailpipe at the containment's air, the tank on its 3 psig blanket at 35 °C and 72 %.
+    expect(plantRun.tag('PORV-456A-FLOW')).toBe(false)
+    expect(Number(plantRun.tag('PORV-456A-TEMP'))).toBeCloseTo(Number(plantRun.read('containment.temperatureC')), 1)
+    expect(Number(plantRun.tag('PRT-PRESS'))).toBeCloseTo(0.122, 3)
+    expect(Number(plantRun.tag('PRT-TEMP'))).toBeCloseTo(35, 1)
+    expect(Number(plantRun.tag('PRT-LVL'))).toBeCloseTo(72, 1)
+    expect(plantRun.activeIds().filter(id => id.includes('porv') || id.includes('prt-'))).toEqual([])
+    plantRun.act('pressurizer-relief-open', { positionPercent: 35 })
+    const entered = new Map<string, number>()
+    const reading = new Map<number, { readonly tailpipe: number; readonly pressure: number; readonly temperature: number; readonly level: number }>()
+    for (let second = 1; second <= 300; second += 1) {
+      plantRun.step()
+      for (const id of plantRun.activeIds()) if (!entered.has(id)) entered.set(id, second)
+      reading.set(second, { tailpipe: Number(plantRun.tag('PORV-456A-TEMP')), pressure: Number(plantRun.tag('PRT-PRESS')), temperature: Number(plantRun.tag('PRT-TEMP')), level: Number(plantRun.tag('PRT-LVL')) })
+    }
+    // The acoustic monitor and the tailpipe answer within seconds; the tank's own alarms follow over minutes.
+    expect(entered.get('alarm:pzr-porv-flow:porv-flow')).toBeLessThanOrEqual(3)
+    expect(entered.get('alarm:pzr-porv-tailpipe-temperature-high:porv-tailpipe-temperature-high')).toBeLessThanOrEqual(10)
+    expect(entered.get('alarm:prt-temperature-high:prt-temperature-high')).toBeLessThanOrEqual(150)
+    expect(entered.get('alarm:prt-pressure-high:prt-pressure-high')).toBeLessThanOrEqual(240)
+    // Steam throttled to the line's back pressure reads its saturation temperature, as Three Mile Island's tailpipe did.
+    expect(reading.get(60)!.tailpipe).toBeGreaterThan(120)
+    expect(reading.get(60)!.tailpipe).toBeLessThan(160)
+    // The tank's water warms, rises and squeezes its blanket, every minute more, its rupture disk still whole.
+    for (const [earlier, later] of [[60, 120], [120, 300]] as const) {
+      for (const key of ['pressure', 'temperature', 'level'] as const) expect(reading.get(later)![key], `${key} ${later}`).toBeGreaterThan(reading.get(earlier)![key])
+    }
+    expect(reading.get(300)!.pressure).toBeLessThan(0.79)
+    expect(plantRun.tag('PRT-DISK')).toBe(false)
+    // Isolated by its block valve, the PORV's monitor reads no flow at once while its tailpipe cools over minutes.
+    plantRun.act('pressurizer-porv-block-valve-close')
+    plantRun.run(20_000)
+    expect(plantRun.tag('PORV-456A-FLOW')).toBe(false)
+    expect(Number(plantRun.tag('PORV-456A-TEMP'))).toBeGreaterThan(100)
+    plantRun.run(900_000)
+    expect(Number(plantRun.tag('PORV-456A-TEMP'))).toBeLessThan(70)
+  }, 120_000)
+})
+
 describe('pressurizer code safety valves', () => {
   test('with the PORV blocked, they hold an overpressure near their 17.24 MPa set pressure, discharging to the relief tank', () => {
     // The same overpressure: no spray, no PORV opening, the PORV isolated and the heaters full on, the 0.4 MW
@@ -354,7 +397,7 @@ describe('the PORV block valve', () => {
     expect(Number(plantRun.read('pressurizer.reliefFlowKgPerS'))).toBe(0)
     expect(Number(plantRun.read('pressurizer-relief-to-tank.flowKgPerS'))).toBe(0)
     plantRun.run(3_000)
-    expect(plantRun.activeIds()).not.toContain('alarm:pzr-relief-flow-high:relief-flow-high')
+    expect(plantRun.activeIds()).not.toContain('alarm:pzr-porv-flow:porv-flow')
   })
 
   test('without power on its motor it stays where it is', () => {

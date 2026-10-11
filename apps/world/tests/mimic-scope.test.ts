@@ -234,7 +234,8 @@ describe('mimic presentation and bindings', () => {
       state: { path: 'pressurizer.reliefValveEffectivePositionFraction' as never, reading: 'value' },
       command: 'pressurizer.reliefValvePositionFraction' as never,
     })
-    expect(porv.frames).toEqual([{ ruleId: 'pzr-relief-flow-high', flap: 'F HI · ALM', flapShort: 'F HI' }])
+    // It is framed by its acoustic flow monitor's alarm, the instrument a plant reads its flow by.
+    expect(porv.frames).toEqual([{ ruleId: 'pzr-porv-flow', flap: 'RELIEF VALVE FLOWING', flapShort: 'RELIEF VALVE FLOWING' }])
     // An accumulator's discharge isolation valve opens on its command at once; the model solves no separate position.
     // The check valve on the same outlet can hold its flow back, so no flow does not say it is shut.
     const accumulator = graph.componentIndexById.get('safetyAccumulatorA' as never)!

@@ -74,6 +74,8 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       heaterCutoffLevelPercent: z.number().finite().min(0).max(100),
       /** Heat of the backup heater group, all on or all off, from its diesel-backed supply. */
       backupHeaterCapacityMw: z.number().finite().positive(),
+      /** The relief flow at and above which the PORV's acoustic flow monitor reads its valve passing flow. */
+      reliefFlowMonitorThresholdKgPerS: z.number().finite().positive(),
       /**
        * Level control: the level the program sets for the loops' mean
        * temperature, rising in a straight line from its no-load to its
@@ -108,7 +110,7 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
           aspect('position', { variable: 'reliefValveEffectivePositionFraction', reading: 'value' }, 'reliefValvePositionFraction'),
           aspect('throughput', { variable: 'reliefFlowKgPerS', reading: 'flow' }),
         ],
-        variables: ['reliefFlowKgPerS', 'reliefValvePositionFraction', 'reliefValveEffectivePositionFraction', 'reliefValveFailureActive', 'reliefValveFailedPositionFraction'],
+        variables: ['reliefFlowKgPerS', 'reliefValvePositionFraction', 'reliefValveEffectivePositionFraction', 'reliefValveFailureActive', 'reliefValveFailedPositionFraction', 'reliefValveFlowing'],
       }, {
         // The spring-loaded code safety valves, on their own lines to the relief tank, which no block valve isolates.
         // The model holds them as one bank: they share a set pressure, so they lift together.
@@ -152,11 +154,47 @@ export const pressurizerComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'reliefValveFailedPositionFraction', label: 'Pressurizer relief valve failed position', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'faultInjection', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'reliefValveEffectivePositionFraction', label: 'Pressurizer relief valve effective position', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
       variable({ path: 'reliefFlowKgPerS', label: 'Pressurizer relief flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s', simulatorOnly: true }),
+      // What a plant reads of the relief flow: the acoustic monitor on the PORV's discharge, flow or no flow.
+      variable({ path: 'reliefValveFlowing', label: 'Pressurizer PORV acoustic flow monitor', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'blockValvePositionFraction', label: 'Pressurizer PORV block valve position command', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'position', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'blockValveEffectivePositionFraction', label: 'Pressurizer PORV block valve position', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
       variable({ path: 'safetyValvesOpen', label: 'Pressurizer code safety valves open', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'safetyValvesLiftFraction', label: 'Pressurizer code safety valve lift', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'position', quantity: 'ratio', unit: 'fraction' }),
       variable({ path: 'safetyValveFlowKgPerS', label: 'Pressurizer code safety valve flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s', simulatorOnly: true }),
+    ],
+  }),
+  defineComponent({
+    kind: 'reliefTank' as ComponentKind,
+    label: 'Relief Tank',
+    // A closed tank that takes the pressurizer's relief and code safety valve
+    // discharge under its water, which condenses the steam: the water warms by
+    // the steam's heat and rises by its mass. A nitrogen blanket fills the
+    // room above the water, squeezed as the water rises and warmed with it, so
+    // the tank's pressure is the blanket's plus the water's vapour pressure. A
+    // rupture disk bursts at its set pressure and vents the tank to the
+    // containment, whose pressure it then holds; what it vents, and any steam
+    // its water no longer condenses, the model does not carry on into the
+    // containment. The discharge is taken as steam at the temperature its line
+    // brings it in at, so a pressurizer relieving water heats it somewhat too fast.
+    ports: {
+      inlet: { kind: 'hydraulicThermal', direction: 'in', circuit: 'flow' },
+    },
+    parametersSchema: z.object({
+      vesselVolumeM3: z.number().finite().positive(),
+      initialLevelPercent: z.number().finite().min(0).max(100),
+      initialTemperatureC: z.number().finite(),
+      /** Its pressure, absolute, at its initial level and temperature: the nitrogen blanket's plus the water's vapour pressure. */
+      initialPressureMPa: z.number().finite().positive(),
+      /** The absolute pressure at which its rupture disk bursts. */
+      ruptureDiskPressureMPa: z.number().finite().positive(),
+    }).strict(),
+    semantics: fixedSemantics({ keyValues: ['pressureMPa', 'levelPercent'], aspects: [aspect('level', { variable: 'levelPercent', reading: 'value' })] }),
+    variables: [
+      variable({ path: 'inventoryKg', label: 'Relief tank water inventory', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'mass', unit: 'kg', simulatorOnly: true }),
+      variable({ path: 'levelPercent', label: 'Relief tank level', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: 0, max: 100 } } }),
+      variable({ path: 'temperatureC', label: 'Relief tank temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
+      variable({ path: 'pressureMPa', label: 'Relief tank pressure', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
+      variable({ path: 'ruptureDiskBurst', label: 'Relief tank rupture disk burst', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
     ],
   }),
 ]

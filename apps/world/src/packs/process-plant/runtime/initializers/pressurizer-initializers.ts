@@ -2,6 +2,7 @@ import { parameterNumber } from '../component-helpers.ts'
 import { pressurizerLevelControl } from '../../graph/pressurizer-component-definitions.ts'
 import { saturatedWaterSteam } from '../water-properties.ts'
 import type { ComponentInitialValueDefinition } from './model.ts'
+import { reliefTankBlanket, reliefTankInitialWaterKg } from '../behaviors/pressurizer-behaviors.ts'
 
 // A pressurizer starts boiling at its nominal pressure and level; its initial
 // reconciliation fits the water and steam to any other initial pressure or
@@ -43,11 +44,26 @@ export const pressurizerInitialValueDefinitions: ReadonlyArray<ComponentInitialV
       if (localPath === 'reliefValveFailedPositionFraction') return 1
       if (localPath === 'reliefValveEffectivePositionFraction') return 0
       if (localPath === 'reliefFlowKgPerS') return 0
+      if (localPath === 'reliefValveFlowing') return false
       if (localPath === 'blockValvePositionFraction') return 1
       if (localPath === 'blockValveEffectivePositionFraction') return 1
       if (localPath === 'safetyValvesOpen') return false
       if (localPath === 'safetyValvesLiftFraction') return 0
       if (localPath === 'safetyValveFlowKgPerS') return 0
+      return undefined
+    },
+  },
+  {
+    // A relief tank starts at its declared level, temperature and blanket pressure.
+    componentKind: 'reliefTank',
+    initialValueFor: (component, localPath) => {
+      const water = reliefTankInitialWaterKg(component)
+      const temperature = parameterNumber(component, 'initialTemperatureC')
+      if (localPath === 'inventoryKg') return water
+      if (localPath === 'levelPercent') return reliefTankBlanket(component, water, temperature).levelPercent
+      if (localPath === 'temperatureC') return temperature
+      if (localPath === 'pressureMPa') return reliefTankBlanket(component, water, temperature).pressureMPa
+      if (localPath === 'ruptureDiskBurst') return false
       return undefined
     },
   },

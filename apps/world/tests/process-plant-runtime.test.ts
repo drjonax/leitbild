@@ -345,8 +345,10 @@ describe('process plant runtime', () => {
       ['steam-generator-b-feedwater-runback', [
         'trip:sg-b-level-low-low-reactor-trip:low-low-level-reactor-trip',
       ]],
+      // The PORV's acoustic monitor and tailpipe read it passing steam.
       ['pressurizer-relief-open', [
-        'alarm:pzr-relief-flow-high:relief-flow-high',
+        'alarm:pzr-porv-flow:porv-flow',
+        'alarm:pzr-porv-tailpipe-temperature-high:porv-tailpipe-temperature-high',
       ]],
       // Shutting the block valve is status, not an alarm: with the PORV shut nothing comes in.
       ['pressurizer-porv-block-valve-close', []],
@@ -404,8 +406,10 @@ describe('process plant runtime', () => {
       ['steam-generator-b-feedwater-runback', [
         'trip:sg-b-level-low-low-reactor-trip:low-low-level-reactor-trip',
       ]],
+      // The PORV's acoustic monitor and tailpipe read it passing steam.
       ['pressurizer-relief-open', [
-        'alarm:pzr-relief-flow-high:relief-flow-high',
+        'alarm:pzr-porv-flow:porv-flow',
+        'alarm:pzr-porv-tailpipe-temperature-high:porv-tailpipe-temperature-high',
       ]],
       // Shutting the block valve is status, not an alarm: with the PORV shut nothing comes in.
       ['pressurizer-porv-block-valve-close', []],

@@ -303,7 +303,7 @@ describe('mimic panels in composed displays', () => {
       display: { panels: ReadonlyArray<{ kind: string; ruleIds?: ReadonlyArray<string> }> }
     }
     expect(result.drawingChanged).toBe(false)
-    expect(result.display.panels[1]!.ruleIds).toEqual(expect.arrayContaining(['pzr-relief-flow-high', 'pzr-pressure-low']))
+    expect(result.display.panels[1]!.ruleIds).toEqual(expect.arrayContaining(['pzr-porv-flow', 'pzr-pressure-low']))
   })
 
   test('sample every live value a mimic draws in one call', () => {

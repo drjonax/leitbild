@@ -1,9 +1,10 @@
-import type { CompiledComponent } from '../../graph/index.ts'
+import { ratedFlowForLink, type CompiledComponent, type CompiledProcessLink } from '../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../plant-compiler.ts'
 import { componentVariablePath, processLinkVariablePath, type ProcessLinkBehaviorDefinition } from '../behavior-contract.ts'
 import { relaxToward, type ComponentNumericReadContext } from '../component-helpers.ts'
 import { primaryLoopLegReversed, reactorCoreNetInflowKgPerS } from '../primary-loop-hydraulics.ts'
-import { primarySystemReactorCore } from '../system-topology.ts'
+import { primarySystemContainment, primarySystemReactorCore } from '../system-topology.ts'
+import { saturationTemperatureCFromPressureMPa } from '../thermophysics.ts'
 import { averageIncomingLinkValue, flowWeightedIncomingLinkValue, hasProcessLinkVariable, serviceMatches } from './link-flow-helpers.ts'
 
 /** The upper plenum's water, which the forward-running hot legs carry: the
@@ -22,11 +23,63 @@ const upperPlenumTemperatureC = (system: CompiledProcessPlant, core: CompiledCom
   return flow <= 0 ? coreOutlet : heat / flow
 }
 
+// A relief line from the pressurizer reads what the thermocouple on its
+// tailpipe, just past its valve, reads. While the valve passes steam, the
+// steam throttles to the pressure the line backs up to, the relief tank's
+// plus what the flow builds along the line (0.6 MPa at the valve's rated
+// flow, in proportion below it), and the tailpipe reads that pressure's
+// saturation temperature: about 140 °C with a third of the PORV's rated
+// flow, as Three Mile Island's stuck-open PORV read. Shut, the pipe cools to
+// the containment air around it. It heats in some 10 s and cools over minutes.
+const reliefLineBackPressureAtRatedFlowMPa = 0.6
+const reliefLineHeatupTimeConstantS = 10
+const reliefLineCooldownTimeConstantS = 300
+const linkTemperatureTimeConstantS = 10
+
+const reliefTankByLink = new WeakMap<CompiledProcessLink, CompiledComponent>()
+
+/** The relief tank a relief line discharges to, through any header on its way. */
+const reliefTankDownstream = (system: CompiledProcessPlant, link: CompiledProcessLink): CompiledComponent => {
+  const cached = reliefTankByLink.get(link)
+  if (cached !== undefined) return cached
+  const visit = (componentIndex: number): CompiledComponent | null => {
+    const component = system.graph.components[componentIndex]
+    if (component?.kind === 'reliefTank') return component
+    for (const index of system.graph.outgoingLinksByComponent[componentIndex] ?? []) {
+      const next = system.graph.links[index]
+      if (next === undefined || next.kind !== 'fluidFlow' || next.service !== link.service) continue
+      const found = visit(next.toComponentIndex)
+      if (found !== null) return found
+    }
+    return null
+  }
+  const tank = visit(link.toComponentIndex)
+  if (tank === null) throw new Error(`relief line ${link.id} discharges to no relief tank`)
+  reliefTankByLink.set(link, tank)
+  return tank
+}
+
+const reliefTailpipe = (system: CompiledProcessPlant, link: CompiledProcessLink, context: ComponentNumericReadContext): { readonly temperatureC: number; readonly timeConstantS: number } => {
+  const flow = Math.max(0, context.readNumber(processLinkVariablePath(link, 'flowKgPerS')))
+  const current = context.readNumber(processLinkVariablePath(link, 'temperatureC'))
+  if (flow > 0) {
+    const rated = ratedFlowForLink(system.graph, link)
+    if (rated === null) throw new Error(`relief line ${link.id} has no rated flow to scale its back pressure by`)
+    const tank = reliefTankDownstream(system, link)
+    const backPressure = context.readNumber(componentVariablePath(tank, 'pressureMPa')) + reliefLineBackPressureAtRatedFlowMPa * flow / rated
+    const target = saturationTemperatureCFromPressureMPa(backPressure)
+    return { temperatureC: target, timeConstantS: target > current ? reliefLineHeatupTimeConstantS : reliefLineCooldownTimeConstantS }
+  }
+  const containment = primarySystemContainment(system)
+  if (containment === null) throw new Error(`relief line ${link.id} runs in a Plant with no containment for its pipe to cool in`)
+  return { temperatureC: context.readNumber(componentVariablePath(containment, 'temperatureC')), timeConstantS: reliefLineCooldownTimeConstantS }
+}
+
 export const processLinkTemperatureBehaviorDefinitions: ReadonlyArray<ProcessLinkBehaviorDefinition> = [
   {
     id: 'process-link-temperature',
     phase: 'updateProcessLinkState',
-    reads: ['temperatureC', 'flowKgPerS', 'source component temperature state', 'reactor coolant loop leg flows and temperatures'],
+    reads: ['temperatureC', 'flowKgPerS', 'source component temperature state', 'reactor coolant loop leg flows and temperatures', 'relief tank pressureMPa', 'containment temperatureC'],
     writes: ['temperatureC'],
     appliesTo: (link): boolean => hasProcessLinkVariable(link, 'temperatureC'),
     update: ({ system, link, context }): void => {
@@ -34,6 +87,7 @@ export const processLinkTemperatureBehaviorDefinitions: ReadonlyArray<ProcessLin
       const toComponent = system.graph.components[link.toComponentIndex]
       if (!fromComponent || !toComponent) throw new Error(`process link ${link.id} references missing component`)
       let target: number
+      let timeConstantS = linkTemperatureTimeConstantS
       const core = primarySystemReactorCore(system)
       if (core !== null && primaryLoopLegReversed(system, link, context)) {
         // A loop the others drive backwards carries the downcomer's water back
@@ -47,7 +101,9 @@ export const processLinkTemperatureBehaviorDefinitions: ReadonlyArray<ProcessLin
       } else if (fromComponent.kind === 'steamGenerator' && link.service === 'primaryCoolant') {
         target = context.readNumber(componentVariablePath(fromComponent, 'primaryOutletTemperatureC'))
       } else if (fromComponent.kind === 'pressurizer' && link.service === 'primaryRelief') {
-        target = context.readNumber(componentVariablePath(fromComponent, 'steamTemperatureC'))
+        const tailpipe = reliefTailpipe(system, link, context)
+        target = tailpipe.temperatureC
+        timeConstantS = tailpipe.timeConstantS
       } else if (fromComponent.kind === 'reactorVessel' && link.service === 'letdown') {
         // Letdown leaves from a cold leg. Its regenerative and letdown heat
         // exchangers are not modelled, so it carries cold-leg temperature to
@@ -87,7 +143,7 @@ export const processLinkTemperatureBehaviorDefinitions: ReadonlyArray<ProcessLin
         processLinkVariablePath(link, 'temperatureC'),
         context.dtSeconds === 0
           ? target
-          : relaxToward(context.readNumber(processLinkVariablePath(link, 'temperatureC')), target, context.dtSeconds, 10),
+          : relaxToward(context.readNumber(processLinkVariablePath(link, 'temperatureC')), target, context.dtSeconds, timeConstantS),
       )
     },
   },

@@ -7,7 +7,8 @@ import {
   type ProcessPlantBehaviorContext,
 } from '../behavior-contract.ts'
 import { approach, clamp, parameterNumber } from '../component-helpers.ts'
-import { primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
+import { flowWeightedIncomingComponentLinkValue, sumIncomingComponentLinkValue } from '../component-link-helpers.ts'
+import { primarySystemContainment, primarySystemReactorCore, primarySystemReactorVessel } from '../system-topology.ts'
 import { saturationTemperatureCFromPressureMPa } from '../thermophysics.ts'
 import {
   compressedWaterState,
@@ -128,6 +129,71 @@ const levelProgramPercent = (control: PressurizerLevelControl, meanTemperatureC:
 const chargingFlowDemand = (control: PressurizerLevelControl, programPercent: number, levelPercent: number): number =>
   clamp(control.nominalChargingFlowKgPerS + control.gainKgPerSPerPercent * (programPercent - levelPercent), 0, control.maxChargingFlowKgPerS)
 
+const atmosphericPressureMPa = 0.101325
+
+const reliefTankWaterDensity = (temperatureC: number): number => compressedWaterState(temperatureC, atmosphericPressureMPa).densityKgPerM3
+
+/**
+ * A relief tank's level and pressure with this much water at this
+ * temperature: its nitrogen blanket, the gas its initial state declares,
+ * squeezed into the room the water leaves and at the water's temperature,
+ * plus the water's vapour pressure. Before its rupture disk bursts.
+ */
+export const reliefTankBlanket = (tank: CompiledComponent, waterKg: number, temperatureC: number): { readonly levelPercent: number; readonly pressureMPa: number } => {
+  const volume = parameterNumber(tank, 'vesselVolumeM3')
+  const initialTemperature = parameterNumber(tank, 'initialTemperatureC')
+  const initialGasVolume = volume * (1 - parameterNumber(tank, 'initialLevelPercent') / 100)
+  const blanket = (parameterNumber(tank, 'initialPressureMPa') - saturationPressureMPaFromTemperatureC(initialTemperature)) * initialGasVolume / (initialTemperature + 273.15)
+  const waterVolume = waterKg / reliefTankWaterDensity(temperatureC)
+  const gasVolume = Math.max(volume * 0.01, volume - waterVolume)
+  return {
+    levelPercent: clamp(waterVolume / volume * 100, 0, 100),
+    pressureMPa: blanket * (temperatureC + 273.15) / gasVolume + saturationPressureMPaFromTemperatureC(temperatureC),
+  }
+}
+
+/** A relief tank's initial water: its initial level at its initial temperature. */
+export const reliefTankInitialWaterKg = (tank: CompiledComponent): number =>
+  parameterNumber(tank, 'vesselVolumeM3') * parameterNumber(tank, 'initialLevelPercent') / 100 * reliefTankWaterDensity(parameterNumber(tank, 'initialTemperatureC'))
+
+// The relief tank condenses what the relief lines bring it under its water,
+// which takes up the steam's heat, its enthalpy above the water's, and its
+// mass. Its blanket sets its pressure until the rupture disk bursts; then it
+// holds the containment's pressure, and its water no hotter than boils there.
+const reliefTankBehavior: ComponentBehaviorDefinition = {
+  id: 'relief-tank-quench-state',
+  phase: 'updateComponentState',
+  componentKind: 'reliefTank',
+  reads: ['inventoryKg', 'temperatureC', 'ruptureDiskBurst', 'incoming:flowKgPerS', 'incoming:temperatureC', 'containmentVolume.pressureMPa?'],
+  writes: ['inventoryKg', 'levelPercent', 'temperatureC', 'pressureMPa', 'ruptureDiskBurst'],
+  update: ({ system, component, context }): void => {
+    const water = context.readNumber(componentVariablePath(component, 'inventoryKg'))
+    const temperature = context.readNumber(componentVariablePath(component, 'temperatureC'))
+    const added = Math.max(0, sumIncomingComponentLinkValue(system, component, 'flowKgPerS', context)) * context.dtSeconds
+    const inletTemperature = flowWeightedIncomingComponentLinkValue(system, component, 'temperatureC', context, () => true) ?? temperature
+    const steamEnthalpy = saturatedWaterSteam(saturationPressureMPaFromTemperatureC(inletTemperature)).vapourEnthalpyKjPerKg
+    const waterState = compressedWaterState(temperature, atmosphericPressureMPa)
+    const nextWater = water + added
+    const heated = nextWater > 0 ? temperature + added * (steamEnthalpy - waterState.enthalpyKjPerKg) / (nextWater * waterState.specificHeatKjPerKgK) : temperature
+    const sealed = reliefTankBlanket(component, nextWater, heated)
+    const burst = context.readBoolean(componentVariablePath(component, 'ruptureDiskBurst')) || sealed.pressureMPa >= parameterNumber(component, 'ruptureDiskPressureMPa')
+    let nextTemperature = heated
+    let pressure = sealed.pressureMPa
+    if (burst) {
+      const containment = primarySystemContainment(system)
+      if (containment === null) throw new Error(`relief tank ${component.id} has burst its rupture disk into a Plant with no containment`)
+      const vented = context.readNumber(componentVariablePath(containment, 'pressureMPa'))
+      nextTemperature = Math.min(heated, saturationTemperatureCFromPressureMPa(vented))
+      pressure = Math.max(vented, saturationPressureMPaFromTemperatureC(nextTemperature))
+    }
+    context.write(componentVariablePath(component, 'inventoryKg'), nextWater)
+    context.write(componentVariablePath(component, 'levelPercent'), reliefTankBlanket(component, nextWater, nextTemperature).levelPercent)
+    context.write(componentVariablePath(component, 'temperatureC'), nextTemperature)
+    context.write(componentVariablePath(component, 'pressureMPa'), pressure)
+    context.write(componentVariablePath(component, 'ruptureDiskBurst'), burst)
+  },
+}
+
 export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefinition> = [
   {
     id: 'pressurizer-pressure-inventory-state',
@@ -170,6 +236,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       'reliefValveEffectivePositionFraction',
       'blockValveEffectivePositionFraction',
       'reliefFlowKgPerS',
+      'reliefValveFlowing',
       'safetyValvesOpen',
       'safetyValvesLiftFraction',
       'safetyValveFlowKgPerS',
@@ -369,6 +436,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       context.write(componentVariablePath(component, 'reliefValveEffectivePositionFraction'), reliefOpening)
       context.write(componentVariablePath(component, 'blockValveEffectivePositionFraction'), nextBlockValvePosition)
       context.write(componentVariablePath(component, 'reliefFlowKgPerS'), reliefFlow * reliefMassFactor)
+      context.write(componentVariablePath(component, 'reliefValveFlowing'), reliefFlow * reliefMassFactor >= parameterNumber(component, 'reliefFlowMonitorThresholdKgPerS'))
       context.write(componentVariablePath(component, 'safetyValvesOpen'), safetyValvesOpen)
       context.write(componentVariablePath(component, 'safetyValvesLiftFraction'), safetyLift)
       context.write(componentVariablePath(component, 'safetyValveFlowKgPerS'), safetyFlow * reliefMassFactor)
@@ -396,6 +464,7 @@ export const pressurizerBehaviorDefinitions: ReadonlyArray<ComponentBehaviorDefi
       context.write(componentVariablePath(component, 'pressureMPa'), clamp(nextPressure, 0.1, 22))
     },
   },
+  reliefTankBehavior,
 ]
 
 export const pressurizerInitialReconciliationDefinitions: ReadonlyArray<ComponentInitialReconciliationDefinition> = [
