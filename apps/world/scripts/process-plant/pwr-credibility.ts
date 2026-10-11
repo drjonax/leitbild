@@ -32,6 +32,7 @@ type SourceRefId =
   | 'nrc-srp-ch15'
   | 'nrc-srp-15-2-7'
   | 'nrc-srp-15-6-3'
+  | 'leitbild-pwr-heat-balance'
   | 'iaea-ssg-2'
   | 'nrc-trace'
   | 'oecd-nea-mslb'
@@ -62,6 +63,12 @@ const sourceRefs: Readonly<Record<SourceRefId, SourceRef>> = {
     title: 'NRC NUREG-0800 Section 15.6.3, Radiological Consequences of Steam Generator Tube Failure (PWR)',
     url: 'https://www.nrc.gov/reading-rm/doc-collections/nuregs/staff/sr0800/ch15/index.html',
     note: 'The design-basis tube failure is a double-ended rupture of one tube. In the Westinghouse analyses it rests on (WCAP-10698, the margin-to-overfill methodology) the break drains the pressurizer within minutes, the reactor trips and safety injection actuates on low pressurizer pressure, and safety injection then makes up the break flow until the operators equalize primary and secondary pressure. The loops stay full: the lasting loss is about the pressurizer\'s water, while most of the leaked mass is replaced.',
+  },
+  'leitbild-pwr-heat-balance': {
+    id: 'leitbild-pwr-heat-balance',
+    title: 'Leitbild reference PWR heat balance',
+    url: 'apps/world/tests/process-plant-primary-thermal-hydraulics.test.ts',
+    note: 'The reference core\'s 3,400 MWt and about 18 MWt of reactor coolant pump heat reach the steam generators; a saturated-steam turbine cycle at about 6.9 MPa converts 33 to 35 % of that, so gross output is about 1,130 to 1,200 MWe, as four-loop plants of that rating deliver.',
   },
   'iaea-ssg-2': {
     id: 'iaea-ssg-2',
@@ -374,11 +381,11 @@ const targets: ReadonlyArray<CredibilityTarget> = [
     caseId: 'steady-power',
     label: 'Electric output remains in the reference plant range',
     signal: 'turbine.electricMw final value',
-    expectation: 'The reference plant should produce a plausible large-PWR electrical output at power.',
+    expectation: 'The reference plant should produce the gross electrical output its heat balance gives: 3,400 MWt of core and about 18 MWt of pump heat at a 33 to 35 % gross cycle efficiency.',
     measure: { kind: 'point', path: variablePath('turbine.electricMw'), atMs: durationMs },
-    acceptable: { min: 650, max: 950 },
+    acceptable: { min: 1_120, max: 1_200 },
     severity: 'watch',
-    sourceRefs: ['leitbild-pwr-scope'],
+    sourceRefs: ['leitbild-pwr-heat-balance', 'leitbild-pwr-scope'],
   },
   {
     id: 'lofw-level-decline',
