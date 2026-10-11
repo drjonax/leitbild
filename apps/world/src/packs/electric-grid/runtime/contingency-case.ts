@@ -7,6 +7,7 @@ import { solvedGridIslands } from './island-lifecycle.ts'
 import type { CompiledGridNetwork } from './network/compiled-network.ts'
 import { createGridIslandSystem, solveGridIslandInto, type GridIslandSystem } from './network/dc-power-flow.ts'
 import { findGridIslands } from './network/islands.ts'
+import { gridTablesFor } from './state/tables.ts'
 
 // A screening case: a private copy of the solved network state (switching, injections, flows) on
 // which contingencies and remedial actions are evaluated. Building one never writes to the Grid:
@@ -232,12 +233,19 @@ export const switchedContingencyCase = (base: ContingencyCase, changes: CaseChan
   const injectionsMw = injections.slice()
   const balances: Array<PartBalance & { readonly busCount: number }> = []
   const islands: CaseIsland[] = []
+  const norwegianBus = gridTablesFor(base.grid.definition).norwegianBus
   for (let index = 0; index < found.count; index += 1) {
     const buses = found.busOrder.slice(found.busStart[index]!, found.busStart[index + 1]!)
     const branches = found.branchOrder.slice(found.branchStart[index]!, found.branchStart[index + 1]!)
+    const system = createGridIslandSystem({ network, islandId: `case-island-${index}`, buses, branches, localOfBus: scratch })
+    if (!buses.some(bus => norwegianBus[bus] === 1)) {
+      // Boundary buses with every tie open lie in no island (boundary-separation.ts): they carry nothing and need no balance.
+      for (const bus of buses) injectionsMw[bus] = 0
+      islands.push(caseIsland(system, false))
+      continue
+    }
     const balance = rebalancePart({ participation, members: buses, injections: injectionsMw, removed: null })
     if ((balance.balancing === 'de-energised' && balance.unservedLoadMw > 0) || Math.abs(balance.imbalanceMw) > balanceToleranceMw) balances.push({ ...balance, busCount: buses.length })
-    const system = createGridIslandSystem({ network, islandId: `case-island-${index}`, buses, branches, localOfBus: scratch })
     islands.push(caseIsland(system, balance.balancing !== 'de-energised'))
   }
   const anglesRad = new Float64Array(network.busCount)

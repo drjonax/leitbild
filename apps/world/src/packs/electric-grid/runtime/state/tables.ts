@@ -37,6 +37,8 @@ export interface GridTables {
   readonly synchronousExternalOfBus: Int32Array
   /** 1 on the boundary buses of asynchronous external systems (HVDC terminals outside the AC network). */
   readonly asynchronousBoundaryBus: Uint8Array
+  /** 1 on a bus of the Norwegian network, 0 on a boundary bus of an external system: an AC component without one lies in no island (topology.ts). */
+  readonly norwegianBus: Uint8Array
   /** Boundary buses of each external system, in its Model order: system k's are `items[start[k] .. start[k + 1])`. */
   readonly externalBoundaryBuses: GridIndexByBus
   /** Converter terminal buses of each HVDC link. */
@@ -110,6 +112,8 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
   const boundaryStart = new Int32Array(index.externalSystems.length + 1)
   index.externalSystems.forEach((system, position) => { boundaryStart[position + 1] = boundaryStart[position]! + system.boundaryBusIds.length })
   const boundaryItems = Int32Array.from(index.externalSystems.flatMap(system => system.boundaryBusIds), busOf)
+  const norwegianBus = new Uint8Array(network.busCount)
+  for (let bus = 0; bus < network.busCount; bus += 1) norwegianBus[bus] = synchronousExternalOfBus[bus]! < 0 && asynchronousBoundaryBus[bus] === 0 ? 1 : 0
   const hvdcIndex = indexById(index.hvdcLinks)
   const hvdcRampGroupOfLink = new Int32Array(index.hvdcLinks.length).fill(-1)
   const rampGroupStart = new Int32Array(index.hvdcRampGroups.length + 1)
@@ -137,6 +141,7 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
     branchesOfBus: { start: endsOfBus.start, items: endsOfBus.items.map(end => branchOfEnd[end]!) },
     synchronousExternalOfBus,
     asynchronousBoundaryBus,
+    norwegianBus,
     hvdcFromBus: Int32Array.from(index.hvdcLinks, link => busOf(link.fromBusId)),
     hvdcToBus: Int32Array.from(index.hvdcLinks, link => busOf(link.toBusId)),
     hvdcRampGroupOfLink,

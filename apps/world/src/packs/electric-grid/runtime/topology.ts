@@ -80,9 +80,7 @@ const createCachedIsland = (network: CompiledGridNetwork, buses: Int32Array, bra
 const synchronousIslandOfComponent = (grid: GridRuntimeInstance, network: CompiledGridNetwork, componentOfBus: Int32Array, componentCount: number): Int32Array => {
   const tables = gridTablesFor(grid.definition)
   const norwegian = new Uint8Array(componentCount)
-  for (let bus = 0; bus < network.busCount; bus += 1) {
-    if (tables.synchronousExternalOfBus[bus]! < 0 && tables.asynchronousBoundaryBus[bus] === 0) norwegian[componentOfBus[bus]!] = 1
-  }
+  for (let bus = 0; bus < network.busCount; bus += 1) if (tables.norwegianBus[bus] === 1) norwegian[componentOfBus[bus]!] = 1
   const parent = Int32Array.from({ length: componentCount }, (_, index) => index)
   const find = (node: number): number => {
     let current = node

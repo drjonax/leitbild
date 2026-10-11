@@ -76,6 +76,16 @@ describe('a separated boundary bus of a synchronous external system', () => {
     const before = query(run.grid, 'world.electric-grid.islands.list')
     expect(before.total).toBe(1)
     expect(before.islands[0].busCount).toBe(4)
+    // N-1 and remedial switching agree: losing SE1's only tie separates the boundary bus, no split.
+    const ask = async (capabilityId: string, input: Readonly<Record<string, unknown>>) => await answerElectricGridQuery({
+      request: { capabilityId, input: { gridId: run.grid.definition.gridId, ...input } },
+      grids: new Map([[run.grid.definition.gridId, run.grid]]),
+    }) as Record<string, any>
+    const tieOutage = await ask('world.electric-grid.contingency.screen', { contingencies: ['tie-se1'] })
+    expect(tieOutage).toMatchObject({ islandingCount: 0, results: [{ islanding: false, unservedLoadMw: 0 }] })
+    expect(tieOutage.results[0].affectedIslands.map((part: { busCount: number; balancing: string }) => [part.busCount, part.balancing])).toEqual([[3, 'reserves']])
+    expect((await ask('world.electric-grid.remedial-actions.evaluate', { contingencies: 'all-branches', actions: [{ kind: 'open-branch', assetId: 'tie-se1' }] })).actionBalances
+      .map((part: { busCount: number }) => part.busCount)).toEqual([3])
     expect(run.command(gridOpenBranchCommandKind, { assetId: 'tie-se1' }).ok).toBe(true)
     run.advanceTo(30_000, [1_000])
 

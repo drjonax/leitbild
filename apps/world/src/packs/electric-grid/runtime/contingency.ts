@@ -14,7 +14,8 @@ import { solveSparseCholesky, type SparseCholeskyFactor } from './network/sparse
 
 // N-1 screening kernel on a contingency snapshot. A branch outage that keeps its island connected
 // moves its flow by line outage distribution factors, LODF(l,k) = PTDF(l,k) / (1 − PTDF(k,k)), from
-// one solve with the island's factor. An outage that splits an island (a bridge), and a generator
+// one solve with the island's factor. An outage that splits an island (a bridge), one that separates
+// a boundary bus (a bridge cutting off only boundary buses, which is no split), and a generator
 // outage, change injections: each resulting part rebalances by its reserve participation and the
 // flow change is one compensating solve on the intact factor. Both equal a re-solve of the changed
 // network. The kernel reads only the snapshot and writes only its own vectors and the records, so
@@ -25,7 +26,7 @@ export interface ContingencyPart extends PartBalance {
 }
 
 export interface ContingencyOutcome {
-  /** The outage split its island. */
+  /** The outage split its island; separating only boundary buses, which their external system holds in no island, is no split. */
   readonly islanding: boolean
   /** The parts that had to rebalance or lost supply. */
   readonly parts: ReadonlyArray<ContingencyPart>
@@ -143,6 +144,21 @@ export const createContingencyEngine = (snapshot: ContingencySnapshot): Continge
       delta[bus] = snapshot.injectionsMw[bus]!
       if (inChild(bus)) childBuses.push(bus)
       else otherBuses.push(bus)
+    }
+    const norwegian = (members: ReadonlyArray<number>): boolean => members.some(bus => network.norwegianBus[bus] === 1)
+    if (!norwegian(childBuses) || !norwegian(otherBuses)) {
+      // A part without a Norwegian bus is a separated boundary bus, which its external system holds
+      // in no island (boundary-separation.ts): no split. It carries nothing; the rest rebalances.
+      const [separated, rest] = norwegian(childBuses) ? [otherBuses, childBuses] : [childBuses, otherBuses]
+      for (const bus of separated) delta[bus] = 0
+      const part = { ...rebalancePart({ participation, members: rest, injections: delta, removed: null }), busCount: rest.length }
+      for (const bus of island.buses) delta[bus] = delta[bus]! - snapshot.injectionsMw[bus]!
+      addCompensation(island, flowsMw)
+      takeOut(branchIndex, flowsMw, outOfService)
+      const separatedBus = (bus: number): boolean => separated.includes(bus)
+      zeroFlowsOfBuses(island, separatedBus, flowsMw, outOfService)
+      if (part.balancing === 'de-energised') zeroFlowsOfBuses(island, bus => !separatedBus(bus), flowsMw, outOfService)
+      return { islanding: false, parts: [part], lostMw }
     }
     const parts = [childBuses, otherBuses].map(members => ({ ...rebalancePart({ participation, members, injections: delta, removed: null }), busCount: members.length }))
     for (const bus of island.buses) delta[bus] = delta[bus]! - snapshot.injectionsMw[bus]!

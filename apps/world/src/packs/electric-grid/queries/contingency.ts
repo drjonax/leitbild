@@ -44,7 +44,7 @@ const partSchema = z.object({
 
 const resultSchema = z.object({
   contingency: z.object({ assetId: z.string(), kind: z.enum(['branch', 'generator']), label: z.string(), lostMw: finite.describe('Pre-contingency flow or unit output (0.1 MW).') }).strict(),
-  islanding: z.boolean().describe('The outage splits its island.'),
+  islanding: z.boolean().describe('The outage splits its island. Separating a boundary bus of an external system (its last tie lost) is no split: the system holds it in no island, and the rest rebalances.'),
   affectedIslands: z.array(partSchema).describe('Parts that had to rebalance: both sides of an islanding outage, or the island of a lost unit.'),
   unservedLoadMw: finite,
   worstBranch: screenedBranchSchema.nullable(),

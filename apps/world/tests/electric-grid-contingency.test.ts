@@ -152,6 +152,7 @@ describe('electric grid N-1 screening', () => {
     const outOfService = new Uint8Array(network.branchCount)
     let branchCount = 0
     let islanding = 0
+    let separating = 0
     let largest = 0
     let largestLoading = 0
     const check = (expected: { readonly flows: Float64Array; readonly live: Uint8Array }): void => {
@@ -167,12 +168,18 @@ describe('electric grid N-1 screening', () => {
       const closed = screeningCase.closed.slice()
       closed[branch] = 0
       let resolved: { readonly flows: Float64Array; readonly live: Uint8Array }
-      if (outcome.islanding) {
-        // A split: each part rebalances its DC injections; the DC change of the re-solve adds to the base.
+      if (outcome.islanding || outcome.parts.length > 0) {
+        // A split, or a boundary bus separated from its island (no split; one part rebalances): each
+        // part rebalances its DC injections; the DC change of the re-solve adds to the base.
         resolved = bruteForceDcFlows(grid, closed, screeningCase.injectionsMw, null)
         check({ flows: hybridFlows(screeningCase.flowsMw, resolved, screeningCase.dcFlowsMw), live: resolved.live })
-        islanding += 1
-        // The part cut off absorbs exactly what the branch carried in the DC solution.
+        if (outcome.islanding) islanding += 1
+        else {
+          expect(outcome.parts).toHaveLength(1)
+          expect([network.branchFrom[branch]!, network.branchTo[branch]!].some(bus => snapshot.network.norwegianBus[bus] === 0)).toBe(true)
+          separating += 1
+        }
+        // The part cut off (the rest, when a boundary bus is separated) absorbs exactly what the branch carried in the DC solution.
         expect(Math.abs(Math.abs(outcome.parts[0]!.imbalanceMw) - Math.abs(screeningCase.dcFlowsMw[branch]!))).toBeLessThan(1e-6)
       } else {
         // A meshed outage: the branch's base flow, routed from its from-bus to its to-bus through the rest of the network.
@@ -213,9 +220,11 @@ describe('electric grid N-1 screening', () => {
     const remedialSnapshot = captureContingencySnapshot(remedial, [], 'normal')
     largestLoading = Math.max(largestLoading, largestDifference(kernelLoading(remedialSnapshot, remedial.flowsMw, new Uint8Array(network.branchCount)), runtimeWayLoading(grid, expectedRemedial, resolved.live)))
     expect(remedial.baseFlowModels).toEqual(screeningCase.baseFlowModels)
-    console.info(`N-1 vs brute force (AC base, DC increments): ${branchCount} branch outages (${islanding} islanding), ${unitCount} unit outages, largest difference ${largest.toExponential(2)} MW, ${largestLoading.toExponential(2)} % loading`)
+    console.info(`N-1 vs brute force (AC base, DC increments): ${branchCount} branch outages (${islanding} islanding, ${separating} separating a boundary bus), ${unitCount} unit outages, largest difference ${largest.toExponential(2)} MW, ${largestLoading.toExponential(2)} % loading`)
     expect(branchCount).toBeGreaterThan(250)
     expect(islanding).toBeGreaterThan(0)
+    // The six Nordic boundary buses with a single tie: losing it is no split.
+    expect(separating).toBe(6)
     expect(largest).toBeLessThan(1e-6)
     expect(largestLoading).toBeLessThan(1e-6)
   }, 120_000)
