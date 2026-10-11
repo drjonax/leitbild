@@ -205,7 +205,8 @@
           "states": {
             "sourceRangeEnergized": { "on": "Source-range HV on", "off": "Source-range HV off" },
             "aboveP6": { "on": "Above P-6", "off": "Below P-6" },
-            "aboveP10": { "on": "Above P-10", "off": "Below P-10" }
+            "aboveP10": { "on": "Above P-10", "off": "Below P-10" },
+            "rodsOnBottom": { "on": "Rods on bottom", "off": "Rods off bottom" }
           }
         }
       }
@@ -451,7 +452,8 @@
           "states": {
             "backupHeatersOn": { "on": "Backup heaters on", "off": "Backup heaters off" },
             "heatersCutOff": { "on": "Heaters cut off on low level", "off": "Heaters not cut off" },
-            "safetyValvesOpen": { "on": "Safety valves open", "off": "Safety valves shut" }
+            "safetyValvesOpen": { "on": "Safety valves open", "off": "Safety valves shut" },
+            "reliefValveFlowing": { "on": "PORV flow", "off": "PORV no flow" }
           }
         }
       }
@@ -513,7 +515,10 @@
       ],
       "metadata": {
         "presentation": {
-          "shortLabel": "PRT"
+          "shortLabel": "PRT",
+          "states": {
+            "ruptureDiskBurst": { "on": "Rupture disk burst", "off": "Rupture disk intact" }
+          }
         }
       }
     },
