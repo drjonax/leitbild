@@ -550,16 +550,23 @@ mod integrated {
             pointers.copy_from_slice(&self.pointers);
             match &self.assembly {
                 Assembly::Colored => self.joined.jacobian(time, cj, y, yp, data),
-                Assembly::Blocks(structure) => jacobian_blocks(
-                    &mut self.joined,
-                    structure,
-                    time,
-                    cj,
-                    y,
-                    yp,
-                    data,
-                    Classes::ALL,
-                ),
+                Assembly::Blocks(structure) => {
+                    // The operator counts its colored assemblies itself.
+                    let started = std::time::Instant::now();
+                    let result = jacobian_blocks(
+                        &mut self.joined,
+                        structure,
+                        time,
+                        cj,
+                        y,
+                        yp,
+                        data,
+                        Classes::ALL,
+                    );
+                    self.joined.counters.jacobians += 1;
+                    self.joined.counters.jacobian_wall_s += started.elapsed().as_secs_f64();
+                    result
+                }
             }
             .map_err(failure)
         }

@@ -1037,6 +1037,39 @@ fn the_holding_opening_releases_the_held_clusters_at_its_stop_and_restarts_exact
     println!("{}", serde_json::to_string(&receipt).unwrap());
 }
 
+/// Per-block wall time of the block Jacobians so far: the local coupler's
+/// calls by kind, and the rest (the network's element replay, the nuclear
+/// template and partials, the base evaluation and the chained ports), per
+/// Jacobian. Timing only; no value changes.
+fn jacobian_attribution(
+    joined: &leitbild_operating_plant::joined::operator::Joined<If97>,
+) -> Value {
+    let c = joined.counters;
+    let k = joined.coupler_counters();
+    let n = c.jacobians.max(1) as f64;
+    let kinds = [
+        ("network_columns_local", k.local),
+        ("solid_columns", k.solid_columns),
+        ("secondary_columns", k.secondary_columns),
+        ("rod_columns", k.rod_columns),
+        ("fuel_heat_columns", k.fuel_heat_columns),
+        ("secondary_heat_columns", k.secondary_heat_columns),
+    ];
+    let coupler: f64 = kinds.iter().map(|(_, t)| t.wall_s).sum();
+    let mut per = serde_json::Map::new();
+    for (name, t) in kinds {
+        per.insert(
+            name.into(),
+            json!({"wall_s_per_jacobian": t.wall_s / n, "calls_per_jacobian": t.calls as f64 / n}),
+        );
+    }
+    per.insert(
+        "rest_network_replay_nuclear_base_ports".into(),
+        json!({"wall_s_per_jacobian": (c.jacobian_wall_s - coupler) / n}),
+    );
+    json!({"jacobians": c.jacobians, "wall_s_per_jacobian": c.jacobian_wall_s / n, "by_kind": per})
+}
+
 /// S2's Newton configuration (claude/ld01-wiki c968921, "Configuration
 /// superseded the same day"): stock's own 0.33 Newton coefficient and an
 /// iteration-matrix refresh when cj changes by 10% (IDASetDeltaCjLSetup).
@@ -1187,6 +1220,7 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
                     s["cpu_s"] = json!(z1::cpu_s() - started);
                     let c = ida.system().joined.counters;
                     s["joined_counters"] = json!(c);
+                    s["coupler_counters"] = json!(ida.system().joined.coupler_counters());
                     eprintln!(
                         "settling t = {t} s: P = {:.6e} W, steps {}, residuals {}, Jacobians {}, CPU {:.1} s",
                         s["released_w"].as_f64().unwrap_or(f64::NAN),
@@ -1236,7 +1270,8 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
     let receipt = json!({
         "kind": "s2-settling-probe",
         "predecessors": ["settling-probe-1-log.jsonl (ac0f7106) was stopped before its first 1 s output: its 0.01 Newton coefficient was superseded the same day",
-            "settling-probe-2-log.jsonl (1590dae0, colored Jacobian) was stopped before its first 1 s output when the block Jacobian landed; its packet lacked R3's passageBlendSpeed"],
+            "settling-probe-2-log.jsonl (1590dae0, colored Jacobian) was stopped before its first 1 s output when the block Jacobian landed; its packet lacked R3's passageBlendSpeed",
+            "settling-probe-3-log.jsonl (c0db454d, block Jacobian) was stopped before its first 1 s output to add the coupler's scope-proportional calls and the per-block Jacobian attribution; values are unchanged (JAC's oracle, b1b9bfd3)"],
         "status": "NOT-EVIDENCE probe; S2 is not declared. PZR boundary closed: shell metal and relief pending (G6), heaters at zero (G6)",
         "preparation": preparation,
         "configuration": {"maxOrder": 2, "relativeTolerance": rtol, "absoluteTolerance": "the S1 classes' scaled floor for every new class (G12)",
@@ -1255,6 +1290,7 @@ fn settling_probe_toward_a_consistent_100_percent_state() {
             "cpu_s_per_simulated_s": (total - preparation_cpu_s) / simulated.max(1e-9),
             "residual_wall_s_per_call": c.residual_wall_s / c.residuals.max(1) as f64,
             "jacobian_wall_s_per_call": c.jacobian_wall_s / c.jacobians.max(1) as f64,
+            "jacobian_attribution": jacobian_attribution(&ida.system().joined),
             "load_average": String::from_utf8_lossy(&std::process::Command::new("sysctl").args(["-n","vm.loadavg"]).output().unwrap().stdout).trim().to_string()},
         "samples": samples,
     });
