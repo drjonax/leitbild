@@ -59,6 +59,12 @@ export interface MimicStateBinding {
 export interface MimicValueBinding {
   readonly path: VariablePath
   readonly unit: string
+  /**
+   * The quantity's letters, where a share of a whole does not say what it
+   * measures: a bus's voltage reads "V 100 %" (HMI review of run 23: "100 %").
+   * A vessel's level, which its symbol draws, needs none.
+   */
+  readonly letters?: string
   readonly span?: { readonly min: number; readonly max: number }
   readonly wider?: { readonly path: VariablePath; readonly span: { readonly min: number; readonly max: number } }
 }
@@ -284,8 +290,9 @@ const levelLimits = (plant: CompiledProcessPlant, state: MimicStateBinding | nul
       .filter((threshold): threshold is typeof threshold & { kind: 'alarm' | 'trip' } => threshold.kind !== 'control')
       .map(threshold => ({ value: threshold.value, kind: threshold.kind, name: thresholdName(threshold, 'percent') }))
 
-const valueBinding = (graph: CompiledPlantGraph, component: CompiledComponent, path: VariablePath): MimicValueBinding => {
+const valueBinding = (graph: CompiledPlantGraph, component: CompiledComponent, path: VariablePath, drawnState: VariablePath | undefined): MimicValueBinding => {
   const signal = graph.signalBindingByPath.get(path)!
+  const share = signal.unit === 'fraction' || signal.unit === 'percent'
   const span = signal.limits?.instrumentSpan
   // The compiler holds both instruments of a declared wider range to their spans.
   const wider = component.semantics.widerRanges.find(range => range.reading === path)?.wider
@@ -293,6 +300,7 @@ const valueBinding = (graph: CompiledPlantGraph, component: CompiledComponent, p
   return {
     path,
     unit: signal.unit,
+    ...(share && path !== drawnState ? { letters: variableLetters(signal) } : {}),
     ...(span === undefined ? {} : { span }),
     ...(widerSignal === undefined || !widerSignal.published ? {} : { wider: { path: widerSignal.path, span: widerSignal.limits!.instrumentSpan! } }),
   }
@@ -317,7 +325,7 @@ export const itemBinding = (
     item,
     label: device === undefined ? labelOf(component) : deviceLabel(component, device),
     state,
-    values: device === undefined ? component.semantics.keyValues.map(path => valueBinding(graph, component, path)) : [],
+    values: device === undefined ? component.semantics.keyValues.map(path => valueBinding(graph, component, path, drawnState)) : [],
     limits: levelLimits(plant, state),
     frames: (framed.get(mimicItemKey(item)) ?? []).map(rule => ({ ruleId: rule.id, ...flapText(plant, rule, drawnState), ...(rule.modes === undefined ? {} : { modeIds: [...rule.modes] }) })),
   }

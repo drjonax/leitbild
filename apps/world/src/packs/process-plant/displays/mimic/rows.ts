@@ -21,6 +21,8 @@ export type MimicRow =
     readonly kind: 'value'
     readonly path: string
     readonly unit: string
+    /** What it measures, before the value, where its unit does not say (MimicValueBinding.letters). */
+    readonly letters?: string
     readonly required: boolean
     readonly span?: { readonly min: number; readonly max: number }
     readonly wider?: { readonly path: string; readonly span: { readonly min: number; readonly max: number } }
@@ -35,13 +37,13 @@ export type MimicRow =
   /** Stacked commands: the row above says CMD where the item disagrees, and this row the command (RUN, STOP). */
   | { readonly kind: 'commandValue'; readonly texts: ReadonlyArray<string>; readonly required: true }
   /**
-   * A valve marker's text, empty while the valve is quiet. What the valve
-   * does comes first (`word`): its opening while it stands between shut and
-   * open (35 %), SHUT or OPEN where it disagrees with its command, or POS ?
-   * where its position is not known. A command it does not follow follows,
-   * CMD (`command`) over its value (`value`: 100 %), never in place of what
-   * it does. A valve without a command says only what its position allows
-   * (`whole`).
+   * A valve marker's text. What the valve does comes first (`word`): SHUT,
+   * OPEN, or its opening while it stands between them (35 %), or POS ?
+   * where its position is not known, so no valve is drawn by its icon alone
+   * (HMI review of run 23: feed regulating and main steam isolation valves
+   * read by icon only). A command it does not follow follows, CMD
+   * (`command`) over its value (`value`: 100 %), never in place of what it
+   * does. A valve without a command says the same of its position (`whole`).
    */
   | { readonly kind: 'marker'; readonly part: 'word' | 'command' | 'value' | 'whole'; readonly texts: ReadonlyArray<string>; readonly required: true }
   /**
@@ -110,7 +112,7 @@ export const itemRows = (
     const state = binding.state
     if (state === null || state.aspect !== 'position') return []
     const computed = state.state !== undefined
-    if (state.command === undefined) return [{ kind: 'marker', part: 'whole', texts: computed ? ['POS ?', WIDEST_OPENING] : ['POS ?'], required: true }]
+    if (state.command === undefined) return [{ kind: 'marker', part: 'whole', texts: computed ? ['POS ?', WIDEST_OPENING, 'SHUT', 'OPEN'] : ['POS ?'], required: true }]
     return [
       { kind: 'marker', part: 'word', texts: ['POS ?', ...(computed ? [WIDEST_OPENING, 'SHUT', 'OPEN'] : [])], required: true },
       { kind: 'marker', part: 'command', texts: ['CMD'], required: true },
@@ -122,6 +124,7 @@ export const itemRows = (
     kind: 'value',
     path: value.path,
     unit: value.unit,
+    ...(value.letters === undefined ? {} : { letters: value.letters }),
     required: index === 0,
     ...(value.span === undefined ? {} : { span: value.span }),
     ...(value.wider === undefined || options.offSpan !== 'wider' ? {} : { wider: { path: value.wider.path, span: value.wider.span } }),
@@ -135,7 +138,8 @@ export const itemRows = (
     if (state.command === undefined) return [{ kind: 'state', texts: ['RUN', 'STOP', '?'], required: true }]
     return [{ kind: 'state', texts: ['RUN', 'STOP', '?', 'CMD'], required: true }, { kind: 'commandValue', texts: valuesOf(RUNNING_COMMANDS), required: true }]
   }
-  if (state.aspect === 'energized') return [{ kind: 'state', texts: ['DEAD', '?'], required: true }]
+  // A source or supply says LIVE as it says DEAD (HMI review of run 23: the grid and the auxiliary transformer drawn without a state).
+  if (state.aspect === 'energized') return [{ kind: 'state', texts: ['LIVE', 'DEAD', '?'], required: true }]
   if (switching(binding)) {
     // No symbol shows a breaker's contacts, so its first row always says them; a command it does not follow follows.
     const contacts: MimicRow = { kind: 'state', texts: ['CLOSED', 'OPEN', '?'], required: true }
@@ -169,9 +173,8 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
     if (row.part === 'command') return look.mismatch === null ? '' : 'CMD'
     if (row.part === 'value') return look.mismatch === null ? '' : look.mismatch.slice('CMD '.length)
     if (unknown) return 'POS ?'
-    // Where it disagrees with its command, a fully shut or open valve says so too.
     const settled = look.state.kind === 'position' && look.state.fraction < SHUT_BELOW ? 'SHUT' : 'OPEN'
-    return row.part === 'word' && look.mismatch !== null && opening === '' ? settled : opening
+    return opening === '' ? settled : opening
   }
   if (row.kind === 'count') {
     // RUN 1/2 while any member runs; STOP 2/2 while none does, counting those known stopped.
@@ -184,7 +187,8 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
   if (row.kind === 'value') {
     const reading = valueRowReading(row, index)
     if (reading === null) return '—'
-    if (!reading.wider) return reading.end === null ? format(reading.value, row.unit) : readingText(reading.value, row.unit, null, reading.span)
+    const lettered = (text: string): string => (row.letters === undefined ? text : `${row.letters} ${text}`)
+    if (!reading.wider) return lettered(reading.end === null ? format(reading.value, row.unit) : readingText(reading.value, row.unit, null, reading.span))
     const unit = unitLabel(row.unit)
     const shown = reading.end === null ? String(Math.round(displayValue(reading.value, row.unit))) : readingValueText(reading.value, row.unit, null, reading.span)
     return `${WIDER_RANGE} ${shown}${unit === '' ? '' : ` ${unit}`}`
@@ -193,7 +197,7 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
     if (look.state.kind === 'unknown') return 'POS ?'
     if (look.state.kind !== 'position') return ''
     const fraction = look.state.fraction
-    return fraction >= 0.05 && fraction <= 0.95 ? format(fraction, 'fraction') : ''
+    return fraction >= SHUT_BELOW && fraction <= OPEN_ABOVE ? format(fraction, 'fraction') : fraction < SHUT_BELOW ? 'SHUT' : 'OPEN'
   }
   if (row.kind === 'mismatch') return look.mismatch ?? ''
   // What a framed item says of its alarms depends on the alarms, not the sample: the drawing writes it (flapTexts).
@@ -204,10 +208,16 @@ export const rowText = (row: MimicRow, look: ItemLook, index: SampleIndex, forma
   // The state word, unless the symbol disagrees with its command: then the command, or CMD over it.
   if (look.mismatch !== null && row.texts.includes(look.mismatch)) return look.mismatch
   if (look.mismatch !== null && row.texts.includes('CMD')) return 'CMD'
-  const word = look.state.kind === 'running' ? 'RUN' : look.state.kind === 'stopped' ? 'STOP' : look.state.kind === 'dead' ? 'DEAD' : look.state.kind === 'unknown' ? '?'
+  const word = look.state.kind === 'running' ? 'RUN' : look.state.kind === 'stopped' ? 'STOP' : look.state.kind === 'energized' ? 'LIVE' : look.state.kind === 'dead' ? 'DEAD' : look.state.kind === 'unknown' ? '?'
     : look.state.kind === 'closed' ? 'CLOSED' : look.state.kind === 'open' ? 'OPEN' : ''
   return row.texts.includes(word) ? word : ''
 }
+
+/** The words a power line's far end says of its state after its name ("from UAT · LIVE"), as a supply's symbol says it. */
+export const POWER_STATE_WORDS: ReadonlyArray<string> = ['LIVE', 'DEAD', '?']
+
+/** A power line's far end in words: LIVE, DEAD, or ? where it is not known. */
+export const powerStateWord = (look: 'live' | 'dead' | 'unknown'): string => look === 'live' ? 'LIVE' : look === 'dead' ? 'DEAD' : '?'
 
 /** What a value row reading the wider instrument says before its value, read in whole units: the wide range. */
 export const WIDER_RANGE = 'WR'

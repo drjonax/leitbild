@@ -7,7 +7,7 @@ import { layoutDiagram, type DiagramEdge, type DiagramGraph, type DiagramLayoutR
 import { MIMIC_LAYOUT_VERSION, type CompiledMimic, type MimicDrawnItem, type MimicPipeState } from './mimic-model.ts'
 import { embeddedPresentation, presentationFor, type MimicPresentation } from './presentation.ts'
 import type { MimicProfile } from './profiles.ts'
-import { COUNT_WORDS, flapCount, itemRows, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
+import { COUNT_WORDS, flapCount, itemRows, POWER_STATE_WORDS, WIDER_RANGE, type FlapPart, type MimicRow } from './rows.ts'
 import { MIMIC_REACH_LINKS, loneReachedPort, resolveMimicScope, stubText, plantLoops, withParallelSupplies, type MimicIntent, type MimicScope, type MimicStub } from './scope.ts'
 import { openBridgeDevice, readoutBlockWidth, smallStateRowWidth, smallValueRowWidth, textWidth, unmeasurable, type OpenBridgeTextStyle } from './text-metrics.ts'
 
@@ -68,14 +68,18 @@ const valueRowWidth = (unit: string, fractionDigits: number): number =>
  * pressure in MPa).
  */
 const valueRowSize = (row: Extract<MimicRow, { kind: 'value' }>, own: number, value: (fractionDigits: number) => number): number =>
-  row.wider === undefined ? own : Math.max(own, textWidth('unit', WIDER_RANGE) + openBridgeDevice.valueRowGap + value(0))
+  (row.letters === undefined ? 0 : textWidth('unit', row.letters) + openBridgeDevice.valueRowGap)
+  + (row.wider === undefined ? own : Math.max(own, textWidth('unit', WIDER_RANGE) + openBridgeDevice.valueRowGap + value(0)))
 
 const stateRowWidth = (texts: ReadonlyArray<string>): number =>
   Math.max(...texts.map(text => textWidth('stateRow', text))) + openBridgeDevice.stateRowPadding
 
+/** The words a position row shows where the valve stands at an end, or its position is not known. */
+const POSITION_WORDS = ['POS ?', 'SHUT', 'OPEN']
+
 /** The texts a row may show, besides its values: what must be measurable. */
 const rowWords = (row: MimicRow): ReadonlyArray<string> =>
-  row.kind === 'value' ? [] : row.kind === 'position' ? ['POS ?'] : row.texts
+  row.kind === 'value' ? [] : row.kind === 'position' ? POSITION_WORDS : row.texts
 
 // Vessels use our stack of readout blocks (one decimal); devices OpenBridge's
 // readout stack at the profile's size: small (11.5 px) or regular (16 px).
@@ -85,17 +89,17 @@ const rowSize = (row: MimicRow, device: boolean, readoutSize: MimicProfile['read
   if (!device || readoutSize === 'regular') {
     const digits = device ? 0 : 1
     if (row.kind === 'value') return { width: valueRowSize(row, valueRowWidth(row.unit, digits), fraction => valueRowWidth(row.unit, fraction)), height: openBridgeDevice.row }
-    if (row.kind === 'position') return { width: Math.max(valueRowWidth('fraction', digits), stateRowWidth(['POS ?'])), height: openBridgeDevice.row }
+    if (row.kind === 'position') return { width: Math.max(valueRowWidth('fraction', digits), stateRowWidth(POSITION_WORDS)), height: openBridgeDevice.row }
     return { width: stateRowWidth(rowWords(row)), height: openBridgeDevice.row }
   }
   if (row.kind === 'value') return { width: valueRowSize(row, smallValueRowWidth(unitLabel(row.unit)), () => smallValueRowWidth(unitLabel(row.unit))), height: openBridgeDevice.smallValueRow }
-  if (row.kind === 'position') return { width: Math.max(smallValueRowWidth('%'), smallStateRowWidth('POS ?')), height: openBridgeDevice.smallValueRow }
+  if (row.kind === 'position') return { width: Math.max(smallValueRowWidth('%'), ...POSITION_WORDS.map(smallStateRowWidth)), height: openBridgeDevice.smallValueRow }
   return { width: Math.max(...rowWords(row).map(smallStateRowWidth)), height: openBridgeDevice.smallStateRow }
 }
 
 const rowTexts = (row: MimicRow): ReadonlyArray<{ readonly style: OpenBridgeTextStyle; readonly text: string }> =>
   row.kind === 'alarm' ? row.texts.map(text => ({ style: 'tag' as const, text }))
-    : row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }, ...(row.wider === undefined ? [] : [{ style: 'unit' as const, text: WIDER_RANGE }])]
+    : row.kind === 'value' ? [{ style: 'unit', text: unitLabel(row.unit) }, ...(row.wider === undefined ? [] : [{ style: 'unit' as const, text: WIDER_RANGE }]), ...(row.letters === undefined ? [] : [{ style: 'unit' as const, text: row.letters }])]
     : rowWords(row).map(text => ({ style: 'stateRow' as const, text }))
 
 const isDevice = (presentation: MimicPresentation): boolean => presentation.element === 'device'
@@ -424,7 +428,9 @@ const plan = (plant: CompiledProcessPlant, scope: MimicScope, profile: MimicProf
     const id = `s${at}`
     const component = graph.components[stub.component]!
     stubs.set(id, stub)
-    const text = stubText(graph, stub, profile.stubLabels)
+    // A power line's far end says whether it is live after its name ("from UAT · LIVE"); its room is kept for the longest word.
+    const powered = linkCarrier(graph.links[stub.links[0]!]!) === 'electricalPower'
+    const text = `${stubText(graph, stub, profile.stubLabels)}${powered ? ` · ${[...POWER_STATE_WORDS].sort((a, b) => textWidth('tag', b) - textWidth('tag', a))[0]}` : ''}`
     const lane = laneOf(component, loopOrder)
     nodes.push({
       id,

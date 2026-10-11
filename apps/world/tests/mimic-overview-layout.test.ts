@@ -227,7 +227,7 @@ describe('the unit overview of the principal circuits', () => {
     expect(flapTexts({ flap: 'LO · ALM', watches: 'LO', action: 'ALM' }, 2, () => true, []).flap).toBe('LO · ALM +2 alarms')
   })
 
-  test('valves on the circuits are markers, and say something only when abnormal or between shut and open', () => {
+  test('valves on the circuits are markers that always say where they stand, and a command they do not follow', () => {
     const mimic = overview(plantOf(4), budgetFor(4))
     const valves = mimic.items.filter(item => item.presentation.element === 'device' && item.presentation.icon.startsWith('valve'))
     expect(valves.length).toBeGreaterThanOrEqual(10)
@@ -244,8 +244,9 @@ describe('the unit overview of the principal circuits', () => {
     const state = fcv.binding.state!
     const at = (position: number, command: number) => indexSample([{ path: state.state!.path, value: position, quality: 'good' }, { path: state.command!, value: command, quality: 'good' }])
     const texts = (index: ReturnType<typeof indexSample>) => fcv.rows.map(row => rowText(row, drawnLook(fcv.binding, fcv.rows, index), index, String))
-    expect(texts(at(1, 1))).toEqual(['', '', ''])
-    expect(texts(at(0, 0))).toEqual(['', '', ''])
+    // OPEN or SHUT at an end, never the icon alone (HMI review of run 23: FCV A–D and the MSIVs by icon only).
+    expect(texts(at(1, 1))).toEqual(['OPEN', '', ''])
+    expect(texts(at(0, 0))).toEqual(['SHUT', '', ''])
     expect(texts(at(0.4, 0.4))).toEqual(['40 %', '', ''])
     // A command it does not follow never takes the place of what it does: a runback reads 35 %, then CMD 100 %.
     expect(texts(at(1, 0))).toEqual(['OPEN', 'CMD', 'SHUT'])

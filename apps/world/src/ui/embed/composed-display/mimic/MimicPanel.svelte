@@ -3,7 +3,7 @@
   import type { Segment } from '@oicl/connector-diagram'
   import type { CompiledMimic, MimicDrawnItem, MimicPipeState } from '../../../../packs/process-plant/displays/mimic/mimic-model.ts'
   import { indexSample, type ItemLook, type SampleIndex } from '../../../../packs/process-plant/displays/mimic/evaluate.ts'
-  import { drawnLook, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, rowText, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
+  import { drawnLook, flapPlaces, flapTexts, itemTreatment, pipeStatesLook, powerStateWord, rowText, valueRowReading, WIDER_RANGE } from '../../../../packs/process-plant/displays/mimic/rows.ts'
   import type { MimicFrame } from '../../../../packs/process-plant/displays/mimic/bindings.ts'
   import { displayValue, formatQuantity, readingValueText, unitLabel, valueDigits } from '../../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplayAlarm, ComposedDisplaySample } from '../composed-display-client.ts'
@@ -89,13 +89,13 @@
 
   // Device rows as OpenBridge readout rows: integers with units (a valve's opening) and state words.
   const deviceRows = (item: MimicDrawnItem, look: ItemLook): OpenBridgeMimic.DeviceRows['rows'] => item.rows.flatMap((row): OpenBridgeMimic.DeviceRows['rows'] => {
-    if (row.kind === 'position' && look.state.kind === 'position') {
-      const fraction = look.state.fraction
-      return fraction >= 0.05 && fraction <= 0.95 ? [{ type: 'value' as const, value: Math.round(fraction * 100), unit: '%' }] : []
+    if (row.kind === 'position' && look.state.kind === 'position' && look.state.fraction >= 0.05 && look.state.fraction <= 0.95) {
+      return [{ type: 'value' as const, value: Math.round(look.state.fraction * 100), unit: '%' }]
     }
     const text = rowText(row, look, index, format)
-    // Every state word but RUN is emphasised: STOP or PASSING is what the operator reads the symbol for; RUN, written so the fill is never all that says it, is the normal state (ISA-101).
-    return text === '' ? [] : [{ type: 'state' as const, text, emphasis: text !== 'RUN' }]
+    // Every state word reads at one weight, RUN as STOP, OPEN as SHUT, LIVE as DEAD (HMI review of run 23: RUN was the faintest
+    // text on the drawing, though the answer's key fact); what departs from what is commanded is outlined, never told by weight.
+    return text === '' ? [] : [{ type: 'state' as const, text, emphasis: true }]
   })
 
 
@@ -281,7 +281,7 @@
                     <span class={`alarm-row ${alert?.status ?? ''}`}>{alert === null ? '' : flapOf(item, alert).parts[row.part]}</span>
                   {:else if row.kind === 'value'}
                     {@const reading = valueRowReading(row, index)}
-                    <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
+                    <span class="value-row" use:readout={{ ob, reading, unit: row.unit }}>{#if row.letters !== undefined}<span class="unit">{row.letters}</span>{/if}{#if reading?.wider === true}<span class="unit">{WIDER_RANGE}</span>{/if}<span class="unit">{unitLabel(row.unit)}</span></span>
                   {:else}
                     {@const text = rowText(row, look, index, format)}
                     {#if text !== ''}<span class="state-row" class:emphasis={row.kind === 'mismatch'}>{text}</span>{/if}
@@ -294,7 +294,7 @@
         {/each}
         {#each mimic.stubs as stub (stub.id)}
           {#if stub.textBox !== null}
-            <span class="stub tag" style={`left:${stub.textBox.x}px;top:${stub.textBox.y}px`}>{stub.text}</span>
+            <span class="stub tag" style={`left:${stub.textBox.x}px;top:${stub.textBox.y}px`}>{stub.text}{#if stub.states.some(state => state.kind === 'power')}{` · ${powerStateWord(pipeStatesLook(stub.states, index) as 'live' | 'dead' | 'unknown')}`}{/if}</span>
           {/if}
         {/each}
       </div>
