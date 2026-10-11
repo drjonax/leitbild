@@ -28,8 +28,8 @@ const screenPayloadSchema = z.object(screeningInput).strict()
 const screenedBranchSchema = z.object({
   assetId: z.string(),
   label: z.string(),
-  flowMw: finite.describe('Post-contingency flow, positive from fromBusId to toBusId (0.1 MW).'),
-  loadingPercent: finite.describe('Post-contingency |flow| over the rating basis × availability (0.1 %).'),
+  flowMw: finite.describe('Post-contingency active power flow, positive from fromBusId to toBusId: the base flow plus the DC outage increment (0.1 MW).'),
+  loadingPercent: finite.describe('Post-contingency |flowMw| over the rating basis × availability (0.1 %). Active power only: on an island whose AC load flow converged, the runtime\'s own branch loading is on apparent power (MVA) and reads higher by the reactive share.'),
   preContingencyLoadingPercent: finite,
 }).strict()
 
@@ -59,10 +59,17 @@ const summarySchema = z.object({
   baseCase: z.object({ overloadedCount: count, worstBranch: screenedBranchSchema.nullable() }).strict(),
 }).strict()
 
+const flowModelsShape = {
+  baseFlowModels: z.array(z.object({ islandId: z.string(), flowModel: z.enum(['ac', 'dc']) }).strict())
+    .describe('Per energised island (ids as in world.electric-grid.islands.list), where its base flows come from: ac, its converged AC load flow (active power at the from end); dc, the DC solution where it did not converge.'),
+  incrementModel: z.literal('dc').describe('Outage increments are DC: line outage distribution factors and compensating solves on the island\'s DC factorisation, added to the base flows.'),
+}
+
 const screenResultSchema = z.object({
   gridId: z.string(),
   revision: count.describe('Grid tick of the solved state that was screened.'),
   ratingBasis: z.enum(['normal', 'emergency']),
+  ...flowModelsShape,
   ...summarySchema.shape,
   results: z.array(resultSchema),
 }).strict()
@@ -108,7 +115,7 @@ const summaryOf = (summary: ScreeningSummary): z.infer<typeof summarySchema> => 
 export const gridContingencyScreenQuery = defineGridQuery({
   id: 'world.electric-grid.contingency.screen',
   title: 'Screen N-1 contingencies',
-  description: 'Read-only DC N-1 screening of the solved Grid: for each branch or generator outage, the post-contingency worst branch and its loading, overloaded branches, whether the outage islands part of the network with each part\'s imbalance (rebalanced by FCR reserve participation; a part without a voltage-forming source loses supply), and the violation count. Branch outages use line outage distribution factors on the cached factorisation; nothing in the Grid changes.',
+  description: 'Read-only N-1 screening of the solved Grid: for each branch or generator outage, the post-contingency worst branch and its loading, overloaded branches, whether the outage islands part of the network with each part\'s imbalance (rebalanced by FCR reserve participation; a part without a voltage-forming source loses supply), and the violation count. Post-contingency flows are the solved base flows (AC where the island\'s load flow converged, else DC) plus DC outage increments: line outage distribution factors on the cached factorisation for branches, compensating solves for islanding and unit outages. Nothing in the Grid changes.',
   searchTerms: ['N-1', 'contingency', 'contingency analysis', 'security assessment', 'outage', 'LODF', 'PTDF', 'overload', 'islanding', 'what if', 'n-1', 'utfall', 'sikkerhetsvurdering', 'driftssikkerhet', 'overlast', 'øydrift'],
   input: screenPayloadSchema,
   output: screenResultSchema,
@@ -121,6 +128,8 @@ export const gridContingencyScreenQuery = defineGridQuery({
       gridId: payload.gridId,
       revision,
       ratingBasis: payload.ratingBasis,
+      baseFlowModels: live.baseFlowModels,
+      incrementModel: 'dc' as const,
       ...summaryOf(summary),
       results: summary.results.slice(0, payload.limit),
     }
@@ -143,6 +152,7 @@ const remedialResultSchema = z.object({
   gridId: z.string(),
   revision: count,
   ratingBasis: z.enum(['normal', 'emergency']),
+  ...flowModelsShape,
   actionBalances: z.array(partSchema).describe('Islands of the post-action case that had to rebalance or lost supply.'),
   before: summarySchema,
   after: summarySchema,
@@ -152,7 +162,7 @@ const remedialResultSchema = z.object({
 export const gridRemedialActionsEvaluateQuery = defineGridQuery({
   id: 'world.electric-grid.remedial-actions.evaluate',
   title: 'Evaluate remedial actions',
-  description: 'Read-only: applies candidate redispatch, load-shedding and branch open/close actions to a private copy of the solved Grid and returns its base case and N-1 screening before and after them. Nothing is applied; issue the matching commands to act.',
+  description: 'Read-only: applies candidate redispatch, load-shedding and branch open/close actions to a private copy of the solved Grid and returns its base case and N-1 screening before and after them. The post-action base flows are the solved base flows plus the DC change the actions make, screened like the live ones. Nothing is applied; issue the matching commands to act.',
   searchTerms: ['remedial action', 'corrective action', 'redispatch', 'countertrade', 'N-1', 'what if', 'switching plan', 'congestion relief', 'avhjelpende tiltak', 'omfordeling', 'spesialregulering', 'koblingsplan', 'n-1'],
   input: remedialPayloadSchema,
   output: remedialResultSchema,
@@ -174,6 +184,8 @@ export const gridRemedialActionsEvaluateQuery = defineGridQuery({
       gridId: payload.gridId,
       revision,
       ratingBasis: payload.ratingBasis,
+      baseFlowModels: live.baseFlowModels,
+      incrementModel: 'dc' as const,
       actionBalances: remedial.balances.map(part => ({
         busCount: part.busCount,
         balancing: part.balancing,

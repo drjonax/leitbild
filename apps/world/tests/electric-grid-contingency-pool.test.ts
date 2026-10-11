@@ -110,6 +110,8 @@ describe('electric grid N-1 worker pool', () => {
   test('a parallel screening is byte-identical to the inline one on the v2 model, and leaves the main thread nearly idle', async () => {
     const grid = await v2Grid()
     const live = liveContingencyCase(grid)
+    // AC base flows with DC increments.
+    expect(live.baseFlowModels.map(island => island.flowModel)).toEqual(['ac'])
     const pool = poolOf(3)
     const selections: ReadonlyArray<ContingencySelection> = [{ kind: 'all-branches' }, { kind: 'largest-generators', count: 100 }]
     for (const selection of selections) {
@@ -141,6 +143,8 @@ describe('electric grid N-1 worker pool', () => {
   test('a parallel screening is byte-identical to the inline one on a synthetic 10k-bus grid, and faster', async () => {
     const grid = intactSynthetic(10_000)
     const live = liveContingencyCase(grid)
+    // Its AC load flow does not converge, so the base flows are DC.
+    expect(live.baseFlowModels.map(island => island.flowModel)).toEqual(['dc'])
     const pool = poolOf(3)
     const branches = selectContingencies(live, { kind: 'all-branches' })
     expect(branches.length).toBe(14_000)

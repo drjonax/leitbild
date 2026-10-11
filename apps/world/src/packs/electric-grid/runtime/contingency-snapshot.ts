@@ -1,5 +1,4 @@
 import type { Balancing, CaseParticipation } from './contingency-balance.ts'
-import type { ContingencyBaseFlowModel } from './contingency-case.ts'
 
 // The compact input and output of an N-1 screening. A snapshot is a self-contained copy of one
 // screening case in typed arrays on SharedArrayBuffers: posting it to a worker thread shares the
@@ -27,8 +26,6 @@ export interface SnapshotNetwork {
 export interface SnapshotIslands {
   readonly count: number
   readonly energised: Uint8Array
-  /** Code into `baseFlowModelByCode` of the model the island's base flows in `flowsMw` come from. */
-  readonly baseFlowModel: Uint8Array
   readonly busStart: Int32Array
   readonly buses: Int32Array
   readonly branchStart: Int32Array
@@ -85,7 +82,11 @@ export interface ContingencySnapshot {
   readonly factors: SnapshotFactors
   readonly bridges: SnapshotBridges
   readonly participation: CaseParticipation
-  /** Solved injections per bus and base flows per branch in each island's declared model (MW, positive from-bus to to-bus). */
+  /**
+   * DC balance injections per bus, and base flows per branch in the model the case declares for
+   * each island (ContingencyCase.baseFlowModels: AC where its load flow converged, else DC); the
+   * kernel adds DC increments to them (MW, positive from-bus to to-bus).
+   */
   readonly injectionsMw: Float64Array
   readonly flowsMw: Float64Array
   /** Rating basis × availability per branch (MW). */
@@ -97,7 +98,6 @@ export interface ContingencySnapshot {
 export const maximumListedOverloads = 20
 
 export const balancingByCode: ReadonlyArray<Balancing> = ['reserves', 'inertia', 'de-energised']
-export const baseFlowModelByCode: ReadonlyArray<ContingencyBaseFlowModel> = ['dc']
 
 /** Integer fields of one result record; each of the (at most two) parts adds a bus count and a balancing code. */
 export const recordInteger = { islanding: 0, partCount: 1, worstBranch: 2, violationCount: 3, listedCount: 4, firstPart: 5 } as const

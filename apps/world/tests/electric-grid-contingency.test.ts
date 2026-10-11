@@ -11,7 +11,8 @@ import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2
 import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
 import { rebalancePart, type RemovedParticipant } from '../src/packs/electric-grid/runtime/contingency-balance.ts'
 import { captureContingencySnapshot } from '../src/packs/electric-grid/runtime/contingency-capture.ts'
-import { liveContingencyCase } from '../src/packs/electric-grid/runtime/contingency-case.ts'
+import { liveContingencyCase, switchedContingencyCase } from '../src/packs/electric-grid/runtime/contingency-case.ts'
+import { remedialCaseChanges } from '../src/packs/electric-grid/runtime/remedial-actions.ts'
 import { screenRecordsInline } from '../src/packs/electric-grid/runtime/contingency-execution.ts'
 import { screenContingencies, selectContingencies } from '../src/packs/electric-grid/runtime/contingency-screen.ts'
 import type { GridContingency } from '../src/packs/electric-grid/runtime/contingency-snapshot.ts'
@@ -61,32 +62,49 @@ const asyncCostInReferences = async (run: () => Promise<unknown>, rounds: number
   return ratios.sort((a, b) => a - b)[Math.floor(rounds / 2)]!
 }
 
-/** Brute force: a fresh factorisation of every island of the changed network, injections rebalanced by the same participation rule. */
-const bruteForceFlows = (grid: GridRuntimeInstance, closed: Uint8Array, injections: Float64Array, removed: RemovedParticipant | null): Float64Array => {
+/**
+ * Brute force: a fresh factorisation of every island of the changed network, injections rebalanced
+ * by the same participation rule. Returns the DC flows and which branches stay on the energised network.
+ */
+const bruteForceDcFlows = (grid: GridRuntimeInstance, closed: Uint8Array, injections: Float64Array, removed: RemovedParticipant | null) => {
   const screeningCase = liveContingencyCase(grid)
   const network = screeningCase.network
   const found = findGridIslands(network, closed)
   const balanced = injections.slice()
   const angles = new Float64Array(network.busCount)
   const flows = new Float64Array(network.branchCount)
+  const live = new Uint8Array(network.branchCount)
   const scratch = new Int32Array(network.busCount)
   for (let island = 0; island < found.count; island += 1) {
     const buses = found.busOrder.slice(found.busStart[island]!, found.busStart[island + 1]!)
     const branches = found.branchOrder.slice(found.branchStart[island]!, found.branchStart[island + 1]!)
     if (rebalancePart({ participation: screeningCase.participation, members: buses, injections: balanced, removed }).balancing === 'de-energised') continue
     solveGridIslandInto(network, createGridIslandSystem({ network, islandId: `brute-${island}`, buses, branches, localOfBus: scratch }), balanced, angles)
-    for (const branch of branches) flows[branch] = (angles[network.branchFrom[branch]!]! - angles[network.branchTo[branch]!]!) * network.sBaseMva * network.branchSusceptancePu[branch]!
+    for (const branch of branches) {
+      flows[branch] = (angles[network.branchFrom[branch]!]! - angles[network.branchTo[branch]!]!) * network.sBaseMva * network.branchSusceptancePu[branch]!
+      live[branch] = 1
+    }
   }
-  return flows
+  return { flows, live }
 }
+
+/**
+ * The hybrid method by re-solves: the base flows (AC where the island converged) plus the DC
+ * change `change` makes, on the branches that stay on the energised network; none elsewhere.
+ */
+const hybridFlows = (base: Float64Array, change: { readonly flows: Float64Array; readonly live: Uint8Array }, dcBase: Float64Array | null): Float64Array =>
+  Float64Array.from(change.flows, (flow, branch) => change.live[branch] === 1 ? base[branch]! + flow - (dcBase === null ? 0 : dcBase[branch]!) : 0)
 
 const largestDifference = (a: Float64Array, b: Float64Array): number => a.reduce((largest, value, index) => Math.max(largest, Math.abs(value - b[index]!)), 0)
 
 describe('electric grid N-1 screening', () => {
-  test('post-contingency flows match brute-force re-solves within 1e-6 MW on every branch, for every branch and unit outage', () => {
+  test('post-contingency flows match brute-force re-solves of the hybrid method within 1e-6 MW on every branch, for every branch and unit outage', () => {
     const grid = solvedNorway()
     const screeningCase = liveContingencyCase(grid)
     const network = screeningCase.network
+    // The base is the AC solution where the islands converged; the increments are DC.
+    expect(screeningCase.baseFlowModels.some(island => island.flowModel === 'ac')).toBe(true)
+    expect(largestDifference(screeningCase.flowsMw, screeningCase.dcFlowsMw)).toBeGreaterThan(1)
     const inService = (bus: number): boolean => screeningCase.islands[screeningCase.islandOfBus[bus]!]!.energised
     const units = norway.model.generators.filter(definition =>
       gridGeneratorIsSynchronised(grid.generators.get(definition.id)!) && inService(network.busIndexById.get(definition.busId)!))
@@ -105,13 +123,23 @@ describe('electric grid N-1 screening', () => {
       const outcome = engine.evaluate(position, flows)
       const closed = screeningCase.closed.slice()
       closed[branch] = 0
-      largest = Math.max(largest, largestDifference(flows, bruteForceFlows(grid, closed, screeningCase.injectionsMw, null)))
-      branchCount += 1
+      let expected: Float64Array
       if (outcome.islanding) {
+        // A split: each part rebalances its DC injections; the DC change of the re-solve adds to the base.
+        expected = hybridFlows(screeningCase.flowsMw, bruteForceDcFlows(grid, closed, screeningCase.injectionsMw, null), screeningCase.dcFlowsMw)
         islanding += 1
-        // The part cut off absorbs exactly what the branch carried.
-        expect(Math.abs(Math.abs(outcome.parts[0]!.imbalanceMw) - Math.abs(outcome.lostMw))).toBeLessThan(1e-6)
+        // The part cut off absorbs exactly what the branch carried in the DC solution.
+        expect(Math.abs(Math.abs(outcome.parts[0]!.imbalanceMw) - Math.abs(screeningCase.dcFlowsMw[branch]!))).toBeLessThan(1e-6)
+      } else {
+        // A meshed outage: the branch's base flow, routed from its from-bus to its to-bus through the rest of the network.
+        const transfer = new Float64Array(network.busCount)
+        transfer[network.branchFrom[branch]!] = screeningCase.flowsMw[branch]!
+        transfer[network.branchTo[branch]!] = -screeningCase.flowsMw[branch]!
+        expected = hybridFlows(screeningCase.flowsMw, bruteForceDcFlows(grid, closed, transfer, null), null)
       }
+      expect(outcome.lostMw).toBe(screeningCase.flowsMw[branch]!)
+      largest = Math.max(largest, largestDifference(flows, expected))
+      branchCount += 1
     })
     let unitCount = 0
     units.forEach((definition, index) => {
@@ -127,10 +155,16 @@ describe('electric grid N-1 screening', () => {
         kineticEnergyMws: generatorKineticEnergyMws(definition),
         forming: generatorIsVoltageForming(definition) ? 1 : 0,
       }
-      largest = Math.max(largest, largestDifference(flows, bruteForceFlows(grid, screeningCase.closed, injections, removed)))
+      largest = Math.max(largest, largestDifference(flows, hybridFlows(screeningCase.flowsMw, bruteForceDcFlows(grid, screeningCase.closed, injections, removed), screeningCase.dcFlowsMw)))
       unitCount += 1
     })
-    console.info(`N-1 vs brute force: ${branchCount} branch outages (${islanding} islanding), ${unitCount} unit outages, largest difference ${largest.toExponential(2)} MW`)
+    // A remedial case's base flows: the live base plus the DC change of its actions.
+    const meshed = contingencies.find((contingency, position) => contingency.kind === 'branch' && !engine.evaluate(position, flows).islanding)!
+    const opened = network.branchIds[(meshed as { branchIndex: number }).branchIndex]!
+    const remedial = switchedContingencyCase(screeningCase, remedialCaseChanges(screeningCase, [{ kind: 'open-branch', assetId: opened }])).case
+    largest = Math.max(largest, largestDifference(remedial.flowsMw, hybridFlows(screeningCase.flowsMw, bruteForceDcFlows(grid, remedial.closed, screeningCase.injectionsMw, null), screeningCase.dcFlowsMw)))
+    expect(remedial.baseFlowModels).toEqual(screeningCase.baseFlowModels)
+    console.info(`N-1 vs brute force (AC base, DC increments): ${branchCount} branch outages (${islanding} islanding), ${unitCount} unit outages, largest difference ${largest.toExponential(2)} MW`)
     expect(branchCount).toBeGreaterThan(250)
     expect(islanding).toBeGreaterThan(0)
     expect(largest).toBeLessThan(1e-6)
@@ -238,7 +272,12 @@ describe('electric grid N-1 screening', () => {
     expect(run.command(gridOpenBranchCommandKind, { assetId: 'branch:g-b' }).ok).toBe(true)
     const radial = await ask(run.grid, 'world.electric-grid.contingency.screen', { contingencies: ['branch:a-l'] })
     expect(radial.results[0]).toMatchObject({ islanding: true, unservedLoadMw: 0 })
-    for (const part of radial.results[0].affectedIslands) expect(Math.abs(part.imbalanceMw)).toBeCloseTo(Math.abs(radial.results[0].contingency.lostMw), 0)
+    // The lost flow is the branch's AC flow; each part rebalances what the branch carried in the DC solution.
+    const radialCase = liveContingencyCase(run.grid)
+    const aL = radialCase.network.branchIds.indexOf('branch:a-l')
+    expect(radialCase.baseFlowModels).toEqual([expect.objectContaining({ flowModel: 'ac' })])
+    expect(radial.results[0].contingency.lostMw).toBeCloseTo(radialCase.flowsMw[aL]!, 1)
+    for (const part of radial.results[0].affectedIslands) expect(Math.abs(part.imbalanceMw)).toBeCloseTo(Math.abs(radialCase.dcFlowsMw[aL]!), 1)
     expect(run.command('world.electric-grid.trip-generator', { assetId: 'generator:l1' }).ok).toBe(true)
     const dead = await ask(run.grid, 'world.electric-grid.contingency.screen', { contingencies: ['branch:a-l'] })
     const lostPart = dead.results[0].affectedIslands.find((part: any) => part.balancing === 'de-energised')
@@ -288,8 +327,9 @@ describe('electric grid N-1 screening', () => {
       contingencies: 'all-branches',
       actions: [{ kind: 'shed-load', assetId: 'load:l', targetDemandMw: 450, emergency: true }],
     })
-    const { results: _results, gridId: _gridId, revision: _revision, ratingBasis: _ratingBasis, ...summary } = screened
+    const { results: _results, gridId: _gridId, revision: _revision, ratingBasis: _ratingBasis, baseFlowModels, incrementModel, ...summary } = screened
     expect(evaluated.before).toEqual(summary)
+    expect({ baseFlowModels: evaluated.baseFlowModels, incrementModel: evaluated.incrementModel }).toEqual({ baseFlowModels, incrementModel: 'dc' })
     expect(evaluated.before.baseCase.overloadedCount).toBe(2)
     expect(evaluated.after.baseCase.overloadedCount).toBe(0)
     expect(evaluated.after.totalViolations).toBeLessThan(evaluated.before.totalViolations)

@@ -1,6 +1,5 @@
 import { caseGeneratorOutputMw, type ContingencyCase } from './contingency-case.ts'
 import {
-  baseFlowModelByCode,
   sharedFloat64,
   sharedInt32,
   sharedUint8,
@@ -31,12 +30,10 @@ const sharedCopyFloat64 = (source: Float64Array): Float64Array => {
 const islandsOf = (screeningCase: ContingencyCase): SnapshotIslands => {
   const count = screeningCase.islands.length
   const energised = sharedUint8(count)
-  const baseFlowModel = sharedUint8(count)
   const busStart = sharedInt32(count + 1)
   const branchStart = sharedInt32(count + 1)
   screeningCase.islands.forEach((island, index) => {
     energised[index] = island.energised ? 1 : 0
-    baseFlowModel[index] = baseFlowModelByCode.indexOf(island.baseFlowModel)
     busStart[index + 1] = busStart[index]! + island.buses.length
     branchStart[index + 1] = branchStart[index]! + island.branches.length
   })
@@ -46,7 +43,7 @@ const islandsOf = (screeningCase: ContingencyCase): SnapshotIslands => {
     buses.set(island.buses, busStart[index]!)
     branches.set(island.branches, branchStart[index]!)
   })
-  return { count, energised, baseFlowModel, busStart, buses, branchStart, branches, islandOfBus: sharedCopyInt32(screeningCase.islandOfBus) }
+  return { count, energised, busStart, buses, branchStart, branches, islandOfBus: sharedCopyInt32(screeningCase.islandOfBus) }
 }
 
 const factorsOf = (screeningCase: ContingencyCase, islands: SnapshotIslands): SnapshotFactors => {
