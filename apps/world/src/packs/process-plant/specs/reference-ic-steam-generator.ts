@@ -39,7 +39,7 @@ export const levelHighHighPercent = 82
 // generator's low level does not send all the pumps' flow to it. A real plant
 // votes two of three or four level channels per generator; this model has one
 // channel each, so that one channel trips.
-const levelLowLowPercent = 20
+export const levelLowLowPercent = 20
 
 // Steam pressure ladder of the reference main steam system: the steam dumps
 // hold no-load pressure, 7.6 MPa (1,092 psig); each generator's atmospheric

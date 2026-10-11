@@ -1,8 +1,8 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
-import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, rule, trip, turbineTripWrites, write } from './reference-ic-helpers.ts'
+import { alarm, all, annunciator, any, comparison, feedwaterIsolationWrites, reactorTripBreakerOpen, rule, trip, turbineTripWrites, vote, write } from './reference-ic-helpers.ts'
 import type { ProcessPlantReferenceLoop } from './reference-loop.ts'
 import { expectedAfterReactorTrip } from './reference-ic-first-out-groups.ts'
-import { levelHighHighPercent } from './reference-ic-steam-generator.ts'
+import { levelHighHighPercent, levelLowLowPercent } from './reference-ic-steam-generator.ts'
 
 const feedwaterAlarm = annunciator({
   system: 'feedwater',
@@ -238,6 +238,25 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       annunciator: annunciator({ system: 'feedwater', equipmentId: 'auxFeedwaterTank', group: 'auxiliary-feedwater', priority: 'high', role: 'symptom' }),
     })],
   }),
+  // A low-low level that comes while a safety bus is dead, as the generators
+  // shrink after a loss of offsite power, does not start that bus's
+  // motor-driven pump with the block of loads its diesel picks up: the
+  // diesel's load sequencer starts it in its own step
+  // (reference-ic-electrical.ts). This hold acts with the low-low level's
+  // start, in the same scan and after it.
+  ...(['A', 'B'] as const).map(train => rule({
+    id: `motor-driven-afw-pump-${train.toLowerCase()}-dead-bus-hold`,
+    label: `Motor-driven auxiliary feedwater pump ${train} start held for its sequencer on a dead safety bus`,
+    ruleClass: 'normalControl',
+    condition: all([
+      comparison({ tagId: `BUS-${train}-ENERGIZED` }, '==', false),
+      vote(1, loops.map(loop => comparison({ tagId: `SG-${loop}-LVL-NR` }, '<', levelLowLowPercent))),
+    ]),
+    delayMs: 1_000,
+    latch: false,
+    resetWhenClear: true,
+    effects: [write(`hold-motor-driven-afw-pump-${train.toLowerCase()}`, { tagId: `AFW-PUMP-${train}` }, false)],
+  })),
   rule({
     id: 'main-feedwater-pump-trip',
     label: 'Main feedwater pump unavailable',
