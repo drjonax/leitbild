@@ -73,7 +73,7 @@ export const transformerRule = {
   injectionMargin: 1.25,
   /** Ratings round up to this step, MVA. */
   stepMva: 50,
-  source: 'rating: the smaller of the line capacities on either level, at least 1.25 × the larger of generation and load on the low-voltage bus, rounded up to 50 MVA; x 0.12 pu on rating (FD1 guidance 0.10–0.15), X/R 40; tap ratio 1',
+  source: 'rating: the smaller of the high-voltage line capacity and the low-voltage line capacity plus the larger of generation and load on the low-voltage bus (what that bus passes on), at least 1.25 × that local injection, rounded up to 50 MVA; x 0.12 pu on rating (FD1 guidance 0.10–0.15), X/R 40; tap ratio 1',
 } as const
 
 /** Numerical floor on series reactance, pu (≈ 0.6 km of 420 kV line): very short corridors stay well conditioned. */

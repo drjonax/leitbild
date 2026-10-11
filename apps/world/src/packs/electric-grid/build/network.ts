@@ -161,8 +161,10 @@ export const toGridTransformer = (branch: TopologyBranch, lines: ReadonlyArray<G
   // The topology writes transformers high side first.
   const highBus = branch.fromBusId
   const lowBus = branch.toBusId
-  const injectionMva = transformerRule.injectionMargin * Math.max(injections.generationMw(lowBus), injections.loadMw(lowBus))
-  const inferredMva = Math.max(Math.min(lineCapacity(highBus), lineCapacity(lowBus)), injectionMva, transformerRule.stepMva)
+  const localMw = Math.max(injections.generationMw(lowBus), injections.loadMw(lowBus))
+  // The low-voltage bus passes on what its lines carry plus its own injection.
+  const throughMva = Math.min(lineCapacity(highBus), lineCapacity(lowBus) + localMw)
+  const inferredMva = Math.max(throughMva, transformerRule.injectionMargin * localMw, transformerRule.stepMva)
   const mapped = branch.ratingMva !== null
   const ratingMva = mapped ? branch.ratingMva! : Math.ceil(inferredMva / transformerRule.stepMva) * transformerRule.stepMva
   const parameters = transformerParameters(ratingMva, branch.circuits)
