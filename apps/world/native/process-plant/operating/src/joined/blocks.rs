@@ -422,9 +422,13 @@ pub fn nuclear_partials(
 /// entries may reach in any state, a superset of every entry the block
 /// assembly writes. The nuclear block's part is its exact structure (the
 /// template's rows, feeds and constant consumers, the partials' entries and
-/// their port chains); every other part is the joined operator's own
-/// structural pattern outside the nuclear rows. `partials` fixes the
-/// nuclear structure, which no state changes.
+/// their port chains). So are the fluid-solid ports: the network and rod
+/// columns' solid rows and the solid columns' network rows, from the wall,
+/// passive and segment laws' reads and the heat receipt's single slot.
+/// Every other part is the joined operator's own structural pattern.
+/// `partials` fixes the nuclear structure, which no state changes; the
+/// pattern holds while every wall cell holds liquid only, which S2's wall
+/// laws require (a vapor-holding wall cell refuses).
 pub fn joined_pattern<P: Properties + WaterProperties>(
     joined: &Joined<P>,
     template: &LinearTemplate,
@@ -433,21 +437,42 @@ pub fn joined_pattern<P: Properties + WaterProperties>(
     let o = joined.offsets();
     let n = o.end;
     let nuclear_rows = o.nuclear..o.solids;
+    let solid_rows = o.solids..o.secondary;
+    let network_rows = 0..o.nuclear;
     let base = joined.structural_pattern()?;
     let mut columns: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
     for (c, rows) in base.iter().enumerate() {
         if nuclear_rows.contains(&c) {
             continue;
         }
-        columns[c].extend(rows.iter().copied().filter(|r| !nuclear_rows.contains(r)));
+        // The fluid-solid ports are rebuilt exactly below: the network and
+        // rod columns' solid rows, and the solid columns' network rows.
+        let fluid_column = c < o.nuclear || c >= o.rods;
+        let solid_column = solid_rows.contains(&c);
+        columns[c].extend(rows.iter().copied().filter(|r| {
+            !nuclear_rows.contains(r)
+                && !(fluid_column && solid_rows.contains(r))
+                && !(solid_column && network_rows.contains(r))
+        }));
     }
     let network = &joined.network;
+    let pzr = network.pzr.cell;
     let cell_rows = |c: usize| -> std::ops::Range<usize> {
-        if c == network.pzr.cell {
+        if c == pzr {
             return network.pzr.coordinates();
         }
         let base = network.cell_layout[c].base;
         base..base + 6
+    };
+    // A heat receipt enters a regular cell's liquid energy row alone (the
+    // enthalpy slot of phase 0; mass and tracer receipts are zero), and the
+    // stratified cell's block.
+    let receipt_rows = |c: usize| -> Vec<usize> {
+        if c == pzr {
+            network.pzr.coordinates().collect()
+        } else {
+            vec![network.cell_layout[c].energy[0]]
+        }
     };
     let solids = joined.solids();
     let deposition = joined.nuclear().deposition();
@@ -461,7 +486,7 @@ pub fn joined_pattern<P: Properties + WaterProperties>(
     };
     let coolant_heat = |columns: &mut Vec<BTreeSet<usize>>, a: usize, col: usize| {
         for (cell, _) in &deposition[a] {
-            columns[col].extend(cell_rows(*cell));
+            columns[col].extend(receipt_rows(*cell));
         }
     };
     for r in &template.rows {
@@ -522,6 +547,104 @@ pub fn joined_pattern<P: Properties + WaterProperties>(
                 columns[o.rods + i].insert(*row);
             }
         }
+    }
+    // The fluid-solid ports, from the laws as written (S2-JOIN's ports):
+    // - A wall law at cell c reads c's water (p, M_l, U_l: the liquid point
+    //   at (p, U_l/M_l) and sat(p); a vapor-holding wall cell refuses) and
+    //   the liquid mass flow of every face ending at c.
+    // - That flow is a donor's liquid density-fraction product times
+    //   Q = Pi/I, with I the supports' liquid mass per current volume
+    //   (times L/A). A support reads M_l and, for a moving cell, the rod
+    //   coordinates that move its volume. A donor's product reads p, M_l
+    //   and U_l, and where vapor is present M_v, U_v and the volume (the
+    //   liquid fraction is 1 - V_v/V). Either endpoint may donate. Boron
+    //   enters neither.
+    // - A half's wall heat writes its clad energy and clad outer surface
+    //   rows; a passive contact (liquid temperature only, no flux) its
+    //   store's row; an SG segment its metal row.
+    // - The heat it delivers reads the solid side's own temperature (the
+    //   clad outer surface, the passive store, the metal) and enters
+    //   receipt_rows of c.
+    // The vapor presence read here is this state's. S2 admits no phase
+    // birth (an S3 transaction), and a dependency outside the pattern is
+    // refused by the assembly, never dropped.
+    let mut moved: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    if let Some(st) = &rods {
+        for (cell, own) in &st.volumes {
+            moved
+                .entry(*cell)
+                .or_default()
+                .extend(own.iter().map(|i| o.rods + i));
+        }
+    }
+    let water_reads = |c: usize| -> Vec<usize> {
+        if c == pzr {
+            network.pzr.coordinates().collect()
+        } else {
+            let l = network.cell_layout[c];
+            vec![l.base, l.mass[0], l.energy[0]]
+        }
+    };
+    // A support's liquid mass per current volume (the inertia of Q).
+    let support_reads = |m: usize| -> Vec<usize> {
+        if m == pzr {
+            return network.pzr.coordinates().collect();
+        }
+        let mut out = vec![network.cell_layout[m].mass[0]];
+        out.extend(moved.get(&m).into_iter().flatten().copied());
+        out
+    };
+    // A donor's liquid density-fraction product: its liquid point at
+    // (p, U_l/M_l), and where vapor is present the vapor volume share.
+    let donor_reads = |m: usize| -> Vec<usize> {
+        if m == pzr {
+            return network.pzr.coordinates().collect();
+        }
+        let l = network.cell_layout[m];
+        let mut out = vec![l.base, l.mass[0], l.energy[0]];
+        if network.cell(m).phase[1].is_some() {
+            out.extend([l.mass[1], l.energy[1]]);
+            out.extend(moved.get(&m).into_iter().flatten().copied());
+        }
+        out
+    };
+    let flux_reads = |c: usize| -> Vec<usize> {
+        let mut out = Vec::new();
+        for (face, supports, ends) in network.liquid_flux_reads(c) {
+            out.push(network.face_layout[2 * face].index);
+            for m in supports {
+                out.extend(support_reads(m));
+            }
+            for m in ends {
+                out.extend(donor_reads(m));
+            }
+        }
+        out
+    };
+    let incidence = solids.incidence();
+    for (a, (_, cells)) in incidence.halves.iter().enumerate() {
+        let clad = o.solids + solids.energy(a, 2);
+        let outer = o.solids + solids.surface(a, 2);
+        for &c in cells {
+            for col in water_reads(c).into_iter().chain(flux_reads(c)) {
+                columns[col].extend([clad, outer]);
+            }
+            columns[outer].extend(receipt_rows(c));
+        }
+    }
+    for &(store, c) in &incidence.passive {
+        let row = o.solids + solids.passive(store);
+        for col in water_reads(c) {
+            columns[col].insert(row);
+        }
+        columns[row].extend(receipt_rows(c));
+    }
+    for (i, &(c, _)) in incidence.segments.iter().enumerate() {
+        let row = o.solids + solids.metal(i);
+        for col in water_reads(c).into_iter().chain(flux_reads(c)) {
+            columns[col].insert(row);
+        }
+        columns[row].extend(receipt_rows(c));
     }
     for (c, rows) in columns.iter_mut().enumerate() {
         rows.insert(c);

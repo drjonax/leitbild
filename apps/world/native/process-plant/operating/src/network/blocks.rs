@@ -714,6 +714,26 @@ struct Projection {
 }
 
 impl<P: Properties> Network<P> {
+    /// The faces with `cell` as an endpoint, each with the cells its
+    /// liquid chart's mass flow reads: the supports, whose phase mass per
+    /// current volume sums the inertia of `Q = Pi/I`, and both endpoints,
+    /// either of which may donate its phase density-fraction product.
+    /// Pressure segments drive the momentum row, not the chart.
+    pub fn liquid_flux_reads(&self, cell: usize) -> Vec<(usize, Vec<usize>, [usize; 2])> {
+        self.faces
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.from == cell || f.to == cell)
+            .map(|(j, f)| {
+                (
+                    j,
+                    f.supports.iter().map(|s| s.region).collect(),
+                    [f.from, f.to],
+                )
+            })
+            .collect()
+    }
+
     fn projection(&self) -> Projection {
         let mut profile = vec![Vec::new(); self.sections.len()];
         let mut force = vec![Vec::new(); self.faces.len()];

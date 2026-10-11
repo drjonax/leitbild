@@ -288,15 +288,32 @@ fn joined_blocks_against_colored() {
         .outputs
         .pop()
         .unwrap();
-    let JoinedHot { mut joined, y, .. } = joined_hot(&declared, &settled, full);
+    let JoinedHot {
+        mut joined, y: y0, ..
+    } = joined_hot(&declared, &settled, full);
     let n = joined.dimension();
     let o = joined.offsets();
     let zero = vec![0.; n];
     let cj = 20.;
-    let (reference, colored, colors, colored_s) = joined_colored(&mut joined, &y, &zero, cj);
+    // The structure is compiled at the hot reference; LD01_JAC_PERTURB
+    // (relative) moves every coordinate by a recorded pseudo-random factor
+    // before both assemblies, so the pattern is checked at another state.
     let started = cpu();
-    let structure = JoinedJacobian::compile(&mut joined, 0., &y).expect("block compile");
+    let structure = JoinedJacobian::compile(&mut joined, 0., &y0).expect("block compile");
     let compile_s = cpu() - started;
+    let perturb: f64 = std::env::var("LD01_JAC_PERTURB").map_or(0., |v| v.parse().unwrap());
+    let mut state = 0x5eed_u64;
+    let y: Vec<f64> = y0
+        .iter()
+        .map(|v| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let u = 2. * ((state >> 11) as f64 / (1u64 << 53) as f64) - 1.;
+            v * (1. + perturb * u)
+        })
+        .collect();
+    let (reference, colored, colors, colored_s) = joined_colored(&mut joined, &y, &zero, cj);
     let mine = &structure.pattern;
     // Every colored nonzero lies in the block pattern.
     let mut outside = Vec::new();
@@ -379,6 +396,7 @@ fn joined_blocks_against_colored() {
     let klu_structural = klu(&reference, &colored);
     let receipt = json!({
         "kind": "s2-joined-blocks-against-colored-NOT-EVIDENCE",
+        "relative_state_perturbation": perturb,
         "block_assembly_refused": refused,
         "klu_block_pattern": klu_blocks, "klu_structural_pattern": klu_structural,
         "composition": {"dimension": n, "offsets": o, "full_owners": full},
@@ -679,6 +697,20 @@ fn joined_solid_scopes() {
     let solids = joined.solids();
     let inc = solids.incidence();
     let halves = solids.halves();
+    for a in [192usize, 193, 194, 195] {
+        println!(
+            "half {a}: helium {} wets {:?}",
+            inc.halves[a].0, inc.halves[a].1
+        );
+    }
+    println!("passive (first 5): {:?}", &inc.passive[..5]);
+    println!("segments: {:?}", inc.segments);
+    for c in [0usize, 1, 9, 10] {
+        println!(
+            "flux reads of cell {c}: {:?}",
+            joined.network.liquid_flux_reads(c)
+        );
+    }
     let mut sizes = BTreeMap::new();
     for a in 0..halves {
         let c = solids.close(&SolidScope {
@@ -805,6 +837,119 @@ fn joined_dense_lines() {
                 "colamd": {"refactor_ms": colamd["refactor_ms"], "factor_ms": colamd["factor_ms"], "lnz_plus_unz": colamd["lnz_plus_unz"]},
                 "amd": {"refactor_ms": amd["refactor_ms"], "factor_ms": amd["factor_ms"], "lnz_plus_unz": amd["lnz_plus_unz"]}})
         );
+    }
+    // What the nonzero cross-block entries are, by coordinate kind.
+    {
+        let net = &joined.network;
+        let solids = joined.solids();
+        let halves = solids.halves();
+        let network_kind = |i: usize| -> String {
+            for l in &net.cell_layout {
+                for (name, index) in [
+                    ("p", l.base),
+                    ("B", l.boron),
+                    ("M_l", l.mass[0]),
+                    ("U_l", l.energy[0]),
+                    ("M_v", l.mass[1]),
+                    ("U_v", l.energy[1]),
+                ] {
+                    if index == i {
+                        return name.into();
+                    }
+                }
+            }
+            for l in &net.face_layout {
+                if l.index == i {
+                    return format!("impulse phase {}", l.phase);
+                }
+            }
+            if net.pzr.coordinates().contains(&i) {
+                return "pzr".into();
+            }
+            "rotor".into()
+        };
+        let solid_kind = |i: usize| -> String {
+            let k = i - o.solids;
+            if k < 3 * halves {
+                format!("energy {}", k % 3)
+            } else if k < 6 * halves {
+                format!("surface {}", (k - 3 * halves) % 3)
+            } else if k < solids.passive(0) {
+                "helium".into()
+            } else if k < solids.metal(0) {
+                "passive".into()
+            } else {
+                "metal".into()
+            }
+        };
+        let kind = |i: usize| -> String {
+            match block(i) {
+                "network" => format!("network {}", network_kind(i)),
+                "solids" => format!("solids {}", solid_kind(i)),
+                b => b.to_string(),
+            }
+        };
+        let mut kinds: BTreeMap<String, [usize; 2]> = BTreeMap::new();
+        for j in 0..n {
+            for (row, v) in stored_column(p, &values, j) {
+                let (cb, rb) = (block(j), block(row));
+                if cb == rb && cb != "network" {
+                    continue;
+                }
+                if !["network", "solids", "rods"].contains(&cb)
+                    || !["network", "solids"].contains(&rb)
+                {
+                    continue;
+                }
+                let e = kinds
+                    .entry(format!("{} -> {}", kind(j), kind(row)))
+                    .or_insert([0, 0]);
+                e[0] += 1;
+                if v != 0. {
+                    e[1] += 1;
+                }
+            }
+        }
+        println!(
+            "{}",
+            json!({"cross_kinds_stored_nonzero": kinds.iter().map(|(k, v)| json!([k, v[0], v[1]])).collect::<Vec<_>>()})
+        );
+    }
+    // Stock KLU (AMD) with this state's exact zeros dropped in one
+    // (column block, row block) at a time: which closures cost the fill.
+    {
+        let mut by_category = Vec::new();
+        for (cb, rb) in [
+            ("rods", "solids"),
+            ("network", "solids"),
+            ("nuclear", "solids"),
+            ("solids", "network"),
+            ("rods", "network"),
+            ("nuclear", "network"),
+            ("network", "network"),
+            ("solids", "solids"),
+        ] {
+            let mut columns = vec![Vec::new(); n];
+            let mut v = Vec::new();
+            for (j, column) in columns.iter_mut().enumerate() {
+                for (row, value) in stored_column(p, &values, j) {
+                    let dropped = value == 0. && row != j && block(j) == cb && block(row) == rb;
+                    if !dropped {
+                        column.push(row);
+                        v.push(value);
+                    }
+                }
+            }
+            let q = Pattern::from_columns(n, &columns).unwrap();
+            let (pointers, rows) = q.to_i64().unwrap();
+            let amd = klu_profile_ordered(&pointers, &rows, &[v], 3, 0);
+            by_category.push(
+                json!({"zeros_dropped_in": format!("{cb} columns / {rb} rows"),
+                "nonzeros": q.nonzeros(), "amd_refactor_ms": amd["refactor_ms"]["mean"],
+                "amd_lnz_plus_unz": amd["lnz_plus_unz"]["max"]}),
+            );
+        }
+        println!("{}", json!({"zeros_dropped_by_category": by_category}));
     }
     // Where the densest column's rows lie, and the densest rows.
     let densest = lines[0].1;
