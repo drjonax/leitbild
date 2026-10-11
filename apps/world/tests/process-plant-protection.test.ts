@@ -337,7 +337,9 @@ describe('the PORV block valve', () => {
     // A motor-operated valve: halfway through its stroke it still passes flow.
     expect(Number(plantRun.tag('MOV-8000A-POS'))).toBeGreaterThan(0)
     expect(Number(plantRun.tag('MOV-8000A-POS'))).toBeLessThan(1)
-    expect(plantRun.activeIds()).toContain('alarm:pzr-porv-block-valve-not-open:porv-block-valve-not-open')
+    // Shutting it is the operators' isolation of the PORV, not an abnormal condition: it alarms nothing.
+    expect(plantRun.activeIds().filter(id => id.includes('block-valve'))).toEqual([])
+    expect(plant.automation.rules.filter(rule => JSON.stringify(rule.condition).includes('MOV-8000A'))).toEqual([])
     plantRun.run(10_000)
     expect(plantRun.tag('MOV-8000A')).toBe(0)
     expect(plantRun.tag('MOV-8000A-POS')).toBe(0)

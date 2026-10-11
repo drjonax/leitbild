@@ -345,9 +345,8 @@ describe('process plant runtime', () => {
       ['pressurizer-relief-open', [
         'alarm:pzr-relief-flow-high:relief-flow-high',
       ]],
-      ['pressurizer-porv-block-valve-close', [
-        'alarm:pzr-porv-block-valve-not-open:porv-block-valve-not-open',
-      ]],
+      // Shutting the block valve is status, not an alarm: with the PORV shut nothing comes in.
+      ['pressurizer-porv-block-valve-close', []],
       // At power the SI block cannot hold, so pressing it brings nothing in.
       ['block-low-pressure-safety-injection', []],
       // Above P-9 a turbine trip trips the reactor; the generator's output and load alarms apply only while it is on line.
@@ -405,9 +404,8 @@ describe('process plant runtime', () => {
       ['pressurizer-relief-open', [
         'alarm:pzr-relief-flow-high:relief-flow-high',
       ]],
-      ['pressurizer-porv-block-valve-close', [
-        'alarm:pzr-porv-block-valve-not-open:porv-block-valve-not-open',
-      ]],
+      // Shutting the block valve is status, not an alarm: with the PORV shut nothing comes in.
+      ['pressurizer-porv-block-valve-close', []],
       // At power the SI block cannot hold, so pressing it brings nothing in.
       ['block-low-pressure-safety-injection', []],
       // Above P-9 a turbine trip trips the reactor; the generator's output and load alarms apply only while it is on line.

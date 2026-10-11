@@ -132,25 +132,9 @@ export const pressurizerReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule>
       annunciator: annunciator({ ...pzrAlarm, priority: 'urgent' }),
     })],
   }),
-  rule({
-    id: 'pzr-porv-block-valve-not-open',
-    label: 'Pressurizer PORV block valve not open',
-    ruleClass: 'alarm',
-    // On the valve's position feedback: a block valve not fully open isolates or throttles the PORV.
-    condition: comparison({ tagId: 'MOV-8000A-POS' }, '<', 0.95),
-    clearCondition: comparison({ tagId: 'MOV-8000A-POS' }, '>=', 0.99),
-    delayMs: 1_000,
-    clearDelayMs: 1_000,
-    latch: false,
-    resetWhenClear: true,
-    effects: [alarm({
-      id: 'porv-block-valve-not-open',
-      title: 'PORV block valve not open',
-      message: 'The pressurizer PORV block valve is not fully open, so the PORV cannot relieve through it.',
-      severity: 'notice',
-      annunciator: annunciator({ ...pzrAlarm, priority: 'medium', role: 'status' }),
-    })],
-  }),
+  // The PORV block valve's position is status, not an alarm: operators shut
+  // it to isolate a PORV that leaks or sticks open, the right action, and its
+  // position feedback (MOV-8000A-POS) shows where it stands.
   rule({
     id: 'pzr-pressure-low-reactor-trip',
     label: 'Pressurizer pressure low reactor trip',
