@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
 import type { ActorId, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import { gridCloseBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridRearmLfddStageCommandKind, gridRestoreLfddStageCommandKind } from '../src/packs/electric-grid/commands/frequency.ts'
@@ -25,9 +26,17 @@ const nordic = gridAutomationPreset(nordicFrequencyAutomationRef)
 const definitionFor = (modelRef: string): CompiledGridDefinition => compileGridDefinition(gridDefinitionSchema.parse({
   id: modelRef === 'electric-grid.halden.four-unit' ? 'grid:halden-four-unit' : 'grid:norway',
   model: { ref: modelRef },
-  operatingPoint: { ref: 'electric-grid.norway.winter-weekday-peak' },
+  operatingPoint: { ref: modelRef === 'electric-grid.halden.four-unit' ? 'electric-grid.norway.winter-weekday-peak' : norwayRuntimeTestOperatingPointRef },
   automation: { ref: 'electric-grid.frequency.nordic-2025' },
 }))
+
+/**
+ * Halden's 4.4 GW at the winter Operating Point loads NO1 corridors far above their ratings in
+ * today's v2 data (DQ1), so these frequency tests run the Nordic Automation without branch
+ * protection: overloads raise alarms but trip nothing.
+ */
+const withoutBranchProtection = (definition: CompiledGridDefinition): CompiledGridDefinition =>
+  ({ ...definition, automation: gridAutomationSchema.parse({ ...definition.automation, branchProtection: { enabled: false } }) })
 
 /** A Grid with its own clock: `advance(dt)` moves it dt seconds on. */
 const runningGrid = (definition: CompiledGridDefinition, connections?: Parameters<typeof createGridRuntimeInstance>[0]['connections']) => {
@@ -471,7 +480,7 @@ describe('synchro-check on closing a loop', () => {
 describe('Halden coupling to the Nordic synchronous area', () => {
   const halden = () => {
     const scenario = scenarios.find(candidate => candidate.id === 'halden-power-complex')!
-    const run = runningGrid(definitionFor('electric-grid.halden.four-unit'), scenario.connections)
+    const run = runningGrid(withoutBranchProtection(definitionFor('electric-grid.halden.four-unit')), scenario.connections)
     for (const connection of run.grid.externalConnections.values()) {
       connection.connected = true
       connection.systemActivePowerMw = 1_100

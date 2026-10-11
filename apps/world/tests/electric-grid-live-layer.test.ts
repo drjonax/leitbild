@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
 import { expression, latest, validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import type { ActorId, CommandEnvelope, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import { layerIdsMatching } from '../src/core/packs/layer-id-glob.ts'
@@ -7,7 +8,7 @@ import type { PackMapTheme } from '../src/core/packs/reference-style.ts'
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayWinterPeakOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
 import { applyGridCommand } from '../src/packs/electric-grid/runtime/apply-command.ts'
@@ -170,7 +171,7 @@ describe('Grid live layer: reference context', () => {
 const norway = compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: norwayGridModelRef },
-  operatingPoint: { ref: norwayWinterPeakOperatingPointRef },
+  operatingPoint: { ref: norwayRuntimeTestOperatingPointRef },
   automation: { ref: nordicFrequencyAutomationRef },
 }))
 

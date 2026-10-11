@@ -28,8 +28,6 @@ export const branchProtectionSchema = z.discriminatedUnion('enabled', [
     sampleIntervalSeconds: z.number().finite().gt(0).max(10).refine(wholeMilliseconds, 'the sample interval must be whole milliseconds'),
     /** First-order conductor heating time constant towards (flow / rating)². */
     thermalTimeConstantSeconds: perBranchKindSecondsSchema,
-    /** How long a branch may carry its emergency rating where its Model gives no duration (v1 Models). */
-    emergencyDurationSeconds: seconds,
     /** Pickup of the instantaneous element in percent of the continuous rating. */
     instantaneousPercentOfRating: percent,
   }).strict(),

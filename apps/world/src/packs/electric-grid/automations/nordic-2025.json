@@ -426,7 +426,6 @@
       "hvdc_link": 7200,
       "switch": 600
     },
-    "emergencyDurationSeconds": 900,
     "instantaneousPercentOfRating": 150
   },
   "alarms": {

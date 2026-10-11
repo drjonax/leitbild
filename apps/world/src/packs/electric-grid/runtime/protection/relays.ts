@@ -16,14 +16,10 @@ import type { GridBranchTripElement } from './state.ts'
 
 export type EnabledBranchProtection = Extract<GridBranchProtectionSettings, { readonly enabled: true }>
 
-/** The Model's emergency duration; a v1 Model gives none, so the Automation's applies. */
-export const branchEmergencyDurationSeconds = (branch: GridBranchDefinition, settings: EnabledBranchProtection): number =>
-  branch.emergencyDurationSeconds ?? settings.emergencyDurationSeconds
-
 /** Thermal level at which the thermal element trips: θ after the emergency duration at the emergency rating from θ = 1. */
 export const branchThermalTripLevel = (branch: GridBranchDefinition, settings: EnabledBranchProtection): number => {
   const emergencySquared = (branch.emergencyRatingMw / branch.ratingMw) ** 2
-  const decay = Math.exp(-branchEmergencyDurationSeconds(branch, settings) / settings.thermalTimeConstantSeconds[branch.kind])
+  const decay = Math.exp(-branch.emergencyDurationSeconds / settings.thermalTimeConstantSeconds[branch.kind])
   return emergencySquared - (emergencySquared - 1) * decay
 }
 
@@ -69,7 +65,7 @@ export const sampleBranchRelays = (grid: GridRuntimeInstance, settings: EnabledB
     if (state.state === 'closed') {
       const element: GridBranchTripElement | null = instantaneousOperates(branch, state, settings)
         ? 'instantaneous'
-        : protection.overEmergencySinceElapsedMs !== null && elapsedMs - protection.overEmergencySinceElapsedMs >= branchEmergencyDurationSeconds(branch, settings) * 1_000
+        : protection.overEmergencySinceElapsedMs !== null && elapsedMs - protection.overEmergencySinceElapsedMs >= branch.emergencyDurationSeconds * 1_000
           ? 'emergency-duration'
           : protection.thermalLevel >= branchThermalTripLevel(branch, settings) ? 'thermal' : null
       if (element !== null) trips.push({ index, element })

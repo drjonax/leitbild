@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test'
+import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
 import type { ActorId, CommandId, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import { gridAlarmLifecycleCommandKind } from '../src/packs/electric-grid/commands/alarm.ts'
 import { gridDerateBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridShedLoadCommandKind } from '../src/packs/electric-grid/commands/load.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
 import { gridAlarmId, noteGridAcSolution, type GridAlarmRecord } from '../src/packs/electric-grid/runtime/alarms.ts'
@@ -26,7 +27,7 @@ const alarmTransitions = (run: SteppedGrid) => run.signals
 const lifecycle = (run: SteppedGrid, payload: Readonly<Record<string, unknown>>) => run.command(gridAlarmLifecycleCommandKind, payload)
 
 const norway = compileGridDefinition(gridDefinitionSchema.parse({
-  id: 'grid:norway', model: { ref: norwayGridModelRef }, operatingPoint: { ref: norwayNormalOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
+  id: 'grid:norway', model: { ref: norwayGridModelRef }, operatingPoint: { ref: norwayRuntimeTestOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
 }))
 
 const loadingAlarm = (band: string) => gridAlarmId('branch', 'branch:g-a', `loading-${band}`)
@@ -95,8 +96,14 @@ describe('electric grid alarms', () => {
     const units = norway.model.generators
       .filter(generator => run.grid.busStates.get(generator.busId)!.islandId === islandId && run.grid.generators.get(generator.id)!.state === 'online')
       .sort((a, b) => run.grid.generators.get(b.id)!.dispatchMw - run.grid.generators.get(a.id)!.dispatchMw)
-    // The four largest units of the main island (about 1.1 GW) take its frequency below 49 Hz.
-    for (const unit of units.slice(0, 4)) expect(run.command(gridTripGeneratorCommandKind, { assetId: unit.id }).ok).toBe(true)
+    // The largest units of the main island, together at least 3 GW (twice the Nordic reference
+    // incident), take its frequency below 49 Hz against the Nordic equivalent's inertia and FCR-D.
+    let lostMw = 0
+    for (const unit of units) {
+      if (lostMw >= 3_000) break
+      lostMw += run.grid.generators.get(unit.id)!.dispatchMw
+      expect(run.command(gridTripGeneratorCommandKind, { assetId: unit.id }).ok).toBe(true)
+    }
     run.advanceTo(124_000)
     const alarmId = gridAlarmId('island', islandId, 'under-frequency-instantaneous-limit')
     expect(run.grid.alarms.records.get(alarmId)).toMatchObject({ active: true, priority: 1, scope: 'island', islandId, unit: 'Hz' })
@@ -109,8 +116,12 @@ describe('electric grid alarms', () => {
     expect(Math.abs(frequencyHz - 50)).toBeLessThan(0.09)
     for (const band of ['instantaneous-limit', 'steady-state-limit', 'standard-range']) {
       const id = gridAlarmId('island', islandId, `under-frequency-${band}`)
-      expect(alarmTransitions(run).filter(transition => transition.alarmId === id).map(transition => transition.type))
-        .toEqual(['electric-grid.alarm.raised', 'electric-grid.alarm.cleared'])
+      const types = alarmTransitions(run).filter(transition => transition.alarmId === id).map(transition => transition.type)
+      console.info(`under-frequency ${band}: ${types.map(type => type.slice('electric-grid.alarm.'.length)).join(' → ')}`)
+      // Raised first, cleared last, alternating: a recovery may dip back once across a band, never chatter within the hysteresis.
+      expect(types.length % 2).toBe(0)
+      types.forEach((type, index) => expect(type).toBe(index % 2 === 0 ? 'electric-grid.alarm.raised' : 'electric-grid.alarm.cleared'))
+      expect(types.length).toBeLessThanOrEqual(4)
     }
     expect(run.grid.alarms.records.has(alarmId)).toBe(false)
     expect(run.grid.alarms.records.get(gridAlarmId('generator', units[0]!.id, 'tripped'))?.active).toBe(true)

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
 import type { ActorId, CommandEnvelope, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import {
   gridClearDerateCommandKind,
@@ -20,7 +21,7 @@ import {
   gridShedLoadCommandKind,
 } from '../src/packs/electric-grid/commands/load.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayWinterPeakOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition, compileGridModelIndex } from '../src/packs/electric-grid/definitions.ts'
 import type { CompiledGridDefinition, GridGeneratorDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
@@ -48,7 +49,7 @@ const isoAt = (seconds: number): IsoTimestamp => new Date(startsAtMs + seconds *
 const norway = compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: norwayGridModelRef },
-  operatingPoint: { ref: norwayWinterPeakOperatingPointRef },
+  operatingPoint: { ref: norwayRuntimeTestOperatingPointRef },
   automation: { ref: nordicFrequencyAutomationRef },
 }))
 
@@ -448,7 +449,7 @@ describe('electric grid query Capabilities', () => {
 
   test('every asset of both published Models fits the typed asset.get output', () => {
     const halden = compileGridDefinition(gridDefinitionSchema.parse({
-      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: norwayWinterPeakOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
+      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: norwayRuntimeTestOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
     }))
     for (const compiled of [definition, halden]) {
       const grid = createGridRuntimeInstance({ definition: compiled, at: isoAt(0) })

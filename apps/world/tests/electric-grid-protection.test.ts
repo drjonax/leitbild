@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
+import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
 import { gridCloseBranchCommandKind, gridDerateBranchCommandKind, gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridResetGeneratorTripCommandKind, gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridResetBranchProtectionCommandKind } from '../src/packs/electric-grid/commands/protection.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { CompiledGridDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
@@ -19,7 +20,7 @@ import { corridorDefinition, isoAt, steppedGrid, tripSignals } from './fixtures/
 const norway = compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: norwayGridModelRef },
-  operatingPoint: { ref: norwayNormalOperatingPointRef },
+  operatingPoint: { ref: norwayRuntimeTestOperatingPointRef },
   automation: { ref: nordicFrequencyAutomationRef },
 }))
 
@@ -29,14 +30,16 @@ const protectionOf = (definition: CompiledGridDefinition): EnabledBranchProtecti
   return settings
 }
 
-/** The most loaded branch whose outage keeps its island connected. */
+/** The most loaded branch below 60 % of its rating (its conductor is cool) whose outage keeps its island connected. */
 const meshedBranchUnderLoad = (run: ReturnType<typeof steppedGrid>): string => {
   const { model } = run.grid.definition
   const network = compiledGridNetworkFor(model)
   const closed = Uint8Array.from(model.branches, branch => run.grid.branches.get(branch.id)!.state === 'closed' ? 1 : 0)
   const baseCount = findGridIslands(network, closed).count
+  const loading = (id: string, ratingMw: number): number => Math.abs(run.grid.branches.get(id)!.flowMw) / ratingMw
   return [...model.branches]
-    .sort((a, b) => Math.abs(run.grid.branches.get(b.id)!.flowMw) / b.ratingMw - Math.abs(run.grid.branches.get(a.id)!.flowMw) / a.ratingMw)
+    .filter(branch => loading(branch.id, branch.ratingMw) < 0.6)
+    .sort((a, b) => loading(b.id, b.ratingMw) - loading(a.id, a.ratingMw))
     .find(branch => {
       const without = closed.slice()
       without[model.branches.indexOf(branch)] = 0
@@ -58,7 +61,7 @@ describe('electric grid branch protection', () => {
     const steady = 1.25 ** 2
     const thermalSeconds = settings.thermalTimeConstantSeconds.ac_line
       * Math.log((steady - run.grid.branches.get(branchId)!.protection.thermalLevel) / (steady - branchThermalTripLevel(branch, settings)))
-    expect(thermalSeconds).toBeGreaterThan(settings.emergencyDurationSeconds + 30)
+    expect(thermalSeconds).toBeGreaterThan(branch.emergencyDurationSeconds + 30)
     // The first relay sample after the derate (61 s) picks up; the element operates 900 s later.
     run.advanceTo(960_000)
     expect(run.grid.branches.get(branchId)!.state).toBe('closed')
@@ -109,7 +112,7 @@ describe('electric grid branch protection', () => {
     ])
     const thermalTrip = reference.trips[0]!.elapsedSeconds
     expect(thermalTrip).toBeGreaterThan(10 + 300)
-    expect(thermalTrip).toBeLessThan(10 + protectionOf(corridorDefinition()).emergencyDurationSeconds)
+    expect(thermalTrip).toBeLessThan(10 + corridorDefinition().model.branches.find(branch => branch.id === 'branch:g-a')!.emergencyDurationSeconds)
     const twoSecond = cascade([2_000])
     expect(twoSecond).toEqual(reference)
     expect(cascade([60_000])).toEqual(reference)

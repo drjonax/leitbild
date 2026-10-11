@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
+import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { IsoTimestamp } from '../src/core/model/index.ts'
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayNormalOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import { compileGridModelV2 } from '../src/packs/electric-grid/models/compile-v2.ts'
 import { answerElectricGridQuery } from '../src/packs/electric-grid/queries/index.ts'
@@ -24,7 +25,7 @@ import { corridorDefinition, steppedGrid } from './fixtures/grid-corridor.ts'
 import { gridDefinitionForModel } from './fixtures/synthetic-grid.ts'
 
 const norway = compileGridDefinition(gridDefinitionSchema.parse({
-  id: 'grid:norway', model: { ref: norwayGridModelRef }, operatingPoint: { ref: norwayNormalOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
+  id: 'grid:norway', model: { ref: norwayGridModelRef }, operatingPoint: { ref: norwayRuntimeTestOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
 }))
 
 const solvedNorway = (): GridRuntimeInstance => {
@@ -154,12 +155,14 @@ describe('electric grid N-1 screening', () => {
     ask(grid, 'world.electric-grid.contingency.screen', { contingencies: 'largest-generators', largestGeneratorCount: 10 })
     const meshed = screened.results.find((result: any) => !result.islanding && result.contingency.kind === 'branch').contingency.assetId
     const unit = norway.model.generators.find(generator => grid.generators.get(generator.id)!.state === 'online' && grid.generators.get(generator.id)!.dispatchMw > 50)!
+    // The largest Oslo load (Grid Model v2 municipality 0301).
+    const oslo = [...norway.model.loads].filter(load => load.id.startsWith('load:0301-')).sort((a, b) => b.demandMw - a.demandMw)[0]!
     ask(grid, 'world.electric-grid.remedial-actions.evaluate', {
       contingencies: 'all-branches',
       actions: [
         { kind: 'open-branch', assetId: meshed },
         { kind: 'redispatch', assetId: unit.id, targetMw: grid.generators.get(unit.id)!.dispatchMw - 20 },
-        { kind: 'shed-load', assetId: 'load:oslo-ev', targetDemandMw: (grid.loads.get('load:oslo-ev')!.servedMw + norway.model.loads.find(load => load.id === 'load:oslo-ev')!.criticalMw) / 2 },
+        { kind: 'shed-load', assetId: oslo.id, targetDemandMw: (grid.loads.get(oslo.id)!.servedMw + oslo.criticalMw) / 2 },
       ],
     })
     expect(grid.topologyPlan).toBe(plan)

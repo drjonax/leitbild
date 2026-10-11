@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
+import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
 import type { ActorId, CommandEnvelope, CommandId, IsoTimestamp, ObjectId, SimulationRunId } from '../src/core/model/index.ts'
 import { gridOpenBranchCommandKind } from '../src/packs/electric-grid/commands/branch.ts'
 import { gridTripGeneratorCommandKind } from '../src/packs/electric-grid/commands/generator.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
-import { norwayGridModelRef, norwayWinterPeakOperatingPointRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
+import { norwayGridModelRef, nordicFrequencyAutomationRef } from '../src/packs/electric-grid/definition-refs.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
 import type { GridModelDefinition } from '../src/packs/electric-grid/grid-model.ts'
 import { answerElectricGridQuery, electricGridQueryCapabilities } from '../src/packs/electric-grid/queries/index.ts'
@@ -23,7 +24,7 @@ const stateId = 'world.electric-grid.map.state'
 const norway = compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: norwayGridModelRef },
-  operatingPoint: { ref: norwayWinterPeakOperatingPointRef },
+  operatingPoint: { ref: norwayRuntimeTestOperatingPointRef },
   automation: { ref: nordicFrequencyAutomationRef },
 }))
 
@@ -104,7 +105,7 @@ describe('Grid map query Capabilities', () => {
 
   test('a Model Addition draws its base along the base\'s routes and its own branches bus to bus, explicitly', () => {
     const halden = compileGridDefinition(gridDefinitionSchema.parse({
-      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: norwayWinterPeakOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
+      id: 'grid:halden', model: { ref: 'electric-grid.halden.four-unit' }, operatingPoint: { ref: norwayRuntimeTestOperatingPointRef }, automation: { ref: nordicFrequencyAutomationRef },
     }))
     const grid = createGridRuntimeInstance({ definition: halden, at })
     advanceGrid(grid, 0, at)

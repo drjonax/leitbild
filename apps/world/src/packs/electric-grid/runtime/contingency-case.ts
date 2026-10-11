@@ -1,6 +1,6 @@
 import { generatorIsVoltageForming, generatorKineticEnergyMws } from './generator-dynamics.ts'
 import type { GridRuntimeInstance, GridTopologyPlan } from './instance.ts'
-import { externalFrequencyEquivalent, externalKineticEnergyMws, gridGeneratorIsSynchronised } from './island-input.ts'
+import { boundaryTieCapacityMw, externalFrequencyEquivalent, externalKineticEnergyMws, gridGeneratorIsSynchronised } from './island-input.ts'
 import { solvedGridIslands } from './island-lifecycle.ts'
 import type { CompiledGridNetwork } from './network/compiled-network.ts'
 import { createGridIslandSystem, type GridIslandSystem } from './network/dc-power-flow.ts'
@@ -102,13 +102,18 @@ const participationFor = (grid: GridRuntimeInstance, network: CompiledGridNetwor
   }
   for (const system of grid.definition.index.externalSystems) {
     if (!system.synchronous) continue
-    const bus = network.busIndexById.get(system.boundaryBusIds[0]!)!
-    if (!energisedBus(bus)) continue
     const reserves = externalFrequencyEquivalent(grid, system).reserves
-    upMw[bus] = upMw[bus]! + reserves.fcrNMw + reserves.fcrDUpMw
-    downMw[bus] = downMw[bus]! + reserves.fcrNMw + reserves.fcrDDownMw
-    kineticEnergyMws[bus] = kineticEnergyMws[bus]! + externalKineticEnergyMws(system)
-    formingCount[bus] = formingCount[bus]! + 1
+    // The equivalent acts at its boundary buses in proportion to their closed ties, as it closes balances in the runtime.
+    const boundaries = system.boundaryBusIds.map(busId => network.busIndexById.get(busId)!).filter(energisedBus)
+    const capacities = boundaries.map(bus => boundaryTieCapacityMw(grid, network.busIds[bus]!))
+    const totalCapacityMw = capacities.reduce((sum, capacity) => sum + capacity, 0)
+    boundaries.forEach((bus, position) => {
+      const share = totalCapacityMw > 0 ? capacities[position]! / totalCapacityMw : 1 / boundaries.length
+      upMw[bus] = upMw[bus]! + (reserves.fcrNMw + reserves.fcrDUpMw) * share
+      downMw[bus] = downMw[bus]! + (reserves.fcrNMw + reserves.fcrDDownMw) * share
+      kineticEnergyMws[bus] = kineticEnergyMws[bus]! + externalKineticEnergyMws(system) * share
+      formingCount[bus] = formingCount[bus]! + 1
+    })
   }
   for (const definition of grid.definition.model.loads) {
     const bus = network.busIndexById.get(definition.busId)!
@@ -124,14 +129,16 @@ export const liveContingencyCase = (grid: GridRuntimeInstance): ContingencyCase 
   const network = plan.network
   const energisedPlanIsland = new Uint8Array(plan.islands.length)
   for (const island of islands.islands) energisedPlanIsland[island.planIndex] = island.energized ? 1 : 0
-  const caseIslands = plan.systems.map((system, index) => caseIsland(system, energisedPlanIsland[index] === 1))
+  // A case island is one AC component: each closes its own balance (through its boundary buses where the
+  // synchronous equivalent ties several components into one synchronous island).
+  const caseIslands = plan.systems.map((system, index) => caseIsland(system, energisedPlanIsland[plan.components[index]!.islandIndex] === 1))
   const flowsMw = new Float64Array(network.branchCount)
   for (const island of caseIslands) if (island.energised) islandFlowsInto(network, island, plan.anglesRad, flowsMw)
   return {
     grid,
     network,
     closed: plan.closedBranches.slice(),
-    islandOfBus: plan.islandIndexOfBus.slice(),
+    islandOfBus: plan.componentIndexOfBus.slice(),
     islands: caseIslands,
     injectionsMw: plan.injectionsMw.slice(),
     flowsMw,

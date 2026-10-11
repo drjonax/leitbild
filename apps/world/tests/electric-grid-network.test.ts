@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { norwayRuntimeTestOperatingPointRef } from './fixtures/grid-operating-point.ts'
 import type { IsoTimestamp } from '../src/core/model/index.ts'
 import { gridDefinitionSchema } from '../src/packs/electric-grid/config.ts'
 import { compileGridDefinition } from '../src/packs/electric-grid/definitions.ts'
@@ -37,7 +38,7 @@ const gridFor = (definition: CompiledGridDefinition): GridRuntimeInstance => cre
 const norwayDefinition = (): CompiledGridDefinition => compileGridDefinition(gridDefinitionSchema.parse({
   id: 'grid:norway',
   model: { ref: 'electric-grid.norway.transmission' },
-  operatingPoint: { ref: 'electric-grid.norway.winter-weekday-peak' },
+  operatingPoint: { ref: norwayRuntimeTestOperatingPointRef },
   automation: { ref: 'electric-grid.frequency.nordic-2025' },
 }))
 

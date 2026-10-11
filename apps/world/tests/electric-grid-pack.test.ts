@@ -88,7 +88,7 @@ describe('electric grid Pack', () => {
     const halden = definition('electric-grid.halden.four-unit', 'electric-grid.norway.winter-weekday-peak')
     expect(() => compileGridModelIndex({ ...halden.model, connectionPoints: [{ ...halden.model.connectionPoints[0]!, busId: 'missing' }] })).toThrow('references unknown bus missing')
     // A published model is an immutable artifact used by persisted Run state; regenerating the model data changes this digest.
-    expect(halden.definitionDigest).toBe('b771ee3ab0f6d370b38a43e54c2cfaaa2a6d5a2593afd72f65be3e8bdddbff7a')
+    expect(halden.definitionDigest).toBe('f38e2dd079789079e1d8599ba243c8f74240bdd89f15c52e6dbc67be04fc6ea9')
     expect(() => definition('electric-grid.halden.four-unit', 'electric-grid.halden.four-unit.normal')).toThrow('unknown Grid Operating Point')
     expect(halden.model.connectionPoints).toHaveLength(4)
   })
@@ -108,7 +108,7 @@ describe('electric grid Pack', () => {
     expect(createLocalElectricGridPackRuntimeAdapter().capabilities.every(capability => capability.input !== undefined && capability.output !== undefined)).toBe(true)
     expect(electricGridPackDataSchema.parse(gridObjects[0]?.packData)).toMatchObject({
       model: { ref: 'electric-grid.norway.transmission' },
-      operatingPoint: { ref: 'electric-grid.norway.winter-weekday-peak' },
+      operatingPoint: { ref: 'electric-grid.norway.summer-night-low' },
       automation: { ref: 'electric-grid.frequency.nordic-2025' },
     })
   })

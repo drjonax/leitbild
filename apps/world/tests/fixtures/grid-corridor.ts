@@ -7,23 +7,18 @@ import { applyGridCommand } from '../../src/packs/electric-grid/runtime/apply-co
 import { drainGridSignals, type GridRuntimeSignal } from '../../src/packs/electric-grid/runtime/grid-signals.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../../src/packs/electric-grid/runtime/instance.ts'
 import { advanceGrid } from '../../src/packs/electric-grid/runtime/solver.ts'
-import { gridDefinitionForModel } from './synthetic-grid.ts'
+import { gridDefinitionForModel, handBuiltModel, syntheticHydroUnit, testLine, testLoad } from './synthetic-grid.ts'
 
 const bus = (id: string, longitude: number): GridBusDefinition => ({ id, label: id, nominalKv: 300, location: [longitude, 60] })
 
-const line = (id: string, fromBusId: string, toBusId: string, reactancePu: number, ratingMw: number): GridBranchDefinition => ({
-  id, label: id, kind: 'ac_line', fromBusId, toBusId, nominalKv: 300, ratingMw, emergencyRatingMw: ratingMw * 1.2,
-  reactancePu, resistancePu: reactancePu / 20, weatherExposure: 'low',
-})
+// Emergency rating 120 % for 15 minutes, as the v2 electrical rule emergency-120pct-15min.
+const line = (id: string, fromBusId: string, toBusId: string, reactancePu: number, ratingMw: number): GridBranchDefinition =>
+  testLine({ id, fromBusId, toBusId, nominalKv: 300, ratingMw, emergencyRatingMw: ratingMw * 1.2, emergencyDurationSeconds: 900, reactancePu, resistancePu: reactancePu / 20 })
 
-export const corridorModel: GridModelDefinition = {
+export const corridorModel: GridModelDefinition = handBuiltModel({
   id: 'test-corridor',
   title: 'Test corridor',
   description: 'Meshed corridor for protection tests',
-  nominalFrequencyHz: 50,
-  fidelity: { powerFlow: 'dc', voltage: 'not-modelled', frequency: 'island-swing', recommendedMaximumBusCount: 1000 },
-  sourceBuild: { id: 'test', generatedAt: '2026-10-10T00:00:00.000Z' },
-  sourceIds: [],
   buses: [bus('bus:g', 8), bus('bus:a', 9), bus('bus:b', 9.5), bus('bus:l', 10)],
   branches: [
     line('branch:g-l', 'bus:g', 'bus:l', 0.1, 600),
@@ -33,13 +28,11 @@ export const corridorModel: GridModelDefinition = {
     line('branch:b-l', 'bus:b', 'bus:l', 0.1, 300),
   ],
   generators: [
-    { id: 'generator:g1', label: 'G1', kind: 'hydro', busId: 'bus:g', location: [8, 60], capacityMw: 1400, availableMw: 1400, reserveMw: 200, rampRateMwPerMinute: 300, inertiaSeconds: 3 },
-    { id: 'generator:l1', label: 'L1', kind: 'hydro', busId: 'bus:l', location: [10, 60], capacityMw: 400, availableMw: 200, reserveMw: 50, rampRateMwPerMinute: 100, inertiaSeconds: 3 },
+    syntheticHydroUnit({ id: 'generator:g1', label: 'G1', busId: 'bus:g', location: [8, 60], capacityMw: 1400, rampRateMwPerMinute: 300 }),
+    syntheticHydroUnit({ id: 'generator:l1', label: 'L1', busId: 'bus:l', location: [10, 60], capacityMw: 400, availableMw: 200, rampRateMwPerMinute: 100 }),
   ],
-  loads: [{ id: 'load:l', label: 'Load L', kind: 'industry', busId: 'bus:l', location: [10, 60], demandMw: 1000, criticalMw: 0, reactiveDemandMvar: 0, priority: 'normal', controllable: true }],
-  storage: [],
-  connectionPoints: [],
-}
+  loads: [testLoad({ id: 'load:l', label: 'Load L', busId: 'bus:l', location: [10, 60], demandMw: 1000 })],
+})
 
 export const corridorDefinition = (): CompiledGridDefinition => gridDefinitionForModel(corridorModel)
 

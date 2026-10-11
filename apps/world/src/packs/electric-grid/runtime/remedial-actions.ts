@@ -53,7 +53,7 @@ export const remedialCaseChanges = (base: ContingencyCase, actions: ReadonlyArra
     }
     if (action.kind === 'shed-load') {
       if (entry?.kind !== 'load') throw new Error(`shed-load needs a load Grid Asset: ${action.assetId}`)
-      if (!entry.definition.controllable) throw new Error(`load Grid Asset ${action.assetId} is not controllable in its Grid Model`)
+      if (entry.definition.priority === 'critical') throw new Error(`load Grid Asset ${action.assetId} is critical in full; manual shedding never disconnects it`)
       const servedMw = grid.loads.get(action.assetId)!.servedMw
       if (action.targetDemandMw < entry.definition.criticalMw) throw new Error(`target demand ${mw(action.targetDemandMw)} is below the critical demand ${mw(entry.definition.criticalMw)} of ${action.assetId}`)
       if (action.targetDemandMw >= servedMw) throw new Error(`target demand ${mw(action.targetDemandMw)} would shed nothing: ${action.assetId} is served ${mw(servedMw)}`)
