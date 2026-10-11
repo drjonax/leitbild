@@ -74,9 +74,11 @@ const createCachedIsland = (network: CompiledGridNetwork, buses: Int32Array, bra
 
 /**
  * Synchronous islands over AC components: components holding boundary buses of the same
- * synchronous external system run at that system's frequency and form one island.
+ * synchronous external system run at that system's frequency and form one island. A boundary bus
+ * whose ties are all open is a component of its own, not coupled to Norway: it joins no island and
+ * stays de-energised (the system has no voltage-forming source of its own there).
  */
-const synchronousIslandOfComponent = (grid: GridRuntimeInstance, network: CompiledGridNetwork, componentOfBus: Int32Array, componentCount: number): Int32Array => {
+const synchronousIslandOfComponent = (grid: GridRuntimeInstance, network: CompiledGridNetwork, componentOfBus: Int32Array, componentCount: number, componentBusCount: (component: number) => number): Int32Array => {
   const parent = Int32Array.from({ length: componentCount }, (_, index) => index)
   const find = (node: number): number => {
     let current = node
@@ -88,9 +90,13 @@ const synchronousIslandOfComponent = (grid: GridRuntimeInstance, network: Compil
   }
   for (const system of grid.definition.index.externalSystems) {
     if (!system.synchronous) continue
-    const first = find(componentOfBus[network.busIndexById.get(system.boundaryBusIds[0]!)!]!)
-    for (const busId of system.boundaryBusIds.slice(1)) {
-      const other = find(componentOfBus[network.busIndexById.get(busId)!]!)
+    const coupled = system.boundaryBusIds
+      .map(busId => componentOfBus[network.busIndexById.get(busId)!]!)
+      .filter(component => componentBusCount(component) > 1)
+    if (coupled.length === 0) continue
+    const first = find(coupled[0]!)
+    for (const component of coupled.slice(1)) {
+      const other = find(component)
       if (other !== first) parent[other] = first
     }
   }
@@ -129,7 +135,7 @@ const buildTopologyPlan = (grid: GridRuntimeInstance, network: CompiledGridNetwo
     systems.push(entry.system)
   }
   islandCaches.set(grid, { current: generation, previous: cache.current })
-  const islandOfComponent = synchronousIslandOfComponent(grid, network, found.islandOfBus, found.count)
+  const islandOfComponent = synchronousIslandOfComponent(grid, network, found.islandOfBus, found.count, component => found.busStart[component + 1]! - found.busStart[component]!)
   const islandCount = found.count === 0 ? 0 : Math.max(...islandOfComponent) + 1
   const components: GridTopologyComponent[] = systems.map((system, component) => ({
     referenceBusId: network.busIds[system.buses[0]!]!,

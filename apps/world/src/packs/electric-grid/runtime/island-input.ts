@@ -35,9 +35,11 @@ export const islandMembers = (grid: GridRuntimeInstance, island: GridTopologyIsl
     generatorBuses: Int32Array.from(island.generators, item => network.busIndexById.get(item.busId)!),
     loadBuses: Int32Array.from(island.loads, item => network.busIndexById.get(item.busId)!),
     storageBuses: Int32Array.from(island.storage, item => network.busIndexById.get(item.busId)!),
+    // A synchronous system couples to the island only through a boundary bus with a closed tie in it.
     externals: [...new Set(island.buses.flatMap(busId => {
       const system = index.synchronousExternalByBus.get(busId)
-      return system === undefined ? [] : [system]
+      if (system === undefined || !island.branches.some(branch => branch.fromBusId === busId || branch.toBusId === busId)) return []
+      return [system]
     }))],
     connectionPointIds: model.connectionPoints.filter(point => island.busSet.has(point.busId)).map(point => point.id),
   }
