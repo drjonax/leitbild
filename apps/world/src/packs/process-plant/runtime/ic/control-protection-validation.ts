@@ -52,7 +52,9 @@ export const assertProcessPlantIcOperatingModesValid = (
  * Each critical safety function compares the signals it reads by their type:
  * a total or difference of numbers, an on/off state only for (in)equality. A
  * signal the Plant does not publish is left to its evaluation, which reads
- * the branch as unknown.
+ * the branch as unknown. It reads what the Plant's instruments read: a value
+ * only the simulator solves (simulatorOnly) would judge the Plant on
+ * something no operator can see.
  */
 export const assertProcessPlantIcSafetyFunctionsValid = (
   graph: CompiledPlantGraph,
@@ -62,11 +64,16 @@ export const assertProcessPlantIcSafetyFunctionsValid = (
     const binding = findProcessPlantSignalBinding(graph, reference)
     if (binding !== undefined && binding.quantity === 'boolean') throw new Error(`process plant I&C ${owner} adds or subtracts on/off signal ${binding.path}`)
   }
+  const instrument = (owner: string, reference: ProcessPlantSignalReference): void => {
+    const binding = findProcessPlantSignalBinding(graph, reference)
+    if (binding?.simulatorOnly === true) throw new Error(`process plant I&C ${owner} reads simulator-only signal ${binding.path}, which no plant instrument measures`)
+  }
   const check = (owner: string, condition: ProcessPlantIcSafetyFunctionCondition): void => {
     if (condition.type === 'all' || condition.type === 'any') {
       for (const child of condition.conditions) check(owner, child)
       return
     }
+    for (const reference of condition.type === 'comparison' ? [condition.signal] : condition.type === 'total' ? condition.signals : [condition.signal, condition.minus]) instrument(owner, reference)
     if (condition.type === 'total') {
       for (const signal of condition.signals) numeric(owner, signal)
       return

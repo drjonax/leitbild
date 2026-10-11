@@ -53,6 +53,8 @@ describe('model semantics declared per component kind', () => {
     for (const path of [
       'pressurizer.pressureMPa', 'pressurizer.levelPercent', 'sgA.levelPercent', 'sgA.wideRangeLevelPercent', 'core.powerRangePercent',
       'core.coreExitTemperatureC', 'rcsInventoryBalance.leakRateKgPerS', 'safetyBusA.energized', 'pressurizer.reliefValveEffectivePositionFraction',
+      // What the containment's high-range radiation monitors read, which its critical safety function judges.
+      'containment.radiationSourceTermMSvPerH',
     ]) expect(simulatorOnly(path), path).toBe(false)
     // A writable signal is a command or a fault, never a diagnostic.
     for (const binding of graph.signalBindings) if (binding.writable) expect(binding.simulatorOnly, binding.path).toBeUndefined()

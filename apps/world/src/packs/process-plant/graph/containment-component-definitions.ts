@@ -43,7 +43,9 @@ export const containmentComponentDefinitions: ReadonlyArray<ComponentDefinition>
       variable({ path: 'releaseFlowKgPerS', label: 'Containment vent release flow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
       variable({ path: 'sumpOutflowKgPerS', label: 'Containment sump outflow', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', quantity: 'flowRate', unit: 'kg/s' }),
       variable({ path: 'heatRemovalMw', label: 'Containment heat removal', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW', simulatorOnly: true }),
-      variable({ path: 'radiationSourceTermMSvPerH', label: 'Containment radiation source term', kind: 'state', discipline: 'radiological', writable: false, publish: 'telemetry', quantity: 'radiationDoseRate', unit: 'mSv/h', simulatorOnly: true }),
+      // What the containment's high-range radiation monitors read (CTMT-RAD), which its alarm and the containment
+      // safety function judge.
+      variable({ path: 'radiationSourceTermMSvPerH', label: 'Containment radiation source term', kind: 'state', discipline: 'radiological', writable: false, publish: 'telemetry', quantity: 'radiationDoseRate', unit: 'mSv/h' }),
       variable({ path: 'contaminationInventory', label: 'Containment contamination inventory', kind: 'state', discipline: 'radiological', writable: false, publish: 'telemetry', measurand: 'contamination', quantity: 'ratio', unit: 'fraction', simulatorOnly: true }),
     ],
   }),

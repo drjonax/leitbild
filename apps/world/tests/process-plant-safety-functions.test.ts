@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { answerProcessPlantQuery, commandsForProcessPlantAction, compileProcessPlant, createProcessPlantRampRunner, createPwrReferencePlantDefinition } from '../src/packs/process-plant/index.ts'
 import { createProcessPlantProtectionRunner, createProcessPlantRuntime, processPlantIcConfigSchema, type ProcessPlantRuntime } from '../src/packs/process-plant/runtime/index.ts'
+import { assertProcessPlantIcSafetyFunctionsValid } from '../src/packs/process-plant/runtime/ic/control-protection-validation.ts'
 import { createProcessPlantRuntimePerformance, type ProcessPlantRuntimeInstance } from '../src/packs/process-plant/runtime-instance.ts'
 import { evaluateSafetyFunctions, safetyFunctionSignals, type SafetyFunctionEvaluation } from '../src/packs/process-plant/safety-functions.ts'
 import { processPlantCapabilities } from '../src/packs/process-plant/capabilities.ts'
@@ -48,6 +49,9 @@ describe('critical safety function status trees', () => {
     const judgedSignals = safetyFunctionSignals(plant)
     for (const path of ['vessel.subcoolingMarginC', 'core.coreExitTemperatureC', 'pressurizer.levelPercent', 'sgA.feedwaterFlowKgPerS', 'containment.pressureMPa']) expect(judgedSignals.has(path as never), path).toBe(true)
     for (const path of ['reactorTripBreakerA.closedState', 'pressurizerReliefTank.levelPercent', 'pressurizerReliefTank.pressureMPa']) expect(judgedSignals.has(path as never), path).toBe(false)
+    // A tree judges the Plant by its instruments: one on a value only the simulator solves is refused.
+    const onDeficit = { ...declared, id: 'core-heat', tree: { question: 'Heat removed', basis: 'test', condition: { type: 'comparison' as const, signal: { path: 'core.coreHeatRemovalDeficitMw' }, operator: '<' as const, value: 1 }, yes: { status: 'green' as const, meaning: 'ok' }, no: { status: 'red' as const, meaning: 'not' } } }
+    expect(() => assertProcessPlantIcSafetyFunctionsValid(plant.graph, [onDeficit as never])).toThrow('process plant I&C safety function core-heat reads simulator-only signal core.coreHeatRemovalDeficitMw, which no plant instrument measures')
   })
 
   test('at full power every tree reads green but subcriticality, which is judged once a trip is demanded', () => {
