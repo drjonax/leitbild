@@ -248,7 +248,10 @@ const activeFactor = (network: AcNetwork, islandId: string, buses: Int32Array, a
 /**
  * Builds one island's AC system. `buses` (ascending) and `branches` are network indices of a
  * connected island, as produced by `findGridIslands`; `localOfBus` is scratch of length
- * `network.busCount` whose contents on return are unspecified.
+ * `network.busCount` whose contents on return are unspecified. B′ (1/x per closed branch, buses[0]
+ * dropped) is the DC power flow's susceptance matrix of the same buses and branches: a caller
+ * holding that factor (the island's GridIslandSystem.factor) passes it as `activeFactor`; without
+ * it B′ is factorised here.
  */
 export const createAcIslandSystem = (config: {
   readonly network: AcNetwork
@@ -256,11 +259,15 @@ export const createAcIslandSystem = (config: {
   readonly buses: Int32Array
   readonly branches: Int32Array
   readonly localOfBus: Int32Array
+  readonly activeFactor?: SparseCholeskyFactor
 }): AcIslandSystem => {
   const { network, islandId, buses, branches } = config
   if (buses.length === 0) throw new Error(`AC island ${islandId} has no buses`)
   for (let local = 1; local < buses.length; local += 1) {
     if (!(buses[local]! > buses[local - 1]!)) throw new Error(`AC island ${islandId} buses must be strictly ascending network indices`)
+  }
+  if (config.activeFactor !== undefined && config.activeFactor.structure.size !== buses.length - 1) {
+    throw new Error(`AC island ${islandId}: the given B′ factor has ${config.activeFactor.structure.size} rows, not ${buses.length - 1}`)
   }
   const admittance = islandAdmittance(network, buses, branches, config.localOfBus)
   return {
@@ -268,7 +275,7 @@ export const createAcIslandSystem = (config: {
     buses,
     branches,
     admittance,
-    activeFactor: activeFactor(network, islandId, buses, admittance, branches),
+    activeFactor: config.activeFactor ?? activeFactor(network, islandId, buses, admittance, branches),
     reactiveFactors: [],
     work: islandWork(buses.length),
   }

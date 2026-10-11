@@ -227,7 +227,15 @@ export const solveGridAcLoadFlow = (grid: GridRuntimeInstance, islands: GridIsla
       const dcSystem = plan.systems[componentIndex]!
       let system = acWork.systems.get(dcSystem)
       if (system === undefined) {
-        system = createAcIslandSystem({ network: acWork.network, islandId: `${island.id}/${component.referenceBusId}`, buses: dcSystem.buses, branches: dcSystem.branches, localOfBus: acWork.localOfBus })
+        // B′ is the DC system's B of the same component, so its factor is shared.
+        system = createAcIslandSystem({
+          network: acWork.network,
+          islandId: `${island.id}/${component.referenceBusId}`,
+          buses: dcSystem.buses,
+          branches: dcSystem.branches,
+          localOfBus: acWork.localOfBus,
+          activeFactor: dcSystem.factor,
+        })
         acWork.systems.set(dcSystem, system)
       }
       const options = (start: AcPowerFlowOptions['start']): AcPowerFlowOptions => ({
