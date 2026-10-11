@@ -8,6 +8,49 @@ const series = z.array(z.tuple([finite.nonnegative(), finite])).min(2).superRefi
   for (let i = 1; i < rows.length; i++) if (rows[i]![0] <= rows[i - 1]![0])
     ctx.addIssue({ code: 'custom', message: 'Times must strictly increase' })
 })
+const fraction = finite.min(0).max(1)
+/** The heater's spatial placement as the deck states it: power component on its heat structure. */
+const heaterShape = z.object({
+  pages: z.string().min(1),
+  powerComponent: positive.int(),
+  heatStructure: positive.int(),
+  axialCells: positive.int(),
+  axialShape: z.array(finite.nonnegative()).min(2),
+  radialNodes_m: z.array(positive).min(2),
+  radialShape: z.array(finite.nonnegative()).min(2),
+}).strict()
+/** One TRACE PIPE as listed: cell arrays and edge arrays (one more edge than cells). */
+const pipe = z.object({
+  component: positive.int(),
+  junctions: z.tuple([positive.int(), positive.int()]),
+  cellLength_m: z.array(positive).min(1),
+  cellVolume_m3: z.array(positive).min(1),
+  edgeFlowArea_m2: z.array(positive).min(2),
+  edgeFriction: z.array(finite.nonnegative()).min(2),
+  edgeGrav: z.array(finite.min(-1).max(1)).min(2),
+  edgeHydraulicDiameter_m: z.array(positive).min(2),
+}).strict()
+const surgeLine = z.object({
+  pages: z.string().min(1),
+  fill: z.object({
+    component: positive.int(),
+    junction: positive.int(),
+    liquidTemperature_K: positive,
+    vaporTemperature_K: positive,
+    pressure_Pa: positive,
+    voidFraction: fraction,
+  }).strict(),
+  pipes: z.array(pipe).min(1),
+  initialCells: z.object({
+    voidFraction: fraction,
+    liquidTemperature_K: positive,
+    vaporTemperature_K: positive,
+    pressure_Pa: positive,
+    noncondensablePressure_Pa: finite.nonnegative(),
+    edgeLiquidVelocity_m_s: finite,
+    edgeVaporVelocity_m_s: finite,
+  }).strict(),
+}).strict()
 const schema = z.object({
   sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
   height_m: positive,
@@ -24,11 +67,30 @@ const schema = z.object({
   outerHeatTransfer_W_m2K: positive,
   surgeMassFlow_kg_s: series,
   heaterPower_W: series,
+  heaterShape,
+  surgeLine,
 }).strict().superRefine((x, ctx) => {
   if (x.outerRadius_m <= x.innerRadius_m || x.liquidCellEquivalents >= x.cellCount)
     ctx.addIssue({ code: 'custom', message: 'Invalid shell or partially filled vessel geometry' })
   if (x.heaterPower_W.some(([, power]) => power < 0))
     ctx.addIssue({ code: 'custom', message: 'Heater power cannot be negative' })
+  const h = x.heaterShape, nodes = h.radialNodes_m
+  if (h.axialCells !== x.cellCount || h.axialShape.length !== h.axialCells + 1 || !h.axialShape.some(v => v > 0))
+    ctx.addIssue({ code: 'custom', message: 'The axial power shape must list cellCount + 1 values, some nonzero, as the deck does' })
+  if (nodes[0] !== x.innerRadius_m || nodes.at(-1) !== x.outerRadius_m || nodes.some((r, i) => i > 0 && r <= nodes[i - 1]!)
+    || h.radialShape.length !== nodes.length)
+    ctx.addIssue({ code: 'custom', message: 'Radial power nodes must rise from the inner to the outer shell radius, one shape value each' })
+  const line = x.surgeLine
+  if (line.fill.junction !== line.pipes[0]!.junctions[0])
+    ctx.addIssue({ code: 'custom', message: 'The FILL junction must open the first pipe' })
+  line.pipes.forEach((p, i) => {
+    const cells = p.cellLength_m.length
+    if (p.cellVolume_m3.length !== cells || [p.edgeFlowArea_m2, p.edgeFriction, p.edgeGrav, p.edgeHydraulicDiameter_m].some(e => e.length !== cells + 1))
+      ctx.addIssue({ code: 'custom', message: `Pipe ${p.component}: cell arrays need one entry per cell and edge arrays one more` })
+    const next = line.pipes[i + 1]
+    if (next && p.junctions[1] !== next.junctions[0])
+      ctx.addIssue({ code: 'custom', message: `Pipe ${p.component} must end at the junction where pipe ${next.component} begins` })
+  })
 })
 
 export function parsePressurizerBoundaries(document: string) {
@@ -57,8 +119,30 @@ export function integrateSignedSchedule(value: unknown) {
   return { incoming, outgoing, net: incoming - outgoing, from_s: rows[0]![0], through_s: rows.at(-1)![0] }
 }
 
+/** Line totals and the deck's internal consistency; GRAV signs and shared-junction precedence are reported, not interpreted. */
+function auditSurgeLine(line: z.infer<typeof surgeLine>) {
+  const cells = line.pipes.flatMap(p => p.cellLength_m.map((dx, j) => ({ component: p.component, dx, vol: p.cellVolume_m3[j]!, edges: [p.edgeFlowArea_m2[j]!, p.edgeFlowArea_m2[j + 1]!] })))
+  const edges = line.pipes.flatMap(p => p.edgeFlowArea_m2.map((fa, j) => ({ fa, hd: p.edgeHydraulicDiameter_m[j]! })))
+  const sharedJunctions = line.pipes.slice(1).map((next, i) => {
+    const before = line.pipes[i]!, k = before.edgeFlowArea_m2.length - 1
+    const listed = (p: typeof before, j: number) => ({ component: p.component, flowArea_m2: p.edgeFlowArea_m2[j]!, friction: p.edgeFriction[j]!, grav: p.edgeGrav[j]!, hydraulicDiameter_m: p.edgeHydraulicDiameter_m[j]! })
+    const a = listed(before, k), b = listed(next, 0)
+    return { junction: next.junctions[0], entries: [a, b], identical: a.flowArea_m2 === b.flowArea_m2 && a.friction === b.friction && a.grav === b.grav && a.hydraulicDiameter_m === b.hydraulicDiameter_m }
+  })
+  return {
+    cells: cells.length,
+    length_m: cells.reduce((s, c) => s + c.dx, 0),
+    volume_m3: cells.reduce((s, c) => s + c.vol, 0),
+    maxVolumeToAreaLengthRelativeDifference: Math.max(...cells.flatMap(c => c.edges.map(fa => Math.abs(c.vol - fa * c.dx) / c.vol))),
+    maxHydraulicDiameterToCircularRelativeDifference: Math.max(...edges.map(e => Math.abs(e.hd - Math.sqrt(4 * e.fa / Math.PI)) / e.hd)),
+    sharedJunctions,
+    edgeGravAsStated: line.pipes.map(p => ({ component: p.component, edgeGrav: p.edgeGrav })),
+  }
+}
+
 export function auditPressurizerBoundaries(value: unknown) {
   const x = schema.parse(value)
+  const powered = x.heaterShape.axialShape.flatMap((v, i) => v > 0 ? [i + 1] : [])
   const area = Math.PI * x.innerRadius_m ** 2
   const outerArea = 2 * Math.PI * x.outerRadius_m * x.height_m
   const cylinderVolume = area * x.height_m
@@ -79,6 +163,13 @@ export function auditPressurizerBoundaries(value: unknown) {
     initialHeaterMinusLateralLoss_W: x.heaterPower_W[0]![1] - initialShellLoss,
     surgeMass_kg: integrateSignedSchedule(x.surgeMassFlow_kg_s),
     heaterEnergy_J: integrateSignedSchedule(x.heaterPower_W),
+    heaterShape: {
+      poweredAxialRows: [powered[0]!, powered.at(-1)!],
+      // Whether the deck's values sit on cell edges or cells, the power lies
+      // in the lowest cells up to the last powered row.
+      poweredHeightBound_m: powered.at(-1)! * x.cellLength_m,
+    },
+    surgeLine: auditSurgeLine(x.surgeLine),
   }
 }
 
