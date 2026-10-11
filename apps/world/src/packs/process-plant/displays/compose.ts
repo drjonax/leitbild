@@ -501,21 +501,18 @@ export const declaredPortFlows = (graph: CompiledPlantGraph, linkIndex: number):
 
 /**
  * A link's flow the I&C judges no rule on, where the model declares a flow
- * through the port at one of its ends that the I&C does judge. Shown as it
- * is, the display would read "no I&C limit" beside an alarm on that flow. A
- * link alone on the port carries the same flow, so the judged signal is shown
- * instead; a link that shares the port carries part of the judged flow, so
- * the judged flow must be shown beside it. The refusal names the judged
- * signal and its limits.
+ * through the port at one of its ends that the I&C does judge. A link alone
+ * on the port carries that same flow: shown as it is, the display would read
+ * "no I&C limit" beside an alarm on it, so the judged signal is shown instead
+ * and the refusal names it with its limits. A link that shares the port
+ * carries only part of the judged flow (auxiliary feed beside main feed into
+ * a steam generator), a reading of its own that no limit applies to, and is
+ * never refused (evaluation run 22: "is AFW reaching every SG?" was refused
+ * its very evidence).
  */
 const judgedElsewhereIssues = (system: ProcessPlantRuntimeInstance, composition: ComposedDisplayComposition): ReadonlyArray<ComposedDisplayIssue> => {
   const graph = system.plant.graph
   const acting = (path: VariablePath) => icThresholdsForSignal(system.plant, path).thresholds.filter(threshold => threshold.kind !== 'control')
-  const shown = new Set(composition.panels.flatMap(panel => 'signals' in panel ? panel.signals : []).flatMap(signal => resolveRef(system, signal.ref)?.path ?? []))
-  const farLabel = (link: CompiledProcessLink, near: number) => {
-    const far = graph.components[link.fromComponentIndex === near ? link.toComponentIndex : link.fromComponentIndex]!
-    return far.metadata?.presentation?.shortLabel ?? far.label
-  }
   return composition.panels.flatMap((panel, panelIndex) => !('signals' in panel) ? [] : panel.signals.flatMap((signal, signalIndex): ComposedDisplayIssue[] => {
     const binding = resolveRef(system, signal.ref)
     if (binding?.owner.type !== 'link' || acting(binding.path).length > 0) return []
@@ -524,15 +521,12 @@ const judgedElsewhereIssues = (system: ProcessPlantRuntimeInstance, composition:
       const judged = graph.signalBindingByPath.get(flow.path)
       if (judged === undefined || judged.unit !== binding.unit || judged.quantity !== binding.quantity) continue
       const limits = acting(judged.path)
-      if (limits.length === 0 || (flow.others.length > 0 && shown.has(judged.path))) continue
+      if (limits.length === 0 || flow.others.length > 0) continue
       const ref = judged.tagId ?? String(judged.path)
       const named = `${ref} (${judged.label}, ${limits.map(limit => thresholdName(limit, judged.unit)).join(', ')})`
-      const sharing = flow.others.map(other => farLabel(other, flow.component)).join(', ')
       return [{
         path: `panels.${panelIndex}.signals.${signalIndex}.ref`,
-        message: flow.others.length === 0
-          ? `"${signal.ref}" is judged by no I&C rule, but the same flow through ${flow.through} is: show ${named} instead, so the display carries the limits its alarms act on`
-          : `"${signal.ref}" is judged by no I&C rule, but the whole flow through ${flow.through}, which this line shares with the ${flow.others.length === 1 ? 'line' : 'lines'} of ${sharing}, is: show ${named} beside it, so the display carries the limits its alarms act on`,
+        message: `"${signal.ref}" is judged by no I&C rule, but the same flow through ${flow.through} is: show ${named} instead, so the display carries the limits its alarms act on`,
         didYouMean: [ref],
       }]
     }
@@ -1329,7 +1323,24 @@ export const composedDisplayWarnings = (display: CompiledComposedDisplay): Reado
 export const formatComposedViewIssues = (issues: ReadonlyArray<ComposedDisplayIssue>): string =>
   `This display can no longer be shown for the current Plant model: ${issues.map(issue => `${issue.path}: ${issue.message}`).join('; ')}`
 
-export const formatComposedDisplayIssues = (issues: ReadonlyArray<ComposedDisplayIssue>): string => [
-  `Display composition rejected (${issues.length} issue${issues.length === 1 ? '' : 's'}); nothing will be shown. Fix every issue and call world.process-plant.display.compose again:`,
-  ...issues.map(issue => `- ${issue.path}: ${issue.message}${issue.didYouMean === undefined ? '' : `. Did you mean: ${issue.didYouMean.join('; ')}`}`),
-].join('\n')
+// A capability rejection's message is at most 2,048 characters on the wire;
+// a longer one fails as a bare invalid request, losing every fix (evaluation
+// run 22, four long refusals at once). Room is kept for the closing line.
+const REJECTION_MAX_CHARS = 2_000
+
+/** Every issue that fits, in order; those that do not are counted, to be seen once the first are fixed. */
+export const formatComposedDisplayIssues = (issues: ReadonlyArray<ComposedDisplayIssue>): string => {
+  const lines = [`Display composition rejected (${issues.length} issue${issues.length === 1 ? '' : 's'}); nothing will be shown. Fix every issue and call world.process-plant.display.compose again:`]
+  let length = lines[0]!.length
+  for (const [index, issue] of issues.entries()) {
+    const line = `- ${issue.path}: ${issue.message}${issue.didYouMean === undefined ? '' : `. Did you mean: ${issue.didYouMean.join('; ')}`}`
+    const rest = issues.length - index
+    if (length + 1 + line.length > REJECTION_MAX_CHARS) {
+      lines.push(`- and ${rest} more issue${rest === 1 ? '' : 's'}, shown once these are fixed`)
+      break
+    }
+    lines.push(line)
+    length += 1 + line.length
+  }
+  return lines.join('\n')
+}
