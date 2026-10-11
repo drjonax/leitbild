@@ -49,6 +49,21 @@ pub trait System {
         yp: &[f64],
         out: &mut [f64],
     ) -> std::result::Result<(), Failure>;
+    /// Number of quadratures `q' = fQ(t,y,yp)` (stock IDAS, the
+    /// `quadratures` feature). A system without them states nothing.
+    fn quadrature_count(&self) -> usize {
+        0
+    }
+    /// Fill the `quadrature_count` integrands at a converged step.
+    fn quadrature(
+        &mut self,
+        _time: f64,
+        _y: &[f64],
+        _yp: &[f64],
+        _out: &mut [f64],
+    ) -> std::result::Result<(), Failure> {
+        Err(Failure::Fatal("this system declares no quadratures".into()))
+    }
 }
 /// Successful `advance` outcome; the output buffers hold the state at `time`.
 #[derive(Clone, Debug, PartialEq)]
@@ -114,6 +129,9 @@ type Jacobian = unsafe extern "C" fn(
     *mut i64,
 ) -> c_int;
 type Roots = unsafe extern "C" fn(*mut c_void, f64, *const f64, *const f64, *mut f64) -> c_int;
+#[cfg(feature = "quadratures")]
+type Quadrature =
+    unsafe extern "C" fn(*mut c_void, f64, *const f64, *const f64, *mut f64) -> c_int;
 const IDA_SUCCESS: c_int = 0;
 const IDA_TSTOP_RETURN: c_int = 1;
 const IDA_ROOT_RETURN: c_int = 2;
@@ -153,6 +171,17 @@ unsafe extern "C" {
     fn operating_ida_max_order(ida: *mut c_void, order: c_int) -> c_int;
     fn operating_ida_max_step(ida: *mut c_void, step: f64) -> c_int;
     fn operating_ida_init_step(ida: *mut c_void, step: f64) -> c_int;
+    #[cfg(feature = "quadratures")]
+    fn operating_ida_quadrature_init(
+        ida: *mut c_void,
+        nq: i64,
+        q0: *const f64,
+        f: Quadrature,
+    ) -> c_int;
+    #[cfg(feature = "quadratures")]
+    fn operating_ida_quadrature_reinit(ida: *mut c_void, q0: *const f64) -> c_int;
+    #[cfg(feature = "quadratures")]
+    fn operating_ida_quadrature(ida: *mut c_void, time: *mut f64, q: *mut f64) -> c_int;
     fn operating_ida_solution_scaling(ida: *mut c_void, enabled: c_int) -> c_int;
     fn operating_ida_newton_coefficient(ida: *mut c_void, coefficient: f64) -> c_int;
     fn operating_ida_reinitialize(ida: *mut c_void, t: f64, y: *const f64, yp: *const f64)
@@ -180,6 +209,9 @@ struct Context<S> {
     n: usize,
     nnz: usize,
     roots: usize,
+    /// Quadratures initialized on this handle (stock IDAS), else 0.
+    #[cfg_attr(not(feature = "quadratures"), allow(dead_code))]
+    quadratures: usize,
     fatal: Option<String>,
     last_trial: Option<String>,
 }
@@ -295,6 +327,29 @@ unsafe extern "C" fn roots<S: System>(
     }));
     c.root_status(result, out)
 }
+#[cfg(feature = "quadratures")]
+unsafe extern "C" fn quadrature<S: System>(
+    user: *mut c_void,
+    t: f64,
+    y: *const f64,
+    yp: *const f64,
+    out: *mut f64,
+) -> c_int {
+    // SAFETY: as for residual; stock passes the initialized quadrature length.
+    let c = unsafe { &mut *user.cast::<Context<S>>() };
+    if c.fatal.is_some() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| unsafe {
+        c.system.quadrature(
+            t,
+            std::slice::from_raw_parts(y, c.n),
+            std::slice::from_raw_parts(yp, c.n),
+            std::slice::from_raw_parts_mut(out, c.quadratures),
+        )
+    }));
+    c.status(result)
+}
 pub struct Ida<S: System> {
     handle: NonNull<c_void>,
     context: Box<Context<S>>,
@@ -339,6 +394,7 @@ impl<S: System> Ida<S> {
             n,
             nnz,
             roots: root_count,
+            quadratures: 0,
             fatal: None,
             last_trial: None,
         });
@@ -554,6 +610,52 @@ impl<S: System> Ida<S> {
         }
         let code = unsafe { operating_ida_init_step(self.handle.as_ptr(), step) };
         self.check(code)
+    }
+    /// Stock IDAS IDAQuadInit from `q0`, with IDASetQuadErrCon false: the
+    /// quadratures follow the accepted steps and never enter the error
+    /// test, so the state trajectory is unchanged. Once per handle, before
+    /// `advance`; a restart by `reinitialize` takes `reinitialize_quadratures`.
+    #[cfg(feature = "quadratures")]
+    pub fn initialize_quadratures(&mut self, q0: &[f64]) -> Result<()> {
+        self.configurable("quadratures")?;
+        let count = self.context.system.quadrature_count();
+        if self.context.quadratures != 0 || count == 0 || q0.len() != count {
+            return Err("IDAS quadratures: once per handle, with the system's count".into());
+        }
+        if q0.iter().any(|v| !v.is_finite()) {
+            return Err("IDAS quadrature initial values must be finite".into());
+        }
+        self.context.quadratures = count;
+        let code = unsafe {
+            operating_ida_quadrature_init(
+                self.handle.as_ptr(),
+                count as i64,
+                q0.as_ptr(),
+                quadrature::<S>,
+            )
+        };
+        self.check(code)
+    }
+    /// Stock IDAS IDAQuadReInit from `q0`, after `reinitialize`.
+    #[cfg(feature = "quadratures")]
+    pub fn reinitialize_quadratures(&mut self, q0: &[f64]) -> Result<()> {
+        self.configurable("quadratures")?;
+        if self.context.quadratures == 0 || q0.len() != self.context.quadratures {
+            return Err("IDAS quadratures were not initialized with this length".into());
+        }
+        let code = unsafe { operating_ida_quadrature_reinit(self.handle.as_ptr(), q0.as_ptr()) };
+        self.check(code)
+    }
+    /// Stock IDAS IDAGetQuad: the quadratures at the last returned time.
+    #[cfg(feature = "quadratures")]
+    pub fn quadratures(&self, q: &mut [f64]) -> Result<f64> {
+        if self.context.quadratures == 0 || q.len() != self.context.quadratures {
+            return Err("IDAS quadratures were not initialized with this length".into());
+        }
+        let mut time = 0.;
+        let code = unsafe { operating_ida_quadrature(self.handle.as_ptr(), &mut time, q.as_mut_ptr()) };
+        self.check(code)?;
+        Ok(time)
     }
     /// IDASetLinearSolutionScaling for the matrix-based KLU solver (stock
     /// enables it): rescale linear solutions after a changed cj.

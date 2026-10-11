@@ -78,6 +78,10 @@ pub fn thread_cpu_s() -> f64 {
 fn s(v: f64) -> Scalar {
     Scalar::constant(v)
 }
+/// The integrator's ledger (request 4, K2): stock IDAS quadratures of
+/// mass, port energy, boron, Joule, exterior loss, hydrostatic remainder and
+/// the bubble and drop transit drifts.
+pub const LEDGER: usize = 8;
 fn ida_failure(f: CellFailure) -> Failure {
     match f {
         CellFailure::Recoverable(r) => Failure::Recoverable(r),
@@ -254,6 +258,8 @@ pub struct Counters {
     pub residual_wall_s: f64,
     pub jacobian_wall_s: f64,
     pub root_calls: u64,
+    /// Ledger integrand evaluations (stock IDAS quadratures).
+    pub quadratures: u64,
 }
 
 /// The cell as one stock-IDA system.
@@ -300,6 +306,40 @@ impl Evaluated {
 }
 
 impl CellSystem {
+    /// The integrator's ledger integrands (request 4, K2), from the same
+    /// evaluation the residual makes: the cell's mass, port-energy and boron
+    /// receipts, the Joule delivery, the exterior loss, the hydrostatic
+    /// remainder and the two transit drifts. Port energy is the cell's energy
+    /// receipt less what the metal hands the fluid.
+    pub fn ledger_rates(
+        &self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+    ) -> Result<[f64; LEDGER], CellFailure> {
+        let e = self.evaluate(t, y, yp, None, None)?;
+        let b = &e.ev.balance;
+        let (joule, exterior, fluid) = match &e.metal {
+            Some(r) => (
+                e.bank_powers_w.iter().sum::<f64>(),
+                r.walls.iter().map(|w| w.exterior_w.value).sum::<f64>(),
+                r.rods.iter().map(|g| g.fluid_energy_w.value).sum::<f64>()
+                    + r.walls.iter().map(|w| w.fluid_energy_w.value).sum::<f64>(),
+            ),
+            None => (0., 0., 0.),
+        };
+        let drift = e.ev.flows.transit_drift.map(|q| q.value);
+        Ok([
+            b.receipt_mass_kg_s.value,
+            b.receipt_energy_w.value - fluid,
+            b.receipt_boron_kg_s.value,
+            joule,
+            exterior,
+            b.volume_work_w.value,
+            drift[0],
+            drift[1],
+        ])
+    }
     pub fn n(&self) -> usize {
         self.scales.len()
     }
@@ -610,8 +650,9 @@ impl ConsistentSystem for CellSystem {
 pub struct Segment {
     pub system: CellSystem,
     pub roots: Vec<Root>,
-    /// Start of this handle's segment.
+    /// Start of this handle's segment and its ledger there.
     pub started_s: f64,
+    pub started_q: [f64; LEDGER],
 }
 impl System for Segment {
     fn dimension(&self) -> usize {
@@ -673,6 +714,31 @@ impl System for Segment {
             .root_values(y, &self.roots, out)
             .map_err(Failure::Fatal)
     }
+    fn quadrature_count(&self) -> usize {
+        LEDGER
+    }
+    fn quadrature(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+        let q = self.system.ledger_rates(t, y, yp).map_err(ida_failure)?;
+        out.copy_from_slice(&q);
+        self.system.counters.quadratures += 1;
+        Ok(())
+    }
+}
+
+/// The integrator's ledger at `t`: the handle's start value before its
+/// first advance, otherwise stock IDAGetQuad at the last returned time,
+/// which must be `t`.
+fn ledger_at(ida: &Ida<Segment>, t: f64) -> Result<[f64; LEDGER], String> {
+    let segment = ida.system();
+    if t == segment.started_s {
+        return Ok(segment.started_q);
+    }
+    let mut q = [0.; LEDGER];
+    let returned = ida.quadratures(&mut q)?;
+    if returned != t {
+        return Err(format!("ledger read at {t} s, but the last return was {returned} s"));
+    }
+    Ok(q)
 }
 
 /// One accepted-state sample, physical units.
@@ -723,6 +789,8 @@ pub struct Sample {
     /// Instantaneous identities: internal totals minus receipts.
     pub identity: [f64; 3],
     pub inventory: [f64; 3],
+    /// The integrator's ledger at this time: the quadratures since t = 0.
+    pub ledger_q: [f64; LEDGER],
     /// Inventory energy minus `p_s (V_b + V_d)`: zone and transit internal energy.
     pub internal_energy_j: f64,
     /// Solver tolerance of the mass, energy and boron totals at this state.
@@ -901,6 +969,7 @@ pub fn sample(
             b.boron_kg_s.value - b.receipt_boron_kg_s.value,
         ],
         inventory: [inv.mass_kg.value, inv.energy_j.value, inv.boron_kg.value],
+        ledger_q: [0.; LEDGER],
         internal_energy_j: inv.energy_j.value
             - c.interface_pressure.value * (x.bubble_volume.value + x.drop_volume.value),
         tolerance: [
@@ -1079,15 +1148,27 @@ pub struct Run {
     pub reached_s: f64,
 }
 
+/// What a new handle starts with besides its state: its stop boundary, the
+/// first step of an event restart (K4) and the ledger carried so far (K2).
+struct HandleStart {
+    stop: f64,
+    first_step: Option<f64>,
+    ledger: [f64; LEDGER],
+}
+
 fn new_handle(
     system: CellSystem,
     t: f64,
     y: &[f64],
     yp: &[f64],
     spec: &RunSpec,
-    stop: f64,
-    first_step: Option<f64>,
+    start: HandleStart,
 ) -> Result<Ida<Segment>, String> {
+    let HandleStart {
+        stop,
+        first_step,
+        ledger: q0,
+    } = start;
     let ids = system.differential();
     let roots = system.roots_active();
     let mut ida = Ida::new(
@@ -1095,6 +1176,7 @@ fn new_handle(
             system,
             roots,
             started_s: t,
+            started_q: q0,
         },
         Initial {
             time: t,
@@ -1110,6 +1192,7 @@ fn new_handle(
     if let Some(h) = first_step {
         ida.set_init_step(h)?;
     }
+    ida.initialize_quadratures(&q0)?;
     ida.stop_at(stop)?;
     Ok(ida)
 }
@@ -1243,6 +1326,7 @@ fn absorb(out: &mut Run, totals: &mut Totals, ida: &Ida<Segment>) {
     out.counters.residual_wall_s += c.residual_wall_s;
     out.counters.jacobian_wall_s += c.jacobian_wall_s;
     out.counters.root_calls += c.root_calls;
+    out.counters.quadratures += c.quadratures;
 }
 
 /// Integrate one declared run from the prepared state `y0` at rest.
@@ -1324,7 +1408,18 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
             return out;
         }
     }
-    let mut ida = match new_handle(system, t, &y, &yp, spec, next_stop(&pending, t), None) {
+    let mut ida = match new_handle(
+        system,
+        t,
+        &y,
+        &yp,
+        spec,
+        HandleStart {
+            stop: next_stop(&pending, t),
+            first_step: None,
+            ledger: [0.; LEDGER],
+        },
+    ) {
         Ok(h) => h,
         Err(e) => {
             finish(
@@ -1353,6 +1448,7 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
      -> Result<Sample, String> {
         let d = cpu_s();
         let mut smp = sample(&ida.system().system, t, y, yp, &spec.atol, spec.rtol)?;
+        smp.ledger_q = ledger_at(ida, t)?;
         if let Ok(stats) = ida.stats() {
             smp.steps = totals.steps + stats.steps;
             smp.error_failures = totals.error_failures + stats.error_failures;
@@ -1631,10 +1727,11 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                 }
                             }
                         }
+                        let ledger = ledger_at(&ida, t);
                         absorb(&mut out, &mut totals, &ida);
                         next.counters = Counters::default();
-                        match start(&mut next, t, &mut y, spec) {
-                            Ok((rates, pair)) => {
+                        match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q))) {
+                            Ok(((rates, pair), q)) => {
                                 yp = rates;
                                 out.initializations.push(pair);
                                 match new_handle(
@@ -1643,8 +1740,11 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                     &y,
                                     &yp,
                                     spec,
-                                    next_stop(&pending, t),
-                                    Some(spec.event_restart_first_step_s),
+                                    HandleStart {
+                                        stop: next_stop(&pending, t),
+                                        first_step: Some(spec.event_restart_first_step_s),
+                                        ledger: q,
+                                    },
                                 ) {
                                     Ok(h) => {
                                         ida = h;
@@ -1822,10 +1922,11 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                             "lift_before":r.lift_before,"lift_after":r.lift_after,"defect":r.defect})),
                         "lift_rate_per_s":rate});
                     if end.is_none() {
+                        let ledger = ledger_at(&ida, t);
                         absorb(&mut out, &mut totals, &ida);
                         next.counters = Counters::default();
-                        match start(&mut next, t, &mut y, spec) {
-                            Ok((rates, pair)) => {
+                        match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q))) {
+                            Ok(((rates, pair), q)) => {
                                 yp = rates;
                                 event["consistent_pair"] = pair["pair"].clone();
                                 out.initializations.push(pair);
@@ -1835,8 +1936,11 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                                     &y,
                                     &yp,
                                     spec,
-                                    next_stop(&pending, t),
-                                    Some(spec.event_restart_first_step_s),
+                                    HandleStart {
+                                        stop: next_stop(&pending, t),
+                                        first_step: Some(spec.event_restart_first_step_s),
+                                        ledger: q,
+                                    },
                                 ) {
                                     Ok(h) => {
                                         ida = h;
@@ -1973,12 +2077,31 @@ pub fn sample_json(s: &Sample) -> Value {
         "steps":s.steps,"last_step_s":s.last_step_s,"order":s.order,"error_test_failures":s.error_failures,"convergence_failures":s.convergence_failures})
 }
 
-/// Conservation ledger over the samples: inventory change against the
-/// trapezoidal integral of the receipts on outputs, events and breakpoints.
-pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value {
+/// Conservation ledgers over the samples (request 4, K2). The gated one is
+/// the integrator's: inventory change against the stock IDAS quadratures of
+/// the residual's own boundary terms, which follow the accepted steps, so it
+/// drifts only by Newton residual and roundoff. The trapezoid of the sampled
+/// receipts over outputs, events and breakpoints is reported beside it, with
+/// its difference from the quadratures. Energy is fluid internal energy
+/// (zones plus transit at u_sat) plus steel energy, against port receipts
+/// plus electrical delivery minus exterior loss minus the hydrostatic
+/// remainder; the transit drifts are reported.
+pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>, bound: f64) -> Value {
     let samples = &run.samples;
     let Some(first) = samples.first() else {
         return json!(null);
+    };
+    // Quadrature totals since the first sample: mass, energy, boron.
+    let quad = |x: &Sample| {
+        let d: Vec<f64> = (0..LEDGER).map(|i| x.ledger_q[i] - first.ledger_q[i]).collect();
+        [d[0], d[1] + d[3] - d[4] - d[5], d[2]]
+    };
+    let held = |x: &Sample| {
+        [
+            x.inventory[0] - first.inventory[0],
+            (x.internal_energy_j + x.metal_energy_j) - (first.internal_energy_j + first.metal_energy_j),
+            x.inventory[2] - first.inventory[2],
+        ]
     };
     let mut integral = [0.; 3];
     let mut work = 0.;
@@ -1986,8 +2109,8 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
     let mut exterior = 0.;
     let mut drift = [0.; 2];
     let mut relief = [0.; 3];
-    let mut worst = [0.; 3];
-    let mut worst_ratio = [0.; 3];
+    let mut worst = [[0.; 3]; 2];
+    let mut worst_ratio = [[0.; 3]; 2];
     let mut identity = [0_f64; 3];
     let mut previous = first;
     for s in samples.iter().skip(1) {
@@ -2015,21 +2138,14 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
                 + previous.relief_drop_kg_s);
         relief[1] += 0.5 * dt * (s.relief_enthalpy_w + previous.relief_enthalpy_w);
         relief[2] += 0.5 * dt * (s.relief_boron_kg_s + previous.relief_boron_kg_s);
-        let closure = [
-            s.inventory[0] - first.inventory[0] - integral[0],
-            (s.internal_energy_j + s.metal_energy_j
-                - first.internal_energy_j
-                - first.metal_energy_j)
-                - (integral[1] + joule - exterior - work),
-            s.inventory[2] - first.inventory[2] - integral[2],
-        ];
+        let h = held(s);
+        let q = quad(s);
+        let trapezoid = [integral[0], integral[1] + joule - exterior - work, integral[2]];
         for i in 0..3 {
-            if closure[i].abs() > worst[i] {
-                worst[i] = closure[i].abs();
-            }
-            let ratio = closure[i].abs() / s.tolerance[i];
-            if ratio > worst_ratio[i] {
-                worst_ratio[i] = ratio;
+            for (k, receipts) in [q, trapezoid].iter().enumerate() {
+                let closure = (h[i] - receipts[i]).abs();
+                worst[k][i] = f64::max(worst[k][i], closure);
+                worst_ratio[k][i] = f64::max(worst_ratio[k][i], closure / s.tolerance[i]);
             }
             identity[i] = identity[i].max(s.identity[i].abs());
         }
@@ -2041,20 +2157,22 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>) -> Value 
     // breakpoints must reproduce them.
     let exact_surge = surge.map(|tb| tb.integral(t));
     let exact_spray = spray.map(|tb| tb.integral(t));
-    let final_closure = [
-        last.inventory[0] - first.inventory[0] - integral[0],
-        (last.internal_energy_j + last.metal_energy_j
-            - first.internal_energy_j
-            - first.metal_energy_j)
-            - (integral[1] + joule - exterior - work),
-        last.inventory[2] - first.inventory[2] - integral[2],
-    ];
-    json!({"t_s":t,"method":"inventory change minus the trapezoidal integral of the port receipts over outputs, root events and breakpoints; energy as fluid internal energy (zones plus transit at u_sat) plus steel energy, against port receipts plus electrical delivery minus exterior loss minus the hydrostatic remainder",
-        "mass":{"inventory_change_kg":last.inventory[0]-first.inventory[0],"receipts_kg":integral[0],"closure_kg":final_closure[0],"max_abs_closure_kg":worst[0],"max_closure_over_solver_tolerance":worst_ratio[0],"solver_tolerance_kg":last.tolerance[0],"within_solver_tolerance":worst_ratio[0] <= 1.,"max_instantaneous_identity_kg_s":identity[0]},
+    let h = held(last);
+    let q = quad(last);
+    let lq: Vec<f64> = (0..LEDGER).map(|i| last.ledger_q[i] - first.ledger_q[i]).collect();
+    let trapezoid = [integral[0], integral[1] + joule - exterior - work, integral[2]];
+    json!({"t_s":t,"bound_solver_tolerances":bound,"method":"gated: inventory change minus the stock IDAS quadratures of the residual's boundary terms (request 4, K2); reported: minus the trapezoid of the sampled receipts over outputs, root events and breakpoints. Energy as fluid internal energy (zones plus transit at u_sat) plus steel energy, against port receipts plus electrical delivery minus exterior loss minus the hydrostatic remainder",
+        "mass":{"inventory_change_kg":h[0],"receipts_kg":q[0],"closure_kg":h[0]-q[0],"max_abs_closure_kg":worst[0][0],"max_closure_over_solver_tolerance":worst_ratio[0][0],"solver_tolerance_kg":last.tolerance[0],"within_solver_tolerance":worst_ratio[0][0] <= bound,"max_instantaneous_identity_kg_s":identity[0]},
         "energy":{"internal_energy_change_j":last.internal_energy_j-first.internal_energy_j,"metal_energy_change_j":last.metal_energy_j-first.metal_energy_j,
             "rod_energy_change_j":last.rod_energy_j-first.rod_energy_j,"wall_energy_change_j":(last.metal_energy_j-last.rod_energy_j)-(first.metal_energy_j-first.rod_energy_j),
-            "electrical_j":joule,"exterior_loss_j":exterior,"port_receipts_j":integral[1],"hydrostatic_remainder_j":work,"transit_drift_j":{"bubbles_paid_by_R":drift[0],"drops_paid_by_g":drift[1]},"closure_j":final_closure[1],"max_abs_closure_j":worst[1],"max_closure_over_solver_tolerance":worst_ratio[1],"solver_tolerance_j":last.tolerance[1],"max_instantaneous_identity_w":identity[1]},
-        "boron":{"inventory_change_kg":last.inventory[2]-first.inventory[2],"receipts_kg":integral[2],"closure_kg":final_closure[2],"max_abs_closure_kg":worst[2],"max_closure_over_solver_tolerance":worst_ratio[2],"solver_tolerance_kg":last.tolerance[2],"within_solver_tolerance":worst_ratio[2] <= 1.,"max_instantaneous_identity_kg_s":identity[2]},
+            "electrical_j":lq[3],"exterior_loss_j":lq[4],"port_receipts_j":lq[1],"hydrostatic_remainder_j":lq[5],"transit_drift_j":{"bubbles_paid_by_R":lq[6],"drops_paid_by_g":lq[7]},
+            "closure_j":h[1]-q[1],"max_abs_closure_j":worst[0][1],"max_closure_over_solver_tolerance":worst_ratio[0][1],"within_solver_tolerance":worst_ratio[0][1] <= bound,"solver_tolerance_j":last.tolerance[1],"max_instantaneous_identity_w":identity[1]},
+        "boron":{"inventory_change_kg":h[2],"receipts_kg":q[2],"closure_kg":h[2]-q[2],"max_abs_closure_kg":worst[0][2],"max_closure_over_solver_tolerance":worst_ratio[0][2],"solver_tolerance_kg":last.tolerance[2],"within_solver_tolerance":worst_ratio[0][2] <= bound,"max_instantaneous_identity_kg_s":identity[2]},
+        "trapezoid":{
+            "mass":{"receipts_kg":trapezoid[0],"closure_kg":h[0]-trapezoid[0],"max_abs_closure_kg":worst[1][0],"max_closure_over_solver_tolerance":worst_ratio[1][0],"minus_quadrature_kg":trapezoid[0]-q[0]},
+            "energy":{"electrical_j":joule,"exterior_loss_j":exterior,"port_receipts_j":integral[1],"hydrostatic_remainder_j":work,"transit_drift_j":{"bubbles_paid_by_R":drift[0],"drops_paid_by_g":drift[1]},
+                "closure_j":h[1]-trapezoid[1],"max_abs_closure_j":worst[1][1],"max_closure_over_solver_tolerance":worst_ratio[1][1],"minus_quadrature_j":trapezoid[1]-q[1]},
+            "boron":{"receipts_kg":trapezoid[2],"closure_kg":h[2]-trapezoid[2],"max_abs_closure_kg":worst[1][2],"max_closure_over_solver_tolerance":worst_ratio[1][2],"minus_quadrature_kg":trapezoid[2]-q[2]}},
         "relief_out":{"mass_kg":relief[0],"enthalpy_j":relief[1],"boron_kg":relief[2]},
         "recorded_tables_exact":{"surge_kg":exact_surge,"spray_kg":exact_spray}})
 }
@@ -2115,7 +2233,7 @@ pub fn run_json(run: &Run, stride: usize) -> Value {
         .fold((f64::INFINITY, 0.), |b, x| if x.0 < b.0 { x } else { b });
     json!({"label":run.label,"end":end,"reached_s":run.reached_s,"totals":run.totals.json(),"handles":run.handles,
         "cpu_s":run.cpu_s,"thread_cpu_s":run.thread_cpu_s,"diagnostic_cpu_s":run.diagnostic_cpu_s,"solver_cpu_s":run.cpu_s-run.diagnostic_cpu_s,"wall_s":run.wall_s,
-        "harness_counters":{"residual_calls":run.counters.residuals,"jacobian_calls":run.counters.jacobians,"residual_wall_s":run.counters.residual_wall_s,"jacobian_wall_s":run.counters.jacobian_wall_s,"root_calls":run.counters.root_calls},
+        "harness_counters":{"residual_calls":run.counters.residuals,"jacobian_calls":run.counters.jacobians,"residual_wall_s":run.counters.residual_wall_s,"jacobian_wall_s":run.counters.jacobian_wall_s,"root_calls":run.counters.root_calls,"quadrature_calls":run.counters.quadratures},
         "consistent_pairs":run.initializations,"max_abs_scaled_row_at_samples":max_row,
         "metastable_peaks":Value::Object(peaks),"accepted_step_checks":run.accepted_checks,
         "min_drag_gap_margin":min_gap,"min_admitted_mass_kg":{"value":min_a.0,"at_s":min_a.1},

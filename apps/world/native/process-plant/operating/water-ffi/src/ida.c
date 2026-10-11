@@ -1,6 +1,12 @@
 /* Original narrow glue to stock IDA/KLU; no solver algorithm is copied here. */
+#ifdef OPERATING_IDAS
+/* Stock IDAS of the same release: IDA plus quadrature integration. */
+#include <idas/idas.h>
+#include <idas/idas_ls.h>
+#else
 #include <ida/ida.h>
 #include <ida/ida_ls.h>
+#endif
 #include <nvector/nvector_serial.h>
 #include <sunmatrix/sunmatrix_sparse.h>
 #include <sunlinsol/sunlinsol_klu.h>
@@ -17,15 +23,17 @@ _Static_assert(sizeof(sunindextype) == sizeof(int64_t), "INT64 required");
 typedef int (*Residual)(void*, double, const double*, const double*, double*);
 typedef int (*Jacobian)(void*, double, double, const double*, const double*, double*, int64_t*, int64_t*);
 typedef int (*Roots)(void*, double, const double*, const double*, double*);
+typedef int (*Quadrature)(void*, double, const double*, const double*, double*);
 typedef struct {
     SUNContext ctx;
-    N_Vector y, yp, atol, ids;
+    N_Vector y, yp, atol, ids, q;
     SUNMatrix matrix;
     SUNLinearSolver linear;
     void *ida, *user;
     Residual residual;
     Jacobian jacobian;
     Roots roots;
+    Quadrature quadrature;
     double time;
 } OperatingIDA;
 static int residual(double t, N_Vector y, N_Vector yp, N_Vector r, void *v) {
@@ -49,6 +57,7 @@ void operating_ida_free(OperatingIDA *o) {
     if (o->linear) SUNLinSolFree(o->linear);
     if (o->matrix) SUNMatDestroy(o->matrix);
     if (o->ids) N_VDestroy(o->ids);
+    if (o->q) N_VDestroy(o->q);
     if (o->atol) N_VDestroy(o->atol);
     if (o->yp) N_VDestroy(o->yp);
     if (o->y) N_VDestroy(o->y);
@@ -203,4 +212,37 @@ int operating_ida_differential(OperatingIDA *o,const double *ids) {
     memcpy(N_VGetArrayPointer(o->ids),ids,N_VGetLength(o->ids)*sizeof(double));
     return IDASetId(o->ida,o->ids);
 }
-
+#ifdef OPERATING_IDAS
+static int quadrature_rhs(double t, N_Vector y, N_Vector yp, N_Vector rq, void *v) {
+    OperatingIDA *o = v;
+    return o->quadrature(o->user,t,N_VGetArrayPointer(y),N_VGetArrayPointer(yp),N_VGetArrayPointer(rq));
+}
+/* Stock IDAQuadInit from q0, excluded from the error test (IDASetQuadErrCon
+   false), so the state trajectory is the one without quadratures. */
+int operating_ida_quadrature_init(OperatingIDA *o,int64_t nq,const double *q0,Quadrature f) {
+    if (o->q || nq<=0) return IDA_ILL_INPUT;
+    o->q=N_VNew_Serial(nq,o->ctx);
+    if (!o->q) return IDA_MEM_FAIL;
+    memcpy(N_VGetArrayPointer(o->q),q0,nq*sizeof(double));
+    o->quadrature=f;
+    int code=IDAQuadInit(o->ida,quadrature_rhs,o->q);
+    if (code>=0) code=IDASetQuadErrCon(o->ida,SUNFALSE);
+    return code;
+}
+/* Stock IDAQuadReInit from q0, for a restart by IDAReInit. */
+int operating_ida_quadrature_reinit(OperatingIDA *o,const double *q0) {
+    if (!o->q) return IDA_ILL_INPUT;
+    memcpy(N_VGetArrayPointer(o->q),q0,N_VGetLength(o->q)*sizeof(double));
+    return IDAQuadReInit(o->ida,o->q);
+}
+/* Stock IDAGetQuad: the quadratures at the last returned time. */
+int operating_ida_quadrature(OperatingIDA *o,double *time,double *q) {
+    if (!o->q) return IDA_ILL_INPUT;
+    N_Vector out=N_VClone(o->q);
+    if (!out) return IDA_MEM_FAIL;
+    int code=IDAGetQuad(o->ida,time,out);
+    if (code>=0) memcpy(q,N_VGetArrayPointer(out),N_VGetLength(out)*sizeof(double));
+    N_VDestroy(out);
+    return code;
+}
+#endif

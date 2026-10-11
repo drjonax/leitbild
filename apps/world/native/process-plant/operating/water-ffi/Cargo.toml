@@ -7,6 +7,8 @@ description = "Opt-in narrow maintained IF97 C ABI, not another property backend
 
 [features]
 ida = []
+# Stock IDAS of the same SUNDIALS release: IDA plus quadratures.
+quadratures = ["ida"]
 
 [workspace]
 

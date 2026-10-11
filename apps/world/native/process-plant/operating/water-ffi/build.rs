@@ -31,7 +31,11 @@ fn main() {
             env::var_os("LD01_OPERATING_SUNDIALS_PREFIX")
                 .expect("ida feature requires an explicitly verified stock SUNDIALS prefix"),
         );
-        assert!(prefix.is_absolute() && prefix.join("include/ida/ida.h").is_file());
+        // The quadratures feature compiles the same glue against stock IDAS,
+        // SUNDIALS's IDA with quadratures, from the same release.
+        let idas = env::var_os("CARGO_FEATURE_QUADRATURES").is_some();
+        let header = if idas { "include/idas/idas.h" } else { "include/ida/ida.h" };
+        assert!(prefix.is_absolute() && prefix.join(header).is_file());
         // These headers define the ABI of this glue. A verified prefix can be
         // rebuilt in place; an unchanged path must not leave stale C objects.
         // Cargo scans directory dependencies recursively, including transitive
@@ -50,6 +54,11 @@ fn main() {
                     "-Wall",
                     "-Wextra",
                     "-Werror",
+                    if idas {
+                        "-DOPERATING_IDAS"
+                    } else {
+                        "-UOPERATING_IDAS"
+                    },
                     "-c",
                     "src/ida.c",
                     "-o"
@@ -84,7 +93,7 @@ fn main() {
         );
         println!("cargo:rustc-link-lib=static=operating_ida");
         for name in [
-            "ida",
+            if idas { "idas" } else { "ida" },
             "nvecserial",
             "sunmatrixsparse",
             "sunlinsolklu",

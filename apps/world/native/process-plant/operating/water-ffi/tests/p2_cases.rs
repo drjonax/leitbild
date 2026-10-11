@@ -15,7 +15,7 @@
 //! receipt. The cell, its spray and relief ports and the relief calibration
 //! are the case-set packet's `pzr` section, unchanged. Nothing is retuned: a
 //! failure is a result.
-#![cfg(all(feature = "ida", target_os = "macos"))]
+#![cfg(all(feature = "quadratures", target_os = "macos"))]
 mod p2_harness;
 
 use leitbild_operating_plant::{
@@ -238,6 +238,8 @@ struct CaseSet {
     /// Stock IDA's first step after every event restart (request 4, K4).
     #[serde(rename = "eventRestartFirstStep_s")]
     event_restart_first_step_s: f64,
+    /// Closure bound on the integrator's ledger, in solver tolerances (K2).
+    quadrature_closure_factor: f64,
     cases: Vec<Entry>,
 }
 
@@ -308,12 +310,24 @@ impl Context {
         let library = std::fs::read(format!("{water}/libld01_operating_water.a"))
             .expect("the water library");
         let water_build = json!({"directory":water,"library_sha256":sha256(&library),"receipt":water_receipt});
+        // The stock IDAS build the quadrature ledger links (request 4, K2):
+        // its library hash as found and its build receipt beside the prefix.
+        let sundials = std::env::var("LD01_OPERATING_SUNDIALS_PREFIX")
+            .expect("LD01_OPERATING_SUNDIALS_PREFIX names the stock IDAS build");
+        let idas = std::fs::read(format!("{sundials}/lib/libsundials_idas.dylib"))
+            .expect("the stock IDAS library");
+        let idas_receipt: Value = serde_json::from_slice(
+            &std::fs::read(format!("{sundials}/../build-receipt.json"))
+                .expect("the IDAS build receipt beside its prefix"),
+        )
+        .expect("build-receipt.json");
+        let sundials_build = json!({"prefix":sundials,"idas_library_sha256":sha256(&idas),"receipt":idas_receipt});
         let app = std::env::current_dir().unwrap().display().to_string();
         let provenance = json!({
             "app_commit":sh(&["rev-parse","HEAD"],&app),"app_dirty":!sh(&["status","--porcelain"],&app).is_empty(),
             "wiki_root":wiki,"wiki_commit":sh(&["rev-parse","HEAD"],&wiki),"wiki_dirty":!sh(&["status","--porcelain"],&wiki).is_empty(),
             "blocks_read_from":"wiki HEAD",
-            "packet":packet_path,"packet_sha256":sha256(&bytes),"packet_composition":composition,"water_build":water_build,
+            "packet":packet_path,"packet_sha256":sha256(&bytes),"packet_composition":composition,"water_build":water_build,"sundials_build":sundials_build,
             "case_block":cases_block.provenance(),"gates_block":gates.provenance(),"accuracy_block":budgets.provenance(),
             "transport_block":transport.provenance(),"heater_banks_block":banks_block.provenance(),"heater_contact_block":contact_block.provenance(),
             "caloric_304_block":caloric_block.provenance(),"shell_block":shell_block.provenance()});
@@ -1034,7 +1048,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         let mut j = run_json(r, stride);
         j["variant"] = json!({"relaxation_factor":v.relaxation_factor,"spray_drop_diameter_m":v.drop_diameter_m,"bubble_diameter_m":v.bubble_diameter_m,"halved_segments":v.halved_segments,"refined":refined});
         j["cpu_cap_s"] = json!(cap);
-        let l = ledger(r, surge.as_ref(), spray.as_ref());
+        let l = ledger(r, surge.as_ref(), spray.as_ref(), ctx.set.quadrature_closure_factor);
         j["conservation"] = l.clone();
         j["area_step_rejections"] = json!(crossing_rejections(r));
         ledgers.insert(label.clone(), l);
@@ -1053,7 +1067,7 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         }
     }
     let conservation_ok = |r: &Run| {
-        let l = ledger(r, surge.as_ref(), spray.as_ref());
+        let l = ledger(r, surge.as_ref(), spray.as_ref(), ctx.set.quadrature_closure_factor);
         l["mass"]["within_solver_tolerance"].as_bool() == Some(true)
             && l["boron"]["within_solver_tolerance"].as_bool() == Some(true)
     };
