@@ -507,10 +507,10 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
     })
   })
 
-  // Tripped branches first, then the most loaded closed ones, within the label limit; every HVDC link
-  // carries its transfer or state.
+  // Tripped branches first ("Tripped" is short enough to fit along a short line), then the most loaded
+  // closed ones, within the label limit; every HVDC link carries its transfer or state.
   const branchLabel = (position: number, text: string, tone: 'alarm' | 'normal') => ({ path: geometry.branches[position]!.path, text, tone })
-  const tripped = geometry.branches.flatMap((branch, position) => result.branches.tripped[position] === 1 ? [branchLabel(position, `${branch.label} tripped`, 'alarm')] : [])
+  const tripped = geometry.branches.flatMap((_branch, position) => result.branches.tripped[position] === 1 ? [branchLabel(position, 'Tripped', 'alarm')] : [])
   const loaded = geometry.branches
     .map((branch, position) => ({ branch, position, loading: result.branches.loadingPercent[position]! }))
     .filter(item => result.branches.closed[item.position] === 1 && item.loading >= watchLoadingPercent)
@@ -549,7 +549,9 @@ const presentState = (gridId: string, geometry: GridMapGeometryResult, rawState:
             ? (availability < 1 ? `Closed, derated to ${Math.round(availability * 100)} %` : 'Closed')
             : branchTripped ? 'Tripped by its protection: reset it, then close' : 'Open'),
           packField('energized', 'Energised', busEnergized(branch.fromBus) && busEnergized(branch.toBus) ? 'Yes' : 'No'),
-          packField('voltage', 'Voltage', `${branch.kv} kV ${branch.kind.replaceAll('_', ' ')}`),
+          packField('voltage', 'Voltage', branch.pathSource === 'network-equivalent'
+            ? `${from.kv} kV – ${to.kv} kV, equivalent of the sub-transmission between them`
+            : `${branch.kv} kV ${branch.kind.replaceAll('_', ' ')}`),
           packField('path', 'Drawn as', drawnAs[branch.pathSource]),
         ],
       }

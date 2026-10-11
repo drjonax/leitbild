@@ -277,6 +277,7 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     expect(drawnAs(norway.model.branches.find(branch => branch.kind === 'ac_line' && branch.id.startsWith('branch:osm-'))!.id)).toBe('Mapped route')
     expect(drawnAs('branch:curated-follo-lambertseter-47kv-equivalent')).toBe('Network equivalent (not a mapped line)')
     expect(drawnAs(norway.model.branches.find(branch => branch.id.startsWith('branch:transformer-'))!.id)).toBe('Transformer, drawn between its buses')
+    expect(state.hoverCard(0)!.fields.find(field => field.key === 'voltage')!.value).toBe('420 kV – 132 kV, equivalent of the sub-transmission between them')
   })
 
   test('follow switching and trips, and label the most loaded closed branches', () => {
@@ -351,8 +352,12 @@ describe('Grid live layer: geometry and state from the map queries', () => {
     const switching = (branchId: string) => state.hoverCard(fid(branchId))!.fields.find(field => field.key === 'switching')!.value
     expect(switching('branch:g-a')).toBe('Tripped by its protection: reset it, then close')
     expect(switching('branch:g-b')).toBe('Open')
-    expect(state.labels.filter(label => label.properties.tone === 'alarm').map(label => label.properties.text)).toEqual(expect.arrayContaining(['branch:g-a tripped']))
-    expect(state.labels.some(label => label.properties.text === 'branch:g-b tripped')).toBe(false)
+    // Each tripped branch carries a "Tripped" label along its own path; the opened one none.
+    const pathOf = (branchId: string) => JSON.stringify(geometry.features[fid(branchId)]!.geometry)
+    const trippedLabels = state.labels.filter(label => label.properties.text === 'Tripped')
+    expect(trippedLabels.every(label => label.properties.tone === 'alarm')).toBe(true)
+    expect(trippedLabels.map(label => JSON.stringify(label.geometry))).toEqual(expect.arrayContaining([pathOf('branch:g-a')]))
+    expect(trippedLabels.some(label => JSON.stringify(label.geometry) === pathOf('branch:g-b'))).toBe(false)
   })
 
   test('reject a state for another geometry', () => {
