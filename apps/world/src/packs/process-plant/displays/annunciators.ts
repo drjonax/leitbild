@@ -104,17 +104,17 @@ export interface DisplayAnnunciation {
   readonly expected: Readonly<Record<string, { readonly after: string; readonly withinMs: number }>>
 }
 
-/** The single numeric signal a rule acts on (alone, or gated by on/off states), whose limit names it. */
+/**
+ * The single numeric signal a display draws the rule's limit on, alone or
+ * inside a combined condition (ic-thresholds.ts), whose limit names it; null
+ * where it draws it on none, or on several.
+ */
 const limitedPath = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule): VariablePath | null => {
-  const numeric = (condition: ProcessPlantIcCondition): boolean =>
-    condition.type === 'comparison' && typeof condition.value === 'number' && condition.operator !== '==' && condition.operator !== '!='
-  const condition = rule.condition
-  if (condition.type === 'comparison') return numeric(condition) ? resolveProcessPlantSignalPath(plant.graph, condition.signal) : null
-  if (condition.type !== 'all') return null
-  const limits = condition.conditions.filter(numeric)
-  const gates = condition.conditions.filter(child => child.type === 'comparison' && typeof child.value === 'boolean')
-  const only = limits[0]
-  return limits.length === 1 && gates.length === condition.conditions.length - 1 && only?.type === 'comparison' ? resolveProcessPlantSignalPath(plant.graph, only.signal) : null
+  const numeric = (condition: ProcessPlantIcCondition): ReadonlyArray<VariablePath> =>
+    condition.type === 'comparison' ? (typeof condition.value === 'number' && condition.operator !== '==' && condition.operator !== '!=' ? [resolveProcessPlantSignalPath(plant.graph, condition.signal)] : [])
+      : condition.type === 'not' ? numeric(condition.condition) : condition.conditions.flatMap(numeric)
+  const drawn = [...new Set(numeric(rule.condition))].filter(path => icThresholdsForSignal(plant, path).thresholds.some(threshold => threshold.ruleId === rule.id))
+  return drawn.length === 1 ? drawn[0]! : null
 }
 
 const annunciationByPlant = new WeakMap<CompiledProcessPlant, DisplayAnnunciation>()

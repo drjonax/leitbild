@@ -948,6 +948,8 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
       tagsOf('loss-of-offsite-power'),
       tagsOf('safety-bus-a-loss-alarm'),
     ]).toEqual([['LO-LO · RX TRIP'], ['LO-3 · SI', 'LO-3 · RX TRIP'], ['LO · ALM'], ['RX TRIP'], ['LO-LO · ALM'], ['ALM']])
+    // A limit inside a combined condition names its row too: the feedwater isolation on low Tavg after a reactor trip.
+    expect(tagsOf('reactor-trip-low-tavg-feedwater-isolation')).toEqual(['LO · FWI'])
     expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('LO-3 · RX TRIP')
     expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:safety-injection']).toBe('LO-3 · SI')
     // Every alarm and trip has a tag, and every one naming a group its group's short label for the tiles.
