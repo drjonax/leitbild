@@ -5,6 +5,7 @@ import type {
   GridDemandProfileDefinition,
   GridGeneratorDefinition,
   GridHvdcLinkDefinition,
+  GridHvdcRampGroupDefinition,
   GridLoadDefinition,
   GridStorageDefinition,
 } from '../grid-model.ts'
@@ -146,10 +147,17 @@ export const hvdcLinkDefinitionSchema = z.object({
   toBusId: z.string().describe('Boundary bus of the external system, or another Norwegian converter bus.'),
   ratingMw: finite.describe('Transfer limit either way (MW).'),
   lossPercent: finite.describe('Converter and cable losses in percent of the sent power.'),
-  rampMwPerMinute: finite.describe('Rate at which the transfer follows a set-point change (MW/min).'),
+  rampMwPerMinute: finite.describe('Rate at which the transfer follows a set-point change (MW/min); a link of a ramp group also shares the group\'s limit.'),
   osmWayIds: z.array(z.string()).readonly(),
   provenance: assetProvenanceSchema,
 }).strict()
+
+export const hvdcRampGroupSchema = z.object({
+  id: z.string(),
+  linkIds: z.array(z.string()).readonly().describe('The HVDC links sharing the limit.'),
+  rampMwPerMinute: finite.describe('Limit on the sum of the links\' transfer changes (MW/min), shared in proportion to each link\'s remaining distance to its set-point; each link also keeps its own rampMwPerMinute.'),
+  provenance: assetProvenanceSchema,
+}).strict().describe('A ramp limit several HVDC links share (one market border, or a joint cap); the provenance note states its basis.')
 
 const islandFrequencyHz = finite.nullable().describe('Frequency of the island holding the asset; null while it is de-energised (Hz).')
 
@@ -264,7 +272,7 @@ export const hvdcLinkOperatingStateSchema = z.enum(['deblocked', 'blocked', 'tri
 export const hvdcLinkStateSchema = z.object({
   state: hvdcLinkOperatingStateSchema,
   setpointMw: finite.describe('Transfer set-point (MW), positive from fromBusId to toBusId: positive exports from Norway.'),
-  transferMw: finite.describe('Power sent at the sending converter (MW, signed like the set-point); it ramps towards the set-point at rampMwPerMinute.'),
+  transferMw: finite.describe('Power sent at the sending converter (MW, signed like the set-point); it ramps towards the set-point at rampMwPerMinute, within its ramp group\'s shared limit.'),
   lossesMw: finite.describe('Converter and cable losses (MW); the receiving converter delivers |transferMw| − lossesMw.'),
   trip: z.object({
     cause: z.enum(['command', 'ac-voltage-loss']).describe('command: trip-hvdc; ac-voltage-loss: a converter terminal\'s AC bus was de-energised.'),
@@ -288,5 +296,6 @@ export type WireSchemasAcceptRuntimeValues = [
   Accepts<typeof loadStateSchema, GridLoadState>,
   Accepts<typeof storageStateSchema, GridStorageState>,
   Accepts<typeof hvdcLinkDefinitionSchema, GridHvdcLinkDefinition>,
+  Accepts<typeof hvdcRampGroupSchema, GridHvdcRampGroupDefinition>,
   Accepts<typeof hvdcLinkStateSchema, GridHvdcLinkState>,
 ]

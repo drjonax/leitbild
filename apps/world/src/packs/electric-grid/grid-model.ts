@@ -140,6 +140,17 @@ export interface GridHvdcLinkDefinition {
   readonly provenance: GridAssetProvenance
 }
 
+/**
+ * A ramp limit several HVDC links share: per step the sum of their |Δtransfer| stays within
+ * rampMwPerMinute, each link within its own ramp too. A link belongs to at most one group.
+ */
+export interface GridHvdcRampGroupDefinition {
+  readonly id: string
+  readonly linkIds: ReadonlyArray<string>
+  readonly rampMwPerMinute: number
+  readonly provenance: GridAssetProvenance
+}
+
 /** Lifecycle state a generator starts in, from the Operating Point. */
 export type GridGeneratorInitialState = 'online' | 'offline' | 'tripped'
 
@@ -275,6 +286,7 @@ export interface GridModelDefinition {
   readonly connectionPoints: ReadonlyArray<GridConnectionPointDefinition>
   readonly externalSystems: ReadonlyArray<GridExternalSystemDefinition>
   readonly hvdcLinks: ReadonlyArray<GridHvdcLinkDefinition>
+  readonly hvdcRampGroups: ReadonlyArray<GridHvdcRampGroupDefinition>
 }
 
 /** The Operating Point values the runtime applies when a Grid starts; generator states and availability are in the Model's generators. */
@@ -323,6 +335,9 @@ export interface CompiledGridModelIndex {
   /** The Model's external systems and HVDC links, empty when it declares none. */
   readonly externalSystems: ReadonlyArray<GridExternalSystemDefinition>
   readonly hvdcLinks: ReadonlyArray<GridHvdcLinkDefinition>
+  readonly hvdcRampGroups: ReadonlyArray<GridHvdcRampGroupDefinition>
+  /** The ramp group each grouped HVDC link shares, by link id. */
+  readonly hvdcRampGroupOfLink: ReadonlyMap<string, GridHvdcRampGroupDefinition>
   /** The synchronous external system (at most one) by each of its boundary buses. */
   readonly synchronousExternalByBus: ReadonlyMap<string, GridExternalSystemDefinition>
   /** Boundary buses of asynchronous external systems: HVDC terminals outside the modelled AC network. */

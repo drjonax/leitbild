@@ -15,6 +15,7 @@ import type {
   CompiledGridModelIndex,
   GridAssetIndexEntry,
   GridExternalSystemDefinition,
+  GridHvdcRampGroupDefinition,
   GridModelDefinition,
   GridOperatingPointDefinition,
 } from './grid-model.ts'
@@ -262,6 +263,21 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     if (link.lossPercent >= 100) failModel(model, `${link.id} lossPercent must be below 100`)
     requireFinite(model, link.rampMwPerMinute, `${link.id} rampMwPerMinute`, Number.MIN_VALUE)
   }
+  const hvdcRampGroups = model.hvdcRampGroups
+  const hvdcRampGroupOfLink = new Map<string, GridHvdcRampGroupDefinition>()
+  const rampGroupIds = new Set<string>()
+  for (const group of hvdcRampGroups) {
+    if (rampGroupIds.has(group.id)) failModel(model, `duplicate HVDC ramp group id ${group.id}`)
+    rampGroupIds.add(group.id)
+    if (group.linkIds.length < 2) failModel(model, `HVDC ramp group ${group.id} needs at least two links`)
+    requireFinite(model, group.rampMwPerMinute, `${group.id} rampMwPerMinute`, Number.MIN_VALUE)
+    for (const linkId of group.linkIds) {
+      if (!hvdcIds.has(linkId)) failModel(model, `HVDC ramp group ${group.id} names unknown HVDC link ${linkId}`)
+      const owner = hvdcRampGroupOfLink.get(linkId)
+      if (owner !== undefined) failModel(model, `HVDC link ${linkId} belongs to both ${owner.id} and ${group.id}; a link shares at most one ramp group`)
+      hvdcRampGroupOfLink.set(linkId, group)
+    }
+  }
   const staticComponentByBus = new Map<string, string>()
   for (const bus of model.buses) {
     if (staticComponentByBus.has(bus.id)) continue
@@ -290,6 +306,8 @@ export const compileGridModelIndex = (model: GridModelDefinition): CompiledGridM
     staticComponentByBus,
     externalSystems,
     hvdcLinks,
+    hvdcRampGroups,
+    hvdcRampGroupOfLink,
     synchronousExternalByBus,
     asynchronousBoundaryBusIds,
     diagnostics: {

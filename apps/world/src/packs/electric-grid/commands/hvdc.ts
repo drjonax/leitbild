@@ -27,7 +27,7 @@ export const gridHvdcCommandCapabilities: ReadonlyArray<SimulationCapability> = 
   gridCommandCapability({
     id: gridSetHvdcSetpointCommandKind,
     title: 'Set HVDC set-point',
-    description: 'Sets the transfer set-point (MW) of a deblocked HVDC link. Positive sends from the link\'s Norwegian converter (fromBusId) to its far end: positive exports from Norway, negative imports. The transfer ramps from its present value at the link\'s rampMwPerMinute, so a change of Δ MW takes |Δ| / rampMwPerMinute minutes; the receiving converter delivers the sent power less lossPercent. Rejected beyond ±ratingMw, on a blocked or tripped link, and for the set-point the link already has; the reason gives the limits.',
+    description: 'Sets the transfer set-point (MW) of a deblocked HVDC link. Positive sends from the link\'s Norwegian converter (fromBusId) to its far end: positive exports from Norway, negative imports. The transfer ramps from its present value at the link\'s rampMwPerMinute, so a change of Δ MW takes |Δ| / rampMwPerMinute minutes; a link of a ramp group (world.electric-grid.asset.get rampGroup) also shares the group\'s limit on the sum of its links\' changes, so it ramps at most at that limit and slower while another link of the group ramps; the receiving converter delivers the sent power less lossPercent. Rejected beyond ±ratingMw, on a blocked or tripped link, and for the set-point the link already has; the reason gives the limits.',
     payloadSchema: gridSetHvdcSetpointPayloadSchema,
     risk: 'write',
     searchTerms: [...hvdcTerms, 'set-point', 'setpoint', 'schedule', 'import', 'export', 'ramp', 'exchange', 'settpunkt', 'eksport', 'utveksling', 'rampe'],

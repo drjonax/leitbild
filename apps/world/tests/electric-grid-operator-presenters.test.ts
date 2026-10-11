@@ -170,10 +170,18 @@ describe('Grid operator command guidance', () => {
   })
 
   test('HVDC set-point guidance states the sign, the limit and the ramp', () => {
-    const link = { label: 'NordLink', ratingMw: 1_400, rampMwPerMinute: 60, transferMw: 200, setpointMw: 200 }
+    const link = { label: 'NordLink', ratingMw: 1_400, rampMwPerMinute: 60, transferMw: 200, setpointMw: 200, rampGroup: null }
     expect(gridHvdcSetpointGuidance(link, null)).toEqual({ convention: 'Positive exports from Norway over NordLink, negative imports into Norway; at most ±1,400 MW.', outcome: null, problem: null })
     expect(gridHvdcSetpointGuidance(link, -600).outcome).toBe('Ramps from 200 MW export to 600 MW import in 13.3 min at 60 MW/min.')
     expect(gridHvdcSetpointGuidance(link, 1_500).problem).toBe('1,500 MW is beyond the ±1,400 MW rating.')
     expect(gridHvdcSetpointGuidance(link, 200).problem).toBe('NordLink already has the set-point 200 MW.')
+  })
+
+  test('HVDC set-point guidance ramps a grouped link at the lower of its own and its group\'s limit', () => {
+    const grouped = { label: 'NordLink', ratingMw: 1_400, rampMwPerMinute: 60, transferMw: 200, setpointMw: 200, rampGroup: { id: 'ramp:no2-continental', rampMwPerMinute: 50, linkCount: 2 } }
+    expect(gridHvdcSetpointGuidance(grouped, -600).outcome)
+      .toBe('Ramps from 200 MW export to 600 MW import in 16.0 min at 50 MW/min. ramp:no2-continental limits its 2 links to 50 MW/min together, so it takes longer while another of them ramps.')
+    const ownLimited = { ...grouped, label: 'NorNed', ratingMw: 700, rampMwPerMinute: 30 }
+    expect(gridHvdcSetpointGuidance(ownLimited, -400).outcome).toStartWith('Ramps from 200 MW export to 400 MW import in 20.0 min at 30 MW/min.')
   })
 })

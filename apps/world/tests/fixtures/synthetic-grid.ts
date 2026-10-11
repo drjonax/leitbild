@@ -52,6 +52,7 @@ export const handBuiltModel = (model: Pick<GridModelDefinition, 'id' | 'title' |
   connectionPoints: [],
   externalSystems: [],
   hvdcLinks: [],
+  hvdcRampGroups: [],
   ...model,
 })
 
@@ -246,6 +247,7 @@ export const syntheticGridModel = (busCount: number, seed = 7): GridModelDefinit
     connectionPoints: [],
     externalSystems: [],
     hvdcLinks: [],
+    hvdcRampGroups: [],
   }
 }
 

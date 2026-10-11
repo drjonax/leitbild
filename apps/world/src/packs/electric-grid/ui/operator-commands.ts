@@ -61,21 +61,32 @@ export interface GridHvdcSetpointContext {
   readonly rampMwPerMinute: number
   readonly transferMw: number
   readonly setpointMw: number
+  /** The ramp limit the link shares with other links, or null. */
+  readonly rampGroup: { readonly id: string; readonly rampMwPerMinute: number; readonly linkCount: number } | null
 }
 
 const exchange = (valueMw: number): string => valueMw === 0 ? '0 MW' : `${mw(Math.abs(valueMw))} ${valueMw > 0 ? 'export' : 'import'}`
 
-/** The sign convention, the limit and, for a requested set-point, its ramp or why it would be rejected. */
+/**
+ * The sign convention, the limit and, for a requested set-point, its ramp or why it would be
+ * rejected. A grouped link ramps alone at the lower of its own and its group's limit; the estimate
+ * says it takes longer while another link of the group ramps too.
+ */
 export const gridHvdcSetpointGuidance = (link: GridHvdcSetpointContext, requestedMw: number | null): { readonly convention: string; readonly outcome: string | null; readonly problem: string | null } => {
   const convention = `Positive exports from Norway over ${link.label}, negative imports into Norway; at most ±${mw(link.ratingMw)}.`
   if (requestedMw === null) return { convention, outcome: null, problem: null }
   if (!Number.isFinite(requestedMw)) return { convention, outcome: null, problem: 'Enter the set-point in MW.' }
   if (Math.abs(requestedMw) > link.ratingMw) return { convention, outcome: null, problem: `${mw(requestedMw)} is beyond the ±${mw(link.ratingMw)} rating.` }
   if (requestedMw === link.setpointMw) return { convention, outcome: null, problem: `${link.label} already has the set-point ${mw(requestedMw)}.` }
-  const minutes = Math.abs(requestedMw - link.transferMw) / link.rampMwPerMinute
+  const group = link.rampGroup
+  const rateMwPerMinute = group === null ? link.rampMwPerMinute : Math.min(link.rampMwPerMinute, group.rampMwPerMinute)
+  const minutes = Math.abs(requestedMw - link.transferMw) / rateMwPerMinute
+  const ramp = `Ramps from ${exchange(link.transferMw)} to ${exchange(requestedMw)} in ${minutes.toFixed(1)} min at ${mw(rateMwPerMinute)}/min.`
   return {
     convention,
-    outcome: `Ramps from ${exchange(link.transferMw)} to ${exchange(requestedMw)} in ${minutes.toFixed(1)} min at ${mw(link.rampMwPerMinute)}/min.`,
+    outcome: group === null
+      ? ramp
+      : `${ramp} ${group.id} limits its ${group.linkCount} links to ${mw(group.rampMwPerMinute)}/min together, so it takes longer while another of them ramps.`,
     problem: null,
   }
 }

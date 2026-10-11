@@ -110,6 +110,30 @@ describe('Grid Model v2 schema', () => {
     expect(rejection(variant(model => { model.externalSystems = [model.externalSystems[0]] }))).toContain('$.buses[5].id: a boundary bus must belong to exactly one external system')
   })
 
+  test('keeps an HVDC ramp group to two or more links of the model, each link in one group, citing a recorded source', () => {
+    const grouped = (change: (model: Draft) => void = () => undefined): unknown => variant(model => {
+      model.hvdcLinks.push({ ...model.hvdcLinks[0], id: 'hvdc:test-link-2' })
+      model.hvdcRampGroups = [{
+        id: 'ramp:test-border', linkIds: ['hvdc:test-link', 'hvdc:test-link-2'], rampMwPerMinute: 50,
+        provenance: { sources: [model.hvdcLinks[0].provenance.sources[0]], method: 'curated', confidence: 'high', note: 'Fixture border ramp cap.' },
+      }]
+      change(model)
+    })
+    expect(validateGridModel(grouped(), 'fixture').hvdcRampGroups.map(group => group.linkIds)).toEqual([['hvdc:test-link', 'hvdc:test-link-2']])
+    expect(rejection(variant(model => { delete model.hvdcRampGroups }))).toContain('$.hvdcRampGroups')
+    expect(rejection(grouped(model => { model.hvdcRampGroups[0].id = 'ramp:Test Border' }))).toContain('$.hvdcRampGroups[0].id: must be an HVDC ramp group id')
+    expect(rejection(grouped(model => { model.hvdcRampGroups[0].linkIds = ['hvdc:test-link'] }))).toContain('$.hvdcRampGroups[0].linkIds')
+    expect(rejection(grouped(model => { model.hvdcRampGroups[0].linkIds[1] = 'hvdc:missing' }))).toContain('$.hvdcRampGroups[0].linkIds[1]: unknown HVDC link hvdc:missing')
+    expect(rejection(grouped(model => { model.hvdcRampGroups[0].linkIds[1] = 'hvdc:test-link' }))).toContain('$.hvdcRampGroups[0].linkIds[1]: duplicate hvdc:test-link')
+    expect(rejection(grouped(model => { model.hvdcRampGroups[0].rampMwPerMinute = 0 }))).toContain('$.hvdcRampGroups[0].rampMwPerMinute')
+    expect(rejection(grouped(model => { delete model.hvdcRampGroups[0].provenance.note }))).toContain('$.hvdcRampGroups[0].provenance.note: a note is required for curated provenance')
+    expect(rejection(grouped(model => { model.hvdcRampGroups[0].provenance.sources = ['curated:unrecorded@2026-10-10'] })))
+      .toContain('$.hvdcRampGroups[0].provenance.sources[0]: curated:unrecorded@2026-10-10 is not a sourceBuild input')
+    expect(rejection(grouped(model => { model.hvdcRampGroups.push({ ...model.hvdcRampGroups[0], id: 'ramp:other-border' }) })))
+      .toContain('$.hvdcRampGroups[1].linkIds[0]: hvdc:test-link already belongs to ramp:test-border; a link shares at most one ramp group')
+    expect(rejection(grouped(model => { model.hvdcRampGroups.push({ ...model.hvdcRampGroups[0] }) }))).toContain('$.hvdcRampGroups[1].id: duplicate HVDC ramp group ramp:test-border')
+  })
+
   test('requires finite, non-negative attachment distances', () => {
     expect(rejection(variant(model => { model.generators[0].attachmentKm = Number.POSITIVE_INFINITY }))).toContain('$.generators[0].attachmentKm')
     expect(rejection(variant(model => { model.loads[0].attachmentKm = Number.NaN }))).toContain('$.loads[0].attachmentKm')

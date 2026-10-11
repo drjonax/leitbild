@@ -42,6 +42,9 @@ export interface GridTables {
   /** Converter terminal buses of each HVDC link. */
   readonly hvdcFromBus: Int32Array
   readonly hvdcToBus: Int32Array
+  /** The ramp group of each HVDC link, or −1; group k's links are `hvdcRampGroupLinks.items[start[k] .. start[k + 1])`, in its Model order. */
+  readonly hvdcRampGroupOfLink: Int32Array
+  readonly hvdcRampGroupLinks: GridIndexByBus
   /** 1 for a synchronous (voltage-forming) unit, and its kinetic energy H·S (MWs; 0 when converter-connected). */
   readonly generatorSynchronous: Uint8Array
   readonly generatorKineticEnergyMws: Float64Array
@@ -107,6 +110,13 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
   const boundaryStart = new Int32Array(index.externalSystems.length + 1)
   index.externalSystems.forEach((system, position) => { boundaryStart[position + 1] = boundaryStart[position]! + system.boundaryBusIds.length })
   const boundaryItems = Int32Array.from(index.externalSystems.flatMap(system => system.boundaryBusIds), busOf)
+  const hvdcIndex = indexById(index.hvdcLinks)
+  const hvdcRampGroupOfLink = new Int32Array(index.hvdcLinks.length).fill(-1)
+  const rampGroupStart = new Int32Array(index.hvdcRampGroups.length + 1)
+  index.hvdcRampGroups.forEach((group, position) => {
+    rampGroupStart[position + 1] = rampGroupStart[position]! + group.linkIds.length
+    for (const linkId of group.linkIds) hvdcRampGroupOfLink[hvdcIndex.get(linkId)!] = position
+  })
   return {
     network,
     externalBoundaryBuses: { start: boundaryStart, items: boundaryItems },
@@ -115,7 +125,7 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
     loadIndexById: indexById(model.loads),
     storageIndexById: indexById(model.storage),
     externalIndexById: indexById(index.externalSystems),
-    hvdcIndexById: indexById(index.hvdcLinks),
+    hvdcIndexById: hvdcIndex,
     connectionPointIndexById: indexById(model.connectionPoints),
     generatorBus,
     loadBus,
@@ -129,6 +139,8 @@ const compileGridTables = (model: GridModelDefinition, index: CompiledGridModelI
     asynchronousBoundaryBus,
     hvdcFromBus: Int32Array.from(index.hvdcLinks, link => busOf(link.fromBusId)),
     hvdcToBus: Int32Array.from(index.hvdcLinks, link => busOf(link.toBusId)),
+    hvdcRampGroupOfLink,
+    hvdcRampGroupLinks: { start: rampGroupStart, items: Int32Array.from(index.hvdcRampGroups.flatMap(group => group.linkIds), linkId => hvdcIndex.get(linkId)!) },
     generatorSynchronous: Uint8Array.from(model.generators, generator => generatorIsVoltageForming(generator) ? 1 : 0),
     generatorKineticEnergyMws: Float64Array.from(model.generators, generatorKineticEnergyMws),
     branchResistancePu: Float64Array.from(model.branches, branch => branch.resistancePu),

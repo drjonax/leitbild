@@ -16,6 +16,7 @@ import { gridAlarmId } from '../src/packs/electric-grid/runtime/alarms.ts'
 import { createGridRuntimeInstance, type GridRuntimeInstance } from '../src/packs/electric-grid/runtime/instance.ts'
 import { islandKineticEnergyMws } from '../src/packs/electric-grid/runtime/island-input.ts'
 import { gridIslandAtBus, solvedGridIslands } from '../src/packs/electric-grid/runtime/island-lifecycle.ts'
+import { hvdcLinksRamping } from '../src/packs/electric-grid/runtime/hvdc.ts'
 import { createGridRecordingPlan } from '../src/packs/electric-grid/recording.ts'
 import { gridMapIslandState } from '../src/packs/electric-grid/queries/map-state.ts'
 import { electricGridRuntimeStateSchema, restoredGridRuntimeStateFor, runtimeStateForElectricGrids } from '../src/packs/electric-grid/sim/runtime-state.ts'
@@ -56,10 +57,20 @@ const model: GridModelDefinition = handBuiltModel({
   ],
 })
 
-/** The test Model with each link starting at the given transfer (MW, positive exports); others at 0. */
-const definitionWith = (transfersMw: Readonly<Record<string, number>> = {}): CompiledGridDefinition => {
-  const base = gridDefinitionForModel(model)
-  return { ...base, operatingPoint: { ...base.operatingPoint, hvdcSetpoints: model.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: transfersMw[link.id] ?? 0 })) } }
+/** A Model with each link starting at the given transfer (MW, positive exports); others at 0. */
+const definitionFor = (base: GridModelDefinition, transfersMw: Readonly<Record<string, number>> = {}): CompiledGridDefinition => {
+  const definition = gridDefinitionForModel(base)
+  return { ...definition, operatingPoint: { ...definition.operatingPoint, hvdcSetpoints: base.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: transfersMw[link.id] ?? 0 })) } }
+}
+/** The test Model with each link starting at the given transfer; see definitionFor. */
+const definitionWith = (transfersMw: Readonly<Record<string, number>> = {}): CompiledGridDefinition => definitionFor(model, transfersMw)
+
+// Both links to Germany share one border's ramp: 50 MW/min together, below the test NordLink's own 60.
+const groupRampMwPerMinute = 50
+const groupedModel: GridModelDefinition = {
+  ...model,
+  id: 'hvdc-ramp-group',
+  hvdcRampGroups: [{ id: 'ramp:test-de', linkIds: [nordlinkId, westLinkId], rampMwPerMinute: groupRampMwPerMinute, provenance }],
 }
 
 const linkOf = (run: SteppedGrid, linkId = nordlinkId) => run.grid.hvdcLinks.get(linkId)!
@@ -126,6 +137,115 @@ describe('HVDC set-point', () => {
     expect(reasonOf(setpoint('hvdc:missing', 100))).toContain('HVDC link not found: hvdc:missing')
     expect(reasonOf(setpoint('south-0', 100))).toContain('HVDC link not found: south-0')
     expect(linkOf(run).setpointMw).toBe(-1_400)
+  })
+})
+
+describe('HVDC ramp groups', () => {
+  /** Steps a run 1 s at a time to `untilMs`, failing a step whose Σ|Δtransfer| over the group exceeds its limit. */
+  const advanceHeldToGroup = (run: SteppedGrid, untilMs: number): void => {
+    while (run.nowMs() < untilMs) {
+      const before = [nordlinkId, westLinkId].map(linkId => linkOf(run, linkId).transferMw)
+      run.advanceTo(run.nowMs() + 1_000, [1_000])
+      const movedMw = [nordlinkId, westLinkId].reduce((sum, linkId, index) => sum + Math.abs(linkOf(run, linkId).transferMw - before[index]!), 0)
+      expect(movedMw).toBeLessThanOrEqual(groupRampMwPerMinute / 60 + 1e-9)
+    }
+  }
+
+  test('holds two links stepping together to the joint limit, shared by remaining distance so they arrive together', () => {
+    const run = steppedGrid(definitionFor(groupedModel))
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: -600 }).ok).toBe(true)
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: westLinkId, setpointMw: -300 }).ok).toBe(true)
+    // 900 MW of change at 50 MW/min together: 18 min, two thirds of it on the test NordLink.
+    advanceHeldToGroup(run, 540_000)
+    expect(linkOf(run).transferMw).toBeCloseTo(-300, 9)
+    expect(linkOf(run, westLinkId).transferMw).toBeCloseTo(-150, 9)
+    expect(hvdcLinksRamping(run.grid)).toBe(true)
+    advanceHeldToGroup(run, 1_080_000)
+    expect(linkOf(run).transferMw).toBe(-600)
+    expect(linkOf(run, westLinkId).transferMw).toBe(-300)
+    expect(hvdcLinksRamping(run.grid)).toBe(false)
+    expect(largestIslandInjectionSumMw(run.grid)).toBeLessThan(1e-6)
+  })
+
+  test('a link bounded by its own ramp passes its unused share of the group to the others', () => {
+    const run = steppedGrid(definitionFor(groupedModel))
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: -100 }).ok).toBe(true)
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: westLinkId, setpointMw: -600 }).ok).toBe(true)
+    // By distance the west link would take 6/7 of 50 MW/min; its own 26 MW/min bounds it and the test NordLink takes the other 24.
+    advanceHeldToGroup(run, 60_000)
+    expect(linkOf(run, westLinkId).transferMw).toBeCloseTo(-26, 9)
+    expect(linkOf(run).transferMw).toBeCloseTo(-24, 9)
+    // Once the test NordLink has arrived (after 250 s), the west link ramps alone at its own 26 MW/min.
+    advanceHeldToGroup(run, 300_000)
+    expect(linkOf(run).transferMw).toBe(-100)
+    expect(linkOf(run, westLinkId).transferMw).toBeCloseTo(-130, 9)
+  })
+
+  test('a link ramping alone in its group moves at the lower of its own and the group\'s limit; a blocked member takes no share', () => {
+    const run = steppedGrid(definitionFor(groupedModel))
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: -600 }).ok).toBe(true)
+    // Own 60 MW/min, group 50: 50 MW/min.
+    run.advanceTo(120_000, [1_000])
+    expect(linkOf(run).transferMw).toBeCloseTo(-100, 9)
+    expect(run.command(gridBlockHvdcCommandKind, { assetId: nordlinkId }).ok).toBe(true)
+    expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: westLinkId, setpointMw: 300 }).ok).toBe(true)
+    // Own 26 MW/min, group 50: 26 MW/min, the blocked test NordLink using none of the group's.
+    run.advanceTo(240_000, [1_000])
+    expect(linkOf(run, westLinkId).transferMw).toBeCloseTo(52, 9)
+    // A link in no group keeps its own ramp: the same command on the ungrouped Model moves at 60 MW/min.
+    const ungrouped = steppedGrid(definitionWith())
+    expect(ungrouped.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: -600 }).ok).toBe(true)
+    ungrouped.advanceTo(120_000, [1_000])
+    expect(linkOf(ungrouped).transferMw).toBeCloseTo(-120, 9)
+  })
+
+  test('is deterministic and follows the same trajectory whatever the advance step', () => {
+    const sampleTimesMs = [90_000, 360_000, 720_000, 1_080_000]
+    const trajectory = (stepMs: number): ReadonlyArray<number> => {
+      const run = steppedGrid(definitionFor(groupedModel))
+      expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: nordlinkId, setpointMw: 600 }).ok).toBe(true)
+      expect(run.command(gridSetHvdcSetpointCommandKind, { assetId: westLinkId, setpointMw: -300 }).ok).toBe(true)
+      return sampleTimesMs.flatMap(timeMs => {
+        run.advanceTo(timeMs, [stepMs])
+        return [linkOf(run).transferMw, linkOf(run, westLinkId).transferMw]
+      })
+    }
+    const reference = trajectory(1_000)
+    expect(trajectory(1_000)).toEqual(reference)
+    // Opposite directions count alike: Σ|Δ| is held to 50 MW/min, 2:1 by distance.
+    expect(reference.slice(0, 2).map(value => Math.round(value * 1e6) / 1e6)).toEqual([50, -25])
+    expect(reference.slice(-2)).toEqual([600, -300])
+    for (const stepMs of [250, 2_500, 7_000]) trajectory(stepMs).forEach((value, index) => expect(value).toBeCloseTo(reference[index]!, 9))
+  })
+
+  test('the Grid rejects a ramp group naming an unknown link, one link, or a link of another group', () => {
+    const group = groupedModel.hvdcRampGroups[0]!
+    const compile = (hvdcRampGroups: GridModelDefinition['hvdcRampGroups']) => () => gridDefinitionForModel({ ...groupedModel, hvdcRampGroups })
+    expect(compile([{ ...group, linkIds: [nordlinkId, 'hvdc:missing'] }])).toThrow('HVDC ramp group ramp:test-de names unknown HVDC link hvdc:missing')
+    expect(compile([{ ...group, linkIds: [nordlinkId] }])).toThrow('HVDC ramp group ramp:test-de needs at least two links')
+    expect(compile([group, { ...group, id: 'ramp:test-other' }])).toThrow('HVDC link hvdc:test-nordlink belongs to both ramp:test-de and ramp:test-other; a link shares at most one ramp group')
+  })
+
+  test('asset.get and power-flow.snapshot name each link\'s ramp group and the group\'s limit', () => {
+    const run = steppedGrid(definitionFor(groupedModel))
+    expect(query(run.grid, 'world.electric-grid.asset.get', { assetId: westLinkId }).asset.rampGroup).toEqual({
+      id: 'ramp:test-de', linkIds: [nordlinkId, westLinkId], rampMwPerMinute: groupRampMwPerMinute, provenance,
+    })
+    expect(query(run.grid, 'world.electric-grid.power-flow.snapshot').hvdcLinks.map((row: { id: string; rampGroup: unknown }) => [row.id, row.rampGroup])).toEqual([
+      [nordlinkId, { id: 'ramp:test-de', rampMwPerMinute: groupRampMwPerMinute }],
+      [westLinkId, { id: 'ramp:test-de', rampMwPerMinute: groupRampMwPerMinute }],
+    ])
+  })
+
+  test('the Norway Model carries the NorNed–NordLink and Skagerrak ramp groups', () => {
+    const definition = compileGridDefinition(gridDefinitionSchema.parse({
+      id: 'grid:norway', model: { ref: norwayGridModelRef }, automation: { ref: nordicFrequencyAutomationRef }, operatingPoint: { ref: norwayRuntimeTestOperatingPointRef },
+    }))
+    expect(definition.index.hvdcRampGroups.map(group => [group.id, group.linkIds, group.rampMwPerMinute])).toEqual([
+      ['ramp:no2-continental', ['hvdc:nordlink', 'hvdc:norned'], 50],
+      ['ramp:skagerrak', ['hvdc:skagerrak-1', 'hvdc:skagerrak-2', 'hvdc:skagerrak-3', 'hvdc:skagerrak-4'], 25],
+    ])
+    expect(definition.index.hvdcRampGroupOfLink.has('hvdc:north-sea-link')).toBe(false)
   })
 })
 
@@ -255,6 +375,7 @@ describe('HVDC links in the Grid queries', () => {
       applicableOperationIds: [gridSetHvdcSetpointCommandKind, gridBlockHvdcCommandKind, gridTripHvdcCommandKind],
       mapTarget: { kind: 'bounds', bounds: [[7, 59], [9, 59]] },
       definition: { fromBusId: 'bus:south', toBusId: 'bus:boundary-DE', ratingMw: 1_400, lossPercent: 3.1, rampMwPerMinute: 60 },
+      rampGroup: null,
       state: { state: 'deblocked', setpointMw: -600, transferMw: -600, lossesMw: expect.closeTo(18.6, 9), trip: null },
     })
     expect(query(run.grid, 'world.electric-grid.assets.search', { kinds: ['hvdc'] }).assets.map((asset: { id: string }) => asset.id)).toEqual([nordlinkId, westLinkId])
@@ -262,8 +383,8 @@ describe('HVDC links in the Grid queries', () => {
 
     const rows = query(run.grid, 'world.electric-grid.power-flow.snapshot').hvdcLinks
     expect(rows).toEqual([
-      { id: nordlinkId, label: 'Test NordLink', state: 'deblocked', ratingMw: 1_400, setpointMw: -600, transferMw: -600, lossesMw: 18.6, loadingPercent: 42.9 },
-      { id: westLinkId, label: 'Test west link', state: 'deblocked', ratingMw: 700, setpointMw: 0, transferMw: 0, lossesMw: 0, loadingPercent: 0 },
+      { id: nordlinkId, label: 'Test NordLink', state: 'deblocked', ratingMw: 1_400, setpointMw: -600, transferMw: -600, lossesMw: 18.6, loadingPercent: 42.9, rampGroup: null },
+      { id: westLinkId, label: 'Test west link', state: 'deblocked', ratingMw: 700, setpointMw: 0, transferMw: 0, lossesMw: 0, loadingPercent: 0, rampGroup: null },
     ])
     expect(query(run.grid, 'world.electric-grid.power-flow.snapshot', { minLoadingPercent: 10 }).hvdcLinks.map((row: { id: string }) => row.id)).toEqual([nordlinkId])
 

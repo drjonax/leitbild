@@ -53,6 +53,8 @@
   interface AssetDetail extends AssetListItem {
     readonly definition: Readonly<Record<string, unknown>>
     readonly state?: Readonly<Record<string, unknown>>
+    /** An HVDC link's shared ramp limit, or null. */
+    readonly rampGroup?: { readonly id: string; readonly linkIds: ReadonlyArray<string>; readonly rampMwPerMinute: number } | null
   }
 
   interface Props {
@@ -114,7 +116,12 @@
     }, Number(commandValue), commandEmergency)
   })
 
-  // An HVDC set-point's sign, limit and ramp.
+  const rampGroupOf = (asset: AssetDetail): { readonly id: string; readonly rampMwPerMinute: number; readonly linkCount: number } | null => {
+    if (asset.rampGroup === undefined) throw new Error(`${asset.id} reports no rampGroup`)
+    return asset.rampGroup === null ? null : { id: asset.rampGroup.id, rampMwPerMinute: asset.rampGroup.rampMwPerMinute, linkCount: asset.rampGroup.linkIds.length }
+  }
+
+  // An HVDC set-point's sign, limit and ramp, within its shared ramp group.
   const hvdcGuidance = $derived.by(() => {
     if (activeOperationId !== gridSetHvdcSetpointCommandKind || detail === null || detail.kind !== 'hvdc') return null
     return gridHvdcSetpointGuidance({
@@ -123,6 +130,7 @@
       rampMwPerMinute: numberField(detail.definition, 'rampMwPerMinute'),
       transferMw: numberField(detail.state, 'transferMw'),
       setpointMw: numberField(detail.state, 'setpointMw'),
+      rampGroup: rampGroupOf(detail),
     }, commandValue.trim() === '' ? null : Number(commandValue))
   })
 

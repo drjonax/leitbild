@@ -272,6 +272,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       connectionPoints: model.connectionPoints.map(point => ({ ...point })),
       externalSystems,
       hvdcLinks: model.hvdcLinks.map(link => ({ ...link })),
+      hvdcRampGroups: model.hvdcRampGroups.map(group => ({ ...group, linkIds: [...group.linkIds] })),
     },
     operatingPoint: {
       id: operatingPoint.id,

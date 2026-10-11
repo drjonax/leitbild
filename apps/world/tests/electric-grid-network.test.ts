@@ -31,7 +31,7 @@ const handModel = (id: string, busIds: ReadonlyArray<string>, branches: Readonly
   sourceIds: [],
   buses: busIds.map((busId, index) => ({ id: busId, label: busId, kind: 'substation' as const, nominalKv: 420, location: [10 + index * 0.1, 60] as const })),
   branches,
-  shunts: [], generators: [], loads: [], demandProfiles: [], storage: [], connectionPoints: [], externalSystems: [], hvdcLinks: [],
+  shunts: [], generators: [], loads: [], demandProfiles: [], storage: [], connectionPoints: [], externalSystems: [], hvdcLinks: [], hvdcRampGroups: [],
 })
 
 const gridFor = (definition: CompiledGridDefinition): GridRuntimeInstance => createGridRuntimeInstance({ definition, at })
