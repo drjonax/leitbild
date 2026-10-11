@@ -809,7 +809,11 @@ fn idas_quadratures_follow_the_steps_and_leave_the_trajectory_unchanged() {
     let (y0, yp0) = ([1., 2.], [-1., 0.]);
     let (mut y, mut yp) = (y0, yp0);
     let mut plain = new(decay(), &y, &yp);
-    plain.advance(2., &mut y, &mut yp).unwrap().reached().unwrap();
+    plain
+        .advance(2., &mut y, &mut yp)
+        .unwrap()
+        .reached()
+        .unwrap();
     let (mut z, mut zp) = (y0, yp0);
     let mut ledgered = Ida::new(
         Ledgered(decay()),
@@ -827,7 +831,11 @@ fn idas_quadratures_follow_the_steps_and_leave_the_trajectory_unchanged() {
     assert!(ledgered.initialize_quadratures(&[0., 0.]).is_err());
     ledgered.initialize_quadratures(&[0.5]).unwrap();
     assert!(ledgered.initialize_quadratures(&[0.5]).is_err());
-    ledgered.advance(2., &mut z, &mut zp).unwrap().reached().unwrap();
+    ledgered
+        .advance(2., &mut z, &mut zp)
+        .unwrap()
+        .reached()
+        .unwrap();
     assert_eq!(y.map(f64::to_bits), z.map(f64::to_bits));
     let mut q = [0.];
     assert_eq!(ledgered.quadratures(&mut q).unwrap(), 2.);

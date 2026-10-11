@@ -772,7 +772,13 @@ impl System for Segment {
     /// has not evaluated. A refusal there is fatal and recorded as the
     /// ledger's own: a recoverable one would make IDAS retry the step and
     /// change the trajectory the residual alone would take.
-    fn quadrature(&mut self, t: f64, y: &[f64], yp: &[f64], out: &mut [f64]) -> Result<(), Failure> {
+    fn quadrature(
+        &mut self,
+        t: f64,
+        y: &[f64],
+        yp: &[f64],
+        out: &mut [f64],
+    ) -> Result<(), Failure> {
         self.system.counters.quadratures += 1;
         match self.system.ledger_rates(t, y, yp) {
             Ok(q) => {
@@ -802,7 +808,9 @@ fn ledger_at(ida: &Ida<Segment>, t: f64) -> Result<[f64; LEDGER], String> {
     let mut q = [0.; LEDGER];
     let returned = ida.quadratures(&mut q)?;
     if returned != t {
-        return Err(format!("ledger read at {t} s, but the last return was {returned} s"));
+        return Err(format!(
+            "ledger read at {t} s, but the last return was {returned} s"
+        ));
     }
     Ok(q)
 }
@@ -1723,7 +1731,10 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
     // ("from_s,to_s"), read after every advance. It only reads the
     // integrator's current state.
     let probe: Option<(f64, f64)> = std::env::var("LD01_P2_STEP_PROBE").ok().map(|w| {
-        let v: Vec<f64> = w.split(',').map(|x| x.parse().expect("probe window")).collect();
+        let v: Vec<f64> = w
+            .split(',')
+            .map(|x| x.parse().expect("probe window"))
+            .collect();
         (v[0], v[1])
     });
     let mut probed = f64::NEG_INFINITY;
@@ -1773,7 +1784,15 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                 && let Ok(smp) = sample(&ida.system().system, tn, &ya, &ypa, &spec.atol, spec.rtol)
             {
                 probed = tn;
-                out.step_probe.push(json!([tn, st.last_step, st.last_order, st.steps, smp.inventory[0], smp.receipt[0], out.handles]));
+                out.step_probe.push(json!([
+                    tn,
+                    st.last_step,
+                    st.last_order,
+                    st.steps,
+                    smp.inventory[0],
+                    smp.receipt[0],
+                    out.handles
+                ]));
             }
         }
         // A pure observation: record it and continue without a sample.
@@ -1866,7 +1885,8 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                         let ledger = ledger_at(&ida, t);
                         absorb(&mut out, &mut totals, &ida);
                         next.counters = Counters::default();
-                        match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q))) {
+                        match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q)))
+                        {
                             Ok(((rates, pair), q)) => {
                                 yp = rates;
                                 out.initializations.push(pair);
@@ -2061,7 +2081,8 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                         let ledger = ledger_at(&ida, t);
                         absorb(&mut out, &mut totals, &ida);
                         next.counters = Counters::default();
-                        match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q))) {
+                        match ledger.and_then(|q| start(&mut next, t, &mut y, spec).map(|r| (r, q)))
+                        {
                             Ok(((rates, pair), q)) => {
                                 yp = rates;
                                 event["consistent_pair"] = pair["pair"].clone();
@@ -2155,66 +2176,80 @@ pub fn run(mut system: CellSystem, y0: &[f64], spec: &RunSpec) -> Run {
                     "IDA stopped at t={} s: {e}",
                     ida.stats().map_or(t, |s| s.internal_time)
                 );
-                Some(if let Some((refusal, tr, yr)) = ida.system().ledger_refusal.clone() {
-                    // Sixth case run's rule: a declared limit root that has
-                    // crossed at the refused step ends the run at that limit;
-                    // the ledger is reported to the last accepted step.
-                    let segment = ida.system();
-                    let mut at_refused = vec![0.; segment.roots.len()];
-                    let mut at_last = vec![0.; segment.roots.len()];
-                    let crossed = if segment.system.root_values(&yr, &segment.roots, &mut at_refused).is_ok()
-                        && segment.system.root_values(&y, &segment.roots, &mut at_last).is_ok()
-                    {
-                        segment
-                            .roots
-                            .iter()
-                            .zip(at_last.iter().zip(&at_refused))
-                            .find(|(r, (before, after))| {
-                                matches!(r, Root::ZoneMass(_) | Root::MixtureTop | Root::SteelLimit(_))
-                                    && (**after == 0. || before.signum() != after.signum())
-                            })
-                            .map(|(r, _)| *r)
+                Some(
+                    if let Some((refusal, tr, yr)) = ida.system().ledger_refusal.clone() {
+                        // Sixth case run's rule: a declared limit root that has
+                        // crossed at the refused step ends the run at that limit;
+                        // the ledger is reported to the last accepted step.
+                        let segment = ida.system();
+                        let mut at_refused = vec![0.; segment.roots.len()];
+                        let mut at_last = vec![0.; segment.roots.len()];
+                        let crossed = if segment
+                            .system
+                            .root_values(&yr, &segment.roots, &mut at_refused)
+                            .is_ok()
+                            && segment
+                                .system
+                                .root_values(&y, &segment.roots, &mut at_last)
+                                .is_ok()
+                        {
+                            segment
+                                .roots
+                                .iter()
+                                .zip(at_last.iter().zip(&at_refused))
+                                .find(|(r, (before, after))| {
+                                    matches!(
+                                        r,
+                                        Root::ZoneMass(_) | Root::MixtureTop | Root::SteelLimit(_)
+                                    ) && (**after == 0. || before.signum() != after.signum())
+                                })
+                                .map(|(r, _)| *r)
+                        } else {
+                            None
+                        };
+                        let mut ya = vec![0.; n];
+                        let mut ypa = vec![0.; n];
+                        let mut q = [0.; LEDGER];
+                        if let Ok(tn) = ida.current_state(&mut ya, &mut ypa)
+                            && tn > t
+                            && ida.quadratures_at(tn, &mut q).is_ok()
+                            && let Ok(mut smp) =
+                                sample(&ida.system().system, tn, &ya, &ypa, &spec.atol, spec.rtol)
+                        {
+                            smp.ledger_q = q;
+                            smp.event = Some("last accepted step before the ledger refusal".into());
+                            out.samples.push(smp);
+                            t = tn;
+                            y = ya;
+                            yp = ypa;
+                        }
+                        let at = format!("crossed at the step the ledger refused at t={tr} s");
+                        match crossed {
+                            Some(root @ Root::SteelLimit(_)) => End::Limit {
+                                label: format!(
+                                    "steel-range applicability limit: {} ({at})",
+                                    root.label()
+                                ),
+                            },
+                            Some(root) if spec.limit => End::Limit {
+                                label: format!("structural event: {} ({at})", root.label()),
+                            },
+                            Some(root) => End::StopRule {
+                                rule: 3,
+                                reason: format!("PZR structural event: {} ({at})", root.label()),
+                            },
+                            None => End::LedgerFailure {
+                                reason: format!("{refusal}; {reason}"),
+                            },
+                        }
+                    } else if spec.limit {
+                        End::Limit {
+                            label: classify_limit(&reason),
+                        }
                     } else {
-                        None
-                    };
-                    let mut ya = vec![0.; n];
-                    let mut ypa = vec![0.; n];
-                    let mut q = [0.; LEDGER];
-                    if let Ok(tn) = ida.current_state(&mut ya, &mut ypa)
-                        && tn > t
-                        && ida.quadratures_at(tn, &mut q).is_ok()
-                        && let Ok(mut smp) = sample(&ida.system().system, tn, &ya, &ypa, &spec.atol, spec.rtol)
-                    {
-                        smp.ledger_q = q;
-                        smp.event = Some("last accepted step before the ledger refusal".into());
-                        out.samples.push(smp);
-                        t = tn;
-                        y = ya;
-                        yp = ypa;
-                    }
-                    let at = format!("crossed at the step the ledger refused at t={tr} s");
-                    match crossed {
-                        Some(root @ Root::SteelLimit(_)) => End::Limit {
-                            label: format!("steel-range applicability limit: {} ({at})", root.label()),
-                        },
-                        Some(root) if spec.limit => End::Limit {
-                            label: format!("structural event: {} ({at})", root.label()),
-                        },
-                        Some(root) => End::StopRule {
-                            rule: 3,
-                            reason: format!("PZR structural event: {} ({at})", root.label()),
-                        },
-                        None => End::LedgerFailure {
-                            reason: format!("{refusal}; {reason}"),
-                        },
-                    }
-                } else if spec.limit {
-                    End::Limit {
-                        label: classify_limit(&reason),
-                    }
-                } else {
-                    End::Failure { reason }
-                })
+                        End::Failure { reason }
+                    },
+                )
             }
         };
         if let Some(end) = end {
@@ -2329,13 +2364,16 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>, bound: f6
     };
     // Quadrature totals since the first sample: mass, energy, boron.
     let quad = |x: &Sample| {
-        let d: Vec<f64> = (0..LEDGER).map(|i| x.ledger_q[i] - first.ledger_q[i]).collect();
+        let d: Vec<f64> = (0..LEDGER)
+            .map(|i| x.ledger_q[i] - first.ledger_q[i])
+            .collect();
         [d[0], d[1] + d[3] - d[4] - d[5], d[2]]
     };
     let held = |x: &Sample| {
         [
             x.inventory[0] - first.inventory[0],
-            (x.internal_energy_j + x.metal_energy_j) - (first.internal_energy_j + first.metal_energy_j),
+            (x.internal_energy_j + x.metal_energy_j)
+                - (first.internal_energy_j + first.metal_energy_j),
             x.inventory[2] - first.inventory[2],
         ]
     };
@@ -2376,7 +2414,11 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>, bound: f6
         relief[2] += 0.5 * dt * (s.relief_boron_kg_s + previous.relief_boron_kg_s);
         let h = held(s);
         let q = quad(s);
-        let trapezoid = [integral[0], integral[1] + joule - exterior - work, integral[2]];
+        let trapezoid = [
+            integral[0],
+            integral[1] + joule - exterior - work,
+            integral[2],
+        ];
         for i in 0..3 {
             for (k, receipts) in [q, trapezoid].iter().enumerate() {
                 let closure = (h[i] - receipts[i]).abs();
@@ -2395,8 +2437,14 @@ pub fn ledger(run: &Run, surge: Option<&Table>, spray: Option<&Table>, bound: f6
     let exact_spray = spray.map(|tb| tb.integral(t));
     let h = held(last);
     let q = quad(last);
-    let lq: Vec<f64> = (0..LEDGER).map(|i| last.ledger_q[i] - first.ledger_q[i]).collect();
-    let trapezoid = [integral[0], integral[1] + joule - exterior - work, integral[2]];
+    let lq: Vec<f64> = (0..LEDGER)
+        .map(|i| last.ledger_q[i] - first.ledger_q[i])
+        .collect();
+    let trapezoid = [
+        integral[0],
+        integral[1] + joule - exterior - work,
+        integral[2],
+    ];
     json!({"t_s":t,"bound_solver_tolerances":bound,"method":"gated: inventory change minus the stock IDAS quadratures of the residual's boundary terms (request 4, K2); reported: minus the trapezoid of the sampled receipts over outputs, root events and breakpoints. Energy as fluid internal energy (zones plus transit at u_sat) plus steel energy, against port receipts plus electrical delivery minus exterior loss minus the hydrostatic remainder",
         "mass":{"inventory_change_kg":h[0],"receipts_kg":q[0],"closure_kg":h[0]-q[0],"max_abs_closure_kg":worst[0][0],"max_closure_over_solver_tolerance":worst_ratio[0][0],"solver_tolerance_kg":last.tolerance[0],"within_solver_tolerance":worst_ratio[0][0] <= bound,"max_instantaneous_identity_kg_s":identity[0]},
         "energy":{"internal_energy_change_j":last.internal_energy_j-first.internal_energy_j,"metal_energy_change_j":last.metal_energy_j-first.metal_energy_j,

@@ -24,8 +24,8 @@ use leitbild_operating_plant::{
         heaters::{BanksBlock, Caloric304, ContactBlock, HeaterCase, Heaters},
         properties as props,
         stratified::{
-            self as st, Case, Cell, ExchangeCase, Parameters, PortKind, ReliefDevice,
-            ReliefMotion, SensitivityFamilies,
+            self as st, Case, Cell, ExchangeCase, Parameters, PortKind, ReliefDevice, ReliefMotion,
+            SensitivityFamilies,
         },
         walls::{ShellBlock, WallCase, Walls},
     },
@@ -37,8 +37,8 @@ use leitbild_operating_water::{
     ida::{Advance, Failure, Ida, Initial, System},
 };
 use p2_harness::{
-    CellSystem, Counters, Cutout, End, Flow, Metal, Relief, Root, Run, RunSpec,
-    Table, cpu_s, ledger, run, run_json, thread_cpu_s,
+    CellSystem, Counters, Cutout, End, Flow, Metal, Relief, Root, Run, RunSpec, Table, cpu_s,
+    ledger, run, run_json, thread_cpu_s,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -317,9 +317,10 @@ impl Context {
             &std::fs::read(format!("{water}/water-build.json")).expect("the water build's receipt"),
         )
         .expect("water-build.json");
-        let library = std::fs::read(format!("{water}/libld01_operating_water.a"))
-            .expect("the water library");
-        let water_build = json!({"directory":water,"library_sha256":sha256(&library),"receipt":water_receipt});
+        let library =
+            std::fs::read(format!("{water}/libld01_operating_water.a")).expect("the water library");
+        let water_build =
+            json!({"directory":water,"library_sha256":sha256(&library),"receipt":water_receipt});
         // The stock IDAS build the quadrature ledger links (request 4, K2):
         // its library hash as found and its build receipt beside the prefix.
         let sundials = std::env::var("LD01_OPERATING_SUNDIALS_PREFIX")
@@ -331,7 +332,8 @@ impl Context {
                 .expect("the IDAS build receipt beside its prefix"),
         )
         .expect("build-receipt.json");
-        let sundials_build = json!({"prefix":sundials,"idas_library_sha256":sha256(&idas),"receipt":idas_receipt});
+        let sundials_build =
+            json!({"prefix":sundials,"idas_library_sha256":sha256(&idas),"receipt":idas_receipt});
         let app = std::env::current_dir().unwrap().display().to_string();
         let provenance = json!({
             "app_commit":sh(&["rev-parse","HEAD"],&app),"app_dirty":!sh(&["status","--porcelain"],&app).is_empty(),
@@ -437,14 +439,8 @@ fn metal(ctx: &Context, entry: &Entry, cell: &Cell, halved: bool, chi: f64) -> M
         wall_birth_fraction: chi,
         ..HeaterCase::nominal(&ctx.contact)
     };
-    let heaters = Heaters::new(
-        cell,
-        &banks(ctx, halved),
-        ctx.caloric,
-        ctx.contact,
-        contact,
-    )
-    .expect("heaters");
+    let heaters = Heaters::new(cell, &banks(ctx, halved), ctx.caloric, ctx.contact, contact)
+        .expect("heaters");
     let walls = Walls::new(
         cell,
         &heaters,
@@ -584,7 +580,13 @@ fn prepare(ctx: &Context, entry: &Entry, halved: bool) -> Prepared {
     if entry.relief == Some(true) {
         y0.push(0.);
     }
-    let m = metal(ctx, entry, &cell, halved, ctx.contact.wet.wall_birth_fraction);
+    let m = metal(
+        ctx,
+        entry,
+        &cell,
+        halved,
+        ctx.contact.wet.wall_birth_fraction,
+    );
     let temperature = preparation.saturation_temperature_k;
     let mut steel = m
         .heaters
@@ -1139,7 +1141,12 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
             "bubble_exchange_factor":v.exchange.factor,"bubble_exchange_diameter_m":v.exchange.diameter_m,"wall_birth_fraction":v.wall_birth_fraction,"refined":refined});
         j["cpu_cap_s"] = json!(cap);
         j["load_average"] = loads[label.as_str()].clone();
-        let l = ledger(r, surge.as_ref(), spray.as_ref(), ctx.set.quadrature_closure_factor);
+        let l = ledger(
+            r,
+            surge.as_ref(),
+            spray.as_ref(),
+            ctx.set.quadrature_closure_factor,
+        );
         j["conservation"] = l.clone();
         j["area_step_rejections"] = json!(crossing_rejections(r));
         ledgers.insert(label.clone(), l);
@@ -1158,7 +1165,12 @@ fn ld01_case(ctx: &Context, entry: &Entry, deadline: f64, smoke: Option<f64>) ->
         }
     }
     let conservation_ok = |r: &Run| {
-        let l = ledger(r, surge.as_ref(), spray.as_ref(), ctx.set.quadrature_closure_factor);
+        let l = ledger(
+            r,
+            surge.as_ref(),
+            spray.as_ref(),
+            ctx.set.quadrature_closure_factor,
+        );
         l["mass"]["within_solver_tolerance"].as_bool() == Some(true)
             && l["boron"]["within_solver_tolerance"].as_bool() == Some(true)
     };

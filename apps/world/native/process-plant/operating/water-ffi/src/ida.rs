@@ -130,8 +130,7 @@ type Jacobian = unsafe extern "C" fn(
 ) -> c_int;
 type Roots = unsafe extern "C" fn(*mut c_void, f64, *const f64, *const f64, *mut f64) -> c_int;
 #[cfg(feature = "quadratures")]
-type Quadrature =
-    unsafe extern "C" fn(*mut c_void, f64, *const f64, *const f64, *mut f64) -> c_int;
+type Quadrature = unsafe extern "C" fn(*mut c_void, f64, *const f64, *const f64, *mut f64) -> c_int;
 const IDA_SUCCESS: c_int = 0;
 const IDA_TSTOP_RETURN: c_int = 1;
 const IDA_ROOT_RETURN: c_int = 2;
@@ -366,8 +365,7 @@ pub fn quadratures_linked() -> bool {
     linked
 }
 #[cfg(not(feature = "quadratures"))]
-const NO_QUADRATURES: &str =
-    "stock IDA has no quadratures: this build links IDA, not IDAS (build with the quadratures feature)";
+const NO_QUADRATURES: &str = "stock IDA has no quadratures: this build links IDA, not IDAS (build with the quadratures feature)";
 pub struct Ida<S: System> {
     handle: NonNull<c_void>,
     context: Box<Context<S>>,
@@ -624,7 +622,9 @@ impl<S: System> Ida<S> {
     pub fn set_init_step(&mut self, step: f64) -> Result<()> {
         self.configurable("initial step")?;
         if !step.is_finite() || step <= 0. {
-            return Err(format!("IDA initial step {step} must be finite and positive"));
+            return Err(format!(
+                "IDA initial step {step} must be finite and positive"
+            ));
         }
         let code = unsafe { operating_ida_init_step(self.handle.as_ptr(), step) };
         self.check(code)
@@ -671,7 +671,8 @@ impl<S: System> Ida<S> {
             return Err("IDAS quadratures were not initialized with this length".into());
         }
         let mut time = 0.;
-        let code = unsafe { operating_ida_quadrature(self.handle.as_ptr(), &mut time, q.as_mut_ptr()) };
+        let code =
+            unsafe { operating_ida_quadrature(self.handle.as_ptr(), &mut time, q.as_mut_ptr()) };
         self.check(code)?;
         Ok(time)
     }

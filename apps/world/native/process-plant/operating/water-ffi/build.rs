@@ -34,7 +34,11 @@ fn main() {
         // The quadratures feature compiles the same glue against stock IDAS,
         // SUNDIALS's IDA with quadratures, from the same release.
         let idas = env::var_os("CARGO_FEATURE_QUADRATURES").is_some();
-        let header = if idas { "include/idas/idas.h" } else { "include/ida/ida.h" };
+        let header = if idas {
+            "include/idas/idas.h"
+        } else {
+            "include/ida/ida.h"
+        };
         assert!(prefix.is_absolute() && prefix.join(header).is_file());
         // These headers define the ABI of this glue. A verified prefix can be
         // rebuilt in place; an unchanged path must not leave stale C objects.
