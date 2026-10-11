@@ -535,11 +535,8 @@ export const evaluate = async (
   }
 
   const makeResult = (decision: Decision): EvalResult => {
-    // Emit `eval_completed` exactly once per evaluate() call. This is the
-    // single source of truth for "this agent is done" — anything that
-    // previously polled agent.state can rely on this firing on every
-    // terminal path because every `return` in evaluate() routes through
-    // makeResult.
+    // Standalone evaluator completion. The AI Agent wraps this stream and
+    // owns its broader turn lifetime (preparation, cancellation and delivery).
     onEvent?.({ kind: 'eval_completed', outcome: decision.response.action })
     return {
       decision: {
@@ -561,6 +558,7 @@ export const evaluate = async (
 
   try {
     for (let toolRound = 0; ; toolRound++) {
+      signal?.throwIfAborted()
       const request: ChatRequest = {
         model: continuationModel(context, config.model),
         messages: context as ReadonlyArray<{ role: 'system' | 'user' | 'assistant'; content: string }>,
@@ -574,6 +572,9 @@ export const evaluate = async (
 
       captureRequest(request)
       const streamResult = await callLLMOnce(llmProvider, request, onEvent, signal)
+      // A provider or tool may finish despite cancellation. Do not start
+      // another model request or execute its newly returned tool calls.
+      signal?.throwIfAborted()
       totalGenerationMs += streamResult.durationMs
       metrics = mergeMetrics(metrics, streamResult.metrics)
       assertCompleteOutput(streamResult.finishReason)
@@ -606,6 +607,7 @@ export const evaluate = async (
           onEvent?.({ kind: 'tool_start', tool: call.tool, callId: call.callId ?? String(i) })
         }
         const results = await toolExecutor(calls, triggerRoomId, signal, options?.executionTurnId)
+        signal?.throwIfAborted()
         for (let i = 0; i < results.length; i++) {
           const call = calls[i]
           const result = results[i]
