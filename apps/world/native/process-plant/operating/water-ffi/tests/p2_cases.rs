@@ -363,9 +363,14 @@ impl Context {
     fn lift_root_bound(&self) -> f64 {
         self.set.tolerance_classes.relief_lift_scaled_absolute
     }
+    /// Writes a new receipt; an existing receipt is never overwritten.
     fn write(&self, id: &str, receipt: &Value) {
         std::fs::create_dir_all(&self.receipts_dir).unwrap();
         let path = format!("{}/{id}.json", self.receipts_dir);
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "receipt {path} exists; move the previous run's receipts first"
+        );
         std::fs::write(&path, serde_json::to_vec_pretty(receipt).unwrap()).unwrap();
         println!("receipt {path}");
     }
@@ -1912,7 +1917,8 @@ fn benchmark(ctx: &Context, entry: &Entry, deadline: f64) -> Value {
         "verdict":if failure.is_none() { "REPORTED (not a P2 gate)" } else { "FAILED RUN" }})
 }
 
-fn run_set(ids: Option<&[&str]>, write: bool, smoke: Option<f64>) -> Value {
+/// Runs the named cases (all when `None`); `write` names the receipt suffix.
+fn run_set(ids: Option<&[&str]>, write: Option<&str>, smoke: Option<f64>) -> Value {
     let ctx = Context::load();
     let set_started = cpu_s();
     let deadline = set_started + ctx.set.cpu_bound_s;
@@ -1936,8 +1942,8 @@ fn run_set(ids: Option<&[&str]>, write: bool, smoke: Option<f64>) -> Value {
         receipt["load_average"] = json!({"start":load_start,"end":load_average(),"cores":8,
             "note":"process CPU on the shared machine; the S1 declaration's hygiene rule replays a CPU-only miss once on a quiet machine when the 1-minute load exceeds 8"});
         summary.push(json!({"case":entry.id,"gate":entry.gate,"verdict":receipt["verdict"],"cpu_s":cpu,"load_average":receipt["load_average"]}));
-        if write {
-            ctx.write(&entry.id, &receipt);
+        if let Some(suffix) = write {
+            ctx.write(&format!("{}{suffix}", entry.id), &receipt);
         } else {
             let dump = std::env::var("LD01_P2_SMOKE_DUMP").ok();
             match dump {
@@ -1956,8 +1962,8 @@ fn run_set(ids: Option<&[&str]>, write: bool, smoke: Option<f64>) -> Value {
     }
     let total = cpu_s() - set_started;
     let set = json!({"kind":"ld01-p2-case-set","provenance":ctx.provenance,"load_average_end":load_average(),"cpu_bound_s":ctx.set.cpu_bound_s,"set_cpu_s":total,"within_bound":total <= ctx.set.cpu_bound_s,"cases":summary});
-    if write {
-        ctx.write("set", &set);
+    if let Some(suffix) = write {
+        ctx.write(&format!("set{suffix}"), &set);
     }
     let _ = &ctx.wiki;
     let _ = &ctx.packet_path;
@@ -1968,7 +1974,7 @@ fn run_set(ids: Option<&[&str]>, write: bool, smoke: Option<f64>) -> Value {
 #[test]
 #[ignore = "requires the P2 packet, the wiki, maintained IF97 and stock IDA/KLU"]
 fn p2_case_set() {
-    let set = run_set(None, true, None);
+    let set = run_set(None, Some(""), None);
     println!("{}", serde_json::to_string_pretty(&set).unwrap());
 }
 
@@ -1982,5 +1988,17 @@ fn p2_harness_smoke() {
     let duration = std::env::var("LD01_P2_SMOKE_DURATION_S")
         .ok()
         .map(|d| d.parse::<f64>().expect("smoke duration"));
-    run_set(Some(&ids), false, duration);
+    run_set(Some(&ids), None, duration);
+}
+
+/// The S1 declaration's hygiene replay: a CPU-only miss under a 1-minute load
+/// above 8 is run once more on a quiet machine. The named cases (comma
+/// separated in `LD01_P2_REPLAY`) run in full, with receipts `<id>-replay.json`.
+#[test]
+#[ignore = "requires the P2 packet, the wiki, maintained IF97 and stock IDA/KLU"]
+fn p2_case_replay() {
+    let ids = std::env::var("LD01_P2_REPLAY").expect("LD01_P2_REPLAY lists case ids");
+    let ids: Vec<&str> = ids.split(',').collect();
+    let set = run_set(Some(&ids), Some("-replay"), None);
+    println!("{}", serde_json::to_string_pretty(&set).unwrap());
 }
