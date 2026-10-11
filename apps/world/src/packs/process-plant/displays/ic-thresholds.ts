@@ -33,6 +33,8 @@ export interface ComposedDisplayThreshold {
    * guessed from its id or title; ACTUATION where it names none.
    */
   readonly action: string
+  /** Present where its action is the reactor trip (its first-out group says so): of limits acting together, it is named first. */
+  readonly reactorTrip?: true
   /** The declared operating modes the rule only acts in, as a display names them where room is short ("Modes 1–2"). */
   readonly modeLabel?: string
   /** The same modes as the Plant names them ("Power operation or Startup"). */
@@ -109,6 +111,12 @@ export const actionOf = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule):
   if (kind === 'control') return 'CTL'
   return firstOutGroupOf(plant, rule)?.shortLabel ?? UNDECLARED_ACTION
 }
+
+// What a rule does, and whether that is the reactor trip.
+const actionFields = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule): Pick<ComposedDisplayThreshold, 'action' | 'reactorTrip'> =>
+  icRuleKind(rule) === 'trip' && firstOutGroupOf(plant, rule)?.reactorTrip === true
+    ? { action: actionOf(plant, rule), reactorTrip: true }
+    : { action: actionOf(plant, rule) }
 
 /**
  * Declared modes as a display names them where room is short: by their short
@@ -234,7 +242,7 @@ const readIcThresholds = (
         label: labelFor(rule),
         kind: icRuleKind(rule),
         ...(severity === undefined ? {} : { severity }),
-        action: actionOf(plant, rule),
+        ...actionFields(plant, rule),
         operator: condition.operator,
         direction: condition.operator === '<' || condition.operator === '<=' ? 'low' : 'high',
         value: condition.value,
@@ -254,7 +262,7 @@ const readIcThresholds = (
         label: labelFor(rule),
         kind: icRuleKind(rule),
         ...(severity === undefined ? {} : { severity }),
-        action: actionOf(plant, rule),
+        ...actionFields(plant, rule),
         operator: gated.limit.operator,
         direction: gated.limit.operator === '<' || gated.limit.operator === '<=' ? 'low' : 'high',
         value: gated.limit.value,

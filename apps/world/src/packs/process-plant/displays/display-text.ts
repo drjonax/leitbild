@@ -139,16 +139,52 @@ export const thresholdFullName = (
 ): string => `${thresholdName(threshold, unit)}${threshold.modeLabel === undefined ? '' : ` (${threshold.modeLabel})`}`
 
 export interface ThresholdMargin {
+  /** The most severe limit at that value (bySeverity); the margin is to it. */
   readonly threshold: ComposedDisplayThreshold
   /** Distance before the rule acts, in native units; negative once the value is beyond it. */
   readonly margin: number
+  /**
+   * The other limits in force at the same value and side, most severe first:
+   * the reactor trip and the AFW start at 20 % act together, and a margin
+   * names both ("LO-LO 20 % · RX TRIP + AFW START").
+   */
+  readonly alongside?: ReadonlyArray<ComposedDisplayThreshold>
 }
+
+const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
+
+/**
+ * Most severe first, as a chip, a margin and a line's label order limits
+ * that act together: the reactor trip, then other automatic actions, then
+ * alarms by their severity.
+ */
+export const bySeverity = (
+  left: Pick<ComposedDisplayThreshold, 'kind' | 'severity' | 'reactorTrip'>,
+  right: Pick<ComposedDisplayThreshold, 'kind' | 'severity' | 'reactorTrip'>,
+): number =>
+  Number(right.reactorTrip === true) - Number(left.reactorTrip === true)
+  || Number(right.kind === 'trip') - Number(left.kind === 'trip')
+  || severityRank[left.severity ?? 'warning'] - severityRank[right.severity ?? 'warning']
 
 /** How far a value is from acting on a threshold: negative once beyond it. */
 export const marginTo = (value: number, threshold: ComposedDisplayThreshold): ThresholdMargin => ({
   threshold,
   margin: threshold.operator === '<' || threshold.operator === '<=' ? value - threshold.value : threshold.value - value,
 })
+
+/**
+ * A margin to a limit with every other limit among `thresholds` that acts at
+ * its value on its side, named by the most severe of them: the QA review's
+ * "8.7 % above LO-LO 20 % · AFW START" hid the reactor trip at the same 20 %.
+ */
+export const coincidentMargin = (margin: ThresholdMargin, thresholds: ReadonlyArray<ComposedDisplayThreshold>): ThresholdMargin => {
+  const at = margin.threshold
+  const together = thresholds
+    .filter(threshold => threshold.kind !== 'control' && threshold.value === at.value && threshold.direction === at.direction)
+  const ordered = [...new Set([at, ...together])].sort(bySeverity)
+  const [first, ...alongside] = ordered
+  return { threshold: first!, margin: margin.margin, ...(alongside.length === 0 ? {} : { alongside }) }
+}
 
 /**
  * Whether the value is past the threshold, so its rule acts: beyond it, or on
@@ -178,19 +214,41 @@ export const nearestThresholdMargin = (
 }
 
 /**
+ * What the limits a margin names do, most severe first, with the modes each
+ * alone acts in where `modes`: "RX TRIP (Modes 1–2) + AFW START".
+ */
+const actionsText = (margin: ThresholdMargin, modes: boolean): string =>
+  [margin.threshold, ...(margin.alongside ?? [])]
+    .map(threshold => `${threshold.action}${modes && threshold.modeLabel !== undefined ? ` (${threshold.modeLabel})` : ''}`)
+    .join(' + ')
+
+/**
+ * The limit a margin names, as its line is labelled, with every action at
+ * it: "LO-LO 20 % · RX TRIP + AFW START"; its order and value lead, as an
+ * answer cites it.
+ */
+export const marginLimitName = (margin: ThresholdMargin, unit: string): string => {
+  const label = unitLabel(unit)
+  return `${limitOrderName(margin.threshold)} ${displayValue(margin.threshold.value, unit)}${label === '' ? '' : ` ${label}`} · ${actionsText(margin, false)}`
+}
+
+/**
  * A margin worded from whole to shortest, each form dropping one more whole
- * part so a narrow tile never cuts a word: first the mode qualifier, then the
- * limit's unit, then its value. How far away the limit is, with its unit, and
- * which limit it is (its order and action) always stay.
+ * part so a narrow tile never cuts a word: first the mode qualifiers, then
+ * the limit's unit, then its value. How far away the limit is, with its
+ * unit, which limit it is (its order) and every action at it always stay.
  */
 export const marginTextForms = (margin: ThresholdMargin, unit: string, resolution: number | null = null): ReadonlyArray<string> => {
   const threshold = margin.threshold
   const lead = isPast(margin) ? 'past' : `${formatQuantity(margin.margin, unit, resolution)} ${threshold.direction === 'low' ? 'above' : 'below'}`
+  const label = unitLabel(unit)
+  const value = `${displayValue(threshold.value, unit)}`
+  const order = limitOrderName(threshold)
   return [...new Set([
-    `${lead} ${thresholdFullName(threshold, unit)}`,
-    `${lead} ${thresholdName(threshold, unit)}`,
-    `${lead} ${thresholdName(threshold, unit, { withUnit: false })}`,
-    `${lead} ${limitKindName(threshold)}`,
+    `${lead} ${order} ${value}${label === '' ? '' : ` ${label}`} · ${actionsText(margin, true)}`,
+    `${lead} ${order} ${value}${label === '' ? '' : ` ${label}`} · ${actionsText(margin, false)}`,
+    `${lead} ${order} ${value} · ${actionsText(margin, false)}`,
+    `${lead} ${order} · ${actionsText(margin, false)}`,
   ])]
 }
 

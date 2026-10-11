@@ -195,6 +195,16 @@ describe('answers whose directions and limits agree with the display', () => {
     expect(answerViewIssues('PT-455 is 13.2 MPa and falling, 0.5 MPa above LO-LO 12.7 · SI; HI ALM 16 MPa lies behind it.' + FENCE, view([moving(siPressure(13.2), -1, 'falling', { name: 'LO-LO 12.7 MPa · SI', value: 12.7 })]))).toEqual([])
   })
 
+  test('loss-main-feedwater at 50 s: the limit ahead named with every action at it, by its order and value', () => {
+    // World names coincident limits together, most severe first (QA review of run 22).
+    const ahead = { name: 'LO-LO 20 % · RX TRIP + AFW START', value: 20, timeToLimitMs: 14_700 }
+    const levels = view(sgLevels(28.7).map(level => moving(level, -35.6, 'falling', ahead)))
+    expect(answerViewIssues('All four SG levels are 28.7 % and falling 35.6 %/min, 8.7 % above LO-LO 20 % · RX TRIP + AFW START (≈15 s).' + FENCE, levels)).toEqual([])
+    expect(answerViewIssues('SG A level is 28.7 % and falling, 46.3 % below HI ALM 75 %.' + FENCE, view([moving(sgLevels(28.7)[0]!, -35.6, 'falling', ahead)]))).toEqual([
+      'It names HI ALM 75 % for SG-A-LVL-NR, but the display names LO-LO 20 % · RX TRIP + AFW START as the limit ahead as it is falling: name LO-LO 20 % · RX TRIP + AFW START as the display does.',
+    ])
+  })
+
   test('turbine-trip: the limit ahead, and watching for either direction', () => {
     expect(answerViewIssues(
       'Over the next minutes, watch all four steam-generator levels for a fall or divergence. The levels are about **73%**, only **2 percentage points below HI ALM 75%**, so watch for a rise as well as a fall.' + FENCE,

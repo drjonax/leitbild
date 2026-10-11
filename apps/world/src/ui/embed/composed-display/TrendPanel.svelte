@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ComposedTrendStrip, ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
-  import { displayValue, formatQuantity, offScale, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
+  import { displayValue, formatQuantity, limitOrderName, offScale, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import {
     limitInScale,
     paddedDomain,
@@ -14,7 +14,7 @@
   import { idleText, limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { HOLD_GAP_MS, rateWindowMs, trendReading, type GateStates, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
-  import { fitName, penStroke } from './pen-style.ts'
+  import { penStroke } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
 
   // One strip of a trend: one measurement of parallel equipment on its own
@@ -91,20 +91,49 @@
     return raw === null ? null : paddedDomain(raw, resolution)
   })
 
-  // Label rows: one per limit, its order, value and action ("LO-LO 20 · AFW
-  // START"); one that does not act now adds a row naming the modes it acts in
-  // ("Modes 1–2") or the on/off states it waits for ("SI-BLOCKED off"), drawn
-  // faint like its line.
+  // A line's label: its order and value, then what each limit there does,
+  // those acting now first and the most severe first (limitLines), one that
+  // does not act now with the modes it acts in or the on/off states it waits
+  // for in brackets, drawn faint like its line: "LO-LO 20 · AFW START + RX
+  // TRIP (Modes 1–2)". Where the gutter is too narrow, whole parts wrap onto
+  // rows under it, each led by its "+" or bracket and indented, so a mode
+  // never reads as a limit of its own (QA review: the faint "Mode 1").
   const LINE = 12
-  /** The modes line under an idle limit's name. */
-  const MODES_LINE = 10
+  /** How far a label's continued rows are indented. */
+  const CONTINUED = 8
   const measureLabel = textMeasure(panelFont(10, 700))
-  const measureModes = textMeasure(panelFont(9))
   const rowText = (threshold: ComposedTrendThreshold): string => thresholdName(threshold, strip.unit, { withUnit: false })
+  interface LabelPart { readonly text: string; readonly member: ComposedTrendThreshold; readonly idle: boolean }
+  const labelParts = (line: (typeof lines)[number]): ReadonlyArray<LabelPart> => line.members.flatMap((member, index) => {
+    const idle = limitLook(member, mode, gates) === 'idle'
+    return [
+      { text: `${index === 0 ? '' : '+ '}${member.action}`, member, idle },
+      ...(idle ? [{ text: `(${idleText(member, mode)})`, member, idle }] : []),
+    ]
+  })
+  /** The label's rows: its head with as many whole parts as fit the gutter, then the rest, each row as many as fit; a fold count follows the head's row. */
+  const labelRows = (head: string, parts: ReadonlyArray<LabelPart>): ReadonlyArray<ReadonlyArray<LabelPart>> => {
+    const rows: Array<Array<LabelPart>> = [[]]
+    let used = head
+    for (const part of parts) {
+      const row = rows.at(-1)!
+      const next = `${used}${row.length === 0 ? '' : ' '}${part.text}`
+      if (row.length === 0 || measureLabel(next) + (rows.length === 1 ? 0 : CONTINUED) <= GUTTER_TEXT) {
+        row.push(part)
+        used = next
+      } else {
+        rows.push([part])
+        used = part.text
+      }
+    }
+    return rows
+  }
   // The right gutter is as wide as its widest label, room for a fold count included, within bounds.
   const GUTTER_MIN = 118
   const GUTTER_MAX = 190
   const gutter = $derived(Math.min(GUTTER_MAX, Math.max(GUTTER_MIN, Math.ceil(Math.max(0, ...limitThresholds.map(threshold => measureLabel(`▲ ${rowText(threshold)} (+9)`)))) + 14)))
+  const headOf = (line: (typeof lines)[number], edge: 'above' | 'below' | null): string =>
+    `${edge === null ? '' : edge === 'above' ? '▲ ' : '▼ '}${limitOrderName(line.members[0]!)} ${displayValue(line.value, strip.unit)} · `
   const pad = $derived({ left: 44, right: gutter, top: 18, bottom: timeAxis ? 22 : 0 })
   const GUTTER_TEXT = $derived(gutter - 12)
 
@@ -150,16 +179,10 @@
       ahead: line.members.some(member => member.ruleIds.some(ruleId => namedRuleIds.has(ruleId))),
       inForce: line.look !== 'idle',
     })), current)
-    const rowsOf = (line: (typeof lines)[number]) => line.members.flatMap(member => {
-      const idle = limitLook(member, mode, gates) === 'idle'
-      return [
-        { kind: 'name' as const, member, idle, size: LINE },
-        ...(idle ? [{ kind: 'modes' as const, member, idle, size: MODES_LINE }] : []),
-      ]
-    })
+    const rowCount = (line: (typeof lines)[number]): number => labelRows(headOf(line, edgeOf(line.value)), labelParts(line)).length
     const slots = lines.map((line): LabelSlot => {
       const edge = edgeOf(line.value)
-      const size = rowsOf(line).reduce((sum, row) => sum + row.size, 0)
+      const size = rowCount(line) * LINE
       return {
         key: line.key,
         want: edge === 'above' ? labelRoom.start : edge === 'below' ? labelRoom.end - size : y(line.value) - LINE / 2,
@@ -174,23 +197,18 @@
       const folded = label.folded.map(key => byKey.get(key)!)
       const edge = edgeOf(line.value)
       const foldedSeverity = worst(folded.flatMap(other => other.members.map(member => limitSeverity(member, activeRuleIds, mode, gates))))
-      let top = label.start
-      const rows = rowsOf(line).map((row, index) => {
-        const at = top + row.size / 2
-        top += row.size
-        const arrow = index === 0 && edge !== null ? (edge === 'above' ? '▲ ' : '▼ ') : ''
-        const count = index === 0 && folded.length > 0 ? ` (+${folded.reduce((sum, other) => sum + other.members.length, 0)})` : ''
-        return {
-          key: `${row.kind}:${row.member.ruleId}`,
-          y: at,
-          idle: row.idle,
-          modes: row.kind === 'modes',
-          // Thresholds are configured numbers; show them exactly, never rounded. Whole words only; the tooltip keeps every mode.
-          text: row.kind === 'modes' ? fitName(idleText(row.member, mode), text => measureModes(text) <= GUTTER_TEXT) : `${arrow}${rowText(row.member)}${count}`,
-          // A folded line's alarm colours the label it folds into.
-          severity: row.kind === 'modes' ? null : limitSeverity(row.member, activeRuleIds, mode, gates) ?? (index === 0 ? foldedSeverity : null),
-        }
-      })
+      const head = headOf(line, edge)
+      const count = folded.length > 0 ? ` (+${folded.reduce((sum, other) => sum + other.members.length, 0)})` : ''
+      const worstActive = worst(line.members.map(member => limitSeverity(member, activeRuleIds, mode, gates)))
+      const rows = labelRows(head, labelParts(line)).map((parts, index) => ({
+        key: `${index}:${parts.map(part => part.text).join(' ')}`,
+        y: label.start + index * LINE + LINE / 2,
+        continued: index > 0,
+        // The head takes the colour of the most severe active limit at the line, or of one folded into it.
+        head: index === 0 ? { text: head, severity: worstActive ?? foldedSeverity, idle: line.look === 'idle' } : null,
+        parts: parts.map(part => ({ text: part.text, idle: part.idle, severity: part.idle ? null : limitSeverity(part.member, activeRuleIds, mode, gates) })),
+        count: index === 0 ? count : '',
+      }))
       return {
         key: label.key,
         edge,
@@ -285,7 +303,7 @@
           <polyline class="leader" points={`${pad.left + plotWidth},${label.lineY} ${pad.left + plotWidth + 4},${label.lineY} ${pad.left + plotWidth + 8},${label.y}`} />
         {/if}
         {#each label.rows as row (row.key)}
-          <text class={`threshold-label ${row.severity === null ? '' : `active-${row.severity}`}`} class:idle={row.idle} class:modes={row.modes} x={pad.left + plotWidth + 10} y={row.y} dominant-baseline="middle"><title>{label.title}</title>{row.text}</text>
+          <text class="threshold-label" x={pad.left + plotWidth + 10 + (row.continued ? CONTINUED : 0)} y={row.y} dominant-baseline="middle"><title>{label.title}</title>{#if row.head !== null}<tspan class={row.head.severity === null ? '' : `active-${row.head.severity}`} class:idle={row.head.idle}>{row.head.text}</tspan>{/if}{#each row.parts as part, index (index)}<tspan class={part.severity === null ? '' : `active-${part.severity}`} class:idle={part.idle}>{index === 0 ? '' : ' '}{part.text}</tspan>{/each}{#if row.count !== ''}<tspan>{row.count}</tspan>{/if}</text>
         {/each}
       {/each}
       {#each controlThresholds.filter(threshold => threshold.value >= domain!.min && threshold.value <= domain!.max) as threshold (threshold.ruleId)}
@@ -327,13 +345,12 @@
   /* A limit that does not act in the current mode: present, but plainly not in force. */
   .threshold.idle { stroke-dasharray: 3 4; stroke-opacity: 0.35; }
   .leader { fill: none; stroke: var(--element-neutral-color); stroke-width: 1; stroke-opacity: 0.7; }
-  .threshold-label { fill: var(--element-neutral-color); font-size: 10px; font-variant-numeric: tabular-nums; }
-  .threshold-label.idle { fill-opacity: 0.6; }
-  .threshold-label.modes { font-size: 9px; }
+  .threshold-label { fill: var(--element-neutral-color); font-size: 10px; font-variant-numeric: tabular-nums; white-space: pre; }
+  .threshold-label .idle { fill-opacity: 0.6; }
   /* Colour appears only while the rule behind the line is active, keyed by its severity. */
-  .threshold-label.active-critical { fill: var(--alert-alarm-color); font-weight: 700; }
-  .threshold-label.active-warning { fill: var(--alert-warning-color); font-weight: 700; }
-  .threshold-label.active-notice, .threshold-label.active-info { fill: var(--alert-caution-color); font-weight: 700; }
+  .threshold-label .active-critical { fill: var(--alert-alarm-color); font-weight: 700; }
+  .threshold-label .active-warning { fill: var(--alert-warning-color); font-weight: 700; }
+  .threshold-label .active-notice, .threshold-label .active-info { fill: var(--alert-caution-color); font-weight: 700; }
   .hatch { stroke: var(--border-divider-color); stroke-width: 1; }
   .offscale { stroke: var(--element-neutral-color); stroke-width: 0.5; stroke-opacity: 0.6; }
   .gap-label { fill: var(--element-neutral-color); font-size: 11px; }

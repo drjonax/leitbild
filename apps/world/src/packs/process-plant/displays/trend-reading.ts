@@ -1,4 +1,4 @@
-import { displayValue, formatValue, isPast, marginTo, marginText, nearestThresholdMargin, offScale, RESOLUTION_FRACTION, unitLabel, type ThresholdMargin } from './display-text.ts'
+import { bySeverity, coincidentMargin, displayValue, formatValue, isPast, marginTo, marginText, nearestThresholdMargin, offScale, RESOLUTION_FRACTION, unitLabel, type ThresholdMargin } from './display-text.ts'
 import type { ComposedDisplayThreshold } from './ic-thresholds.ts'
 
 // How a signal's recent history reads: its rate over the display's window,
@@ -225,8 +225,9 @@ export const timeToThresholdText = (value: number, rate: number | null, threshol
 /**
  * The limit a moving value heads for: of the limits in force, the nearest
  * whose value lies ahead of it in the direction it moves, whether it has not
- * reached that limit yet or is past it and moving back across it. Null where
- * none lies ahead.
+ * reached that limit yet or is past it and moving back across it, named with
+ * every other limit acting at its value (coincidentMargin). Null where none
+ * lies ahead.
  */
 export const limitAhead = (
   value: number,
@@ -237,13 +238,13 @@ export const limitAhead = (
     .filter(threshold => threshold.kind !== 'control' && (travel === 'rising' ? threshold.value > value : threshold.value < value))
   if (ahead.length === 0) return null
   const nearest = ahead.reduce((best, candidate) => Math.abs(candidate.value - value) < Math.abs(best.value - value) ? candidate : best)
-  return marginTo(value, nearest)
+  return coincidentMargin(marginTo(value, nearest), thresholds)
 }
 
 /** Of the limits in force the value is past, the outermost on the side it is past: 0 % is past LO-LO 20 %, not only past LO 30 %. */
 const outermostPassed = (value: number, thresholds: ReadonlyArray<ComposedDisplayThreshold>): ThresholdMargin | null => {
   const passed = thresholds.filter(threshold => threshold.kind !== 'control').map(threshold => marginTo(value, threshold)).filter(isPast)
-  return passed.length === 0 ? null : passed.reduce((outermost, candidate) => candidate.margin > outermost.margin ? candidate : outermost)
+  return passed.length === 0 ? null : coincidentMargin(passed.reduce((outermost, candidate) => candidate.margin > outermost.margin ? candidate : outermost), thresholds)
 }
 
 /**
@@ -304,7 +305,8 @@ export const limitsInForce = (
 
 /**
  * The most severe of a signal's limits in force whose I&C rule is active now,
- * trips first: what its chip and its drawing's badge both name.
+ * the reactor trip first, then other trips (bySeverity): what its chip and
+ * its drawing's badge both name.
  */
 export const activeThreshold = <T extends ComposedDisplayThreshold>(
   thresholds: ReadonlyArray<T>,
@@ -313,9 +315,7 @@ export const activeThreshold = <T extends ComposedDisplayThreshold>(
   gates: GateStates,
 ): T | null =>
   limitsInForce(thresholds, mode, gates).filter(threshold => threshold.kind !== 'control' && activeRuleIds.has(threshold.ruleId))
-    .sort((left, right) => Number(right.kind === 'trip') - Number(left.kind === 'trip') || severityRank[left.severity ?? 'warning'] - severityRank[right.severity ?? 'warning'])[0] as T | undefined ?? null
-
-const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
+    .sort(bySeverity)[0] as T | undefined ?? null
 
 /**
  * What a legend row says of a signal's limits, read in the direction the
@@ -406,7 +406,7 @@ export const trendReading = (config: {
     const behind = outermostPassed(value, inForce)
     return { ...reading, limit: behind !== null ? { kind: 'past', margin: behind, back: null } : { kind: 'clear', direction: heading === 'falling' ? 'low' : 'high' } }
   }
-  const margin = nearestThresholdMargin(value, inForce)!
+  const margin = coincidentMargin(nearestThresholdMargin(value, inForce)!, inForce)
   if (isPast(margin)) return { ...reading, limit: { kind: 'past', margin, back: null } }
   // Going nowhere, a value is near a limit only within a quarter of the scale
   // it reads over: farther, a margin says nothing an operator acts on (a

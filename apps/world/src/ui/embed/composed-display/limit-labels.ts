@@ -1,4 +1,5 @@
 import type { ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
+import { bySeverity } from '../../../packs/process-plant/displays/display-text.ts'
 import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
 import { gatesHold, limitInForce, type GateStates, type PlantModeNow } from '../../../packs/process-plant/displays/trend-reading.ts'
 
@@ -121,7 +122,7 @@ export const limitSeverity = (
 export interface LimitLine<T> {
   readonly key: string
   readonly value: number
-  /** Those that act now first, then trips before alarms: the order their labels stack in. */
+  /** Those that act now first, then the most severe first (bySeverity): the order their label names them in. */
   readonly members: ReadonlyArray<T>
   /** As the member most in force: acting, then qualified, then idle. */
   readonly look: 'acting' | 'qualified' | 'idle'
@@ -133,12 +134,12 @@ export interface LimitLine<T> {
  * identical "LO TRIP 20" lines for the reactor trip and the AFW start),
  * highest value first as they read down a gutter.
  */
-export const limitLines = <T extends Pick<ComposedTrendThreshold, 'value' | 'kind' | 'modeIds' | 'gates'>>(thresholds: ReadonlyArray<T>, mode: PlantModeNow, gates: GateStates): ReadonlyArray<LimitLine<T>> => {
+export const limitLines = <T extends Pick<ComposedTrendThreshold, 'value' | 'kind' | 'severity' | 'reactorTrip' | 'modeIds' | 'gates'>>(thresholds: ReadonlyArray<T>, mode: PlantModeNow, gates: GateStates): ReadonlyArray<LimitLine<T>> => {
   const rank = { acting: 0, qualified: 1, idle: 2 } as const
   const values = [...new Set(thresholds.filter(threshold => threshold.kind !== 'control').map(threshold => threshold.value))].sort((left, right) => right - left)
   return values.map(value => {
     const members = thresholds.filter(threshold => threshold.kind !== 'control' && threshold.value === value)
-      .sort((left, right) => rank[limitLook(left, mode, gates)] - rank[limitLook(right, mode, gates)] || Number(right.kind === 'trip') - Number(left.kind === 'trip'))
+      .sort((left, right) => rank[limitLook(left, mode, gates)] - rank[limitLook(right, mode, gates)] || bySeverity(left, right))
     const look = members.map(member => limitLook(member, mode, gates)).sort((left, right) => rank[left] - rank[right])[0]!
     return { key: String(value), value, members, look, kind: members.some(member => member.kind === 'trip') ? 'trip' : 'alarm' }
   })

@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import type { ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
-import { activeThreshold, limitStateText, projectedMinutes, rateChange, rateText, rateWindowMs, readingLookBackMs, readingStateText, travelOf, travelText, trendPoints, trendReading, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { marginLimitName, marginTextForms } from '../src/packs/process-plant/displays/display-text.ts'
+import { activeThreshold, limitStateText, projectedMinutes, rateChange, rateText, rateWindowMs, readingLookBackMs, readingStateText, travelOf, travelText, trendPoints, trendReading, type LimitState, type TrendPoint } from '../src/packs/process-plant/displays/trend-reading.ts'
 
 // Pressurizer pressure limits as the reference PWR's I&C draws them.
 const pressureLimits: ReadonlyArray<ComposedDisplayThreshold> = [
-  { ruleId: 'pzr-trip-low', label: 'Pressurizer pressure low trip', kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 13.8, order: 2, action: 'RX TRIP', modeLabel: 'Mode 1', modeNames: 'Power operation', modeIds: ['powerOperation'] },
+  { ruleId: 'pzr-trip-low', label: 'Pressurizer pressure low trip', kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 13.8, order: 2, action: 'RX TRIP', reactorTrip: true, modeLabel: 'Mode 1', modeNames: 'Power operation', modeIds: ['powerOperation'] },
   { ruleId: 'pzr-low', label: 'Pressurizer pressure low', kind: 'alarm', severity: 'warning', operator: '<', direction: 'low', value: 14.8, order: 1, action: 'ALM' },
   { ruleId: 'pzr-spray', label: 'Spray', kind: 'control', operator: '>', direction: 'high', value: 15.65, order: 1, action: 'CTL' },
   { ruleId: 'pzr-high', label: 'Pressurizer pressure high', kind: 'alarm', severity: 'warning', operator: '>', direction: 'high', value: 16, order: 1, action: 'ALM' },
@@ -12,7 +13,7 @@ const pressureLimits: ReadonlyArray<ComposedDisplayThreshold> = [
 // Steam generator narrow-range level limits: the AFW start acts in every mode, the reactor trip only in modes 1 and 2.
 const levelLimits: ReadonlyArray<ComposedDisplayThreshold> = [
   { ruleId: 'sg-b-afw', label: 'Steam generator B low-low level', kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 20, order: 2, action: 'AFW START' },
-  { ruleId: 'sg-b-rx-trip', label: 'Reactor trip on steam generator B low-low level', kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 20, order: 2, action: 'RX TRIP', modeLabel: 'Modes 1–2', modeNames: 'Power operation or Startup', modeIds: ['powerOperation', 'startup'] },
+  { ruleId: 'sg-b-rx-trip', label: 'Reactor trip on steam generator B low-low level', kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 20, order: 2, action: 'RX TRIP', reactorTrip: true, modeLabel: 'Modes 1–2', modeNames: 'Power operation or Startup', modeIds: ['powerOperation', 'startup'] },
   { ruleId: 'sg-b-low', label: 'Steam generator B level low', kind: 'alarm', severity: 'warning', operator: '<', direction: 'low', value: 30, order: 1, action: 'ALM' },
   { ruleId: 'sg-b-high', label: 'Steam generator B level high', kind: 'alarm', severity: 'warning', operator: '>', direction: 'high', value: 75, order: 1, action: 'ALM' },
 ]
@@ -102,6 +103,26 @@ describe('how a trend reads now', () => {
     expect(text).not.toContain('recover')
   })
 
+  test('a margin names every action at the limit it names, the most severe first', () => {
+    // QA review, loss of main feedwater at 50 s: "8.7 % above LO-LO 20 % · AFW START", though the reactor trips at the same 20 %.
+    const falling = seconds(60, second => 50 - second * 0.36)
+    const reading = readLevel(falling, falling.at(-1)!.v, { mode: powerOperation })
+    expect(reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { ruleId: 'sg-b-rx-trip' }, alongside: [{ ruleId: 'sg-b-afw' }] } })
+    const margin = (reading.limit as Extract<LimitState, { kind: 'margin' }>).margin
+    expect(marginTextForms(margin, 'percent', 0.1)).toEqual([
+      '8.4 % above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START',
+      '8.4 % above LO-LO 20 % · RX TRIP + AFW START',
+      '8.4 % above LO-LO 20 · RX TRIP + AFW START',
+      '8.4 % above LO-LO · RX TRIP + AFW START',
+    ])
+    // As an answer cites it: order and value first.
+    expect(marginLimitName(margin, 'percent')).toBe('LO-LO 20 % · RX TRIP + AFW START')
+    // In hot standby the reactor trip does not act: the margin names the AFW start alone.
+    expect(limitStateText(readLevel(falling, falling.at(-1)!.v, { mode: hotStandby }).limit!, 'percent', 0.1)).toStartWith('8.4 % above LO-LO 20 % · AFW START')
+    // Past it, both are named too.
+    expect(readingStateText(readLevel(seconds(90, () => 0), 0, { mode: powerOperation }), 'percent', 0.1)).toBe('below range · past LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START')
+  })
+
   test('past every limit on its way, it names the outermost it is past', () => {
     // Below both low limits and still falling: none ahead (porv-open), past the low-pressure trip.
     const reading = read(seconds(120, second => 5 - second * 0.005), 4.4, { activeRuleIds: new Set(['pzr-low', 'pzr-trip-low']) })
@@ -151,7 +172,8 @@ describe('how a trend reads now', () => {
     expect(reading.inAlarm).toBeNull()
     expect(limitStateText(read(null, 12, { thresholds: [] }).limit!, 'MPa')).toBe('no I&C limit')
     // The most severe limit in force with its rule active: trips before alarms.
-    expect(activeThreshold(levelLimits, new Set(['sg-b-low', 'sg-b-afw', 'sg-b-rx-trip']), powerOperation, () => undefined)?.ruleId).toMatch(/^sg-b-(afw|rx-trip)$/)
+    // Of trips acting together, the reactor trip is named first.
+    expect(activeThreshold(levelLimits, new Set(['sg-b-low', 'sg-b-afw', 'sg-b-rx-trip']), powerOperation, () => undefined)?.ruleId).toBe('sg-b-rx-trip')
     expect(activeThreshold(levelLimits, new Set(['sg-b-low', 'sg-b-rx-trip']), hotStandby, () => undefined)?.ruleId).toBe('sg-b-low')
   })
 

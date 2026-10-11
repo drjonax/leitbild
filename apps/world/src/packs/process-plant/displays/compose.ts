@@ -40,7 +40,7 @@ import {
   type ComposedPanelSize,
   type DisplayEvidence,
 } from './composition.ts'
-import { displayValue, isPast, nearestThresholdMargin, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
+import { displayValue, isPast, marginLimitName, nearestThresholdMargin, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
 import { appendPoint, COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
@@ -1371,7 +1371,7 @@ const travelContent = (entry: PenReading | undefined): Pick<EmbeddedViewContent[
   const threshold = limit.margin.threshold
   return {
     ...trend,
-    limitAhead: { name: thresholdName(threshold, pen.unit), value: displayValue(threshold.value, pen.unit), unit },
+    limitAhead: { name: marginLimitName(limit.margin, pen.unit), value: displayValue(threshold.value, pen.unit), unit },
     ...(limit.minutes === null ? {} : { timeToLimitMs: Math.max(1, Math.round(limit.minutes * 60_000)) }),
   }
 }
