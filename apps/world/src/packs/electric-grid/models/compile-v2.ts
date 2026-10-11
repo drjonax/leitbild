@@ -63,9 +63,6 @@ export interface RuntimeScales {
 
 export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOperatingPointV2, scales: RuntimeScales = {}): CompiledV2 => {
   if (!operatingPoint.compatibleModelRefs.includes(model.id)) throw new Error(`Operating Point ${operatingPoint.id} is not compatible with ${model.id}`)
-  if ((operatingPoint.branchStates ?? []).length > 0) {
-    throw new Error(`Operating Point ${operatingPoint.id}: the Grid runtime does not apply initial branch states yet; every branch starts closed`)
-  }
   const states = new Map((operatingPoint.generatorStates ?? []).map(state => [state.assetId, state]))
   const areaScale = operatingPoint.priceAreaDemandScale ?? {}
   const firstSource = (provenance: GridProvenance): string => provenance.sources[0]!
@@ -78,6 +75,8 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
     ...(bus.substationId === undefined ? {} : { sourceFeatureId: bus.substationId }),
     provenance: bus.provenance,
   }))
+  // Ratings at the Operating Point's ambient conditions replace the Model's as the branch's base ratings.
+  const ratings = new Map((operatingPoint.branchRatings ?? []).map(entry => [entry.assetId, entry]))
   const branches: GridBranchDefinition[] = model.branches.map(branch => ({
     id: branch.id,
     label: branch.label,
@@ -87,8 +86,8 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
     nominalKv: branch.nominalKv,
     ...(branch.lengthKm === undefined ? {} : { lengthKm: branch.lengthKm }),
     circuits: branch.circuits,
-    ratingMw: branch.ratingMw,
-    emergencyRatingMw: branch.emergencyRatingMw,
+    ratingMw: ratings.get(branch.id)?.ratingMw ?? branch.ratingMw,
+    emergencyRatingMw: ratings.get(branch.id)?.emergencyRatingMw ?? branch.emergencyRatingMw,
     emergencyDurationSeconds: branch.emergencyDurationSeconds,
     reactancePu: branch.reactancePu,
     resistancePu: branch.resistancePu,
@@ -142,6 +141,7 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       provenance: load.provenance,
     }
   })
+  const branchStates = new Map((operatingPoint.branchStates ?? []).map(entry => [entry.assetId, entry]))
   const newestInput = [...model.sourceBuild.inputs].map(input => input.snapshotAt).sort().at(-1)!
   const exchanges = new Map((operatingPoint.externalExchangeSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).exportMw]))
   const hvdcSchedules = new Map((operatingPoint.hvdcSchedules ?? []).map(schedule => [schedule.assetId, constantSchedule(operatingPoint, schedule.assetId, schedule.points).transferMw]))
@@ -192,6 +192,12 @@ export const compileGridModelV2 = (model: GridModelV2, operatingPoint: GridOpera
       storageStateOfCharge: scales.storageStateOfCharge ?? null,
       hvdcSetpoints: model.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: hvdcSchedules.get(link.id) ?? 0 })),
       externalExchanges: externalSystems.filter(system => system.synchronous).map(system => ({ systemId: system.id, scheduledExportMw: exchanges.get(system.id) ?? 0 })),
+      // An Operating Point lists only the branches that start open or derated (a summer ambient
+      // rating is an availability below 1); every other branch starts closed at its full rating.
+      branchStates: model.branches.map(branch => {
+        const entry = branchStates.get(branch.id)
+        return { branchId: branch.id, state: entry?.state ?? 'closed', availability: entry?.availability ?? 1 }
+      }),
     },
   }
 }

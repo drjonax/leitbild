@@ -228,7 +228,7 @@ describe('electric grid generator commands', () => {
 describe('electric grid branch commands', () => {
   test('rejects switching that changes nothing', () => {
     const { grid, send } = harness()
-    const branchId = definition.model.branches[0]!.id
+    const branchId = definition.operatingPoint.branchStates.find(entry => entry.state === 'closed' && entry.availability === 1)!.branchId
     expect(reasonOf(send(gridCloseBranchCommandKind, { assetId: branchId }))).toContain('already closed')
     expect(send(gridOpenBranchCommandKind, { assetId: branchId }).ok).toBe(true)
     expect(reasonOf(send(gridOpenBranchCommandKind, { assetId: branchId }))).toContain('already open')

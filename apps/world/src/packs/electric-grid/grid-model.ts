@@ -229,6 +229,8 @@ export interface GridOperatingPointDefinition {
   readonly hvdcSetpoints: ReadonlyArray<{ readonly linkId: string; readonly setpointMw: number }>
   /** Scheduled export of each synchronous external system's exchange (MW, positive from Norway), one per system. */
   readonly externalExchanges: ReadonlyArray<{ readonly systemId: string; readonly scheduledExportMw: number }>
+  /** Initial switching state and available fraction of the rating of each branch, one per branch in model order. */
+  readonly branchStates: ReadonlyArray<{ readonly branchId: string; readonly state: 'closed' | 'open'; readonly availability: number }>
 }
 
 export type GridAssetDefinition = GridBusDefinition | GridBranchDefinition | GridGeneratorDefinition | GridLoadDefinition | GridStorageDefinition

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { gridProjectionSchema } from '../model.ts'
 import type { GridRuntimeInstance } from '../runtime/instance.ts'
+import type { GridOperatingPointDefinition } from '../grid-model.ts'
 import { modelDiagnosticsSchema, modelFidelitySchema } from './catalog.ts'
 import { defineGridQuery, gridFor, gridPayloadSchema } from './common.ts'
 import {
@@ -22,6 +23,19 @@ const affectedLoadUnservedMw = 0
 const constrainedBranchRowLimit = 8
 const generatorRowLimit = 12
 const affectedLoadRowLimit = 8
+
+const operatingPointSummary = (operatingPoint: GridOperatingPointDefinition) => {
+  const { branchStates, ...values } = operatingPoint
+  return {
+    ...values,
+    hvdcSetpoints: operatingPoint.hvdcSetpoints.map(entry => ({ ...entry })),
+    externalExchanges: operatingPoint.externalExchanges.map(entry => ({ ...entry })),
+    initialBranchStates: {
+      openCount: branchStates.filter(entry => entry.state === 'open').length,
+      deratedCount: branchStates.filter(entry => entry.state === 'closed' && entry.availability < 1).length,
+    },
+  }
+}
 
 const automationSummary = (grid: GridRuntimeInstance) => {
   const automation = grid.definition.automation
@@ -55,6 +69,10 @@ const summaryResultSchema = z.object({
     storageStateOfCharge: finite.nullable().describe('Initial charge of every storage asset; null when the Operating Point gives none.'),
     hvdcSetpoints: z.array(z.object({ linkId: z.string(), setpointMw: finite }).strict()).describe('Initial HVDC set-points (MW, positive from the link\'s fromBusId).'),
     externalExchanges: z.array(z.object({ systemId: z.string(), scheduledExportMw: finite }).strict()).describe('Scheduled export to each synchronous external system (MW).'),
+    initialBranchStates: z.object({
+      openCount: z.number().int().nonnegative(),
+      deratedCount: z.number().int().nonnegative(),
+    }).strict().describe('Branches the Operating Point starts open, and closed branches it starts below their full rating (a summer ambient rating is such a derate); power-flow.snapshot gives each availability.'),
   }).strict(),
   automation: z.object({
     id: z.string(),
@@ -153,11 +171,7 @@ const summaryFor = (grid: GridRuntimeInstance): z.infer<typeof summaryResultSche
       sourceBuild: { ...model.sourceBuild },
       fidelity: { ...model.fidelity },
     },
-    operatingPoint: {
-      ...grid.definition.operatingPoint,
-      hvdcSetpoints: grid.definition.operatingPoint.hvdcSetpoints.map(entry => ({ ...entry })),
-      externalExchanges: grid.definition.operatingPoint.externalExchanges.map(entry => ({ ...entry })),
-    },
+    operatingPoint: operatingPointSummary(grid.definition.operatingPoint),
     automation: automationSummary(grid),
     projection: grid.projection,
     assetCounts: {

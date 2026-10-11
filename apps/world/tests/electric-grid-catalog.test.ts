@@ -104,12 +104,12 @@ describe('Electric Grid definition catalog', () => {
     expect(compiler.compile(definitionFor(fixtureBase.id)).model.id).toBe(fixtureBase.id)
   })
 
-  test('validates per-asset Operating Point overrides but refuses to drop the ones the runtime cannot apply', () => {
+  test('validates per-asset Operating Point overrides and applies each to its asset only', () => {
     const { compiler } = fixtureCompiler()
     const definition = definitionFor('electric-grid.test.fixture-addition')
     const withOverrides = (overrides: object) => ({ ...definition, operatingPoint: { ...definition.operatingPoint, overrides } })
-    expect(() => compiler.compile(withOverrides({ branchStates: [{ assetId: 'branch:curated-fixture-hasle', state: 'open' }] })))
-      .toThrow('valid for electric-grid.test.fixture-addition, but the current Grid runtime does not apply branchStates yet')
+    const opened = compiler.compile(withOverrides({ branchStates: [{ assetId: 'branch:curated-fixture-hasle', state: 'open' }] }))
+    expect(opened.operatingPoint.branchStates.filter(entry => entry.state === 'open' || entry.availability < 1)).toEqual([{ branchId: 'branch:curated-fixture-hasle', state: 'open', availability: 1 }])
     expect(() => compiler.compile(withOverrides({ branchStates: [{ assetId: 'branch:curated-fixture-missing', state: 'open' }] })))
       .toThrow('unknown branch branch:curated-fixture-missing')
     expect(compiler.compile(withOverrides({ branchStates: [], loadScale: 0.9 })).operatingPoint.loadScale).toBe(0.9)

@@ -221,6 +221,7 @@ export const gridDefinitionForModel = (model: GridModelDefinition): CompiledGrid
     id: 'synthetic', title: 'Synthetic', loadScale: 1, generationAvailabilityScale: 1, storageStateOfCharge: 0.5,
     hvdcSetpoints: model.hvdcLinks.map(link => ({ linkId: link.id, setpointMw: 0 })),
     externalExchanges: model.externalSystems.filter(system => system.synchronous).map(system => ({ systemId: system.id, scheduledExportMw: 0 })),
+    branchStates: model.branches.map(branch => ({ branchId: branch.id, state: 'closed' as const, availability: 1 })),
   },
   automation: gridAutomationPreset(nordicFrequencyAutomationRef),
   definitionDigest: '0'.repeat(64),

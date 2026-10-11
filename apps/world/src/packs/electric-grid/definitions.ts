@@ -276,24 +276,12 @@ interface CompiledModelEntry {
 
 const overridesPath = ['operatingPoint', 'overrides'] as const
 
-/** Per-asset override fields the runtime cannot apply yet; overrides of them are rejected, never silently ignored. */
-const unappliedOverrideFields = (overrides: GridOperatingPointOverrides): ReadonlyArray<string> =>
-  overrides.branchStates !== undefined && overrides.branchStates.length > 0 ? ['branchStates'] : []
-
 /** Validates overrides against the selected v2 model; issue paths are relative to the Grid definition. */
 const resolveOverrides = (definition: GridDefinition, targets: GridOperatingPointTargets): GridOperatingPointOverrides => {
   const overrides = gridOperatingPointOverridesSchema.parse(definition.operatingPoint.overrides ?? {})
   const issues = gridOperatingPointStateIssues(overrides, targets)
   if (issues.length > 0) {
     throw new z.ZodError(issues.map(issue => ({ code: 'custom' as const, path: [...overridesPath, ...issue.path], message: issue.message })))
-  }
-  const unapplied = unappliedOverrideFields(overrides)
-  if (unapplied.length > 0) {
-    throw new z.ZodError(unapplied.map(field => ({
-      code: 'custom' as const,
-      path: [...overridesPath, field],
-      message: `valid for ${definition.model.ref}, but the current Grid runtime does not apply ${field} yet`,
-    })))
   }
   return overrides
 }

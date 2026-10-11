@@ -87,13 +87,34 @@ describe('Grid Model v2 → runtime model', () => {
       .toThrow('$.externalSystemStates[0].assetId: external:DE is not synchronous')
   })
 
-  test('refuses an Operating Point for another model, and schedules and branch states the runtime does not follow', () => {
+  test('refuses an Operating Point for another model and schedules the runtime does not follow', () => {
     expect(() => compileGridModelV2(fixture, { ...fixturePoint, compatibleModelRefs: ['electric-grid.other'] })).toThrow('is not compatible')
     const link = fixture.hvdcLinks[0]!
     const twoPoints = { assetId: link.id, timeZone: 'Europe/Oslo' as const, points: [{ localTime: '00:00', transferMw: 0 }, { localTime: '12:00', transferMw: 100 }] }
     expect(() => compileGridModelV2(fixture, { ...fixturePoint, hvdcSchedules: [twoPoints] })).toThrow(`the schedule of ${link.id} has 2 points`)
     const constant = compileGridModelV2(fixture, { ...fixturePoint, hvdcSchedules: [{ ...twoPoints, points: [{ localTime: '00:00', transferMw: 100 }] }] })
     expect(constant.operatingPoint.hvdcSetpoints.find(entry => entry.linkId === link.id)?.setpointMw).toBe(100)
-    expect(() => compileGridModelV2(fixture, { ...fixturePoint, branchStates: [{ assetId: fixture.branches[0]!.id, state: 'open' }] })).toThrow('does not apply initial branch states')
+  })
+
+  test('takes the Operating Point\'s ambient ratings as the base ratings of the branches it lists', () => {
+    const [summer, other] = fixture.branches
+    const compiled = compileGridModelV2(fixture, { ...fixturePoint, branchRatings: [{ assetId: summer!.id, ratingMw: summer!.ratingMw * 0.856, emergencyRatingMw: summer!.emergencyRatingMw * 0.856 }] })
+    expect(compiled.model.branches[0]).toMatchObject({ ratingMw: summer!.ratingMw * 0.856, emergencyRatingMw: summer!.emergencyRatingMw * 0.856 })
+    expect(compiled.model.branches[1]).toMatchObject({ ratingMw: other!.ratingMw, emergencyRatingMw: other!.emergencyRatingMw })
+    expect(compiled.operatingPoint.branchStates[0]).toEqual({ branchId: summer!.id, state: 'closed', availability: 1 })
+    expect(() => validateGridOperatingPoint({ ...fixturePoint, branchRatings: [{ assetId: summer!.id, ratingMw: 100, emergencyRatingMw: 90 }] }, 'ratings', gridOperatingPointTargetsForModel(fixture)))
+      .toThrow('$.branchRatings[0].emergencyRatingMw: must be at least ratingMw (100)')
+    expect(() => validateGridOperatingPoint({ ...fixturePoint, branchRatings: [{ assetId: 'branch:curated-missing', ratingMw: 100, emergencyRatingMw: 120 }] }, 'ratings', gridOperatingPointTargetsForModel(fixture)))
+      .toThrow('$.branchRatings[0].assetId: unknown branch branch:curated-missing')
+  })
+
+  test('starts each branch as the Operating Point lists it, and every other branch closed at its full rating', () => {
+    const [opened, derated, ...others] = fixture.branches
+    const compiled = compileGridModelV2(fixture, { ...fixturePoint, branchStates: [{ assetId: opened!.id, state: 'open' }, { assetId: derated!.id, state: 'closed', availability: 0.856 }] })
+    expect(compiled.operatingPoint.branchStates).toEqual([
+      { branchId: opened!.id, state: 'open', availability: 1 },
+      { branchId: derated!.id, state: 'closed', availability: 0.856 },
+      ...others.map(branch => ({ branchId: branch.id, state: 'closed' as const, availability: 1 })),
+    ])
   })
 })

@@ -335,7 +335,7 @@ const requireRestored = <T extends { readonly id: string }>(items: ReadonlyArray
   return byId
 }
 
-const requiredValue = (values: ReadonlyMap<string, number>, id: string, subject: string): number => {
+const requiredValue = <Value,>(values: ReadonlyMap<string, Value>, id: string, subject: string): Value => {
   const value = values.get(id)
   if (value === undefined) throw new Error(`the Operating Point gives ${id} no ${subject}`)
   return value
@@ -356,11 +356,13 @@ export const createGridRuntimeInstance = (config: {
   const restoredExternals = restored ? requireRestored(restored.externalSystems, index.externalSystems.map(item => item.id), 'external systems') : null
   const restoredHvdc = restored ? requireRestored(restored.hvdcLinks, index.hvdcLinks.map(item => item.id), 'HVDC links') : null
   if (restored && restored.lossLoadByBusMw.length !== model.buses.length) throw new Error('stored Grid runtime state has a loss vector of the wrong length')
+  const initialBranchStates = new Map(operatingPoint.branchStates.map(entry => [entry.branchId, entry]))
   const branches = new Map(model.branches.map(branch => {
     const stored = restoredBranches?.get(branch.id)
+    const initial = requiredValue(initialBranchStates, branch.id, 'initial branch state')
     return [branch.id, {
-      state: stored?.state ?? 'closed',
-      availability: stored?.availability ?? 1,
+      state: stored?.state ?? initial.state,
+      availability: stored?.availability ?? initial.availability,
       flowMw: 0,
       loadingPercent: 0,
       voltageFromPu: 0,
