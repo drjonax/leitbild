@@ -175,6 +175,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
           }
           connection.systemActivePowerMw = nextPowerMw
           connection.connected = nextConnected
+          connection.systemPresent = true
           if (trackStartup) observedStartupConnections.add(`${grid.definition.gridId}\u0000${connection.definition.network.portId}`)
         }
       }
@@ -186,7 +187,8 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       for (const grid of grids.values()) {
         for (const connection of grid.externalConnections.values()) {
           if (connection.definition.system.objectId !== objectId) continue
-          if (connection.connected || connection.systemActivePowerMw !== 0) affectedGridIds.add(grid.definition.gridId)
+          if (connection.connected || connection.systemPresent || connection.systemActivePowerMw !== 0) affectedGridIds.add(grid.definition.gridId)
+          connection.systemPresent = false
           connection.connected = false
           connection.systemActivePowerMw = 0
         }
@@ -252,6 +254,7 @@ export const createLocalElectricGridPackRuntimeAdapter = (): PackRuntimeAdapter 
       for (const grid of grids.values()) {
         for (const connection of grid.externalConnections.values()) {
           if (config.isObjectProviderAvailable?.(connection.definition.system.objectId) === false) {
+            connection.systemPresent = false
             connection.connected = false
             connection.systemActivePowerMw = 0
           }

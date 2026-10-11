@@ -286,7 +286,10 @@ export interface GridRuntimeInstance {
 export interface GridExternalConnectionState {
   readonly definition: ElectricalConnectionDefinition
   readonly busId: string
+  /** The connected system's object exists and its runtime is available: the bay links the Grid to a system. */
+  systemPresent: boolean
   systemActivePowerMw: number
+  /** The system exchanges power: its own port is connected and energised. */
   connected: boolean
 }
 
@@ -449,7 +452,7 @@ export const createGridRuntimeInstance = (config: {
     // One system per connection point: a second connection would replace the first's exchange.
     const existing = externalConnections.get(point.id)
     if (existing) throw new Error(`Grid connection point ${connection.network.objectId}:${point.id} is connected by both ${existing.definition.id} and ${connection.id}`)
-    externalConnections.set(point.id, { definition: connection, busId: point.busId, systemActivePowerMw: 0, connected: false })
+    externalConnections.set(point.id, { definition: connection, busId: point.busId, systemPresent: true, systemActivePowerMw: 0, connected: false })
   }
   const grid: GridRuntimeInstance = {
     definition,

@@ -21,7 +21,10 @@ export const gridElectricalPortDefinitions = (
 /**
  * Port state at each connection point. A live bus reports nominal voltage (the DC model computes
  * none) and its island frequency; a de-energised bus reports energized=false, voltage 0 and no
- * frequency, and no power flows through the port.
+ * frequency, and no power flows through the port. `connected` is the Grid side of the bay: true
+ * while a present system is connected there, whatever that system's own breaker does, so a
+ * system that lost offsite power sees it return when the bus is energised again. Power flows only
+ * while the system's own port is connected and energised.
  */
 export const gridElectricalPortsAt = (config: {
   readonly grid: GridRuntimeInstance
@@ -30,7 +33,8 @@ export const gridElectricalPortsAt = (config: {
   const bus = config.grid.busStates.get(point.busId)
   if (!bus) throw new Error(`Grid ${config.grid.definition.gridId} has no solved state for connection bus ${point.busId}; advance the Grid first`)
   const connection = config.grid.externalConnections.get(point.id)
-  const connected = connection?.connected === true
+  const connected = connection?.systemPresent === true
+  const exchanging = connection?.connected === true
   const base = {
     id: point.id,
     label: point.label,
@@ -43,7 +47,7 @@ export const gridElectricalPortsAt = (config: {
     ...base,
     state: bus.energized
       ? {
-          activePowerMw: connected ? -connection.systemActivePowerMw : 0,
+          activePowerMw: exchanging ? -connection.systemActivePowerMw : 0,
           voltagePu: bus.voltagePu,
           frequencyHz: bus.frequencyHz,
           energized: true,
