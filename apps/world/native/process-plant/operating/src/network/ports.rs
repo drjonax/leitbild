@@ -12,10 +12,10 @@
 //! The stratified PZR cell takes only its port receipt; its boundary stays
 //! the network's own (closed in S1 and S2).
 //!
-//! Moving cell volumes ([`CellVolume`]) are a declared port of the rod owner.
-//! The network's rigid-volume EOS row, rate closure and inertance do not yet
-//! consume a moving volume, so a coupling that reports one is refused rather
-//! than ignored (memo Table 1.2, "Rod displacement and work").
+//! Moving cell volumes ([`CellVolume`]) are the rod owner's port, consumed
+//! by [`Network::evaluate_joined`]: the EOS row, the phase rate closure and
+//! the face inertance take the current volume (memo Table 1.2, "Rod
+//! displacement and work"); [`Fluid::current_volumes`] reports it.
 use super::{Failure, Network, Properties, Water, rec, s};
 use crate::{
     local_flow::{Cell, Chart},
@@ -46,6 +46,9 @@ pub struct Fluid<'a> {
     /// Region pressure-reference elevations and compiled fluid volumes.
     pub elevations: &'a [f64],
     pub volumes: &'a [f64],
+    /// Regular cells only: this evaluation's free volume with its direction,
+    /// the compiled volume for a fixed cell, the moving one for a moving cell.
+    pub current_volumes: &'a [Scalar],
 }
 
 impl Fluid<'_> {
@@ -168,6 +171,7 @@ impl<P: Properties> Network<P> {
             endpoints: &self.endpoints,
             elevations: &self.elevations,
             volumes: &self.volumes,
+            current_volumes: &self.cell_volume,
         };
         coupling.couple(&fluid, &mut Receipts::new(&mut self.coupled_receipts[..n]))?;
         for node in 0..n {

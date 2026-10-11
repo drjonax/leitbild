@@ -232,6 +232,10 @@ pub enum Command {
     /// trip through its named cause and the holding circuit opens after the
     /// declared delay (H6). Each owner applies its own part.
     TurbineTrip,
+    /// The manual reactor-trip interrupt: the holding circuit opens at the
+    /// command's time, with no turbine trip (G7's contrary case). The steam
+    /// demand stays at its constant A/B values as a declared boundary.
+    ManualReactorTrip,
 }
 
 /// Structural dependencies of one block, in its own indices, for the joined
@@ -320,6 +324,10 @@ pub trait Secondary<P> {
         y: &mut [f64],
     ) -> Result<Transaction, Failure>;
     fn command(&mut self, t: f64, command: Command) -> Result<Transaction, Failure>;
+    /// The earliest declared time event strictly after `t` (for example the
+    /// end of the STOP ramp), or `None`. The harness stops there and restarts
+    /// by the exact consistent start.
+    fn next_time_event(&self, t: f64) -> Option<f64>;
 }
 
 /// The rod bodies (spider and bodies, H7), their guide passages (F1 (a),
@@ -370,4 +378,11 @@ pub trait Rods<P> {
         y: &mut [f64],
     ) -> Result<Transaction, Failure>;
     fn command(&mut self, t: f64, command: Command) -> Result<Transaction, Failure>;
+    /// The earliest declared time event strictly after `t` (for example the
+    /// holding circuit's opening after its declared delay), or `None`.
+    fn next_time_event(&self, t: f64) -> Option<f64>;
+    /// Startup only: solve the owner's algebraic coordinates at the composed
+    /// fluid state (the guide passages' steady currents), after which
+    /// `prepared()` holds them. No differential coordinate changes.
+    fn prepare(&mut self, properties: &P, fluid: &Fluid<'_>) -> Result<Transaction, Failure>;
 }

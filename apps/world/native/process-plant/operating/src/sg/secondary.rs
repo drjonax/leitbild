@@ -470,6 +470,9 @@ impl<P: Properties> Secondary<P> for Secondaries {
     fn differential(&self) -> Vec<f64> {
         self.layout.ids()
     }
+    fn next_time_event(&self, t: f64) -> Option<f64> {
+        self.ramp_end().filter(|end| *end > t)
+    }
     fn generators(&self) -> usize {
         self.sgs.len()
     }
@@ -747,6 +750,12 @@ impl<P: Properties> Secondary<P> for Secondaries {
 
     fn command(&mut self, t: f64, command: Command) -> Result<Transaction, Failure> {
         match command {
+            // G7: the steam demand stays at its constant A/B values.
+            Command::ManualReactorTrip => Ok(Transaction {
+                deposits: Vec::new(),
+                receipt: json!({"owner":"secondary","command":"ManualReactorTrip","t_s":t,
+                    "steamDemand":"held at the constant A/B values (G7, declared boundary)"}),
+            }),
             Command::TurbineTrip => {
                 if let Some(t0) = self.trip_s {
                     return Err(fatal(format!(

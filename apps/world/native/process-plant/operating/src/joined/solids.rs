@@ -20,6 +20,7 @@ use super::{
     packet::Packet,
 };
 use crate::{
+    initialization,
     network::{Failure, Water},
     thermal::{self, Saturation, Scalar, WaterPoint, WaterProperties},
 };
@@ -89,6 +90,54 @@ pub struct WallWater {
     pub mass_flux: Scalar,
 }
 
+/// Structural incidence of the solids, for the joined sparse pattern.
+#[derive(Clone, Debug, Default)]
+pub struct Incidence {
+    /// Per material half: its helium store and the cells its clad wets.
+    pub halves: Vec<(usize, Vec<usize>)>,
+    /// Passive contacts: (passive store, water cell).
+    pub passive: Vec<(usize, usize)>,
+    /// Plenum contacts: (helium store, passive store).
+    pub plenum: Vec<(usize, usize)>,
+    /// SG segments: (primary water cell, secondary).
+    pub segments: Vec<(usize, usize)>,
+}
+
+/// A wall's water with every direction removed: the startup initializer's
+/// closure may seed only the clad-outer temperature.
+#[derive(Clone, Copy, Debug)]
+struct WaterWall {
+    pressure: Scalar,
+    temperature: Scalar,
+    bulk: WaterPoint,
+    saturation: Saturation,
+    mass_flux: Scalar,
+}
+impl WaterWall {
+    fn of(w: WallWater) -> Self {
+        let p = |q: WaterPoint| WaterPoint {
+            density: s(q.density.value),
+            viscosity: s(q.viscosity.value),
+            conductivity: s(q.conductivity.value),
+            cp: s(q.cp.value),
+            expansion: s(q.expansion.value),
+            enthalpy: s(q.enthalpy.value),
+        };
+        Self {
+            pressure: s(w.pressure.value),
+            temperature: s(w.temperature.value),
+            bulk: p(w.bulk),
+            saturation: Saturation {
+                temperature: s(w.saturation.temperature.value),
+                liquid: p(w.saturation.liquid),
+                vapor: p(w.saturation.vapor),
+                surface_tension: s(w.saturation.surface_tension.value),
+            },
+            mass_flux: s(w.mass_flux.value),
+        }
+    }
+}
+
 /// Temperatures recovered from the current energies.
 #[derive(Clone, Debug, Default)]
 pub struct Temperatures {
@@ -132,6 +181,7 @@ pub struct Solids {
     wall: Vec<Option<WallWater>>,
     helium_rate: Vec<Scalar>,
     passive_rate: Vec<Scalar>,
+    passive_ids: Vec<String>,
 }
 
 impl Solids {
@@ -377,6 +427,7 @@ impl Solids {
             prepared,
             helium_rate: vec![s(0.); helium_nr.len()],
             passive_rate: vec![s(0.); passive_mass.len()],
+            passive_ids: t.passive_stores.iter().map(|p| p.id.clone()).collect(),
             bands,
             helium_nr,
             passive_mass,
@@ -415,6 +466,42 @@ impl Solids {
     }
     fn metal0(&self) -> usize {
         self.passive0() + self.passive_mass.len()
+    }
+    /// Local index of half `a`'s energy `k` (inner fuel, outer fuel, clad).
+    pub fn energy(&self, a: usize, k: usize) -> usize {
+        3 * a + k
+    }
+    pub fn helium(&self, h: usize) -> usize {
+        self.helium0() + h
+    }
+    pub fn passive(&self, p: usize) -> usize {
+        self.passive0() + p
+    }
+    pub fn metal(&self, i: usize) -> usize {
+        self.metal0() + i
+    }
+    /// Local index of the passive store named `id`, for energy deposits.
+    pub fn passive_store(&self, id: &str) -> Option<usize> {
+        self.passive_ids
+            .iter()
+            .position(|p| p == id)
+            .map(|p| self.passive(p))
+    }
+    pub fn incidence(&self) -> Incidence {
+        Incidence {
+            halves: self
+                .bands
+                .iter()
+                .map(|b| (b.helium, b.contacts.iter().map(|c| c.water).collect()))
+                .collect(),
+            passive: self.passive.iter().map(|c| (c.solid, c.water)).collect(),
+            plenum: self.plenum.iter().map(|c| (c.helium, c.solid)).collect(),
+            segments: self
+                .segments
+                .iter()
+                .map(|g| (g.primary, g.secondary))
+                .collect(),
+        }
     }
     /// Local index of half `a`'s surface `k` (fuel surface, clad inner,
     /// clad outer).
@@ -484,6 +571,78 @@ impl Solids {
             });
         }
         Ok(())
+    }
+
+    /// The wall water of the last [`Solids::wall_water`] call at `cell`.
+    pub fn wall_water_at(&self, cell: usize) -> Option<WallWater> {
+        self.wall_slot
+            .get(cell)
+            .copied()
+            .flatten()
+            .and_then(|k| self.wall[k])
+    }
+
+    /// The fixed-stock surface initializer (operating-thermal.md) for every
+    /// half, at its current finite temperatures and the wall water of the
+    /// last [`Solids::wall_water`] call: the composed state's own flows. It
+    /// returns surface temperatures only; no energy, history or water
+    /// coordinate is changed. The surfaces' current values are the seeds.
+    pub fn initialize_surfaces<P: WaterProperties>(
+        &self,
+        properties: &P,
+        x: Coordinates<'_>,
+        temperatures: &Temperatures,
+        policy: initialization::SurfacePolicy,
+    ) -> Result<Vec<initialization::SurfaceInitialization>, Failure> {
+        let mut out = Vec::with_capacity(self.bands.len());
+        for (i, b) in self.bands.iter().enumerate() {
+            let [inner, outer, clad_mean] = temperatures.fuel[i].map(|t| s(t.value));
+            let seed = [0, 1, 2].map(|k| x.value(self.surface(i, k)).value);
+            let fixed = thermal::FuelTemperatures {
+                inner_mean: inner,
+                outer_mean: outer,
+                fuel_surface: s(seed[0]),
+                helium: s(temperatures.helium[b.helium].value),
+                clad_inner: s(seed[1]),
+                clad_mean,
+                clad_outer: s(seed[2]),
+            };
+            let walls: Vec<(Contact, WaterWall)> = b
+                .contacts
+                .iter()
+                .map(|c| self.wall_at(c.water).map(|w| (*c, WaterWall::of(w))))
+                .collect::<Result<_, _>>()?;
+            let wall = |outer: Scalar| -> thermal::Result<Scalar> {
+                let mut heat = s(0.);
+                for (c, w) in &walls {
+                    let q = thermal::liquid_wall_current(
+                        properties,
+                        w.pressure,
+                        w.temperature,
+                        outer,
+                        w.mass_flux,
+                        thermal::WallLaw {
+                            diameter_m: c.diameter,
+                            film: thermal::Film::Core,
+                            emissivity: b.geometry.clad_emissivity,
+                            material: thermal::core_wall_material(clad_mean, b.clad_density)?,
+                        },
+                        w.saturation,
+                        w.bulk,
+                    )?;
+                    if q.vapor_mass.value != 0. {
+                        return Err("initial core wall vapor departure");
+                    }
+                    heat = heat + s(c.area) * q.heat;
+                }
+                Ok(heat)
+            };
+            out.push(
+                initialization::initialize_fuel_surfaces(&b.geometry, fixed, seed, policy, wall)
+                    .map_err(|e| fatal(format!("half {i}: {e}")))?,
+            );
+        }
+        Ok(out)
     }
 
     fn wall_at(&self, cell: usize) -> Result<WallWater, Failure> {
