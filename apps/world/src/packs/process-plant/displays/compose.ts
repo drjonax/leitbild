@@ -792,7 +792,8 @@ export const compileComposedDisplay = (
  * An agent's display with what World adds to it (evidence.ts), each value
  * labelled as added: first in the free places of the last row of the agent's
  * readouts, then in one panel of its own over the alarms, under a line that
- * says so. It never makes a display taller than a chat view allows: trends
+ * says so, or where that line does not fit, in further rows of the agent's
+ * readouts. It never makes a display taller than a chat view allows: trends
  * shrink first, then the least telling values are left out. A value that no
  * longer resolves (a display re-opened on a changed model) is refused as any
  * other signal is.
@@ -830,6 +831,12 @@ export const withEvidence = (
     const added: ComposedReadoutsPanel = { kind: 'readouts', pens: pens.slice(joined.length, count), added: true }
     const fitted = kept([...own.slice(0, at), added, ...own.slice(at)], count)
     if (fitted !== null) return fitted
+    // Where a panel of its own, with its line and gap, does not fit, the values join the agent's readouts in
+    // rows of their own, each still labelled as added (evaluation run 22: a pressurizer depressurization 2 px
+    // too tall to carry the subcooling margin).
+    if (readouts === -1) continue
+    const extended = kept(own.map((panel, index) => index === readouts && panel.kind === 'readouts' ? { ...panel, pens: [...panel.pens, ...pens.slice(joined.length, count)] } : panel), count)
+    if (extended !== null) return extended
   }
   return kept(own, joined.length) ?? { ok: true, display, evidence: [] }
 }

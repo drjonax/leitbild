@@ -138,12 +138,14 @@ describe('what World adds to a composed display', () => {
     expect(content.items.some(item => item.names.includes('MFW-B-CV-POS'))).toBe(true)
   }, 60_000)
 
+  const relief = once(() => situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 3))
+
   test('PORV open: the safety injection it set off and the subcooling margin fill the free places of the agent\'s readouts', () => {
     // Run 22: pressure 10.7 MPa falling with the PORV stuck at 35 %; the display showed no subcooling margin. The
     // overview in Hot standby leads with containment pressure, which SI, steam line isolation and spray guard through
     // Modes 3 and 4, and has no room for the subcooling margin; the unit still watches it, and falling towards its
     // alarm it is off normal, so it is added. Containment pressure, at normal, is not.
-    const { compose, read } = situation({ actionId: 'pressurizer-relief-open', parameters: { positionPercent: 35 } }, 3)
+    const { compose, read } = relief()
     const { evidence, display, result } = compose('Pressurizer depressurization', ['PT-455', 'PORV-456A', 'PZR-LVL'], [
       { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('PZR-LVL')] },
       { kind: 'readouts', signals: [signal('pressurizer.reliefFlowKgPerS'), signal('PORV-456A-POS'), signal('PORV-456A'), signal('MOV-8000A-POS')] },
@@ -159,6 +161,26 @@ describe('what World adds to a composed display', () => {
     expect(readouts.added).toBeUndefined()
     expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, null, 'delivers', 'mode'])
     expect(result.view.height).toBe(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
+  }, 60_000)
+
+  test('PORV open as run 22 composed it: with no room for a panel of their own, the values join the agent\'s readouts in a row of their own', () => {
+    // Run 22 QA: the display added nothing three minutes in. Its trend has two strips and a live row, and its three
+    // readouts fill their row: a labelled panel of the safety injection and the subcooling margin needed 662 px of
+    // the 660 a chat view allows, so both were dropped.
+    const { compose, read } = relief()
+    const { evidence, display, result } = compose('Unit 2 pressurizer depressurization', ['PT-455', 'PORV-456A', 'PZR-LVL'], [
+      { kind: 'trend', horizon: '2m', signals: [signal('PT-455', 'primary'), signal('pressurizer.reliefFlowKgPerS'), signal('PZR-LVL', 'counter-evidence')] },
+      { kind: 'readouts', signals: [signal('PORV-456A-POS', 'primary'), signal('PORV-456A'), signal('MOV-8000A-POS')] },
+      { kind: 'alarms', scope: 'related' },
+    ])
+    expect(listed(evidence)).toEqual([['safetyInjectionHeader.outletFlowKgPerS', 'delivers'], ['vessel.subcoolingMarginC', 'mode']])
+    expect(display.panels.map(panel => panel.kind)).toEqual(['trend', 'readouts', 'alarms'])
+    const readouts = display.panels[1]!
+    if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
+    expect(readouts.added).toBeUndefined()
+    expect(readouts.pens.map(pen => pen.added?.kind ?? null)).toEqual([null, null, null, 'delivers', 'mode'])
+    expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
+    expect(read('vessel.subcoolingMarginC')).toBeGreaterThan(16.7)
   }, 60_000)
 
   test('loss of main feedwater and turbine trip: the auxiliary feedwater the actuation delivers, and the loops the display left out', () => {
