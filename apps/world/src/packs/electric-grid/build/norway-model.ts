@@ -12,7 +12,7 @@ import type { TopologyBranch, TopologyBus, TopologyHvdcLink, TopologySummary } f
 import { curatedNetwork } from './curated-branches.ts'
 import { curationSourceId, topologyCurationSet, withoutCuratedExclusions } from './curations.ts'
 import { electricalRules } from './electrical.ts'
-import { buildGenerators, registeredHydroUnits, registeredWindUnits } from './generators.ts'
+import { buildGenerators, buildSiteGenerators, registeredHydroUnits, registeredWindUnits } from './generators.ts'
 import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverUtilisationHours } from './generator-rules.ts'
 import { buildGeometry, type GridGeometry } from './geometry.ts'
 import { buildHaldenAddition, haldenAdditionId } from './halden-addition.ts'
@@ -22,7 +22,7 @@ import { buildExternalSystems, buildHvdcLinks, excludedInterconnectors, topology
 import { createBuildLedger, type BuildLedgerEntry } from './ledger.ts'
 import { buildLoads, loadKindRules } from './loads.ts'
 import { inferShunts, mainNetwork, toGridBus, toGridLine, toGridTransformer } from './network.ts'
-import { buildOperatingPoints, committedLoading } from './operating-points.ts'
+import { buildOperatingPoints, dispatchRule } from './operating-points.ts'
 import { buildLoadProfiles } from './profiles.ts'
 import { readSidecarFeatures } from './sidecar-features.ts'
 import { modelSources, sha256Hex, sourceBuildId } from './sources.ts'
@@ -39,7 +39,7 @@ export const buildRules = {
   aggregationThresholdMw,
   attachmentRadiusKm,
   runOfRiverUtilisationHours,
-  committedLoading,
+  dispatch: dispatchRule,
 }
 
 /** Topology ledger reasons that only filter the source (wrong voltage, inside one station): ids only. */
@@ -139,7 +139,7 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
   ]
   const mainBusIds = new Set([...main.mainBusIds, ...curated.buses.map(bus => bus.id)])
   const stations = createStationIndex(buses, main.buses, mainBusIds, sidecar.outline)
-  const generators = buildGenerators({
+  const registeredGenerators = buildGenerators({
     units: [
       ...registeredHydroUnits(inputs.hydro.data.plants, ids.hydro, ledger),
       ...registeredWindUnits(inputs.wind.data.farms, ids.wind, ledger),
@@ -170,6 +170,17 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     lineCapacityMw: busId => lineCapacity.get(busId) ?? 0,
     ledger,
   })
+  const generators = [...registeredGenerators, ...buildSiteGenerators({
+    sites: inputs.majorSites.data,
+    loads,
+    buses,
+    plantLocation: osmPlantId => {
+      const anchor = sidecar.anchor(osmPlantId)
+      return anchor?.category === 'plant' ? anchor.location : undefined
+    },
+    sourceIds: ids,
+    ledger,
+  })].sort((left, right) => compareText(left.id, right.id))
   const sumByBus = (items: ReadonlyArray<{ readonly busId: string; readonly mw: number }>): ((busId: string) => number) => {
     const sums = new Map<string, number>()
     for (const item of items) sums.set(item.busId, (sums.get(item.busId) ?? 0) + item.mw)
@@ -212,6 +223,9 @@ export const buildNorwayGridModel = (inputs: NorwayModelBuildInputs): NorwayMode
     compatibleModelRefs: [norwayModelId, haldenAdditionId],
     summerAreaMw: summerHour.priceAreas.byAreaMw as Record<PriceArea, number>,
     summerHour: summerHour.priceAreas.startTime,
+    summerStartUtc: summerHour.priceAreas.startUtc,
+    winterStartUtc: winterHour.priceAreas.startUtc,
+    dispatch: inputs.referenceDispatch.data.hours,
   })
   const halden = buildHaldenAddition(model, priceAreaOf)
   for (const target of [gridOperatingPointTargetsForModel(model), gridOperatingPointTargetsForModel(halden.composed)]) {

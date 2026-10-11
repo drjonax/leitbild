@@ -1,5 +1,6 @@
 import type { PriceArea } from '../schemas/grid-ids.ts'
-import type { GridBusV2, GridGeneratorV2 } from '../schemas/grid-model.ts'
+import type { GridMajorSiteTable } from '../schemas/grid-major-site.ts'
+import type { GridBusV2, GridGeneratorV2, GridLoadV2 } from '../schemas/grid-model.ts'
 import { compareText } from '../topology/ids.ts'
 import { haversineKm, roundTo, type LonLat } from './geo.ts'
 import { aggregationThresholdMw, attachmentRadiusKm, generatorKindRules, runOfRiverUtilisationHours, smallHydroInertiaSeconds } from './generator-rules.ts'
@@ -280,3 +281,54 @@ export const buildGenerators = (config: {
   if (unknown.length > 0) throw new Error(`regional-route curations name generators that are not registered plants: ${unknown.join(', ')}`)
   return generators.sort((left, right) => compareText(left.id, right.id))
 }
+
+/**
+ * Power plants inside major sites (norway-major-sites.json onSiteGeneration): one thermal unit per
+ * plant at the bus of its site's load, located at the mapped OSM plant.
+ */
+export const buildSiteGenerators = (config: {
+  readonly sites: GridMajorSiteTable
+  readonly loads: ReadonlyArray<GridLoadV2>
+  readonly buses: ReadonlyArray<GridBusV2>
+  readonly plantLocation: (osmPlantId: string) => LonLat | undefined
+  readonly sourceIds: ModelSourceIds
+  readonly ledger: BuildLedger
+}): ReadonlyArray<GridGeneratorV2> => config.sites.sites.flatMap((site): GridGeneratorV2[] => {
+  const plant = site.onSiteGeneration
+  if (plant === null) return []
+  const loadId = `load:site-${site.id.slice('site:'.length)}`
+  const load = config.loads.find(candidate => candidate.id === loadId)
+  if (load === undefined) throw new Error(`${site.id}: its on-site plant ${plant.name} needs the site load ${loadId} in the model`)
+  const bus = config.buses.find(candidate => candidate.id === load.busId)!
+  const location = config.plantLocation(plant.osmPlantId)
+  if (location === undefined) throw new Error(`${site.id}: OSM plant ${plant.osmPlantId} is not a plant of the sidecar`)
+  const rule = generatorKindRules[plant.kind]
+  const id = `generator:osm-${plant.osmPlantId.replace('/', '-')}`
+  const km = haversineKm(location, bus.location)
+  config.ledger.add({ reason: 'site-generator-attached', elementIds: [id, bus.id], mw: plant.capacityMw, distanceKm: km, detail: `${plant.name} (${plant.units} units) → ${bus.label}, the bus of ${site.name}` })
+  return [{
+    id,
+    label: plant.name,
+    kind: plant.kind,
+    busId: bus.id,
+    location: [roundTo(location[0], 6), roundTo(location[1], 6)],
+    capacityMw: plant.capacityMw,
+    ratedMva: roundTo(plant.capacityMw / rule.powerFactor, 3),
+    powerFactor: rule.powerFactor,
+    voltageSetpointPu: rule.voltageSetpointPu,
+    inertiaSeconds: rule.inertiaSeconds,
+    synchronous: rule.synchronous,
+    minimumStableMw: roundTo(plant.capacityMw * rule.minimumStableShare, 3),
+    rampMwPerMinute: roundTo(plant.capacityMw * rule.rampSharePerMinute, 3),
+    blackStartCapable: rule.blackStartCapable,
+    priceArea: site.priceArea,
+    registryIds: [],
+    attachmentKm: roundTo(km, 2),
+    provenance: {
+      sources: [config.sourceIds.majorSites, config.sourceIds.osm],
+      method: 'curated',
+      confidence: 'medium',
+      note: `${plant.units}-unit ${plant.fuel} power plant of ${site.name} (${plant.evidence.map(entry => entry.url).join(', ')}); at its site's bus; rule ${rule.id}`,
+    },
+  }]
+})

@@ -4,7 +4,7 @@ import type { generatorKinds } from '../schemas/grid-ids.ts'
 // mean production only, so every value below is a typical published figure for the kind; each
 // generator's provenance names this table's rule id.
 
-type ModelledKind = Extract<typeof generatorKinds[number], 'hydro-reservoir' | 'hydro-run-of-river' | 'hydro-pumped' | 'wind'>
+type ModelledKind = Extract<typeof generatorKinds[number], 'hydro-reservoir' | 'hydro-run-of-river' | 'hydro-pumped' | 'wind' | 'thermal'>
 
 export interface GeneratorKindRule {
   readonly id: string
@@ -39,6 +39,17 @@ export const generatorKindRules: Readonly<Record<ModelledKind, GeneratorKindRule
   'hydro-run-of-river': {
     id: 'unit-hydro-run-of-river', synchronous: true, powerFactor: 0.9, voltageSetpointPu: 1.0, inertiaSeconds: 3.44, minimumStableShare: 0.3, rampSharePerMinute: 0.1, blackStartCapable: false,
     sources: { ...hydroSources, blackStartCapable: 'run-of-river plants lack the storage to sustain a black start' },
+  },
+  thermal: {
+    id: 'unit-thermal-gas-turbine', synchronous: true, powerFactor: 0.9, voltageSetpointPu: 1.0, inertiaSeconds: 2.5, minimumStableShare: 0.2, rampSharePerMinute: 0.1, blackStartCapable: false,
+    sources: {
+      powerFactor: hydroSources.powerFactor,
+      voltageSetpointPu: 'nominal set-point 1.0 pu; operators adjust it within the normal voltage range',
+      inertiaSeconds: 'H 2.5 s on rated MVA: the lower bound of the two-pole thermal unit range 2.5–6 s (P. Kundur, Power System Stability and Control, 1994, Table 3.2), for light aeroderivative gas-turbine rotors (modelling judgement)',
+      minimumStableShare: 'one of five equal units (Melkøya: 5 × 45 MW) can run alone: a 20 % plant minimum (modelling judgement)',
+      rampSharePerMinute: '10 % of capacity per minute, as for hydro units (no published unit value)',
+      blackStartCapable: 'no public evidence of black-start service',
+    },
   },
   wind: {
     id: 'unit-wind', synchronous: false, powerFactor: 0.95, voltageSetpointPu: 1.0, inertiaSeconds: 0, minimumStableShare: 0, rampSharePerMinute: 0.1, blackStartCapable: false,

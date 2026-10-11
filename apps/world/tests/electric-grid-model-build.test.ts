@@ -4,11 +4,12 @@ import { cableRules, lineParameters, overheadRules, reactanceFloorPu, transforme
 import { simplifyPath, type LonLat } from '../src/packs/electric-grid/build/geo.ts'
 import { jsonLines } from '../src/packs/electric-grid/build/json-lines.ts'
 import { createBuildLedger } from '../src/packs/electric-grid/build/ledger.ts'
-import { dispatchGenerators } from '../src/packs/electric-grid/build/operating-points.ts'
+import { dispatchGenerators, referenceSchedules } from '../src/packs/electric-grid/build/operating-points.ts'
 import { corridorPath } from '../src/packs/electric-grid/build/paths.ts'
 import { sourceBuildId } from '../src/packs/electric-grid/build/sources.ts'
 import { gridCurationCollectionSchema } from '../src/packs/electric-grid/schemas/grid-curation.ts'
-import { validateGridModel, type GridModelV2 } from '../src/packs/electric-grid/schemas/grid-model.ts'
+import { validateGridModel } from '../src/packs/electric-grid/schemas/grid-model.ts'
+import type { GridReferenceHourDispatch } from '../src/packs/electric-grid/schemas/grid-reference-dispatch.ts'
 import type { TopologyInput } from '../src/packs/electric-grid/topology/input.ts'
 
 const fixture = validateGridModel(await Bun.file(new URL('./fixtures/grid-model-v2.fixture.json', import.meta.url)).json(), 'fixture')
@@ -59,15 +60,32 @@ describe('model build: geometry', () => {
 })
 
 describe('model build: dispatch', () => {
-  test('runs must-run units at their mean output and shares the residual over committed storage hydro', () => {
-    const production: Readonly<Record<string, number>> = { 'generator:nve-wind-45': 262.8, 'generator:aggregate-osm-way-60495669@132-hydro-run-of-river': 175.2 }
-    const model: GridModelV2 = { ...fixture, generators: fixture.generators.map(generator => generator.id in production ? { ...generator, annualProductionGwh: production[generator.id]! } : generator) }
-    const states = dispatchGenerators(model, () => 300 / model.loads.length)
-    const byId = new Map(states.map(state => [state.assetId, state]))
-    expect(byId.get('generator:nve-wind-45')).toMatchObject({ state: 'online', availableMw: 30, targetMw: 30 })
-    expect(byId.get('generator:aggregate-osm-way-60495669@132-hydro-run-of-river')).toMatchObject({ state: 'online', availableMw: 40, targetMw: 20 })
-    expect(byId.get('generator:nve-hydro-123')).toMatchObject({ state: 'online', availableMw: 300, targetMw: 250 })
-    expect(() => dispatchGenerators(model, () => 1000 / model.loads.length)).toThrow('cannot cover the residual demand')
+  const hour: GridReferenceHourDispatch = {
+    startUtc: '2026-01-12T07:00:00.000Z',
+    generationMw: { hydroRunOfRiver: 2000, hydroReservoir: 15000, hydroPumpedStorage: 500, windOnshore: 3000, windOffshore: 0, fossilGas: 0, other: 100 },
+    loadMw: 20000,
+    importMw: { SE: -50, FI: 0, DK: 0, DE: -100, NL: 0, GB: 0 },
+    queries: ['https://example.org/q'],
+    note: 'fixture hour',
+  }
+
+  test('schedules the measured exchange and shares measured output by capacity, storage hydro closing the balance', () => {
+    const schedules = referenceSchedules(fixture, hour)
+    expect(schedules.hvdc).toEqual([{ assetId: 'hvdc:test-link', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', transferMw: 100 }] }])
+    expect(schedules.exchange).toEqual([{ assetId: 'external:nordic-remainder', timeZone: 'Europe/Oslo', points: [{ localTime: '00:00', exportMw: 50 }] }])
+    // The fixture holds the only wind and run-of-river units: measured 3000 and 2000 MW exceed them, so both run at full output.
+    const states = new Map(dispatchGenerators(fixture, () => 100, hour, schedules).map(state => [state.assetId, state]))
+    expect(states.get('generator:nve-wind-45')).toMatchObject({ state: 'online', availableMw: 100, targetMw: 100 })
+    expect(states.get('generator:aggregate-osm-way-60495669@132-hydro-run-of-river')).toMatchObject({ state: 'online', targetMw: 40 })
+    // 2 × 100 MW demand + 150 MW export − 140 MW measured output.
+    expect(states.get('generator:nve-hydro-123')).toMatchObject({ state: 'online', availableMw: 300, targetMw: 210 })
+  })
+
+  test('commits storage hydro at one loading and refuses a balance it cannot cover', () => {
+    const schedules = referenceSchedules(fixture, { ...hour, importMw: { ...hour.importMw, SE: 0, DE: 0 } })
+    const states = new Map(dispatchGenerators(fixture, () => 120, hour, schedules).map(state => [state.assetId, state]))
+    expect(states.get('generator:nve-hydro-123')).toMatchObject({ state: 'online', availableMw: 300, targetMw: 100 })
+    expect(() => dispatchGenerators(fixture, () => 500, hour, schedules)).toThrow('cannot cover the residual demand')
   })
 })
 

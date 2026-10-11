@@ -16,6 +16,7 @@ const reasonDispositions = {
   'municipality-load-attached': 'inferred',
   'site-load-attached': 'curated',
   'site-without-station': 'dropped',
+  'site-generator-attached': 'curated',
   'curated-branch-added': 'curated',
 } as const
 

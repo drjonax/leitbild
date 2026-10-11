@@ -2,10 +2,12 @@ import { z } from 'zod'
 import { gridCurationCollectionSchema, type GridCurationCollection } from '../schemas/grid-curation.ts'
 import { interconnectorTableSchema, type GridInterconnectorTable } from '../schemas/grid-interconnector.ts'
 import { majorSiteTableSchema, type GridMajorSiteTable } from '../schemas/grid-major-site.ts'
+import { referenceDispatchTableSchema, type GridReferenceDispatchTable } from '../schemas/grid-reference-dispatch.ts'
 import { priceAreas } from '../schemas/grid-ids.ts'
 
 // The explicit inputs of the Norway model build: the DS1 OSM sidecar and its manifest, the DS2
-// registry and measurement snapshots of one date, and the curated tables in models/. Each file is
+// registry and measurement snapshots of one date, and the curated tables in models/ (including the
+// measured national dispatch of the reference hours). Each file is
 // validated here (only the fields the build reads) and carries the SHA-256 of its bytes, so the
 // build is a pure function of these values.
 
@@ -154,10 +156,12 @@ export interface NorwayModelBuildInputs {
   readonly curations: BuildFile<GridCurationCollection>
   readonly interconnectors: BuildFile<GridInterconnectorTable>
   readonly majorSites: BuildFile<GridMajorSiteTable>
+  readonly referenceDispatch: BuildFile<GridReferenceDispatchTable>
 }
 
 export const buildFileSchemas = {
   curations: gridCurationCollectionSchema,
   interconnectors: interconnectorTableSchema,
   majorSites: majorSiteTableSchema,
+  referenceDispatch: referenceDispatchTableSchema,
 } as const

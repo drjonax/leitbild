@@ -45,6 +45,17 @@ export const majorSiteSchema = z.strictObject({
     powerFromShoreMw: z.number().positive(),
     onshoreConnection: z.string().min(1),
   }).nullable(),
+  // A power plant inside the site that supplies it (Hammerfest LNG): the model adds it as a thermal
+  // unit at the site's bus, dispatched to the measured national output of its kind.
+  onSiteGeneration: z.strictObject({
+    name: z.string().min(1),
+    osmPlantId: z.string().regex(/^(node|way|relation)\/\d+$/),
+    kind: z.literal('thermal'),
+    fuel: z.literal('gas'),
+    units: z.number().int().positive(),
+    capacityMw: z.number().positive(),
+    evidence: z.array(curatedEvidenceSchema).min(1),
+  }).nullable(),
   elhubAbsorption: z.strictObject({
     municipalityNr: municipalityNumberSchema,
     group: z.literal('industry'),

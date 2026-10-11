@@ -20,6 +20,7 @@ export interface ModelSourceIds {
   readonly elhub: string
   readonly interconnectors: string
   readonly majorSites: string
+  readonly referenceDispatch: string
   /** Curation feature id (slug) → `curation:<slug>`. */
   readonly curation: (slug: string) => string
 }
@@ -60,6 +61,7 @@ export const modelSources = (inputs: NorwayModelBuildInputs): ModelSources => {
     elhub: `elhub:reference-hours@${date}`,
     interconnectors: `curated:norway-interconnectors@${inputs.interconnectors.data.curatedAt}`,
     majorSites: `curated:norway-major-sites@${inputs.majorSites.data.curatedAt}`,
+    referenceDispatch: `curated:norway-reference-dispatch@${inputs.referenceDispatch.data.curatedAt}`,
     curation: slug => `curation:${slug}`,
   }
   const curated = (sourceId: string, file: BuildFile<{ readonly curatedAt: string }>): GridSourceInput => ({
@@ -82,6 +84,8 @@ export const modelSources = (inputs: NorwayModelBuildInputs): ModelSources => {
       snapshotInput(ids.elhub, inputs.referenceHours),
       curated(ids.interconnectors, inputs.interconnectors),
       curated(ids.majorSites, inputs.majorSites),
+      // Transcribed measurements: the table's own data licence, not OSM's.
+      { sourceId: ids.referenceDispatch, snapshotAt: `${inputs.referenceDispatch.data.curatedAt}T00:00:00Z`, sha256: inputs.referenceDispatch.sha256, licence: inputs.referenceDispatch.data.sources[0]!.licence },
       ...curationInputs,
     ],
   }

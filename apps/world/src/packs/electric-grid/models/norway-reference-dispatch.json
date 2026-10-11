@@ -1,0 +1,69 @@
+{
+ "schema": "leitbild.electric-grid.norway-reference-dispatch",
+ "curatedAt": "2026-10-11",
+ "sources": [
+  {
+   "id": "energy-charts",
+   "title": "Energy-Charts API: public net electricity generation (/public_power) and cross-border physical flows (/cbpf), country no",
+   "publisher": "Fraunhofer ISE (Energy-Charts.info), from ENTSO-E Transparency Platform data",
+   "url": "https://api.energy-charts.info/",
+   "licence": "cc-by-4.0",
+   "attribution": "Energy-Charts.info (Fraunhofer ISE); data: ENTSO-E Transparency Platform",
+   "retrievedAt": "2026-10-11"
+  }
+ ],
+ "hours": {
+  "winterPeak": {
+   "startUtc": "2026-01-12T07:00:00.000Z",
+   "generationMw": {
+    "hydroRunOfRiver": 2593.7,
+    "hydroReservoir": 19619.9,
+    "hydroPumpedStorage": 687.8,
+    "windOnshore": 3310.6,
+    "windOffshore": 1.1,
+    "fossilGas": 150.2,
+    "other": 113.3
+   },
+   "loadMw": 24288.0,
+   "importMw": {
+    "SE": -1459.3,
+    "FI": -47.0,
+    "DK": 118.0,
+    "DE": -1404.0,
+    "NL": 12.0,
+    "GB": 629.0
+   },
+   "queries": [
+    "https://api.energy-charts.info/public_power?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z",
+    "https://api.energy-charts.info/cbpf?country=no&start=2026-01-12T07:00Z&end=2026-01-12T07:45Z"
+   ],
+   "note": "Means of the quarter-hours 07:00–07:45 UTC (08:00–09:00 Europe/Oslo). other = waste 44.1 + other renewables 69.1 + biomass 0.1 + solar 0.0 MW. Net export 2,150.8 MW. Statnett driftsdata (PhysicalFlowMap/GetFlow, 07:00 UTC) gives NordLink 1,446.7 MW export, Skagerrak 56.7, North Sea Link 539.4 and NorNed 102.4 MW import; its history keeps no AC or internal border flows for this hour."
+  },
+  "summerLow": {
+   "startUtc": "2026-07-12T04:00:00.000Z",
+   "generationMw": {
+    "hydroRunOfRiver": 2263.7,
+    "hydroReservoir": 9727.5,
+    "hydroPumpedStorage": null,
+    "windOnshore": 433.7,
+    "windOffshore": 3.5,
+    "fossilGas": 133.9,
+    "other": 95.9
+   },
+   "loadMw": 10854.0,
+   "importMw": {
+    "SE": 845.2,
+    "FI": -37.0,
+    "DK": -719.0,
+    "DE": -883.2,
+    "NL": 0.0,
+    "GB": -1125.0
+   },
+   "queries": [
+    "https://api.energy-charts.info/public_power?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z",
+    "https://api.energy-charts.info/cbpf?country=no&start=2026-07-12T04:00Z&end=2026-07-12T04:45Z"
+   ],
+   "note": "Means of the quarter-hours 04:00–04:45 UTC (06:00–07:00 Europe/Oslo). Hydro pumped storage is not published for this hour (null). other = other renewables 54.0 + waste 40.9 + solar 1.0 MW. Net export 1,919.0 MW."
+  }
+ }
+}

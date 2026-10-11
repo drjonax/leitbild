@@ -1,6 +1,6 @@
 {
   "schema": "leitbild.electric-grid.norway-major-sites",
-  "curatedAt": "2026-10-10",
+  "curatedAt": "2026-10-11",
   "osmSnapshot": "Substation OSM ids from the production grid-norway sidecar build 20260528-230419 (OSM PBF); re-confirm against the fresh 2026-10 Geofabrik extract.",
   "inclusionRule": "Industrial, petroleum and data-centre loads with a published electrical demand of at least 25 MW (annual self-reported electricity / 8760 h, or published power-from-shore or contracted MW), in the municipalities that dominate Elhub industry consumption.",
   "sites": [
@@ -33,6 +33,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1563",
         "group": "industry"
@@ -98,6 +99,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1149",
         "group": "industry"
@@ -159,6 +161,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4643",
         "group": "industry"
@@ -216,6 +219,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4617",
         "group": "industry"
@@ -277,6 +281,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4638",
         "group": "industry"
@@ -322,6 +327,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1824",
         "group": "industry"
@@ -379,6 +385,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4206",
         "group": "industry"
@@ -444,6 +451,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1833",
         "group": "industry"
@@ -505,6 +513,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1833",
         "group": "industry"
@@ -570,6 +579,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1833",
         "group": "industry"
@@ -627,6 +637,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4626",
         "group": "industry"
@@ -688,6 +699,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1146",
         "group": "industry"
@@ -745,6 +757,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1547",
         "group": "industry"
@@ -814,6 +827,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4631",
         "group": "industry"
@@ -875,6 +889,36 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": {
+        "name": "Melkøya gasskraftverk",
+        "osmPlantId": "way/685025522",
+        "kind": "thermal",
+        "fuel": "gas",
+        "units": 5,
+        "capacityMw": 225,
+        "evidence": [
+          {
+            "url": "https://www.regjeringen.no/contentassets/c0c85d54ff88493b86713781ec7b6ece/vedrorende-godkjenning-av-endret-utbyggingsplan-for-snohvitfeltet-og-hammerfest-lng-l1483852-002-l1484472.pdf",
+            "supports": "OED 2023, p. 2: five gas-turbine generators of 45 MW, four in operation and one in reserve, about 225 MW electricity; p. 3: grid connection allocation 50 MW"
+          },
+          {
+            "url": "https://www.offshorenorge.no/contentassets/7a9efe0e38314d2fa311e25075ecf402/hammerfest-lng-2025.pdf",
+            "supports": "Equinor annual report 2025 to Miljødirektoratet: four turbines ran in 2025 (turbine gas 252.8 million Sm³, table 7.1.1a)"
+          },
+          {
+            "url": "https://www.regjeringen.no/contentassets/c0c85d54ff88493b86713781ec7b6ece/equinor-energy-as-soknad-om-anleggskonsesjon-og-ekspropriasjonstillatelse-for-a-bygge-og-drive-nettanlegg-for-a-elektrifisere-hammerfest-lng-melkoya-1484280.pdf",
+            "supports": "OED 2023, pp. 6–7: the 132 kV cable from Lucerna has about 80 MW technical capacity, 50 MW allocated to Equinor"
+          },
+          {
+            "url": "https://www.regjeringen.no/no/aktuelt/kraft-og-industriloft-for-finnmark/id2990581/",
+            "supports": "Electrification of Melkøya from the grid no earlier than 1 January 2030"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/685025522",
+            "supports": "OSM power=plant \"Melkøya gasskraftverk\", Equinor, plant:source=gas, 229 MW (extract 2026-10-08)"
+          }
+        ]
+      },
       "elhubAbsorption": {
         "municipalityNr": "5603",
         "group": "industry"
@@ -908,7 +952,7 @@
         ],
         "method": "curated",
         "confidence": "low",
-        "note": "Electricity is largely generated on site from gas; grid draw is not published, so the published annual electricity is a weight only. Full electrification via 420 kV Skaidi–Hyggevatn planned for 2030."
+        "note": "Electricity is largely generated on site from gas; grid draw is not published, so the published annual electricity is a weight only. Full electrification via 420 kV Skaidi–Hyggevatn planned for 2030. The on-site gas power plant (5 × 45 MW) is modelled as a thermal unit at the same bus."
       }
     },
     {
@@ -946,6 +990,7 @@
         "powerFromShoreMw": 208,
         "onshoreConnection": "Kollsnes HVDC rectifiers, +/-60 kV, ~70 km cables (+ original AC cable)"
       },
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4626",
         "group": "industry"
@@ -1005,6 +1050,7 @@
         "powerFromShoreMw": 55,
         "onshoreConnection": "Kollsnes onshore substation, 145 kV HVAC subsea cable ~162 km; energised Dec 2018, production from 30 Jun 2021"
       },
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4626",
         "group": "industry"
@@ -1068,6 +1114,7 @@
         "powerFromShoreMw": 300,
         "onshoreConnection": "Haugsneset (Tysvær): phase 1 100 MW HVDC (2018/2019), phase 2 +200 MW HVDC (2022); ~200 km"
       },
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1146",
         "group": "industry"
@@ -1131,6 +1178,7 @@
         "powerFromShoreMw": 115,
         "onshoreConnection": "Via Johan Sverdrup field centre (phase 2) from Haugsneset; Edvard Grieg 2022, Ivar Aasen and Gina Krog 2023, Sleipner 2024"
       },
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1146",
         "group": "industry"
@@ -1190,6 +1238,7 @@
         "powerFromShoreMw": 78,
         "onshoreConnection": "Lista HVDC Light converter, 150 kV DC, ~292-294 km; operations 2012, field on stream 2013"
       },
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4206",
         "group": "industry"
@@ -1253,6 +1302,7 @@
         "powerFromShoreMw": 75,
         "onshoreConnection": "Hyggevatn, AC subsea cable ~106 km"
       },
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "5603",
         "group": "industry"
@@ -1312,6 +1362,7 @@
         "powerFromShoreMw": 40,
         "onshoreConnection": "Mongstad, ~98.5 km static AC cable + 1.5 km riser"
       },
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4631",
         "group": "industry"
@@ -1365,6 +1416,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4001",
         "group": "industry"
@@ -1422,6 +1474,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4001",
         "group": "industry"
@@ -1479,6 +1532,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4012",
         "group": "industry"
@@ -1532,6 +1586,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4012",
         "group": "industry"
@@ -1585,6 +1640,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1845",
         "group": "industry"
@@ -1646,6 +1702,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "5055",
         "group": "industry"
@@ -1703,6 +1760,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "5059",
         "group": "industry"
@@ -1760,6 +1818,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "5530",
         "group": "industry"
@@ -1817,6 +1876,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4227",
         "group": "industry"
@@ -1878,6 +1938,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "1135",
         "group": "industry"
@@ -1935,6 +1996,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4648",
         "group": "industry"
@@ -1988,6 +2050,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "3105",
         "group": "industry"
@@ -2041,6 +2104,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4618",
         "group": "industry"
@@ -2098,6 +2162,7 @@
         "year": 2023
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "4618",
         "group": "industry"
@@ -2155,6 +2220,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "5037",
         "group": "industry"
@@ -2208,6 +2274,7 @@
         "year": 2025
       },
       "offshore": null,
+      "onSiteGeneration": null,
       "elhubAbsorption": {
         "municipalityNr": "3101",
         "group": "industry"
