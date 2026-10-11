@@ -365,11 +365,11 @@
   /* A block, not a flex box: an ellipsis only shortens a block's own text, so a long trip title ends in "…" rather than mid-word. */
   .banner { margin: 0; height: 22px; line-height: 22px; padding: 0 8px; display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--container-section-color); border-left: 3px solid var(--alert-caution-color); }
   .banner.quiet { background: none; border-left-color: transparent; color: var(--element-neutral-color); padding-left: 0; }
-  /* The reactor trip and the actuations each keep a part of the line, each shortened on its own. */
+  /* The reactor trip and the actuations each keep a part of the line, each shortened on its own; the trip keeps its whole name first. */
   .banner.trip { display: flex; gap: 14px; border-left-color: var(--alert-alarm-color); font-weight: 600; }
   .banner.trip > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tripped { flex: 1 1 auto; }
-  .actuated { flex: 0 1 auto; font-weight: 600; }
+  .tripped { flex: 0 0 auto; max-width: 70%; }
+  .actuated { flex: 1 1 0; }
   .status { margin: 8px 0; color: var(--element-neutral-color); }
   .status p { margin: 4px 0; }
   .hint { font-size: 11.5px; }
