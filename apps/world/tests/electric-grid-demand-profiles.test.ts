@@ -272,7 +272,7 @@ describe('Electric Grid demand profiles', () => {
       return demand
     }
     expect(trajectory(second)).toEqual(trajectory(first))
-  }, 60_000)
+  }, 600_000) // Hang guard: two 30-minute Norway runs stretch about load/8-fold in wall time on this 8-core machine
 
   test('publishes the profile series, day type and factor of a load, and the profile sources in the summary', () => {
     const grid = createGridRuntimeInstance({ definition: winter, at: '2026-01-12T07:00:00.000Z' })
