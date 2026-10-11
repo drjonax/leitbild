@@ -17,6 +17,7 @@
 //! is hardcoded here. Signed Newton trials are evaluated without clipping;
 //! physical admission is a separate account.
 mod account;
+mod blocks;
 mod evaluate;
 pub mod heaters;
 mod jacobian;
@@ -29,6 +30,7 @@ mod tolerance;
 pub mod walls;
 
 pub use account::{Tolerances, empty_energy_ratio};
+pub use blocks::BlockJacobian;
 pub use jacobian::{
     ConsistentPair, ConsistentSystem, CscOut, DensePattern, Largest, Projection, SparseJacobian,
     consistent_rates, consistent_start, project_constraints,
