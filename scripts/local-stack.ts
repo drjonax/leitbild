@@ -20,6 +20,31 @@ export const localModelEnvironment = (enabled: boolean, caller: NodeJS.ProcessEn
   return Object.fromEntries(keys.flatMap(key => caller[key] === undefined ? [] : [[key, caller[key]!]]))
 }
 
+/** Straight-line routing unless an OSRM endpoint is named; World's own adapter then validates and uses it. */
+export const localRoutingEnvironment = (osrm: string | undefined): Record<string, string> =>
+  osrm === undefined ? { LEITBILD_ROUTING_PROVIDER: 'direct' } : { LEITBILD_ROUTING_PROVIDER: 'osrm', LEITBILD_OSRM_URL: osrm }
+
+const parseUrl = (value: string): URL | undefined => { try { return new URL(value) } catch { return undefined } }
+
+/** Refuse the endpoint shapes World's OSRM adapter refuses at construction, so no service starts with one.
+ * Snapping any coordinate then proves a loaded road graph without assuming its coverage. */
+export const preflightOsrm = async (osrm: string): Promise<void> => {
+  const endpoint = parseUrl(osrm)
+  // The value is not echoed: it may carry credentials.
+  if (!endpoint || !['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+    throw new Error("--osrm must be an HTTP(S) endpoint without credentials, query or fragment, as World's OSRM adapter requires")
+  }
+  const probe = `${endpoint.href.replace(/\/+$/, '')}/nearest/v1/driving/0,0?number=1`
+  try {
+    const response = await fetch(probe, { signal: AbortSignal.timeout(5_000), redirect: 'error' })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const { code } = await response.json() as { code?: unknown }
+    if (code !== 'Ok') throw new Error(`OSRM code ${String(code)}`)
+  } catch (error) {
+    throw new Error(`OSRM at ${probe} is not ready (${String(error)}); start the router before dev:stack`, { cause: error })
+  }
+}
+
 /** Deliberately not a Caddy parser: these two named matchers own our route split.
  * Fail if their format changes rather than silently testing a different split. */
 export const localRoutes = (caddy: string): ((path: string) => ModuleName) => {
@@ -85,9 +110,12 @@ export const startLocalProxy = (route: (path: string) => ModuleName, ports: Reco
   },
 })
 
-export const startLocalStack = async (port = 43100, models = false) => {
+export interface LocalStackOptions { readonly port?: number; readonly models?: boolean; readonly osrm?: string }
+
+export const startLocalStack = async ({ port = 43100, models = false, osrm }: LocalStackOptions = {}) => {
   // Validate prerequisites before starting any child or creating a data directory.
   await preflightLocalStack(repository)
+  if (osrm !== undefined) await preflightOsrm(osrm)
   const route = localRoutes(await Bun.file(join(repository, 'apps/leitbild/deploy/sites/leitbild.caddy')).text())
   const directory = await mkdtemp(join(tmpdir(), 'leitbild-local-'))
   console.log(`Local state and logs retained: ${directory}`)
@@ -122,7 +150,7 @@ export const startLocalStack = async (port = 43100, models = false) => {
       WORKSPACE_HOST_URL: origin, LEITBILD_BIND_HOST: loopback, BIND_HOST: loopback,
       WORKSPACE_HOST_HOME: join(directory, 'host'), LEITBILD_HOME: join(directory, 'agents'),
       LEITBILD_DATA_DIR: join(directory, 'world'), LEITBILD_MAP_ROOT: join(directory, 'maps'),
-      LEITBILD_REFERENCE_ROOT: join(directory, 'reference'), LEITBILD_ROUTING_PROVIDER: 'direct',
+      LEITBILD_REFERENCE_ROOT: join(directory, 'reference'), ...localRoutingEnvironment(osrm),
       LEITBILD_KNOWLEDGE_SNAPSHOT: join(repository, 'knowledge/snapshot.json'),
       ...localModelEnvironment(models, process.env),
       WORKSPACE_MODULES: JSON.stringify((['world', 'agents'] as const).map(moduleId => ({ moduleId, internalBaseUrl: `http://${loopback}:${ports[moduleId]}`, manifestPath: '/.well-known/workspace-module' }))),
@@ -158,7 +186,7 @@ export const startLocalStack = async (port = 43100, models = false) => {
         await sleep(100)
       }
     }
-    console.log(`Leitbild local stack: ${origin}\n${models ? 'Provider environment explicitly enabled.' : 'No model credentials loaded.'} No external MCP servers or map/reference artifacts loaded; direct routing is a development limitation.`)
+    console.log(`Leitbild local stack: ${origin}\n${models ? 'Provider environment explicitly enabled.' : 'No model credentials loaded.'} No external MCP servers or map/reference artifacts loaded. ${osrm === undefined ? 'Direct straight-line routing is a development limitation.' : `OSRM routing at ${osrm}.`}`)
     return { origin, directory, ports, stop: async () => { await stop(); process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal) } }
   } catch (error) {
     await stop(); process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal)
@@ -169,10 +197,11 @@ export const startLocalStack = async (port = 43100, models = false) => {
 if (import.meta.main) {
   const args = process.argv.slice(2)
   const portArg = args.find(argument => argument.startsWith('--port='))
-  if (args.some(argument => argument !== '--smoke' && argument !== '--models' && argument !== portArg)) throw new Error('Usage: bun run dev:stack [--smoke] [--models] [--port=43100]')
+  const osrmArg = args.find(argument => argument.startsWith('--osrm='))
+  if (args.some(argument => argument !== '--smoke' && argument !== '--models' && argument !== portArg && argument !== osrmArg)) throw new Error('Usage: bun run dev:stack [--smoke] [--models] [--osrm=http://127.0.0.1:5055] [--port=43100]')
   const port = portArg ? Number(portArg.slice(7)) : 43100
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid loopback port')
-  const stack = await startLocalStack(port, args.includes('--models'))
+  const stack = await startLocalStack({ port, models: args.includes('--models'), ...(osrmArg === undefined ? {} : { osrm: osrmArg.slice(7) }) })
   if (args.includes('--smoke')) {
     try { await smokeLocalStack(stack.origin); console.log('Local stack smoke passed') }
     finally { await stack.stop() }
