@@ -11,6 +11,20 @@ const primaryLoopIdsFrom = (parameters: unknown): ReadonlyArray<string> => {
   return parsed.primaryLoopIds ?? []
 }
 
+/**
+ * What the ex-core nuclear instruments can indicate; a reading beyond pins at
+ * the end of its span: the power range 0 to 120 % of rated power, the
+ * intermediate range's compensated ion chamber 1e-11 A to 1e-3 A and its
+ * startup-rate meter -0.5 to +5 decades a minute, the source range's
+ * proportional counter up to 1e6 counts a second.
+ */
+export const nuclearInstrumentSpans = {
+  powerRangePercent: { min: 0, max: 120 },
+  intermediateRangeCurrentAmps: { min: 1e-11, max: 1e-3 },
+  intermediateRangeStartupRateDpm: { min: -0.5, max: 5 },
+  sourceRangeCountRateCps: { min: 0, max: 1e6 },
+} as const
+
 // How a core behaves once it is shut down, as its parameters declare it. The
 // reference four-loop core declares:
 // - Keepin's six delayed-neutron groups for thermal fission of U-235, beta
@@ -149,7 +163,9 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       /** Intermediate-range current at rated power. */
       nominalIntermediateRangeCurrentAmps: z.number().finite().positive().optional(),
       /** P-6: the intermediate-range current above which the source range's high voltage is cut. */
-      sourceRangeCutoffCurrentAmps: z.number().finite().positive().optional(),
+      p6IntermediateRangeCurrentAmps: z.number().finite().positive(),
+      /** P-10: the power-range reading, in percent of rated power, above which the low-power trips may be blocked. */
+      p10PowerRangePercent: z.number().finite().positive().max(100),
       minimumNaturalCirculationCoolingFraction: normalized.optional(),
     }),
     semantics: fixedSemantics({
@@ -173,8 +189,8 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'effectiveReactivityPcm', label: 'Effective core reactivity', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'reactivity', unit: 'pcm' }),
       variable({ path: 'rodInsertionFraction', label: 'Rod insertion demand', kind: 'control', discipline: 'control', writable: true, publish: 'telemetry', actuation: 'command', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 } } }),
       variable({ path: 'sourceRangeEnergized', label: 'Source-range detector high voltage on', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
-      variable({ path: 'sourceRangeCountRateCps', label: 'Source-range neutron count rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'countRate', unit: 'cps' }),
-      variable({ path: 'intermediateRangeCurrentAmps', label: 'Intermediate-range neutron current', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'electricalCurrent', unit: 'amps' }),
+      variable({ path: 'sourceRangeCountRateCps', label: 'Source-range neutron count rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'countRate', unit: 'cps', limits: { hardRange: nuclearInstrumentSpans.sourceRangeCountRateCps } }),
+      variable({ path: 'intermediateRangeCurrentAmps', label: 'Intermediate-range neutron current', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'electricalCurrent', unit: 'amps', limits: { hardRange: nuclearInstrumentSpans.intermediateRangeCurrentAmps } }),
       variable({ path: 'coolantInletTemperatureC', label: 'Core coolant inlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'coolantOutletTemperatureC', label: 'Core coolant outlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'coreExitTemperatureC', label: 'Core-exit temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
@@ -194,6 +210,10 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'pumpHeatMw', label: 'Reactor coolant pump heat', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'heatToCoolantMw', label: 'Heat to coolant', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'vapourGenerationKgPerS', label: 'Reactor coolant steam generation', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'flowRateDelta', unit: 'kg/s' }),
+      variable({ path: 'powerRangePercent', label: 'Power-range neutron flux', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'power', unit: 'percent', limits: { hardRange: nuclearInstrumentSpans.powerRangePercent } }),
+      variable({ path: 'aboveP10', label: 'P-10 power range above setpoint', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
+      variable({ path: 'intermediateRangeStartupRateDpm', label: 'Intermediate-range startup rate', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'startupRate', unit: 'DPM', limits: { hardRange: nuclearInstrumentSpans.intermediateRangeStartupRateDpm } }),
+      variable({ path: 'aboveP6', label: 'P-6 intermediate range above setpoint', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
     ],
   }),
   defineComponent({

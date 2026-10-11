@@ -215,7 +215,7 @@ describe('procedure client', () => {
     const native = await readProcedureTagValue('run-test' as SimulationRunId, plant.id, { id: 'NIS-PR-AVG' }, provider)
     expect(requests.at(-1)).toEqual({ plantId: plant.id, signals: [{ tagId: 'NIS-PR-AVG' }] })
     expect(responses.at(-1)).not.toHaveProperty('valueView')
-    expect(native).toMatchObject({ value: responses.at(-1)!.variable.value, unit: 'MW' })
+    expect(native).toMatchObject({ value: responses.at(-1)!.variable.value, unit: 'percent' })
     expect(native).not.toHaveProperty('conversionStatus')
   })
 

@@ -77,9 +77,11 @@ describe('process plant model composition', () => {
     // its program was given its tag (PZR-LVL-DEV), so its low-deviation alarm
     // replaces the fixed 35 % low-level alarm that stood after every trip,
     // and again when the core was given six delayed-neutron groups, decay
-    // heat on the ANS-5.1 curve and a scram worth on its trip breakers;
-    // PWR Runs checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('6c4692f30747876672ae50ab52822bc4eea05892af8a5f655b5901294b54b2b8')
+    // heat on the ANS-5.1 curve and a scram worth on its trip breakers, and
+    // again when its nuclear instruments were given their spans, the power
+    // range and startup rate, and P-6 and P-10; PWR Runs checkpointed before
+    // then must be restarted.
+    expect(system.modelDigest).toBe('8fd49f36613cd0cd96387bed6ad3162e47ce6c14a597b9c8983514c4364b9deb')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
@@ -391,7 +393,8 @@ describe('process plant discovery', () => {
             expect.stringContaining('Conversion from MPa to psig is unavailable'),
           ],
         },
-        { id: 'NIS-PR-AVG', status: 'resolved-with-warnings', warnings: [expect.stringContaining('Conversion from MW to percent is unavailable'), expect.stringContaining('no equipment identity')] },
+        // The power-range instruments read percent of rated power, as the procedures expect.
+        { id: 'NIS-PR-AVG', status: 'resolved', warnings: [] },
         { id: 'SI-SIG', status: 'missing', warnings: [] },
       ],
     })

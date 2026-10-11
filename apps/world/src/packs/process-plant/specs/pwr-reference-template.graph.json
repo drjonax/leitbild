@@ -63,16 +63,14 @@
         "coreBypassFlowFraction": 0.05,
         "nominalSourceRangeCountRateCps": 100000,
         "nominalIntermediateRangeCurrentAmps": 0.0005,
+        "p6IntermediateRangeCurrentAmps": 1e-10,
+        "p10PowerRangePercent": 10,
         "minimumNaturalCirculationCoolingFraction": 0.08
       },
       "variables": [
         {
           "path": "powerMw",
-          "description": "Core fission power; procedure-facing proxy for power-range nuclear instrumentation average",
-          "externalRefs": [
-            "NIS-PR-AVG",
-            "nis.power_range.avg"
-          ],
+          "description": "Core fission power, which the power-range nuclear instrumentation reads in percent of rated power (NIS-PR-AVG)",
           "capabilities": {
             "procedureRelevant": true
           },
@@ -105,19 +103,22 @@
           }
         },
         {
-          "path": "sourceRangeEnergized",
-          "tagId": "NIS-SR-HV",
+          "path": "powerRangePercent",
+          "tagId": "NIS-PR-AVG",
           "equipmentId": "nuclear-instrumentation",
-          "description": "Source-range detector high voltage on; cut above P-6, an intermediate-range current of 1e-10 A"
+          "description": "Power-range nuclear instrumentation average, neutron flux in percent of rated thermal power over its 0 to 120 % span",
+          "externalRefs": [
+            "nis.power_range.avg"
+          ],
+          "capabilities": {
+            "procedureRelevant": true
+          }
         },
         {
-          "path": "sourceRangeCountRateCps",
-          "tagId": "NIS-SR",
+          "path": "aboveP10",
+          "tagId": "P-10",
           "equipmentId": "nuclear-instrumentation",
-          "description": "Source-range nuclear instrumentation count rate; no counts while its detectors' high voltage is off above P-6 (NIS-SR-HV)",
-          "externalRefs": [
-            "nis.source_range.count_rate"
-          ]
+          "description": "P-10 permissive: power range above 10 % of rated power; it cuts the source-range high voltage"
         },
         {
           "path": "intermediateRangeCurrentAmps",
@@ -126,6 +127,36 @@
           "description": "Intermediate-range nuclear instrumentation current, in proportion to neutron flux over its 1e-11 A to 1e-3 A span",
           "externalRefs": [
             "nis.intermediate_range.avg"
+          ]
+        },
+        {
+          "path": "intermediateRangeStartupRateDpm",
+          "tagId": "NIS-IR-SUR",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "Intermediate-range startup rate in decades a minute over its -0.5 to +5 DPM span; about -1/3 DPM, a -80 s period, minutes after a trip",
+          "externalRefs": [
+            "nis.intermediate_range.startup_rate"
+          ]
+        },
+        {
+          "path": "aboveP6",
+          "tagId": "P-6",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "P-6 permissive: intermediate-range current above 1e-10 A; the source-range high voltage is cut while it holds and comes back on when it clears"
+        },
+        {
+          "path": "sourceRangeEnergized",
+          "tagId": "NIS-SR-HV",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "Source-range detector high voltage on; cut above P-6 (NIS-IR above 1e-10 A) and restored below it, some 15 minutes after a trip from power"
+        },
+        {
+          "path": "sourceRangeCountRateCps",
+          "tagId": "NIS-SR",
+          "equipmentId": "nuclear-instrumentation",
+          "description": "Source-range nuclear instrumentation count rate over its span to 1e6 cps; no counts while its detectors' high voltage is off above P-6 (NIS-SR-HV)",
+          "externalRefs": [
+            "nis.source_range.count_rate"
           ]
         },
         {
@@ -11210,9 +11241,13 @@
     "core.temperatureFeedbackPcm",
     "core.effectiveReactivityPcm",
     "core.rodInsertionFraction",
+    "core.powerRangePercent",
+    "core.aboveP10",
     "core.sourceRangeCountRateCps",
     "core.sourceRangeEnergized",
     "core.intermediateRangeCurrentAmps",
+    "core.intermediateRangeStartupRateDpm",
+    "core.aboveP6",
     "core.fuelTemperatureC",
     "core.fuelLowerTemperatureC",
     "core.fuelMidTemperatureC",

@@ -706,31 +706,6 @@ describe('nuclear instrumentation', () => {
     expect(plantRun.tag('NIS-SR-HV')).toBe(false)
     expect(plantRun.tag('NIS-SR')).toBe(0)
   })
-
-  test('after a trip the source range is energized below P-6 and counts', () => {
-    const tripped = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:nis-trip', valueOverrides: { 'pressurizer.pressureMPa': 10 } }))
-    const runtime = createProcessPlantRuntime({ system: tripped })
-    const protection = createProcessPlantProtectionRunner({ system: tripped, protection: tripped.automation })
-    const tag = (tagId: string) => runtime.readVariable(resolveProcessPlantSignalBinding(tripped.graph, { tagId: tagId as never }).path)
-    let energizedAt: number | null = null
-    // The flux falls on its -80 s period after the trip: P-6 clears some 15 minutes on, and the source range counts
-    // down to the startup source's 10 cps within half an hour.
-    for (let second = 1; second <= 1_800; second += 1) {
-      runtime.tick(1_000)
-      protection.evaluate({ runtime, elapsedMs: runtime.elapsedMs(), simulationRunId: 'run-model-truth' as SimulationRunId, sourceRuntimeId: 'process-plant.local' })
-      if (energizedAt === null && tag('NIS-SR-HV') === true) {
-        energizedAt = second
-        // It comes on below P-6 at the top of its range.
-        expect(Number(tag('NIS-SR'))).toBeGreaterThan(1_000)
-        expect(Number(tag('NIS-SR'))).toBeLessThanOrEqual(100_010)
-      }
-    }
-    expect(energizedAt).not.toBeNull()
-    // Shut down, the source range counts the startup source and the intermediate range sits at the bottom of its span.
-    expect(Number(tag('NIS-SR'))).toBeGreaterThanOrEqual(10)
-    expect(Number(tag('NIS-SR'))).toBeLessThan(100)
-    expect(Number(tag('NIS-IR'))).toBe(1e-11)
-  }, 120_000) // A tripped Run held for minutes, the same watchdog as the runtime's long trajectories.
 })
 
 describe('flows declared through a port', () => {

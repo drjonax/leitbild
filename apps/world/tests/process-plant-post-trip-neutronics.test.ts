@@ -9,11 +9,13 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { reactorNeutronics } from '../src/packs/process-plant/graph/reactor-component-definitions.ts'
 import { reactorKineticsPowerStep } from '../src/packs/process-plant/runtime/physics.ts'
+import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
 
 // The four-loop reference PWR tripped from steady full power, against what a
 // Westinghouse-type four-loop plant does: the power drops promptly as the rods
 // fall, then falls on the longest-lived delayed-neutron group's period, about
-// -80 s (-1/3 decade a minute); decay heat follows the ANS-5.1 curve.
+// -80 s (-1/3 decade a minute); decay heat follows the ANS-5.1 curve; the
+// source range comes back on below P-6 some 10 to 20 minutes after the trip.
 
 const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:post-trip-neutronics', loopCount: 4 }))
 const core = plant.graph.components[plant.graph.componentIndexById.get('core' as never)!]!
@@ -27,6 +29,7 @@ const started = () => {
   const runtime = createProcessPlantRuntime({ system: plant })
   const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
   const read = (path: string): number => Number(runtime.readVariable(path as VariablePath))
+  const tag = (tagId: string): unknown => runtime.readVariable(resolveProcessPlantSignalBinding(plant.graph, { tagId: tagId as never }).path)
   const run = (seconds: number, each?: (second: number) => void): void => {
     for (let second = 1; second <= seconds; second++) {
       runtime.tick(1_000)
@@ -34,7 +37,7 @@ const started = () => {
       each?.(second)
     }
   }
-  return { runtime, read, run }
+  return { runtime, read, tag, run }
 }
 
 // One trip from full power, held for 20 minutes and sampled each second; the tests below read it.
@@ -54,6 +57,13 @@ const tripped = () => {
     powerMw: plantRun.read('core.powerMw'),
     decayHeatMw: plantRun.read('core.decayHeatMw'),
     reactivityPcm: plantRun.read('core.reactivityPcm'),
+    powerRange: plantRun.read('core.powerRangePercent'),
+    intermediateRange: plantRun.read('core.intermediateRangeCurrentAmps'),
+    startupRate: Number(plantRun.tag('NIS-IR-SUR')),
+    p6: plantRun.tag('P-6') as boolean,
+    p10: plantRun.tag('P-10') as boolean,
+    highVoltage: plantRun.tag('NIS-SR-HV') as boolean,
+    sourceRange: Number(plantRun.tag('NIS-SR')),
   }))
   tripTrajectory = { before, samples }
   return tripTrajectory
@@ -61,10 +71,10 @@ const tripped = () => {
 const at = (second: number) => tripped().samples[second - 1]!
 
 describe('at steady full power', () => {
-  test('the neutronics add nothing: power, heat balance and the delta-T channels hold their operating point', () => {
+  test('the neutronics add nothing: power, heat balance, instruments and the delta-T channels hold their operating point', () => {
     const plantRun = started()
     plantRun.run(60)
-    const { read } = plantRun
+    const { read, tag } = plantRun
     expect(read('core.powerMw')).toBeCloseTo(ratedPowerMw, 1)
     expect(read('core.totalThermalPowerMw')).toBeCloseTo(read('core.powerMw'), 1)
     // Decay heat holds its 6 % share of fission power; each precursor group sustains the power it has.
@@ -75,6 +85,14 @@ describe('at steady full power', () => {
     expect(read('deltaTChannelA.deltaTC')).toBeCloseTo(35.55, 2)
     expect(read('deltaTChannelA.overtemperatureSetpointC')).toBeCloseTo(41.84, 2)
     expect(read('deltaTChannelA.overpowerSetpointC')).toBeCloseTo(38.88, 2)
+    // The instruments: power range at 100 %, the intermediate range high and steady, both permissives in, the source range off.
+    expect(Number(tag('NIS-PR-AVG'))).toBeCloseTo(100, 2)
+    expect(Number(tag('NIS-IR'))).toBeCloseTo(5e-4, 6)
+    expect(Number(tag('NIS-IR-SUR'))).toBeCloseTo(0, 3)
+    expect(tag('P-6')).toBe(true)
+    expect(tag('P-10')).toBe(true)
+    expect(tag('NIS-SR-HV')).toBe(false)
+    expect(tag('NIS-SR')).toBe(0)
   })
 })
 
@@ -86,13 +104,23 @@ describe('a reactor trip from full power', () => {
     // The prompt drop: within seconds the power falls to the share the delayed neutrons sustain, beta / (beta - rho).
     expect(at(5).powerMw as number).toBeLessThan(before.powerMw * 0.1)
     expect(at(5).powerMw as number).toBeGreaterThan(before.powerMw * 0.03)
-    // 93 s after the trip: some 0.2 to 0.5 % power.
-    expect(at(93).powerMw as number / ratedPowerMw).toBeGreaterThan(0.002)
-    expect(at(93).powerMw as number / ratedPowerMw).toBeLessThan(0.005)
+    // 93 s after the trip: some 0.2 to 0.5 % power, the intermediate range about 1e-6 A, the source range still off.
+    expect(at(93).powerRange as number).toBeGreaterThan(0.2)
+    expect(at(93).powerRange as number).toBeLessThan(0.5)
+    expect(at(93).intermediateRange as number).toBeGreaterThan(1e-6)
+    expect(at(93).intermediateRange as number).toBeLessThan(5e-6)
+    expect(at(93).highVoltage).toBe(false)
     // From five minutes on, the longest-lived group sets the period: about -80 s, -1/3 decade a minute.
     const periodS = (600 - 300) / Math.log((at(600).powerMw as number) / (at(300).powerMw as number))
     expect(periodS).toBeLessThan(-75)
     expect(periodS).toBeGreaterThan(-90)
+    for (const second of [300, 450, 600]) {
+      expect(at(second).startupRate as number).toBeGreaterThan(-0.35)
+      expect(at(second).startupRate as number).toBeLessThan(-0.3)
+    }
+    // The meter pins at the bottom of its -0.5 DPM span through the prompt drop, and never reads a rise.
+    expect(at(2).startupRate).toBe(-0.5)
+    expect(Math.max(...tripped().samples.map(sample => sample.startupRate as number))).toBeLessThanOrEqual(0)
   }, 120_000) // The trip is held for 20 minutes, the same watchdog as the runtime's long trajectories.
 
   test('leaves decay heat on the ANS-5.1 curve', () => {
@@ -102,6 +130,25 @@ describe('a reactor trip from full power', () => {
       expect(fraction / ansDecayHeatFraction(second)).toBeGreaterThan(0.97)
       expect(fraction / ansDecayHeatFraction(second)).toBeLessThan(1.05)
     }
+  }, 120_000)
+
+  test('re-energizes the source range below P-6, some 10 to 20 minutes after the trip', () => {
+    const { samples } = tripped()
+    // P-10 clears within seconds of the trip; P-6 holds while the intermediate range reads above 1e-10 A.
+    expect(samples.findIndex(sample => sample.p10 === false) + 1).toBeLessThan(10)
+    const clearedAt = samples.findIndex(sample => sample.p6 === false) + 1
+    expect(clearedAt).toBeGreaterThan(10 * 60)
+    expect(clearedAt).toBeLessThan(20 * 60)
+    for (const sample of samples) {
+      expect(sample.highVoltage).toBe(!(sample.p6 as boolean))
+      expect(sample.p6).toBe((sample.intermediateRange as number) >= 1e-10)
+      if (!sample.highVoltage) expect(sample.sourceRange).toBe(0)
+    }
+    // It comes on at the top of its range, overlapping the intermediate range, and counts down from there.
+    expect(at(clearedAt).sourceRange as number).toBeGreaterThan(5e4)
+    expect(at(clearedAt).sourceRange as number).toBeLessThanOrEqual(1e5 + 10)
+    expect(at(1_200).sourceRange as number).toBeLessThan(at(clearedAt).sourceRange as number)
+    expect(at(1_200).sourceRange as number).toBeGreaterThan(10)
   }, 120_000)
 })
 

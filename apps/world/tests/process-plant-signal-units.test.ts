@@ -73,8 +73,9 @@ describe('requested-unit signal read boundary', () => {
   }
 
   test('preserves native observations and quality; adds a view only when requested', () => {
-    const native = read([{ tagId: 'NIS-PR-AVG' }]).signals[0]!
-    const projected = read([{ tagId: 'NIS-PR-AVG', requestedUnit: 'percent' }]).signals[0]!
+    // Fission power in MW, asked for in percent: the power-range instruments read that, and no conversion is declared.
+    const native = read([{ path: 'core.powerMw' }]).signals[0]!
+    const projected = read([{ path: 'core.powerMw', requestedUnit: 'percent' }]).signals[0]!
     expect(native).not.toHaveProperty('valueView')
     expect(projected.signal).toEqual(native.signal)
     expect(projected.variable).toEqual(native.variable)
@@ -83,7 +84,7 @@ describe('requested-unit signal read boundary', () => {
       status: 'unavailable', value: native.variable.value, unit: 'MW', requestedUnit: 'percent',
       reason: expect.stringContaining('Conversion from MW to percent is unavailable'),
     })
-    expect(projected.signal.description).toContain('proxy')
+    expect(projected.signal.description).toContain('NIS-PR-AVG')
     const capability = processPlantCapabilities.find(entry => entry.id === 'world.process-plant.signals.read')!
     expect(capability.output.parse({ plantId: plant.id, signals: [projected] })).toEqual({ plantId: plant.id, signals: [projected] })
   })
@@ -101,10 +102,10 @@ describe('requested-unit signal read boundary', () => {
 
   test('external-reference matches cannot bypass unit warnings, and SI-SIG stays missing', () => {
     for (const units of ['percent', 'bogus-units']) {
-      const row = read([{ tagId: 'NIS-PR-AVG', requestedUnit: units }]).signals[0]!
+      const row = read([{ tagId: 'nis.intermediate_range.avg', requestedUnit: units }]).signals[0]!
       expect(query('world.process-plant.procedure-tags.validate', {
-        plantId: plant.id, tags: [{ id: 'NIS-PR-AVG', units, simPath: 'nis.power_range.avg' }],
-      })).toMatchObject({ tags: [{ id: 'NIS-PR-AVG', status: 'resolved-with-warnings', warnings: [row.valueView!.reason] }] })
+        plantId: plant.id, tags: [{ id: 'nis.intermediate_range.avg', units, simPath: 'nis.intermediate_range.avg' }],
+      })).toMatchObject({ tags: [{ id: 'nis.intermediate_range.avg', status: 'resolved-with-warnings', warnings: [row.valueView!.reason] }] })
     }
     expect(query('world.process-plant.procedure-tags.validate', { plantId: plant.id, tags: [{ id: 'SI-SIG', units: 'bool' }] }))
       .toMatchObject({ tags: [{ id: 'SI-SIG', status: 'missing', warnings: [] }] })
@@ -129,13 +130,17 @@ describe('requested-unit signal read boundary', () => {
   })
 
   test('procedure range and equipment claims are checked even for external-reference matches', () => {
-    // Core power declares its 0 to 4,500 MW hard range, so a procedure's 0 to 4,000 MW span is checked against it.
+    // The power range declares its 0 to 120 % span as its hard range, so a procedure's 0 to 100 % span is checked against it.
     expect(query('world.process-plant.procedure-tags.validate', {
-      plantId: plant.id, tags: [{ id: 'NIS-PR-AVG', equipment: 'unverified-detector', units: 'MW', range: [0, 4000] }],
-    })).toMatchObject({ tags: [{ status: 'resolved-with-warnings', warnings: [expect.stringContaining('no equipment identity'), expect.stringContaining('does not match signal hard range 0..4500 MW')] }] })
-    // A signal with no hard range, matched by its external reference, cannot have a declared range verified.
+      plantId: plant.id, tags: [{ id: 'NIS-PR-AVG', equipment: 'unverified-detector', units: 'percent', range: [0, 100] }],
+    })).toMatchObject({ tags: [{ status: 'resolved-with-warnings', warnings: [expect.stringContaining('does not match process equipment nuclear-instrumentation'), expect.stringContaining('does not match signal hard range 0..120 percent')] }] })
+    // The intermediate range, matched by its external reference, declares the 1e-11 A to 1e-3 A span a procedure expects.
     expect(query('world.process-plant.procedure-tags.validate', {
       plantId: plant.id, tags: [{ id: 'nis.intermediate_range.avg', equipment: 'nuclear-instrumentation', units: 'amps', range: [1e-11, 1e-3] }],
+    })).toMatchObject({ tags: [{ status: 'resolved', warnings: [] }] })
+    // A signal with no hard range, matched by its external reference, cannot have a declared range verified.
+    expect(query('world.process-plant.procedure-tags.validate', {
+      plantId: plant.id, tags: [{ id: 'rcs.t_avg', equipment: 'vessel', units: 'degC', range: [260, 330] }],
     })).toMatchObject({ tags: [{ status: 'resolved-with-warnings', warnings: [expect.stringContaining('no explicit hard range')] }] })
     expect(query('world.process-plant.procedure-tags.validate', {
       plantId: plant.id, tags: [{ id: 'ROD-POS-AVG', equipment: 'wrong-equipment', units: 'fraction', range: [0, 2] }],

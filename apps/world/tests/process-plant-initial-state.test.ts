@@ -27,6 +27,8 @@ const absoluteFloorByUnit: Readonly<Record<string, number>> = {
   'percent': 0.5,
   'fraction': 0.005,
   'pcm': 1,
+  // A startup-rate meter reads hundredths of a decade a minute.
+  'DPM': 0.01,
   'm3': 0.05,
   'mSv/h': 0.01,
 }

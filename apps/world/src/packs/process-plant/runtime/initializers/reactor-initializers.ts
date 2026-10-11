@@ -32,9 +32,14 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       if (localPath === 'voidFeedbackPcm') return 0
       if (localPath === 'effectiveReactivityPcm') return 0
       if (localPath === 'rodInsertionFraction') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1))
+      if (localPath === 'powerRangePercent') return nuclearInstrumentationReading(component, initialFissionPower).powerRangePercent
+      if (localPath === 'aboveP10') return nuclearInstrumentationReading(component, initialFissionPower).aboveP10
+      if (localPath === 'intermediateRangeCurrentAmps') return nuclearInstrumentationReading(component, initialFissionPower).intermediateRangeCurrentAmps
+      // Held at steady power, the flux does not change.
+      if (localPath === 'intermediateRangeStartupRateDpm') return 0
+      if (localPath === 'aboveP6') return nuclearInstrumentationReading(component, initialFissionPower).aboveP6
       if (localPath === 'sourceRangeEnergized') return nuclearInstrumentationReading(component, initialFissionPower).sourceRangeEnergized
       if (localPath === 'sourceRangeCountRateCps') return nuclearInstrumentationReading(component, initialFissionPower).sourceRangeCountRateCps
-      if (localPath === 'intermediateRangeCurrentAmps') return nuclearInstrumentationReading(component, initialFissionPower).intermediateRangeCurrentAmps
       if (localPath === 'coolantInletTemperatureC') return initialCoolantInlet
       if (localPath === 'coolantOutletTemperatureC') return initialCoolantOutlet
       if (localPath === 'coreExitTemperatureC') return initialCoreExit
