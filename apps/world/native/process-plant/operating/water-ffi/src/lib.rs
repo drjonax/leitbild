@@ -229,15 +229,40 @@ fn exact_held(branch: Branch, held: &WaterPoint, dp: f64, dt: f64) -> Result<Wat
 }
 
 /// The saturated liquid and vapor endpoints at `p` with their exact
-/// directions along `dp`: temperature, density, internal energy and enthalpy
-/// bit for bit those of `directional(Saturated*, p, 0, dp, 0)`. Transport,
-/// cv, cp and expansion directions are not evaluated (NaN), and no
-/// coefficient probe is made.
+/// directions along `dp`: temperature, density and enthalpy bit for bit
+/// those of `directional(Saturated*, p, 0, dp, 0)`. Transport, cv, cp and
+/// expansion directions are not evaluated (NaN), and no coefficient probe is
+/// made. At a seed of exactly +0.0 those three directions are +0.0 (the
+/// exact directions are products of the seed with the finite positive
+/// slope, compressibility, density and cp), so the endpoint needs neither its
+/// compressibility nor its slope, and every other direction is NaN.
 pub fn saturation_caloric(p: f64, dp: f64) -> Result<[(WaterPoint, WaterPoint); 2], Error> {
     if !dp.is_finite() {
         return Err(Error::AbiArgument);
     }
+    let value_only = dp.to_bits() == 0;
     let endpoint = |branch: Branch| -> Result<(WaterPoint, WaterPoint), Error> {
+        if value_only {
+            let q = point_fields(branch, p, 0., 0)?;
+            let n = f64::NAN;
+            let zero = WaterPoint {
+                region: q.region,
+                pressure_pa: 0.,
+                temperature_k: 0.,
+                density_kg_m3: 0.,
+                internal_energy_j_kg: n,
+                enthalpy_j_kg: 0.,
+                cp_j_kg_k: n,
+                cv_j_kg_k: n,
+                expansion_per_k: n,
+                compressibility_per_pa: n,
+                viscosity_pa_s: n,
+                conductivity_w_m_k: n,
+                saturation_slope_k_pa: n,
+                saturation_departure_k: n,
+            };
+            return Ok((q, zero));
+        }
         let q = point_fields(branch, p, 0., FIELD_KAPPA | FIELD_SLOPE)?;
         Ok((q, exact_held(branch, &q, dp, 0.)?))
     };

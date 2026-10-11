@@ -867,9 +867,11 @@ fn thermodynamic_partials_are_the_exact_fields_of_partials() {
     assert!(compared > 80_000, "{compared}");
 }
 
-/// What `properties::Shared` relies on: the caloric saturation tuple at a
-/// +0.0 pressure seed is the tuple at any finite seed with its directions
-/// set to +0.0, bit for bit, over a dense pressure sweep.
+/// What `properties::Shared` and the value-only caloric tuple rely on: at a
+/// +0.0 pressure seed the complete tuple's exact directions (T, densities,
+/// enthalpies, computed by the bridge's Gibbs identities) are +0.0, and the
+/// caloric tuple equals it, and equals the values of the tuple at any finite
+/// seed, bit for bit, over a dense pressure sweep.
 #[test]
 fn value_only_caloric_saturation_is_a_held_tuple_with_zero_directions() {
     let mut state = 0x5EED_0004;
@@ -883,17 +885,28 @@ fn value_only_caloric_saturation_is_a_held_tuple_with_zero_directions() {
         let Ok(zero) = If97.saturation_caloric(Scalar::new(p, 0.)) else {
             continue;
         };
+        let complete = Properties::saturation(&If97, Scalar::new(p, 0.)).unwrap();
+        let fields = |t: &Saturation| {
+            [
+                t.temperature,
+                t.liquid.density,
+                t.liquid.enthalpy,
+                t.vapor.density,
+                t.vapor.enthalpy,
+            ]
+        };
+        for (a, b) in fields(&zero).into_iter().zip(fields(&complete)) {
+            assert_eq!(
+                [a.value.to_bits(), a.direction.to_bits()],
+                [b.value.to_bits(), b.direction.to_bits()],
+                "p={p:e}"
+            );
+            assert_eq!(b.direction.to_bits(), 0, "p={p:e}: computed +0.0 direction");
+        }
         for dp in [1., -1., 0.98, 1e4, -3e4, 1e-300, -0.] {
             let seeded = If97.saturation_caloric(Scalar::new(p, dp)).unwrap();
-            for (a, b) in [
-                (zero.temperature, seeded.temperature),
-                (zero.liquid.density, seeded.liquid.density),
-                (zero.liquid.enthalpy, seeded.liquid.enthalpy),
-                (zero.vapor.density, seeded.vapor.density),
-                (zero.vapor.enthalpy, seeded.vapor.enthalpy),
-            ] {
+            for (a, b) in fields(&zero).into_iter().zip(fields(&seeded)) {
                 assert_eq!(a.value.to_bits(), b.value.to_bits(), "p={p:e}");
-                assert_eq!(a.direction.to_bits(), 0, "p={p:e}: +0.0 direction");
             }
         }
         checked += 1;
