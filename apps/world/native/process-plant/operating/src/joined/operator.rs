@@ -450,6 +450,13 @@ impl<P: Properties + WaterProperties> Joined<P> {
             return Err(fatal("stage length"));
         }
         self.blocks.pre_network(y, yp, seed, cj)?;
+        // The rod owner's moving volumes; a prepared pose lists none, so every
+        // cell keeps its compiled volume. Taken out for the call, so the
+        // coupling may borrow the blocks while the network reads them.
+        let volumes = match self.blocks.rods {
+            RodPort::Owner(_) => std::mem::take(&mut self.blocks.cell_volumes),
+            RodPort::Prepared(_) => Vec::new(),
+        };
         let (network_rows, block_rows) = self.rows.split_at_mut(o.nuclear);
         let mut coupler = Coupler {
             blocks: &mut self.blocks,
@@ -460,7 +467,7 @@ impl<P: Properties + WaterProperties> Joined<P> {
             cj,
             rows: block_rows,
         };
-        self.network.evaluate_coupled(
+        let result = self.network.evaluate_joined(
             t,
             &y[..o.nuclear],
             &yp[..o.nuclear],
@@ -468,7 +475,12 @@ impl<P: Properties + WaterProperties> Joined<P> {
             cj,
             reuse,
             Some(&mut coupler),
-        )?;
+            &volumes,
+        );
+        if matches!(self.blocks.rods, RodPort::Owner(_)) {
+            self.blocks.cell_volumes = volumes;
+        }
+        result?;
         network_rows.copy_from_slice(self.network.rows());
         self.counters.residuals += 1;
         self.counters.residual_wall_s += started.elapsed().as_secs_f64();
@@ -818,6 +830,18 @@ impl<P: Properties + WaterProperties> Joined<P> {
                 add(&mut columns, &rows, &cols);
             }
         }
+        // Moving volumes: a cell's volume reaches every row its own
+        // coordinates reach (EOS, fractions, inertance, feedback density).
+        if let RodPort::Owner(b) = &self.blocks.rods {
+            for (cell, own) in &b.structure().volumes {
+                let mut rows = BTreeSet::new();
+                for c in self.cell(*cell) {
+                    rows.extend(columns[c].iter().copied());
+                }
+                let cols: BTreeSet<usize> = own.iter().map(|i| o.rods + i).collect();
+                add(&mut columns, &rows, &cols);
+            }
+        }
         for (c, rows) in columns.iter_mut().enumerate() {
             rows.insert(c);
         }
@@ -843,17 +867,6 @@ impl<P: Properties + WaterProperties> Blocks<P> {
                 let x = view(y, yp, seed, cj, o.rods..o.end, &self.scales[3].coordinates)?;
                 b.travel(x, &mut self.travel)?;
                 b.volumes(x, &self.compiled_volumes, &mut self.cell_volumes)?;
-                for (c, v) in self.cell_volumes.iter().enumerate() {
-                    if v.volume_m3.value != self.compiled_volumes[c]
-                        || v.volume_m3.direction != 0.
-                        || v.rate_m3_s.value != 0.
-                        || v.rate_m3_s.direction != 0.
-                    {
-                        return Err(Failure::Fatal(format!(
-                            "cell {c} reports a moving volume; the network does not consume one yet"
-                        )));
-                    }
-                }
             }
             RodPort::Prepared(travel) => {
                 for (t, v) in self.travel.iter_mut().zip(travel) {
@@ -885,7 +898,6 @@ impl<P: Properties + WaterProperties> Blocks<P> {
             secondary,
             rods,
             source_water,
-            compiled_volumes,
             nuclear_rows,
             solid_rows,
             secondary_rows,
@@ -928,7 +940,7 @@ impl<P: Properties + WaterProperties> Blocks<P> {
             let (q, d) = fluid.points[j][0]
                 .ok_or_else(|| trial(format!("source region {i}'s cell {j} has no liquid")))?;
             *w = RegionWater {
-                density_kg_m3: (liquid + fluid.vapor_mass[j]) / s(compiled_volumes[j]),
+                density_kg_m3: (liquid + fluid.vapor_mass[j]) / fluid.current_volumes[j],
                 boron_ppm_eq: s(1e6) * fluid.tracer[j] / liquid,
                 pressure_pa: fluid.cells[j].pressure,
                 temperature_k: Scalar::new(q.temperature_k, d.temperature_k),
