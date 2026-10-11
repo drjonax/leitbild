@@ -202,6 +202,54 @@
       "accessedOn": "2026-10-11",
       "status": "verified",
       "note": "No universal angle: some systems accept no more than 20°; manual reclosing in normal operation with digital relays uses 15-25°, automatic synch-check relays 15-35°; a digital-relay example uses 15° and 0.05 Hz. 20° for closing a loop inside one island is a modelling choice within these ranges."
+    },
+    {
+      "section": "branchProtection",
+      "title": "Commission Regulation (EU) 2017/1485 (SO GL), Article 25",
+      "url": "https://www.legislation.gov.uk/eur/2017/1485/article/25/adopted/data.xml",
+      "accessedOn": "2026-10-11",
+      "status": "verified",
+      "note": "Article 25(1)(c): operational security limits include current limits in terms of thermal rating including the transitory admissible overloads. The emergency rating and its duration (Model, or 900 s for v1 Models as in the v2 build's 120 %/15 min rule) are that transitory admissible overload; the definite-time element trips a branch above it for longer than its duration."
+    },
+    {
+      "section": "branchProtection",
+      "title": "CIGRE Technical Brochure 601: Guide for thermal rating calculations of overhead lines",
+      "url": "https://www.e-cigre.org/publications/detail/601-guide-for-thermal-rating-calculations-of-overhead-lines.html",
+      "accessedOn": "2026-10-11",
+      "status": "unverified",
+      "note": "TB 601 treats transient conductor heating; the brochure is paywalled and was not read. Overhead conductor time constants are commonly quoted at 5-15 min, so 600 s is used for lines; 7200 s for cables, transformers and v1 HVDC branches stands for their much larger thermal mass. The thermal trip level is derived per branch so that a branch carrying its continuous rating can carry its emergency rating for exactly its emergency duration (Leitbild modelling choice)."
+    },
+    {
+      "section": "branchProtection",
+      "title": "NERC PRC-023-4 Reliability Standard Audit Worksheet (transmission relay loadability)",
+      "url": "https://www.nerc.com/pa/comp/Reliability%20Standard%20Audits%20Worksheets%20DL/RSAW%20PRC-023-4_2016_v1.docx",
+      "accessedOn": "2026-10-11",
+      "status": "modelling-choice",
+      "note": "Load-responsive line relays must not operate at or below 150 % of the highest seasonal facility rating (PRC-023 R1 criterion 1, seen in NERC worksheet summaries, not in the standard text). The instantaneous element picks up at 150 % of the continuous rating, a simplified distance-zone load encroachment. The 1 s relay sample interval is a Leitbild modelling choice."
+    },
+    {
+      "section": "alarms",
+      "title": "Commission Regulation (EU) 2017/1485 (SO GL), Annex III",
+      "url": "https://www.legislation.gov.uk/eur/2017/1485/annex/III/adopted/data.xml",
+      "accessedOn": "2026-10-11",
+      "status": "verified",
+      "note": "Table 1, Nordic: standard frequency range ±100 mHz, maximum steady-state frequency deviation 500 mHz, maximum instantaneous frequency deviation 1000 mHz. These set the priority 3, 2 and 1 island frequency bands; the 10 mHz (and 10 %) clear hysteresis is a Leitbild modelling choice."
+    },
+    {
+      "section": "alarms",
+      "title": "Commission Regulation (EU) 2017/1485 (SO GL), Article 25",
+      "url": "https://www.legislation.gov.uk/eur/2017/1485/article/25/adopted/data.xml",
+      "accessedOn": "2026-10-11",
+      "status": "verified",
+      "note": "Branch loading alarms at the continuous rating (operational security limit) and at the emergency rating (transitory admissible overload) follow Article 25(1)(c); the 90 % pre-warning band is a Leitbild modelling choice."
+    },
+    {
+      "section": "alarms",
+      "title": "Leitbild alarm handling",
+      "url": "https://www.legislation.gov.uk/eur/2017/1485/annex/III/adopted/data.xml",
+      "accessedOn": "2026-10-11",
+      "status": "modelling-choice",
+      "note": "Leitbild modelling choices, not published values: an alarm changes state at most once per 10 s; clear delays of 10 s and raise delays of 0 s (10 s for the 90 % loading and reserve-deficit alarms); thresholds of 10 MW reserve deficit and 1 MW unserved load; priorities 1 for loss of supply, LFDD, AC non-convergence, branch trips, emergency loading and frequency beyond the instantaneous limit."
     }
   ],
   "simulation": {
@@ -367,5 +415,120 @@
   "synchroCheck": {
     "maximumFrequencyDifferenceHz": 0.1,
     "maximumAngleDifferenceDegrees": 20
+  },
+  "branchProtection": {
+    "enabled": true,
+    "sampleIntervalSeconds": 1,
+    "thermalTimeConstantSeconds": {
+      "ac_line": 600,
+      "cable": 7200,
+      "transformer": 7200,
+      "hvdc_link": 7200,
+      "switch": 600
+    },
+    "emergencyDurationSeconds": 900,
+    "instantaneousPercentOfRating": 150
+  },
+  "alarms": {
+    "minimumTransitionIntervalSeconds": 10,
+    "islandFrequency": [
+      {
+        "id": "standard-range",
+        "priority": 3,
+        "raiseDelaySeconds": 0,
+        "clearDelaySeconds": 10,
+        "deviationHz": 0.1,
+        "clearDeviationHz": 0.09
+      },
+      {
+        "id": "steady-state-limit",
+        "priority": 2,
+        "raiseDelaySeconds": 0,
+        "clearDelaySeconds": 10,
+        "deviationHz": 0.5,
+        "clearDeviationHz": 0.45
+      },
+      {
+        "id": "instantaneous-limit",
+        "priority": 1,
+        "raiseDelaySeconds": 0,
+        "clearDelaySeconds": 10,
+        "deviationHz": 1.0,
+        "clearDeviationHz": 0.9
+      }
+    ],
+    "islandDeEnergised": {
+      "priority": 1,
+      "raiseDelaySeconds": 0,
+      "clearDelaySeconds": 0
+    },
+    "islandFormed": {
+      "priority": 2,
+      "raiseDelaySeconds": 0,
+      "clearDelaySeconds": 0
+    },
+    "reserveDeficit": {
+      "priority": 3,
+      "raiseDelaySeconds": 10,
+      "clearDelaySeconds": 10,
+      "raiseMw": 10,
+      "clearMw": 5
+    },
+    "unservedLoad": {
+      "priority": 2,
+      "raiseDelaySeconds": 0,
+      "clearDelaySeconds": 10,
+      "raiseMw": 1,
+      "clearMw": 0.5
+    },
+    "lfddStageOperated": {
+      "priority": 1,
+      "raiseDelaySeconds": 0,
+      "clearDelaySeconds": 0
+    },
+    "acNonConvergence": {
+      "priority": 1,
+      "raiseDelaySeconds": 0,
+      "clearDelaySeconds": 10
+    },
+    "branchLoading": [
+      {
+        "id": "high",
+        "priority": 3,
+        "raiseDelaySeconds": 10,
+        "clearDelaySeconds": 10,
+        "basis": "continuous-rating",
+        "raisePercent": 90,
+        "clearPercent": 88
+      },
+      {
+        "id": "overload",
+        "priority": 2,
+        "raiseDelaySeconds": 0,
+        "clearDelaySeconds": 10,
+        "basis": "continuous-rating",
+        "raisePercent": 100,
+        "clearPercent": 98
+      },
+      {
+        "id": "above-emergency",
+        "priority": 1,
+        "raiseDelaySeconds": 0,
+        "clearDelaySeconds": 10,
+        "basis": "emergency-rating",
+        "raisePercent": 100,
+        "clearPercent": 98
+      }
+    ],
+    "branchTripped": {
+      "priority": 1,
+      "raiseDelaySeconds": 0,
+      "clearDelaySeconds": 0
+    },
+    "generatorTripped": {
+      "priority": 2,
+      "raiseDelaySeconds": 0,
+      "clearDelaySeconds": 0
+    }
   }
 }

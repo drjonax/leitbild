@@ -1,7 +1,9 @@
 import { z } from 'zod'
+import { alarmsSchema, branchProtectionSchema } from './grid-protection-automation.ts'
 
 // Automation Definition for island frequency control: swing integration, FCR-N/FCR-D,
-// aFRR, mFRR, LFDD, storage response and generator frequency protection. Frequencies are
+// aFRR, mFRR, LFDD, storage response, generator frequency protection, branch protection and
+// alarm limits (grid-protection-automation.ts). Frequencies are
 // absolute Hz on the declared nominal frequency; every field names its unit.
 
 const hz = z.number().finite().positive()
@@ -35,6 +37,7 @@ const directionalRequirementSchema = z.object({
 
 export const automationSectionSchema = z.enum([
   'simulation', 'swing', 'fcrN', 'fcrD', 'afrr', 'mfrr', 'lfdd', 'storage', 'generatorProtection', 'synchroCheck',
+  'branchProtection', 'alarms',
 ])
 
 const sourceReferenceSchema = z.object({
@@ -216,6 +219,8 @@ export const gridAutomationSchema = z.object({
   storage: storageSchema,
   generatorProtection: generatorProtectionSchema,
   synchroCheck: synchroCheckSchema,
+  branchProtection: branchProtectionSchema,
+  alarms: alarmsSchema,
 }).strict().superRefine((value, context) => {
   const nominal = value.swing.nominalFrequencyHz
   const issue = (message: string, path: ReadonlyArray<string | number>): void => {
