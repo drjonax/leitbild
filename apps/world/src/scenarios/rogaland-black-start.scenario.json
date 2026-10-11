@@ -1,7 +1,7 @@
 {
   "id": "rogaland-black-start",
   "title": "Regional blackout and black start · Sør-Rogaland",
-  "description": "A summer weekday evening, 18:00. The 132 kV network serving southern Stavanger, Sandnes and Ryfylke is fed from the 300 kV grid through two transformers, at Lyse and Fagrafjell. At this hour Elhub's measured summer demand puts the region at about 290 MW, half of it imported; at the summer night low (Sunday 06:00, about 220 MW, 45 % imported) the region would ride through the same separation on its own hydro and under-frequency load shedding. The Grid starts from the summer night's unit commitment, with the evening's extra demand shared over the online units' headroom. One minute in, both transformers trip. The region's own units cannot carry the deficit: its frequency collapses within a second, every unit trips and the island goes dead while the rest of the grid stays live. Restore it as a black-start exercise: a dead island energises only from a black-start capable unit inside it or by closing a branch onto it from a live neighbour, and the exercise keeps both transformers open until the region is live again. Lysebotn I (120 MW), Flørli and Jøssang are the region's units the model marks black-start capable, by its rule for storage hydropower (Statnett does not publish its black-start providers). Disconnect the demand, black-start Lysebotn I onto a small starting block, pick up the rest in blocks small enough to stay above the 48.8 Hz first stage of under-frequency load shedding, then bring the island within 0.1 Hz of the main grid and close a transformer under synchro-check. There are no weather-driven faults.",
+  "description": "A summer weekday evening, 18:00. The 132 kV network serving southern Stavanger, Sandnes and Ryfylke is fed from the transmission grid through two transformers, Lyse 300/132 kV and Fagrafjell 420/132 kV. At this hour Elhub's measured summer demand puts the region at about 290 MW, half of it imported; at the summer night low (Sunday 06:00, about 220 MW, 45 % imported) the region would ride through the same separation on its own hydro and under-frequency load shedding. The Grid starts from the summer night's unit commitment, with the evening's extra demand shared over the online units' headroom. One minute in, both transformers trip. The region's own units cannot carry the deficit: its frequency collapses within a second, every unit trips and the island goes dead while the rest of the grid stays live. Restore it as a black-start exercise: a dead island energises only from a black-start capable unit inside it or by closing a branch onto it from a live neighbour, and the exercise keeps both transformers open until the region is live again. Lysebotn I (120 MW), Flørli and Jøssang are the region's units the model marks black-start capable, by its rule for storage hydropower (Statnett does not publish its black-start providers). Disconnect the demand, black-start Lysebotn I onto a small starting block, pick up the rest in blocks small enough to stay above the 48.8 Hz first stage of under-frequency load shedding, then bring the island within 0.1 Hz of the main grid and close a transformer under synchro-check. There are no weather-driven faults.",
   "objectives": [
     "Confirm the blackout: the region's island is de-energised, its units are tripped and its demand is out, while the main grid stays live (islands.list, assets.search with the island id).",
     "Prepare the black start: reset Lysebotn I's trip and disconnect the region's demand with emergency shedding (shed-load with emergency: true), leaving a starting block of about 40 MW in Ryfylke (Forsand, Dalen, Jøssang, Nye Veland and Nye Hjelmeland) for Lysebotn I's 36 MW minimum stable output. A unit that is not black-start capable cannot start in the dead island.",
@@ -46,7 +46,7 @@
             "guidance": {
               "id": "black-start-briefing",
               "title": "Sør-Rogaland hangs on two transformers",
-              "message": "The 132 kV network serving southern Stavanger, Sandnes and Ryfylke imports about half of its demand through the Lyse and Fagrafjell 300/132 kV transformers. Both trip at one minute.",
+              "message": "The 132 kV network serving southern Stavanger, Sandnes and Ryfylke imports about half of its demand through the Lyse 300/132 kV and Fagrafjell 420/132 kV transformers. Both trip at one minute.",
               "objectIds": ["grid:norway"],
               "dismissible": true,
               "tone": "default"
@@ -57,7 +57,7 @@
       {
         "id": "rogaland-transformers-trip",
         "at": { "kind": "after_scenario_start", "seconds": 60 },
-        "title": "Both Sør-Rogaland 300/132 kV transformers trip",
+        "title": "Both Sør-Rogaland grid transformers trip",
         "actions": [
           {
             "type": "invoke_capability",
@@ -67,7 +67,7 @@
           {
             "type": "invoke_capability",
             "capabilityId": "world.electric-grid.open-branch",
-            "input": { "gridId": "grid:norway", "assetId": "branch:transformer-osm-way-830770515-300-132" }
+            "input": { "gridId": "grid:norway", "assetId": "branch:transformer-osm-way-830770515-420-132" }
           },
           {
             "type": "show_guidance",

@@ -11,6 +11,7 @@ import { findGridIslands } from '../src/packs/electric-grid/runtime/network/isla
 import { gridDcFlowsMw } from '../src/packs/electric-grid/runtime/power-flow.ts'
 import { advanceGrid } from '../src/packs/electric-grid/runtime/solver.ts'
 import { solveGridAngles, topologyPlanForGrid } from '../src/packs/electric-grid/runtime/topology.ts'
+import { gridAutomationSchema } from '../src/packs/electric-grid/schemas/grid-automation.ts'
 import { costsInReferences, referenceQuietMs } from './cpu-cost.ts'
 import { gridDefinitionForModel, syntheticGridDefinition } from './fixtures/synthetic-grid.ts'
 
@@ -183,7 +184,10 @@ describe('electric-grid sparse network core', () => {
   })
 
   test('matches the previous dense solver on the Norway model to 1e-11 of the largest flow with bus angles in radians, before and after switching', () => {
-    const definition = norwayDefinition()
+    // Without branch protection: opening every ninth branch can overload another, and a relay trip
+    // would be one more switching change; the comparison counts the rebuilds of its own switching.
+    const norway = norwayDefinition()
+    const definition: CompiledGridDefinition = { ...norway, automation: gridAutomationSchema.parse({ ...norway.automation, branchProtection: { enabled: false } }) }
     const grid = gridFor(definition)
     const check = (): void => {
       advanceGrid(grid, 2, at)

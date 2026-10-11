@@ -108,7 +108,8 @@ const knownGaps: Readonly<Record<string, KnownGap>> = {
   'summerLow hydro NO2': { boundMw: 725, reason: uniformStorageHydro },
   'summerLow hydro NO4': { boundMw: 850, reason: uniformStorageHydro },
   'summerLow wind NO1': { boundMw: 175, reason: 'wind is shared by national capacity; NO1\'s farms produced 197 MW where their share gives 33 MW' },
-  'winterPeak national production': { boundMw: 900, reason: unmodelledLosses },
+  // 897 MW before lane VAL1's transformer curations lowered the winter branch losses by 5 MW.
+  'winterPeak national production': { boundMw: 925, reason: unmodelledLosses },
   'summerLow national production': { boundMw: 450, reason: unmodelledLosses },
 }
 

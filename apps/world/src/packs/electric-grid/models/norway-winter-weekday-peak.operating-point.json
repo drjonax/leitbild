@@ -54,7 +54,6 @@
     {"assetId":"generator:aggregate-osm-relation-13989591@300-wind","state":"online","availableMw":2.293,"targetMw":2.293},
     {"assetId":"generator:aggregate-osm-relation-14018338@132-hydro-run-of-river","state":"online","availableMw":10.65,"targetMw":2.357},
     {"assetId":"generator:aggregate-osm-relation-14022167@132-hydro-run-of-river","state":"online","availableMw":18.408,"targetMw":4.073},
-    {"assetId":"generator:aggregate-osm-relation-14027918@132-hydro-run-of-river","state":"online","availableMw":3.6,"targetMw":0.797},
     {"assetId":"generator:aggregate-osm-relation-14072633@132-hydro-run-of-river","state":"online","availableMw":0.028,"targetMw":0.006},
     {"assetId":"generator:aggregate-osm-relation-14339814@132-hydro-run-of-river","state":"online","availableMw":3.78,"targetMw":0.836},
     {"assetId":"generator:aggregate-osm-relation-14347509@132-hydro-run-of-river","state":"online","availableMw":0.075,"targetMw":0.017},
@@ -119,6 +118,7 @@
     {"assetId":"generator:aggregate-osm-relation-7911013@132-hydro-run-of-river","state":"online","availableMw":5.8,"targetMw":1.283},
     {"assetId":"generator:aggregate-osm-relation-7920297@132-hydro-run-of-river","state":"online","availableMw":16.891,"targetMw":3.738},
     {"assetId":"generator:aggregate-osm-relation-8174130@132-hydro-run-of-river","state":"online","availableMw":0.125,"targetMw":0.028},
+    {"assetId":"generator:aggregate-osm-relation-8177974@132-hydro-run-of-river","state":"online","availableMw":3.6,"targetMw":0.797},
     {"assetId":"generator:aggregate-osm-relation-8182117@420-hydro-run-of-river","state":"online","availableMw":2.8,"targetMw":0.62},
     {"assetId":"generator:aggregate-osm-relation-8193470@300-hydro-run-of-river","state":"online","availableMw":40.207,"targetMw":8.897},
     {"assetId":"generator:aggregate-osm-relation-8196063@300-hydro-run-of-river","state":"online","availableMw":15.399,"targetMw":3.408},
@@ -861,6 +861,10 @@
     {"assetId":"generator:nve-wind-9970","state":"online","availableMw":33.905,"targetMw":33.905},
     {"assetId":"generator:nve-wind-9975","state":"online","availableMw":16.51,"targetMw":16.51},
     {"assetId":"generator:osm-way-685025522","state":"online","availableMw":225,"targetMw":150.2}
+  ],
+  "branchStates": [
+    {"assetId":"branch:osm-122cf84b421ee3ca","state":"open"},
+    {"assetId":"branch:osm-64c4608e3fb764b2","state":"open"}
   ],
   "hvdcSchedules": [
     {"assetId":"hvdc:nordlink","timeZone":"Europe/Oslo","points":[{"localTime":"00:00","transferMw":1400}]},

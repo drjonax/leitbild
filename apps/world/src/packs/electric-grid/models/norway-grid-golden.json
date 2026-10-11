@@ -5449,33 +5449,6 @@
   ],
   "powerFlowOverloads": [
     {
-      "branchId": "branch:osm-ee73974c4b9512fd",
-      "label": "Flesaker - Mjøndalen (132 kV, 2 circuits)",
-      "operatingPointId": "electric-grid.norway.winter-weekday-peak",
-      "maxLoading": 1.08,
-      "reason": "Flesaker feeds Drammen from the west at 432 MVA against the model's 406 MVA rating at 0 °C air (ambient rule). At the reference hour Drammen had −11.5 °C in darkness (ERA5); with I² linear in air temperature through FNN Table 1 (20 °C 749 A, −10 °C 930 A for 243-AL1/39 under 900 W/m² sun) the two circuits carry about 436 MVA at −11.5 °C, so the line is within its thermal limit at the hour the Operating Point represents. The conductor of this 1966 line is not published.",
-      "evidence": [
-        {
-          "sourceId": "era5-open-meteo",
-          "url": "https://archive-api.open-meteo.com/v1/archive",
-          "ref": "59.719 N 10.138 E, 2026-01-12T07:00 UTC",
-          "note": "temperature_2m −11.5 °C, shortwave_radiation 0 W/m²"
-        },
-        {
-          "sourceId": "vde-fnn",
-          "url": "https://www.vde.com/resource/blob/2326494/b8df0df841617c90e10d31f83112a0ee/vde-fnn-hinweis-hinweise-zur-umsetzung-des-witterngsabhaengigen-freileitungsbetriebs-data.pdf",
-          "ref": "Tabelle 1 (p. 13)",
-          "note": "243-AL1/39-ST1A at 80 °C, 0.6 m/s, Cigre TB 601: 749 A at 20 °C, 930 A at −10 °C"
-        },
-        {
-          "sourceId": "openstreetmap",
-          "url": "https://www.openstreetmap.org/way/164654100",
-          "ref": "way/164654100",
-          "note": "Flesaker - Mjøndalen, circuits=2, start_date=1966, Glitre Nett"
-        }
-      ]
-    },
-    {
       "branchId": "branch:osm-f32a8c4ff97e6ea6",
       "label": "Heifjellet – Middagseidklumpen 132 kV cable (Øyfjellet wind farm)",
       "operatingPointId": "electric-grid.norway.winter-weekday-peak",

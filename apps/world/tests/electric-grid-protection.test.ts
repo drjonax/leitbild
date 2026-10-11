@@ -54,7 +54,10 @@ describe('electric grid branch protection', () => {
     const branchId = meshedBranchUnderLoad(run)
     const branch = norway.model.branches.find(candidate => candidate.id === branchId)!
     // 125 % of the derated rating: above the 118 % emergency rating, below the 150 % instantaneous pickup.
-    const availability = Math.abs(run.grid.branches.get(branchId)!.flowMw) / (1.25 * branch.ratingMw)
+    // Relays act on the AC apparent power, so the derate is set on it, not on the active flow.
+    const before = run.grid.branches.get(branchId)!
+    expect(before.flowModel).toBe('ac')
+    const availability = before.apparentPowerMva! / (1.25 * branch.ratingMw)
     expect(run.command(gridDerateBranchCommandKind, { assetId: branchId, availability }).ok).toBe(true)
     const settings = protectionOf(norway)
     // From the pre-derate thermal state the thermal element would need longer than the emergency duration.

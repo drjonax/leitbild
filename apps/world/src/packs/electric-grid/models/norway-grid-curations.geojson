@@ -1634,6 +1634,237 @@
           }
         ]
       }
+    },
+    {
+      "type": "Feature",
+      "id": "fagrafjell-420-300-autotransformers",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.761835,
+          58.790233
+        ]
+      },
+      "properties": {
+        "kind": "add-transformer-units",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model validation (lane VAL1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/830770515"
+        ],
+        "substationOsmId": "way/830770515",
+        "highKv": 420,
+        "lowKv": 300,
+        "units": 2,
+        "unitRatingMva": 1000,
+        "reason": "Fagrafjell's concession gives two 420/300 kV 1,000 MVA autotransformers. OSM maps the station at 420, 300 and 132 kV without transformers, where the capacity rule would infer a 420/300 kV and a 300/132 kV unit instead of the station's 420/300 and 420/132 kV units. The station is in service with the Lyse–Fagrafjell 420 kV line since 2023-06-01; that each concession unit is installed is not separately published.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-sor/lyse-fagrafjell/forslag-til-anleggskonsesjon-statnett.pdf",
+            "ref": "Statnett, forslag til anleggskonsesjon 420 kV Lyse–Fagrafjell, item 1 Fagrafjell transformatorstasjon (p. 1)",
+            "note": "3 stk. 420/132 kV 300 MVA transformatorer; 2 stk. 420/300 kV 1000 MVA autotransformatorer"
+          },
+          {
+            "url": "https://www.statnett.no/vare-prosjekter/region-sor/lyse-fagrafjell/",
+            "ref": "Statnett project page Lyse–Fagrafjell, facts box (read 2026-10-11)",
+            "note": "Satt i drift 1. juni 2023"
+          },
+          {
+            "url": "https://www.statnett.no/contentassets/5e5fe08c532745939640c1e93adde1c4/konsesjonssoknad-420_kv_fagrafjell_humleberget_28.02.2025_statnett.pdf",
+            "ref": "Statnett, konsesjonssøknad 420 kV Fagrafjell–Humleberget (2025-02-28), section on affected stations",
+            "note": "Fagrafjell transformatorstasjon in operation under concession OED 16/3829 of 2019-09-20"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "fagrafjell-420-132-transformers",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.761835,
+          58.790233
+        ]
+      },
+      "properties": {
+        "kind": "add-transformer-units",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model validation (lane VAL1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/830770515"
+        ],
+        "substationOsmId": "way/830770515",
+        "highKv": 420,
+        "lowKv": 132,
+        "units": 3,
+        "unitRatingMva": 300,
+        "reason": "Fagrafjell's concession gives three 420/132 kV 300 MVA transformers feeding Lnett's 132 kV network (Vagle, Stokkeland). Without them the capacity rule joins 132 kV through one inferred 300/132 kV unit (350 MVA), whose loss overloaded Moen – Lysebotn to 143 % of its emergency rating in the winter N-1 screening.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-sor/lyse-fagrafjell/forslag-til-anleggskonsesjon-statnett.pdf",
+            "ref": "Statnett, forslag til anleggskonsesjon 420 kV Lyse–Fagrafjell, item 1 Fagrafjell transformatorstasjon (p. 1)",
+            "note": "3 stk. 420/132 kV 300 MVA transformatorer; 3 stk. 132 kV bryterfelt til transformatorene"
+          },
+          {
+            "url": "https://www.statnett.no/vare-prosjekter/region-sor/lyse-fagrafjell/",
+            "ref": "Statnett project page Lyse–Fagrafjell, facts box (read 2026-10-11)",
+            "note": "Satt i drift 1. juni 2023"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "hamang-300-132-transformers",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          10.498979,
+          59.896892
+        ]
+      },
+      "properties": {
+        "kind": "add-transformer-units",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model validation (lane VAL1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/187555858"
+        ],
+        "substationOsmId": "way/187555858",
+        "highKv": 300,
+        "lowKv": 132,
+        "units": 2,
+        "unitRatingMva": 300,
+        "reason": "New Hamang (in service since May 2024, built for 420 kV and run at 300 kV) has two 300 MVA 300(420)/132 kV transformers, and two 200 MVA 132/47 kV units below the model's floor. OSM maps no transformer there, where the capacity rule would infer one 300/132 kV unit of 300 MVA.",
+        "evidence": [
+          {
+            "url": "https://www.statnett.no/globalassets/her-er-vare-prosjekter/region-ost/nettplan-stor-oslo/sogn-ulven/endringssoknad-nye-hamang_med_vedlegg.pdf",
+            "ref": "Statnett, endringssøknad nye Hamang transformatorstasjon, Transformatorkonfigurasjon (p. 1)",
+            "note": "To transformatorer med ytelse 300 MVA og omsetning 300(420)/132 kV; to transformatorer med ytelse 200 MVA og omsetning 132/47 kV"
+          },
+          {
+            "url": "https://www.statnett.no/vare-prosjekter/region-ost/hamang-transformatorstasjon/",
+            "ref": "Statnett project page Hamang transformatorstasjon (read 2026-10-11)",
+            "note": "Fire transformatorer kom på plass i august 2023; nye Hamang idriftsatt 2024, gamle Hamang tatt ut av drift 26. august 2024"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "rana-svabo-132kv-delt-drift",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          14.177489,
+          66.305919
+        ]
+      },
+      "properties": {
+        "kind": "normally-open",
+        "licence": "osm-odbl-1.0",
+        "author": "Leitbild grid model validation (lane VAL1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/572699175",
+          "way/572699176"
+        ],
+        "wayOsmIds": [
+          "way/572699175",
+          "way/572699176"
+        ],
+        "voltageKv": 132,
+        "reason": "Flicker from the Svabo steel furnace makes the 132 kV network under Rana run split (delt drift). Only the furnace is supplied from Statnett's Rana 420/132 kV transformer, and the rest of Svabo is fed from Nedre Røssåga over the double 132 kV line. The model has the furnace (7 Steel Nordic, ex Celsa) at Rana, so the two Svabo – Rana kraftverk lines start open: Rana 420/132 kV no longer meshes with Svabo and Nedre Røssåga; meshed, the loss of Rana – Nedre Røssåga overloaded Nedre Røssåga – Svabo to 138 % of its emergency rating in the winter N-1 screening.",
+        "evidence": [
+          {
+            "url": "https://www.regjeringen.no/contentassets/355bf61f1184430499fdff63105fff32/statnett-konseptvalgutredning-helgeland.pdf",
+            "ref": "Statnett, Konseptvalgutredning Helgeland (October 2024), p. 11",
+            "note": "delt drift i 132 kV nettet under Rana; Dagens 420/132 kV transformator i Rana beslaglegges av Celsas stålovn, mens øvrig forbruk i Svabo forsynes fra Nedre Røssåga via regionalnettsledninger (132 kV)"
+          },
+          {
+            "url": "https://www.regjeringen.no/contentassets/355bf61f1184430499fdff63105fff32/statnett-konseptvalgutredning-helgeland.pdf",
+            "ref": "Statnett, Konseptvalgutredning Helgeland (October 2024), p. 15",
+            "note": "132 kV i Svabo er delt i to adskilte drifter; Celsa ligger som eneste forbrukskunde under Statnetts transformator"
+          },
+          {
+            "url": "https://www.openstreetmap.org/way/572699175",
+            "ref": "way/572699175 and way/572699176",
+            "note": "the two Svabo – Rana kraftverk 132 kV lines (Linea), each double-circuit in the model"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "alefjaer-tap-110kv",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          8.024298,
+          58.23711
+        ]
+      },
+      "properties": {
+        "kind": "exclude-feature",
+        "licence": "nve-nlod-2.0",
+        "author": "Leitbild grid model validation (lane VAL1)",
+        "reviewedAt": "2026-10-11",
+        "targetOsmIds": [
+          "way/988971051"
+        ],
+        "reason": "The 0.2 km tap from the Senumstad – Lund line into Ålefjær is built for 132 kV but operated at 110 kV, in west Agder's 110 kV network below the model's 132 kV floor (Ålefjær couples it to 132 kV through one 50 MVA 132/110 kV transformer). OSM tags the tap 132 kV and the station 132;110;22 kV.",
+        "evidence": [
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/201507222/1731176",
+            "ref": "NVE anleggskonsesjon Agder Energi Nett 201507222-4 (2016-06-15), item 67 (p. 11)",
+            "note": "Avgreining Ålefjær fra ledningen Senumstad – Lund: ca. 0,2 km, nominell spenning 132 kV (drives på 110 kV)"
+          },
+          {
+            "url": "https://webfileservice.nve.no/API/PublishedFiles/Download/201507222/1731176",
+            "ref": "NVE anleggskonsesjon Agder Energi Nett 201507222-4 (2016-06-15), item 26 (p. 5)",
+            "note": "Ålefjær transformatorstasjon: en transformator 50 MVA 132/110 kV; 132 kV koblingsanlegg med fem bryterfelt (fire felt driftes på 110 kV)"
+          },
+          {
+            "url": "https://www.openstreetmap.org/relation/14027918",
+            "ref": "relation/14027918",
+            "note": "Ålefjær trafostasjon voltage=132000;110000;22000 (checked 2026-10-11)"
+          }
+        ],
+        "expiresWhen": [
+          {
+            "kind": "review-by",
+            "date": "2027-04-11"
+          }
+        ]
+      }
     }
   ]
 }

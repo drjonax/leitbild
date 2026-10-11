@@ -332,7 +332,7 @@ describe('bundled Electric Grid Scenarios', () => {
     const lysebotn = 'generator:nve-hydro-257'
     // Forsand small hydro: a run-of-river aggregate that the model does not mark black-start capable.
     const follower = 'generator:aggregate-osm-relation-12678808@132-hydro-run-of-river'
-    const fagrafjell = 'branch:transformer-osm-way-830770515-300-132'
+    const fagrafjell = 'branch:transformer-osm-way-830770515-420-132'
     const lyse = 'branch:transformer-osm-relation-8886202-300-132'
     const startingBlockBuses = new Set(['bus:osm-relation-12678808@132', 'bus:osm-relation-10876752@132', 'bus:osm-relation-12678806@132', 'bus:osm-way-1191984327@132', 'bus:osm-way-1191984325@132'])
     const islandPickUpBuses = new Set(['bus:osm-way-50192634@132', 'bus:osm-relation-20603477@132', 'bus:osm-way-288575132@132', 'bus:osm-way-830770515@132'])

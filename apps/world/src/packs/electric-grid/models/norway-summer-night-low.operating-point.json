@@ -54,7 +54,6 @@
     {"assetId":"generator:aggregate-osm-relation-13989591@300-wind","state":"online","availableMw":0.303,"targetMw":0.303},
     {"assetId":"generator:aggregate-osm-relation-14018338@132-hydro-run-of-river","state":"online","availableMw":10.65,"targetMw":2.057},
     {"assetId":"generator:aggregate-osm-relation-14022167@132-hydro-run-of-river","state":"online","availableMw":18.408,"targetMw":3.555},
-    {"assetId":"generator:aggregate-osm-relation-14027918@132-hydro-run-of-river","state":"online","availableMw":3.6,"targetMw":0.695},
     {"assetId":"generator:aggregate-osm-relation-14072633@132-hydro-run-of-river","state":"online","availableMw":0.028,"targetMw":0.005},
     {"assetId":"generator:aggregate-osm-relation-14339814@132-hydro-run-of-river","state":"online","availableMw":3.78,"targetMw":0.73},
     {"assetId":"generator:aggregate-osm-relation-14347509@132-hydro-run-of-river","state":"online","availableMw":0.075,"targetMw":0.014},
@@ -119,6 +118,7 @@
     {"assetId":"generator:aggregate-osm-relation-7911013@132-hydro-run-of-river","state":"online","availableMw":5.8,"targetMw":1.12},
     {"assetId":"generator:aggregate-osm-relation-7920297@132-hydro-run-of-river","state":"online","availableMw":16.891,"targetMw":3.262},
     {"assetId":"generator:aggregate-osm-relation-8174130@132-hydro-run-of-river","state":"online","availableMw":0.125,"targetMw":0.024},
+    {"assetId":"generator:aggregate-osm-relation-8177974@132-hydro-run-of-river","state":"online","availableMw":3.6,"targetMw":0.695},
     {"assetId":"generator:aggregate-osm-relation-8182117@420-hydro-run-of-river","state":"online","availableMw":2.8,"targetMw":0.541},
     {"assetId":"generator:aggregate-osm-relation-8193470@300-hydro-run-of-river","state":"online","availableMw":40.207,"targetMw":7.765},
     {"assetId":"generator:aggregate-osm-relation-8196063@300-hydro-run-of-river","state":"online","availableMw":15.399,"targetMw":2.974},
@@ -862,6 +862,10 @@
     {"assetId":"generator:nve-wind-9975","state":"online","availableMw":2.18,"targetMw":2.18},
     {"assetId":"generator:osm-way-685025522","state":"online","availableMw":225,"targetMw":133.9}
   ],
+  "branchStates": [
+    {"assetId":"branch:osm-122cf84b421ee3ca","state":"open"},
+    {"assetId":"branch:osm-64c4608e3fb764b2","state":"open"}
+  ],
   "hvdcSchedules": [
     {"assetId":"hvdc:nordlink","timeZone":"Europe/Oslo","points":[{"localTime":"00:00","transferMw":883.2}]},
     {"assetId":"hvdc:norned","timeZone":"Europe/Oslo","points":[{"localTime":"00:00","transferMw":0}]},
@@ -946,7 +950,6 @@
     {"assetId":"branch:osm-13431d90dfd9621a","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-135a5d9a43c7205b","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-13c6fda49108cbc6","ratingMw":2217,"emergencyRatingMw":2660},
-    {"assetId":"branch:osm-13f3d94f42fee5b2","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-13ff3ee10565f97f","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-143061d25cd5076e","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-144f2373709213f8","ratingMw":174,"emergencyRatingMw":209},
@@ -998,7 +1001,6 @@
     {"assetId":"branch:osm-1f21c8bd4acea73c","ratingMw":348,"emergencyRatingMw":418},
     {"assetId":"branch:osm-1f2ab1196245987c","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-1f7dddcaa700aecb","ratingMw":174,"emergencyRatingMw":209},
-    {"assetId":"branch:osm-1f91c57c892a5946","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-1ff8b7b6397bba29","ratingMw":1187,"emergencyRatingMw":1424},
     {"assetId":"branch:osm-20a1f7ce92dd38ea","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-20b9a32956983057","ratingMw":174,"emergencyRatingMw":209},
@@ -1035,6 +1037,7 @@
     {"assetId":"branch:osm-2897ca46541db273","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-291c5016dcf52727","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-29434e75abe0ec47","ratingMw":174,"emergencyRatingMw":209},
+    {"assetId":"branch:osm-297d506c5f001b6a","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-29d0052a912dfdc0","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-29f5017c4cc216df","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-2a072ebdf918ae19","ratingMw":174,"emergencyRatingMw":209},
@@ -1119,7 +1122,6 @@
     {"assetId":"branch:osm-40461d2561205160","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-40b201e92fac5a26","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-410db89b672ce8d8","ratingMw":174,"emergencyRatingMw":209},
-    {"assetId":"branch:osm-4116910bfccb4b94","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-4133cea7180732ad","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-41a0b28879d8ccf0","ratingMw":174,"emergencyRatingMw":209},
     {"assetId":"branch:osm-41e6da3596b728fd","ratingMw":174,"emergencyRatingMw":209},
