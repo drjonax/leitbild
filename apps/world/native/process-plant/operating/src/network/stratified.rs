@@ -1442,9 +1442,11 @@ pub fn restriction_partials<P: Properties>(
     let mut held: Option<HeldFlux> = None;
     let mut partials = [0.; 3];
     let mut throat = [0.; 3];
+    // The three passes share one property boundary: each state once.
+    let shared = props::Shared::new(properties);
     for k in 0..3 {
         let unit = |j: usize, v: f64| Scalar::new(v, if j == k { 1. } else { 0. });
-        let f = restriction_flux(properties, vapor, unit(0, p0), unit(1, h0), unit(2, p_back))?;
+        let f = restriction_flux(&shared, vapor, unit(0, p0), unit(1, h0), unit(2, p_back))?;
         partials[k] = f.mass_flux.direction;
         throat[k] = f.throat_pressure_pa.direction;
         let h = held.get_or_insert(HeldFlux {
