@@ -154,6 +154,7 @@ unsafe extern "C" {
     fn operating_ida_max_step(ida: *mut c_void, step: f64) -> c_int;
     fn operating_ida_solution_scaling(ida: *mut c_void, enabled: c_int) -> c_int;
     fn operating_ida_newton_coefficient(ida: *mut c_void, coefficient: f64) -> c_int;
+    fn operating_ida_delta_cj(ida: *mut c_void, dcj: f64) -> c_int;
     fn operating_ida_reinitialize(ida: *mut c_void, t: f64, y: *const f64, yp: *const f64)
     -> c_int;
     fn operating_ida_root_directions(ida: *mut c_void, directions: *mut c_int) -> c_int;
@@ -560,6 +561,19 @@ impl<S: System> Ida<S> {
             ));
         }
         let code = unsafe { operating_ida_newton_coefficient(self.handle.as_ptr(), coefficient) };
+        self.check(code)
+    }
+    /// IDASetDeltaCjLSetup: stock sets the iteration matrix up again when
+    /// `cj/cj_old` leaves `((1-dcj)/(1+dcj), (1+dcj)/(1-dcj))`; stock's default
+    /// is 0.25, and 0 sets it up at every change of `cj`. Stock silently
+    /// replaces a value outside `[0, 1)` with its default, so such a value
+    /// is refused here instead.
+    pub fn set_delta_cj_lsetup(&mut self, dcj: f64) -> Result<()> {
+        self.configurable("linear-setup cj ratio bound")?;
+        if !(0. ..1.).contains(&dcj) {
+            return Err(format!("IDA dcj {dcj} must lie in [0, 1)"));
+        }
+        let code = unsafe { operating_ida_delta_cj(self.handle.as_ptr(), dcj) };
         self.check(code)
     }
     /// Only actual intervention/event boundaries and the final horizon require
