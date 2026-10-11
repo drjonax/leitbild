@@ -304,7 +304,7 @@ pub fn consistent_start<P: Properties + WaterProperties>(
     Ok((yp, report))
 }
 
-pub use integrated::{Discrete, Integrated, Restart, discrete_restart};
+pub use integrated::{Assembly, Discrete, Integrated, Restart, Restarted, discrete_restart};
 
 mod integrated {
     use super::Report;
@@ -312,6 +312,7 @@ mod integrated {
     use leitbild_operating_plant::{
         joined::{
             block::{Command, Transaction},
+            blocks::{Classes, JoinedJacobian, jacobian_blocks},
             operator::Joined,
         },
         network::{self, Properties},
@@ -328,8 +329,10 @@ mod integrated {
     /// S2's segment configuration, set explicitly at every start and
     /// restart because stock IDAReInit retains it: the Newton coefficient
     /// and the linear-setup cj bound (claude/ld01-wiki c968921: 0.33 and
-    /// 0.1), G13's first step (1e-4 s), and the exact consistent start's
-    /// bound and rate passes.
+    /// 0.1), G13's first step (1e-4 s), the exact consistent start's bound
+    /// and rate passes, and the largest roundoff violation of a nonnegative
+    /// stock a restart places on its bound, in solver scaling
+    /// (claude/ld01-wiki 014676f: 1e-12).
     #[derive(Clone, Copy, Debug)]
     pub struct Restart {
         pub newton_coefficient: f64,
@@ -337,6 +340,17 @@ mod integrated {
         pub first_step_s: f64,
         pub start_bound: f64,
         pub start_passes: usize,
+        pub bound_placement: f64,
+    }
+
+    /// What one discrete restart did.
+    #[derive(Debug)]
+    pub struct Restarted {
+        pub transactions: Vec<Transaction>,
+        /// Nonnegative stocks placed on their bound, each reported.
+        pub placements: Vec<network::Placement>,
+        pub yp: Vec<f64>,
+        pub report: Report,
     }
     impl Restart {
         /// Configure a segment start (after construction or a restart).
@@ -366,12 +380,13 @@ mod integrated {
     ///    (roots: `transact`; a command: `command`), then every time event
     ///    due at `t` is transacted, so a root that is exactly zero at the
     ///    restart is never missed and root and time event never both fire;
-    /// 2. the differential identity is recomputed from the owners' modes;
-    /// 3. the exact consistent start at the transacted `y` (the projection
+    /// 2. a nonnegative network stock below zero by less than the declared
+    ///    roundoff is placed on its bound and reported; a larger violation
+    ///    refuses;
+    /// 3. the differential identity is recomputed from the owners' modes;
+    /// 4. the exact consistent start at the transacted `y` (the projection
     ///    may change algebraic coordinates only);
-    /// 4. IDAReInit with the consistent rates and the segment configuration.
-    ///
-    /// It returns the transactions, the rates and the start's report.
+    /// 5. IDAReInit with the consistent rates and the segment configuration.
     #[allow(clippy::too_many_arguments)] // One restart: event, state, identity and tolerances.
     pub fn discrete_restart<P: Properties + WaterProperties>(
         ida: &mut Ida<Integrated<P>>,
@@ -382,7 +397,7 @@ mod integrated {
         absolute: &[f64],
         relative: f64,
         restart: &Restart,
-    ) -> Result<(Vec<Transaction>, Vec<f64>, Report), String> {
+    ) -> Result<Restarted, String> {
         let joined = &mut ida.system_mut().joined;
         if absolute.len() != y.len() {
             return Err("restart tolerances layout".into());
@@ -396,6 +411,9 @@ mod integrated {
             Discrete::Command(c) => joined.command(t, y, c).map_err(message)?,
         };
         done.extend(joined.time_events(t, y).map_err(message)?);
+        let nonnegative = joined.network.nonnegative_stocks();
+        let placements = network::place_on_bounds(t, y, &nonnegative, restart.bound_placement)
+            .map_err(message)?;
         let ids = joined.differential(network_ids);
         let weights: Vec<f64> = y
             .iter()
@@ -415,17 +433,34 @@ mod integrated {
         ida.reinitialize(t, y, &yp)?;
         ida.set_differential(&ids)?;
         restart.configure(ida)?;
-        Ok((done, yp, report))
+        Ok(Restarted {
+            transactions: done,
+            placements,
+            yp,
+            report,
+        })
     }
 
-    /// The joined operator as one stock-IDA system, with its colored sparse
+    /// How the stage Jacobian is assembled.
+    pub enum Assembly {
+        /// One exact seeded joined evaluation per color of the operator's
+        /// structural pattern: the reference.
+        Colored,
+        /// JAC's block assembly on its element-exact pattern, checked
+        /// against the colored matrix entry by entry.
+        Blocks(Box<JoinedJacobian>),
+    }
+
+    /// The joined operator as one stock-IDA system, with its sparse
     /// Jacobian. A partial composition (a prepared port) is refused.
     pub struct Integrated<P: Properties> {
         pub joined: Joined<P>,
         rows: Vec<i64>,
         pointers: Vec<i64>,
+        assembly: Assembly,
     }
     impl<P: Properties + WaterProperties> Integrated<P> {
+        /// On the colored assembly.
         pub fn new(joined: Joined<P>) -> Result<Self, String> {
             if !joined.integrable() {
                 return Err(
@@ -440,7 +475,30 @@ mod integrated {
                 joined,
                 rows,
                 pointers,
+                assembly: Assembly::Colored,
             })
+        }
+        /// On the block assembly, compiled at the value state `(t, y, 0)`;
+        /// its pattern holds for every state and mode.
+        pub fn with_blocks(mut joined: Joined<P>, t: f64, y: &[f64]) -> Result<Self, String> {
+            if !joined.integrable() {
+                return Err(
+                    "a joined operator with a prepared SG or rod port cannot be integrated".into(),
+                );
+            }
+            let structure = JoinedJacobian::compile(&mut joined, t, y).map_err(|f| match f {
+                network::Failure::Recoverable(r) | network::Failure::Fatal(r) => r,
+            })?;
+            let (pointers, rows) = structure.pattern.to_i64()?;
+            Ok(Self {
+                joined,
+                rows,
+                pointers,
+                assembly: Assembly::Blocks(Box::new(structure)),
+            })
+        }
+        pub fn assembly(&self) -> &Assembly {
+            &self.assembly
         }
     }
     impl<P: Properties + WaterProperties> System for Integrated<P> {
@@ -490,7 +548,20 @@ mod integrated {
         ) -> Result<(), Failure> {
             rows.copy_from_slice(&self.rows);
             pointers.copy_from_slice(&self.pointers);
-            self.joined.jacobian(time, cj, y, yp, data).map_err(failure)
+            match &self.assembly {
+                Assembly::Colored => self.joined.jacobian(time, cj, y, yp, data),
+                Assembly::Blocks(structure) => jacobian_blocks(
+                    &mut self.joined,
+                    structure,
+                    time,
+                    cj,
+                    y,
+                    yp,
+                    data,
+                    Classes::ALL,
+                ),
+            }
+            .map_err(failure)
         }
     }
 }
