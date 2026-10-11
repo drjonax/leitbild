@@ -606,8 +606,9 @@ fn fluid_directions_enter_rows_and_receipts_exactly() {
     let mut b = block(SpiderDrag::EnvelopeDisk { coefficient: 1.28 });
     let base = z4_field(0.);
     let (y, yp) = mixed(&mut b, &base);
-    // Seed each plenum's pressure, density, viscosity, enthalpy and tracer.
-    for cell in [0, 9, 10] {
+    // Seed each plenum's and two tip cells' pressure, density, viscosity,
+    // enthalpy and tracer (R2 takes the tip cells' displaced water).
+    for cell in [0, 1, 4, 9, 10] {
         for field in 0..5 {
             let seeded = |sign: f64, direction: f64| {
                 let mut w = base.clone();
@@ -854,4 +855,54 @@ fn the_bodies_work_enters_the_water_once() {
         (paid - boundary).abs() <= 1e-9 * boundary.abs(),
         "{paid} vs {boundary}"
     );
+}
+
+#[test]
+fn moving_bodies_conserve_volume_mass_energy_and_tracer_through_the_annulus() {
+    let water = z4_field(0.);
+    let mut b = block(SpiderDrag::EnvelopeDisk { coefficient: 1.28 });
+    let (y, yp) = mixed(&mut b, &water);
+    let (_, cells, volumes) = evaluate(&mut b, &y, &yp, None, 0., &water);
+    let d = fluid_data(&water);
+    let f = fluid(&d);
+    let scales = Rods::<()>::layout(&b).scales.clone();
+    let x = Coordinates::new(&y, &yp, None, 0., &scales).unwrap();
+    let mut heat = 0.;
+    for c in 0..52 {
+        heat += b.power(c, &x, &f).unwrap()[1];
+    }
+    let sum = |k: usize| cells.iter().map(|c| c[0][k].value).sum::<f64>();
+    let scale = |k: usize| cells.iter().map(|c| c[0][k].value.abs()).sum::<f64>();
+    // Volume: the swept cells' free volume is constant.
+    let volume_rate: f64 = volumes.iter().map(|v| v.rate_m3_s.value).sum();
+    assert!(volume_rate.abs() < 1e-15);
+    // Mass and tracer: what leaves a cell enters another.
+    assert!(sum(0).abs() <= 1e-13 * scale(0), "mass {}", sum(0));
+    assert!(sum(2).abs() <= 1e-13 * scale(2), "tracer {}", sum(2));
+    // Energy: the transported enthalpy cancels; only the bodies' work stays.
+    assert!(
+        (sum(1) - heat).abs() <= 1e-12 * scale(1),
+        "enthalpy {} vs work {heat}",
+        sum(1)
+    );
+    // R2: each core cell loses exactly the water its shrinking free volume
+    // displaces, through the annulus, not through the core route.
+    let mut moved = 0;
+    for cell in 1..9 {
+        let expected = water[cell].rho.value * volumes[cell].rate_m3_s.value;
+        if expected != 0. {
+            moved += 1;
+        }
+        assert!(
+            (cells[cell][0][0].value - expected).abs() <= 1e-12 * expected.abs().max(1e-30),
+            "cell {cell}: {} vs {expected}",
+            cells[cell][0][0].value
+        );
+    }
+    assert!(moved > 0);
+    // The annulus delivers the passage currents plus the displaced water.
+    let passages: f64 = (0..52).map(|c| x.value(3 * c + 2).value).sum();
+    let displaced: f64 = (1..9).map(|c| -cells[c][0][0].value).sum();
+    let upper = cells[9][0][0].value;
+    assert!((upper - passages - displaced).abs() <= 1e-12 * upper.abs());
 }

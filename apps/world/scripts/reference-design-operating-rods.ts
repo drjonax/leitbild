@@ -9,10 +9,10 @@ import { parseControlAbsorber, controlAbsorberGeometry } from './reference-desig
 import { parseFuelConstruction } from './reference-design-fuel-construction'
 import { parseFuelHandling, fuelAssemblyPositions } from './reference-design-fuel-handling'
 import { parseOperatingHotReference } from './reference-design-operating-fluid'
+import { parseColdControlRelease } from './reference-design-control-release'
 
 const positive = z.number().finite().positive()
-const rodSchema = z.object({ spiderDrag: z.enum(['pending', 'envelope-disk', 'omitted']),
-  envelopeDiskDragCoefficient: positive }).strict()
+const rodSchema = z.object({ spiderDrag: z.enum(['pending', 'envelope-disk', 'omitted']) }).strict()
 const holdingSchema = z.object({ turbineTripToOpening_s: positive }).strict()
 function strictBlock(text: string, fence: string): unknown {
   const rows = [...text.matchAll(new RegExp('^```' + fence + '\\s*\\n([\\s\\S]*?)^```\\s*$', 'gm'))]
@@ -21,6 +21,14 @@ function strictBlock(text: string, fence: string): unknown {
 }
 export const parseS2Rods = (text: string) => rodSchema.parse(strictBlock(text, 'ld01-s2-rods'))
 export const parseS2Holding = (text: string) => holdingSchema.parse(strictBlock(text, 'ld01-s2-holding-circuit'))
+/** The page's one broad-body law (the cold release record's `broadDrag`):
+ * the envelope-disk coefficient its label names, not a new number. */
+export function envelopeDiskCoefficient(text: string) {
+  const label = parseColdControlRelease(text).broadDrag
+  const match = /^quiescent-UPPER-envelope-disk-(\d+(?:\.\d+)?)$/.exec(label)
+  if (!match) throw Error(`Unselected broad-drag law ${label}`)
+  return positive.parse(Number(match[1]))
+}
 
 /** Pages consumed, relative to the LD-01 design root. */
 export const OPERATING_RODS_PAGES = [
@@ -98,7 +106,8 @@ export function compileOperatingRodsFrom(texts: Readonly<Record<(typeof OPERATIN
     normal_travel_m: control.normalTravel_m,
     holding: { turbine_trip_to_opening_s: holding.turbineTripToOpening_s },
     spider_drag: s2.spiderDrag === 'envelope-disk'
-      ? { selection: 'envelope-disk', coefficient: s2.envelopeDiskDragCoefficient } : { selection: s2.spiderDrag },
+      ? { selection: 'envelope-disk', coefficient: envelopeDiskCoefficient(texts['systems/reactor/control-absorber-and-guide-water.md']) }
+      : { selection: s2.spiderDrag },
   }
 }
 

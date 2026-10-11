@@ -31,6 +31,7 @@ use crate::{
         CellVolume, Class, Command, Coordinates, Fluid, Layout, Receipts, Rods, Structure,
         Transaction,
     },
+    local_flow::Phase,
     network::{Failure, packet::Packet},
     thermal::Scalar,
 };
@@ -190,6 +191,10 @@ pub struct Forces {
     pub passage_residual: Scalar,
     pub chi: Scalar,
     pub annulus_dissipation: Scalar,
+    /// The annulus mass current in the bores' water, the passage current
+    /// plus the displacement (R2), kg/s.
+    pub annulus_current: Scalar,
+    /// The plenum whose water the bores hold (R2: the annulus current's source).
     pub donor: usize,
     pub donor_density: Scalar,
     pub donor_viscosity: Scalar,
@@ -650,14 +655,19 @@ impl RodBlock {
         let (y, v, m) = (x.value(3 * c), x.value(3 * c + 1), x.value(3 * c + 2));
         self.admit_travel(c, y.value)?;
         let branch = Branch::of_rate(x.rate(3 * c).value);
-        // The current's donor by its value; zero current takes the upward one.
-        let donor = if m.value >= 0. {
-            self.lower
-        } else {
-            self.upper
+        // R2: the bores' displaced water joins the passage current in the
+        // annulus, D = -A_b v upward (a dashpot current while falling). The
+        // bores hold the water of the annulus current's source: LOWER's while
+        // it flows up, whatever the clear current's sign, UPPER's when it
+        // flows down (F1 (a)'s donor at rest). Zero takes the upward one.
+        let displacement = -s(self.body_area) * v;
+        let liquid = |cell: usize| {
+            fluid.cells[cell].phase[0]
+                .ok_or_else(|| recoverable(format!("rods: guide plenum cell {cell} has no liquid")))
         };
-        let phase = fluid.cells[donor].phase[0]
-            .ok_or_else(|| recoverable(format!("rods: guide donor cell {donor} has no liquid")))?;
+        let upward = m.value + liquid(self.lower)?.density.value * displacement.value >= 0.;
+        let donor = if upward { self.lower } else { self.upper };
+        let phase = liquid(donor)?;
         let (point, direction) = fluid.points[donor][0].ok_or_else(|| {
             recoverable(format!(
                 "rods: guide donor cell {donor} has no liquid point"
@@ -673,8 +683,11 @@ impl RodBlock {
         let tip = s(self.body_bottom) + y;
         let clear_length = tip - s(self.guide_bottom);
         let annulus_length = s(self.guide_top) - tip;
+        let annulus_current = m + rho * displacement;
         let clear = self.passage.clear(m, rho, mu, clear_length);
-        let ann = self.passage.annulus(m, v, rho, mu, annulus_length);
+        let ann = self
+            .passage
+            .annulus(annulus_current, v, rho, mu, annulus_length);
         let passage = lower_mouth
             - upper_mouth
             - rho * g * s(self.guide_top - self.guide_bottom)
@@ -707,6 +720,7 @@ impl RodBlock {
             passage_residual: passage,
             chi: ann.chi,
             annulus_dissipation: ann.dissipation,
+            annulus_current,
             donor,
             donor_density: rho,
             donor_viscosity: mu,
@@ -747,10 +761,11 @@ impl RodBlock {
 
     /// The steady passage current of cluster `c` at `travel` and body speed
     /// `speed` in this fluid state: the unique root of its monotone series
-    /// balance, by a bracketed Newton to `1e-12` of the passage's row scale.
+    /// balance, by a bracketed Newton.
     /// A donor-density gap, where the upward donor's balance is negative at
     /// zero current and the downward donor's positive, has no steady passage
-    /// state and is refused.
+    /// state and is refused. Convergence is declared at `1e-12` of the row
+    /// scale plus the balance's rounding floor between the plena pressures.
     pub fn passage_current(
         &self,
         c: usize,
@@ -788,10 +803,16 @@ impl RodBlock {
             .ok_or_else(|| fatal("rods: a plenum has no liquid to prepare the passages"))?
             .density
             .value;
-        // The mouth losses alone close the balance below this current.
+        // The mouth losses alone close the balance below this current: both
+        // mouths for an upward current, the lower one for a downward clear
+        // current (the annulus current may still rise with a falling body).
         let p = &self.passage;
-        let k = p.lower_mouth_loss / (p.clear_area * p.clear_area)
-            + p.upper_mouth_loss / (p.annulus.area * p.annulus.area);
+        let k = if sign > 0. {
+            p.lower_mouth_loss / (p.clear_area * p.clear_area)
+                + p.upper_mouth_loss / (p.annulus.area * p.annulus.area)
+        } else {
+            p.lower_mouth_loss / (p.clear_area * p.clear_area)
+        };
         let bound = (2. * rho * at_zero.abs() / k).sqrt();
         let (mut lo, mut hi) = if sign > 0. {
             (0., bound)
@@ -804,7 +825,11 @@ impl RodBlock {
                 self.clusters[c].id
             )));
         }
-        let tolerance = 1e-12 * self.layout.row_scales[3 * c + 2];
+        // Declared convergence: 1e-12 of the passage's row scale, above the
+        // rounding floor of a balance taken between ~15 MPa plenum pressures.
+        let plena = fluid.cells[self.lower].pressure.value.abs()
+            + fluid.cells[self.upper].pressure.value.abs();
+        let tolerance = 1e-12 * self.layout.row_scales[3 * c + 2] + 8. * f64::EPSILON * plena;
         let mut m = 0.5 * (lo + hi);
         for _ in 0..200 {
             let r = residual(m, 1.)?;
@@ -824,10 +849,87 @@ impl RodBlock {
                 0.5 * (lo + hi)
             };
         }
+        // A collapsed bracket whose ends keep their signs is a jump of the
+        // balance, where the annulus current reverses and the bores' water
+        // changes plenum: no steady state there (R3, until E2b's law).
+        let (below, above) = (residual(lo, 0.)?.value, residual(hi, 0.)?.value);
         Err(fatal(format!(
-            "rods: {} passage balance did not close to {tolerance} Pa",
+            "rods: {} passage balance did not close to {tolerance} Pa: it falls from {below} Pa to {above} Pa between {lo} and {hi} kg/s, where the annulus current reverses (no steady passage state, R3)",
             self.clusters[c].id
         )))
+    }
+
+    /// The swept cells holding cluster `c`'s body tips, with each one's share
+    /// of the tips (the side the tips move into at a plane).
+    fn tip_cells(&self, c: usize, y: f64, branch: Branch) -> Vec<(usize, f64)> {
+        let tip = self.body_bottom + y;
+        self.cells
+            .iter()
+            .filter_map(|cell| {
+                // The half-line above the tips loses length as they rise.
+                let (_, slope) = overlap(cell.bottom, cell.top, (tip, 1.), (cell.top, 0.), branch);
+                let share = -slope * cell.weights[c];
+                (share != 0.).then_some((cell.index, share))
+            })
+            .collect()
+    }
+
+    /// Cluster `c`'s guide transport, per network cell `[mass, enthalpy,
+    /// tracer]` into the cell. The clear current `m` joins, at the tips, the
+    /// water the bodies displace from the cells holding the tips (R2: their
+    /// own water leaves as their free volume shrinks), and the annulus
+    /// carries the sum into UPPER. The tip junction has no storage: what
+    /// flows out carries the mixture of what flows in, so mass, enthalpy and
+    /// tracer are conserved exactly. Each stream's source follows its sign.
+    #[allow(clippy::type_complexity)]
+    fn transport(
+        &self,
+        c: usize,
+        x: &Coordinates<'_>,
+        fluid: &Fluid<'_>,
+    ) -> Result<Vec<(usize, [Scalar; 3])>, Failure> {
+        let (y, v, m) = (x.value(3 * c), x.value(3 * c + 1), x.value(3 * c + 2));
+        let branch = Branch::of_rate(x.rate(3 * c).value);
+        let liquid = |cell: usize| {
+            fluid.cells[cell].phase[0]
+                .ok_or_else(|| recoverable(format!("rods: guide cell {cell} has no liquid")))
+        };
+        // Streams into the junction (positive) or out of it, with the cell
+        // they come from or go to and that cell's water.
+        let mut streams: Vec<(usize, Scalar, Phase)> = vec![(self.lower, m, liquid(self.lower)?)];
+        let mut displaced = s(0.);
+        for (cell, share) in self.tip_cells(c, y.value, branch) {
+            let water = liquid(cell)?;
+            let mass = water.density * s(self.body_area * share) * -v;
+            displaced = displaced + mass;
+            streams.push((cell, mass, water));
+        }
+        // The annulus takes the sum into UPPER: an outflow of the junction.
+        streams.push((self.upper, -(m + displaced), liquid(self.upper)?));
+        let (mut inflow, mut enthalpy, mut tracer) = (s(0.), s(0.), s(0.));
+        for (_, mass, water) in &streams {
+            if mass.value > 0. {
+                inflow = inflow + *mass;
+                enthalpy = enthalpy + *mass * water.enthalpy;
+                tracer = tracer + *mass * water.boron_concentration;
+            }
+        }
+        if inflow.value == 0. {
+            return Ok(Vec::new());
+        }
+        let (mix_h, mix_c) = (enthalpy / inflow, tracer / inflow);
+        Ok(streams
+            .into_iter()
+            .map(|(cell, mass, water)| {
+                // Into the junction is out of the cell, at the cell's water.
+                let (h, b) = if mass.value > 0. {
+                    (water.enthalpy, water.boron_concentration)
+                } else {
+                    (mix_h, mix_c)
+                };
+                (cell, [-mass, -mass * h, -mass * b])
+            })
+            .collect())
     }
 
     /// The moving bodies' mechanical and fluid power ledger of one cluster
@@ -943,7 +1045,7 @@ impl<P> Rods<P> for RodBlock {
         }
         for c in 0..self.clusters.len() {
             let f = self.forces(c, &x, fluid)?;
-            let (y, v, m) = (x.value(3 * c), x.value(3 * c + 1), x.value(3 * c + 2));
+            let (y, v) = (x.value(3 * c), x.value(3 * c + 1));
             rows[3 * c] = x.rate(3 * c) - v;
             rows[3 * c + 1] = match self.modes[c] {
                 Mode::Free => {
@@ -957,13 +1059,9 @@ impl<P> Rods<P> for RodBlock {
                 Mode::Held | Mode::Seated => v,
             };
             rows[3 * c + 2] = f.passage_residual;
-            // The upward current leaves LOWER and enters UPPER with its
-            // donor's enthalpy and tracer (a downward one the reverse).
-            let phase = fluid.cells[f.donor].phase[0]
-                .ok_or_else(|| recoverable("rods: guide donor lost its liquid"))?;
-            let (enthalpy, tracer) = (m * phase.enthalpy, m * phase.boron_concentration);
-            receipts.add(self.lower, 0, -m, -enthalpy, -tracer)?;
-            receipts.add(self.upper, 0, m, enthalpy, tracer)?;
+            for (cell, [mass, enthalpy, tracer]) in self.transport(c, &x, fluid)? {
+                receipts.add(cell, 0, mass, enthalpy, tracer)?;
+            }
             // Wall work over the annulus span, by swept length and share.
             let branch = Branch::of_rate(x.rate(3 * c).value);
             let wall_work = -f.wall * v;
@@ -1013,13 +1111,16 @@ impl<P> Rods<P> for RodBlock {
             st.own.push(own);
             st.cells.push(plena.clone());
         }
+        // Receipts read the plena and, through the tip junction (R2), the
+        // water of every cell a tip can be in.
+        let read: Vec<usize> = self.cells.iter().map(|c| c.index).collect();
         for cell in &self.cells {
             let writers: Vec<usize> = (0..n)
                 .filter(|c| cell.weights[*c] != 0.)
                 .flat_map(|c| [3 * c, 3 * c + 1, 3 * c + 2])
                 .collect();
             if !writers.is_empty() {
-                st.receipts.push((cell.index, writers, plena.clone()));
+                st.receipts.push((cell.index, writers, read.clone()));
             }
             let movers: Vec<usize> = (0..n)
                 .filter(|c| cell.weights[*c] != 0.)
