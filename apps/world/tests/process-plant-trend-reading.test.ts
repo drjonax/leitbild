@@ -119,15 +119,15 @@ describe('how a trend reads now', () => {
     expect(reading.limit).toMatchObject({ kind: 'margin', margin: { threshold: { ruleId: 'sg-b-rx-trip' }, alongside: [{ ruleId: 'sg-b-afw' }] } })
     const margin = (reading.limit as Extract<LimitState, { kind: 'margin' }>).margin
     expect(marginTextForms(margin, 'percent', 0.1)).toEqual([
-      '8.4 % above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START',
-      '8.4 % above LO-LO 20 % · RX TRIP + AFW START',
-      '8.4 % above LO-LO 20 · RX TRIP + AFW START',
-      '8.4 % above LO-LO · RX TRIP + AFW START',
+      '8.4 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START',
+      '8.4 percentage points above LO-LO 20 % · RX TRIP + AFW START',
+      '8.4 pp above LO-LO 20 · RX TRIP + AFW START',
+      '8.4 pp above LO-LO · RX TRIP + AFW START',
     ])
     // As an answer cites it: order and value first.
     expect(marginLimitName(margin, 'percent')).toBe('LO-LO 20 % · RX TRIP + AFW START')
     // In hot standby the reactor trip does not act: the margin names the AFW start alone.
-    expect(limitStateText(readLevel(falling, falling.at(-1)!.v, { mode: hotStandby }).limit!, 'percent', 0.1)).toStartWith('8.4 % above LO-LO 20 % · AFW START')
+    expect(limitStateText(readLevel(falling, falling.at(-1)!.v, { mode: hotStandby }).limit!, 'percent', 0.1)).toStartWith('8.4 percentage points above LO-LO 20 % · AFW START')
     // Past it, both are named too.
     expect(readingStateText(readLevel(seconds(90, () => 0), 0, { mode: powerOperation }), 'percent', 0.1)).toBe('below range · past LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START')
   })
@@ -276,7 +276,7 @@ describe('a time to a limit only from an established trend (QA review cases)', (
     const read = qaCase('loss-main-feedwater', 80, ['SG-A-LVL-NR'])
     for (const horizonMs of [120_000, 600_000]) {
       const level = read('SG-A-LVL-NR', 50, horizonMs, powerOperation)
-      expect(level.text).toBe('8.7 % above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈15 s')
+      expect(level.text).toBe('8.7 percentage points above LO-LO 20 % · RX TRIP (Modes 1–2) + AFW START · ≈15 s')
       expect((level.reading.limit as Extract<LimitState, { kind: 'margin' }>).minutes! * 60).toBeCloseTo(14.7, 0)
     }
     // It does, 15 s later.
