@@ -2,6 +2,8 @@ import type { ProcessSignalBinding, VariablePath } from '../graph/index.ts'
 import type { CompiledProcessPlant } from '../plant-compiler.ts'
 import type { ProcessPlantIcCondition, ProcessPlantIcFirstOutGroup, ProcessPlantIcOperatingMode, ProcessPlantIcRule } from '../runtime/index.ts'
 import { resolveProcessPlantSignalBinding, resolveProcessPlantSignalPath } from '../signals.ts'
+import { displayValue, unitLabel } from './display-text.ts'
+import { operatingPointValue } from './operating-point.ts'
 
 // Thresholds drawn on composed displays come only from the Plant's configured
 // I&C rules. They are named I&C thresholds, not variable limits: they state
@@ -21,11 +23,13 @@ export interface ComposedDisplayThreshold {
   readonly direction: 'low' | 'high'
   readonly value: number
   /**
-   * 1 for the limit nearest normal on its side, 2 for one beyond another
-   * that can act with it: an alarm at 30 % reads LO, the limits at 20 % below
-   * it LO-LO, whichever of them alarms and whichever actuates.
+   * Its step away from normal on its side, counted over the distinct values
+   * of the limits that can act with it (orderLimits): 1 for the nearest
+   * (LO), 2 beyond it (LO-LO), 3 beyond that (LO-3). An alarm at 30 % reads
+   * LO, the limits at 20 % below it LO-LO, whichever of them alarms and
+   * whichever actuates.
    */
-  readonly order: 1 | 2
+  readonly order: number
   /**
    * What the I&C does there, as every display names it (display-text.ts): ALM
    * for an alarm, CTL for a control set point, and for a trip the short label
@@ -42,18 +46,38 @@ export interface ComposedDisplayThreshold {
   /** The same modes by id, to tell whether the rule acts in the Plant's current mode. */
   readonly modeIds?: ReadonlyArray<string>
   /**
-   * The on/off states of other signals the rule also requires ("SI-BLOCKED
-   * off"): it acts at this value only while they hold. Absent, the value alone
-   * decides.
+   * What else the rule requires besides this value, as operators read it,
+   * one entry per condition ("SI-BLOCKED off", "TRIP-BKR-A-POS OPEN or
+   * TRIP-BKR-B-POS OPEN", "NIS-PR-AVG > 50 %"): it acts at this value only
+   * while they all hold. Absent, the value alone decides.
    */
   readonly gatedBy?: ReadonlyArray<string>
-  /** The same states by signal path and the state each must read, to tell whether they hold now (trend-reading.ts gatesHold). */
-  readonly gates?: ReadonlyArray<{ readonly path: VariablePath; readonly on: boolean }>
+  /** The same conditions by signal path, to tell whether they hold now (trend-reading.ts gatesHold). */
+  readonly gates?: ReadonlyArray<LimitGate>
+  /**
+   * Where the rule votes over channels (2 of 4 low-low levels), how many of
+   * how many must be past their limits: this channel's limit is where it
+   * votes, and its action is named with the vote ("AFW START 2/4").
+   */
+  readonly coincidence?: { readonly required: number; readonly of: number }
 }
 
-/** A rule that watches the signal inside a combined condition (vote, all,
- * any, not). Its action does not follow from one value, so it is listed, not
- * drawn. */
+/**
+ * A condition a rule combines a limit with: an on/off state of another
+ * signal ("SI-BLOCKED off"), another value past its own limit ("NIS-PR-AVG >
+ * 50 %"), or any or all of several such ("either reactor trip breaker
+ * open").
+ */
+export type LimitGate =
+  | { readonly path: VariablePath; readonly on: boolean }
+  | { readonly path: VariablePath; readonly operator: '<' | '<=' | '>' | '>='; readonly value: number }
+  | { readonly any: ReadonlyArray<LimitGate> }
+  | { readonly all: ReadonlyArray<LimitGate> }
+
+/** A rule that watches the signal in a condition no limit on it can be read
+ * from: an equality, a value that only arms the rule (it holds at the
+ * Plant's operating point), or one combined with conditions no gate states.
+ * It is listed, not drawn. */
 export interface ComposedDisplayCombinedRule {
   readonly ruleId: string
   readonly label: string
@@ -164,47 +188,152 @@ const actTogether = ({ modeIds: left }: Pick<ComposedDisplayThreshold, 'modeIds'
 const ordersWith = (left: ComposedDisplayThresholdKind, right: ComposedDisplayThresholdKind): boolean =>
   (left === 'control') === (right === 'control')
 
+/** A limit that acts only while other conditions hold besides its value (gatedBy). */
+const conditional = (threshold: Pick<ComposedDisplayThreshold, 'gates'>): boolean => (threshold.gates ?? []).length > 0
+
 /**
- * A signal's limits order away from normal in each direction: one with
- * another limit closer to normal on its side that can act with it is the
- * second (LO-LO, HI-HI), whatever each does; otherwise the first (LO, HI).
- * Limits of different modes are alternatives, not steps.
+ * A signal's limits order away from normal in each direction: each is the
+ * step after the distinct values, nearer normal on its side, of the limits
+ * that can act with it (LO, LO-LO, LO-3), whatever each does; limits at one
+ * value share their step, so no two steps share a name. Limits of different
+ * modes are alternatives, not steps. A limit that acts only with other
+ * conditions is a step beyond those nearer normal, but never one before the
+ * limits its value alone decides: the pressurizer's safety injection at
+ * 12.7 MPa, gated by its block, reads LO-3 beyond the reactor trip's LO-LO
+ * 13.8 MPa (HMI review of run 23: both read LO-LO), while a level alarm at
+ * 40 % that needs low feed flow too leaves the 30 % alarm LO and the 20 %
+ * trip LO-LO.
  */
 export const orderLimits = (thresholds: ReadonlyArray<Omit<ComposedDisplayThreshold, 'order'>>): ComposedDisplayThreshold[] =>
   thresholds.map(threshold => ({
     ...threshold,
-    order: thresholds
+    order: 1 + new Set(thresholds
       .filter(other => ordersWith(other.kind, threshold.kind) && other.direction === threshold.direction && actTogether(other, threshold))
-      .some(other => threshold.direction === 'low' ? other.value > threshold.value : other.value < threshold.value) ? 2 : 1,
+      .filter(other => conditional(threshold) || !conditional(other))
+      .filter(other => threshold.direction === 'low' ? other.value > threshold.value : other.value < threshold.value)
+      .map(other => other.value)).size,
   }))
 
-type NumericLimit = { readonly operator: '<' | '<=' | '>' | '>='; readonly value: number }
+type NumericOperator = '<' | '<=' | '>' | '>='
+const negatedOperator: Readonly<Record<NumericOperator, NumericOperator>> = { '<': '>=', '<=': '>', '>': '<=', '>=': '<' }
+
+const holds = (value: number, operator: NumericOperator, limit: number): boolean =>
+  operator === '<' ? value < limit : operator === '<=' ? value <= limit : operator === '>' ? value > limit : value >= limit
 
 /**
- * One numeric limit on the path among conditions that are otherwise only
- * on/off states of other signals: the limit, and those states as operators
- * read them ("SI-BLOCKED off"). Null for anything else.
+ * A condition as a gate on a limit, negated where `negated` (a rule's
+ * `not`); null where no gate can state it: an equality on a number, or a
+ * vote among other values.
  */
-const gatedLimit = (
-  plant: CompiledProcessPlant,
-  conditions: ReadonlyArray<ProcessPlantIcCondition>,
-  path: VariablePath,
-): { readonly limit: NumericLimit; readonly gates: ReadonlyArray<{ readonly name: string; readonly path: VariablePath; readonly on: boolean }> } | null => {
-  const limits: NumericLimit[] = []
-  const gates: Array<{ readonly name: string; readonly path: VariablePath; readonly on: boolean }> = []
-  for (const child of conditions) {
-    if (child.type !== 'comparison') return null
-    const onPath = resolveProcessPlantSignalPath(plant.graph, child.signal) === path
-    if (onPath && typeof child.value === 'number' && child.operator !== '==' && child.operator !== '!=') {
-      limits.push({ operator: child.operator, value: child.value })
-      continue
+const gateOf = (plant: CompiledProcessPlant, condition: ProcessPlantIcCondition, negated: boolean): LimitGate | null => {
+  if (condition.type === 'not') return gateOf(plant, condition.condition, !negated)
+  if (condition.type === 'comparison') {
+    const path = resolveProcessPlantSignalPath(plant.graph, condition.signal)
+    if (condition.operator === '==' || condition.operator === '!=') {
+      if (typeof condition.value !== 'boolean') return null
+      return { path, on: (condition.operator === '==' ? condition.value : !condition.value) !== negated }
     }
-    if (onPath || typeof child.value !== 'boolean' || (child.operator !== '==' && child.operator !== '!=')) return null
-    const binding = resolveProcessPlantSignalBinding(plant.graph, child.signal)
-    const on = child.operator === '==' ? child.value : !child.value
-    gates.push({ name: `${binding.tagId ?? binding.label} ${on ? 'on' : 'off'}`, path: binding.path, on })
+    if (typeof condition.value !== 'number') return null
+    return { path, operator: negated ? negatedOperator[condition.operator] : condition.operator, value: condition.value }
   }
-  return limits.length === 1 && gates.length > 0 ? { limit: limits[0]!, gates } : null
+  if (condition.type === 'vote') return null
+  const children = condition.conditions.map(child => gateOf(plant, child, negated))
+  if (children.some(child => child === null)) return null
+  const gates = children as ReadonlyArray<LimitGate>
+  if (gates.length === 1) return gates[0]!
+  // Negated, every condition becomes any one of their negations, and the other way round.
+  return (condition.type === 'any') !== negated ? { any: gates } : { all: gates }
+}
+
+/**
+ * A gate as operators read it: an on/off state by the words of the state
+ * it serves ("TRIP-BKR-A-POS OPEN", "SI-BLOCKED off"), another value past
+ * its limit in display units ("NIS-PR-AVG > 50 %"); alternatives joined
+ * by "or", groups inside another in brackets.
+ */
+export const gateText = (plant: CompiledProcessPlant, gate: LimitGate): string => {
+  const inner = (child: LimitGate): string => 'any' in child || 'all' in child ? `(${gateText(plant, child)})` : gateText(plant, child)
+  if ('any' in gate) return gate.any.map(inner).join(' or ')
+  if ('all' in gate) return gate.all.map(inner).join(' and ')
+  const binding = plant.graph.signalBindingByPath.get(gate.path)!
+  const name = binding.tagId ?? ownedName(plant, binding)
+  if ('on' in gate) return `${name} ${stateWord(plant, binding, gate.on)}`
+  const unit = unitLabel(binding.unit)
+  return `${name} ${gate.operator} ${displayValue(gate.value, binding.unit)}${unit === '' ? '' : ` ${unit}`}`
+}
+
+/** An untagged signal named with the equipment it belongs to, as one gate among parallel loops' tells them apart: "SG A feedwater inflow". */
+const ownedName = (plant: CompiledProcessPlant, binding: ProcessSignalBinding): string => {
+  const owner = binding.owner.type === 'component' ? plant.graph.components[binding.owner.componentIndex]! : undefined
+  const short = owner?.metadata?.presentation?.shortLabel
+  return short === undefined ? binding.label : `${short} ${binding.label.charAt(0).toLowerCase()}${binding.label.slice(1)}`
+}
+
+/**
+ * An on/off state in the words of the state aspect it reads or commands
+ * (OPEN or CLOSED for a breaker's contacts, OPEN or SHUT for a valve, RUN
+ * or STOP, LIVE or DEAD), else on or off.
+ */
+const stateWord = (plant: CompiledProcessPlant, binding: ProcessSignalBinding, on: boolean): string => {
+  const owner = binding.owner.type === 'component' ? plant.graph.components[binding.owner.componentIndex]! : undefined
+  const served = owner?.semantics.aspects.find(aspect => aspect.command === binding.path || aspect.state?.path === binding.path)
+  if (served?.aspect === 'running') return on ? 'RUN' : 'STOP'
+  if (served?.aspect === 'energized') return on ? 'LIVE' : 'DEAD'
+  if (served?.aspect === 'position' && served.state?.reading === 'closedWhileTrue') return on ? 'CLOSED' : 'OPEN'
+  if (served?.aspect === 'position') return on ? 'OPEN' : 'SHUT'
+  return on ? 'on' : 'off'
+}
+
+/** A limit read from a rule's condition: where the value acts, what else must hold, and the vote it is part of. */
+interface ReadLimit {
+  readonly operator: NumericOperator
+  readonly value: number
+  readonly gates: ReadonlyArray<LimitGate>
+  readonly coincidence?: { readonly required: number; readonly of: number }
+}
+
+/**
+ * The limits on a value inside a rule's condition, with what else each
+ * needs: a comparison of the value is a limit; inside "all", every other
+ * condition gates it; each alternative of "any" is a limit of its own; each
+ * channel of a vote votes at its limit. A negation turns each condition
+ * into its opposite. "unstated" stands for a comparison of the value that
+ * has no place on its axis (an equality), or whose gates nothing can state.
+ */
+const limitsOn = (
+  plant: CompiledProcessPlant,
+  condition: ProcessPlantIcCondition,
+  path: VariablePath,
+  negated: boolean,
+  context: Pick<ReadLimit, 'gates' | 'coincidence'>,
+): ReadonlyArray<ReadLimit | 'unstated'> => {
+  if (condition.type === 'not') return limitsOn(plant, condition.condition, path, !negated, context)
+  if (condition.type === 'comparison') {
+    if (resolveProcessPlantSignalPath(plant.graph, condition.signal) !== path) return []
+    if (typeof condition.value !== 'number' || condition.operator === '==' || condition.operator === '!=') return ['unstated']
+    return [{ operator: negated ? negatedOperator[condition.operator] : condition.operator, value: condition.value, ...context }]
+  }
+  if (condition.type === 'vote') {
+    if (negated) return conditionWatches(plant, condition, path) ? ['unstated'] : []
+    const coincidence = { required: condition.required, of: condition.conditions.length }
+    return condition.conditions.flatMap(child => limitsOn(plant, child, path, false, { ...context, coincidence }))
+  }
+  // Alternatives (any, or a negated all) each act alone.
+  if ((condition.type === 'any') !== negated) return condition.conditions.flatMap(child => limitsOn(plant, child, path, negated, context))
+  const low = (operator: string): boolean => (operator === '<' || operator === '<=') !== negated
+  return condition.conditions.flatMap((child, index) => {
+    if (!conditionWatches(plant, child, path)) return []
+    const own = limitsOn(plant, child, path, negated, context)
+    // A comparison of the same value beside it the other way is the other edge of a band (a control's normal
+    // band), not a gate; one the same way makes the tighter of the two the limit, which no gate states.
+    const sameValue = (other: ProcessPlantIcCondition): other is Extract<ProcessPlantIcCondition, { type: 'comparison' }> =>
+      other.type === 'comparison' && resolveProcessPlantSignalPath(plant.graph, other.signal) === path
+    const others = condition.conditions.filter((_, at) => at !== index)
+    if (others.filter(sameValue).some(other => own.some(limit => limit === 'unstated' || low(other.operator) === (limit.operator === '<' || limit.operator === '<=')))) return own.map(() => 'unstated' as const)
+    const gates = others.filter(other => !sameValue(other)).map(other => gateOf(plant, other, negated))
+    if (gates.some(gate => gate === null)) return own.map(() => 'unstated' as const)
+    return limitsOn(plant, child, path, negated, { ...context, gates: [...context.gates, ...(gates as ReadonlyArray<LimitGate>)] })
+  })
 }
 
 // A Plant's rules never change once compiled, so each signal's thresholds are read once.
@@ -223,6 +352,25 @@ export const icThresholdsForSignal = (
   return read
 }
 
+/**
+ * The limits a rule sets on a value, as drawn: every comparison of it its
+ * condition holds, alone or inside "all", "any", "not" or a vote (HMI
+ * review of run 23: the feedwater isolation on low Tavg after a reactor
+ * trip, `all([trip breaker open, TAVG < 295.6])`, was not drawn on Tavg).
+ * Inside a combined condition, a comparison that holds at the Plant's
+ * operating point only arms the rule (power above P-9 for a reactor trip on
+ * turbine trip), so it is no limit on that value. Null where the rule sets
+ * none it can draw.
+ */
+const ruleLimits = (plant: CompiledProcessPlant, rule: ProcessPlantIcRule, path: VariablePath): ReadonlyArray<ReadLimit> | null => {
+  const found = limitsOn(plant, rule.condition, path, false, { gates: [] })
+  if (found.includes('unstated')) return null
+  const nominal = operatingPointValue(plant, path)
+  const limits = (found as ReadonlyArray<ReadLimit>)
+    .filter(limit => rule.condition.type === 'comparison' || nominal === undefined || !holds(nominal, limit.operator, limit.value))
+  return limits.length === 0 ? null : limits
+}
+
 const readIcThresholds = (
   plant: CompiledProcessPlant,
   path: VariablePath,
@@ -230,54 +378,41 @@ const readIcThresholds = (
   const thresholds: Array<Omit<ComposedDisplayThreshold, 'order'>> = []
   const combinedRules: ComposedDisplayCombinedRule[] = []
   for (const rule of plant.automation.rules) {
-    if (!rule.enabled) continue
+    if (!rule.enabled || !conditionWatches(plant, rule.condition, path)) continue
     const condition = rule.condition
-    if (condition.type === 'comparison') {
-      if (resolveProcessPlantSignalPath(plant.graph, condition.signal) !== path) continue
-      // Equality rules act on discrete states; they have no position on a value axis.
-      if (typeof condition.value !== 'number' || condition.operator === '==' || condition.operator === '!=') continue
-      const severity = severityFor(rule)
-      thresholds.push({
-        ruleId: rule.id,
-        label: labelFor(rule),
-        kind: icRuleKind(rule),
-        ...(severity === undefined ? {} : { severity }),
-        ...actionFields(plant, rule),
-        operator: condition.operator,
-        direction: condition.operator === '<' || condition.operator === '<=' ? 'low' : 'high',
-        value: condition.value,
-        ...modesOf(plant, rule),
-      })
-      continue
-    }
-    // A limit on this value that other signals' on/off states only gate (SI on
-    // low pressure unless an operator blocked it) still has its place on the
-    // axis: it is drawn, naming what gates it. Votes, alternatives and limits
-    // shared with other values stay listed.
-    const gated = condition.type === 'all' ? gatedLimit(plant, condition.conditions, path) : null
-    if (gated !== null) {
-      const severity = severityFor(rule)
-      thresholds.push({
-        ruleId: rule.id,
-        label: labelFor(rule),
-        kind: icRuleKind(rule),
-        ...(severity === undefined ? {} : { severity }),
-        ...actionFields(plant, rule),
-        operator: gated.limit.operator,
-        direction: gated.limit.operator === '<' || gated.limit.operator === '<=' ? 'low' : 'high',
-        value: gated.limit.value,
-        ...modesOf(plant, rule),
-        gatedBy: gated.gates.map(gate => gate.name),
-        gates: gated.gates.map(gate => ({ path: gate.path, on: gate.on })),
-      })
-      continue
-    }
-    if (conditionWatches(plant, condition, path)) {
+    // Equality rules act on discrete states; they have no position on a value axis.
+    if (condition.type === 'comparison' && (typeof condition.value !== 'number' || condition.operator === '==' || condition.operator === '!=')) continue
+    const limits = ruleLimits(plant, rule, path)
+    if (limits === null) {
       combinedRules.push({ ruleId: rule.id, label: labelFor(rule), kind: icRuleKind(rule) })
+      continue
+    }
+    const severity = severityFor(rule)
+    const action = actionFields(plant, rule)
+    for (const limit of limits) {
+      thresholds.push({
+        ruleId: rule.id,
+        label: labelFor(rule),
+        kind: icRuleKind(rule),
+        ...(severity === undefined ? {} : { severity }),
+        ...action,
+        ...(limit.coincidence === undefined ? {} : { action: `${action.action} ${limit.coincidence.required}/${limit.coincidence.of}`, coincidence: limit.coincidence }),
+        operator: limit.operator,
+        direction: limit.operator === '<' || limit.operator === '<=' ? 'low' : 'high',
+        value: limit.value,
+        ...modesOf(plant, rule),
+        ...(limit.gates.length === 0 ? {} : { gatedBy: limit.gates.map(gate => gateText(plant, gate)), gates: limit.gates }),
+      })
     }
   }
+  // A channel's vote at a value where the same action already acts on this
+  // value alone says nothing more: the turbine-driven AFW pump's 2-of-4 start
+  // at the low-low level each generator's own AFW start already names there.
+  const named = thresholds.filter(threshold => threshold.coincidence === undefined
+    || !thresholds.some(other => other.coincidence === undefined && other.value === threshold.value && other.direction === threshold.direction
+      && `${other.action} ${threshold.coincidence!.required}/${threshold.coincidence!.of}` === threshold.action))
   return {
-    thresholds: orderLimits(thresholds).sort((left, right) => left.value - right.value || left.ruleId.localeCompare(right.ruleId)),
+    thresholds: orderLimits(named).sort((left, right) => left.value - right.value || left.ruleId.localeCompare(right.ruleId)),
     combinedRules: combinedRules.sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
   }
 }

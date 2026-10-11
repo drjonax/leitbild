@@ -797,6 +797,8 @@ describe('steam generator high level', () => {
       [20, 'trip', 'low'],
       [20, 'trip', 'low'],
       [30, 'alarm', 'low'],
+      // Feedwater low: below 40 % with low feed flow too.
+      [40, 'alarm', 'low'],
       [75, 'alarm', 'high'],
       [82, 'trip', 'high'],
     ])

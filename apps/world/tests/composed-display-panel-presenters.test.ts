@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
-import { idleText, limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
+import { distinguishingNames, idleText, joinedName, limitLabelParts, limitLabelRanks, limitLines, limitLook, limitSeverity, mergedText, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
 import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates, tileActions } from '../src/ui/embed/composed-display/panel-presenters.ts'
 import { activeThreshold, gatesHold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { formatQuantity, formatValue, limitKindName, marginText, marginTextForms, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
@@ -45,8 +45,16 @@ describe('composed display panel presenters', () => {
     // A limit in every mode and one only in power operation act together; limits of two different modes are alternatives.
     expect(names([limit('relief', 'trip', 'high', 16.18, 'PORV'), limit('reactor', 'trip', 'high', 16.35, 'RX TRIP', ['powerOperation'])])).toEqual(['HI 16.18 °C · PORV', 'HI-HI 16.35 °C · RX TRIP'])
     expect(names([limit('startup', 'alarm', 'low', 20, 'ALM', ['startup']), limit('power', 'alarm', 'low', 30, 'ALM', ['powerOperation'])])).toEqual(['LO 20 °C · ALM', 'LO 30 °C · ALM'])
-    // Two rules at one value are one step; a third beyond them is LO-LO, never LO-LO-LO.
-    expect(names([limit('a', 'alarm', 'low', 10, 'ALM'), limit('b', 'alarm', 'low', 10, 'ALM'), limit('c', 'alarm', 'low', 5, 'ALM'), limit('d', 'trip', 'low', 2, 'SI')])).toEqual(['LO 10 °C · ALM', 'LO 10 °C · ALM', 'LO-LO 5 °C · ALM', 'LO-LO 2 °C · SI'])
+    // Two rules at one value are one step; each value beyond is the next step, written with its count past the second (HMI review of run 23: two different limits both read LO-LO).
+    expect(names([limit('a', 'alarm', 'low', 10, 'ALM'), limit('b', 'alarm', 'low', 10, 'ALM'), limit('c', 'alarm', 'low', 5, 'ALM'), limit('d', 'trip', 'low', 2, 'SI'), limit('e', 'trip', 'low', 1, 'CS')]))
+      .toEqual(['LO 10 °C · ALM', 'LO 10 °C · ALM', 'LO-LO 5 °C · ALM', 'LO-3 2 °C · SI', 'LO-4 1 °C · CS'])
+    // A limit gated by other conditions is a step beyond the limits nearer normal (the pressurizer's blocked SI beyond the trip),
+    // but never one before the limits its value alone decides (a level alarm that needs low feed flow too).
+    const gated = <T extends ReturnType<typeof limit>>(threshold: T) => ({ ...threshold, gatedBy: ['FLOW < 150 kg/s'], gates: [{ path: 'sg.flow' as never, operator: '<' as const, value: 150 }] })
+    expect(names([limit('alarm', 'alarm', 'low', 14.8, 'ALM'), limit('trip', 'trip', 'low', 13.8, 'RX TRIP', ['powerOperation']), gated(limit('si', 'trip', 'low', 12.7, 'SI', ['powerOperation', 'hotStandby']))]))
+      .toEqual(['LO 14.8 °C · ALM', 'LO-LO 13.8 °C · RX TRIP', 'LO-3 12.7 °C · SI'])
+    expect(names([gated(limit('feed', 'alarm', 'low', 40, 'ALM')), limit('alarm', 'alarm', 'low', 30, 'ALM'), limit('trip', 'trip', 'low', 20, 'RX TRIP')]))
+      .toEqual(['LO 40 °C · ALM', 'LO 30 °C · ALM', 'LO-LO 20 °C · RX TRIP'])
     expect(limitKindName({ direction: 'high', order: 2, action: 'FWI' })).toBe('HI-HI · FWI')
     expect(limitKindName({ direction: 'low', order: 1, action: 'ALM' })).toBe('LO · ALM')
   })
@@ -509,5 +517,40 @@ describe('limit labels', () => {
     expect(limitSeverity(si, new Set(['si']), hotStandby, blocked)).toBeNull()
     expect(idleText(si, hotStandby)).toBe('SI-BLOCKED off')
     expect(limitsInForce([si as unknown as ComposedDisplayThreshold], hotStandby, blocked)).toEqual([])
+  })
+
+  test('a gate inside a combined condition holds as the condition does: any one of its states, or another value past its limit', () => {
+    // The feedwater isolation on low Tavg acts after a reactor trip: either trip breaker open (HMI review of run 23).
+    const fwi = { gates: [{ any: [{ path: 'reactorTripBreakerA.closedState', on: false }, { path: 'reactorTripBreakerB.closedState', on: false }] }] } as never
+    const breakers = (a: boolean, b: boolean) => (path: string) => path === 'reactorTripBreakerA.closedState' ? a : path === 'reactorTripBreakerB.closedState' ? b : undefined
+    expect([gatesHold(fwi, breakers(true, true)), gatesHold(fwi, breakers(false, true)), gatesHold(fwi, breakers(true, false)), gatesHold(fwi, noGates)]).toEqual([false, true, true, true])
+    // The reactor trip on turbine trip above P-9: power above 50 % gates the stop valve's limit.
+    const p9 = { gates: [{ path: 'core.powerRangePercent', operator: '>', value: 50 }] } as never
+    expect([gatesHold(p9, path => (path === 'core.powerRangePercent' ? 100 : undefined)), gatesHold(p9, path => (path === 'core.powerRangePercent' ? 30 : undefined))]).toEqual([true, false])
+  })
+
+  test('a line names each action once, its signals only where they differ, and limits beyond an edge in value order', () => {
+    // Loss of offsite power: both buses' margin alarms at 0 MW read "LO 0 · ALM", not "ALM + ALM" (HMI review of run 23).
+    const margin = (signal: string, train: string) => ({
+      ruleId: `overload-${train}`, label: `EDG ${train} overload`, kind: 'alarm', severity: 'warning', operator: '<=', direction: 'low', value: 0, order: 1, action: 'ALM',
+      ruleIds: [`overload-${train}`], signals: [signal], gatedBy: [`BRK-EDG-${train}-POS CLOSED, BRK-OFFSITE-${train}-POS OPEN`],
+      gates: [{ path: `dieselBreaker${train}.closedState`, on: true }, { path: `offsiteBreaker${train}.closedState`, on: false }],
+    }) as const
+    const both = [margin('BUS-A-MARGIN', 'A'), margin('BUS-B-MARGIN', 'B')]
+    const onDiesels = (path: string) => path.startsWith('dieselBreaker')
+    const texts = (gates: (path: string) => boolean | undefined) => {
+      const lines = limitLines(both, { id: 'hotStandby', label: 'Hot standby' }, gates)
+      return limitLabelParts(lines[0]!, lines, { id: 'hotStandby', label: 'Hot standby' }, gates).map(part => part.text)
+    }
+    expect(texts(onDiesels)).toEqual(['ALM'])
+    // Bus A on its diesel, bus B still on offsite power: the two differ, so each names its bus.
+    expect(texts(path => path === 'dieselBreakerA.closedState' || path === 'offsiteBreakerB.closedState')).toEqual(['ALM (A)', '+ ALM (BRK-EDG-B-POS CLOSED, BRK-OFFSITE-B-POS OPEN) (B)'])
+    // Names: what tells parallel signals apart, alike ones as one.
+    expect(distinguishingNames(['SG-A-LVL-NR', 'SG-B-LVL-NR'])).toEqual(['A', 'B'])
+    expect(joinedName(['BRK-EDG-A-POS', 'BRK-EDG-B-POS'])).toBe('BRK-EDG-A/B-POS')
+    expect(mergedText(['SG A feedwater inflow < 150 kg/s', 'SG B feedwater inflow < 150 kg/s'])).toBe('SG A/B feedwater inflow < 150 kg/s')
+    expect(mergedText(['BRK-EDG-A-POS CLOSED, BRK-OFFSITE-A-POS OPEN', 'BRK-EDG-B-POS CLOSED, BRK-OFFSITE-B-POS OPEN'])).toBeNull()
+    // compare-sg-levels: LO 30 and LO-LO 20 both lie below the scale; given highest first and wanting one edge, they read down in value order.
+    expect(stackLabels([slot('lo-30', 120, 1, 'low', 12), slot('lo-lo-20', 120, 0, 'low', 24)], { start: 0, end: 120 }).map(label => [label.key, label.start])).toEqual([['lo-30', 84], ['lo-lo-20', 96]])
   })
 })

@@ -104,12 +104,14 @@ describe('I&C thresholds for composed displays', () => {
     // Safety injection below the low-pressure reactor trip, unless blocked below P-11, is SI by its own first-out
     // group, though it trips the reactor too; both pressure reactor trips are RX TRIP. The PORV's opening is
     // pressure control, not a limit an actuation acts at.
-    expect(names('PT-455', 'MPa')).toEqual(['LO-LO 12.7 MPa · SI (Modes 1–3)', 'LO-LO 13.8 MPa · RX TRIP (Mode 1)', 'LO 14.8 MPa · ALM', 'HI 16 MPa · ALM', 'HI-HI 16.55 MPa · RX TRIP (Mode 1)'])
+    // Each step from normal has a name of its own (HMI review of run 23: 12.7 and 13.8 MPa both read LO-LO).
+    expect(names('PT-455', 'MPa')).toEqual(['LO-3 12.7 MPa · SI (Modes 1–3)', 'LO-LO 13.8 MPa · RX TRIP (Mode 1)', 'LO 14.8 MPa · ALM', 'HI 16 MPa · ALM', 'HI-HI 16.55 MPa · RX TRIP (Mode 1)'])
     // Low-low level starts auxiliary feedwater and trips the reactor at one set point: two limits of one order, each
-    // named by its group, the reactor trip in modes 1 and 2 only; high-high level isolates feedwater.
-    expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO-LO 20 % · AFW START', 'LO-LO 20 % · RX TRIP (Modes 1–2)', 'LO 30 % · ALM', 'HI 75 % · ALM', 'HI-HI 82 % · FWI'])
+    // named by its group, the reactor trip in modes 1 and 2 only; high-high level isolates feedwater. The
+    // feedwater-low alarm at 40 % needs low feed flow too: it is drawn, and leaves the 30 % alarm LO.
+    expect(names('SG-A-LVL-NR', 'percent')).toEqual(['LO-LO 20 % · AFW START', 'LO-LO 20 % · RX TRIP (Modes 1–2)', 'LO 30 % · ALM', 'LO 40 % · ALM', 'HI 75 % · ALM', 'HI-HI 82 % · FWI'])
     // Every name keeps the order-then-value shape answers cite.
-    expect(names('SG-A-LVL-NR', 'percent').every(name => /^(LO|HI)(-(LO|HI))? \d+ % · /.test(name))).toBe(true)
+    expect(names('SG-A-LVL-NR', 'percent').every(name => /^(LO|HI)(-(LO|HI|\d))? \d+ % · /.test(name))).toBe(true)
   })
 
   test('draw a limit that only on/off states of other signals gate, naming them', () => {
@@ -129,8 +131,9 @@ describe('I&C thresholds for composed displays', () => {
     }
     const plant = { ...compiled, automation: { ...compiled.automation, rules: [...compiled.automation.rules, gated] } }
     const drawn = icThresholdsForSignal(plant, pressure).thresholds.find(threshold => threshold.ruleId === 'probe-gated-low-pressure')!
-    expect([drawn.value, drawn.direction, drawn.gatedBy]).toEqual([12.7, 'low', ['TRIP-BKR-A-POS off']])
-    // Two limits on the value, or a gate on a number, still make a combined rule that is listed.
+    // A breaker's contacts read as the breaker states them.
+    expect([drawn.value, drawn.direction, drawn.gatedBy]).toEqual([12.7, 'low', ['TRIP-BKR-A-POS OPEN']])
+    // Two limits the same way on the value make a combined rule that is listed: the tighter one decides, which no gate states.
     const twoLimits = { ...gated, id: 'probe-two-limits', condition: { type: 'all' as const, conditions: [gated.condition.conditions[0]!, { ...gated.condition.conditions[0]!, value: 12 }] } }
     const listed = icThresholdsForSignal({ ...plant, automation: { ...plant.automation, rules: [...plant.automation.rules, twoLimits] } }, pressure)
     expect(listed.combinedRules.map(rule => rule.ruleId)).toContain('probe-two-limits')
@@ -142,11 +145,62 @@ describe('I&C thresholds for composed displays', () => {
     expect([si.value, si.direction, si.gatedBy]).toEqual([12.7, 'low', ['SI-BLOCKED off']])
   })
 
-  test('list combined-condition rules instead of drawing them', () => {
+  test('draw each channel of a vote at its limit, named with the vote', () => {
+    // The low-flow reactor trip votes 3 of 4 pumps' flows: each pump's flow trend draws the 3,000 kg/s line.
     const flow = compiled.graph.signalBindingByTagId.get('RCP-A-FLOW' as never)!.path
     const result = icThresholdsForSignal(compiled, flow)
-    expect(result.thresholds.map(threshold => threshold.value)).toEqual([2500])
-    expect(result.combinedRules.map(rule => rule.ruleId)).toContain('reactor-low-rcp-flow-trip')
+    expect(result.thresholds.map(threshold => thresholdFullName(threshold, 'kg/s'))).toEqual(['LO-LO 2500 kg/s · ALM (Mode 1)', 'LO 3000 kg/s · RX TRIP 3/4 (Mode 1)'])
+    expect(result.combinedRules).toEqual([])
+    // A vote at a value where the same action acts on the value alone names nothing more: the turbine-driven
+    // AFW pump's 2-of-4 start at the low-low level each generator's own AFW start already names.
+    const level = compiled.graph.signalBindingByTagId.get('SG-A-LVL-NR' as never)!.path
+    expect(icThresholdsForSignal(compiled, level).thresholds.map(threshold => threshold.action)).not.toContain('AFW START 2/4')
+  })
+
+  test('draw a limit inside a combined condition, gated by the rest of it (HMI review of run 23)', () => {
+    // The feedwater isolation on low Tavg after a reactor trip: all([either trip breaker open, TAVG < 295.6]).
+    const tavg = compiled.graph.signalBindingByTagId.get('TAVG' as never)!.path
+    const [fwi] = icThresholdsForSignal(compiled, tavg).thresholds
+    expect(thresholdFullName(fwi!, 'degC')).toBe('LO 295.6 °C · FWI (Mode 3)')
+    expect(fwi!.gatedBy).toEqual(['TRIP-BKR-A-POS OPEN or TRIP-BKR-B-POS OPEN'])
+    // The reactor trip on turbine trip above P-9: the stop valve's position is the limit, power above P-9 its gate;
+    // power above 50 % holds at the operating point, so it only arms the rule and is no limit on power.
+    const stop = icThresholdsForSignal(compiled, compiled.graph.signalBindingByTagId.get('TURB-STOP-POS' as never)!.path).thresholds
+    expect(stop.map(threshold => [thresholdFullName(threshold, 'fraction'), threshold.gatedBy])).toEqual([['LO 5 % · RX TRIP (Mode 1)', ['NIS-PR-AVG > 50 %']]])
+    const power = icThresholdsForSignal(compiled, compiled.graph.signalBindingByTagId.get('NIS-PR-AVG' as never)!.path)
+    expect(power.thresholds.filter(threshold => threshold.kind !== 'control').map(threshold => threshold.value)).toEqual([105.9, 110.3])
+    expect(power.combinedRules.map(rule => rule.ruleId)).toEqual(['reactor-rcp-breaker-open-trip', 'reactor-turbine-trip'])
+  })
+
+  test('every numeric comparison in the four-loop rules is drawn on its signal, but those that only arm a rule', () => {
+    // HMI review of run 23 found limits inside combined conditions missed: 43 of 132 comparisons were not drawn.
+    // What remains are comparisons that hold at the operating point: P-7, P-8 and P-9 on power, the pressure
+    // controller's normal band and the feedwater isolation's release below 82 % on every generator; and the
+    // turbine-driven AFW pump's 2-of-4 vote at 20 %, which each generator's own AFW START at 20 % names.
+    const leaves = (condition: (typeof compiled.automation.rules)[number]['condition']): ReadonlyArray<Extract<typeof condition, { type: 'comparison' }>> =>
+      condition.type === 'comparison' ? [condition] : condition.type === 'not' ? leaves(condition.condition) : condition.conditions.flatMap(leaves)
+    const missed = compiled.automation.rules.filter(rule => rule.enabled).flatMap(rule => leaves(rule.condition)
+      .filter(leaf => typeof leaf.value === 'number' && leaf.operator !== '==' && leaf.operator !== '!=')
+      .filter(leaf => {
+        const path = compiled.graph.signalBindingByTagId.get(('tagId' in leaf.signal ? leaf.signal.tagId : '') as never)?.path ?? ('path' in leaf.signal ? leaf.signal.path : '')
+        return !icThresholdsForSignal(compiled, path as VariablePath).thresholds.some(threshold => threshold.ruleId === rule.id && threshold.value === leaf.value)
+      })
+      .map(leaf => `${rule.id} ${'tagId' in leaf.signal ? leaf.signal.tagId : leaf.signal.path} ${leaf.operator} ${leaf.value}`))
+    expect(missed).toEqual([
+      'reactor-turbine-trip NIS-PR-AVG > 50',
+      'reactor-rcp-breaker-open-trip NIS-PR-AVG > 48',
+      'reactor-rcp-breaker-open-trip NIS-PR-AVG > 10',
+      'pzr-pressure-normal-band PT-455 >= 15.4',
+      'pzr-pressure-normal-band PT-455 <= 15.6',
+      'sg-level-low-low-turbine-afw-start SG-A-LVL-NR < 20',
+      'sg-level-low-low-turbine-afw-start SG-B-LVL-NR < 20',
+      'sg-level-low-low-turbine-afw-start SG-C-LVL-NR < 20',
+      'sg-level-low-low-turbine-afw-start SG-D-LVL-NR < 20',
+      'feedwater-isolation-release SG-A-LVL-NR < 82',
+      'feedwater-isolation-release SG-B-LVL-NR < 82',
+      'feedwater-isolation-release SG-C-LVL-NR < 82',
+      'feedwater-isolation-release SG-D-LVL-NR < 82',
+    ])
   })
 })
 
@@ -423,6 +477,10 @@ describe('thresholds drawn on composed trends', () => {
       [20, 'trip', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
       [20, 'trip', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
       [30, 'alarm', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
+      // The feedwater-low alarm, which needs low feed flow too: each generator's own flow gates its own.
+      [40, 'alarm', ['SG-A-LVL-NR']],
+      [40, 'alarm', ['SG-B-LVL-NR']],
+      [40, 'alarm', ['SG-C-LVL-NR']],
       [75, 'alarm', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
       [82, 'trip', ['SG-B-LVL-NR', 'SG-A-LVL-NR', 'SG-C-LVL-NR']],
     ])
@@ -440,6 +498,8 @@ describe('thresholds drawn on composed trends', () => {
       [20, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
       [20, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
       [30, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
+      [40, ['SG-A-LVL-NR']],
+      [40, ['SG-B-LVL-NR']],
       [75, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
       [82, ['SG-A-LVL-NR', 'SG-B-LVL-NR']],
     ])
@@ -585,7 +645,7 @@ describe('composed display panels', () => {
     const { view } = composeView([{ kind: 'comparison', signals: ['A', 'B', 'C', 'D'].map(loop => ({ ref: `RCP-${loop}-FLOW`, role: loop === 'B' ? 'primary' : 'context' })) }])
     const panel = view.display.panels[0] as { kind: string; unit: string; pens: unknown[]; thresholds: Array<{ value: number; signals: string[] }> }
     expect([panel.kind, panel.unit, panel.pens.length]).toEqual(['comparison', 'kg/s', 4])
-    expect(panel.thresholds.map(threshold => [threshold.value, threshold.signals])).toEqual([[2500, ['RCP-A-FLOW', 'RCP-B-FLOW', 'RCP-C-FLOW', 'RCP-D-FLOW']]])
+    expect(panel.thresholds.map(threshold => [threshold.value, threshold.signals])).toEqual([[2500, ['RCP-A-FLOW', 'RCP-B-FLOW', 'RCP-C-FLOW', 'RCP-D-FLOW']], [3000, ['RCP-A-FLOW', 'RCP-B-FLOW', 'RCP-C-FLOW', 'RCP-D-FLOW']]])
     expect(rejectionOf(() => ask('world.process-plant.display.compose', display([
       { kind: 'comparison', signals: [{ ref: 'RCP-A-FLOW', role: 'primary' }, { ref: 'PT-455', role: 'context' }] },
     ])))).toContain('a comparison shares one value axis')
@@ -840,9 +900,9 @@ describe('what a display\'s banner, actuation line and alarm rows name', () => {
       tagsOf('reactor-overtemperature-delta-t-trip'),
       tagsOf('loss-of-offsite-power'),
       tagsOf('safety-bus-a-loss-alarm'),
-    ]).toEqual([['LO-LO · RX TRIP'], ['LO-LO · SI', 'LO-LO · RX TRIP'], ['LO · ALM'], ['RX TRIP'], ['LO-LO · ALM'], ['ALM']])
-    expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('LO-LO · RX TRIP')
-    expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:safety-injection']).toBe('LO-LO · SI')
+    ]).toEqual([['LO-LO · RX TRIP'], ['LO-3 · SI', 'LO-3 · RX TRIP'], ['LO · ALM'], ['RX TRIP'], ['LO-LO · ALM'], ['ALM']])
+    expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:reactor-trip']).toBe('LO-3 · RX TRIP')
+    expect(annunciation.tags['trip:safety-injection-low-pzr-pressure:safety-injection']).toBe('LO-3 · SI')
     // Every alarm and trip has a tag, and every one naming a group its group's short label for the tiles.
     const annunciated = compiled.automation.rules.filter(rule => rule.enabled).flatMap(rule => rule.effects.flatMap(effect => effect.type === 'alarm.enter' || effect.type === 'trip.enter' ? [{ rule, effect }] : []))
     expect(annunciated.every(({ rule, effect }) => annunciation.tags[`${effect.type === 'alarm.enter' ? 'alarm' : 'trip'}:${rule.id}:${effect.id}`] !== undefined)).toBe(true)

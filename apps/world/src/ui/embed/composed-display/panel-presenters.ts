@@ -37,7 +37,7 @@ export const median = (values: ReadonlyArray<number>): number | null => {
 
 const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
 
-/** The on/off states a sample reads, which the gated limits a display draws are judged by (gatesHold); none before the first. */
+/** The on/off states and values a sample reads, which the gated limits a display draws are judged by (gatesHold); none before the first. */
 export const sampledGates = (latest: Pick<ComposedDisplaySample, 'values'> | undefined): GateStates => {
   const values = new Map((latest?.values ?? []).map(entry => [entry.path, entry.value]))
   return gateStatesOf(path => values.get(path))

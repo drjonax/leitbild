@@ -1,5 +1,5 @@
 import { bySeverity, coincidentMargin, displayValue, formatValue, isPast, marginTo, marginText, nearestThresholdMargin, offScale, RESOLUTION_FRACTION, unitLabel, type ThresholdMargin } from './display-text.ts'
-import type { ComposedDisplayThreshold } from './ic-thresholds.ts'
+import type { ComposedDisplayThreshold, LimitGate } from './ic-thresholds.ts'
 
 // How a signal's recent history reads: its rate over the display's window,
 // which way it is going, the limit ahead of it and the time to that limit.
@@ -303,30 +303,42 @@ export const limitInForce = (threshold: Pick<ComposedDisplayThreshold, 'modeIds'
   threshold.modeIds === undefined || (mode !== null && threshold.modeIds.includes(mode.id))
 
 /**
- * The on/off states a gated limit's gates are read from, by signal path: a
- * sample's values on the embed, the Plant's own on World, so both read a
- * limit alike. Undefined for a state not read (before the first sample).
+ * The values a gated limit's gates are read from, by signal path: on/off
+ * states and numbers, a sample's values on the embed, the Plant's own on
+ * World, so both read a limit alike. Undefined for a value not read (before
+ * the first sample).
  */
-export type GateStates = (path: string) => boolean | undefined
+export type GateStates = (path: string) => boolean | number | undefined
 
-/** On/off states as values read them: a sample's on the embed (its values), the Plant's on World (its reads). */
+/** Gate values as values read them: a sample's on the embed (its values), the Plant's on World (its reads). */
 export const gateStatesOf = (read: (path: string) => unknown): GateStates => path => {
   const value = read(path)
-  return typeof value === 'boolean' ? value : undefined
+  return typeof value === 'boolean' || typeof value === 'number' ? value : undefined
+}
+
+/** Every signal a gate reads, so a display samples them with the limits they gate. */
+export const gatePaths = (gate: LimitGate): ReadonlyArray<string> =>
+  'any' in gate ? gate.any.flatMap(gatePaths) : 'all' in gate ? gate.all.flatMap(gatePaths) : [String(gate.path)]
+
+/** Whether a gate holds on the values read; a value not read yet holds, as every limit is kept before the mode is known. */
+const gateHolds = (gate: LimitGate, gates: GateStates): boolean => {
+  if ('any' in gate) return gate.any.some(child => gateHolds(child, gates))
+  if ('all' in gate) return gate.all.every(child => gateHolds(child, gates))
+  const value = gates(gate.path)
+  if ('on' in gate) return typeof value !== 'boolean' || value === gate.on
+  if (typeof value !== 'number') return true
+  return gate.operator === '<' ? value < gate.value : gate.operator === '<=' ? value <= gate.value : gate.operator === '>' ? value > gate.value : value >= gate.value
 }
 
 /**
- * Whether the on/off states a gated limit requires hold now (SI on low
- * pressure only while SI-BLOCKED reads off). A limit whose gates do not hold
- * does not act, as one of another mode does not: it is drawn idle and no
- * margin or time is read against it. A state not read yet holds, as every
- * limit is kept before the mode is known.
+ * Whether the conditions a gated limit requires hold now (SI on low
+ * pressure only while SI-BLOCKED reads off; the feedwater isolation on low
+ * Tavg only while a reactor trip breaker reads open). A limit whose gates do
+ * not hold does not act, as one of another mode does not: it is drawn idle
+ * and no margin or time is read against it.
  */
 export const gatesHold = (threshold: Pick<ComposedDisplayThreshold, 'gates'>, gates: GateStates): boolean =>
-  (threshold.gates ?? []).every(gate => {
-    const state = gates(gate.path)
-    return state === undefined || state === gate.on
-  })
+  (threshold.gates ?? []).every(gate => gateHolds(gate, gates))
 
 /**
  * A signal's limits that act now: in the Plant's current mode, with their

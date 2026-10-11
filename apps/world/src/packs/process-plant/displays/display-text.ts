@@ -163,10 +163,17 @@ export const offScaleText = (value: number, span: NumericSpan | undefined): stri
   return end === null ? '' : `${end} range`
 }
 
-/** LO or HI for the first limit on its side, LO-LO or HI-HI beyond it. */
+/**
+ * A limit's step from normal on its side, as every display names it: LO
+ * or HI for the first, LO-LO or HI-HI beyond it, then LO-3, LO-4 (HI-3,
+ * HI-4). Past the second step the count is written, not a third repeat:
+ * "LO-LO-LO" differs from "LO-LO" only by its length and is miscounted at a
+ * glance, while "LO-3" reads apart from both (NUREG-0700: labels that
+ * differ in shape, not only in length) and keeps a badge short.
+ */
 export const limitOrderName = (threshold: Pick<ComposedDisplayThreshold, 'direction' | 'order'>): string => {
   const direction = threshold.direction === 'low' ? 'LO' : 'HI'
-  return threshold.order > 1 ? `${direction}-${direction}` : direction
+  return threshold.order <= 1 ? direction : threshold.order === 2 ? `${direction}-${direction}` : `${direction}-${threshold.order}`
 }
 
 /**

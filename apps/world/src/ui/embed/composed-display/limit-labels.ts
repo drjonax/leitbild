@@ -1,5 +1,5 @@
 import type { ComposedTrendThreshold } from '../../../packs/process-plant/displays/compose.ts'
-import { bySeverity } from '../../../packs/process-plant/displays/display-text.ts'
+import { bySeverity, limitOrderName } from '../../../packs/process-plant/displays/display-text.ts'
 import type { ComposedDisplayThreshold } from '../../../packs/process-plant/displays/ic-thresholds.ts'
 import { gatesHold, limitInForce, type GateStates, type PlantModeNow } from '../../../packs/process-plant/displays/trend-reading.ts'
 
@@ -143,4 +143,110 @@ export const limitLines = <T extends Pick<ComposedTrendThreshold, 'value' | 'kin
     const look = members.map(member => limitLook(member, mode, gates)).sort((left, right) => rank[left] - rank[right])[0]!
     return { key: String(value), value, members, look, kind: members.some(member => member.kind === 'trip') ? 'trip' : 'alarm' }
   })
+}
+
+/**
+ * What tells names apart that share their leading and trailing parts:
+ * "A" and "B" of BUS-A-MARGIN and BUS-B-MARGIN; a name that shares nothing
+ * with the others is kept whole.
+ */
+export const distinguishingNames = (names: ReadonlyArray<string>): ReadonlyArray<string> => splitNames(names).middles
+
+/** Names as their shared leading and trailing parts and what tells each apart (distinguishingNames). */
+const splitNames = (names: ReadonlyArray<string>): { readonly lead: string; readonly middles: ReadonlyArray<string>; readonly trail: string } => {
+  if (names.length < 2) return { lead: '', middles: names, trail: '' }
+  const tokens = names.map(name => name.split(/([-\s.])/))
+  let lead = 0
+  while (tokens.every(parts => parts.length > lead + 1 && parts[lead] === tokens[0]![lead])) lead += 1
+  let trail = 0
+  while (tokens.every(parts => parts.length > lead + trail + 1 && parts[parts.length - 1 - trail] === tokens[0]![tokens[0]!.length - 1 - trail])) trail += 1
+  const middles = tokens.map(parts => parts.slice(lead, parts.length - trail).join(''))
+  const separator = /^[-\s.]+|[-\s.]+$/g
+  if (middles.some(middle => middle.replace(separator, '') === '')) return { lead: '', middles: names, trail: '' }
+  const first = tokens[0]!
+  // Separators beside the middle belong to the shared parts: "BRK-EDG-" A "-POS".
+  const leading = middles[0]!.match(/^[-\s.]+/)?.[0] ?? ''
+  const trailing = middles[0]!.match(/[-\s.]+$/)?.[0] ?? ''
+  return {
+    lead: `${first.slice(0, lead).join('')}${leading}`,
+    middles: middles.map(middle => middle.replace(separator, '')),
+    trail: `${trailing}${first.slice(first.length - trail).join('')}`,
+  }
+}
+
+/** Names alike but for what tells them apart, as one: "BRK-EDG-A/B-POS", "SG-A/B/C/D-LVL-NR". */
+export const joinedName = (names: ReadonlyArray<string>): string => {
+  const distinct = [...new Set(names)]
+  if (distinct.length < 2) return distinct[0] ?? ''
+  const { lead, middles, trail } = splitNames(distinct)
+  return `${lead}${middles.join('/')}${trail}`
+}
+
+/**
+ * Texts alike but for one word, as one: "SG A/B feedwater inflow < 150
+ * kg/s"; the text itself where all are the same; null where they differ in
+ * more than one word.
+ */
+export const mergedText = (texts: ReadonlyArray<string>): string | null => {
+  const distinct = [...new Set(texts)]
+  if (distinct.length <= 1) return distinct[0] ?? ''
+  const words = distinct.map(text => text.split(' '))
+  if (words.some(list => list.length !== words[0]!.length)) return null
+  const differing = words[0]!.map((_, at) => at).filter(at => words.some(list => list[at] !== words[0]![at]))
+  if (differing.length !== 1) return null
+  const at = differing[0]!
+  return words[0]!.map((word, index) => (index === at ? joinedName(words.map(list => list[at]!)) : word)).join(' ')
+}
+
+/** One part of a limit line's label: what one or more limits there do, with what an idle one waits for or whose signal it is. */
+export interface LimitLabelPart<T> {
+  readonly text: string
+  readonly members: ReadonlyArray<T>
+  readonly idle: boolean
+}
+
+/**
+ * The parts of a limit line's label after its order and value, those acting
+ * first and the most severe first (limitLines): each action once, however
+ * many signals' limits there do it ("LO 0 · ALM" for both buses, not "ALM +
+ * ALM": HMI review of run 23), led by "+" after the first. One that does
+ * not act now names, in brackets, the modes it acts in or the conditions it
+ * waits for. Where limits doing the same differ between the signals they
+ * watch (one bus's acts, the other's waits), each part names its signals by
+ * what tells them apart ("ALM (A)"). A limit that acts only with other
+ * conditions names them where another line of the strip shares its step
+ * name (LO 40 % with low feed flow beside the LO 30 % alarm).
+ */
+export const limitLabelParts = <T extends Pick<ComposedTrendThreshold, 'action' | 'signals' | 'modeIds' | 'modeLabel' | 'gatedBy' | 'gates' | 'direction' | 'order' | 'value'>>(
+  line: LimitLine<T>,
+  lines: ReadonlyArray<LimitLine<T>>,
+  mode: PlantModeNow,
+  gates: GateStates,
+): ReadonlyArray<LimitLabelPart<T>> => {
+  const shared = (member: T): boolean => lines.some(other => other.value !== line.value && other.members.some(peer => limitOrderName(peer) === limitOrderName(member)))
+  const described = line.members.map(member => {
+    const idle = limitLook(member, mode, gates) === 'idle'
+    const waits = idle ? idleText(member, mode) : member.gatedBy !== undefined && shared(member) ? member.gatedBy.join(', ') : ''
+    return { member, idle, waits }
+  })
+  // Limits doing the same that wait on conditions alike but for one word (each generator's own feed flow) read as one: "SG A/B feedwater inflow < 150 kg/s".
+  const groups: Array<{ text: string; idle: boolean; members: T[] }> = []
+  for (const entry of described) {
+    const peers = described.filter(other => other.member.action === entry.member.action && other.idle === entry.idle)
+    const merged = mergedText(peers.map(peer => peer.waits))
+    const waits = merged ?? entry.waits
+    const text = `${entry.member.action}${waits === '' ? '' : ` (${waits})`}`
+    const same = groups.find(group => group.text === text && group.idle === entry.idle)
+    if (same === undefined) groups.push({ text, idle: entry.idle, members: [entry.member] })
+    else same.members.push(entry.member)
+  }
+  const all = [...new Set(line.members.flatMap(member => member.signals))]
+  const names = new Map(all.map((signal, index) => [signal, distinguishingNames(all)[index]!]))
+  const signalsOf = (members: ReadonlyArray<T>): ReadonlyArray<string> => [...new Set(members.flatMap(member => member.signals))]
+  const qualified = groups.some(group => signalsOf(group.members).length !== all.length)
+  return groups.map((group, index) => ({
+    text: `${index === 0 ? '' : '+ '}${group.text}${qualified && signalsOf(group.members).length !== all.length ? ` (${signalsOf(group.members).map(signal => names.get(signal)!).join(', ')})` : ''}`,
+    members: group.members,
+    idle: group.idle,
+  }))
 }

@@ -5,7 +5,7 @@
   import { displayValue, formatValue, limitKindName, limitOrderName, readingText, shownReading, thresholdFullName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
   import { median, sampledGates } from './panel-presenters.ts'
   import { COMPARISON_HISTORY_MS, ratePerMinute, rateText, rateWindowMs, trendReading, windowText, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
-  import { idleText, limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
+  import { limitLabelParts, limitLabelRanks, limitLines, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
   import { displayName, fitName } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
   import { paddedDomain, rawDomain, type ValueDomain } from './trend-geometry.ts'
@@ -87,11 +87,11 @@
   const measureHead = textMeasure(panelFont(10.5, 700))
   const HEAD_GAP = 8
   const LINE_TOP = top - 6
-  // One name per line: its order and value, then what each limit there does,
-  // one that does not act in the current mode with its modes: "LO-LO 20 ·
-  // AFW START + RX TRIP (Modes 1–2)".
+  // One name per line: its order and value, then what the limits there do,
+  // each action once, one that does not act in the current mode with its
+  // modes (limitLabelParts): "LO-LO 20 · AFW START + RX TRIP (Modes 1–2)".
   const headName = (line: (typeof lines)[number]): string =>
-    `${limitOrderName(line.members[0]!)} ${displayValue(line.value, panel.unit)} · ${line.members.map(member => `${member.action}${limitLook(member, mode, gates) === 'idle' ? ` (${idleText(member, mode)})` : ''}`).join(' + ')}`
+    `${limitOrderName(line.members[0]!)} ${displayValue(line.value, panel.unit)} · ${limitLabelParts(line, lines, mode, gates).map(part => part.text).join(' ')}`
   // The limit each value's reading names (trend-reading.ts): what it heads for or is past.
   const namedRuleIds = $derived(new Set(panel.pens.flatMap((pen, index) => {
     const value = values[index]

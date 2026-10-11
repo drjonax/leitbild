@@ -214,7 +214,7 @@ describe('answers whose directions and limits agree with the display', () => {
   })
 
   test('a limit named by its order and value, as limits relabelled by function read, is the limit ahead', () => {
-    expect(answerViewIssues('PT-455 is 13.2 MPa and falling, 0.5 MPa above LO-LO 12.7 · SI; HI ALM 16 MPa lies behind it.' + FENCE, view([moving(siPressure(13.2), -1, 'falling', { name: 'LO-LO 12.7 MPa · SI', value: 12.7 })]))).toEqual([])
+    expect(answerViewIssues('PT-455 is 13.2 MPa and falling, 0.5 MPa above LO-3 12.7 · SI; HI ALM 16 MPa lies behind it.' + FENCE, view([moving(siPressure(13.2), -1, 'falling', { name: 'LO-3 12.7 MPa · SI', value: 12.7 })]))).toEqual([])
   })
 
   test('loss-main-feedwater at 50 s: the limit ahead named with every action at it, by its order and value', () => {
@@ -276,6 +276,10 @@ describe('answers that give a time to a limit', () => {
   test('a limit named by its order and value, as relabelled limits read', () => {
     expect(answerViewIssues('PT-455 is 13.2 MPa and falling, ≈30 s from LO-LO 12.7 · SI.' + FENCE, view([moving(siPressure(13.2), -1, 'falling', { name: 'LO-LO 12.7 MPa · SI', value: 12.7 })]))).toEqual([
       'It gives ≈30 s to LO-LO 12.7 for PT-455, but the display projects no time to it: give the rate and margin it shows, without a time.',
+    ])
+    // A third step from normal is written with its count, as World names it.
+    expect(answerViewIssues('PT-455 is 13.2 MPa and falling, ≈30 s from LO-3 12.7 · SI.' + FENCE, view([moving(siPressure(13.2), -1, 'falling', { name: 'LO-3 12.7 MPa · SI', value: 12.7 })]))).toEqual([
+      'It gives ≈30 s to LO-3 12.7 for PT-455, but the display projects no time to it: give the rate and margin it shows, without a time.',
     ])
   })
 })

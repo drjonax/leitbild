@@ -428,12 +428,13 @@ const directionIssues = (sentences: ReadonlyArray<string>, view: EmbeddedViewCon
 })
 
 // A limit named as the display names them or in words: "HI ALM 16 MPa",
-// "LO-LO TRIP 20%", "LO-LO 12.7 MPa · SI", "LO TRIP", "low alarm at 14.8 MPa".
+// "LO-LO TRIP 20%", "LO-3 12.7 MPa · SI", "LO TRIP", "low alarm at 14.8 MPa".
 // Without a kind (ALM, TRIP) only the display's capitals with a value name
 // one, and without a value only its capitals with a kind: "low 20 %" and "the
 // low trip" are words. The value's unit may be left out ("LO-LO 12.7").
-const LIMIT = new RegExp(`\\b(HI(?:-HI)?|LO(?:-LO)?|high(?:[- ]high)?|low(?:[- ]low)?)(?:[- ](ALM|TRIP|alarm|trip))?(?:\\s+(?:limit|threshold|line|set ?point))?(?:(?:\\s+(?:at|of))?\\s+([-−]?\\d+(?:\\.\\d+)?)(?!\\.?\\d)(?:\\s?(${UNIT_PATTERN})(?![\\w/]))?)?`, 'gi')
-const DISPLAY_ORDER = /^(?:HI|LO)(?:-(?:HI|LO))?$/
+const LIMIT = new RegExp(`\\b(HI(?:-HI|-\\d)?|LO(?:-LO|-\\d)?|high(?:[- ]high)?|low(?:[- ]low)?)(?:[- ](ALM|TRIP|alarm|trip))?(?:\\s+(?:limit|threshold|line|set ?point))?(?:(?:\\s+(?:at|of))?\\s+([-−]?\\d+(?:\\.\\d+)?)(?!\\.?\\d)(?:\\s?(${UNIT_PATTERN})(?![\\w/]))?)?`, 'gi')
+// Past its second step a display writes the step's count: "LO-3".
+const DISPLAY_ORDER = /^(?:HI|LO)(?:-(?:HI|LO|\d))?$/
 
 type CitedLimit = { readonly value: number; readonly written: string; readonly unit: string | undefined }
 type NamedLimit = { readonly text: string; readonly index: number; readonly low: boolean; readonly cited: CitedLimit | undefined }

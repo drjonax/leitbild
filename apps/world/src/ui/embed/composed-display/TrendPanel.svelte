@@ -11,7 +11,7 @@
     valueTicks,
     type ValueDomain,
   } from './trend-geometry.ts'
-  import { idleText, limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
+  import { limitLabelParts, limitLabelRanks, limitLines, limitSeverity, stackLabels, type LabelSlot, type LimitLabelPart } from './limit-labels.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { HOLD_GAP_MS, rateWindowMs, trendReading, type GateStates, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import { penStroke } from './pen-style.ts'
@@ -95,26 +95,21 @@
     return raw === null ? null : paddedDomain(raw, resolution)
   })
 
-  // A line's label: its order and value, then what each limit there does,
-  // those acting now first and the most severe first (limitLines), one that
-  // does not act now with the modes it acts in or the on/off states it waits
-  // for in brackets, drawn faint like its line: "LO-LO 20 · AFW START + RX
-  // TRIP (Modes 1–2)". Where the gutter is too narrow, whole parts wrap onto
-  // rows under it, each led by its "+" or bracket and indented, so a mode
-  // never reads as a limit of its own (QA review: the faint "Mode 1").
+  // A line's label: its order and value, then what the limits there do,
+  // those acting now first and the most severe first, each action once
+  // (limitLabelParts), one that does not act now with the modes it acts in
+  // or the conditions it waits for in brackets, drawn faint like its line:
+  // "LO-LO 20 · AFW START + RX TRIP (Modes 1–2)". Where the gutter is too
+  // narrow, whole parts wrap onto rows under it, each led by its "+" or
+  // bracket and indented, so a mode never reads as a limit of its own (QA
+  // review: the faint "Mode 1").
   const LINE = 12
   /** How far a label's continued rows are indented. */
   const CONTINUED = 8
   const measureLabel = textMeasure(panelFont(10, 700))
   const rowText = (threshold: ComposedTrendThreshold): string => thresholdName(threshold, strip.unit, { withUnit: false })
-  interface LabelPart { readonly text: string; readonly member: ComposedTrendThreshold; readonly idle: boolean }
-  const labelParts = (line: (typeof lines)[number]): ReadonlyArray<LabelPart> => line.members.flatMap((member, index) => {
-    const idle = limitLook(member, mode, gates) === 'idle'
-    return [
-      { text: `${index === 0 ? '' : '+ '}${member.action}`, member, idle },
-      ...(idle ? [{ text: `(${idleText(member, mode)})`, member, idle }] : []),
-    ]
-  })
+  type LabelPart = LimitLabelPart<ComposedTrendThreshold>
+  const labelParts = (line: (typeof lines)[number]): ReadonlyArray<LabelPart> => limitLabelParts(line, lines, mode, gates)
   /** The label's rows: its head with as many whole parts as fit the gutter, then the rest, each row as many as fit; a fold count follows the head's row. */
   const labelRows = (head: string, parts: ReadonlyArray<LabelPart>): ReadonlyArray<ReadonlyArray<LabelPart>> => {
     const rows: Array<Array<LabelPart>> = [[]]
@@ -189,7 +184,9 @@
       const size = rowCount(line) * LINE
       return {
         key: line.key,
-        want: edge === 'above' ? labelRoom.start : edge === 'below' ? labelRoom.end - size : y(line.value) - LINE / 2,
+        // Labels of limits beyond an edge all want that edge, so they keep the order the lines come in, highest
+        // value first, and read down the gutter in value order (HMI review of run 23: LO-LO 20 stacked above LO 30).
+        want: edge === 'above' ? labelRoom.start : edge === 'below' ? labelRoom.end : y(line.value) - LINE / 2,
         size,
         group: line.members[0]!.direction,
         rank: ranks.get(line.key)!,
@@ -210,7 +207,7 @@
         continued: index > 0,
         // The head takes the colour of the most severe active limit at the line, or of one folded into it.
         head: index === 0 ? { text: head, severity: worstActive ?? foldedSeverity, idle: line.look === 'idle' } : null,
-        parts: parts.map(part => ({ text: part.text, idle: part.idle, severity: part.idle ? null : limitSeverity(part.member, activeRuleIds, mode, gates) })),
+        parts: parts.map(part => ({ text: part.text, idle: part.idle, severity: part.idle ? null : worst(part.members.map(member => limitSeverity(member, activeRuleIds, mode, gates))) })),
         count: index === 0 ? count : '',
       }))
       return {
