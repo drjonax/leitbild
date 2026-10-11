@@ -54,6 +54,88 @@ const turbineAlarm = annunciator({
   role: 'status',
 })
 
+// Frequency ride-through of the generator on its grid boundary, at the
+// Nordic values of NC RfG Article 13 (Commission Regulation (EU) 2016/631,
+// Table 2) for a 50 Hz grid, the reference plant's nominal frequency.
+// Between 49.0 and 51.0 Hz the unit stays connected without limit. Between
+// 47.5 and 49.0 Hz, and between 51.0 and 51.5 Hz, it stays connected for at
+// least 30 min, the code's minimum, and its frequency relays trip it once a
+// band has held that long. Beyond 47.5 or 51.5 Hz the code asks nothing and
+// the relays trip it after 0.5 s, a definite-time delay that rides through a
+// measuring transient without letting the turbine run on at a frequency its
+// blades and the reactor coolant pumps are not rated for. The relays read
+// the frequency only of a live boundary, a dead one being the loss-of-load
+// trip's. There is no rate-of-change-of-frequency relay, so a frequency
+// swinging at 2 Hz/s inside the bands trips nothing. Each trip is the
+// turbine trip, sealed in, and above P-9 it trips the reactor.
+const frequencyBandMinutesMs = 30 * 60_000
+const frequencyRelayDelayMs = 500
+
+const gridFrequencyRideThrough = (): ReadonlyArray<ProcessPlantIcRule> => {
+  const gridFrequency = { path: 'offsiteGrid.frequencyHz' }
+  const relay = (config: {
+    readonly id: string
+    readonly label: string
+    readonly operator: '<' | '>'
+    readonly hz: number
+    readonly delayMs: number
+    readonly message: string
+  }): ProcessPlantIcRule => rule({
+    id: config.id,
+    label: config.label,
+    ruleClass: 'protection',
+    condition: all([
+      comparison({ tagId: 'GRID-AVAIL' }, '==', true),
+      comparison(gridFrequency, config.operator, config.hz),
+    ]),
+    delayMs: config.delayMs,
+    effects: [
+      trip({
+        id: 'frequency-turbine-trip',
+        title: config.label,
+        message: config.message,
+        actuates: ['turbineTrip'],
+        annunciator: annunciator({ ...turbineAlarm, priority: 'urgent', role: 'automaticAction' }),
+      }),
+      ...turbineTripWrites(config.id),
+    ],
+  })
+  return [
+    relay({
+      id: 'turbine-trip-on-grid-underfrequency',
+      label: 'Turbine trip on grid underfrequency',
+      operator: '<',
+      hz: 47.5,
+      delayMs: frequencyRelayDelayMs,
+      message: 'Grid frequency is below 47.5 Hz, under the band the unit must ride through: the turbine trips.',
+    }),
+    relay({
+      id: 'turbine-trip-on-grid-overfrequency',
+      label: 'Turbine trip on grid overfrequency',
+      operator: '>',
+      hz: 51.5,
+      delayMs: frequencyRelayDelayMs,
+      message: 'Grid frequency is above 51.5 Hz, over the band the unit must ride through: the turbine trips.',
+    }),
+    relay({
+      id: 'turbine-trip-on-sustained-low-grid-frequency',
+      label: 'Turbine trip on 30 min of grid frequency below 49 Hz',
+      operator: '<',
+      hz: 49.0,
+      delayMs: frequencyBandMinutesMs,
+      message: 'Grid frequency has stayed below 49.0 Hz for 30 min, the time the unit must ride through it: the turbine trips.',
+    }),
+    relay({
+      id: 'turbine-trip-on-sustained-high-grid-frequency',
+      label: 'Turbine trip on 30 min of grid frequency above 51 Hz',
+      operator: '>',
+      hz: 51.0,
+      delayMs: frequencyBandMinutesMs,
+      message: 'Grid frequency has stayed above 51.0 Hz for 30 min, the time the unit must ride through it: the turbine trips.',
+    }),
+  ]
+}
+
 export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlantReferenceLoop>): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
     id: 'reactor-trip-turbine-trip',
@@ -171,6 +253,7 @@ export const balanceOfPlantReferenceIcRules = (loops: ReadonlyArray<ProcessPlant
       ...turbineTripWrites('loss-of-load'),
     ],
   }),
+  ...gridFrequencyRideThrough(),
   rule({
     id: 'turbine-load-low',
     label: 'Turbine load low',
