@@ -48,7 +48,9 @@ pub fn place_on_bounds(
     tolerance: f64,
 ) -> Result<Vec<Placement>, Failure> {
     if !(tolerance.is_finite() && tolerance >= 0.) {
-        return Err(Failure::Fatal(format!("restart bound tolerance {tolerance} is not admissible")));
+        return Err(Failure::Fatal(format!(
+            "restart bound tolerance {tolerance} is not admissible"
+        )));
     }
     let mut placed = Vec::new();
     for &i in nonnegative {
