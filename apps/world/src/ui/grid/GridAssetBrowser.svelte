@@ -28,6 +28,8 @@
     gridShedLoadCommandKind,
   } from '../../packs/electric-grid/commands/load.ts'
   import { electricGridDestructiveCommandKinds } from '../../packs/electric-grid/commands/index.ts'
+  import { gridResetBranchProtectionCommandKind } from '../../packs/electric-grid/commands/protection.ts'
+  import { gridHvdcSetpointGuidance, gridShedLoadPlan, type GridShedLoadPlan } from '../../packs/electric-grid/ui/operator-commands.ts'
   import { invokeSimulationRunCapability, querySimulationRunCapability } from '../simulation-run-client.ts'
   import { untrack } from 'svelte'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
@@ -87,9 +89,42 @@
   let activeOperationId = $state<string | null>(null)
   let commandValue = $state('')
   let commandStatus = $state<string | null>(null)
-  let pendingConfirmation = $state<{ readonly operationId: string; readonly value: number } | null>(null)
+  let commandEmergency = $state(false)
+  let pendingConfirmation = $state<{ readonly operationId: string; readonly value: number; readonly emergency: boolean } | null>(null)
   let loadSequence = 0
   let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+  const numberField = (fields: Readonly<Record<string, unknown>> | undefined, key: string): number => {
+    const value = fields?.[key]
+    if (typeof value !== 'number') throw new Error(`${detail?.id ?? 'asset'} reports no ${key}`)
+    return value
+  }
+
+  // Shed-load's interruptible limit and emergency flag, checked as the operator types.
+  const shedPlan = $derived.by((): GridShedLoadPlan | null => {
+    if (activeOperationId !== gridShedLoadCommandKind || detail === null || detail.kind !== 'load') return null
+    return gridShedLoadPlan({
+      label: detail.label,
+      priority: String(detail.definition.priority),
+      criticalMw: numberField(detail.definition, 'criticalMw'),
+      interruptibleMw: numberField(detail.definition, 'interruptibleMw'),
+      demandMw: numberField(detail.state, 'demandMw'),
+      modelledDemandMw: numberField(detail.state, 'modelledDemandMw'),
+      nominalDemandMw: numberField(detail.state, 'nominalDemandMw'),
+    }, Number(commandValue), commandEmergency)
+  })
+
+  // An HVDC set-point's sign, limit and ramp.
+  const hvdcGuidance = $derived.by(() => {
+    if (activeOperationId !== gridSetHvdcSetpointCommandKind || detail === null || detail.kind !== 'hvdc') return null
+    return gridHvdcSetpointGuidance({
+      label: detail.label,
+      ratingMw: numberField(detail.definition, 'ratingMw'),
+      rampMwPerMinute: numberField(detail.definition, 'rampMwPerMinute'),
+      transferMw: numberField(detail.state, 'transferMw'),
+      setpointMw: numberField(detail.state, 'setpointMw'),
+    }, commandValue.trim() === '' ? null : Number(commandValue))
+  })
 
   const pageNumber = $derived(Math.floor(offset / pageSize) + 1)
   const pageCount = $derived(Math.max(1, Math.ceil(total / pageSize)))
@@ -178,6 +213,7 @@
     [gridDeblockHvdcCommandKind]: 'Deblock',
     [gridTripHvdcCommandKind]: 'Trip',
     [gridResetHvdcTripCommandKind]: 'Reset trip',
+    [gridResetBranchProtectionCommandKind]: 'Reset protection',
   }[operationId] ?? operationId)
 
   const valueLabel = (operationId: string): string => operationId === gridDerateBranchCommandKind
@@ -189,7 +225,7 @@
         : operationId === gridSetGeneratorAvailabilityCommandKind
           ? 'Available capacity (MW)'
           : operationId === gridSetHvdcSetpointCommandKind
-            ? 'Set-point (MW, positive exports)'
+            ? 'Set-point (MW): + exports from Norway, − imports'
             : 'Target (MW)'
 
   const defaultValueFor = (operationId: string): string => {
@@ -203,19 +239,21 @@
     return ''
   }
 
-  const payloadFor = (operationId: string, value: number): Readonly<Record<string, unknown>> => {
+  const payloadFor = (operationId: string, value: number, emergency: boolean): Readonly<Record<string, unknown>> => {
     const base = { gridId, assetId: detail!.id }
     if (operationId === gridDispatchGeneratorCommandKind) return { ...base, targetMw: value }
     if (operationId === gridSetGeneratorAvailabilityCommandKind) return { ...base, availableMw: value }
     if (operationId === gridDerateBranchCommandKind) return { ...base, availability: value }
-    if (operationId === gridShedLoadCommandKind) return { ...base, targetDemandMw: value }
+    if (operationId === gridShedLoadCommandKind) return { ...base, targetDemandMw: value, emergency }
     if (operationId === gridSetEvChargingDemandCommandKind) return { ...base, demandMw: value }
     if (operationId === gridSetHvdcSetpointCommandKind) return { ...base, setpointMw: value }
     return base
   }
 
   const confirmationText = (confirmation: { readonly operationId: string; readonly value: number }): string =>
-    `${operationLabel(confirmation.operationId)} ${detail?.label ?? ''}${numericOperation(confirmation.operationId) ? ` to ${confirmation.value.toLocaleString()} MW` : ''}? This disconnects supply or generation at once.`
+    confirmation.operationId === gridShedLoadCommandKind && shedPlan !== null
+      ? shedPlan.confirmation
+      : `${operationLabel(confirmation.operationId)} ${detail?.label ?? ''}${numericOperation(confirmation.operationId) ? ` to ${confirmation.value.toLocaleString()} MW` : ''}? This disconnects supply or generation at once.`
 
   const sendOperation = async (operationId: string): Promise<void> => {
     if (!detail) return
@@ -223,6 +261,7 @@
     if (numericOperation(operationId) && activeOperationId !== operationId) {
       activeOperationId = operationId
       commandValue = defaultValueFor(operationId)
+      commandEmergency = false
       commandStatus = null
       return
     }
@@ -232,25 +271,32 @@
       commandStatus = 'Enter a valid number'
       return
     }
-    if (electricGridDestructiveCommandKinds.has(operationId)) {
-      pendingConfirmation = { operationId, value }
+    // The guidance below the form already names what the runtime would reject and how to change it; nothing is sent.
+    const problem = operationId === gridShedLoadCommandKind ? shedPlan?.problem : operationId === gridSetHvdcSetpointCommandKind ? hvdcGuidance?.problem : null
+    if (problem) {
       commandStatus = null
       return
     }
-    await invokeOperation(operationId, value)
+    const emergency = operationId === gridShedLoadCommandKind && commandEmergency
+    if (electricGridDestructiveCommandKinds.has(operationId)) {
+      pendingConfirmation = { operationId, value, emergency }
+      commandStatus = null
+      return
+    }
+    await invokeOperation(operationId, value, emergency)
   }
 
-  const invokeOperation = async (operationId: string, value: number): Promise<void> => {
+  const invokeOperation = async (operationId: string, value: number, emergency: boolean): Promise<void> => {
     if (!detail) return
     pendingConfirmation = null
     commandStatus = 'Sending…'
     try {
       const response = await invokeSimulationRunCapability(simulationRunId, {
         capabilityId: operationId,
-        input: payloadFor(operationId, value),
+        input: payloadFor(operationId, value, emergency),
       })
       if (response.kind !== 'command') throw new Error(`Capability ${operationId} is not a command`)
-      if (!response.result.ok) throw new Error(response.result.reason ?? 'Command rejected')
+      if (!response.result.ok) throw new Error(`Rejected: ${response.result.reason ?? 'no reason given'}`)
       activeOperationId = null
       commandStatus = 'Accepted'
       await Promise.all([loadAssets(false), loadDetail(detail.id)])
@@ -270,6 +316,14 @@
   }
   const percentOf = (fraction: unknown): unknown => typeof fraction === 'number' ? fraction * 100 : fraction
 
+  /** A tripped branch's relay operation and what restores it; otherwise its thermal state. */
+  const protectionText = (protection: unknown): string => {
+    const value = protection as { readonly thermalLevel: number; readonly trip: { readonly element: string; readonly loadingPercent: number } | null } | undefined
+    if (value === undefined) return 'Not reported'
+    if (value.trip !== null) return `Tripped by its ${value.trip.element} element at ${value.trip.loadingPercent.toFixed(0)} %: Reset protection, then Close`
+    return `Armed · thermal level ${value.thermalLevel.toFixed(2)} (1 = continuous rating)`
+  }
+
   /** The fields an operator reads first, per asset kind; the full records stay under Raw data. */
   const keyFieldsFor = (asset: AssetDetail): ReadonlyArray<{ readonly label: string; readonly value: string }> => {
     const definition = asset.definition
@@ -279,6 +333,7 @@
       field('Loading', formatted(valueOf(state, 'loadingPercent'), '%', 1)),
       field('Flow', `${formatted(valueOf(state, 'flowMw'), 'MW')} (positive from ${formatted(valueOf(definition, 'fromBusId'))})`),
       field('Switching', formatted(valueOf(state, 'state'))),
+      field('Protection', protectionText(valueOf(state, 'protection'))),
       field('Available rating', formatted(percentOf(valueOf(state, 'availability')), '%')),
       field('Rating', `${formatted(valueOf(definition, 'ratingMw'), 'MW')} · emergency ${formatted(valueOf(definition, 'emergencyRatingMw'), 'MW')}`),
       field('Voltage', formatted(valueOf(definition, 'nominalKv'), 'kV')),
@@ -298,6 +353,7 @@
       field('Shed', `${formatted(valueOf(state, 'shedMw'), 'MW', 1)} (manual ${formatted(valueOf(state, 'curtailedMw'), 'MW', 1)}, LFDD ${formatted(valueOf(state, 'lfddShedMw'), 'MW', 1)})`),
       field('Priority', formatted(valueOf(definition, 'priority'))),
       field('Interruptible', formatted(valueOf(definition, 'interruptibleMw'), 'MW', 1)),
+      field('Critical', formatted(valueOf(definition, 'criticalMw'), 'MW', 1)),
       field('Bus', formatted(valueOf(definition, 'busId'))),
     ]
     if (asset.kind === 'hvdc') return [
@@ -401,15 +457,26 @@
           </div>
           {#if activeOperationId}
             <div class="command-form">
-              <label>{valueLabel(activeOperationId)}<input type="number" bind:value={commandValue} /></label>
+              <label>{valueLabel(activeOperationId)}<input type="text" bind:value={commandValue} /></label>
+              {#if activeOperationId === gridShedLoadCommandKind}
+                <label class="emergency"><input type="checkbox" bind:checked={commandEmergency} />Emergency</label>
+              {/if}
               <button type="button" onclick={() => activeOperationId && void sendOperation(activeOperationId)}>Apply</button>
             </div>
+            {#if shedPlan}
+              <p class="guidance">{shedPlan.limits}</p>
+              {#if shedPlan.problem}<p class="guidance problem">{shedPlan.problem}</p>{/if}
+            {/if}
+            {#if hvdcGuidance}
+              <p class="guidance">{hvdcGuidance.convention}</p>
+              {#if hvdcGuidance.problem}<p class="guidance problem">{hvdcGuidance.problem}</p>{:else if hvdcGuidance.outcome}<p class="guidance">{hvdcGuidance.outcome}</p>{/if}
+            {/if}
           {/if}
           {#if pendingConfirmation}
             {@const confirmation = pendingConfirmation}
             <div class="confirmation" role="alertdialog" aria-label="Confirm Grid operation">
               <p>{confirmationText(confirmation)}</p>
-              <button type="button" class="confirm" onclick={() => void invokeOperation(confirmation.operationId, confirmation.value)}>Confirm</button>
+              <button type="button" class="confirm" onclick={() => void invokeOperation(confirmation.operationId, confirmation.value, confirmation.emergency)}>Confirm</button>
               <button type="button" onclick={() => { pendingConfirmation = null }}>Cancel</button>
             </div>
           {/if}
@@ -472,7 +539,12 @@
   .command-form { display: flex; align-items: end; gap: 6px; padding: 8px; border-radius: 5px; background: rgba(148,163,184,.1); }
   .command-form label { display: flex; flex: 1; flex-direction: column; gap: 4px; font-size: 10px; }
   .command-form input { width: 100%; box-sizing: border-box; padding: 5px 6px; color: inherit; border: 1px solid rgba(148,163,184,.45); border-radius: 4px; background: transparent; }
-  .command-status { margin: 5px 0; color: #64748b; font-size: 10px; }
+  .command-status { margin: 5px 0; color: #64748b; font-size: 10px; overflow-wrap: anywhere; }
+  .command-form label.emergency { flex: 0 0 auto; flex-direction: row; align-items: center; gap: 4px; font-size: 11px; }
+  .command-form label.emergency input { width: auto; }
+  .guidance { margin: 5px 0 0; color: #64748b; font-size: 10px; }
+  .guidance.problem { color: #b45309; font-weight: 600; }
+  :global(.dark) .guidance { color: #94a3b8; } :global(.dark) .guidance.problem { color: #fbbf24; }
   .confirmation { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; padding: 8px; border: 1px solid rgba(220,38,38,.45); border-radius: 5px; background: rgba(220,38,38,.08); font-size: 11px; }
   .confirmation p { flex: 1 1 100%; margin: 0; }
   .confirmation button { padding: 5px 8px; color: inherit; border: 1px solid rgba(148,163,184,.4); border-radius: 999px; background: transparent; cursor: pointer; font-size: 11px; }

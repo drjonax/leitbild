@@ -1,12 +1,17 @@
 <script lang="ts">
-  import { Activity, ListTree, LocateFixed, X } from 'lucide-svelte'
+  import { Activity, Bell, ListTree, LocateFixed, ShieldAlert, X } from 'lucide-svelte'
   import { untrack } from 'svelte'
   import type { OperationalObject, SimulationRunId } from '../../core/model/index.ts'
   import { parseElectricGridObjectData } from '../../packs/electric-grid/model.ts'
+  import type { GridIslandsResult } from '../../packs/electric-grid/queries/islands.ts'
   import { gridAssetItemId, parseGridAssetItemId } from '../../packs/electric-grid/ui/grid-live-layer.ts'
+  import { gridLocalTimeZone } from '../../packs/electric-grid/ui/operator-alarms.ts'
   import { querySimulationRunCapability } from '../simulation-run-client.ts'
   import { runOnMount } from '../svelte-lifecycle.svelte.ts'
+  import GridAlarmList from './GridAlarmList.svelte'
   import GridAssetBrowser from './GridAssetBrowser.svelte'
+  import GridContingencyView from './GridContingencyView.svelte'
+  import GridLfddStages from './GridLfddStages.svelte'
 
   type MapTarget =
     | { readonly kind: 'point'; readonly center: readonly [number, number] }
@@ -33,6 +38,8 @@
       readonly servedLoadMw: number
       readonly reserveMarginMw: number
       readonly voltageModel: 'ac-fdlf'
+      readonly voltageMinPu: number | null
+      readonly voltageMaxPu: number | null
       readonly statusLabel: string
       readonly activeAlarmCount: number
       readonly islands: ReadonlyArray<{ readonly id: string; readonly energized: boolean; readonly loadMw: number; readonly alarmCount: number }>
@@ -45,20 +52,6 @@
     readonly affectedLoads: ReadonlyArray<{ readonly id: string; readonly label: string; readonly state: { readonly unservedMw: number; readonly shedMw: number; readonly serviceState: string } }>
   }
 
-  interface GridIslandRow {
-    readonly id: string
-    readonly referenceBus: { readonly id: string; readonly label: string }
-    readonly busCount: number
-    readonly energized: boolean
-    readonly frequencyHz: number | null
-    readonly loadMw: number
-    readonly unservedLoadMw: number
-  }
-
-  interface GridIslands {
-    readonly total: number
-    readonly islands: ReadonlyArray<GridIslandRow>
-  }
 
   interface PanelFrame {
     readonly left: number
@@ -84,11 +77,11 @@
   let frame = $state<PanelFrame | null>(null)
   let gesture = $state<PanelGesture | null>(null)
   let summary = $state<GridOverviewSummary | null>(null)
-  let islands = $state<GridIslands | null>(null)
+  let islands = $state<GridIslandsResult | null>(null)
   let queryError = $state<string | null>(null)
   let selectedGridId = $state<string | null>(null)
   let selectedAssetId = $state<string | null>(null)
-  let view = $state<'summary' | 'assets'>('summary')
+  let view = $state<'summary' | 'alarms' | 'contingency' | 'assets'>('summary')
   let summarySequence = 0
   // The last selection this panel applied or reported, so its own report does not re-apply.
   let appliedItemId: string | null = null
@@ -325,7 +318,7 @@
     try {
       const [result, islandResult] = await Promise.all([
         querySimulationRunCapability<GridOverviewSummary>(simulationRunId, 'world.electric-grid.grid.summary', { gridId: requestedGridId }),
-        querySimulationRunCapability<GridIslands>(simulationRunId, 'world.electric-grid.islands.list', { gridId: requestedGridId, limit: 20 }),
+        querySimulationRunCapability<GridIslandsResult>(simulationRunId, 'world.electric-grid.islands.list', { gridId: requestedGridId, limit: 20 }),
       ])
       if (sequence !== summarySequence || gridId !== requestedGridId) return
       summary = result
@@ -403,8 +396,12 @@
 
     <div class="panel-navigation">
       <div class="view-tabs" role="tablist" aria-label="Grid panel view">
-        <button type="button" class:active={view === 'summary'} onclick={() => { view = 'summary' }}><Activity size={13} />Overview</button>
-        <button type="button" class:active={view === 'assets'} onclick={() => { view = 'assets' }}><ListTree size={13} />Assets</button>
+        <button type="button" role="tab" aria-selected={view === 'summary'} class:active={view === 'summary'} onclick={() => { view = 'summary' }}><Activity size={13} />Overview</button>
+        <button type="button" role="tab" aria-selected={view === 'alarms'} class:active={view === 'alarms'} onclick={() => { view = 'alarms' }}>
+          <Bell size={13} />Alarms{#if system.activeAlarmCount > 0}<span class="badge">{system.activeAlarmCount}</span>{/if}
+        </button>
+        <button type="button" role="tab" aria-selected={view === 'contingency'} class:active={view === 'contingency'} onclick={() => { view = 'contingency' }}><ShieldAlert size={13} />N-1</button>
+        <button type="button" role="tab" aria-selected={view === 'assets'} class:active={view === 'assets'} onclick={() => { view = 'assets' }}><ListTree size={13} />Assets</button>
       </div>
       {#if gridItems.length > 1}
         <label>Grid
@@ -431,8 +428,8 @@
             <strong>{mw(system.reserveMarginMw)} MW</strong>
           </div>
           <div class="metric">
-            <span>Voltage</span>
-            <strong>Not computed (DC model)</strong>
+            <span>Voltage (AC)</span>
+            <strong>{system.voltageMinPu === null || system.voltageMaxPu === null ? 'No converged island' : `${system.voltageMinPu.toFixed(3)}–${system.voltageMaxPu.toFixed(3)} pu`}</strong>
           </div>
         </div>
 
@@ -441,7 +438,7 @@
           {#if system.activeAlarmCount === 0}
             <p class="empty-state">No active alarms.</p>
           {:else}
-            <p class="alarm-status">{system.activeAlarmCount} active · {system.statusLabel}</p>
+            <p class="alarm-status">{system.activeAlarmCount} active · {system.statusLabel} <button type="button" class="link-button" onclick={() => { view = 'alarms' }}>Open alarm list</button></p>
             <ul>
               {#if summary && summary.constrainedBranchCount > 0}<li>{summary.constrainedBranchCount} corridors at or above {summary.thresholds.constrainedBranchLoadingPercent}% loading</li>{/if}
               {#if summary && summary.affectedLoadCount > 0}<li>{summary.affectedLoadCount} loads with unserved demand</li>{/if}
@@ -487,6 +484,10 @@
           {/each}
         </div>
 
+        {#if islands && gridId}
+          <GridLfddStages {simulationRunId} {gridId} islands={islands.islands} onChanged={() => void loadSummary()} />
+        {/if}
+
         {#if islands}
           <div class="islands">
             <h3>Islands ({islands.total})</h3>
@@ -504,6 +505,14 @@
           </div>
         {/if}
       </div>
+    {:else if view === 'alarms' && gridId}
+      {#key gridId}
+        <GridAlarmList {simulationRunId} {gridId} refreshRevision={selectedGridItem?.object.revision ?? 0} timeZone={gridLocalTimeZone} onLocate={assetId => void locateAsset(assetId)} />
+      {/key}
+    {:else if view === 'contingency' && gridId}
+      {#key gridId}
+        <GridContingencyView {simulationRunId} {gridId} revision={selectedGridItem?.object.revision ?? 0} {selectedAssetId} onLocate={assetId => void locateAsset(assetId)} />
+      {/key}
     {:else if gridId}
       {#key gridId}
         <GridAssetBrowser {simulationRunId} {gridId} refreshRevision={selectedGridItem?.object.revision ?? 0} {selectedAssetId} onSelectAsset={assetId => selectAsset(assetId, true)} {onFocusMap} />
@@ -550,6 +559,9 @@
   .view-tabs { display: flex; gap: 5px; }
   .view-tabs button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; color: inherit; border: 1px solid rgba(148, 163, 184, .4); border-radius: 5px; background: transparent; cursor: pointer; font-size: 11px; }
   .view-tabs button.active { border-color: #3b82f6; background: rgba(59, 130, 246, .12); }
+  .badge { min-width: 14px; padding: 0 4px; border-radius: 7px; color: #fff; background: #dc2626; font-size: 10px; font-weight: 700; text-align: center; }
+  .link-button { margin-left: 6px; padding: 0; color: #2563eb; border: 0; background: transparent; cursor: pointer; font: inherit; text-decoration: underline; }
+  :global(.dark) .link-button { color: #93c5fd; }
   .panel-navigation label { display: flex; align-items: center; gap: 5px; color: #64748b; font-size: 10px; }
   .panel-navigation select { max-width: 180px; padding: 4px 6px; color: inherit; border: 1px solid rgba(148, 163, 184, .4); border-radius: 4px; background: transparent; font: inherit; }
   .summary-view { min-height: 0; overflow: auto; }
