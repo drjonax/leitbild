@@ -125,7 +125,7 @@ describe('what World adds to a composed display', () => {
     ])
     expect([read('feedwaterControlValveB.effectivePositionFraction'), read('feedwaterControlValveB.positionFraction')]).toEqual([expect.closeTo(0.35, 2), 0])
     expect(evidence[0]!.reason).toBe('FCV B does not follow its demand (CMD SHUT)')
-    expect(evidence[0]!.note).toMatch(/^35\.0 % since 10:00:0\d; demand 100 % then, 0 % since 10:01:[0-5]\d$/)
+    expect(evidence[0]!.note).toMatch(/^35\.0 % since 10:00:0\d; demand 100 % then, 0 % since 10:00:[0-5]\d$/)
     // Named by the action that judges the shown level, though every start lines the feed up to SG B.
     expect(evidence[2]!.reason).toBe('Steam generator B low-low level auxiliary feedwater actuation: its flow into SG B')
     const rows = rowsOf(display)
@@ -135,7 +135,7 @@ describe('what World adds to a composed display', () => {
     // The narrow range is off its span: its legend row reads the wide range in its rate's place, so World adds none.
     expect(read('sgB.levelPercent')).toBe(0)
     expect(listed(evidence).map(([, kind]) => kind)).not.toContain('wider')
-    expect(result.margins[0]).toMatch(/^SG-B-LVL-NR: <0 % \(WR SG-B-LVL-WR: 2\d\.\d %\)/)
+    expect(result.margins[0]).toMatch(/^SG-B-LVL-NR: <0 % \(WR SG-B-LVL-WR: \d+\.\d %\)/)
     const content = embeddedViewContentSchema.parse(result.viewContent)
     expect(content.items.find(item => item.names.includes('SG-B-LVL-WR'))?.values[0]?.value).toBeGreaterThan(15)
     expect(content.items.some(item => item.names.includes('MFW-B-CV-POS'))).toBe(true)
@@ -219,7 +219,7 @@ describe('what World adds to a composed display', () => {
     for (const loop of ['a', 'b', 'c', 'd']) expect(lossOfFeed.read(`aux-feedwater-valve-${loop}-to-sg-${loop}.flowKgPerS`)).toBeGreaterThan(20)
     expect(Number(lossOfFeed.read('core.powerRangePercent'))).toBeLessThan(5)
     expect(lossOfFeed.read('turbineStopValve.effectivePositionFraction')).toBe(0)
-    expect(evidence.find(entry => entry.kind === 'trip')!.reason).toMatch(/^Reactor trip at 10:01:\d\d: what says Core and Turbine stopped$/)
+    expect(evidence.find(entry => entry.kind === 'trip')!.reason).toMatch(/^Reactor trip at 10:00:\d\d: what says Core and Turbine stopped$/)
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
 
     // A drawing that writes a narrow range at the end of its span: the wide ranges are added, in one row.
@@ -235,26 +235,39 @@ describe('what World adds to a composed display', () => {
     expect(listed(now.evidence).map(([, kind]) => kind)).not.toContain('trip')
   }, PLANT_HANG_GUARD_MS)
 
-  test('turbine trip: narrow ranges falling toward the end of their span bring the wide ranges, beside the auxiliary feed in all and to each, and the trip check', () => {
-    // Run 23: a minute after the turbine trip the narrow ranges read 17.9 %, falling 18 %/min, on scale; nothing
-    // showed where the inventory would be once they left it.
+  test('turbine trip: narrow ranges below their span read the wide ranges in the legend, beside the auxiliary feed in all and to each, and the trip check', () => {
+    // Run 23: a minute after the turbine trip the narrow ranges read 17.9 %, on scale; nothing showed where the
+    // inventory would be once they left it. Since the narrow range spans the wide range's upper quarter (R4a), the
+    // shrink takes every generator below it within seconds: each legend row reads its wide range.
     const turbineTrip = situation({ actionId: 'turbine-trip' }, 1)
     const { evidence, display, result } = turbineTrip.compose('Post-trip steam-generator inventory', ['SG-A-LVL-NR', 'SG-B-LVL-NR', 'SG-C-LVL-NR', 'SG-D-LVL-NR'], [
       { kind: 'trend', horizon: '10m', signals: [signal('SG-A-LVL-NR', 'primary'), ...['B', 'C', 'D'].map(loop => signal(`SG-${loop}-LVL-NR`))] },
       { kind: 'alarms', scope: 'plant' },
     ])
-    expect(Number(turbineTrip.read('sgA.levelPercent'))).toBeGreaterThan(0)
+    expect(Number(turbineTrip.read('sgA.levelPercent'))).toBe(0)
+    for (const loop of ['A', 'B', 'C', 'D']) expect(result.margins.join('\n')).toMatch(new RegExp(`SG-${loop}-LVL-NR: <0 % \\(WR SG-${loop}-LVL-WR: \\d+\\.\\d %\\)`))
     expect(rowsOf(display)).toEqual([
-      { kind: 'wider', name: '', items: ['SG-A-LVL-WR', 'SG-B-LVL-WR', 'SG-C-LVL-WR', 'SG-D-LVL-WR'] },
       { kind: 'delivers', name: '', items: ['AFW-FLOW'] },
       afwToEach,
       trip,
       { kind: 'isolates', name: '', items: ['Process header outlet flow · Main Feedwater Header'] },
     ])
-    expect(evidence[0]!.reason).toBe('SG-A-LVL-NR, SG-B-LVL-NR, SG-C-LVL-NR and SG-D-LVL-NR head for the bottom of their span: the same quantity on the instruments with the wider span')
-    expect(evidence[4]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers')
-    expect(evidence[5]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers to SG A, SG B, SG C and SG D')
+    expect(evidence[0]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers')
+    expect(evidence[1]!.reason).toBe('Steam generator A low-low level auxiliary feedwater actuation: what it delivers to SG A, SG B, SG C and SG D')
     expect(result.view.height).toBeLessThanOrEqual(COMPOSED_DISPLAY_MAX_HEIGHT_PX)
+  }, PLANT_HANG_GUARD_MS)
+
+  test('a narrow range on its span whose fall reaches its end within the trend brings its wide range', () => {
+    // Feed regulating valve B failed at 70 %: forty seconds in, SG B's narrow range is still on its span, falling
+    // toward its bottom within the ten-minute trend.
+    const { compose, read } = situation({ actionId: 'steam-generator-b-feedwater-runback', parameters: { positionPercent: 70 } }, 40 / 60)
+    const { evidence, display } = compose('SG B inventory after its feed valve failed', ['SG-B-LVL-NR'], [
+      { kind: 'trend', horizon: '10m', signals: [signal('SG-B-LVL-NR', 'primary'), ...['A', 'C', 'D'].map(loop => signal(`SG-${loop}-LVL-NR`))] },
+      { kind: 'alarms', scope: 'plant' },
+    ])
+    expect(Number(read('sgB.levelPercent'))).toBeGreaterThan(20)
+    expect(rowsOf(display)).toContainEqual({ kind: 'wider', name: '', items: ['SG-B-LVL-WR'] })
+    expect(evidence.find(entry => entry.kind === 'wider')!.reason).toBe('SG-B-LVL-NR heads for the bottom of its span: the same quantity on the instrument with the wider span')
   }, PLANT_HANG_GUARD_MS)
 
   test('a line-up drawing: the parallel supply into what it ends at, the flow its header carries in all and to each destination', () => {
