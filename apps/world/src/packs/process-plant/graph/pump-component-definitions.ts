@@ -29,6 +29,13 @@ export const pumpComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
        * of its speed.
        */
       coastdownTimeConstantS: z.number().finite().positive().optional(),
+      /**
+       * For a pump its own turbine drives: the time from its start signal to
+       * its commanded speed, as its steam admission valve opens and the
+       * turbine accelerates the pump. Its speed rises evenly over it; any
+       * other pump is at its speed as it starts.
+       */
+      runUpTimeS: z.number().finite().positive().optional(),
       loopResistanceCoefficient: z.number().finite().nonnegative().optional(),
       /**
        * The head it develops at rated speed with no flow. Its head falls along

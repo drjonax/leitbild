@@ -75,7 +75,8 @@ describe('auxiliary feedwater', () => {
     plantRun.run(5)
     for (const pump of pumps) plantRun.set(`${pump}.running`, true)
     for (const loop of loops) plantRun.set(`auxFeedwaterValve${loop}.positionFraction`, loop === 'B' ? 1 : 0)
-    plantRun.run(30)
+    // The turbine-driven pump takes its 30 s run-up to come to speed.
+    plantRun.run(60)
     const { read, tag } = plantRun
     // About 44 kg/s into a generator at 6.9 MPa, not the pumps' 110 kg/s.
     expect(tag('AFW-B-FLOW')).toBeGreaterThan(35)
@@ -153,7 +154,8 @@ describe('auxiliary feedwater', () => {
     }
     expect(turbinePumpAt).not.toBeNull()
     expect(['A', 'C', 'D'].filter(loop => tag(`SG-${loop}-LVL-NR`) < 20).length).toBeGreaterThanOrEqual(2)
-    plantRun.run(30)
+    // A minute on, past its run-up, it delivers its rated flow.
+    plantRun.run(60)
     for (const loop of ['A', 'B', 'C', 'D']) {
       expect(tag(`AFW-${loop}-FLOW`)).toBeGreaterThan(25)
       expect(tag(`AFW-${loop}-FLOW`)).toBeLessThan(31)
@@ -178,6 +180,33 @@ describe('auxiliary feedwater', () => {
     expect(turbinePumpAt! - bothLowAt!).toBeGreaterThanOrEqual(1)
     expect(turbinePumpAt! - bothLowAt!).toBeLessThanOrEqual(3)
     expect(plantRun.read('auxFeedwaterPumpMotor.runningState')).toBe(1)
+  })
+
+  test('the turbine-driven pump runs up over 30 s and delivers its rated flow within a minute of its start signal', () => {
+    // A Terry turbine comes from cold standby to full load within 30 s (NRC RCIC training, ML11258A312); every
+    // pump delivers rated flow within a minute of its automatic start (Westinghouse Technology Systems Manual 5.7).
+    const plantRun = started()
+    plantRun.run(5)
+    plantRun.act('loss-main-feedwater')
+    let startedAt: number | null = null
+    const trace: Array<{ readonly second: number; readonly rpm: number; readonly flow: number }> = []
+    for (let second = 1; second <= 200; second += 1) {
+      plantRun.run(1)
+      if (startedAt === null && plantRun.read('auxFeedwaterPumpTurbine.runningState') === 1) startedAt = second
+      if (startedAt !== null) trace.push({ second: second - startedAt, rpm: plantRun.tag('TDAFW-SPEED'), flow: plantRun.read('auxFeedwaterPumpTurbine.flowKgPerS') })
+      if (startedAt !== null && second - startedAt >= 60) break
+    }
+    expect(startedAt).not.toBeNull()
+    const at = (second: number) => trace.find(point => point.second === second)!
+    // Its speed rises evenly to its rated 3,600 rpm; until its head passes the generators' pressure it delivers nothing.
+    expect(at(15).rpm).toBeCloseTo(1_920, -1)
+    expect(at(15).flow).toBe(0)
+    expect(at(20).flow).toBe(0)
+    expect(at(30).rpm).toBeCloseTo(3_600, 0)
+    expect(at(60).flow).toBeGreaterThan(0.95 * ratedFlowKgPerS.auxFeedwaterPumpTurbine)
+    const fullFlowAt = trace.find(point => point.flow > 0.9 * ratedFlowKgPerS.auxFeedwaterPumpTurbine)!.second
+    expect(fullFlowAt).toBeGreaterThan(30)
+    expect(fullFlowAt).toBeLessThan(60)
   })
 
   test('puts every kilogram it feeds into the generator\'s inventory', () => {

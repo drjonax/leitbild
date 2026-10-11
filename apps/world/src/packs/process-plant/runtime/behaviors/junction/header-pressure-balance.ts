@@ -1,7 +1,7 @@
 import type { CompiledComponent, CompiledProcessLink, VariablePath } from '../../../graph/index.ts'
 import type { CompiledProcessPlant } from '../../../plant-compiler.ts'
 import { componentVariablePath } from '../../behavior-contract.ts'
-import { clamp, parameterNumber } from '../../component-helpers.ts'
+import { clamp, optionalParameterNumber, parameterNumber } from '../../component-helpers.ts'
 import { incomingComponentLinks, outgoingComponentLinks } from '../../component-link-helpers.ts'
 import { componentHasElectricalPower, type ElectricalReadContext } from '../electrical-behaviors.ts'
 
@@ -21,6 +21,7 @@ const atmosphericPressureMPa = 0.101325
 
 interface FeedPump {
   readonly pump: CompiledComponent
+  readonly nominalSpeedRpm: number
   readonly ratedFlowKgPerS: number
   readonly ratedHeadMPa: number
   readonly shutoffHeadMPa: number
@@ -60,7 +61,7 @@ const feedPumpFor = (header: CompiledComponent, pump: CompiledComponent | undefi
   const ratedHeadMPa = parameterNumber(pump, 'nominalHeadPa') / 1_000_000
   const shutoffHeadMPa = parameterNumber(pump, 'shutoffHeadPa') / 1_000_000
   if (!(shutoffHeadMPa > ratedHeadMPa)) throw new Error(`pump ${pump.id} shutoff head must exceed its rated head`)
-  return { pump, ratedFlowKgPerS: parameterNumber(pump, 'nominalFlowKgPerS'), ratedHeadMPa, shutoffHeadMPa }
+  return { pump, nominalSpeedRpm: optionalParameterNumber(pump, 'nominalSpeedRpm', 3600), ratedFlowKgPerS: parameterNumber(pump, 'nominalFlowKgPerS'), ratedHeadMPa, shutoffHeadMPa }
 }
 
 const branchFor = (system: CompiledProcessPlant, header: CompiledComponent, link: CompiledProcessLink, knownPaths: ReadonlySet<VariablePath>): Branch => {
@@ -113,10 +114,11 @@ export const headerPressureBalance = (
   context: ElectricalReadContext,
 ): HeaderPressureBalance => {
   const { pumps, branches } = balancedHeader(system, header)
-  // A pump runs while it is commanded to and its motor has power.
+  // A pump runs while it is commanded to and its motor has power, at the
+  // speed its rotor has reached: a turbine-driven pump's comes up over its run-up.
   const running = pumps.flatMap(feed => context.readBoolean(componentVariablePath(feed.pump, 'running'))
     && componentHasElectricalPower(system, feed.pump, context)
-    ? [{ feed, speed: clamp(context.readNumber(componentVariablePath(feed.pump, 'speedFraction')), 0, 1.2) }]
+    ? [{ feed, speed: clamp(context.readNumber(componentVariablePath(feed.pump, 'speedRpm')) / feed.nominalSpeedRpm, 0, 1.2) }]
     : [])
   const open = branches.map(branch => ({
     branch,

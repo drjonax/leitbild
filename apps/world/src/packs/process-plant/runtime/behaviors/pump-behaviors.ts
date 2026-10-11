@@ -49,11 +49,17 @@ const pumpSpeedFraction = (component: CompiledComponent, context: Pick<ProcessPl
 
 const nominalSpeedRpm = (component: CompiledComponent): number => optionalParameterNumber(component, 'nominalSpeedRpm', 3600)
 
-// A pump with a flywheel coasts when its motor stops. The water's drag on the
+// A turbine-driven pump comes up to its commanded speed over its run-up
+// time once started, and the flow it can deliver rises with its speed. A pump
+// with a flywheel coasts when its motor stops. The water's drag on the
 // impeller grows as the square of its speed, so the speed n falls as
 // n' = -n^2 / tau, n0 / (1 + n0 t / tau): it halves in the coastdown time
 // constant tau, and the flow it drives falls with it. Any other pump stops.
 const pumpRotorSpeedRpm = (component: CompiledComponent, context: Pick<ProcessPlantBehaviorContext, 'readNumber' | 'dtSeconds'>, running: boolean, speed: number): number => {
+  const runUpTime = (component.parameters as Readonly<Record<string, unknown>>).runUpTimeS
+  if (running && typeof runUpTime === 'number') {
+    return approach(context.readNumber(componentVariablePath(component, 'speedRpm')), speed * nominalSpeedRpm(component), nominalSpeedRpm(component) * context.dtSeconds / runUpTime)
+  }
   if (running) return speed * nominalSpeedRpm(component)
   const coastdownTimeConstant = (component.parameters as Readonly<Record<string, unknown>>).coastdownTimeConstantS
   if (typeof coastdownTimeConstant !== 'number') return 0
