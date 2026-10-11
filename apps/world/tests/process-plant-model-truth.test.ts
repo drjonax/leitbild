@@ -499,12 +499,17 @@ describe('alarms that apply only in power operation', () => {
     const qualified = plant.automation.rules.filter(rule => rule.modes !== undefined)
     // The steam generator low-low level trips and the auxiliary feedwater start on
     // a main feedwater pump trip act wherever the reactor can be critical, safety
-    // injection down to hot standby, the feedwater isolation after a trip in hot
-    // standby; every other qualified rule only at power.
+    // injection on low pressurizer pressure down to hot standby, on containment
+    // pressure Hi-1 and containment spray on Hi-3 down to hot shutdown, steam line
+    // isolation on Hi-2 down to hot standby, the feedwater isolation after a trip
+    // in hot standby; every other qualified rule only at power.
     const notOnlyAtPower = Object.fromEntries(qualified.filter(rule => JSON.stringify(rule.modes) !== '["powerOperation"]').map(rule => [rule.id, rule.modes]))
     expect(notOnlyAtPower).toEqual({
       ...Object.fromEntries(['a', 'b', 'c', 'd'].map(loop => [`sg-${loop}-level-low-low-reactor-trip`, ['powerOperation', 'startup']])),
       'safety-injection-low-pzr-pressure': ['powerOperation', 'startup', 'hotStandby'],
+      'safety-injection-containment-pressure-high-1': ['powerOperation', 'startup', 'hotStandby', 'hotShutdown'],
+      'containment-pressure-high-2-steam-line-isolation': ['powerOperation', 'startup', 'hotStandby'],
+      'containment-pressure-high-3-spray': ['powerOperation', 'startup', 'hotStandby', 'hotShutdown'],
       'main-feedwater-pumps-tripped-afw-start': ['powerOperation', 'startup'],
       'reactor-trip-low-tavg-feedwater-isolation': ['hotStandby'],
     })

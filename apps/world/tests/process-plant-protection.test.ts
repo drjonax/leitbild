@@ -12,6 +12,7 @@ import {
 } from '../src/packs/process-plant/index.ts'
 import { resolveProcessPlantSignalBinding } from '../src/packs/process-plant/signals.ts'
 import { validateProcessPlantControlWrite } from '../src/packs/process-plant/control-write-validation.ts'
+import { icThresholdsForSignal } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 
 // Reactor protection and safety injection of the four-loop reference PWR,
 // read from the I&C's trips and alarms and the equipment's feedback. Each
@@ -634,4 +635,60 @@ describe('feedwater isolation', () => {
       ...loops.map(loop => `feedwaterControlValve${loop}.isolationSignal=true`),
     ]))
   })
+})
+
+describe('containment pressure', () => {
+  const entered = (plantRun: ReturnType<typeof started>, ids: ReadonlyArray<string>, seconds: number) => {
+    const at = new Map<string, number>()
+    for (let second = 1; second <= seconds; second += 1) {
+      plantRun.step()
+      for (const id of plantRun.activeIds()) if (ids.includes(id) && !at.has(id)) at.set(id, second)
+    }
+    return at
+  }
+  const alarm = 'alarm:containment-pressure-high:pressure-high'
+  const hi1 = 'trip:safety-injection-containment-pressure-high-1:safety-injection'
+  const lowPressureSi = 'trip:safety-injection-low-pzr-pressure:safety-injection'
+  const hi2 = 'trip:containment-pressure-high-2-steam-line-isolation:steam-line-isolation'
+  const hi3 = 'trip:containment-pressure-high-3-spray:containment-spray'
+
+  test('displays draw the alarm below Hi-1 safety injection, Hi-2 steam line isolation and Hi-3 spray', () => {
+    const pressure = resolveProcessPlantSignalBinding(graph, { tagId: 'CTMT-PR' as never }).path
+    const actuates = (ruleId: string) => plant.automation.rules.find(rule => rule.id === ruleId)!.effects
+      .flatMap(effect => effect.type === 'trip.enter' ? effect.annunciator!.actuates! : [])[0] ?? null
+    expect(icThresholdsForSignal(plant, pressure).thresholds.map(threshold => [threshold.value, threshold.kind, actuates(threshold.ruleId)])).toEqual([
+      [0.11, 'alarm', null],
+      [0.128, 'trip', 'safetyInjection'],
+      [0.147, 'trip', 'steamLineIsolation'],
+      [0.186, 'trip', 'containmentSpray'],
+    ])
+    expect(plant.automation.rules.some(rule => rule.id === 'containment-pressure-high-reactor-trip')).toBe(false)
+  })
+
+  test('a small break inside containment alarms, then actuates SI on Hi-1 before the pressurizer pressure falls to its SI set point', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-hot-leg-a.leak.areaFraction' as VariablePath, value: 0.005 })
+    const at = entered(plantRun, [alarm, hi1, lowPressureSi], 90)
+    expect(at.get(alarm)).toBeLessThan(at.get(hi1)!)
+    expect(at.get(hi1)).toBeLessThan(at.get(lowPressureSi) ?? Number.POSITIVE_INFINITY)
+    expect(plantRun.trip(hi1)!.firstOut).toBe(true)
+    expect(plantRun.tag('SI-PUMP-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('TRIP-BKR-A-POS')).toBe(false)
+  }, 120_000)
+
+  test('a larger break shuts the steam lines on Hi-2 and starts spray on Hi-3, which brings the pressure back down', () => {
+    const plantRun = started()
+    plantRun.run(5_000)
+    plantRun.runtime.writeCommand({ type: 'setVariable', path: 'rcs-hot-leg-a.leak.areaFraction' as VariablePath, value: 0.02 })
+    const at = entered(plantRun, [alarm, hi1, hi2, hi3], 110)
+    expect([...at.keys()]).toEqual([alarm, hi1, hi2, hi3])
+    for (const loop of ['A', 'B', 'C', 'D']) expect(Number(plantRun.tag(`MSIV-${loop}-POS`)), loop).toBe(0)
+    expect(plantRun.tag('CSPRAY-A-RUNNING')).toBe(true)
+    expect(plantRun.tag('CSPRAY-B-RUNNING')).toBe(true)
+    expect(Number(plantRun.tag('SPRAY-FLOW'))).toBeGreaterThan(300)
+    const sprayed = Number(plantRun.tag('CTMT-PR'))
+    plantRun.run(30_000)
+    expect(Number(plantRun.tag('CTMT-PR'))).toBeLessThan(sprayed)
+  }, 120_000)
 })

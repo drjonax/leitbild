@@ -12,6 +12,8 @@ export const referenceActuations = [
   { id: 'auxiliaryFeedwaterStart', label: 'Auxiliary feedwater start', shortLabel: 'AFW START' },
   { id: 'feedwaterIsolation', label: 'Feedwater isolation', shortLabel: 'FWI' },
   { id: 'pressurizerReliefOpen', label: 'Pressurizer PORV open', shortLabel: 'PORV OPEN' },
+  { id: 'steamLineIsolation', label: 'Steam line isolation', shortLabel: 'MSI' },
+  { id: 'containmentSpray', label: 'Containment spray', shortLabel: 'CS' },
 ] as const satisfies ReadonlyArray<ProcessPlantIcActuation>
 
 export type ReferenceActuationId = (typeof referenceActuations)[number]['id']

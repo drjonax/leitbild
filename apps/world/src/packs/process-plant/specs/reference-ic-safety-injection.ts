@@ -1,5 +1,6 @@
 import type { ProcessPlantIcRule } from '../runtime/index.ts'
 import { alarm, all, annunciator, comparison, reactorTripBreakerOpen, reactorTripBreakerWrites, rule, trip, write } from './reference-ic-helpers.ts'
+import { containmentPressureHigh1MPa } from './reference-ic-containment.ts'
 
 // Safety injection on low pressurizer pressure: below 12.7 MPa (about
 // 1,830 psig, within the 1,807 to 1,870 psig Westinghouse plants set it at)
@@ -28,6 +29,12 @@ const siPumps = [
   { id: 'safetyInjectionPumpB', train: 'B' },
 ] as const
 
+const safetyInjectionWrites = (idPrefix: string) => [
+  ...siPumps.map(pump => write(`start-high-head-si-pump-${pump.train.toLowerCase()}`, { tagId: `SI-PUMP-${pump.train}` }, true)),
+  ...reactorTripBreakerWrites(idPrefix),
+  write(`insert-control-rods-${idPrefix}`, { path: 'core.rodInsertionFraction' }, 1),
+]
+
 export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcRule> => [
   rule({
     id: 'safety-injection-low-pzr-pressure',
@@ -47,9 +54,28 @@ export const safetyInjectionReferenceIcRules = (): ReadonlyArray<ProcessPlantIcR
         actuates: ['safetyInjection', 'reactorTrip'],
         annunciator: siAction,
       }),
-      ...siPumps.map(pump => write(`start-high-head-si-pump-${pump.train.toLowerCase()}`, { tagId: `SI-PUMP-${pump.train}` }, true)),
-      ...reactorTripBreakerWrites('safety-injection'),
-      write('insert-control-rods-safety-injection', { path: 'core.rodInsertionFraction' }, 1),
+      ...safetyInjectionWrites('safety-injection'),
+    ],
+  }),
+  // Containment pressure Hi-1 (NUREG-1431 Table 3.3.2-1, function 1.c), in
+  // modes 1 to 4: a break inside containment pressurizes it before the
+  // pressurizer's pressure falls to its SI set point.
+  rule({
+    id: 'safety-injection-containment-pressure-high-1',
+    label: 'Safety injection on containment pressure Hi-1',
+    ruleClass: 'protection',
+    modes: ['powerOperation', 'startup', 'hotStandby', 'hotShutdown'],
+    condition: comparison({ tagId: 'CTMT-PR' }, '>', containmentPressureHigh1MPa),
+    delayMs: 1_000,
+    effects: [
+      trip({
+        id: 'safety-injection',
+        title: 'Safety injection actuated on containment pressure Hi-1',
+        message: `Containment pressure is above Hi-1, ${containmentPressureHigh1MPa} MPa (3.86 psig): the SI signal starts both high-head safety injection pumps and trips the reactor.`,
+        actuates: ['safetyInjection', 'reactorTrip'],
+        annunciator: siAction,
+      }),
+      ...safetyInjectionWrites('safety-injection-containment'),
     ],
   }),
   // The BLOCK pushbutton is accepted only where the block can hold: below
