@@ -153,17 +153,21 @@ export const annunciatorStates = (
 
 /**
  * The actions a tile names in the room its counts leave: as many whole as
- * fit ("RX TRIP 1st · SI"), the rest counted ("+1"); where not even the first
- * fits, only whether the system holds a first-out ("1st"). Never cut.
+ * fit, in order ("SI 1st · RX TRIP"), the rest counted ("+1"); else any
+ * other first-out that fits with the rest counted ("FWI 1st +1" where "AFW
+ * START 1st +1" does not); where none fits, only whether the system holds a
+ * first-out ("1st"). Never cut.
  */
 export const tileActions = (
   actions: AnnunciatorState['actions'],
   fits: (text: string) => boolean,
 ): string => {
   const named = actions.map(action => `${action.name}${action.firstOut ? ' 1st' : ''}`)
-  for (let shown = named.length; shown > 0; shown -= 1) {
-    const text = `${named.slice(0, shown).join(' · ')}${shown < named.length ? ` +${named.length - shown}` : ''}`
-    if (fits(text)) return text
-  }
-  return actions.some(action => action.firstOut) ? '1st' : ''
+  const rest = (shown: number): string => shown < named.length ? ` +${named.length - shown}` : ''
+  const candidates = [
+    ...named.map((_, index) => `${named.slice(0, named.length - index).join(' · ')}${rest(named.length - index)}`),
+    // A first-out is never counted away behind one that is not.
+    ...named.slice(1).filter((_, index) => actions[index + 1]!.firstOut || !actions[0]!.firstOut).map(name => `${name}${rest(1)}`),
+  ]
+  return candidates.find(fits) ?? (actions.some(action => action.firstOut) ? '1st' : '')
 }

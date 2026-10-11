@@ -401,6 +401,8 @@ describe('annunciator tiles', () => {
     expect(tileActions(states[1]!.actions, room(20))).toBe('SI 1st · RX TRIP')
     expect(tileActions(states[1]!.actions, room(12))).toBe('SI 1st +1')
     expect(tileActions(states[2]!.actions, room(6))).toBe('1st')
+    // Where the first does not fit with the rest counted, a shorter one does (the loss-of-feedwater overview's Feedwater tile).
+    expect(tileActions([{ name: 'AFW START', firstOut: true }, { name: 'FWI', firstOut: true }], room(12))).toBe('FWI 1st +1')
     expect(tileActions([], room(20))).toBe('')
   })
 })
