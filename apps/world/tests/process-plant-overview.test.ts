@@ -313,12 +313,12 @@ describe('equipment opened from the unit overview', () => {
     expect(mimic.mimic.stubs.map(stub => stub.text)).toContain('from ACC ×4, CHG ×2, RHR iso, SI header')
     expect(result.display.height).toBeLessThanOrEqual(fullHd.height)
     // Opened at power it leads with the power range, Tavg's deviation from Tref, subcooling margin, the RCS leak rate
-    // and outlet temperature, then its instruments, the core exit thermocouples and P-10 among them; the startup rate
-    // and the de-energized source range no longer fit.
+    // and outlet temperature, then its instruments, the core exit thermocouples and the startup rate among them, never
+    // a permissive; the de-energized source range no longer fits.
     const readouts = result.display.panels.find(panel => panel.kind === 'readouts')!
     if (readouts.kind !== 'readouts') throw new Error('expected the readouts')
     expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(0, 5)).toEqual(['NIS-PR-AVG', 'TAVG-TREF', 'SUB-MARGIN', 'RCS-LEAK-RATE', 'core.coolantOutletTemperatureC'])
-    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-3)).toEqual(['NIS-IR', 'CET-AVG', 'P-10'])
+    expect(readouts.pens.map(pen => pen.tagId ?? String(pen.path)).slice(-3)).toEqual(['NIS-IR', 'CET-AVG', 'NIS-IR-SUR'])
   })
 
   test('every item of the overview opens', () => {

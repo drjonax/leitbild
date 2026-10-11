@@ -43,6 +43,7 @@ const valveSemantics = (parameters: unknown): ComponentSemantics => {
     portFlows: [],
     keyValues: [],
     meaningfulWhile: [],
+    permissives: [],
     energy: [],
   }
 }

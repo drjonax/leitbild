@@ -199,6 +199,7 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       keyValues: ['coolantOutletTemperatureC'],
       // Above P-6 the source range's high voltage is cut and it counts nothing.
       meaningfulWhile: [{ flag: 'sourceRangeEnergized', variables: ['sourceRangeCountRateCps'] }],
+      permissives: ['aboveP6', 'aboveP10'],
       energy: [{ role: 'source', circuit: 'coolant', rate: 'totalThermalPowerMw' }],
     }),
     variables: [

@@ -128,13 +128,20 @@ export interface ComponentSemantics {
    * voltage is on, and reads a zero that measures nothing while it is off.
    */
   readonly meaningfulWhile: ReadonlyArray<{ readonly flag: string; readonly variables: ReadonlyArray<string> }>
+  /**
+   * Permissives the equipment derives from what it measures (a power range
+   * above P-10, a pressurizer pressure below P-11): solved flags that let
+   * protection be blocked or enable it, read by the logic that uses them,
+   * not values a display leads with.
+   */
+  readonly permissives: ReadonlyArray<string>
   /** What the equipment does with energy, by port circuit. */
   readonly energy: ReadonlyArray<EnergyRole>
 }
 
 /** Declares semantics that do not depend on a component's parameters. */
 export const fixedSemantics = (semantics: Partial<ComponentSemantics>): ((parameters: unknown) => ComponentSemantics) => {
-  const resolved: ComponentSemantics = { aspects: [], embedded: [], ratedOutflow: [], portFlows: [], keyValues: [], meaningfulWhile: [], energy: [], ...semantics }
+  const resolved: ComponentSemantics = { aspects: [], embedded: [], ratedOutflow: [], portFlows: [], keyValues: [], meaningfulWhile: [], permissives: [], energy: [], ...semantics }
   return () => resolved
 }
 
@@ -175,6 +182,7 @@ export interface CompiledComponentSemantics {
   readonly portFlows: ReadonlyArray<{ readonly port: PortName; readonly path: VariablePath }>
   readonly keyValues: ReadonlyArray<VariablePath>
   readonly meaningfulWhile: ReadonlyArray<{ readonly flag: VariablePath; readonly variables: ReadonlyArray<VariablePath> }>
+  readonly permissives: ReadonlyArray<VariablePath>
   readonly energy: ReadonlyArray<CompiledEnergyRole>
 }
 

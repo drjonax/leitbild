@@ -285,6 +285,11 @@ const compileComponentSemantics = (
         }),
       }
     }),
+    permissives: semantics.permissives.map(local => {
+      const flag = resolve(local as LocalVariablePath)
+      if (flag.quantity !== 'boolean' || flag.writable) throw new Error(`${context}: permissive ${local} is not a solved flag`)
+      return variablePathFor(componentId, local as LocalVariablePath)
+    }),
     energy: semantics.energy.map((role): CompiledEnergyRole => {
       const circuits = new Set(Object.values(ports).map(port => port.circuit))
       const named = role.role === 'transfer' ? [role.from, role.to] : [role.circuit]

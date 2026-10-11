@@ -110,9 +110,13 @@ export const notMeaningfulNow = (plant: CompiledProcessPlant, now: PlantNow): Re
   .flatMap(component => component.semantics.meaningfulWhile)
   .flatMap(qualified => now.read(qualified.flag) === true ? [] : qualified.variables))
 
-/** The flags that say whether readings measure anything (a source range's high voltage): they qualify readings, they are none. */
+/**
+ * The flags that say whether readings measure anything (a source range's high
+ * voltage), and the permissives equipment derives (P-6, P-10, P-11): they
+ * qualify readings or gate protection; they are no readings of their own.
+ */
 const meaningFlags = (plant: CompiledProcessPlant): ReadonlySet<VariablePath> => new Set(plant.graph.components
-  .flatMap(component => component.semantics.meaningfulWhile.map(qualified => qualified.flag)))
+  .flatMap(component => [...component.semantics.meaningfulWhile.map(qualified => qualified.flag), ...component.semantics.permissives]))
 
 /** What a detail's lead values depend on besides its equipment: the same key draws the same values. */
 export const leadValuesKey = (plant: CompiledProcessPlant, now: PlantNow): string =>
@@ -138,7 +142,9 @@ const equipmentOf = (binding: ProcessSignalBinding): ReadonlyArray<string> => [
  * feedwater flow alarm that acts at power, opened at shutdown). A reading the
  * model marks as measuring nothing now (a de-energized source range) is left
  * out, and the flag that says so is never a value of its own: the reading is
- * shown while it measures. Each is taken in turn from every item, so
+ * shown while it measures. Nor is a permissive (P-10 on the core): the source
+ * range's high voltage is the instrument fact, its state the logic's. Each is
+ * taken in turn from every item, so
  * parallel equipment is compared value by value.
  */
 export const equipmentKeyValues = (plant: CompiledProcessPlant, components: ReadonlyArray<number>, now: PlantNow): ReadonlyArray<VariablePath> => {

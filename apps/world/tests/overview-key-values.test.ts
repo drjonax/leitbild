@@ -89,9 +89,9 @@ describe('the values equipment opened from the overview leads with', () => {
     // thermocouples are: their alarms are the core's related alarms. The de-energized source range measures
     // nothing at power: it is left out, and its high-voltage flag is never a value of its own (run 22: "Source-range
     // detector high voltage on · Reactor Core" as a sentence row).
-    // Tavg's deviation from Tref, which alarms in power operation, follows the power range; the power range's P-10
-    // follows the instruments.
-    expect(of(['core'])).toEqual(['core.powerRangePercent', 'core.averageTemperatureDeviationC', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC', 'core.aboveP10'] as never)
+    // Tavg's deviation from Tref, which alarms in power operation, follows the power range; the startup rate follows
+    // the instruments. The permissives the core derives (P-6, P-10) are never values of their own.
+    expect(of(['core'])).toEqual(['core.powerRangePercent', 'core.averageTemperatureDeviationC', 'vessel.subcoolingMarginC', 'rcsInventoryBalance.leakRateKgPerS', 'core.coolantOutletTemperatureC', 'core.intermediateRangeCurrentAmps', 'core.coreExitTemperatureC', 'core.intermediateRangeStartupRateDpm'] as never)
     // With its high voltage on, the source range counts something and ranks as an instrument, before the
     // intermediate range.
     const counting: PlantNow = { ...atPower, read: path => String(path) === 'core.sourceRangeEnergized' ? true : runtime.readVariable(path) }
