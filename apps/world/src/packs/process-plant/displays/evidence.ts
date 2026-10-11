@@ -1,6 +1,6 @@
 import type { ProcessSignalBinding, VariablePath } from '../graph/index.ts'
 import type { ProcessPlantRuntimeInstance } from '../runtime-instance.ts'
-import { actionEquipment, actionFlows, actionFlowsInto, actsIn, automaticActions, conditionBindings, feeds, throughputDownstream } from './actuations.ts'
+import { actionEquipment, actionFlows, actionFlowsInto, actsIn, automaticActions, conditionBindings, feeds, throughputDownstream, type AutomaticAction } from './actuations.ts'
 import { composedPanelPens, rankedAsRead, type CompiledComposedDisplay, type ComposedDisplayPen, type ComposedDisplayReading } from './compose.ts'
 import { COMPOSED_EVIDENCE_MAX, type DisplayEvidence, type DisplayEvidenceKind } from './composition.ts'
 import { isPast } from './display-text.ts'
@@ -35,6 +35,9 @@ const shortLabel = (system: ProcessPlantRuntimeInstance, component: number): str
  * - cause: equipment the question's values are measured on, or one line from
  *   it, whose state does not follow its command (a feed valve stuck at 35 %
  *   while demanded open), as its state and its command;
+ * - wider: for a shown reading at an end of its instrument's span (a
+ *   narrow-range level at 0 %), the same quantity on the instrument the
+ *   equipment declares reads it over a wider span (its wide-range level);
  * - delivers and isolates: what an automatic action acting in the mode
  *   delivers or isolates (the header flow its pumps feed, or the flow it
  *   starts or shuts off into the one piece of shown equipment it feeds),
@@ -120,18 +123,33 @@ export const displayEvidence = (
     }
   }
 
+  // Wider: a reading off its span says only that the quantity is there or beyond; its wider instrument says where.
+  for (const entry of readings) {
+    if (entry.reading.offScale === null) continue
+    const binding = bindingOf(entry.pen.path)
+    if (binding.owner.type !== 'component') continue
+    for (const range of graph.components[binding.owner.componentIndex]!.semantics.widerRanges) {
+      if (range.reading === entry.pen.path) add(range.wider, 'wider', `${entry.pen.name} reads ${entry.reading.offScale} its span: the same quantity on the instrument with the wider span`)
+    }
+  }
+
   // Delivers and isolates: automatic actions acting in the mode that bear on what is shown.
   const mode = now.mode === undefined || now.mode === null ? null : now.mode.id
   const ahead = new Set(readings.flatMap(entry => entry.reading.limit?.kind === 'margin' && !isPast(entry.reading.limit.margin) && entry.reading.limit.eta !== ''
     ? [entry.reading.limit.margin.threshold.ruleId] : []))
   const shownPaths = new Set(pens.map(pen => String(pen.path)))
-  for (const action of automaticActions(plant).values()) {
+  // Those that judge a shown value first, so a flow several actions send is named by the one the display is about
+  // (SG B's own low-low level, not SG A's, for the auxiliary feed into SG B every start lines up).
+  const judging = (action: AutomaticAction): boolean =>
+    conditionBindings(plant, action.rule.condition).some(binding => shownPaths.has(String(binding.path)))
+  const bearing = [...automaticActions(plant).values()].sort((left, right) => Number(judging(right)) - Number(judging(left)))
+  for (const action of bearing) {
     if (!actsIn(action.rule, mode) || !(now.activeRuleIds.has(action.rule.id) || ahead.has(action.rule.id))) continue
     const flows = actionFlows(plant, action, MIMIC_REACH_LINKS)
     const commanded = actionEquipment(plant, action)
     // The equipment its flows reach: the shown equipment it feeds, within a mimic's reach of what it commands.
     const fed = [...shownEquipment].filter(component => commanded.some(source => source === component || feeds(plant, source, component, MIMIC_REACH_LINKS)))
-    const judgesShown = conditionBindings(plant, action.rule.condition).some(binding => shownPaths.has(String(binding.path)))
+    const judgesShown = judging(action)
     if (!judgesShown && fed.length === 0) continue
     // Named as the I&C names the action ("Safety injection on low pressurizer pressure").
     const named = action.rule.label ?? action.rule.id
@@ -211,11 +229,12 @@ export const displayEvidence = (
 }
 
 /**
- * The order values are kept in where room is short: the cause first, what
- * the automatic actions deliver, the healthy or left-out loops to compare,
+ * The order values are kept in where room is short: the cause first, the
+ * wider instrument of a reading off its span, what the automatic actions
+ * deliver, the healthy or left-out loops to compare,
  * what they isolate, what the unit leads with, the line-up's flows.
  */
-const PRIORITY: ReadonlyArray<DisplayEvidenceKind> = ['cause', 'delivers', 'reference', 'isolates', 'mode', 'flow']
+const PRIORITY: ReadonlyArray<DisplayEvidenceKind> = ['cause', 'wider', 'delivers', 'reference', 'isolates', 'mode', 'flow']
 
 /** The same reading on parallel equipment of the other loops: the same measurement, by loop, in loop order. */
 const parallelReadings = (system: ProcessPlantRuntimeInstance, pen: ComposedDisplayPen): ReadonlyArray<{ readonly path: VariablePath; readonly loop: string; readonly component: number }> => {

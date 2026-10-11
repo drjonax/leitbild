@@ -86,9 +86,11 @@ describe('process plant model composition', () => {
     // steam generator its AFW flow signal, and again when each steam
     // generator gained a wide-range level beside its narrow-range one, and
     // again when the pressurizer's heaters were rated like a Westinghouse
-    // four-loop plant's, 0.4 MW proportional and 1.4 MW backup; PWR Runs
-    // checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('ca6d370e4508b952831316a0f89f34fc0425f0be1049d7178ef61bb57a275f0f')
+    // four-loop plant's, 0.4 MW proportional and 1.4 MW backup, and again
+    // when the narrow-range levels' spans moved from each steam generator to
+    // their kind, beside their hard range; PWR Runs checkpointed before then
+    // must be restarted.
+    expect(system.modelDigest).toBe('a1442657dfbf0a1b60f48eda78e843db5300bab4633be24184f9a9857a243cea')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
@@ -100,10 +102,14 @@ describe('process plant model composition', () => {
     expect(JSON.stringify(restored.checkpoint())).toBe(JSON.stringify(running.checkpoint()))
   })
 
-  test('declares the span each steam generator narrow-range level indicates over', () => {
+  test('declares the span each steam generator level instrument indicates over, and the wide range as the narrow\'s wider', () => {
     const system = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:spans', loopCount: 4 }))
-    const levels = system.graph.signalBindings.filter(binding => /^SG-[A-D]-LVL-NR$/.test(String(binding.tagId)))
-    expect(levels.map(binding => [String(binding.tagId), binding.limits?.instrumentSpan])).toEqual(['A', 'B', 'C', 'D'].map(loop => [`SG-${loop}-LVL-NR`, { min: 0, max: 100 }]))
+    const levels = system.graph.signalBindings.filter(binding => /^SG-[A-D]-LVL-(NR|WR)$/.test(String(binding.tagId)))
+    expect(levels.map(binding => [String(binding.tagId), binding.limits?.instrumentSpan, binding.limits?.hardRange]).sort()).toEqual(['A', 'B', 'C', 'D']
+      .flatMap(loop => ['NR', 'WR'].map(range => [`SG-${loop}-LVL-${range}`, { min: 0, max: 100 }, { min: 0, max: 100 }])).sort())
+    // The same level over a wider span: where the narrow range reads off its span, the wide range reads on.
+    const sgB = system.graph.components[system.graph.componentIndexById.get('sgB' as never)!]!
+    expect(sgB.semantics.widerRanges).toEqual([{ reading: 'sgB.levelPercent', wider: 'sgB.wideRangeLevelPercent' }] as never)
   })
 
   test('declares the span each nuclear instrument indicates over, where it pins', () => {

@@ -152,7 +152,8 @@ const equipmentOf = (binding: ProcessSignalBinding): ReadonlyArray<string> => [
  * feedwater flow alarm that acts at power, opened at shutdown). A reading the
  * model marks as measuring nothing now (a de-energized source range) is left
  * out, and the flag that says so is never a value of its own: the reading is
- * shown while it measures. Nor is a permissive (P-10 on the core): the source
+ * shown while it measures. An instrument reading the same quantity over a
+ * wider span follows the reading it widens. Nor is a permissive (P-10 on the core): the source
  * range's high voltage is the instrument fact, its state the logic's. Each is
  * taken in turn from every item, so
  * parallel equipment is compared value by value.
@@ -168,8 +169,12 @@ export const equipmentKeyValues = (plant: CompiledProcessPlant, components: Read
     const keys = equipment(component)
     return [...new Set(bindings.filter(binding => equipmentOf(binding).some(key => keys.has(key))).map(binding => binding.path))]
   }
+  // An instrument that reads the same quantity over a wider span ranks beside the reading it widens (a steam
+  // generator's wide-range level beside its narrow range), on each item, so parallel items still compare in turn.
+  const wider = new Map(components.flatMap(component => graph.components[component]!.semantics.widerRanges.map(range => [range.reading, range.wider] as const)))
+  const widened = (paths: ReadonlyArray<VariablePath>): ReadonlyArray<VariablePath> => paths.flatMap(path => wider.has(path) ? [path, wider.get(path)!] : [path])
   const inTurn = (listOf: (component: number) => ReadonlyArray<VariablePath>): ReadonlyArray<VariablePath> => {
-    const lists = components.map(component => listOf(component).filter(readable))
+    const lists = components.map(component => widened(listOf(component)).filter(readable))
     return Array.from({ length: Math.max(0, ...lists.map(list => list.length)) }, (_, rank) => lists.flatMap(list => list.slice(rank, rank + 1))).flat()
   }
   const actions = [...automaticActions(plant).values()].filter(action => actsIn(action.rule, now.mode))

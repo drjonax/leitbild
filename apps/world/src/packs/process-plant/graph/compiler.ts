@@ -290,6 +290,14 @@ const compileComponentSemantics = (
       if (flag.quantity !== 'boolean' || flag.writable) throw new Error(`${context}: permissive ${local} is not a solved flag`)
       return variablePathFor(componentId, local as LocalVariablePath)
     }),
+    widerRanges: semantics.widerRanges.map(range => {
+      const reading = resolve(range.reading as LocalVariablePath)
+      const wider = resolve(range.wider as LocalVariablePath)
+      if (reading.writable || wider.writable) throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must be solved readings`)
+      if (reading.quantity !== wider.quantity || reading.unit !== wider.unit || reading.measurand !== wider.measurand) throw new Error(`${context}: ${range.wider} does not read the quantity ${range.reading} reads`)
+      if (reading.limits?.instrumentSpan === undefined || wider.limits?.instrumentSpan === undefined) throw new Error(`${context}: ${range.reading} and its wider range ${range.wider} must declare their instrument spans`)
+      return { reading: variablePathFor(componentId, range.reading as LocalVariablePath), wider: variablePathFor(componentId, range.wider as LocalVariablePath) }
+    }),
     energy: semantics.energy.map((role): CompiledEnergyRole => {
       const circuits = new Set(Object.values(ports).map(port => port.circuit))
       const named = role.role === 'transfer' ? [role.from, role.to] : [role.circuit]

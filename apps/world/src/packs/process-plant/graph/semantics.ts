@@ -135,13 +135,20 @@ export interface ComponentSemantics {
    * not values a display leads with.
    */
   readonly permissives: ReadonlyArray<string>
+  /**
+   * One quantity read by two instruments, the second over a wider span (a
+   * steam generator's narrow-range level and its wide-range level from the
+   * tube sheet): where the first stands at an end of its span, the second
+   * says where the quantity is.
+   */
+  readonly widerRanges: ReadonlyArray<{ readonly reading: string; readonly wider: string }>
   /** What the equipment does with energy, by port circuit. */
   readonly energy: ReadonlyArray<EnergyRole>
 }
 
 /** Declares semantics that do not depend on a component's parameters. */
 export const fixedSemantics = (semantics: Partial<ComponentSemantics>): ((parameters: unknown) => ComponentSemantics) => {
-  const resolved: ComponentSemantics = { aspects: [], embedded: [], ratedOutflow: [], portFlows: [], keyValues: [], meaningfulWhile: [], permissives: [], energy: [], ...semantics }
+  const resolved: ComponentSemantics = { aspects: [], embedded: [], ratedOutflow: [], portFlows: [], keyValues: [], meaningfulWhile: [], permissives: [], widerRanges: [], energy: [], ...semantics }
   return () => resolved
 }
 
@@ -183,6 +190,7 @@ export interface CompiledComponentSemantics {
   readonly keyValues: ReadonlyArray<VariablePath>
   readonly meaningfulWhile: ReadonlyArray<{ readonly flag: VariablePath; readonly variables: ReadonlyArray<VariablePath> }>
   readonly permissives: ReadonlyArray<VariablePath>
+  readonly widerRanges: ReadonlyArray<{ readonly reading: VariablePath; readonly wider: VariablePath }>
   readonly energy: ReadonlyArray<CompiledEnergyRole>
 }
 

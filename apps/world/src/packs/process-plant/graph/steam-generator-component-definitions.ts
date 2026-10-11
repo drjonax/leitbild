@@ -60,11 +60,14 @@ export const steamGeneratorComponentDefinitions: ReadonlyArray<ComponentDefiniti
       // What its feed lines bring in through the feedwater inlet, and what its steam lines take out.
       portFlows: [{ port: 'feedwaterInlet', variable: 'feedwaterFlowKgPerS' }, { port: 'steamOutlet', variable: 'steamOutflowKgPerS' }],
       energy: [{ role: 'transfer', from: 'primary', to: 'secondary' }],
+      // The wide range reads the same level from the tube sheet up: where the narrow range is off scale, it reads on.
+      widerRanges: [{ reading: 'levelPercent', wider: 'wideRangeLevelPercent' }],
     }),
     variables: [
-      // Each level instrument reads 0 to 100 % of its own span and stays at the end of it when the level leaves it.
-      variable({ path: 'levelPercent', label: 'Steam generator narrow-range level', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: 0, max: 100 } } }),
-      variable({ path: 'wideRangeLevelPercent', label: 'Steam generator wide-range level', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: 0, max: 100 } } }),
+      // Each level instrument reads 0 to 100 % of its own span and stays at the end of it when the level leaves it,
+      // its span declared so that displays tell a reading at its end from a value.
+      variable({ path: 'levelPercent', label: 'Steam generator narrow-range level', kind: 'state', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: 0, max: 100 }, instrumentSpan: { min: 0, max: 100 } } }),
+      variable({ path: 'wideRangeLevelPercent', label: 'Steam generator wide-range level', kind: 'derived', discipline: 'hydraulic', writable: false, publish: 'telemetry', measurand: 'level', quantity: 'ratio', unit: 'percent', limits: { hardRange: { min: 0, max: 100 }, instrumentSpan: { min: 0, max: 100 } } }),
       variable({ path: 'pressureMPa', label: 'Steam generator pressure', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'pressure', unit: 'MPa' }),
       variable({ path: 'heatTransferMw', label: 'Heat transfer', kind: 'derived', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'power', unit: 'MW' }),
       variable({ path: 'primaryInletTemperatureC', label: 'Primary inlet temperature', kind: 'state', discipline: 'thermal', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),

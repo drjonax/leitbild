@@ -133,12 +133,13 @@ export type ComposedDisplayComposition = z.infer<typeof composedDisplayCompositi
 
 /**
  * Why World added a value to an agent's display (evidence.ts): the state
- * and command of equipment in the question's path that do not agree; what an
- * automatic action delivers or isolates; the same reading on a healthy or
- * left-out loop; what the unit leads with in its mode; the flow along a
- * drawn line-up.
+ * and command of equipment in the question's path that do not agree; the
+ * same quantity on a wider instrument where a shown reading is off its span;
+ * what an automatic action delivers or isolates; the same reading on a
+ * healthy or left-out loop; what the unit watches in its mode; the flow
+ * along a drawn line-up.
  */
-export const displayEvidenceKindSchema = z.enum(['cause', 'delivers', 'isolates', 'reference', 'mode', 'flow'])
+export const displayEvidenceKindSchema = z.enum(['cause', 'wider', 'delivers', 'isolates', 'reference', 'mode', 'flow'])
 export type DisplayEvidenceKind = z.infer<typeof displayEvidenceKindSchema>
 
 /** The most values World adds to one display: two readout rows. */
