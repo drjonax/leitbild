@@ -264,6 +264,7 @@ describe('answers whose times agree with the display', () => {
       'Pressurizer pressure is back above LO ALM 14.8 MPa in ≈23 s at this rate.',
       'Natural circulation takes 5–15 min to establish; verify that subcooling stays above LO ALM 16.7 °C and core-exit temperature (not shown) stops rising.',
       'The trend reaches back ≈1 min of history; SG A is 1.69 percentage points above LO TRIP 20%.',
+      'If SG A level reaches LO TRIP 20% within 1 min, verify auxiliary feedwater (not shown) has started.',
     ]) expect(answerViewIssues(answer + FENCE, levels).filter(issue => issue.startsWith('It gives'))).toEqual([])
   })
 })

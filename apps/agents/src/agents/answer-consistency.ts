@@ -417,7 +417,9 @@ const SIGNED_TIME = new RegExp(`[≈~]\\s?${TIME}`, 'gi')
 const TIME_TO = new RegExp(`(?<![\\w.,])(?:${ABOUT}\\s+|[≈~]\\s?)?${TIME}\\s+(?:away\\s+)?(?:to|until|from|before|short of)\\s`, 'gi')
 // "will reach LO TRIP 20 % in about 5 s": a limit, then when, said of what is to come.
 const IN_TIME = new RegExp(`\\b(?:in|within)\\s+((?:${ABOUT}\\s+|[≈~]\\s?)?${TIME})`, 'gi')
-const TO_COME = /\b(?:will|would|could|may|might|reach(?:es)?|hits?|cross(?:es)?|at (?:this|that|the current|the sampled|its) rate|if|projected|expected)\b/i
+const TO_COME = /\b(?:will|would|could|may|might|reach(?:es)?|hits?|cross(?:es)?|at (?:this|that|the current|the sampled|its) rate|projected|expected)\b/i
+// A condition, not a projection: "if subcooling reaches LO ALM 16.7 °C within 1 min, …".
+const CONDITION = /^\s*(?:if|when|once|should|unless)\b/i
 // Words between "… s to" and the limit it leads to: "48 s from LO ALM", "2 min to reaching the LO TRIP".
 const LEADS_TO = /^(?:(?:the|its|reaching|hitting|crossing|go|going|before)\s+)*$/i
 // What a value did, not what it will do: "fell below LO TRIP 20 % in 45 s".
@@ -455,7 +457,7 @@ const projectionsIn = (clause: string): ReadonlyArray<Projection> => {
   for (const match of clause.matchAll(IN_TIME)) {
     const at = match.index + match[0].length - match[1]!.length
     const limit = limits.filter(candidate => candidate.index < match.index).at(-1)
-    if (limit === undefined || !TO_COME.test(clause.slice(0, match.index)) || DONE.test(clause.slice(limit.index, match.index)) || elapsed(at, match.index + match[0].length)) continue
+    if (limit === undefined || CONDITION.test(clause) || !TO_COME.test(clause.slice(0, match.index)) || DONE.test(clause.slice(limit.index, match.index)) || elapsed(at, match.index + match[0].length)) continue
     add(at, { text: match[1]!, ms: projectionMs(match[2]!, match[3]!), limit })
   }
   for (const match of clause.matchAll(SIGNED_TIME)) {
