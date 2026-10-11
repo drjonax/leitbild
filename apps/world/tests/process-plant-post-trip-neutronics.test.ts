@@ -67,6 +67,8 @@ const tripped = () => {
     p10: plantRun.tag('P-10') as boolean,
     highVoltage: plantRun.tag('NIS-SR-HV') as boolean,
     sourceRange: Number(plantRun.tag('NIS-SR')),
+    rodPosition: Number(plantRun.tag('ROD-POS-IND')),
+    rodBottom: plantRun.tag('ROD-BOTTOM') as boolean,
   }))
   tripTrajectory = { before, samples }
   return tripTrajectory
@@ -96,6 +98,9 @@ describe('at steady full power', () => {
     expect(tag('P-10')).toBe(true)
     expect(tag('NIS-SR-HV')).toBe(false)
     expect(tag('NIS-SR')).toBe(0)
+    // The rods stand where rod control holds them, off the bottom.
+    expect(Number(tag('ROD-POS-IND'))).toBeCloseTo(Number(tag('ROD-POS-AVG')), 6)
+    expect(tag('ROD-BOTTOM')).toBe(false)
     // Tavg sits on its program: Tref at full load.
     expect(Number(tag('TREF'))).toBeCloseTo(305.7, 1)
     expect(Math.abs(Number(tag('TAVG-TREF')))).toBeLessThan(0.1)
@@ -103,6 +108,17 @@ describe('at steady full power', () => {
 })
 
 describe('a reactor trip from full power', () => {
+  test('the rod position indication follows the rods down and reads them on the bottom within their drop time', () => {
+    const { scram } = reactorNeutronics(core)
+    // A second after the trip signal the rods are on their way; by the drop time's end they are on the bottom, and stay.
+    expect(at(1).rodPosition as number).toBeGreaterThan(0.15)
+    expect(at(1).rodPosition as number).toBeLessThan(scram.rodBottomInsertionFraction)
+    expect(at(1).rodBottom).toBe(false)
+    expect(at(Math.ceil(scram.insertionTimeS)).rodBottom).toBe(true)
+    expect(at(Math.ceil(scram.insertionTimeS)).rodPosition as number).toBeCloseTo(1, 6)
+    expect(at(600).rodBottom).toBe(true)
+  })
+
   test('drops power promptly as the rods fall, then settles on a -1/3 decade a minute period', () => {
     const { before } = tripped()
     // The rods insert their 4,000 pcm scram worth in their 2.7 s drop time.

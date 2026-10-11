@@ -37,7 +37,8 @@ export const reactorInitialValueDefinitions: ReadonlyArray<ComponentInitialValue
       const initialReference = program.noLoadAverageTemperatureC + clamp(initialPowerFraction, 0, 1) * (program.fullLoadAverageTemperatureC - program.noLoadAverageTemperatureC)
       if (localPath === 'referenceAverageTemperatureC') return initialReference
       if (localPath === 'averageTemperatureDeviationC') return (initialCoolantInlet + initialCoolantOutlet) / 2 - initialReference
-      if (localPath === 'rodInsertionFraction') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1))
+      if (localPath === 'rodInsertionFraction' || localPath === 'rodInsertedFraction') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1))
+      if (localPath === 'rodsOnBottom') return optionalParameterNumber(component, 'criticalRodInsertionFraction', clamp(1 - initialPowerFraction, 0, 1)) >= reactorNeutronics(component).scram.rodBottomInsertionFraction
       if (localPath === 'powerRangePercent') return nuclearInstrumentationReading(component, initialFissionPower).powerRangePercent
       if (localPath === 'aboveP10') return nuclearInstrumentationReading(component, initialFissionPower).aboveP10
       if (localPath === 'intermediateRangeCurrentAmps') return nuclearInstrumentationReading(component, initialFissionPower).intermediateRangeCurrentAmps

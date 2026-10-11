@@ -46,6 +46,7 @@
         "scram": {
           "reactivityPcm": 4000,
           "insertionTimeS": 2.7,
+          "rodBottomInsertionFraction": 0.912,
           "reactorTripBreakers": [
             "reactorTripBreakerA",
             "reactorTripBreakerB"
@@ -106,6 +107,18 @@
           "capabilities": {
             "procedureRelevant": true
           }
+        },
+        {
+          "path": "rodInsertedFraction",
+          "tagId": "ROD-POS-IND",
+          "equipmentId": "rod-control-system",
+          "description": "Average control rod position indication, as an insertion fraction: the demand while the rod drives hold the rods, then their fall over the 2.7 s drop time once the trip breakers open"
+        },
+        {
+          "path": "rodsOnBottom",
+          "tagId": "ROD-BOTTOM",
+          "equipmentId": "rod-control-system",
+          "description": "Rod bottom indication: every rod at or below the rod bottom bistable, 20 steps withdrawn"
         },
         {
           "path": "powerRangePercent",
@@ -12121,6 +12134,8 @@
     "pressurizer-relief-header-to-tank.temperatureC",
     "safetyInjectionBlockLogic.blockPushbutton",
     "safetyInjectionBlockLogic.blocked",
-    "safetyInjectionBlockLogic.belowP11"
+    "safetyInjectionBlockLogic.belowP11",
+    "core.rodInsertedFraction",
+    "core.rodsOnBottom"
   ]
 }

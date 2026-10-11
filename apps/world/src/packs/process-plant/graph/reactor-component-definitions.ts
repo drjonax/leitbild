@@ -39,7 +39,10 @@ export const nuclearInstrumentSpans = {
 //   Westinghouse four-loop safety analyses assume for the falling rods (FSAR
 //   Chapter 15.0, rod cluster control assembly insertion characteristics),
 //   the drop time the standard technical specifications hold each rod to
-//   (NUREG-1431, LCO 3.1.4).
+//   (NUREG-1431, LCO 3.1.4). The rod position indication follows the drop
+//   over that time, and its rod bottom bistable reads the rods on the bottom
+//   at 20 steps withdrawn of their 228-step travel, as a Westinghouse plant's
+//   rod bottom lights come on.
 
 /** Delayed-neutron precursor groups the core's kinetics carries. */
 export const delayedNeutronGroupCount = 6
@@ -71,6 +74,12 @@ const scramSchema = z.object({
   reactivityPcm: z.number().finite().positive(),
   /** The time the falling rods take to insert it. */
   insertionTimeS: z.number().finite().positive(),
+  /**
+   * The rod bottom bistable: the insertion at and beyond which the rod
+   * position indication reads the rods on the bottom, a fraction of their
+   * travel.
+   */
+  rodBottomInsertionFraction: normalized,
   /** The reactor trip breakers in series on the rod drive power: either one open drops the rods. */
   reactorTripBreakers: z.array(idSchema).min(1),
 }).strict()
@@ -250,6 +259,10 @@ export const reactorComponentDefinitions: ReadonlyArray<ComponentDefinition> = [
       variable({ path: 'aboveP6', label: 'P-6 intermediate range above setpoint', kind: 'derived', discipline: 'nuclear', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
       variable({ path: 'referenceAverageTemperatureC', label: 'Reference average coolant temperature', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperature', unit: 'degC' }),
       variable({ path: 'averageTemperatureDeviationC', label: 'Average coolant temperature deviation from reference', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'temperatureDelta', unit: 'degC' }),
+      // Where the rods are, as their position indication reads it: the demand,
+      // which the drives follow, until the trip breakers drop them.
+      variable({ path: 'rodInsertedFraction', label: 'Rod position', kind: 'state', discipline: 'control', writable: false, publish: 'telemetry', measurand: 'insertion', quantity: 'ratio', unit: 'fraction', limits: { hardRange: { min: 0, max: 1 }, instrumentSpan: { min: 0, max: 1 } } }),
+      variable({ path: 'rodsOnBottom', label: 'Rods on bottom', kind: 'derived', discipline: 'control', writable: false, publish: 'telemetry', quantity: 'boolean', unit: 'boolean' }),
     ],
   }),
   defineComponent({

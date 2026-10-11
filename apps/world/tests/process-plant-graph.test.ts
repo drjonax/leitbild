@@ -91,12 +91,13 @@ describe('process plant model composition', () => {
     // again when the pressurizer's heaters were rated like a Westinghouse
     // four-loop plant's, 0.4 MW proportional and 1.4 MW backup, and again
     // when the narrow-range levels' spans moved from each steam generator to
-    // their kind, beside their hard range, again when the pressurizer's
-    // level program and its deviation from it were published beside its
-    // level, and again when the link flows no plant instrument measures
-    // (leak, relief and release flows) were marked simulator-only; PWR Runs
-    // checkpointed before then must be restarted.
-    expect(system.modelDigest).toBe('317a5eab02712797051c5592b0da31e2bbbd80c4528210c31ea092a458261e3f')
+    // their kind, beside their hard range, again when the pressurizer's level
+    // program and its deviation from it were published beside its level, again
+    // when the link flows no plant instrument measures (leak, relief and release
+    // flows) were marked simulator-only, and again when the rods gained their
+    // position indication and rod bottom bistable; PWR Runs checkpointed before
+    // then must be restarted.
+    expect(system.modelDigest).toBe('0ca888e070c5227409502635a354061057f4944adc51b163b423d7928a2632de')
     const running = createProcessPlantRuntime({ system })
     running.tick(1_300)
     const persisted = JSON.parse(JSON.stringify(running.checkpoint()))
