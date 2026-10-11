@@ -3,9 +3,9 @@
 // reads (rates, the limit ahead, times to it) is World's trend-reading.ts,
 // which the compose result states too.
 import { marginTextForms } from '../../../packs/process-plant/displays/display-text.ts'
-import { limitStateText, type LimitState } from '../../../packs/process-plant/displays/trend-reading.ts'
+import { gateStatesOf, limitStateText, type GateStates, type LimitState } from '../../../packs/process-plant/displays/trend-reading.ts'
 import type { DisplayAnnunciation } from '../../../packs/process-plant/displays/annunciators.ts'
-import type { ComposedDisplayAlarm } from './composed-display-client.ts'
+import type { ComposedDisplayAlarm, ComposedDisplaySample } from './composed-display-client.ts'
 
 /**
  * A limit state worded from whole to shortest: in full (with the time to the
@@ -36,6 +36,12 @@ export const median = (values: ReadonlyArray<number>): number | null => {
 }
 
 const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
+
+/** The on/off states a sample reads, which the gated limits a display draws are judged by (gatesHold); none before the first. */
+export const sampledGates = (latest: Pick<ComposedDisplaySample, 'values'> | undefined): GateStates => {
+  const values = new Map((latest?.values ?? []).map(entry => [entry.path, entry.value]))
+  return gateStatesOf(path => values.get(path))
+}
 
 /** The OpenBridge alert type each severity is drawn as, everywhere an alarm shows: list, tiles and drawing. */
 export const alertTypeOf = (severity: ComposedDisplayAlarm['severity']): 'alarm' | 'warning' | 'caution' =>

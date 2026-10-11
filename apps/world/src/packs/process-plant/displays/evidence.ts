@@ -9,7 +9,7 @@ import { itemBinding, type MimicItem } from './mimic/bindings.ts'
 import { itemLook, type SampleIndex } from './mimic/evaluate.ts'
 import { MIMIC_REACH_LINKS } from './mimic/scope.ts'
 import { overviewCandidates, overviewKeyValues, plantNowOf } from './overview-key-values.ts'
-import { limitsInForce } from './trend-reading.ts'
+import { gateStatesOf, limitsInForce } from './trend-reading.ts'
 
 // The evidence a composed display carries besides what the agent chose: what
 // the Plant's model says bears on the question now, added by World and
@@ -184,7 +184,7 @@ export const displayEvidence = (
   // overview leads with is added; a value it has no room for only off normal (heading for a limit, or past one):
   // containment pressure standing at normal 7 kPa below its alarm is not, a subcooling margin falling towards its
   // alarm is. Only a value with a limit in force can be off normal, so only those and the leads are read.
-  const limited = (path: VariablePath): boolean => limitsInForce(icThresholdsForSignal(plant, path).thresholds, now.mode).length > 0
+  const limited = (path: VariablePath): boolean => limitsInForce(icThresholdsForSignal(plant, path).thresholds, now.mode, gateStatesOf(gate => now.read(gate as VariablePath))).length > 0
   const watched = [...candidates, ...ends].filter(path => systemsOf(path).some(name => asked.has(name)) && readable(path) && !shown.has(String(path))
     && (leads.has(path) || limited(path)))
   for (const { path, offNormal } of rankedAsRead(system, watched, now, recordedSeriesIds)) {

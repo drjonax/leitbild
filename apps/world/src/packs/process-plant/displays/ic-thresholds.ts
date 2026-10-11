@@ -45,6 +45,8 @@ export interface ComposedDisplayThreshold {
    * decides.
    */
   readonly gatedBy?: ReadonlyArray<string>
+  /** The same states by signal path and the state each must read, to tell whether they hold now (trend-reading.ts gatesHold). */
+  readonly gates?: ReadonlyArray<{ readonly path: VariablePath; readonly on: boolean }>
 }
 
 /** A rule that watches the signal inside a combined condition (vote, all,
@@ -179,9 +181,9 @@ const gatedLimit = (
   plant: CompiledProcessPlant,
   conditions: ReadonlyArray<ProcessPlantIcCondition>,
   path: VariablePath,
-): { readonly limit: NumericLimit; readonly gates: ReadonlyArray<string> } | null => {
+): { readonly limit: NumericLimit; readonly gates: ReadonlyArray<{ readonly name: string; readonly path: VariablePath; readonly on: boolean }> } | null => {
   const limits: NumericLimit[] = []
-  const gates: string[] = []
+  const gates: Array<{ readonly name: string; readonly path: VariablePath; readonly on: boolean }> = []
   for (const child of conditions) {
     if (child.type !== 'comparison') return null
     const onPath = resolveProcessPlantSignalPath(plant.graph, child.signal) === path
@@ -192,7 +194,7 @@ const gatedLimit = (
     if (onPath || typeof child.value !== 'boolean' || (child.operator !== '==' && child.operator !== '!=')) return null
     const binding = resolveProcessPlantSignalBinding(plant.graph, child.signal)
     const on = child.operator === '==' ? child.value : !child.value
-    gates.push(`${binding.tagId ?? binding.label} ${on ? 'on' : 'off'}`)
+    gates.push({ name: `${binding.tagId ?? binding.label} ${on ? 'on' : 'off'}`, path: binding.path, on })
   }
   return limits.length === 1 && gates.length > 0 ? { limit: limits[0]!, gates } : null
 }
@@ -257,7 +259,8 @@ const readIcThresholds = (
         direction: gated.limit.operator === '<' || gated.limit.operator === '<=' ? 'low' : 'high',
         value: gated.limit.value,
         ...modesOf(plant, rule),
-        gatedBy: gated.gates,
+        gatedBy: gated.gates.map(gate => gate.name),
+        gates: gated.gates.map(gate => ({ path: gate.path, on: gate.on })),
       })
       continue
     }

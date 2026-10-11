@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { fitName } from '../src/ui/embed/composed-display/pen-style.ts'
-import { limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
+import { idleText, limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels } from '../src/ui/embed/composed-display/limit-labels.ts'
 import { actuatedNames, agoText, alarmAge, bannerTrip, firstOutFlag, fitLimitStateText, limitStateForms, median, visibleAlarms, annunciatorStates } from '../src/ui/embed/composed-display/panel-presenters.ts'
-import { activeThreshold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
+import { activeThreshold, gatesHold, limitAhead, limitInForce, limitsInForce, projectionBasis, minutesToThreshold, rateChange, ratePerMinute, rateText, rateWindowMs, timeToThresholdText, type LimitState } from '../src/packs/process-plant/displays/trend-reading.ts'
 import { formatQuantity, formatValue, limitKindName, marginText, marginTextForms, nearestThresholdMargin, readingResolution, readingText, shownReading, simulationClock, thresholdFullName, thresholdName, unitLabel } from '../src/packs/process-plant/displays/display-text.ts'
 import { modesShortText, orderLimits, type ComposedDisplayThreshold } from '../src/packs/process-plant/displays/ic-thresholds.ts'
 import type { ComposedDisplayAlarm } from '../src/ui/embed/composed-display/composed-display-client.ts'
+
+/** No on/off state read yet: every gated limit is kept. */
+const noGates = () => undefined
 
 const thresholds: ReadonlyArray<ComposedDisplayThreshold> = [
   { ruleId: 'trip-low', label: 'Low-low', kind: 'trip', operator: '<', direction: 'low', value: 20, order: 2, action: 'RX TRIP' },
@@ -289,10 +292,10 @@ describe('composed display panel presenters', () => {
   })
 
   test('the most severe active threshold acting in the current mode marks the value', () => {
-    expect(activeThreshold(thresholds, new Set(['alarm-low', 'trip-low']), undefined)?.ruleId).toBe('trip-low')
-    expect(activeThreshold(thresholds, new Set(['control']), undefined)).toBeNull()
+    expect(activeThreshold(thresholds, new Set(['alarm-low', 'trip-low']), undefined, noGates)?.ruleId).toBe('trip-low')
+    expect(activeThreshold(thresholds, new Set(['control']), undefined, noGates)).toBeNull()
     // A high alarm of power operation does not mark a value in hot standby, latched or not.
-    expect(activeThreshold(thresholds, new Set(['alarm-high']), { id: 'hotStandby', label: 'Hot standby' })).toBeNull()
+    expect(activeThreshold(thresholds, new Set(['alarm-high']), { id: 'hotStandby', label: 'Hot standby' }, noGates)).toBeNull()
   })
 
   test('a reading is shown to a resolution of a thousandth of what the model declares it reads over', () => {
@@ -397,10 +400,10 @@ describe('limit labels', () => {
     expect(limitInForce(flowLow, null)).toBe(false)
     expect(limitInForce(thresholds[0]!, hotStandby)).toBe(true)
     // No margin or limit ahead is read against a limit that does not act: 401 kg/s is past nothing in hot standby.
-    expect(limitsInForce([flowLow], hotStandby)).toEqual([])
-    expect(limitAhead(401, 'falling', limitsInForce([flowLow], hotStandby))).toBeNull()
+    expect(limitsInForce([flowLow], hotStandby, noGates)).toEqual([])
+    expect(limitAhead(401, 'falling', limitsInForce([flowLow], hotStandby, noGates))).toBeNull()
     // Before the first sample the mode is unknown; nothing is compared yet.
-    expect(limitsInForce([flowLow], undefined)).toEqual([flowLow])
+    expect(limitsInForce([flowLow], undefined, noGates)).toEqual([flowLow])
   })
 
   test('limits at one value are one line, each keeping its own label, look and colour', () => {
@@ -413,7 +416,7 @@ describe('limit labels', () => {
     const reactorTrip = line('sg-b-rx-trip', 'RX TRIP', ['powerOperation', 'startup'])
     const alarm = { ...line('sg-b-low', 'ALM'), kind: 'alarm', severity: 'warning', value: 30, order: 1 } as const
     const hotStandby = { id: 'hotStandby', label: 'Hot standby' }
-    const lines = limitLines([reactorTrip, alarm, afw], hotStandby)
+    const lines = limitLines([reactorTrip, alarm, afw], hotStandby, noGates)
     expect(lines.map(entry => [entry.value, entry.look, entry.members.map(member => member.ruleId)])).toEqual([
       [30, 'acting', ['sg-b-low']],
       // The AFW start acts now, so the line is drawn in force and its label comes first.
@@ -422,8 +425,26 @@ describe('limit labels', () => {
     expect(lines[1]!.members.map(member => thresholdName(member, 'percent', { withUnit: false }))).toEqual(['LO-LO 20 · AFW START', 'LO-LO 20 · RX TRIP'])
     // Both rules active and the value past both: only the limit in force takes the alarm colour; the reactor trip of modes 1-2 stays idle.
     const active = new Set(['sg-b-afw', 'sg-b-rx-trip'])
-    expect([limitSeverity(afw, active, hotStandby), limitSeverity(reactorTrip, active, hotStandby)]).toEqual(['critical', null])
-    expect([limitLook(afw, hotStandby), limitLook(reactorTrip, hotStandby), limitLook(reactorTrip, undefined), limitLook(reactorTrip, { id: 'powerOperation', label: 'Power operation' })]).toEqual(['acting', 'idle', 'qualified', 'acting'])
-    expect(limitLines([reactorTrip], hotStandby)[0]!.look).toBe('idle')
+    expect([limitSeverity(afw, active, hotStandby, noGates), limitSeverity(reactorTrip, active, hotStandby, noGates)]).toEqual(['critical', null])
+    expect([limitLook(afw, hotStandby, noGates), limitLook(reactorTrip, hotStandby, noGates), limitLook(reactorTrip, undefined, noGates), limitLook(reactorTrip, { id: 'powerOperation', label: 'Power operation' }, noGates)]).toEqual(['acting', 'idle', 'qualified', 'acting'])
+    expect(limitLines([reactorTrip], hotStandby, noGates)[0]!.look).toBe('idle')
+    expect(idleText(reactorTrip, hotStandby)).toBe('Modes 1–2')
+  })
+
+  test('a limit whose gates do not hold is idle, as one of another mode is, and says what it waits for', () => {
+    // Safety injection on low pressurizer pressure acts only while SI-BLOCKED reads off.
+    const si = {
+      ruleId: 'si', label: 'Safety injection on low pressurizer pressure', kind: 'trip', severity: 'critical', operator: '<', direction: 'low', value: 12.7, order: 2, action: 'SI',
+      ruleIds: ['si'], signals: ['PT-455'], gatedBy: ['SI-BLOCKED off'], gates: [{ path: 'safetyInjectionBlockLogic.blocked', on: false }],
+    } as unknown as Parameters<typeof limitLook>[0] & Parameters<typeof limitSeverity>[0]
+    const blocked = (path: string) => path === 'safetyInjectionBlockLogic.blocked' ? true : undefined
+    const unblocked = (path: string) => path === 'safetyInjectionBlockLogic.blocked' ? false : undefined
+    const hotStandby = { id: 'hotStandby', label: 'Hot standby' }
+    expect([gatesHold(si, blocked), gatesHold(si, unblocked), gatesHold(si, noGates)]).toEqual([false, true, true])
+    expect([limitLook(si, hotStandby, blocked), limitLook(si, hotStandby, unblocked)]).toEqual(['idle', 'acting'])
+    // Active or not, it takes no alarm colour while blocked, and its second line names the state it waits for.
+    expect(limitSeverity(si, new Set(['si']), hotStandby, blocked)).toBeNull()
+    expect(idleText(si, hotStandby)).toBe('SI-BLOCKED off')
+    expect(limitsInForce([si as unknown as ComposedDisplayThreshold], hotStandby, blocked)).toEqual([])
   })
 })

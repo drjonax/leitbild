@@ -4,6 +4,7 @@
   import { composedTrendLegendHeight } from '../../../packs/process-plant/displays/composition.ts'
   import { readingText, shownReading } from '../../../packs/process-plant/displays/display-text.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
+  import { sampledGates } from './panel-presenters.ts'
   import { displayName, fitName, penStroke, roleLabel } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
   import { rateText, rateWindowMs, readingStateText, trendReading, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
@@ -58,7 +59,7 @@
     {@const value = typeof entry?.value === 'number' ? shownReading(entry.value, pen.resolution) : entry?.value}
     {@const points = (series.get(String(pen.path)) ?? []).map(point => ({ t: point.t, v: shownReading(point.v, pen.resolution) }))}
     {@const liveOnly = live || historyMissing.has(String(pen.path))}
-    {@const reading = typeof value === 'number' ? trendReading({ value, points: live ? null : points, windowMs, unit: pen.unit, thresholds: pen.thresholds, mode: latest?.mode, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }) : null}
+    {@const reading = typeof value === 'number' ? trendReading({ value, points: live ? null : points, windowMs, unit: pen.unit, thresholds: pen.thresholds, mode: latest?.mode, gates: sampledGates(latest), activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }) : null}
     {@const inAlarm = reading?.inAlarm ?? null}
     {@const state = reading === null ? '' : readingStateText(reading, pen.unit, pen.resolution)}
     <li>

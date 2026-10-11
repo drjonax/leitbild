@@ -263,16 +263,44 @@ export const limitInForce = (threshold: Pick<ComposedDisplayThreshold, 'modeIds'
   threshold.modeIds === undefined || (mode !== null && threshold.modeIds.includes(mode.id))
 
 /**
- * A signal's limits that act in the Plant's current mode, so no margin or
- * time is read against one that does not. The mode is unknown only where the
- * Plant declares none (no limit is qualified) or before the first sample
- * (no value is compared), so then every limit is kept.
+ * The on/off states a gated limit's gates are read from, by signal path: a
+ * sample's values on the embed, the Plant's own on World, so both read a
+ * limit alike. Undefined for a state not read (before the first sample).
+ */
+export type GateStates = (path: string) => boolean | undefined
+
+/** On/off states as values read them: a sample's on the embed (its values), the Plant's on World (its reads). */
+export const gateStatesOf = (read: (path: string) => unknown): GateStates => path => {
+  const value = read(path)
+  return typeof value === 'boolean' ? value : undefined
+}
+
+/**
+ * Whether the on/off states a gated limit requires hold now (SI on low
+ * pressure only while SI-BLOCKED reads off). A limit whose gates do not hold
+ * does not act, as one of another mode does not: it is drawn idle and no
+ * margin or time is read against it. A state not read yet holds, as every
+ * limit is kept before the mode is known.
+ */
+export const gatesHold = (threshold: Pick<ComposedDisplayThreshold, 'gates'>, gates: GateStates): boolean =>
+  (threshold.gates ?? []).every(gate => {
+    const state = gates(gate.path)
+    return state === undefined || state === gate.on
+  })
+
+/**
+ * A signal's limits that act now: in the Plant's current mode, with their
+ * gates holding, so no margin or time is read against one that does not.
+ * The mode is unknown only where the Plant declares none (no limit is
+ * qualified) or before the first sample (no value is compared), so then
+ * every limit whose gates hold is kept.
  */
 export const limitsInForce = (
   thresholds: ReadonlyArray<ComposedDisplayThreshold>,
   mode: PlantModeNow,
+  gates: GateStates,
 ): ReadonlyArray<ComposedDisplayThreshold> =>
-  mode === undefined ? thresholds : thresholds.filter(threshold => limitInForce(threshold, mode))
+  thresholds.filter(threshold => (mode === undefined || limitInForce(threshold, mode)) && gatesHold(threshold, gates))
 
 /**
  * The most severe of a signal's limits in force whose I&C rule is active now,
@@ -282,8 +310,9 @@ export const activeThreshold = <T extends ComposedDisplayThreshold>(
   thresholds: ReadonlyArray<T>,
   activeRuleIds: ReadonlySet<string>,
   mode: PlantModeNow,
+  gates: GateStates,
 ): T | null =>
-  limitsInForce(thresholds, mode).filter(threshold => threshold.kind !== 'control' && activeRuleIds.has(threshold.ruleId))
+  limitsInForce(thresholds, mode, gates).filter(threshold => threshold.kind !== 'control' && activeRuleIds.has(threshold.ruleId))
     .sort((left, right) => Number(right.kind === 'trip') - Number(left.kind === 'trip') || severityRank[left.severity ?? 'warning'] - severityRank[right.severity ?? 'warning'])[0] as T | undefined ?? null
 
 const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
@@ -342,21 +371,23 @@ export const trendReading = (config: {
   readonly unit: string
   readonly thresholds: ReadonlyArray<ComposedDisplayThreshold>
   readonly mode: PlantModeNow
+  /** The on/off states the gated limits among the thresholds require, as read now. */
+  readonly gates: GateStates
   readonly activeRuleIds: ReadonlySet<string>
   readonly resolution?: number | null
   readonly span?: { readonly min: number; readonly max: number }
 }): TrendReading => {
-  const { value, points, windowMs, unit, thresholds, mode, activeRuleIds } = config
+  const { value, points, windowMs, unit, thresholds, mode, gates, activeRuleIds } = config
   const resolution = config.resolution ?? null
   const end = offScale(value, config.span)
   const rate = points === null || end !== null ? null : ratePerMinute(points, windowMs)
   const travel = travelOf(rate, value, resolution)
-  const inForce = limitsInForce(thresholds, mode).filter(threshold => threshold.kind !== 'control')
+  const inForce = limitsInForce(thresholds, mode, gates).filter(threshold => threshold.kind !== 'control')
   const reading = {
     rate,
     travel,
     change: rate === null || points === null ? null : rateChange(points, windowMs, value, resolution),
-    inAlarm: activeThreshold(thresholds, activeRuleIds, mode),
+    inAlarm: activeThreshold(thresholds, activeRuleIds, mode, gates),
     offScale: end,
   }
   if (!thresholds.some(threshold => threshold.kind !== 'control')) return { ...reading, limit: { kind: 'unlimited' } }

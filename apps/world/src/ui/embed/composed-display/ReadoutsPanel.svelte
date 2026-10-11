@@ -4,7 +4,7 @@
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import type { ComposedDisplaySnapshot } from './composed-display-session.ts'
   import { displayValue, offScale, readingValueText, shownReading, unitLabel, valueDigits } from '../../../packs/process-plant/displays/display-text.ts'
-  import { fitLimitStateText } from './panel-presenters.ts'
+  import { fitLimitStateText, sampledGates } from './panel-presenters.ts'
   import { limitStateText, rateWindowMs, readingStateText, trendReading, type LimitState, type TrendReading } from '../../../packs/process-plant/displays/trend-reading.ts'
   import type { ComposedDisplayPen } from '../../../packs/process-plant/displays/compose.ts'
   import { displayName, fitName } from './pen-style.ts'
@@ -69,6 +69,7 @@
     unit: pen.unit,
     thresholds: pen.thresholds,
     mode: latest?.mode,
+    gates: sampledGates(latest),
     activeRuleIds,
     resolution: pen.resolution,
     ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }),

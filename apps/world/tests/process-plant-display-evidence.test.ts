@@ -24,7 +24,14 @@ import type { PackRuntimeRecordedHistory } from '../src/simulation/protocol.ts'
 
 const START = Date.parse('2026-10-11T10:00:00.000Z')
 
-const situation = (fault: { readonly actionId: string; readonly parameters?: Record<string, unknown> } | null, minutes: number) => {
+/** What a test may do to the Plant after the fault and the minutes it played: step it a second, write a signal, read one. */
+interface Operator {
+  readonly step: () => void
+  readonly write: (tagId: string, value: number | boolean) => void
+  readonly tag: (tagId: string) => unknown
+}
+
+const situation = (fault: { readonly actionId: string; readonly parameters?: Record<string, unknown> } | null, minutes: number, operate?: (operator: Operator) => void) => {
   const plant = compileProcessPlant(createPwrReferencePlantDefinition({ id: 'plant:evidence', loopCount: 4 }))
   const runtime = createProcessPlantRuntime({ system: plant })
   const protection = createProcessPlantProtectionRunner({ system: plant, protection: plant.automation })
@@ -47,6 +54,8 @@ const situation = (fault: { readonly actionId: string; readonly parameters?: Rec
     runtime.writeCommand({ type: 'setVariable', path: command.path, value: command.value })
   }
   for (let second = 0; second < minutes * 60; second += 1) step()
+  const pathOf = (tagId: string) => plant.graph.signalBindingByTagId.get(tagId as never)!.path
+  operate?.({ step, write: (tagId, value) => runtime.writeCommand({ type: 'setVariable', path: pathOf(tagId), value }), tag: tagId => runtime.readVariable(pathOf(tagId)) })
   // The newest samples first, as the historian reads a series window.
   const recordedHistory: PackRuntimeRecordedHistory = {
     read: query => (series.get(query.seriesId) ?? [])
@@ -65,6 +74,7 @@ const situation = (fault: { readonly actionId: string; readonly parameters?: Rec
     const result = ask('world.process-plant.display.compose', { plantId: plant.id, title, question: `${title}: what is going on?`, need: 'Decide the response', subjects, panels }) as {
       view: { state: string; height: number }
       shows: ReadonlyArray<string>
+      margins: ReadonlyArray<string>
       viewContent: unknown
     }
     const state = composedDisplayStateSchema.parse(JSON.parse(result.view.state))
@@ -207,5 +217,34 @@ describe('what World adds to a composed display', () => {
       expect(evidence).toEqual([])
       expect(display.panels).toHaveLength(panels.length)
     }
+  }, 60_000)
+})
+
+describe('a limit that on/off states gate, as World reads it', () => {
+  test('acts only while its gates hold: below 12.7 MPa with SI blocked, the pressure is past no SI limit', () => {
+    // A planned depressurization in hot standby: the reactor tripped, the PORV open, SI blocked as P-11 comes in.
+    const blocked = situation(null, 0, operator => {
+      operator.write('TRIP-BKR-A', false)
+      operator.write('TRIP-BKR-B', false)
+      for (let second = 0; second < 30; second += 1) operator.step()
+      operator.write('PORV-456A', 1)
+      for (let second = 0; second < 600 && Number(operator.tag('PT-455')) > 12.4; second += 1) {
+        operator.step()
+        if (operator.tag('P-11') === true && operator.tag('SI-BLOCKED') === false) operator.write('SI-BLOCK', true)
+      }
+    })
+    expect(blocked.read('safetyInjectionBlockLogic.blocked')).toBe(true)
+    expect(Number(blocked.read('pressurizer.pressureMPa'))).toBeLessThan(12.7)
+    const { result } = blocked.compose('Planned depressurization', ['PT-455'], [{ kind: 'trend', horizon: '10m', signals: [signal('PT-455', 'primary')] }])
+    // The SI limit is drawn and said to act only while SI-BLOCKED is off; no margin is read against it while blocked.
+    expect(result.shows.join('\n')).toContain('"LO-LO 12.7 MPa · SI" automatic action line')
+    expect(result.shows.join('\n')).toContain('(only while SI-BLOCKED off)')
+    expect(result.margins.join('\n')).not.toContain('· SI')
+    expect(result.margins[0]).toMatch(/^PT-455: .*LO 14\.8 MPa · ALM/)
+  }, 120_000)
+
+  test('a generator at power is past no limit', () => {
+    const { result } = atPower().compose('Generator output', ['GEN-MW'], [{ kind: 'trend', horizon: '10m', signals: [signal('GEN-MW', 'primary')] }])
+    expect(result.margins.join('\n')).not.toContain('past')
   }, 60_000)
 })

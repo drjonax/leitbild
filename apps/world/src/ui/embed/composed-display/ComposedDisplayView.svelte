@@ -15,7 +15,7 @@
   import ReadoutsPanel from './ReadoutsPanel.svelte'
   import MimicPanel from './mimic/MimicPanel.svelte'
   import TrendPanel from './TrendPanel.svelte'
-  import { actuatedNames, agoText, alarmAge, bannerTrip } from './panel-presenters.ts'
+  import { actuatedNames, agoText, alarmAge, bannerTrip, sampledGates } from './panel-presenters.ts'
   import { trendWindowMs } from './trend-geometry.ts'
 
   let { envelope }: { envelope: EmbeddedViewEnvelope } = $props()
@@ -322,6 +322,7 @@
                 timeAxis={stripIndex === panel.strips.length - 1}
                 adviceLabel={stripIndex === 0}
                 mode={snapshot.latest?.mode}
+                gates={sampledGates(snapshot.latest)}
                 {activeRuleIds}
               />
               <PenLegend pens={strip.pens} horizonMs={panel.horizonMs} latest={snapshot.latest} series={snapshot.series} historyMissing={snapshot.historyMissing} {activeRuleIds} />

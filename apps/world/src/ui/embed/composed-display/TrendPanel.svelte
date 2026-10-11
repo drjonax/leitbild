@@ -11,9 +11,9 @@
     valueTicks,
     type ValueDomain,
   } from './trend-geometry.ts'
-  import { limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
+  import { idleText, limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
-  import { HOLD_GAP_MS, rateWindowMs, trendReading, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
+  import { HOLD_GAP_MS, rateWindowMs, trendReading, type GateStates, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
   import { fitName, penStroke } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
 
@@ -34,6 +34,7 @@
     timeAxis,
     adviceLabel,
     mode,
+    gates,
     activeRuleIds,
   }: {
     strip: ComposedTrendStrip
@@ -54,6 +55,8 @@
     adviceLabel: boolean
     /** The Plant's operating mode in the latest sample; undefined before it or where the Plant declares none. */
     mode: ComposedDisplaySample['mode']
+    /** The on/off states the strip's gated limits require, as the latest sample reads them. */
+    gates: GateStates
     /** I&C rules active now; their threshold labels take the alarm colour while they act in the mode. */
     activeRuleIds: ReadonlySet<string>
   } = $props()
@@ -74,7 +77,7 @@
   // on the axis only when they fall inside it, to keep the trend quiet. Limits
   // at one value are one line, each with its own label.
   const limitThresholds = $derived(strip.thresholds.filter(threshold => threshold.kind !== 'control'))
-  const lines = $derived(limitLines(limitThresholds, mode))
+  const lines = $derived(limitLines(limitThresholds, mode, gates))
   const drawnLines = $derived(lines.filter(line => limitInScale(line.value, range)))
   const controlThresholds = $derived(strip.thresholds.filter(threshold => threshold.kind === 'control'))
 
@@ -89,8 +92,9 @@
   })
 
   // Label rows: one per limit, its order, value and action ("LO-LO 20 · AFW
-  // START"); one that does not act in the current mode adds a row naming the
-  // modes it acts in ("Modes 1–2"), drawn faint like its line.
+  // START"); one that does not act now adds a row naming the modes it acts in
+  // ("Modes 1–2") or the on/off states it waits for ("SI-BLOCKED off"), drawn
+  // faint like its line.
   const LINE = 12
   /** The modes line under an idle limit's name. */
   const MODES_LINE = 10
@@ -128,7 +132,7 @@
     const points = shownPoints(pen)
     const latest = points.at(-1)
     if (latest === undefined) return []
-    const limit = trendReading({ value: latest.v, points, windowMs: rateWindowMs(horizonMs), unit: pen.unit, thresholds: pen.thresholds, mode, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }).limit
+    const limit = trendReading({ value: latest.v, points, windowMs: rateWindowMs(horizonMs), unit: pen.unit, thresholds: pen.thresholds, mode, gates, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }).limit
     return limit?.kind === 'margin' || limit?.kind === 'past' ? [limit.margin.threshold.ruleId] : []
   })))
   const edgeOf = (value: number): 'above' | 'below' | null =>
@@ -142,12 +146,12 @@
     const ranks = limitLabelRanks(lines.map(line => ({
       key: line.key,
       value: line.value,
-      active: worst(line.members.map(member => limitSeverity(member, activeRuleIds, mode))),
+      active: worst(line.members.map(member => limitSeverity(member, activeRuleIds, mode, gates))),
       ahead: line.members.some(member => member.ruleIds.some(ruleId => namedRuleIds.has(ruleId))),
       inForce: line.look !== 'idle',
     })), current)
     const rowsOf = (line: (typeof lines)[number]) => line.members.flatMap(member => {
-      const idle = limitLook(member, mode) === 'idle'
+      const idle = limitLook(member, mode, gates) === 'idle'
       return [
         { kind: 'name' as const, member, idle, size: LINE },
         ...(idle ? [{ kind: 'modes' as const, member, idle, size: MODES_LINE }] : []),
@@ -169,7 +173,7 @@
       const line = byKey.get(label.key)!
       const folded = label.folded.map(key => byKey.get(key)!)
       const edge = edgeOf(line.value)
-      const foldedSeverity = worst(folded.flatMap(other => other.members.map(member => limitSeverity(member, activeRuleIds, mode))))
+      const foldedSeverity = worst(folded.flatMap(other => other.members.map(member => limitSeverity(member, activeRuleIds, mode, gates))))
       let top = label.start
       const rows = rowsOf(line).map((row, index) => {
         const at = top + row.size / 2
@@ -182,9 +186,9 @@
           idle: row.idle,
           modes: row.kind === 'modes',
           // Thresholds are configured numbers; show them exactly, never rounded. Whole words only; the tooltip keeps every mode.
-          text: row.kind === 'modes' ? fitName(row.member.modeLabel!, text => measureModes(text) <= GUTTER_TEXT) : `${arrow}${rowText(row.member)}${count}`,
+          text: row.kind === 'modes' ? fitName(idleText(row.member, mode), text => measureModes(text) <= GUTTER_TEXT) : `${arrow}${rowText(row.member)}${count}`,
           // A folded line's alarm colours the label it folds into.
-          severity: row.kind === 'modes' ? null : limitSeverity(row.member, activeRuleIds, mode) ?? (index === 0 ? foldedSeverity : null),
+          severity: row.kind === 'modes' ? null : limitSeverity(row.member, activeRuleIds, mode, gates) ?? (index === 0 ? foldedSeverity : null),
         }
       })
       return {

@@ -21,7 +21,7 @@ const hotStandby = { id: 'hotStandby', label: 'Hot standby' }
 const seconds = (count: number, value: (second: number) => number): ReadonlyArray<TrendPoint> =>
   Array.from({ length: count + 1 }, (_, second) => ({ t: second * 1000, v: value(second) }))
 const read = (points: ReadonlyArray<TrendPoint> | null, value: number, extra: Partial<Parameters<typeof trendReading>[0]> = {}) =>
-  trendReading({ value, points, windowMs: rateWindowMs(600_000), unit: 'MPa', thresholds: pressureLimits, mode: powerOperation, activeRuleIds: new Set(), ...extra })
+  trendReading({ value, points, windowMs: rateWindowMs(600_000), unit: 'MPa', thresholds: pressureLimits, mode: powerOperation, gates: () => undefined, activeRuleIds: new Set(), ...extra })
 const readLevel = (points: ReadonlyArray<TrendPoint> | null, value: number, extra: Partial<Parameters<typeof trendReading>[0]> = {}) =>
   read(points, value, { unit: 'percent', thresholds: levelLimits, resolution: 0.1, span: { min: 0, max: 100 }, ...extra })
 
@@ -151,8 +151,8 @@ describe('how a trend reads now', () => {
     expect(reading.inAlarm).toBeNull()
     expect(limitStateText(read(null, 12, { thresholds: [] }).limit!, 'MPa')).toBe('no I&C limit')
     // The most severe limit in force with its rule active: trips before alarms.
-    expect(activeThreshold(levelLimits, new Set(['sg-b-low', 'sg-b-afw', 'sg-b-rx-trip']), powerOperation)?.ruleId).toMatch(/^sg-b-(afw|rx-trip)$/)
-    expect(activeThreshold(levelLimits, new Set(['sg-b-low', 'sg-b-rx-trip']), hotStandby)?.ruleId).toBe('sg-b-low')
+    expect(activeThreshold(levelLimits, new Set(['sg-b-low', 'sg-b-afw', 'sg-b-rx-trip']), powerOperation, () => undefined)?.ruleId).toMatch(/^sg-b-(afw|rx-trip)$/)
+    expect(activeThreshold(levelLimits, new Set(['sg-b-low', 'sg-b-rx-trip']), hotStandby, () => undefined)?.ruleId).toBe('sg-b-low')
   })
 
   test('direction, projected times and recorded pages', () => {

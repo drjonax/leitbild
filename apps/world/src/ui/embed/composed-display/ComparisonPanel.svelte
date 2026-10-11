@@ -3,9 +3,9 @@
   import { composedDisplayLayout } from '../../../packs/process-plant/displays/composition.ts'
   import type { ComposedDisplaySample } from './composed-display-client.ts'
   import { displayValue, formatValue, limitKindName, limitOrderName, readingText, shownReading, thresholdFullName, unitLabel } from '../../../packs/process-plant/displays/display-text.ts'
-  import { median } from './panel-presenters.ts'
+  import { median, sampledGates } from './panel-presenters.ts'
   import { COMPARISON_HISTORY_MS, ratePerMinute, rateText, rateWindowMs, trendReading, windowText, type TrendPoint } from '../../../packs/process-plant/displays/trend-reading.ts'
-  import { limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
+  import { idleText, limitLabelRanks, limitLines, limitLook, limitSeverity, stackLabels, type LabelSlot } from './limit-labels.ts'
   import { displayName, fitName } from './pen-style.ts'
   import { panelFont, textMeasure } from './text-measure.ts'
   import { paddedDomain, rawDomain, type ValueDomain } from './trend-geometry.ts'
@@ -69,12 +69,13 @@
   // modes, even with a value past it; while the mode is not known yet, a
   // qualified one is dashed.
   const mode = $derived(latest?.mode)
-  const lines = $derived(limitLines(panel.thresholds, mode))
+  const gates = $derived(sampledGates(latest))
+  const lines = $derived(limitLines(panel.thresholds, mode, gates))
   // The same 30 s window as a 10-minute trend's legend, so one signal never shows two rates.
   const RATE_WINDOW_MS = rateWindowMs(COMPARISON_HISTORY_MS)
   const severityRank = { critical: 0, warning: 1, notice: 2, info: 3 } as const
   const activeOf = (line: (typeof lines)[number]): string | null =>
-    line.members.map(member => limitSeverity(member, activeRuleIds, mode)).filter((severity): severity is keyof typeof severityRank => severity !== null)
+    line.members.map(member => limitSeverity(member, activeRuleIds, mode, gates)).filter((severity): severity is keyof typeof severityRank => severity !== null)
       .sort((left, right) => severityRank[left] - severityRank[right])[0] ?? null
 
   // Limit names over the scale sit at their lines, pushed apart along the head
@@ -90,12 +91,12 @@
   // one that does not act in the current mode with its modes: "LO-LO 20 ·
   // AFW START + RX TRIP (Modes 1–2)".
   const headName = (line: (typeof lines)[number]): string =>
-    `${limitOrderName(line.members[0]!)} ${displayValue(line.value, panel.unit)} · ${line.members.map(member => `${member.action}${limitLook(member, mode) === 'idle' ? ` (${member.modeLabel})` : ''}`).join(' + ')}`
+    `${limitOrderName(line.members[0]!)} ${displayValue(line.value, panel.unit)} · ${line.members.map(member => `${member.action}${limitLook(member, mode, gates) === 'idle' ? ` (${idleText(member, mode)})` : ''}`).join(' + ')}`
   // The limit each value's reading names (trend-reading.ts): what it heads for or is past.
   const namedRuleIds = $derived(new Set(panel.pens.flatMap((pen, index) => {
     const value = values[index]
     if (value === undefined) return []
-    const limit = trendReading({ value, points: shownPoints(pen), windowMs: RATE_WINDOW_MS, unit: pen.unit, thresholds: pen.thresholds, mode, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }).limit
+    const limit = trendReading({ value, points: shownPoints(pen), windowMs: RATE_WINDOW_MS, unit: pen.unit, thresholds: pen.thresholds, mode, gates, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) }).limit
     return limit?.kind === 'margin' || limit?.kind === 'past' ? [limit.margin.threshold.ruleId] : []
   })))
   const heads = $derived.by(() => {
@@ -150,7 +151,7 @@
     {#each panel.pens as pen, index (pen.path)}
       {@const value = values[index]}
       {@const y = top + index * row}
-      {@const reading = value === undefined ? null : trendReading({ value, points: shownPoints(pen), windowMs: RATE_WINDOW_MS, unit: pen.unit, thresholds: pen.thresholds, mode, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) })}
+      {@const reading = value === undefined ? null : trendReading({ value, points: shownPoints(pen), windowMs: RATE_WINDOW_MS, unit: pen.unit, thresholds: pen.thresholds, mode, gates, activeRuleIds, resolution: pen.resolution, ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }) })}
       {@const inAlarm = reading?.inAlarm ?? null}
       <text class="tag" class:primary={pen.role === 'primary'} x="0" y={y + row / 2} dominant-baseline="middle">{fitted(labelled[index]!)}<title>{labelled[index]!.text} · {pen.label} · {pen.role}{pen.command ? ' · operator or automation demand, not a measured state' : ''}</title></text>
       <line class="track" x1={scaleStart} x2={scaleStart + scaleWidth} y1={y + row / 2} y2={y + row / 2} />

@@ -41,7 +41,7 @@ import {
   type DisplayEvidence,
 } from './composition.ts'
 import { displayValue, isPast, nearestThresholdMargin, readingResolution, readingText, shownReading, thresholdName, trendSpanMs, unitLabel } from './display-text.ts'
-import { appendPoint, COMPARISON_HISTORY_MS, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
+import { appendPoint, COMPARISON_HISTORY_MS, gateStatesOf, limitsInForce, rateWindowMs, readingLookBackMs, readingStateText, travelText, TREND_HISTORY_LIMIT, trendReading, type PlantModeNow, type TrendPoint, type TrendReading } from './trend-reading.ts'
 import { compileMimic, compileMimicScope, groupLabel, type MimicCompileResult } from './mimic/compile-mimic.ts'
 import { MIMIC_MAX_WIDTH } from './mimic/mimic-model.ts'
 import { chatMimicProfile, detailMimicProfile, overviewMimicProfile } from './mimic/profiles.ts'
@@ -1261,6 +1261,7 @@ const penReading = (pen: ComposedDisplayPen, view: PenView, now: ComposedDisplay
     unit: pen.unit,
     thresholds: pen.thresholds,
     mode: now.mode,
+    gates: gateStatesOf(path => now.read(path as VariablePath)),
     activeRuleIds: now.activeRuleIds,
     resolution: pen.resolution,
     ...(pen.limits?.instrumentSpan === undefined ? {} : { span: pen.limits.instrumentSpan }),
@@ -1279,7 +1280,7 @@ const penReading = (pen: ComposedDisplayPen, view: PenView, now: ComposedDisplay
     reading,
     legend: view.kind === 'legend',
     text: [`${pen.name}: ${readingText(value, pen.unit, pen.resolution, pen.limits?.instrumentSpan)}`, travel, chip, state].filter(part => part !== '').join(', '),
-    rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode)),
+    rank: penRank(value, reading, limitsInForce(pen.thresholds, now.mode, gateStatesOf(path => now.read(path as VariablePath)))),
   }]
 }
 
